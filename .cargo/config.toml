@@ -1,6 +1,5 @@
 [build]
-# faster incremental builds on Linux
-rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+# lld not available — remove flag if lld is installed later for faster builds
 
 [profile.dev]
 # faster compile, slower binary — fine for development

@@ -1,0 +1,7 @@
+telegram:
+  token: "${TELEGRAM_BOT_TOKEN}"
+  polling:
+    enabled: true
+    interval_ms: 1000
+  allowlist:
+    chat_ids: []

@@ -1,0 +1,15 @@
+agents:
+  - id: "kate"
+    model:
+      provider: "minimax"
+      model: "MiniMax-M2.5"
+    plugins:
+      - whatsapp
+      - browser
+      - memory
+    heartbeat:
+      enabled: true
+      interval: "5m"
+    config:
+      debounce_ms: 2000
+      queue_cap: 5
