@@ -1,0 +1,13 @@
+#!/bin/sh
+set -e
+
+echo ">> fmt check..."
+cargo fmt --all -- --check
+
+echo ">> clippy..."
+cargo clippy --workspace -- -D warnings
+
+echo ">> tests..."
+cargo test --workspace --quiet
+
+echo ">> ok"

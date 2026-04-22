@@ -1,0 +1,27 @@
+# Rust
+target/
+**/*.rs.bk
+Cargo.lock
+
+# Secrets — never commit
+secrets/
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.nkey
+
+# Runtime data
+data/
+logs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
