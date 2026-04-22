@@ -63,7 +63,7 @@ Full detail with sub-phases and done criteria: `proyecto/PHASES.md`
 
 | Phase | Name | Sub-phases | Status |
 |-------|------|-----------|--------|
-| 1 | Core Runtime | 1.1 scaffold, 1.2 config, 1.3 local bus, 1.4 session, 1.5 agent skeleton, 1.6 plugin interface | 1/6 |
+| 1 | Core Runtime | 1.1 scaffold, 1.2 config, 1.3 local bus, 1.4 session, 1.5 agent skeleton, 1.6 plugin interface | 2/6 |
 | 2 | NATS Broker | 2.1 client, 2.2 abstraction, 2.3 disk queue, 2.4 DLQ, 2.5 circuit breaker, 2.6 backpressure | 0/6 |
 | 3 | LLM Integration | 3.1 trait, 3.2 minimax, 3.3 rate limiter, 3.4 openai-compat, 3.5 tool registry, 3.6 agent loop | 0/6 |
 | 4 | Browser CDP | 4.1 cdp client, 4.2 chrome launch, 4.3 element refs, 4.4 commands, 4.5 event loop, 4.6 session | 0/6 |
@@ -76,7 +76,7 @@ Full detail with sub-phases and done criteria: `proyecto/PHASES.md`
 | 11 | Extension System | 11.1 manifest, 11.2 discovery, 11.3 stdio runtime, 11.4 NATS runtime, 11.5 tool registration, 11.6 lifecycle hooks, 11.7 CLI commands, 11.8 templates | 0/8 |
 | 12 | MCP Support | 12.1 client stdio, 12.2 client HTTP, 12.3 tool catalog, 12.4 session runtime, 12.5 resources, 12.6 agent as MCP server, 12.7 MCP in extensions | 0/7 |
 
-**Progress: 1 / 68 sub-phases done**
+**Progress: 2 / 68 sub-phases done**
 
 ### Progress tracking rule
 

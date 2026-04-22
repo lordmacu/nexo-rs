@@ -7,11 +7,11 @@ OpenClaw reference: `../research/` — study patterns, do not copy TypeScript di
 
 ## Progress
 
-**Global: 1 / 68 sub-phases done**
+**Global: 2 / 68 sub-phases done**
 
 | Phase | Done | Total |
 |-------|------|-------|
-| 1 — Core Runtime | 1 | 6 |
+| 1 — Core Runtime | 2 | 6 |
 | 2 — NATS Broker | 0 | 6 |
 | 3 — LLM Integration | 0 | 6 |
 | 4 — Browser CDP | 0 | 6 |
@@ -38,7 +38,7 @@ OpenClaw reference: `../research/` — study patterns, do not copy TypeScript di
 - `cargo build --workspace` passes clean
 - **Done:** no compile errors, all crates visible in workspace
 
-### 1.2 — Config loading (`crates/config`) ⬜
+### 1.2 — Config loading (`crates/config`) ✅
 - Load `config/agents.yaml`, `config/broker.yaml`, `config/llm.yaml`, `config/memory.yaml`
 - Resolve `${ENV_VAR}` placeholders at load time
 - Error clearly if required env var is missing
