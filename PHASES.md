@@ -7,11 +7,11 @@ OpenClaw reference: `../research/` — study patterns, do not copy TypeScript di
 
 ## Progress
 
-**Global: 0 / 68 sub-phases done**
+**Global: 1 / 68 sub-phases done**
 
 | Phase | Done | Total |
 |-------|------|-------|
-| 1 — Core Runtime | 0 | 6 |
+| 1 — Core Runtime | 1 | 6 |
 | 2 — NATS Broker | 0 | 6 |
 | 3 — LLM Integration | 0 | 6 |
 | 4 — Browser CDP | 0 | 6 |
@@ -32,7 +32,7 @@ OpenClaw reference: `../research/` — study patterns, do not copy TypeScript di
 
 **Goal:** Agent process boots, loads config, receives a message, runs a no-op agent loop.
 
-### 1.1 — Workspace scaffold ⬜
+### 1.1 — Workspace scaffold ✅
 - Create `Cargo.toml` workspace with all crates declared
 - Create each crate with empty `lib.rs` + `Cargo.toml`
 - `cargo build --workspace` passes clean
