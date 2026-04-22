@@ -1,0 +1,13 @@
+[build]
+# faster incremental builds on Linux
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+[profile.dev]
+# faster compile, slower binary — fine for development
+opt-level = 0
+debug = true
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
