@@ -1,0 +1,3 @@
+whatsapp:
+  session_dir: "./data/sessions"
+  credentials_file: "${WA_CREDENTIALS_FILE}"
