@@ -103,6 +103,17 @@ cargo run --bin agent -- --config config/agents.yaml
 - **All code (variables, functions, types, modules) in English**
 - Conversations with Cristian in Spanish — code artifacts always English
 
+## MANDATORY: Before every sub-phase
+
+**Before writing any code for any sub-phase, always run `/forge brainstorm <topic>` first.**
+
+No exceptions. Even if the sub-phase seems obvious. Brainstorm:
+1. Mines OpenClaw (`../research/` if available, or the repo at `/home/familia/chat/research/`) for patterns, pitfalls, and decisions already made
+2. Surfaces non-obvious constraints before code is written
+3. Confirms the approach matches the architecture in `design-agent-framework.md`
+
+Flow is always: **brainstorm → spec → plan → ejecutar**. Never skip to ejecutar.
+
 ## Development workflow — use `/forge`
 
 All feature work follows this pipeline:
