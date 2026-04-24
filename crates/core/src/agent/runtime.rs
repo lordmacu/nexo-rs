@@ -48,6 +48,13 @@ pub struct AgentRuntime {
     /// throttles, and keeping buckets segregated means flood on one
     /// channel cannot exhaust the quota on the other.
     sender_rate_limiters: Arc<DashMap<usize, Option<Arc<SenderRateLimiter>>>>,
+    /// Pre-resolved per-binding capability policies, keyed by binding
+    /// index. `usize::MAX` is reserved for the legacy "no bindings"
+    /// bucket synthesised from agent-level defaults. Policies are
+    /// immutable for the lifetime of the runtime so we allocate each
+    /// one exactly once at `new()` time — the hot intake path just
+    /// clones an `Arc`.
+    effective_policies: Arc<DashMap<usize, Arc<EffectiveBindingPolicy>>>,
     shutdown: CancellationToken,
     tasks: Arc<Mutex<JoinSet<()>>>,
 }
@@ -55,6 +62,22 @@ impl AgentRuntime {
     pub fn new(agent: Arc<Agent>, broker: AnyBroker, sessions: Arc<SessionManager>) -> Self {
         let debounce_ms = Duration::from_millis(agent.config.config.debounce_ms);
         let queue_cap = agent.config.config.queue_cap;
+        // Pre-resolve the per-binding effective policies so the intake
+        // hot path doesn't allocate. The set is bounded by the number
+        // of bindings (typically 1-3) plus the legacy sentinel slot
+        // for agents that haven't adopted bindings yet.
+        let effective_policies: DashMap<usize, Arc<EffectiveBindingPolicy>> = DashMap::new();
+        if agent.config.inbound_bindings.is_empty() {
+            effective_policies.insert(
+                usize::MAX,
+                Arc::new(EffectiveBindingPolicy::from_agent_defaults(&agent.config)),
+            );
+        } else {
+            for idx in 0..agent.config.inbound_bindings.len() {
+                effective_policies
+                    .insert(idx, EffectiveBindingPolicy::resolved(&agent.config, idx));
+            }
+        }
         Self {
             agent,
             broker,
@@ -66,6 +89,7 @@ impl AgentRuntime {
             debounce_ms,
             queue_cap,
             sender_rate_limiters: Arc::new(DashMap::new()),
+            effective_policies: Arc::new(effective_policies),
             shutdown: CancellationToken::new(),
             tasks: Arc::new(Mutex::new(JoinSet::new())),
         }
@@ -98,6 +122,7 @@ impl AgentRuntime {
         let debounce_ms = self.debounce_ms;
         let queue_cap = self.queue_cap;
         let sender_rate_limiters = Arc::clone(&self.sender_rate_limiters);
+        let effective_policies = Arc::clone(&self.effective_policies);
         let shutdown = self.shutdown.clone();
         let tasks = Arc::clone(&self.tasks);
         let shutdown2 = shutdown.clone();
@@ -136,13 +161,13 @@ impl AgentRuntime {
                         // skills, model, prompt, rate limit, delegates).
                         let bindings = &agent.config.inbound_bindings;
                         let effective = if bindings.is_empty() {
-                            // Pre-binding YAML: synthesise a policy from
-                            // agent-level defaults so downstream code
-                            // paths can treat `ctx.effective` as always
-                            // present.
-                            Arc::new(EffectiveBindingPolicy::from_agent_defaults(
-                                &agent.config,
-                            ))
+                            // Pre-binding YAML: use the pre-resolved
+                            // legacy slot keyed at usize::MAX so the
+                            // hot path only bumps an Arc refcount.
+                            effective_policies
+                                .get(&usize::MAX)
+                                .map(|e| Arc::clone(e.value()))
+                                .expect("legacy effective policy is seeded at runtime::new")
                         } else {
                             match match_binding_index(
                                 bindings,
@@ -157,7 +182,10 @@ impl AgentRuntime {
                                         binding_index = idx,
                                         "inbound matched binding",
                                     );
-                                    EffectiveBindingPolicy::resolved(&agent.config, idx)
+                                    effective_policies
+                                        .get(&idx)
+                                        .map(|e| Arc::clone(e.value()))
+                                        .expect("per-binding effective policy is seeded at runtime::new")
                                 }
                                 None => {
                                     tracing::trace!(

@@ -65,26 +65,14 @@ impl ToolRegistry {
         if patterns.is_empty() {
             return 0;
         }
-        let rules: Vec<(&str, bool)> = patterns
-            .iter()
-            .map(|p| match p.strip_suffix('*') {
-                Some(stem) => (stem, true),
-                None => (p.as_str(), false),
-            })
-            .collect();
+        // Share the exact matching semantics with EffectiveBinding
+        // Policy::tool_allowed so an agent-level allowlist and a
+        // per-binding allowlist cannot drift apart (e.g. one honours
+        // `"*"` but the other treats it as a literal name).
         let victims: Vec<String> = self
             .handlers
             .iter()
-            .filter(|e| {
-                let name = e.key();
-                !rules.iter().any(|(stem, wildcard)| {
-                    if *wildcard {
-                        name.starts_with(*stem)
-                    } else {
-                        name == *stem
-                    }
-                })
-            })
+            .filter(|e| !super::effective::allowlist_matches(patterns, e.key()))
             .map(|e| e.key().clone())
             .collect();
         let n = victims.len();
