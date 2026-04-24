@@ -1188,20 +1188,24 @@ async fn main() -> Result<()> {
             tracing::debug!(agent = %agent_id, "mcp hot-reload wired");
         }
 
-        // Apply per-agent tool allowlist — prune the fully-registered
-        // catalog down to the patterns in `allowed_tools`. Empty list
-        // = every tool stays (back-compat). Must happen after all
-        // registers (builtins, MCP, extensions) but before the behavior
-        // builds its relevance filter, so the LLM never even sees a
-        // disallowed tool.
-        if !agent_cfg.allowed_tools.is_empty() {
+        // Apply the agent-level tool allowlist ONLY for legacy agents
+        // (no inbound_bindings). With bindings present, each binding
+        // carries its own `allowed_tools` override via
+        // EffectiveBindingPolicy; pruning the base registry here would
+        // cap every binding below the agent-level list, making
+        // `binding.allowed_tools: ["*"]` (or any expansion beyond the
+        // agent list) silently lose tools. Per-binding enforcement
+        // happens in llm_behavior at turn time instead, keeping the
+        // registry authoritative and letting bindings narrow AND
+        // expand freely within it.
+        if agent_cfg.inbound_bindings.is_empty() && !agent_cfg.allowed_tools.is_empty() {
             let removed = tools.retain_matching(&agent_cfg.allowed_tools);
             tracing::info!(
                 agent = %agent_id,
                 kept = tools.to_tool_defs().len(),
                 removed,
                 patterns = ?agent_cfg.allowed_tools,
-                "per-agent tool allowlist applied",
+                "per-agent tool allowlist applied (legacy, no bindings)",
             );
         }
 
