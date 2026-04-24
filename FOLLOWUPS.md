@@ -1727,12 +1727,6 @@ still-open minor polish tasks — none block production use.
   works but would key a nonsense cache entry if an unbound path ever
   goes through `ToolRegistryCache::get_or_build`. Either forbid that
   path (panic in debug) or switch to `Option<usize>` for the index.
-- **ToolRegistryCache + filtered_clone are unused in production**:
-  the cache was built for per-binding registries but the final wiring
-  in llm_behavior filters at turn time via `effective.tool_allowed()`,
-  so the cache only runs in its own unit tests. Either wire it in to
-  skip the per-turn filter (marginal perf win, more memory) or delete
-  the dead code to reduce surface area.
 - **Skills check is relative to CWD**: `binding_validate` resolves
   `skills_dir / skill` via `Path::new`. Works for `cargo run` from
   `proyecto/`; breaks if the binary is invoked from a different cwd.
