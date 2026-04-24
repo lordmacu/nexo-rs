@@ -1843,6 +1843,117 @@ Deferred to follow-up (no current demand):
 
 ---
 
+## Phase 18 — Config hot-reload
+
+**Goal:** Operators rotate allowlists, model strings, prompts, and
+other per-agent knobs without restarting the daemon. Sessions in
+flight keep their snapshot for the life of the current turn; the
+next inbound event resolves against the new snapshot (apply-on-next).
+Plugin configs (whatsapp, telegram, browser, email) are out of scope
+for Phase 18 — their lifecycle refactor is Phase 19.
+
+### 18.1 — Deps + schema ✅
+
+- `arc-swap = "1"` + `notify = "6"` + `notify-debouncer-full = "0.3"`
+  wired into `agent-core`.
+- `RuntimeConfig` YAML type in `agent-config` — loads
+  `runtime.yaml` when present; absent file → defaults with reload
+  enabled and a 500 ms debouncer window.
+
+### 18.2 — `RuntimeSnapshot` + ArcSwap ✅
+
+- `crates/core/src/runtime_snapshot.rs` — immutable per-agent
+  snapshot holding `AgentConfig`, pre-resolved `effective_policies`
+  keyed by `Option<usize>`, a fresh `ToolRegistryCache`, and an
+  optional `LlmClient`. Monotonic `version` tags logs.
+- `RuntimeSnapshot::build` for production reloads (pins a live
+  `LlmClient`); `bare` for the early-boot / test path.
+- `AgentRuntime.snapshot: Arc<ArcSwap<RuntimeSnapshot>>` +
+  `snapshot_handle()` + `swap_snapshot()`.
+
+### 18.3 — Reload command channel ✅
+
+- `ReloadCommand::Apply(Arc<RuntimeSnapshot>)` mpsc channel per
+  runtime; `reload_sender()` hands the tx to the coordinator.
+- `start()` consumes the receiver once; a biased `tokio::select!`
+  arm drains reload first so a burst of inbound can't starve a
+  pending swap.
+
+### 18.4 — File watcher ✅
+
+- `crates/core/src/config_watch.rs` — debounced watcher over
+  `agents.yaml`, `agents.d/`, `llm.yaml`, `runtime.yaml` + any
+  `runtime.reload.extra_watch_paths` — pushes `()` notifications
+  through a tokio mpsc for the coordinator to consume.
+
+### 18.5 — `ConfigReloadCoordinator` ✅
+
+- `crates/core/src/config_reload.rs` — `reload()` runs the full
+  pipeline: `AppConfig::load` → aggregate validation
+  (`validate_agents_with_providers`) → per-agent
+  `RuntimeSnapshot::build` → dispatch `Apply`. Serial `tokio::Mutex`
+  gate prevents two overlapping triggers from racing. Fail-safe:
+  any validation error keeps the old snapshot; `config_reload_
+  rejected_total` bumps; structured `warn!` logs list every
+  offender.
+- `start(broker, reload_cfg)` spawns the watcher task + the
+  `control.reload` broker subscriber, publishes `control.reload.
+  ack` with the serialized `ReloadOutcome`. Honours
+  `runtime.reload.enabled = false` by skipping both tasks.
+- Add/remove agent lifecycle is rejected with a clear message
+  (operators restart the daemon to reshape the fleet); Phase 19
+  wires that in after the plugin-lifecycle refactor.
+
+### 18.6 — Intake migration ✅
+
+- The runtime's main select loop now calls `snapshot.load_full()`
+  once per event (lock-free) and resolves the per-binding policy +
+  tool cache from the fresh snapshot. Legacy per-runtime caches
+  survive as a test-path fallback via `or_else`.
+- Sessions that were mid-turn when a reload landed keep their Arc;
+  the next event's `load_full()` picks up the new version.
+
+### 18.7 — Telemetry ✅
+
+- Counters: `config_reload_applied_total`,
+  `config_reload_rejected_total`.
+- Histogram: `config_reload_latency_ms` (wall-clock of load →
+  validate → build → swap).
+- Gauge: `runtime_config_version{agent_id}` — monotonic per agent.
+
+### 18.8 — CLI + boot wiring ✅
+
+- `agent reload [--json]` subcommand publishes `control.reload`,
+  subscribes-before-publish to `control.reload.ack`, prints the
+  `ReloadOutcome` (human or JSON), exits 0 on any applied / 1 on
+  timeout / 2 on all-rejected.
+- `src/main.rs` collects every `reload_sender` during agent spawn
+  and registers them with the coordinator, then calls
+  `start(broker, cfg.runtime.reload)` so SIGTERM-clean shutdown
+  works automatically.
+
+### 18.9 — Tests ✅
+
+- `crates/config/src/types/runtime.rs` unit tests — schema shape.
+- `crates/core/src/runtime_snapshot.rs` unit tests — builder error
+  path + legacy sentinel.
+- `crates/core/src/config_watch.rs` unit tests — tempdir fires on
+  write.
+- `crates/core/src/config_reload.rs` unit tests — missing config dir
+  fails cleanly + initial version is 0.
+- `crates/core/tests/hot_reload_test.rs` — end-to-end: Apply swap
+  visible to the next message; 5 consecutive Applies don't starve
+  the inbound path; the final version wins.
+
+**Progress: 9/9 sub-phases done.** Follow-ups:
+
+- Add/remove agent lifecycle (Phase 19).
+- Plugin / MCP config hot-reload (Phase 19).
+- `config_reloaded` hook + diff-aware log (Phase 19).
+- SIGHUP trigger as an extra UX path (deferred).
+
+---
+
 ## Phase dependencies summary
 
 ```
