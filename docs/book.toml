@@ -1,0 +1,34 @@
+[book]
+title = "Nexo-rs"
+authors = ["Cristian García <informacion@cristiangarcia.co>"]
+description = "Rust multi-agent framework — NATS-backed, LLM-powered, microservices-ready"
+language = "en"
+src = "src"
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/lordmacu/nexo-rs"
+edit-url-template = "https://github.com/lordmacu/nexo-rs/edit/main/docs/{path}"
+site-url = "/nexo-rs/"
+additional-js = ["mermaid.min.js", "mermaid-init.js"]
+
+[output.html.search]
+enable = true
+limit-results = 30
+teaser-word-count = 30
+use-boolean-and = true
+boost-title = 2
+boost-hierarchy = 1
+boost-paragraph = 1
+expand = true
+heading-split-level = 3
+
+[output.html.fold]
+enable = true
+level = 1
+
+[preprocessor]
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
