@@ -308,7 +308,13 @@ impl LlmAgentBehavior {
                 ),
             }
         }
-        if !ctx.config.skills.is_empty() {
+        // Per-binding skills: pull the list from the effective policy so
+        // a narrow binding can boot with zero skills loaded while a
+        // wider binding on the same agent injects the full catalogue.
+        // skills_dir stays agent-level because skills are physical files
+        // shared across every binding.
+        let effective = ctx.effective_policy();
+        if !effective.skills.is_empty() {
             let skills_dir = ctx.config.skills_dir.trim();
             if skills_dir.is_empty() {
                 tracing::warn!(
@@ -317,7 +323,7 @@ impl LlmAgentBehavior {
                 );
             } else {
                 let loader = SkillLoader::new(skills_dir);
-                let loaded = loader.load_many(&ctx.config.skills).await;
+                let loaded = loader.load_many(&effective.skills).await;
                 if let Some(blocks) = render_skill_blocks(&loaded) {
                     system_parts.push(blocks);
                 }
@@ -327,11 +333,15 @@ impl LlmAgentBehavior {
         // agents in the process. The LLM learns who it can delegate to
         // without the user having to hand-write `AGENTS.md`.
         if let Some(peers) = ctx.peers.as_ref() {
-            if let Some(block) = peers.render_for(&ctx.agent_id, &ctx.config.allowed_delegates) {
+            if let Some(block) = peers.render_for(&ctx.agent_id, &effective.allowed_delegates) {
                 system_parts.push(block);
             }
         }
-        let system_prompt = ctx.config.system_prompt.trim();
+        // Per-binding system prompt: agent-level base with an optional
+        // `# CHANNEL ADDENDUM` block appended by EffectiveBindingPolicy.
+        // Legacy bindingless code paths see the plain agent prompt via
+        // from_agent_defaults.
+        let system_prompt = effective.system_prompt.trim();
         if !system_prompt.is_empty() {
             system_parts.push(system_prompt.to_string());
         }
