@@ -11,7 +11,7 @@ beyond surface docs.
 
 Legend: `⬜ pending  🔄 in progress  ✅ done`
 
-Progress: **11 / 18 phases done, 0 in progress**
+Progress: **12 / 18 phases done, 0 in progress**
 
 ---
 
@@ -291,7 +291,7 @@ sessions.
 
 ---
 
-## Phase D11 — Operations   ⬜
+## Phase D11 — Operations   ✅
 
 Mapping to phase 9 + scattered ops work.
 
@@ -299,15 +299,18 @@ Pages: `ops/docker.md`, `ops/metrics.md`, `ops/logging.md`,
 `ops/dlq.md`.
 
 Deep-dive checklist:
-- [ ] Docker: compose file walkthrough, volumes, secrets, networking
-- [ ] Metrics: full Prometheus metric table (name, type, labels, when
-  emitted)
-- [ ] Example Grafana queries
-- [ ] Logging: tracing setup, log levels, structured fields, correlation
-  across agents
-- [ ] DLQ: when items land there, inspect / replay / purge flow
-- [ ] Health endpoints: what they report, how to wire in k8s liveness /
-  readiness
+- [x] Docker: compose layout diagram, multi-stage Dockerfile,
+  config/docker/ overrides, secrets, volume + shm gotchas
+- [x] Metrics: full Prometheus metric table (8 metrics), labels,
+  scrape-time breaker sampling
+- [x] Example Prometheus alert rules (3 common cases)
+- [x] Logging: RUST_LOG + AGENT_LOG_FORMAT, three format modes,
+  structured-field conventions, stdout-reserved-for-wire-protocols
+- [x] Correlation across agents via correlation_id + delegation flow
+  diagram
+- [x] DLQ: when items land there, CLI (list/replay/purge) + exit
+  codes, poison-pill cleanup workflow, no replay dedup gotcha
+- [x] Health endpoints: /health vs /ready semantics, k8s probe config
 
 **Done criteria:** ops team can run this in production without reading
 code.
