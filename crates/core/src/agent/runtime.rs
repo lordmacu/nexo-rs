@@ -1,6 +1,7 @@
 use super::agent::Agent;
 use super::behavior::AgentBehavior;
 use super::context::AgentContext;
+use super::effective::EffectiveBindingPolicy;
 use super::peer_directory::PeerDirectory;
 use super::routing::{route_topic, AgentMessage, AgentPayload, AgentRouter};
 use super::sender_rate_limit::SenderRateLimiter;
@@ -127,19 +128,47 @@ impl AgentRuntime {
                             parse_inbound_topic(&event.topic);
                         // Binding filter — empty list = legacy wildcard
                         // (accept all, matches pre-binding behavior).
-                        // Populated list = strict allowlist.
+                        // Populated list = strict allowlist; we also
+                        // capture the matched binding index so the
+                        // session task can pick up its per-binding
+                        // capability overrides (tools, outbound allowlist,
+                        // skills, model, prompt, rate limit, delegates).
                         let bindings = &agent.config.inbound_bindings;
-                        if !bindings.is_empty()
-                            && !binding_matches(bindings, &source_plugin, source_instance.as_deref())
-                        {
-                            tracing::trace!(
-                                agent_id = %agent.id,
-                                plugin = %source_plugin,
-                                instance = source_instance.as_deref().unwrap_or("-"),
-                                "inbound dropped by binding filter",
-                            );
-                            continue;
-                        }
+                        let effective = if bindings.is_empty() {
+                            // Pre-binding YAML: synthesise a policy from
+                            // agent-level defaults so downstream code
+                            // paths can treat `ctx.effective` as always
+                            // present.
+                            Arc::new(EffectiveBindingPolicy::from_agent_defaults(
+                                &agent.config,
+                            ))
+                        } else {
+                            match match_binding_index(
+                                bindings,
+                                &source_plugin,
+                                source_instance.as_deref(),
+                            ) {
+                                Some(idx) => {
+                                    tracing::trace!(
+                                        agent_id = %agent.id,
+                                        plugin = %source_plugin,
+                                        instance = source_instance.as_deref().unwrap_or("-"),
+                                        binding_index = idx,
+                                        "inbound matched binding",
+                                    );
+                                    EffectiveBindingPolicy::resolved(&agent.config, idx)
+                                }
+                                None => {
+                                    tracing::trace!(
+                                        agent_id = %agent.id,
+                                        plugin = %source_plugin,
+                                        instance = source_instance.as_deref().unwrap_or("-"),
+                                        "inbound dropped by binding filter",
+                                    );
+                                    continue;
+                                }
+                            }
+                        };
                         let sender_id = event.payload
                             .get("from")
                             .and_then(|v| v.as_str())
@@ -195,6 +224,7 @@ impl AgentRuntime {
                         // handle so it can remove exactly its own entry from
                         // the map on exit (the `same_channel` check avoids a
                         // race where a newer session replaced us).
+                        let effective_for_session = Arc::clone(&effective);
                         let entry = session_txs.entry(session_id).or_insert_with(|| {
                             let (tx, rx) = mpsc::channel(queue_cap);
                             let tx_for_task = tx.clone();
@@ -204,6 +234,7 @@ impl AgentRuntime {
                                 broker.clone(),
                                 Arc::clone(&sessions),
                             );
+                            ctx = ctx.with_effective(Arc::clone(&effective_for_session));
                             if let Some(ref mem) = memory {
                                 ctx = ctx.with_memory(Arc::clone(mem));
                             }
@@ -638,21 +669,40 @@ fn parse_inbound_topic(topic: &str) -> (String, Option<String>) {
         _ => (rest.to_string(), None),
     }
 }
-/// Check whether `(plugin, instance)` matches at least one binding.
-/// A binding with `instance=None` matches any instance of its plugin —
+/// Find the first binding index that matches `(plugin, instance)`. A
+/// binding with `instance=None` matches any instance of its plugin —
 /// including events with no instance at all. Used by the runtime
-/// inbound-subscriber loop.
-fn binding_matches(bindings: &[InboundBinding], plugin: &str, instance: Option<&str>) -> bool {
-    bindings.iter().any(|b| {
+/// inbound-subscriber loop to both accept/reject events and select
+/// which binding's overrides govern the session.
+///
+/// Returns `None` when no binding matches. Note: when an agent has no
+/// bindings at all the caller interprets that as the legacy wildcard
+/// ("accept every inbound"); this helper only speaks to the populated
+/// case.
+fn match_binding_index(
+    bindings: &[InboundBinding],
+    plugin: &str,
+    instance: Option<&str>,
+) -> Option<usize> {
+    bindings.iter().position(|b| {
         if b.plugin != plugin {
             return false;
         }
         match (&b.instance, instance) {
-            (None, _) => true, // plugin-wide binding
+            (None, _) => true,
             (Some(want), Some(got)) => want == got,
-            (Some(_), None) => false, // binding asked for instance, topic had none
+            (Some(_), None) => false,
         }
     })
+}
+
+/// Back-compat boolean wrapper around [`match_binding_index`]. Kept for
+/// the unit tests that assert the accept/reject semantics; production
+/// callers use `match_binding_index` so the index can be fed into
+/// `EffectiveBindingPolicy::resolve`.
+#[cfg(test)]
+fn binding_matches(bindings: &[InboundBinding], plugin: &str, instance: Option<&str>) -> bool {
+    match_binding_index(bindings, plugin, instance).is_some()
 }
 #[cfg(test)]
 mod tests {
