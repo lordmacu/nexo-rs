@@ -222,3 +222,6 @@ Dual-licensed under either:
 - Apache-2.0 — see [`LICENSE-APACHE`](LICENSE-APACHE)
 
 at your option. SPDX: `MIT OR Apache-2.0`.
+
+Redistributions must preserve the attribution in [`NOTICE`](NOTICE)
+per Section 4(d) of the Apache License.
