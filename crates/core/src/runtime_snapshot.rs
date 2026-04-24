@@ -47,10 +47,12 @@ pub struct RuntimeSnapshot {
     /// that changes `allowed_tools` does not serve a stale filtered
     /// clone.
     pub tool_cache: Arc<ToolRegistryCache>,
-    /// LLM client for this agent. Rebuilt on every snapshot so a
-    /// rotated API key or a swapped `model.provider` in `llm.yaml`
-    /// takes effect on the next turn.
-    pub llm_client: Arc<dyn LlmClient>,
+    /// LLM client for this agent. `None` in early-boot snapshots
+    /// built before the `LlmRegistry` is wired in (tests, scaffolding).
+    /// Production snapshots constructed via the reload coordinator
+    /// always populate this; consumers that fall back read the
+    /// behavior-owned `llm` field.
+    pub llm_client: Option<Arc<dyn LlmClient>>,
     /// Monotonic version per agent. The intake path tags log lines
     /// with this so operators can correlate "session X used version Y"
     /// when debugging a reload.
@@ -78,6 +80,35 @@ impl RuntimeSnapshot {
     /// with `validate_agents_with_providers` *before* calling this so
     /// a failure here means something changed between validation and
     /// build — always log at warn and keep the old snapshot.
+    /// Build a snapshot with the LLM client set to `None`. Used at
+    /// `AgentRuntime::new` before the registry is wired, and in tests.
+    /// Production reloads use [`RuntimeSnapshot::build`] to also pin
+    /// the LLM client.
+    pub fn bare(agent_config: Arc<AgentConfig>, version: u64) -> Self {
+        let effective_policies: dashmap::DashMap<Option<usize>, Arc<EffectiveBindingPolicy>> =
+            dashmap::DashMap::new();
+        if agent_config.inbound_bindings.is_empty() {
+            effective_policies.insert(
+                None,
+                Arc::new(EffectiveBindingPolicy::from_agent_defaults(&agent_config)),
+            );
+        } else {
+            for idx in 0..agent_config.inbound_bindings.len() {
+                effective_policies.insert(
+                    Some(idx),
+                    EffectiveBindingPolicy::resolved(&agent_config, idx),
+                );
+            }
+        }
+        Self {
+            agent_config,
+            effective_policies: Arc::new(effective_policies),
+            tool_cache: Arc::new(ToolRegistryCache::new()),
+            llm_client: None,
+            version,
+        }
+    }
+
     pub fn build(
         agent_config: Arc<AgentConfig>,
         llm_registry: &LlmRegistry,
@@ -112,7 +143,7 @@ impl RuntimeSnapshot {
             agent_config,
             effective_policies: Arc::new(effective_policies),
             tool_cache: Arc::new(ToolRegistryCache::new()),
-            llm_client,
+            llm_client: Some(llm_client),
             version,
         })
     }

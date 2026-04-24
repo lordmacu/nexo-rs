@@ -2,6 +2,8 @@ use super::agent::Agent;
 use super::behavior::AgentBehavior;
 use super::context::AgentContext;
 use super::effective::EffectiveBindingPolicy;
+use crate::runtime_snapshot::RuntimeSnapshot;
+use arc_swap::ArcSwap;
 use super::peer_directory::PeerDirectory;
 use super::routing::{route_topic, AgentMessage, AgentPayload, AgentRouter};
 use super::sender_rate_limit::SenderRateLimiter;
@@ -55,6 +57,13 @@ pub struct AgentRuntime {
     /// of the runtime so we allocate each one exactly once at `new()`
     /// time — the hot intake path just clones an `Arc`.
     effective_policies: Arc<DashMap<Option<usize>, Arc<EffectiveBindingPolicy>>>,
+    /// Phase 18 — hot-reloadable snapshot. Holds the same
+    /// `effective_policies` + `tool_cache` data as the legacy fields
+    /// above, plus the optional per-agent `LlmClient`. The intake
+    /// hot path still reads the legacy fields in this commit; those
+    /// reads migrate to `snapshot.load()` in a follow-up so the
+    /// refactor stays atomic per step.
+    snapshot: Arc<ArcSwap<RuntimeSnapshot>>,
     /// Base tool registry (plugins + MCP + extensions + skills). Used
     /// together with `tool_cache` to hand each session a filtered
     /// `Arc<ToolRegistry>` that only exposes the binding's allowed
@@ -92,6 +101,7 @@ impl AgentRuntime {
                     .insert(Some(idx), EffectiveBindingPolicy::resolved(&agent.config, idx));
             }
         }
+        let initial_snapshot = RuntimeSnapshot::bare(Arc::clone(&agent.config), 0);
         Self {
             agent,
             broker,
@@ -104,6 +114,7 @@ impl AgentRuntime {
             queue_cap,
             sender_rate_limiters: Arc::new(DashMap::new()),
             effective_policies: Arc::new(effective_policies),
+            snapshot: Arc::new(ArcSwap::from_pointee(initial_snapshot)),
             tool_base: None,
             credentials: None,
             tool_cache: Arc::new(super::tool_registry_cache::ToolRegistryCache::new()),
@@ -126,6 +137,20 @@ impl AgentRuntime {
     pub fn with_tool_base(mut self, tools: Arc<super::tool_registry::ToolRegistry>) -> Self {
         self.tool_base = Some(tools);
         self
+    }
+    /// Expose the runtime's `ArcSwap<RuntimeSnapshot>` so the reload
+    /// coordinator can swap a freshly-built snapshot in atomically
+    /// without tearing down the runtime. Cheap `Arc` clone — callers
+    /// typically stash the handle once at boot.
+    pub fn snapshot_handle(&self) -> Arc<ArcSwap<RuntimeSnapshot>> {
+        Arc::clone(&self.snapshot)
+    }
+    /// Atomic swap of the per-agent snapshot. Readers that already
+    /// hold an `Arc<RuntimeSnapshot>` (session tasks mid-turn) keep
+    /// their copy for the lifetime of that Arc; subsequent
+    /// `snapshot.load()` calls see the new value.
+    pub fn swap_snapshot(&self, new: Arc<RuntimeSnapshot>) {
+        self.snapshot.store(new);
     }
     /// Attach the credential resolver. All `AgentContext`s built by
     /// this runtime inherit it so outbound tools can look up the
