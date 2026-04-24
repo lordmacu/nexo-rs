@@ -387,7 +387,16 @@ impl LlmAgentBehavior {
                 }
             }
         }
-        let model = ctx.config.model.model.clone();
+        // Per-binding model override: ctx.effective carries the model
+        // string resolved by EffectiveBindingPolicy. Agent-level config
+        // is only consulted via the `effective_policy()` fallback when
+        // the context was built outside of a matched binding (heartbeat
+        // bootstrap, tests). The provider stays at whatever the agent
+        // was booted with — boot validation rejects bindings that try
+        // to change `model.provider` because the LLM client is wired
+        // once per agent. Switching only the model name works because
+        // providers ship multiple model variants behind a single API.
+        let model = ctx.effective_policy().model.model.clone();
         let tool_defs = self.tools.to_tool_defs();
         // Phase 3 optimisation: the relevance filter index is built
         // once at agent boot (see `with_tool_policy`). We just borrow
