@@ -1650,9 +1650,8 @@ Formalizada en `PHASES.md` como sub-fase 10.9. Resumen del trade-off para no olv
 ### ~~Circuit breaker per `(channel, instance)`~~ ✅ Resuelto 2026-04-24
 - `crates/auth/src/breaker.rs`: `BreakerRegistry` con `DashMap<"channel:instance", Arc<CircuitBreaker>>`. Cada `publish_outbound` en WA/TG consulta `ctx.breakers.for_handle(h)` antes de enviar; aísla 429 por número. Métrica `credentials_breaker_state{channel,instance}` actualizada en transiciones.
 
-### Hot-reload de `credentials` sin restart
-- Cambios en `agents.d/*.yaml` o `whatsapp.yaml` requieren reiniciar el daemon para que la nueva binding se materialice.
-- **Acción:** endpoint `POST /admin/credentials/reload` que re-corre `build_credentials` y actualiza `AgentRuntime.credentials`. Necesita `ArcSwap` en el resolver para lectura lock-free + invariante "binding no cambia mid-session".
+### ~~Hot-reload de `credentials` sin restart~~ ✅ Resuelto 2026-04-24
+- `AgentCredentialResolver` migró sus campos a `ArcSwap`/`AtomicU64`. `wire::reload_resolver(config_dir, bundle, strict)` re-corre el gauntlet y hace `rebuild()` atómico. Endpoint `POST /admin/credentials/reload` en `127.0.0.1:9091` devuelve `ReloadOutcome` JSON. Failure mode preservado: si el rebuild falla, las bindings viejas siguen activas.
 
 ### CLI `agent setup google --account <id> --agent <agent_id>`
 - Hoy el operador edita `google-auth.yaml` a mano + dispara consent externo. Sin wizard.
