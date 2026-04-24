@@ -317,11 +317,11 @@ async fn main() -> Result<()> {
     tracing::info!(config_dir = %config_dir.display(), "loading config");
     let cfg = AppConfig::load(&config_dir).context("failed to load config")?;
 
-    // Validate per-binding overrides before anything else spawns. We skip
-    // the tool-name check here because the tool registry is assembled
-    // after extensions / MCP discovery — the structural checks (duplicate
-    // bindings, unknown telegram instances, missing skill dirs) are
-    // enough to surface the most common YAML mistakes at startup.
+    // First pass of per-binding override validation — structural
+    // checks only (duplicate bindings, unknown telegram instances,
+    // missing skill dirs, same-provider model override). The tool-name
+    // and known-provider checks run a few statements below once the
+    // LLM registry and tool registry are assembled.
     agent_core::agent::validate_agents(
         &cfg.agents.agents,
         &cfg.plugins.telegram,
@@ -376,6 +376,23 @@ async fn main() -> Result<()> {
         }
     }
     let llm_registry = LlmRegistry::with_builtins();
+
+    // Provider-level validation pass: every agent's (and every
+    // binding override's) `model.provider` must be a real registered
+    // provider. Same aggregate error format as the structural pass
+    // above so multi-agent configs surface every typo in one error.
+    {
+        let names = llm_registry.names();
+        let known_providers = agent_core::agent::KnownProviders::new(names);
+        agent_core::agent::validate_agents_with_providers(
+            &cfg.agents.agents,
+            &cfg.plugins.telegram,
+            &agent_core::agent::KnownTools::default(),
+            &known_providers,
+        )
+        .context("per-binding provider validation failed")?;
+    }
+
     let mcp_sampling_provider = build_mcp_sampling_provider(&cfg, &llm_registry)
         .context("failed to initialize MCP sampling provider")?;
     let mcp_manager: Option<Arc<agent_mcp::McpRuntimeManager>> = match cfg.mcp.as_ref() {

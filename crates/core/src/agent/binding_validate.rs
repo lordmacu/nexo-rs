@@ -264,7 +264,13 @@ pub fn validate_agent(
     known_tools: &KnownTools<'_>,
 ) -> Result<(), BindingValidationError> {
     let mut errors = Vec::new();
-    validate_agent_into(agent, telegram_instances, known_tools, &mut errors);
+    validate_agent_into(
+        agent,
+        telegram_instances,
+        known_tools,
+        &KnownProviders::default(),
+        &mut errors,
+    );
     if let Some(first) = errors.into_iter().next() {
         Err(first)
     } else {
@@ -276,8 +282,30 @@ fn validate_agent_into(
     agent: &AgentConfig,
     telegram_instances: &[TelegramPluginConfig],
     known_tools: &KnownTools<'_>,
+    known_providers: &KnownProviders<'_>,
     errors: &mut Vec<BindingValidationError>,
 ) {
+    // 0. Known provider check (agent-level + any binding-level override).
+    if known_providers.is_enabled() {
+        if !known_providers.contains(&agent.model.provider) {
+            errors.push(BindingValidationError::UnknownProvider {
+                agent: agent.id.clone(),
+                provider: agent.model.provider.clone(),
+                known: known_providers.listed(),
+            });
+        }
+        for b in &agent.inbound_bindings {
+            let Some(m) = &b.model else { continue };
+            if !known_providers.contains(&m.provider) {
+                errors.push(BindingValidationError::UnknownProvider {
+                    agent: agent.id.clone(),
+                    provider: m.provider.clone(),
+                    known: known_providers.listed(),
+                });
+            }
+        }
+    }
+
     // 1. Duplicate bindings.
     let mut seen: HashSet<(String, Option<String>)> = HashSet::new();
     for b in &agent.inbound_bindings {
@@ -697,6 +725,57 @@ mod tests {
         assert!(msg.contains("duplicate binding"));
         assert!(msg.contains("provider"));
         assert!(msg.contains("issue"), "message should count issues, got: {msg}");
+    }
+
+    #[test]
+    fn unknown_provider_rejected_when_catalogue_supplied() {
+        // Agent-level provider typo.
+        let mut a = agent("ana", "./skills");
+        a.model.provider = "anthopic".into();
+        let known = KnownProviders::new(["anthropic", "minimax", "openai"]);
+        let err = validate_agents_with_providers(&[a], &[], &KnownTools::default(), &known)
+            .unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("anthopic"));
+        assert!(msg.contains("anthropic"));
+    }
+
+    #[test]
+    fn empty_providers_catalogue_disables_check() {
+        // Without a catalogue, any string passes — used in the early
+        // boot path before the LLM registry exists.
+        let mut a = agent("ana", "./skills");
+        a.model.provider = "bogus".into();
+        validate_agents(&[a], &[], &KnownTools::default())
+            .expect("empty catalogue disables the check");
+    }
+
+    #[test]
+    fn binding_provider_typo_rejected() {
+        let mut a = agent("ana", "./skills");
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "telegram".into(),
+            model: Some(ModelConfig {
+                provider: "anthopic".into(),
+                model: "x".into(),
+            }),
+            ..Default::default()
+        });
+        // Both typo provider AND mismatch will fire; aggregate returns
+        // both so operator fixes them together.
+        let known = KnownProviders::new(["anthropic", "minimax"]);
+        let errors = collect_binding_errors_with_providers(
+            &[a],
+            &[],
+            &KnownTools::default(),
+            &known,
+        );
+        assert!(errors
+            .iter()
+            .any(|e| matches!(e, BindingValidationError::UnknownProvider { .. })));
+        assert!(errors
+            .iter()
+            .any(|e| matches!(e, BindingValidationError::ProviderMismatch { .. })));
     }
 
     #[test]
