@@ -35,10 +35,19 @@ pub struct AgentRuntime {
     session_txs: Arc<DashMap<Uuid, mpsc::Sender<InboundMessage>>>,
     debounce_ms: Duration,
     queue_cap: usize,
-    /// Per-sender inbound throttle — denies messages whose sender_id
-    /// exceeds its bucket. `None` = unlimited (back-compat). Built
-    /// from `agent.config.sender_rate_limit` when present.
-    sender_rate_limiter: Option<Arc<SenderRateLimiter>>,
+    /// Per-binding sender rate limiters, keyed by binding index. Built
+    /// lazily on first matching intake from the binding's effective
+    /// `sender_rate_limit`; `None` in a slot means "this binding opted
+    /// out of rate limiting". Legacy bindingless agents key their single
+    /// limiter at `usize::MAX` via
+    /// `EffectiveBindingPolicy::from_agent_defaults`.
+    ///
+    /// Rationale for per-binding (instead of one per agent): an agent
+    /// that exposes a narrow sales surface on WhatsApp and a trusted
+    /// owner-only surface on Telegram typically wants very different
+    /// throttles, and keeping buckets segregated means flood on one
+    /// channel cannot exhaust the quota on the other.
+    sender_rate_limiters: Arc<DashMap<usize, Option<Arc<SenderRateLimiter>>>>,
     shutdown: CancellationToken,
     tasks: Arc<Mutex<JoinSet<()>>>,
 }
@@ -46,14 +55,6 @@ impl AgentRuntime {
     pub fn new(agent: Arc<Agent>, broker: AnyBroker, sessions: Arc<SessionManager>) -> Self {
         let debounce_ms = Duration::from_millis(agent.config.config.debounce_ms);
         let queue_cap = agent.config.config.queue_cap;
-        // Auto-wire the sender rate limiter from config so `new()`
-        // already honors `sender_rate_limit`. Callers don't need a
-        // separate builder call for the common path.
-        let sender_rate_limiter = agent
-            .config
-            .sender_rate_limit
-            .clone()
-            .map(|cfg| Arc::new(SenderRateLimiter::new(cfg)));
         Self {
             agent,
             broker,
@@ -64,7 +65,7 @@ impl AgentRuntime {
             session_txs: Arc::new(DashMap::new()),
             debounce_ms,
             queue_cap,
-            sender_rate_limiter,
+            sender_rate_limiters: Arc::new(DashMap::new()),
             shutdown: CancellationToken::new(),
             tasks: Arc::new(Mutex::new(JoinSet::new())),
         }
@@ -96,7 +97,7 @@ impl AgentRuntime {
         let session_txs = Arc::clone(&self.session_txs);
         let debounce_ms = self.debounce_ms;
         let queue_cap = self.queue_cap;
-        let sender_rate_limiter = self.sender_rate_limiter.clone();
+        let sender_rate_limiters = Arc::clone(&self.sender_rate_limiters);
         let shutdown = self.shutdown.clone();
         let tasks = Arc::clone(&self.tasks);
         let shutdown2 = shutdown.clone();
@@ -173,18 +174,31 @@ impl AgentRuntime {
                             .get("from")
                             .and_then(|v| v.as_str())
                             .map(|s| s.to_string());
-                        // Per-sender rate limit — applied after binding
-                        // filter so we don't waste bucket tokens on
-                        // events the agent would drop anyway. A denied
-                        // event is silently dropped (trace-logged) so
-                        // the sender doesn't get a "rate limited" reply
-                        // they could use to probe the bot.
-                        if let Some(rl) = &sender_rate_limiter {
+                        // Per-sender rate limit — applied after the
+                        // binding filter so we don't waste bucket
+                        // tokens on events the agent would drop anyway.
+                        // A denied event is silently dropped (trace-
+                        // logged) so the sender doesn't get a "rate
+                        // limited" reply they could use to probe the
+                        // bot. Limiter is per-binding, built lazily
+                        // from the effective `sender_rate_limit`.
+                        let limiter_slot = sender_rate_limiters
+                            .entry(effective.binding_index)
+                            .or_insert_with(|| {
+                                effective
+                                    .sender_rate_limit
+                                    .clone()
+                                    .map(|cfg| Arc::new(SenderRateLimiter::new(cfg)))
+                            })
+                            .value()
+                            .clone();
+                        if let Some(rl) = limiter_slot {
                             if !rl.try_acquire(&agent.id, sender_id.as_deref()).await {
                                 tracing::trace!(
                                     agent_id = %agent.id,
                                     plugin = %source_plugin,
                                     sender = sender_id.as_deref().unwrap_or("-"),
+                                    binding_index = effective.binding_index,
                                     "inbound dropped by sender rate limit",
                                 );
                                 continue;
