@@ -1,5 +1,6 @@
 pub mod agents;
 pub mod broker;
+pub mod credentials;
 pub mod extensions;
 pub mod llm;
 pub mod mcp;
@@ -9,6 +10,7 @@ pub mod plugins;
 
 pub use agents::*;
 pub use broker::*;
+pub use credentials::*;
 pub use extensions::*;
 pub use llm::*;
 pub use mcp::*;

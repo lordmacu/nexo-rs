@@ -107,6 +107,14 @@ enum Mode {
     DryRun {
         json: bool,
     },
+    /// Phase 17 — run the credential gauntlet against the loaded config
+    /// and print a report (OK / warnings / errors). Exits 0 on clean,
+    /// 1 on errors, 2 on warnings-only. Used by CI to gate PRs that
+    /// edit `agents.d/*.yaml`, `whatsapp.yaml`, `telegram.yaml`, or
+    /// `google-auth.yaml`.
+    CheckConfig {
+        strict: bool,
+    },
     Help,
 }
 
@@ -281,6 +289,7 @@ async fn main() -> Result<()> {
             agent_id,
         } => return run_status(json, endpoint, agent_id).await,
         Mode::DryRun { json } => return run_dry_run(&args.config_dir, json),
+        Mode::CheckConfig { strict } => return run_check_config(&args.config_dir, strict),
         Mode::ExtInstall {
             source,
             update,
@@ -1877,6 +1886,16 @@ fn parse_args() -> CliArgs {
         .cloned()
         .collect();
 
+    // --check-config is a flag. `--check-config --strict` toggles
+    // StrictLevel::Strict for the resolver — warnings become errors.
+    if positional.iter().any(|a| a == "--check-config") && pos_no_flags.is_empty() {
+        let strict = positional.iter().any(|a| a == "--strict");
+        return CliArgs {
+            config_dir,
+            mode: Mode::CheckConfig { strict },
+        };
+    }
+
     // --dry-run is a flag, not a positional. Handle before the match
     // so `agent --dry-run` works without a subcommand slot.
     let dry_run_flag =
@@ -2947,6 +2966,33 @@ async fn run_status(json: bool, endpoint: Option<String>, agent_id: Option<Strin
 /// vars + file secrets, and prints a summary. Exits non-zero on any
 /// error, so CI pipelines can gate deploys on `agent --dry-run` before
 /// flipping traffic.
+fn run_check_config(config_dir: &std::path::Path, strict: bool) -> Result<()> {
+    let cfg = AppConfig::load(config_dir)
+        .with_context(|| format!("failed to load config from {}", config_dir.display()))?;
+    let google = agent_auth::load_google_auth(config_dir)
+        .with_context(|| "failed to load google-auth.yaml")?;
+    let level = if strict {
+        agent_auth::StrictLevel::Strict
+    } else {
+        agent_auth::StrictLevel::Lenient
+    };
+    let result = agent_auth::build_credentials(
+        &cfg.agents.agents,
+        &cfg.plugins.whatsapp,
+        &cfg.plugins.telegram,
+        &google,
+        level,
+    );
+    let code = agent_auth::print_report(&result);
+    // Exit code mapping: main.rs returns Result<()>; wrap non-zero in
+    // a dedicated error so the shell sees the intended status.
+    if code == 0 {
+        Ok(())
+    } else {
+        std::process::exit(code)
+    }
+}
+
 fn run_dry_run(config_dir: &std::path::Path, json: bool) -> Result<()> {
     let cfg = AppConfig::load(config_dir)
         .with_context(|| format!("failed to load config from {}", config_dir.display()))?;

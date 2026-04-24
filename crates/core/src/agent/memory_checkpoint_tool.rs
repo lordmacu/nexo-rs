@@ -101,6 +101,7 @@ mod tests {
             description: String::new(),
             outbound_allowlist: Default::default(),
             google_auth: None,
+            credentials: Default::default(),
         });
         let broker = AnyBroker::local();
         let sessions = Arc::new(SessionManager::new(std::time::Duration::from_secs(60), 20));

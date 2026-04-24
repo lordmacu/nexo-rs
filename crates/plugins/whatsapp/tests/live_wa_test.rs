@@ -52,12 +52,14 @@ fn live_cfg(session_dir: String) -> WhatsappPluginConfig {
         },
         public_tunnel: Default::default(),
         instance: None,
+        allow_agents: Vec::new(),
         transcriber: WhatsappTranscriberConfig::default(),
         daemon: WhatsappDaemonConfig {
             prefer_existing: false,
         },
         public_tunnel: Default::default(),
         instance: None,
+        allow_agents: Vec::new(),
     }
 }
 

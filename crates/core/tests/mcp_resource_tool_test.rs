@@ -118,6 +118,7 @@ fn agent_cfg() -> Arc<AgentConfig> {
         description: String::new(),
         outbound_allowlist: Default::default(),
         google_auth: None,
+        credentials: Default::default(),
     })
 }
 

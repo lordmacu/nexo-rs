@@ -151,7 +151,12 @@ impl CredentialStore for GoogleCredentialStore {
                     .warnings
                     .push(format!("google account '{id}' has no scopes declared"));
             }
-            if !a.client_id_path.exists() {
+            // Paths prefixed with `inline:` are synthetic markers for
+            // legacy `agents[].google_auth` inline credentials migrated
+            // in-memory. Skip the exists-check for those.
+            let is_inline =
+                |p: &std::path::Path| p.to_string_lossy().starts_with("inline:");
+            if !is_inline(&a.client_id_path) && !a.client_id_path.exists() {
                 report.errors.push(crate::error::BuildError::Credential {
                     channel: GOOGLE,
                     instance: id.clone(),
@@ -160,7 +165,7 @@ impl CredentialStore for GoogleCredentialStore {
                     },
                 });
             }
-            if !a.client_secret_path.exists() {
+            if !is_inline(&a.client_secret_path) && !a.client_secret_path.exists() {
                 report.errors.push(crate::error::BuildError::Credential {
                     channel: GOOGLE,
                     instance: id.clone(),

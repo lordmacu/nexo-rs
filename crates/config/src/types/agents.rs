@@ -122,6 +122,14 @@ pub struct AgentConfig {
     /// system prompt was jailbroken from spamming arbitrary numbers.
     #[serde(default)]
     pub outbound_allowlist: OutboundAllowlistConfig,
+    /// Phase 17 — per-agent credential bindings. Declares which
+    /// plugin instance / Google account the agent uses for outbound
+    /// traffic. The gauntlet validates every entry at boot. Empty =
+    /// back-compat (resolver infers from `inbound_bindings` when a
+    /// single instance matches, otherwise outbound tools are
+    /// unavailable).
+    #[serde(default)]
+    pub credentials: crate::types::credentials::AgentCredentialsConfig,
 }
 
 /// Per-agent allowlist of outbound recipients. Phone numbers are matched

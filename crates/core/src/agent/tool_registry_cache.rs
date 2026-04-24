@@ -27,7 +27,7 @@ use super::tool_registry::ToolRegistry;
 /// synchronising setup.
 #[derive(Clone, Default)]
 pub struct ToolRegistryCache {
-    entries: Arc<DashMap<(String, usize), Arc<ToolRegistry>>>,
+    entries: Arc<DashMap<(String, Option<usize>), Arc<ToolRegistry>>>,
 }
 
 impl ToolRegistryCache {
@@ -37,12 +37,13 @@ impl ToolRegistryCache {
 
     /// Returns the cached registry for `(agent_id, binding_index)`,
     /// building it with `base.filtered_clone(allowed_tools)` on first
-    /// access. The closure form avoids an eager clone for every cache
-    /// hit.
+    /// access. `binding_index = None` is reserved for the legacy
+    /// "no bindings" slot so the real-binding key space (0..N) stays
+    /// disjoint from it.
     pub fn get_or_build(
         &self,
         agent_id: &str,
-        binding_index: usize,
+        binding_index: Option<usize>,
         base: &ToolRegistry,
         allowed_tools: &[String],
     ) -> Arc<ToolRegistry> {
@@ -114,7 +115,7 @@ mod tests {
         let cache = ToolRegistryCache::new();
         let narrow = cache.get_or_build(
             "ana",
-            0,
+            Some(0),
             &base,
             &["whatsapp_send_message".to_string()],
         );
@@ -127,7 +128,7 @@ mod tests {
     fn wildcard_entry_keeps_everything() {
         let base = base_registry();
         let cache = ToolRegistryCache::new();
-        let full = cache.get_or_build("ana", 1, &base, &["*".to_string()]);
+        let full = cache.get_or_build("ana", Some(1), &base, &["*".to_string()]);
         assert!(full.contains("whatsapp_send_message"));
         assert!(full.contains("memory_write"));
         assert!(full.contains("browser_open"));
@@ -139,7 +140,7 @@ mod tests {
         // full surface.
         let base = base_registry();
         let cache = ToolRegistryCache::new();
-        let full = cache.get_or_build("legacy", 0, &base, &[]);
+        let full = cache.get_or_build("legacy", None, &base, &[]);
         assert_eq!(full.to_tool_defs().len(), 4);
     }
 
@@ -147,7 +148,7 @@ mod tests {
     fn prefix_glob_matches() {
         let base = base_registry();
         let cache = ToolRegistryCache::new();
-        let mem_only = cache.get_or_build("ana", 2, &base, &["memory_*".to_string()]);
+        let mem_only = cache.get_or_build("ana", Some(2), &base, &["memory_*".to_string()]);
         assert!(mem_only.contains("memory_write"));
         assert!(mem_only.contains("memory_query"));
         assert!(!mem_only.contains("whatsapp_send_message"));
@@ -157,8 +158,8 @@ mod tests {
     fn repeated_get_is_cache_hit() {
         let base = base_registry();
         let cache = ToolRegistryCache::new();
-        let a = cache.get_or_build("ana", 0, &base, &["*".to_string()]);
-        let b = cache.get_or_build("ana", 0, &base, &["*".to_string()]);
+        let a = cache.get_or_build("ana", Some(0), &base, &["*".to_string()]);
+        let b = cache.get_or_build("ana", Some(0), &base, &["*".to_string()]);
         assert_eq!(cache.len(), 1);
         assert!(Arc::ptr_eq(&a, &b));
     }
@@ -167,8 +168,8 @@ mod tests {
     fn different_bindings_produce_independent_entries() {
         let base = base_registry();
         let cache = ToolRegistryCache::new();
-        let wa = cache.get_or_build("ana", 0, &base, &["whatsapp_send_message".into()]);
-        let tg = cache.get_or_build("ana", 1, &base, &["*".into()]);
+        let wa = cache.get_or_build("ana", Some(0), &base, &["whatsapp_send_message".into()]);
+        let tg = cache.get_or_build("ana", Some(1), &base, &["*".into()]);
         assert_eq!(cache.len(), 2);
         assert!(!Arc::ptr_eq(&wa, &tg));
         assert_eq!(wa.to_tool_defs().len(), 1);

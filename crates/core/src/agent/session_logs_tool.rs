@@ -404,6 +404,7 @@ mod tests {
             description: String::new(),
             outbound_allowlist: Default::default(),
             google_auth: None,
+            credentials: Default::default(),
         });
         let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
         let sid = Uuid::new_v4();
@@ -597,6 +598,7 @@ mod tests {
             description: String::new(),
             outbound_allowlist: Default::default(),
             google_auth: None,
+            credentials: Default::default(),
         });
         let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
         let ctx = AgentContext::new("kate", cfg, broker, sessions);
