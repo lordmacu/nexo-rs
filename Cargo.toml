@@ -17,6 +17,7 @@ members = [
     "crates/plugins/gmail-poller",
     "crates/setup",
     "crates/tunnel",
+    "crates/auth",
 ]
 # Keep standalone extension templates out of the agent workspace so they don't
 # inherit our deps or lockfile. Users copy them verbatim and build separately.

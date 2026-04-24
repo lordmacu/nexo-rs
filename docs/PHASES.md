@@ -11,7 +11,7 @@ beyond surface docs.
 
 Legend: `⬜ pending  🔄 in progress  ✅ done`
 
-Progress: **4 / 18 phases done, 0 in progress**
+Progress: **5 / 18 phases done, 0 in progress**
 
 ---
 
@@ -116,7 +116,7 @@ docs alone.
 
 ---
 
-## Phase D4 — Plugins (channels)   ⬜
+## Phase D4 — Plugins (channels)   ✅
 
 Mapping to phases 4 (browser), 6 (WhatsApp), phase 13 (google plus
 Telegram, Email, gmail-poller).
@@ -125,23 +125,23 @@ Pages: `plugins/whatsapp.md`, `plugins/telegram.md`, `plugins/email.md`,
 `plugins/browser.md`, `plugins/google.md`.
 
 Deep-dive checklist per plugin:
-- [ ] NATS topics consumed / produced (diagram)
-- [ ] Config schema + env requirements
-- [ ] Pairing / auth flow (QR, OAuth, API key)
-- [ ] Event shape (inbound + outbound JSON)
-- [ ] Tool surface exposed to the LLM (names, args, return)
-- [ ] Error modes + recovery
-- [ ] Known limitations
+- [x] NATS topics consumed / produced (diagram)
+- [x] Config schema + env requirements
+- [x] Pairing / auth flow (QR, OAuth, API key)
+- [x] Event shape (inbound + outbound JSON)
+- [x] Tool surface exposed to the LLM (names, args, return)
+- [x] Error modes + recovery
+- [x] Known limitations
 
 Specific:
-- [ ] WhatsApp: `whatsapp-rs` wrapper, session dir, allow-list, media
+- [x] WhatsApp: `whatsapp-rs` wrapper, session dir, allow-list, media
   download, message store
-- [ ] Telegram: bot API token, chat allow-list, reply/edit/reaction
-- [ ] Email: Gmail poller cron shape, regex triage, outbound-only
-- [ ] Browser: CDP connection, element refs, command family table,
+- [x] Telegram: bot API token, chat allow-list, reply/edit/reaction
+- [x] Email: scaffolded status + redirect to gmail-poller
+- [x] Browser: CDP connection, element refs, command family table,
   screenshot strategy
-- [ ] Google: OAuth consent flow, scopes, token refresh, tool family
-  (`google_gmail_*`, `google_calendar_*`, `google_drive_*`, `google_sheets_*`)
+- [x] Google: OAuth consent flow, scopes, token refresh, generic
+  google_call; gmail-poller cron, regex extraction, dispatch
 
 **Done criteria:** each plugin has a "happy path" example and a
 "common error" troubleshooting section.
