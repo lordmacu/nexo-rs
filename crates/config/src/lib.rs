@@ -40,6 +40,7 @@ impl AppConfig {
     pub fn load(dir: &Path) -> Result<Self> {
         let mut agents = load_required::<AgentsConfig>(dir, "agents.yaml")?;
         merge_agents_drop_in(dir, &mut agents)?;
+        resolve_relative_paths(dir, &mut agents);
         let broker = load_required::<BrokerConfig>(dir, "broker.yaml")?;
         let llm = load_required::<LlmConfig>(dir, "llm.yaml")?;
         let memory = load_required::<MemoryConfig>(dir, "memory.yaml")?;
@@ -70,6 +71,7 @@ impl AppConfig {
     pub fn load_for_mcp_server(dir: &Path) -> Result<McpServerBootConfig> {
         let mut agents = load_required::<AgentsConfig>(dir, "agents.yaml")?;
         merge_agents_drop_in(dir, &mut agents)?;
+        resolve_relative_paths(dir, &mut agents);
         let mcp_server =
             load_optional::<McpServerConfigFile>(dir, "mcp_server.yaml")?.map(|f| f.mcp_server);
         Ok(McpServerBootConfig { agents, mcp_server })
@@ -85,6 +87,34 @@ impl AppConfig {
 /// Each drop-in file has the same shape as `agents.yaml`
 /// (`agents: [ ... ]`) so operators can move entries freely between the
 /// base file and the directory without restructuring.
+/// Resolve agent-level filesystem paths (`skills_dir`, `workspace`,
+/// `transcripts_dir`, `extra_docs`) against the config directory when
+/// they are relative. Makes boot independent of the process cwd — a
+/// config loaded from `/etc/agent/` still points `./skills` at
+/// `/etc/agent/skills` instead of whatever the shell happened to
+/// launch from. Absolute paths and empty strings pass through
+/// unchanged.
+fn resolve_relative_paths(dir: &Path, agents: &mut AgentsConfig) {
+    let resolve = |p: &str| -> String {
+        if p.is_empty() {
+            return p.to_string();
+        }
+        let candidate = Path::new(p);
+        if candidate.is_absolute() {
+            return p.to_string();
+        }
+        dir.join(candidate).to_string_lossy().into_owned()
+    };
+    for a in &mut agents.agents {
+        a.skills_dir = resolve(&a.skills_dir);
+        a.workspace = resolve(&a.workspace);
+        a.transcripts_dir = resolve(&a.transcripts_dir);
+        for d in &mut a.extra_docs {
+            *d = resolve(d);
+        }
+    }
+}
+
 fn merge_agents_drop_in(dir: &Path, base: &mut AgentsConfig) -> Result<()> {
     let drop_dir = dir.join("agents.d");
     if !drop_dir.exists() {
