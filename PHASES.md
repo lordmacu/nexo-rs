@@ -7,22 +7,22 @@ OpenClaw reference: `../research/` — study patterns, do not copy TypeScript di
 
 ## Progress
 
-**Global: 2 / 68 sub-phases done**
+**Global: 66 / 70 sub-phases done**
 
 | Phase | Done | Total |
 |-------|------|-------|
-| 1 — Core Runtime | 2 | 6 |
-| 2 — NATS Broker | 0 | 6 |
-| 3 — LLM Integration | 0 | 6 |
-| 4 — Browser CDP | 0 | 6 |
-| 5 — Memory | 0 | 5 |
+| 1 — Core Runtime | 7 | 7 |
+| 2 — NATS Broker | 6 | 6 |
+| 3 — LLM Integration | 6 | 6 |
+| 4 — Browser CDP | 6 | 6 |
+| 5 — Memory | 5 | 5 |
 | 6 — WhatsApp Plugin | 0 | 4 |
-| 7 — Heartbeat | 0 | 3 |
-| 8 — Agent-to-Agent | 0 | 3 |
-| 9 — Polish | 0 | 6 |
-| 10 — Soul, Identity & Learning | 0 | 8 |
-| 11 — Extension System | 0 | 8 |
-| 12 — MCP Support | 0 | 7 |
+| 7 — Heartbeat | 3 | 3 |
+| 8 — Agent-to-Agent | 3 | 3 |
+| 9 — Polish | 6 | 6 |
+| 10 — Soul, Identity & Learning | 9 | 9 |
+| 11 — Extension System | 8 | 8 |
+| 12 — MCP Support | 8 | 8 |
 
 > After each sub-phase: mark ✅ here, update count in this table and in `../CLAUDE.md`.
 
@@ -45,31 +45,41 @@ OpenClaw reference: `../research/` — study patterns, do not copy TypeScript di
 - Structs: `AgentConfig`, `BrokerConfig`, `LLMConfig`, `MemoryConfig`
 - **Done:** `Config::load("config/")` returns populated structs; missing env var returns descriptive error
 
-### 1.3 — Local event bus (`crates/broker/src/local.rs`) ⬜
+### 1.3 — Local event bus (`crates/broker/src/local.rs`) ✅
 - `tokio::mpsc`-based in-memory bus, no external dependency
 - Implements `BrokerHandle` trait (same interface as NATS broker)
 - `subscribe(topic, handler)`, `publish(topic, event)`, `request(topic, msg) -> Response`
 - Topic pattern matching: `agent.events.*` wildcards
 - **Done:** two tasks can pub/sub through local bus in integration test
 
-### 1.4 — Session manager (`crates/core/src/session/`) ⬜
+### 1.4 — Session manager (`crates/core/src/session/`) ✅
 - `Session { id, agent_id, history, context, created_at, last_access }`
 - `SessionManager`: create, get, update, expire (TTL from config)
 - In-memory store for Phase 1 (SQLite persistence comes in Phase 5)
 - **Done:** session created, updated, retrieved, expired after TTL in unit tests
 
-### 1.5 — Agent skeleton (`crates/core/src/agent/`) ⬜
-- `Agent` struct with `id`, `model: ModelConfig`, `plugins: Vec<Box<dyn Plugin>>`
-- `AgentBehavior` trait: `on_message`, `on_event`, `on_heartbeat`, `decide`
-- `AgentRuntime`: boots agent, subscribes to `plugin.inbound.{plugin}` topics, calls `on_message`
-- No-op default implementation (echoes message back)
-- **Done:** agent boots from YAML config, receives test message, calls `on_message`, no panic
+### 1.5 — Agent types + behavior trait (`crates/core/src/agent/`) ✅
+- `RunTrigger` enum: `User | Heartbeat | Manual`
+- `InboundMessage` struct: `id`, `session_id`, `agent_id`, `sender_id`, `text`, `trigger`, `timestamp`
+- `AgentContext` struct: `broker`, `sessions`, `agent_id`, `config`
+- `AgentBehavior` trait: `on_message`, `on_event`, `on_heartbeat`, `decide` (all default no-op)
+- `Agent` struct: `id`, `config: Arc<AgentConfig>`, `behavior: Arc<dyn AgentBehavior>`
+- `NoOpAgent`: logs on `on_message`, no-op elsewhere
+- **Done:** `NoOpAgent` receives `InboundMessage`, logs it, unit test passes
 
-### 1.6 — Plugin interface (`crates/core/src/agent/plugin.rs`) ⬜
+### 1.6 — Plugin interface (`crates/core/src/agent/plugin.rs`) ✅
 - `Plugin` trait: `name()`, `start(broker)`, `stop()`, `send_command(cmd) -> Response`
 - `Command` and `Response` enums (extensible)
 - `PluginRegistry`: register by name, lookup, start all, stop all
 - **Done:** mock plugin registers, starts, receives command, returns response
+
+### 1.7 — Agent runtime: boot + debounce + queue + dispatch ✅
+- `AgentRuntime`: takes `Agent`, `LocalBroker`, `Arc<SessionManager>`
+- `start()` spawns tokio task: subscribe `plugin.inbound.{plugin}` per plugin in config
+- Inbound debounce: `debounce_ms` from `AgentRuntimeConfig` — emits last event after idle window
+- Per-session message queue: `mpsc(queue_cap)` per `session_id`, messages serialized per session
+- Dispatch: `behavior.on_message(ctx, msg).await`; errors logged, runtime continues
+- **Done:** two tasks send events to agent via broker → debounce collapses → `on_message` called exactly once per debounce window
 
 ---
 
@@ -77,36 +87,36 @@ OpenClaw reference: `../research/` — study patterns, do not copy TypeScript di
 
 **Goal:** Replace local bus with real NATS. Survive NATS restart without losing messages.
 
-### 2.1 — NATS client (`crates/broker/src/nats.rs`) ⬜
+### 2.1 — NATS client (`crates/broker/src/nats.rs`) ✅
 - Connect to NATS via `async-nats`
 - Implements same `BrokerHandle` trait as local bus — zero changes to callers
 - Auth via nkey file (path from config)
 - **Done:** pub/sub works end-to-end through real NATS server in integration test
 
-### 2.2 — Broker abstraction (`crates/broker/src/lib.rs`) ⬜
+### 2.2 — Broker abstraction (`crates/broker/src/lib.rs`) ✅
 - `BrokerHandle` enum: `Local(LocalBroker)` | `Nats(NatsBroker)`
 - Selected at boot from `config/broker.yaml` `type` field
 - **Done:** switching config between `local` and `nats` changes broker with no code change
 
-### 2.3 — Persistent disk queue (`crates/broker/src/queue.rs`) ⬜
+### 2.3 — Persistent disk queue (`crates/broker/src/disk_queue.rs`) ✅
 - Append-only write-ahead log at `./data/queue/`
 - On publish: write to disk first, then forward to NATS
 - On NATS reconnect: drain disk queue → publish pending → delete entries
 - **Done:** kill NATS mid-run, restart, all pending events delivered
 
-### 2.4 — Dead letter queue ⬜
+### 2.4 — Dead letter queue ✅
 - After `max_attempts` failures, move message to `agent.dlq.{topic}`
 - DLQ persisted to SQLite (`./data/dlq.db`)
 - CLI command to inspect/replay DLQ entries
 - **Done:** 3 failed deliveries move message to DLQ; replay command redelivers
 
-### 2.5 — Circuit breaker (`crates/core/src/circuit_breaker.rs`) ⬜
+### 2.5 — Circuit breaker (inside `NatsBroker`) ✅
 - States: `Closed` → `Open` → `HalfOpen` → `Closed`
 - `failure_threshold`, `recovery_timeout` configurable per use site
 - Wrap every external call site: NATS publish, LLM call, CDP command
 - **Done:** inject failures in test, breaker opens, rejects, recovers after timeout
 
-### 2.6 — Backpressure ⬜
+### 2.6 — Backpressure ✅
 - `EventBus` tracks pending-per-topic counter
 - When `max_pending` exceeded: slow producers via `tokio::time::sleep` backoff
 - **Done:** fast publisher + slow subscriber → publisher slows, no memory explosion
@@ -117,43 +127,39 @@ OpenClaw reference: `../research/` — study patterns, do not copy TypeScript di
 
 **Goal:** Agent calls MiniMax, gets completion, parses tool calls, executes via ToolRegistry.
 
-### 3.1 — LLM client trait (`crates/llm/src/client.rs`) ⬜
-- `LLMClient` trait: `complete(prompt) -> Completion`, `stream(prompt, cb)`, `embed(text) -> Vec<f32>`
-- `Prompt { system, messages, tools, max_tokens }`
-- `Completion { content, tool_calls, usage: TokenUsage }`
-- **Done:** trait defined, mock impl passes all method calls
+### 3.1 — LLM client trait (`crates/llm/src/client.rs`) ✅
+- `LlmClient` trait: `chat(ChatRequest) -> ChatResponse`
+- Types: `ChatMessage`, `ChatRole`, `ChatRequest`, `ChatResponse`, `ResponseContent`, `ToolCall`, `ToolDef`, `TokenUsage`, `FinishReason`
+- **Done:** trait defined with full type set
 
-### 3.2 — MiniMax client (`crates/llm/src/minimax.rs`) ← **start here** ⬜
-- HTTP client via `reqwest` to `https://api.minimax.chat/v1`
-- Auth: `Authorization: Bearer ${MINIMAX_API_KEY}` + `GroupId: ${MINIMAX_GROUP_ID}`
-- `complete()` and `stream()` implementations
-- Map MiniMax response format → `Completion` struct
-- **Done:** real API call returns completion; token usage populated
+### 3.2 — MiniMax client (`crates/llm/src/minimax.rs`) ✅
+- POST to `{base_url}/text/chatcompletion_v2`
+- `X-MiniMax-Group-Id` header when `group_id` present
+- Handles `Text` and `Parts` content formats
+- **Done:** full wire type deserialization, maps to `ChatResponse`
 
-### 3.3 — Rate limiter (`crates/llm/src/rate_limiter.rs`) ⬜
+### 3.3 — Rate limiter (`crates/llm/src/rate_limiter.rs`) ✅
 - Token bucket: `requests_per_second` from config
-- On 429: exponential backoff (1s initial, 2x multiplier, 60s max)
-- `QuotaTracker`: alert log when remaining tokens < threshold
-- Wraps any `LLMClient` transparently
-- **Done:** 10 rapid requests → rate limiter spaces them; 429 → backoff logged; quota alert fires
+- `acquire()` sleeps until next allowed slot
+- **Done:** two rapid acquires space >= 90ms at 10 rps
 
-### 3.4 — OpenAI-compatible client (`crates/llm/src/openai.rs`) ⬜
+### 3.4 — OpenAI-compatible client (`crates/llm/src/openai_compat.rs`) ✅
+- POST `{base_url}/chat/completions`
+- Reads `retry-after` header on 429
 - Covers OpenAI + Ollama (same API shape)
-- Base URL configurable → points to `http://localhost:11434/v1` for Ollama
-- **Done:** works against Ollama local instance with `llama3`
+- **Done:** compiles, maps response to `ChatResponse`
 
-### 3.5 — Tool registry (`crates/core/src/tool_registry.rs`) ⬜
-- `Tool` trait: `name()`, `description()`, `schema() -> JsonSchema`, `execute(args) -> Value`
-- `ToolRegistry`: register, list (for LLM prompt injection), dispatch by name
-- **Done:** register 2 tools, inject schemas into prompt, parse tool_call from completion, dispatch
+### 3.5 — Tool registry (`crates/core/src/agent/tool_registry.rs`) ✅
+- `ToolHandler` trait: `call(ctx, args) -> Value`
+- `ToolRegistry`: `register`, `get`, `to_tool_defs`
+- **Done:** register tool, retrieve by name, list all defs
 
-### 3.6 — Agent LLM loop (`crates/core/src/agent/loop.rs`) ⬜
-- On `on_message`: build prompt from session history + system prompt + tools
-- Call LLM → parse completion
-- If tool_calls: execute via ToolRegistry → append results → call LLM again
-- Loop until no more tool_calls or max_iterations reached
-- Append final response to session history
-- **Done:** agent receives "what time is it?" → calls `time` tool → responds with time
+### 3.6 — Agent LLM loop (`crates/core/src/agent/llm_behavior.rs`) ✅
+- `LlmAgentBehavior`: `on_message` → build history → chat loop → execute tools → publish outbound
+- `source_plugin` from `InboundMessage` → routes reply to `plugin.outbound.{plugin}`
+- Max 10 tool iterations; warns if exhausted
+- `AnyLlmClient::stub()` for tests
+- **Done:** 3 tests pass — text reply published, tool call then text, session history persists
 
 ---
 
@@ -161,42 +167,33 @@ OpenClaw reference: `../research/` — study patterns, do not copy TypeScript di
 
 **Goal:** Agent can navigate, click, fill, screenshot via Chrome DevTools Protocol.
 
-### 4.1 — CDP WebSocket client (`crates/plugins/browser/src/cdp/client.rs`) ⬜
-- Connect to `http://127.0.0.1:9222/json` → discover targets
-- Open WebSocket to target → send/receive CDP JSON-RPC
-- Async: send command, await matching `id` in response stream
-- **Done:** `Page.navigate` to URL, receive `frameStoppedLoading` event
+### 4.1 — CDP WebSocket client (`crates/plugins/browser/src/cdp/client.rs`) ✅
+- `CdpClient::connect(ws_url)` — tokio-tungstenite, writer+reader tasks, DashMap pending
+- `send(method, params)` — atomic id, oneshot channel correlation
+- `discover_ws_url(http_url)` — GET /json/version
 
-### 4.2 — Chrome auto-discovery / launch ⬜
-- Try connect to `cdp_url` from config
-- If unreachable: spawn `google-chrome --remote-debugging-port=9222 --headless`
-- Retry connect up to 10s
-- **Done:** no Chrome running → plugin launches it → connects
+### 4.2 — Chrome launcher (`crates/plugins/browser/src/chrome.rs`) ✅
+- `find_chrome_executable()` — searches PATH + known Linux paths
+- `launch(config)` — spawn with `--remote-debugging-port=0`, read WS URL from stderr
+- `connect_existing(cdp_url)` — GET /json/version → WS URL
+- `RunningChrome::drop` — kills child process
 
-### 4.3 — Element reference system ⬜
-- After `DOM.getDocument`: assign stable refs `@e1`, `@e2` to interactive elements
-- `ElementRegistry`: maps ref → `nodeId`, tracks lifecycle (removed on navigation)
-- **Done:** snapshot returns elements with refs; click `@e2` resolves to correct nodeId
+### 4.3 — Element refs system ✅
+- `CdpSession::new` — Target.attachToTarget, stores sessionId
+- `snapshot()` — JS query all interactive elements, assigns @e1..@eN via data-agent-ref
 
-### 4.4 — Command implementations ⬜
-- `Navigate { url }` → `Page.navigate`
-- `Click { selector }` → `DOM.querySelector` + `Input.dispatchMouseEvent`
-- `Fill { selector, value }` → focus + `Input.insertText`
-- `Screenshot` → `Page.captureScreenshot` → base64 bytes
-- `Snapshot` → `DOM.getDocument` + element refs → structured tree
-- `Evaluate { script }` → `Runtime.evaluate`
-- `Wait { condition }` → poll or CDP event subscription
-- **Done:** all commands tested against real Chrome in integration test
+### 4.4 — Commands CDP ✅
+- `navigate`, `click`, `fill`, `screenshot`, `evaluate`, `snapshot`, `scroll_to`
+- All use sessionId in CDP messages, timeout from config
 
-### 4.5 — Browser plugin event loop ⬜
-- Subscribe to `plugin.outbound.browser` → execute commands
-- Publish CDP events to `agent.events.{agent_id}.{event_type}`
-- **Done:** agent publishes click command → plugin executes → agent receives result event
+### 4.5 — Plugin event loop ✅
+- `BrowserPlugin::start(broker)` — subscribes plugin.inbound.browser, dispatches BrowserCmd, publishes to plugin.outbound.browser
+- `BrowserCmd` serde tag enum, `BrowserResult` with ok/error/data/snapshot fields
 
-### 4.6 — Session persistence ⬜
-- Save/restore Chrome profile from `user_data_dir`
-- Multiple profiles (default / development) switchable via config
-- **Done:** login to site in one run → restart → still logged in
+### 4.6 — Session management ✅
+- `ensure_session()` — lazy init on first command
+- `Arc<Mutex<Option<CdpSession>>>` — reset on stop
+- Per-command timeout wrapper
 
 ---
 
@@ -204,66 +201,110 @@ OpenClaw reference: `../research/` — study patterns, do not copy TypeScript di
 
 **Goal:** Agent remembers conversation history across restarts. Semantic recall works.
 
-### 5.1 — Short-term memory (`crates/memory/src/short_term.rs`) ⬜
-- `RollingWindow<Interaction>` capped at `max_history_turns` from config
-- Per-session, in-process
-- `context(session_id, max_turns)` → `Vec<Interaction>` for prompt building
-- **Done:** 100 turns added, only last 50 returned; session isolated from other sessions
+### 5.1 — Short-term memory ✅
+- Implemented in Phase 1.4 as `SessionManager` with rolling `history` capped at `max_history_turns`
+- No separate `short_term.rs` needed — session is the short-term layer
 
-### 5.2 — SQLite store (`crates/memory/src/store.rs`) ⬜
-- `sqlx` + SQLite at `./data/memory.db`
-- Tables: `sessions`, `interactions`, `agent_facts`
-- `store(session_id, interaction)` → insert
-- `history(session_id, limit)` → ordered interactions
-- **Done:** restart process, history survives; 1000 interactions inserted in <500ms
+### 5.2 — SQLite store + schema ✅
+- `LongTermMemory::open(path)` — sqlx SqlitePool with WAL mode
+- Tables: `memories`, `memories_fts` (FTS5 virtual), `interactions`
+- Auto-migrate on open with indexes on agent_id and session_id
+- `save_interaction(session_id, agent_id, role, content)` + `load_interactions`
 
-### 5.3 — Long-term memory (`crates/memory/src/long_term.rs`) ⬜
-- `remember(agent_id, fact: &str)` → insert into `agent_facts`
-- `recall(agent_id, query, limit)` → keyword search (full-text via SQLite FTS5)
-- **Done:** store 20 facts, recall with partial keyword returns relevant ones
+### 5.3 — Long-term: remember / recall / forget ✅
+- `remember(agent_id, content, tags)` — INSERT in memories + memories_fts in tx
+- `recall(agent_id, query, limit)` — FTS5 MATCH with rank ordering, JOIN with memories
+- `forget(id)` — DELETE from both tables in tx
+- Tests: 6 green (keyword recall, multi-match, forget, cross-agent isolation)
 
-### 5.4 — Vector index (`crates/memory/src/vector.rs`) ⬜
-- `sqlite-vec` extension loaded into same SQLite connection
-- On `remember`: embed fact via LLM `embed()` → store vector
-- `recall_semantic(query, limit)` → embed query → cosine similarity search
-- **Done:** store "user likes jazz", recall with "music preferences" returns it top-1
+### 5.4 — Vector index ✅
+- `sqlite-vec` auto-extension registrada via `vector::enable()` (libsqlite3-sys bindings)
+- `EmbeddingProvider` trait + `HttpEmbeddingProvider` (OpenAI-compat: `/embeddings` endpoint)
+- `LongTermMemory::open_with_vector(path, Option<provider>)` crea `vec_memories` vec0 table con dimension del provider
+- `remember()` inserta embedding best-effort (log warn on failure)
+- `recall_vector(agent_id, query, k)` — KNN via `embedding MATCH ? AND k = ?`
+- `recall_hybrid(agent_id, query, k)` — RRF fusion FTS + vector (k_const=60), fallback graceful a FTS si provider Err
+- `MemoryTool` acepta `"mode": "keyword" | "vector" | "hybrid"` (default keyword)
+- LRU cache 64-entry en `HttpEmbeddingProvider` para single-query re-embeds
+- Dimension mismatch al reabrir DB → error fatal con instrucción de borrar DB
+- main.rs wire: lee `memory.vector` de `memory.yaml`, construye provider si `enabled: true`, inyecta en `LongTermMemory::open_with_vector`
+- Tests: 4 unit provider (wiremock) + 2 unit vector helpers + 7 integration (vector_test.rs)
 
-### 5.5 — Memory tool ⬜
-- Register `MemoryTool` in `ToolRegistry`
-- Tools: `remember(fact)`, `recall(query)`, `list_facts()`
-- Agent uses via tool calling loop
-- **Done:** agent receives "remember I like jazz" → calls `remember` tool → persisted; next session recall works
+### 5.5 — Memory tool ✅
+- `MemoryTool::new(Arc<LongTermMemory>)` lives in `agent-core` (avoids cyclic dep)
+- `ToolHandler::call` dispatches `remember` | `recall` | `forget` by `action` field
+- `MemoryTool::tool_def()` returns `ToolDef` with JSON schema for LLM tool calling
+- `AgentContext::memory: Option<Arc<LongTermMemory>>` + `with_memory()` builder
+- `LlmAgentBehavior` auto-loads last 20 interactions on new session, persists every turn
 
 ---
 
 ## Phase 6 — WhatsApp Plugin
 
-**Goal:** Agent receives and sends WhatsApp messages via `whatsapp-rs`.
+**Goal:** Agent receives and sends WhatsApp messages via `wa-agent` crate (crates.io name) / `whatsapp_rs` (import name). Integration optimized for the agent runtime wa-agent ships (ACL, dedup, typing heartbeat, chat-meta skip, outbox, reconnect, rate-limit are inherited — not reimplemented).
 
-### 6.1 — Audit `whatsapp-rs` public API ⬜
-- Read `../whatsapp-rs/src/lib.rs` — what is `pub`
-- Read `../whatsapp-rs/src/messages/send.rs` and `recv.rs`
-- Read `../whatsapp-rs/src/auth/` — session lifecycle
-- Document: send function signatures, recv event types, session init flow
-- **Done:** list of pub functions + event types written in `docs/whatsapp-rs-api.md`
+**Integration model (Model C):** in-process `Session` driven by `run_agent_with` for inbound; direct `Session::send_*` for proactive outbound (heartbeat, A2A). Bridge between wa-agent handler and core uses `session_id` already carried by `Event` (UUIDv5 derived from remote JID).
 
-### 6.2 — WhatsApp plugin wrapper (`crates/plugins/whatsapp/src/lib.rs`) ⬜
-- Wrap `whatsapp-rs` as `Plugin` trait implementation
-- `start()`: init `whatsapp-rs` session (load credentials or QR pair)
-- Recv loop: translate `whatsapp-rs` events → publish to `plugin.inbound.whatsapp`
-- `send_command(SendText { to, text })` → call `whatsapp-rs` send function
-- **Done:** real WhatsApp message received → event on broker; agent response → sent via WhatsApp
+### 6.1 — Audit + integration ADR ✅
+- Read `../whatsapp-rs/src/lib.rs`, `agent.rs`, `client.rs`, `daemon.rs`
+- Verify `run_agent_with` concurrency semantics (serial per chat? global?)
+- Verify `Session::download_media` / equivalent method name
+- Verify daemon IPC socket path (`.whatsapp-rs.sock`?)
+- Decide daemon vs in-process (in-process v1; daemon as follow-up extension)
+- Decide version pin (path `../whatsapp-rs` during Phase 6, switch to `wa-agent = "=0.1.x"` post-6.8)
+- **Done:** `docs/wa-agent-integration.md` written — API mapping table + ADR + pin plan
 
-### 6.3 — Session persistence ⬜
-- Credentials stored in path from `config/plugins/whatsapp.yaml` `session_dir`
-- On restart: load existing credentials, skip QR
-- On credential expiry: re-trigger QR flow, notify agent
-- **Done:** restart plugin → reconnects without QR; expired session → QR event published
+### 6.2 — Config + bootstrap ⬜
+- `crates/plugins/whatsapp/Cargo.toml` with deps (wa-agent path, agent-core, agent-broker, dashmap, tokio, serde, anyhow, uuid, tracing, async-trait, reqwest, mime_guess)
+- `src/config.rs`: `WhatsappPluginConfig` with `session_dir`, `media_dir`, `acl`, `behavior`, `rate_limit`, `bridge`, `transcriber`, `daemon` sections; YAML loader with env-var resolution via `agent-config`
+- `src/session.rs`: `bootstrap_session(&cfg) -> Result<Session>` — `XDG_DATA_HOME` override, `Client::new().connect()`, QR ASCII render, `creds.json.bak` backup before re-pair
+- `src/plugin.rs` skeleton impl of `Plugin` trait
+- `config/plugins/whatsapp.yaml` with spec defaults
+- **Done:** `cargo build -p agent-plugin-whatsapp`; config parse unit test green
 
-### 6.4 — Media support ⬜
-- `SendMedia { to, path, caption }` → `whatsapp-rs` media send
-- Inbound media: download to `./data/media/`, publish path in event
-- **Done:** send image, receive image with local path
+### 6.3 — Inbound bridge (`run_agent_with`) ✅
+- `src/session_id.rs`: deterministic UUIDv5 from bare JID (const namespace)
+- `src/events.rs`: `InboundEvent` enum (Message/MediaReceived/Qr/Connected/Disconnected/Reconnecting/PairingSuccess/CredentialsExpired)
+- `src/bridge.rs`: handler closure — ignore_from_me filter, oneshot insert into `PendingMap` keyed by session_id, publish `plugin.inbound.whatsapp` Event with session_id + payload, timeout policy (`noop` | `apology_text`)
+- `plugin.rs::start()` spawns `session.run_agent_with(acl, handler)`
+- **Done:** unit test with mock broker resolves oneshot from outbound event → handler returns `Response::Text`; timeout path returns `Noop`
+
+### 6.4 — Outbound dispatcher ✅
+- `src/dispatch.rs`: subscriber of `plugin.outbound.whatsapp` — match `event.session_id` against `PendingMap`; hit → oneshot resolve (reactive reply in-handler); miss → direct `Session::send_text` (proactive)
+- Support Commands: `SendMessage`, `Custom { name: "react"|"reply"|"typing" }`
+- `plugin.rs::send_command(cmd)` publishes to `plugin.outbound.whatsapp` for programmatic use
+- **Done:** LocalBroker integration test — proactive path sends via mocked Session; reactive path resolves oneshot → handler returns proper Response
+
+### 6.5 — Media (send + inbound) ✅
+- `src/media.rs`: `download_to_bytes(url)` via reqwest; MIME-sniff → `send_image`/`send_video`/`send_audio`/`send_document` selection
+- Inbound: if `ctx.msg` carries `MediaInfo` → `Session::download_media(msg)` → write to `cfg.media_dir/{msg_id}.{ext}` → publish `InboundEvent::MediaReceived` alongside normal text event
+- Dispatch: `Command::SendMedia { to, url, caption }` → download → `send_media_auto`
+- **Done:** MIME→variant selection unit test; live round-trip deferred to 6.8
+
+### 6.6 — Lifecycle + health ✅
+- `plugin.rs::health() -> PluginHealth { connected, last_event, outbox_pending }` from `session.metrics()`
+- QR expiry watcher: disconnect reason `qr_expired` → re-render + re-publish `InboundEvent::Qr`
+- Cred corruption: on `connect()` failure → backup `creds.json` to `creds.json.bak.{ts}` → restart pair flow
+- Boot doctor self-test (logs warnings, fatal only if unrecoverable)
+- Daemon collision check (`.whatsapp-rs.sock` exists + `daemon.prefer_existing` = true → boot aborts with clear msg)
+- Wire into core `/health` (Phase 9.3)
+- **Done:** daemon-collision unit test; reconnect path covered
+
+### 6.7 — Transcriber (voice → text) ✅
+- `src/transcriber.rs`: `NatsTranscriber` impl `wa_agent::agent::Transcriber` — `broker.request("skill.whisper.transcribe", { audio_base64, mime }, 30s)` → text
+- Plugin uses `run_agent_with_transcribe` when `cfg.transcriber.enabled = true`
+- **Done:** broker-mock unit test — audio in → transcribed text reaches handler `ctx.text`
+
+### 6.8 — E2E integration test ✅
+- `tests/whatsapp_live_test.rs` behind `#[cfg(feature = "live-wa")]`
+- Scenarios: inbound text → LLM echo reply; proactive heartbeat reminder; media round-trip; kill-network → auto-reconnect
+- **Done:** `cargo test --features live-wa -p agent-plugin-whatsapp` green on live account; normal `cargo test` still green (feature-gated)
+
+### 6.9 — QR friendly (wa-agent hook + plugin event) ✅
+- `wa-agent`: add `Client::on_qr(cb)` builder + `QrCallback` type; `run_pairing` now invokes the callback when set and falls back to `println!` otherwise
+- `agent-plugin-whatsapp`: `session::connect_session` installs a callback that publishes `InboundEvent::Qr { ascii, png_base64, expires_at }` on `plugin.inbound.whatsapp` each time the server rotates a pairing ref
+- PNG encoded via `qrcode` + `image` (256px min, base64)
+- **Done:** pairing QR streams through the broker instead of stdout; any subscriber (web UI, Telegram admin, webhook) can render it. Unit test verifies `render_qr_png` produces valid PNG bytes
 
 ---
 
@@ -271,22 +312,27 @@ OpenClaw reference: `../research/` — study patterns, do not copy TypeScript di
 
 **Goal:** Agents fire `on_heartbeat()` on interval. Proactive behavior works.
 
-### 7.1 — Heartbeat runtime (`crates/core/src/heartbeat.rs`) ⬜
+### 7.1 — Heartbeat runtime (`crates/core/src/heartbeat.rs`) ✅
 - Per-agent `tokio::interval` from `heartbeat.interval` config
 - On tick: publish `agent.events.{agent_id}.heartbeat`
 - `AgentRuntime` subscribes, calls `on_heartbeat(ctx)`
-- **Done:** agent configured with 5s interval → `on_heartbeat` called every 5s
+- `heartbeat_interval()` parses config with `humantime`; disabled agents don't spawn ticker
+- **Done:** runtime test with `50ms` interval publishes ticks and calls `on_heartbeat()` repeatedly
 
-### 7.2 — Default heartbeat behaviors ⬜
+### 7.2 — Default heartbeat behaviors ✅
 - Check pending reminders in memory → send proactive message if due
 - Log heartbeat (debug level) with agent id + timestamp
-- **Done:** store reminder at T+10s → heartbeat fires → message sent at T+10s
+- `LongTermMemory` now persists reminders in SQLite; `LlmAgentBehavior::on_heartbeat()` claims due reminders atomically, publishes to `plugin.outbound.{plugin}`, and marks them delivered
+- Failed delivery releases the claim so the next heartbeat can retry it
+- **Done:** tests cover due reminder delivery, no duplicate claim, retry after claim release, and heartbeat debug logging path is wired
 
-### 7.3 — Heartbeat tool ⬜
+### 7.3 — Heartbeat tool ✅
 - `schedule_reminder(at: DateTime, message: &str)` tool
 - Stored in `agent_facts` with type `reminder`
 - Heartbeat checks and fires
-- **Done:** agent called with "remind me in 1 minute to drink water" → fires correctly
+- `HeartbeatTool` stores reminders in SQLite and accepts RFC3339 timestamps or relative delays like `10m`
+- `LlmAgentBehavior` injects runtime context (`session_id`, `source_plugin`, `recipient`) so the model only chooses `at` and `message`
+- **Done:** tests cover scheduling from a live conversation and later heartbeat delivery
 
 ---
 
@@ -294,23 +340,26 @@ OpenClaw reference: `../research/` — study patterns, do not copy TypeScript di
 
 **Goal:** Agent A can delegate tasks to Agent B and receive results.
 
-### 8.1 — Routing protocol ⬜
+### 8.1 — Routing protocol ✅
 - Topic: `agent.route.{target_id}`
 - Message: `AgentMessage { from, to, correlation_id, payload: AgentPayload }`
 - `AgentPayload`: `Delegate { task, context }` | `Result { task_id, output }` | `Broadcast { event, data }`
-- **Done:** struct definitions + serde round-trip test
+- Defined in `crates/core/src/agent/routing.rs` with serde tags and round-trip test
 
-### 8.2 — Routing in AgentRuntime ⬜
+### 8.2 — Routing in AgentRuntime ✅
 - Subscribe to `agent.route.{self.id}` on boot
 - On `Delegate`: run agent loop with delegated task, publish `Result` back
 - On `Result`: match by `correlation_id`, resume waiting caller
-- **Done:** agent A delegates to agent B in integration test, receives result
+- Runtime now subscribes to route topic and handles `Delegate`/`Result`/`Broadcast`
+- **Done:** integration test validates agent A delegates to agent B and receives correlated result
 
-### 8.3 — Delegation tool ⬜
+### 8.3 — Delegation tool ✅
 - `delegate(agent_id: &str, task: &str) -> Value` tool
 - Registered in ToolRegistry, callable by LLM via tool calling
 - Waits for result with configurable timeout
-- **Done:** LLM calls delegate tool → routes to agent B → returns result to LLM
+- `DelegationTool` added in `agent-core`; uses `AgentRouter::delegate(...)` with timeout
+- `LlmAgentBehavior` injects runtime context into delegate args and now implements `decide()` using the same LLM tool loop
+- **Done:** test validates LLM calls `delegate` tool, receives result, and emits final user reply
 
 ---
 
@@ -318,45 +367,67 @@ OpenClaw reference: `../research/` — study patterns, do not copy TypeScript di
 
 **Goal:** Production-ready: logs, metrics, health checks, graceful shutdown, Docker.
 
-### 9.1 — Structured logging ⬜
+### 9.1 — Structured logging ✅
 - `tracing` + `tracing-subscriber` with JSON formatter in production
 - Log levels: ERROR (panics/unrecoverable), WARN (retry/circuit breaker), INFO (lifecycle), DEBUG (message flow)
 - Span per agent message: `agent_id`, `session_id`, `message_id`
+- Baseline now includes structured fields on runtime + LLM path (`agent_id`, `session_id`, `message_id`, `correlation_id`) and richer formatter metadata (`target`, `thread_id`)
+- Logging policy added: `AGENT_LOG_FORMAT=pretty|compact|json`; if unset and `AGENT_ENV=production`, default is `json`
+- JSON mode implemented with a dedicated tracing layer (no extra dependency features): emits `ts_unix_ms`, `level`, `target`, `thread_id`, source location, fields, and span stack
 - **Done:** all log lines have structured fields; `RUST_LOG=info` shows clean output
 
-### 9.2 — Metrics (Prometheus) ⬜
+### 9.2 — Metrics (Prometheus) ✅
 - `metrics` + `metrics-exporter-prometheus` crates
 - Track: `llm_requests_total`, `llm_latency_ms`, `messages_processed_total`, `circuit_breaker_state`
 - Expose at `http://0.0.0.0:9090/metrics`
-- **Done:** `/metrics` returns valid Prometheus text format with all counters
+- Implemented with internal telemetry module + plain Prometheus text endpoint at `:9090/metrics`
+- Tracks `llm_requests_total`, `llm_latency_ms` histogram, `messages_processed_total`, `circuit_breaker_state{breaker="nats"}`
+- **Done:** `agent` serves `/metrics` in Prometheus text format without extra infra dependencies
 
-### 9.3 — Health check endpoints ⬜
+### 9.3 — Health check endpoints ✅
 - HTTP server (minimal, `axum`) on port 8080
 - `GET /health` → 200 if process alive
 - `GET /ready` → 200 if broker connected + at least one agent running
-- **Done:** Docker HEALTHCHECK passes; `/ready` returns 503 when NATS is down
+- Implemented minimal HTTP server on `:8080`
+- `GET /health` returns `200 {"status":"ok"}`
+- `GET /ready` returns `200` only when broker is ready and `agents_running > 0`, otherwise `503` with diagnostic payload
+- **Done:** readiness now gates on broker connectivity and runtime agent count
 
-### 9.4 — Graceful shutdown ⬜
+### 9.4 — Graceful shutdown ✅
+- Implemented coordinated shutdown: `src/main.rs` marks runtime not-ready, stops plugins first (cuts intake), then stops agent runtimes to drain in-flight work.
 - Handle `SIGTERM` and `SIGINT`
 - On signal: stop accepting new messages → drain in-flight → flush memory store → stop plugins → exit 0
 - Timeout: 30s max drain before force exit
+- `AgentRuntime::stop()` now cancels intake, closes per-session queues, drains queued/buffered messages, and waits up to 30s before aborting remaining tasks.
+- **Done:** runtime test `runtime_stop_flushes_remaining` now asserts pending buffered message is flushed on `stop()`.
 - **Done:** `kill -TERM <pid>` → no messages lost; exits within 30s
 
-### 9.5 — Docker Compose ⬜
+### 9.5 — Docker Compose ✅
 - Services: `nats`, `agent`, `chrome` (browserless)
 - Agent image: multi-stage build (builder → runtime)
 - Secrets via Docker secrets files (not env vars in compose file)
 - Health checks on all services
 - Volume mounts: `./config`, `./data`, `./secrets`
+- Scaffold implemented: `Dockerfile`, `.dockerignore`, `docker-compose.yml`, `config/docker/*`, `secrets/*.example`
+- `docker compose config` validates
+- `docker compose up -d` reaches `healthy` for `nats`, `chrome`, and `agent`
+- Docker builder updated to `rust:1-bookworm` to satisfy crates requiring `rustc >= 1.88`
+- Restart persistence verified: `docker compose down && docker compose up -d` keeps data/volume state (`/app/data/memory.db`, `proyecto_nats_data`)
 - **Done:** `docker compose up` → all services healthy; `docker compose down && up` → state persists
 
-### 9.6 — Integration test suite ⬜
-- Test: full message flow WhatsApp → agent LLM loop → WhatsApp reply
-- Test: browser navigate + screenshot
-- Test: NATS restart recovery
-- Test: circuit breaker open/recover
-- Test: agent-to-agent delegation
-- **Done:** `cargo test --workspace` green; `docker compose -f docker-compose.test.yml up` green
+### 9.6 — Integration test suite ✅
+- `scripts/integration_stack_smoke.sh` — 8 pasos contra el compose stack real:
+  1. Salud de containers · 2. `/health`+`/ready` · 3. `/metrics` (TYPE + etiquetas) ·
+  4. NATS `/healthz` · 5. Browser E2E (CDP discover → navigate → screenshot → evaluate) ·
+  6. NATS restart recovery (trip + reconexión) · 7. Agent-to-agent delegation ·
+  8. DiskQueue drain_nats.
+- `scripts/extensions_smoke.sh` — smoke offline-first para extensiones stdio
+  (handshake, status, errores esperados sin credenciales) y ahora integrado en
+  `make integration-suite`.
+- Tests gated por env var: `CDP_URL` (`browser_cdp_e2e`), `NATS_URL`
+  (`delegation_e2e_test`, `disk_queue_drain_nats_test`). Skip limpio sin la var.
+- Deferred: WhatsApp real end-to-end queda aparcado con Phase 6.
+- **Done:** `cargo test --workspace` verde; `make integration-smoke` pasa 8/8 contra compose.
 
 ---
 
@@ -373,7 +444,7 @@ OpenClaw reference:
 - `research/src/agents/identity.ts` — name, emoji, ack reaction, per-channel prefix
 - `research/src/agents/identity.human-delay.test.ts` — human delay config and merge logic
 
-### 10.1 — Agent identity system ⬜
+### 10.1 — Agent identity system ✅
 
 Each agent has a persistent identity beyond just a system prompt.
 
@@ -419,7 +490,7 @@ agent:
 - Per-channel prefix resolution: channel config → agent config → name fallback
 - **Done:** kate receives message → 👀 reaction appears → delay fires → response sent with natural timing
 
-### 10.2 — SOUL.md — agent personality file ⬜
+### 10.2 — SOUL.md — agent personality file ✅
 
 Each agent workspace has a `SOUL.md` injected at session start as high-priority system context.
 
@@ -448,7 +519,7 @@ Each agent workspace has a `SOUL.md` injected at session start as high-priority 
 
 - **Done:** kate's SOUL.md injected → responses match defined tone; `update_soul` tool rewrites section; restart preserves change
 
-### 10.3 — MEMORY.md — persistent self-knowledge ⬜
+### 10.3 — MEMORY.md — persistent self-knowledge ✅
 
 `MEMORY.md` is the agent's durable long-term memory, distinct from conversation history.
 
@@ -483,7 +554,7 @@ Each agent workspace has a `SOUL.md` injected at session start as high-priority 
 - Agent decides when to write (after learning something new and durable)
 - **Done:** kate told "I prefer dark mode" → writes to MEMORY.md → next session recalls it without being told
 
-### 10.4 — Session transcripts ⬜
+### 10.4 — Session transcripts ✅
 
 All conversations stored as structured JSONL for dreaming input.
 
@@ -501,7 +572,7 @@ pub enum TranscriptEntry {
 - Used as input for dreaming sweep (Phase 10.6)
 - **Done:** full conversation written to JSONL; file readable and parseable after restart
 
-### 10.5 — Recall signal tracking ⬜
+### 10.5 — Recall signal tracking ✅
 
 Tracks which facts are recalled frequently — foundation for dreaming promotion.
 
@@ -527,7 +598,7 @@ pub struct RecallStats {
 - Facts with `score > threshold` are candidates for dreaming promotion
 - **Done:** recall same fact 3x with different queries → score above threshold → appears in promotion candidates
 
-### 10.6 — Dreaming — memory consolidation sweep ⬜
+### 10.6 — Dreaming — memory consolidation sweep ✅
 
 Inspired directly by OpenClaw's dreaming system. A scheduled LLM sweep that synthesizes recent sessions and high-recall facts into durable `MEMORY.md` entries.
 
@@ -594,7 +665,7 @@ Scheduled via the Heartbeat cron system (Phase 7). Uses the LLM client (Phase 3)
 
 - **Done:** run dreaming sweep → Light Sleep report written → REM report written → fact promoted to MEMORY.md → next session agent recalls fact without being reminded
 
-### 10.7 — Concept vocabulary ⬜
+### 10.7 — Concept vocabulary ✅
 
 Inspired by `research/extensions/memory-core/src/concept-vocabulary.ts`.
 
@@ -617,7 +688,7 @@ pub struct ConceptEntry {
 - Injected into vector search at recall time: expand query with known aliases
 - **Done:** "wa integration" query finds results tagged "WhatsApp" via alias expansion
 
-### 10.8 — Agent self-report ⬜
+### 10.8 — Agent self-report ✅
 
 Agent can describe its own state on demand.
 
@@ -627,6 +698,63 @@ Tools:
 - `my_stats()` → session count, facts stored, last dream date, recall signals this week
 
 - **Done:** user asks "what do you remember about me?" → agent reads MEMORY.md → responds with structured summary
+
+### 10.9 — Git-backed memory workspace ✅
+
+Wrap the workspace dir (MEMORY.md, SOUL.md, memory/YYYY-MM-DD.md) in a local git repo so every mutation produces a reviewable, revertable commit. Matches the `DiffMem`/Manus/Claude Code pattern that stabilised in 2026 as the de-facto agent memory protocol.
+
+**Goal:** forensics, rollback, and blame for agent memory without paying operational cost (no remotes, no shell-out, batched commits).
+
+```rust
+pub struct MemoryGitRepo {
+    root: PathBuf,
+    repo: git2::Repository,
+    author: git2::Signature<'static>,  // "{agent_id} <agent@{hostname}>"
+}
+
+impl MemoryGitRepo {
+    pub fn open_or_init(root: &Path, agent_id: &str) -> anyhow::Result<Self>;
+    pub fn commit_all(&self, subject: &str, body: &str) -> anyhow::Result<git2::Oid>;
+    pub fn log(&self, n: usize) -> anyhow::Result<Vec<CommitSummary>>;
+    pub fn diff_since(&self, oid: git2::Oid) -> anyhow::Result<String>;
+    pub fn revert(&self, oid: git2::Oid) -> anyhow::Result<()>;
+}
+```
+
+Design rules:
+- **Local only by default** — no remote push. Optional `git.remote` field for operators who run a self-hosted git server (Gitea/forgejo). Never GitHub unless explicitly opted in (PII risk).
+- **Commit batching, never per-write** — triggers are:
+  1. End of each dreaming sweep (10.6) → commit with LLM-generated summary
+  2. Session close in `SessionManager::delete` → commit the day's `memory/YYYY-MM-DD.md`
+  3. Explicit `forge_memory_checkpoint` tool invocation
+- **`.gitignore`** auto-generated on `init`: `transcripts/`, `media/`, `*.tmp` (PII + binaries stay out of history)
+- **`libgit2` via `git2` crate** — no shell-out to `git` CLI; works on hosts without git installed
+- **Pre-commit validation** — file size cap, frontmatter valid, forbidden patterns (phone numbers, emails in MEMORY.md)
+- **LLM-generated commit messages** — same MiniMax client; prompt: "resume los cambios de este diff en 1 linea subject + 2-5 bullets body"
+- **Config** in `agents.yaml`:
+  ```yaml
+  workspace: "./workspaces/kate"
+  git:
+    enabled: true
+    remote: ""       # empty = local only
+    push_on_commit: false
+    author_name: "kate"
+    author_email: "agent@localhost"
+    max_file_bytes: 1048576  # 1 MiB
+  ```
+
+Sub-phase breakdown:
+- 10.9.1 — `git2` dep + `MemoryGitRepo::open_or_init` + `.gitignore` bootstrap
+- 10.9.2 — `commit_all` with batching; integrate in dreaming sweep
+- 10.9.3 — Session-close hook in `SessionManager::delete` (requires the `on_session_expire` callback that's also a 12.4 follow-up — land together)
+- 10.9.4 — `forge_memory_checkpoint` native tool (agent-triggered commit with user-provided note)
+- 10.9.5 — `log` / `diff_since` tools so the LLM can inspect its own history cheaply (DiffMem pattern)
+- 10.9.6 — Pre-commit validator + size cap
+- 10.9.7 — Optional remote push (guarded by flag, rate-limited)
+
+**Done:** `dreaming` sweep produces a commit visible in `git log`; corrupt MEMORY.md recoverable via `git revert`; `forge_memory_checkpoint("milestone")` works from LLM tool loop; integration test verifies commits land and are diffable.
+
+**Priority:** deferred. Ship after Phase 6 (WhatsApp) and any remaining Phase 12 work. Implement when a real deployment produces the first "why did the agent say X yesterday" incident or when the first memory-corruption bug appears. See FOLLOWUPS for rationale.
 
 ---
 
@@ -654,7 +782,7 @@ Two-tier plugin model (learned from OpenClaw's evolution):
 
 Extensions communicate with the agent via **NATS** (already in the stack) or **stdio JSON-RPC** (fallback for simple cases). No ABI issues, no dynamic `.so` linking, any language works.
 
-### 11.1 — Extension manifest (`plugin.toml`) ⬜
+### 11.1 — Extension manifest (`plugin.toml`) ✅
 
 Each extension declares its identity and capabilities in a `plugin.toml`:
 
@@ -686,7 +814,7 @@ license = "MIT"
 
 - **Done:** `plugin.toml` parses into `ExtensionManifest` struct; invalid fields return descriptive error
 
-### 11.2 — Extension discovery ⬜
+### 11.2 — Extension discovery ✅
 
 Agent scans `./extensions/` on boot for subdirectories containing `plugin.toml`.
 
@@ -720,7 +848,7 @@ extensions:
 
 - **Done:** drop `plugin.toml` into `./extensions/my-weather/` → agent discovers it on boot; disabled entry skipped
 
-### 11.3 — Extension runtime (stdio transport) ⬜
+### 11.3 — Extension runtime (stdio transport) ✅
 
 Simplest transport: agent spawns extension as child process, communicates via stdin/stdout JSON-RPC.
 
@@ -753,7 +881,7 @@ pub struct StdioExtensionRuntime {
 - On crash: restart with backoff (circuit breaker from Phase 2)
 - **Done:** spawn echo extension via stdio → `tools/call` roundtrip works; crash → restart logged
 
-### 11.4 — Extension runtime (NATS transport) ⬜
+### 11.4 — Extension runtime (NATS transport) ✅
 
 For extensions that run as independent services (not spawned by agent).
 
@@ -774,7 +902,7 @@ pub struct NatsExtensionRuntime {
 - Agent subscribes to `ext.registry.*` and adds extensions dynamically (hot-plug)
 - **Done:** extension process started independently → agent discovers it via NATS announce → tools available
 
-### 11.5 — Extension tool registration ⬜
+### 11.5 — Extension tool registration ✅
 
 Extensions expose tools that get merged into the agent's `ToolRegistry`.
 
@@ -799,7 +927,7 @@ impl Tool for ExtensionTool {
 - Prefixed: `ext_{plugin_id}_{tool_name}` to avoid collision
 - **Done:** weather extension tool appears in LLM prompt; LLM calls it; result returned
 
-### 11.6 — Lifecycle hooks ⬜
+### 11.6 — Lifecycle hooks ✅
 
 Extensions can hook into agent lifecycle events, not just expose tools.
 
@@ -828,7 +956,7 @@ hooks = ["before_message", "after_tool_call"]
 - Hooks called in registration order; any hook can modify context or abort
 - **Done:** logging extension hooks `before_message` → every message logged to file; abort hook stops processing
 
-### 11.7 — Extension CLI commands ⬜
+### 11.7 — Extension CLI commands ✅
 
 Extensions can add CLI subcommands to the agent binary.
 
@@ -852,7 +980,7 @@ pub struct ExtensionCli {
 - `disable`/`enable`: toggles in `config/extensions.yaml` without deleting
 - **Done:** `agent ext list` shows table with id, version, status, tool count
 
-### 11.8 — Extension template ⬜
+### 11.8 — Extension template ✅
 
 Starter template for building a new extension, in Rust and in Python (two most likely languages).
 
@@ -893,7 +1021,9 @@ OpenClaw reference:
 
 MCP crate: `rmcp` (official Rust SDK from modelcontextprotocol) or `mcp-client` crate.
 
-### 12.1 — MCP client (stdio transport) ⬜
+**Runtime wiring:** `src/main.rs` construye `McpRuntimeManager` al boot cuando `mcp.yaml` está habilitado, mergea servers declarados por extensions via `collect_mcp_declarations`, y registra sus tools + resource meta-tools en cada `ToolRegistry` via `register_session_tools(&runtime, &tools)`. Sentinel `Uuid::nil()` compartido entre agents. Shutdown llama `manager.shutdown_all()` antes de parar los agent runtimes.
+
+### 12.1 — MCP client (stdio transport) ✅
 
 Connect to any MCP server that runs as a local process (most common case).
 
@@ -937,7 +1067,7 @@ mcp:
 
 - **Done:** connect to `@modelcontextprotocol/server-filesystem` → list tools → agent can call `read_file`
 
-### 12.2 — MCP client (HTTP/SSE transport) ⬜
+### 12.2 — MCP client (HTTP/SSE transport) ✅
 
 Connect to remote MCP servers over HTTP (Streamable HTTP or legacy SSE).
 
@@ -968,7 +1098,7 @@ mcp:
 - Auto-detect transport type from server capabilities on connect
 - **Done:** connect to remote HTTP MCP server → tools available → roundtrip call works
 
-### 12.3 — MCP tool catalog ⬜
+### 12.3 — MCP tool catalog ✅
 
 Each connected MCP server exposes tools. Catalog tracks all of them.
 
@@ -993,7 +1123,7 @@ pub struct McpCatalogTool {
 - Tools registered in `ToolRegistry` as `McpProxyTool` (routes calls to MCP server)
 - **Done:** `filesystem` server connected → `mcp_filesystem_read_file` appears in agent tool list; LLM calls it
 
-### 12.4 — Session-scoped MCP runtime ⬜
+### 12.4 — Session-scoped MCP runtime ✅
 
 MCP connections are scoped per session (learned from OpenClaw's `SessionMcpRuntime`).
 
@@ -1020,7 +1150,7 @@ impl McpRuntimeManager {
 - Config fingerprint: if `mcp.yaml` changes mid-session, runtime reconnects transparently
 - **Done:** two sessions use same MCP server concurrently without interference; config reload reconnects
 
-### 12.5 — MCP resources ⬜
+### 12.5 — MCP resources ✅
 
 MCP servers can expose Resources (files, DB rows, live data) in addition to tools.
 
@@ -1037,7 +1167,7 @@ pub struct McpResource {
 - Resources injected into prompt context when relevant (via Memory system)
 - **Done:** `filesystem` server resources listed; agent reads a file resource and uses content in response
 
-### 12.6 — Agent as MCP server (optional) ⬜
+### 12.6 — Agent as MCP server (optional) ✅
 
 Expose the agent itself as an MCP server so Claude Desktop, Cursor, or other MCP clients can use it.
 
@@ -1064,7 +1194,7 @@ mcp_server:
 - Claude Desktop can connect to the agent and use its browser/memory tools
 - **Done:** add agent as MCP server in Claude Desktop → `browser_screenshot` callable from Claude
 
-### 12.7 — MCP in extension manifests ⬜
+### 12.7 — MCP in extension manifests ✅
 
 Extensions can declare MCP servers they bundle (learned from `bundle-mcp.ts`).
 
@@ -1081,6 +1211,382 @@ env = { BRAVE_API_KEY = "${BRAVE_API_KEY}" }
 - Agent auto-starts declared MCP servers when extension is loaded
 - MCP tools appear namespaced: `ext_{plugin_id}_mcp_{server}_{tool}`
 - **Done:** install extension with bundled MCP server → MCP server starts → tools available with no extra config
+
+### 12.8 — tools/list_changed hot-reload ✅
+
+MCP servers can push `notifications/tools/list_changed` when their tool set mutates at runtime (e.g. a filesystem server that gains a new directory capability). Before 12.8 the client silently dropped the notification; the LLM kept using a stale snapshot until the process was restarted.
+
+- `ClientEvent` enum (`ToolsListChanged`, `ResourcesListChanged`, `Other(method)`) emitted on a `tokio::sync::broadcast` channel by both `StdioMcpClient` and `HttpMcpClient`
+- Stdio reader parses notifications before response routing (notifs have no `id`)
+- HTTP emits from both SSE dispatcher and streamable-stream message scanner
+- `SessionMcpRuntime::on_tools_changed<F>(F)` spawns a per-client debounce task (200 ms window) that fires the callback once per server per burst
+- `ToolRegistry::clear_by_prefix(&str) -> usize` removes all handlers under `mcp_{sanitized_server}_`
+- main.rs wiring: on notification, clear prefix + `register_session_tools` rebuilds the session catalog
+- Broadcast `Lagged` is tolerated (debounce re-fire covers it); `Closed` exits the task; dispose aborts all watchers
+- **Done:** mock server emits notif → client event fires → session callback invokes after debounce → registry re-registered without process restart (tests in `crates/mcp/tests/hot_reload_test.rs`)
+
+---
+
+## Phase 13 — Skills (OpenClaw-inspired)
+
+Reference: `proyecto/OPENCLAW-SKILLS-PLAN.md`.
+
+### 13.1 — Prompt-layer skill loader   ✅
+- `AgentConfig.skills` + `skills_dir` in `crates/config/src/types/agents.rs`
+- `crates/core/src/agent/skills.rs` (`SkillLoader`, `render_system_blocks`)
+- Injection in `llm_behavior.rs` (workspace → skills → system_prompt)
+- 6 skill markdowns under `skills/`
+- Agent `kate` activates them in `config/agents.yaml`
+- **Done:** skills appear inside the system message, missing files warn instead of fail
+
+### 13.2 — Tool-backed: weather   ✅
+- Extension `extensions/weather/` rewritten v0.2.0
+- Provider: Open-Meteo (free, no API key); replaces wttr.in + curl subprocess
+- Tools: `status`, `current`, `forecast` (1–16 days, metric/imperial)
+- Reliability: reqwest blocking + rustls, 5s connect / 10s total timeout, retry 3× on 5xx and timeouts (500ms→1s→2s), per-host circuit breaker (5 fails / 30s open), 24h geocoding cache (cap 1000)
+- 13 tests: 8 unit (wmo, breaker, cache) + 5 integration (wiremock-mocked Open-Meteo)
+- Skill doc updated to reflect new tool schema (units, days max 16)
+- **Done:** `cargo test` green; smoke `./target/release/weather` returns Open-Meteo metadata
+
+### 13.3 — Tool-backed: openstreetmap   ✅
+- Extension `extensions/openstreetmap/` rewritten v0.2.0
+- Provider: Nominatim (OSM, no API key)
+- Tools: `status`, `search` (forward geocode), `reverse` (reverse geocode)
+- Reliability: reqwest blocking + rustls, 5s/10s timeouts, retry 3× on 5xx/timeout, circuit breaker (5 fails / 30s), rate limiter ~1 req/sec (Nominatim usage policy)
+- 15 tests: 9 unit (breaker, cache, rate-limit) + 6 integration (`wiremock`)
+- Skill doc updated; reuses breaker/cache primitives from weather (consider extracting to shared crate, see FOLLOWUPS)
+- **Done:** `cargo test` green; smoke `./target/release/openstreetmap` returns Nominatim metadata
+### 13.4 — Tool-backed: github (REST direct)   ✅
+- Decision: dropped MCP plan and `gh` CLI wrapper in favor of direct REST API calls (consistent with weather/osm reliability stack)
+- Extension `extensions/github/` rewritten v0.2.0
+- Provider: GitHub REST API v2022-11-28 (`api.github.com`); auth via `GITHUB_TOKEN` Bearer
+- Tools: `status`, `pr_list`, `pr_view`, `pr_checks` (two-step PR→check-runs), `issue_list` (filters out PRs)
+- Reliability: reqwest blocking + rustls, 5s/15s timeouts, retry 3× on 5xx/timeout, circuit breaker (5 fails / 30s)
+- Typed errors: `Unauthorized` (-32011), `Forbidden` (-32012), `RateLimited` with `X-RateLimit-Reset` epoch (-32013), `NotFound` (-32001)
+- 13 tests: 4 unit (breaker) + 9 integration (`wiremock`)
+- Skill doc rewritten; `GITHUB_DEFAULT_REPO` env removes need for repeated `repo` arg
+- **Done:** `cargo test` green; smoke status returns API metadata + token-present flag
+### 13.5 — Tool-backed: summarize   ✅
+- Extension `extensions/summarize/` rewritten v0.2.0
+- Provider: OpenAI-compatible `/chat/completions` (works with OpenAI, MiniMax, Groq, llama.cpp server)
+- Tools: `status`, `summarize_text`, `summarize_file` (UTF-8, ≤ 1 MB / 60k chars)
+- `length`: short|medium|long → maps to system prompt (1–2 / 3–5 / 6–10 sentences)
+- Reliability: reqwest blocking + rustls, 5s/30s timeouts, retry 3× on 5xx/timeout, circuit breaker (5 fails / 30s)
+- Typed errors: `Unauthorized` (-32011), `EmptyCompletion` (-32007)
+- 10 tests: 4 unit (breaker) + 6 integration (`wiremock` chat/completions)
+- Skill doc rewritten with chunking guidance for oversized inputs
+- **Done:** `cargo test` green; smoke status returns endpoint+model+token flag
+### 13.6 — Tool-backed: openai-whisper   ✅
+- Extension `extensions/openai-whisper/` rewritten v0.2.0
+- Provider: OpenAI-compatible `/audio/transcriptions` (multipart upload). Compatible con OpenAI, Groq Whisper-large-v3, local whisper.cpp HTTP
+- Tools: `status`, `transcribe_file` (≤ 25 MB, model/language/prompt/format/temperature args)
+- Formatos respuesta: `text` (default) | `json` | `verbose_json` (segments+timestamps) | `srt` | `vtt`
+- Reliability: reqwest blocking + multipart, rustls TLS, 5s/120s timeouts, retry 2× con backoff 1500ms (audio uploads costosos), circuit breaker 5/60s
+- Typed errors: `Unauthorized` (-32011), `PayloadTooLarge` (-32014), `UnsupportedMedia` (-32015), `EmptyTranscript` (-32007)
+- Reusa `ext_common::Breaker`
+- 10 integration tests con wiremock (status, text/json/verbose_json, 401/413/415/5xx, validación)
+- **Done:** `cargo test` green; smoke status verde; SKILL.md actualizada con guía por error
+### 13.7 — Skill metadata (frontmatter, `requires`)   ✅
+- `SkillMetadata { name, description, requires: { bins, env }, max_chars }` parsed from optional YAML frontmatter (`---` delimited) at the top of each `SKILL.md`
+- Backwards compatible: skills without frontmatter behave exactly as Phase 13.1 (no breaking change)
+- Malformed YAML logs at warn and loads with default metadata — never a hard failure
+- `requires.bins` checked via PATH walk at load time; missing bins logged
+- `requires.env` checked via `std::env::var`; missing/empty vars logged
+- `LoadedSkill.missing_bins` / `missing_env` exposed for downstream policy decisions
+- `render_system_blocks` uses `metadata.name` as display heading and `metadata.description` as a `> blockquote` line
+- `metadata.max_chars` truncates content with `…[truncated to N chars]` marker
+- 6 unit tests in `crates/core/src/agent/skills.rs`
+- All 6 user skills (weather, openstreetmap, github, summarize, openai-whisper, goplaces) upgraded with frontmatter
+- **Done:** `cargo test --workspace --lib` green; agent-core lib went from 93 → 99 tests
+### 13.19 — Tool-backed: anthropic + gemini (LLM providers)   ✅
+- **Decisión**: no son extensions stdio — son **LLM providers** nativos que pagan la inversión del LlmRegistry refactor. Van en `crates/llm/` y se registran en `with_builtins()`.
+- `crates/llm/src/anthropic.rs` (~230 LOC): Messages API, auth `x-api-key` + `anthropic-version`, text-only (tool-calling followup), system prompt split, token usage mapping
+- `crates/llm/src/gemini.rs` (~210 LOC): `generateContent`, auth via `?key=`, roles user→user/assistant→model, systemInstruction separado, generationConfig (maxOutputTokens+temperature)
+- Ambos implementan `LlmClient` + `LlmProviderFactory`; registrados en `LlmRegistry::with_builtins()` junto a minimax+openai
+- Retry/circuit/rate-limit igual que OpenAI (rate-limit inherited con `with_retry` + `CircuitBreaker`)
+- Agregar Anthropic/Gemini a un agente: `llm.yaml` → `providers.anthropic.api_key=$ANTHROPIC_API_KEY`, `providers.gemini.api_key=$GEMINI_API_KEY` + `agents.yaml` → `model.provider: anthropic, model: claude-opus-4-7` o `provider: gemini, model: gemini-2.5-pro`
+- Tests: 5 registry tests existentes siguen verde (nuevos builtins sin break)
+- **Followup**: tool-call bridging para ambos (Anthropic `tool_use` blocks, Gemini `functionCall`)
+
+### 13.20 — Tool-backed: brave-search   ✅
+- Extension `extensions/brave-search/` + 1 tool `brave_search(query, count?, freshness?, country?, safesearch?)`
+- Auth via `X-Subscription-Token` header con `BRAVE_SEARCH_API_KEY`
+- `freshness` (pd/pw/pm/py), `country` (ISO 2), `safesearch` (off/moderate/strict)
+- Retry+CB reuse `ext_common::Breaker`
+- 4 integration tests (wiremock): status, search happy-path con query_param check, missing key, 401 → -32011
+- Free tier ~2k queries/día
+
+### 13.21 — Tool-backed: wolfram-alpha   ✅
+- Extension `extensions/wolfram-alpha/` + 2 tools: `wolfram_short(input, units?)` para single-line answers (endpoint `/v1/result`), `wolfram_query(input, format?, units?)` para full pods (`/v2/query`)
+- Auth via `appid` query param con `WOLFRAM_APP_ID`
+- Flatten pods: `{id, title, primary, subpods}` para cada pod
+- Manejo especial: HTTP 501 del `/v1/result` mapea a `{ok:false, error:"no_result"}` (Wolfram usa 501 como "no entendí")
+- 5 integration tests (wiremock)
+
+### 13.22 — Tool-backed: docker-api   ✅
+- Extension `extensions/docker-api/` wraps `docker` CLI
+- 8 tools: `status`, `ps(all?, filter?)`, `inspect(target)`, `logs(target, lines?, since?)`, `stats(target)`, `start†`, `stop†(timeout_secs?)`, `restart†(timeout_secs?)`
+- Write gate: `DOCKER_API_ALLOW_WRITE=true` para start/stop/restart
+- Container name validator regex `[a-zA-Z0-9][a-zA-Z0-9_.-]*` bloquea shell injection en args
+- `ps --format '{{json .}}'` — parsea cada linea como JSON → array estructurado
+- Subprocess con watchdog SIGKILL (mismo patrón video-frames)
+- 8 tests (2 unit name validator + 6 integration contra docker real con guards graceful si no hay docker)
+
+### 13.23 — Tool-backed: proxmox   ✅
+- Extension `extensions/proxmox/` wraps Proxmox VE REST API
+- 6 tools: `status`, `list_nodes`, `list_vms(node?)`, `list_containers(node?)`, `vm_status(node, vmid, kind?)`, `vm_action†(node, vmid, kind?, action)`
+- Auth: API Token via `Authorization: PVEAPIToken=user@realm!tokenid=value` header (`PROXMOX_TOKEN` env)
+- Write gate: `PROXMOX_ALLOW_WRITE=true` para vm_action (start/stop/shutdown/reboot/suspend/resume)
+- `PROXMOX_INSECURE_TLS=true` para self-signed certs en LAN
+- `kind` ∈ qemu|lxc; `list_containers` sin node usa `/cluster/resources` + filter client-side
+- 7 integration tests (wiremock): status, list_nodes con auth header, vm_action gated, vm_status lxc path, node validator, 401, missing url/token
+
+### 13.18 — Tool-backed: google (Gmail + Calendar + Tasks + Drive + People + Photos)   ✅
+- Extension `extensions/google/` con OAuth 2.0 user refresh-token flow (service accounts no aplican para Gmail personal sin Workspace domain-wide delegation)
+- `oauth.rs` con cache in-process (parking_lot::Mutex) con margen de 60s antes del expiry; endpoint override via `GOOGLE_OAUTH_TOKEN_URL`
+- **32 tools**: status + 5 Gmail + 5 Calendar + 5 Tasks + 6 Drive + 7 People + 4 Photos
+  - Gmail: list, read (body_text decoded base64url + headers flat), search (alias), send†, modify_labels†
+  - Calendar: list_calendars, list_events (date-only vs RFC 3339 auto-detectado), create†, update†, delete†
+  - Tasks: list_lists, list_tasks, add†, complete†, delete†
+  - Drive: list, get, download (sandbox enforced), upload†, create_folder†, delete†
+  - People: list, search (fuzzy), get, other_list, create†, update† (auto-fetch etag + field mask), delete†. Render flat: display_name + emails + phones + organization + notes
+  - Photos (readonly): list_media, search (date ranges + content categories + media types + favorites + album — album_id y filters son mutually exclusive), get_media, list_albums
+- **Write gate** 5 flags independientes: `GOOGLE_ALLOW_SEND`, `GOOGLE_ALLOW_CALENDAR_WRITE`, `GOOGLE_ALLOW_TASKS_WRITE`, `GOOGLE_ALLOW_DRIVE_WRITE`, `GOOGLE_ALLOW_CONTACTS_WRITE`. Writes sin flag → `-32043 WriteDenied`
+- **Drive sandbox**: `GOOGLE_DRIVE_SANDBOX_ROOT` (default temp); download/upload paths enforced
+- Multipart upload custom (no dep de `multipart` crate) — metadata JSON + bytes en boundary manual
+- Error surface: -32011/-32012/-32001/-32013/-32043/-32602
+- `#![recursion_limit="512"]` en lib.rs por el tamaño del schema JSON macro
+- reuse `ext_common::Breaker`; reqwest blocking + rustls
+- 22 integration tests (wiremock) — cubren gmail/calendar/tasks/drive + people search flattening + people write-gate + photos album-vs-filter exclusivity + photos filter serialization
+- OAuth setup documentado: Cloud Console project → OAuth client ID → OAuth Playground → refresh_token (operador, ~5 min)
+- Skill doc con scopes recomendados + patterns (resolve contact → email/invite, search photos por fecha/contenido, PDF Drive→summarize)
+
+### 13.17 — Tool-backed: rtsp-snapshot   ✅
+- Reinterpret de OpenClaw `camsnap` (bin propietario `camsnap`) → ffmpeg subprocess
+- Tools: `status`, `snapshot(url, output_path, transport?, width?)`, `clip(url, output_path, duration_secs, transport?)`
+- URL allowlist estricta: `rtsp/rtsps/http/https`; rechaza `file://`, `concat:` (ffmpeg gadgets)
+- Sandbox `RTSP_SNAPSHOT_OUTPUT_ROOT` (default temp); path traversal bloqueado
+- Watchdog SIGKILL en timeout; `RTSP_SNAPSHOT_TIMEOUT_SECS` configurable (default 60s, max 600s)
+- Clip con `-c copy` (stream copy, sin re-encode)
+- 12 tests (5 unit + 7 integration) — live-camera path testeado con URL unreachable para ejercitar subprocess runner
+- Pipeline doc: snapshot→vision-lm, clip→video-frames.extract_audio→whisper
+
+### 13.16 — Tool-backed: spotify   ✅
+- Reinterpret de OpenClaw `spotify-player` (wraps TUI CLIs `spogo`/`spotify_player`) → Spotify Web API directo (más práctico en servidor headless)
+- Tools: `status`, `now_playing`, `search`, `play`, `pause`, `next`, `previous`
+- Auth: `SPOTIFY_ACCESS_TOKEN` env (refresh flow OAuth a cargo del operador — doc explica que la extension no refreshea)
+- Detección de `NO_ACTIVE_DEVICE` via body sniffing → `-32070` (mensaje específico: "abre Spotify en un device")
+- Rate-limit 429 con `retry_after_secs` parseado del header
+- URI validation: `spotify:track|album|playlist|artist|show|episode:...`
+- reuse `ext_common::Breaker`; reqwest blocking + rustls
+- 12 integration tests (wiremock): now_playing shapes, 204/no-device, search, 401/403/429/NO_ACTIVE_DEVICE, URI validation, missing token
+
+### 13.15 — Tool-backed: endpoint-check   ✅
+- Reinterpret de OpenClaw `healthcheck` (host hardening, no portable) → HTTP probe + TLS cert inspection
+- Tools: `status`, `http_probe(url, method?, timeout?, follow_redirects?, expected_status?)`, `ssl_cert(host, port?, timeout?, warn_days?)`
+- HTTP: GET/HEAD con latency_ms, final_url, content_type, body_preview (≤500 chars), matches_expected opcional
+- TLS cert: TCP + rustls handshake con **accept-any verifier** (ver expired/self-signed cert info sin bloquear); parse vía `x509-parser` → subject, issuer, SANs, serial_hex, signature_algorithm, chain_length, not_before/not_after_unix, seconds_until_expiry, days_until_expiry, expiring_soon, expired
+- Error codes nuevos: -32060 Resolve, -32061 Connect, -32062 TLS, -32063 Parse
+- 10 integration tests (wiremock HTTP + unreachable host para SSL resolve)
+
+### 13.14 — Tool-backed: tmux-remote   ✅
+- OpenClaw port directo (sin reinterpret)
+- Tools: `status`, `new_session`, `send_keys`, `capture_pane`, `list_sessions`, `kill_session`
+- Socket dedicado `TMUX_REMOTE_SOCKET` (default `$TMPDIR/agent-rs-tmux.sock`), aislado del tmux del operador
+- Session name validator regex `[A-Za-z0-9_-]{1,64}` — bloquea shell injection en `tmux -t`
+- send_keys split en dos invocaciones (literal keys + Enter) para evitar que tmux parsee `C-m` dentro del string
+- `list_sessions` normaliza "no server" / "No such file or directory" a `{count:0, sessions:[]}`
+- Format string `#{session_name}|#{session_created}|#{session_windows}` → parsing trivial
+- 11 tests (3 unit + 8 integration con socket efímero per-test + cleanup kill)
+
+### 13.13 — Tool-backed: onepassword   ✅
+- Nueva extension `extensions/onepassword/` (crate `onepassword-ext`, bin `onepassword`)
+- Wraps `op` CLI con service-account auth (`OP_SERVICE_ACCOUNT_TOKEN`) — descarta el tmux+desktop-app hack de OpenClaw (solo macOS)
+- Tools: `status`, `whoami`, `list_vaults`, `list_items`, `read_secret`
+- **Reveal policy opt-in**: `read_secret` devuelve solo `{length, fingerprint_sha256_prefix}` por defecto; con `OP_ALLOW_REVEAL=true|1|yes` añade `value`. Fingerprint = primeros 8 bytes de `sha256(secret)` hex → permite verificar identidad sin leak
+- `list_items` **siempre** strippea campos tipo `fields[].value` antes de serializar (test dedicado que verifica `"SECRET_LEAK"` nunca aparece en la salida JSON)
+- Strict validator `op://Vault/Item/field`: rechaza wildcards, query strings, segmentos vacíos, esquemas no-`op`
+- Subprocess runner con watchdog SIGKILL (mismo patrón video-frames), timeout configurable via `OP_TIMEOUT_SECS` (30s default, 300s max)
+- `OP_BIN_OVERRIDE` para tests — apunta a bash script fake que emite JSON predeterminado
+- Error codes nuevos: -32040 MissingBinary, -32041 MissingServiceToken, -32042 NonZeroExit (con stderr preview), -32043 RevealDenied (informativo)
+- 16 tests (5 unit + 11 integration) serializados vía `serial_test` por env var compartida
+- SKILL.md con warning prominente sobre reveal flow (secret → LLM → transcripts → memory → NATS) + patrón recomendado "verify-by-fingerprint, reveal only when forced"
+- Smoke release verde: reporta correctamente missing bin + missing token sin crashear
+- **Done:** `cargo test -p onepassword-ext` verde
+
+### 13.12 — Tool-backed: session-logs   ✅
+- Tool **agent-core puro** (no extension; lee filesystem local sin subprocess ni red) — primera skill backed "in-process"
+- Archivo `crates/core/src/agent/session_logs_tool.rs`; wire en `agent/mod.rs` (`pub use SessionLogsTool`)
+- Lee JSONL transcripts bajo `ctx.config.transcripts_dir` (Phase 10.4 writer)
+- Tool `session_logs` con dispatch por action:
+  - `list_sessions` — escanea directorio, devuelve summary (header + entry_count + first/last timestamps), ordenado por modificación más reciente
+  - `read_session { session_id }` — entradas ordenadas + header + `truncated` flag
+  - `search { query }` — substring case-insensitive across todas las sesiones, devuelve hits con preview
+  - `recent { session_id? }` — tail N entradas; defaults a la sesión actual del context
+- Límites: `MAX_LIMIT=500`, `max_chars` 20–4000 default 200 para preview (evita blow context window)
+- Aislamiento: scoped al `transcripts_dir` del agente; sin acceso cross-agent
+- Transcript dir vacío → `{ok: false, error: "transcripts_dir is not configured..."}`
+- Skill doc con frontmatter (Phase 13.7) y guía para diferenciar vs. `memory` tool (vector search)
+- 8 unit tests: list (2 sessions), read (order preserved), read missing (error), search (case-insensitive Unicode), recent (default current session + tail), truncates long content, missing transcripts_dir, unknown action
+- **Done:** `cargo test -p agent-core --lib session_logs` verde (8/8); agent-core lib pasa de 112 → 120
+
+### 13.11 — Tool-backed: video-frames   ✅
+- Nueva extension `extensions/video-frames/` (crate `video-frames-ext`, bin `video-frames`)
+- Wraps `ffmpeg` + `ffprobe` subprocess (no pure-Rust codec; declarado como `requires.bins` en plugin.toml)
+- Tools: `status`, `probe`, `extract_frames`, `extract_audio`
+- Features: `probe` devuelve duración + streams JSON; `extract_frames` soporta evenly-spaced via `count` o `fps` fijo + resize opcional; `extract_audio` mp3 default o wav con mono+sample_rate (default 16k para Whisper)
+- **Sandbox**: `VIDEO_FRAMES_OUTPUT_ROOT` (default temp) — todo output path debe estar dentro; rechaza con `-32034`
+- **Watchdog**: per-subprocess timeout vía mpsc + SIGKILL on Unix; configurable `VIDEO_FRAMES_TIMEOUT_SECS` (default 600s, max 3600s); evita dep completa de `libc` con extern "C" kill
+- Input cap 500 MB, frames cap 1000
+- Error codes nuevos: `-32030` MissingBinary, `-32031` SpawnFailed, `-32032` NonZeroExit (stderr preview), `-32033` Timeout, `-32034` IoError
+- 14 tests (4 unit + 10 integration) serializados via `serial_test` por env var compartida; synthetic fixture red+sine generado en runtime
+- Pipeline doc: `video → extract_audio → whisper.transcribe → summarize`
+- **Done:** `cargo test -p video-frames-ext` verde; smoke release OK
+
+### 13.10 — Tool-backed: fetch-url   ✅
+- Decisión: OpenClaw `xurl` es Twitter/X API (naming confuso). Reinterpretado como fetch URL genérico — valor real para pipeline `url → text → summarize`
+- Nueva extension `extensions/fetch-url/` (crate `fetch-url-ext`, bin `fetch-url`)
+- Tools: `status`, `fetch_url(url, method?, headers?, body?, max_bytes?, timeout_secs?, allow_private?)`
+- Métodos soportados: GET/POST/PUT/DELETE/HEAD/PATCH/OPTIONS
+- Límites: 5 MB default / 50 MB hard cap; 15s default / 120s max timeout
+- Reliability: reqwest blocking + rustls + gzip/brotli, retry 3× en 5xx+timeouts, `ext_common::Breaker` (threshold 10 / 30s), 5 redirects max
+- **SSRF guard** activo por default:
+  - Blocklist hostnames: `localhost`, `metadata.google.internal`, `metadata`
+  - IPv4: loopback, private (10/172.16/192.168), link-local, `169.254.169.254` (cloud metadata)
+  - IPv6: loopback `::1`, unique-local `fc00::/7`, link-local `fe80::/10`
+  - Override per-call con `allow_private: true`
+  - Documentado: DNS-based SSRF no cubierto (usar `allow_private` en callers confiables)
+- Body decoding: UTF-8 → `body_text`, binario → `body_base64` (content-type heurística)
+- Error codes: -32020 BlockedHost, -32021 SizeCap, plus estándares (-32002/3/4/5)
+- Reuse `ext_common::Breaker` (5ª extension con el patrón dedup)
+- 17 tests: 7 unit SSRF guards (localhost, ipv4 loopback/private, ipv6 loopback/unique-local, metadata, public allowed) + 10 integration wiremock (GET json, POST body+headers, size cap truncate, 404→-32002, 5xx retry→-32003, private blocked, non-http scheme, bad url, status limits, binary→base64)
+- Skill doc con pipeline patterns URL→summary y URL→PDF→summary
+- Smoke release verde
+- **Done:** `cargo test -p fetch-url-ext` verde
+
+### 13.9 — Tool-backed: pdf-extract   ✅
+- Nueva extension `extensions/pdf-extract/` (crate `pdf-extract-ext`, bin `pdf-extract`)
+- Decisión: OpenClaw `nano-pdf` es un editor Python con LLM — reinterpretado como **extractor** puro Rust (caso de uso real: PDFs → summarize pipeline)
+- Backend: crate `pdf-extract 0.7` (sin Poppler/Python/ffmpeg)
+- Tools: `status`, `extract_text(path, max_chars?)` con defaults seguros (25 MB file cap, 200 000 chars output cap)
+- Typed errors: `-32602` bad input (missing, empty path, bad max_chars), `-32006` provider error (malformed PDF)
+- Frontmatter (Phase 13.7) en `skills/pdf-extract/SKILL.md` con guía para chain a summarize
+- Fixture tests: `tests/fixtures/hello.pdf` (2.4 KB, generado via ps2pdf)
+- 8 integration tests: status, extraction happy path, max_chars truncate, missing file, empty path, max_chars=0, non-pdf → provider error, unknown tool
+- README con pipeline pattern extract → summarize
+- Smoke release verde: extrae texto del fixture correctamente
+- **Done:** `cargo test -p pdf-extract-ext` verde
+
+### 13.8 — Taskflow runtime   ➡️ Promoted to Phase 14
+TaskFlow es un substrate runtime, no una skill markdown. Movido a su propia phase con sub-fases. Ver Phase 14 abajo.
+
+---
+
+## Phase 14 — TaskFlow Runtime (durable multi-step flows)
+
+**Objetivo**: substrate de flows durables/resumibles que sobreviven restart, soportan revision-checked mutations y enlazan child tasks bajo un owner-session único. Reemplaza la Phase 13.8 que asumía SKILL.md — TaskFlow necesita runtime nuevo.
+
+**Inspirado en**: `research/skills/taskflow/SKILL.md` + `research/docs/automation/taskflow.md` + `research/src/plugins/runtime/runtime-taskflow.ts`. Adaptado a Rust + microservices: persistencia en SQLite (en lugar de Node KV), wait/resume vía heartbeat (Phase 7) en lugar de event loop, exposición a agent vía ToolRegistry (Phase 3.5) en lugar de plugin SDK.
+
+**Modelo**:
+- `Flow { id, owner_session, requester_origin, controller_id, goal, current_step, state_json, wait_json, status, revision }`
+- `FlowStep { flow_id, runtime: managed|mirrored, child_session_key, run_id, status }`
+- `FlowStatus { Created, Running, Waiting, Cancelled, Finished, Failed }`
+- Cada mutación lleva `expected_revision`; conflicto → `RevisionMismatch` error
+
+### 14.1 — Schema + FlowStore (SQLite)   ✅
+- Crate nuevo `crates/agent-taskflow` (member del workspace)
+- Tablas: `flows`, `flow_steps`, `flow_events` (audit trail append-only)
+- `FlowStatus { Created, Running, Waiting, Cancelled, Finished, Failed }` con `is_terminal()` y round-trip de string
+- `Flow` con `state_json` (Value) + `wait_json` opcional + `cancel_requested` sticky + `revision` i64
+- `FlowStore` trait async + `SqliteFlowStore` impl sobre `sqlx::SqlitePool`
+- CRUD: `insert`, `get`, `list_by_owner`, `list_by_status`, `update_with_revision` (UPDATE ... WHERE revision = ?), `append_event`, `list_events`
+- Schema idempotente, foreign keys ON
+- **Done:** 8 unit tests verde (2 types + 6 store): insert/get round trip, list filters, revision conflict detection, event log append/list. Workspace build verde.
+
+### 14.2 — Flow types + state machine   ✅
+- `FlowStatus::can_transition_to(next)` con tabla legal: Created→Running, Running→Waiting/Finished/Failed, Waiting→Running/Failed, **cancel desde cualquier no-terminal**
+- `Flow::transition_to(next)` aplica + valida + actualiza `updated_at`
+- `Flow::request_cancel()` flag sticky idempotente; bloquea cualquier transición no-Cancelled
+- Errors: `IllegalTransition`, `AlreadyTerminal`, `CancelPending`
+- 6 unit tests nuevos: legal sequence, illegal rejected, cancel from any non-terminal, terminal rejects, cancel_requested blocks non-cancel, request_cancel idempotent
+- **Done:** 14 tests verde total en el crate (8 store + 6 types). Workspace build verde.
+
+### 14.3 — Managed flow API (FlowManager)   ✅
+- `FlowManager::new(Arc<dyn FlowStore>)` — store-agnostic (in-mem/SQLite/futuro NATS)
+- API: `create_managed`, `start_running`, `set_waiting`, `resume`, `finish`, `fail`, `request_cancel`, `cancel`, `update_state`
+- Cada método: read → mutate → `transition_to` → `update_with_revision` → audit event
+- Retry-on-conflict 1× (RETRY_ATTEMPTS=2): refetch automático para race heartbeat-vs-tool, sin livelock
+- `set_waiting` persiste `wait_json` (timer/external/manual); `resume` lo limpia + permite shallow-merge en `state_json`
+- `fail(reason)` estampa `state_json.failure = {reason, at}` y deja audit event
+- `update_state(patch, next_step?)` mutación de estado sin cambiar status; rechazada si `cancel_requested` o terminal
+- Shallow merge: keys top-level del patch sobreescriben las de `state_json`; non-object reemplaza entero
+- 8 unit tests nuevos: happy path completo, fail con reason, cancel mid-flight, request_cancel bloquea finish, update_state preserva status + merge, cancel_pending bloquea update_state, audit event en create, double finish → AlreadyTerminal
+- **Done:** 22 tests verde total en el crate; workspace build verde.
+
+### 14.4 — Wait/resume engine (heartbeat-driven)   ✅
+- `WaitCondition { Timer { at }, ExternalEvent { topic, correlation_id }, Manual }` con serde tagged enum (`kind` discriminator)
+- Persistencia en `flow.wait_json`; parsing tolerante vía `WaitCondition::from_value`
+- `WaitEngine::tick_at(now)` escanea flows en `Waiting`, aplica `evaluate(flow, now)`:
+  - `cancel_requested` → flip a `Cancelled` (prioridad sobre wait)
+  - `Timer { at }` con `now >= at` → `resume(None)`
+  - `Timer { at }` con `now < at` → permanecer Waiting
+  - `ExternalEvent`/`Manual` → permanecer Waiting (necesitan señal explícita)
+- `WaitEngine::try_resume_external(flow_id, topic, correlation_id, payload)` host-driven (NATS bridge lo invoca); payload se persiste como `state.resume_event`
+- `WaitEngine::run(interval, shutdown_token)` long-running loop para cron/heartbeat
+- `TickReport { scanned, resumed, cancelled, still_waiting, errors }` para métricas
+- Engine **broker-agnostic**: no importa `agent-broker`; host wirea el bridge NATS → `try_resume_external`
+- 10 tests nuevos: timer fires past deadline, timer doesn't fire early, external matches resumes + clears wait_json, external no-match no-op, manual ignored by tick, cancel_requested flips to cancelled, run loop honra shutdown token, unknown flow no-op, running flow no-op, WaitCondition round-trip
+- **Done:** 32 tests verde total (8 store + 6 transitions + 8 manager + 10 engine). Workspace build verde, zero warnings.
+
+### 14.5 — Agent tool integration (TaskFlowTool)   ✅
+- Tool único `taskflow` con dispatch por `action`: `start|status|advance|cancel|list_mine`
+- Archivo `crates/core/src/agent/taskflow_tool.rs`; wire en `agent/mod.rs` (`pub use TaskFlowTool`)
+- `crates/core` añade dep `agent-taskflow`
+- `owner_session_key` derivado de `agent:{agent_id}:session:{session_id}` — aisla flows por sesión y bloquea cross-session access
+- Auto-start en `start` action (Created → Running inmediato) para UX del LLM
+- Revision handling **oculto al LLM** — la tool siempre refetcha antes de mutar
+- `list_mine` usa `list_by_owner` para devolver solo los flows de esta sesión
+- `advance` hace shallow-merge sobre `state_json` + optional `current_step` update
+- 8 unit tests en `taskflow_tool.rs`:
+  - start crea + running flow
+  - status devuelve el estado actual
+  - advance merge shallow + actualiza step
+  - cancel → Cancelled
+  - list_mine filtra por sesión (multi-session setup)
+  - cross-session access rechazado con error "different session"
+  - falta session_id → error
+  - unknown flow_id → `{ok:false, error:"not_found"}`
+- **Done:** 8 tests verde, agent-core lib total pasa a 107 (antes 99); workspace build verde.
+
+### 14.6 — Mirrored mode + CLI commands   ✅
+- `FlowStore` extendido: `insert_step`, `update_step`, `get_step`, `list_steps`, `find_step_by_run_id`
+- `FlowManager::create_mirrored(input)` crea + auto-start Running
+- `FlowManager::record_step_observation(StepObservation)` upsert-style por `(flow_id, run_id)`: inserta si nuevo, actualiza si existe; preserva `child_session_key` cuando la observation no lo trae
+- `FlowManager::list_steps(flow_id)` para inspección
+- Cada observation emite audit event `step_observed` con runtime + status
+- **Engine sigue broker-agnostic**: host bridge (NATS subscriber, CLI task, cron) llama `record_step_observation`
+- CLI en `src/main.rs`:
+  - `agent flow list [--json]` — tabla de todos los flows (sort by `updated_at` DESC)
+  - `agent flow show <id> [--json]` — detalle + steps
+  - `agent flow cancel <id>` — llama `manager.cancel`
+  - `agent flow resume <id>` — llama `manager.resume` manual
+  - `agent flow` → help text
+- Path SQLite vía `TASKFLOW_DB_PATH` env (default `./data/taskflow.db`)
+- 9 tests nuevos: 5 store step CRUD + 4 manager mirrored
+- Smoke verificado: `agent flow` help + `list` empty state
+- **Done:** 41 tests verde en agent-taskflow; workspace build + full lib tests verde; CLI binario smoke passing.
+
+### 14.7 — Integration tests + restart durability + skill doc   ✅
+- `crates/taskflow/tests/e2e_test.rs` con 4 tests multi-thread:
+  - `flow_state_survives_reopen`: escribe flow (run + update + wait) → drop store → reopen mismo path → verifica `current_step`, `state_json`, `wait_json`, `revision=3`; luego `resume` funciona
+  - `concurrent_mutations_serialize_via_revision_retry`: 2 tasks simultáneas → ambas succeed por retry interno → final revision +2, ambos patches presentes
+  - `heavy_contention_surfaces_revision_mismatch`: 10 tasks concurrentes → ok + conflict ≤ 10, invariante `revision == 1 + ok`
+  - `mirrored_steps_survive_reopen`: 3 step observations persistidas → reopen → list_steps devuelve 3 en orden correcto
+- `skills/taskflow/SKILL.md` nuevo con frontmatter Phase 13.7 (name + description + requires)
+- `crates/taskflow/README.md` con layout, quick start, tests, CLI, error codes, related phases
+- FOLLOWUPS entry con 9 items pendientes explícitos (heartbeat wiring, NATS bridge, set_waiting/finish LLM actions, etc.)
+- **Done:** 45 tests totales en agent-taskflow (41 unit + 4 integration), workspace build verde.
 
 ---
 

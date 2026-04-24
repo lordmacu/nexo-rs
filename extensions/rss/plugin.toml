@@ -1,0 +1,19 @@
+[plugin]
+id = "rss"
+version = "0.1.0"
+name = "RSS / Atom"
+description = "Fetch and parse RSS, Atom, and JSON feeds. Returns entries with title, link, published, summary."
+
+[capabilities]
+tools = ["status", "fetch_feed"]
+
+[requires]
+env = []
+
+[transport]
+kind = "stdio"
+command = "./target/release/rss"
+
+[meta]
+author = "agent-rs"
+license = "MIT"

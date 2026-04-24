@@ -13,3 +13,80 @@ agents:
     config:
       debounce_ms: 2000
       queue_cap: 5
+    # Optional: prepended as a `system` message to every LLM turn.
+    system_prompt: ""
+    # Optional: path to the agent's workspace directory. When set, the loader
+    # reads IDENTITY.md, SOUL.md, USER.md, AGENTS.md, recent daily notes, and
+    # MEMORY.md (only in main sessions) and prepends them to the system prompt.
+    workspace: "./data/workspace/kate"
+    # Optional: extra workspace-relative MDs that render as their own
+    # `# RULES — <filename>` blocks after the standard sections. Use for
+    # topic-scoped rule files (sales script, product catalog, policies)
+    # you want the agent to respect without polluting SOUL.md. Missing
+    # files log a warning but don't abort the turn.
+    # extra_docs:
+    #   - "SALES_SCRIPT.md"
+    #   - "PRODUCT_CATALOG.md"
+    # Optional: which plugin inbound topics this agent accepts. Empty
+    # (the default) = legacy wildcard — agent receives every inbound.
+    # Populated = strict allowlist. A binding with `instance` omitted
+    # matches every instance of that plugin. Topic format:
+    #   plugin.inbound.<plugin>              → plugin-wide
+    #   plugin.inbound.<plugin>.<instance>   → per instance (multi-bot)
+    # inbound_bindings:
+    #   - plugin: telegram
+    #     instance: bot_sales
+    #   - plugin: whatsapp
+    # Optional: strict allowlist of tool names this agent can call.
+    # Supports trailing `*` globs. Empty = every registered tool is
+    # callable (back-compat). Populated = any tool not matching a
+    # pattern is dropped from the agent's registry at build time, so
+    # the LLM never even sees it.
+    # allowed_tools:
+    #   - "memory_*"
+    #   - "ext_weather_*"
+    #   - "delegate"
+    # Optional: per-sender inbound rate limit. Token bucket keyed by
+    # (agent_id, sender_id). Denied messages are silently dropped —
+    # the sender gets no reply, which is intentional (no oracle for
+    # spammers). Use for public bot surfaces.
+    # sender_rate_limit:
+    #   rps: 0.5     # 1 msg every 2 seconds steady-state
+    #   burst: 5     # initial quota before throttling kicks in
+    # Optional: strict allowlist of peer agent ids this one can
+    # delegate to. Supports trailing `*` globs. Empty = no restriction.
+    # Populated = delegate tool rejects any target that doesn't match.
+    # allowed_delegates:
+    #   - "soporte_*"
+    #   - "ventas"
+    # Optional: one-line role summary shown in every other agent's
+    # `# PEERS` block. Helps peers know when to delegate to this agent.
+    # description: "handles weather, reminders, and general chat"
+    # Optional: list of local skill docs to prepend after workspace blocks.
+    # Each skill resolves to <skills_dir>/<name>/SKILL.md
+    skills:
+      - "weather"
+      - "openai-whisper"
+      - "summarize"
+      - "goplaces"
+      - "openstreetmap"
+      - "github"
+    # Optional: base directory for local skills. Relative to process cwd.
+    skills_dir: "./skills"
+    # Optional: JSONL transcripts per session. Kept out of the workspace on
+    # purpose — workspaces are typically git-committed, transcripts contain PII.
+    transcripts_dir: "./data/transcripts/kate"
+    # Dreaming (Phase 10.6) — periodic memory consolidation sweep.
+    dreaming:
+      enabled: true
+      interval_secs: 3600
+      min_score: 0.35
+      min_recall_count: 2
+      min_unique_queries: 2
+      max_promotions_per_sweep: 20
+      weights:
+        frequency: 0.24
+        relevance: 0.30
+        recency: 0.15
+        diversity: 0.15
+        consolidation: 0.10

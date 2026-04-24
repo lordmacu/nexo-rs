@@ -4,3 +4,21 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+tokio             = { workspace = true }
+serde             = { workspace = true }
+serde_json        = { workspace = true }
+anyhow            = { workspace = true }
+thiserror         = { workspace = true }
+tracing           = { workspace = true }
+async-trait       = { workspace = true }
+dashmap           = { workspace = true }
+tokio-tungstenite = { workspace = true }
+tokio-util        = { workspace = true }
+base64            = { workspace = true }
+reqwest           = { workspace = true }
+futures           = { workspace = true }
+uuid              = { workspace = true }
+agent-broker      = { path = "../../broker" }
+agent-config      = { path = "../../config" }
+agent-core        = { path = "../../core" }
+agent-resilience  = { path = "../../resilience" }

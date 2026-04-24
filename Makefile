@@ -1,4 +1,4 @@
-.PHONY: dev build test lint fmt check clean docker-up docker-down docker-logs
+.PHONY: dev build test lint fmt check clean docker-up docker-down docker-logs integration-smoke integration-browser integration-recovery integration-suite extensions-smoke
 
 dev:
 	RUST_LOG=debug cargo run --bin agent -- --config config/agents.yaml
@@ -37,6 +37,25 @@ docker-logs:
 
 docker-build:
 	docker compose build
+
+integration-smoke:
+	./scripts/integration_stack_smoke.sh
+
+integration-browser:
+	cargo run --quiet --bin integration-browser-check
+
+integration-recovery:
+	./scripts/integration_nats_recovery.sh
+
+integration-suite:
+	docker compose up -d
+	./scripts/integration_stack_smoke.sh
+	./scripts/extensions_smoke.sh
+	cargo run --quiet --bin integration-browser-check
+	./scripts/integration_nats_recovery.sh
+
+extensions-smoke:
+	./scripts/extensions_smoke.sh
 
 setup:
 	cp .env.example .env

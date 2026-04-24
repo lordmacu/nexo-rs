@@ -480,21 +480,156 @@ agents:
     heartbeat:
       enabled: true
       interval: "5m"
+    workspace: "./data/workspace/kate"
     config:
       debounce_ms: 2000
       queue_cap: 5
 
   - id: "ventas"
     model:
-      provider: "openai"
-      model: "gpt-4"
-    plugins:
-      - telegram
-      - email
-    config:
-      allowlist:
-        - "+573001234567"
+      provider: "minimax"
+      model: "MiniMax-M2.5"
+    workspace: "./data/workspace/ventas"
+    extra_docs:
+      - "SALES_SCRIPT.md"
+      - "PRODUCT_CATALOG.md"
+    inbound_bindings:
+      - plugin: telegram
+        instance: bot_sales
+    allowed_tools:
+      - "memory_*"
+      - "ext_weather_*"
+      - "delegate"
 ```
+
+### Per-agent isolation
+
+Each agent can be tuned independently along several axes. Every
+setting defaults to "off / wildcard" so legacy single-agent configs
+keep working unchanged.
+
+| Setting | Purpose | Empty default |
+|---|---|---|
+| `workspace` | Per-agent `IDENTITY.md` / `SOUL.md` / `USER.md` / `AGENTS.md` / `MEMORY.md` + daily notes. Loaded at turn start. | No workspace layer. |
+| `extra_docs` | Additional workspace-relative MDs rendered as `# RULES — <filename>` blocks. Scoped context (sales script, product catalog) kept out of SOUL.md. | No extra blocks. |
+| `inbound_bindings` | Allowlist of `(plugin, instance?)` pairs the agent accepts. Non-matching events are dropped at runtime. | Wildcard — receive every inbound. |
+| `allowed_tools` | Strict glob allowlist of tool names. Non-matching tools are pruned from the agent's `ToolRegistry` at build time so the LLM never sees them. | All registered tools callable. |
+| `allowed_delegates` | Allowlist of peer agent ids this one can call via `delegate`. Rejected at tool-call time with a clear error. | Delegate to anyone. |
+| `sender_rate_limit` | Token bucket per `(agent_id, sender_id)` applied before the message is enqueued. Denies are silently dropped (no oracle for spammers). | Unlimited. |
+| `description` | One-line role summary shown in other agents' `# PEERS` block. | No annotation next to the id. |
+
+Memory stays partitioned by `agent_id` in SQL columns regardless of
+setup, so two agents sharing `memory.db` never see each other's rows.
+
+### Peer directory
+
+`PeerDirectory` is built once at boot from every `AgentConfig` and
+rendered as a `# PEERS` block right after workspace and before the
+inline `system_prompt`. Each agent's view filters itself out and
+annotates peers with `✓` / `✗` based on its own `allowed_delegates`:
+
+```markdown
+# PEERS
+Other agents you can reach via `delegate({agent_id, task, ...})`:
+
+- ✗ `boss` — takes decisions
+- ✓ `soporte_lvl1` — first-line support
+- ✓ `ventas` — closes deals
+```
+
+This replaces the need to hand-write each workspace's `AGENTS.md` in
+multi-agent setups. A user-written `AGENTS.md` still loads on top.
+
+### Multi-instance plugins
+
+Some plugins support more than one "account" in a single process.
+`TelegramPluginConfig.telegram` in `plugins/telegram.yaml` accepts
+either a single map (legacy) or a sequence of bots:
+
+```yaml
+telegram:
+  - token: ${TELEGRAM_BOT_BOSS}
+    instance: boss
+    allowlist: { chat_ids: [...] }
+  - token: ${TELEGRAM_BOT_SALES}
+    instance: sales
+    allowlist: { chat_ids: [...] }
+```
+
+Each instance publishes to `plugin.inbound.telegram.<instance>` and
+subscribes to `plugin.outbound.telegram.<instance>`. Agents target a
+specific bot with `inbound_bindings: [{plugin: telegram, instance: X}]`;
+replies carry `source_instance` so `llm_behavior` routes outbound to
+the matching bot. Unlabelled instances fall through to the legacy
+`plugin.inbound.telegram` / `plugin.outbound.telegram` topics.
+
+The same mechanism applies to WhatsApp: `whatsapp:` accepts a sequence
+of accounts and each gets an isolated `FileStore` (rooted at
+`<session_dir>/.whatsapp-rs`) via `whatsapp_rs::Client::new_in_dir`.
+No process-wide `XDG_DATA_HOME` mutation, so Signal keys are never
+shared between accounts.
+
+The health server exposes per-instance pairing UIs alongside the
+legacy routes:
+
+| Route | Target |
+|---|---|
+| `/whatsapp/instances` | JSON array of registered instance labels |
+| `/whatsapp/pair[/qr\|/status]` | First instance (legacy single-account) |
+| `/whatsapp/<instance>/pair[/qr\|/status]` | Named instance |
+
+The HTML page is shared; its JS derives the QR/status URLs from
+`window.location.pathname` so opening `/whatsapp/biz/pair` in a
+browser polls `/whatsapp/biz/pair/qr` and `/whatsapp/biz/pair/status`
+without any template-time baking.
+
+### Tool-execution policy
+
+`config/tool_policy.yaml` (optional) controls caching, bounded
+parallelism, and relevance filtering. Per-agent overrides fully
+replace the global settings for named agents:
+
+```yaml
+cache:
+  ttl_secs: 60
+  tools: ["ext_weather_*", "ext_wikipedia_*"]
+  max_entries: 1024
+  max_value_bytes: 262144          # skip cache for payloads > 256 KiB
+parallel_safe: ["ext_weather_*", "ext_wikipedia_*"]
+parallel:
+  max_in_flight: 4
+  call_timeout_secs: 30
+relevance:
+  enabled: true
+  top_k: 24
+  min_score: 0.01
+  always_include: ["delegate", "memory_*"]
+per_agent:
+  kate:
+    parallel_safe: ["ext_weather_*"]
+    parallel: { max_in_flight: 2, call_timeout_secs: 5 }
+```
+
+### Admin HTTP (loopback `127.0.0.1:9091`)
+
+All routes bind to loopback only (no auth). For remote ops, ssh-tunnel
+`-L 9091:127.0.0.1:9091`.
+
+| Route | Purpose |
+|---|---|
+| `GET /admin/agents` | JSON array of every agent's id, description, model, bindings, `allowed_tools`, `allowed_delegates`, `extra_docs`, sender rate-limit flag, workspace flag. |
+| `GET /admin/agents/<id>` | Same shape as one entry above, for a single agent. 404 when the id isn't registered. |
+| `GET /admin/tool-cache/stats` | `{entries, per_agent_overrides}` |
+| `POST /admin/tool-cache/clear` | Drop every cache entry |
+| `POST /admin/tool-cache/invalidate?agent=X&tool=Y` | Scoped purge |
+
+### CLI
+
+| Command | Purpose |
+|---|---|
+| `agent` | Start the daemon (default) |
+| `agent status [<id>] [--json] [--endpoint=URL]` | Query the admin endpoint and pretty-print the agent directory; pass `<id>` to narrow to one agent (`/admin/agents/<id>`). |
+| `agent --dry-run [--json]` | Load config, validate env vars + fields, print a summary, exit 0. CI pre-deploy gate. |
 
 ### config/broker.yaml
 
@@ -586,17 +721,34 @@ vector:
 
 ### config/plugins/telegram.yaml
 
+Single-bot (legacy shape):
+
 ```yaml
 telegram:
   token: "${TELEGRAM_BOT_TOKEN}"
-  webhook:
-    enabled: false
   polling:
     enabled: true
     interval_ms: 1000
   allowlist:
     chat_ids: []                # empty = allow all
 ```
+
+Multi-bot — declare a sequence with `instance:` labels:
+
+```yaml
+telegram:
+  - token: "${TELEGRAM_BOT_BOSS}"
+    instance: boss
+    allowlist: { chat_ids: [111] }
+  - token: "${TELEGRAM_BOT_SALES}"
+    instance: sales
+    allowlist: { chat_ids: [222, 333] }
+```
+
+Each bot runs in the same process with its own `BotClient`, media
+cache dir (`<TELEGRAM_MEDIA_DIR>/<instance>`), offset file, and
+inbound/outbound topics. Registry name collapses to `telegram` (legacy)
+or `telegram.<instance>` so `PluginRegistry` doesn't overwrite.
 
 ## Directory Structure
 
@@ -723,6 +875,12 @@ config = "0.14"
 - Tool calling protocol
 - Prompt management
 - Rate limiter + quota tracker
+- **Streaming** (`LlmClient::stream()` → `BoxStream<Result<StreamChunk>>`): providers SSE
+  (MiniMax OpenAI-compat + Anthropic flavors, OpenAiClient) producen token-level deltas;
+  providers sin SSE heredan default que sintetiza stream de un chunk desde `chat()`.
+  `StreamChunk` variants: `TextDelta`, `ToolCallStart/ArgsDelta/End`, `Usage`, `End{finish_reason}`.
+  Circuit breaker + retry aplican al request-open; mid-stream errors no se reintentan.
+  `collect_stream()` helper reconstruye `ChatResponse` desde el stream.
 
 ### Phase 4: Browser Plugin
 - CDP client

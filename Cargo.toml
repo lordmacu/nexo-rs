@@ -5,10 +5,21 @@ members = [
     "crates/llm",
     "crates/memory",
     "crates/config",
+    "crates/extensions",
+    "crates/mcp",
+    "crates/resilience",
+    "crates/taskflow",
     "crates/plugins/browser",
     "crates/plugins/whatsapp",
     "crates/plugins/telegram",
     "crates/plugins/email",
+    "crates/setup",
+    "crates/tunnel",
+]
+# Keep standalone extension templates out of the agent workspace so they don't
+# inherit our deps or lockfile. Users copy them verbatim and build separately.
+exclude = [
+    "extensions/template-rust",
 ]
 resolver = "2"
 
@@ -21,6 +32,18 @@ edition = "2021"
 name = "agent"
 path = "src/main.rs"
 
+[[bin]]
+name = "browser-test"
+path = "src/browser_test.rs"
+
+[[bin]]
+name = "integration-browser-check"
+path = "src/integration_browser_check.rs"
+
+[[bin]]
+name = "llm_smoke"
+path = "src/bin/llm_smoke.rs"
+
 [workspace.dependencies]
 tokio              = { version = "1", features = ["full"] }
 serde              = { version = "1", features = ["derive"] }
@@ -30,14 +53,55 @@ thiserror          = "1"
 tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 async-nats         = "0.35"
-reqwest            = { version = "0.12", features = ["rustls-tls", "json"] }
+reqwest            = { version = "0.12", features = ["rustls-tls", "json", "stream", "cookies"] }
 sqlx               = { version = "0.8", features = ["sqlite", "runtime-tokio"] }
 tokio-tungstenite  = "0.21"
-uuid               = { version = "1", features = ["v4"] }
+uuid               = { version = "1", features = ["v4", "serde"] }
 chrono             = { version = "0.4", features = ["serde"] }
 config             = "0.14"
 serde_yaml         = "0.9"
+async-trait        = "0.1"
+dashmap            = "6"
+humantime          = "2"
+tokio-util         = { version = "0.7", features = ["rt"] }
+bytes              = "1"
+futures            = "0.3"
+base64             = "0.22"
+sha2               = "0.10"
+hex                = "0.4"
+sqlite-vec         = "0.1"
+lru                = "0.12"
+libsqlite3-sys     = "0.30"
+git2               = { version = "0.19", default-features = false }
+notify             = "6"
+notify-debouncer-full = "0.3"
+eventsource-stream = "0.2"
 
 [dependencies]
-tokio  = { workspace = true }
-anyhow = { workspace = true }
+tokio               = { workspace = true }
+anyhow              = { workspace = true }
+async-nats          = { workspace = true }
+futures             = { workspace = true }
+uuid                = { workspace = true }
+agent-plugin-browser = { path = "crates/plugins/browser" }
+agent-plugin-whatsapp = { path = "crates/plugins/whatsapp" }
+agent-plugin-telegram = { path = "crates/plugins/telegram" }
+agent-setup          = { path = "crates/setup" }
+agent-tunnel         = { path = "crates/tunnel" }
+agent-config        = { path = "crates/config" }
+agent-broker        = { path = "crates/broker" }
+agent-core          = { path = "crates/core" }
+agent-extensions    = { path = "crates/extensions" }
+agent-llm           = { path = "crates/llm" }
+agent-mcp           = { path = "crates/mcp" }
+agent-memory        = { path = "crates/memory" }
+agent-taskflow      = { path = "crates/taskflow" }
+tokio-util          = { workspace = true }
+tracing             = { workspace = true }
+tracing-subscriber  = { workspace = true }
+base64              = { workspace = true }
+reqwest             = { workspace = true }
+serde_json          = { workspace = true }
+serde_yaml          = { workspace = true }
+humantime           = { workspace = true }
+async-trait         = { workspace = true }

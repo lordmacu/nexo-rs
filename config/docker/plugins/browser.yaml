@@ -1,0 +1,9 @@
+browser:
+  headless: true
+  executable: ""
+  cdp_url: "http://chrome:9222"
+  user_data_dir: "/app/data/browser/profile"
+  window_width: 1280
+  window_height: 800
+  connect_timeout_ms: 10000
+  command_timeout_ms: 15000

@@ -63,20 +63,22 @@ Full detail with sub-phases and done criteria: `proyecto/PHASES.md`
 
 | Phase | Name | Sub-phases | Status |
 |-------|------|-----------|--------|
-| 1 | Core Runtime | 1.1 scaffold, 1.2 config, 1.3 local bus, 1.4 session, 1.5 agent skeleton, 1.6 plugin interface | 2/6 |
-| 2 | NATS Broker | 2.1 client, 2.2 abstraction, 2.3 disk queue, 2.4 DLQ, 2.5 circuit breaker, 2.6 backpressure | 0/6 |
-| 3 | LLM Integration | 3.1 trait, 3.2 minimax, 3.3 rate limiter, 3.4 openai-compat, 3.5 tool registry, 3.6 agent loop | 0/6 |
-| 4 | Browser CDP | 4.1 cdp client, 4.2 chrome launch, 4.3 element refs, 4.4 commands, 4.5 event loop, 4.6 session | 0/6 |
-| 5 | Memory | 5.1 short-term, 5.2 sqlite, 5.3 long-term, 5.4 vector, 5.5 memory tool | 0/5 |
-| 6 | WhatsApp Plugin | 6.1 audit api, 6.2 wrapper, 6.3 session, 6.4 media | 0/4 |
-| 7 | Heartbeat | 7.1 runtime, 7.2 behaviors, 7.3 reminder tool | 0/3 |
-| 8 | Agent-to-Agent | 8.1 protocol, 8.2 routing, 8.3 delegation tool | 0/3 |
-| 9 | Polish | 9.1 logging, 9.2 metrics, 9.3 health, 9.4 shutdown, 9.5 docker, 9.6 integration tests | 0/6 |
-| 10 | Soul, Identity & Learning | 10.1 identity, 10.2 SOUL.md, 10.3 MEMORY.md, 10.4 transcripts, 10.5 recall signals, 10.6 dreaming, 10.7 vocabulary, 10.8 self-report | 0/8 |
-| 11 | Extension System | 11.1 manifest, 11.2 discovery, 11.3 stdio runtime, 11.4 NATS runtime, 11.5 tool registration, 11.6 lifecycle hooks, 11.7 CLI commands, 11.8 templates | 0/8 |
-| 12 | MCP Support | 12.1 client stdio, 12.2 client HTTP, 12.3 tool catalog, 12.4 session runtime, 12.5 resources, 12.6 agent as MCP server, 12.7 MCP in extensions | 0/7 |
+| 1 | Core Runtime | 1.1 scaffold, 1.2 config, 1.3 local bus, 1.4 session, 1.5 agent types+trait, 1.6 plugin interface, 1.7 agent runtime | 7/7 ✅ |
+| 2 | NATS Broker | 2.1 client, 2.2 abstraction, 2.3 disk queue, 2.4 DLQ, 2.5 circuit breaker, 2.6 backpressure | 6/6 ✅ |
+| 3 | LLM Integration | 3.1 trait, 3.2 minimax, 3.3 rate limiter, 3.4 openai-compat, 3.5 tool registry, 3.6 agent loop | 6/6 ✅ |
+| 4 | Browser CDP | 4.1 cdp client, 4.2 chrome launch, 4.3 element refs, 4.4 commands, 4.5 event loop, 4.6 session | 6/6 ✅ |
+| 5 | Memory | 5.1 short-term, 5.2 sqlite, 5.3 long-term, 5.4 vector, 5.5 memory tool | 5/5 ✅ |
+| 6 | WhatsApp Plugin | 6.1 audit+ADR, 6.2 config+bootstrap, 6.3 inbound bridge, 6.4 outbound dispatch, 6.5 media, 6.6 lifecycle+health, 6.7 transcriber, 6.8 e2e, 6.9 qr friendly | 9/9 ✅ |
+| 7 | Heartbeat | 7.1 runtime, 7.2 behaviors, 7.3 reminder tool | 3/3 ✅ |
+| 8 | Agent-to-Agent | 8.1 protocol, 8.2 routing, 8.3 delegation tool | 3/3 ✅ |
+| 9 | Polish | 9.1 logging, 9.2 metrics, 9.3 health, 9.4 shutdown, 9.5 docker, 9.6 integration tests | 6/6 ✅ |
+| 10 | Soul, Identity & Learning | 10.1 identity, 10.2 SOUL.md, 10.3 MEMORY.md, 10.4 transcripts, 10.5 recall signals, 10.6 dreaming, 10.7 vocabulary, 10.8 self-report, 10.9 git-backed memory | 9/9 ✅ |
+| 11 | Extension System | 11.1 manifest, 11.2 discovery, 11.3 stdio runtime, 11.4 NATS runtime, 11.5 tool registration, 11.6 lifecycle hooks, 11.7 CLI commands, 11.8 templates | 8/8 ✅ |
+| 12 | MCP Support | 12.1 client stdio, 12.2 client HTTP, 12.3 tool catalog, 12.4 session runtime, 12.5 resources, 12.6 agent as MCP server, 12.7 MCP in extensions, 12.8 tools/list_changed hot-reload | 8/8 ✅ |
+| 13 | Skills (OpenClaw + Google + infra) | 13.1–13.18 (skills + google) + 13.19 anthropic/gemini LLM providers + 13.20 brave-search + 13.21 wolfram-alpha + 13.22 docker-api + 13.23 proxmox | 22/22 ✅ |
+| 14 | TaskFlow runtime | 14.1 schema+FlowStore, 14.2 state machine, 14.3 FlowManager, 14.4 wait/resume, 14.5 agent tools, 14.6 mirrored+CLI, 14.7 e2e+docs | 7/7 ✅ |
 
-**Progress: 2 / 68 sub-phases done**
+**Progress: 105 / 105 sub-phases done (0 deferred). All phases complete.**
 
 ### Progress tracking rule
 

@@ -1,0 +1,10 @@
+target
+.git
+.claude
+.cargo
+data
+secrets/*
+!secrets/.gitkeep
+research
+**/*.log
+**/*.sqlite*

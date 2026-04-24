@@ -1,0 +1,16 @@
+[plugin]
+id = "weather"
+version = "0.2.0"
+name = "Weather"
+description = "Rust extension exposing current weather and short forecast tools via Open-Meteo"
+
+[capabilities]
+tools = ["status", "current", "forecast"]
+
+[transport]
+kind = "stdio"
+command = "./target/release/weather"
+
+[meta]
+author = "agent-rs"
+license = "MIT"

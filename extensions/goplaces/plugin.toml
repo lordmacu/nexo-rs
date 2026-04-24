@@ -1,0 +1,16 @@
+[plugin]
+id = "goplaces"
+version = "0.1.0"
+name = "GoPlaces"
+description = "Rust extension for Google Places text search and place details"
+
+[capabilities]
+tools = ["status", "search_text", "place_details"]
+
+[transport]
+kind = "stdio"
+command = "./target/release/goplaces"
+
+[meta]
+author = "agent-rs"
+license = "MIT"

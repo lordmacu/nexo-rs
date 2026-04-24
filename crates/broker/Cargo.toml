@@ -4,3 +4,20 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+tokio        = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+uuid         = { workspace = true }
+chrono       = { workspace = true }
+anyhow       = { workspace = true }
+thiserror    = { workspace = true }
+async-trait  = { workspace = true }
+dashmap      = { workspace = true }
+async-nats   = { workspace = true }
+sqlx         = { workspace = true }
+tracing      = { workspace = true }
+bytes        = { workspace = true }
+futures      = { workspace = true }
+tokio-util   = { workspace = true }
+agent-config = { path = "../config" }
+agent-resilience = { path = "../resilience" }

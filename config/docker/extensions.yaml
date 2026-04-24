@@ -1,0 +1,13 @@
+extensions:
+  enabled: true
+  search_paths:
+    - "/app/extensions"
+  disabled: []
+  allowlist: []
+  ignore_dirs:
+    - "target"
+    - ".git"
+    - "node_modules"
+    - "dist"
+    - ".build"
+  max_depth: 3

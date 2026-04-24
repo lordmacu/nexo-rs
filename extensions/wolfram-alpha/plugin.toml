@@ -1,0 +1,19 @@
+[plugin]
+id = "wolfram-alpha"
+version = "0.1.0"
+name = "Wolfram Alpha"
+description = "Computational queries via Wolfram Alpha API (short answers, full results)."
+
+[capabilities]
+tools = ["status", "wolfram_short", "wolfram_query"]
+
+[requires]
+env = ["WOLFRAM_APP_ID"]
+
+[transport]
+kind = "stdio"
+command = "./target/release/wolfram-alpha"
+
+[meta]
+author = "agent-rs"
+license = "MIT"

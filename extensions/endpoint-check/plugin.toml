@@ -1,0 +1,16 @@
+[plugin]
+id = "endpoint-check"
+version = "0.1.0"
+name = "Endpoint Check"
+description = "HTTP probe (status + latency) and TLS certificate inspection (issuer, SAN, expiry)."
+
+[capabilities]
+tools = ["status", "http_probe", "ssl_cert"]
+
+[transport]
+kind = "stdio"
+command = "./target/release/endpoint-check"
+
+[meta]
+author = "agent-rs"
+license = "MIT"

@@ -3,4 +3,33 @@ name = "agent-llm"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+# Historical: stubbed `AnyLlmClient::Stub` variant. After the registry refactor,
+# tests instantiate fakes via `Arc<dyn LlmClient>` directly — feature is a no-op
+# and kept only to avoid breaking external manifests that still mention it.
+stub    = []
+
 [dependencies]
+tokio        = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+anyhow       = { workspace = true }
+thiserror    = { workspace = true }
+async-trait  = { workspace = true }
+tracing      = { workspace = true }
+reqwest      = { workspace = true }
+futures      = { workspace = true }
+eventsource-stream = { workspace = true }
+bytes        = { workspace = true }
+agent-config = { path = "../config" }
+agent-resilience = { path = "../resilience" }
+sha2         = { workspace = true }
+hex          = { workspace = true }
+chrono       = { workspace = true }
+base64       = { workspace = true }
+tempfile     = "3"
+
+[dev-dependencies]
+tokio-test = "0.4"
+wiremock   = "0.6"

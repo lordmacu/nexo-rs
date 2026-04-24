@@ -1,0 +1,18 @@
+[package]
+name = "openai-whisper"
+version = "0.2.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "multipart"] }
+once_cell = "1"
+ext-common = { path = "../_common" }
+
+[dev-dependencies]
+wiremock = "0.6"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+serial_test = "3"

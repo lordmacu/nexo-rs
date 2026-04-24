@@ -1,0 +1,16 @@
+[plugin]
+id = "openstreetmap"
+version = "0.2.0"
+name = "OpenStreetMap"
+description = "Rust extension for OpenStreetMap geocoding and reverse geocoding via Nominatim"
+
+[capabilities]
+tools = ["status", "search", "reverse"]
+
+[transport]
+kind = "stdio"
+command = "./target/release/openstreetmap"
+
+[meta]
+author = "agent-rs"
+license = "MIT"

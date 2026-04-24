@@ -3,4 +3,40 @@ name = "agent-core"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["schema-validation"]
+# Enables pre-handler JSON Schema validation of tool arguments.
+schema-validation = ["dep:jsonschema"]
+
 [dependencies]
+jsonschema = { version = "0.20", optional = true, default-features = false }
+sha2        = { workspace = true }
+tokio       = { workspace = true }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+serde_yaml  = { workspace = true }
+uuid        = { workspace = true }
+chrono      = { workspace = true }
+dashmap     = { workspace = true }
+humantime   = { workspace = true }
+anyhow      = { workspace = true }
+thiserror   = { workspace = true }
+agent-config  = { path = "../config" }
+agent-broker  = { path = "../broker" }
+tracing       = { workspace = true }
+async-trait   = { workspace = true }
+tokio-util    = { workspace = true }
+agent-llm     = { path = "../llm" }
+agent-memory  = { path = "../memory" }
+agent-extensions = { path = "../extensions" }
+agent-mcp       = { path = "../mcp" }
+agent-taskflow  = { path = "../taskflow" }
+futures         = { workspace = true }
+base64          = { workspace = true }
+git2            = { workspace = true }
+
+[dev-dependencies]
+agent-llm     = { path = "../llm", features = ["stub"] }
+async-nats    = { workspace = true }
+futures       = { workspace = true }
+tempfile      = "3"

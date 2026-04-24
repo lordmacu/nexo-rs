@@ -1,0 +1,19 @@
+[plugin]
+id = "tesseract-ocr"
+version = "0.1.0"
+name = "Tesseract OCR"
+description = "Extract text from images via the local `tesseract` binary. Supports language packs and PSM modes."
+
+[capabilities]
+tools = ["status", "ocr", "languages"]
+
+[requires]
+bins = ["tesseract"]
+
+[transport]
+kind = "stdio"
+command = "./target/release/tesseract-ocr"
+
+[meta]
+author = "agent-rs"
+license = "MIT"

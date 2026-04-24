@@ -1,0 +1,39 @@
+agents:
+  - id: "kate"
+    model:
+      provider: "minimax"
+      model: "MiniMax-M2.5"
+    plugins:
+      - whatsapp
+      - browser
+      - memory
+    heartbeat:
+      enabled: true
+      interval: "5m"
+    config:
+      debounce_ms: 2000
+      queue_cap: 5
+    # Optional: prepended as a `system` message to every LLM turn.
+    system_prompt: ""
+    # Optional: path to the agent's workspace directory. When set, the loader
+    # reads IDENTITY.md, SOUL.md, USER.md, AGENTS.md, recent daily notes, and
+    # MEMORY.md (only in main sessions) and prepends them to the system prompt.
+    workspace: "/app/data/workspace/kate"
+    # Optional: JSONL transcripts per session. Kept out of the workspace on
+    # purpose — workspaces are typically git-committed, transcripts contain PII.
+    transcripts_dir: "/app/data/transcripts/kate"
+    # Dreaming (Phase 10.6) — periodic memory consolidation sweep.
+    # Disabled by default; flip `enabled: true` to run sweeps.
+    dreaming:
+      enabled: true
+      interval_secs: 3600   # 1h — tighten for demo, OpenClaw default is daily
+      min_score: 0.35
+      min_recall_count: 2
+      min_unique_queries: 2
+      max_promotions_per_sweep: 20
+      weights:
+        frequency: 0.24
+        relevance: 0.30
+        recency: 0.15
+        diversity: 0.15
+        consolidation: 0.10

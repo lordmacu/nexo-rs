@@ -1,0 +1,12 @@
+# Keep the stdio entrypoint Unix-LF even when cloned on Windows / WSL.
+# Without this, CRLF line endings sneak in via git's autocrlf and the
+# shebang line (`#!/usr/bin/env python3\r`) makes the kernel look for
+# an interpreter named `python3\r`, which fails with a confusing
+# "No such file or directory".
+#
+# Git does not express the executable bit via `.gitattributes` — the
+# exec bit was set at the original `git add` time, so cloners who
+# preserve `core.fileMode` get it automatically. On filesystems that
+# strip the bit (Windows without WSL), run `chmod +x main.py` after
+# clone. See README for details.
+main.py text eol=lf

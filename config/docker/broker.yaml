@@ -1,0 +1,15 @@
+broker:
+  type: "nats"
+  url: "nats://nats:4222"
+  auth:
+    enabled: false
+    nkey_file: "/run/secrets/nats.nkey"
+  persistence:
+    enabled: true
+    path: "/app/data/queue"
+  limits:
+    max_payload: "4MB"
+    max_pending: 10000
+  fallback:
+    mode: "local_queue"
+    drain_on_reconnect: true

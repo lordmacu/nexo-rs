@@ -1,0 +1,40 @@
+# Phase 12.6 — Expose this agent as an MCP server over stdio.
+#
+# When `enabled: true`, `agent mcp-server` advertises the native tool set
+# (self-report + memory + whatever is in the allowlist) to any MCP client
+# that spawns the binary. Use this to plug the agent into Claude Desktop,
+# Cursor, Zed, etc.
+#
+# Claude Desktop install example:
+#   {
+#     "mcpServers": {
+#       "kate": {
+#         "command": "/usr/local/bin/agent",
+#         "args": ["--config", "/etc/agent/config", "mcp-server"]
+#       }
+#     }
+#   }
+mcp_server:
+  enabled: false
+  name: "agent"
+  # Empty allowlist exposes native tools, but NOT proxy tools (`ext_*`,
+  # `mcp_*`) unless `expose_proxies: true`.
+  # For safety, enumerate explicit tool names here in production.
+  allowlist: []
+  # Opt-in global exposure for proxy tools (`ext_*`, `mcp_*`) when
+  # allowlist is empty. Explicit allowlist entries always win.
+  expose_proxies: false
+  # Optional initialize auth token. When set, the server reads the expected
+  # token from this env var and rejects `initialize` unless params include:
+  #   - auth_token: "<token>"
+  #   - or _meta.auth_token: "<token>"
+  # Example Claude Desktop snippet:
+  #   "env": { "MCP_SERVER_TOKEN": "change-me" }
+  auth_token_env: null
+  # Example curated allowlist:
+  # allowlist:
+  #   - who_am_i
+  #   - what_do_i_know
+  #   - my_stats
+  #   - memory_recall
+  #   - ext_weather_ping

@@ -1,0 +1,19 @@
+[plugin]
+id = "wikipedia"
+version = "0.1.0"
+name = "Wikipedia"
+description = "Search Wikipedia and fetch article summaries or full extracts."
+
+[capabilities]
+tools = ["status", "search", "summary", "extract"]
+
+[requires]
+env = []
+
+[transport]
+kind = "stdio"
+command = "./target/release/wikipedia"
+
+[meta]
+author = "agent-rs"
+license = "MIT"

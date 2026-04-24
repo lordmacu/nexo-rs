@@ -1,0 +1,15 @@
+short_term:
+  max_history_turns: 50
+  session_ttl: "24h"
+
+long_term:
+  backend: "sqlite"
+  sqlite:
+    path: "/app/data/memory.db"
+
+vector:
+  backend: "sqlite-vec"
+  embedding:
+    provider: "minimax"
+    model: "embo-01"
+    dimensions: 1536

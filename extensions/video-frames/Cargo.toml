@@ -1,0 +1,22 @@
+[package]
+name = "video-frames-ext"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "video-frames"
+path = "src/main.rs"
+
+[lib]
+name = "video_frames_ext"
+path = "src/lib.rs"
+
+[workspace]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"
+serial_test = "3"

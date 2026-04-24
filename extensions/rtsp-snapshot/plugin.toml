@@ -1,0 +1,19 @@
+[plugin]
+id = "rtsp-snapshot"
+version = "0.1.0"
+name = "RTSP Snapshot"
+description = "Capture still frames or short clips from RTSP/HTTP camera streams via ffmpeg."
+
+[capabilities]
+tools = ["status", "snapshot", "clip"]
+
+[requires]
+bins = ["ffmpeg"]
+
+[transport]
+kind = "stdio"
+command = "./target/release/rtsp-snapshot"
+
+[meta]
+author = "agent-rs"
+license = "MIT"
