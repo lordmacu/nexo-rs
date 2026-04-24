@@ -11,7 +11,7 @@ beyond surface docs.
 
 Legend: `⬜ pending  🔄 in progress  ✅ done`
 
-Progress: **10 / 18 phases done, 0 in progress**
+Progress: **11 / 18 phases done, 0 in progress**
 
 ---
 
@@ -264,23 +264,27 @@ Deep-dive checklist:
 
 ---
 
-## Phase D10 — Soul, identity & learning   ⬜
+## Phase D10 — Soul, identity & learning   ✅
 
 Mapping to phase 10.
 
 Pages: `soul/identity.md`, `soul/memory.md`, `soul/dreaming.md`.
 
 Deep-dive checklist:
-- [ ] Identity: who-am-I prompt, per-agent config
-- [ ] SOUL.md: structure, write rules, read cadence
-- [ ] MEMORY.md: index shape, max size, truncation
-- [ ] Transcripts: format, location, rotation
-- [ ] Recall signals: what triggers lookup, ranking
-- [ ] Dreaming: when it runs, what it does, safety rails
-- [ ] Vocabulary learning
-- [ ] Self-report tool
-- [ ] Workspace-git: per-agent repo, commit cadence, what gets
-  committed
+- [x] Identity: AgentIdentity 5 fields, template-placeholder skip,
+  prompt injection
+- [x] SOUL.md: raw markdown, main + shared scope, 12k/60k truncation
+- [x] MEMORY.md: sections + bullets, append-only, main-scope-only
+- [x] Transcripts: JSONL per session with header + entries, no
+  rotation, write-only
+- [x] Recall signals: recall_events schema + 6-field signal struct
+- [x] Dreaming: Light→Deep flow, scoring formula + weights, gates,
+  outputs (MEMORY.md append, DREAMS.md, memory_promotions), tuning
+- [x] Vocabulary (concept_tags) — deterministic pipeline, not TF-IDF,
+  8 tags max, glossary match + compound tokens
+- [x] Self-report: three tools (who_am_i, what_do_i_know, my_stats)
+- [x] Workspace-git: three commit triggers (dream/session-close/
+  checkpoint), mechanics, forge_memory_checkpoint + memory_history
 
 **Done criteria:** reader understands how an agent "learns" across
 sessions.
