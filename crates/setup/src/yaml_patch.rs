@@ -623,3 +623,357 @@ mod tests {
         assert!(v["allow"].as_sequence().unwrap().is_empty());
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Phase 17 helpers — multi-instance plugin entries + per-agent
+// `credentials:` block + google-auth.yaml account upsert. These exist
+// in a separate impl block so the wizard can call them imperatively
+// without going through the declarative ServiceDef flow, which cannot
+// model array entries.
+// ─────────────────────────────────────────────────────────────────────
+
+/// Locate the YAML file where `agent_id` is declared. Checks
+/// `<config>/agents.yaml` first, then every `<config>/agents.d/*.yaml`.
+/// Returns `None` when the id is unknown.
+pub fn find_agent_file(config_dir: &Path, agent_id: &str) -> Result<Option<std::path::PathBuf>> {
+    let main = config_dir.join("agents.yaml");
+    if main.exists() {
+        let ids = list_agent_ids(&main).unwrap_or_default();
+        if ids.iter().any(|id| id == agent_id) {
+            return Ok(Some(main));
+        }
+    }
+    let drop_dir = config_dir.join("agents.d");
+    if !drop_dir.exists() {
+        return Ok(None);
+    }
+    for entry in fs::read_dir(&drop_dir)? {
+        let path = entry?.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("yaml") {
+            continue;
+        }
+        if list_agent_ids(&path).unwrap_or_default().iter().any(|id| id == agent_id) {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
+}
+
+/// Write `credentials.<channel>: <instance>` into `agent_id`'s entry
+/// inside the given agents YAML file. Creates the `credentials`
+/// mapping when absent.
+pub fn patch_agent_credentials(
+    file: &Path,
+    agent_id: &str,
+    channel: &str,
+    instance: &str,
+) -> Result<()> {
+    let _guard = YAML_UPSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let text = fs::read_to_string(file).with_context(|| format!("read {}", file.display()))?;
+    let mut root: Value =
+        serde_yaml::from_str(&text).with_context(|| format!("parse {}", file.display()))?;
+
+    let agents = root
+        .get_mut("agents")
+        .and_then(Value::as_sequence_mut)
+        .ok_or_else(|| anyhow::anyhow!("`agents:` sequence missing in {}", file.display()))?;
+
+    let target = agents
+        .iter_mut()
+        .find(|it| it.get("id").and_then(Value::as_str) == Some(agent_id))
+        .ok_or_else(|| anyhow::anyhow!("agent `{agent_id}` not found in {}", file.display()))?;
+
+    let map = target
+        .as_mapping_mut()
+        .ok_or_else(|| anyhow::anyhow!("agent `{agent_id}` is not a mapping"))?;
+
+    let creds = map
+        .entry(Value::String("credentials".into()))
+        .or_insert_with(|| Value::Mapping(Mapping::new()));
+    let creds_map = creds
+        .as_mapping_mut()
+        .ok_or_else(|| anyhow::anyhow!("`credentials` is not a mapping"))?;
+    creds_map.insert(
+        Value::String(channel.to_string()),
+        Value::String(instance.to_string()),
+    );
+
+    let parent = file.parent().unwrap_or(Path::new("."));
+    let tmp = tempfile::NamedTempFile::new_in(parent)?;
+    {
+        let mut f = tmp.reopen()?;
+        f.write_all(serde_yaml::to_string(&root)?.as_bytes())?;
+        f.flush()?;
+        f.sync_all().ok();
+    }
+    tmp.persist(file)
+        .map_err(|e| anyhow::anyhow!("persist yaml {}: {e}", file.display()))?;
+    Ok(())
+}
+
+/// Normalise `config/plugins/whatsapp.yaml` to the sequence form and
+/// upsert an entry by `instance` label. When the file is absent or the
+/// root is an empty mapping, creates a fresh sequence.
+pub fn whatsapp_upsert_instance(
+    file: &Path,
+    instance: &str,
+    session_dir: &str,
+    media_dir: &str,
+    allow_agents: &[String],
+) -> Result<()> {
+    let _guard = YAML_UPSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let mut root: Value = if file.exists() {
+        let text = fs::read_to_string(file)?;
+        if text.trim().is_empty() {
+            Value::Mapping(Mapping::new())
+        } else {
+            serde_yaml::from_str(&text)?
+        }
+    } else {
+        if let Some(parent) = file.parent() {
+            fs::create_dir_all(parent).ok();
+        }
+        Value::Mapping(Mapping::new())
+    };
+
+    let map = root
+        .as_mapping_mut()
+        .ok_or_else(|| anyhow::anyhow!("whatsapp.yaml root is not a mapping"))?;
+
+    // Normalise mapping form → sequence.
+    let existing = map.remove(Value::String("whatsapp".into()));
+    let mut seq: Vec<Value> = match existing {
+        Some(Value::Sequence(s)) => s,
+        Some(Value::Mapping(m)) => vec![Value::Mapping(m)],
+        _ => Vec::new(),
+    };
+
+    let mut entry = Mapping::new();
+    entry.insert(Value::String("instance".into()), Value::String(instance.into()));
+    entry.insert(Value::String("enabled".into()), Value::Bool(true));
+    entry.insert(
+        Value::String("session_dir".into()),
+        Value::String(session_dir.into()),
+    );
+    entry.insert(
+        Value::String("media_dir".into()),
+        Value::String(media_dir.into()),
+    );
+    entry.insert(
+        Value::String("allow_agents".into()),
+        Value::Sequence(allow_agents.iter().cloned().map(Value::String).collect()),
+    );
+
+    // Replace-in-place if an entry with this instance already exists.
+    let replaced = seq.iter_mut().any(|v| {
+        if v.get("instance").and_then(Value::as_str) == Some(instance) {
+            *v = Value::Mapping(entry.clone());
+            true
+        } else {
+            false
+        }
+    });
+    if !replaced {
+        seq.push(Value::Mapping(entry));
+    }
+
+    map.insert(Value::String("whatsapp".into()), Value::Sequence(seq));
+
+    let parent = file.parent().unwrap_or(Path::new("."));
+    fs::create_dir_all(parent).ok();
+    let tmp = tempfile::NamedTempFile::new_in(parent)?;
+    {
+        let mut f = tmp.reopen()?;
+        f.write_all(serde_yaml::to_string(&root)?.as_bytes())?;
+        f.flush()?;
+        f.sync_all().ok();
+    }
+    tmp.persist(file)
+        .map_err(|e| anyhow::anyhow!("persist yaml {}: {e}", file.display()))?;
+    Ok(())
+}
+
+/// Same pattern for `config/plugins/telegram.yaml`. Token is written as
+/// a `${file:...}` placeholder pointing at the `secrets/` sibling of
+/// `config_dir` (so the wizard's existing secret store keeps working).
+pub fn telegram_upsert_instance(
+    file: &Path,
+    instance: &str,
+    token_placeholder: &str,
+    allow_agents: &[String],
+    chat_ids: &[i64],
+) -> Result<()> {
+    let _guard = YAML_UPSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let mut root: Value = if file.exists() {
+        let text = fs::read_to_string(file)?;
+        if text.trim().is_empty() {
+            Value::Mapping(Mapping::new())
+        } else {
+            serde_yaml::from_str(&text)?
+        }
+    } else {
+        if let Some(parent) = file.parent() {
+            fs::create_dir_all(parent).ok();
+        }
+        Value::Mapping(Mapping::new())
+    };
+
+    let map = root
+        .as_mapping_mut()
+        .ok_or_else(|| anyhow::anyhow!("telegram.yaml root is not a mapping"))?;
+
+    let existing = map.remove(Value::String("telegram".into()));
+    let mut seq: Vec<Value> = match existing {
+        Some(Value::Sequence(s)) => s,
+        Some(Value::Mapping(m)) => vec![Value::Mapping(m)],
+        _ => Vec::new(),
+    };
+
+    let mut entry = Mapping::new();
+    entry.insert(Value::String("instance".into()), Value::String(instance.into()));
+    entry.insert(
+        Value::String("token".into()),
+        Value::String(token_placeholder.into()),
+    );
+    entry.insert(
+        Value::String("allow_agents".into()),
+        Value::Sequence(allow_agents.iter().cloned().map(Value::String).collect()),
+    );
+    let mut allowlist = Mapping::new();
+    allowlist.insert(
+        Value::String("chat_ids".into()),
+        Value::Sequence(
+            chat_ids
+                .iter()
+                .map(|n| Value::Number((*n).into()))
+                .collect(),
+        ),
+    );
+    entry.insert(Value::String("allowlist".into()), Value::Mapping(allowlist));
+
+    let replaced = seq.iter_mut().any(|v| {
+        if v.get("instance").and_then(Value::as_str) == Some(instance) {
+            *v = Value::Mapping(entry.clone());
+            true
+        } else {
+            false
+        }
+    });
+    if !replaced {
+        seq.push(Value::Mapping(entry));
+    }
+
+    map.insert(Value::String("telegram".into()), Value::Sequence(seq));
+
+    let parent = file.parent().unwrap_or(Path::new("."));
+    fs::create_dir_all(parent).ok();
+    let tmp = tempfile::NamedTempFile::new_in(parent)?;
+    {
+        let mut f = tmp.reopen()?;
+        f.write_all(serde_yaml::to_string(&root)?.as_bytes())?;
+        f.flush()?;
+        f.sync_all().ok();
+    }
+    tmp.persist(file)
+        .map_err(|e| anyhow::anyhow!("persist yaml {}: {e}", file.display()))?;
+    Ok(())
+}
+
+/// Upsert an account in `config/plugins/google-auth.yaml`.
+pub fn google_auth_upsert_account(
+    file: &Path,
+    id: &str,
+    agent_id: &str,
+    client_id_path: &str,
+    client_secret_path: &str,
+    token_path: &str,
+    scopes: &[String],
+) -> Result<()> {
+    let _guard = YAML_UPSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let mut root: Value = if file.exists() {
+        let text = fs::read_to_string(file)?;
+        if text.trim().is_empty() {
+            Value::Mapping(Mapping::new())
+        } else {
+            serde_yaml::from_str(&text)?
+        }
+    } else {
+        if let Some(parent) = file.parent() {
+            fs::create_dir_all(parent).ok();
+        }
+        Value::Mapping(Mapping::new())
+    };
+
+    let map = root
+        .as_mapping_mut()
+        .ok_or_else(|| anyhow::anyhow!("google-auth.yaml root is not a mapping"))?;
+
+    let ga = map
+        .entry(Value::String("google_auth".into()))
+        .or_insert_with(|| {
+            let mut m = Mapping::new();
+            m.insert(
+                Value::String("accounts".into()),
+                Value::Sequence(Vec::new()),
+            );
+            Value::Mapping(m)
+        });
+    let ga_map = ga
+        .as_mapping_mut()
+        .ok_or_else(|| anyhow::anyhow!("`google_auth` is not a mapping"))?;
+    let accounts = ga_map
+        .entry(Value::String("accounts".into()))
+        .or_insert_with(|| Value::Sequence(Vec::new()));
+    let seq = accounts
+        .as_sequence_mut()
+        .ok_or_else(|| anyhow::anyhow!("`google_auth.accounts` is not a sequence"))?;
+
+    let mut entry = Mapping::new();
+    entry.insert(Value::String("id".into()), Value::String(id.into()));
+    entry.insert(
+        Value::String("agent_id".into()),
+        Value::String(agent_id.into()),
+    );
+    entry.insert(
+        Value::String("client_id_path".into()),
+        Value::String(client_id_path.into()),
+    );
+    entry.insert(
+        Value::String("client_secret_path".into()),
+        Value::String(client_secret_path.into()),
+    );
+    entry.insert(
+        Value::String("token_path".into()),
+        Value::String(token_path.into()),
+    );
+    entry.insert(
+        Value::String("scopes".into()),
+        Value::Sequence(scopes.iter().cloned().map(Value::String).collect()),
+    );
+
+    let replaced = seq.iter_mut().any(|v| {
+        if v.get("id").and_then(Value::as_str) == Some(id) {
+            *v = Value::Mapping(entry.clone());
+            true
+        } else {
+            false
+        }
+    });
+    if !replaced {
+        seq.push(Value::Mapping(entry));
+    }
+
+    let parent = file.parent().unwrap_or(Path::new("."));
+    fs::create_dir_all(parent).ok();
+    let tmp = tempfile::NamedTempFile::new_in(parent)?;
+    {
+        let mut f = tmp.reopen()?;
+        f.write_all(serde_yaml::to_string(&root)?.as_bytes())?;
+        f.flush()?;
+        f.sync_all().ok();
+    }
+    tmp.persist(file)
+        .map_err(|e| anyhow::anyhow!("persist yaml {}: {e}", file.display()))?;
+    Ok(())
+}
+

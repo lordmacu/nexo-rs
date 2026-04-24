@@ -24,6 +24,7 @@ pub mod credentials_check;
 pub mod prompt;
 pub mod registry;
 pub mod services;
+pub mod services_imperative;
 pub mod status;
 pub mod telegram_link;
 pub mod writer;
@@ -408,6 +409,20 @@ pub fn run_doctor(config_dir: &Path) -> Result<()> {
 }
 
 fn run_service(svc: &ServiceDef, secrets_dir: &Path, config_dir: &Path) -> Result<()> {
+    // Phase 17 — hijack WhatsApp / Telegram / Google so they prompt
+    // for `instance`, allow_agents, and auto-write the `credentials:`
+    // block on the chosen agent. The declarative form cannot express
+    // array entries + cross-file patches.
+    match services_imperative::dispatch(svc.id, config_dir, secrets_dir)? {
+        services_imperative::Outcome::Handled => {
+            if let Ok(summary) = credentials_check::run(config_dir) {
+                credentials_check::print(&summary);
+            }
+            return Ok(());
+        }
+        services_imperative::Outcome::NotHandled => {}
+    }
+
     println!();
     println!("── {} ─────────────────────────────────", svc.label);
     if let Some(desc) = svc.description {
