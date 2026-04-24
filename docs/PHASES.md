@@ -11,7 +11,7 @@ beyond surface docs.
 
 Legend: `⬜ pending  🔄 in progress  ✅ done`
 
-Progress: **6 / 18 phases done, 0 in progress**
+Progress: **7 / 18 phases done, 0 in progress**
 
 ---
 
@@ -168,7 +168,7 @@ query the SQLite file by hand to inspect state.
 
 ---
 
-## Phase D6 — Extensions   ⬜
+## Phase D6 — Extensions   ✅
 
 Mapping to phase 11.
 
@@ -176,18 +176,20 @@ Pages: `extensions/manifest.md`, `extensions/stdio.md`,
 `extensions/nats.md`, `extensions/cli.md`, `extensions/templates.md`.
 
 Deep-dive checklist:
-- [ ] Full `plugin.toml` schema — every field, defaults, validation
-- [ ] Discovery: search paths, ignore dirs, allowlist/disabled,
+- [x] Full `plugin.toml` schema — every field, defaults, validation
+- [x] Discovery: search paths, ignore dirs, allowlist/disabled,
   max_depth, follow_links, nested-prune semantics
-- [ ] Gating: `requires.bins`, `requires.env`, skip-vs-fail behavior
-- [ ] Stdio runtime: handshake protocol, tool listing, lifecycle, env
-  injection, stderr routing
-- [ ] NATS runtime: subject prefix, handshake, fan-out semantics
-- [ ] Hooks: `before_message`, `after_tool_call`, etc. — table + flow
-  diagram
-- [ ] CLI: `agent ext list / install / uninstall / doctor`
-- [ ] Watcher: file-change detection, debounce, reload semantics
-- [ ] Templates: `template-rust`, `template-python` — walkthrough
+- [x] Gating: `requires.bins`, `requires.env`, skip-vs-fail behavior
+- [x] Stdio runtime: handshake protocol, tool listing, lifecycle, env
+  injection (block rules), stderr routing
+- [x] NATS runtime: subject prefix, handshake, heartbeat liveness,
+  when to pick over stdio
+- [x] Hooks: valid names (before_message, after_message,
+  before_tool_call, after_tool_call), HookResponse abort/override
+- [x] CLI: list / info / enable / disable / validate / doctor /
+  install / uninstall + exit code table
+- [x] Watcher: phase 11.2 follow-up — logs only, no auto-reload
+- [x] Templates: template-rust and template-python walkthroughs
 
 **Done criteria:** a developer can ship a new extension by reading the
 docs alone, with no need to grep source.
