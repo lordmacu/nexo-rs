@@ -1,7 +1,10 @@
 pub mod agent;
 pub mod heartbeat;
+pub mod runtime_snapshot;
 pub mod session;
 pub mod telemetry;
+
+pub use runtime_snapshot::RuntimeSnapshot;
 
 pub use agent::{
     Agent, AgentBehavior, AgentContext, AgentMessage, AgentPayload, AgentRouter, AgentRuntime,
