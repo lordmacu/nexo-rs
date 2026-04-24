@@ -11,7 +11,7 @@ beyond surface docs.
 
 Legend: `⬜ pending  🔄 in progress  ✅ done`
 
-Progress: **5 / 18 phases done, 0 in progress**
+Progress: **6 / 18 phases done, 0 in progress**
 
 ---
 
@@ -148,19 +148,20 @@ Specific:
 
 ---
 
-## Phase D5 — Memory   ⬜
+## Phase D5 — Memory   ✅
 
 Mapping to phase 5.
 
 Pages: `memory/short-term.md`, `memory/long-term.md`, `memory/vector.md`.
 
 Deep-dive checklist:
-- [ ] Memory layers diagram: STM (in-mem) → LTM (SQLite) → vector
-- [ ] Schema dump for LTM tables
-- [ ] Retention / pruning rules
-- [ ] Vector: sqlite-vec setup, embedding model, index config
-- [ ] Tool surface: `memory_store`, `memory_search`, etc. — full API
-- [ ] How workspace-git fits in (phase 10.9)
+- [x] Memory layers diagram: STM (in-mem) → LTM (SQLite) → vector
+- [x] Schema dump for LTM tables
+- [x] Retention / pruning rules (sliding window, cap eviction, TTL sweep, manual VACUUM note)
+- [x] Vector: sqlite-vec setup, embedding model, index config, RRF
+- [x] Tool surface: unified `memory` tool (remember/recall/forget),
+  memory_history, forge_memory_checkpoint
+- [x] How workspace-git fits in (phase 10.9)
 
 **Done criteria:** reader understands when each layer is used and can
 query the SQLite file by hand to inspect state.

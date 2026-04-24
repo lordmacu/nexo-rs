@@ -10,11 +10,16 @@
 pub mod audit;
 pub mod error;
 pub mod gauntlet;
+pub mod google;
 pub mod handle;
 pub mod resolver;
 pub mod store;
+pub mod telegram;
+pub mod whatsapp;
 
 pub use error::{BuildError, CredentialError, ResolveError};
 pub use handle::{AgentId, Channel, CredentialHandle, Fingerprint};
-pub use resolver::{AgentCredentialResolver, StrictLevel};
+pub use resolver::{
+    AgentCredentialResolver, AgentCredentialsInput, CredentialStores, StrictLevel,
+};
 pub use store::{CredentialStore, ValidationReport};

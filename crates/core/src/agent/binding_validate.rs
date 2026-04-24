@@ -83,6 +83,15 @@ pub enum BindingValidationError {
         binding_provider: String,
         agent_provider: String,
     },
+
+    #[error(
+        "agent '{agent}': unknown LLM provider '{provider}' (known: {known})"
+    )]
+    UnknownProvider {
+        agent: String,
+        provider: String,
+        known: String,
+    },
 }
 
 /// Known-tools catalogue used by [`validate_agents`]. An empty set turns
@@ -91,6 +100,39 @@ pub enum BindingValidationError {
 #[derive(Debug, Default, Clone)]
 pub struct KnownTools<'a> {
     names: HashSet<&'a str>,
+}
+
+/// Known-providers catalogue used by [`validate_agents`]. An empty set
+/// turns off the provider check (same rationale as `KnownTools`: the
+/// LLM registry is populated at boot alongside the config load).
+#[derive(Debug, Default, Clone)]
+pub struct KnownProviders<'a> {
+    names: HashSet<&'a str>,
+}
+
+impl<'a> KnownProviders<'a> {
+    pub fn new<I>(names: I) -> Self
+    where
+        I: IntoIterator<Item = &'a str>,
+    {
+        Self {
+            names: names.into_iter().collect(),
+        }
+    }
+
+    fn is_enabled(&self) -> bool {
+        !self.names.is_empty()
+    }
+
+    fn contains(&self, name: &str) -> bool {
+        self.names.contains(name)
+    }
+
+    fn listed(&self) -> String {
+        let mut v: Vec<&&str> = self.names.iter().collect();
+        v.sort();
+        v.iter().copied().copied().collect::<Vec<_>>().join(", ")
+    }
 }
 
 impl<'a> KnownTools<'a> {
@@ -137,9 +179,34 @@ pub fn collect_binding_errors(
     telegram_instances: &[TelegramPluginConfig],
     known_tools: &KnownTools<'_>,
 ) -> Vec<BindingValidationError> {
+    collect_binding_errors_with_providers(
+        agents,
+        telegram_instances,
+        known_tools,
+        &KnownProviders::default(),
+    )
+}
+
+/// Same as [`collect_binding_errors`] but also validates that every
+/// agent's `model.provider` (and any binding-level `model.provider`
+/// override) is present in `known_providers`. Intended for the boot
+/// path, where the LLM registry already knows which providers are
+/// wired in.
+pub fn collect_binding_errors_with_providers(
+    agents: &[AgentConfig],
+    telegram_instances: &[TelegramPluginConfig],
+    known_tools: &KnownTools<'_>,
+    known_providers: &KnownProviders<'_>,
+) -> Vec<BindingValidationError> {
     let mut errors = Vec::new();
     for agent in agents {
-        validate_agent_into(agent, telegram_instances, known_tools, &mut errors);
+        validate_agent_into(
+            agent,
+            telegram_instances,
+            known_tools,
+            known_providers,
+            &mut errors,
+        );
     }
     errors
 }
@@ -153,7 +220,26 @@ pub fn validate_agents(
     telegram_instances: &[TelegramPluginConfig],
     known_tools: &KnownTools<'_>,
 ) -> anyhow::Result<()> {
-    let errors = collect_binding_errors(agents, telegram_instances, known_tools);
+    validate_agents_with_providers(
+        agents,
+        telegram_instances,
+        known_tools,
+        &KnownProviders::default(),
+    )
+}
+
+pub fn validate_agents_with_providers(
+    agents: &[AgentConfig],
+    telegram_instances: &[TelegramPluginConfig],
+    known_tools: &KnownTools<'_>,
+    known_providers: &KnownProviders<'_>,
+) -> anyhow::Result<()> {
+    let errors = collect_binding_errors_with_providers(
+        agents,
+        telegram_instances,
+        known_tools,
+        known_providers,
+    );
     if errors.is_empty() {
         return Ok(());
     }
