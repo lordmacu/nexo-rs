@@ -25,6 +25,7 @@ async fn main() -> anyhow::Result<()> {
         window_height: 800,
         connect_timeout_ms: 15_000,
         command_timeout_ms: 15_000,
+        args: Vec::new(),
     };
 
     tracing::info!("launching Chromium...");

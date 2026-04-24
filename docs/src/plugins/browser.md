@@ -29,6 +29,7 @@ browser:
   window_height: 800
   connect_timeout_ms: 10000
   command_timeout_ms: 15000
+  args: []                           # extra CLI flags for Chrome
 ```
 
 | Field | Default | Purpose |
@@ -40,6 +41,7 @@ browser:
 | `window_width` / `window_height` | `1280` / `800` | Viewport. |
 | `connect_timeout_ms` | `10000` | How long to wait for Chrome startup / remote connect. |
 | `command_timeout_ms` | `15000` | Per-CDP-command execution timeout. |
+| `args` | `[]` | Extra CLI flags forwarded verbatim to the spawned Chrome. Ignored when `cdp_url` is set. Later args win — use this to override built-in flags when a restricted environment needs it (e.g. `--no-sandbox` on Termux). |
 
 ## Auth
 
