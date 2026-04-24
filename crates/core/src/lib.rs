@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod config_watch;
 pub mod heartbeat;
 pub mod runtime_snapshot;
 pub mod session;
