@@ -5,6 +5,7 @@
 # Getting started
 
 - [Installation](./getting-started/installation.md)
+- [Native install (no Docker)](./getting-started/install-native.md)
 - [Quick start](./getting-started/quickstart.md)
 - [Setup wizard](./getting-started/setup-wizard.md)
 

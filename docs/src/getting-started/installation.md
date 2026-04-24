@@ -46,7 +46,20 @@ The workspace compiles 18 crates and 4 binaries: `agent`,
 cargo test --workspace --lib
 ```
 
+## Native install (no Docker)
+
+If you'd rather skip Docker entirely — run the agent as a plain
+process under systemd / launchd, or just local dev — see the full
+walkthrough and use the bootstrap script:
+
+```bash
+./scripts/bootstrap.sh
+```
+
+Details: [Native install](./install-native.md).
+
 ## Next
 
 - [Quick start](./quickstart.md) — first agent running in five minutes
 - [Setup wizard](./setup-wizard.md) — pair channels and wire secrets
+- [Native install](./install-native.md) — detailed no-Docker setup
