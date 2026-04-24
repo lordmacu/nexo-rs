@@ -1,7 +1,9 @@
 # Rust
 target/
 **/*.rs.bk
-Cargo.lock
+# Cargo.lock is committed — nexo-rs is a binary application (Rust
+# ecosystem convention). Reproducible builds in CI + `--locked` in
+# the release workflow depend on it.
 
 # Secrets — never commit
 secrets/*
