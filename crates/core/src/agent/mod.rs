@@ -45,7 +45,7 @@ pub use agent::Agent;
 pub use agents_directory::{AgentInfo, AgentsDirectory};
 pub use behavior::AgentBehavior;
 pub use binding_validate::{
-    validate_agent, validate_agents, BindingValidationError, KnownTools,
+    collect_binding_errors, validate_agent, validate_agents, BindingValidationError, KnownTools,
 };
 pub use context::AgentContext;
 pub use delegation_tool::DelegationTool;

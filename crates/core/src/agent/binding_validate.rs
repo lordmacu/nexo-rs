@@ -127,34 +127,77 @@ impl<'a> KnownTools<'a> {
     }
 }
 
-/// Validate every agent's bindings against the surrounding config. See
-/// module docs for the full list of checks. Returns the first error
-/// encountered; callers that want to surface every problem at once can
-/// invoke [`validate_agent`] per-agent and aggregate.
+/// Validate every agent's bindings against the surrounding config and
+/// return **every** error found, not just the first. Callers that only
+/// want to fail boot on the first problem can check `.is_empty()`; the
+/// aggregate form exists so operators fixing multi-agent configs see
+/// the full list of problems in one pass instead of restart-and-repeat.
+pub fn collect_binding_errors(
+    agents: &[AgentConfig],
+    telegram_instances: &[TelegramPluginConfig],
+    known_tools: &KnownTools<'_>,
+) -> Vec<BindingValidationError> {
+    let mut errors = Vec::new();
+    for agent in agents {
+        validate_agent_into(agent, telegram_instances, known_tools, &mut errors);
+    }
+    errors
+}
+
+/// Validate every agent's bindings. Returns `Ok(())` when the
+/// aggregate error list is empty, otherwise an [`anyhow::Error`]
+/// whose `Display` includes every error separated by `\n  - ` so the
+/// operator sees each problem on its own line.
 pub fn validate_agents(
     agents: &[AgentConfig],
     telegram_instances: &[TelegramPluginConfig],
     known_tools: &KnownTools<'_>,
-) -> Result<(), BindingValidationError> {
-    for agent in agents {
-        validate_agent(agent, telegram_instances, known_tools)?;
+) -> anyhow::Result<()> {
+    let errors = collect_binding_errors(agents, telegram_instances, known_tools);
+    if errors.is_empty() {
+        return Ok(());
     }
-    Ok(())
+    let mut msg = format!(
+        "per-binding override validation failed ({} issue{}):",
+        errors.len(),
+        if errors.len() == 1 { "" } else { "s" },
+    );
+    for e in &errors {
+        msg.push_str("\n  - ");
+        msg.push_str(&e.to_string());
+    }
+    Err(anyhow::anyhow!(msg))
 }
 
-/// Validate a single agent. Emits `tracing::warn!` for soft signals and
-/// returns a typed error for hard failures.
+/// Validate a single agent and return the first error. Kept for
+/// call sites that prefer early-exit semantics and for the unit test
+/// suite; the boot path uses [`validate_agents`] which aggregates.
 pub fn validate_agent(
     agent: &AgentConfig,
     telegram_instances: &[TelegramPluginConfig],
     known_tools: &KnownTools<'_>,
 ) -> Result<(), BindingValidationError> {
+    let mut errors = Vec::new();
+    validate_agent_into(agent, telegram_instances, known_tools, &mut errors);
+    if let Some(first) = errors.into_iter().next() {
+        Err(first)
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_agent_into(
+    agent: &AgentConfig,
+    telegram_instances: &[TelegramPluginConfig],
+    known_tools: &KnownTools<'_>,
+    errors: &mut Vec<BindingValidationError>,
+) {
     // 1. Duplicate bindings.
     let mut seen: HashSet<(String, Option<String>)> = HashSet::new();
     for b in &agent.inbound_bindings {
         let key = (b.plugin.clone(), b.instance.clone());
         if !seen.insert(key.clone()) {
-            return Err(BindingValidationError::DuplicateBinding {
+            errors.push(BindingValidationError::DuplicateBinding {
                 agent: agent.id.clone(),
                 plugin: b.plugin.clone(),
                 instance: b.instance.clone().unwrap_or_else(|| "<wildcard>".into()),
@@ -181,7 +224,7 @@ pub fn validate_agent(
                 .filter_map(|t| t.instance.clone())
                 .collect::<Vec<_>>()
                 .join(", ");
-            return Err(BindingValidationError::UnknownTelegramInstance {
+            errors.push(BindingValidationError::UnknownTelegramInstance {
                 agent: agent.id.clone(),
                 index: idx,
                 instance: inst.to_string(),
@@ -199,7 +242,7 @@ pub fn validate_agent(
             };
             for tool in list {
                 if !known_tools.contains(tool) {
-                    return Err(BindingValidationError::UnknownTool {
+                    errors.push(BindingValidationError::UnknownTool {
                         agent: agent.id.clone(),
                         index: idx,
                         tool: tool.clone(),
@@ -211,15 +254,10 @@ pub fn validate_agent(
     }
 
     // 4. Model override must keep the same provider.
-    //    The LLM client is wired once per agent; switching providers at
-    //    turn time would need a per-binding client pool and per-binding
-    //    credentials, which we don't support yet. Switching only the
-    //    model name within one provider (Haiku ↔ Sonnet on Anthropic) is
-    //    safe and is the common case.
     for (idx, b) in agent.inbound_bindings.iter().enumerate() {
         let Some(m) = &b.model else { continue };
         if m.provider != agent.model.provider {
-            return Err(BindingValidationError::ProviderMismatch {
+            errors.push(BindingValidationError::ProviderMismatch {
                 agent: agent.id.clone(),
                 index: idx,
                 binding_provider: m.provider.clone(),
@@ -236,7 +274,7 @@ pub fn validate_agent(
         for skill in skills {
             let skill_dir = Path::new(&agent.skills_dir).join(skill);
             if !skill_dir.is_dir() {
-                return Err(BindingValidationError::UnknownSkill {
+                errors.push(BindingValidationError::UnknownSkill {
                     agent: agent.id.clone(),
                     index: idx,
                     skill: skill.clone(),
@@ -260,7 +298,30 @@ pub fn validate_agent(
         }
     }
 
-    Ok(())
+    // 7. Soft warn: wildcard + specific-instance binding overlap on
+    //    the same plugin. Both match the specific event; order in the
+    //    Vec decides the winner (first match wins) — easy to miss
+    //    when staring at YAML. Flag it so the operator confirms the
+    //    order was intentional.
+    let mut seen_wildcard: HashSet<&str> = HashSet::new();
+    let mut seen_specific: HashSet<&str> = HashSet::new();
+    for b in &agent.inbound_bindings {
+        if b.instance.is_none() {
+            seen_wildcard.insert(b.plugin.as_str());
+        } else {
+            seen_specific.insert(b.plugin.as_str());
+        }
+    }
+    for plugin in seen_wildcard.intersection(&seen_specific) {
+        tracing::warn!(
+            agent = %agent.id,
+            plugin = %plugin,
+            "inbound bindings contain both a wildcard (instance=None) and a \
+             specific-instance entry for the same plugin — first-match wins; \
+             list the specific binding before the wildcard if you want it to \
+             take priority"
+        );
+    }
 }
 
 fn has_any_override(b: &agent_config::InboundBinding) -> bool {
@@ -492,6 +553,64 @@ mod tests {
         });
         validate_agent(&a, &[], &KnownTools::default())
             .expect("same-provider model switch must pass");
+    }
+
+    #[test]
+    fn collect_binding_errors_aggregates_multi_agent_problems() {
+        // Two agents, each broken in a different way. Aggregate form
+        // should surface both so the operator fixes them in one pass.
+        let mut a1 = agent("ana", "./skills");
+        a1.inbound_bindings.push(InboundBinding {
+            plugin: "telegram".into(),
+            instance: Some("missing".into()),
+            ..Default::default()
+        });
+        let mut a2 = agent("bob", "./skills");
+        a2.inbound_bindings.push(InboundBinding {
+            plugin: "whatsapp".into(),
+            model: Some(ModelConfig {
+                provider: "minimax".into(),
+                model: "x".into(),
+            }),
+            ..Default::default()
+        });
+        let errors = collect_binding_errors(&[a1, a2], &[], &KnownTools::default());
+        assert_eq!(errors.len(), 2, "both agent errors should be collected");
+        assert!(errors
+            .iter()
+            .any(|e| matches!(e, BindingValidationError::UnknownTelegramInstance { .. })));
+        assert!(errors
+            .iter()
+            .any(|e| matches!(e, BindingValidationError::ProviderMismatch { .. })));
+    }
+
+    #[test]
+    fn validate_agents_aggregates_into_single_error_message() {
+        let mut a = agent("ana", "./skills");
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "telegram".into(),
+            instance: Some("ana_tg".into()),
+            ..Default::default()
+        });
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "telegram".into(),
+            instance: Some("ana_tg".into()),
+            ..Default::default()
+        });
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "whatsapp".into(),
+            model: Some(ModelConfig {
+                provider: "minimax".into(),
+                model: "x".into(),
+            }),
+            ..Default::default()
+        });
+        let tg = vec![tg_instance("ana_tg")];
+        let err = validate_agents(&[a], &tg, &KnownTools::default()).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("duplicate binding"));
+        assert!(msg.contains("provider"));
+        assert!(msg.contains("issue"), "message should count issues, got: {msg}");
     }
 
     #[test]
