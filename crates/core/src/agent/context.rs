@@ -42,6 +42,12 @@ pub struct AgentContext {
     /// match (delegation receive, heartbeat, tests); consumers fall
     /// back to the behavior's base registry in that case.
     pub effective_tools: Option<Arc<ToolRegistry>>,
+    /// Phase 17 — resolver that maps this agent's id to the opaque
+    /// credential handles it is allowed to use for outbound traffic.
+    /// `None` in early-boot / test contexts; consumers must treat that
+    /// as "no credentials configured" (tools return an unbound error
+    /// rather than publishing from an arbitrary account).
+    pub credentials: Option<Arc<agent_auth::AgentCredentialResolver>>,
 }
 impl AgentContext {
     pub fn new(
@@ -62,6 +68,7 @@ impl AgentContext {
             session_id: None,
             effective: None,
             effective_tools: None,
+            credentials: None,
         }
     }
     pub fn with_memory(mut self, memory: Arc<LongTermMemory>) -> Self {
@@ -90,6 +97,13 @@ impl AgentContext {
     }
     pub fn with_effective_tools(mut self, tools: Arc<ToolRegistry>) -> Self {
         self.effective_tools = Some(tools);
+        self
+    }
+    pub fn with_credentials(
+        mut self,
+        credentials: Arc<agent_auth::AgentCredentialResolver>,
+    ) -> Self {
+        self.credentials = Some(credentials);
         self
     }
     /// Returns the active effective policy, synthesising one from the

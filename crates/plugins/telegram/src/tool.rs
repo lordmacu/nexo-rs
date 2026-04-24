@@ -41,9 +41,27 @@ fn allowlist_denied(ctx: &AgentContext, chat_id: i64) -> bool {
 }
 
 async fn publish_outbound(ctx: &AgentContext, payload: Value) -> anyhow::Result<()> {
-    let topic = "plugin.outbound.telegram";
-    let event = Event::new(topic, &ctx.agent_id, payload);
-    ctx.broker.publish(topic, event).await?;
+    // Phase 17 — resolve the target bot instance from the agent's
+    // `credentials.telegram` binding. Legacy single-bot deployments
+    // without a resolver stay on the un-suffixed topic for back-compat.
+    let topic = match ctx.credentials.as_ref() {
+        Some(resolver) => match resolver.resolve(&ctx.agent_id, agent_auth::handle::TELEGRAM) {
+            Ok(handle) => {
+                agent_auth::audit::audit_outbound(&handle, "plugin.outbound.telegram");
+                agent_auth::telemetry::inc_usage(
+                    agent_auth::handle::TELEGRAM,
+                    handle.account_id_raw(),
+                    &ctx.agent_id,
+                    "outbound",
+                );
+                format!("plugin.outbound.telegram.{}", handle.account_id_raw())
+            }
+            Err(_) => "plugin.outbound.telegram".to_string(),
+        },
+        None => "plugin.outbound.telegram".to_string(),
+    };
+    let event = Event::new(&topic, &ctx.agent_id, payload);
+    ctx.broker.publish(&topic, event).await?;
     Ok(())
 }
 

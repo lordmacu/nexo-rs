@@ -338,6 +338,49 @@ async fn main() -> Result<()> {
     )
     .context("per-binding override validation failed")?;
 
+    // Phase 17 — credential gauntlet. Collects every invariant error
+    // across WhatsApp / Telegram / Google in one pass. Lenient level
+    // on boot so legacy deployments keep working; CI should run
+    // `agent --check-config --strict` to gate PRs.
+    let google_auth = agent_auth::load_google_auth(&config_dir)
+        .context("failed to load google-auth.yaml")?;
+    let credentials = match agent_auth::build_credentials(
+        &cfg.agents.agents,
+        &cfg.plugins.whatsapp,
+        &cfg.plugins.telegram,
+        &google_auth,
+        agent_auth::StrictLevel::Lenient,
+    ) {
+        Ok(bundle) => {
+            for w in &bundle.warnings {
+                tracing::warn!(target: "credentials", "{w}");
+            }
+            {
+                use agent_auth::CredentialStore;
+                tracing::info!(
+                    wa = bundle.stores.whatsapp.list().len(),
+                    tg = bundle.stores.telegram.list().len(),
+                    google = bundle.stores.google.list().len(),
+                    "credential gauntlet passed"
+                );
+            }
+            Some(bundle)
+        }
+        Err(errs) => {
+            // Don't hard-fail boot on a legacy config that predates the
+            // gauntlet — but surface every error loudly and disable the
+            // resolver so outbound tools fall back to legacy topics.
+            tracing::error!(
+                errors = errs.len(),
+                "credential gauntlet rejected config — running without per-agent credential enforcement"
+            );
+            for e in &errs {
+                tracing::error!(target: "credentials", "{e}");
+            }
+            None
+        }
+    };
+
     // Extension discovery (Phase 11.2) -------------------------------------
     // Runs before anything that depends on extensions. Spawns stdio runtimes
     // (Phase 11.3) for each discovered candidate and keeps them alive for
@@ -1304,6 +1347,9 @@ async fn main() -> Result<()> {
             runtime = runtime.with_memory(mem);
         }
         runtime = runtime.with_peers(Arc::clone(&peer_directory));
+        if let Some(ref bundle) = credentials {
+            runtime = runtime.with_credentials(Arc::clone(&bundle.resolver));
+        }
         runtime
             .start()
             .await

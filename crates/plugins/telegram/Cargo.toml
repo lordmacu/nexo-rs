@@ -20,6 +20,7 @@ agent-broker = { path = "../../broker" }
 agent-core   = { path = "../../core" }
 agent-config = { path = "../../config" }
 agent-llm    = { path = "../../llm" }
+agent-auth   = { path = "../../auth" }
 
 [dev-dependencies]
 wiremock     = "0.6"

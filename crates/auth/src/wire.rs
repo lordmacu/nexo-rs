@@ -78,7 +78,10 @@ pub fn build_credentials(
     let mut errors: Vec<BuildError> = Vec::new();
 
     // ── 1. Path claims (session_dir WA + credential files Google) ──
-    let mut session_claims: Vec<PathClaim> = whatsapp
+    // Only labelled instances participate in the per-agent resolver.
+    // Unlabelled (instance=None) accounts keep using the legacy single
+    // outbound topic `plugin.outbound.whatsapp` as back-compat.
+    let session_claims: Vec<PathClaim> = whatsapp
         .iter()
         .filter_map(|c| {
             c.instance.as_ref().map(|ins| PathClaim {
@@ -88,16 +91,6 @@ pub fn build_credentials(
             })
         })
         .collect();
-    // Also include the legacy single-account case (instance = None).
-    for c in whatsapp {
-        if c.instance.is_none() {
-            session_claims.push(PathClaim {
-                channel: WHATSAPP,
-                instance: "default".to_string(),
-                path: c.session_dir.clone().into(),
-            });
-        }
-    }
 
     let (canonical, canon_errs) = canonicalize_session_dirs(&session_claims);
     errors.extend(canon_errs);
@@ -121,22 +114,30 @@ pub fn build_credentials(
     crate::telemetry::set_insecure_paths(insecure_count);
 
     // ── 2. Build per-channel stores ──
+    // Skip unlabelled instances — they stay on the legacy outbound
+    // topic and do not appear in the resolver's binding surface.
     let wa_accounts: Vec<WhatsappAccount> = whatsapp
         .iter()
-        .map(|c| WhatsappAccount {
-            instance: c.instance.clone().unwrap_or_else(|| "default".into()),
-            session_dir: c.session_dir.clone().into(),
-            media_dir: c.media_dir.clone().into(),
-            allow_agents: c.allow_agents.clone(),
+        .filter_map(|c| {
+            let instance = c.instance.as_ref()?.clone();
+            Some(WhatsappAccount {
+                instance,
+                session_dir: c.session_dir.clone().into(),
+                media_dir: c.media_dir.clone().into(),
+                allow_agents: c.allow_agents.clone(),
+            })
         })
         .collect();
     let tg_accounts: Vec<TelegramAccount> = telegram
         .iter()
-        .map(|c| TelegramAccount {
-            instance: c.instance.clone().unwrap_or_else(|| "default".into()),
-            token: c.token.clone(),
-            allow_agents: c.allow_agents.clone(),
-            allowed_chat_ids: c.allowlist.chat_ids.clone(),
+        .filter_map(|c| {
+            let instance = c.instance.as_ref()?.clone();
+            Some(TelegramAccount {
+                instance,
+                token: c.token.clone(),
+                allow_agents: c.allow_agents.clone(),
+                allowed_chat_ids: c.allowlist.chat_ids.clone(),
+            })
         })
         .collect();
     let mut goog_accounts: Vec<GoogleAccount> = google
