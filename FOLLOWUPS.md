@@ -1727,10 +1727,6 @@ still-open minor polish tasks — none block production use.
   works but would key a nonsense cache entry if an unbound path ever
   goes through `ToolRegistryCache::get_or_build`. Either forbid that
   path (panic in debug) or switch to `Option<usize>` for the index.
-- **Skills check is relative to CWD**: `binding_validate` resolves
-  `skills_dir / skill` via `Path::new`. Works for `cargo run` from
-  `proyecto/`; breaks if the binary is invoked from a different cwd.
-  Same problem exists at agent level — fix both together.
 - **Hot-reload of per-binding config**: the effective policy cache
   and tool registry are built at runtime::new. Config changes need a
   process restart. A future hot-reload path would need to invalidate
