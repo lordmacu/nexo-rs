@@ -1,0 +1,39 @@
+# Gmail poller — background task that polls Gmail on a fixed interval
+# and routes matching emails to channel plugins. Zero LLM in the hot
+# path. Dedup via Gmail UNREAD label (marks read after dispatch).
+#
+# Pre-req: OAuth tokens in `token_path` (generated via `agent setup`
+# google-auth for any agent). The poller reads them read-only; only
+# the google plugin mutates via the refresh flow.
+#
+# Delete this file to disable the feature entirely.
+gmail_poller:
+  enabled: true
+  # Seconds between polls. 60 = 1 min. Lower = faster notifications +
+  # more Gmail API calls (quota: 1 billion units/day, a list+modify
+  # costs ~15 units, so 60s ≈ 21,600 units/day — well within budget).
+  interval_secs: 60
+  # Absolute path to the tokens. We share kate's by default; pairing
+  # via `setup google-auth` for kate is the canonical source.
+  token_path: ./data/workspace/kate/google_tokens.json
+
+  jobs:
+    # Sales-lead route — matches the standard "Nueva solicitud de
+    # llamada" template used by landing forms. Adjust `extract`
+    # regexes if the form copy changes.
+    - name: solicitud-llamada
+      query: 'subject:"Nueva solicitud de llamada" is:unread'
+      forward_to_subject: plugin.outbound.whatsapp.default
+      forward_to: "573115728852@s.whatsapp.net"
+      extract:
+        nombre:   '(?is)nombre[:\s]+([^\n\r]+)'
+        telefono: '(?is)tel[eé]fono[:\s]+([+\d\s\-]+)'
+        email:    '(?is)e-?mail[:\s]+([\w.@+-]+)'
+        mensaje:  '(?is)mensaje[:\s]+(.+?)(?:\n\n|$)'
+      message_template: |
+        📞 Nueva solicitud de llamada
+        Cliente: {nombre}
+        Tel: {telefono}
+        Email: {email}
+        Mensaje: {mensaje}
+      mark_read_on_dispatch: true
