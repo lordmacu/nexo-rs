@@ -74,11 +74,27 @@ pub struct AgentRuntime {
     /// AgentContext the runtime builds. `None` in tests / no-credential
     /// boot paths; consumers fall back to legacy topics in that case.
     credentials: Option<Arc<agent_auth::AgentCredentialResolver>>,
-    /// Cache of filtered registries keyed by `(agent_id, binding_index)`
-    /// — built lazily on first intake per binding.
+    /// Legacy cache — still owned by the runtime for back-compat with
+    /// any test construction path. Hot-reload reads the per-snapshot
+    /// `tool_cache` instead; see [`RuntimeSnapshot::tool_cache`].
     tool_cache: Arc<super::tool_registry_cache::ToolRegistryCache>,
+    /// Phase 18 — reload control channel. The coordinator sends
+    /// `Apply(snapshot)` to atomically swap; the runtime reads the
+    /// new snapshot from the next event onwards (apply-on-next).
+    reload_tx: mpsc::Sender<ReloadCommand>,
+    /// Receiver owned by the runtime until `start()` moves it into
+    /// the select loop. `Option` because it can only be taken once.
+    reload_rx: Arc<Mutex<Option<mpsc::Receiver<ReloadCommand>>>>,
     shutdown: CancellationToken,
     tasks: Arc<Mutex<JoinSet<()>>>,
+}
+
+/// Commands the reload coordinator sends to per-agent runtimes.
+#[derive(Debug)]
+pub enum ReloadCommand {
+    /// Swap in a new snapshot. Picked up by the next event's
+    /// `snapshot.load()` read — in-flight turns keep the old Arc.
+    Apply(Arc<RuntimeSnapshot>),
 }
 impl AgentRuntime {
     pub fn new(agent: Arc<Agent>, broker: AnyBroker, sessions: Arc<SessionManager>) -> Self {
@@ -102,6 +118,7 @@ impl AgentRuntime {
             }
         }
         let initial_snapshot = RuntimeSnapshot::bare(Arc::clone(&agent.config), 0);
+        let (reload_tx, reload_rx) = mpsc::channel(4);
         Self {
             agent,
             broker,
@@ -118,6 +135,8 @@ impl AgentRuntime {
             tool_base: None,
             credentials: None,
             tool_cache: Arc::new(super::tool_registry_cache::ToolRegistryCache::new()),
+            reload_tx,
+            reload_rx: Arc::new(Mutex::new(Some(reload_rx))),
             shutdown: CancellationToken::new(),
             tasks: Arc::new(Mutex::new(JoinSet::new())),
         }
@@ -152,6 +171,12 @@ impl AgentRuntime {
     pub fn swap_snapshot(&self, new: Arc<RuntimeSnapshot>) {
         self.snapshot.store(new);
     }
+    /// Clone the `ReloadCommand` sender so the coordinator can push
+    /// `Apply` commands. One sender per agent runtime; the receiver is
+    /// drained inside `start()`.
+    pub fn reload_sender(&self) -> mpsc::Sender<ReloadCommand> {
+        self.reload_tx.clone()
+    }
     /// Attach the credential resolver. All `AgentContext`s built by
     /// this runtime inherit it so outbound tools can look up the
     /// agent's bound instance instead of publishing to the legacy
@@ -169,6 +194,19 @@ impl AgentRuntime {
     pub async fn start(&self) -> anyhow::Result<()> {
         let plugin_topic = "plugin.inbound.>";
         let mut plugin_sub = self.broker.subscribe(plugin_topic).await?;
+        // Phase 18 — take the reload receiver exactly once. Subsequent
+        // start() calls on the same runtime would starve reload; the
+        // None branch logs a warn instead of panicking to keep test
+        // code that re-starts runtimes honest.
+        let reload_rx = self.reload_rx.lock().await.take();
+        if reload_rx.is_none() {
+            tracing::warn!(
+                agent_id = %self.agent.id,
+                "reload receiver already taken — hot-reload disabled for this runtime start"
+            );
+        }
+        let mut reload_rx = reload_rx;
+        let snapshot = Arc::clone(&self.snapshot);
         let heartbeat_topic = heartbeat_topic(&self.agent.id);
         let mut heartbeat_sub = self.broker.subscribe(&heartbeat_topic).await?;
         let route_inbound_topic = route_topic(&self.agent.id);
@@ -209,6 +247,37 @@ impl AgentRuntime {
             ctx = ctx.with_router(Arc::clone(&router));
             loop {
                 tokio::select! {
+                    biased;
+                    // Phase 18 — reload command drains first so a
+                    // burst of inbound events can't starve a pending
+                    // config swap. `biased` keeps arm ordering stable.
+                    cmd = async {
+                        match reload_rx.as_mut() {
+                            Some(rx) => rx.recv().await,
+                            None => std::future::pending().await,
+                        }
+                    } => {
+                        match cmd {
+                            Some(ReloadCommand::Apply(new_snap)) => {
+                                let version = new_snap.version;
+                                snapshot.store(new_snap);
+                                crate::telemetry::set_runtime_config_version(&agent.id, version);
+                                crate::telemetry::inc_config_reload_applied();
+                                tracing::info!(
+                                    agent_id = %agent.id,
+                                    version,
+                                    "config reload: snapshot applied",
+                                );
+                            }
+                            None => {
+                                tracing::debug!(agent_id = %agent.id, "reload channel closed");
+                                // Channel closed just means the
+                                // coordinator went away; keep serving
+                                // with the current snapshot.
+                                reload_rx = None;
+                            }
+                        }
+                    }
                     event = plugin_sub.next() => {
                         let Some(event) = event else { break };
                         let session_id = event.session_id.unwrap_or_else(Uuid::new_v4);
