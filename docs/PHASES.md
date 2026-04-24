@@ -11,7 +11,7 @@ beyond surface docs.
 
 Legend: `⬜ pending  🔄 in progress  ✅ done`
 
-Progress: **2 / 18 phases done, 0 in progress**
+Progress: **3 / 18 phases done, 0 in progress**
 
 ---
 
@@ -65,7 +65,7 @@ the agent emitting an outbound reply.
 
 ---
 
-## Phase D2 — Configuration   ⬜
+## Phase D2 — Configuration   ✅
 
 Mapping to phase 1.2 + scattered config additions.
 
@@ -73,17 +73,17 @@ Pages: `config/layout.md`, `config/agents.md`, `config/llm.md`,
 `config/broker.md`, `config/memory.md`, `config/drop-in.md`.
 
 Deep-dive checklist:
-- [ ] Full layout tree of `config/` with description per file
-- [ ] Env var resolution rules: `${VAR}`, `${VAR:-default}`,
+- [x] Full layout tree of `config/` with description per file
+- [x] Env var resolution rules: `${VAR}`, `${VAR:-default}`,
   `${file:./secrets/x}`, `${file:/run/secrets/x}`, path-traversal rules
-- [ ] Secret precedence: env → file → docker secret → error
-- [ ] Full `agents.yaml` field reference (every key, every constraint)
-- [ ] Drop-in directory: merge order, override rules, `.example.yaml`
+- [x] Secret precedence: env → file → docker secret → error
+- [x] Full `agents.yaml` field reference (every key, every constraint)
+- [x] Drop-in directory: merge order, override rules, `.example.yaml`
   convention, gitignore reasoning
-- [ ] `allowed_tools` semantics (build-time pruning vs runtime filter)
-- [ ] `inbound_bindings` and `outbound_allowlist` with examples
-- [ ] Per-provider LLM config schema + auth modes
-- [ ] Memory config: per-agent isolation, DB location, retention
+- [x] `allowed_tools` semantics (build-time pruning vs runtime filter)
+- [x] `inbound_bindings` and `outbound_allowlist` with examples
+- [x] Per-provider LLM config schema + auth modes
+- [x] Memory config: per-agent isolation, DB location, retention
 
 **Done criteria:** every field documented with type, default, example,
 and at least one "common mistake" callout.
