@@ -1,6 +1,10 @@
 # nexo-rs
 
-[📘 Documentation](https://lordmacu.github.io/nexo-rs/) · [Contributing](./docs/src/contributing.md) · [License](#license)
+[![docs](https://img.shields.io/badge/docs-latest-blue)](https://lordmacu.github.io/nexo-rs/)
+[![api](https://img.shields.io/badge/api-rustdoc-orange)](https://lordmacu.github.io/nexo-rs/api/)
+[![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-green)](#license)
+
+[📘 Documentation](https://lordmacu.github.io/nexo-rs/) · [API reference](https://lordmacu.github.io/nexo-rs/api/) · [Contributing](./docs/src/contributing.md) · [License](#license)
 
 A Rust framework for building **multi-agent** LLM systems that live on
 real messaging channels — WhatsApp, Telegram, email — instead of a chat

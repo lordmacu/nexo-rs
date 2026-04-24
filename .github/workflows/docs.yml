@@ -48,6 +48,37 @@ jobs:
       - name: Build mdBook
         run: mdbook build docs
 
+      - name: Sanity-check links in built book
+        run: |
+          # Fail the build if any generated page references a path under
+          # docs/book that doesn't exist on disk. Lightweight alternative
+          # to mdbook-linkcheck (which is incompatible with mdbook 0.5).
+          set -euo pipefail
+          missing=0
+          while IFS= read -r -d '' html; do
+            while read -r href; do
+              [[ "$href" == "" || "$href" == "#"* || "$href" == *"://"* || "$href" == "/"* ]] && continue
+              target_relative="${href%%#*}"
+              [[ "$target_relative" == "" ]] && continue
+              # Resolve relative to the referring file's directory.
+              dir="$(dirname "$html")"
+              cand="$dir/$target_relative"
+              if [[ "$cand" == *"/" ]]; then
+                cand="${cand}index.html"
+              fi
+              # Normalize trivial ../ segments.
+              cand_resolved="$(python3 -c "import os,sys; print(os.path.normpath(sys.argv[1]))" "$cand")"
+              if [[ ! -e "$cand_resolved" ]]; then
+                echo "broken link: $html -> $href (resolved $cand_resolved)"
+                missing=$((missing + 1))
+              fi
+            done < <(grep -Eoh 'href="[^"]+"' "$html" | sed 's/^href="//;s/"$//')
+          done < <(find docs/book -name '*.html' -print0)
+          if [[ "$missing" -gt 0 ]]; then
+            echo "$missing broken local links"
+            exit 1
+          fi
+
       - name: Build rustdoc (cargo doc --workspace --no-deps)
         run: cargo doc --workspace --no-deps --locked
 

@@ -11,7 +11,7 @@ beyond surface docs.
 
 Legend: `⬜ pending  🔄 in progress  ✅ done`
 
-Progress: **16 / 18 phases done, 0 in progress**
+Progress: **17 / 18 phases done, 1 deferred (D16 translations)**
 
 ---
 
@@ -396,17 +396,26 @@ the same domain.
 
 ---
 
-## Phase D16 — Translations   ⬜ (optional)
+## Phase D16 — Translations   ⏸ deferred
 
 - [ ] Spanish mirror under `docs/src-es/` once English stabilizes
 
+Deferred until docs content settles. Not worth maintaining a parallel
+tree while subsystems still evolve; revisit after a v1.0 cut.
+
 ---
 
-## Phase D17 — Polish & launch   ⬜
+## Phase D17 — Polish & launch   ✅
 
-- [ ] Broken-link check in CI
-- [ ] Spell check (typos)
-- [ ] Every page has at least one diagram or concrete example
-- [ ] "Edit this page" link on every page works
-- [ ] Custom favicon + social-share meta
-- [ ] Add docs badge to README
+- [x] Broken-link check in CI — lightweight grep-based script in
+  `.github/workflows/docs.yml` (mdbook-linkcheck preprocessor is
+  incompatible with mdbook 0.5, so we rolled our own for local links
+  in the built site)
+- [ ] Spell check (typos) — skipped; low-value noise against code
+  identifiers
+- [x] Every page has at least one diagram or concrete example —
+  verified manually across every page built so far
+- [x] "Edit this page" link on every page works — `edit-url-template`
+  wired in `book.toml` → GitHub edit URL
+- [ ] Custom favicon + social-share meta — deferred; no asset yet
+- [x] Add docs + api + license badges to README
