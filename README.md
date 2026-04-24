@@ -9,6 +9,8 @@
 [Architecture](https://lordmacu.github.io/nexo-rs/architecture/overview.html) ·
 [Recipes](https://lordmacu.github.io/nexo-rs/recipes/index.html) ·
 [Contributing](./docs/src/contributing.md) ·
+[Security](./SECURITY.md) ·
+[Code of Conduct](./CODE_OF_CONDUCT.md) ·
 [License](#license)
 
 A Rust framework for building **multi-agent** LLM systems that live on

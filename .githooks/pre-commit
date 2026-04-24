@@ -34,6 +34,10 @@ _docs_sync_check() {
     case "$f" in
       .githooks/*|README.md|LICENSE*|NOTICE|.gitignore|.gitattributes|*.md)
         continue ;;
+      # GitHub UI chrome (not runtime):
+      .github/ISSUE_TEMPLATE/*|.github/PULL_REQUEST_TEMPLATE.md|\
+      .github/CODEOWNERS|.github/FUNDING.yml|.github/dependabot.yml)
+        continue ;;
     esac
 
     # Test-only files.
