@@ -1,0 +1,108 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build binaries for"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: false
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: true
+          - target: x86_64-apple-darwin
+            os: macos-13
+            cross: false
+          - target: aarch64-apple-darwin
+            os: macos-14
+            cross: false
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.cross
+        run: cargo install cross --locked --version ^0.2
+
+      - name: Build agent binary
+        shell: bash
+        run: |
+          if [[ "${{ matrix.cross }}" == "true" ]]; then
+            cross build --release --bin agent --locked --target ${{ matrix.target }}
+          else
+            cargo build --release --bin agent --locked --target ${{ matrix.target }}
+          fi
+
+      - name: Package archive
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref="${{ github.event.inputs.tag || github.ref_name }}"
+          name="nexo-rs-${ref}-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          cp "target/${{ matrix.target }}/release/agent" "dist/$name/agent"
+          cp README.md LICENSE-MIT LICENSE-APACHE NOTICE CHANGELOG.md "dist/$name/"
+          cd dist
+          tar -czf "$name.tar.gz" "$name"
+          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+          echo "archive=dist/$name.tar.gz"         >> "$GITHUB_OUTPUT"
+          echo "checksum=dist/$name.tar.gz.sha256" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nexo-rs-${{ matrix.target }}
+          path: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.checksum }}
+
+  publish:
+    name: attach to release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Attach assets to GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          # Upload each archive + checksum. `--clobber` lets re-runs
+          # replace stale artifacts from a previous run of the same tag.
+          gh release upload "$tag" artifacts/*.tar.gz artifacts/*.sha256 \
+            --repo ${{ github.repository }} --clobber

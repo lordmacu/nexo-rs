@@ -88,6 +88,7 @@
 - [Metrics (Prometheus)](./ops/metrics.md)
 - [Logging](./ops/logging.md)
 - [DLQ](./ops/dlq.md)
+- [Config hot-reload](./ops/hot-reload.md)
 
 # Recipes
 
