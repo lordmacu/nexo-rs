@@ -934,17 +934,44 @@ async fn main() -> Result<()> {
             agent_plugin_telegram::register_telegram_tools(&tools);
             tracing::info!(agent = %agent_id, "registered telegram_* tools for agent");
         }
-        // Google OAuth tools — gated on `agents.<id>.google_auth` being
-        // set. The client holds the refresh_token on disk at
+        // Google OAuth tools — gated on either `agents.<id>.google_auth`
+        // (legacy inline) or an entry in `plugins/google-auth.yaml`
+        // resolved via the credential store (phase 17). The client
+        // holds the refresh_token on disk at
         // `<workspace>/<token_file>` so consent only runs once.
-        if let Some(gcfg) = agent_cfg.google_auth.as_ref() {
-            let core_cfg = agent_plugin_google::GoogleAuthConfig {
+        let google_core_cfg = agent_cfg
+            .google_auth
+            .as_ref()
+            .map(|gcfg| agent_plugin_google::GoogleAuthConfig {
                 client_id: gcfg.client_id.clone(),
                 client_secret: gcfg.client_secret.clone(),
                 scopes: gcfg.scopes.clone(),
                 token_file: gcfg.token_file.clone(),
                 redirect_port: gcfg.redirect_port,
-            };
+            })
+            .or_else(|| {
+                credentials
+                    .as_ref()
+                    .and_then(|b| b.stores.google.account_for_agent(&agent_cfg.id))
+                    .and_then(|acct| {
+                        let cid = std::fs::read_to_string(&acct.client_id_path).ok()?;
+                        let csec = std::fs::read_to_string(&acct.client_secret_path).ok()?;
+                        let token_file = acct
+                            .token_path
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("google_tokens.json")
+                            .to_string();
+                        Some(agent_plugin_google::GoogleAuthConfig {
+                            client_id: cid.trim().to_string(),
+                            client_secret: csec.trim().to_string(),
+                            scopes: acct.scopes.clone(),
+                            token_file,
+                            redirect_port: 8765,
+                        })
+                    })
+            });
+        if let Some(core_cfg) = google_core_cfg {
             let workspace_dir = if agent_cfg.workspace.trim().is_empty() {
                 PathBuf::from("./data/workspace")
             } else {

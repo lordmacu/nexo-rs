@@ -11,7 +11,7 @@ beyond surface docs.
 
 Legend: `⬜ pending  🔄 in progress  ✅ done`
 
-Progress: **13 / 18 phases done, 0 in progress**
+Progress: **14 / 18 phases done, 0 in progress**
 
 ---
 
@@ -339,18 +339,24 @@ expanded examples.
 
 ---
 
-## Phase D13 — Recipes & tutorials   ⬜
+## Phase D13 — Recipes & tutorials   ✅
 
-Pages: add under `recipes/` (new top-level).
+Pages: `recipes/` registered in SUMMARY under new "Recipes" section.
 
-Ideas:
-- [ ] "Build a WhatsApp sales agent like Ana"
-- [ ] "Route between two agents with `agent.route.*`"
-- [ ] "Write a custom extension in Python"
-- [ ] "Use nexo-rs as an MCP server from Claude Desktop"
-- [ ] "Run behind NATS with TLS + auth"
-
-**Done criteria:** each recipe runs end-to-end from a clean checkout.
+- [x] `recipes/index.md` — recipe catalog with one-line purpose
+- [x] `whatsapp-sales-agent.md` — drop-in agent w/ `notify_lead`
+  tool, private agents.d/ pattern, wizard pairing, outbound_allowlist
+- [x] `agent-to-agent.md` — `delegate` tool, `agent.route.*`,
+  `allowed_delegates` + `accept_delegates_from`, fan-out, guardrails
+- [x] `python-extension.md` — template-python walkthrough with full
+  working main.py JSON-RPC loop, requires.bins gating, ext install
+  --link --enable dev loop
+- [x] `mcp-from-claude-desktop.md` — enable mcp_server.yaml,
+  Claude Desktop JSON snippet, three sub-recipes (cross-session
+  memory, WhatsApp post, read-only Gmail), auth_token_env for tunnels
+- [x] `nats-tls-auth.md` — NKey generation with nsc, server config
+  with mTLS + authorization, agent broker.yaml with nkey_file,
+  smoke test via `nats` CLI, per-agent NKey isolation
 
 ---
 

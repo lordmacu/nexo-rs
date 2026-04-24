@@ -7,7 +7,7 @@ OpenClaw reference: `../research/` — study patterns, do not copy TypeScript di
 
 ## Progress
 
-**Global: 66 / 70 sub-phases done**
+**Global: 77 / 81 sub-phases done**
 
 | Phase | Done | Total |
 |-------|------|-------|
@@ -1731,6 +1731,115 @@ All green; back-compat for bindingless agents verified byte-for-byte.
 under "Per-binding capability override" (tool-name check at boot,
 aggregate validate errors, wildcard/specific overlap warning,
 provider registry check, skills CWD, hot-reload, sentinel design).**
+
+---
+
+## Phase 17 — Per-agent credentials (WhatsApp / Telegram / Google)
+
+**Goal:** Each agent declares which plugin instance / Google account it
+uses for outbound traffic. Outbound tools resolve the target instance
+from the agent's binding, not from LLM args. Boot-time gauntlet
+validates every invariant (missing instance, path overlap, insecure
+file permissions, cross-agent intent) in a single pass so operators
+fix their YAML in one edit.
+
+### 17.1 — `agent-auth` scaffold + opaque handle ✅
+- New crate `crates/auth/` with `CredentialHandle` (Debug redacts
+  raw id, fingerprint = `sha256(account_id)[..8]`), `CredentialError`,
+  `BuildError`, `CredentialStore` trait.
+- **Done:** `cargo test -p agent-auth` green; handle Debug proven not
+  to leak raw id; fingerprint pinned to known vector.
+
+### 17.2 — Boot gauntlet (paths + permissions) ✅
+- Pure functions: `canonicalize_session_dirs`, `check_duplicate_paths`,
+  `check_prefix_overlap`, `check_permissions` (linux 0o077 mask, skip
+  `/run/secrets/`, env override `CHAT_AUTH_SKIP_PERM_CHECK=1`).
+- **Done:** accumulative error reporting; 5 unit tests.
+
+### 17.3 — Per-channel stores (WA + TG + Google) ✅
+- `WhatsappCredentialStore`, `TelegramCredentialStore` (token redacted
+  in `Debug`), `GoogleCredentialStore` with per-fingerprint
+  `tokio::Mutex` refresh lock.
+- **Done:** 1:1 `agent_id` rule for Google; `allow_agents` filter for
+  WA/TG; 10 unit tests.
+
+### 17.4 — Resolver with invariant accumulation ✅
+- `AgentCredentialResolver::build` returns `Err(Vec<BuildError>)` so
+  every violation surfaces in one pass. Checks: missing instance,
+  ambiguous inbound, allow_agents exclusion, asymmetric binding
+  (warn in Lenient, error in Strict), single-inbound inference.
+- **Done:** 9 tests covering every invariant, including
+  `boot_reports_all_errors_in_one_pass`.
+
+### 17.5 — Prometheus telemetry ✅
+- 9 series: `credentials_accounts_total`, `credentials_bindings_total`,
+  `channel_account_usage_total`, `channel_acl_denied_total`,
+  `credentials_resolve_errors_total`, `credentials_breaker_state`,
+  `credentials_boot_validation_errors_total`,
+  `credentials_insecure_paths_total`,
+  `credentials_google_token_refresh_total`.
+- **Done:** `render_prometheus()` returns deterministic ordering;
+  sample test asserts every TYPE line is present.
+
+### 17.6 — Config schemas ✅
+- `AgentConfig.credentials: { whatsapp, telegram, google,
+  <channel>_asymmetric }`.
+- `WhatsappPluginConfig.allow_agents`, `TelegramPluginConfig.allow_agents`.
+- Optional `config/plugins/google-auth.yaml` with
+  `accounts: [{id, agent_id, client_id_path, client_secret_path,
+  token_path, scopes}]`.
+- `AccountConfig.agent_id: Option<String>` in gmail-poller (defaults
+  to `id` for back-compat).
+- **Done:** 4 deserialisation tests.
+
+### 17.7 — `agent --check-config [--strict]` ✅
+- New CLI subcommand runs the gauntlet + resolver against the loaded
+  config and prints a report. Exit 0 clean, 1 errors, 2 warnings-only.
+- **Done:** validated against the real `config/` — catches dangling
+  `credentials.telegram='ana_tg'` binding in
+  `ana.per-binding.example.yaml`.
+
+### 17.8 — Runtime integration ✅
+- `AgentContext.credentials: Option<Arc<AgentCredentialResolver>>`
+  + `with_credentials()` builder. `AgentRuntime` threads it into
+  every `AgentContext` it constructs.
+- `main.rs` runs the gauntlet (lenient) at boot, attaches the resolver
+  to every runtime; errors are logged but don't abort (legacy configs
+  keep working).
+- **Done:** `cargo build --workspace` + tests green.
+
+### 17.9 — Plugin tool migration ✅
+- `whatsapp_*` / `telegram_*` tools publish to
+  `plugin.outbound.<ch>.<instance>` when resolver yields a handle;
+  fall back to legacy bare topic otherwise. Emit `audit_outbound`
+  + `inc_usage{direction=outbound}` on every publish.
+- **Done:** unlabelled instances keep legacy topic (100% back-compat).
+
+### 17.10 — Google tool store lookup ✅
+- `main.rs` registers `google_*` tools either from the legacy inline
+  `agents.<id>.google_auth` block or from a matching entry in
+  `GoogleCredentialStore`. Inline → store migration happens
+  transparently in `build_credentials` (prefix `inline:` so the
+  gauntlet skips file-exists).
+- **Done:** agents without either source simply don't see `google_*`.
+
+### 17.11 — E2E isolation + fingerprint stability ✅
+- `crates/auth/tests/cross_agent_isolation.rs` — two agents, two WA
+  instances, two TG bots; verifies each resolves their own accounts
+  and Kate cannot bind to Ana's instance (boot rejects with
+  `AllowAgentsExcludes`).
+- `crates/auth/tests/fingerprint_stability.rs` — pins sha256 output
+  to a known vector + 1000-id no-collision smoke.
+- **Done:** 47 tests across `agent-auth`, no flakes.
+
+**Progress: 11/11 sub-phases done.**
+
+Deferred to follow-up (no current demand):
+- Circuit breaker per `(channel, instance)` at the dispatch layer
+  (today WA/TG plugins share the global breaker already covered by
+  Phase 2.5).
+- Hot-reload of `credentials` block without restart.
+- `agent setup google --account <id> --agent <agent_id>` CLI.
 
 ---
 

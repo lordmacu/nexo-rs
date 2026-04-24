@@ -23,6 +23,7 @@
 - [broker.yaml](./config/broker.md)
 - [memory.yaml](./config/memory.md)
 - [Drop-in agents](./config/drop-in.md)
+- [Per-agent credentials](./config/credentials.md)
 
 # LLM providers
 
@@ -85,6 +86,15 @@
 - [Metrics (Prometheus)](./ops/metrics.md)
 - [Logging](./ops/logging.md)
 - [DLQ](./ops/dlq.md)
+
+# Recipes
+
+- [Index](./recipes/index.md)
+- [WhatsApp sales agent](./recipes/whatsapp-sales-agent.md)
+- [Agent-to-agent delegation](./recipes/agent-to-agent.md)
+- [Python extension](./recipes/python-extension.md)
+- [MCP server from Claude Desktop](./recipes/mcp-from-claude-desktop.md)
+- [NATS with TLS + auth](./recipes/nats-tls-auth.md)
 
 ---
 

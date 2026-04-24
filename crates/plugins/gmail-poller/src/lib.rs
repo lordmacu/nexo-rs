@@ -45,6 +45,7 @@ fn resolve_accounts(cfg: &GmailPollerConfig) -> Result<Vec<AccountConfig>> {
         token_path: token_path.to_string(),
         client_id_path,
         client_secret_path,
+        agent_id: None,
     }])
 }
 
