@@ -28,6 +28,13 @@ screenshot.png
 agent.log
 *.log
 
+# Private agent definitions (business prompts, pricing, internal contacts).
+# Runtime loads `config/agents.d/*.yaml` and merges them with the base
+# `agents.yaml`. Keep the base file public-safe; put anything sensitive
+# (customer-facing sales scripts, tarifarios, etc.) into the drop-in dir.
+config/agents.d/*.yaml
+!config/agents.d/*.example.yaml
+
 # IDE
 .idea/
 .vscode/
