@@ -342,9 +342,16 @@ Plugins telegram/, email/, whatsapp/: cada uno tiene `src/lib.rs` vacío (1 lín
 
 ## 🟡 Phase 11.2 — Extension discovery (follow-ups)
 
-### No hay métrica Prometheus de discovery
-- Ya logeamos candidates/scanned_dirs/diagnostics. Falta un counter `agent_extensions_discovered{status=ok|disabled|invalid}` en `crates/core/src/telemetry.rs`.
-- **Acción:** añadir cuando 11.5 empiece a operar sobre la lista — así el dashboard distingue "descubierto y cargado" vs "descubierto pero inválido".
+### ~~No hay métrica Prometheus de discovery~~ ✅ Resuelto 2026-04-24
+- `crates/core/src/telemetry.rs` agrega `agent_extensions_discovered{status=ok|disabled|invalid}` (counter) y lo renderiza siempre con las 3 labels (0 por defecto cuando no hay datos).
+- `run_extension_discovery` en `src/main.rs` reporta:
+  - `ok = report.candidates.len()`
+  - `disabled = report.disabled_count`
+  - `invalid = report.invalid_count`
+- `crates/extensions/src/discovery.rs` ahora expone `DiscoveryReport.disabled_count` e `invalid_count` para evitar heurísticas en el wiring.
+- Tests:
+  - `telemetry::tests::extension_discovery_status_metrics_render` en `agent-core`
+  - `discovery::tests::scan_applies_disabled` y `scan_invalid_manifest_becomes_error_diagnostic` validan los nuevos counters en `agent-extensions`.
 
 ### ~~Symlinks ignorados por defecto~~ ✅ Resuelto 2026-04-24
 - `ExtensionsConfig.follow_links: bool` (default `false` — safe). Propagado a `ExtensionDiscovery` vía `with_follow_links(true)`.
@@ -361,12 +368,20 @@ Plugins telegram/, email/, whatsapp/: cada uno tiene `src/lib.rs` vacío (1 lín
 - Cambios en `plugin.toml` requieren reinicio del agente. Aceptable mientras extensiones no se usen en caliente.
 - **Acción:** 11.7 CLI puede añadir `agent extensions refresh` sin reiniciar el resto del runtime.
 
-### Pruning nested es O(N²)
-- `prune_nested` hace comparación cuadrática sobre candidates. N será pequeño (docenas); si crece >100 cambiar a sort-by-path + single pass.
+### ~~Pruning nested es O(N²)~~ ✅ Resuelto 2026-04-24
+- `crates/extensions/src/discovery.rs::prune_nested` ahora es `O(N * depth)`:
+  - ordena candidatos por path,
+  - mantiene `BTreeSet<PathBuf>` de roots ya aceptados,
+  - para cada candidato revisa solo su cadena de ancestros (`parent()`), en lugar de comparar contra todos.
+- Mantiene la semántica original (dropear solo descendientes estrictos).
+- Validado con el bloque completo `discovery::tests::*` en `agent-extensions` (incluye `scan_prunes_nested_plugin_toml`, `scan_handles_multiple_roots`, `discovery_is_deterministic`).
 
-### `scan_finds_valid_manifest` depende de `starts_with` sobre paths canónicos
-- En macOS/Windows, `canonicalize` puede devolver prefijos raros (UNC, `/private/...`). El guard funciona pero los logs pueden confundir.
-- **Acción:** normalizar `display()` a ruta relativa al search_path cuando sea posible.
+### ~~`scan_finds_valid_manifest` depende de `starts_with` sobre paths canónicos~~ ✅ Resuelto 2026-04-24
+- `crates/extensions/src/discovery.rs` ahora normaliza paths de diagnóstico vía `normalize_path_for_display(...)`:
+  - si el path cae bajo el `canonical_root`, lo remapea al `search_path` configurado por el operador,
+  - si no, deja el path original.
+- Efecto: en hosts donde `canonicalize` devuelve prefijos inesperados (ej. `/private/...`, UNC), los warnings/errors de discovery salen con rutas coherentes con la config.
+- Test unix de regresión: `diagnostics_use_configured_search_path_prefix_when_root_is_symlink`.
 
 ### Docker volume mount ya incluido, pero config/docker usa `/app/extensions`
 - `docker-compose.yml` monta `./extensions:/app/extensions:ro`. Si el usuario no crea `./extensions/` en host, el bind monta un directorio vacío — discovery emite 0 candidates sin warn (es el comportamiento correcto, dir existe pero vacío).

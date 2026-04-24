@@ -127,6 +127,27 @@ fn typed_value(raw: &str, kind: ValueKind) -> Result<Value> {
     })
 }
 
+/// Read a dotted-path string value from a YAML file. `None` if any
+/// segment is missing or the final value isn't a string. Used to honor
+/// operator overrides (e.g. `whatsapp.session_dir`) instead of
+/// silently overwriting them.
+pub fn get_string(file: &Path, dotted_path: &str) -> Result<Option<String>> {
+    if !file.exists() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(file).with_context(|| format!("read {}", file.display()))?;
+    let v: Value =
+        serde_yaml::from_str(&text).with_context(|| format!("parse {}", file.display()))?;
+    let mut cur = &v;
+    for segment in dotted_path.split('.') {
+        match cur.get(segment) {
+            Some(next) => cur = next,
+            None => return Ok(None),
+        }
+    }
+    Ok(cur.as_str().map(str::to_string))
+}
+
 /// Return the `workspace` string for a given agent id from `agents.yaml`.
 /// None → agent not found or no `workspace` key.
 pub fn get_agent_workspace(file: &Path, agent_id: &str) -> Result<Option<String>> {

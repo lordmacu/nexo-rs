@@ -1,6 +1,7 @@
 //! One tick of Gmail polling for a single [`JobConfig`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use agent_broker::{AnyBroker, BrokerHandle, Event};
@@ -8,25 +9,63 @@ use agent_plugin_google::GoogleAuthClient;
 use anyhow::{Context, Result};
 use regex::Regex;
 use serde_json::{json, Value};
+use tokio::sync::Mutex;
 
 use crate::config::JobConfig;
 
-/// Precompiled regex set for one job. Built once at plugin init so
-/// every tick avoids the regex compile cost.
+/// Precompiled regex set + persistent dedup cache for one job. Built
+/// once at plugin init; the cache acts as belt-and-suspenders on top
+/// of Gmail's UNREAD flag.
 pub struct CompiledJob {
     pub cfg: JobConfig,
     pub extract: HashMap<String, Regex>,
+    /// Substring/domain filters for the `From:` header (lowercased).
+    pub sender_allowlist: Vec<String>,
+    /// In-memory mirror of `<state_dir>/<job>.seen.json`. Survives
+    /// restarts so if `mark_read` fails mid-flow we still don't
+    /// re-dispatch on boot.
+    pub seen: Arc<Mutex<HashSet<String>>>,
+    pub seen_path: PathBuf,
 }
 
 impl CompiledJob {
-    pub fn new(cfg: JobConfig) -> Result<Self> {
+    pub fn new(cfg: JobConfig, state_dir: &std::path::Path) -> Result<Self> {
         let mut extract = HashMap::new();
         for (field, pattern) in &cfg.extract {
             let re = Regex::new(pattern)
                 .with_context(|| format!("invalid regex for field `{field}`: {pattern}"))?;
             extract.insert(field.clone(), re);
         }
-        Ok(Self { cfg, extract })
+        let sender_allowlist = cfg
+            .sender_allowlist
+            .iter()
+            .map(|s| s.to_lowercase())
+            .collect();
+        let seen_path = state_dir.join(format!("gmail-poller-{}.seen.json", cfg.name));
+        let seen = load_seen(&seen_path);
+        Ok(Self {
+            cfg,
+            extract,
+            sender_allowlist,
+            seen: Arc::new(Mutex::new(seen)),
+            seen_path,
+        })
+    }
+}
+
+fn load_seen(path: &std::path::Path) -> HashSet<String> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<HashSet<String>>(&s).ok())
+        .unwrap_or_default()
+}
+
+async fn persist_seen(path: &std::path::Path, seen: &HashSet<String>) {
+    if let Some(parent) = path.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+    if let Ok(json) = serde_json::to_vec(seen) {
+        let _ = tokio::fs::write(path, &json).await;
     }
 }
 
@@ -39,9 +78,19 @@ pub async fn run_once(
     google: &Arc<GoogleAuthClient>,
     broker: &AnyBroker,
 ) -> Result<usize> {
+    // Compose the effective query — base + optional `newer_than` bound.
+    // `newer_than` is a separate config field (not inline in `query`)
+    // so it's obvious on first deploy and easy to remove later.
+    let mut effective_q = job.cfg.query.clone();
+    if let Some(bound) = job.cfg.newer_than.as_deref() {
+        if !bound.trim().is_empty() {
+            effective_q.push_str(&format!(" newer_than:{bound}"));
+        }
+    }
     let list_url = format!(
-        "https://gmail.googleapis.com/gmail/v1/users/me/messages?q={}&maxResults=20",
-        urlencode(&job.cfg.query)
+        "https://gmail.googleapis.com/gmail/v1/users/me/messages?q={}&maxResults={}",
+        urlencode(&effective_q),
+        job.cfg.max_per_tick
     );
     let list: Value = google
         .authorized_call("GET", &list_url, None)
@@ -53,33 +102,64 @@ pub async fn run_once(
     };
 
     let mut dispatched = 0usize;
-    for m in messages {
+    for (idx, m) in messages.iter().take(job.cfg.max_per_tick).enumerate() {
         let Some(id) = m.get("id").and_then(Value::as_str) else {
             continue;
         };
-        if let Err(e) = process_one(id, job, google, broker).await {
-            // Log and continue; other messages in the same tick still
-            // get a chance. Gmail-side dedup via UNREAD label means a
-            // transient failure retries next tick without duplicating.
-            tracing::warn!(
-                job = %job.cfg.name,
-                message_id = %id,
-                error = %e,
-                "gmail-poller: failed to process message"
-            );
-            continue;
+        {
+            let seen = job.seen.lock().await;
+            if seen.contains(id) {
+                // Local cache hit → Gmail mark_read must have failed
+                // last time. Skip to avoid duplicate dispatch.
+                tracing::debug!(
+                    job = %job.cfg.name,
+                    message_id = %id,
+                    "gmail-poller: skip (already in seen cache)"
+                );
+                continue;
+            }
         }
-        dispatched += 1;
+        match process_one(id, job, google, broker).await {
+            Ok(true) => {
+                dispatched += 1;
+                // Throttle between dispatches so a spike doesn't
+                // hammer the downstream channel (WhatsApp rate limits
+                // sit around 1 msg/sec per chat). Skip the sleep for
+                // the last one.
+                if idx + 1 < messages.len() {
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        job.cfg.dispatch_delay_ms,
+                    ))
+                    .await;
+                }
+            }
+            Ok(false) => {
+                // Skipped intentionally (missing required field,
+                // sender not in allowlist). Don't count, don't retry.
+            }
+            Err(e) => {
+                tracing::warn!(
+                    job = %job.cfg.name,
+                    message_id = %id,
+                    error = %e,
+                    "gmail-poller: failed to process message"
+                );
+                continue;
+            }
+        }
     }
     Ok(dispatched)
 }
 
+/// Returns `Ok(true)` when the message was dispatched, `Ok(false)`
+/// when it was intentionally skipped (filter miss, missing required
+/// field), `Err` on transient failures the caller should log + retry.
 async fn process_one(
     id: &str,
     job: &CompiledJob,
     google: &Arc<GoogleAuthClient>,
     broker: &AnyBroker,
-) -> Result<()> {
+) -> Result<bool> {
     let msg_url = format!(
         "https://gmail.googleapis.com/gmail/v1/users/me/messages/{id}?format=full"
     );
@@ -89,6 +169,7 @@ async fn process_one(
         .context("get message detail")?;
 
     let subject = header_value(&msg, "Subject").unwrap_or_default();
+    let from = header_value(&msg, "From").unwrap_or_default();
     let snippet = msg
         .get("snippet")
         .and_then(Value::as_str)
@@ -96,11 +177,27 @@ async fn process_one(
         .to_string();
     let body = extract_body(&msg);
 
+    // Sender allowlist — early skip (no dispatch, no mark-read).
+    if !job.sender_allowlist.is_empty() {
+        let from_l = from.to_lowercase();
+        let allowed = job.sender_allowlist.iter().any(|needle| from_l.contains(needle));
+        if !allowed {
+            tracing::debug!(
+                job = %job.cfg.name,
+                message_id = %id,
+                from = %from,
+                "gmail-poller: sender not in allowlist, skip"
+            );
+            return Ok(false);
+        }
+    }
+
     // Apply extraction regexes against body first, fall back to
     // snippet, finally empty string so template rendering never fails.
     let mut fields: HashMap<String, String> = HashMap::new();
     fields.insert("subject".to_string(), subject.clone());
     fields.insert("snippet".to_string(), snippet.clone());
+    fields.insert("from".to_string(), from.clone());
     for (name, re) in &job.extract {
         let captured = re
             .captures(&body)
@@ -110,6 +207,27 @@ async fn process_one(
             .unwrap_or_default();
         fields.insert(name.clone(), captured);
     }
+
+    // Required-fields gate — skip dispatch if the regexes didn't find
+    // what the template depends on. The message still gets marked
+    // read so we don't pile up re-attempts on a malformed email.
+    for req in &job.cfg.require_fields {
+        let v = fields.get(req).map(String::as_str).unwrap_or("");
+        if v.is_empty() {
+            tracing::warn!(
+                job = %job.cfg.name,
+                message_id = %id,
+                required = %req,
+                "gmail-poller: required field empty, skip dispatch"
+            );
+            if job.cfg.mark_read_on_dispatch {
+                try_mark_read(id, google).await;
+            }
+            remember_seen(job, id).await;
+            return Ok(false);
+        }
+    }
+
     let text = render_template(&job.cfg.message_template, &fields);
 
     // Dispatch to the configured channel. We publish a plain outbound
@@ -124,27 +242,13 @@ async fn process_one(
         .await
         .context("publish outbound event")?;
 
-    // Dedup: flip UNREAD off. Success means next `is:unread` query
-    // won't re-match this message. If the modify fails we DO NOT bail
-    // — the message already fired, we just log and next tick may
-    // re-send once (acceptable: Gmail marks read after the second
-    // call anyway). Worst case: one duplicate notification.
+    remember_seen(job, id).await;
+
+    // Dedup flip. Failures here don't bail — `seen` cache already
+    // prevents re-dispatch next tick. Worst case: the email stays
+    // UNREAD in Gmail but we won't send it again.
     if job.cfg.mark_read_on_dispatch {
-        let modify_url = format!(
-            "https://gmail.googleapis.com/gmail/v1/users/me/messages/{id}/modify"
-        );
-        let body = json!({ "removeLabelIds": ["UNREAD"] });
-        if let Err(e) = google
-            .authorized_call("POST", &modify_url, Some(body))
-            .await
-        {
-            tracing::warn!(
-                job = %job.cfg.name,
-                message_id = %id,
-                error = %e,
-                "gmail-poller: dispatched but failed to mark read"
-            );
-        }
+        try_mark_read(id, google).await;
     }
 
     tracing::info!(
@@ -153,7 +257,37 @@ async fn process_one(
         subject = %subject,
         "gmail-poller: dispatched"
     );
-    Ok(())
+    Ok(true)
+}
+
+async fn try_mark_read(id: &str, google: &Arc<GoogleAuthClient>) {
+    let url = format!(
+        "https://gmail.googleapis.com/gmail/v1/users/me/messages/{id}/modify"
+    );
+    let body = json!({ "removeLabelIds": ["UNREAD"] });
+    if let Err(e) = google.authorized_call("POST", &url, Some(body)).await {
+        tracing::warn!(
+            message_id = %id,
+            error = %e,
+            "gmail-poller: failed to mark read"
+        );
+    }
+}
+
+async fn remember_seen(job: &CompiledJob, id: &str) {
+    let mut seen = job.seen.lock().await;
+    seen.insert(id.to_string());
+    // Cap the cache — Gmail message ids are monotonic enough that
+    // dropping old ones is safe once messages hit the `cap` line.
+    if seen.len() > 5000 {
+        // Take a snapshot, drop the 1000 lexicographically smallest.
+        let mut ids: Vec<String> = seen.iter().cloned().collect();
+        ids.sort();
+        for id in ids.into_iter().take(1000) {
+            seen.remove(&id);
+        }
+    }
+    persist_seen(&job.seen_path, &seen).await;
 }
 
 fn header_value(msg: &Value, name: &str) -> Option<String> {

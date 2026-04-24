@@ -216,4 +216,9 @@ live in [`proyecto/PHASES.md`](proyecto/PHASES.md).
 
 ## License
 
-See [`LICENSE`](LICENSE).
+Dual-licensed under either:
+
+- MIT — see [`LICENSE-MIT`](LICENSE-MIT)
+- Apache-2.0 — see [`LICENSE-APACHE`](LICENSE-APACHE)
+
+at your option. SPDX: `MIT OR Apache-2.0`.

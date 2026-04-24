@@ -26,16 +26,19 @@ pub fn defs() -> Vec<ServiceDef> {
                 },
                 FieldDef {
                     key: "session_dir",
-                    label: "Session dir (credenciales + outbox + message store)",
-                    help: Some("Ruta; debe ser persistente."),
+                    label: "Session dir (opcional — vacío = per-agent bajo <workspace>/whatsapp/default)",
+                    help: Some(
+                        "Dejar vacío para que cada agente use su propio workspace. \
+                         Llenar solo para forzar una ruta compartida (bind mount, volumen cifrado, etc).",
+                    ),
                     kind: FieldKind::Text,
-                    required: true,
-                    default: Some("./data/whatsapp-session"),
+                    required: false,
+                    default: None,
                     target: FieldTarget::Yaml {
                         file: "plugins/whatsapp.yaml",
                         path: "whatsapp.session_dir",
                     },
-                    validator: Some(validate_nonempty),
+                    validator: None,
                 },
                 FieldDef {
                     key: "media_dir",

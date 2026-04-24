@@ -67,6 +67,9 @@ static TOOL_LATENCY: LazyLock<DashMap<ToolKey, Histogram>> = LazyLock::new(DashM
 /// `"hit" | "miss" | "put" | "evict"`. Lets ops measure cache hit
 /// rate without instrumenting each handler by hand.
 static TOOL_CACHE_EVENTS: LazyLock<DashMap<ToolCallKey, AtomicU64>> = LazyLock::new(DashMap::new);
+/// Phase 11.2 follow-up — extension discovery counters by status.
+/// `status` is one of `"ok" | "disabled" | "invalid"`.
+static EXTENSIONS_DISCOVERED: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
 
 pub fn inc_messages_processed_total(agent_id: &str) {
     MESSAGES_PROCESSED
@@ -141,6 +144,18 @@ pub fn inc_tool_cache_event(agent: &str, tool: &str, event: &str) {
         .fetch_add(1, Ordering::Relaxed);
 }
 
+/// Phase 11.2 follow-up — add N extension-discovery results under one
+/// status label. This is called once per discovery pass at startup.
+pub fn add_extensions_discovered(status: &str, count: u64) {
+    if count == 0 {
+        return;
+    }
+    EXTENSIONS_DISCOVERED
+        .entry(status.to_string())
+        .or_insert_with(|| AtomicU64::new(0))
+        .fetch_add(count, Ordering::Relaxed);
+}
+
 /// Update circuit breaker state gauge. `open=true` → 1, `open=false` → 0.
 pub fn set_circuit_breaker_state(breaker: &str, open: bool) {
     CIRCUIT_BREAKER_STATE
@@ -159,6 +174,7 @@ pub fn reset_for_test() {
     TOOL_CALLS.clear();
     TOOL_LATENCY.clear();
     TOOL_CACHE_EVENTS.clear();
+    EXTENSIONS_DISCOVERED.clear();
 }
 
 pub fn render_prometheus(fallback_nats_open: bool) -> String {
@@ -264,6 +280,20 @@ pub fn render_prometheus(fallback_nats_open: bool) -> String {
                 v
             ));
         }
+    }
+
+    out.push_str(
+        "# HELP agent_extensions_discovered Total extension discovery outcomes by status.\n",
+    );
+    out.push_str("# TYPE agent_extensions_discovered counter\n");
+    for status in ["ok", "disabled", "invalid"] {
+        let v = EXTENSIONS_DISCOVERED
+            .get(status)
+            .map(|x| x.load(Ordering::Relaxed))
+            .unwrap_or(0);
+        out.push_str(&format!(
+            "agent_extensions_discovered{{status=\"{status}\"}} {v}\n"
+        ));
     }
 
     // Phase 9.2 follow-up — per-tool counter.
@@ -494,6 +524,18 @@ mod tests {
         let body = render_prometheus(false);
         assert!(body.contains("messages_processed_total{agent=\"kate\"} 2"));
         assert!(body.contains("messages_processed_total{agent=\"mori\"} 1"));
+    }
+
+    #[test]
+    fn extension_discovery_status_metrics_render() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_for_test();
+        add_extensions_discovered("ok", 2);
+        add_extensions_discovered("disabled", 1);
+        let body = render_prometheus(false);
+        assert!(body.contains("agent_extensions_discovered{status=\"ok\"} 2"));
+        assert!(body.contains("agent_extensions_discovered{status=\"disabled\"} 1"));
+        assert!(body.contains("agent_extensions_discovered{status=\"invalid\"} 0"));
     }
 
     #[test]

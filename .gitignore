@@ -38,6 +38,9 @@ config/agents.d/*.yaml
 # IDE
 .idea/
 .vscode/
+
+# Claude Code local worktrees
+.claude/worktrees/
 *.swp
 *.swo
 

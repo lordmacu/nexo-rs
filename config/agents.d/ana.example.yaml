@@ -5,8 +5,8 @@
 agents:
   - id: example_sales_agent
     model:
-      provider: anthropic
-      model: claude-haiku-4-5
+      provider: minimax
+      model: MiniMax-M2.5
     plugins:
       - whatsapp
     inbound_bindings:
