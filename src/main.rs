@@ -854,6 +854,12 @@ async fn main() -> Result<()> {
         Arc::clone(&agents_directory),
     ));
     let mut runtimes: Vec<AgentRuntime> = Vec::with_capacity(cfg.agents.agents.len());
+    // Phase 18 — collect each agent's reload channel so the coordinator
+    // can dispatch `Apply(snapshot)` on hot-reload.
+    let mut reload_senders: Vec<(
+        String,
+        tokio::sync::mpsc::Sender<agent_core::agent::runtime::ReloadCommand>,
+    )> = Vec::with_capacity(cfg.agents.agents.len());
     // Dreaming-side cancellation + handles. Each enabled agent spawns a
     // sweep loop; shutdown cancels the token and joins them with a
     // bounded timeout so SIGTERM cannot hang on an in-flight sweep.
@@ -1383,6 +1389,7 @@ async fn main() -> Result<()> {
             .with_context(|| format!("failed to start agent runtime for {agent_id}"))?;
         running_agents.fetch_add(1, Ordering::Relaxed);
         tracing::info!(agent = %agent_id, "agent runtime started");
+        reload_senders.push((agent_id.to_string(), runtime.reload_sender()));
         runtimes.push(runtime);
 
         // Dreaming (Phase 10.6) — when enabled and long-term memory + workspace
@@ -1510,6 +1517,25 @@ async fn main() -> Result<()> {
                 );
             }
         }
+    }
+
+    // Phase 18 — wire the hot-reload coordinator. It owns its own
+    // CancellationToken tied to `watcher_shutdown` so the watcher +
+    // broker subscriber exit alongside the extensions watcher on
+    // SIGTERM.
+    let reload_coord = Arc::new(agent_core::ConfigReloadCoordinator::new(
+        config_dir.clone(),
+        Arc::new(llm_registry),
+        watcher_shutdown.clone(),
+    ));
+    for (id, tx) in reload_senders.drain(..) {
+        reload_coord.register(id, tx);
+    }
+    if let Err(e) = Arc::clone(&reload_coord)
+        .start(broker.clone(), cfg.runtime.reload.clone())
+        .await
+    {
+        tracing::warn!(error = %e, "config reload coordinator failed to start — hot-reload disabled");
     }
 
     tracing::info!("agent ready — waiting for shutdown signal (SIGTERM / Ctrl+C)");
