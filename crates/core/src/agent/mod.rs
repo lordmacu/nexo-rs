@@ -36,6 +36,7 @@ pub mod taskflow_tool;
 pub mod tool_filter;
 pub mod tool_policy;
 pub mod tool_registry;
+pub mod tool_registry_cache;
 pub mod transcripts;
 pub mod types;
 pub mod workspace;
@@ -82,6 +83,7 @@ pub use session_logs_tool::SessionLogsTool;
 pub use skills::{LoadedSkill, SkillLoader};
 pub use taskflow_tool::TaskFlowTool;
 pub use tool_registry::{ToolHandler, ToolRegistry};
+pub use tool_registry_cache::ToolRegistryCache;
 pub use transcripts::{
     SessionHeader, TranscriptEntry, TranscriptLine, TranscriptRole, TranscriptWriter,
     TRANSCRIPT_VERSION,
