@@ -1708,3 +1708,45 @@ No abordado (low ROI):
   are baked in as defaults. Both are overridable via YAML, but if
   Anthropic rotates them upstream we'll need to ship a new default
   release.
+
+## Per-binding capability override (feature in progress)
+
+Landed in sessions A+B (schema, EffectiveBindingPolicy, binding_validate,
+AgentContext carrier, tool registry cache). Sessions C+D still pending.
+The items below surfaced during review of A+B — none are blockers, but
+they should be picked up before the feature is called complete.
+
+- **Enable tool-name validation at boot**: `src/main.rs` calls
+  `validate_agents` with an empty `KnownTools` catalogue because the
+  tool registry is not assembled until after extensions/MCP discovery.
+  Once Session C builds a pre-spawn catalogue, pass it in so a typo in
+  `allowed_tools` fails boot instead of silently dropping to "nothing
+  matches" at runtime.
+- **Aggregate validation errors**: `validate_agents` currently returns
+  the first `BindingValidationError` and stops. For multi-agent configs
+  the operator fixes one error, reboots, sees the next. Switch to
+  collecting every error into a `Vec<BindingValidationError>` and
+  print them all in one pass.
+- **Warn on wildcard + specific instance overlap**: a binding
+  `{plugin: telegram, instance: None}` alongside
+  `{plugin: telegram, instance: Some("x")}` is accepted today. Both
+  match the specific bot; order in the Vec decides the winner, which
+  is implicit. Emit a warn (or a hard error) when this overlap exists.
+- **agents_directory default-spread fragility**: the struct-literal
+  sites in `agents_directory.rs` and `runtime.rs`/`runtime_test.rs`
+  now use `..Default::default()` after InboundBinding gained fields.
+  A future InboundBinding field will silently default everywhere;
+  auditing for "did I mean to set this?" becomes harder. Consider a
+  builder/ctor once the schema stabilises.
+- **binding_index sentinel (`usize::MAX`) in `from_agent_defaults`**:
+  works but would key a nonsense cache entry if an unbound path ever
+  goes through `ToolRegistryCache::get_or_build`. Either forbid that
+  path (panic in debug) or switch to `Option<usize>` for the index.
+- **Provider availability check**: `binding_validate` trusts
+  `ModelConfig.provider` strings (`anthropic`, `minimax`, …). A typo
+  like `provider: anthopic` slips through and explodes at first LLM
+  call. Add a boot check against the registered LLM providers.
+- **Skills check is relative to CWD**: `binding_validate` resolves
+  `skills_dir / skill` via `Path::new`. Works for `cargo run` from
+  `proyecto/`; breaks if the binary is invoked from a different cwd.
+  Same problem exists at agent level — fix both together.
