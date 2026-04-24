@@ -1654,6 +1654,86 @@ code flow deferred, live smoke test gated (skipped in default CI).
 
 ---
 
+## Phase 16 — Per-binding capability override
+
+A single agent can now expose distinct capability surfaces per
+`InboundBinding` — narrow sales tools on WhatsApp, full power on a
+private Telegram channel, no process duplication. Shared identity,
+shared workspace, shared memory; per-channel policy.
+
+### 16.1 — Schema (InboundBinding overrides) ✅
+
+`InboundBinding` gains optional overrides: `allowed_tools`,
+`outbound_allowlist`, `skills`, `model`, `system_prompt_extra`,
+`sender_rate_limit` (untagged enum `inherit | disable | {rps, burst}`),
+`allowed_delegates`. `ModelConfig: Clone`, `InboundBinding: Default`
+so existing struct literals spread with `..Default::default()`. Seven
+YAML parse tests lock down every form including `deny_unknown_fields`.
+
+### 16.2 — EffectiveBindingPolicy + merge rules ✅
+
+`crates/core/src/agent/effective.rs`: concrete capability snapshot
+built once by `resolve(&AgentConfig, binding_index)`. Merge rules:
+replace for lists/structs, append for `system_prompt_extra` as a
+`# CHANNEL ADDENDUM` block, inherit/disable/config for rate-limit.
+`from_agent_defaults` synthesises a policy for unbound paths
+(delegation, heartbeat) keyed at `binding_index = usize::MAX`.
+`tool_allowed()` + a shared `allowlist_matches()` helper keep agent-
+level and per-binding matching in one place. 13 unit tests.
+
+### 16.3 — Boot validation ✅
+
+`binding_validate.rs` fails boot on duplicate `(plugin, instance)`,
+unknown telegram instance, missing skill directories, unknown tool
+names (when a catalogue is supplied), and provider mismatches
+between agent and binding. Soft warn on bindings with no overrides.
+Hooked in `src/main.rs` right after `AppConfig::load`. 13 unit tests.
+
+### 16.4 — AgentContext + registry cache ✅
+
+`AgentContext` gains `effective: Option<Arc<EffectiveBindingPolicy>>`
+with an `effective_policy()` helper that falls back to agent-level
+defaults. `ToolRegistryCache` (`DashMap<(AgentId, usize),
+Arc<ToolRegistry>>`) uses `entry()` for atomic `get_or_build`. Base
+registry stays authoritative; per-binding filtered clones share
+handlers. 7 unit tests.
+
+### 16.5 — Runtime intake + rate limiter ✅
+
+`match_binding_index` replaces the `binding_matches` bool; runtime
+picks the matched index, looks up the pre-resolved policy (allocated
+once at `AgentRuntime::new` to keep the hot path a single `Arc`
+clone), attaches it to the session `AgentContext`. Sender rate
+limiter is now per-binding keyed by `binding_index`, so flood on one
+channel cannot exhaust the quota on another.
+
+### 16.6 — LLM, prompt, skills, outbound, delegation ✅
+
+`llm_behavior` reads `effective.model`, `effective.skills`,
+`effective.system_prompt`, `effective.allowed_delegates`. Tool list
+shown to the LLM and tool-call execution both consult
+`effective.tool_allowed(name)` (defense-in-depth). `whatsapp_*` and
+`telegram_*` outbound tools read the per-binding allowlist from
+`ctx.effective_policy()`. Agent-level boot prune is skipped when
+bindings exist so per-binding overrides can both narrow and expand
+within the registry.
+
+### 16.7 — Example YAML + end-to-end tests ✅
+
+`config/agents.d/ana.per-binding.example.yaml` ships a two-binding
+Ana (WA sales narrow + TG full power). Integration suite:
+`crates/core/tests/per_binding_override_test.rs` — 5 end-to-end
+tests covering both-bindings dispatch, unmatched drop, legacy
+fallback, per-binding rate limit isolation, and defense-in-depth.
+All green; back-compat for bindingless agents verified byte-for-byte.
+
+**Progress: 7/7 sub-phases done. Follow-ups tracked in `FOLLOWUPS.md`
+under "Per-binding capability override" (tool-name check at boot,
+aggregate validate errors, wildcard/specific overlap warning,
+provider registry check, skills CWD, hot-reload, sentinel design).**
+
+---
+
 ## Phase dependencies summary
 
 ```
