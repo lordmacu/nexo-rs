@@ -774,6 +774,53 @@ mod tests {
         );
     }
     #[test]
+    fn match_binding_index_returns_first_winner_for_overlapping_rules() {
+        // Two bindings overlap: the wildcard `(telegram, None)` matches
+        // every telegram event, but there's also a specific
+        // `(telegram, Some("sales"))` at a higher index. The runtime
+        // must return the FIRST match in declaration order — callers
+        // that want the specific binding to win should list it before
+        // the wildcard. Locking down the rule here so a future refactor
+        // can't silently reorder.
+        let bindings = vec![
+            InboundBinding {
+                plugin: "telegram".into(),
+                instance: None,
+                ..Default::default()
+            },
+            InboundBinding {
+                plugin: "telegram".into(),
+                instance: Some("sales".into()),
+                ..Default::default()
+            },
+        ];
+        assert_eq!(
+            match_binding_index(&bindings, "telegram", Some("sales")),
+            Some(0),
+            "first-match semantics: wildcard at index 0 wins over specific at index 1"
+        );
+        // Reversed order: specific wins.
+        let bindings = vec![
+            InboundBinding {
+                plugin: "telegram".into(),
+                instance: Some("sales".into()),
+                ..Default::default()
+            },
+            InboundBinding {
+                plugin: "telegram".into(),
+                instance: None,
+                ..Default::default()
+            },
+        ];
+        assert_eq!(
+            match_binding_index(&bindings, "telegram", Some("sales")),
+            Some(0)
+        );
+        // No match → None.
+        assert_eq!(match_binding_index(&bindings, "whatsapp", None), None);
+    }
+
+    #[test]
     fn binding_matches_covers_plugin_wide_and_exact_instance() {
         let all_telegram = vec![InboundBinding {
             plugin: "telegram".into(),
