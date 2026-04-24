@@ -4,6 +4,9 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use arc_swap::ArcSwap;
 
 use crate::error::{BuildError, ResolveError};
 use crate::google::GoogleCredentialStore;
@@ -56,21 +59,25 @@ impl CredentialStores {
     }
 }
 
+/// Hot-reloadable resolver. Bindings + warnings + strict level live in
+/// `ArcSwap`/`ArcSwap`/atomic so the runtime can swap them without
+/// re-creating the `Arc<AgentCredentialResolver>` every plugin/tool
+/// holds.
 #[derive(Debug)]
 pub struct AgentCredentialResolver {
-    bindings: Arc<HashMap<AgentId, HashMap<Channel, CredentialHandle>>>,
-    warnings: Vec<String>,
-    strict: StrictLevel,
-    version: u64,
+    bindings: ArcSwap<HashMap<AgentId, HashMap<Channel, CredentialHandle>>>,
+    warnings: ArcSwap<Vec<String>>,
+    strict: ArcSwap<StrictLevel>,
+    version: AtomicU64,
 }
 
 impl AgentCredentialResolver {
     pub fn empty() -> Self {
         Self {
-            bindings: Arc::new(HashMap::new()),
-            warnings: Vec::new(),
-            strict: StrictLevel::default(),
-            version: 0,
+            bindings: ArcSwap::from_pointee(HashMap::new()),
+            warnings: ArcSwap::from_pointee(Vec::new()),
+            strict: ArcSwap::from_pointee(StrictLevel::default()),
+            version: AtomicU64::new(0),
         }
     }
 
@@ -83,6 +90,7 @@ impl AgentCredentialResolver {
         channel: Channel,
     ) -> Result<CredentialHandle, ResolveError> {
         self.bindings
+            .load()
             .get(agent_id)
             .and_then(|m| m.get(channel))
             .cloned()
@@ -93,15 +101,31 @@ impl AgentCredentialResolver {
     }
 
     pub fn version(&self) -> u64 {
-        self.version
+        self.version.load(Ordering::Relaxed)
     }
 
-    pub fn warnings(&self) -> &[String] {
-        &self.warnings
+    pub fn warnings(&self) -> Vec<String> {
+        self.warnings.load().as_ref().clone()
     }
 
     pub fn strict(&self) -> StrictLevel {
-        self.strict
+        **self.strict.load()
+    }
+
+    /// Atomic hot-reload — replaces bindings, warnings, and strict
+    /// level in one swap. Existing `CredentialHandle`s already issued
+    /// to in-flight tool calls keep working (handles are by-value
+    /// clones, the resolver only mediates lookup of *future* calls).
+    pub fn replace_state(
+        &self,
+        new_bindings: HashMap<AgentId, HashMap<Channel, CredentialHandle>>,
+        new_warnings: Vec<String>,
+        new_strict: StrictLevel,
+    ) {
+        self.bindings.store(Arc::new(new_bindings));
+        self.warnings.store(Arc::new(new_warnings));
+        self.strict.store(Arc::new(new_strict));
+        self.version.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Validate every agent binding against the given stores. Returns
@@ -213,11 +237,33 @@ impl AgentCredentialResolver {
         }
 
         Ok(Self {
-            bindings: Arc::new(bindings),
-            warnings,
-            strict,
-            version: 1,
+            bindings: ArcSwap::from_pointee(bindings),
+            warnings: ArcSwap::from_pointee(warnings),
+            strict: ArcSwap::from_pointee(strict),
+            version: AtomicU64::new(1),
         })
+    }
+
+    /// Reload entry point — runs `build` against fresh inputs and
+    /// atomically swaps the new state into `self`. Used by the
+    /// admin endpoint and integration tests.
+    pub fn rebuild(
+        &self,
+        agents: &[AgentCredentialsInput],
+        stores: &CredentialStores,
+        strict: StrictLevel,
+    ) -> Result<(), Vec<BuildError>> {
+        let fresh = Self::build(agents, stores, strict)?;
+        // Move state out of the freshly-built resolver into self.
+        let new_bindings = fresh.bindings.load_full();
+        let new_warnings = fresh.warnings.load_full();
+        let new_strict = **fresh.strict.load();
+        self.replace_state(
+            (*new_bindings).clone(),
+            (*new_warnings).clone(),
+            new_strict,
+        );
+        Ok(())
     }
 
     /// Test-only constructor that takes raw bindings. Not intended for
@@ -227,10 +273,10 @@ impl AgentCredentialResolver {
         bindings: HashMap<AgentId, HashMap<Channel, CredentialHandle>>,
     ) -> Self {
         Self {
-            bindings: Arc::new(bindings),
-            warnings: Vec::new(),
-            strict: StrictLevel::default(),
-            version: 1,
+            bindings: ArcSwap::from_pointee(bindings),
+            warnings: ArcSwap::from_pointee(Vec::new()),
+            strict: ArcSwap::from_pointee(StrictLevel::default()),
+            version: AtomicU64::new(1),
         }
     }
 }
