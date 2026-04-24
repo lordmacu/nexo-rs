@@ -1,0 +1,41 @@
+# Template for a sales / support agent. Copy to `ana.yaml` (gitignored)
+# and fill in the real prompt, pricing, and lead notification number.
+# The runtime merges every `*.yaml` in this directory into the top-level
+# `agents:` list at boot.
+agents:
+  - id: example_sales_agent
+    model:
+      provider: anthropic
+      model: claude-haiku-4-5
+    plugins:
+      - whatsapp
+    inbound_bindings:
+      - plugin: whatsapp
+    # The agent should only ever see the one tool it needs. Anything
+    # registered outside this list is pruned from the tool registry
+    # before the LLM sees it.
+    allowed_tools:
+      - whatsapp_send_message
+    # Defense-in-depth: even if the prompt is jailbroken, the tool rejects
+    # recipients that aren't in this allowlist.
+    outbound_allowlist:
+      whatsapp:
+        - "573000000000"  # replace with the human advisor's number
+    heartbeat:
+      enabled: false
+    config:
+      debounce_ms: 2000
+      queue_cap: 5
+    workspace: ./data/workspace/example_sales_agent
+    skills: []
+    skills_dir: ./skills
+    transcripts_dir: ./data/transcripts/example_sales_agent
+    dreaming:
+      enabled: false
+    system_prompt: |
+      Sos un asesor comercial. Ayudás al cliente a elegir un plan y, cuando
+      tenés los datos necesarios, llamás `whatsapp_send_message` al número
+      del allowlist para notificar al asesor humano.
+
+      Reemplazá este texto con tu flujo real, tarifario, y reglas
+      anti-manipulación. Nunca respondas fuera del guión.

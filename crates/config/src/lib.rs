@@ -4,7 +4,7 @@ pub mod types;
 pub use types::*;
 
 use anyhow::{Context, Result};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 pub struct AppConfig {
@@ -38,7 +38,8 @@ pub struct McpServerBootConfig {
 
 impl AppConfig {
     pub fn load(dir: &Path) -> Result<Self> {
-        let agents = load_required::<AgentsConfig>(dir, "agents.yaml")?;
+        let mut agents = load_required::<AgentsConfig>(dir, "agents.yaml")?;
+        merge_agents_drop_in(dir, &mut agents)?;
         let broker = load_required::<BrokerConfig>(dir, "broker.yaml")?;
         let llm = load_required::<LlmConfig>(dir, "llm.yaml")?;
         let memory = load_required::<MemoryConfig>(dir, "memory.yaml")?;
@@ -67,11 +68,49 @@ impl AppConfig {
     /// missing `llm.yaml` / `broker.yaml` / `memory.yaml` env vars so the
     /// subcommand runs on hosts that don't have a full runtime configured.
     pub fn load_for_mcp_server(dir: &Path) -> Result<McpServerBootConfig> {
-        let agents = load_required::<AgentsConfig>(dir, "agents.yaml")?;
+        let mut agents = load_required::<AgentsConfig>(dir, "agents.yaml")?;
+        merge_agents_drop_in(dir, &mut agents)?;
         let mcp_server =
             load_optional::<McpServerConfigFile>(dir, "mcp_server.yaml")?.map(|f| f.mcp_server);
         Ok(McpServerBootConfig { agents, mcp_server })
     }
+}
+
+/// Merge private agent definitions from `config/agents.d/*.yaml` into the
+/// top-level agents list. Use-case: keep `config/agents.yaml` public-safe
+/// in version control while stashing per-customer or business-sensitive
+/// agents (full prompts, pricing tables, internal contact lists) in a
+/// gitignored drop-in directory that the runtime still loads at boot.
+///
+/// Each drop-in file has the same shape as `agents.yaml`
+/// (`agents: [ ... ]`) so operators can move entries freely between the
+/// base file and the directory without restructuring.
+fn merge_agents_drop_in(dir: &Path, base: &mut AgentsConfig) -> Result<()> {
+    let drop_dir = dir.join("agents.d");
+    if !drop_dir.exists() {
+        return Ok(());
+    }
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&drop_dir)
+        .with_context(|| format!("read_dir {}", drop_dir.display()))?
+        .filter_map(|r| r.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("yaml"))
+        .collect();
+    // Deterministic load order — operators can prefix with `00-`, `10-`, etc.
+    files.sort();
+    for path in files {
+        let raw = std::fs::read_to_string(&path)
+            .with_context(|| format!("cannot read {}", path.display()))?;
+        let label = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("agents.d entry");
+        let resolved = env::resolve_placeholders(&raw, label)?;
+        let extra: AgentsConfig = serde_yaml::from_str(&resolved)
+            .with_context(|| format!("invalid config in {}", path.display()))?;
+        base.agents.extend(extra.agents);
+    }
+    Ok(())
 }
 
 /// Load a required YAML file, resolving `${ENV_VAR}` placeholders.
