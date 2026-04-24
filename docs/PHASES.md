@@ -11,7 +11,7 @@ beyond surface docs.
 
 Legend: `⬜ pending  🔄 in progress  ✅ done`
 
-Progress: **3 / 18 phases done, 0 in progress**
+Progress: **4 / 18 phases done, 0 in progress**
 
 ---
 
@@ -90,7 +90,7 @@ and at least one "common mistake" callout.
 
 ---
 
-## Phase D3 — LLM providers   ⬜
+## Phase D3 — LLM providers   ✅
 
 Mapping to phase 3 + 15 (Anthropic auth).
 
@@ -98,18 +98,18 @@ Pages: `llm/minimax.md`, `llm/anthropic.md`, `llm/openai.md`,
 `llm/retry.md`.
 
 Deep-dive checklist:
-- [ ] MiniMax M2.5: why it's the primary, API key vs Token Plan OAuth,
+- [x] MiniMax M2.5: why it's the primary, API key vs Token Plan OAuth,
   fallback chain, group_id handling
-- [ ] Anthropic: API key vs OAuth PKCE subscription, credentials reader
+- [x] Anthropic: API key vs OAuth PKCE subscription, credentials reader
   paths, token refresh cadence
-- [ ] OpenAI-compatible: how Ollama / Groq / local proxies plug in,
+- [x] OpenAI-compatible: how Ollama / Groq / local proxies plug in,
   supported model name formats
-- [ ] Tool registry: how JSON-schema tools are passed per provider
-- [ ] Rate limiter: per-provider requests/sec, quota alert threshold,
+- [x] Tool registry: how JSON-schema tools are passed per provider
+- [x] Rate limiter: per-provider requests/sec, quota alert threshold,
   429 handling with exponential backoff + jitter
-- [ ] Retry policy table: 5xx attempts, 429 attempts, backoff curves
-- [ ] Error classification: which errors retry, which fail fast
-- [ ] Streaming vs non-streaming: current stance, implications
+- [x] Retry policy table: 5xx attempts, 429 attempts, backoff curves
+- [x] Error classification: which errors retry, which fail fast
+- [x] Streaming vs non-streaming: current stance, implications
 
 **Done criteria:** reader can plug in a new provider by following the
 docs alone.
