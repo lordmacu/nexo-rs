@@ -1,0 +1,20 @@
+//! Per-agent credential management for channel plugins (WhatsApp,
+//! Telegram, Google). Exposes [`CredentialHandle`], per-channel stores,
+//! and an [`AgentCredentialResolver`] that binds an agent id to the
+//! account it is allowed to use for outbound traffic.
+//!
+//! Boot-time [`gauntlet`] validates filesystem paths, permissions, and
+//! cross-store consistency, accumulating every error in one pass so
+//! operators can fix the full YAML in a single edit.
+
+pub mod audit;
+pub mod error;
+pub mod gauntlet;
+pub mod handle;
+pub mod resolver;
+pub mod store;
+
+pub use error::{BuildError, CredentialError, ResolveError};
+pub use handle::{AgentId, Channel, CredentialHandle, Fingerprint};
+pub use resolver::{AgentCredentialResolver, StrictLevel};
+pub use store::{CredentialStore, ValidationReport};
