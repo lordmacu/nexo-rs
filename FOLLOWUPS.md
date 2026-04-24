@@ -1709,32 +1709,17 @@ No abordado (low ROI):
   Anthropic rotates them upstream we'll need to ship a new default
   release.
 
-## Per-binding capability override (feature in progress)
+## Per-binding capability override
 
-Landed in sessions A+B (schema, EffectiveBindingPolicy, binding_validate,
-AgentContext carrier, tool registry cache). Sessions C+D still pending.
-The items below surfaced during review of A+B — none are blockers, but
-they should be picked up before the feature is called complete.
+Phase 16 complete. Four review follow-ups landed as separate commits
+after the initial feature: aggregate validation errors, wildcard/
+specific overlap warning, post-assembly tool-name check, and known-
+provider validation against the LLM registry. Items below are the
+still-open minor polish tasks — none block production use.
 
-- **Enable tool-name validation at boot**: `src/main.rs` calls
-  `validate_agents` with an empty `KnownTools` catalogue because the
-  tool registry is not assembled until after extensions/MCP discovery.
-  Once Session C builds a pre-spawn catalogue, pass it in so a typo in
-  `allowed_tools` fails boot instead of silently dropping to "nothing
-  matches" at runtime.
-- **Aggregate validation errors**: `validate_agents` currently returns
-  the first `BindingValidationError` and stops. For multi-agent configs
-  the operator fixes one error, reboots, sees the next. Switch to
-  collecting every error into a `Vec<BindingValidationError>` and
-  print them all in one pass.
-- **Warn on wildcard + specific instance overlap**: a binding
-  `{plugin: telegram, instance: None}` alongside
-  `{plugin: telegram, instance: Some("x")}` is accepted today. Both
-  match the specific bot; order in the Vec decides the winner, which
-  is implicit. Emit a warn (or a hard error) when this overlap exists.
 - **agents_directory default-spread fragility**: the struct-literal
   sites in `agents_directory.rs` and `runtime.rs`/`runtime_test.rs`
-  now use `..Default::default()` after InboundBinding gained fields.
+  use `..Default::default()` after InboundBinding gained fields.
   A future InboundBinding field will silently default everywhere;
   auditing for "did I mean to set this?" becomes harder. Consider a
   builder/ctor once the schema stabilises.
@@ -1742,11 +1727,23 @@ they should be picked up before the feature is called complete.
   works but would key a nonsense cache entry if an unbound path ever
   goes through `ToolRegistryCache::get_or_build`. Either forbid that
   path (panic in debug) or switch to `Option<usize>` for the index.
-- **Provider availability check**: `binding_validate` trusts
-  `ModelConfig.provider` strings (`anthropic`, `minimax`, …). A typo
-  like `provider: anthopic` slips through and explodes at first LLM
-  call. Add a boot check against the registered LLM providers.
+- **ToolRegistryCache + filtered_clone are unused in production**:
+  the cache was built for per-binding registries but the final wiring
+  in llm_behavior filters at turn time via `effective.tool_allowed()`,
+  so the cache only runs in its own unit tests. Either wire it in to
+  skip the per-turn filter (marginal perf win, more memory) or delete
+  the dead code to reduce surface area.
 - **Skills check is relative to CWD**: `binding_validate` resolves
   `skills_dir / skill` via `Path::new`. Works for `cargo run` from
   `proyecto/`; breaks if the binary is invoked from a different cwd.
   Same problem exists at agent level — fix both together.
+- **Hot-reload of per-binding config**: the effective policy cache
+  and tool registry are built at runtime::new. Config changes need a
+  process restart. A future hot-reload path would need to invalidate
+  both caches plus the rate-limiter slots.
+- **session_id cross-binding collision (theoretical)**: a session is
+  tied to its first binding for the life of the session_id. If two
+  plugins ever generated the same session_id for the same agent the
+  policy for the later plugin would silently use the first one's
+  effective. Platform ids don't collide today, so this is a paper
+  cut — documented for future auditors.
