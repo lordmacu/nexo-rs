@@ -1,6 +1,7 @@
 use super::effective::EffectiveBindingPolicy;
 use super::peer_directory::PeerDirectory;
 use super::routing::AgentRouter;
+use super::tool_registry::ToolRegistry;
 use crate::session::SessionManager;
 use agent_broker::AnyBroker;
 use agent_config::types::agents::AgentConfig;
@@ -35,6 +36,12 @@ pub struct AgentContext {
     /// to access a policy that always has a value — it synthesises one
     /// from the agent-level config when `effective` is `None`.
     pub effective: Option<Arc<EffectiveBindingPolicy>>,
+    /// Per-binding tool registry — shares handlers with the agent's base
+    /// registry but only exposes tools that survive the binding's
+    /// `allowed_tools` filter. `None` on code paths without a binding
+    /// match (delegation receive, heartbeat, tests); consumers fall
+    /// back to the behavior's base registry in that case.
+    pub effective_tools: Option<Arc<ToolRegistry>>,
 }
 impl AgentContext {
     pub fn new(
@@ -54,6 +61,7 @@ impl AgentContext {
             mcp: None,
             session_id: None,
             effective: None,
+            effective_tools: None,
         }
     }
     pub fn with_memory(mut self, memory: Arc<LongTermMemory>) -> Self {
@@ -78,6 +86,10 @@ impl AgentContext {
     }
     pub fn with_effective(mut self, effective: Arc<EffectiveBindingPolicy>) -> Self {
         self.effective = Some(effective);
+        self
+    }
+    pub fn with_effective_tools(mut self, tools: Arc<ToolRegistry>) -> Self {
+        self.effective_tools = Some(tools);
         self
     }
     /// Returns the active effective policy, synthesising one from the

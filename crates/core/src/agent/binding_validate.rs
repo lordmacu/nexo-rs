@@ -491,6 +491,7 @@ mod tests {
             accept_delegates_from: Vec::new(),
             description: String::new(),
             google_auth: None,
+            credentials: Default::default(),
             outbound_allowlist: OutboundAllowlistConfig::default(),
         }
     }
@@ -503,6 +504,7 @@ mod tests {
             auto_transcribe: TelegramAutoTranscribeConfig::default(),
             bridge_timeout_ms: 120_000,
             instance: Some(name.into()),
+            allow_agents: Vec::new(),
         }
     }
 

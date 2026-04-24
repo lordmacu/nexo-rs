@@ -1287,6 +1287,10 @@ async fn main() -> Result<()> {
 
         let mut runtime =
             AgentRuntime::new(Arc::clone(&agent), broker.clone(), Arc::clone(&sessions));
+        // Hand the runtime the base registry so each session picks up a
+        // per-binding filtered clone from the ToolRegistryCache instead
+        // of paying a per-turn filter inside llm_behavior.
+        runtime = runtime.with_tool_base(Arc::clone(&tools));
         if let Some(mem) = memory.clone() {
             runtime = runtime.with_memory(mem);
         }
@@ -2085,6 +2089,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         description: primary.description.clone(),
         google_auth: primary.google_auth.clone(),
         outbound_allowlist: primary.outbound_allowlist.clone(),
+        credentials: primary.credentials.clone(),
     });
     let broker = AnyBroker::local();
     let sessions = Arc::new(SessionManager::new(std::time::Duration::from_secs(300), 20));

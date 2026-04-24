@@ -55,6 +55,15 @@ pub struct AgentRuntime {
     /// one exactly once at `new()` time — the hot intake path just
     /// clones an `Arc`.
     effective_policies: Arc<DashMap<usize, Arc<EffectiveBindingPolicy>>>,
+    /// Base tool registry (plugins + MCP + extensions + skills). Used
+    /// together with `tool_cache` to hand each session a filtered
+    /// `Arc<ToolRegistry>` that only exposes the binding's allowed
+    /// tools. `None` for runtimes spun up without tool wiring (tests,
+    /// no-LLM behaviors). See [`AgentRuntime::with_tool_base`].
+    tool_base: Option<Arc<super::tool_registry::ToolRegistry>>,
+    /// Cache of filtered registries keyed by `(agent_id, binding_index)`
+    /// — built lazily on first intake per binding.
+    tool_cache: Arc<super::tool_registry_cache::ToolRegistryCache>,
     shutdown: CancellationToken,
     tasks: Arc<Mutex<JoinSet<()>>>,
 }
@@ -90,6 +99,8 @@ impl AgentRuntime {
             queue_cap,
             sender_rate_limiters: Arc::new(DashMap::new()),
             effective_policies: Arc::new(effective_policies),
+            tool_base: None,
+            tool_cache: Arc::new(super::tool_registry_cache::ToolRegistryCache::new()),
             shutdown: CancellationToken::new(),
             tasks: Arc::new(Mutex::new(JoinSet::new())),
         }
@@ -100,6 +111,14 @@ impl AgentRuntime {
     }
     pub fn with_peers(mut self, peers: Arc<PeerDirectory>) -> Self {
         self.peers = Some(peers);
+        self
+    }
+    /// Attach the base tool registry used by this agent so the runtime
+    /// can hand each session a per-binding filtered view via its
+    /// internal cache. Without this, sessions fall back to the
+    /// behavior's own registry and pay a per-turn filter cost.
+    pub fn with_tool_base(mut self, tools: Arc<super::tool_registry::ToolRegistry>) -> Self {
+        self.tool_base = Some(tools);
         self
     }
     pub fn router(&self) -> Arc<AgentRouter> {
@@ -123,6 +142,8 @@ impl AgentRuntime {
         let queue_cap = self.queue_cap;
         let sender_rate_limiters = Arc::clone(&self.sender_rate_limiters);
         let effective_policies = Arc::clone(&self.effective_policies);
+        let tool_base = self.tool_base.clone();
+        let tool_cache = Arc::clone(&self.tool_cache);
         let shutdown = self.shutdown.clone();
         let tasks = Arc::clone(&self.tasks);
         let shutdown2 = shutdown.clone();
@@ -267,6 +288,20 @@ impl AgentRuntime {
                         // the map on exit (the `same_channel` check avoids a
                         // race where a newer session replaced us).
                         let effective_for_session = Arc::clone(&effective);
+                        // Pre-filtered tool registry for this binding.
+                        // Built lazily and cached per `(agent, binding_index)`
+                        // so the per-turn tool list is an `Arc` clone, not
+                        // a rebuild. `None` when the runtime wasn't given a
+                        // base registry (tests); llm_behavior falls back to
+                        // its own tool set in that case.
+                        let effective_tools_for_session = tool_base.as_ref().map(|base| {
+                            tool_cache.get_or_build(
+                                &agent.id,
+                                effective_for_session.binding_index,
+                                base,
+                                &effective_for_session.allowed_tools,
+                            )
+                        });
                         let entry = session_txs.entry(session_id).or_insert_with(|| {
                             let (tx, rx) = mpsc::channel(queue_cap);
                             let tx_for_task = tx.clone();
@@ -277,6 +312,9 @@ impl AgentRuntime {
                                 Arc::clone(&sessions),
                             );
                             ctx = ctx.with_effective(Arc::clone(&effective_for_session));
+                            if let Some(tools) = effective_tools_for_session.clone() {
+                                ctx = ctx.with_effective_tools(tools);
+                            }
                             if let Some(ref mem) = memory {
                                 ctx = ctx.with_memory(Arc::clone(mem));
                             }

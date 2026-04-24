@@ -423,17 +423,21 @@ impl LlmAgentBehavior {
         // providers ship multiple model variants behind a single API.
         let effective_policy = ctx.effective_policy();
         let model = effective_policy.model.model.clone();
-        // Filter the LLM-visible tool catalogue against the per-binding
-        // `allowed_tools`. The base registry keeps every tool so other
-        // bindings of the same agent can still see them; only this
-        // turn's tool_defs get narrowed. Empty allowlist = full set
-        // (back-compat for agents that don't restrict tools).
-        let tool_defs: Vec<_> = self
-            .tools
-            .to_tool_defs()
-            .into_iter()
-            .filter(|d| effective_policy.tool_allowed(&d.name))
-            .collect();
+        // Prefer the pre-filtered per-binding registry attached by
+        // AgentRuntime (see `with_tool_base`). Falls back to the
+        // behavior's base registry + a per-turn filter when the
+        // runtime wasn't given a tool base (legacy tests, no-LLM
+        // behaviors). Both paths produce the same visible surface;
+        // the cached path skips the clone-per-turn.
+        let tool_defs: Vec<_> = match ctx.effective_tools.as_ref() {
+            Some(pre) => pre.to_tool_defs(),
+            None => self
+                .tools
+                .to_tool_defs()
+                .into_iter()
+                .filter(|d| effective_policy.tool_allowed(&d.name))
+                .collect(),
+        };
         // Phase 3 optimisation: the relevance filter index is built
         // once at agent boot (see `with_tool_policy`). We just borrow
         // the prebuilt index here and score against a query built
