@@ -1209,6 +1209,25 @@ async fn main() -> Result<()> {
             );
         }
 
+        // Second-pass binding validation: now that the tool registry
+        // is fully assembled for THIS agent (builtins + plugins + MCP +
+        // extensions + skills) we can verify that every name listed
+        // under a binding's `allowed_tools` refers to a tool that
+        // actually exists. Typos like `allowed_tools: [whatapp_send]`
+        // would otherwise boot silently and deliver an agent that
+        // appears to have tools but cannot call any of them.
+        {
+            let defs = tools.to_tool_defs();
+            let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
+            let catalog = agent_core::agent::KnownTools::new(names);
+            agent_core::agent::validate_agent(
+                &agent_cfg,
+                &cfg.plugins.telegram,
+                &catalog,
+            )
+            .map_err(|e| anyhow::anyhow!("agent `{}` binding validation failed: {}", agent_id, e))?;
+        }
+
         let mut behavior = LlmAgentBehavior::new(llm, Arc::clone(&tools))
             .with_hooks(Arc::clone(&hooks))
             .with_tool_policy(tool_policy_registry.for_agent(&agent_id));
