@@ -11,7 +11,7 @@ beyond surface docs.
 
 Legend: `⬜ pending  🔄 in progress  ✅ done`
 
-Progress: **8 / 18 phases done, 0 in progress**
+Progress: **9 / 18 phases done, 0 in progress**
 
 ---
 
@@ -220,20 +220,21 @@ Continue, etc.) to a running nexo-rs agent.
 
 ---
 
-## Phase D8 — Skills & gating   ⬜
+## Phase D8 — Skills & gating   ✅
 
 Mapping to phase 13.
 
 Pages: `skills/catalog.md`, `skills/gating.md`.
 
 Deep-dive checklist:
-- [ ] Catalog table: all 22+ skills — name, what it does, requires,
-  link to source
-- [ ] `requires.env` / `requires.bins` enforcement — when tool is
-  dropped vs warned
-- [ ] How to add a skill as an inline extension
-- [ ] Anthropic / Gemini LLM providers as "skills" (phase 13.19)
-- [ ] brave-search / wolfram-alpha / docker-api / proxmox specifics
+- [x] Catalog table: all 22+ skills — grouped by domain (core,
+  search, ops, media, google) with requires + write-gate
+- [x] `requires.env` / `requires.bins` enforcement — extension
+  warn-and-continue vs local skill warn-and-skip
+- [x] Local skills (skills_dir) semantics + SKILL.md frontmatter
+- [x] Anthropic / Gemini live in crates/llm not as extensions
+- [x] Write-gate pattern (DOCKER_API_ALLOW_WRITE, PROXMOX_ALLOW_WRITE,
+  GOOGLE_ALLOW_*)
 
 **Done criteria:** catalog is accurate; reader can predict which tools
 will be available given their env.
