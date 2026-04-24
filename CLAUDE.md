@@ -142,6 +142,34 @@ All feature work follows this pipeline:
 
 **Whenever any implementation phase starts** (coding begins), run `/forge ejecutar <topic>` automatically. This ensures OpenClaw reference is checked, `cargo build` gates are enforced, and features outside the plan are deferred.
 
+## MANDATORY: Keep docs/ in sync
+
+**The mdBook at `docs/` is the public documentation served at
+`https://lordmacu.github.io/nexo-rs/`. It must reflect the current state
+of the code at all times.**
+
+After **any** of the following — no exceptions — update `docs/` in the
+same commit / PR:
+
+1. A sub-phase in `PHASES.md` is marked `✅`
+2. A feature is added, removed, or renamed
+3. A config field, YAML key, env var, or CLI flag changes
+4. A plugin / extension / skill is added or its API changes
+5. A behavior, retry policy, or fault-tolerance rule changes
+6. Any change touching public types (traits, structs, enums exposed at crate boundary)
+
+Update checklist per change:
+
+- Find the relevant page under `docs/src/` (SUMMARY.md lists all sections)
+- Update the content — keep examples runnable, keep YAML snippets in sync with `config/`
+- If a new concept lands and has no page yet → add the page, register it in `docs/src/SUMMARY.md`
+- Run `mdbook build docs` locally to verify it renders without broken links
+- Commit docs/ changes **together** with the code change, not in a follow-up
+
+If the change is code-internal and truly invisible to users (refactor, rename private fn, test-only), docs update is not required — but note that in the commit body.
+
+The CI workflow `.github/workflows/docs.yml` rebuilds and redeploys on every push to `main`. If docs drift, users see stale info on the public site — treat this as a bug.
+
 ## OpenClaw reference
 
 Location: `research/` — TypeScript, single-process, Node 22+.

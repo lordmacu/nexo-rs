@@ -41,6 +41,10 @@ config/agents.d/*.yaml
 
 # Claude Code local worktrees
 .claude/worktrees/
+
+# mdBook build output — published via GitHub Actions, not committed
+docs/book/
+docs/theme/highlight.css.bak
 *.swp
 *.swo
 
