@@ -175,6 +175,35 @@ google_auth:
 
 Used by `crates/plugins/google` to run OAuth PKCE per agent.
 
+**Deprecated in Phase 17** — prefer declaring Google accounts in a
+dedicated `config/plugins/google-auth.yaml` and binding them from
+`credentials.google` (see next section). Inline `google_auth` still
+boots with a warn so existing deployments keep working; it is
+auto-migrated into the credential store at startup.
+
+### Credentials (per-agent WhatsApp / Telegram / Google)
+
+Pins each agent to the plugin instance / Google account it may use
+for outbound traffic. The runtime resolves the target at publish time
+from the agent id — the LLM cannot pick the instance via tool args,
+closing the prompt-injection vector.
+
+```yaml
+credentials:
+  whatsapp: personal          # must match whatsapp.yaml instance label
+  telegram: ana_bot           # must match telegram.yaml instance label
+  google:   ana@gmail.com     # must match google-auth.yaml accounts[].id
+  # Silence the "inbound ≠ outbound" warning when intentional:
+  # telegram_asymmetric: true
+```
+
+Validated at boot by the gauntlet (`agent --check-config` runs the same
+checks without starting the daemon). Omitting `credentials:` keeps the
+legacy single-account behavior for back-compat.
+
+Full schema + migration guide:
+[`config/credentials.md`](./credentials.md).
+
 ## Relationship diagram
 
 ```mermaid

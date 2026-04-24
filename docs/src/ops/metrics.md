@@ -32,10 +32,24 @@ Exposed metrics:
 | `agent_tool_cache_events_total` | counter | `agent`, `event={hit,miss,put,evict}`, `tool` | Tool-level memoization |
 | `agent_tool_latency_ms` | histogram | `agent`, `tool` | Per-tool latency |
 | `circuit_breaker_state` | gauge | `breaker` | `0 = Closed`, `1 = Open`; always includes `nats` |
+| `credentials_accounts_total` | gauge | `channel` | Per-channel labelled instance count (Phase 17) |
+| `credentials_bindings_total` | gauge | `agent`, `channel` | `1` when the agent has a credential bound, `0` otherwise |
+| `channel_account_usage_total` | counter | `agent`, `channel`, `direction={inbound,outbound}`, `instance` | Every credential use |
+| `channel_acl_denied_total` | counter | `agent`, `channel`, `instance` | Outbound calls rejected by `allow_agents` |
+| `credentials_resolve_errors_total` | counter | `channel`, `reason` | Resolver failures (`unbound`, `not_found`, `not_permitted`) |
+| `credentials_breaker_state` | gauge | `channel`, `instance` | `0=closed`, `1=half-open`, `2=open` (reserved — per-instance breaker is a follow-up) |
+| `credentials_boot_validation_errors_total` | counter | `kind` | Gauntlet errors by kind at boot |
+| `credentials_insecure_paths_total` | gauge | — | Credential files with lax permissions at boot |
+| `credentials_google_token_refresh_total` | counter | `account_fp`, `outcome={ok,err}` | Google OAuth refresh attempts (fp = sha256[..8], not raw email) |
 
 Circuit-breaker state for the `nats` breaker is sampled **at scrape
 time** from broker readiness, so a stalled publish path shows up in
 the next scrape without needing an eager push.
+
+The `credentials_*` and `channel_*` series are documented with full
+schema examples in [`config/credentials.md`](../config/credentials.md).
+`account_fp` is always an 8-byte sha256 fingerprint of the account id,
+never the raw JID or email, so scraped metrics stay safe to share.
 
 ## Useful alerts
 
