@@ -11,7 +11,7 @@ beyond surface docs.
 
 Legend: `⬜ pending  🔄 in progress  ✅ done`
 
-Progress: **14 / 18 phases done, 0 in progress**
+Progress: **15 / 18 phases done, 0 in progress**
 
 ---
 
@@ -360,12 +360,18 @@ Pages: `recipes/` registered in SUMMARY under new "Recipes" section.
 
 ---
 
-## Phase D14 — API reference bridge   ⬜
+## Phase D14 — API reference bridge   ✅
 
-- [ ] `cargo doc --workspace --no-deps` produced in CI
-- [ ] Published under `/api/` on gh-pages
-- [ ] "API reference" link in mdBook top nav
-- [ ] Public crate surface audited: every `pub` item has a `///` doc
+- [x] `cargo doc --workspace --no-deps --locked` produced in CI
+  (`.github/workflows/docs.yml`)
+- [x] Output bundled under `docs/book/api/` and published to gh-pages;
+  redirect `index.html` points at the `agent` crate root
+- [x] "API reference (rustdoc) ↗" link added to SUMMARY + intro page
+- [x] `api-reference.md` landing page with per-crate table, when-to-
+  read-rustdoc-vs-book guidance, local build commands, stability
+  disclaimer
+- [ ] Public crate surface audit (every `pub` item has a `///` doc) —
+  tracked as aspirational; currently partial
 
 **Done criteria:** mdBook for prose + rustdoc for API, both live under
 the same domain.

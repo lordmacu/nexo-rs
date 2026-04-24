@@ -100,3 +100,4 @@
 
 [Contributing](./contributing.md)
 [License](./license.md)
+[API reference (rustdoc) ↗](./api-reference.md)

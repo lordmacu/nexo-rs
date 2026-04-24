@@ -78,3 +78,5 @@ nexo-rs is opinionated toward that shape.
 - [Installation](./getting-started/installation.md)
 - [Quick start](./getting-started/quickstart.md)
 - [Architecture overview](./architecture/overview.md)
+- [API reference (rustdoc)](./api-reference.md) — every public type in
+  the workspace
