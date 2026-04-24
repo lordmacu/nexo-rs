@@ -23,6 +23,7 @@ anyhow      = { workspace = true }
 thiserror   = { workspace = true }
 agent-config  = { path = "../config" }
 agent-broker  = { path = "../broker" }
+agent-auth    = { path = "../auth" }
 tracing       = { workspace = true }
 async-trait   = { workspace = true }
 tokio-util    = { workspace = true }

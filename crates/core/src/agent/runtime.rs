@@ -61,6 +61,10 @@ pub struct AgentRuntime {
     /// tools. `None` for runtimes spun up without tool wiring (tests,
     /// no-LLM behaviors). See [`AgentRuntime::with_tool_base`].
     tool_base: Option<Arc<super::tool_registry::ToolRegistry>>,
+    /// Phase 17 — per-agent credential resolver attached to every
+    /// AgentContext the runtime builds. `None` in tests / no-credential
+    /// boot paths; consumers fall back to legacy topics in that case.
+    credentials: Option<Arc<agent_auth::AgentCredentialResolver>>,
     /// Cache of filtered registries keyed by `(agent_id, binding_index)`
     /// — built lazily on first intake per binding.
     tool_cache: Arc<super::tool_registry_cache::ToolRegistryCache>,
@@ -101,6 +105,7 @@ impl AgentRuntime {
             sender_rate_limiters: Arc::new(DashMap::new()),
             effective_policies: Arc::new(effective_policies),
             tool_base: None,
+            credentials: None,
             tool_cache: Arc::new(super::tool_registry_cache::ToolRegistryCache::new()),
             shutdown: CancellationToken::new(),
             tasks: Arc::new(Mutex::new(JoinSet::new())),
@@ -122,6 +127,17 @@ impl AgentRuntime {
         self.tool_base = Some(tools);
         self
     }
+    /// Attach the credential resolver. All `AgentContext`s built by
+    /// this runtime inherit it so outbound tools can look up the
+    /// agent's bound instance instead of publishing to the legacy
+    /// single-account topic.
+    pub fn with_credentials(
+        mut self,
+        credentials: Arc<agent_auth::AgentCredentialResolver>,
+    ) -> Self {
+        self.credentials = Some(credentials);
+        self
+    }
     pub fn router(&self) -> Arc<AgentRouter> {
         Arc::clone(&self.router)
     }
@@ -137,6 +153,7 @@ impl AgentRuntime {
         let broker = self.broker.clone();
         let memory = self.memory.clone();
         let peers = self.peers.clone();
+        let credentials = self.credentials.clone();
         let router = Arc::clone(&self.router);
         let session_txs = Arc::clone(&self.session_txs);
         let debounce_ms = self.debounce_ms;
@@ -160,6 +177,9 @@ impl AgentRuntime {
             }
             if let Some(ref p) = peers {
                 ctx = ctx.with_peers(Arc::clone(p));
+            }
+            if let Some(ref c) = credentials {
+                ctx = ctx.with_credentials(Arc::clone(c));
             }
             ctx = ctx.with_router(Arc::clone(&router));
             loop {
@@ -321,6 +341,9 @@ impl AgentRuntime {
                             }
                             if let Some(ref p) = peers {
                                 ctx = ctx.with_peers(Arc::clone(p));
+                            }
+                            if let Some(ref c) = credentials {
+                                ctx = ctx.with_credentials(Arc::clone(c));
                             }
                             let behavior = Arc::clone(&agent.behavior);
                             let cancel = shutdown.clone();

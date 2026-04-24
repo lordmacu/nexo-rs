@@ -61,9 +61,29 @@ async fn publish_outbound(
     ctx: &AgentContext,
     payload: Value,
 ) -> anyhow::Result<()> {
-    let topic = "plugin.outbound.whatsapp";
-    let event = Event::new(topic, &ctx.agent_id, payload);
-    ctx.broker.publish(topic, event).await?;
+    // Phase 17 — resolve the target WhatsApp instance from the agent's
+    // credential binding. Falls back to the legacy single-topic
+    // `plugin.outbound.whatsapp` when no resolver is attached (early
+    // boot paths, tests) or when the agent has no `credentials.whatsapp`
+    // declared (back-compat single-account deployments).
+    let topic = match ctx.credentials.as_ref() {
+        Some(resolver) => match resolver.resolve(&ctx.agent_id, agent_auth::handle::WHATSAPP) {
+            Ok(handle) => {
+                agent_auth::audit::audit_outbound(&handle, "plugin.outbound.whatsapp");
+                agent_auth::telemetry::inc_usage(
+                    agent_auth::handle::WHATSAPP,
+                    handle.account_id_raw(),
+                    &ctx.agent_id,
+                    "outbound",
+                );
+                format!("plugin.outbound.whatsapp.{}", handle.account_id_raw())
+            }
+            Err(_) => "plugin.outbound.whatsapp".to_string(),
+        },
+        None => "plugin.outbound.whatsapp".to_string(),
+    };
+    let event = Event::new(&topic, &ctx.agent_id, payload);
+    ctx.broker.publish(&topic, event).await?;
     Ok(())
 }
 
