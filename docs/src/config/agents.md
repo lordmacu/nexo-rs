@@ -49,7 +49,8 @@ Each `inbound_bindings[]` entry can **override** the agent-level
 defaults for that channel: `allowed_tools`, `outbound_allowlist`,
 `skills`, `model`, `system_prompt_extra`, `sender_rate_limit`,
 `allowed_delegates`. Useful for running the same agent on two channels
-with different rules.
+with different rules. See [Per-binding capability override](#per-binding-capability-override)
+below for the full override surface and merge rules.
 
 ### Tool sandboxing
 
@@ -60,10 +61,21 @@ with different rules.
 | `tool_args_validation.enabled` | bool | `true` | Toggle JSON-schema validation of tool arguments. |
 | `outbound_allowlist` | object | `{}` | Per-plugin recipient allowlist (e.g. phone numbers, chat ids). Defense-in-depth for `send` tools. |
 
-**`allowed_tools` semantics:** Tools not matching the allowlist are
-**removed from the registry** before the LLM sees them — the model
-never knows they exist. This is enforced at registry-build time, not
-as a runtime filter, so there is no way to jailbreak past it.
+**`allowed_tools` semantics:**
+
+- For **legacy agents** (no `inbound_bindings`) the allowlist is
+  applied at registry-build time — tools not matching the patterns
+  are removed from the registry before the LLM sees them.
+- For agents **with** `inbound_bindings` the base registry keeps every
+  tool and enforcement happens per-binding at turn time (see
+  [Per-binding capability override](#per-binding-capability-override))
+  so a binding's override can both narrow AND expand within the
+  registry. Defense-in-depth: the LLM only receives tools allowed by
+  the matched binding, and the tool-call execution path rejects any
+  hallucinated name outside the same allowlist.
+
+In both modes the LLM never receives disallowed tool definitions; the
+difference is **where** the filter is applied.
 
 ### System prompt & workspace
 
@@ -181,6 +193,110 @@ flowchart LR
     PL -->|tools from| PLUG[plugins/*.yaml]
     WS -->|files| SOUL[SOUL.md /<br/>IDENTITY.md /<br/>MEMORY.md]
 ```
+
+## Per-binding capability override
+
+A single agent can expose distinct capability surfaces per
+`InboundBinding` without running two agent processes. Typical use:
+the same `Ana` agent answers WhatsApp with a narrow sales-only surface
+and Telegram with the full catalogue.
+
+### Schema
+
+Every `inbound_bindings[]` entry accepts the following optional
+overrides. Unset fields inherit the agent-level value.
+
+| Field | Type | Strategy | Notes |
+|-------|------|----------|-------|
+| `allowed_tools` | `[string]` | replace | `["*"]` = every registered tool |
+| `outbound_allowlist` | object | replace (whole) | Whatsapp/telegram recipient lists |
+| `skills` | `[string]` | replace | Resolved from agent-level `skills_dir` |
+| `model` | object | replace | **Must keep the same `provider`** |
+| `system_prompt_extra` | string | append | Rendered as `# CHANNEL ADDENDUM` block |
+| `sender_rate_limit` | `inherit` \| `disable` \| `{rps, burst}` | 3-way | Untagged enum |
+| `allowed_delegates` | `[string]` | replace | Peer allowlist for the `delegate` tool |
+
+Anything else (`workspace`, `transcripts_dir`, `heartbeat`, `memory`,
+`workspace_git`, `google_auth`) stays at the agent level — identity
+and persistent state do not change per channel.
+
+### Example
+
+```yaml
+agents:
+  - id: ana
+    model: { provider: anthropic, model: claude-haiku-4-5 }
+    plugins: [whatsapp, telegram]
+    workspace: ./data/workspace/ana
+    skills_dir: ./skills
+    system_prompt: |
+      You are Ana.
+    allowed_tools: []            # agent-level = permissive; bindings narrow
+    outbound_allowlist: {}
+    inbound_bindings:
+      - plugin: whatsapp
+        allowed_tools: [whatsapp_send_message]
+        outbound_allowlist:
+          whatsapp: ["573115728852"]
+        skills: []
+        sender_rate_limit: { rps: 0.5, burst: 3 }
+        system_prompt_extra: |
+          Channel: WhatsApp sales. Follow the ETB/Claro lead flow.
+      - plugin: telegram
+        instance: ana_tg
+        allowed_tools: ["*"]
+        outbound_allowlist:
+          telegram: [1194292426]
+        skills: [browser, github, openstreetmap]
+        model: { provider: anthropic, model: claude-sonnet-4-5 }
+        allowed_delegates: ["*"]
+        sender_rate_limit: disable
+        system_prompt_extra: |
+          Channel: private Telegram. Full tool access allowed.
+```
+
+### Boot-time validation
+
+The runtime rejects configs with:
+
+- Duplicate `(plugin, instance)` tuples in the same agent.
+- Telegram `instance` referenced by a binding but not declared in
+  `config/plugins/telegram.yaml`.
+- Binding `model.provider` different from the agent-level provider
+  (the LLM client is wired once per agent).
+- Skills listed in a binding whose directory does not exist under
+  `skills_dir`.
+
+A binding that sets no overrides is allowed but logs a warn.
+
+### Matching order
+
+Bindings are evaluated top-to-bottom; the **first** match wins. If
+you have both `{plugin: telegram, instance: None}` (wildcard) and
+`{plugin: telegram, instance: "admin"}`, declare the specific entry
+first — otherwise the wildcard consumes every Telegram event.
+
+### Runtime isolation
+
+- **Tool list shown to the LLM** is filtered through the binding's
+  `allowed_tools`; tools hidden on WhatsApp remain invisible even if
+  the LLM hallucinates the name.
+- **Tool-call execution** re-checks the allowlist and returns
+  `not_allowed` for anything outside — stops hallucination loops
+  without executing the forbidden tool.
+- **Outbound tools** (`whatsapp_send_message`, `telegram_send_message`)
+  read `outbound_allowlist` from the matched binding, so WhatsApp
+  sends on the sales channel cannot reach numbers that only the
+  private channel allows.
+- **Sender rate limit buckets** are keyed per binding; flood on one
+  channel cannot drain the quota on another.
+
+### Back-compat
+
+Agents without `inbound_bindings` keep the pre-feature behavior byte-
+for-byte: the agent-level `allowed_tools` is pruned into the base
+registry at boot, and the runtime synthesises a policy from agent-
+level defaults (keyed at `binding_index = usize::MAX`).
 
 ## Common mistakes
 
