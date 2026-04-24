@@ -1,0 +1,16 @@
+[plugin]
+id = "summarize"
+version = "0.2.0"
+name = "Summarize"
+description = "Rust extension for summarizing text and local files via OpenAI-compatible chat completions"
+
+[capabilities]
+tools = ["status", "summarize_text", "summarize_file"]
+
+[transport]
+kind = "stdio"
+command = "./target/release/summarize"
+
+[meta]
+author = "agent-rs"
+license = "MIT"

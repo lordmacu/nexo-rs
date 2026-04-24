@@ -4,3 +4,23 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+tokio        = { workspace = true }
+tokio-util   = { workspace = true, features = ["io"] }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+anyhow       = { workspace = true }
+async-trait  = { workspace = true }
+tracing      = { workspace = true }
+uuid         = { workspace = true, features = ["v5"] }
+reqwest      = { workspace = true, features = ["multipart"] }
+dashmap      = { workspace = true }
+futures-util = "0.3"
+chrono       = { workspace = true }
+agent-broker = { path = "../../broker" }
+agent-core   = { path = "../../core" }
+agent-config = { path = "../../config" }
+
+[dev-dependencies]
+wiremock     = "0.6"
+serial_test  = "3"
+tempfile     = "3"

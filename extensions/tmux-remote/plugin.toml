@@ -1,0 +1,19 @@
+[plugin]
+id = "tmux-remote"
+version = "0.1.0"
+name = "tmux Remote"
+description = "Drive tmux sessions from the agent: create, send keys, capture pane output, kill."
+
+[capabilities]
+tools = ["status", "new_session", "send_keys", "capture_pane", "list_sessions", "kill_session"]
+
+[requires]
+bins = ["tmux"]
+
+[transport]
+kind = "stdio"
+command = "./target/release/tmux-remote"
+
+[meta]
+author = "agent-rs"
+license = "MIT"

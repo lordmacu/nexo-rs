@@ -1,0 +1,20 @@
+[plugin]
+id = "onepassword"
+version = "0.1.0"
+name = "1Password"
+description = "Read 1Password secrets via `op` CLI + service-account token. Secret values are metadata-only by default; enable reveal with OP_ALLOW_REVEAL=true."
+
+[capabilities]
+tools = ["status", "whoami", "list_vaults", "list_items", "read_secret"]
+
+[requires]
+bins = ["op"]
+env  = ["OP_SERVICE_ACCOUNT_TOKEN"]
+
+[transport]
+kind = "stdio"
+command = "./target/release/onepassword"
+
+[meta]
+author = "agent-rs"
+license = "MIT"

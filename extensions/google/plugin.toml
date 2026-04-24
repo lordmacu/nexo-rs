@@ -1,0 +1,27 @@
+[plugin]
+id = "google"
+version = "0.1.0"
+name = "Google Workspace"
+description = "Gmail / Calendar / Tasks / Drive / People / Photos client using OAuth 2.0 user refresh-token flow. Read-only by default; writes are gated by per-service env flags."
+
+[capabilities]
+tools = [
+  "status",
+  "gmail_list", "gmail_read", "gmail_search", "gmail_send", "gmail_modify_labels",
+  "calendar_list_calendars", "calendar_list_events", "calendar_create_event", "calendar_update_event", "calendar_delete_event",
+  "tasks_list_lists", "tasks_list_tasks", "tasks_add", "tasks_complete", "tasks_delete",
+  "drive_list", "drive_get", "drive_download", "drive_upload", "drive_create_folder", "drive_delete",
+  "contacts_list", "contacts_search", "contacts_get", "contacts_other_list", "contacts_create", "contacts_update", "contacts_delete",
+  "photos_list_media", "photos_search", "photos_get_media", "photos_list_albums"
+]
+
+[requires]
+env = ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN"]
+
+[transport]
+kind = "stdio"
+command = "./target/release/google"
+
+[meta]
+author = "agent-rs"
+license = "MIT"

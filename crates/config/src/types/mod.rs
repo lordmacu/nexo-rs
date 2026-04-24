@@ -1,11 +1,17 @@
 pub mod agents;
 pub mod broker;
+pub mod extensions;
 pub mod llm;
+pub mod mcp;
+pub mod mcp_server;
 pub mod memory;
 pub mod plugins;
 
 pub use agents::*;
 pub use broker::*;
+pub use extensions::*;
 pub use llm::*;
+pub use mcp::*;
+pub use mcp_server::*;
 pub use memory::*;
 pub use plugins::*;

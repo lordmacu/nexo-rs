@@ -1,0 +1,17 @@
+[plugin]
+id = "template-rust"
+version = "0.1.0"
+name = "Rust Template"
+description = "Standalone Rust extension with ping + add tools"
+
+[capabilities]
+tools = ["ping", "add"]
+hooks = ["before_message"]
+
+[transport]
+kind = "stdio"
+command = "./template-rust"
+
+[meta]
+author = "agent-rs"
+license = "MIT"

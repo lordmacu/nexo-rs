@@ -1,0 +1,16 @@
+[plugin]
+id = "github"
+version = "0.2.0"
+name = "GitHub"
+description = "Rust extension for GitHub repository operations via REST API (PAT auth)"
+
+[capabilities]
+tools = ["status", "pr_list", "pr_view", "pr_checks", "issue_list"]
+
+[transport]
+kind = "stdio"
+command = "./target/release/github"
+
+[meta]
+author = "agent-rs"
+license = "MIT"

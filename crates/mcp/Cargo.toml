@@ -1,0 +1,41 @@
+[package]
+name = "agent-mcp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+tracing    = { workspace = true }
+tokio      = { workspace = true }
+tokio-util = { workspace = true }
+dashmap    = { workspace = true }
+async-trait = { workspace = true }
+agent-resilience = { path = "../resilience" }
+agent-extensions = { path = "../extensions" }
+agent-config     = { path = "../config" }
+agent-llm        = { path = "../llm" }
+chrono           = { workspace = true }
+uuid             = { workspace = true }
+futures          = { workspace = true }
+futures-util     = "0.3"
+sha2             = { workspace = true }
+reqwest          = { workspace = true, features = ["stream"] }
+url              = "2"
+bytes            = { workspace = true }
+notify           = { workspace = true }
+notify-debouncer-full = { workspace = true }
+anyhow           = { workspace = true }
+serde_yaml       = { workspace = true }
+lru              = { workspace = true }
+
+[dev-dependencies]
+tokio      = { workspace = true, features = ["macros", "rt-multi-thread", "process", "io-util", "time", "sync", "net"] }
+axum       = "0.7"
+tower      = "0.5"
+tempfile   = "3"
+tracing-subscriber = { workspace = true }
+
+# Auto-discovered from `src/bin/mock_mcp_server.rs`. Used by
+# `tests/mock_server_test.rs` via `CARGO_BIN_EXE_mock_mcp_server`.

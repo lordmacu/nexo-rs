@@ -1,0 +1,19 @@
+[plugin]
+id = "cloudflare"
+version = "0.1.0"
+name = "Cloudflare API"
+description = "Cloudflare zones, DNS records, and cache purge via API token."
+
+[capabilities]
+tools = ["status", "list_zones", "list_dns_records", "create_dns_record", "update_dns_record", "delete_dns_record", "purge_cache"]
+
+[requires]
+env = ["CLOUDFLARE_API_TOKEN"]
+
+[transport]
+kind = "stdio"
+command = "./target/release/cloudflare"
+
+[meta]
+author = "agent-rs"
+license = "MIT"

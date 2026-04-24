@@ -1,0 +1,16 @@
+[plugin]
+id = "msedge-tts"
+version = "0.1.0"
+name = "MSEdge TTS"
+description = "Rust extension exposing Microsoft Edge Read Aloud text-to-speech tools"
+
+[capabilities]
+tools = ["status", "list_voices", "synthesize"]
+
+[transport]
+kind = "stdio"
+command = "./target/release/msedge-tts"
+
+[meta]
+author = "agent-rs"
+license = "MIT OR Apache-2.0"

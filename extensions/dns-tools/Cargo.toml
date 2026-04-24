@@ -1,0 +1,20 @@
+[package]
+name = "dns-tools-ext"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "dns-tools"
+path = "src/main.rs"
+
+[lib]
+name = "dns_tools_ext"
+path = "src/lib.rs"
+
+[workspace]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hickory-resolver = { version = "0.24", default-features = false, features = ["tokio-runtime", "system-config"] }
+tokio = { version = "1", features = ["rt", "net", "io-util", "macros", "time"] }

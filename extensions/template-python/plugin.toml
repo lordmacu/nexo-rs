@@ -1,0 +1,17 @@
+[plugin]
+id = "template-python"
+version = "0.1.0"
+name = "Python Template"
+description = "Stdlib-only Python extension with ping + add tools"
+
+[capabilities]
+tools = ["ping", "add"]
+hooks = ["before_message"]
+
+[transport]
+kind = "stdio"
+command = "./main.py"
+
+[meta]
+author = "agent-rs"
+license = "MIT"

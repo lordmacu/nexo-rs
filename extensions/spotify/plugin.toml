@@ -1,0 +1,19 @@
+[plugin]
+id = "spotify"
+version = "0.1.0"
+name = "Spotify"
+description = "Spotify Web API client — now_playing, search, play, pause, skip. Requires a user access token (OAuth refresh flow handled by the operator)."
+
+[capabilities]
+tools = ["status", "now_playing", "search", "play", "pause", "next", "previous"]
+
+[requires]
+env = ["SPOTIFY_ACCESS_TOKEN"]
+
+[transport]
+kind = "stdio"
+command = "./target/release/spotify"
+
+[meta]
+author = "agent-rs"
+license = "MIT"

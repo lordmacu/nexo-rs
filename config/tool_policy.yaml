@@ -1,0 +1,57 @@
+# Tool-execution policy — optional (file absent = feature off).
+#
+# Governs two orthogonal optimisations the agent runtime applies to
+# tool calls produced by the LLM:
+#
+#   cache: dedupe repeated (tool, args) calls within `ttl_secs`
+#   parallel_safe: allow concurrent execution within one LLM turn
+#
+# Globs match by trailing `*` only (prefix wildcard). Exact names
+# without `*` match literally.
+
+cache:
+  ttl_secs: 60
+  max_entries: 1024
+  tools:
+    # Deterministic / read-only fetches benefit most. Weather rarely
+    # shifts minute-to-minute; neither does a Wikipedia summary.
+    - "ext_weather_*"
+    - "ext_wikipedia_*"
+    - "ext_wolfram-alpha_*"
+    - "ext_openstreetmap_*"
+    - "ext_fetch-url_*"
+    - "ext_pdf-extract_*"
+    - "ext_brave-search_*"
+    - "ext_dns-tools_*"
+
+parallel_safe:
+  # Tools with no observable side-effect — safe to fire concurrently
+  # inside a single LLM turn (multi-city weather, multi-query search).
+  - "ext_weather_*"
+  - "ext_wikipedia_*"
+  - "ext_wolfram-alpha_*"
+  - "ext_openstreetmap_*"
+  - "ext_fetch-url_*"
+  - "ext_pdf-extract_*"
+  - "ext_brave-search_*"
+  - "ext_dns-tools_*"
+  - "ext_endpoint-check_*"
+  - "ext_goplaces_*"
+
+# TF-cosine relevance filter: rank tools against the user prompt and
+# pass only the top-K to the LLM. Huge token saving when 140+ tools
+# are registered but the prompt is about one domain.
+relevance:
+  enabled: true
+  top_k: 24          # max tools sent to LLM per turn
+  min_score: 0.01    # drop if cosine below this, even in top-K
+  # Tools that NEVER get filtered out — critical plumbing
+  # (delegation, memory) has to remain reachable regardless.
+  always_include:
+    - "delegate"
+    - "memory_*"
+    - "forge_*"
+    - "who_am_i"
+    - "what_do_i_know"
+    - "my_stats"
+    - "schedule_reminder"

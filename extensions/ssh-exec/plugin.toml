@@ -1,0 +1,19 @@
+[plugin]
+id = "ssh-exec"
+version = "0.1.0"
+name = "SSH Exec"
+description = "Run commands on remote hosts via ssh. Transfers via scp. Allowlist of hosts required."
+
+[capabilities]
+tools = ["status", "exec", "scp_upload", "scp_download"]
+
+[requires]
+bins = ["ssh", "scp"]
+
+[transport]
+kind = "stdio"
+command = "./target/release/ssh-exec"
+
+[meta]
+author = "agent-rs"
+license = "MIT"

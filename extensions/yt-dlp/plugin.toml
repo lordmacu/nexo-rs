@@ -1,0 +1,19 @@
+[plugin]
+id = "yt-dlp"
+version = "0.1.0"
+name = "yt-dlp"
+description = "Download videos / extract audio / fetch metadata from YouTube, Twitter, IG, etc. via the yt-dlp CLI."
+
+[capabilities]
+tools = ["status", "info", "download", "formats"]
+
+[requires]
+bins = ["yt-dlp"]
+
+[transport]
+kind = "stdio"
+command = "./target/release/yt-dlp"
+
+[meta]
+author = "agent-rs"
+license = "MIT"

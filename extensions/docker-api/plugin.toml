@@ -1,0 +1,19 @@
+[plugin]
+id = "docker-api"
+version = "0.1.0"
+name = "Docker API"
+description = "Inspect and control Docker containers via the local `docker` CLI. Reads are unrestricted; lifecycle writes are gated."
+
+[capabilities]
+tools = ["status", "ps", "inspect", "logs", "stats", "start", "stop", "restart"]
+
+[requires]
+bins = ["docker"]
+
+[transport]
+kind = "stdio"
+command = "./target/release/docker-api"
+
+[meta]
+author = "agent-rs"
+license = "MIT"

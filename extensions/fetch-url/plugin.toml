@@ -1,0 +1,16 @@
+[plugin]
+id = "fetch-url"
+version = "0.1.0"
+name = "Fetch URL"
+description = "HTTP GET/POST utility with size cap, SSRF guard, retries, and circuit breaker."
+
+[capabilities]
+tools = ["status", "fetch_url"]
+
+[transport]
+kind = "stdio"
+command = "./target/release/fetch-url"
+
+[meta]
+author = "agent-rs"
+license = "MIT"

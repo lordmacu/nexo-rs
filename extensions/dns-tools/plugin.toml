@@ -1,0 +1,19 @@
+[plugin]
+id = "dns-tools"
+version = "0.1.0"
+name = "DNS Tools"
+description = "DNS lookups (A, AAAA, MX, TXT, CNAME, NS, SOA, SRV), reverse lookup, and whois."
+
+[capabilities]
+tools = ["status", "resolve", "reverse", "whois"]
+
+[requires]
+env = []
+
+[transport]
+kind = "stdio"
+command = "./target/release/dns-tools"
+
+[meta]
+author = "agent-rs"
+license = "MIT"

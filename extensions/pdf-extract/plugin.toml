@@ -1,0 +1,16 @@
+[plugin]
+id = "pdf-extract"
+version = "0.1.0"
+name = "PDF Extract"
+description = "Rust extension for extracting plain text from PDF files (no external binaries)."
+
+[capabilities]
+tools = ["status", "extract_text"]
+
+[transport]
+kind = "stdio"
+command = "./target/release/pdf-extract"
+
+[meta]
+author = "agent-rs"
+license = "MIT"

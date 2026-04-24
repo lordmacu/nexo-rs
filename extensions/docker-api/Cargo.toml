@@ -1,0 +1,22 @@
+[package]
+name = "docker-api-ext"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "docker-api"
+path = "src/main.rs"
+
+[lib]
+name = "docker_api_ext"
+path = "src/lib.rs"
+
+[workspace]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"
+serial_test = "3"

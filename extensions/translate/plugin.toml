@@ -1,0 +1,19 @@
+[plugin]
+id = "translate"
+version = "0.1.0"
+name = "Translate"
+description = "Text translation via LibreTranslate (self-hosted) or DeepL API."
+
+[capabilities]
+tools = ["status", "languages", "translate", "detect"]
+
+[requires]
+env = []
+
+[transport]
+kind = "stdio"
+command = "./target/release/translate"
+
+[meta]
+author = "agent-rs"
+license = "MIT"

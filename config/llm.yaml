@@ -1,11 +1,47 @@
 providers:
   minimax:
-    api_key: "${MINIMAX_API_KEY}"
-    group_id: "${MINIMAX_GROUP_ID}"
-    base_url: "https://api.minimax.chat/v1"
+    api_key: ${MINIMAX_API_KEY:-}
+    group_id: ${MINIMAX_GROUP_ID:-}
+    base_url: https://api.minimax.io/anthropic
+    auth:
+      mode: auto
+      bundle: ./secrets/minimax_portal.json
     rate_limit:
       requests_per_second: 2.0
       quota_alert_threshold: 10000
+    api_flavor: anthropic_messages
+
+  # Anthropic (Claude) — direct API. Tool calling, vision, streaming.
+  # anthropic:
+  #   api_key: ${ANTHROPIC_API_KEY:-}
+  #   base_url: https://api.anthropic.com
+  #   rate_limit:
+  #     requests_per_second: 2.0
+
+  # OpenAI / ChatGPT — chat, streaming, vision, tool calling, embeddings.
+  # Leave base_url empty to hit api.openai.com. Same client serves
+  # Azure OpenAI, OpenRouter, Groq, LM Studio, vLLM when pointed at
+  # their compatible endpoint.
+  # openai:
+  #   api_key: ${OPENAI_API_KEY:-}
+  #   base_url: ""                           # api.openai.com/v1 default
+  #   rate_limit:
+  #     requests_per_second: 5.0
+  #     quota_alert_threshold: 500000
+  #   embedding_model: text-embedding-3-small # used by LlmClient::embed()
+
+  # Google Gemini — chat, streaming, vision, embeddings, safety.
+  # gemini:
+  #   api_key: ${GEMINI_API_KEY:-}
+  #   base_url: ""                          # default endpoint
+  #   embedding_model: text-embedding-004   # used by LlmClient::embed()
+  #   safety_settings:                      # pass-through Gemini format
+  #     - category: HARM_CATEGORY_HARASSMENT
+  #       threshold: BLOCK_ONLY_HIGH
+  #     - category: HARM_CATEGORY_DANGEROUS_CONTENT
+  #       threshold: BLOCK_ONLY_HIGH
+  #   rate_limit:
+  #     requests_per_second: 2.0
 
 retry:
   max_attempts: 5

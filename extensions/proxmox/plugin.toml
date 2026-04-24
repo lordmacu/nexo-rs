@@ -1,0 +1,19 @@
+[plugin]
+id = "proxmox"
+version = "0.1.0"
+name = "Proxmox"
+description = "Proxmox VE REST API client — list nodes/VMs/containers, status, gated lifecycle."
+
+[capabilities]
+tools = ["status", "list_nodes", "list_vms", "list_containers", "vm_status", "vm_action"]
+
+[requires]
+env = ["PROXMOX_URL", "PROXMOX_TOKEN"]
+
+[transport]
+kind = "stdio"
+command = "./target/release/proxmox"
+
+[meta]
+author = "agent-rs"
+license = "MIT"

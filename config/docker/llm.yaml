@@ -1,0 +1,14 @@
+providers:
+  minimax:
+    api_key: "${file:/run/secrets/minimax_api_key}"
+    group_id: "${file:/run/secrets/minimax_group_id}"
+    base_url: "https://api.minimax.chat/v1"
+    rate_limit:
+      requests_per_second: 2.0
+      quota_alert_threshold: 10000
+
+retry:
+  max_attempts: 5
+  initial_backoff_ms: 1000
+  max_backoff_ms: 60000
+  backoff_multiplier: 2.0

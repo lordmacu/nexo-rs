@@ -1,0 +1,19 @@
+[plugin]
+id = "video-frames"
+version = "0.1.0"
+name = "Video Frames"
+description = "Extract frames and audio from video files via ffmpeg subprocess. Pairs with openai-whisper for audio→text."
+
+[capabilities]
+tools = ["status", "probe", "extract_frames", "extract_audio"]
+
+[requires]
+bins = ["ffmpeg", "ffprobe"]
+
+[transport]
+kind = "stdio"
+command = "./target/release/video-frames"
+
+[meta]
+author = "agent-rs"
+license = "MIT"

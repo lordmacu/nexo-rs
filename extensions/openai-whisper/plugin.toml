@@ -1,0 +1,16 @@
+[plugin]
+id = "openai-whisper"
+version = "0.2.0"
+name = "OpenAI Whisper"
+description = "Rust extension for audio transcription via OpenAI-compatible /audio/transcriptions endpoint"
+
+[capabilities]
+tools = ["status", "transcribe_file"]
+
+[transport]
+kind = "stdio"
+command = "./target/release/openai-whisper"
+
+[meta]
+author = "agent-rs"
+license = "MIT"

@@ -4,7 +4,9 @@ target/
 Cargo.lock
 
 # Secrets — never commit
-secrets/
+secrets/*
+!secrets/.gitkeep
+!secrets/*.example
 .env
 .env.*
 !.env.example
@@ -15,6 +17,12 @@ secrets/
 # Runtime data
 data/
 logs/
+# Cache of resolved peer devices per JID. Contains contacts' phone
+# numbers (PII) and only makes sense for a specific paired account.
+device_cache.json
+# Local dev artifacts
+screenshot.png
+*.patch
 
 # IDE
 .idea/

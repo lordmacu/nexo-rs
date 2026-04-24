@@ -7,9 +7,21 @@ long_term:
   sqlite:
     path: "./data/memory.db"
 
+# Phase 5.4 — semantic memory. Opt-in: set `enabled: true` after pointing
+# `base_url` at an OpenAI-compatible embeddings server (Ollama, LocalAI,
+# llama-server, vLLM, or the real OpenAI API). `dimensions` must match the
+# model output; a mismatch against an existing DB aborts startup.
 vector:
+  enabled: false
   backend: "sqlite-vec"
+  # Default recall mode for `memory` tool when caller omits `mode`.
+  # One of: keyword | vector | hybrid
+  default_recall_mode: "keyword"
   embedding:
-    provider: "minimax"
-    model: "embo-01"
-    dimensions: 1536
+    provider: "http"
+    base_url: "http://localhost:11434/v1"   # Ollama default
+    model: "nomic-embed-text"
+    # Set this to $EMBEDDING_API_KEY-like placeholder for hosted providers.
+    api_key: ""
+    dimensions: 768
+    timeout_secs: 30

@@ -1,0 +1,19 @@
+[plugin]
+id = "brave-search"
+version = "0.1.0"
+name = "Brave Search"
+description = "Web search via Brave Search API."
+
+[capabilities]
+tools = ["status", "brave_search"]
+
+[requires]
+env = ["BRAVE_SEARCH_API_KEY"]
+
+[transport]
+kind = "stdio"
+command = "./target/release/brave-search"
+
+[meta]
+author = "agent-rs"
+license = "MIT"

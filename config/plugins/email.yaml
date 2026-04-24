@@ -1,9 +1,9 @@
 email:
   smtp:
-    host: "${SMTP_HOST}"
+    host: "${SMTP_HOST:-}"
     port: 587
-    username: "${SMTP_USER}"
-    password: "${SMTP_PASSWORD}"
+    username: "${SMTP_USER:-}"
+    password: "${SMTP_PASSWORD:-}"
   imap:
-    host: "${IMAP_HOST}"
+    host: "${IMAP_HOST:-}"
     port: 993

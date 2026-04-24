@@ -7,6 +7,7 @@ pub struct BrokerConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BrokerInner {
     #[serde(rename = "type")]
     pub kind: BrokerKind,
@@ -30,6 +31,7 @@ pub enum BrokerKind {
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct BrokerAuthConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -37,6 +39,7 @@ pub struct BrokerAuthConfig {
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct BrokerPersistenceConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -47,6 +50,7 @@ pub struct BrokerPersistenceConfig {
 fn default_queue_path() -> String { "./data/queue".to_string() }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct BrokerLimitsConfig {
     #[serde(default = "default_max_payload")]
     pub max_payload: String,
@@ -58,6 +62,7 @@ fn default_max_payload() -> String { "4MB".to_string() }
 fn default_max_pending() -> usize { 10_000 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct BrokerFallbackConfig {
     #[serde(default = "default_fallback_mode")]
     pub mode: String,

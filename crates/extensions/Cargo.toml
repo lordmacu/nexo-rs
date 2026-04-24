@@ -1,0 +1,43 @@
+[package]
+name = "agent-extensions"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+tracing    = { workspace = true }
+tokio      = { workspace = true }
+tokio-util = { workspace = true }
+futures    = { workspace = true }
+dashmap    = { workspace = true }
+toml       = "0.8"
+semver     = "1"
+regex      = "1.10"
+walkdir    = "2"
+agent-resilience = { path = "../resilience" }
+agent-broker    = { path = "../broker" }
+agent-config    = { path = "../config" }
+url             = "2"
+async-trait     = { workspace = true }
+uuid            = { workspace = true }
+anyhow          = { workspace = true }
+serde_yaml      = { workspace = true }
+humantime-serde = "1"
+notify          = { workspace = true }
+notify-debouncer-full = { workspace = true }
+sha2            = { workspace = true }
+reqwest         = { workspace = true }
+
+[dev-dependencies]
+async-nats = { workspace = true }
+tempfile   = "3"
+wiremock   = "0.6"
+agent-mcp  = { path = "../mcp" }
+tokio      = { workspace = true, features = ["macros", "rt-multi-thread", "process", "io-util", "time", "sync"] }
+tracing-subscriber = { workspace = true }
+
+[[example]]
+name = "echo_ext"
+path = "examples/echo_ext.rs"
