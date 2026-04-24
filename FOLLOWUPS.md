@@ -1659,6 +1659,18 @@ Formalizada en `PHASES.md` como sub-fase 10.9. Resumen del trade-off para no olv
 - Hoy el operador edita `google-auth.yaml` a mano + dispara consent externo. Sin wizard.
 - **Acción:** portar device-code OAuth flow; escribir `token_path` + añadir entrada a `google-auth.yaml`. Opcional hasta que haya >2 cuentas reales.
 
+### Setup wizard multi-instance (WA/TG)
+- El wizard hoy escribe `config/plugins/whatsapp.yaml` + `telegram.yaml` como single-account (sin `instance:`). Para multi-cuenta el usuario edita YAML a mano.
+- **Acción:** extender `registry::ServiceDef` para soportar "array entry" en vez de solo "root object". Pedir `instance:` + `allow_agents:` en la forma cuando el user ya tiene 1 instancia configurada. Bloqueante solo cuando aparezca una segunda cuenta real.
+
+### Setup wizard auto-escribir `credentials:` block
+- Cuando el wizard termina WA/TG/Google para agente X con instance Y, debería escribir `credentials.<channel>: Y` en el archivo donde vive X (agents.yaml o agents.d/X.yaml) automáticamente.
+- **Acción:** helper `yaml_patch::patch_agent_credentials(file, agent_id, channel, instance)` análogo al existente `patch_agent_google_auth`. Buscar agente en agents.yaml primero, luego agents.d/*.yaml. Solo tiene valor después del item anterior (multi-instance).
+
+### Setup migrar Google inline → google-auth.yaml
+- El wizard hoy escribe `google_auth` inline dentro del agente. El gauntlet lo acepta con warn de deprecation pero no migra solo.
+- **Acción:** cambiar `services/skills.rs` Google services para escribir a `config/plugins/google-auth.yaml` con `accounts[]` + `agent_id`, y escribir `credentials.google` en el agente. Requiere elegir `agent_id` al inicio del flujo Google.
+
 ### Legacy `agents.google_auth` hard-error (V2)
 - V1 deja warn-only. En V2 convertir a error y forzar migración a `google-auth.yaml`.
 - **Acción:** flag `strict_credentials: true` global; eventualmente default.
