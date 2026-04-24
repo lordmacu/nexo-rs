@@ -6,6 +6,7 @@
 
 - [Installation](./getting-started/installation.md)
 - [Native install (no Docker)](./getting-started/install-native.md)
+- [Termux (Android)](./getting-started/install-termux.md)
 - [Quick start](./getting-started/quickstart.md)
 - [Setup wizard](./getting-started/setup-wizard.md)
 
