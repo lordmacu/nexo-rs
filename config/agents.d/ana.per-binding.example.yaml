@@ -1,0 +1,75 @@
+# Ana — per-binding capability override example.
+#
+# One agent, two inbound bindings. Same workspace, memory, and identity;
+# different capability surface per channel:
+#
+#   - WhatsApp  → narrow sales surface (one tool, one recipient, strict RL).
+#   - Telegram  → full-power personal channel (skills, stronger model).
+#
+# Back-compat: bindings without overrides inherit the agent-level settings.
+# This file is a template for the per-binding override feature; the runtime
+# wiring that consumes these fields is implemented across the later sessions
+# of the feature rollout.
+agents:
+  - id: ana_per_binding_example
+    model:
+      provider: anthropic
+      model: claude-haiku-4-5
+    plugins:
+      - whatsapp
+      - telegram
+    workspace: ./data/workspace/ana_per_binding_example
+    skills_dir: ./skills
+    transcripts_dir: ./data/transcripts/ana_per_binding_example
+    skills: []
+    heartbeat:
+      enabled: false
+    config:
+      debounce_ms: 2000
+      queue_cap: 5
+    dreaming:
+      enabled: false
+
+    # Agent-level defaults — used by any binding that does not override.
+    allowed_tools: []
+    outbound_allowlist: {}
+    allowed_delegates: []
+
+    system_prompt: |
+      You are Ana.
+
+    inbound_bindings:
+      # Sales channel — ultra limited surface.
+      - plugin: whatsapp
+        allowed_tools:
+          - whatsapp_send_message
+        outbound_allowlist:
+          whatsapp:
+            - "573115728852"
+        skills: []
+        sender_rate_limit:
+          rps: 0.5
+          burst: 3
+        system_prompt_extra: |
+          Channel: WhatsApp sales. Follow the ETB/Claro lead-capture flow.
+
+      # Private Telegram — full power.
+      - plugin: telegram
+        instance: ana_tg
+        allowed_tools: ["*"]
+        outbound_allowlist:
+          telegram:
+            - 1194292426
+        skills:
+          - browser
+          - github
+          - openstreetmap
+          - summarize
+          - weather
+        model:
+          provider: anthropic
+          model: claude-sonnet-4-5
+        allowed_delegates: ["*"]
+        sender_rate_limit: disable
+        system_prompt_extra: |
+          Channel: private Telegram. Full tool access allowed.
