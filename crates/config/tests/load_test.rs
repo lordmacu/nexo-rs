@@ -88,9 +88,54 @@ fn happy_path() {
     let cfg = AppConfig::load(dir.path()).expect("should load");
     assert_eq!(cfg.agents.agents[0].id, "kate");
     assert_eq!(cfg.llm.providers["minimax"].api_key, "test_key");
-    assert!(cfg.plugins.whatsapp.is_some());
-    assert!(cfg.plugins.telegram.is_some());
+    assert_eq!(cfg.plugins.whatsapp.len(), 1);
+    assert_eq!(cfg.plugins.telegram.len(), 1);
     assert!(cfg.plugins.email.is_some());
+}
+
+#[test]
+fn whatsapp_supports_multi_account_list_shape() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    write_fixtures(dir.path());
+    write_file(&dir.path().join("plugins"), "whatsapp.yaml", r#"
+whatsapp:
+  - session_dir: "./data/sessions/biz"
+    credentials_file: "${WA_CREDENTIALS_FILE}"
+    instance: "biz"
+  - session_dir: "./data/sessions/support"
+    credentials_file: "${WA_CREDENTIALS_FILE}"
+    instance: "support"
+"#);
+    let cfg = AppConfig::load(dir.path()).expect("should load");
+    assert_eq!(cfg.plugins.whatsapp.len(), 2);
+    assert_eq!(cfg.plugins.whatsapp[0].instance.as_deref(), Some("biz"));
+    assert_eq!(cfg.plugins.whatsapp[1].instance.as_deref(), Some("support"));
+    // Each instance has its own session_dir (the critical per-account
+    // isolation requirement for Signal protocol keys).
+    assert_ne!(
+        cfg.plugins.whatsapp[0].session_dir,
+        cfg.plugins.whatsapp[1].session_dir,
+    );
+}
+
+#[test]
+fn telegram_supports_multi_bot_list_shape() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    write_fixtures(dir.path());
+    // Overwrite the telegram fixture with the list-shape variant.
+    write_file(&dir.path().join("plugins"), "telegram.yaml", r#"
+telegram:
+  - token: "${TELEGRAM_BOT_TOKEN}"
+    instance: "bot_boss"
+  - token: "${TELEGRAM_BOT_TOKEN}"
+    instance: "bot_sales"
+"#);
+    let cfg = AppConfig::load(dir.path()).expect("should load");
+    assert_eq!(cfg.plugins.telegram.len(), 2);
+    assert_eq!(cfg.plugins.telegram[0].instance.as_deref(), Some("bot_boss"));
+    assert_eq!(cfg.plugins.telegram[1].instance.as_deref(), Some("bot_sales"));
 }
 
 #[test]
@@ -140,6 +185,10 @@ fn file_secret_resolved() {
     let mut tmp = tempfile::NamedTempFile::new().unwrap();
     write!(tmp, "  file_secret_value  ").unwrap();
     let secret_path = tmp.path().to_str().unwrap().to_string();
+    let parent = tmp.path().parent().unwrap().to_path_buf();
+    // Whitelist the tempfile's directory for the path validator added
+    // by the `${file:...}` traversal fix; otherwise /tmp is rejected.
+    std::env::set_var("CONFIG_SECRETS_DIR", &parent);
 
     write_file(dir.path(), "llm.yaml", &format!(r#"
 providers:
@@ -152,6 +201,7 @@ providers:
     std::env::set_var("MINIMAX_API_KEY", "not_used");
     let cfg = AppConfig::load(dir.path()).unwrap();
     assert_eq!(cfg.llm.providers["minimax"].api_key, "file_secret_value");
+    std::env::remove_var("CONFIG_SECRETS_DIR");
 }
 
 #[test]
