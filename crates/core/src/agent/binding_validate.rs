@@ -71,6 +71,18 @@ pub enum BindingValidationError {
         skill: String,
         dir: String,
     },
+
+    #[error(
+        "agent '{agent}' binding[{index}]: model override provider '{binding_provider}' \
+         does not match the agent provider '{agent_provider}'. Per-binding model switching is \
+         only supported within the same provider (the LLM client is wired once per agent)."
+    )]
+    ProviderMismatch {
+        agent: String,
+        index: usize,
+        binding_provider: String,
+        agent_provider: String,
+    },
 }
 
 /// Known-tools catalogue used by [`validate_agents`]. An empty set turns
@@ -198,7 +210,25 @@ pub fn validate_agent(
         }
     }
 
-    // 4. Skills exist on disk.
+    // 4. Model override must keep the same provider.
+    //    The LLM client is wired once per agent; switching providers at
+    //    turn time would need a per-binding client pool and per-binding
+    //    credentials, which we don't support yet. Switching only the
+    //    model name within one provider (Haiku ↔ Sonnet on Anthropic) is
+    //    safe and is the common case.
+    for (idx, b) in agent.inbound_bindings.iter().enumerate() {
+        let Some(m) = &b.model else { continue };
+        if m.provider != agent.model.provider {
+            return Err(BindingValidationError::ProviderMismatch {
+                agent: agent.id.clone(),
+                index: idx,
+                binding_provider: m.provider.clone(),
+                agent_provider: agent.model.provider.clone(),
+            });
+        }
+    }
+
+    // 5. Skills exist on disk.
     for (idx, b) in agent.inbound_bindings.iter().enumerate() {
         let Some(skills) = b.skills.as_ref() else {
             continue;
@@ -216,7 +246,7 @@ pub fn validate_agent(
         }
     }
 
-    // 5. Soft warn: binding with no overrides at all.
+    // 6. Soft warn: binding with no overrides at all.
     for (idx, b) in agent.inbound_bindings.iter().enumerate() {
         if !has_any_override(b) {
             tracing::warn!(
@@ -432,6 +462,36 @@ mod tests {
             ..Default::default()
         });
         validate_agent(&a, &[], &KnownTools::default()).expect("must still boot");
+    }
+
+    #[test]
+    fn provider_mismatch_rejected() {
+        let mut a = agent("ana", "./skills");
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "telegram".into(),
+            model: Some(ModelConfig {
+                provider: "minimax".into(),
+                model: "MiniMax-M2.5".into(),
+            }),
+            ..Default::default()
+        });
+        let err = validate_agent(&a, &[], &KnownTools::default()).unwrap_err();
+        assert!(matches!(err, BindingValidationError::ProviderMismatch { .. }));
+    }
+
+    #[test]
+    fn same_provider_model_switch_accepted() {
+        let mut a = agent("ana", "./skills");
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "telegram".into(),
+            model: Some(ModelConfig {
+                provider: "anthropic".into(),
+                model: "claude-sonnet-4-5".into(),
+            }),
+            ..Default::default()
+        });
+        validate_agent(&a, &[], &KnownTools::default())
+            .expect("same-provider model switch must pass");
     }
 
     #[test]
