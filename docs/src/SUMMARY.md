@@ -96,6 +96,19 @@
 - [MCP server from Claude Desktop](./recipes/mcp-from-claude-desktop.md)
 - [NATS with TLS + auth](./recipes/nats-tls-auth.md)
 
+# Architecture Decision Records
+
+- [Index](./adr/index.md)
+- [0001 — Single-process runtime](./adr/0001-single-process.md)
+- [0002 — NATS as the broker](./adr/0002-nats-broker.md)
+- [0003 — sqlite-vec for vector search](./adr/0003-sqlite-vec.md)
+- [0004 — Per-agent tool sandboxing](./adr/0004-per-agent-sandbox.md)
+- [0005 — Drop-in agents.d/ directory](./adr/0005-drop-in-agents.md)
+- [0006 — Workspace-git memory forensics](./adr/0006-workspace-git.md)
+- [0007 — WhatsApp via whatsapp-rs](./adr/0007-whatsapp-signal-protocol.md)
+- [0008 — MCP dual role](./adr/0008-mcp-dual-role.md)
+- [0009 — Dual MIT / Apache-2.0 license](./adr/0009-dual-license.md)
+
 ---
 
 [Contributing](./contributing.md)
