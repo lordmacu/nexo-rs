@@ -103,7 +103,18 @@ fn resolve_relative_paths(dir: &Path, agents: &mut AgentsConfig) {
         if candidate.is_absolute() {
             return p.to_string();
         }
-        dir.join(candidate).to_string_lossy().into_owned()
+        // Skip leading `./` components so the rendered path looks clean
+        // (`/etc/agent/skills` instead of `/etc/agent/./skills`) and
+        // matches what downstream consumers expect in log messages and
+        // assertions.
+        let mut joined = dir.to_path_buf();
+        for comp in candidate.components() {
+            match comp {
+                std::path::Component::CurDir => {}
+                c => joined.push(c.as_os_str()),
+            }
+        }
+        joined.to_string_lossy().into_owned()
     };
     for a in &mut agents.agents {
         a.skills_dir = resolve(&a.skills_dir);
