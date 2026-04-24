@@ -22,6 +22,9 @@ pub struct AppConfig {
     /// Phase 12.6 — optional server-side config (expose this agent as an
     /// MCP server). `None` when `mcp_server.yaml` is absent.
     pub mcp_server: Option<McpServerConfig>,
+    /// Phase 18 — runtime-level knobs (hot-reload). Always populated;
+    /// an absent `runtime.yaml` yields [`RuntimeConfig::default`].
+    pub runtime: RuntimeConfig,
 }
 
 /// Minimal config bundle for the `agent mcp-server` subcommand.
@@ -53,6 +56,7 @@ impl AppConfig {
         }
         let mcp_server =
             load_optional::<McpServerConfigFile>(dir, "mcp_server.yaml")?.map(|f| f.mcp_server);
+        let runtime = load_optional::<RuntimeConfig>(dir, "runtime.yaml")?.unwrap_or_default();
         Ok(AppConfig {
             agents,
             broker,
@@ -62,6 +66,7 @@ impl AppConfig {
             extensions,
             mcp,
             mcp_server,
+            runtime,
         })
     }
 
