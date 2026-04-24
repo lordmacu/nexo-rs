@@ -675,6 +675,24 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Gmail poller — background task that polls Gmail on a fixed
+    // interval and routes matching emails to channel plugins. No LLM
+    // in the hot path; dedup via Gmail UNREAD label. Absent config
+    // file = feature off.
+    match agent_plugin_gmail_poller::GmailPollerConfig::load(&config_dir) {
+        Ok(Some(cfg)) => {
+            if let Err(e) = agent_plugin_gmail_poller::spawn(cfg, broker.clone()).await {
+                tracing::warn!(error = %e, "gmail-poller failed to start");
+            }
+        }
+        Ok(None) => {
+            tracing::debug!("gmail-poller: config absent, skipping");
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "gmail-poller: failed to load config");
+        }
+    }
+
     // Optional sidecar policy for tool caching / parallel-safety /
     // relevance filtering. File absence = feature off (back-compat).
     // The `Registry` owns a default `ToolPolicy` plus per-agent
