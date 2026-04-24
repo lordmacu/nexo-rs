@@ -28,7 +28,12 @@ fn parse_chat_id(args: &Value) -> anyhow::Result<i64> {
 }
 
 fn allowlist_denied(ctx: &AgentContext, chat_id: i64) -> bool {
-    let list = &ctx.config.outbound_allowlist.telegram;
+    // Per-binding allowlist: same story as whatsapp — the effective
+    // policy carries the override for the matched binding so a strict
+    // sales channel can pin outbound to a specific chat while a
+    // wildcard binding keeps the agent-level default.
+    let effective = ctx.effective_policy();
+    let list = &effective.outbound_allowlist.telegram;
     if list.is_empty() {
         return false;
     }
