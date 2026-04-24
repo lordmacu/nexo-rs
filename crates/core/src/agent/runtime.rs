@@ -686,6 +686,7 @@ mod tests {
         let all_telegram = vec![InboundBinding {
             plugin: "telegram".into(),
             instance: None,
+            ..Default::default()
         }];
         assert!(binding_matches(&all_telegram, "telegram", None));
         assert!(binding_matches(&all_telegram, "telegram", Some("anyone")));
@@ -693,6 +694,7 @@ mod tests {
         let only_sales = vec![InboundBinding {
             plugin: "telegram".into(),
             instance: Some("sales".into()),
+            ..Default::default()
         }];
         assert!(binding_matches(&only_sales, "telegram", Some("sales")));
         assert!(!binding_matches(&only_sales, "telegram", Some("boss")));
@@ -704,10 +706,12 @@ mod tests {
             InboundBinding {
                 plugin: "telegram".into(),
                 instance: Some("sales".into()),
+                ..Default::default()
             },
             InboundBinding {
                 plugin: "whatsapp".into(),
                 instance: None,
+                ..Default::default()
             },
         ];
         assert!(binding_matches(&mixed, "telegram", Some("sales")));

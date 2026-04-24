@@ -176,12 +176,71 @@ fn default_sender_burst() -> u64 {
 
 /// Matches inbound plugin events to an agent. A binding is "plugin X"
 /// (any instance) or "plugin X, instance Y" (exact).
-#[derive(Debug, Clone, Deserialize)]
+///
+/// Per-binding overrides: each optional field replaces the matching
+/// agent-level setting when `Some(..)`. `None` (the default) inherits the
+/// agent-level value unchanged, preserving back-compat for bindings that
+/// only specify `plugin` / `instance`.
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InboundBinding {
     pub plugin: String,
     #[serde(default)]
     pub instance: Option<String>,
+
+    /// Replace the agent-level `allowed_tools` for messages arriving via
+    /// this binding. `Some(vec!["*"])` = expose every registered tool.
+    #[serde(default)]
+    pub allowed_tools: Option<Vec<String>>,
+    /// Replace the agent-level outbound allowlist for this binding.
+    #[serde(default)]
+    pub outbound_allowlist: Option<OutboundAllowlistConfig>,
+    /// Replace the agent-level skills list for this binding.
+    #[serde(default)]
+    pub skills: Option<Vec<String>>,
+    /// Override the LLM used when answering via this binding.
+    #[serde(default)]
+    pub model: Option<ModelConfig>,
+    /// Appended to the agent's `system_prompt` as a `# CHANNEL ADDENDUM`
+    /// block. Personality lives at the agent level; the addendum only
+    /// tells the LLM what is special about this particular channel.
+    #[serde(default)]
+    pub system_prompt_extra: Option<String>,
+    /// Per-binding sender rate limit. See `SenderRateLimitOverride` for
+    /// the three supported forms (`inherit` / `disable` / `{rps, burst}`).
+    #[serde(default)]
+    pub sender_rate_limit: SenderRateLimitOverride,
+    /// Replace the agent-level `allowed_delegates` list for this binding.
+    #[serde(default)]
+    pub allowed_delegates: Option<Vec<String>>,
+}
+
+/// Per-binding override for the sender rate limit.
+///
+/// YAML forms accepted:
+///   `sender_rate_limit: inherit`            → inherit agent-level limit
+///   `sender_rate_limit: disable`            → no limit on this binding
+///   `sender_rate_limit: { rps: .., burst: .. }` → binding-specific limit
+///
+/// Omitting the field is equivalent to `inherit` (the `Default`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum SenderRateLimitOverride {
+    Keyword(SenderRateLimitKeyword),
+    Config(SenderRateLimitConfig),
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SenderRateLimitKeyword {
+    Inherit,
+    Disable,
+}
+
+impl Default for SenderRateLimitOverride {
+    fn default() -> Self {
+        SenderRateLimitOverride::Keyword(SenderRateLimitKeyword::Inherit)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -324,7 +383,7 @@ fn default_weight_con() -> f32 {
     0.10
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelConfig {
     pub provider: String,
