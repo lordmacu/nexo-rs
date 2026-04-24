@@ -154,17 +154,32 @@ pub fn build_credentials(
         .collect();
 
     // Migrate legacy inline `agents[].google_auth` into the store with
-    // a warning. The account id is the agent id — 1:1 per agent.
+    // a warning. The account id is the agent id — 1:1 per agent. In
+    // Strict mode the legacy form is an error: Phase 17 V2 forces the
+    // move to google-auth.yaml.
     let mut legacy_warnings: Vec<String> = Vec::new();
     for agent in agents {
         let Some(g) = &agent.google_auth else { continue };
         if goog_accounts.iter().any(|a| a.agent_id == agent.id) {
             continue; // already declared explicitly in google-auth.yaml
         }
-        legacy_warnings.push(format!(
+        let msg = format!(
             "agent '{}': inline google_auth is deprecated — migrate to config/plugins/google-auth.yaml (id: {0})",
             agent.id
-        ));
+        );
+        match strict {
+            StrictLevel::Strict => {
+                errors.push(BuildError::LegacyInlineGoogleAuth {
+                    agent: agent.id.clone(),
+                });
+                // Skip the synthetic migration — we want the operator
+                // to fix the YAML, not run on a ghost entry.
+                continue;
+            }
+            StrictLevel::Lenient => {
+                legacy_warnings.push(msg);
+            }
+        }
         // `google_auth` uses `client_id` / `client_secret` as literal
         // strings, so emit synthetic in-memory paths. The gmail-poller
         // legacy path uses files; this synthetic path is marked by the
@@ -229,6 +244,7 @@ pub fn build_credentials(
                 BuildError::AllowAgentsExcludes { .. } => "allow_agents_excludes",
                 BuildError::AsymmetricBinding { .. } => "asymmetric_binding",
                 BuildError::Credential { .. } => "credential_io",
+                BuildError::LegacyInlineGoogleAuth { .. } => "legacy_inline_google_auth",
             };
             crate::telemetry::inc_boot_error(kind);
         }
