@@ -11,7 +11,7 @@ beyond surface docs.
 
 Legend: `⬜ pending  🔄 in progress  ✅ done`
 
-Progress: **9 / 18 phases done, 0 in progress**
+Progress: **10 / 18 phases done, 0 in progress**
 
 ---
 
@@ -241,20 +241,24 @@ will be available given their env.
 
 ---
 
-## Phase D9 — TaskFlow   ⬜
+## Phase D9 — TaskFlow   ✅
 
 Mapping to phase 14.
 
 Pages: `taskflow/model.md`, `taskflow/manager.md`.
 
 Deep-dive checklist:
-- [ ] Schema + FlowStore persistence
-- [ ] State machine diagram (pending → running → waiting → done/failed)
-- [ ] FlowManager responsibilities
-- [ ] `wait` / `resume` semantics, correlation ids
-- [ ] Agent-facing tools: start_flow, continue_flow, get_flow_state
-- [ ] Mirrored events + CLI inspection
-- [ ] End-to-end example (multi-step business process)
+- [x] Schema + FlowStore persistence (flows, flow_steps, flow_events,
+  UNIQUE (flow_id, run_id), append-only audit trail)
+- [x] State machine diagram (Created → Running → Waiting → terminal)
+  plus sticky cancel behavior
+- [x] FlowManager responsibilities with mermaid architecture diagram
+- [x] `wait` / `resume` semantics (Timer / ExternalEvent /
+  Manual + correlation_id scheme)
+- [x] Agent-facing `taskflow` tool with actions (start, status,
+  advance, cancel, list_mine), session tenancy, revision hidden
+- [x] Mirrored flows + step observation upsert, `agent flow` CLI
+- [x] End-to-end restart-recovery test shape
 
 **Done criteria:** reader can model a real 3+ step flow and wire it.
 
