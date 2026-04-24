@@ -131,6 +131,21 @@ impl LlmAgentBehavior {
             tool_call_id = %call.id,
             "tool call dispatch"
         );
+        // Defense-in-depth: enforce the per-binding `allowed_tools`
+        // list at execution time. The tool was already hidden from
+        // the LLM's tool_defs for this binding (see filter below at
+        // the turn-entry point), so a matching call usually means the
+        // model is hallucinating the name — returning a clear error
+        // keeps the turn bounded instead of either executing the
+        // forbidden tool or letting the model retry the same call.
+        let effective_tools = ctx.effective_policy();
+        if !effective_tools.tool_allowed(&call.name) {
+            let msg_str = format!(
+                "tool `{}` is not available on this binding (agent `{}`)",
+                call.name, ctx.agent_id
+            );
+            return (msg_str.clone(), Some(msg_str), "not_allowed", 0);
+        }
         // Phase 11.6 — before_tool_call hook.
         let mut skip_call = None;
         if let Some(hooks) = &self.hooks {
@@ -406,8 +421,19 @@ impl LlmAgentBehavior {
         // to change `model.provider` because the LLM client is wired
         // once per agent. Switching only the model name works because
         // providers ship multiple model variants behind a single API.
-        let model = ctx.effective_policy().model.model.clone();
-        let tool_defs = self.tools.to_tool_defs();
+        let effective_policy = ctx.effective_policy();
+        let model = effective_policy.model.model.clone();
+        // Filter the LLM-visible tool catalogue against the per-binding
+        // `allowed_tools`. The base registry keeps every tool so other
+        // bindings of the same agent can still see them; only this
+        // turn's tool_defs get narrowed. Empty allowlist = full set
+        // (back-compat for agents that don't restrict tools).
+        let tool_defs: Vec<_> = self
+            .tools
+            .to_tool_defs()
+            .into_iter()
+            .filter(|d| effective_policy.tool_allowed(&d.name))
+            .collect();
         // Phase 3 optimisation: the relevance filter index is built
         // once at agent boot (see `with_tool_policy`). We just borrow
         // the prebuilt index here and score against a query built
