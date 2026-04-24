@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod agents_directory;
 pub mod behavior;
+pub mod binding_validate;
 pub mod context;
 pub mod delegation_tool;
 pub mod dreaming;
@@ -42,6 +43,9 @@ pub mod workspace_git;
 pub use agent::Agent;
 pub use agents_directory::{AgentInfo, AgentsDirectory};
 pub use behavior::AgentBehavior;
+pub use binding_validate::{
+    validate_agent, validate_agents, BindingValidationError, KnownTools,
+};
 pub use context::AgentContext;
 pub use delegation_tool::DelegationTool;
 pub use dreaming::{DreamCandidate, DreamEngine, DreamReport, DreamWeights, DreamingConfig};
