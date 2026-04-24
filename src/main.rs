@@ -373,7 +373,7 @@ async fn main() -> Result<()> {
                     "credential gauntlet passed"
                 );
             }
-            Some(bundle)
+            Some(Arc::new(bundle))
         }
         Err(errs) => {
             // Don't hard-fail boot on a legacy config that predates the
@@ -858,9 +858,12 @@ async fn main() -> Result<()> {
     // here is authenticated, so exposing it to the LAN would let anyone
     // flush the cache or inspect the agent list. ssh-tunnel
     // `-L 9091:127.0.0.1:9091` to reach it remotely.
+    let credentials_for_admin = credentials.as_ref().map(Arc::clone);
     let _admin_handle = tokio::spawn(run_admin_server(
         Arc::clone(&tool_policy_registry),
         Arc::clone(&agents_directory),
+        credentials_for_admin,
+        config_dir.clone(),
     ));
     let mut runtimes: Vec<AgentRuntime> = Vec::with_capacity(cfg.agents.agents.len());
     // Phase 18 — collect each agent's reload channel so the coordinator
@@ -2665,6 +2668,8 @@ async fn run_health_server(health: RuntimeHealth) {
 async fn run_admin_server(
     registry: Arc<agent_core::agent::tool_policy::ToolPolicyRegistry>,
     agents: Arc<agent_core::agent::AgentsDirectory>,
+    credentials_for_admin: Option<Arc<agent_auth::CredentialsBundle>>,
+    admin_config_dir: PathBuf,
 ) {
     let listener = match TcpListener::bind("127.0.0.1:9091").await {
         Ok(l) => l,
@@ -2684,8 +2689,10 @@ async fn run_admin_server(
         };
         let registry = Arc::clone(&registry);
         let agents = Arc::clone(&agents);
+        let creds = credentials_for_admin.clone();
+        let cfg_dir = admin_config_dir.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_admin_conn(stream, registry, agents).await {
+            if let Err(e) = handle_admin_conn(stream, registry, agents, creds, cfg_dir).await {
                 tracing::debug!(error = %e, "admin connection failed");
             }
         });
@@ -2696,16 +2703,46 @@ async fn handle_admin_conn(
     mut stream: TcpStream,
     registry: Arc<agent_core::agent::tool_policy::ToolPolicyRegistry>,
     agents: Arc<agent_core::agent::AgentsDirectory>,
+    credentials: Option<Arc<agent_auth::CredentialsBundle>>,
+    config_dir: PathBuf,
 ) -> anyhow::Result<()> {
     let (method, full_path) = read_http_method_path(&mut stream).await?;
     let (path, query) = match full_path.find('?') {
         Some(i) => (&full_path[..i], &full_path[i + 1..]),
         None => (full_path.as_str(), ""),
     };
-    // Route `/admin/agents*` to the agents directory; fall through to
-    // the tool-policy handler otherwise. Adding a new admin subsection
-    // is a matter of another `if let Some(...)` above this line.
-    let (status, body, content_type) = if let Some(resp) = agents.dispatch(&method, path) {
+    // Route `/admin/credentials/*` first (Phase 17 hot-reload), then
+    // `/admin/agents*`, then fall back to the tool-policy handler.
+    let (status, body, content_type) = if path == "/admin/credentials/reload"
+        && method == "POST"
+    {
+        match credentials.as_deref() {
+            Some(bundle) => match agent_auth::wire::reload_resolver(
+                &config_dir,
+                bundle,
+                agent_auth::StrictLevel::Lenient,
+            ) {
+                Ok(outcome) => (
+                    200,
+                    serde_json::to_string_pretty(&outcome)
+                        .unwrap_or_else(|_| "{}".into()),
+                    "application/json",
+                ),
+                Err(errs) => {
+                    let body = serde_json::json!({
+                        "ok": false,
+                        "errors": errs.iter().map(|e| e.to_string()).collect::<Vec<_>>(),
+                    });
+                    (400, body.to_string(), "application/json")
+                }
+            },
+            None => (
+                503,
+                "{\"ok\":false,\"error\":\"credentials subsystem disabled\"}".into(),
+                "application/json",
+            ),
+        }
+    } else if let Some(resp) = agents.dispatch(&method, path) {
         resp
     } else {
         agent_core::agent::tool_policy::admin_dispatch(&method, path, query, &registry)

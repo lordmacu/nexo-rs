@@ -337,6 +337,89 @@ fn agent_to_input(agent: &AgentConfig) -> AgentCredentialsInput {
     }
 }
 
+/// Hot-reload the credential resolver in-place. Re-reads YAML from
+/// `config_dir`, runs the gauntlet, and atomically swaps the new
+/// bindings into the existing `Arc<AgentCredentialResolver>` held by
+/// every plugin tool. Returns the per-channel account counts and any
+/// warnings the rebuild surfaced.
+pub fn reload_resolver(
+    config_dir: &Path,
+    bundle: &CredentialsBundle,
+    strict: StrictLevel,
+) -> Result<ReloadOutcome, Vec<BuildError>> {
+    let cfg = match agent_config::AppConfig::load(config_dir) {
+        Ok(c) => c,
+        Err(e) => {
+            return Err(vec![BuildError::Credential {
+                channel: crate::handle::WHATSAPP,
+                instance: "<config>".into(),
+                source: crate::error::CredentialError::Unreadable {
+                    path: config_dir.to_path_buf(),
+                    source: std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
+                },
+            }])
+        }
+    };
+    let google = match load_google_auth(config_dir) {
+        Ok(g) => g,
+        Err(e) => {
+            return Err(vec![BuildError::Credential {
+                channel: crate::handle::GOOGLE,
+                instance: "<google-auth.yaml>".into(),
+                source: crate::error::CredentialError::Unreadable {
+                    path: config_dir.join("plugins/google-auth.yaml"),
+                    source: std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
+                },
+            }])
+        }
+    };
+
+    // Build fresh stores so removed/added accounts surface immediately.
+    // Existing plugin instances keep using their old session_dir until
+    // the daemon restarts; this reload only affects the resolver +
+    // tool-side ACL, which is the V1 invariant we promised.
+    let fresh = build_credentials(
+        &cfg.agents.agents,
+        &cfg.plugins.whatsapp,
+        &cfg.plugins.telegram,
+        &google,
+        strict,
+    )?;
+
+    // Drive the resolver's atomic swap from the freshly-built bindings.
+    let inputs: Vec<crate::resolver::AgentCredentialsInput> = cfg
+        .agents
+        .agents
+        .iter()
+        .map(crate::wire::agent_to_input_pub)
+        .collect();
+    bundle.resolver.rebuild(&inputs, &fresh.stores, strict)?;
+
+    use crate::store::CredentialStore;
+    Ok(ReloadOutcome {
+        accounts_wa: fresh.stores.whatsapp.list().len(),
+        accounts_tg: fresh.stores.telegram.list().len(),
+        accounts_google: fresh.stores.google.list().len(),
+        warnings: fresh.warnings,
+        version: bundle.resolver.version(),
+    })
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct ReloadOutcome {
+    pub accounts_wa: usize,
+    pub accounts_tg: usize,
+    pub accounts_google: usize,
+    pub warnings: Vec<String>,
+    pub version: u64,
+}
+
+/// Internal helper exposed for `reload_resolver`. Mirrors the private
+/// `agent_to_input` defined inside this module.
+pub fn agent_to_input_pub(agent: &AgentConfig) -> crate::resolver::AgentCredentialsInput {
+    agent_to_input(agent)
+}
+
 /// Convenience for `--check-config` / CLI: pretty-print either the
 /// warnings or the accumulated error list to stderr and return an
 /// exit code (0 = clean, 1 = errors, 2 = warnings-only).

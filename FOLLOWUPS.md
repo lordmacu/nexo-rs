@@ -1647,9 +1647,8 @@ Formalizada en `PHASES.md` como sub-fase 10.9. Resumen del trade-off para no olv
 
 ## Phase 17 — Per-agent credentials (deferred items)
 
-### Circuit breaker per `(channel, instance)`
-- Hoy WA/TG comparten el breaker global (Phase 2.5). Un 429 de un número tumba el breaker del otro durante la ventana cooldown.
-- **Acción:** `BreakerKey::Account { channel, instance }` en `crates/resilience/`; wire en dispatch de cada plugin. Solo vale la pena cuando haya >1 account por canal real.
+### ~~Circuit breaker per `(channel, instance)`~~ ✅ Resuelto 2026-04-24
+- `crates/auth/src/breaker.rs`: `BreakerRegistry` con `DashMap<"channel:instance", Arc<CircuitBreaker>>`. Cada `publish_outbound` en WA/TG consulta `ctx.breakers.for_handle(h)` antes de enviar; aísla 429 por número. Métrica `credentials_breaker_state{channel,instance}` actualizada en transiciones.
 
 ### Hot-reload de `credentials` sin restart
 - Cambios en `agents.d/*.yaml` o `whatsapp.yaml` requieren reiniciar el daemon para que la nueva binding se materialice.
