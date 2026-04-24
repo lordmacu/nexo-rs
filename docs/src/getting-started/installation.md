@@ -58,8 +58,21 @@ walkthrough and use the bootstrap script:
 
 Details: [Native install](./install-native.md).
 
+## Termux (Android)
+
+Running on an Android phone under Termux? The same bootstrap script
+detects Termux and does the right thing (no sudo, `$PREFIX/bin`,
+`pkg install`, default to `broker.type: local`):
+
+```bash
+./scripts/bootstrap.sh --yes
+```
+
+Details: [Termux install](./install-termux.md).
+
 ## Next
 
 - [Quick start](./quickstart.md) — first agent running in five minutes
 - [Setup wizard](./setup-wizard.md) — pair channels and wire secrets
 - [Native install](./install-native.md) — detailed no-Docker setup
+- [Termux install](./install-termux.md) — phone-hosted personal agent

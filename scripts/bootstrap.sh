@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Non-Docker bootstrap for nexo-rs.
+# Non-Docker bootstrap for nexo-rs. Works on Linux, macOS, and Termux.
 #
 # Verifies prerequisites, installs NATS (native or container), creates the
 # runtime directory layout, stages example configs, and builds the agent
@@ -10,8 +10,10 @@
 #                            [--skip-setup] [--yes]
 #
 #   --nats=native   install nats-server to /usr/local/bin (default on Linux/mac)
+#                   or $PREFIX/bin (Termux)
 #   --nats=docker   run nats:2.10-alpine as a detached container (requires docker)
-#   --nats=skip     don't touch NATS (BYO broker)
+#   --nats=skip     don't touch NATS (BYO broker). Default on Termux, where
+#                   the recommended setup is broker.type: local in-process.
 #   --skip-build    don't run `cargo build --release`
 #   --skip-setup    don't launch `agent setup` at the end
 #   --yes           auto-confirm sudo + install prompts when possible
@@ -86,6 +88,12 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # ---------------------------------------------------------------------------
 
 detect_os() {
+  # Termux sits on top of Linux but needs a different install surface —
+  # no sudo, no /usr/local/bin, no systemd, `pkg` instead of `apt`.
+  if [[ -n "${TERMUX_VERSION:-}" ]] || [[ "${PREFIX:-}" == */com.termux/* ]]; then
+    echo "termux"
+    return
+  fi
   case "$(uname -s)" in
     Linux*)   echo "linux"  ;;
     Darwin*)  echo "macos"  ;;
@@ -120,8 +128,9 @@ if ! have sqlite3; then warn "sqlite3 CLI not found (runtime only needs libsqlit
 if [[ "${#missing[@]}" -gt 0 ]]; then
   err "missing core tools: ${missing[*]}"
   case "$OS" in
-    linux) err "try: sudo apt install -y ${missing[*]}" ;;
-    macos) err "try: brew install ${missing[*]}" ;;
+    linux)  err "try: sudo apt install -y ${missing[*]}" ;;
+    macos)  err "try: brew install ${missing[*]}" ;;
+    termux) err "try: pkg install -y ${missing[*]}" ;;
   esac
   exit 1
 fi
@@ -129,31 +138,51 @@ fi
 # Rust
 if ! have cargo; then
   warn "rust / cargo not installed"
-  if confirm "install rust via rustup now?"; then
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-    # shellcheck disable=SC1091
-    source "$HOME/.cargo/env"
-    ok "rust installed"
+  if [[ "$OS" == "termux" ]]; then
+    # rustup doesn't exist for Termux; `pkg install rust` ships a native toolchain.
+    if confirm "install rust via 'pkg install rust' now?"; then
+      pkg install -y rust
+      ok "rust installed via pkg"
+    else
+      err "cargo is required; rerun after: pkg install rust"
+      exit 1
+    fi
   else
-    err "cargo is required; rerun after installing rust"
-    exit 1
+    if confirm "install rust via rustup now?"; then
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+      # shellcheck disable=SC1091
+      source "$HOME/.cargo/env"
+      ok "rust installed"
+    else
+      err "cargo is required; rerun after installing rust"
+      exit 1
+    fi
   fi
 else
   ok "rust $(rustc --version)"
 fi
 
-rustup component add rustfmt clippy >/dev/null 2>&1 || true
+# rustup isn't available on Termux; component install is a no-op there.
+if [[ "$OS" != "termux" ]]; then
+  rustup component add rustfmt clippy >/dev/null 2>&1 || true
+fi
 
 # ---------------------------------------------------------------------------
 # 2. NATS
 # ---------------------------------------------------------------------------
 
 install_nats_native() {
-  local url target
+  local url target install_dir
+  # NATS releases ship static Go binaries, so the linux-arm64 archive
+  # works unchanged in Termux on aarch64 phones.
   if [[ "$OS" == "linux" && "$ARCH" == "amd64" ]]; then
     url="https://github.com/nats-io/nats-server/releases/download/v${NATS_VERSION}/nats-server-v${NATS_VERSION}-linux-amd64.tar.gz"
   elif [[ "$OS" == "linux" && "$ARCH" == "arm64" ]]; then
     url="https://github.com/nats-io/nats-server/releases/download/v${NATS_VERSION}/nats-server-v${NATS_VERSION}-linux-arm64.tar.gz"
+  elif [[ "$OS" == "termux" && "$ARCH" == "arm64" ]]; then
+    url="https://github.com/nats-io/nats-server/releases/download/v${NATS_VERSION}/nats-server-v${NATS_VERSION}-linux-arm64.tar.gz"
+  elif [[ "$OS" == "termux" && "$ARCH" == "amd64" ]]; then
+    url="https://github.com/nats-io/nats-server/releases/download/v${NATS_VERSION}/nats-server-v${NATS_VERSION}-linux-amd64.tar.gz"
   elif [[ "$OS" == "macos" ]]; then
     if have brew; then
       brew install nats-server
@@ -175,11 +204,17 @@ install_nats_native() {
     err "nats-server binary not found in archive"
     return 1
   fi
-  if have sudo; then
-    sudo install -m 0755 "$target" /usr/local/bin/nats-server
+  if [[ "$OS" == "termux" ]]; then
+    install_dir="${PREFIX:-/data/data/com.termux/files/usr}/bin"
   else
+    install_dir="/usr/local/bin"
+  fi
+  if [[ "$OS" != "termux" ]] && have sudo; then
+    sudo install -m 0755 "$target" "$install_dir/nats-server"
+  else
+    install -m 0755 "$target" "$install_dir/nats-server" 2>/dev/null || \
     install -m 0755 "$target" "$HOME/.local/bin/nats-server" 2>/dev/null || {
-      err "cannot install nats-server — no sudo and no ~/.local/bin"
+      err "cannot install nats-server — no sudo and no writable bindir"
       return 1
     }
   fi
@@ -210,6 +245,12 @@ case "$NATS_MODE" in
   auto)
     if have nats-server; then
       ok "nats-server already installed ($(nats-server --version 2>&1 | head -1))"
+    elif [[ "$OS" == "termux" ]]; then
+      # On Termux, default to the in-process local broker — no NATS needed.
+      # The operator can opt into --nats=native if they want a real broker.
+      warn "Termux detected — defaulting to local broker (broker.type: local)"
+      warn "re-run with --nats=native to download a NATS binary instead"
+      NATS_MODE="skip"
     else
       install_nats_native || exit 1
     fi
@@ -241,6 +282,16 @@ for dir in data data/queue data/workspace data/media data/transcripts secrets; d
 done
 
 chmod 700 secrets 2>/dev/null || true
+
+# Termux-specific hint: the credentials gauntlet's mode-check doesn't
+# map cleanly onto Android filesystem perms. Tell the operator to
+# disable it.
+if [[ "$OS" == "termux" ]]; then
+  if ! grep -q "CHAT_AUTH_SKIP_PERM_CHECK" ~/.profile 2>/dev/null; then
+    warn "Termux detected — add 'export CHAT_AUTH_SKIP_PERM_CHECK=1' to your shell init"
+    warn "  (Android's filesystem permission model triggers false-positive gauntlet errors)"
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # 4. Stage gitignored example configs if missing
@@ -292,7 +343,34 @@ fi
 # Summary
 # ---------------------------------------------------------------------------
 
-cat <<EOF
+if [[ "$OS" == "termux" ]]; then
+  cat <<EOF
+
+${BOLD}Bootstrap complete (Termux mode).${RESET}
+
+Next steps:
+
+  1. (Optional) Keep the CPU awake even with the screen off:
+       termux-wake-lock
+
+  2. Make sure your broker is ready:
+     - Local mode (default): set broker.type: local in config/broker.yaml
+     - Native NATS:          nats-server -js &
+
+  3. Run the agent:
+       export CHAT_AUTH_SKIP_PERM_CHECK=1
+       ./target/release/agent --config ./config
+
+  4. Verify:
+       curl localhost:8080/ready
+       curl localhost:9090/metrics
+
+  5. Background / auto-start options (termux-services, Termux:Boot)
+     live in docs/src/getting-started/install-termux.md
+
+EOF
+else
+  cat <<EOF
 
 ${BOLD}Bootstrap complete.${RESET}
 
@@ -313,3 +391,4 @@ Next steps:
      docs/src/getting-started/install-native.md
 
 EOF
+fi
