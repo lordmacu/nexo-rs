@@ -1711,29 +1711,23 @@ No abordado (low ROI):
 
 ## Per-binding capability override
 
-Phase 16 complete. Four review follow-ups landed as separate commits
-after the initial feature: aggregate validation errors, wildcard/
-specific overlap warning, post-assembly tool-name check, and known-
-provider validation against the LLM registry. Items below are the
-still-open minor polish tasks — none block production use.
+Phase 16 complete. Review + polish landed across several commits:
+aggregate validation errors, wildcard/specific overlap warning,
+post-assembly tool-name check, known-provider validation against
+the LLM registry, config-dir-relative path resolution, and
+Option<usize> binding_index (no more `usize::MAX` sentinel). The
+only items left are structural choices, not bugs.
 
-- **agents_directory default-spread fragility**: the struct-literal
-  sites in `agents_directory.rs` and `runtime.rs`/`runtime_test.rs`
-  use `..Default::default()` after InboundBinding gained fields.
-  A future InboundBinding field will silently default everywhere;
-  auditing for "did I mean to set this?" becomes harder. Consider a
-  builder/ctor once the schema stabilises.
-- **binding_index sentinel (`usize::MAX`) in `from_agent_defaults`**:
-  works but would key a nonsense cache entry if an unbound path ever
-  goes through `ToolRegistryCache::get_or_build`. Either forbid that
-  path (panic in debug) or switch to `Option<usize>` for the index.
-- **Hot-reload of per-binding config**: the effective policy cache
-  and tool registry are built at runtime::new. Config changes need a
-  process restart. A future hot-reload path would need to invalidate
-  both caches plus the rate-limiter slots.
+- **`agents_directory` default-spread fragility**: `..Default::default()`
+  in test-only struct literals means any future InboundBinding field
+  silently defaults. Acceptable for tests; revisit if the schema
+  gains a field whose default has semantic weight.
+- **Hot-reload of per-binding config**: the effective policy cache,
+  tool registry cache, and rate-limiter slots are built at
+  `runtime::new`. Config changes need a process restart. A hot-
+  reload path would have to invalidate all three plus the LLM
+  registry catalogue used for boot-time validation.
 - **session_id cross-binding collision (theoretical)**: a session is
-  tied to its first binding for the life of the session_id. If two
-  plugins ever generated the same session_id for the same agent the
-  policy for the later plugin would silently use the first one's
-  effective. Platform ids don't collide today, so this is a paper
-  cut — documented for future auditors.
+  tied to its first binding for the life of `session_id`. Platform
+  ids don't collide today, so this is a paper cut — documented for
+  future auditors.
