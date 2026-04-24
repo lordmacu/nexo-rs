@@ -93,6 +93,25 @@ impl ToolRegistry {
         }
         n
     }
+    /// Build a fresh registry that shares the current handlers but drops
+    /// every entry whose name does not match `allowed_tools`. Used by the
+    /// per-binding tool registry cache: the base registry is assembled
+    /// once at boot (plugins + extensions + MCP), and each binding gets
+    /// its own filtered clone cheaply — handlers stay behind `Arc`, only
+    /// the `DashMap` is fresh. An empty `allowed_tools` slice yields a
+    /// full clone (back-compat with agents that don't narrow the set).
+    pub fn filtered_clone(&self, allowed_tools: &[String]) -> ToolRegistry {
+        let clone = ToolRegistry {
+            handlers: Arc::new(DashMap::new()),
+        };
+        for entry in self.handlers.iter() {
+            clone
+                .handlers
+                .insert(entry.key().clone(), entry.value().clone());
+        }
+        clone.retain_matching(allowed_tools);
+        clone
+    }
     /// Phase 12.8 — remove every tool whose name starts with `prefix`.
     /// Used to drop a server's previous tool set before re-registering
     /// after a `notifications/tools/list_changed`. Returns the number of
