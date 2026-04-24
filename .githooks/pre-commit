@@ -1,5 +1,89 @@
 #!/bin/sh
+# Pre-commit checks for nexo-rs.
+#
+# Order is fastest-first: docs-sync gate (grep-only, ~50ms) rejects
+# before we spend minutes on cargo. Install once per clone:
+#     git config core.hooksPath .githooks
+# or re-run ./scripts/bootstrap.sh which wires this for you.
+
 set -e
+
+# ---------------------------------------------------------------------------
+# 0. Docs-in-sync gate
+# ---------------------------------------------------------------------------
+# Enforces the CLAUDE.md "MANDATORY: Keep docs/ in sync" rule. Any
+# commit that touches production source or config without touching
+# docs/ fails unless the message contains [no-docs].
+
+_docs_sync_check() {
+  # Staged files (A/C/M/R), excluding deletions.
+  staged=$(git diff --cached --name-only --diff-filter=ACMR)
+  [ -z "$staged" ] && return 0
+
+  docs_touched=0
+  production_count=0
+  production_list=""
+
+  for f in $staged; do
+    # Docs changes always count.
+    case "$f" in
+      docs/*) docs_touched=1; continue ;;
+    esac
+
+    # Things that never require a docs update.
+    case "$f" in
+      .githooks/*|README.md|LICENSE*|NOTICE|.gitignore|.gitattributes|*.md)
+        continue ;;
+    esac
+
+    # Test-only files.
+    case "$f" in
+      */tests/*|*_test.rs|*_smoke.rs) continue ;;
+    esac
+    base=$(basename "$f")
+    case "$base" in test_*.rs) continue ;; esac
+
+    # Production-facing paths.
+    case "$f" in
+      crates/*|src/*|config/*|extensions/*|scripts/*|.github/*|Cargo.toml|Cargo.lock)
+        production_count=$((production_count + 1))
+        production_list="${production_list}${f}
+"
+        ;;
+    esac
+  done
+
+  [ "$production_count" -eq 0 ] && return 0
+  [ "$docs_touched" -eq 1 ] && return 0
+
+  # Opt-out via commit message.
+  msg_file=$(git rev-parse --git-path COMMIT_EDITMSG)
+  if [ -f "$msg_file" ] && grep -qE '\[no-docs\]' "$msg_file"; then
+    echo ">> docs-sync: [no-docs] tag accepted (${production_count} production file(s))" >&2
+    return 0
+  fi
+
+  printf '\n\033[1;31mDocs out of sync with code.\033[0m\n\n'
+  echo "This commit stages ${production_count} production file(s) but nothing under docs/."
+  echo 'Nexo-rs rule (CLAUDE.md MANDATORY section): user-visible changes'
+  echo 'must update the mdBook in the same commit.'
+  echo ''
+  echo '  Production files in this commit:'
+  printf '%s' "$production_list" | sed 's/^/    /'
+  echo ''
+  echo '  What to do:'
+  echo '    1. Update the relevant page under docs/src/ (SUMMARY.md lists them)'
+  echo '    2. Or, if the change is purely internal (private refactor,'
+  echo '       test-only, dependency bump that does not alter behavior),'
+  echo '       add [no-docs] to your commit message.'
+  echo ''
+  echo '  Escape hatch:  git commit --no-verify  (bypasses all hooks)'
+  echo ''
+  return 1
+}
+
+echo ">> docs-sync gate..."
+_docs_sync_check
 
 echo ">> fmt check..."
 cargo fmt --all -- --check
