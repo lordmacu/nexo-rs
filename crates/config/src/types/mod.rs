@@ -7,6 +7,7 @@ pub mod mcp;
 pub mod mcp_server;
 pub mod memory;
 pub mod plugins;
+pub mod runtime;
 
 pub use agents::*;
 pub use broker::*;
@@ -17,3 +18,4 @@ pub use mcp::*;
 pub use mcp_server::*;
 pub use memory::*;
 pub use plugins::*;
+pub use runtime::*;
