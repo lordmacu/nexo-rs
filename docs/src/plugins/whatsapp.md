@@ -51,6 +51,8 @@ Key fields:
 | Field | Default | Purpose |
 |-------|---------|---------|
 | `session_dir` | per-agent | Signal Protocol state. Each account needs its own dir. |
+| `instance` | `None` | Label for multi-account routing. Unlabelled keeps the legacy bare topic. |
+| `allow_agents` | `[]` | Agents permitted to publish from this instance. Empty = accept any agent holding a resolver handle. Defense-in-depth for the per-agent [`credentials`](../config/credentials.md) binding. |
 | `acl.allow_list` | `[]` | Bare JIDs allowed to reach the agent. Empty **+** empty env = open. |
 | `behavior.ignore_chat_meta` | `true` | Skip muted / archived / locked chats on the phone. |
 | `behavior.ignore_from_me` | `true` | Drop the agent's own replies to prevent loops. |

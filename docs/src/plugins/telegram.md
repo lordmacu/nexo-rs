@@ -43,6 +43,8 @@ Key fields:
 | Field | Default | Purpose |
 |-------|---------|---------|
 | `token` | — (required) | Bot API token from @BotFather. |
+| `instance` | `None` | Label for multi-bot routing. Unlabelled keeps the legacy bare topic. |
+| `allow_agents` | `[]` | Agents permitted to publish from this bot. Empty = accept any agent holding a resolver handle. Defense-in-depth for the per-agent [`credentials`](../config/credentials.md) binding. |
 | `polling.enabled` | `true` | Long-polling intake. Webhook not yet supported. |
 | `polling.interval_ms` | `25000` | Long-poll timeout hint. Telegram clamps to [1 s, 50 s]. |
 | `polling.offset_path` | `./data/media/telegram/offset` | File to persist update offset across restarts. |

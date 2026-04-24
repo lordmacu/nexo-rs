@@ -15,8 +15,31 @@ Sources: `crates/plugins/google/` and `crates/plugins/gmail-poller/`.
 
 ### Config
 
+Two shapes supported:
+
+**Preferred (Phase 17)** — declare accounts in a dedicated store and
+bind them from the agent via [`credentials.google`](../config/credentials.md):
+
 ```yaml
-# config/plugins/google.yaml (or inline in agents.yaml)
+# config/plugins/google-auth.yaml
+google_auth:
+  accounts:
+    - id: ana@gmail.com
+      agent_id: ana                     # 1:1; gauntlet enforces the binding
+      client_id_path:     ./secrets/google/ana_client_id.txt
+      client_secret_path: ./secrets/google/ana_client_secret.txt
+      token_path:         ./secrets/google/ana_token.json
+      scopes:
+        - https://www.googleapis.com/auth/gmail.modify
+```
+
+Gmail-poller picks these up automatically; agents see `google_*` tools
+when the store has an entry matching their `agent_id`.
+
+**Legacy inline** (still works, logs a migration warn):
+
+```yaml
+# agents.yaml
 google_auth:
   client_id: ${GOOGLE_CLIENT_ID}
   client_secret: ${file:./secrets/google_secret.txt}
@@ -102,6 +125,7 @@ gmail_poller:
   interval_secs: 60
   accounts:
     - id: default
+      agent_id: ana           # Phase 17 — binds the account to an agent; defaults to `id` when omitted
       token_path: ./data/workspace/ana/google_token.json
       client_id_path: ./secrets/google_client_id.txt
       client_secret_path: ./secrets/google_client_secret.txt
