@@ -8,8 +8,8 @@ use std::process::Command;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use agent_core::agent::{build_session_catalog, register_session_tools};
 use agent_core::agent::tool_registry::ToolRegistry;
+use agent_core::agent::{build_session_catalog, register_session_tools};
 use agent_mcp::config::McpServerConfig;
 use agent_mcp::runtime_config::{McpRuntimeConfig, McpServerRuntimeConfig};
 use agent_mcp::McpRuntimeManager;
@@ -59,7 +59,10 @@ fn server_config(name: &str) -> McpServerConfig {
 
 fn manager_with(servers: Vec<McpServerConfig>) -> Arc<McpRuntimeManager> {
     McpRuntimeManager::new(McpRuntimeConfig {
-        servers: servers.into_iter().map(McpServerRuntimeConfig::Stdio).collect(),
+        servers: servers
+            .into_iter()
+            .map(McpServerRuntimeConfig::Stdio)
+            .collect(),
         session_ttl: Duration::from_secs(60),
         idle_reap_interval: Duration::from_secs(1),
         reset_level_on_unset: false,
@@ -75,8 +78,11 @@ async fn build_session_catalog_lists_tools_from_all_servers() {
     let sid = Uuid::new_v4();
     let rt = mgr.get_or_create(sid).await;
     let catalog = build_session_catalog(&rt).await;
-    let names: Vec<&str> =
-        catalog.entries().iter().map(|e| e.prefixed_name.as_str()).collect();
+    let names: Vec<&str> = catalog
+        .entries()
+        .iter()
+        .map(|e| e.prefixed_name.as_str())
+        .collect();
     assert!(names.contains(&"mcp_alpha_echo"));
     assert!(names.contains(&"mcp_beta_echo"));
     mgr.shutdown_all().await;

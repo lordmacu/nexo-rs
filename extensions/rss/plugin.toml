@@ -10,6 +10,9 @@ tools = ["status", "fetch_feed"]
 [requires]
 env = []
 
+[context]
+passthrough = true
+
 [transport]
 kind = "stdio"
 command = "./target/release/rss"

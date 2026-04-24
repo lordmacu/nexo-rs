@@ -67,8 +67,12 @@ impl BrowserInner {
         }
 
         let target_id = get_first_target_id(&ws_url, self.config.connect_timeout_ms).await?;
-        let session =
-            CdpSession::new(Arc::clone(&client), &target_id, self.config.command_timeout_ms).await?;
+        let session = CdpSession::new(
+            Arc::clone(&client),
+            &target_id,
+            self.config.command_timeout_ms,
+        )
+        .await?;
         *session_lock = Some(session);
         drop(session_lock);
 
@@ -88,9 +92,7 @@ impl BrowserInner {
 
         let broker_guard = self.broker.lock().await;
         let Some(broker) = broker_guard.clone() else {
-            tracing::debug!(
-                "browser plugin has no broker yet — deferring CDP event forwarder"
-            );
+            tracing::debug!("browser plugin has no broker yet — deferring CDP event forwarder");
             return;
         };
         drop(broker_guard);
@@ -129,7 +131,11 @@ impl BrowserInner {
         });
     }
 
-    pub(crate) async fn execute(self: &Arc<Self>, cmd: BrowserCmd) -> BrowserResult {
+    /// Execute one CDP command against the managed Chrome session.
+    /// Public so the `BrowserTool` family (registered as LLM tools) can
+    /// drive the browser directly — otherwise callers would have to
+    /// round-trip through the broker.
+    pub async fn execute(self: &Arc<Self>, cmd: BrowserCmd) -> BrowserResult {
         if !self.circuit.allow() {
             return BrowserResult::err(format!(
                 "circuit breaker `{}` is open",
@@ -191,13 +197,11 @@ impl BrowserInner {
                     Err(_) => BrowserResult::err("evaluate timed out"),
                 }
             }
-            BrowserCmd::Snapshot => {
-                match tokio::time::timeout(timeout, session.snapshot()).await {
-                    Ok(Ok(text)) => BrowserResult::ok_snapshot(text),
-                    Ok(Err(e)) => BrowserResult::err(e.to_string()),
-                    Err(_) => BrowserResult::err("snapshot timed out"),
-                }
-            }
+            BrowserCmd::Snapshot => match tokio::time::timeout(timeout, session.snapshot()).await {
+                Ok(Ok(text)) => BrowserResult::ok_snapshot(text),
+                Ok(Err(e)) => BrowserResult::err(e.to_string()),
+                Err(_) => BrowserResult::err("snapshot timed out"),
+            },
             BrowserCmd::ScrollTo { target } => {
                 match tokio::time::timeout(timeout, session.scroll_to(&target)).await {
                     Ok(Ok(())) => BrowserResult::ok(),
@@ -227,6 +231,15 @@ impl BrowserPlugin {
             inner: Arc::new(BrowserInner::new(config)),
             shutdown: CancellationToken::new(),
         }
+    }
+
+    /// Execute one browser command directly (no broker roundtrip). The
+    /// `BrowserTool` family calls this from inside LLM tool handlers so
+    /// each tool call runs exactly once per request — sending through
+    /// the broker would pile inbound events on top of whatever the
+    /// plugin's own subscriber is doing.
+    pub async fn execute(&self, cmd: BrowserCmd) -> BrowserResult {
+        self.inner.execute(cmd).await
     }
 }
 

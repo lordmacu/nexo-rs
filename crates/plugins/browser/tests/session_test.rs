@@ -4,9 +4,9 @@ use serde_json::json;
 use tokio::net::TcpListener;
 
 async fn mock_cdp_server_stateful() -> String {
+    use futures::{SinkExt, StreamExt};
     use tokio_tungstenite::accept_async;
     use tokio_tungstenite::tungstenite::Message;
-    use futures::{SinkExt, StreamExt};
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -36,7 +36,7 @@ async fn mock_cdp_server_stateful() -> String {
                 };
 
                 let resp = json!({ "id": id, "result": result });
-                let _ = sink.send(Message::Text(resp.to_string().into())).await;
+                let _ = sink.send(Message::Text(resp.to_string())).await;
             }
         }
     });
@@ -54,9 +54,18 @@ async fn snapshot_generates_element_refs() {
 
     let snapshot = session.snapshot().await.unwrap();
 
-    assert!(snapshot.contains("@e1"), "snapshot should contain @e1: {snapshot}");
-    assert!(snapshot.contains("@e2"), "snapshot should contain @e2: {snapshot}");
-    assert!(snapshot.contains("button"), "snapshot should contain button tag");
+    assert!(
+        snapshot.contains("@e1"),
+        "snapshot should contain @e1: {snapshot}"
+    );
+    assert!(
+        snapshot.contains("@e2"),
+        "snapshot should contain @e2: {snapshot}"
+    );
+    assert!(
+        snapshot.contains("button"),
+        "snapshot should contain button tag"
+    );
 }
 
 #[tokio::test]

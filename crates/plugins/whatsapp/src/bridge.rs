@@ -78,12 +78,7 @@ pub async fn bridge_step(
         return None;
     }
 
-    match tokio::time::timeout(
-        Duration::from_millis(cfg.bridge.response_timeout_ms),
-        rx,
-    )
-    .await
-    {
+    match tokio::time::timeout(Duration::from_millis(cfg.bridge.response_timeout_ms), rx).await {
         Ok(Ok(text)) => Some(text),
         Ok(Err(_cancelled)) => {
             // Sender was dropped — a newer inbound on the same session

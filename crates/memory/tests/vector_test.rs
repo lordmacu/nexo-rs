@@ -15,7 +15,10 @@ struct MockProvider {
 
 impl MockProvider {
     fn new(dim: usize) -> Self {
-        Self { dim, mapping: Mutex::new(HashMap::new()) }
+        Self {
+            dim,
+            mapping: Mutex::new(HashMap::new()),
+        }
     }
 
     /// Deterministic embedding: hash text into the first N positions.
@@ -119,8 +122,12 @@ async fn recall_vector_filters_by_agent_id() {
     let mem = LongTermMemory::open_with_vector(path.to_str().unwrap(), Some(mock(8)))
         .await
         .unwrap();
-    mem.remember("kate", "shared text about things", &[]).await.unwrap();
-    mem.remember("bob", "shared text about things", &[]).await.unwrap();
+    mem.remember("kate", "shared text about things", &[])
+        .await
+        .unwrap();
+    mem.remember("bob", "shared text about things", &[])
+        .await
+        .unwrap();
     let kate_hits = mem
         .recall_vector("kate", "shared text about things", 5)
         .await
@@ -147,16 +154,25 @@ async fn recall_hybrid_merges_fts_and_vector() {
         .await
         .unwrap();
     // FTS hit on "rust"
-    mem.remember("kate", "rust is a systems language", &[]).await.unwrap();
+    mem.remember("kate", "rust is a systems language", &[])
+        .await
+        .unwrap();
     // Semantic-only candidate (shares bytes with query)
-    mem.remember("kate", "cristian enjoys terse output", &[]).await.unwrap();
+    mem.remember("kate", "cristian enjoys terse output", &[])
+        .await
+        .unwrap();
     // Non-matching baseline
-    mem.remember("kate", "unrelated musings about coffee", &[]).await.unwrap();
+    mem.remember("kate", "unrelated musings about coffee", &[])
+        .await
+        .unwrap();
 
     let out = mem.recall_hybrid("kate", "rust", 3).await.unwrap();
     assert!(!out.is_empty());
     // At least the FTS match must be present.
-    assert!(out.iter().any(|m| m.content.contains("rust")), "missing FTS hit: {out:?}");
+    assert!(
+        out.iter().any(|m| m.content.contains("rust")),
+        "missing FTS hit: {out:?}"
+    );
 }
 
 #[tokio::test]
@@ -174,9 +190,6 @@ async fn dimension_mismatch_on_reopen_errors() {
     let result = LongTermMemory::open_with_vector(path.to_str().unwrap(), Some(mock(8))).await;
     match result {
         Ok(_) => panic!("expected dimension mismatch"),
-        Err(e) => assert!(
-            e.to_string().contains("dimension mismatch"),
-            "got: {e}"
-        ),
+        Err(e) => assert!(e.to_string().contains("dimension mismatch"), "got: {e}"),
     }
 }

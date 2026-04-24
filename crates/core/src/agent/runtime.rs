@@ -1,17 +1,3 @@
-use std::mem;
-use std::sync::Arc;
-use std::time::Duration;
-use dashmap::DashMap;
-use serde_json::Value;
-use tokio::sync::mpsc::error::TryRecvError;
-use tokio::sync::{mpsc, Mutex};
-use tokio::task::JoinSet;
-use tokio::time::{sleep_until, Instant};
-use tokio_util::sync::CancellationToken;
-use tracing::Instrument;
-use uuid::Uuid;
-use agent_broker::{AnyBroker, BrokerHandle};
-use agent_memory::LongTermMemory;
 use super::agent::Agent;
 use super::behavior::AgentBehavior;
 use super::context::AgentContext;
@@ -19,10 +5,24 @@ use super::peer_directory::PeerDirectory;
 use super::routing::{route_topic, AgentMessage, AgentPayload, AgentRouter};
 use super::sender_rate_limit::SenderRateLimiter;
 use super::types::{InboundMedia, InboundMessage, RunTrigger};
-use agent_config::types::agents::InboundBinding;
 use crate::heartbeat::{heartbeat_interval, heartbeat_topic, publish_heartbeat};
 use crate::session::SessionManager;
 use crate::telemetry::inc_messages_processed_total;
+use agent_broker::{AnyBroker, BrokerHandle};
+use agent_config::types::agents::InboundBinding;
+use agent_memory::LongTermMemory;
+use dashmap::DashMap;
+use serde_json::Value;
+use std::mem;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::mpsc::error::TryRecvError;
+use tokio::sync::{mpsc, Mutex};
+use tokio::task::JoinSet;
+use tokio::time::{sleep_until, Instant};
+use tokio_util::sync::CancellationToken;
+use tracing::Instrument;
+use uuid::Uuid;
 pub struct AgentRuntime {
     agent: Arc<Agent>,
     broker: AnyBroker,
@@ -162,6 +162,19 @@ impl AgentRuntime {
                             }
                         }
                         let media = extract_inbound_media(&event.payload);
+                        // Drop events with no text and no media — e.g. reactions,
+                        // receipts, typing, poll votes reach us as empty-text
+                        // InboundEvent::Message. Without this gate the LLM gets
+                        // invoked on empty input and produces spontaneous "¿en
+                        // qué ayudo?" replies (see startup spam bug).
+                        if text.is_empty() && media.is_none() {
+                            tracing::trace!(
+                                agent_id = %agent.id,
+                                plugin = %source_plugin,
+                                "inbound dropped: no text and no media",
+                            );
+                            continue;
+                        }
                         let mut msg = InboundMessage::new(session_id, &agent.id, text);
                         msg.source_plugin = source_plugin;
                         msg.source_instance = source_instance;
@@ -396,7 +409,13 @@ impl AgentRuntime {
             let agent_id = self.agent.id.clone();
             let shutdown = self.shutdown.clone();
             self.tasks.lock().await.spawn(async move {
-                let mut ticker = tokio::time::interval(interval);
+                // Delay first tick by `interval` so the agent doesn't fire
+                // on_heartbeat immediately on boot (which causes proactive
+                // messages / reminders to spam on startup).
+                let mut ticker = tokio::time::interval_at(
+                    tokio::time::Instant::now() + interval,
+                    interval,
+                );
                 ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
                 loop {
                     tokio::select! {
@@ -595,9 +614,14 @@ fn extract_inbound_media(payload: &Value) -> Option<InboundMedia> {
         .to_string();
     let mime_type = payload
         .pointer("/media/mime_type")
+        .or_else(|| payload.pointer("/media/0/mime_type"))
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-    Some(InboundMedia { kind, path, mime_type })
+    Some(InboundMedia {
+        kind,
+        path,
+        mime_type,
+    })
 }
 /// Split `plugin.inbound.<plugin>[.<instance>]` into its parts.
 /// Returns `("", None)` if the topic doesn't have the expected prefix
@@ -618,19 +642,15 @@ fn parse_inbound_topic(topic: &str) -> (String, Option<String>) {
 /// A binding with `instance=None` matches any instance of its plugin —
 /// including events with no instance at all. Used by the runtime
 /// inbound-subscriber loop.
-fn binding_matches(
-    bindings: &[InboundBinding],
-    plugin: &str,
-    instance: Option<&str>,
-) -> bool {
+fn binding_matches(bindings: &[InboundBinding], plugin: &str, instance: Option<&str>) -> bool {
     bindings.iter().any(|b| {
         if b.plugin != plugin {
             return false;
         }
         match (&b.instance, instance) {
-            (None, _) => true,                      // plugin-wide binding
+            (None, _) => true, // plugin-wide binding
             (Some(want), Some(got)) => want == got,
-            (Some(_), None) => false,               // binding asked for instance, topic had none
+            (Some(_), None) => false, // binding asked for instance, topic had none
         }
     })
 }
@@ -639,20 +659,27 @@ mod tests {
     use super::*;
     #[test]
     fn parse_topic_extracts_plugin_and_optional_instance() {
-        assert_eq!(parse_inbound_topic("plugin.inbound.telegram"),
-            ("telegram".into(), None));
-        assert_eq!(parse_inbound_topic("plugin.inbound.telegram.sales"),
-            ("telegram".into(), Some("sales".into())));
+        assert_eq!(
+            parse_inbound_topic("plugin.inbound.telegram"),
+            ("telegram".into(), None)
+        );
+        assert_eq!(
+            parse_inbound_topic("plugin.inbound.telegram.sales"),
+            ("telegram".into(), Some("sales".into()))
+        );
         // Nested instances collapse — everything after the 2nd dot is
         // treated as the instance name so bot_names can contain `.`.
-        assert_eq!(parse_inbound_topic("plugin.inbound.telegram.bot.v2"),
-            ("telegram".into(), Some("bot.v2".into())));
+        assert_eq!(
+            parse_inbound_topic("plugin.inbound.telegram.bot.v2"),
+            ("telegram".into(), Some("bot.v2".into()))
+        );
         // Non-inbound topics → neutral sentinel; binding filter rejects
         // them unless bindings are empty.
-        assert_eq!(parse_inbound_topic("something.else"),
-            (String::new(), None));
-        assert_eq!(parse_inbound_topic("plugin.inbound."),
-            (String::new(), None));
+        assert_eq!(parse_inbound_topic("something.else"), (String::new(), None));
+        assert_eq!(
+            parse_inbound_topic("plugin.inbound."),
+            (String::new(), None)
+        );
     }
     #[test]
     fn binding_matches_covers_plugin_wide_and_exact_instance() {
@@ -674,8 +701,14 @@ mod tests {
         assert!(!binding_matches(&only_sales, "telegram", None));
         // Multiple bindings: OR-semantic.
         let mixed = vec![
-            InboundBinding { plugin: "telegram".into(), instance: Some("sales".into()) },
-            InboundBinding { plugin: "whatsapp".into(), instance: None },
+            InboundBinding {
+                plugin: "telegram".into(),
+                instance: Some("sales".into()),
+            },
+            InboundBinding {
+                plugin: "whatsapp".into(),
+                instance: None,
+            },
         ];
         assert!(binding_matches(&mixed, "telegram", Some("sales")));
         assert!(binding_matches(&mixed, "whatsapp", Some("whatever")));

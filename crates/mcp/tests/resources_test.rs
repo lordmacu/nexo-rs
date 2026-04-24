@@ -45,10 +45,7 @@ async fn read_resource_text() {
     let client = StdioMcpClient::connect(config("r2", "resources"))
         .await
         .expect("connect");
-    let contents = client
-        .read_resource("file:///readme")
-        .await
-        .expect("read");
+    let contents = client.read_resource("file:///readme").await.expect("read");
     assert_eq!(contents.len(), 1);
     assert_eq!(contents[0].text.as_deref(), Some("hello"));
     client.shutdown().await;
@@ -59,10 +56,7 @@ async fn read_resource_blob() {
     let client = StdioMcpClient::connect(config("r3", "resources"))
         .await
         .expect("connect");
-    let contents = client
-        .read_resource("file:///blob")
-        .await
-        .expect("read");
+    let contents = client.read_resource("file:///blob").await.expect("read");
     assert_eq!(contents.len(), 1);
     assert_eq!(contents[0].blob.as_deref(), Some("aGVsbG8="));
     assert_eq!(contents[0].mime_type.as_deref(), Some("image/png"));
@@ -74,10 +68,7 @@ async fn read_resource_not_found_is_server_error() {
     let client = StdioMcpClient::connect(config("r4", "resources"))
         .await
         .expect("connect");
-    let err = client
-        .read_resource("file:///ghost")
-        .await
-        .unwrap_err();
+    let err = client.read_resource("file:///ghost").await.unwrap_err();
     match err {
         McpError::ServerError { code, .. } => assert_eq!(code, -32002),
         other => panic!("unexpected: {other:?}"),

@@ -1,7 +1,7 @@
-use std::sync::Arc;
-use dashmap::DashMap;
-use agent_broker::AnyBroker;
 use super::plugin::Plugin;
+use agent_broker::AnyBroker;
+use dashmap::DashMap;
+use std::sync::Arc;
 #[derive(Default, Clone)]
 pub struct PluginRegistry {
     plugins: Arc<DashMap<String, Arc<dyn Plugin>>>,
@@ -13,6 +13,14 @@ impl PluginRegistry {
     pub fn register(&self, plugin: impl Plugin + 'static) {
         self.plugins
             .insert(plugin.name().to_string(), Arc::new(plugin));
+    }
+
+    /// Register a plugin that is already behind an `Arc` so the caller
+    /// can keep its own handle after registration (needed when tools
+    /// want to call plugin methods directly without going through the
+    /// broker — e.g. `BrowserTool` → `BrowserPlugin::execute`).
+    pub fn register_arc(&self, plugin: Arc<dyn Plugin>) {
+        self.plugins.insert(plugin.name().to_string(), plugin);
     }
     pub fn get(&self, name: &str) -> Option<Arc<dyn Plugin>> {
         self.plugins.get(name).map(|e| Arc::clone(e.value()))

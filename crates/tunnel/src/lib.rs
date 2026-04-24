@@ -186,9 +186,7 @@ fn extract_trycloudflare_url(line: &str) -> Option<String> {
     use regex::Regex;
     use std::sync::OnceLock;
     static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        Regex::new(r"https://[a-zA-Z0-9._-]+\.trycloudflare\.com").unwrap()
-    });
+    let re = RE.get_or_init(|| Regex::new(r"https://[a-zA-Z0-9._-]+\.trycloudflare\.com").unwrap());
     re.find(line).map(|m| m.as_str().to_string())
 }
 

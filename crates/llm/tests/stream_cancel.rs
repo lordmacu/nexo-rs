@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use agent_config::types::llm::LlmProviderConfig;
 use agent_config::types::llm::RetryConfig;
-use agent_llm::{LlmClient, OpenAiClient};
 use agent_llm::types::{ChatMessage, ChatRequest};
+use agent_llm::{LlmClient, OpenAiClient};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -47,11 +47,7 @@ data: [DONE]\n\n";
         .mount(&server)
         .await;
 
-    let client = OpenAiClient::new(
-        &cfg_for(server.uri()),
-        "gpt-test",
-        RetryConfig::default(),
-    );
+    let client = OpenAiClient::new(&cfg_for(server.uri()), "gpt-test", RetryConfig::default());
 
     let start = std::time::Instant::now();
 
@@ -62,10 +58,7 @@ data: [DONE]\n\n";
     // phase and skip the test if the mock pushes headers slowly.
     let stream_res = tokio::time::timeout(
         Duration::from_millis(500),
-        client.stream(ChatRequest::new(
-            "gpt-test",
-            vec![ChatMessage::user("hi")],
-        )),
+        client.stream(ChatRequest::new("gpt-test", vec![ChatMessage::user("hi")])),
     )
     .await;
 

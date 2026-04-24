@@ -25,6 +25,7 @@ use crate::http::HttpMcpClient;
 use crate::http::HttpMcpOptions;
 use crate::resource_cache::ResourceCache;
 use crate::runtime_config::McpServerRuntimeConfig;
+use crate::sampling::SamplingProvider;
 use crate::types::McpToolResult;
 
 /// Time window that collapses bursts of list-changed notifications
@@ -316,27 +317,34 @@ async fn debounce_event(
 /// Connect every configured server in parallel. Failures are logged at
 /// `warn` and the offending server is simply absent from the returned map
 /// (consistent with 12.3 fail-open semantics).
-pub(crate) async fn connect_all(
+pub(crate) async fn connect_all_with_sampling(
     configs: &[McpServerRuntimeConfig],
+    sampling_provider: Option<Arc<dyn SamplingProvider>>,
 ) -> HashMap<String, Arc<dyn McpClient>> {
     let futures = configs.iter().map(|cfg| {
         let cfg = cfg.clone();
-        async move { connect_one(cfg).await }
+        let sampling_provider = sampling_provider.clone();
+        async move { connect_one(cfg, sampling_provider).await }
     });
     let results = join_all(futures).await;
     results.into_iter().flatten().collect()
 }
 
-async fn connect_one(cfg: McpServerRuntimeConfig) -> Option<(String, Arc<dyn McpClient>)> {
+async fn connect_one(
+    cfg: McpServerRuntimeConfig,
+    sampling_provider: Option<Arc<dyn SamplingProvider>>,
+) -> Option<(String, Arc<dyn McpClient>)> {
     let name = cfg.name().to_string();
     match cfg {
-        McpServerRuntimeConfig::Stdio(inner) => match StdioMcpClient::connect(inner).await {
-            Ok(c) => Some((name, Arc::new(c) as Arc<dyn McpClient>)),
-            Err(e) => {
-                tracing::warn!(mcp = %name, error = %e, "mcp stdio connect failed");
-                None
+        McpServerRuntimeConfig::Stdio(inner) => {
+            match StdioMcpClient::connect_with_sampling(inner, sampling_provider).await {
+                Ok(c) => Some((name, Arc::new(c) as Arc<dyn McpClient>)),
+                Err(e) => {
+                    tracing::warn!(mcp = %name, error = %e, "mcp stdio connect failed");
+                    None
+                }
             }
-        },
+        }
         McpServerRuntimeConfig::Http {
             url,
             transport,

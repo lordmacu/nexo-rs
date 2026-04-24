@@ -52,10 +52,8 @@ where
                 "id": id,
             }))
             .unwrap();
-            let reply_payload = Message::new(
-                reply_to.clone(),
-                serde_json::Value::String(response_line),
-            );
+            let reply_payload =
+                Message::new(reply_to.clone(), serde_json::Value::String(response_line));
             let reply_event = Event::new(
                 reply_to.clone(),
                 "mock-extension",
@@ -79,29 +77,32 @@ fn fast_opts() -> NatsRuntimeOptions {
 #[tokio::test]
 async fn connect_handshake_exposes_tool_descriptors() {
     let broker: Arc<dyn BrokerHandle> = Arc::new(LocalBroker::new());
-    let _mock = spawn_mock_extension(broker.clone(), "ext.weather.rpc".into(), |method, _| {
-        match method {
-            "initialize" => serde_json::json!({
-                "server_version": "0.1.0",
-                "tools": [{
-                    "name": "get_weather",
-                    "description": "returns a fake forecast",
-                    "input_schema": {"type": "object"}
-                }],
-                "hooks": []
-            }),
-            "tools/list" => serde_json::json!({
-                "tools": [{
-                    "name": "get_weather",
-                    "description": "returns a fake forecast",
-                    "input_schema": {"type": "object"}
-                }]
-            }),
-            "tools/call" => serde_json::json!({"content": "22C"}),
-            _ => serde_json::json!(null),
-        }
-    })
-    .await;
+    let _mock =
+        spawn_mock_extension(
+            broker.clone(),
+            "ext.weather.rpc".into(),
+            |method, _| match method {
+                "initialize" => serde_json::json!({
+                    "server_version": "0.1.0",
+                    "tools": [{
+                        "name": "get_weather",
+                        "description": "returns a fake forecast",
+                        "input_schema": {"type": "object"}
+                    }],
+                    "hooks": []
+                }),
+                "tools/list" => serde_json::json!({
+                    "tools": [{
+                        "name": "get_weather",
+                        "description": "returns a fake forecast",
+                        "input_schema": {"type": "object"}
+                    }]
+                }),
+                "tools/call" => serde_json::json!({"content": "22C"}),
+                _ => serde_json::json!(null),
+            },
+        )
+        .await;
 
     let runtime = NatsRuntime::connect(broker.clone(), "weather", "ext", fast_opts())
         .await
@@ -134,7 +135,9 @@ async fn call_times_out_when_extension_drops_request() {
                 Ok(m) => m,
                 Err(_) => continue,
             };
-            let Some(reply_to) = msg.reply_to.clone() else { continue };
+            let Some(reply_to) = msg.reply_to.clone() else {
+                continue;
+            };
             let line = match &msg.payload {
                 serde_json::Value::String(s) => s.clone(),
                 other => other.to_string(),

@@ -7,6 +7,9 @@ description = "Rust extension for OpenStreetMap geocoding and reverse geocoding 
 [capabilities]
 tools = ["status", "search", "reverse"]
 
+[context]
+passthrough = true
+
 [transport]
 kind = "stdio"
 command = "./target/release/openstreetmap"

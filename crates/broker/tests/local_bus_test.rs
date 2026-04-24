@@ -10,7 +10,10 @@ async fn pubsub_basic() {
     let mut sub = broker.subscribe("plugin.inbound.whatsapp").await.unwrap();
 
     let event = Event::new("plugin.inbound.whatsapp", "test", json!({"text": "hello"}));
-    broker.publish("plugin.inbound.whatsapp", event.clone()).await.unwrap();
+    broker
+        .publish("plugin.inbound.whatsapp", event.clone())
+        .await
+        .unwrap();
 
     let received = sub.next().await.unwrap();
     assert_eq!(received.topic, "plugin.inbound.whatsapp");
@@ -39,7 +42,10 @@ async fn pubsub_wildcard_single_segment() {
 
     // e3 should NOT arrive — verify with a timeout
     let timeout = tokio::time::timeout(Duration::from_millis(50), sub.next()).await;
-    assert!(timeout.is_err(), "wildcard * should not match multi-segment topic");
+    assert!(
+        timeout.is_err(),
+        "wildcard * should not match multi-segment topic"
+    );
 }
 
 #[tokio::test]
@@ -54,7 +60,8 @@ async fn request_response() {
             let req: Message = serde_json::from_value(event.payload).unwrap();
             if let Some(inbox) = req.reply_to {
                 let reply = Message::new(&inbox, json!({"echo": req.payload}));
-                let reply_event = Event::new(&inbox, "responder", serde_json::to_value(&reply).unwrap());
+                let reply_event =
+                    Event::new(&inbox, "responder", serde_json::to_value(&reply).unwrap());
                 broker2.publish(&inbox, reply_event).await.unwrap();
             }
         }
@@ -82,7 +89,10 @@ async fn request_timeout() {
 
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("timed out"), "expected timeout error, got: {err}");
+    assert!(
+        err.contains("timed out"),
+        "expected timeout error, got: {err}"
+    );
 }
 
 #[tokio::test]

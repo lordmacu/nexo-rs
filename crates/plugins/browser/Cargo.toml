@@ -21,4 +21,5 @@ uuid              = { workspace = true }
 agent-broker      = { path = "../../broker" }
 agent-config      = { path = "../../config" }
 agent-core        = { path = "../../core" }
+agent-llm         = { path = "../../llm" }
 agent-resilience  = { path = "../../resilience" }

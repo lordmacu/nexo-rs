@@ -80,12 +80,10 @@ async fn sampling_create_message_happy_path() {
         reply: "pong".into(),
     });
 
-    let client = StdioMcpClient::connect_with_sampling(
-        base_config("sampling-happy", &log),
-        Some(provider),
-    )
-    .await
-    .expect("connect");
+    let client =
+        StdioMcpClient::connect_with_sampling(base_config("sampling-happy", &log), Some(provider))
+            .await
+            .expect("connect");
 
     let raw = wait_for_log(&log, Duration::from_secs(3))
         .await
@@ -149,7 +147,10 @@ async fn sampling_llm_failure_maps_to_jsonrpc_error() {
     let v: serde_json::Value = serde_json::from_str(raw.lines().next().unwrap()).unwrap();
     assert_eq!(v["id"], 9001);
     assert_eq!(v["error"]["code"], -32603);
-    assert!(v["error"]["message"].as_str().unwrap().contains("fake llm failure"));
+    assert!(v["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("fake llm failure"));
 
     client.shutdown().await;
 }

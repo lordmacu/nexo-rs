@@ -22,6 +22,7 @@ use crate::protocol::{
     self, parse_notification_method, InitializeParams, INITIALIZE_ID, PROTOCOL_VERSION,
 };
 use crate::sampling::{wire as sampling_wire, SamplingProvider};
+use crate::telemetry::{inc_sampling_requests_total, observe_sampling_duration_ms};
 use crate::types::{
     InitializeResult, McpCapabilities, McpClientInfo, McpServerInfo, McpTool, McpToolResult,
     ToolsListPage,
@@ -575,40 +576,6 @@ pub(crate) fn sanitize_reason(raw: &str) -> String {
         .collect()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::sanitize_reason;
-
-    #[test]
-    fn sanitize_reason_strips_control_chars() {
-        let out = sanitize_reason("line1\nline2\tend");
-        assert_eq!(out, "line1line2end");
-    }
-
-    #[test]
-    fn sanitize_reason_truncates_to_200() {
-        let raw: String = "a".repeat(500);
-        let out = sanitize_reason(&raw);
-        assert_eq!(out.len(), 200);
-    }
-
-    #[test]
-    fn sanitize_reason_passes_typical_text() {
-        let out = sanitize_reason("client shutdown");
-        assert_eq!(out, "client shutdown");
-    }
-
-    #[test]
-    fn mcp_log_levels_are_spec_compliant() {
-        let levels = crate::client_trait::MCP_LOG_LEVELS;
-        assert_eq!(levels.len(), 8);
-        assert!(levels.contains(&"debug"));
-        assert!(levels.contains(&"warning"));
-        assert!(levels.contains(&"emergency"));
-        assert!(!levels.contains(&"warn")); // common typo
-    }
-}
-
 #[async_trait::async_trait]
 impl crate::client_trait::McpClient for StdioMcpClient {
     fn name(&self) -> &str {
@@ -932,9 +899,15 @@ async fn handle_incoming(
 ) -> Option<String> {
     let method = req.method.as_str();
     if method == "sampling/createMessage" {
+        let started_at = std::time::Instant::now();
+        let record = |outcome: &str| {
+            inc_sampling_requests_total(server_name, outcome);
+            observe_sampling_duration_ms(server_name, started_at.elapsed().as_millis() as u64);
+        };
         let provider = match provider {
             Some(p) => p,
             None => {
+                record("unsupported");
                 return Some(encode_error(
                     &req.id,
                     -32601,
@@ -945,18 +918,34 @@ async fn handle_incoming(
         let parsed = match sampling_wire::parse_create_message_params(server_name, &req.params) {
             Ok(r) => r,
             Err(e) => {
+                record(sampling_outcome_from_error(&e));
                 return Some(encode_error(&req.id, e.json_rpc_code(), &e.to_string()));
             }
         };
         match provider.sample(parsed).await {
             Ok(resp) => {
+                record("ok");
                 let result = sampling_wire::encode_response(&resp);
                 Some(encode_result(&req.id, &result))
             }
-            Err(e) => Some(encode_error(&req.id, e.json_rpc_code(), &e.to_string())),
+            Err(e) => {
+                record(sampling_outcome_from_error(&e));
+                Some(encode_error(&req.id, e.json_rpc_code(), &e.to_string()))
+            }
         }
     } else {
         Some(encode_error(&req.id, -32601, "method not found"))
+    }
+}
+
+fn sampling_outcome_from_error(e: &crate::sampling::SamplingError) -> &'static str {
+    match e {
+        crate::sampling::SamplingError::Disabled(_) => "disabled",
+        crate::sampling::SamplingError::RateLimited(_) => "rate_limited",
+        crate::sampling::SamplingError::InvalidParams(_) => "invalid_params",
+        crate::sampling::SamplingError::ToolCallsRejected => "tool_calls_rejected",
+        crate::sampling::SamplingError::LlmError(_) => "llm_error",
+        crate::sampling::SamplingError::NoProvider => "no_provider",
     }
 }
 
@@ -991,5 +980,39 @@ fn drain_pending(pending: &Arc<PendingMap>) {
         if let Some((_, tx)) = pending.remove(&id) {
             let _ = tx.send(Err((-32000, "child exited".into())));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_reason;
+
+    #[test]
+    fn sanitize_reason_strips_control_chars() {
+        let out = sanitize_reason("line1\nline2\tend");
+        assert_eq!(out, "line1line2end");
+    }
+
+    #[test]
+    fn sanitize_reason_truncates_to_200() {
+        let raw: String = "a".repeat(500);
+        let out = sanitize_reason(&raw);
+        assert_eq!(out.len(), 200);
+    }
+
+    #[test]
+    fn sanitize_reason_passes_typical_text() {
+        let out = sanitize_reason("client shutdown");
+        assert_eq!(out, "client shutdown");
+    }
+
+    #[test]
+    fn mcp_log_levels_are_spec_compliant() {
+        let levels = crate::client_trait::MCP_LOG_LEVELS;
+        assert_eq!(levels.len(), 8);
+        assert!(levels.contains(&"debug"));
+        assert!(levels.contains(&"warning"));
+        assert!(levels.contains(&"emergency"));
+        assert!(!levels.contains(&"warn")); // common typo
     }
 }

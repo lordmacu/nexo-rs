@@ -1,7 +1,7 @@
-use async_trait::async_trait;
 use super::behavior::AgentBehavior;
 use super::context::AgentContext;
 use super::types::InboundMessage;
+use async_trait::async_trait;
 pub struct NoOpAgent;
 #[async_trait]
 impl AgentBehavior for NoOpAgent {

@@ -6,7 +6,8 @@
 
 use futures::stream::{self, BoxStream, Stream, StreamExt};
 use std::collections::BTreeMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+use tokio::sync::mpsc;
 
 /// Max idle time between SSE events from an LLM. If the upstream
 /// stalls longer than this we emit an error chunk and close the stream
@@ -14,9 +15,35 @@ use std::time::Duration;
 /// coming. 120 s is enough for the slowest observed long-thought
 /// tokens while catching genuinely dead connections.
 const SSE_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
+/// Bounded queue between SSE parser task and downstream consumer.
+/// When full, parser `send().await` applies backpressure so we stop
+/// pulling network bytes until the consumer drains chunks.
+const SSE_CHUNK_BUFFER: usize = 128;
+
+/// Guard: a 200 OK with a non-`text/event-stream` body is an upstream
+/// proxy/auth wall that only *looks* healthy. Without this check the
+/// SSE parser silently swallows HTML/JSON error pages line by line and
+/// the caller sees a stream that ends with nothing. Returns the
+/// validated response on success; error-maps otherwise. Missing
+/// Content-Type is tolerated — some proxies elide the header and the
+/// event-stream parser handles that fine.
+pub fn ensure_event_stream(resp: reqwest::Response) -> anyhow::Result<reqwest::Response> {
+    if let Some(ct) = resp.headers().get(reqwest::header::CONTENT_TYPE) {
+        if let Ok(s) = ct.to_str() {
+            let s_lower = s.to_ascii_lowercase();
+            if !s_lower.contains("text/event-stream") {
+                anyhow::bail!(
+                    "expected SSE response (text/event-stream), got content-type `{s}` — upstream is likely an error page"
+                );
+            }
+        }
+    }
+    Ok(resp)
+}
 
 use crate::client::LlmClient;
 use crate::rate_limiter::RateLimiter;
+use crate::telemetry::{inc_stream_chunks_total, observe_stream_ttft_ms};
 use crate::types::{
     ChatRequest, ChatResponse, FinishReason, ResponseContent, TokenUsage, ToolCall,
 };
@@ -44,6 +71,35 @@ where
         .boxed()
 }
 
+/// Wrap a stream to emit per-provider TTFT/chunk telemetry.
+///
+/// `agent_llm_stream_ttft_seconds`: observed once, on first contentful chunk
+/// (`TextDelta` or any `ToolCall*` variant).
+/// `agent_llm_stream_chunks_total`: incremented for every emitted chunk kind.
+pub fn stream_metrics_tap<S>(
+    stream: S,
+    provider: &str,
+) -> BoxStream<'static, anyhow::Result<StreamChunk>>
+where
+    S: Stream<Item = anyhow::Result<StreamChunk>> + Send + 'static,
+{
+    let provider = provider.to_string();
+    let started = Instant::now();
+    let mut observed_ttft = false;
+    stream
+        .inspect(move |item| {
+            if let Ok(chunk) = item {
+                inc_stream_chunks_total(&provider, chunk.kind_label());
+                if !observed_ttft && chunk.is_contentful() {
+                    observed_ttft = true;
+                    let elapsed_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
+                    observe_stream_ttft_ms(&provider, elapsed_ms);
+                }
+            }
+        })
+        .boxed()
+}
+
 /// One incremental event from a streaming LLM call.
 ///
 /// Ordering guarantees:
@@ -60,6 +116,48 @@ pub enum StreamChunk {
     ToolCallEnd { id: String },
     Usage(TokenUsage),
     End { finish_reason: FinishReason },
+}
+
+impl StreamChunk {
+    pub fn kind_label(&self) -> &'static str {
+        match self {
+            StreamChunk::TextDelta { .. } => "text_delta",
+            StreamChunk::ToolCallStart { .. } => "tool_call_start",
+            StreamChunk::ToolCallArgsDelta { .. } => "tool_call_args_delta",
+            StreamChunk::ToolCallEnd { .. } => "tool_call_end",
+            StreamChunk::Usage(_) => "usage",
+            StreamChunk::End { .. } => "end",
+        }
+    }
+
+    fn is_contentful(&self) -> bool {
+        matches!(
+            self,
+            StreamChunk::TextDelta { .. }
+                | StreamChunk::ToolCallStart { .. }
+                | StreamChunk::ToolCallArgsDelta { .. }
+                | StreamChunk::ToolCallEnd { .. }
+        )
+    }
+}
+
+/// Hard cap on assembled assistant text during `collect_stream`. A
+/// malformed upstream that keeps emitting `TextDelta` without an `End`
+/// could otherwise exhaust heap — the streaming LLM path isn't bounded
+/// by `max_tokens` until the provider says so. 8 MiB is more than any
+/// sane response while catching runaway / adversarial cases.
+const MAX_TEXT_BYTES: usize = 8 * 1024 * 1024;
+/// Hard cap per tool-call arguments JSON blob. Matches real-world
+/// Anthropic / OpenAI tool call sizes with a wide margin.
+const MAX_TOOL_ARGS_BYTES: usize = 4 * 1024 * 1024;
+
+fn receiver_stream(
+    rx: mpsc::Receiver<anyhow::Result<StreamChunk>>,
+) -> BoxStream<'static, anyhow::Result<StreamChunk>> {
+    futures::stream::unfold(rx, |mut rx| async move {
+        rx.recv().await.map(|item| (item, rx))
+    })
+    .boxed()
 }
 
 /// Drain a `StreamChunk` stream into a complete `ChatResponse`.
@@ -81,7 +179,15 @@ where
 
     while let Some(item) = s.next().await {
         match item? {
-            StreamChunk::TextDelta { delta } => text.push_str(&delta),
+            StreamChunk::TextDelta { delta } => {
+                if text.len().saturating_add(delta.len()) > MAX_TEXT_BYTES {
+                    anyhow::bail!(
+                        "stream text exceeded {} bytes — refusing to buffer further",
+                        MAX_TEXT_BYTES
+                    );
+                }
+                text.push_str(&delta);
+            }
             StreamChunk::ToolCallStart { id, name } => {
                 if !tool_buf.contains_key(&id) {
                     tool_order.push(id.clone());
@@ -92,6 +198,13 @@ where
                 let entry = tool_buf
                     .entry(id.clone())
                     .or_insert_with(|| (String::new(), String::new()));
+                if entry.1.len().saturating_add(delta.len()) > MAX_TOOL_ARGS_BYTES {
+                    anyhow::bail!(
+                        "tool `{}` args exceeded {} bytes — refusing to buffer further",
+                        entry.0,
+                        MAX_TOOL_ARGS_BYTES
+                    );
+                }
                 entry.1.push_str(&delta);
                 if !tool_order.iter().any(|x| x == &id) {
                     tool_order.push(id);
@@ -106,8 +219,7 @@ where
         }
     }
 
-    let finish_reason =
-        finish.ok_or_else(|| anyhow::anyhow!("stream ended without End chunk"))?;
+    let finish_reason = finish.ok_or_else(|| anyhow::anyhow!("stream ended without End chunk"))?;
 
     let content = if !tool_order.is_empty() {
         let calls: Vec<ToolCall> = tool_order
@@ -117,9 +229,8 @@ where
                     let arguments = if args.trim().is_empty() {
                         serde_json::json!({})
                     } else {
-                        serde_json::from_str(&args).unwrap_or_else(|_| {
-                            serde_json::Value::String(args.clone())
-                        })
+                        serde_json::from_str(&args)
+                            .unwrap_or_else(|_| serde_json::Value::String(args.clone()))
                     };
                     ToolCall {
                         id,
@@ -153,7 +264,10 @@ where
     C: LlmClient + ?Sized,
 {
     let resp = client.chat(req).await?;
-    Ok(synth_chunks_from_response(resp).boxed())
+    Ok(stream_metrics_tap(
+        synth_chunks_from_response(resp),
+        client.provider(),
+    ))
 }
 
 fn synth_chunks_from_response(
@@ -177,8 +291,7 @@ fn synth_chunks_from_response(
                     id: c.id.clone(),
                     name: c.name.clone(),
                 }));
-                let args = serde_json::to_string(&c.arguments)
-                    .unwrap_or_else(|_| "{}".into());
+                let args = serde_json::to_string(&c.arguments).unwrap_or_else(|_| "{}".into());
                 chunks.push(Ok(StreamChunk::ToolCallArgsDelta {
                     id: c.id.clone(),
                     delta: args,
@@ -206,8 +319,12 @@ mod tests {
     #[tokio::test]
     async fn collect_text_only() {
         let s = ok_chunks(vec![
-            StreamChunk::TextDelta { delta: "hola ".into() },
-            StreamChunk::TextDelta { delta: "mundo".into() },
+            StreamChunk::TextDelta {
+                delta: "hola ".into(),
+            },
+            StreamChunk::TextDelta {
+                delta: "mundo".into(),
+            },
             StreamChunk::Usage(TokenUsage {
                 prompt_tokens: 3,
                 completion_tokens: 2,
@@ -240,7 +357,9 @@ mod tests {
                 id: "call_1".into(),
                 delta: "\"Bogota\"}".into(),
             },
-            StreamChunk::ToolCallEnd { id: "call_1".into() },
+            StreamChunk::ToolCallEnd {
+                id: "call_1".into(),
+            },
             StreamChunk::Usage(TokenUsage::default()),
             StreamChunk::End {
                 finish_reason: FinishReason::ToolUse,
@@ -343,6 +462,34 @@ mod tests {
             }
             _ => panic!(),
         }
+    }
+
+    #[tokio::test]
+    async fn metrics_tap_records_ttft_and_chunk_kinds() {
+        let provider = "zz_stream_metrics_probe";
+        let stream = stream_metrics_tap(
+            ok_chunks(vec![
+                StreamChunk::TextDelta {
+                    delta: "hola".into(),
+                },
+                StreamChunk::Usage(TokenUsage::default()),
+                StreamChunk::End {
+                    finish_reason: FinishReason::Stop,
+                },
+            ]),
+            provider,
+        );
+        let _ = collect_stream(stream).await.unwrap();
+        let body = crate::telemetry::render_prometheus();
+        assert!(body.contains(
+            "agent_llm_stream_chunks_total{provider=\"zz_stream_metrics_probe\",kind=\"text_delta\"} 1"
+        ));
+        assert!(body.contains(
+            "agent_llm_stream_chunks_total{provider=\"zz_stream_metrics_probe\",kind=\"usage\"} 1"
+        ));
+        assert!(body.contains(
+            "agent_llm_stream_ttft_seconds_count{provider=\"zz_stream_metrics_probe\"} 1"
+        ));
     }
 }
 
@@ -469,7 +616,9 @@ pub(crate) fn parse_openai_line(
             }
             if slot.started && !slot.ended {
                 slot.ended = true;
-                out.push(Ok(StreamChunk::ToolCallEnd { id: slot.id.clone() }));
+                out.push(Ok(StreamChunk::ToolCallEnd {
+                    id: slot.id.clone(),
+                }));
             }
         }
     }
@@ -500,61 +649,56 @@ where
     E: std::fmt::Display + Send + 'static,
 {
     use eventsource_stream::Eventsource;
-    let events = Box::pin(
+    let mut events = Box::pin(
         byte_stream
-            .map(|r| {
-                r.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
-            })
+            .map(|r| r.map_err(|e| std::io::Error::other(e.to_string())))
             .eventsource(),
     );
-
-    let s = futures::stream::unfold(
-        (events, OpenAiAcc::default(), Vec::<anyhow::Result<StreamChunk>>::new(), false),
-        |(mut events, mut acc, mut buf, mut closed)| async move {
-            loop {
-                if let Some(item) = buf.pop() {
-                    return Some((item, (events, acc, buf, closed)));
-                }
-                if closed {
-                    return None;
-                }
-                match tokio::time::timeout(SSE_IDLE_TIMEOUT, events.next()).await {
-                    Ok(Some(Ok(ev))) => {
-                        parse_openai_line(&ev.data, &mut acc, &mut buf);
-                        buf.reverse(); // pop gives FIFO
-                    }
-                    Ok(Some(Err(e))) => {
-                        return Some((Err(anyhow::anyhow!("sse error: {e}")), (events, acc, buf, true)));
-                    }
-                    Ok(None) => {
-                        closed = true;
-                        // Emit usage + End as final chunks.
-                        if let Some(u) = acc.usage.take() {
-                            buf.push(Ok(StreamChunk::Usage(u)));
+    let (tx, rx) = mpsc::channel::<anyhow::Result<StreamChunk>>(SSE_CHUNK_BUFFER);
+    tokio::spawn(async move {
+        let mut acc = OpenAiAcc::default();
+        loop {
+            match tokio::time::timeout(SSE_IDLE_TIMEOUT, events.next()).await {
+                Ok(Some(Ok(ev))) => {
+                    let mut out = Vec::<anyhow::Result<StreamChunk>>::new();
+                    parse_openai_line(&ev.data, &mut acc, &mut out);
+                    for chunk in out {
+                        if tx.send(chunk).await.is_err() {
+                            return;
                         }
-                        let finish = acc
-                            .finish_reason
-                            .take()
-                            .unwrap_or(FinishReason::Stop);
-                        buf.push(Ok(StreamChunk::End {
+                    }
+                }
+                Ok(Some(Err(e))) => {
+                    let _ = tx.send(Err(anyhow::anyhow!("sse error: {e}"))).await;
+                    return;
+                }
+                Ok(None) => {
+                    if let Some(u) = acc.usage.take() {
+                        if tx.send(Ok(StreamChunk::Usage(u))).await.is_err() {
+                            return;
+                        }
+                    }
+                    let finish = acc.finish_reason.take().unwrap_or(FinishReason::Stop);
+                    let _ = tx
+                        .send(Ok(StreamChunk::End {
                             finish_reason: finish,
-                        }));
-                        buf.reverse();
-                    }
-                    Err(_) => {
-                        return Some((
-                            Err(anyhow::anyhow!(
-                                "sse idle timeout after {}s",
-                                SSE_IDLE_TIMEOUT.as_secs()
-                            )),
-                            (events, acc, buf, true),
-                        ));
-                    }
+                        }))
+                        .await;
+                    return;
+                }
+                Err(_) => {
+                    let _ = tx
+                        .send(Err(anyhow::anyhow!(
+                            "sse idle timeout after {}s",
+                            SSE_IDLE_TIMEOUT.as_secs()
+                        )))
+                        .await;
+                    return;
                 }
             }
-        },
-    );
-    s.boxed()
+        }
+    });
+    receiver_stream(rx)
 }
 
 // ── Anthropic streaming parser ────────────────────────────────────────────────
@@ -695,71 +839,63 @@ where
     E: std::fmt::Display + Send + 'static,
 {
     use eventsource_stream::Eventsource;
-    let events = Box::pin(
+    let mut events = Box::pin(
         byte_stream
-            .map(|r| {
-                r.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
-            })
+            .map(|r| r.map_err(|e| std::io::Error::other(e.to_string())))
             .eventsource(),
     );
-
-    let s = futures::stream::unfold(
-        (
-            events,
-            AnthropicAcc::default(),
-            Vec::<anyhow::Result<StreamChunk>>::new(),
-            false,
-        ),
-        |(mut events, mut acc, mut buf, mut closed)| async move {
-            loop {
-                if let Some(item) = buf.pop() {
-                    return Some((item, (events, acc, buf, closed)));
-                }
-                if closed {
-                    return None;
-                }
-                match tokio::time::timeout(SSE_IDLE_TIMEOUT, events.next()).await {
-                    Ok(Some(Ok(ev))) => {
-                        let etype = if ev.event.is_empty() {
-                            "message".to_string()
-                        } else {
-                            ev.event.clone()
-                        };
-                        parse_anthropic_event(&etype, &ev.data, &mut acc, &mut buf);
-                        buf.reverse();
+    let (tx, rx) = mpsc::channel::<anyhow::Result<StreamChunk>>(SSE_CHUNK_BUFFER);
+    tokio::spawn(async move {
+        let mut acc = AnthropicAcc::default();
+        loop {
+            match tokio::time::timeout(SSE_IDLE_TIMEOUT, events.next()).await {
+                Ok(Some(Ok(ev))) => {
+                    let etype = if ev.event.is_empty() {
+                        "message".to_string()
+                    } else {
+                        ev.event.clone()
+                    };
+                    let mut out = Vec::<anyhow::Result<StreamChunk>>::new();
+                    parse_anthropic_event(&etype, &ev.data, &mut acc, &mut out);
+                    for chunk in out {
+                        if tx.send(chunk).await.is_err() {
+                            return;
+                        }
                     }
-                    Ok(Some(Err(e))) => {
-                        return Some((
-                            Err(anyhow::anyhow!("sse error: {e}")),
-                            (events, acc, buf, true),
-                        ));
+                }
+                Ok(Some(Err(e))) => {
+                    let _ = tx.send(Err(anyhow::anyhow!("sse error: {e}"))).await;
+                    return;
+                }
+                Ok(None) => {
+                    if tx
+                        .send(Ok(StreamChunk::Usage(acc.usage.clone())))
+                        .await
+                        .is_err()
+                    {
+                        return;
                     }
-                    Ok(None) => {
-                        closed = true;
-                        buf.push(Ok(StreamChunk::Usage(acc.usage.clone())));
-                        let finish = acc
-                            .finish_reason
-                            .take()
-                            .unwrap_or(FinishReason::Stop);
-                        buf.push(Ok(StreamChunk::End {
+                    let finish = acc.finish_reason.take().unwrap_or(FinishReason::Stop);
+                    let _ = tx
+                        .send(Ok(StreamChunk::End {
                             finish_reason: finish,
-                        }));
-                        buf.reverse();
-                    }
-                    Err(_) => {
-                        return Some((
-                            Err(anyhow::anyhow!(
-                                "sse idle timeout after {}s",
-                                SSE_IDLE_TIMEOUT.as_secs()
-                            )),
-                            (events, acc, buf, true),
-                        ));
-                    }
+                        }))
+                        .await;
+                    return;
+                }
+                Err(_) => {
+                    let _ = tx
+                        .send(Err(anyhow::anyhow!(
+                            "sse idle timeout after {}s",
+                            SSE_IDLE_TIMEOUT.as_secs()
+                        )))
+                        .await;
+                    return;
                 }
             }
-        },
-    );
-    s.boxed()
+        }
+    });
+    receiver_stream(rx)
 }
 
 // ── Gemini SSE ────────────────────────────────────────────────────────────────
@@ -791,7 +927,9 @@ fn parse_gemini_event(data: &str, acc: &mut GeminiAcc, out: &mut Vec<anyhow::Res
             for part in parts {
                 if let Some(t) = part.get("text").and_then(|t| t.as_str()) {
                     if !t.is_empty() {
-                        out.push(Ok(StreamChunk::TextDelta { delta: t.to_string() }));
+                        out.push(Ok(StreamChunk::TextDelta {
+                            delta: t.to_string(),
+                        }));
                     }
                 }
                 if let Some(fc) = part.get("functionCall") {
@@ -839,64 +977,61 @@ where
     E: std::fmt::Display + Send + 'static,
 {
     use eventsource_stream::Eventsource;
-    let events = Box::pin(
+    let mut events = Box::pin(
         byte_stream
-            .map(|r| r.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))
+            .map(|r| r.map_err(|e| std::io::Error::other(e.to_string())))
             .eventsource(),
     );
-
-    let s = futures::stream::unfold(
-        (
-            events,
-            GeminiAcc::default(),
-            Vec::<anyhow::Result<StreamChunk>>::new(),
-            false,
-        ),
-        |(mut events, mut acc, mut buf, mut closed)| async move {
-            loop {
-                if let Some(item) = buf.pop() {
-                    return Some((item, (events, acc, buf, closed)));
-                }
-                if closed {
-                    return None;
-                }
-                match tokio::time::timeout(SSE_IDLE_TIMEOUT, events.next()).await {
-                    Ok(Some(Ok(ev))) => {
-                        if ev.data.trim().is_empty() {
-                            continue;
+    let (tx, rx) = mpsc::channel::<anyhow::Result<StreamChunk>>(SSE_CHUNK_BUFFER);
+    tokio::spawn(async move {
+        let mut acc = GeminiAcc::default();
+        loop {
+            match tokio::time::timeout(SSE_IDLE_TIMEOUT, events.next()).await {
+                Ok(Some(Ok(ev))) => {
+                    if ev.data.trim().is_empty() {
+                        continue;
+                    }
+                    let mut out = Vec::<anyhow::Result<StreamChunk>>::new();
+                    parse_gemini_event(&ev.data, &mut acc, &mut out);
+                    for chunk in out {
+                        if tx.send(chunk).await.is_err() {
+                            return;
                         }
-                        parse_gemini_event(&ev.data, &mut acc, &mut buf);
-                        buf.reverse();
                     }
-                    Ok(Some(Err(e))) => {
-                        return Some((
-                            Err(anyhow::anyhow!("sse error: {e}")),
-                            (events, acc, buf, true),
-                        ));
+                }
+                Ok(Some(Err(e))) => {
+                    let _ = tx.send(Err(anyhow::anyhow!("sse error: {e}"))).await;
+                    return;
+                }
+                Ok(None) => {
+                    if tx
+                        .send(Ok(StreamChunk::Usage(acc.usage.clone())))
+                        .await
+                        .is_err()
+                    {
+                        return;
                     }
-                    Ok(None) => {
-                        closed = true;
-                        buf.push(Ok(StreamChunk::Usage(acc.usage.clone())));
-                        let finish = acc.finish_reason.take().unwrap_or(FinishReason::Stop);
-                        buf.push(Ok(StreamChunk::End {
+                    let finish = acc.finish_reason.take().unwrap_or(FinishReason::Stop);
+                    let _ = tx
+                        .send(Ok(StreamChunk::End {
                             finish_reason: finish,
-                        }));
-                        buf.reverse();
-                    }
-                    Err(_) => {
-                        return Some((
-                            Err(anyhow::anyhow!(
-                                "sse idle timeout after {}s",
-                                SSE_IDLE_TIMEOUT.as_secs()
-                            )),
-                            (events, acc, buf, true),
-                        ));
-                    }
+                        }))
+                        .await;
+                    return;
+                }
+                Err(_) => {
+                    let _ = tx
+                        .send(Err(anyhow::anyhow!(
+                            "sse idle timeout after {}s",
+                            SSE_IDLE_TIMEOUT.as_secs()
+                        )))
+                        .await;
+                    return;
                 }
             }
-        },
-    );
-    s.boxed()
+        }
+    });
+    receiver_stream(rx)
 }
 
 #[cfg(test)]
@@ -908,7 +1043,11 @@ mod parser_tests {
     fn bstream(
         chunks: Vec<&'static str>,
     ) -> impl FStream<Item = Result<Bytes, std::io::Error>> + Send + 'static {
-        stream::iter(chunks.into_iter().map(|s| Ok(Bytes::from_static(s.as_bytes()))))
+        stream::iter(
+            chunks
+                .into_iter()
+                .map(|s| Ok(Bytes::from_static(s.as_bytes()))),
+        )
     }
 
     #[tokio::test]

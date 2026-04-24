@@ -7,6 +7,9 @@ description = "HTTP GET/POST utility with size cap, SSRF guard, retries, and cir
 [capabilities]
 tools = ["status", "fetch_url"]
 
+[context]
+passthrough = true
+
 [transport]
 kind = "stdio"
 command = "./target/release/fetch-url"

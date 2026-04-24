@@ -1,12 +1,12 @@
-use std::sync::Arc;
+use super::context::AgentContext;
+use super::tool_registry::ToolHandler;
+use agent_llm::ToolDef;
+use agent_memory::LongTermMemory;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
+use std::sync::Arc;
 use uuid::Uuid;
-use agent_llm::ToolDef;
-use agent_memory::LongTermMemory;
-use super::context::AgentContext;
-use super::tool_registry::ToolHandler;
 pub struct HeartbeatTool {
     memory: Arc<LongTermMemory>,
 }

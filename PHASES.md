@@ -1590,6 +1590,70 @@ TaskFlow es un substrate runtime, no una skill markdown. Movido a su propia phas
 
 ---
 
+## Phase 15 — Claude subscription auth
+
+**Goal:** allow the Anthropic provider to authenticate with API key,
+`claude setup-token`, imported Claude Code CLI credentials, or a raw
+OAuth bundle with auto-refresh — all configurable through
+`agent setup anthropic`.
+
+### 15.1 — Config schema ✅
+
+Extend `LlmAuthConfig` with `setup_token_file`, `refresh_endpoint`,
+`client_id`. YAML parsing tests for the 5 modes
+(`api_key | setup_token | oauth_bundle | cli_import | auto`).
+
+### 15.2 — `anthropic_auth.rs` (bundle + OAuthState refresh) ✅
+
+`OAuthBundle` with atomic save, `AnthropicAuth` enum (ApiKey /
+SetupToken / OAuth), `OAuthState` with refresh mutex against
+`https://console.anthropic.com/v1/oauth/token`, rotation persisted.
+
+### 15.3 — Claude CLI credentials reader ✅
+
+`read_claude_cli_credentials()` parses `~/.claude/.credentials.json`
+and reads the macOS Keychain entry `Claude Code-credentials`. Converts
+`expiresAt` (ms) to unix seconds.
+
+### 15.4 — `AnthropicClient` uses `AnthropicAuth` ✅
+
+`AnthropicClient::new() -> Result<Self>`, `resolve_headers()` per
+request (x-api-key vs Authorization + `anthropic-beta`), classifies
+401/403 as `LlmError::CredentialInvalid` (not retried, not counted by
+breaker), marks OAuth state stale.
+
+### 15.5 — Setup wizard ✅
+
+`services/llm.rs::anthropic` expanded with `auth_mode` select (4
+options). `writer::persist_anthropic()` branches: api_key → secrets
+file; setup_token → validates prefix + length; cli_import → reads
+`~/.claude/.credentials.json`, converts to our bundle shape;
+oauth_bundle → accepts pasted JSON. All branches patch
+`llm.yaml::providers.anthropic.auth.*`.
+
+### 15.6 — Error classification ✅
+
+`LlmError::CredentialInvalid` variant added; `with_retry` does not
+retry it; HTTP 401/403 from the Anthropic endpoint maps to it with a
+hint pointing the operator at `agent setup anthropic`.
+
+### 15.8 — OAuth browser login flow (PKCE) ✅
+
+`services/anthropic_oauth.rs` nuevo: PKCE authorization_code flow
+contra `https://claude.ai/oauth/authorize` + `https://console.anthropic.com/v1/oauth/token`.
+Muestra URL, abre browser (best-effort), user pega `<code>#<state>`,
+exchange → `OAuthToken`. Nuevo modo `oauth_login` en wizard que
+ejecuta el flow y persiste bundle. Estado CSRF verificado. Soporta
+pegar URL completa o `code#state` directo.
+
+### 15.7 — Docs + YAML example ✅
+
+`config/llm.yaml` ships with a commented `auth.mode: auto` block.
+`FOLLOWUPS.md` records: multi-profile round-robin deferred, device
+code flow deferred, live smoke test gated (skipped in default CI).
+
+---
+
 ## Phase dependencies summary
 
 ```

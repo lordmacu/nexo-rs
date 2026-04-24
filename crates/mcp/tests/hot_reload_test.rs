@@ -9,9 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use agent_mcp::{
-    ClientEvent, McpClient, McpServerConfig, SessionMcpRuntime, StdioMcpClient,
-};
+use agent_mcp::{ClientEvent, McpClient, McpServerConfig, SessionMcpRuntime, StdioMcpClient};
 use uuid::Uuid;
 
 fn mock_server_path() -> PathBuf {
@@ -89,7 +87,10 @@ async fn session_on_tools_changed_fires_on_real_notification() {
     tokio::time::sleep(Duration::from_millis(400)).await;
 
     assert_eq!(fires.load(Ordering::SeqCst), 1);
-    assert_eq!(seen.lock().unwrap().as_slice(), &["notif-session".to_string()]);
+    assert_eq!(
+        seen.lock().unwrap().as_slice(),
+        &["notif-session".to_string()]
+    );
 
     rt.dispose().await;
 }

@@ -1,4 +1,4 @@
-.PHONY: dev build test lint fmt check clean docker-up docker-down docker-logs integration-smoke integration-browser integration-recovery integration-suite extensions-smoke
+.PHONY: dev build test lint fmt check clean docker-up docker-down docker-logs integration-smoke integration-browser integration-recovery integration-suite extensions-smoke setup setup-wizard setup-list setup-doctor setup-google setup-google-docker
 
 dev:
 	RUST_LOG=debug cargo run --bin agent -- --config config/agents.yaml
@@ -57,7 +57,35 @@ integration-suite:
 extensions-smoke:
 	./scripts/extensions_smoke.sh
 
+CONFIG_DIR ?= config/docker
+
 setup:
-	cp .env.example .env
+	cp -n .env.example .env || true
 	mkdir -p data secrets logs
-	@echo "Edit .env with your API keys, then run: make dev"
+	@echo "Edit .env with your API keys, then run: make setup-wizard"
+
+# Interactive menu — shows every service the wizard knows about.
+setup-wizard:
+	cargo run --quiet --bin agent -- --config $(CONFIG_DIR) setup
+
+# List all services (ids + labels) that setup knows.
+setup-list:
+	cargo run --quiet --bin agent -- --config $(CONFIG_DIR) setup list
+
+# Audit: which services are configured, which are missing secrets.
+setup-doctor:
+	cargo run --quiet --bin agent -- --config $(CONFIG_DIR) setup doctor
+
+# Jump straight to Google OAuth (client_id + client_secret prompt).
+setup-google:
+	cargo run --quiet --bin agent -- --config $(CONFIG_DIR) setup google-auth
+
+# Same, but inside the agent Docker image — useful when building the
+# release image is already done and cargo is not available on the host.
+# Mounts secrets/ and config/ as rw so the wizard can persist.
+setup-google-docker:
+	docker compose run --rm \
+	  -v $(PWD)/config:/app/config \
+	  -v $(PWD)/secrets:/app/config/secrets \
+	  --entrypoint agent \
+	  agent --config /app/$(CONFIG_DIR) setup google-auth

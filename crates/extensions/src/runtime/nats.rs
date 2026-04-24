@@ -140,7 +140,9 @@ impl NatsRuntime {
     /// Force the runtime into a terminal failed state. Used by the directory
     /// when heartbeats stop arriving so subsequent calls short-circuit.
     pub(crate) fn mark_failed(&self, reason: impl Into<String>) {
-        *self.state.write().unwrap_or_else(|p| p.into_inner()) = RuntimeState::Failed { reason: reason.into() };
+        *self.state.write().unwrap_or_else(|p| p.into_inner()) = RuntimeState::Failed {
+            reason: reason.into(),
+        };
     }
 
     pub async fn call(
@@ -231,11 +233,7 @@ impl NatsRuntime {
     pub async fn shutdown_with_reason(&self, reason: &str) {
         let reason = sanitize_reason(reason);
         if matches!(self.state(), RuntimeState::Ready) {
-            if let Ok(line) = wire::encode(
-                "shutdown",
-                serde_json::json!({ "reason": reason }),
-                0,
-            ) {
+            if let Ok(line) = wire::encode("shutdown", serde_json::json!({ "reason": reason }), 0) {
                 let msg = Message::new(
                     self.rpc_subject.clone(),
                     serde_json::Value::String(line.trim_end().to_string()),
@@ -349,8 +347,7 @@ mod tests {
         let msg = Message::new(
             "ext.x.rpc",
             serde_json::Value::String(
-                "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-1,\"message\":\"bad\"},\"id\":1}"
-                    .into(),
+                "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-1,\"message\":\"bad\"},\"id\":1}".into(),
             ),
         );
         let err = decode_jsonrpc_result(&msg).unwrap_err();

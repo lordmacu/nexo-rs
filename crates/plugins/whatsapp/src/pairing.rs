@@ -79,7 +79,7 @@ impl PairingState {
     pub async fn status(&self) -> StatusSnapshot {
         let our_jid = self.our_jid.read().await.clone();
         let has_qr = self.current_qr.read().await.is_some();
-        let last_reconnect_attempt = self.last_reconnect_attempt.read().await.clone();
+        let last_reconnect_attempt = *self.last_reconnect_attempt.read().await;
         let state = if self.connected.load(Ordering::SeqCst) {
             "connected"
         } else if has_qr {
@@ -175,89 +175,6 @@ pub fn dispatch_route(
     }
 }
 
-#[cfg(test)]
-mod route_tests {
-    use super::*;
-    use std::collections::BTreeMap;
-
-    fn empty() -> BTreeMap<String, SharedPairingState> {
-        BTreeMap::new()
-    }
-
-    fn with(ids: &[&str]) -> BTreeMap<String, SharedPairingState> {
-        let mut m = BTreeMap::new();
-        for id in ids {
-            m.insert((*id).to_string(), PairingState::new());
-        }
-        m
-    }
-
-    #[test]
-    fn instances_returns_sorted_json_array() {
-        let m = with(&["support", "biz", "vip"]);
-        let r = dispatch_route("instances", &m).expect("handled");
-        match r {
-            WhatsappRoute::Json(body) => {
-                // BTreeMap → keys in sorted order.
-                assert_eq!(body, r#"["biz","support","vip"]"#);
-            }
-            _ => panic!("expected Json"),
-        }
-    }
-
-    #[test]
-    fn legacy_pair_routes_hit_first_instance() {
-        let m = with(&["biz", "support"]);
-        match dispatch_route("pair", &m).unwrap() {
-            WhatsappRoute::Html => {}
-            _ => panic!("expected Html"),
-        }
-        assert!(matches!(dispatch_route("pair/qr", &m).unwrap(), WhatsappRoute::Qr(_)));
-        assert!(matches!(
-            dispatch_route("pair/status", &m).unwrap(),
-            WhatsappRoute::Status(_)
-        ));
-    }
-
-    #[test]
-    fn empty_map_returns_disabled_on_legacy_routes() {
-        let m = empty();
-        assert!(matches!(dispatch_route("pair", &m).unwrap(), WhatsappRoute::Disabled));
-        assert!(matches!(dispatch_route("pair/qr", &m).unwrap(), WhatsappRoute::Disabled));
-        assert!(matches!(
-            dispatch_route("pair/status", &m).unwrap(),
-            WhatsappRoute::Disabled
-        ));
-    }
-
-    #[test]
-    fn per_instance_routes_match_or_404() {
-        let m = with(&["biz", "support"]);
-        assert!(matches!(dispatch_route("biz/pair", &m).unwrap(), WhatsappRoute::Html));
-        assert!(matches!(dispatch_route("biz/pair/qr", &m).unwrap(), WhatsappRoute::Qr(_)));
-        assert!(matches!(
-            dispatch_route("biz/pair/status", &m).unwrap(),
-            WhatsappRoute::Status(_)
-        ));
-        // Unknown instance.
-        assert!(matches!(
-            dispatch_route("nonexistent/pair", &m).unwrap(),
-            WhatsappRoute::NotFound
-        ));
-        assert!(matches!(
-            dispatch_route("nonexistent/pair/qr", &m).unwrap(),
-            WhatsappRoute::NotFound
-        ));
-    }
-
-    #[test]
-    fn unrelated_path_returns_none_for_fallthrough() {
-        let m = with(&["biz"]);
-        assert!(dispatch_route("something-else", &m).is_none());
-        assert!(dispatch_route("biz/other", &m).is_none());
-    }
-}
-
 /// Small HTML page you can open in a browser during pairing. Polls
 /// `/whatsapp/pair/qr` and `/whatsapp/pair/status` every 2s and
 /// swaps the QR image in place.
@@ -329,3 +246,101 @@ tick();
 </body>
 </html>
 "#;
+
+#[cfg(test)]
+mod route_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn empty() -> BTreeMap<String, SharedPairingState> {
+        BTreeMap::new()
+    }
+
+    fn with(ids: &[&str]) -> BTreeMap<String, SharedPairingState> {
+        let mut m = BTreeMap::new();
+        for id in ids {
+            m.insert((*id).to_string(), PairingState::new());
+        }
+        m
+    }
+
+    #[test]
+    fn instances_returns_sorted_json_array() {
+        let m = with(&["support", "biz", "vip"]);
+        let r = dispatch_route("instances", &m).expect("handled");
+        match r {
+            WhatsappRoute::Json(body) => {
+                // BTreeMap → keys in sorted order.
+                assert_eq!(body, r#"["biz","support","vip"]"#);
+            }
+            _ => panic!("expected Json"),
+        }
+    }
+
+    #[test]
+    fn legacy_pair_routes_hit_first_instance() {
+        let m = with(&["biz", "support"]);
+        match dispatch_route("pair", &m).unwrap() {
+            WhatsappRoute::Html => {}
+            _ => panic!("expected Html"),
+        }
+        assert!(matches!(
+            dispatch_route("pair/qr", &m).unwrap(),
+            WhatsappRoute::Qr(_)
+        ));
+        assert!(matches!(
+            dispatch_route("pair/status", &m).unwrap(),
+            WhatsappRoute::Status(_)
+        ));
+    }
+
+    #[test]
+    fn empty_map_returns_disabled_on_legacy_routes() {
+        let m = empty();
+        assert!(matches!(
+            dispatch_route("pair", &m).unwrap(),
+            WhatsappRoute::Disabled
+        ));
+        assert!(matches!(
+            dispatch_route("pair/qr", &m).unwrap(),
+            WhatsappRoute::Disabled
+        ));
+        assert!(matches!(
+            dispatch_route("pair/status", &m).unwrap(),
+            WhatsappRoute::Disabled
+        ));
+    }
+
+    #[test]
+    fn per_instance_routes_match_or_404() {
+        let m = with(&["biz", "support"]);
+        assert!(matches!(
+            dispatch_route("biz/pair", &m).unwrap(),
+            WhatsappRoute::Html
+        ));
+        assert!(matches!(
+            dispatch_route("biz/pair/qr", &m).unwrap(),
+            WhatsappRoute::Qr(_)
+        ));
+        assert!(matches!(
+            dispatch_route("biz/pair/status", &m).unwrap(),
+            WhatsappRoute::Status(_)
+        ));
+        // Unknown instance.
+        assert!(matches!(
+            dispatch_route("nonexistent/pair", &m).unwrap(),
+            WhatsappRoute::NotFound
+        ));
+        assert!(matches!(
+            dispatch_route("nonexistent/pair/qr", &m).unwrap(),
+            WhatsappRoute::NotFound
+        ));
+    }
+
+    #[test]
+    fn unrelated_path_returns_none_for_fallthrough() {
+        let m = with(&["biz"]);
+        assert!(dispatch_route("something-else", &m).is_none());
+        assert!(dispatch_route("biz/other", &m).is_none());
+    }
+}

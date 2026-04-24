@@ -1,9 +1,9 @@
-use std::sync::Arc;
+use super::context::AgentContext;
+use agent_llm::ToolDef;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use serde_json::Value;
-use agent_llm::ToolDef;
-use super::context::AgentContext;
+use std::sync::Arc;
 #[async_trait]
 pub trait ToolHandler: Send + Sync {
     async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value>;
@@ -122,7 +122,8 @@ mod tests {
         }
     }
     fn mk_def(name: &str) -> ToolDef {
-        ToolDef { name: name.to_string(),
+        ToolDef {
+            name: name.to_string(),
             description: "".into(),
             parameters: serde_json::json!({"type": "object" }),
         }
@@ -146,7 +147,8 @@ mod tests {
         }
     }
     fn tagged_def(name: &str, desc: &str) -> ToolDef {
-        ToolDef { name: name.into(),
+        ToolDef {
+            name: name.into(),
             description: desc.into(),
             parameters: serde_json::json!({"type": "object" }),
         }

@@ -1,12 +1,12 @@
-use std::sync::Arc;
-use std::time::Duration;
+use agent_broker::{AnyBroker, BrokerHandle, Event};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::oneshot;
 use tokio::time::timeout;
 use uuid::Uuid;
-use agent_broker::{AnyBroker, BrokerHandle, Event};
 
 /// RAII cleaner for a pending correlation entry. Ensures the entry is
 /// removed on drop — including when the `delegate` future is cancelled

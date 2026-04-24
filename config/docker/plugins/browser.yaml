@@ -1,7 +1,13 @@
 browser:
+  # Plugin launches Google Chrome directly inside this container (the
+  # image ships /usr/bin/google-chrome). `cdp_url: ""` means auto-launch
+  # instead of attaching to an existing CDP endpoint. Chrome picks an
+  # ephemeral port and the plugin discovers it from Chrome's startup log.
   headless: true
   executable: ""
-  cdp_url: "http://chrome:9222"
+  cdp_url: ""
+  # Profile is under /app/data which is volume-mounted, so cookies,
+  # localStorage and OAuth tokens survive container restarts.
   user_data_dir: "/app/data/browser/profile"
   window_width: 1280
   window_height: 800

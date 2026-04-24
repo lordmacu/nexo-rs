@@ -43,9 +43,7 @@ const DEFAULT_ENV_BLOCKLIST: &[&str] = &[
 /// Unconditional substring patterns — matched anywhere in the var name.
 /// Catches names like `PASSWORD_DB` (trailing table segment) or
 /// `AWS_SECRET_ACCESS_KEY` (secret mid-name).
-const DEFAULT_ENV_BLOCKLIST_SUBSTRS: &[&str] = &[
-    "PASSWORD", "SECRET", "CREDENTIAL", "PRIVATE_KEY",
-];
+const DEFAULT_ENV_BLOCKLIST_SUBSTRS: &[&str] = &["PASSWORD", "SECRET", "CREDENTIAL", "PRIVATE_KEY"];
 
 pub struct StdioSpawnOptions {
     pub cwd: PathBuf,
@@ -69,7 +67,10 @@ impl Default for StdioSpawnOptions {
             restart_window: Duration::from_secs(300),
             base_backoff: Duration::from_secs(1),
             max_backoff: Duration::from_secs(16),
-            env_blocklist_suffixes: DEFAULT_ENV_BLOCKLIST.iter().map(|s| s.to_string()).collect(),
+            env_blocklist_suffixes: DEFAULT_ENV_BLOCKLIST
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
             shutdown_grace: Duration::from_secs(3),
         }
     }
@@ -94,10 +95,7 @@ impl std::fmt::Debug for StdioRuntime {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("StdioRuntime")
             .field("extension_id", &self.extension_id)
-            .field(
-                "state",
-                &self.state.try_read().map(|g| g.clone()).ok(),
-            )
+            .field("state", &self.state.try_read().map(|g| g.clone()).ok())
             .field("pending_requests", &self.pending.len())
             .field("shutdown_requested", &self.shutdown.is_cancelled())
             .field("handshake", &self.handshake)
@@ -138,11 +136,15 @@ mod debug_tests {
 
 impl StdioRuntime {
     /// Convenience entry point; pass manifest + cwd, get a supervised runtime.
-    pub async fn spawn(
-        manifest: &ExtensionManifest,
-        cwd: PathBuf,
-    ) -> Result<Self, StartError> {
-        Self::spawn_with(manifest, StdioSpawnOptions { cwd, ..Default::default() }).await
+    pub async fn spawn(manifest: &ExtensionManifest, cwd: PathBuf) -> Result<Self, StartError> {
+        Self::spawn_with(
+            manifest,
+            StdioSpawnOptions {
+                cwd,
+                ..Default::default()
+            },
+        )
+        .await
     }
 
     pub async fn spawn_with(
@@ -355,11 +357,7 @@ impl StdioRuntime {
     pub async fn shutdown_with_reason(&self, reason: &str) {
         let reason = sanitize_reason(reason);
         self.shutdown.cancel();
-        if let Ok(line) = wire::encode(
-            "shutdown",
-            serde_json::json!({ "reason": reason }),
-            0,
-        ) {
+        if let Ok(line) = wire::encode("shutdown", serde_json::json!({ "reason": reason }), 0) {
             let _ = self.outbox_tx.try_send(line);
         }
         tokio::time::sleep(self.opts.shutdown_grace).await;
@@ -465,7 +463,10 @@ mod shebang_diag_tests {
         writeln!(f, "print('hi')").unwrap();
         let msg = diagnose_missing_interpreter(script.to_str().unwrap(), tmp.path());
         let msg = msg.expect("should detect missing interpreter");
-        assert!(msg.contains("definitely-not-an-interpreter-xyz"), "msg: {msg}");
+        assert!(
+            msg.contains("definitely-not-an-interpreter-xyz"),
+            "msg: {msg}"
+        );
         assert!(msg.contains("shebang"), "msg: {msg}");
     }
 
@@ -492,7 +493,10 @@ mod env_blocklist_tests {
     use super::*;
 
     fn suffixes() -> Vec<String> {
-        DEFAULT_ENV_BLOCKLIST.iter().map(|s| s.to_string()).collect()
+        DEFAULT_ENV_BLOCKLIST
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
     }
 
     #[test]
@@ -548,10 +552,13 @@ fn diagnose_missing_interpreter(command: &str, cwd: &std::path::Path) -> Option<
         .to_string();
     let rest = first_line.strip_prefix("#!")?.trim();
     // Handle `#!/usr/bin/env python3` and plain `#!/usr/bin/python3`.
-    let (interpreter, check_in_path) = if let Some(after_env) = rest.strip_prefix("/usr/bin/env ")
-    {
+    let (interpreter, check_in_path) = if let Some(after_env) = rest.strip_prefix("/usr/bin/env ") {
         (
-            after_env.split_whitespace().next().unwrap_or("").to_string(),
+            after_env
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_string(),
             true,
         )
     } else {
@@ -662,15 +669,18 @@ async fn spawn_and_handshake(
             StartError::Spawn(e)
         })?;
 
-    let stdin = child.stdin.take().ok_or_else(|| {
-        StartError::Spawn(std::io::Error::other("child stdin missing"))
-    })?;
-    let stdout = child.stdout.take().ok_or_else(|| {
-        StartError::Spawn(std::io::Error::other("child stdout missing"))
-    })?;
-    let stderr = child.stderr.take().ok_or_else(|| {
-        StartError::Spawn(std::io::Error::other("child stderr missing"))
-    })?;
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| StartError::Spawn(std::io::Error::other("child stdin missing")))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| StartError::Spawn(std::io::Error::other("child stdout missing")))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| StartError::Spawn(std::io::Error::other("child stderr missing")))?;
 
     // Per-child reader task — owned by the supervisor so it can abort
     // it on child exit before respawning a fresh reader for the new
@@ -707,9 +717,9 @@ async fn spawn_and_handshake(
     // Direct write keeps the handshake fast and avoids a bootstrapping
     // chicken-and-egg.
     let _ = outbox_tx; // kept for signature symmetry with old call sites
-    // Actually we DO still need the supervisor to drain the handshake.
-    // The simplest path: write it directly to the child's stdin now,
-    // before returning stdin to the supervisor.
+                       // Actually we DO still need the supervisor to drain the handshake.
+                       // The simplest path: write it directly to the child's stdin now,
+                       // before returning stdin to the supervisor.
     let mut stdin = stdin;
     if let Err(e) = stdin.write_all(handshake_line.as_bytes()).await {
         return Err(StartError::Spawn(std::io::Error::other(format!(
@@ -729,8 +739,8 @@ async fn spawn_and_handshake(
         Err(_elapsed) => return Err(StartError::HandshakeTimeout(opts.handshake_timeout)),
     };
 
-    let handshake: HandshakeInfo = serde_json::from_value(handshake_value)
-        .map_err(StartError::DecodeHandshake)?;
+    let handshake: HandshakeInfo =
+        serde_json::from_value(handshake_value).map_err(StartError::DecodeHandshake)?;
 
     Ok((child, stdin, reader_handle, handshake))
 }
@@ -789,11 +799,7 @@ async fn reader_task(
     }
 }
 
-async fn stderr_task(
-    stderr: ChildStderr,
-    shutdown: CancellationToken,
-    extension_id: String,
-) {
+async fn stderr_task(stderr: ChildStderr, shutdown: CancellationToken, extension_id: String) {
     let mut lines = BufReader::new(stderr).lines();
     loop {
         tokio::select! {
@@ -894,15 +900,15 @@ async fn supervisor(
         }
 
         if attempts >= opts.max_restart_attempts {
-            *state.write().unwrap() =
-                RuntimeState::Failed { reason: "max restart attempts exceeded".into() };
+            *state.write().unwrap() = RuntimeState::Failed {
+                reason: "max restart attempts exceeded".into(),
+            };
             tracing::error!(ext=%extension_id, "extension permanently failed");
             return;
         }
 
         attempts += 1;
-        let backoff = (opts.base_backoff
-            * 2u32.saturating_pow(attempts.saturating_sub(1).min(6)))
+        let backoff = (opts.base_backoff * 2u32.saturating_pow(attempts.saturating_sub(1).min(6)))
             .min(opts.max_backoff);
         *state.write().unwrap() = RuntimeState::Restarting { attempt: attempts };
         tracing::warn!(ext=%extension_id, attempt=attempts, ?backoff, "restarting extension");

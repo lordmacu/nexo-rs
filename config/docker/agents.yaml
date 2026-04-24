@@ -13,6 +13,20 @@ agents:
     config:
       debounce_ms: 2000
       queue_cap: 5
+    google_auth:
+      client_id: "${GOOGLE_CLIENT_ID}"
+      client_secret: "${GOOGLE_CLIENT_SECRET}"
+      redirect_port: 8765
+      scopes:
+        - userinfo.email
+        - userinfo.profile
+        - gmail.modify
+        - calendar.events
+        - drive
+        - spreadsheets
+        - tasks
+        - photoslibrary.readonly
+        - youtube.readonly
     # Optional: prepended as a `system` message to every LLM turn.
     system_prompt: ""
     # Optional: path to the agent's workspace directory. When set, the loader

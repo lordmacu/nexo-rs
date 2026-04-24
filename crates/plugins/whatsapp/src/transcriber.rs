@@ -57,15 +57,13 @@ impl whatsapp_rs::agent::Transcriber for NatsTranscriber {
             });
             let msg = Message::new(&topic, payload);
             match broker.request(&topic, msg, timeout).await {
-                Ok(reply) => {
-                    match serde_json::from_value::<TranscribeReply>(reply.payload) {
-                        Ok(r) => r.text,
-                        Err(e) => {
-                            tracing::warn!(error = %e, "transcribe reply parse failed");
-                            None
-                        }
+                Ok(reply) => match serde_json::from_value::<TranscribeReply>(reply.payload) {
+                    Ok(r) => r.text,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "transcribe reply parse failed");
+                        None
                     }
-                }
+                },
                 Err(e) => {
                     tracing::warn!(error = %e, topic = %topic, "transcribe request failed");
                     None

@@ -5,7 +5,9 @@
 //! providers that opt out return predictable errors to callers.
 
 use agent_config::types::llm::{LlmProviderConfig, RateLimitConfig, RetryConfig};
-use agent_llm::{ChatRequest, ChatResponse, FinishReason, LlmClient, OpenAiClient, ResponseContent, TokenUsage};
+use agent_llm::{
+    ChatRequest, ChatResponse, FinishReason, LlmClient, OpenAiClient, ResponseContent, TokenUsage,
+};
 use async_trait::async_trait;
 
 struct NoEmbedProvider;
@@ -48,8 +50,11 @@ async fn openai_embed_empty_input_short_circuits() {
         api_key: "unused".into(),
         group_id: None,
         base_url: "http://127.0.0.1:1".into(), // unroutable — must not be hit
-        rate_limit: RateLimitConfig::default(), auth: None, api_flavor: None,
-            embedding_model: None, safety_settings: None,
+        rate_limit: RateLimitConfig::default(),
+        auth: None,
+        api_flavor: None,
+        embedding_model: None,
+        safety_settings: None,
     };
     let client = OpenAiClient::new(&cfg, "text-embedding-3-small", RetryConfig::default());
     let out = client.embed(&[]).await.unwrap();

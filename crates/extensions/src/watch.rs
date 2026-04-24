@@ -97,10 +97,7 @@ async fn run_watcher(
 
     let mut watched_any = false;
     for root in &roots {
-        match debouncer
-            .watcher()
-            .watch(root, RecursiveMode::Recursive)
-        {
+        match debouncer.watcher().watch(root, RecursiveMode::Recursive) {
             Ok(()) => {
                 watched_any = true;
                 tracing::info!(root = %root.display(), "watching plugin.toml under root");
@@ -201,8 +198,7 @@ fn pid_by_path(snapshot: &KnownPluginSnapshot, path: &Path) -> Option<String> {
 /// an empty string if the file cannot be read (callers treat that as "no
 /// hash known" so the next successful read shows a diff).
 pub fn hash_file(path: &Path) -> Result<String> {
-    let bytes = std::fs::read(path)
-        .with_context(|| format!("read {}", path.display()))?;
+    let bytes = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
     let mut h = Sha256::new();
     h.update(&bytes);
     Ok(hex_encode(&h.finalize()))

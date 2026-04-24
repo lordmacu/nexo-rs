@@ -64,11 +64,7 @@ struct DoctorRuntimeReport<'a> {
 /// binary passes `None` and nats checks skip.
 #[async_trait::async_trait]
 pub trait BrokerClientForDoctor: Send + Sync {
-    async fn wait_for_subject(
-        &self,
-        subject: &str,
-        timeout: Duration,
-    ) -> anyhow::Result<()>;
+    async fn wait_for_subject(&self, subject: &str, timeout: Duration) -> anyhow::Result<()>;
 }
 
 pub async fn run_doctor_runtime(
@@ -126,8 +122,8 @@ pub async fn run_doctor_runtime(
         writeln!(ctx.out, "runtime checks:")?;
         writeln!(
             ctx.out,
-            "{:<20} {:<9} {:<7} {:>10}  {}",
-            "ID", "TRANSPORT", "OUTCOME", "ELAPSED", "ERROR"
+            "{:<20} {:<9} {:<7} {:>10}  ERROR",
+            "ID", "TRANSPORT", "OUTCOME", "ELAPSED"
         )?;
         let mut sorted = results.iter().collect::<Vec<_>>();
         sorted.sort_by(|a, b| a.id.cmp(&b.id));
@@ -250,7 +246,7 @@ async fn check_http(url: &str, timeout: Duration) -> (Outcome, Option<String>) {
             if s == reqwest::StatusCode::METHOD_NOT_ALLOWED
                 || s == reqwest::StatusCode::NOT_IMPLEMENTED
             {
-                return match client.get(url).send().await {
+                match client.get(url).send().await {
                     Ok(get_resp) => {
                         let gs = get_resp.status();
                         if gs.is_success() || gs.is_redirection() {
@@ -270,7 +266,7 @@ async fn check_http(url: &str, timeout: Duration) -> (Outcome, Option<String>) {
                         Outcome::Fail,
                         Some(format!("HTTP {} (HEAD) then GET error: {e}", s.as_u16())),
                     ),
-                };
+                }
             } else {
                 (Outcome::Fail, Some(format!("HTTP {}", s.as_u16())))
             }

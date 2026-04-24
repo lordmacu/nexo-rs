@@ -7,6 +7,7 @@ edition = "2021"
 agent-core   = { path = "../../core" }
 agent-broker = { path = "../../broker" }
 agent-config = { path = "../../config" }
+agent-llm    = { path = "../../llm" }
 
 wa-agent = "0.1.1"
 

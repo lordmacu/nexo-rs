@@ -28,9 +28,17 @@ impl Default for CircuitBreakerConfig {
 
 #[derive(Debug)]
 enum State {
-    Closed { consecutive_failures: u32 },
-    Open { until: Instant, backoff: Duration },
-    HalfOpen { consecutive_successes: u32, backoff: Duration },
+    Closed {
+        consecutive_failures: u32,
+    },
+    Open {
+        until: Instant,
+        backoff: Duration,
+    },
+    HalfOpen {
+        consecutive_successes: u32,
+        backoff: Duration,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -67,7 +75,9 @@ impl CircuitBreaker {
         Self {
             name: name.into(),
             config,
-            state: Mutex::new(State::Closed { consecutive_failures: 0 }),
+            state: Mutex::new(State::Closed {
+                consecutive_failures: 0,
+            }),
         }
     }
 
@@ -107,7 +117,9 @@ impl CircuitBreaker {
     pub fn on_success(&self) {
         let mut state = lock_state(&self.state);
         match &mut *state {
-            State::Closed { consecutive_failures } => {
+            State::Closed {
+                consecutive_failures,
+            } => {
                 *consecutive_failures = 0;
             }
             State::HalfOpen {
@@ -117,7 +129,9 @@ impl CircuitBreaker {
                 *consecutive_successes += 1;
                 if *consecutive_successes >= self.config.success_threshold {
                     tracing::info!(name = %self.name, "circuit breaker: half-open → closed");
-                    *state = State::Closed { consecutive_failures: 0 };
+                    *state = State::Closed {
+                        consecutive_failures: 0,
+                    };
                 }
             }
             State::Open { .. } => {}
@@ -127,7 +141,9 @@ impl CircuitBreaker {
     pub fn on_failure(&self) {
         let mut state = lock_state(&self.state);
         match &*state {
-            State::Closed { consecutive_failures } => {
+            State::Closed {
+                consecutive_failures,
+            } => {
                 let next = consecutive_failures + 1;
                 if next >= self.config.failure_threshold {
                     let backoff = self.config.initial_backoff;
@@ -137,7 +153,9 @@ impl CircuitBreaker {
                         backoff,
                     };
                 } else {
-                    *state = State::Closed { consecutive_failures: next };
+                    *state = State::Closed {
+                        consecutive_failures: next,
+                    };
                 }
             }
             State::HalfOpen { backoff, .. } => {
@@ -181,7 +199,9 @@ impl CircuitBreaker {
     pub fn reset(&self) {
         let mut state = lock_state(&self.state);
         tracing::info!(name = %self.name, "circuit breaker reset");
-        *state = State::Closed { consecutive_failures: 0 };
+        *state = State::Closed {
+            consecutive_failures: 0,
+        };
     }
 
     /// Convenience wrapper: run `f`, record success/failure automatically,
@@ -286,8 +306,7 @@ mod tests {
     async fn call_short_circuits_when_open() {
         let cb = CircuitBreaker::new("t", fast_config());
         cb.trip();
-        let result: Result<(), CircuitError<&str>> =
-            cb.call(|| async { Ok::<(), &str>(()) }).await;
+        let result: Result<(), CircuitError<&str>> = cb.call(|| async { Ok::<(), &str>(()) }).await;
         assert!(matches!(result, Err(CircuitError::Open(_))));
     }
 
@@ -316,7 +335,7 @@ mod tests {
         cb.trip(); // first trip, backoff = 20ms
         tokio::time::sleep(Duration::from_millis(15)).await;
         cb.trip(); // second trip, backoff = 40ms (doubled, capped at 200ms)
-        // Still well inside 40ms window
+                   // Still well inside 40ms window
         assert!(cb.is_open());
         tokio::time::sleep(Duration::from_millis(15)).await;
         // 30ms into the 40ms window — still open (would have been
@@ -355,9 +374,12 @@ mod tests {
         });
         h.join().unwrap();
         // Mutex is now poisoned. But our helpers should still work.
-        assert!(cb.is_open() == false); // Closed by default
+        assert!(!cb.is_open()); // Closed by default
         cb.on_failure();
         cb.on_failure();
-        assert!(cb.is_open(), "breaker should have tripped despite poisoned mutex");
+        assert!(
+            cb.is_open(),
+            "breaker should have tripped despite poisoned mutex"
+        );
     }
 }

@@ -3,6 +3,72 @@ use crate::registry::*;
 pub fn defs() -> Vec<ServiceDef> {
     vec![
         ServiceDef {
+            id: "google-auth",
+            label: "Google OAuth (loopback flow — Gmail, Calendar, Drive, Sheets, …)",
+            category: Category::Skill,
+            description: Some(
+                "Autentica contra la cuenta Google del usuario con OAuth 2.0 loopback. \
+                 Pide client_id + client_secret (Google Cloud Console → Credentials → \
+                 OAuth 2.0 Client ID tipo Desktop app, o Web app con redirect URI \
+                 http://127.0.0.1:8765/callback). El refresh_token se persiste solo — \
+                 el usuario da consent una vez.",
+            ),
+            fields: vec![
+                FieldDef {
+                    key: "client_id",
+                    label: "Google OAuth client_id",
+                    help: Some(
+                        "Google Cloud Console → APIs & Services → Credentials → \
+                         OAuth 2.0 Client IDs. Tipo: Desktop app (más simple) o \
+                         Web app con http://127.0.0.1:8765/callback autorizado.",
+                    ),
+                    kind: FieldKind::Secret,
+                    required: true,
+                    default: None,
+                    target: FieldTarget::Secret {
+                        file: "google_client_id.txt",
+                        env_var: "GOOGLE_CLIENT_ID",
+                    },
+                    validator: Some(validate_nonempty),
+                },
+                FieldDef {
+                    key: "client_secret",
+                    label: "Google OAuth client_secret",
+                    help: Some("Misma pantalla de Credentials."),
+                    kind: FieldKind::Secret,
+                    required: true,
+                    default: None,
+                    target: FieldTarget::Secret {
+                        file: "google_client_secret.txt",
+                        env_var: "GOOGLE_CLIENT_SECRET",
+                    },
+                    validator: Some(validate_nonempty),
+                },
+                FieldDef {
+                    key: "scopes",
+                    label: "Scopes (coma-separado, short-form acepta)",
+                    help: Some(
+                        "Ej: gmail.readonly,calendar.events,drive.readonly. \
+                         Short-form se expande a URL canónica. Default: solo userinfo.",
+                    ),
+                    kind: FieldKind::List,
+                    required: false,
+                    default: Some(
+                        "userinfo.email,userinfo.profile,\
+                         gmail.modify,\
+                         calendar.events,\
+                         drive,\
+                         spreadsheets,\
+                         tasks,\
+                         photoslibrary.readonly,\
+                         youtube.readonly",
+                    ),
+                    target: FieldTarget::EnvOnly("GOOGLE_AUTH_SCOPES"),
+                    validator: None,
+                },
+            ],
+        },
+        ServiceDef {
             id: "google",
             label: "Google extension (Gmail + Calendar + Tasks)",
             category: Category::Skill,

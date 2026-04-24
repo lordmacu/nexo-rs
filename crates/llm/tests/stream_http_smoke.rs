@@ -2,8 +2,8 @@
 //! the OpenAI-compat client's `stream()` produces the expected chunks.
 
 use agent_config::types::llm::{LlmProviderConfig, RateLimitConfig, RetryConfig};
-use agent_llm::{collect_stream, LlmClient, OpenAiClient, ResponseContent};
 use agent_llm::types::{ChatMessage, ChatRequest};
+use agent_llm::{collect_stream, LlmClient, OpenAiClient, ResponseContent};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -18,7 +18,8 @@ fn cfg_for(base_url: String) -> LlmProviderConfig {
         },
         auth: None,
         api_flavor: None,
-            embedding_model: None, safety_settings: None,
+        embedding_model: None,
+        safety_settings: None,
     }
 }
 
@@ -40,11 +41,7 @@ data: [DONE]\n\n";
         .mount(&server)
         .await;
 
-    let client = OpenAiClient::new(
-        &cfg_for(server.uri()),
-        "gpt-test",
-        RetryConfig::default(),
-    );
+    let client = OpenAiClient::new(&cfg_for(server.uri()), "gpt-test", RetryConfig::default());
     let stream = client
         .stream(ChatRequest::new(
             "gpt-test",
@@ -69,16 +66,9 @@ async fn openai_stream_opens_returns_error_on_400() {
         .mount(&server)
         .await;
 
-    let client = OpenAiClient::new(
-        &cfg_for(server.uri()),
-        "gpt-test",
-        RetryConfig::default(),
-    );
+    let client = OpenAiClient::new(&cfg_for(server.uri()), "gpt-test", RetryConfig::default());
     let result = client
-        .stream(ChatRequest::new(
-            "gpt-test",
-            vec![ChatMessage::user("x")],
-        ))
+        .stream(ChatRequest::new("gpt-test", vec![ChatMessage::user("x")]))
         .await;
     match result {
         Ok(_) => panic!("expected error on HTTP 400"),

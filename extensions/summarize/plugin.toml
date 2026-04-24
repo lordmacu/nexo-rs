@@ -7,6 +7,9 @@ description = "Rust extension for summarizing text and local files via OpenAI-co
 [capabilities]
 tools = ["status", "summarize_text", "summarize_file"]
 
+[context]
+passthrough = true
+
 [transport]
 kind = "stdio"
 command = "./target/release/summarize"

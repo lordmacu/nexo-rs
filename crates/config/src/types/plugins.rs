@@ -45,11 +45,21 @@ pub struct BrowserConfig {
     pub command_timeout_ms: u64,
 }
 
-fn default_user_data_dir() -> String { "./data/browser/profile".to_string() }
-fn default_window_width() -> u32 { 1280 }
-fn default_window_height() -> u32 { 800 }
-fn default_connect_timeout_ms() -> u64 { 10_000 }
-fn default_command_timeout_ms() -> u64 { 15_000 }
+fn default_user_data_dir() -> String {
+    "./data/browser/profile".to_string()
+}
+fn default_window_width() -> u32 {
+    1280
+}
+fn default_window_height() -> u32 {
+    800
+}
+fn default_connect_timeout_ms() -> u64 {
+    10_000
+}
+fn default_command_timeout_ms() -> u64 {
+    15_000
+}
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
@@ -61,6 +71,11 @@ pub struct WhatsappPluginConfigFile {
 /// (legacy single-account) or a sequence of maps (multi-account). Each
 /// account needs its own `session_dir` and `instance` label; `main.rs`
 /// iterates and registers one `WhatsappPlugin` per entry.
+// `Single` holds a full `WhatsappPluginConfig` (>400 bytes) while
+// `Many` is a thin `Vec` header. Clippy flags the variance but
+// boxing `Single` here would force an allocation on every minimal
+// config load, which is the common path — accepted trade-off.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Deserialize, Clone)]
 #[serde(untagged)]
 pub enum WhatsappPluginShape {
@@ -264,7 +279,9 @@ pub struct WhatsappDaemonConfig {
 
 impl Default for WhatsappDaemonConfig {
     fn default() -> Self {
-        Self { prefer_existing: true }
+        Self {
+            prefer_existing: true,
+        }
     }
 }
 
@@ -278,19 +295,45 @@ impl Default for WhatsappTranscriberConfig {
     }
 }
 
-fn default_enabled() -> bool { false }
-fn default_true() -> bool { true }
-fn default_session_dir() -> String { "./data/whatsapp-session".to_string() }
-fn default_media_dir() -> String { "./data/media/whatsapp".to_string() }
-fn default_acl_env() -> String { "WA_AGENT_ALLOW".to_string() }
-fn default_rate_global() -> f32 { 2.0 }
-fn default_rate_per_jid() -> f32 { 1.0 }
-fn default_rate_burst() -> u32 { 5 }
-fn default_response_timeout_ms() -> u64 { 30_000 }
-fn default_on_timeout() -> String { "noop".to_string() }
-fn default_apology() -> String { "Sorry, I took too long to reply. Please try again.".to_string() }
-fn default_transcriber_skill() -> String { "whisper".to_string() }
-fn default_transcriber_timeout_ms() -> u64 { 30_000 }
+fn default_enabled() -> bool {
+    false
+}
+fn default_true() -> bool {
+    true
+}
+fn default_session_dir() -> String {
+    "./data/whatsapp-session".to_string()
+}
+fn default_media_dir() -> String {
+    "./data/media/whatsapp".to_string()
+}
+fn default_acl_env() -> String {
+    "WA_AGENT_ALLOW".to_string()
+}
+fn default_rate_global() -> f32 {
+    2.0
+}
+fn default_rate_per_jid() -> f32 {
+    1.0
+}
+fn default_rate_burst() -> u32 {
+    5
+}
+fn default_response_timeout_ms() -> u64 {
+    30_000
+}
+fn default_on_timeout() -> String {
+    "noop".to_string()
+}
+fn default_apology() -> String {
+    "Sorry, I took too long to reply. Please try again.".to_string()
+}
+fn default_transcriber_skill() -> String {
+    "whisper".to_string()
+}
+fn default_transcriber_timeout_ms() -> u64 {
+    30_000
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -343,7 +386,9 @@ pub struct TelegramPluginConfig {
     pub instance: Option<String>,
 }
 
-fn default_bridge_timeout_ms() -> u64 { 120_000 }
+fn default_bridge_timeout_ms() -> u64 {
+    120_000
+}
 
 #[derive(Debug, Deserialize, Default, Clone)]
 #[serde(deny_unknown_fields)]
@@ -367,7 +412,9 @@ pub struct TelegramAutoTranscribeConfig {
 fn default_whisper_command() -> String {
     "./extensions/openai-whisper/target/release/openai-whisper".to_string()
 }
-fn default_whisper_timeout() -> u64 { 60_000 }
+fn default_whisper_timeout() -> u64 {
+    60_000
+}
 
 #[derive(Debug, Deserialize, Default, Clone)]
 #[serde(deny_unknown_fields)]
@@ -383,11 +430,15 @@ pub struct TelegramPollingConfig {
     pub offset_path: Option<String>,
 }
 
-fn default_polling_enabled() -> bool { true }
+fn default_polling_enabled() -> bool {
+    true
+}
 /// Long-poll timeout hint in milliseconds. Telegram's own cap is 50s;
 /// we clamp to [1, 50] seconds in the plugin. 25s keeps server round-
 /// trips minimal without starving the connection of keepalives.
-fn default_polling_interval() -> u64 { 25_000 }
+fn default_polling_interval() -> u64 {
+    25_000
+}
 
 #[derive(Debug, Deserialize, Default, Clone)]
 #[serde(deny_unknown_fields)]
@@ -419,7 +470,9 @@ pub struct SmtpConfig {
     pub password: String,
 }
 
-fn default_smtp_port() -> u16 { 587 }
+fn default_smtp_port() -> u16 {
+    587
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -429,4 +482,6 @@ pub struct ImapConfig {
     pub port: u16,
 }
 
-fn default_imap_port() -> u16 { 993 }
+fn default_imap_port() -> u16 {
+    993
+}

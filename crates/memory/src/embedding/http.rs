@@ -36,9 +36,7 @@ impl HttpEmbeddingProvider {
         if dimension == 0 {
             anyhow::bail!("embedding dimension must be > 0");
         }
-        let client = reqwest::Client::builder()
-            .timeout(timeout)
-            .build()?;
+        let client = reqwest::Client::builder().timeout(timeout).build()?;
         Ok(Self {
             client,
             base_url,

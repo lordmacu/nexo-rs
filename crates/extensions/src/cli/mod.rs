@@ -98,13 +98,19 @@ pub fn print_help(out: &mut dyn Write) -> std::io::Result<()> {
     writeln!(out, "  agent ext disable <id>")?;
     writeln!(out, "  agent ext validate <path>")?;
     writeln!(out, "  agent ext doctor [--runtime] [--json]")?;
-    writeln!(out, "  agent ext install <path> [--update] [--enable] [--dry-run] [--link] [--json]")?;
+    writeln!(
+        out,
+        "  agent ext install <path> [--update] [--enable] [--dry-run] [--link] [--json]"
+    )?;
     writeln!(out, "  agent ext uninstall <id> --yes [--json]")?;
     writeln!(out)?;
     writeln!(out, "Exit codes:")?;
     writeln!(out, "  0  success")?;
     writeln!(out, "  1  extension not found / --update target missing")?;
-    writeln!(out, "  2  invalid manifest / invalid source / --link needs absolute path")?;
+    writeln!(
+        out,
+        "  2  invalid manifest / invalid source / --link needs absolute path"
+    )?;
     writeln!(out, "  3  config write failed")?;
     writeln!(out, "  4  invalid id (empty or reserved)")?;
     writeln!(out, "  5  target already exists (use --update)")?;
@@ -113,7 +119,10 @@ pub fn print_help(out: &mut dyn Write) -> std::io::Result<()> {
     writeln!(out, "  8  copy or atomic swap failed")?;
     writeln!(out, "  9  one or more runtime checks failed (--runtime)")?;
     writeln!(out)?;
-    writeln!(out, "Note: `enable`/`disable` rewrite `config/extensions.yaml`.")?;
+    writeln!(
+        out,
+        "Note: `enable`/`disable` rewrite `config/extensions.yaml`."
+    )?;
     writeln!(out, "Inline comments in that file are not preserved.")?;
     Ok(())
 }
@@ -136,10 +145,7 @@ mod tests {
         assert_eq!(CliError::LinkRequiresAbsolute.exit_code(), 2);
         assert_eq!(CliError::ConfigWrite("x".into()).exit_code(), 3);
         assert_eq!(CliError::InvalidId("x".into(), "y".into()).exit_code(), 4);
-        assert_eq!(
-            CliError::AlreadyExists(PathBuf::from("/x")).exit_code(),
-            5
-        );
+        assert_eq!(CliError::AlreadyExists(PathBuf::from("/x")).exit_code(), 5);
         assert_eq!(
             CliError::IdCollision {
                 id: "a".into(),

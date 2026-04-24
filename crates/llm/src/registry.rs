@@ -90,12 +90,15 @@ impl LlmRegistry {
                 self.names()
             )
         })?;
-        let provider_cfg = llm_cfg.providers.get(&agent_model.provider).ok_or_else(|| {
-            anyhow::anyhow!(
-                "LLM provider '{}' not present in config.providers",
-                agent_model.provider
-            )
-        })?;
+        let provider_cfg = llm_cfg
+            .providers
+            .get(&agent_model.provider)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "LLM provider '{}' not present in config.providers",
+                    agent_model.provider
+                )
+            })?;
         factory.build(provider_cfg, &agent_model.model, llm_cfg.retry.clone())
     }
 }
@@ -151,8 +154,10 @@ mod tests {
                 requests_per_second: 1.0,
                 quota_alert_threshold: Some(100),
             },
-            auth: None, api_flavor: None,
-            embedding_model: None, safety_settings: None,
+            auth: None,
+            api_flavor: None,
+            embedding_model: None,
+            safety_settings: None,
         }
     }
 
@@ -183,8 +188,7 @@ mod tests {
         let mut r = LlmRegistry::with_builtins();
         let err = r
             .register(Box::new(MiniMaxFactory))
-            .err()
-            .expect("expected duplicate error");
+            .expect_err("expected duplicate error");
         assert!(err.to_string().contains("already registered"));
     }
 
@@ -220,7 +224,7 @@ mod tests {
             provider: "minimax".into(),
             model: "m1".into(),
         };
-        let client = r.build(&cfg, &model).ok().expect("client");
+        let client = r.build(&cfg, &model).expect("client");
         assert_eq!(client.provider(), "minimax");
     }
 }

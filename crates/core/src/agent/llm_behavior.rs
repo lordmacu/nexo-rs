@@ -1,8 +1,3 @@
-use std::sync::Arc;
-use agent_broker::{BrokerHandle, Event};
-use agent_llm::{Attachment, ChatMessage, ChatRequest, ChatRole, LlmClient, ResponseContent};
-use async_trait::async_trait;
-use chrono::Utc;
 use super::behavior::AgentBehavior;
 use super::context::AgentContext;
 use super::skills::{render_system_blocks as render_skill_blocks, SkillLoader};
@@ -12,6 +7,13 @@ use super::types::InboundMessage;
 use super::workspace::{SessionScope, WorkspaceLoader};
 use crate::session::types::{Interaction, Role};
 use crate::telemetry::{inc_llm_requests_total, observe_llm_latency_ms};
+use agent_broker::{BrokerHandle, Event};
+use agent_llm::{
+    collect_stream, Attachment, ChatMessage, ChatRequest, ChatRole, LlmClient, ResponseContent,
+};
+use async_trait::async_trait;
+use chrono::Utc;
+use std::sync::Arc;
 /// Decide whether a session is a private DM (main) or a shared surface.
 /// `MEMORY.md` loads only for `Main` — shared scopes strip it at load time.
 fn session_scope_for(msg: &InboundMessage) -> SessionScope {
@@ -59,10 +61,7 @@ impl LlmAgentBehavior {
     /// Pre-builds the relevance filter (if enabled) so the per-turn
     /// hot path stays O(1) instead of re-tokenizing the full tool
     /// catalog on every message.
-    pub fn with_tool_policy(
-        mut self,
-        p: Arc<super::tool_policy::ToolPolicy>,
-    ) -> Self {
+    pub fn with_tool_policy(mut self, p: Arc<super::tool_policy::ToolPolicy>) -> Self {
         let rel = p.relevance_config().clone();
         if rel.enabled {
             let tool_defs = self.tools.to_tool_defs();
@@ -97,10 +96,7 @@ impl LlmAgentBehavior {
     /// Phase 9.2 follow-up — attach per-tool rate limiter. Denied calls
     /// surface as `outcome="rate_limited"` and are not routed to the
     /// handler.
-    pub fn with_rate_limiter(
-        mut self,
-        rl: Arc<super::rate_limit::ToolRateLimiter>,
-    ) -> Self {
+    pub fn with_rate_limiter(mut self, rl: Arc<super::rate_limit::ToolRateLimiter>) -> Self {
         self.rate_limiter = Some(rl);
         self
     }
@@ -158,9 +154,7 @@ impl LlmAgentBehavior {
         let started_tool = std::time::Instant::now();
         let call_ctx = ctx.clone().with_session_id(msg.session_id);
         let rate_allowed = match &self.rate_limiter {
-            Some(rl) if skip_call.is_none() => {
-                rl.try_acquire(&ctx.agent_id, &call.name).await
-            }
+            Some(rl) if skip_call.is_none() => rl.try_acquire(&ctx.agent_id, &call.name).await,
             _ => true,
         };
         let schema_error: Option<String> = match &self.schema_validator {
@@ -183,9 +177,7 @@ impl LlmAgentBehavior {
                 None
             };
         let (result, tool_err, outcome) = match (skip_call, schema_error) {
-            (Some(msg_str), _) => {
-                (msg_str, Some("blocked-by-hook".to_string()), "blocked")
-            }
+            (Some(msg_str), _) => (msg_str, Some("blocked-by-hook".to_string()), "blocked"),
             (None, _) if !rate_allowed => {
                 let msg_str = format!(
                     "rate limited: exceeded configured rps for tool '{}'",
@@ -214,7 +206,9 @@ impl LlmAgentBehavior {
                             let to = std::time::Duration::from_secs(
                                 self.tool_policy.parallel_config().call_timeout_secs,
                             );
-                            match tokio::time::timeout(to, handler.call(&call_ctx, args.clone())).await {
+                            match tokio::time::timeout(to, handler.call(&call_ctx, args.clone()))
+                                .await
+                            {
                                 Ok(Ok(v)) => {
                                     self.tool_policy.cache_put(
                                         &ctx.agent_id,
@@ -224,9 +218,7 @@ impl LlmAgentBehavior {
                                     );
                                     (stringify_tool_result(&v), None, "ok")
                                 }
-                                Ok(Err(e)) => {
-                                    (format!("error: {e}"), Some(e.to_string()), "error")
-                                }
+                                Ok(Err(e)) => (format!("error: {e}"), Some(e.to_string()), "error"),
                                 Err(_) => {
                                     let msg = format!(
                                         "timeout after {}s for tool '{}'",
@@ -335,9 +327,7 @@ impl LlmAgentBehavior {
         // agents in the process. The LLM learns who it can delegate to
         // without the user having to hand-write `AGENTS.md`.
         if let Some(peers) = ctx.peers.as_ref() {
-            if let Some(block) =
-                peers.render_for(&ctx.agent_id, &ctx.config.allowed_delegates)
-            {
+            if let Some(block) = peers.render_for(&ctx.agent_id, &ctx.config.allowed_delegates) {
                 system_parts.push(block);
             }
         }
@@ -369,10 +359,9 @@ impl LlmAgentBehavior {
             Role::Assistant => Some(ChatMessage::assistant(&i.content)),
             Role::Tool => None,
         }));
-        // Attach inbound media to the latest user turn so vision-capable
-        // providers (Anthropic / Gemini) can see the photo / doc the
-        // sender shared. Non-image media is still useful for skills
-        // downstream — but only image attachments ride on the LLM wire.
+        // Attach inbound media to the latest user turn. Gemini consumes
+        // image/audio/video parts inline; providers that do not support
+        // a media kind simply skip it while keeping the text turn.
         if let Some(media) = msg.media.as_ref() {
             if let Some(att) = build_media_attachment(media) {
                 if let Some(last_user) = messages
@@ -435,7 +424,10 @@ impl LlmAgentBehavior {
             let model_label = self.llm.model_id();
             inc_llm_requests_total(&ctx.agent_id, provider, model_label);
             let started_at = std::time::Instant::now();
-            let response = self.llm.chat(req).await?;
+            // Phase 3 follow-up: consume the streaming API in the
+            // main loop so provider-native SSE paths are exercised
+            // end-to-end (chat() remains the fallback in the trait).
+            let response = collect_stream(self.llm.stream(req).await?).await?;
             observe_llm_latency_ms(
                 &ctx.agent_id,
                 provider,
@@ -479,10 +471,7 @@ impl LlmAgentBehavior {
                     type BoxedCallFut<'a> = Pin<
                         Box<
                             dyn std::future::Future<
-                                    Output = (
-                                        usize,
-                                        (String, Option<String>, &'static str, u64),
-                                    ),
+                                    Output = (usize, (String, Option<String>, &'static str, u64)),
                                 > + Send
                                 + 'a,
                         >,
@@ -490,8 +479,7 @@ impl LlmAgentBehavior {
                     let (par_idx, seq_idx): (Vec<usize>, Vec<usize>) = (0..calls.len())
                         .partition(|i| self.tool_policy.is_parallel_safe(&calls[*i].name));
                     let par_cap = self.tool_policy.parallel_config().max_in_flight;
-                    let mut in_flight: FuturesUnordered<BoxedCallFut<'_>> =
-                        FuturesUnordered::new();
+                    let mut in_flight: FuturesUnordered<BoxedCallFut<'_>> = FuturesUnordered::new();
                     let mut results_by_idx: HashMap<
                         usize,
                         (String, Option<String>, &'static str, u64),
@@ -762,7 +750,8 @@ fn build_media_attachment(media: &super::types::InboundMedia) -> Option<Attachme
                 .map(str::to_string)
                 .unwrap_or_else(|| guess_mime(&media.path, "image/jpeg")),
         )
-    } else if kind_hint == "voice" || kind_hint == "audio"
+    } else if kind_hint == "voice"
+        || kind_hint == "audio"
         || mime_hint.map(|m| m.starts_with("audio/")).unwrap_or(false)
     {
         (
@@ -771,7 +760,9 @@ fn build_media_attachment(media: &super::types::InboundMedia) -> Option<Attachme
                 .map(str::to_string)
                 .unwrap_or_else(|| guess_mime(&media.path, "audio/ogg")),
         )
-    } else if kind_hint == "video" || kind_hint == "video_note" || kind_hint == "animation"
+    } else if kind_hint == "video"
+        || kind_hint == "video_note"
+        || kind_hint == "animation"
         || mime_hint.map(|m| m.starts_with("video/")).unwrap_or(false)
     {
         (
@@ -786,7 +777,9 @@ fn build_media_attachment(media: &super::types::InboundMedia) -> Option<Attachme
     let mut att = Attachment {
         kind: att_kind.to_string(),
         mime_type: mime,
-        data: agent_llm::AttachmentData::Path { path: media.path.clone() },
+        data: agent_llm::AttachmentData::Path {
+            path: media.path.clone(),
+        },
     };
     if let Err(e) = att.materialize() {
         tracing::warn!(path = %media.path, kind = att_kind, error = %e, "failed to materialize inbound media; skipping");
@@ -864,4 +857,62 @@ fn inject_runtime_tool_args(
         }
     }
     args
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::types::InboundMedia;
+    use super::*;
+    use agent_llm::AttachmentData;
+
+    fn temp_media_file(name: &str, bytes: &[u8]) -> tempfile::NamedTempFile {
+        let file = tempfile::Builder::new()
+            .prefix("media-")
+            .suffix(name)
+            .tempfile()
+            .expect("create temp file");
+        std::fs::write(file.path(), bytes).expect("write media bytes");
+        file
+    }
+
+    #[test]
+    fn build_media_attachment_voice_materializes_as_audio() {
+        let file = temp_media_file(".ogg", b"ogg-bytes");
+        let media = InboundMedia {
+            kind: "voice".into(),
+            path: file.path().display().to_string(),
+            mime_type: None,
+        };
+        let att = build_media_attachment(&media).expect("voice media should attach");
+        assert_eq!(att.kind, "audio");
+        assert_eq!(att.mime_type, "audio/ogg");
+        match att.data {
+            AttachmentData::Base64 { base64 } => assert!(!base64.is_empty()),
+            other => panic!("expected Base64 attachment, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_media_attachment_video_uses_kind_and_guessed_mime() {
+        let file = temp_media_file(".WEBM", b"webm-bytes");
+        let media = InboundMedia {
+            kind: "video_note".into(),
+            path: file.path().display().to_string(),
+            mime_type: None,
+        };
+        let att = build_media_attachment(&media).expect("video_note media should attach");
+        assert_eq!(att.kind, "video");
+        assert_eq!(att.mime_type, "video/webm");
+    }
+
+    #[test]
+    fn build_media_attachment_ignores_unsupported_kind() {
+        let file = temp_media_file(".pdf", b"%PDF");
+        let media = InboundMedia {
+            kind: "document".into(),
+            path: file.path().display().to_string(),
+            mime_type: Some("application/pdf".into()),
+        };
+        assert!(build_media_attachment(&media).is_none());
+    }
 }

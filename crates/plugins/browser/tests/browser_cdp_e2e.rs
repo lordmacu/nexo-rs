@@ -47,12 +47,14 @@ async fn full_e2e_flow_against_real_chrome() -> anyhow::Result<()> {
         .to_string();
 
     let mut session = CdpSession::new(Arc::clone(&client), &target_id, 15_000).await?;
-    session
-        .navigate("data:text/html,<h1>hello</h1>")
-        .await?;
+    session.navigate("data:text/html,<h1>hello</h1>").await?;
 
     let png = session.screenshot().await?;
-    assert!(png.len() > 100, "screenshot unexpectedly small: {} bytes", png.len());
+    assert!(
+        png.len() > 100,
+        "screenshot unexpectedly small: {} bytes",
+        png.len()
+    );
     assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n", "not a PNG");
 
     let title = session

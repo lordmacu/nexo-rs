@@ -5,8 +5,7 @@ use std::path::{Path, PathBuf};
 
 use agent_config::ExtensionsConfig;
 use agent_extensions::cli::{
-    run_install, run_uninstall, CliContext, CliError, InstallMode, InstallOptions,
-    UninstallOptions,
+    run_install, run_uninstall, CliContext, CliError, InstallMode, InstallOptions, UninstallOptions,
 };
 use tempfile::TempDir;
 
@@ -164,7 +163,9 @@ fn install_copy_creates_target_and_manifest_loadable() {
 #[test]
 fn install_rejects_existing_target_without_update() {
     let env = Env::new("weather");
-    install(&env, None, opts_default(env.src_dir.clone())).0.unwrap();
+    install(&env, None, opts_default(env.src_dir.clone()))
+        .0
+        .unwrap();
     let (res, _) = install(&env, None, opts_default(env.src_dir.clone()));
     let err = res.unwrap_err();
     assert!(matches!(err, CliError::AlreadyExists(_)), "{err:?}");
@@ -174,7 +175,9 @@ fn install_rejects_existing_target_without_update() {
 #[test]
 fn install_with_update_replaces_atomically() {
     let env = Env::new("weather");
-    install(&env, None, opts_default(env.src_dir.clone())).0.unwrap();
+    install(&env, None, opts_default(env.src_dir.clone()))
+        .0
+        .unwrap();
 
     // Bump version in source.
     fs::write(
@@ -321,7 +324,10 @@ fn install_with_enable_removes_from_disabled() {
     res.unwrap();
     assert!(out.contains("enabled: weather"));
     let updated = fs::read_to_string(&yaml).unwrap();
-    assert!(!updated.contains("weather"), "disabled should be empty, got: {updated}");
+    assert!(
+        !updated.contains("weather"),
+        "disabled should be empty, got: {updated}"
+    );
 }
 
 #[test]
@@ -345,7 +351,10 @@ fn install_rejects_reserved_id() {
     let (res, _) = install(&env, None, opts_default(env.src_dir.clone()));
     let err = res.unwrap_err();
     assert!(
-        matches!(err, CliError::InvalidManifest(_) | CliError::InvalidId(_, _)),
+        matches!(
+            err,
+            CliError::InvalidManifest(_) | CliError::InvalidId(_, _)
+        ),
         "{err:?}"
     );
 }
@@ -404,7 +413,9 @@ fn install_json_output_contains_mode() {
 #[test]
 fn uninstall_removes_copied_dir() {
     let env = Env::new("weather");
-    install(&env, None, opts_default(env.src_dir.clone())).0.unwrap();
+    install(&env, None, opts_default(env.src_dir.clone()))
+        .0
+        .unwrap();
     let target = env.search_root.join("weather");
     assert!(target.exists());
     let (res, out) = uninstall(
@@ -437,7 +448,10 @@ fn uninstall_removes_symlink_without_following() {
     .0
     .unwrap();
     let target = env.search_root.join("weather");
-    assert!(fs::symlink_metadata(&target).unwrap().file_type().is_symlink());
+    assert!(fs::symlink_metadata(&target)
+        .unwrap()
+        .file_type()
+        .is_symlink());
 
     let (res, _) = uninstall(
         &env,
@@ -458,7 +472,9 @@ fn uninstall_removes_symlink_without_following() {
 #[test]
 fn uninstall_without_yes_fails_with_exit_7() {
     let env = Env::new("weather");
-    install(&env, None, opts_default(env.src_dir.clone())).0.unwrap();
+    install(&env, None, opts_default(env.src_dir.clone()))
+        .0
+        .unwrap();
     let (res, _) = uninstall(
         &env,
         None,
@@ -497,11 +513,9 @@ fn install_outcome_variant_matches_spec() {
     res.unwrap();
     // Round-trip check for the InstallMode type — mostly here so the
     // public enum keeps its shape as the CLI grows.
-    let modes = vec![
-        InstallMode::Copy,
+    let modes = [InstallMode::Copy,
         InstallMode::Link,
         InstallMode::Update,
-        InstallMode::DryRun,
-    ];
+        InstallMode::DryRun];
     assert_eq!(modes.len(), 4);
 }

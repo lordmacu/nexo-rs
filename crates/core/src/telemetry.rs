@@ -1,5 +1,5 @@
-use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::LazyLock;
 
 use dashmap::DashMap;
 
@@ -66,8 +66,7 @@ static TOOL_LATENCY: LazyLock<DashMap<ToolKey, Histogram>> = LazyLock::new(DashM
 /// Per-(agent, tool, event) cache counters. `event` is one of
 /// `"hit" | "miss" | "put" | "evict"`. Lets ops measure cache hit
 /// rate without instrumenting each handler by hand.
-static TOOL_CACHE_EVENTS: LazyLock<DashMap<ToolCallKey, AtomicU64>> =
-    LazyLock::new(DashMap::new);
+static TOOL_CACHE_EVENTS: LazyLock<DashMap<ToolCallKey, AtomicU64>> = LazyLock::new(DashMap::new);
 
 pub fn inc_messages_processed_total(agent_id: &str) {
     MESSAGES_PROCESSED
@@ -179,8 +178,13 @@ pub fn render_prometheus(fallback_nats_open: bool) -> String {
             .iter()
             .map(|e| (e.key().clone(), e.value().load(Ordering::Relaxed)))
             .collect();
-        rows.sort_by(|a, b| (a.0.agent.clone(), a.0.provider.clone(), a.0.model.clone())
-            .cmp(&(b.0.agent.clone(), b.0.provider.clone(), b.0.model.clone())));
+        rows.sort_by(|a, b| {
+            (a.0.agent.clone(), a.0.provider.clone(), a.0.model.clone()).cmp(&(
+                b.0.agent.clone(),
+                b.0.provider.clone(),
+                b.0.model.clone(),
+            ))
+        });
         for (key, v) in rows {
             out.push_str(&format!(
                 "llm_requests_total{{agent=\"{}\",provider=\"{}\",model=\"{}\"}} {}\n",
@@ -207,12 +211,19 @@ pub fn render_prometheus(fallback_nats_open: bool) -> String {
     } else {
         let keys: Vec<LlmKey> = {
             let mut ks: Vec<_> = LLM_LATENCY.iter().map(|e| e.key().clone()).collect();
-            ks.sort_by(|a, b| (a.agent.clone(), a.provider.clone(), a.model.clone())
-                .cmp(&(b.agent.clone(), b.provider.clone(), b.model.clone())));
+            ks.sort_by(|a, b| {
+                (a.agent.clone(), a.provider.clone(), a.model.clone()).cmp(&(
+                    b.agent.clone(),
+                    b.provider.clone(),
+                    b.model.clone(),
+                ))
+            });
             ks
         };
         for key in keys {
-            let Some(series) = LLM_LATENCY.get(&key) else { continue };
+            let Some(series) = LLM_LATENCY.get(&key) else {
+                continue;
+            };
             let agent = escape(&key.agent);
             let provider = escape(&key.provider);
             let model = escape(&key.model);
@@ -266,8 +277,11 @@ pub fn render_prometheus(fallback_nats_open: bool) -> String {
             .map(|e| (e.key().clone(), e.value().load(Ordering::Relaxed)))
             .collect();
         rows.sort_by(|a, b| {
-            (a.0.agent.clone(), a.0.outcome.clone(), a.0.tool.clone())
-                .cmp(&(b.0.agent.clone(), b.0.outcome.clone(), b.0.tool.clone()))
+            (a.0.agent.clone(), a.0.outcome.clone(), a.0.tool.clone()).cmp(&(
+                b.0.agent.clone(),
+                b.0.outcome.clone(),
+                b.0.tool.clone(),
+            ))
         });
         for (key, v) in rows {
             out.push_str(&format!(
@@ -281,9 +295,7 @@ pub fn render_prometheus(fallback_nats_open: bool) -> String {
     }
 
     // Tool policy cache observability.
-    out.push_str(
-        "# HELP agent_tool_cache_events_total Tool cache events by agent/tool/event.\n",
-    );
+    out.push_str("# HELP agent_tool_cache_events_total Tool cache events by agent/tool/event.\n");
     out.push_str("# TYPE agent_tool_cache_events_total counter\n");
     if TOOL_CACHE_EVENTS.is_empty() {
         out.push_str("agent_tool_cache_events_total 0\n");
@@ -293,8 +305,11 @@ pub fn render_prometheus(fallback_nats_open: bool) -> String {
             .map(|e| (e.key().clone(), e.value().load(Ordering::Relaxed)))
             .collect();
         rows.sort_by(|a, b| {
-            (a.0.agent.clone(), a.0.outcome.clone(), a.0.tool.clone())
-                .cmp(&(b.0.agent.clone(), b.0.outcome.clone(), b.0.tool.clone()))
+            (a.0.agent.clone(), a.0.outcome.clone(), a.0.tool.clone()).cmp(&(
+                b.0.agent.clone(),
+                b.0.outcome.clone(),
+                b.0.tool.clone(),
+            ))
         });
         for (key, v) in rows {
             out.push_str(&format!(
@@ -322,11 +337,15 @@ pub fn render_prometheus(fallback_nats_open: bool) -> String {
     } else {
         let keys: Vec<ToolKey> = {
             let mut ks: Vec<_> = TOOL_LATENCY.iter().map(|e| e.key().clone()).collect();
-            ks.sort_by(|a, b| (a.agent.clone(), a.tool.clone()).cmp(&(b.agent.clone(), b.tool.clone())));
+            ks.sort_by(|a, b| {
+                (a.agent.clone(), a.tool.clone()).cmp(&(b.agent.clone(), b.tool.clone()))
+            });
             ks
         };
         for key in keys {
-            let Some(series) = TOOL_LATENCY.get(&key) else { continue };
+            let Some(series) = TOOL_LATENCY.get(&key) else {
+                continue;
+            };
             let agent = escape(&key.agent);
             let tool = escape(&key.tool);
             for (idx, upper) in LATENCY_BUCKET_LIMITS_MS.iter().enumerate() {
@@ -419,7 +438,9 @@ mod tests {
             "agent_tool_latency_ms_count{agent=\"kate\",tool=\"mcp_fs_read\"} 2"
         ));
         assert!(
-            body.contains("agent_tool_latency_ms_bucket{agent=\"kate\",tool=\"mcp_fs_read\",le=\"50\"}"),
+            body.contains(
+                "agent_tool_latency_ms_bucket{agent=\"kate\",tool=\"mcp_fs_read\",le=\"50\"}"
+            ),
             "missing 50ms bucket:\n{body}"
         );
     }
@@ -454,9 +475,12 @@ mod tests {
         assert!(body.contains(
             "llm_latency_ms_count{agent=\"kate\",provider=\"minimax\",model=\"MiniMax-Text-01\"} 1"
         ));
-        assert!(body.contains("\"le=\\\"50\\\"".to_string().as_str())
-            || body.contains("le=\"50\""));
-        assert!(body.contains("llm_latency_ms_sum{agent=\"kate\",provider=\"minimax\",model=\"MiniMax-Text-01\"} 42"));
+        assert!(
+            body.contains("\"le=\\\"50\\\"".to_string().as_str()) || body.contains("le=\"50\"")
+        );
+        assert!(body.contains(
+            "llm_latency_ms_sum{agent=\"kate\",provider=\"minimax\",model=\"MiniMax-Text-01\"} 42"
+        ));
     }
 
     #[test]

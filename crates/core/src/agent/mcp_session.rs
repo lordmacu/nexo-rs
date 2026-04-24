@@ -6,10 +6,10 @@
 //! Future `notifications/tools/list_changed` wiring will call
 //! `SessionMcpRuntime::invalidate_catalog`, and any cache held by the
 //! caller should refresh through these helpers.
-use std::sync::Arc;
-use agent_mcp::SessionMcpRuntime;
 use super::mcp_catalog::McpToolCatalog;
 use super::tool_registry::ToolRegistry;
+use agent_mcp::SessionMcpRuntime;
+use std::sync::Arc;
 /// Build a fresh `McpToolCatalog` from the runtime's currently connected
 /// clients. Touches `last_used_at` so building the catalog counts as
 /// activity for reap purposes.

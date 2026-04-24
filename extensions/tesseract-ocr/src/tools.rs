@@ -42,20 +42,55 @@ pub fn dispatch(name: &str, args: &Value) -> Result<Value, ToolError> {
 }
 
 fn status() -> Value {
-    let version = Command::new(bin()).arg("--version").output().ok()
-        .and_then(|o| {
-            let s = String::from_utf8_lossy(&o.stderr).to_string();
-            s.lines().next().map(|l| l.trim().to_string())
-        });
+    let bin_path = bin();
+    let probe = Command::new(&bin_path).arg("--version").output();
+    let (version, status_error) = match probe {
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+            let version = first_non_empty_line(&stdout)
+                .or_else(|| first_non_empty_line(&stderr));
+            let err = if out.status.success() {
+                None
+            } else {
+                first_non_empty_line(&stderr)
+                    .or_else(|| first_non_empty_line(&stdout))
+                    .or_else(|| Some(format!("exit status {}", out.status)))
+            };
+            (version, err)
+        }
+        Err(e) => (None, Some(format!("spawn failed: {e}"))),
+    };
     json!({
         "ok": version.is_some(),
         "provider": "tesseract-ocr",
         "client_version": CLIENT_VERSION,
-        "bin": bin(),
+        "bin": bin_path,
         "bin_version": version,
+        "status_error": status_error,
+        "install_hint": if version.is_none() { Some(install_hint_for_current_os()) } else { None::<&str> },
         "tools": ["status","languages","ocr"],
         "requires": {"bins":["tesseract"],"env":[]}
     })
+}
+
+fn first_non_empty_line(s: &str) -> Option<String> {
+    s.lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .map(str::to_string)
+}
+
+fn install_hint_for_current_os() -> &'static str {
+    if cfg!(target_os = "linux") {
+        "Install tesseract. Debian/Ubuntu: `sudo apt-get install tesseract-ocr`; Fedora: `sudo dnf install tesseract`; Alpine: `apk add tesseract-ocr`."
+    } else if cfg!(target_os = "macos") {
+        "Install tesseract with Homebrew: `brew install tesseract`."
+    } else if cfg!(target_os = "windows") {
+        "Install Tesseract OCR and ensure `tesseract.exe` is in PATH (or set `TESSERACT_BIN`)."
+    } else {
+        "Install Tesseract OCR and ensure the `tesseract` binary is available in PATH (or set `TESSERACT_BIN`)."
+    }
 }
 
 fn languages() -> Result<Value, ToolError> {
@@ -112,4 +147,20 @@ fn required_string(args: &Value, key: &str) -> Result<String, ToolError> {
 }
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max { s.to_string() } else { format!("{}…", &s[..max]) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn first_non_empty_line_skips_blanks() {
+        let out = first_non_empty_line("\n  \n  tesseract 5.4.0 \n");
+        assert_eq!(out.as_deref(), Some("tesseract 5.4.0"));
+    }
+
+    #[test]
+    fn install_hint_is_non_empty() {
+        assert!(!install_hint_for_current_os().trim().is_empty());
+    }
 }

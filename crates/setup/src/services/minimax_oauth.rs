@@ -64,9 +64,8 @@ fn gen_pkce() -> Pkce {
     let mut raw = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut raw);
     let verifier = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw);
-    let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
-        Sha256::digest(verifier.as_bytes()),
-    );
+    let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(Sha256::digest(verifier.as_bytes()));
     let mut state_bytes = [0u8; 16];
     rand::thread_rng().fill_bytes(&mut state_bytes);
     let state = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(state_bytes);

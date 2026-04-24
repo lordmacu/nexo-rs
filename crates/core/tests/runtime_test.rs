@@ -66,14 +66,16 @@ fn make_config(
         dreaming: Default::default(),
         workspace_git: Default::default(),
         tool_rate_limits: None,
-            tool_args_validation: None,
-            extra_docs: Vec::new(),
-            inbound_bindings: Vec::new(),
-            allowed_tools: Vec::new(),
-            sender_rate_limit: None,
-            allowed_delegates: Vec::new(),
-            accept_delegates_from: Vec::new(),
-            description: String::new(),
+        tool_args_validation: None,
+        extra_docs: Vec::new(),
+        inbound_bindings: Vec::new(),
+        allowed_tools: Vec::new(),
+        sender_rate_limit: None,
+        allowed_delegates: Vec::new(),
+        accept_delegates_from: Vec::new(),
+        description: String::new(),
+        outbound_allowlist: Default::default(),
+        google_auth: None,
     }
 }
 
@@ -267,7 +269,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             transcripts_dir: String::new(),
             dreaming: Default::default(),
             workspace_git: Default::default(),
-        tool_rate_limits: None,
+            tool_rate_limits: None,
             tool_args_validation: None,
             extra_docs: Vec::new(),
             inbound_bindings: Vec::new(),
@@ -276,6 +278,8 @@ async fn runtime_routes_delegate_and_returns_result() {
             allowed_delegates: Vec::new(),
             accept_delegates_from: Vec::new(),
             description: String::new(),
+            outbound_allowlist: Default::default(),
+            google_auth: None,
         },
         behavior_a,
     ));
@@ -305,7 +309,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             transcripts_dir: String::new(),
             dreaming: Default::default(),
             workspace_git: Default::default(),
-        tool_rate_limits: None,
+            tool_rate_limits: None,
             tool_args_validation: None,
             extra_docs: Vec::new(),
             inbound_bindings: Vec::new(),
@@ -314,6 +318,8 @@ async fn runtime_routes_delegate_and_returns_result() {
             allowed_delegates: Vec::new(),
             accept_delegates_from: Vec::new(),
             description: String::new(),
+            outbound_allowlist: Default::default(),
+            google_auth: None,
         },
         behavior_b,
     ));
@@ -418,7 +424,13 @@ async fn two_agents_receive_only_their_bound_plugin_instances() {
     let s4 = Uuid::new_v4();
     publish_on(&broker, "plugin.inbound.telegram.boss", s1, "to-boss").await;
     publish_on(&broker, "plugin.inbound.telegram.sales", s2, "to-sales").await;
-    publish_on(&broker, "plugin.inbound.whatsapp", s3, "to-whatsapp-unbound").await;
+    publish_on(
+        &broker,
+        "plugin.inbound.whatsapp",
+        s3,
+        "to-whatsapp-unbound",
+    )
+    .await;
     publish_on(&broker, "plugin.inbound.telegram.other", s4, "to-other-bot").await;
 
     // Debounce is 0 but the select loop + session task are async; give
@@ -429,10 +441,16 @@ async fn two_agents_receive_only_their_bound_plugin_instances() {
     let ventas = ventas_received.lock().unwrap().clone();
     let legacy = legacy_received.lock().unwrap().clone();
 
-    assert_eq!(boss, vec!["to-boss".to_string()],
-        "boss should only see its own bot");
-    assert_eq!(ventas, vec!["to-sales".to_string()],
-        "ventas should only see its own bot");
+    assert_eq!(
+        boss,
+        vec!["to-boss".to_string()],
+        "boss should only see its own bot"
+    );
+    assert_eq!(
+        ventas,
+        vec!["to-sales".to_string()],
+        "ventas should only see its own bot"
+    );
     // Legacy wildcard sees every inbound regardless of instance.
     assert_eq!(legacy.len(), 4, "legacy wildcard should receive all 4");
     assert!(legacy.contains(&"to-boss".to_string()));
@@ -462,13 +480,35 @@ async fn plugin_wide_binding_accepts_any_instance() {
     );
     rt.start().await.unwrap();
 
-    publish_on(&broker, "plugin.inbound.telegram", Uuid::new_v4(), "no-instance").await;
-    publish_on(&broker, "plugin.inbound.telegram.sales", Uuid::new_v4(), "from-sales").await;
-    publish_on(&broker, "plugin.inbound.whatsapp", Uuid::new_v4(), "from-whatsapp").await;
+    publish_on(
+        &broker,
+        "plugin.inbound.telegram",
+        Uuid::new_v4(),
+        "no-instance",
+    )
+    .await;
+    publish_on(
+        &broker,
+        "plugin.inbound.telegram.sales",
+        Uuid::new_v4(),
+        "from-sales",
+    )
+    .await;
+    publish_on(
+        &broker,
+        "plugin.inbound.whatsapp",
+        Uuid::new_v4(),
+        "from-whatsapp",
+    )
+    .await;
 
     sleep(Duration::from_millis(100)).await;
     let got = received.lock().unwrap().clone();
-    assert_eq!(got.len(), 2, "plugin-wide binding accepts both telegram topics but not whatsapp");
+    assert_eq!(
+        got.len(),
+        2,
+        "plugin-wide binding accepts both telegram topics but not whatsapp"
+    );
     assert!(got.contains(&"no-instance".to_string()));
     assert!(got.contains(&"from-sales".to_string()));
     assert!(!got.contains(&"from-whatsapp".to_string()));
@@ -477,11 +517,7 @@ async fn plugin_wide_binding_accepts_any_instance() {
 }
 
 async fn publish_from(broker: &AnyBroker, topic: &str, sender: &str, text: &str) {
-    let mut event = Event::new(
-        topic,
-        "test",
-        json!({ "text": text, "from": sender }),
-    );
+    let mut event = Event::new(topic, "test", json!({ "text": text, "from": sender }));
     event.session_id = Some(Uuid::new_v4());
     broker.publish(topic, event).await.unwrap();
 }
@@ -507,7 +543,13 @@ async fn sender_rate_limit_drops_excess_messages_from_same_sender() {
 
     // u1 sends 4 messages — only 2 should make it through.
     for i in 0..4 {
-        publish_from(&broker, "plugin.inbound.telegram", "u1", &format!("msg-{i}")).await;
+        publish_from(
+            &broker,
+            "plugin.inbound.telegram",
+            "u1",
+            &format!("msg-{i}"),
+        )
+        .await;
     }
     // u2 on different sender bucket — both get through.
     publish_from(&broker, "plugin.inbound.telegram", "u2", "from-u2-a").await;
@@ -519,6 +561,9 @@ async fn sender_rate_limit_drops_excess_messages_from_same_sender() {
     let got = received.lock().unwrap().clone();
     let u1_count = got.iter().filter(|t| t.starts_with("msg-")).count();
     let u2_count = got.iter().filter(|t| t.starts_with("from-u2-")).count();
-    assert_eq!(u1_count, 2, "u1 should be limited to burst=2 (got {u1_count}): {got:?}");
+    assert_eq!(
+        u1_count, 2,
+        "u1 should be limited to burst=2 (got {u1_count}): {got:?}"
+    );
     assert_eq!(u2_count, 2, "u2 has its own bucket, both pass: {got:?}");
 }

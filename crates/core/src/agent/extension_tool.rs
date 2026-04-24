@@ -1,13 +1,13 @@
 //! Phase 11.5 — bridge an extension's JSON-RPC tools into the agent's
 //! `ToolRegistry`. The LLM sees the tool (prefixed + attributed in the
 //! description); calls are routed to the owning `StdioRuntime`.
-use std::sync::Arc;
-use async_trait::async_trait;
-use serde_json::Value;
-use agent_extensions::{StdioRuntime, ToolDescriptor};
-use agent_llm::ToolDef;
 use super::context::AgentContext;
 use super::tool_registry::ToolHandler;
+use agent_extensions::{StdioRuntime, ToolDescriptor};
+use agent_llm::ToolDef;
+use async_trait::async_trait;
+use serde_json::Value;
+use std::sync::Arc;
 /// Prefix prepended to every extension-provided tool name so they cannot
 /// collide with native tools like `memory`, `heartbeat`, `who_am_i`.
 pub const EXT_NAME_PREFIX: &str = "ext_";
@@ -150,17 +150,20 @@ impl ToolHandler for ExtensionTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::SessionManager;
     use agent_broker::AnyBroker;
     use agent_config::types::agents::{
         AgentConfig, AgentRuntimeConfig, HeartbeatConfig, ModelConfig,
     };
-    use crate::session::SessionManager;
     use std::time::Duration;
     use uuid::Uuid;
     fn test_ctx(agent: &str, session: Option<Uuid>) -> AgentContext {
         let cfg = Arc::new(AgentConfig {
             id: agent.into(),
-            model: ModelConfig { provider: "stub".into(), model: "m1".into() },
+            model: ModelConfig {
+                provider: "stub".into(),
+                model: "m1".into(),
+            },
             plugins: vec![],
             heartbeat: HeartbeatConfig::default(),
             config: AgentRuntimeConfig::default(),
@@ -171,7 +174,7 @@ mod tests {
             transcripts_dir: String::new(),
             dreaming: Default::default(),
             workspace_git: Default::default(),
-        tool_rate_limits: None,
+            tool_rate_limits: None,
             tool_args_validation: None,
             extra_docs: Vec::new(),
             inbound_bindings: Vec::new(),
@@ -180,6 +183,8 @@ mod tests {
             allowed_delegates: Vec::new(),
             accept_delegates_from: Vec::new(),
             description: String::new(),
+            outbound_allowlist: Default::default(),
+            google_auth: None,
         });
         let broker = AnyBroker::local();
         let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
@@ -209,13 +214,7 @@ mod tests {
     #[tokio::test]
     async fn inject_meta_session_none_serializes_null() {
         let ctx = test_ctx("kate", None);
-        let out = inject_context_meta(
-            true,
-            &ctx,
-            serde_json::json!({}),
-            "weather",
-            "get",
-        );
+        let out = inject_context_meta(true, &ctx, serde_json::json!({}), "weather", "get");
         assert_eq!(out["_meta"]["agent_id"], "kate");
         assert!(out["_meta"]["session_id"].is_null());
     }

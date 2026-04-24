@@ -40,7 +40,10 @@ async fn slow_subscriber_keeps_subscription_but_drops_events() {
             break;
         }
     }
-    assert!(seen_final, "subscription was reaped instead of just shedding events");
+    assert!(
+        seen_final,
+        "subscription was reaped instead of just shedding events"
+    );
 }
 
 #[tokio::test]

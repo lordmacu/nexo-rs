@@ -14,7 +14,10 @@ struct FixtureHandler;
 #[async_trait]
 impl McpServerHandler for FixtureHandler {
     fn server_info(&self) -> McpServerInfo {
-        McpServerInfo { name: "fixture".into(), version: "0.1.0".into() }
+        McpServerInfo {
+            name: "fixture".into(),
+            version: "0.1.0".into(),
+        }
     }
 
     async fn list_tools(&self) -> Result<Vec<McpTool>, McpError> {
@@ -28,11 +31,7 @@ impl McpServerHandler for FixtureHandler {
         }])
     }
 
-    async fn call_tool(
-        &self,
-        name: &str,
-        arguments: Value,
-    ) -> Result<McpToolResult, McpError> {
+    async fn call_tool(&self, name: &str, arguments: Value) -> Result<McpToolResult, McpError> {
         if name != "echo" {
             return Err(McpError::Protocol("unknown tool".into()));
         }
@@ -42,7 +41,9 @@ impl McpServerHandler for FixtureHandler {
             .unwrap_or("")
             .to_string();
         Ok(McpToolResult {
-            content: vec![McpContent::Text { text: format!("echo: {text}") }],
+            content: vec![McpContent::Text {
+                text: format!("echo: {text}"),
+            }],
             is_error: false,
         })
     }

@@ -11,6 +11,9 @@ tools = ["status", "whoami", "list_vaults", "list_items", "read_secret"]
 bins = ["op"]
 env  = ["OP_SERVICE_ACCOUNT_TOKEN"]
 
+[context]
+passthrough = true
+
 [transport]
 kind = "stdio"
 command = "./target/release/onepassword"

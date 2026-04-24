@@ -3,6 +3,7 @@
 mod infra;
 mod llm;
 mod memory;
+pub mod anthropic_oauth;
 pub mod minimax_oauth;
 mod plugins;
 mod runtime;

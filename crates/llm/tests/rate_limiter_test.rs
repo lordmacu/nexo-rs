@@ -1,5 +1,5 @@
-use std::time::{Duration, Instant};
 use agent_llm::RateLimiter;
+use std::time::{Duration, Instant};
 
 #[tokio::test]
 async fn acquire_does_not_overlap_slots() {

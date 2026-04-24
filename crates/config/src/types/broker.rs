@@ -47,7 +47,9 @@ pub struct BrokerPersistenceConfig {
     pub path: String,
 }
 
-fn default_queue_path() -> String { "./data/queue".to_string() }
+fn default_queue_path() -> String {
+    "./data/queue".to_string()
+}
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
@@ -58,8 +60,12 @@ pub struct BrokerLimitsConfig {
     pub max_pending: usize,
 }
 
-fn default_max_payload() -> String { "4MB".to_string() }
-fn default_max_pending() -> usize { 10_000 }
+fn default_max_payload() -> String {
+    "4MB".to_string()
+}
+fn default_max_pending() -> usize {
+    10_000
+}
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
@@ -70,5 +76,9 @@ pub struct BrokerFallbackConfig {
     pub drain_on_reconnect: bool,
 }
 
-fn default_fallback_mode() -> String { "local_queue".to_string() }
-fn default_drain_on_reconnect() -> bool { true }
+fn default_fallback_mode() -> String {
+    "local_queue".to_string()
+}
+fn default_drain_on_reconnect() -> bool {
+    true
+}

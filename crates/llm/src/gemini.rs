@@ -22,10 +22,12 @@ use crate::client::LlmClient;
 use crate::rate_limiter::RateLimiter;
 use crate::registry::LlmProviderFactory;
 use crate::retry::{parse_retry_after_ms, with_retry, LlmError};
-use crate::stream::{parse_gemini_sse, record_usage_tap, StreamChunk};
+use crate::stream::{
+    ensure_event_stream, parse_gemini_sse, record_usage_tap, stream_metrics_tap, StreamChunk,
+};
 use crate::types::{
-    Attachment, AttachmentData, ChatRequest, ChatResponse, ChatRole, FinishReason,
-    ResponseContent, TokenUsage, ToolCall, ToolChoice,
+    Attachment, AttachmentData, ChatRequest, ChatResponse, ChatRole, FinishReason, ResponseContent,
+    TokenUsage, ToolCall, ToolChoice,
 };
 
 const DEFAULT_BASE: &str = "https://generativelanguage.googleapis.com/v1beta";
@@ -212,7 +214,9 @@ impl LlmClient for GeminiClient {
             .await
         {
             Ok(r) => Ok(r),
-            Err(CircuitError::Open(name)) => Err(anyhow::anyhow!("circuit breaker `{name}` is open")),
+            Err(CircuitError::Open(name)) => {
+                Err(anyhow::anyhow!("circuit breaker `{name}` is open"))
+            }
             Err(CircuitError::Inner(e)) => Err(anyhow::anyhow!("{e}")),
         }
     }
@@ -241,9 +245,13 @@ impl LlmClient for GeminiClient {
             }
             Err(CircuitError::Inner(e)) => return Err(anyhow::anyhow!("{e}")),
         };
-        Ok(record_usage_tap(
-            parse_gemini_sse(resp.bytes_stream()),
-            self.rate_limiter.clone(),
+        let resp = ensure_event_stream(resp)?;
+        Ok(stream_metrics_tap(
+            record_usage_tap(
+                parse_gemini_sse(resp.bytes_stream()),
+                self.rate_limiter.clone(),
+            ),
+            self.provider(),
         ))
     }
 
@@ -263,10 +271,8 @@ impl LlmClient for GeminiClient {
                 // batchEmbedContents doesn't return token counts —
                 // approximate as input token count from text lengths.
                 if let Some(tracker) = self.rate_limiter.quota_tracker() {
-                    let approx_tokens: u32 = texts
-                        .iter()
-                        .map(|t| (t.len() / 4).max(1) as u32)
-                        .sum();
+                    let approx_tokens: u32 =
+                        texts.iter().map(|t| (t.len() / 4).max(1) as u32).sum();
                     tracker.record_usage(approx_tokens, 0);
                 }
                 Ok(v)
@@ -642,7 +648,10 @@ mod tests {
     #[test]
     fn body_includes_function_declarations_and_stops() {
         let body = build_body(&req_with_tools());
-        assert_eq!(body["tools"][0]["functionDeclarations"][0]["name"], "get_weather");
+        assert_eq!(
+            body["tools"][0]["functionDeclarations"][0]["name"],
+            "get_weather"
+        );
         assert_eq!(body["generationConfig"]["stopSequences"][0], "END");
         assert_eq!(body["systemInstruction"]["parts"][0]["text"], "be brief");
     }
@@ -668,8 +677,14 @@ mod tests {
         let model_msg = contents.iter().find(|c| c["role"] == "model").unwrap();
         assert_eq!(model_msg["parts"][0]["functionCall"]["name"], "get_weather");
         let tool_msg = contents.last().unwrap();
-        assert_eq!(tool_msg["parts"][0]["functionResponse"]["name"], "get_weather");
-        assert_eq!(tool_msg["parts"][0]["functionResponse"]["response"]["temp"], 22);
+        assert_eq!(
+            tool_msg["parts"][0]["functionResponse"]["name"],
+            "get_weather"
+        );
+        assert_eq!(
+            tool_msg["parts"][0]["functionResponse"]["response"]["temp"],
+            22
+        );
     }
 
     #[test]
@@ -682,7 +697,8 @@ mod tests {
                 "finishReason":"STOP"
             }],
             "usageMetadata":{"promptTokenCount":8,"candidatesTokenCount":3}
-        })).unwrap();
+        }))
+        .unwrap();
         let resp = to_chat_response(raw);
         match resp.content {
             ResponseContent::ToolCalls(calls) => {
@@ -705,10 +721,7 @@ mod tests {
             tool_call_id: None,
             name: None,
             tool_calls: Vec::new(),
-            attachments: vec![Attachment::image_base64(
-                "image/jpeg",
-                "aGVsbG8=",
-            )],
+            attachments: vec![Attachment::image_base64("image/jpeg", "aGVsbG8=")],
         }];
         let body = build_body(&r);
         let parts = &body["contents"][0]["parts"];
@@ -789,7 +802,8 @@ mod tests {
             "candidates": [],
             "promptFeedback": { "blockReason": "SAFETY" },
             "usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 0}
-        })).unwrap();
+        }))
+        .unwrap();
         let resp = to_chat_response(raw);
         match resp.content {
             ResponseContent::Text(t) => assert!(t.is_empty()),
@@ -805,7 +819,8 @@ mod tests {
     fn blocked_prompt_without_explicit_reason_uses_unspecified() {
         let raw: GeminiResponse = serde_json::from_value(json!({
             "candidates": [],
-        })).unwrap();
+        }))
+        .unwrap();
         let resp = to_chat_response(raw);
         match resp.finish_reason {
             FinishReason::Other(s) => assert_eq!(s, "BLOCKED:UNSPECIFIED"),
@@ -826,6 +841,9 @@ mod tests {
             tool_choice: ToolChoice::Auto,
         };
         let err = validate_request(&r).unwrap_err();
-        assert!(format!("{err:?}").contains("contents cannot be empty"), "{err:?}");
+        assert!(
+            format!("{err:?}").contains("contents cannot be empty"),
+            "{err:?}"
+        );
     }
 }

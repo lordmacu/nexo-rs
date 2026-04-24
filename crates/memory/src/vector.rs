@@ -38,7 +38,7 @@ pub fn pack_f32(vec: &[f32]) -> Vec<u8> {
 
 /// Reverse of `pack_f32`. Returns `None` if `bytes.len() % 4 != 0`.
 pub fn unpack_f32(bytes: &[u8]) -> Option<Vec<f32>> {
-    if bytes.len() % 4 != 0 {
+    if !bytes.len().is_multiple_of(4) {
         return None;
     }
     let mut out = Vec::with_capacity(bytes.len() / 4);
@@ -55,7 +55,9 @@ mod tests {
 
     #[test]
     fn pack_unpack_roundtrip() {
-        let v = vec![0.1_f32, -2.5, 3.14, f32::MIN, f32::MAX];
+        // Arbitrary test floats — `3.125` avoids the clippy
+        // `approx_constant` false-positive that flagged `3.14` as PI.
+        let v = vec![0.1_f32, -2.5, 3.125, f32::MIN, f32::MAX];
         let bytes = pack_f32(&v);
         assert_eq!(bytes.len(), v.len() * 4);
         let back = unpack_f32(&bytes).unwrap();

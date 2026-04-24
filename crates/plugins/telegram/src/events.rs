@@ -54,8 +54,8 @@ pub enum InboundEvent {
         timestamp: i64,
         msg_id: String,
         username: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        media: Option<MediaDescriptor>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        media: Vec<MediaDescriptor>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         latitude: Option<f64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -87,15 +87,23 @@ pub enum InboundEvent {
         changed_by: String,
         timestamp: i64,
     },
-    Connected { bot_username: String, bot_id: i64 },
-    Disconnected { reason: String },
-    BridgeTimeout { session_id: uuid::Uuid },
+    Connected {
+        bot_username: String,
+        bot_id: i64,
+    },
+    Disconnected {
+        reason: String,
+    },
+    BridgeTimeout {
+        session_id: uuid::Uuid,
+    },
 }
 
 impl InboundEvent {
     pub fn to_payload(&self) -> serde_json::Value {
         let v = serde_json::to_value(self).unwrap_or(serde_json::Value::Null);
-        if let Self::Message { from, text, media, forward, .. } = self {
+        if let Self::Message { from, text, media, forward, .. } = self
+        {
             let mut obj = match v {
                 serde_json::Value::Object(m) => m,
                 _ => serde_json::Map::new(),
@@ -111,7 +119,7 @@ impl InboundEvent {
             // Promote media local_path to a top-level convenience field
             // so agents can branch on its presence without matching the
             // full MediaDescriptor object.
-            if let Some(m) = media {
+            if let Some(m) = media.first() {
                 obj.insert(
                     "media_kind".into(),
                     serde_json::Value::String(m.kind.clone()),

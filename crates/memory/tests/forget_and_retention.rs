@@ -27,18 +27,13 @@ async fn forget_removes_all_derived_rows() {
 
     assert_eq!(mem.count_memories("kate").await.unwrap(), 1);
     assert!(mem.is_promoted(id).await.unwrap());
-    assert!(
-        mem.count_recall_events_since("kate", 0).await.unwrap() >= 1
-    );
+    assert!(mem.count_recall_events_since("kate", 0).await.unwrap() >= 1);
 
     // forget — all three child tables should lose the row.
     assert!(mem.forget(id).await.unwrap());
     assert_eq!(mem.count_memories("kate").await.unwrap(), 0);
     assert!(!mem.is_promoted(id).await.unwrap());
-    assert_eq!(
-        mem.count_recall_events_since("kate", 0).await.unwrap(),
-        0
-    );
+    assert_eq!(mem.count_recall_events_since("kate", 0).await.unwrap(), 0);
 
     // Second forget() is a noop.
     assert!(!mem.forget(id).await.unwrap());
@@ -53,14 +48,9 @@ async fn prune_recall_events_trims_old_rows() {
     let id = mem.remember("kate", "content", &[]).await.unwrap();
     // Record a few fresh events (ts = now, which is > cutoff).
     for _ in 0..5 {
-        mem.record_recall_event("kate", id, "q", 0.5)
-            .await
-            .unwrap();
+        mem.record_recall_event("kate", id, "q", 0.5).await.unwrap();
     }
-    assert_eq!(
-        mem.count_recall_events_since("kate", 0).await.unwrap(),
-        5
-    );
+    assert_eq!(mem.count_recall_events_since("kate", 0).await.unwrap(), 5);
 
     // retention_days=0 → cutoff = now, everything with ts < now dies.
     // (Race-safe because sqlite writes ts_ms at insert; pruning uses a
@@ -68,10 +58,7 @@ async fn prune_recall_events_trims_old_rows() {
     tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     let removed = mem.prune_recall_events(0).await.unwrap();
     assert_eq!(removed, 5, "expected 5 rows deleted, got {removed}");
-    assert_eq!(
-        mem.count_recall_events_since("kate", 0).await.unwrap(),
-        0
-    );
+    assert_eq!(mem.count_recall_events_since("kate", 0).await.unwrap(), 0);
 }
 
 #[tokio::test]

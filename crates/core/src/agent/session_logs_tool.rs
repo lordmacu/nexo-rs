@@ -1,11 +1,11 @@
-use std::path::{Path, PathBuf};
-use async_trait::async_trait;
-use serde_json::{json, Value};
-use uuid::Uuid;
-use agent_llm::ToolDef;
 use super::context::AgentContext;
 use super::tool_registry::ToolHandler;
 use super::transcripts::{SessionHeader, TranscriptEntry, TranscriptLine, TranscriptWriter};
+use agent_llm::ToolDef;
+use async_trait::async_trait;
+use serde_json::{json, Value};
+use std::path::{Path, PathBuf};
+use uuid::Uuid;
 const DEFAULT_LIMIT: usize = 50;
 const MAX_LIMIT: usize = 500;
 const DEFAULT_MAX_CHARS: usize = 200;
@@ -67,12 +67,16 @@ impl ToolHandler for SessionLogsTool {
         let writer = TranscriptWriter::new(root.clone(), ctx.agent_id.clone());
         match action {
             "list_sessions" => {
-                let limit = optional_usize(&args, "limit")?.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
+                let limit = optional_usize(&args, "limit")?
+                    .unwrap_or(DEFAULT_LIMIT)
+                    .min(MAX_LIMIT);
                 list_sessions(&writer, &root, limit).await
             }
             "read_session" => {
                 let id = required_uuid(&args, "session_id")?;
-                let limit = optional_usize(&args, "limit")?.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
+                let limit = optional_usize(&args, "limit")?
+                    .unwrap_or(DEFAULT_LIMIT)
+                    .min(MAX_LIMIT);
                 let max_chars = optional_usize(&args, "max_chars")?
                     .unwrap_or(DEFAULT_MAX_CHARS)
                     .clamp(20, 4000);
@@ -80,7 +84,9 @@ impl ToolHandler for SessionLogsTool {
             }
             "search" => {
                 let query = required_nonempty_string(&args, "query")?;
-                let limit = optional_usize(&args, "limit")?.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
+                let limit = optional_usize(&args, "limit")?
+                    .unwrap_or(DEFAULT_LIMIT)
+                    .min(MAX_LIMIT);
                 let max_chars = optional_usize(&args, "max_chars")?
                     .unwrap_or(DEFAULT_MAX_CHARS)
                     .clamp(20, 4000);
@@ -88,9 +94,8 @@ impl ToolHandler for SessionLogsTool {
             }
             "recent" => {
                 let id = match optional_string(&args, "session_id") {
-                    Some(s) => Uuid::parse_str(&s).map_err(|e| {
-                        anyhow::anyhow!("`session_id` is not a valid UUID: {e}")
-                    })?,
+                    Some(s) => Uuid::parse_str(&s)
+                        .map_err(|e| anyhow::anyhow!("`session_id` is not a valid UUID: {e}"))?,
                     None => ctx.session_id.ok_or_else(|| {
                         anyhow::anyhow!(
                             "recent action requires either `session_id` or a session-scoped context"
@@ -123,9 +128,9 @@ async fn list_sessions(
     limit: usize,
 ) -> anyhow::Result<Value> {
     let mut rows: Vec<Value> = Vec::new();
-    let mut entries = tokio::fs::read_dir(root).await.map_err(|e| {
-        anyhow::anyhow!("cannot read transcripts_dir `{}`: {e}", root.display())
-    })?;
+    let mut entries = tokio::fs::read_dir(root)
+        .await
+        .map_err(|e| anyhow::anyhow!("cannot read transcripts_dir `{}`: {e}", root.display()))?;
     let mut files: Vec<PathBuf> = Vec::new();
     while let Some(entry) = entries.next_entry().await? {
         let path = entry.path();
@@ -221,9 +226,9 @@ async fn search_sessions(
 ) -> anyhow::Result<Value> {
     let needle = query.to_lowercase();
     let mut hits: Vec<Value> = Vec::new();
-    let mut entries = tokio::fs::read_dir(root).await.map_err(|e| {
-        anyhow::anyhow!("cannot read transcripts_dir `{}`: {e}", root.display())
-    })?;
+    let mut entries = tokio::fs::read_dir(root)
+        .await
+        .map_err(|e| anyhow::anyhow!("cannot read transcripts_dir `{}`: {e}", root.display()))?;
     let mut files: Vec<PathBuf> = Vec::new();
     while let Some(entry) = entries.next_entry().await? {
         let p = entry.path();
@@ -242,7 +247,9 @@ async fn search_sessions(
         };
         let lines = writer.read_session(uuid).await.unwrap_or_default();
         for line in &lines {
-            let TranscriptLine::Entry(e) = line else { continue };
+            let TranscriptLine::Entry(e) = line else {
+                continue;
+            };
             if e.content.to_lowercase().contains(&needle) {
                 hits.push(json!({
                     "session_id": uuid.to_string(),
@@ -360,12 +367,14 @@ mod tests {
     use super::*;
     use crate::session::SessionManager;
     use agent_broker::{AnyBroker, BrokerHandle};
-    use agent_config::types::agents::{AgentConfig, AgentRuntimeConfig, HeartbeatConfig, ModelConfig};
+    use agent_config::types::agents::{
+        AgentConfig, AgentRuntimeConfig, HeartbeatConfig, ModelConfig,
+    };
     use chrono::Utc;
     use std::sync::Arc;
     use std::time::Duration;
     async fn setup() -> (SessionLogsTool, AgentContext, PathBuf, Uuid) {
-        let dir = tempfile::tempdir().expect("tempdir").into_path();
+        let dir = tempfile::tempdir().expect("tempdir").keep();
         let broker = AnyBroker::local();
         let _ = broker.subscribe("_").await;
         let cfg = Arc::new(AgentConfig {
@@ -393,13 +402,20 @@ mod tests {
             allowed_delegates: Vec::new(),
             accept_delegates_from: Vec::new(),
             description: String::new(),
+            outbound_allowlist: Default::default(),
+            google_auth: None,
         });
         let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
         let sid = Uuid::new_v4();
         let ctx = AgentContext::new("kate", cfg, broker, sessions).with_session_id(sid);
         (SessionLogsTool::new(), ctx, dir, sid)
     }
-    async fn write_some_entries(root: &Path, agent_id: &str, session: Uuid, msgs: &[(TranscriptRole, &str)]) {
+    async fn write_some_entries(
+        root: &Path,
+        agent_id: &str,
+        session: Uuid,
+        msgs: &[(TranscriptRole, &str)],
+    ) {
         let w = TranscriptWriter::new(root, agent_id);
         for (role, content) in msgs {
             let entry = TranscriptEntry {
@@ -423,16 +439,13 @@ mod tests {
             &dir,
             "kate",
             s1,
-            &[(TranscriptRole::User, "hola"), (TranscriptRole::Assistant, "buenos dias")],
+            &[
+                (TranscriptRole::User, "hola"),
+                (TranscriptRole::Assistant, "buenos dias"),
+            ],
         )
         .await;
-        write_some_entries(
-            &dir,
-            "kate",
-            s2,
-            &[(TranscriptRole::User, "que haces")],
-        )
-        .await;
+        write_some_entries(&dir, "kate", s2, &[(TranscriptRole::User, "que haces")]).await;
         let out = tool
             .call(&ctx, json!({ "action": "list_sessions" }))
             .await
@@ -463,7 +476,10 @@ mod tests {
         )
         .await;
         let out = tool
-            .call(&ctx, json!({ "action": "read_session", "session_id": s.to_string() }))
+            .call(
+                &ctx,
+                json!({ "action": "read_session", "session_id": s.to_string() }),
+            )
             .await
             .unwrap();
         assert_eq!(out["ok"], true);
@@ -579,11 +595,16 @@ mod tests {
             allowed_delegates: Vec::new(),
             accept_delegates_from: Vec::new(),
             description: String::new(),
+            outbound_allowlist: Default::default(),
+            google_auth: None,
         });
         let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
         let ctx = AgentContext::new("kate", cfg, broker, sessions);
         let tool = SessionLogsTool::new();
-        let out = tool.call(&ctx, json!({ "action": "list_sessions" })).await.unwrap();
+        let out = tool
+            .call(&ctx, json!({ "action": "list_sessions" }))
+            .await
+            .unwrap();
         assert_eq!(out["ok"], false);
         assert!(out["error"].as_str().unwrap().contains("transcripts_dir"));
     }

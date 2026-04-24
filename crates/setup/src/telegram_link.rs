@@ -88,9 +88,7 @@ struct TgFrom {
 pub async fn run(secrets_dir: &Path, config_dir: &Path) -> Result<()> {
     let token_path = secrets_dir.join("telegram_bot_token.txt");
     if !token_path.exists() {
-        bail!(
-            "bot token missing — corre primero `agent setup telegram` para pegar el token"
-        );
+        bail!("bot token missing — corre primero `agent setup telegram` para pegar el token");
     }
     let token = std::fs::read_to_string(&token_path)
         .with_context(|| format!("read {}", token_path.display()))?
@@ -107,7 +105,9 @@ pub async fn run(secrets_dir: &Path, config_dir: &Path) -> Result<()> {
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(LONG_POLL_SECS + 10))
         .build()?;
-    let me = get_me(&http, &token).await.context("validating bot token")?;
+    let me = get_me(&http, &token)
+        .await
+        .context("validating bot token")?;
     if !me.is_bot {
         bail!("token resolves to a non-bot user — regenera con @BotFather");
     }
@@ -134,7 +134,10 @@ pub async fn run(secrets_dir: &Path, config_dir: &Path) -> Result<()> {
     loop {
         if std::time::Instant::now() >= deadline {
             pb.finish_and_clear();
-            bail!("timed out after {}s waiting for a message", LINK_TIMEOUT.as_secs());
+            bail!(
+                "timed out after {}s waiting for a message",
+                LINK_TIMEOUT.as_secs()
+            );
         }
         let updates = get_updates(&http, &token, offset).await;
         match updates {
@@ -169,7 +172,9 @@ pub async fn run(secrets_dir: &Path, config_dir: &Path) -> Result<()> {
                             config_dir.join("plugins/telegram.yaml").display()
                         );
                         println!();
-                        println!("  Ya puedes iniciar el agente; el bot solo responderá a ese chat.");
+                        println!(
+                            "  Ya puedes iniciar el agente; el bot solo responderá a ese chat."
+                        );
                         return Ok(());
                     }
                 }
@@ -237,7 +242,9 @@ fn append_chat_id_to_allowlist(config_dir: &Path, chat_id: i64) -> Result<()> {
 }
 
 fn read_current_allowlist(path: &Path) -> Vec<i64> {
-    let Ok(text) = std::fs::read_to_string(path) else { return Vec::new() };
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
     let Ok(v) = serde_yaml::from_str::<serde_yaml::Value>(&text) else {
         return Vec::new();
     };

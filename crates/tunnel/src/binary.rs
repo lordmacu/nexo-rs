@@ -22,8 +22,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
-const RELEASE_BASE: &str =
-    "https://github.com/cloudflare/cloudflared/releases/latest/download";
+const RELEASE_BASE: &str = "https://github.com/cloudflare/cloudflared/releases/latest/download";
 
 /// Resolve a working cloudflared binary, downloading if necessary.
 pub async fn ensure_cloudflared() -> Result<PathBuf> {
@@ -212,8 +211,7 @@ pub(crate) fn path_is_safe(p: &Path) -> bool {
 }
 
 pub(crate) fn extract_tgz_single_binary_from_path(tarball: &Path, target: &Path) -> Result<()> {
-    let f = std::fs::File::open(tarball)
-        .with_context(|| format!("open {}", tarball.display()))?;
+    let f = std::fs::File::open(tarball).with_context(|| format!("open {}", tarball.display()))?;
     let gz = flate2::read::GzDecoder::new(f);
     let mut tar = tar::Archive::new(gz);
     for entry in tar.entries()? {

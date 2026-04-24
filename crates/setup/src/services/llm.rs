@@ -83,22 +83,69 @@ pub fn defs() -> Vec<ServiceDef> {
         },
         ServiceDef {
             id: "anthropic",
-            label: "Anthropic Claude (openai-compat)",
+            label: "Anthropic Claude (API key / setup-token / Claude CLI / OAuth)",
             category: Category::Llm,
-            description: Some("API key Anthropic. Requiere configurar base_url apropiado en llm.yaml."),
-            fields: vec![FieldDef {
-                key: "api_key",
-                label: "Anthropic API key",
-                help: Some("Empieza con `sk-ant-…`"),
-                kind: FieldKind::Secret,
-                required: true,
-                default: None,
-                target: FieldTarget::Secret {
-                    file: "anthropic_api_key.txt",
-                    env_var: "ANTHROPIC_API_KEY",
+            description: Some(
+                "Dos modos de autenticación:\n\
+                 · `oauth_login` → flujo browser PKCE (suscripción Claude.ai) ★ recomendado\n\
+                 · `setup_token` → pegar token sk-ant-oat01-… de `claude setup-token`\n\
+                 El runtime además auto-detecta (mode=auto) bundles OAuth previos \
+                 y credenciales `~/.claude/.credentials.json` si existen — no hay \
+                 que re-correr wizard tras un `claude login` nuevo.",
+            ),
+            fields: vec![
+                FieldDef {
+                    key: "auth_mode",
+                    label: "Modo de autenticación",
+                    help: Some("oauth_login (browser) · setup_token (paste sk-ant-oat01-…)"),
+                    kind: FieldKind::Choice(&["oauth_login", "setup_token"]),
+                    required: true,
+                    default: Some("oauth_login"),
+                    target: FieldTarget::EnvOnly("ANTHROPIC_AUTH_MODE"),
+                    validator: None,
                 },
-                validator: Some(validate_nonempty),
-            }],
+                FieldDef {
+                    key: "secret_value",
+                    label: "Setup-token (solo si auth_mode=setup_token)",
+                    help: Some("Pega `sk-ant-oat01-…`. Dejar vacío para oauth_login."),
+                    kind: FieldKind::Secret,
+                    required: false,
+                    default: None,
+                    target: FieldTarget::EnvOnly("ANTHROPIC_SECRET_VALUE"),
+                    validator: None,
+                },
+                FieldDef {
+                    key: "set_as_default",
+                    label: "¿Usar Anthropic como proveedor principal en agents.yaml?",
+                    help: Some(
+                        "Reescribe `model.provider` y `model.model` en config/agents.yaml. \
+                         Opciones:\n\
+                         · `no`    → no toca agents.yaml (dejás todo como está)\n\
+                         · `first` → solo parcha el primer agente (útil si tenés varios \
+                           agentes con providers distintos y solo querés cambiar uno)\n\
+                         · `yes`   → parcha TODOS los agentes a anthropic/<default_model>",
+                    ),
+                    kind: FieldKind::Choice(&["no", "first", "yes"]),
+                    required: true,
+                    default: Some("no"),
+                    target: FieldTarget::EnvOnly("ANTHROPIC_SET_AS_DEFAULT"),
+                    validator: None,
+                },
+                FieldDef {
+                    key: "default_model",
+                    label: "Modelo Anthropic a usar por defecto",
+                    help: Some("Solo aplica si `set_as_default` != no."),
+                    kind: FieldKind::Choice(&[
+                        "claude-sonnet-4-5",
+                        "claude-opus-4-5",
+                        "claude-haiku-4-5",
+                    ]),
+                    required: true,
+                    default: Some("claude-sonnet-4-5"),
+                    target: FieldTarget::EnvOnly("ANTHROPIC_DEFAULT_MODEL"),
+                    validator: None,
+                },
+            ],
         },
     ]
 }

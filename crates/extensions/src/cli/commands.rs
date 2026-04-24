@@ -203,7 +203,8 @@ fn gather_rows(ctx: &CliContext<'_>) -> Vec<ListRow> {
         .candidates
         .iter()
         .map(|c| {
-            let status = resolve_status_for_candidate(&c.manifest.plugin.id, &ctx.extensions.disabled);
+            let status =
+                resolve_status_for_candidate(&c.manifest.plugin.id, &ctx.extensions.disabled);
             ListRow::from_manifest(&c.manifest, &status, c.root_dir.display().to_string())
         })
         .collect();
@@ -212,9 +213,9 @@ fn gather_rows(ctx: &CliContext<'_>) -> Vec<ListRow> {
         if d.level != DiagnosticLevel::Error {
             continue;
         }
-        let already = rows
-            .iter()
-            .any(|r| d.path.starts_with(&r.path) || r.path.starts_with(d.path.display().to_string().as_str()));
+        let already = rows.iter().any(|r| {
+            d.path.starts_with(&r.path) || r.path.starts_with(d.path.display().to_string().as_str())
+        });
         if already {
             continue;
         }
@@ -240,7 +241,7 @@ fn validate_id(id: &str) -> Result<(), CliError> {
     if id.is_empty() {
         return Err(CliError::InvalidId(id.into(), "empty".into()));
     }
-    if RESERVED_IDS.iter().any(|r| *r == id) {
+    if RESERVED_IDS.contains(&id) {
         return Err(CliError::InvalidId(id.into(), "reserved native id".into()));
     }
     Ok(())

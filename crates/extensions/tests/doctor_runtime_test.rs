@@ -16,8 +16,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_config::ExtensionsConfig;
 use agent_config::types::extensions::ExtensionsDoctorConfig;
+use agent_config::ExtensionsConfig;
 use agent_extensions::cli::{
     run_doctor_runtime, BrokerClientForDoctor, CliContext, CliError, DoctorOptions,
 };
@@ -111,9 +111,7 @@ impl Env {
         write_plugin_toml(
             &dir,
             id,
-            &format!(
-                "[transport]\nkind = \"nats\"\nsubject_prefix = \"{subject_prefix}\""
-            ),
+            &format!("[transport]\nkind = \"nats\"\nsubject_prefix = \"{subject_prefix}\""),
         );
     }
 

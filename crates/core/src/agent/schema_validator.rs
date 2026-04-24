@@ -5,13 +5,13 @@
 //! When the feature is off the validator is a no-op; when on, callers
 //! get detailed error messages with JSON pointer paths that the LLM can
 //! use to fix its next attempt.
-use std::sync::Arc;
 use agent_llm::ToolDef;
 use dashmap::DashMap;
-use serde_json::Value;
-use sha2::{Digest, Sha256};
 #[cfg(feature = "schema-validation")]
 use jsonschema::Validator;
+use serde_json::Value;
+use sha2::{Digest, Sha256};
+use std::sync::Arc;
 pub struct ToolArgsValidator {
     #[cfg(feature = "schema-validation")]
     cache: DashMap<u64, Arc<Validator>>,
@@ -52,7 +52,9 @@ impl ToolArgsValidator {
         if !def.parameters.is_object() {
             return Ok(());
         }
-        let Some(obj) = def.parameters.as_object() else { return Ok(()); };
+        let Some(obj) = def.parameters.as_object() else {
+            return Ok(());
+        };
         if obj.is_empty() {
             return Ok(());
         }
@@ -103,8 +105,7 @@ fn schema_fingerprint(schema: &Value) -> u64 {
     let bytes = serde_json::to_vec(schema).unwrap_or_default();
     let digest = Sha256::digest(&bytes);
     u64::from_be_bytes([
-        digest[0], digest[1], digest[2], digest[3],
-        digest[4], digest[5], digest[6], digest[7],
+        digest[0], digest[1], digest[2], digest[3], digest[4], digest[5], digest[6], digest[7],
     ])
 }
 #[cfg(test)]
@@ -112,9 +113,11 @@ mod tests {
     use super::*;
     use serde_json::json;
     fn tool(name: &str, params: Value) -> ToolDef {
-        ToolDef { name: name.into(),
+        ToolDef {
+            name: name.into(),
             description: String::new(),
-            parameters: params }
+            parameters: params,
+        }
     }
     #[test]
     fn validates_required_field() {

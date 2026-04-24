@@ -60,22 +60,14 @@ impl AgentsDirectory {
     /// Dispatch admin requests scoped to `/admin/agents*`. Returns
     /// `None` for routes this module doesn't own so the caller can
     /// fall through to the next handler.
-    pub fn dispatch(
-        &self,
-        method: &str,
-        path: &str,
-    ) -> Option<(u16, String, &'static str)> {
+    pub fn dispatch(&self, method: &str, path: &str) -> Option<(u16, String, &'static str)> {
         const JSON: &str = "application/json; charset=utf-8";
         match (method, path) {
             ("GET", "/admin/agents") => Some((200, self.render_list(), JSON)),
             ("GET", p) if p.starts_with("/admin/agents/") => {
                 let id = &p["/admin/agents/".len()..];
                 if id.is_empty() || id.contains('/') {
-                    return Some((
-                        404,
-                        r#"{"error":"not found"}"#.to_string(),
-                        JSON,
-                    ));
+                    return Some((404, r#"{"error":"not found"}"#.to_string(), JSON));
                 }
                 match self.agents.iter().find(|a| a.id == id) {
                     Some(a) => Some((200, render_agent(a), JSON)),
@@ -219,7 +211,10 @@ mod tests {
         let (status, body, _) = dir.dispatch("GET", "/admin/agents/kate").unwrap();
         assert_eq!(status, 200);
         assert!(body.contains(r#""id":"kate""#));
-        assert!(!body.starts_with("["), "single-agent response is an object, not array");
+        assert!(
+            !body.starts_with("["),
+            "single-agent response is an object, not array"
+        );
 
         let (status, body, _) = dir.dispatch("GET", "/admin/agents/nobody").unwrap();
         assert_eq!(status, 404);
@@ -244,8 +239,14 @@ mod tests {
     fn bindings_render_with_optional_instance() {
         let mut a = info("k");
         a.inbound_bindings = vec![
-            InboundBinding { plugin: "telegram".into(), instance: Some("sales".into()) },
-            InboundBinding { plugin: "whatsapp".into(), instance: None },
+            InboundBinding {
+                plugin: "telegram".into(),
+                instance: Some("sales".into()),
+            },
+            InboundBinding {
+                plugin: "whatsapp".into(),
+                instance: None,
+            },
         ];
         let dir = AgentsDirectory::new(vec![a]);
         let (_, body, _) = dir.dispatch("GET", "/admin/agents").unwrap();

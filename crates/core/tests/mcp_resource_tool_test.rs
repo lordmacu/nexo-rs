@@ -108,14 +108,16 @@ fn agent_cfg() -> Arc<AgentConfig> {
         dreaming: Default::default(),
         workspace_git: Default::default(),
         tool_rate_limits: None,
-            tool_args_validation: None,
-            extra_docs: Vec::new(),
-            inbound_bindings: Vec::new(),
-            allowed_tools: Vec::new(),
-            sender_rate_limit: None,
-            allowed_delegates: Vec::new(),
-            accept_delegates_from: Vec::new(),
-            description: String::new(),
+        tool_args_validation: None,
+        extra_docs: Vec::new(),
+        inbound_bindings: Vec::new(),
+        allowed_tools: Vec::new(),
+        sender_rate_limit: None,
+        allowed_delegates: Vec::new(),
+        accept_delegates_from: Vec::new(),
+        description: String::new(),
+        outbound_allowlist: Default::default(),
+        google_auth: None,
     })
 }
 
@@ -212,7 +214,8 @@ async fn register_into_does_not_overwrite_native() {
     // produce for server "happy" + tool "echo".
     let registry = ToolRegistry::new();
     registry.register(
-        ToolDef { name: "mcp_happy_echo".into(),
+        ToolDef {
+            name: "mcp_happy_echo".into(),
             description: "native".into(),
             parameters: serde_json::json!({"type":"object" }),
         },
@@ -398,7 +401,9 @@ async fn read_resource_uri_outside_allowlist_counts_violation() {
     let registry = ToolRegistry::new();
     register_session_tools_with_overrides(&rt, &registry, false, HashMap::new()).await;
 
-    let (_, handler) = registry.get("mcp_fsviol_read_resource").expect("registered");
+    let (_, handler) = registry
+        .get("mcp_fsviol_read_resource")
+        .expect("registered");
     let ctx = null_context();
     let _ = handler
         .call(&ctx, serde_json::json!({"uri":"file:///readme"}))

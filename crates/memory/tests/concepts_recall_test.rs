@@ -9,7 +9,9 @@ async fn remember_populates_concept_tags() {
     let db = open_temp_db().await;
     let agent = "c-agent";
 
-    db.remember(agent, "OpenAI quota monitoring endpoint", &["ops"]).await.unwrap();
+    db.remember(agent, "OpenAI quota monitoring endpoint", &["ops"])
+        .await
+        .unwrap();
     let results = db.recall(agent, "quota", 5).await.unwrap();
     assert_eq!(results.len(), 1);
     assert!(
@@ -25,9 +27,13 @@ async fn recall_expands_query_via_glossary_tag() {
     let agent = "c-agent-2";
 
     // Stored content contains "OpenAI" which derives tag `openai`.
-    db.remember(agent, "We use OpenAI for embedding workloads", &[]).await.unwrap();
+    db.remember(agent, "We use OpenAI for embedding workloads", &[])
+        .await
+        .unwrap();
     // Unrelated noise to ensure the match isn't trivial.
-    db.remember(agent, "Cluster autoscaler pod limits", &[]).await.unwrap();
+    db.remember(agent, "Cluster autoscaler pod limits", &[])
+        .await
+        .unwrap();
 
     // Query derives `openai` as a concept tag (glossary match). Raw
     // FTS5 MATCH of just "openai" also hits the first row, so expansion
@@ -41,8 +47,12 @@ async fn recall_with_tags_matches_via_expansion() {
     let db = open_temp_db().await;
     let agent = "c-agent-3";
 
-    db.remember(agent, "We use OpenAI for embedding workloads", &[]).await.unwrap();
-    db.remember(agent, "Router VLAN segmentation on core switch", &[]).await.unwrap();
+    db.remember(agent, "We use OpenAI for embedding workloads", &[])
+        .await
+        .unwrap();
+    db.remember(agent, "Router VLAN segmentation on core switch", &[])
+        .await
+        .unwrap();
 
     // Query text deliberately does NOT contain "openai" or "router".
     // Caller-supplied tags trigger FTS expansion.
