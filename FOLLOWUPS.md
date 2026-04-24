@@ -1645,6 +1645,34 @@ Formalizada en `PHASES.md` como sub-fase 10.9. Resumen del trade-off para no olv
 
 ---
 
+## Phase 17 — Per-agent credentials (deferred items)
+
+### Circuit breaker per `(channel, instance)`
+- Hoy WA/TG comparten el breaker global (Phase 2.5). Un 429 de un número tumba el breaker del otro durante la ventana cooldown.
+- **Acción:** `BreakerKey::Account { channel, instance }` en `crates/resilience/`; wire en dispatch de cada plugin. Solo vale la pena cuando haya >1 account por canal real.
+
+### Hot-reload de `credentials` sin restart
+- Cambios en `agents.d/*.yaml` o `whatsapp.yaml` requieren reiniciar el daemon para que la nueva binding se materialice.
+- **Acción:** endpoint `POST /admin/credentials/reload` que re-corre `build_credentials` y actualiza `AgentRuntime.credentials`. Necesita `ArcSwap` en el resolver para lectura lock-free + invariante "binding no cambia mid-session".
+
+### CLI `agent setup google --account <id> --agent <agent_id>`
+- Hoy el operador edita `google-auth.yaml` a mano + dispara consent externo. Sin wizard.
+- **Acción:** portar device-code OAuth flow; escribir `token_path` + añadir entrada a `google-auth.yaml`. Opcional hasta que haya >2 cuentas reales.
+
+### Legacy `agents.google_auth` hard-error (V2)
+- V1 deja warn-only. En V2 convertir a error y forzar migración a `google-auth.yaml`.
+- **Acción:** flag `strict_credentials: true` global; eventualmente default.
+
+### `google_*` tools lazy-refresh sin file watcher
+- Si el operador edita `google-auth.yaml` y hace reload, el `GoogleAuthClient` ya instanciado mantiene las credenciales viejas en memoria (client_id leído en boot).
+- **Acción:** relectura on-demand o integrar con hot-reload (item anterior).
+
+### Inline-credential migration path opaco
+- `client_id_path: inline:<literal>` resuelve pero el gauntlet reporta "inline:..." en mensajes. No es user-facing pero es feo en traza.
+- **Acción:** custom `Display` para `PathBuf` con prefijo inline → render `"<inline credential>"`.
+
+---
+
 ## Reglas para mantener este archivo
 
 - **Después de cada `/forge ejecutar`:** añadir aquí lo que quedó fuera del plan
