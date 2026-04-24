@@ -43,6 +43,15 @@ pub struct BrowserConfig {
     pub connect_timeout_ms: u64,
     #[serde(default = "default_command_timeout_ms")]
     pub command_timeout_ms: u64,
+    /// Extra CLI flags forwarded verbatim to the spawned Chrome/Chromium
+    /// process. Empty by default — nothing changes for Linux/macOS
+    /// deployments. Intended use is restricted environments that need
+    /// e.g. `--no-sandbox --disable-dev-shm-usage` (Termux, certain
+    /// hardened containers). Ignored when `cdp_url` is set, since
+    /// attaching to an existing Chrome means the operator already
+    /// launched it with their own flags.
+    #[serde(default)]
+    pub args: Vec<String>,
 }
 
 fn default_user_data_dir() -> String {

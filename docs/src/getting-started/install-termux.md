@@ -7,6 +7,31 @@ Use this path for a **personal agent** (one phone, one WhatsApp,
 one Telegram). For multi-tenant / multi-process deployments the
 regular Linux setup on a server is the right shape.
 
+## Root vs non-root
+
+**Everything in this guide runs without root.** You do not need to
+root your phone to self-host nexo-rs on it.
+
+Root only unlocks extras:
+
+| Scenario | Needs root? |
+|----------|:-----------:|
+| Build + run the agent daemon | ❌ no |
+| Pair WhatsApp, Telegram, Google | ❌ no |
+| Local broker (`broker.type: local`) | ❌ no |
+| Native NATS Go binary | ❌ no (installs to `$PREFIX/bin`) |
+| `termux-wake-lock`, Termux:Boot autostart | ❌ no |
+| Install skills from `pkg` (ffmpeg, tesseract, yt-dlp) | ❌ no |
+| MCP client / server mode | ❌ no |
+| Browser plugin via `cdp_url` to a chromium you launched yourself | ❌ no |
+| **Docker compose stack** (via `proot-distro` or Linux Deploy) | ✅ yes |
+| **SELinux permissive** (if Chromium sandbox misbehaves) | ✅ yes |
+| Running multiple proot-distro containers side by side | ✅ yes |
+| Bypass Android's battery optimizer more aggressively | ✅ yes |
+
+Short version: **don't root just for nexo-rs**. Root if you want the
+full compose stack in a Linux-Deploy chroot, otherwise skip it.
+
 ## What works
 
 | Area | Status |
@@ -231,7 +256,26 @@ extensions:
   disabled: [browser]
 ```
 
-Or, if you have `tur-repo` chromium installed and want to try:
+Or, if you have `tur-repo` chromium installed and want nexo-rs to
+spawn it, use the `browser.args` field to forward the flags Termux
+needs:
+
+```yaml
+# config/plugins/browser.yaml
+browser:
+  headless: true
+  executable: /data/data/com.termux/files/usr/bin/chromium
+  args:
+    - --no-sandbox
+    - --disable-dev-shm-usage
+    - --disable-gpu
+```
+
+The built-in launch flags still apply; `args` is appended after
+them so you can also override any of the built-ins (Chrome's CLI
+parser uses last-wins).
+
+Alternative: launch chromium yourself and attach via `cdp_url`:
 
 ```yaml
 # config/plugins/browser.yaml
@@ -241,6 +285,9 @@ browser:
   #            --disable-gpu --remote-debugging-port=9222 &
   cdp_url: http://127.0.0.1:9222
 ```
+
+When `cdp_url` is set, `args` is ignored — nexo-rs doesn't spawn
+Chrome, only connects to yours.
 
 ## Verify
 

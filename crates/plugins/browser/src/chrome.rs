@@ -58,6 +58,13 @@ impl ChromeLauncher {
             args.push("--disable-gpu".to_string());
         }
 
+        // Operator-supplied extra flags (`browser.args` in YAML). Appended
+        // after our built-ins so the operator can override if a flag
+        // conflicts — later args win with Chrome's CLI parser.
+        for extra in &config.args {
+            args.push(extra.clone());
+        }
+
         let mut child = Command::new(&exe)
             .args(&args)
             .stderr(std::process::Stdio::piped())
