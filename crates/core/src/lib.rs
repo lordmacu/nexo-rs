@@ -1,10 +1,12 @@
 pub mod agent;
+pub mod config_reload;
 pub mod config_watch;
 pub mod heartbeat;
 pub mod runtime_snapshot;
 pub mod session;
 pub mod telemetry;
 
+pub use config_reload::{ConfigReloadCoordinator, ReloadOutcome, ReloadRejection};
 pub use runtime_snapshot::RuntimeSnapshot;
 
 pub use agent::{
