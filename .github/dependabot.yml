@@ -1,0 +1,34 @@
+version: 2
+updates:
+  # Rust workspace dependencies — weekly, grouped to avoid PR spam.
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Bogota
+    open-pull-requests-limit: 5
+    groups:
+      rust-patch:
+        update-types: [patch]
+      rust-minor:
+        update-types: [minor]
+    commit-message:
+      prefix: "deps"
+      include: scope
+    labels: [dependencies, rust]
+
+  # GitHub Actions — workflows pin Node 20 etc., keep them fresh.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+      day: monday
+      time: "06:00"
+      timezone: America/Bogota
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci"
+      include: scope
+    labels: [dependencies, ci]
