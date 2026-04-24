@@ -6,7 +6,7 @@ broker:
     nkey_file: "/run/secrets/nats.nkey"
   persistence:
     enabled: true
-    path: "./data/queue"
+    path: "./data/queue/broker.db"
   limits:
     max_payload: "4MB"
     max_pending: 10000

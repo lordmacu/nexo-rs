@@ -335,6 +335,20 @@ impl LlmAgentBehavior {
         if !system_prompt.is_empty() {
             system_parts.push(system_prompt.to_string());
         }
+        // Inbound metadata — give the LLM the current sender so it
+        // doesn't have to ask ("¿cuál es tu teléfono?") when the
+        // channel already carries it (WhatsApp JID, Telegram user id,
+        // email address). The runtime injects this every turn so even
+        // mid-conversation it's always current.
+        if let Some(sender) = msg.sender_id.as_deref() {
+            if !sender.is_empty() {
+                system_parts.push(format!(
+                    "# CONTEXTO DEL CANAL\n\nRemitente ({}): {}\n\nUsá este identificador como \"número del cliente\" cuando un prompt hable de capturar el teléfono.",
+                    msg.source_plugin,
+                    sender
+                ));
+            }
+        }
         if !system_parts.is_empty() {
             prefix_messages.push(ChatMessage::system(system_parts.join("\n\n")));
         }
