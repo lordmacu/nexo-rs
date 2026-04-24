@@ -414,10 +414,10 @@ mod tests {
     }
 
     #[test]
-    fn from_agent_defaults_marks_sentinel_index() {
+    fn from_agent_defaults_uses_none_as_binding_sentinel() {
         let a = sample_agent();
         let eff = EffectiveBindingPolicy::from_agent_defaults(&a);
-        assert_eq!(eff.binding_index, usize::MAX);
+        assert_eq!(eff.binding_index, None);
         assert_eq!(eff.allowed_tools, a.allowed_tools);
     }
 }
