@@ -11,7 +11,7 @@ beyond surface docs.
 
 Legend: `⬜ pending  🔄 in progress  ✅ done`
 
-Progress: **1 / 18 phases started**
+Progress: **2 / 18 phases done, 0 in progress**
 
 ---
 
@@ -35,7 +35,7 @@ run their first agent — and the site deploys automatically.
 
 ---
 
-## Phase D1 — Architecture   ⬜
+## Phase D1 — Architecture   ✅
 
 Mapping to code phases 1 (core runtime) and 9 (polish/ops).
 
@@ -43,21 +43,21 @@ Pages: `architecture/overview.md`, `architecture/agent-runtime.md`,
 `architecture/event-bus.md`, `architecture/fault-tolerance.md`.
 
 Deep-dive checklist:
-- [ ] Top-level component diagram (mermaid) — process boundaries, which
+- [x] Top-level component diagram (mermaid) — process boundaries, which
   crate owns what
-- [ ] Agent lifecycle sequence diagram — boot → discovery → plugin load
+- [x] Agent lifecycle sequence diagram — boot → discovery → plugin load
   → LLM loop → shutdown
-- [ ] EventBus contract: topic namespace table (`plugin.inbound.*`,
+- [x] EventBus contract: topic namespace table (`plugin.inbound.*`,
   `plugin.outbound.*`, `agent.route.*`, `plugin.health.*`, etc.)
-- [ ] SessionManager: how sessions are keyed, TTL, cleanup, resurrection
-- [ ] CircuitBreaker: state machine diagram (closed → open → half-open),
+- [x] SessionManager: how sessions are keyed, TTL, cleanup, resurrection
+- [x] CircuitBreaker: state machine diagram (closed → open → half-open),
   thresholds per external dep, retry policy table
-- [ ] Disk queue behavior: where files live, format, drain order, poison
+- [x] Disk queue behavior: where files live, format, drain order, poison
   pill handling
-- [ ] DLQ shape + CLI (`agent dlq list / replay / purge`)
-- [ ] Backpressure: thresholds, what happens when a plugin stalls
-- [ ] Single-instance lockfile: file layout, PID check, takeover flow
-- [ ] Graceful shutdown sequence: drain order, deadlines, SIGTERM path
+- [x] DLQ shape + CLI (`agent dlq list / replay / purge`)
+- [x] Backpressure: thresholds, what happens when a plugin stalls
+- [x] Single-instance lockfile: file layout, PID check, takeover flow
+- [x] Graceful shutdown sequence: drain order, deadlines, SIGTERM path
 
 **Done criteria:** a reader who has never seen the code can explain, on
 paper, what happens from a WhatsApp message hitting the NATS topic to
