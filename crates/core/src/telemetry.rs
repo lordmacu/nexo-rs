@@ -156,6 +156,33 @@ pub fn add_extensions_discovered(status: &str, count: u64) {
         .fetch_add(count, Ordering::Relaxed);
 }
 
+/// Phase 18 — hot-reload telemetry. Tracks applied / rejected reload
+/// attempts + the monotonic config version per agent so operators can
+/// correlate which snapshot was active when a session fired.
+static CONFIG_RELOAD_APPLIED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static CONFIG_RELOAD_REJECTED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static CONFIG_RELOAD_LATENCY: LazyLock<Histogram> = LazyLock::new(Histogram::new);
+static RUNTIME_CONFIG_VERSION: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
+
+pub fn inc_config_reload_applied() {
+    CONFIG_RELOAD_APPLIED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn inc_config_reload_rejected() {
+    CONFIG_RELOAD_REJECTED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn observe_config_reload_latency_ms(duration_ms: u64) {
+    CONFIG_RELOAD_LATENCY.observe(duration_ms);
+}
+
+pub fn set_runtime_config_version(agent_id: &str, version: u64) {
+    RUNTIME_CONFIG_VERSION
+        .entry(agent_id.to_string())
+        .or_insert_with(|| AtomicU64::new(0))
+        .store(version, Ordering::Relaxed);
+}
+
 /// Update circuit breaker state gauge. `open=true` → 1, `open=false` → 0.
 pub fn set_circuit_breaker_state(breaker: &str, open: bool) {
     CIRCUIT_BREAKER_STATE
@@ -175,6 +202,9 @@ pub fn reset_for_test() {
     TOOL_LATENCY.clear();
     TOOL_CACHE_EVENTS.clear();
     EXTENSIONS_DISCOVERED.clear();
+    CONFIG_RELOAD_APPLIED.store(0, Ordering::Relaxed);
+    CONFIG_RELOAD_REJECTED.store(0, Ordering::Relaxed);
+    RUNTIME_CONFIG_VERSION.clear();
 }
 
 pub fn render_prometheus(fallback_nats_open: bool) -> String {
