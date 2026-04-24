@@ -112,6 +112,9 @@ pub enum BuildError {
         #[source]
         source: CredentialError,
     },
+
+    #[error("agent '{agent}': inline google_auth is deprecated and not accepted under strict_credentials=true; migrate to config/plugins/google-auth.yaml")]
+    LegacyInlineGoogleAuth { agent: String },
 }
 
 #[derive(Debug, Error)]
