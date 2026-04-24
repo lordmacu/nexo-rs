@@ -317,6 +317,18 @@ async fn main() -> Result<()> {
     tracing::info!(config_dir = %config_dir.display(), "loading config");
     let cfg = AppConfig::load(&config_dir).context("failed to load config")?;
 
+    // Validate per-binding overrides before anything else spawns. We skip
+    // the tool-name check here because the tool registry is assembled
+    // after extensions / MCP discovery — the structural checks (duplicate
+    // bindings, unknown telegram instances, missing skill dirs) are
+    // enough to surface the most common YAML mistakes at startup.
+    agent_core::agent::validate_agents(
+        &cfg.agents.agents,
+        &cfg.plugins.telegram,
+        &agent_core::agent::KnownTools::default(),
+    )
+    .context("per-binding override validation failed")?;
+
     // Extension discovery (Phase 11.2) -------------------------------------
     // Runs before anything that depends on extensions. Spawns stdio runtimes
     // (Phase 11.3) for each discovered candidate and keeps them alive for
