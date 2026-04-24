@@ -960,12 +960,17 @@ async fn main() -> Result<()> {
         let google_core_cfg = agent_cfg
             .google_auth
             .as_ref()
-            .map(|gcfg| agent_plugin_google::GoogleAuthConfig {
-                client_id: gcfg.client_id.clone(),
-                client_secret: gcfg.client_secret.clone(),
-                scopes: gcfg.scopes.clone(),
-                token_file: gcfg.token_file.clone(),
-                redirect_port: gcfg.redirect_port,
+            .map(|gcfg| {
+                (
+                    agent_plugin_google::GoogleAuthConfig {
+                        client_id: gcfg.client_id.clone(),
+                        client_secret: gcfg.client_secret.clone(),
+                        scopes: gcfg.scopes.clone(),
+                        token_file: gcfg.token_file.clone(),
+                        redirect_port: gcfg.redirect_port,
+                    },
+                    None::<agent_plugin_google::SecretSources>,
+                )
             })
             .or_else(|| {
                 credentials
@@ -980,22 +985,31 @@ async fn main() -> Result<()> {
                             .and_then(|n| n.to_str())
                             .unwrap_or("google_tokens.json")
                             .to_string();
-                        Some(agent_plugin_google::GoogleAuthConfig {
+                        let cfg = agent_plugin_google::GoogleAuthConfig {
                             client_id: cid.trim().to_string(),
                             client_secret: csec.trim().to_string(),
                             scopes: acct.scopes.clone(),
                             token_file,
                             redirect_port: 8765,
-                        })
+                        };
+                        let sources = agent_plugin_google::SecretSources {
+                            client_id_path: acct.client_id_path.clone(),
+                            client_secret_path: acct.client_secret_path.clone(),
+                        };
+                        Some((cfg, Some(sources)))
                     })
             });
-        if let Some(core_cfg) = google_core_cfg {
+        if let Some((core_cfg, sources)) = google_core_cfg {
             let workspace_dir = if agent_cfg.workspace.trim().is_empty() {
                 PathBuf::from("./data/workspace")
             } else {
                 PathBuf::from(&agent_cfg.workspace)
             };
-            let client = agent_plugin_google::GoogleAuthClient::new(core_cfg, &workspace_dir);
+            let client = agent_plugin_google::GoogleAuthClient::new_with_sources(
+                core_cfg,
+                &workspace_dir,
+                sources,
+            );
             if let Err(e) = client.load_from_disk().await {
                 tracing::warn!(
                     agent = %agent_id,

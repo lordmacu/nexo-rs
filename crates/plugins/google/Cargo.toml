@@ -19,3 +19,7 @@ serde_json  = { workspace = true }
 serde_urlencoded = "0.7"
 tokio       = { workspace = true }
 tracing     = { workspace = true }
+arc-swap    = { workspace = true }
+
+[dev-dependencies]
+tempfile    = "3"

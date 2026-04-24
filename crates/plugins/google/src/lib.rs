@@ -10,6 +10,7 @@ pub mod tools;
 
 pub use client::{
     canonicalize_scopes, DeviceChallenge, GoogleAuthClient, GoogleAuthConfig, GoogleTokens,
+    SecretSources,
 };
 pub use tools::{
     register_all as register_tools, GoogleAuthRevokeTool, GoogleAuthStartTool,
