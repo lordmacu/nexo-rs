@@ -281,6 +281,18 @@ for dir in data data/queue data/workspace data/media data/transcripts secrets; d
   fi
 done
 
+# Wire git hooks so the docs-sync + fmt + clippy + tests gate runs
+# on every commit. Idempotent: git config is a rewrite.
+if [[ -d .githooks ]] && have git && [[ -d .git ]]; then
+  current="$(git config --get core.hooksPath 2>/dev/null || true)"
+  if [[ "$current" != ".githooks" ]]; then
+    git config core.hooksPath .githooks
+    ok "git hooks wired (core.hooksPath = .githooks)"
+  else
+    ok "git hooks already wired"
+  fi
+fi
+
 chmod 700 secrets 2>/dev/null || true
 
 # Termux-specific hint: the credentials gauntlet's mode-check doesn't
