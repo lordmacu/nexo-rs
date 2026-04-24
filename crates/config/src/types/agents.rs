@@ -6,7 +6,7 @@ pub struct AgentsConfig {
     pub agents: Vec<AgentConfig>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentConfig {
     pub id: String,
@@ -398,7 +398,7 @@ pub struct ModelConfig {
     pub model: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HeartbeatConfig {
     #[serde(default)]
@@ -420,7 +420,7 @@ fn default_heartbeat_interval() -> String {
     "5m".to_string()
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentRuntimeConfig {
     #[serde(default = "default_debounce_ms")]
