@@ -47,7 +47,11 @@ impl ToolHandler for DelegationTool {
         // Peer allowlist — empty = no restriction (back-compat).
         // Populated = target must match at least one pattern. Glob
         // uses the same trailing-`*` convention as `allowed_tools`.
-        let allowlist = &ctx.config.allowed_delegates;
+        // Read from the effective policy so a narrow binding can block
+        // delegation even if the agent-level list is permissive, or a
+        // trusted channel can broaden it to `["*"]`.
+        let effective = ctx.effective_policy();
+        let allowlist = &effective.allowed_delegates;
         if !allowlist.is_empty() && !delegate_matches(allowlist, target) {
             anyhow::bail!(
                 "agent `{}` is not allowed to delegate to `{}` (allowed_delegates: {:?})",

@@ -39,7 +39,13 @@ fn normalize_to(raw: &str) -> (String, String) {
 }
 
 fn allowlist_denied(ctx: &AgentContext, digits: &str) -> bool {
-    let list = &ctx.config.outbound_allowlist.whatsapp;
+    // Per-binding allowlist: the effective policy carries whichever
+    // override the matched binding defined (or the agent-level default
+    // when no override). This means a sales binding can lock outbound
+    // to the advisor's number while a private-channel binding keeps
+    // the wider agent-level list.
+    let effective = ctx.effective_policy();
+    let list = &effective.outbound_allowlist.whatsapp;
     if list.is_empty() {
         return false;
     }
