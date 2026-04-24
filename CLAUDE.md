@@ -79,8 +79,9 @@ Full detail with sub-phases and done criteria: `proyecto/PHASES.md`
 | 14 | TaskFlow runtime | 14.1 schema+FlowStore, 14.2 state machine, 14.3 FlowManager, 14.4 wait/resume, 14.5 agent tools, 14.6 mirrored+CLI, 14.7 e2e+docs | 7/7 ✅ |
 | 15 | Claude subscription auth | 15.1 config schema, 15.2 anthropic_auth module, 15.3 CLI credentials reader, 15.4 AnthropicClient wiring, 15.5 setup wizard, 15.6 error classification, 15.7 docs, 15.8 OAuth browser PKCE flow | 8/8 ✅ |
 | 16 | Per-binding capability override | 16.1 schema, 16.2 EffectiveBindingPolicy, 16.3 boot validation, 16.4 AgentContext + registry cache, 16.5 runtime intake + rate limiter, 16.6 LLM/prompt/skills/outbound/delegation, 16.7 YAML example + e2e tests | 7/7 ✅ |
+| 17 | Per-agent credentials (WA/TG/Google) | 17.1 agent-auth scaffold, 17.2 boot gauntlet, 17.3 per-channel stores, 17.4 resolver, 17.5 telemetry, 17.6 config schemas, 17.7 `--check-config`, 17.8 runtime integration, 17.9 plugin tool migration, 17.10 google tool store lookup, 17.11 e2e + fingerprint stability | 11/11 ✅ |
 
-**Progress: 120 / 120 sub-phases done (0 deferred). All phases complete.**
+**Progress: 131 / 131 sub-phases done (0 deferred). All phases complete.**
 
 ### Progress tracking rule
 

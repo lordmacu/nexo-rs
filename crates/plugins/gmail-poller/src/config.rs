@@ -50,6 +50,19 @@ pub struct AccountConfig {
     pub token_path: String,
     pub client_id_path: String,
     pub client_secret_path: String,
+    /// Phase 17 — agent that owns this Google account. When absent
+    /// the value falls back to `id` for back-compat with deployments
+    /// written before per-agent credentials existed. The gauntlet in
+    /// `agent-auth` enforces 1:1 agent_id → account across boots so
+    /// cross-agent Gmail access cannot silently happen.
+    #[serde(default)]
+    pub agent_id: Option<String>,
+}
+
+impl AccountConfig {
+    pub fn effective_agent_id(&self) -> &str {
+        self.agent_id.as_deref().unwrap_or(&self.id)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
