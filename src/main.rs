@@ -1382,6 +1382,7 @@ async fn main() -> Result<()> {
         runtime = runtime.with_peers(Arc::clone(&peer_directory));
         if let Some(ref bundle) = credentials {
             runtime = runtime.with_credentials(Arc::clone(&bundle.resolver));
+            runtime = runtime.with_breakers(Arc::clone(&bundle.breakers));
         }
         runtime
             .start()

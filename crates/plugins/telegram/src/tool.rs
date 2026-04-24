@@ -44,7 +44,7 @@ async fn publish_outbound(ctx: &AgentContext, payload: Value) -> anyhow::Result<
     // Phase 17 — resolve the target bot instance from the agent's
     // `credentials.telegram` binding. Legacy single-bot deployments
     // without a resolver stay on the un-suffixed topic for back-compat.
-    let topic = match ctx.credentials.as_ref() {
+    let (topic, breaker_handle) = match ctx.credentials.as_ref() {
         Some(resolver) => match resolver.resolve(&ctx.agent_id, agent_auth::handle::TELEGRAM) {
             Ok(handle) => {
                 agent_auth::audit::audit_outbound(&handle, "plugin.outbound.telegram");
@@ -54,15 +54,58 @@ async fn publish_outbound(ctx: &AgentContext, payload: Value) -> anyhow::Result<
                     &ctx.agent_id,
                     "outbound",
                 );
-                format!("plugin.outbound.telegram.{}", handle.account_id_raw())
+                let topic = format!("plugin.outbound.telegram.{}", handle.account_id_raw());
+                (topic, Some(handle))
             }
-            Err(_) => "plugin.outbound.telegram".to_string(),
+            Err(_) => ("plugin.outbound.telegram".to_string(), None),
         },
-        None => "plugin.outbound.telegram".to_string(),
+        None => ("plugin.outbound.telegram".to_string(), None),
     };
+
+    let breaker = match (breaker_handle.as_ref(), ctx.breakers.as_ref()) {
+        (Some(h), Some(reg)) => Some(reg.for_handle(h)),
+        _ => None,
+    };
+    if let Some(ref b) = breaker {
+        if !b.allow() {
+            if let Some(ref h) = breaker_handle {
+                agent_auth::telemetry::set_breaker_state(
+                    agent_auth::handle::TELEGRAM,
+                    h.account_id_raw(),
+                    agent_auth::telemetry::BreakerState::Open,
+                );
+            }
+            return Err(anyhow::anyhow!(
+                "circuit breaker open for telegram instance — back off and retry"
+            ));
+        }
+    }
+
     let event = Event::new(&topic, &ctx.agent_id, payload);
-    ctx.broker.publish(&topic, event).await?;
-    Ok(())
+    let result = ctx.broker.publish(&topic, event).await;
+    if let (Some(b), Some(h)) = (&breaker, &breaker_handle) {
+        match &result {
+            Ok(_) => {
+                b.on_success();
+                agent_auth::telemetry::set_breaker_state(
+                    agent_auth::handle::TELEGRAM,
+                    h.account_id_raw(),
+                    agent_auth::telemetry::BreakerState::Closed,
+                );
+            }
+            Err(_) => {
+                b.on_failure();
+                if b.is_open() {
+                    agent_auth::telemetry::set_breaker_state(
+                        agent_auth::handle::TELEGRAM,
+                        h.account_id_raw(),
+                        agent_auth::telemetry::BreakerState::Open,
+                    );
+                }
+            }
+        }
+    }
+    result.map_err(anyhow::Error::from)
 }
 
 // ─────────────────────────────────────────────────────────────────────

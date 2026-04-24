@@ -34,6 +34,10 @@ use crate::whatsapp::{WhatsappAccount, WhatsappCredentialStore};
 pub struct CredentialsBundle {
     pub stores: CredentialStores,
     pub resolver: Arc<AgentCredentialResolver>,
+    /// Per-`(channel, instance)` circuit breakers shared with plugin
+    /// tools. Created with default config; failure on one account
+    /// never trips another.
+    pub breakers: Arc<crate::breaker::BreakerRegistry>,
     pub warnings: Vec<String>,
 }
 
@@ -265,6 +269,7 @@ pub fn build_credentials(
             Ok(CredentialsBundle {
                 stores,
                 resolver: Arc::new(resolver),
+                breakers: Arc::new(crate::breaker::BreakerRegistry::default()),
                 warnings,
             })
         }
