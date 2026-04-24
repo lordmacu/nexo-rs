@@ -25,7 +25,7 @@ use uuid::Uuid;
 
 #[derive(Default)]
 struct CapturedEffective {
-    binding_index: usize,
+    binding_index: Option<usize>,
     allowed_tools: Vec<String>,
     outbound_whatsapp: Vec<String>,
     outbound_telegram: Vec<i64>,
@@ -190,7 +190,7 @@ async fn whatsapp_binding_receives_narrow_policy_telegram_binding_receives_full_
     assert_eq!(snap.len(), 2, "both bindings should have delivered one event each");
 
     let wa = snap.iter().find(|c| c.text == "hola WA").expect("WA capture");
-    assert_eq!(wa.binding_index, 0, "WA binding is declared first");
+    assert_eq!(wa.binding_index, Some(0), "WA binding is declared first");
     assert_eq!(wa.allowed_tools, vec!["whatsapp_send_message".to_string()]);
     assert_eq!(wa.outbound_whatsapp, vec!["573115728852".to_string()]);
     assert!(wa.outbound_telegram.is_empty(), "WA binding clears TG outbound");
@@ -207,7 +207,7 @@ async fn whatsapp_binding_receives_narrow_policy_telegram_binding_receives_full_
     assert!(wa.allowed_delegates.is_empty(), "WA bans delegation");
 
     let tg = snap.iter().find(|c| c.text == "hola TG").expect("TG capture");
-    assert_eq!(tg.binding_index, 1, "TG binding is declared second");
+    assert_eq!(tg.binding_index, Some(1), "TG binding is declared second");
     assert_eq!(tg.allowed_tools, vec!["*".to_string()]);
     assert_eq!(tg.outbound_telegram, vec![1_194_292_426]);
     assert!(tg.outbound_whatsapp.is_empty());
@@ -299,9 +299,8 @@ async fn legacy_agent_without_bindings_synthesises_agent_level_policy() {
     assert_eq!(snap.len(), 1);
     let c = &snap[0];
     assert_eq!(
-        c.binding_index,
-        usize::MAX,
-        "legacy path keys the sentinel slot"
+        c.binding_index, None,
+        "legacy path keys the bindingless slot with None"
     );
     assert_eq!(c.allowed_tools, vec!["weather".to_string()]);
     assert_eq!(c.system_prompt, "Legacy Ana.");
