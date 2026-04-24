@@ -1670,9 +1670,8 @@ Formalizada en `PHASES.md` como sub-fase 10.9. Resumen del trade-off para no olv
 - V1 deja warn-only. En V2 convertir a error y forzar migración a `google-auth.yaml`.
 - **Acción:** flag `strict_credentials: true` global; eventualmente default.
 
-### `google_*` tools lazy-refresh sin file watcher
-- Si el operador edita `google-auth.yaml` y hace reload, el `GoogleAuthClient` ya instanciado mantiene las credenciales viejas en memoria (client_id leído en boot).
-- **Acción:** relectura on-demand o integrar con hot-reload (item anterior).
+### ~~`google_*` tools lazy-refresh sin file watcher~~ ✅ Resuelto 2026-04-24
+- `GoogleAuthClient` migró `config` a `ArcSwap`. `refresh_secrets_if_changed` se invoca en cada llamada de red (`exchange_code`, `request_device_code`, `poll_device_code`, `refresh_token`); compara mtime de `client_id_path`/`client_secret_path` y reescribe sólo cuando hubo rotación. Sin daemon restart.
 
 ### Inline-credential migration path opaco
 - `client_id_path: inline:<literal>` resuelve pero el gauntlet reporta "inline:..." en mensajes. No es user-facing pero es feo en traza.
