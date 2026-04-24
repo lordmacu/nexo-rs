@@ -115,6 +115,14 @@ enum Mode {
     CheckConfig {
         strict: bool,
     },
+    /// Phase 18 — trigger a hot-reload on a running agent daemon.
+    /// Publishes `control.reload` on the same broker the daemon is on
+    /// and waits up to 5s for a `control.reload.ack` with the outcome
+    /// (version, applied, rejected). Exit 0 if at least one agent
+    /// reloaded; exit 1 if all rejected or no ack arrived.
+    Reload {
+        json: bool,
+    },
     Help,
 }
 
@@ -290,6 +298,7 @@ async fn main() -> Result<()> {
         } => return run_status(json, endpoint, agent_id).await,
         Mode::DryRun { json } => return run_dry_run(&args.config_dir, json),
         Mode::CheckConfig { strict } => return run_check_config(&args.config_dir, strict),
+        Mode::Reload { json } => return run_reload(&args.config_dir, json).await,
         Mode::ExtInstall {
             source,
             update,
@@ -2066,6 +2075,9 @@ fn parse_args() -> CliArgs {
         [cmd, service] if cmd == "setup" => Mode::SetupOne {
             service: service.clone(),
         },
+        [cmd] if cmd == "reload" => Mode::Reload {
+            json: has_json_flag,
+        },
         [cmd] if cmd == "status" => Mode::Status {
             json: has_json_flag,
             endpoint: positional
@@ -2503,6 +2515,73 @@ async fn run_dlq_purge(config_dir: &std::path::Path) -> Result<()> {
     let queue = open_disk_queue(config_dir).await?;
     let n = queue.purge_dead_letters().await?;
     println!("purged {n} dead-letter entries");
+    Ok(())
+}
+
+/// Phase 18 — `agent reload` subcommand. Loads the broker config,
+/// connects, subscribes to `control.reload.ack`, publishes on
+/// `control.reload`, and waits up to 5s for the daemon to respond.
+///
+/// Exit codes:
+///   0 — at least one agent reloaded successfully.
+///   1 — no ack arrived, or every agent rejected.
+///   2 — all rejections were "agent not registered" etc. (partial).
+async fn run_reload(config_dir: &std::path::Path, json: bool) -> Result<()> {
+    let cfg = AppConfig::load(config_dir).context("failed to load config")?;
+    let broker = AnyBroker::from_config(&cfg.broker.broker)
+        .await
+        .context("failed to connect to broker")?;
+
+    // Subscribe before publishing so the daemon's ack is not missed.
+    let mut ack_sub = broker
+        .subscribe("control.reload.ack")
+        .await
+        .context("failed to subscribe to control.reload.ack")?;
+
+    let req_payload = serde_json::json!({ "requested_by": "cli" });
+    let ev = agent_broker::Event::new("control.reload", "cli", req_payload);
+    broker
+        .publish("control.reload", ev)
+        .await
+        .context("failed to publish control.reload")?;
+
+    let ack = match tokio::time::timeout(std::time::Duration::from_secs(5), ack_sub.next()).await {
+        Ok(Some(e)) => e,
+        Ok(None) => {
+            eprintln!("daemon closed the ack subscription before responding");
+            std::process::exit(1);
+        }
+        Err(_) => {
+            eprintln!("no control.reload.ack received within 5s — is the daemon running?");
+            std::process::exit(1);
+        }
+    };
+
+    let outcome: agent_core::ReloadOutcome =
+        serde_json::from_value(ack.payload).context("malformed ack payload")?;
+
+    if json {
+        let body = serde_json::to_string_pretty(&outcome)
+            .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"));
+        println!("{body}");
+    } else {
+        println!("reload v{}: applied={} rejected={} elapsed={}ms",
+                 outcome.version,
+                 outcome.applied.len(),
+                 outcome.rejected.len(),
+                 outcome.elapsed_ms);
+        for id in &outcome.applied {
+            println!("  ✓ {id}");
+        }
+        for r in &outcome.rejected {
+            let who = r.agent_id.as_deref().unwrap_or("<top-level>");
+            println!("  ✗ {who}: {}", r.reason);
+        }
+    }
+
+    if outcome.applied.is_empty() {
+        std::process::exit(if outcome.rejected.is_empty() { 1 } else { 2 });
+    }
     Ok(())
 }
 
