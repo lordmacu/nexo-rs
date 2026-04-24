@@ -11,7 +11,7 @@ beyond surface docs.
 
 Legend: `⬜ pending  🔄 in progress  ✅ done`
 
-Progress: **7 / 18 phases done, 0 in progress**
+Progress: **8 / 18 phases done, 0 in progress**
 
 ---
 
@@ -196,23 +196,24 @@ docs alone, with no need to grep source.
 
 ---
 
-## Phase D7 — MCP   ⬜
+## Phase D7 — MCP   ✅
 
 Mapping to phase 12.
 
 Pages: `mcp/introduction.md`, `mcp/client.md`, `mcp/server.md`.
 
 Deep-dive checklist:
-- [ ] What is MCP (brief) + why we implement both sides
-- [ ] Client stdio: spawn model, handshake, tool/resource discovery
-- [ ] Client HTTP: connection, session mgmt, auth
-- [ ] Tool catalog: unified view over extensions + MCP + built-ins
-- [ ] `tools/list_changed`: hot-reload flow, diff application
-- [ ] Agent as MCP server: listen transport, exposed tools, resource
-  endpoints
-- [ ] MCP servers in extensions (phase 12.7)
-- [ ] Sentinel session pattern (process-wide sharing to avoid duplicate
-  MCP children)
+- [x] What is MCP (brief) + why we implement both sides
+- [x] Client stdio: spawn model, handshake, tool/resource discovery
+- [x] Client HTTP: streamable_http | sse | auto fallback, headers,
+  mcp-session-id
+- [x] Tool catalog: parallel tools/list, prefixed names, non-fatal
+  per-server errors
+- [x] `tools/list_changed` hot reload: 200 ms debounce, catalog rebuild
+- [x] Agent as MCP server: stdio, allowlist, expose_proxies, auth
+  token, exposure rules diagram
+- [x] MCP servers in extensions (phase 12.7) referenced in manifest
+- [x] Sentinel session (nil UUID) process-wide sharing pattern
 
 **Done criteria:** reader can connect any MCP client (Claude Desktop,
 Continue, etc.) to a running nexo-rs agent.
