@@ -16,6 +16,7 @@
 
 use std::sync::Arc;
 
+use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 
 use super::tool_registry::ToolRegistry;
@@ -46,12 +47,19 @@ impl ToolRegistryCache {
         allowed_tools: &[String],
     ) -> Arc<ToolRegistry> {
         let key = (agent_id.to_string(), binding_index);
-        if let Some(existing) = self.entries.get(&key) {
-            return Arc::clone(existing.value());
+        // Atomic get-or-insert: two racing callers with the same key must
+        // observe the same Arc. A plain `get` + `insert` split leaves a
+        // TOCTOU window where the loser's Arc is orphaned (functionally
+        // equivalent but wastes a filtered_clone and diverges from the
+        // cached identity — breaks Arc::ptr_eq expectations).
+        match self.entries.entry(key) {
+            Entry::Occupied(e) => Arc::clone(e.get()),
+            Entry::Vacant(slot) => {
+                let filtered = Arc::new(base.filtered_clone(allowed_tools));
+                slot.insert(Arc::clone(&filtered));
+                filtered
+            }
         }
-        let filtered = Arc::new(base.filtered_clone(allowed_tools));
-        self.entries.insert(key.clone(), Arc::clone(&filtered));
-        filtered
     }
 
     /// Number of cached filtered registries. Exposed for tests and
