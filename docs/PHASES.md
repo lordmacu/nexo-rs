@@ -11,7 +11,7 @@ beyond surface docs.
 
 Legend: `⬜ pending  🔄 in progress  ✅ done`
 
-Progress: **12 / 18 phases done, 0 in progress**
+Progress: **13 / 18 phases done, 0 in progress**
 
 ---
 
@@ -317,16 +317,22 @@ code.
 
 ---
 
-## Phase D12 — CLI reference   ⬜
+## Phase D12 — CLI reference   ✅
 
-Pages: add `cli/reference.md` (not yet in SUMMARY).
+Page: `cli/reference.md` (registered in SUMMARY).
 
 Deep-dive checklist:
-- [ ] `agent` top-level subcommands: `run`, `setup`, `dlq`, `ext`, `flow`
-- [ ] Every subcommand: flags, env inputs, exit codes, examples
-- [ ] Error code table (the README mentions `1 extension not found`,
-  `7 uninstall missing --yes`, etc. — make it exhaustive)
-- [ ] Shell completion (if any)
+- [x] Invocation shape + hand-rolled parser caveat
+- [x] Global env vars table (RUST_LOG, AGENT_LOG_FORMAT, AGENT_ENV,
+  TASKFLOW_DB_PATH, CONFIG_SECRETS_DIR)
+- [x] Generic exit-code table (0/1/2)
+- [x] Subcommand index + per-subcommand syntax (default daemon,
+  setup, status, dlq, ext, flow, mcp-server, --check-config,
+  --dry-run)
+- [x] Exhaustive extension-specific exit-code table (0-9)
+- [x] Daemon admin endpoints reference
+- [x] Gotcha section (global --config must come first, parser
+  strictness, admin console is loopback-only)
 
 **Done criteria:** `agent --help` output is mirrored in docs with
 expanded examples.

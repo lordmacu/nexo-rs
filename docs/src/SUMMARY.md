@@ -75,6 +75,10 @@
 - [MEMORY.md](./soul/memory.md)
 - [Dreaming](./soul/dreaming.md)
 
+# CLI
+
+- [Reference](./cli/reference.md)
+
 # Operations
 
 - [Docker](./ops/docker.md)
