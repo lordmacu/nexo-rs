@@ -1,3 +1,4 @@
+use super::effective::EffectiveBindingPolicy;
 use super::peer_directory::PeerDirectory;
 use super::routing::AgentRouter;
 use crate::session::SessionManager;
@@ -27,6 +28,13 @@ pub struct AgentContext {
     /// (heartbeat bootstrap, tests). Used by tool handlers that opt into
     /// context passthrough.
     pub session_id: Option<Uuid>,
+    /// Per-binding capability snapshot resolved at intake. `Some` when the
+    /// runtime matched the inbound event to an `InboundBinding` for this
+    /// agent; `None` for paths without a binding match (delegation
+    /// receive, heartbeat, tests). Use [`AgentContext::effective_policy`]
+    /// to access a policy that always has a value — it synthesises one
+    /// from the agent-level config when `effective` is `None`.
+    pub effective: Option<Arc<EffectiveBindingPolicy>>,
 }
 impl AgentContext {
     pub fn new(
@@ -45,6 +53,7 @@ impl AgentContext {
             peers: None,
             mcp: None,
             session_id: None,
+            effective: None,
         }
     }
     pub fn with_memory(mut self, memory: Arc<LongTermMemory>) -> Self {
@@ -66,5 +75,19 @@ impl AgentContext {
     pub fn with_session_id(mut self, id: Uuid) -> Self {
         self.session_id = Some(id);
         self
+    }
+    pub fn with_effective(mut self, effective: Arc<EffectiveBindingPolicy>) -> Self {
+        self.effective = Some(effective);
+        self
+    }
+    /// Returns the active effective policy, synthesising one from the
+    /// agent-level config when no binding was matched. Cheap to call in
+    /// hot paths: returns an existing `Arc` when available and builds a
+    /// fresh one only for unbound contexts.
+    pub fn effective_policy(&self) -> Arc<EffectiveBindingPolicy> {
+        if let Some(eff) = &self.effective {
+            return Arc::clone(eff);
+        }
+        Arc::new(EffectiveBindingPolicy::from_agent_defaults(&self.config))
     }
 }
