@@ -1,10 +1,10 @@
+use super::plugin::{Command, Plugin, Response};
+use agent_broker::AnyBroker;
+use async_trait::async_trait;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
-use async_trait::async_trait;
-use agent_broker::AnyBroker;
-use super::plugin::{Command, Plugin, Response};
 pub struct MockPlugin {
     pub plugin_name: String,
     pub received: Arc<Mutex<Vec<Command>>>,

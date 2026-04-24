@@ -7,6 +7,9 @@ description = "Rust extension for audio transcription via OpenAI-compatible /aud
 [capabilities]
 tools = ["status", "transcribe_file"]
 
+[context]
+passthrough = true
+
 [transport]
 kind = "stdio"
 command = "./target/release/openai-whisper"

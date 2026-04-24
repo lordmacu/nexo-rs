@@ -7,16 +7,16 @@
 //   * `my_stats`      — numeric counts + top concept tags
 //
 // All read-only; no state mutation. Bounded response size per tool.
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use async_trait::async_trait;
-use chrono::Utc;
-use serde_json::{json, Value};
-use agent_llm::ToolDef;
-use agent_memory::LongTermMemory;
 use super::context::AgentContext;
 use super::tool_registry::ToolHandler;
 use super::workspace::parse_identity;
+use agent_llm::ToolDef;
+use agent_memory::LongTermMemory;
+use async_trait::async_trait;
+use chrono::Utc;
+use serde_json::{json, Value};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 const SOUL_EXCERPT_MAX: usize = 2048;
 const MEMORY_BODY_MAX: usize = 6144;
 const MEMORY_DEFAULT_LIMIT: usize = 20;

@@ -10,6 +10,9 @@ tools = ["status", "resolve", "reverse", "whois"]
 [requires]
 env = []
 
+[context]
+passthrough = true
+
 [transport]
 kind = "stdio"
 command = "./target/release/dns-tools"

@@ -14,9 +14,9 @@
 //! - Missing files are silently skipped; a missing workspace is not an error
 //!   (agents without workspaces still work — they just have no persona layer).
 //! - No writes here — the loader is read-only. Writes belong to memory tools.
-use std::path::{Path, PathBuf};
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 /// Parsed contents of a workspace directory — everything the LLM turn needs.
 #[derive(Debug, Clone, Default)]
 pub struct WorkspaceBundle {
@@ -153,8 +153,29 @@ impl WorkspaceLoader {
     }
     /// Read a workspace-relative file, apply per-file truncation, subtract
     /// from the global budget. Returns `Ok(None)` when the file is absent.
+    /// Relative paths containing `..` or absolute paths are rejected so
+    /// a crafted `extra_docs` entry cannot read files outside the
+    /// agent's workspace root.
     async fn read_opt(&self, rel: &str, budget: &mut usize) -> anyhow::Result<Option<String>> {
         if *budget == 0 {
+            return Ok(None);
+        }
+        let rel_path = std::path::Path::new(rel);
+        if rel_path.is_absolute() {
+            tracing::warn!(
+                rel = %rel,
+                "workspace read rejected: absolute path not allowed"
+            );
+            return Ok(None);
+        }
+        if rel_path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            tracing::warn!(
+                rel = %rel,
+                "workspace read rejected: `..` traversal not allowed"
+            );
             return Ok(None);
         }
         let path = self.root.join(rel);
@@ -415,7 +436,11 @@ mod tests {
             "Step 1: greet. Step 2: qualify. Step 3: close.",
         )
         .await?;
-        tokio::fs::write(tmp.join("PRODUCT_CATALOG.md"), "- Widget A: $10\n- Widget B: $20").await?;
+        tokio::fs::write(
+            tmp.join("PRODUCT_CATALOG.md"),
+            "- Widget A: $10\n- Widget B: $20",
+        )
+        .await?;
         let loader = WorkspaceLoader::new(&tmp);
         let bundle = loader
             .load_with_extras(
@@ -423,14 +448,16 @@ mod tests {
                 &[
                     "SALES_SCRIPT.md".to_string(),
                     "PRODUCT_CATALOG.md".to_string(),
-                    "".to_string(),          // empty entry is ignored
+                    "".to_string(),           // empty entry is ignored
                     "MISSING.md".to_string(), // logs warning, doesn't fail
                 ],
             )
             .await?;
         let rendered = bundle.render_system_blocks().unwrap();
         let soul_idx = rendered.find("# SOUL").expect("soul present");
-        let sales_idx = rendered.find("# RULES — SALES_SCRIPT.md").expect("sales block");
+        let sales_idx = rendered
+            .find("# RULES — SALES_SCRIPT.md")
+            .expect("sales block");
         let catalog_idx = rendered
             .find("# RULES — PRODUCT_CATALOG.md")
             .expect("catalog block");

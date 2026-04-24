@@ -1,13 +1,13 @@
 //! Phase 12.3 — collect tools from N `StdioMcpClient`s and publish them in
 //! the agent's `ToolRegistry`. Snapshot semantics: 12.4 will introduce
 //! session-scoped refresh on `notifications/tools/list_changed`.
-use std::collections::HashSet;
-use std::sync::Arc;
-use futures::future::join_all;
-use agent_mcp::{McpClient, ResourceCache};
 use super::mcp_tool::McpTool;
 use super::tool_registry::ToolRegistry;
 use agent_llm::ToolDef as LlmToolDef;
+use agent_mcp::{McpClient, ResourceCache};
+use futures::future::join_all;
+use std::collections::HashSet;
+use std::sync::Arc;
 /// One tool exposed by a connected MCP server.
 #[derive(Debug, Clone)]
 pub struct McpCatalogEntry {

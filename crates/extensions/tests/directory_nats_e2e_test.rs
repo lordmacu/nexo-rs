@@ -14,12 +14,8 @@ use agent_config::types::broker::{
     BrokerAuthConfig, BrokerFallbackConfig, BrokerInner, BrokerKind, BrokerLimitsConfig,
     BrokerPersistenceConfig,
 };
-use agent_extensions::runtime::announce::{
-    AnnounceCapabilities, AnnouncePayload, ShutdownPayload,
-};
-use agent_extensions::runtime::{
-    DirectoryEvent, ExtensionDirectory, NatsRuntimeOptions,
-};
+use agent_extensions::runtime::announce::{AnnounceCapabilities, AnnouncePayload, ShutdownPayload};
+use agent_extensions::runtime::{DirectoryEvent, ExtensionDirectory, NatsRuntimeOptions};
 use futures::StreamExt;
 use uuid::Uuid;
 
@@ -47,7 +43,10 @@ fn nats_cfg(url: String, queue_path: String) -> BrokerInner {
     }
 }
 
-async fn wait_for<F>(rx: &mut tokio::sync::mpsc::Receiver<DirectoryEvent>, mut pred: F) -> DirectoryEvent
+async fn wait_for<F>(
+    rx: &mut tokio::sync::mpsc::Receiver<DirectoryEvent>,
+    mut pred: F,
+) -> DirectoryEvent
 where
     F: FnMut(&DirectoryEvent) -> bool,
 {
@@ -120,7 +119,9 @@ async fn publish_announce(
     };
     let topic = format!("{prefix}.registry.announce");
     let ev = Event::new(topic.clone(), "nats-e2e", serde_json::to_value(payload)?);
-    client.publish(topic, serde_json::to_vec(&ev)?.into()).await?;
+    client
+        .publish(topic, serde_json::to_vec(&ev)?.into())
+        .await?;
     client.flush().await?;
     Ok(())
 }
@@ -136,7 +137,9 @@ async fn publish_shutdown(
     };
     let topic = format!("{prefix}.registry.shutdown.{id}");
     let ev = Event::new(topic.clone(), "nats-e2e", serde_json::to_value(payload)?);
-    client.publish(topic, serde_json::to_vec(&ev)?.into()).await?;
+    client
+        .publish(topic, serde_json::to_vec(&ev)?.into())
+        .await?;
     client.flush().await?;
     Ok(())
 }

@@ -3,8 +3,8 @@ pub mod types;
 
 pub use types::*;
 
-use std::path::Path;
 use anyhow::{Context, Result};
+use std::path::Path;
 
 #[derive(Debug)]
 pub struct AppConfig {
@@ -43,14 +43,14 @@ impl AppConfig {
         let llm = load_required::<LlmConfig>(dir, "llm.yaml")?;
         let memory = load_required::<MemoryConfig>(dir, "memory.yaml")?;
         let plugins = load_plugins(dir)?;
-        let extensions = load_optional::<ExtensionsConfigFile>(dir, "extensions.yaml")?
-            .map(|f| f.extensions);
+        let extensions =
+            load_optional::<ExtensionsConfigFile>(dir, "extensions.yaml")?.map(|f| f.extensions);
         let mcp = load_optional::<McpConfigFile>(dir, "mcp.yaml")?.map(|f| f.mcp);
         if let Some(m) = &mcp {
             m.validate().map_err(|e| anyhow::anyhow!(e))?;
         }
-        let mcp_server = load_optional::<McpServerConfigFile>(dir, "mcp_server.yaml")?
-            .map(|f| f.mcp_server);
+        let mcp_server =
+            load_optional::<McpServerConfigFile>(dir, "mcp_server.yaml")?.map(|f| f.mcp_server);
         Ok(AppConfig {
             agents,
             broker,
@@ -68,8 +68,8 @@ impl AppConfig {
     /// subcommand runs on hosts that don't have a full runtime configured.
     pub fn load_for_mcp_server(dir: &Path) -> Result<McpServerBootConfig> {
         let agents = load_required::<AgentsConfig>(dir, "agents.yaml")?;
-        let mcp_server = load_optional::<McpServerConfigFile>(dir, "mcp_server.yaml")?
-            .map(|f| f.mcp_server);
+        let mcp_server =
+            load_optional::<McpServerConfigFile>(dir, "mcp_server.yaml")?.map(|f| f.mcp_server);
         Ok(McpServerBootConfig { agents, mcp_server })
     }
 }
@@ -80,13 +80,15 @@ pub fn load_required<T: serde::de::DeserializeOwned>(dir: &Path, filename: &str)
     let raw = std::fs::read_to_string(&path)
         .with_context(|| format!("cannot read {}", path.display()))?;
     let resolved = env::resolve_placeholders(&raw, filename)?;
-    serde_yaml::from_str(&resolved)
-        .with_context(|| format!("invalid config in {}", path.display()))
+    serde_yaml::from_str(&resolved).with_context(|| format!("invalid config in {}", path.display()))
 }
 
 /// Load an optional YAML file, resolving `${ENV_VAR}` placeholders. Returns
 /// `Ok(None)` when the file is absent.
-pub fn load_optional<T: serde::de::DeserializeOwned>(dir: &Path, filename: &str) -> Result<Option<T>> {
+pub fn load_optional<T: serde::de::DeserializeOwned>(
+    dir: &Path,
+    filename: &str,
+) -> Result<Option<T>> {
     let path = dir.join(filename);
     if !path.exists() {
         return Ok(None);
@@ -107,9 +109,14 @@ fn load_plugins(dir: &Path) -> Result<PluginsConfig> {
     let telegram = load_optional::<TelegramPluginConfigFile>(&plugins_dir, "telegram.yaml")?
         .map(|f| f.telegram.into_vec())
         .unwrap_or_default();
-    let email = load_optional::<EmailPluginConfigFile>(&plugins_dir, "email.yaml")?
-        .map(|f| f.email);
-    let browser = load_optional::<BrowserConfigFile>(&plugins_dir, "browser.yaml")?
-        .map(|f| f.browser);
-    Ok(PluginsConfig { whatsapp, telegram, email, browser })
+    let email =
+        load_optional::<EmailPluginConfigFile>(&plugins_dir, "email.yaml")?.map(|f| f.email);
+    let browser =
+        load_optional::<BrowserConfigFile>(&plugins_dir, "browser.yaml")?.map(|f| f.browser);
+    Ok(PluginsConfig {
+        whatsapp,
+        telegram,
+        email,
+        browser,
+    })
 }

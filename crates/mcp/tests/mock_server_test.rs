@@ -123,10 +123,8 @@ async fn shutdown_sends_cancelled_for_pending() {
     let log_path = log.path().to_path_buf();
 
     let mut cfg = base_config("slow", "slow_call");
-    cfg.env.insert(
-        "MOCK_CANCELLED_LOG".into(),
-        log_path.display().to_string(),
-    );
+    cfg.env
+        .insert("MOCK_CANCELLED_LOG".into(), log_path.display().to_string());
     cfg.call_timeout = Duration::from_secs(2);
     cfg.shutdown_grace = Duration::from_millis(200);
 
@@ -152,9 +150,11 @@ async fn shutdown_sends_cancelled_for_pending() {
 
     let contents = std::fs::read_to_string(&log_path).expect("read log");
     let lines: Vec<&str> = contents.lines().filter(|l| !l.is_empty()).collect();
-    assert!(!lines.is_empty(), "no cancelled notif written: {contents:?}");
-    let parsed: serde_json::Value =
-        serde_json::from_str(lines[0]).expect("json parse");
+    assert!(
+        !lines.is_empty(),
+        "no cancelled notif written: {contents:?}"
+    );
+    let parsed: serde_json::Value = serde_json::from_str(lines[0]).expect("json parse");
     assert_eq!(parsed["method"], "notifications/cancelled");
     assert!(parsed["params"]["requestId"].is_u64(), "{parsed}");
     assert_eq!(parsed["params"]["reason"], "client shutdown");
@@ -167,10 +167,8 @@ async fn shutdown_with_reason_sends_custom_reason() {
     let log_path = log.path().to_path_buf();
 
     let mut cfg = base_config("slow-reason", "slow_call");
-    cfg.env.insert(
-        "MOCK_CANCELLED_LOG".into(),
-        log_path.display().to_string(),
-    );
+    cfg.env
+        .insert("MOCK_CANCELLED_LOG".into(), log_path.display().to_string());
     cfg.call_timeout = Duration::from_secs(2);
     cfg.shutdown_grace = Duration::from_millis(200);
 
@@ -209,11 +207,15 @@ async fn log_notification_from_mock_is_observable() {
             self.0.lock().unwrap().extend_from_slice(buf);
             Ok(buf.len())
         }
-        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
     impl<'a> MakeWriter<'a> for SharedBuf {
         type Writer = SharedBuf;
-        fn make_writer(&'a self) -> Self::Writer { self.clone() }
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
     }
 
     let buf = SharedBuf::default();
@@ -296,10 +298,8 @@ async fn set_log_level_applies_and_server_acks() {
     let log_path = log.path().to_path_buf();
 
     let mut cfg = base_config("setlevel", "logging_capable");
-    cfg.env.insert(
-        "MOCK_SETLEVEL_LOG".into(),
-        log_path.display().to_string(),
-    );
+    cfg.env
+        .insert("MOCK_SETLEVEL_LOG".into(), log_path.display().to_string());
     cfg.log_level = Some("warning".into());
 
     let client = StdioMcpClient::connect(cfg).await.expect("connect");
@@ -352,10 +352,9 @@ async fn update_config_hot_reloads_log_level_on_live_client() {
     let log_path = log.path().to_path_buf();
 
     let mut initial = base_config("setlevel-hot", "logging_capable");
-    initial.env.insert(
-        "MOCK_SETLEVEL_LOG".into(),
-        log_path.display().to_string(),
-    );
+    initial
+        .env
+        .insert("MOCK_SETLEVEL_LOG".into(), log_path.display().to_string());
     initial.log_level = Some("warning".into());
 
     let mgr = McpRuntimeManager::new(McpRuntimeConfig {
@@ -391,8 +390,14 @@ async fn update_config_hot_reloads_log_level_on_live_client() {
 
     let contents = std::fs::read_to_string(&log_path).expect("read log");
     let lines: Vec<&str> = contents.lines().filter(|l| !l.is_empty()).collect();
-    assert!(lines.contains(&"warning"), "missing initial level: {lines:?}");
-    assert!(lines.contains(&"error"), "missing hot-reloaded level: {lines:?}");
+    assert!(
+        lines.contains(&"warning"),
+        "missing initial level: {lines:?}"
+    );
+    assert!(
+        lines.contains(&"error"),
+        "missing hot-reloaded level: {lines:?}"
+    );
 
     mgr.shutdown_all().await;
 }
@@ -440,10 +445,9 @@ async fn update_config_resets_level_to_info_when_flag_on_and_unset() {
     let log_path = log.path().to_path_buf();
 
     let mut initial = base_config("reset-level", "logging_capable");
-    initial.env.insert(
-        "MOCK_SETLEVEL_LOG".into(),
-        log_path.display().to_string(),
-    );
+    initial
+        .env
+        .insert("MOCK_SETLEVEL_LOG".into(), log_path.display().to_string());
     initial.log_level = Some("warning".into());
 
     let mgr = McpRuntimeManager::new(McpRuntimeConfig {
@@ -476,7 +480,10 @@ async fn update_config_resets_level_to_info_when_flag_on_and_unset() {
 
     let contents = std::fs::read_to_string(&log_path).expect("read log");
     let lines: Vec<&str> = contents.lines().filter(|l| !l.is_empty()).collect();
-    assert!(lines.contains(&"warning"), "missing initial level: {lines:?}");
+    assert!(
+        lines.contains(&"warning"),
+        "missing initial level: {lines:?}"
+    );
     assert!(lines.contains(&"info"), "missing reset-to-info: {lines:?}");
 
     mgr.shutdown_all().await;

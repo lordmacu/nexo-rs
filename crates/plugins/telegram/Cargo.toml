@@ -19,6 +19,7 @@ chrono       = { workspace = true }
 agent-broker = { path = "../../broker" }
 agent-core   = { path = "../../core" }
 agent-config = { path = "../../config" }
+agent-llm    = { path = "../../llm" }
 
 [dev-dependencies]
 wiremock     = "0.6"

@@ -110,6 +110,54 @@ pub struct AgentConfig {
     /// agent's id appears in peers lists with no annotation.
     #[serde(default)]
     pub description: String,
+    /// Google OAuth 2.0 — when present, the agent gets the
+    /// `google_*` tool family (auth_start / auth_status / call /
+    /// auth_revoke). `None` = no Google integration.
+    #[serde(default)]
+    pub google_auth: Option<GoogleAuthAgentConfig>,
+    /// Allowlist of recipients per outbound channel. Enforced by the
+    /// `whatsapp_*` and `telegram_*` tools before publishing to the
+    /// broker. Empty list = no restriction (back-compat). Populated =
+    /// only those recipients may be reached — blocks an agent whose
+    /// system prompt was jailbroken from spamming arbitrary numbers.
+    #[serde(default)]
+    pub outbound_allowlist: OutboundAllowlistConfig,
+}
+
+/// Per-agent allowlist of outbound recipients. Phone numbers are matched
+/// as normalized strings (digits only, country code included). Telegram
+/// chat IDs are matched exactly.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OutboundAllowlistConfig {
+    #[serde(default)]
+    pub whatsapp: Vec<String>,
+    #[serde(default)]
+    pub telegram: Vec<i64>,
+}
+
+/// Thin YAML surface for Google OAuth creds. Mirrors the shape
+/// `agent_core::agent::google_auth::GoogleAuthConfig` expects; the
+/// runtime converts between the two at boot (keeps the config crate
+/// independent of agent-core).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GoogleAuthAgentConfig {
+    pub client_id: String,
+    pub client_secret: String,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    #[serde(default = "default_google_token_file")]
+    pub token_file: String,
+    #[serde(default = "default_google_redirect_port")]
+    pub redirect_port: u16,
+}
+
+fn default_google_token_file() -> String {
+    "google_tokens.json".to_string()
+}
+fn default_google_redirect_port() -> u16 {
+    8765
 }
 
 /// Token bucket per `(agent_id, sender_id)`. `burst` = initial pool;
@@ -145,7 +193,9 @@ pub struct ToolArgsValidationConfig {
 
 impl Default for ToolArgsValidationConfig {
     fn default() -> Self {
-        Self { enabled: default_tool_args_validation_enabled() }
+        Self {
+            enabled: default_tool_args_validation_enabled(),
+        }
     }
 }
 

@@ -10,6 +10,9 @@ tools = ["status", "list_zones", "list_dns_records", "create_dns_record", "updat
 [requires]
 env = ["CLOUDFLARE_API_TOKEN"]
 
+[context]
+passthrough = true
+
 [transport]
 kind = "stdio"
 command = "./target/release/cloudflare"

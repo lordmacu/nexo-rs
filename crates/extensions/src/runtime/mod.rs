@@ -30,7 +30,7 @@ pub const HOOK_NAMES: &[&str] = &[
 
 /// Returns true if `name` is one of the supported hook points.
 pub fn is_valid_hook(name: &str) -> bool {
-    HOOK_NAMES.iter().any(|h| *h == name)
+    HOOK_NAMES.contains(&name)
 }
 
 /// Response an extension returns from a hook invocation. `abort=true` on a
@@ -51,11 +51,7 @@ pub struct HookResponse {
     /// Optional JSON object whose keys replace the event's keys for
     /// subsequent handlers. Non-object values are ignored with a warn
     /// (can't merge a scalar into a map).
-    #[serde(
-        default,
-        rename = "override",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, rename = "override", skip_serializing_if = "Option::is_none")]
     pub override_event: Option<serde_json::Value>,
 }
 

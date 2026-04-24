@@ -8,9 +8,9 @@ use tokio::net::TcpListener;
 async fn mock_cdp_server(
     handler: impl Fn(serde_json::Value) -> serde_json::Value + Send + 'static,
 ) -> String {
+    use futures::{SinkExt, StreamExt};
     use tokio_tungstenite::accept_async;
     use tokio_tungstenite::tungstenite::Message;
-    use futures::{SinkExt, StreamExt};
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -28,7 +28,7 @@ async fn mock_cdp_server(
                 let id = req["id"].as_u64().unwrap();
                 let result = handler(req);
                 let resp = json!({ "id": id, "result": result });
-                let _ = sink.send(Message::Text(resp.to_string().into())).await;
+                let _ = sink.send(Message::Text(resp.to_string())).await;
             }
         }
     });
@@ -43,7 +43,10 @@ async fn send_receives_correct_response() {
     let ws_url = mock_cdp_server(|_req| json!({ "title": "Test Page" })).await;
     let client = CdpClient::connect(&ws_url).await.unwrap();
 
-    let result = client.send("Target.getTargetInfo", json!({})).await.unwrap();
+    let result = client
+        .send("Target.getTargetInfo", json!({}))
+        .await
+        .unwrap();
     assert_eq!(result["title"], "Test Page");
 }
 
@@ -54,7 +57,8 @@ async fn multiple_concurrent_sends_correlate_correctly() {
     let ws_url = mock_cdp_server(|req| {
         // Echo back the method name as the result
         json!({ "method": req["method"] })
-    }).await;
+    })
+    .await;
 
     let client = CdpClient::connect(&ws_url).await.unwrap();
 
@@ -72,9 +76,9 @@ async fn multiple_concurrent_sends_correlate_correctly() {
 #[tokio::test]
 async fn error_response_propagates_as_err() {
     use agent_plugin_browser::CdpClient;
+    use futures::{SinkExt, StreamExt};
     use tokio_tungstenite::accept_async;
     use tokio_tungstenite::tungstenite::Message;
-    use futures::{SinkExt, StreamExt};
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -91,7 +95,7 @@ async fn error_response_propagates_as_err() {
                     "id": id,
                     "error": { "code": -32601, "message": "Method not found" }
                 });
-                let _ = sink.send(Message::Text(resp.to_string().into())).await;
+                let _ = sink.send(Message::Text(resp.to_string())).await;
             }
         }
     });
@@ -108,7 +112,8 @@ async fn connect_timeout_on_unreachable_host() {
     let result = tokio::time::timeout(
         Duration::from_secs(3),
         agent_plugin_browser::CdpClient::connect("ws://127.0.0.1:19999"),
-    ).await;
+    )
+    .await;
 
     // Either times out our test wrapper or returns a connection error
     match result {

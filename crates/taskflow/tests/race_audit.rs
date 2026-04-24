@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use agent_taskflow::{
-    manager::{CreateManagedInput, FlowManager, StepObservation},
+    manager::{CreateManagedInput, FlowManager},
     store::{FlowStore, SqliteFlowStore},
     types::{FlowStep, FlowStepStatus, StepRuntime},
 };

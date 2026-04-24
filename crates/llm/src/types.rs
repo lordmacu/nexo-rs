@@ -76,7 +76,9 @@ impl Attachment {
         Self {
             kind: "image".into(),
             mime_type: mime_type.into(),
-            data: AttachmentData::Base64 { base64: base64.into() },
+            data: AttachmentData::Base64 {
+                base64: base64.into(),
+            },
         }
     }
 
@@ -86,8 +88,8 @@ impl Attachment {
     pub fn materialize(&mut self) -> anyhow::Result<()> {
         if let AttachmentData::Path { path } = &self.data {
             use base64::Engine;
-            let bytes = std::fs::read(path)
-                .map_err(|e| anyhow::anyhow!("read attachment {path}: {e}"))?;
+            let bytes =
+                std::fs::read(path).map_err(|e| anyhow::anyhow!("read attachment {path}: {e}"))?;
             let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
             self.data = AttachmentData::Base64 { base64: encoded };
         }

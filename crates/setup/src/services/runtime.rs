@@ -1,7 +1,21 @@
 use crate::registry::*;
 
 pub fn defs() -> Vec<ServiceDef> {
-    vec![ServiceDef {
+    vec![
+    ServiceDef {
+        id: "link",
+        label: "Vincular agente con plugins (whatsapp/telegram/browser/…)",
+        category: Category::Agent,
+        description: Some(
+            "Menu de configuración por agente. Elegís el agente y tildás los \
+             plugins que tiene que tener. Para telegram dispara el flow de \
+             linking con @BotFather; para whatsapp imprime el QR y espera al \
+             pairing. Los demás solo se agregan a `plugins:` en agents.yaml.",
+        ),
+        // No fields — the handler drives its own interactive flow.
+        fields: vec![],
+    },
+    ServiceDef {
         id: "runtime",
         label: "Runtime / logging",
         category: Category::Runtime,
@@ -38,5 +52,6 @@ pub fn defs() -> Vec<ServiceDef> {
                 validator: None,
             },
         ],
-    }]
+    }
+    ]
 }

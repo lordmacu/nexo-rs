@@ -405,18 +405,13 @@ mod tests {
         let m = eng.manager();
         let f = m.create_managed(input()).await.unwrap();
         let f = m.start_running(f.id).await.unwrap();
-        let r = eng
-            .try_resume_external(f.id, "t", "c", None)
-            .await
-            .unwrap();
+        let r = eng.try_resume_external(f.id, "t", "c", None).await.unwrap();
         assert!(r.is_none(), "should ignore non-waiting flows");
     }
 
     #[test]
     fn wait_condition_round_trip() {
-        let original = WaitCondition::Timer {
-            at: Utc::now(),
-        };
+        let original = WaitCondition::Timer { at: Utc::now() };
         let v = original.clone().into_value();
         let parsed = WaitCondition::from_value(&v).expect("round trip");
         match parsed {

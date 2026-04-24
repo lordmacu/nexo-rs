@@ -3,12 +3,10 @@ use std::time::Duration;
 
 use agent_broker::{AnyBroker, BrokerHandle};
 use agent_config::types::agents::{AgentConfig, AgentRuntimeConfig, HeartbeatConfig, ModelConfig};
+use agent_core::agent::tool_policy::{CacheConfig, ParallelConfig, ToolPolicy, ToolPolicyConfig};
 use agent_core::agent::{
     Agent, AgentBehavior, AgentContext, AgentMessage, AgentPayload, AgentRouter, AgentRuntime,
     DelegationTool, InboundMessage, LlmAgentBehavior, ToolHandler, ToolRegistry,
-};
-use agent_core::agent::tool_policy::{
-    CacheConfig, ParallelConfig, ToolPolicy, ToolPolicyConfig,
 };
 use agent_core::session::SessionManager;
 use agent_llm::{
@@ -167,14 +165,16 @@ fn make_context(broker: AnyBroker) -> AgentContext {
         dreaming: Default::default(),
         workspace_git: Default::default(),
         tool_rate_limits: None,
-            tool_args_validation: None,
-            extra_docs: Vec::new(),
-            inbound_bindings: Vec::new(),
-            allowed_tools: Vec::new(),
-            sender_rate_limit: None,
-            allowed_delegates: Vec::new(),
-            accept_delegates_from: Vec::new(),
-            description: String::new(),
+        tool_args_validation: None,
+        extra_docs: Vec::new(),
+        inbound_bindings: Vec::new(),
+        allowed_tools: Vec::new(),
+        sender_rate_limit: None,
+        allowed_delegates: Vec::new(),
+        accept_delegates_from: Vec::new(),
+        description: String::new(),
+        outbound_allowlist: Default::default(),
+        google_auth: None,
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     AgentContext::new("test-agent", cfg, broker, sessions)
@@ -232,14 +232,16 @@ async fn system_prompt_prepended_to_llm_request() {
         dreaming: Default::default(),
         workspace_git: Default::default(),
         tool_rate_limits: None,
-            tool_args_validation: None,
-            extra_docs: Vec::new(),
-            inbound_bindings: Vec::new(),
-            allowed_tools: Vec::new(),
-            sender_rate_limit: None,
-            allowed_delegates: Vec::new(),
-            accept_delegates_from: Vec::new(),
-            description: String::new(),
+        tool_args_validation: None,
+        extra_docs: Vec::new(),
+        inbound_bindings: Vec::new(),
+        allowed_tools: Vec::new(),
+        sender_rate_limit: None,
+        allowed_delegates: Vec::new(),
+        accept_delegates_from: Vec::new(),
+        description: String::new(),
+        outbound_allowlist: Default::default(),
+        google_auth: None,
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     let ctx = AgentContext::new("test-agent", cfg, broker, sessions);
@@ -249,7 +251,10 @@ async fn system_prompt_prepended_to_llm_request() {
         captured: Arc::clone(&captured),
         reply: "ok".into(),
     };
-    let behavior = LlmAgentBehavior::new(Arc::new(llm) as Arc<dyn LlmClient>, Arc::new(ToolRegistry::new()));
+    let behavior = LlmAgentBehavior::new(
+        Arc::new(llm) as Arc<dyn LlmClient>,
+        Arc::new(ToolRegistry::new()),
+    );
 
     behavior
         .on_message(&ctx, make_msg(Uuid::new_v4(), "whatsapp"))
@@ -274,7 +279,10 @@ async fn empty_system_prompt_emits_no_system_message() {
         captured: Arc::clone(&captured),
         reply: "ok".into(),
     };
-    let behavior = LlmAgentBehavior::new(Arc::new(llm) as Arc<dyn LlmClient>, Arc::new(ToolRegistry::new()));
+    let behavior = LlmAgentBehavior::new(
+        Arc::new(llm) as Arc<dyn LlmClient>,
+        Arc::new(ToolRegistry::new()),
+    );
 
     behavior
         .on_message(&ctx, make_msg(Uuid::new_v4(), "whatsapp"))
@@ -329,14 +337,16 @@ async fn workspace_bundle_prepended_to_system_message() -> anyhow::Result<()> {
         dreaming: Default::default(),
         workspace_git: Default::default(),
         tool_rate_limits: None,
-            tool_args_validation: None,
-            extra_docs: Vec::new(),
-            inbound_bindings: Vec::new(),
-            allowed_tools: Vec::new(),
-            sender_rate_limit: None,
-            allowed_delegates: Vec::new(),
-            accept_delegates_from: Vec::new(),
-            description: String::new(),
+        tool_args_validation: None,
+        extra_docs: Vec::new(),
+        inbound_bindings: Vec::new(),
+        allowed_tools: Vec::new(),
+        sender_rate_limit: None,
+        allowed_delegates: Vec::new(),
+        accept_delegates_from: Vec::new(),
+        description: String::new(),
+        outbound_allowlist: Default::default(),
+        google_auth: None,
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     let ctx = AgentContext::new("test-agent", cfg, broker, sessions);
@@ -346,7 +356,10 @@ async fn workspace_bundle_prepended_to_system_message() -> anyhow::Result<()> {
         captured: Arc::clone(&captured),
         reply: "ok".into(),
     };
-    let behavior = LlmAgentBehavior::new(Arc::new(llm) as Arc<dyn LlmClient>, Arc::new(ToolRegistry::new()));
+    let behavior = LlmAgentBehavior::new(
+        Arc::new(llm) as Arc<dyn LlmClient>,
+        Arc::new(ToolRegistry::new()),
+    );
 
     behavior
         .on_message(&ctx, make_msg(Uuid::new_v4(), "whatsapp"))
@@ -412,14 +425,16 @@ async fn skills_loaded_between_workspace_and_system_prompt() -> anyhow::Result<(
         dreaming: Default::default(),
         workspace_git: Default::default(),
         tool_rate_limits: None,
-            tool_args_validation: None,
-            extra_docs: Vec::new(),
-            inbound_bindings: Vec::new(),
-            allowed_tools: Vec::new(),
-            sender_rate_limit: None,
-            allowed_delegates: Vec::new(),
-            accept_delegates_from: Vec::new(),
-            description: String::new(),
+        tool_args_validation: None,
+        extra_docs: Vec::new(),
+        inbound_bindings: Vec::new(),
+        allowed_tools: Vec::new(),
+        sender_rate_limit: None,
+        allowed_delegates: Vec::new(),
+        accept_delegates_from: Vec::new(),
+        description: String::new(),
+        outbound_allowlist: Default::default(),
+        google_auth: None,
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     let ctx = AgentContext::new("test-agent", cfg, broker, sessions);
@@ -429,7 +444,10 @@ async fn skills_loaded_between_workspace_and_system_prompt() -> anyhow::Result<(
         captured: Arc::clone(&captured),
         reply: "ok".into(),
     };
-    let behavior = LlmAgentBehavior::new(Arc::new(llm) as Arc<dyn LlmClient>, Arc::new(ToolRegistry::new()));
+    let behavior = LlmAgentBehavior::new(
+        Arc::new(llm) as Arc<dyn LlmClient>,
+        Arc::new(ToolRegistry::new()),
+    );
 
     behavior
         .on_message(&ctx, make_msg(Uuid::new_v4(), "whatsapp"))
@@ -487,14 +505,16 @@ async fn workspace_memory_skipped_when_source_is_peer_agent() -> anyhow::Result<
         dreaming: Default::default(),
         workspace_git: Default::default(),
         tool_rate_limits: None,
-            tool_args_validation: None,
-            extra_docs: Vec::new(),
-            inbound_bindings: Vec::new(),
-            allowed_tools: Vec::new(),
-            sender_rate_limit: None,
-            allowed_delegates: Vec::new(),
-            accept_delegates_from: Vec::new(),
-            description: String::new(),
+        tool_args_validation: None,
+        extra_docs: Vec::new(),
+        inbound_bindings: Vec::new(),
+        allowed_tools: Vec::new(),
+        sender_rate_limit: None,
+        allowed_delegates: Vec::new(),
+        accept_delegates_from: Vec::new(),
+        description: String::new(),
+        outbound_allowlist: Default::default(),
+        google_auth: None,
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     let ctx = AgentContext::new("test-agent", cfg, broker, sessions);
@@ -504,7 +524,10 @@ async fn workspace_memory_skipped_when_source_is_peer_agent() -> anyhow::Result<
         captured: Arc::clone(&captured),
         reply: "ok".into(),
     };
-    let behavior = LlmAgentBehavior::new(Arc::new(llm) as Arc<dyn LlmClient>, Arc::new(ToolRegistry::new()));
+    let behavior = LlmAgentBehavior::new(
+        Arc::new(llm) as Arc<dyn LlmClient>,
+        Arc::new(ToolRegistry::new()),
+    );
 
     // Simulate delegation from another agent.
     let mut msg = InboundMessage::new(Uuid::new_v4(), "test-agent", "hola");
@@ -550,14 +573,16 @@ async fn transcript_written_when_dir_configured() -> anyhow::Result<()> {
         dreaming: Default::default(),
         workspace_git: Default::default(),
         tool_rate_limits: None,
-            tool_args_validation: None,
-            extra_docs: Vec::new(),
-            inbound_bindings: Vec::new(),
-            allowed_tools: Vec::new(),
-            sender_rate_limit: None,
-            allowed_delegates: Vec::new(),
-            accept_delegates_from: Vec::new(),
-            description: String::new(),
+        tool_args_validation: None,
+        extra_docs: Vec::new(),
+        inbound_bindings: Vec::new(),
+        allowed_tools: Vec::new(),
+        sender_rate_limit: None,
+        allowed_delegates: Vec::new(),
+        accept_delegates_from: Vec::new(),
+        description: String::new(),
+        outbound_allowlist: Default::default(),
+        google_auth: None,
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     let ctx = AgentContext::new("test-agent", cfg, broker, sessions);
@@ -594,7 +619,10 @@ async fn text_reply_published_to_outbound_topic() {
 
     let ctx = make_context(broker);
     let tools = Arc::new(ToolRegistry::new());
-    let behavior = LlmAgentBehavior::new(Arc::new(StubLlm("hello back".into())) as Arc<dyn LlmClient>, tools);
+    let behavior = LlmAgentBehavior::new(
+        Arc::new(StubLlm("hello back".into())) as Arc<dyn LlmClient>,
+        tools,
+    );
 
     let msg = make_msg(Uuid::new_v4(), "whatsapp");
     behavior.on_message(&ctx, msg).await.unwrap();
@@ -625,9 +653,10 @@ async fn tool_call_then_text_reply() {
         }
     }
     tools.register(
-        ToolDef { name: "ping".into(),
+        ToolDef {
+            name: "ping".into(),
             description: "ping".into(),
-            parameters: serde_json::json!({ }),
+            parameters: serde_json::json!({}),
         },
         PingHandler,
     );
@@ -660,7 +689,8 @@ async fn session_history_persists_across_messages() {
 
     let ctx = make_context(broker);
     let tools = Arc::new(ToolRegistry::new());
-    let behavior = LlmAgentBehavior::new(Arc::new(StubLlm("ok".into())) as Arc<dyn LlmClient>, tools);
+    let behavior =
+        LlmAgentBehavior::new(Arc::new(StubLlm("ok".into())) as Arc<dyn LlmClient>, tools);
 
     let session_id = Uuid::new_v4();
     for _ in 0..3 {
@@ -695,14 +725,16 @@ async fn heartbeat_delivers_due_reminders_once() {
         dreaming: Default::default(),
         workspace_git: Default::default(),
         tool_rate_limits: None,
-            tool_args_validation: None,
-            extra_docs: Vec::new(),
-            inbound_bindings: Vec::new(),
-            allowed_tools: Vec::new(),
-            sender_rate_limit: None,
-            allowed_delegates: Vec::new(),
-            accept_delegates_from: Vec::new(),
-            description: String::new(),
+        tool_args_validation: None,
+        extra_docs: Vec::new(),
+        inbound_bindings: Vec::new(),
+        allowed_tools: Vec::new(),
+        sender_rate_limit: None,
+        allowed_delegates: Vec::new(),
+        accept_delegates_from: Vec::new(),
+        description: String::new(),
+        outbound_allowlist: Default::default(),
+        google_auth: None,
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     let memory = Arc::new(LongTermMemory::open(":memory:").await.unwrap());
@@ -723,7 +755,10 @@ async fn heartbeat_delivers_due_reminders_once() {
         .unwrap();
 
     let tools = Arc::new(ToolRegistry::new());
-    let behavior = LlmAgentBehavior::new(Arc::new(StubLlm("unused".into())) as Arc<dyn LlmClient>, tools);
+    let behavior = LlmAgentBehavior::new(
+        Arc::new(StubLlm("unused".into())) as Arc<dyn LlmClient>,
+        tools,
+    );
 
     behavior.on_heartbeat(&ctx).await.unwrap();
 
@@ -739,7 +774,7 @@ async fn heartbeat_delivers_due_reminders_once() {
         .await
         .unwrap();
     assert!(due.is_empty());
-    assert!(memory.mark_reminder_delivered(reminder_id).await.unwrap() == false);
+    assert!(!memory.mark_reminder_delivered(reminder_id).await.unwrap());
 
     behavior.on_heartbeat(&ctx).await.unwrap();
     let second = tokio::time::timeout(Duration::from_millis(50), sub.next()).await;
@@ -766,14 +801,16 @@ async fn schedule_reminder_tool_uses_current_conversation_context() {
         dreaming: Default::default(),
         workspace_git: Default::default(),
         tool_rate_limits: None,
-            tool_args_validation: None,
-            extra_docs: Vec::new(),
-            inbound_bindings: Vec::new(),
-            allowed_tools: Vec::new(),
-            sender_rate_limit: None,
-            allowed_delegates: Vec::new(),
-            accept_delegates_from: Vec::new(),
-            description: String::new(),
+        tool_args_validation: None,
+        extra_docs: Vec::new(),
+        inbound_bindings: Vec::new(),
+        allowed_tools: Vec::new(),
+        sender_rate_limit: None,
+        allowed_delegates: Vec::new(),
+        accept_delegates_from: Vec::new(),
+        description: String::new(),
+        outbound_allowlist: Default::default(),
+        google_auth: None,
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     let memory = Arc::new(LongTermMemory::open(":memory:").await.unwrap());
@@ -785,7 +822,8 @@ async fn schedule_reminder_tool_uses_current_conversation_context() {
         agent_core::agent::HeartbeatTool::tool_def(),
         agent_core::agent::HeartbeatTool::new(Arc::clone(&memory)),
     );
-    let behavior = LlmAgentBehavior::new(Arc::new(ReminderThenTextLlm) as Arc<dyn LlmClient>, tools);
+    let behavior =
+        LlmAgentBehavior::new(Arc::new(ReminderThenTextLlm) as Arc<dyn LlmClient>, tools);
 
     let mut msg = InboundMessage::new(
         Uuid::new_v4(),
@@ -842,14 +880,16 @@ async fn llm_can_call_delegate_tool_and_receive_result() {
         dreaming: Default::default(),
         workspace_git: Default::default(),
         tool_rate_limits: None,
-            tool_args_validation: None,
-            extra_docs: Vec::new(),
-            inbound_bindings: Vec::new(),
-            allowed_tools: Vec::new(),
-            sender_rate_limit: None,
-            allowed_delegates: Vec::new(),
-            accept_delegates_from: Vec::new(),
-            description: String::new(),
+        tool_args_validation: None,
+        extra_docs: Vec::new(),
+        inbound_bindings: Vec::new(),
+        allowed_tools: Vec::new(),
+        sender_rate_limit: None,
+        allowed_delegates: Vec::new(),
+        accept_delegates_from: Vec::new(),
+        description: String::new(),
+        outbound_allowlist: Default::default(),
+        google_auth: None,
     };
     let runtime_b = AgentRuntime::new(
         Arc::new(Agent::new(cfg_b, ResponderBehavior)),
@@ -875,14 +915,16 @@ async fn llm_can_call_delegate_tool_and_receive_result() {
         dreaming: Default::default(),
         workspace_git: Default::default(),
         tool_rate_limits: None,
-            tool_args_validation: None,
-            extra_docs: Vec::new(),
-            inbound_bindings: Vec::new(),
-            allowed_tools: Vec::new(),
-            sender_rate_limit: None,
-            allowed_delegates: Vec::new(),
-            accept_delegates_from: Vec::new(),
-            description: String::new(),
+        tool_args_validation: None,
+        extra_docs: Vec::new(),
+        inbound_bindings: Vec::new(),
+        allowed_tools: Vec::new(),
+        sender_rate_limit: None,
+        allowed_delegates: Vec::new(),
+        accept_delegates_from: Vec::new(),
+        description: String::new(),
+        outbound_allowlist: Default::default(),
+        google_auth: None,
     });
     let mut sub = broker.subscribe("plugin.outbound.telegram").await.unwrap();
     let router = Arc::new(AgentRouter::new());
@@ -902,7 +944,8 @@ async fn llm_can_call_delegate_tool_and_receive_result() {
 
     let tools = Arc::new(ToolRegistry::new());
     tools.register(DelegationTool::tool_def(), DelegationTool);
-    let behavior_a = LlmAgentBehavior::new(Arc::new(DelegateThenTextLlm) as Arc<dyn LlmClient>, tools);
+    let behavior_a =
+        LlmAgentBehavior::new(Arc::new(DelegateThenTextLlm) as Arc<dyn LlmClient>, tools);
 
     let mut msg = InboundMessage::new(Uuid::new_v4(), "agent-a", "delegate this");
     msg.source_plugin = "telegram".into();
@@ -951,7 +994,9 @@ impl LlmClient for ToolCallTwiceThenText {
             })
         }
     }
-    fn model_id(&self) -> &str { "cache-stub" }
+    fn model_id(&self) -> &str {
+        "cache-stub"
+    }
 }
 
 /// Emits two parallel tool calls in a single response, then a text
@@ -991,7 +1036,9 @@ impl LlmClient for TwoToolsInOneCall {
             })
         }
     }
-    fn model_id(&self) -> &str { "parallel-stub" }
+    fn model_id(&self) -> &str {
+        "parallel-stub"
+    }
 }
 
 #[tokio::test]
@@ -1020,7 +1067,9 @@ async fn cached_tool_call_short_circuits_handler() {
             description: "Echo".into(),
             parameters: serde_json::json!({}),
         },
-        CountingEcho { calls: Arc::clone(&counter) },
+        CountingEcho {
+            calls: Arc::clone(&counter),
+        },
     );
 
     let policy_cfg = ToolPolicyConfig {
@@ -1036,7 +1085,9 @@ async fn cached_tool_call_short_circuits_handler() {
         per_agent: Default::default(),
     };
     let behavior = LlmAgentBehavior::new(
-        Arc::new(ToolCallTwiceThenText { calls: Mutex::new(0) }) as Arc<dyn LlmClient>,
+        Arc::new(ToolCallTwiceThenText {
+            calls: Mutex::new(0),
+        }) as Arc<dyn LlmClient>,
         tools,
     )
     .with_tool_policy(ToolPolicy::from_config(&policy_cfg));
@@ -1055,8 +1106,11 @@ async fn cached_tool_call_short_circuits_handler() {
 
     // Despite 2 identical tool calls, the handler fired only once —
     // the second hit was served from the policy cache.
-    assert_eq!(counter.load(Ordering::SeqCst), 1,
-        "expected one handler invocation (second was cached)");
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        1,
+        "expected one handler invocation (second was cached)"
+    );
 }
 
 #[tokio::test]
@@ -1082,23 +1136,42 @@ async fn parallel_safe_tools_run_concurrently() {
     }
     let counter = Arc::new(AtomicU32::new(0));
     tools.register(
-        ToolDef { name: "ext_slow_a".into(), description: "slow a".into(), parameters: serde_json::json!({}) },
-        Sleepy { sleep_ms: 120, fired: Arc::clone(&counter) },
+        ToolDef {
+            name: "ext_slow_a".into(),
+            description: "slow a".into(),
+            parameters: serde_json::json!({}),
+        },
+        Sleepy {
+            sleep_ms: 120,
+            fired: Arc::clone(&counter),
+        },
     );
     tools.register(
-        ToolDef { name: "ext_slow_b".into(), description: "slow b".into(), parameters: serde_json::json!({}) },
-        Sleepy { sleep_ms: 120, fired: Arc::clone(&counter) },
+        ToolDef {
+            name: "ext_slow_b".into(),
+            description: "slow b".into(),
+            parameters: serde_json::json!({}),
+        },
+        Sleepy {
+            sleep_ms: 120,
+            fired: Arc::clone(&counter),
+        },
     );
 
     let policy_cfg = ToolPolicyConfig {
         cache: CacheConfig::default(),
         parallel_safe: vec!["ext_slow_*".into()],
-        parallel: ParallelConfig { max_in_flight: 4, call_timeout_secs: 5 },
+        parallel: ParallelConfig {
+            max_in_flight: 4,
+            call_timeout_secs: 5,
+        },
         relevance: Default::default(),
         per_agent: Default::default(),
     };
     let behavior = LlmAgentBehavior::new(
-        Arc::new(TwoToolsInOneCall { calls: Mutex::new(0) }) as Arc<dyn LlmClient>,
+        Arc::new(TwoToolsInOneCall {
+            calls: Mutex::new(0),
+        }) as Arc<dyn LlmClient>,
         tools,
     )
     .with_tool_policy(ToolPolicy::from_config(&policy_cfg));
@@ -1121,7 +1194,8 @@ async fn parallel_safe_tools_run_concurrently() {
     // should finish close to 120ms; allow generous slack for CI.
     assert!(
         elapsed < Duration::from_millis(230),
-        "parallel execution took {:?} — looks sequential", elapsed,
+        "parallel execution took {:?} — looks sequential",
+        elapsed,
     );
 }
 
@@ -1138,10 +1212,7 @@ async fn reply_routes_to_instance_specific_outbound_topic() {
         .subscribe("plugin.outbound.telegram.sales")
         .await
         .unwrap();
-    let mut sub_legacy = broker
-        .subscribe("plugin.outbound.telegram")
-        .await
-        .unwrap();
+    let mut sub_legacy = broker.subscribe("plugin.outbound.telegram").await.unwrap();
 
     let ctx = make_context(broker);
     let tools = Arc::new(ToolRegistry::new());
@@ -1177,10 +1248,7 @@ async fn reply_falls_back_to_legacy_outbound_when_no_instance() {
     // No `source_instance` = legacy single-bot path. Reply must use
     // `plugin.outbound.telegram` so pre-multi-bot configs keep working.
     let broker = AnyBroker::local();
-    let mut sub_legacy = broker
-        .subscribe("plugin.outbound.telegram")
-        .await
-        .unwrap();
+    let mut sub_legacy = broker.subscribe("plugin.outbound.telegram").await.unwrap();
 
     let ctx = make_context(broker);
     let tools = Arc::new(ToolRegistry::new());
@@ -1206,14 +1274,17 @@ async fn reply_falls_back_to_legacy_outbound_when_no_instance() {
 async fn delegation_rejects_target_outside_allowed_delegates() {
     // agent-a is configured to only delegate to `soporte_*`. Attempt
     // to delegate to `ventas` must fail before any NATS roundtrip.
-    use agent_core::agent::DelegationTool;
     use agent_core::agent::AgentRouter;
+    use agent_core::agent::DelegationTool;
 
     let broker = AnyBroker::local();
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     let cfg = Arc::new(AgentConfig {
         id: "agent-a".into(),
-        model: ModelConfig { provider: "stub".into(), model: "m1".into() },
+        model: ModelConfig {
+            provider: "stub".into(),
+            model: "m1".into(),
+        },
         plugins: vec![],
         heartbeat: HeartbeatConfig::default(),
         config: AgentRuntimeConfig::default(),
@@ -1233,10 +1304,11 @@ async fn delegation_rejects_target_outside_allowed_delegates() {
         allowed_delegates: vec!["soporte_*".into()],
         accept_delegates_from: Vec::new(),
         description: String::new(),
+        outbound_allowlist: Default::default(),
+        google_auth: None,
     });
     let router = Arc::new(AgentRouter::new());
-    let ctx = AgentContext::new("agent-a", cfg, broker, sessions)
-        .with_router(router);
+    let ctx = AgentContext::new("agent-a", cfg, broker, sessions).with_router(router);
 
     let tool = DelegationTool;
     let err = tool
@@ -1250,7 +1322,10 @@ async fn delegation_rejects_target_outside_allowed_delegates() {
         .await
         .expect_err("delegation should have been rejected by allowlist");
     let err_msg = format!("{err}");
-    assert!(err_msg.contains("not allowed to delegate"), "got: {err_msg}");
+    assert!(
+        err_msg.contains("not allowed to delegate"),
+        "got: {err_msg}"
+    );
     assert!(err_msg.contains("ventas"), "got: {err_msg}");
 
     // Positive case: delegating to a matching pattern is NOT rejected
@@ -1282,14 +1357,26 @@ async fn peer_directory_renders_into_system_prompt() {
     let _sub = broker.subscribe("plugin.outbound.telegram").await.unwrap();
 
     let peers = PeerDirectory::new(vec![
-        PeerSummary { id: "boss".into(), description: "takes decisions".into() },
-        PeerSummary { id: "ventas".into(), description: "closes deals".into() },
-        PeerSummary { id: "soporte_lvl1".into(), description: "first-line".into() },
+        PeerSummary {
+            id: "boss".into(),
+            description: "takes decisions".into(),
+        },
+        PeerSummary {
+            id: "ventas".into(),
+            description: "closes deals".into(),
+        },
+        PeerSummary {
+            id: "soporte_lvl1".into(),
+            description: "first-line".into(),
+        },
     ]);
 
     let cfg = Arc::new(AgentConfig {
         id: "ventas".into(),
-        model: ModelConfig { provider: "stub".into(), model: "m1".into() },
+        model: ModelConfig {
+            provider: "stub".into(),
+            model: "m1".into(),
+        },
         plugins: vec![],
         heartbeat: HeartbeatConfig::default(),
         config: AgentRuntimeConfig::default(),
@@ -1309,6 +1396,8 @@ async fn peer_directory_renders_into_system_prompt() {
         allowed_delegates: vec!["soporte_*".into()],
         accept_delegates_from: Vec::new(),
         description: "sales desk".into(),
+        outbound_allowlist: Default::default(),
+        google_auth: None,
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     let ctx = AgentContext::new("ventas", cfg, broker, sessions).with_peers(peers);
@@ -1333,7 +1422,10 @@ async fn peer_directory_renders_into_system_prompt() {
         .find(|m| m.role == agent_llm::ChatRole::System)
         .expect("system message present");
     let sys_text = sys.content.as_str();
-    assert!(sys_text.contains("# PEERS"), "peers block missing: {sys_text}");
+    assert!(
+        sys_text.contains("# PEERS"),
+        "peers block missing: {sys_text}"
+    );
     // Self (`ventas`) filtered out.
     assert!(!sys_text.contains("`ventas`"));
     // Unreachable peer (`boss`) still listed but marked ✗.
@@ -1395,12 +1487,20 @@ async fn retain_matching_prunes_tools_from_llm_request() {
 
     let req = captured.lock().unwrap().remove(0);
     let names: Vec<&str> = req.tools.iter().map(|t| t.name.as_str()).collect();
-    assert!(names.contains(&"memory_recall"),
-        "allowlisted tool missing: {names:?}");
-    assert!(names.contains(&"delegate"),
-        "allowlisted tool missing: {names:?}");
-    assert!(!names.contains(&"ext_github_comment"),
-        "pruned tool leaked to LLM: {names:?}");
-    assert!(!names.contains(&"ext_weather_forecast"),
-        "pruned tool leaked to LLM: {names:?}");
+    assert!(
+        names.contains(&"memory_recall"),
+        "allowlisted tool missing: {names:?}"
+    );
+    assert!(
+        names.contains(&"delegate"),
+        "allowlisted tool missing: {names:?}"
+    );
+    assert!(
+        !names.contains(&"ext_github_comment"),
+        "pruned tool leaked to LLM: {names:?}"
+    );
+    assert!(
+        !names.contains(&"ext_weather_forecast"),
+        "pruned tool leaked to LLM: {names:?}"
+    );
 }

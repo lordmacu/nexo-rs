@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Category {
+    Agent,
     Llm,
     Memory,
     Plugin,
@@ -21,6 +22,7 @@ pub enum Category {
 impl Category {
     pub fn label(self) -> &'static str {
         match self {
+            Self::Agent => "Agente",
             Self::Llm => "LLM",
             Self::Memory => "Memory",
             Self::Plugin => "Plugin",
@@ -155,7 +157,7 @@ pub fn validate_telegram_token(s: &str) -> Result<(), String> {
 
 pub fn validate_port(s: &str) -> Result<(), String> {
     match s.trim().parse::<u32>() {
-        Ok(n) if n >= 1 && n <= 65535 => Ok(()),
+        Ok(n) if (1..=65535).contains(&n) => Ok(()),
         _ => Err("port must be 1..=65535".into()),
     }
 }

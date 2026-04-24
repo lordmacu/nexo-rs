@@ -16,9 +16,7 @@ use uuid::Uuid;
 
 use agent_broker::{BrokerHandle, Event};
 
-use super::announce::{
-    AnnouncePayload, HeartbeatPayload, RegistryRequestPayload, ShutdownPayload,
-};
+use super::announce::{AnnouncePayload, HeartbeatPayload, RegistryRequestPayload, ShutdownPayload};
 use super::nats::{NatsRuntime, NatsRuntimeOptions};
 use super::transport::ExtensionTransport;
 
@@ -61,7 +59,11 @@ impl std::fmt::Debug for DirectoryEvent {
                 .field("id", id)
                 .field("version", version)
                 .finish_non_exhaustive(),
-            Self::Removed { id, version, reason } => f
+            Self::Removed {
+                id,
+                version,
+                reason,
+            } => f
                 .debug_struct("Removed")
                 .field("id", id)
                 .field("version", version)
@@ -133,7 +135,10 @@ impl ExtensionDirectory {
                 opts.clone(),
                 shutdown.clone(),
             ));
-            this.tasks.lock().unwrap_or_else(|p| p.into_inner()).push(handle);
+            this.tasks
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push(handle);
         }
         // Heartbeat listener.
         {
@@ -145,7 +150,10 @@ impl ExtensionDirectory {
                 events_tx.clone(),
                 shutdown.clone(),
             ));
-            this.tasks.lock().unwrap_or_else(|p| p.into_inner()).push(handle);
+            this.tasks
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push(handle);
         }
         // Shutdown beacon listener.
         {
@@ -157,7 +165,10 @@ impl ExtensionDirectory {
                 events_tx.clone(),
                 shutdown.clone(),
             ));
-            this.tasks.lock().unwrap_or_else(|p| p.into_inner()).push(handle);
+            this.tasks
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push(handle);
         }
         // Extension async event listener.
         {
@@ -170,7 +181,10 @@ impl ExtensionDirectory {
                 events_tx.clone(),
                 shutdown.clone(),
             ));
-            this.tasks.lock().unwrap_or_else(|p| p.into_inner()).push(handle);
+            this.tasks
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push(handle);
         }
         // Liveness sweeper.
         {
@@ -180,7 +194,10 @@ impl ExtensionDirectory {
                 opts.clone(),
                 shutdown.clone(),
             ));
-            this.tasks.lock().unwrap_or_else(|p| p.into_inner()).push(handle);
+            this.tasks
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push(handle);
         }
         // Initial replay request — live extensions re-announce.
         {
@@ -203,7 +220,10 @@ impl ExtensionDirectory {
                 );
                 let _ = broker.publish(&subj, ev).await;
             });
-            this.tasks.lock().unwrap_or_else(|p| p.into_inner()).push(handle);
+            this.tasks
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push(handle);
         }
 
         (this, events_rx)
@@ -224,7 +244,8 @@ impl ExtensionDirectory {
     /// Cancel all tasks and shut every runtime down. Idempotent.
     pub async fn shutdown(&self) {
         self.shutdown.cancel();
-        let tasks: Vec<JoinHandle<()>> = std::mem::take(&mut *self.tasks.lock().unwrap_or_else(|p| p.into_inner()));
+        let tasks: Vec<JoinHandle<()>> =
+            std::mem::take(&mut *self.tasks.lock().unwrap_or_else(|p| p.into_inner()));
         for h in tasks {
             h.abort();
         }
@@ -252,7 +273,8 @@ fn parse_notification_id(topic: &str, prefix: &str) -> Option<String> {
 impl Drop for ExtensionDirectory {
     fn drop(&mut self) {
         self.shutdown.cancel();
-        let tasks: Vec<JoinHandle<()>> = std::mem::take(&mut *self.tasks.lock().unwrap_or_else(|p| p.into_inner()));
+        let tasks: Vec<JoinHandle<()>> =
+            std::mem::take(&mut *self.tasks.lock().unwrap_or_else(|p| p.into_inner()));
         for h in tasks {
             h.abort();
         }
@@ -327,9 +349,15 @@ async fn handle_announce(
     if let Some(existing) = entries.get(&id).map(|e| e.value().clone()) {
         if existing.version == announce.version {
             // Same version re-announce → just refresh last_seen.
-            *existing.last_seen.write().unwrap_or_else(|p| p.into_inner()) = Instant::now();
+            *existing
+                .last_seen
+                .write()
+                .unwrap_or_else(|p| p.into_inner()) = Instant::now();
             let _ = events_tx
-                .send(DirectoryEvent::Refreshed { id: id.clone(), version: existing.version.clone() })
+                .send(DirectoryEvent::Refreshed {
+                    id: id.clone(),
+                    version: existing.version.clone(),
+                })
                 .await;
             return;
         }
@@ -340,20 +368,20 @@ async fn handle_announce(
         } else {
             announce.subject_prefix.clone()
         };
-        let runtime = match NatsRuntime::connect(broker.clone(), id.clone(), prefix, opts.clone()).await
-        {
-            Ok(rt) => Arc::new(rt),
-            Err(e) => {
-                tracing::warn!(
-                    id,
-                    old_version = %existing.version,
-                    new_version = %announce.version,
-                    ?e,
-                    "connect to announced replacement failed; keeping old runtime"
-                );
-                return;
-            }
-        };
+        let runtime =
+            match NatsRuntime::connect(broker.clone(), id.clone(), prefix, opts.clone()).await {
+                Ok(rt) => Arc::new(rt),
+                Err(e) => {
+                    tracing::warn!(
+                        id,
+                        old_version = %existing.version,
+                        new_version = %announce.version,
+                        ?e,
+                        "connect to announced replacement failed; keeping old runtime"
+                    );
+                    return;
+                }
+            };
         let replacement = DirectoryEntry {
             id: id.clone(),
             version: announce.version.clone(),
@@ -366,7 +394,9 @@ async fn handle_announce(
             .send(DirectoryEvent::Removed {
                 id: id.clone(),
                 version: existing.version.clone(),
-                reason: RemovalReason::Announced { new_version: announce.version.clone() },
+                reason: RemovalReason::Announced {
+                    new_version: announce.version.clone(),
+                },
             })
             .await;
         let _ = events_tx

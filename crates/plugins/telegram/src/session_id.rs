@@ -25,6 +25,9 @@ mod tests {
     #[test]
     fn negative_group_ids_ok() {
         // Telegram uses negative ids for groups/supergroups
-        assert_ne!(session_id_for_chat(-1001234567890), session_id_for_chat(1001234567890));
+        assert_ne!(
+            session_id_for_chat(-1001234567890),
+            session_id_for_chat(1001234567890)
+        );
     }
 }

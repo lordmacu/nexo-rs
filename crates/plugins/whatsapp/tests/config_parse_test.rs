@@ -4,11 +4,14 @@
 use agent_config::{WhatsappPluginConfig, WhatsappPluginConfigFile};
 
 fn load_yaml(s: &str) -> WhatsappPluginConfig {
-    let file: WhatsappPluginConfigFile =
-        serde_yaml::from_str(s).expect("yaml parses");
+    let file: WhatsappPluginConfigFile = serde_yaml::from_str(s).expect("yaml parses");
     // Tests assume the single-account shape; unwrap into one entry.
     let mut vec = file.whatsapp.into_vec();
-    assert_eq!(vec.len(), 1, "config_parse_test yaml must describe one account");
+    assert_eq!(
+        vec.len(),
+        1,
+        "config_parse_test yaml must describe one account"
+    );
     vec.remove(0)
 }
 

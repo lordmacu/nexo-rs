@@ -54,6 +54,7 @@ pub fn select_services<'a>(
     // don't show options the operator can't actually pick.
     use crate::registry::Category;
     let ordered_cats: &[Category] = &[
+        Category::Agent,
         Category::Llm,
         Category::Memory,
         Category::Plugin,
@@ -133,8 +134,7 @@ pub fn select_services<'a>(
                     2
                 }
             });
-            let mut items: Vec<String> =
-                vec!["← Volver a categorías".to_string()];
+            let mut items: Vec<String> = vec!["← Volver a categorías".to_string()];
             for (i, svc) in &svc_in_cat {
                 let st = &report.services[*i];
                 let marker = if st.is_fully_configured() {
@@ -267,7 +267,11 @@ fn prompt_field(field: &FieldDef) -> Result<String> {
                     .with_prompt(label.clone())
                     .default(default)
                     .interact()?;
-                if b { "true".into() } else { "false".into() }
+                if b {
+                    "true".into()
+                } else {
+                    "false".into()
+                }
             }
             FieldKind::Choice(opts) => {
                 let default_idx = field
@@ -325,6 +329,75 @@ fn read_field_non_interactive(field: &FieldDef) -> Result<String> {
 /// Simple yes/no wrapper for the interactive wizard. Non-TTY runs
 /// return the `default_yes` argument so scripted callers get a
 /// deterministic answer.
+/// Read the pasted callback URL. Browsers always put it on one line,
+/// so `Input` is fine.
+pub fn ask_callback_url() -> anyhow::Result<String> {
+    let t = theme();
+    let raw: String = Input::with_theme(&t)
+        .with_prompt("Callback URL")
+        .allow_empty(false)
+        .interact_text()?;
+    Ok(raw.trim().to_string())
+}
+
+/// Single-select prompt over a list of labels. Returns the chosen
+/// index. Non-TTY callers get `0`.
+pub fn pick_from_list(prompt: &str, items: &[&str]) -> anyhow::Result<usize> {
+    if items.is_empty() {
+        anyhow::bail!("empty list");
+    }
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        return Ok(0);
+    }
+    let t = theme();
+    let idx = Select::with_theme(&t)
+        .with_prompt(prompt)
+        .items(items)
+        .default(0)
+        .interact()?;
+    Ok(idx)
+}
+
+/// Multi-select checkbox prompt. `preselected` is the set of items
+/// ticked on entry (already-attached plugins, typically). Returns the
+/// full list the user confirmed.
+pub fn multi_select(
+    prompt: &str,
+    items: &[&str],
+    preselected: &[bool],
+) -> anyhow::Result<Vec<String>> {
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        return Ok(Vec::new());
+    }
+    let t = theme();
+    let idxs = MultiSelect::with_theme(&t)
+        .with_prompt(prompt)
+        .items(items)
+        .defaults(preselected)
+        .interact()?;
+    Ok(idxs.into_iter().map(|i| items[i].to_string()).collect())
+}
+
+/// Pick one agent id from a list. Non-TTY callers auto-pick the first
+/// for deterministic unattended installs; interactive runs always
+/// prompt (even for single-agent setups) so the operator sees which
+/// agent is about to be touched.
+pub fn pick_agent(ids: &[String]) -> anyhow::Result<String> {
+    if ids.is_empty() {
+        anyhow::bail!("no agents available");
+    }
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        return Ok(ids[0].clone());
+    }
+    let t = theme();
+    let idx = Select::with_theme(&t)
+        .with_prompt("¿A qué agente asignar?")
+        .items(ids)
+        .default(0)
+        .interact()?;
+    Ok(ids[idx].clone())
+}
+
 pub fn yes_no(prompt: &str, default_yes: bool) -> anyhow::Result<bool> {
     if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
         return Ok(default_yes);

@@ -91,7 +91,10 @@ fn main() {
                     write_error(&mut stdout, id, -32601, &format!("unknown tool `{name}`"));
                     continue;
                 }
-                let args = params.get("arguments").cloned().unwrap_or(serde_json::json!({}));
+                let args = params
+                    .get("arguments")
+                    .cloned()
+                    .unwrap_or(serde_json::json!({}));
                 write_result(&mut stdout, id, serde_json::json!({ "echoed": args }));
             }
             "shutdown" => {
@@ -102,17 +105,18 @@ fn main() {
                 break;
             }
             other => {
-                write_error(&mut stdout, id, -32601, &format!("method not found: {other}"));
+                write_error(
+                    &mut stdout,
+                    id,
+                    -32601,
+                    &format!("method not found: {other}"),
+                );
             }
         }
     }
 }
 
-fn write_result(
-    out: &mut impl Write,
-    id: Option<serde_json::Value>,
-    result: serde_json::Value,
-) {
+fn write_result(out: &mut impl Write, id: Option<serde_json::Value>, result: serde_json::Value) {
     let msg = serde_json::json!({
         "jsonrpc": "2.0",
         "id": id.unwrap_or(serde_json::Value::Null),
@@ -122,12 +126,7 @@ fn write_result(
     let _ = out.flush();
 }
 
-fn write_error(
-    out: &mut impl Write,
-    id: Option<serde_json::Value>,
-    code: i32,
-    message: &str,
-) {
+fn write_error(out: &mut impl Write, id: Option<serde_json::Value>, code: i32, message: &str) {
     let msg = serde_json::json!({
         "jsonrpc": "2.0",
         "id": id.unwrap_or(serde_json::Value::Null),

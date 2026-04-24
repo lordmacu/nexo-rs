@@ -37,7 +37,9 @@ impl ServiceStatus {
             .all(|f| matches!(f.status, FieldStatus::Configured | FieldStatus::NotRequired))
     }
     pub fn is_partially_configured(&self) -> bool {
-        self.fields.iter().any(|f| f.status == FieldStatus::Configured)
+        self.fields
+            .iter()
+            .any(|f| f.status == FieldStatus::Configured)
     }
 }
 
@@ -73,6 +75,10 @@ pub fn audit(services: &[ServiceDef], secrets_dir: &Path, config_dir: &Path) -> 
             services_out.push(audit_minimax(svc, secrets_dir, config_dir));
             continue;
         }
+        if svc.id == "anthropic" {
+            services_out.push(audit_anthropic(svc, secrets_dir));
+            continue;
+        }
         let mut fields_out = Vec::with_capacity(svc.fields.len());
         for field in &svc.fields {
             fields_out.push(audit_field(field, secrets_dir, config_dir, &mut yaml_cache));
@@ -84,7 +90,9 @@ pub fn audit(services: &[ServiceDef], secrets_dir: &Path, config_dir: &Path) -> 
             fields: fields_out,
         });
     }
-    StatusReport { services: services_out }
+    StatusReport {
+        services: services_out,
+    }
 }
 
 fn audit_minimax(svc: &ServiceDef, secrets_dir: &Path, _config_dir: &Path) -> ServiceStatus {
@@ -99,14 +107,22 @@ fn audit_minimax(svc: &ServiceDef, secrets_dir: &Path, _config_dir: &Path) -> Se
         key: "key".into(),
         label: "Key (plan o api)".into(),
         required: true,
-        status: if any_key { FieldStatus::Configured } else { FieldStatus::Missing },
+        status: if any_key {
+            FieldStatus::Configured
+        } else {
+            FieldStatus::Missing
+        },
         source: "secrets/minimax_{code_plan,api}_key.txt".into(),
     };
     let group_report = FieldReport {
         key: "group_id".into(),
         label: "MiniMax group ID".into(),
         required: true,
-        status: if group_ok { FieldStatus::Configured } else { FieldStatus::Missing },
+        status: if group_ok {
+            FieldStatus::Configured
+        } else {
+            FieldStatus::Missing
+        },
         source: "secrets/minimax_group_id.txt".into(),
     };
     ServiceStatus {
@@ -117,8 +133,42 @@ fn audit_minimax(svc: &ServiceDef, secrets_dir: &Path, _config_dir: &Path) -> Se
     }
 }
 
+fn audit_anthropic(svc: &ServiceDef, secrets_dir: &Path) -> ServiceStatus {
+    let api = secrets_dir.join("anthropic_api_key.txt");
+    let setup = secrets_dir.join("anthropic_setup_token.txt");
+    let bundle = secrets_dir.join("anthropic_oauth.json");
+    let any = plan_configured_or(&api)
+        || plan_configured_or(&setup)
+        || plan_configured_or(&bundle);
+    let source = format!(
+        "secrets/anthropic_{{api_key.txt, setup_token.txt, oauth.json}}; env:ANTHROPIC_API_KEY"
+    );
+    let env_ok = std::env::var("ANTHROPIC_API_KEY")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
+    let status = if any || env_ok {
+        FieldStatus::Configured
+    } else {
+        FieldStatus::Missing
+    };
+    ServiceStatus {
+        service_id: svc.id.to_string(),
+        service_label: svc.label.to_string(),
+        category: svc.category,
+        fields: vec![FieldReport {
+            key: "credential".into(),
+            label: "Anthropic credential (cualquier modo)".into(),
+            required: true,
+            status,
+            source,
+        }],
+    }
+}
+
 fn plan_configured_or(path: &Path) -> bool {
-    std::fs::metadata(path).map(|m| m.len() > 0).unwrap_or(false)
+    std::fs::metadata(path)
+        .map(|m| m.len() > 0)
+        .unwrap_or(false)
 }
 
 fn audit_field(
@@ -135,7 +185,10 @@ fn audit_field(
                 .unwrap_or(false)
             {
                 (true, format!("secrets/{file}"))
-            } else if std::env::var(env_var).map(|v| !v.is_empty()).unwrap_or(false) {
+            } else if std::env::var(env_var)
+                .map(|v| !v.is_empty())
+                .unwrap_or(false)
+            {
                 (true, format!("env:{env_var}"))
             } else {
                 (false, format!("secrets/{file} or env:{env_var}"))
@@ -151,7 +204,9 @@ fn audit_field(
             (found, format!("{file}::{path}"))
         }
         FieldTarget::EnvOnly(env_var) => {
-            let set = std::env::var(env_var).map(|v| !v.is_empty()).unwrap_or(false);
+            let set = std::env::var(env_var)
+                .map(|v| !v.is_empty())
+                .unwrap_or(false);
             (set, format!("env:{env_var}"))
         }
     };
@@ -214,7 +269,9 @@ pub fn print_report(report: &StatusReport) {
         Category::Runtime,
     ];
     for cat in ordered {
-        let Some(list) = by_cat.get(cat.label()) else { continue };
+        let Some(list) = by_cat.get(cat.label()) else {
+            continue;
+        };
         println!();
         println!("▎{}", cat.label());
         for s in list {

@@ -86,7 +86,10 @@ async fn extension_hook_fires_and_continues() {
     );
 
     let outcome = registry
-        .fire("before_tool_call", json!({"agent_id": "kate", "tool_name": "memory"}))
+        .fire(
+            "before_tool_call",
+            json!({"agent_id": "kate", "tool_name": "memory"}),
+        )
         .await;
     assert_eq!(outcome, HookOutcome::Continue);
 

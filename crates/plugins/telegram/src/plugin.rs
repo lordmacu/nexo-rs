@@ -14,7 +14,9 @@ use tokio::task::{AbortHandle, JoinHandle};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::bot::{split_text, BotClient, MediaSource, Message as TgMessage, MAX_TEXT_LEN};
+use crate::bot::{
+    split_text, truncate_utf16, BotClient, MediaSource, Message as TgMessage, MAX_TEXT_LEN,
+};
 use crate::events::{ForwardInfo, InboundEvent, MediaDescriptor};
 use crate::session_id::session_id_for_chat;
 
@@ -235,7 +237,8 @@ impl Plugin for TelegramPlugin {
     }
 }
 
-async fn dispatch_custom(
+#[doc(hidden)]
+pub async fn dispatch_custom(
     bot: &Arc<BotClient>,
     name: &str,
     payload: serde_json::Value,
@@ -243,54 +246,103 @@ async fn dispatch_custom(
     match name {
         "chat_action" => {
             #[derive(Deserialize)]
-            struct P { chat_id: i64, action: String }
+            struct P {
+                chat_id: i64,
+                action: String,
+            }
             let p: P = serde_json::from_value(payload)?;
             bot.send_chat_action(p.chat_id, &p.action).await?;
             Ok(Response::Ok)
         }
         "reply" => {
             #[derive(Deserialize)]
-            struct P { chat_id: i64, msg_id: i64, text: String, #[serde(default)] parse_mode: Option<String> }
+            struct P {
+                chat_id: i64,
+                msg_id: i64,
+                text: String,
+                #[serde(default)]
+                parse_mode: Option<String>,
+            }
             let p: P = serde_json::from_value(payload)?;
-            let last = send_text_chunked(bot, p.chat_id, &p.text, Some(p.msg_id), p.parse_mode.as_deref()).await?;
+            let last = send_text_chunked(
+                bot,
+                p.chat_id,
+                &p.text,
+                Some(p.msg_id),
+                p.parse_mode.as_deref(),
+            )
+            .await?;
             Ok(Response::MessageSent { message_id: last })
         }
         "send_with_format" => {
             #[derive(Deserialize)]
-            struct P { chat_id: i64, text: String, parse_mode: String, #[serde(default)] reply_markup: Option<serde_json::Value> }
+            struct P {
+                chat_id: i64,
+                text: String,
+                parse_mode: String,
+                #[serde(default)]
+                reply_markup: Option<serde_json::Value>,
+            }
             let p: P = serde_json::from_value(payload)?;
             // Formatted + inline-keyboard messages can't be safely split
             // across segments (Markdown entity spans, button layouts), so
-            // cap the whole text at MAX_TEXT_LEN and warn if truncated.
-            let text = if p.text.chars().count() > MAX_TEXT_LEN {
-                tracing::warn!("telegram send_with_format truncated from {} chars", p.text.chars().count());
-                p.text.chars().take(MAX_TEXT_LEN - 1).collect::<String>() + "…"
-            } else {
-                p.text.clone()
-            };
-            let sent = bot.send_message_full(p.chat_id, &text, None, Some(&p.parse_mode), p.reply_markup.as_ref()).await?;
-            Ok(Response::MessageSent { message_id: sent.message_id.to_string() })
+            // cap the whole text with the same UTF-16 budget Telegram uses.
+            let text = truncate_utf16(&p.text, MAX_TEXT_LEN);
+            let sent = bot
+                .send_message_full(
+                    p.chat_id,
+                    &text,
+                    None,
+                    Some(&p.parse_mode),
+                    p.reply_markup.as_ref(),
+                )
+                .await?;
+            Ok(Response::MessageSent {
+                message_id: sent.message_id.to_string(),
+            })
         }
         "edit_message" => {
             #[derive(Deserialize)]
-            struct P { chat_id: i64, message_id: i64, text: String, #[serde(default)] parse_mode: Option<String> }
+            struct P {
+                chat_id: i64,
+                message_id: i64,
+                text: String,
+                #[serde(default)]
+                parse_mode: Option<String>,
+            }
             let p: P = serde_json::from_value(payload)?;
-            bot.edit_message_text(p.chat_id, p.message_id, &p.text, p.parse_mode.as_deref()).await?;
-            Ok(Response::MessageSent { message_id: p.message_id.to_string() })
+            bot.edit_message_text(p.chat_id, p.message_id, &p.text, p.parse_mode.as_deref())
+                .await?;
+            Ok(Response::MessageSent {
+                message_id: p.message_id.to_string(),
+            })
         }
         "reaction" => {
             #[derive(Deserialize)]
-            struct P { chat_id: i64, message_id: i64, emoji: String }
+            struct P {
+                chat_id: i64,
+                message_id: i64,
+                emoji: String,
+            }
             let p: P = serde_json::from_value(payload)?;
-            bot.set_message_reaction(p.chat_id, p.message_id, &p.emoji).await?;
+            bot.set_message_reaction(p.chat_id, p.message_id, &p.emoji)
+                .await?;
             Ok(Response::Ok)
         }
         "send_location" => {
             #[derive(Deserialize)]
-            struct P { chat_id: i64, latitude: f64, longitude: f64 }
+            struct P {
+                chat_id: i64,
+                latitude: f64,
+                longitude: f64,
+            }
             let p: P = serde_json::from_value(payload)?;
-            let sent = bot.send_location(p.chat_id, p.latitude, p.longitude).await?;
-            Ok(Response::MessageSent { message_id: sent.message_id.to_string() })
+            let sent = bot
+                .send_location(p.chat_id, p.latitude, p.longitude)
+                .await?;
+            Ok(Response::MessageSent {
+                message_id: sent.message_id.to_string(),
+            })
         }
         "send_photo" => send_media_cmd(bot, payload, SendMediaKind::Photo).await,
         "send_audio" => send_media_cmd(bot, payload, SendMediaKind::Audio).await,
@@ -305,7 +357,14 @@ async fn dispatch_custom(
 }
 
 #[derive(Clone, Copy)]
-enum SendMediaKind { Photo, Audio, Voice, Video, Document, Animation }
+enum SendMediaKind {
+    Photo,
+    Audio,
+    Voice,
+    Video,
+    Document,
+    Animation,
+}
 
 async fn send_media_cmd(
     bot: &Arc<BotClient>,
@@ -316,11 +375,16 @@ async fn send_media_cmd(
     struct P {
         chat_id: i64,
         source: serde_json::Value,
-        #[serde(default)] caption: Option<String>,
-        #[serde(default)] parse_mode: Option<String>,
-        #[serde(default)] title: Option<String>,
-        #[serde(default)] performer: Option<String>,
-        #[serde(default)] duration: Option<u64>,
+        #[serde(default)]
+        caption: Option<String>,
+        #[serde(default)]
+        parse_mode: Option<String>,
+        #[serde(default)]
+        title: Option<String>,
+        #[serde(default)]
+        performer: Option<String>,
+        #[serde(default)]
+        duration: Option<u64>,
     }
     let p: P = serde_json::from_value(payload)?;
     let src = MediaSource::from_json(&p.source)?;
@@ -329,14 +393,25 @@ async fn send_media_cmd(
     let sent = match kind {
         SendMediaKind::Photo => bot.send_photo(p.chat_id, &src, cap, pm).await?,
         SendMediaKind::Audio => {
-            bot.send_audio(p.chat_id, &src, cap, p.title.as_deref(), p.performer.as_deref(), p.duration, pm).await?
+            bot.send_audio(
+                p.chat_id,
+                &src,
+                cap,
+                p.title.as_deref(),
+                p.performer.as_deref(),
+                p.duration,
+                pm,
+            )
+            .await?
         }
         SendMediaKind::Voice => bot.send_voice(p.chat_id, &src, cap, p.duration, pm).await?,
         SendMediaKind::Video => bot.send_video(p.chat_id, &src, cap, p.duration, pm).await?,
         SendMediaKind::Document => bot.send_document(p.chat_id, &src, cap, pm).await?,
         SendMediaKind::Animation => bot.send_animation(p.chat_id, &src, cap, pm).await?,
     };
-    Ok(Response::MessageSent { message_id: sent.message_id.to_string() })
+    Ok(Response::MessageSent {
+        message_id: sent.message_id.to_string(),
+    })
 }
 
 /// Send text, splitting at Telegram's per-message cap. Returns the
@@ -487,11 +562,7 @@ fn spawn_poller(
                 // informational event for the agent runtime.
                 if let Some(cq) = upd.callback_query.clone() {
                     let _ = bot.answer_callback_query(&cq.id, None, false).await;
-                    let chat_id_cq = cq
-                        .message
-                        .as_ref()
-                        .map(|m| m.chat.id)
-                        .unwrap_or(0);
+                    let chat_id_cq = cq.message.as_ref().map(|m| m.chat.id).unwrap_or(0);
                     if has_allowlist && chat_id_cq != 0 && !allowlist.contains(&chat_id_cq) {
                         continue;
                     }
@@ -549,8 +620,9 @@ fn spawn_poller(
                 // Original audio path stays on the InboundEvent.media
                 // field for skills that want the raw file.
                 if cfg.auto_transcribe.enabled {
-                    if let Some(m) = media.as_ref() {
-                        if (m.kind == "voice" || m.kind == "audio") && text.is_empty() {
+                    if let Some(m) = media.iter().find(|m| m.kind == "voice" || m.kind == "audio")
+                    {
+                        if text.is_empty() {
                             // Pre-announce so the user sees feedback for
                             // the transcription leg, not just the reply.
                             let _ = bot.send_chat_action(chat_id, "typing").await;
@@ -576,15 +648,16 @@ fn spawn_poller(
                     from: from.clone(),
                     chat: chat_id.to_string(),
                     chat_type: msg.chat.kind.clone(),
-                    text: if text.is_empty() { None } else { Some(text.clone()) },
+                    text: if text.is_empty() {
+                        None
+                    } else {
+                        Some(text.clone())
+                    },
                     reply_to: msg
                         .reply_to_message
                         .as_ref()
                         .map(|m| m.message_id.to_string()),
-                    is_group: matches!(
-                        msg.chat.kind.as_str(),
-                        "group" | "supergroup" | "channel"
-                    ),
+                    is_group: matches!(msg.chat.kind.as_str(), "group" | "supergroup" | "channel"),
                     timestamp: msg.date,
                     msg_id: msg.message_id.to_string(),
                     username: msg.from.as_ref().and_then(|u| u.username.clone()),
@@ -607,9 +680,7 @@ fn spawn_poller(
                     // Telegram's typing indicator lasts ~5s per call.
                     let _ = bot_for_typing.send_chat_action(chat_id, "typing").await;
                     let mut interval = tokio::time::interval(Duration::from_millis(4000));
-                    interval.set_missed_tick_behavior(
-                        tokio::time::MissedTickBehavior::Delay,
-                    );
+                    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
                     interval.tick().await; // immediate tick, already fired above
                     loop {
                         interval.tick().await;
@@ -649,11 +720,8 @@ fn spawn_poller(
                 let inbound_topic_inner = inbound_topic.clone();
                 tokio::spawn(async move {
                     let inbound_topic = inbound_topic_inner;
-                    let result = tokio::time::timeout(
-                        Duration::from_millis(bridge_timeout_ms),
-                        rx,
-                    )
-                    .await;
+                    let result =
+                        tokio::time::timeout(Duration::from_millis(bridge_timeout_ms), rx).await;
                     // Regardless of outcome, make sure our typing ticker
                     // stops and our entry doesn't linger in the queue.
                     typing_task.abort();
@@ -696,8 +764,7 @@ fn spawn_poller(
                         Ok(Err(_)) => {}
                         Err(_elapsed) => {
                             let ev = InboundEvent::BridgeTimeout { session_id };
-                            let mut e =
-                                Event::new(&inbound_topic, SOURCE, ev.to_payload());
+                            let mut e = Event::new(&inbound_topic, SOURCE, ev.to_payload());
                             e.session_id = Some(session_id);
                             let _ = broker_for_timeout.publish(&inbound_topic, e).await;
                             {
@@ -747,7 +814,11 @@ fn extract_forward_info(msg: &TgMessage) -> Option<ForwardInfo> {
             "user" => origin
                 .pointer("/sender_user/first_name")
                 .and_then(|v| v.as_str())
-                .or_else(|| origin.pointer("/sender_user/username").and_then(|v| v.as_str()))
+                .or_else(|| {
+                    origin
+                        .pointer("/sender_user/username")
+                        .and_then(|v| v.as_str())
+                })
                 .unwrap_or("user")
                 .to_string(),
             "hidden_user" => origin
@@ -838,120 +909,146 @@ pub async fn save_offset(path: &PathBuf, offset: i64) -> std::io::Result<()> {
     tokio::fs::rename(&tmp, path).await
 }
 
-/// Detect which media kind the message carries, fetch its `file_path`
-/// via `getFile`, and stream-download into `media_dir`. Returns
-/// `Some(MediaDescriptor)` on success, `None` for text-only or on error.
+/// Detect all media kinds the message carries, fetch each `file_path`
+/// via `getFile`, and stream-download into `media_dir`. Returns one
+/// descriptor per successfully downloaded attachment.
 async fn download_media(
     bot: &BotClient,
     msg: &TgMessage,
     media_dir: &PathBuf,
-) -> Option<MediaDescriptor> {
-    // Pick the highest-quality variant per media kind.
-    let (kind, file_id, mime, size, duration, width, height, file_name, ext_hint) =
-        if let Some(photos) = msg.photo.as_ref().and_then(|v| v.last()) {
-            (
-                "photo",
-                photos.file_id.clone(),
-                None,
-                photos.file_size,
-                None,
-                Some(photos.width),
-                Some(photos.height),
-                None,
-                "jpg",
-            )
-        } else if let Some(v) = &msg.voice {
-            (
-                "voice",
-                v.file_id.clone(),
-                v.mime_type.clone(),
-                v.file_size,
-                Some(v.duration),
-                None,
-                None,
-                None,
-                "oga",
-            )
-        } else if let Some(a) = &msg.audio {
-            (
-                "audio",
-                a.file_id.clone(),
-                a.mime_type.clone(),
-                a.file_size,
-                Some(a.duration),
-                None,
-                None,
-                a.file_name.clone(),
-                "mp3",
-            )
-        } else if let Some(v) = &msg.video {
-            (
-                "video",
-                v.file_id.clone(),
-                v.mime_type.clone(),
-                v.file_size,
-                Some(v.duration),
-                Some(v.width),
-                Some(v.height),
-                v.file_name.clone(),
-                "mp4",
-            )
-        } else if let Some(v) = &msg.video_note {
-            (
-                "video_note",
-                v.file_id.clone(),
-                None,
-                v.file_size,
-                Some(v.duration),
-                Some(v.length),
-                Some(v.length),
-                None,
-                "mp4",
-            )
-        } else if let Some(a) = &msg.animation {
-            (
-                "animation",
-                a.file_id.clone(),
-                a.mime_type.clone(),
-                a.file_size,
-                Some(a.duration),
-                Some(a.width),
-                Some(a.height),
-                a.file_name.clone(),
-                "mp4",
-            )
-        } else if let Some(d) = &msg.document {
-            (
-                "document",
-                d.file_id.clone(),
-                d.mime_type.clone(),
-                d.file_size,
-                None,
-                None,
-                None,
-                d.file_name.clone(),
-                "bin",
-            )
-        } else if let Some(s) = &msg.sticker {
-            (
-                "sticker",
-                s.file_id.clone(),
-                None,
-                s.file_size,
-                None,
-                Some(s.width),
-                Some(s.height),
-                None,
-                if s.is_video { "webm" } else if s.is_animated { "tgs" } else { "webp" },
-            )
-        } else {
-            return None;
-        };
+) -> Vec<MediaDescriptor> {
+    let mut candidates: Vec<MediaDownloadInput> = Vec::new();
+    // Pick highest-quality photo variant.
+    if let Some(photos) = msg.photo.as_ref().and_then(|v| v.last()) {
+        candidates.push(MediaDownloadInput {
+            kind: "photo",
+            file_id: photos.file_id.clone(),
+            mime: None,
+            size: photos.file_size,
+            duration: None,
+            width: Some(photos.width),
+            height: Some(photos.height),
+            file_name: None,
+            ext_hint: "jpg",
+        });
+    }
+    if let Some(v) = &msg.voice {
+        candidates.push(MediaDownloadInput {
+            kind: "voice",
+            file_id: v.file_id.clone(),
+            mime: v.mime_type.clone(),
+            size: v.file_size,
+            duration: Some(v.duration),
+            width: None,
+            height: None,
+            file_name: None,
+            ext_hint: "oga",
+        });
+    }
+    if let Some(a) = &msg.audio {
+        candidates.push(MediaDownloadInput {
+            kind: "audio",
+            file_id: a.file_id.clone(),
+            mime: a.mime_type.clone(),
+            size: a.file_size,
+            duration: Some(a.duration),
+            width: None,
+            height: None,
+            file_name: a.file_name.clone(),
+            ext_hint: "mp3",
+        });
+    }
+    if let Some(v) = &msg.video {
+        candidates.push(MediaDownloadInput {
+            kind: "video",
+            file_id: v.file_id.clone(),
+            mime: v.mime_type.clone(),
+            size: v.file_size,
+            duration: Some(v.duration),
+            width: Some(v.width),
+            height: Some(v.height),
+            file_name: v.file_name.clone(),
+            ext_hint: "mp4",
+        });
+    }
+    if let Some(v) = &msg.video_note {
+        candidates.push(MediaDownloadInput {
+            kind: "video_note",
+            file_id: v.file_id.clone(),
+            mime: None,
+            size: v.file_size,
+            duration: Some(v.duration),
+            width: Some(v.length),
+            height: Some(v.length),
+            file_name: None,
+            ext_hint: "mp4",
+        });
+    }
+    if let Some(a) = &msg.animation {
+        candidates.push(MediaDownloadInput {
+            kind: "animation",
+            file_id: a.file_id.clone(),
+            mime: a.mime_type.clone(),
+            size: a.file_size,
+            duration: Some(a.duration),
+            width: Some(a.width),
+            height: Some(a.height),
+            file_name: a.file_name.clone(),
+            ext_hint: "mp4",
+        });
+    }
+    if let Some(d) = &msg.document {
+        candidates.push(MediaDownloadInput {
+            kind: "document",
+            file_id: d.file_id.clone(),
+            mime: d.mime_type.clone(),
+            size: d.file_size,
+            duration: None,
+            width: None,
+            height: None,
+            file_name: d.file_name.clone(),
+            ext_hint: "bin",
+        });
+    }
+    if let Some(s) = &msg.sticker {
+        candidates.push(MediaDownloadInput {
+            kind: "sticker",
+            file_id: s.file_id.clone(),
+            mime: None,
+            size: s.file_size,
+            duration: None,
+            width: Some(s.width),
+            height: Some(s.height),
+            file_name: None,
+            ext_hint: if s.is_video {
+                "webm"
+            } else if s.is_animated {
+                "tgs"
+            } else {
+                "webp"
+            },
+        });
+    }
 
-    let info = match bot.get_file(&file_id).await {
+    let mut out: Vec<MediaDescriptor> = Vec::new();
+    for c in candidates {
+        if let Some(m) = download_one_media(bot, msg, media_dir, c).await {
+            out.push(m);
+        }
+    }
+    out
+}
+
+async fn download_one_media(
+    bot: &BotClient,
+    msg: &TgMessage,
+    media_dir: &PathBuf,
+    c: MediaDownloadInput,
+) -> Option<MediaDescriptor> {
+    let info = match bot.get_file(&c.file_id).await {
         Ok(i) => i,
         Err(e) => {
-            tracing::warn!(error = %e, kind, "telegram getFile failed");
+            tracing::warn!(error = %e, kind = c.kind, "telegram getFile failed");
             return None;
         }
     };
@@ -959,34 +1056,47 @@ async fn download_media(
     let ext = std::path::Path::new(&remote_path)
         .extension()
         .and_then(|s| s.to_str())
-        .unwrap_or(ext_hint);
+        .unwrap_or(c.ext_hint);
     let dest = media_dir.join(format!(
         "{}-{}-{}.{ext}",
-        msg.chat.id, msg.message_id, file_id.chars().take(10).collect::<String>()
+        msg.chat.id,
+        msg.message_id,
+        c.file_id.chars().take(10).collect::<String>()
     ));
     // Cache dedup: same chat/msg/file_id prefix lands on the same path.
     // A re-delivered or forwarded media can reuse it without re-downloading.
     let size_on_disk = tokio::fs::metadata(&dest).await.ok().map(|m| m.len());
     if size_on_disk.is_some() {
-        tracing::debug!(path = %dest.display(), kind, "telegram media cache hit");
+        tracing::debug!(path = %dest.display(), kind = c.kind, "telegram media cache hit");
     } else if let Err(e) = bot.download_file(&remote_path, &dest).await {
-        tracing::warn!(error = %e, kind, "telegram download failed");
+        tracing::warn!(error = %e, kind = c.kind, "telegram download failed");
         return None;
     }
 
     Some(MediaDescriptor {
-        kind: kind.to_string(),
+        kind: c.kind.to_string(),
         local_path: dest.to_string_lossy().to_string(),
-        file_id,
-        mime_type: mime,
-        file_size: size,
-        duration_s: duration,
-        width,
-        height,
-        file_name,
+        file_id: c.file_id,
+        mime_type: c.mime,
+        file_size: c.size,
+        duration_s: c.duration,
+        width: c.width,
+        height: c.height,
+        file_name: c.file_name,
     })
 }
 
+struct MediaDownloadInput {
+    kind: &'static str,
+    file_id: String,
+    mime: Option<String>,
+    size: Option<u64>,
+    duration: Option<u32>,
+    width: Option<u32>,
+    height: Option<u32>,
+    file_name: Option<String>,
+    ext_hint: &'static str,
+}
 
 /// Spawn the openai-whisper extension binary, send a single
 /// `tools/call { transcribe_file, file_path }` JSON-RPC request, wait
@@ -1001,7 +1111,10 @@ async fn transcribe_voice(
         return None;
     }
     if !std::path::Path::new(command).exists() {
-        tracing::warn!(command, "telegram auto_transcribe: whisper binary not found");
+        tracing::warn!(
+            command,
+            "telegram auto_transcribe: whisper binary not found"
+        );
         return None;
     }
 
@@ -1064,16 +1177,11 @@ async fn transcribe_voice(
     let read_loop = async {
         use tokio::io::{AsyncBufReadExt, BufReader};
         let mut reader = BufReader::new(stdout).lines();
-        while let Some(line) = reader
-            .next_line()
-            .await
-            .map_err(|e| e.to_string())?
-        {
+        while let Some(line) = reader.next_line().await.map_err(|e| e.to_string())? {
             if line.trim().is_empty() {
                 continue;
             }
-            let v: serde_json::Value =
-                serde_json::from_str(&line).map_err(|e| e.to_string())?;
+            let v: serde_json::Value = serde_json::from_str(&line).map_err(|e| e.to_string())?;
             if v.get("id").and_then(|v| v.as_u64()) != Some(1) {
                 continue;
             }
@@ -1143,9 +1251,7 @@ async fn spawn_dispatcher(
             // session_id. FIFO matches the core runtime's per-session
             // serialisation: first message in gets first reply out.
             if let Some(sid) = sid {
-                let popped = pending
-                    .get_mut(&sid)
-                    .and_then(|mut q| q.pop_front());
+                let popped = pending.get_mut(&sid).and_then(|mut q| q.pop_front());
                 // Clean up empty queues so DashMap doesn't grow unbounded
                 // over churn of short-lived chats.
                 let mut drop_session = false;
@@ -1175,14 +1281,9 @@ async fn spawn_dispatcher(
                 .get("to")
                 .and_then(serde_json::Value::as_str)
                 .and_then(|s| s.parse::<i64>().ok())
-                .or_else(|| {
-                    payload
-                        .get("chat_id")
-                        .and_then(serde_json::Value::as_i64)
-                });
-            let chat_id: Option<i64> = explicit.or_else(|| {
-                sid.and_then(|s| session_to_chat.get(&s).map(|c| *c.value()))
-            });
+                .or_else(|| payload.get("chat_id").and_then(serde_json::Value::as_i64));
+            let chat_id: Option<i64> =
+                explicit.or_else(|| sid.and_then(|s| session_to_chat.get(&s).map(|c| *c.value())));
             let Some(cid) = chat_id else {
                 tracing::debug!("telegram outbound dropped: no chat_id resolved");
                 continue;
@@ -1214,84 +1315,92 @@ async fn spawn_dispatcher(
             let _ = bot.send_chat_action(cid, action).await;
 
             match (kind, source) {
-                (Some(k @ "photo"), Some(src)) => {
-                    match MediaSource::from_json(&src) {
-                        Ok(s) => {
-                            if let Err(e) = bot
-                                .send_photo(cid, &s, caption.as_deref(), parse_mode.as_deref())
-                                .await
-                            {
-                                tracing::warn!(chat_id = cid, kind = k, error = %e, "telegram media send failed");
-                            }
+                (Some(k @ "photo"), Some(src)) => match MediaSource::from_json(&src) {
+                    Ok(s) => {
+                        if let Err(e) = bot
+                            .send_photo(cid, &s, caption.as_deref(), parse_mode.as_deref())
+                            .await
+                        {
+                            tracing::warn!(chat_id = cid, kind = k, error = %e, "telegram media send failed");
                         }
-                        Err(e) => tracing::warn!(kind = k, error = %e, "telegram: invalid media source"),
                     }
-                }
-                (Some(k @ "voice"), Some(src)) => {
-                    match MediaSource::from_json(&src) {
-                        Ok(s) => {
-                            if let Err(e) = bot
-                                .send_voice(cid, &s, caption.as_deref(), None, parse_mode.as_deref())
-                                .await
-                            {
-                                tracing::warn!(chat_id = cid, kind = k, error = %e, "telegram media send failed");
-                            }
+                    Err(e) => {
+                        tracing::warn!(kind = k, error = %e, "telegram: invalid media source")
+                    }
+                },
+                (Some(k @ "voice"), Some(src)) => match MediaSource::from_json(&src) {
+                    Ok(s) => {
+                        if let Err(e) = bot
+                            .send_voice(cid, &s, caption.as_deref(), None, parse_mode.as_deref())
+                            .await
+                        {
+                            tracing::warn!(chat_id = cid, kind = k, error = %e, "telegram media send failed");
                         }
-                        Err(e) => tracing::warn!(kind = k, error = %e, "telegram: invalid media source"),
                     }
-                }
-                (Some(k @ "audio"), Some(src)) => {
-                    match MediaSource::from_json(&src) {
-                        Ok(s) => {
-                            if let Err(e) = bot
-                                .send_audio(cid, &s, caption.as_deref(), None, None, None, parse_mode.as_deref())
-                                .await
-                            {
-                                tracing::warn!(chat_id = cid, kind = k, error = %e, "telegram media send failed");
-                            }
+                    Err(e) => {
+                        tracing::warn!(kind = k, error = %e, "telegram: invalid media source")
+                    }
+                },
+                (Some(k @ "audio"), Some(src)) => match MediaSource::from_json(&src) {
+                    Ok(s) => {
+                        if let Err(e) = bot
+                            .send_audio(
+                                cid,
+                                &s,
+                                caption.as_deref(),
+                                None,
+                                None,
+                                None,
+                                parse_mode.as_deref(),
+                            )
+                            .await
+                        {
+                            tracing::warn!(chat_id = cid, kind = k, error = %e, "telegram media send failed");
                         }
-                        Err(e) => tracing::warn!(kind = k, error = %e, "telegram: invalid media source"),
                     }
-                }
-                (Some(k @ "video"), Some(src)) => {
-                    match MediaSource::from_json(&src) {
-                        Ok(s) => {
-                            if let Err(e) = bot
-                                .send_video(cid, &s, caption.as_deref(), None, parse_mode.as_deref())
-                                .await
-                            {
-                                tracing::warn!(chat_id = cid, kind = k, error = %e, "telegram media send failed");
-                            }
+                    Err(e) => {
+                        tracing::warn!(kind = k, error = %e, "telegram: invalid media source")
+                    }
+                },
+                (Some(k @ "video"), Some(src)) => match MediaSource::from_json(&src) {
+                    Ok(s) => {
+                        if let Err(e) = bot
+                            .send_video(cid, &s, caption.as_deref(), None, parse_mode.as_deref())
+                            .await
+                        {
+                            tracing::warn!(chat_id = cid, kind = k, error = %e, "telegram media send failed");
                         }
-                        Err(e) => tracing::warn!(kind = k, error = %e, "telegram: invalid media source"),
                     }
-                }
-                (Some(k @ "document"), Some(src)) => {
-                    match MediaSource::from_json(&src) {
-                        Ok(s) => {
-                            if let Err(e) = bot
-                                .send_document(cid, &s, caption.as_deref(), parse_mode.as_deref())
-                                .await
-                            {
-                                tracing::warn!(chat_id = cid, kind = k, error = %e, "telegram media send failed");
-                            }
+                    Err(e) => {
+                        tracing::warn!(kind = k, error = %e, "telegram: invalid media source")
+                    }
+                },
+                (Some(k @ "document"), Some(src)) => match MediaSource::from_json(&src) {
+                    Ok(s) => {
+                        if let Err(e) = bot
+                            .send_document(cid, &s, caption.as_deref(), parse_mode.as_deref())
+                            .await
+                        {
+                            tracing::warn!(chat_id = cid, kind = k, error = %e, "telegram media send failed");
                         }
-                        Err(e) => tracing::warn!(kind = k, error = %e, "telegram: invalid media source"),
                     }
-                }
-                (Some(k @ "animation"), Some(src)) => {
-                    match MediaSource::from_json(&src) {
-                        Ok(s) => {
-                            if let Err(e) = bot
-                                .send_animation(cid, &s, caption.as_deref(), parse_mode.as_deref())
-                                .await
-                            {
-                                tracing::warn!(chat_id = cid, kind = k, error = %e, "telegram media send failed");
-                            }
+                    Err(e) => {
+                        tracing::warn!(kind = k, error = %e, "telegram: invalid media source")
+                    }
+                },
+                (Some(k @ "animation"), Some(src)) => match MediaSource::from_json(&src) {
+                    Ok(s) => {
+                        if let Err(e) = bot
+                            .send_animation(cid, &s, caption.as_deref(), parse_mode.as_deref())
+                            .await
+                        {
+                            tracing::warn!(chat_id = cid, kind = k, error = %e, "telegram media send failed");
                         }
-                        Err(e) => tracing::warn!(kind = k, error = %e, "telegram: invalid media source"),
                     }
-                }
+                    Err(e) => {
+                        tracing::warn!(kind = k, error = %e, "telegram: invalid media source")
+                    }
+                },
                 _ => {
                     let text: String = payload
                         .get("text")

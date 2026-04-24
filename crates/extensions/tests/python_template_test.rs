@@ -25,7 +25,10 @@ async fn python_template_roundtrip() {
     let dir = template_dir();
     let main_py = dir.join("main.py");
     if !main_py.exists() {
-        eprintln!("skip: template-python/main.py not found at {}", main_py.display());
+        eprintln!(
+            "skip: template-python/main.py not found at {}",
+            main_py.display()
+        );
         return;
     }
     if !has_python3() {
@@ -36,8 +39,7 @@ async fn python_template_roundtrip() {
     // Manifest declares `command = "./main.py"` — which only works inside a
     // cwd that contains main.py. Spawning with cwd=dir is exactly the real
     // runtime behavior (discovery sets root_dir as cwd).
-    let manifest =
-        ExtensionManifest::from_path(&dir.join("plugin.toml")).expect("manifest parses");
+    let manifest = ExtensionManifest::from_path(&dir.join("plugin.toml")).expect("manifest parses");
 
     let rt = StdioRuntime::spawn(&manifest, dir.clone())
         .await

@@ -9,11 +9,11 @@
 //! its own quota, isolated across agents. Unlike `ToolRateLimiter`
 //! this is fully sync (DashMap entry lock only) because the hot path
 //! is per-message and must not yield.
+use agent_config::types::agents::SenderRateLimitConfig;
+use dashmap::DashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
-use dashmap::DashMap;
 use tokio::sync::Mutex;
-use agent_config::types::agents::SenderRateLimitConfig;
 
 /// Cap on concurrent sender buckets. Protects against OOM when a
 /// public bot sees traffic from a churning population of sender_ids
@@ -60,7 +60,7 @@ impl TokenBucket {
                     let new = cur.saturating_add(add).min(self.capacity);
                     self.tokens.store(new, Ordering::Relaxed);
                     let consumed = add as f64 / self.rate_per_sec;
-                    *last = *last + std::time::Duration::from_secs_f64(consumed);
+                    *last += std::time::Duration::from_secs_f64(consumed);
                 }
             }
         }
@@ -69,12 +69,10 @@ impl TokenBucket {
             if cur == 0 {
                 return false;
             }
-            match self.tokens.compare_exchange(
-                cur,
-                cur - 1,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            ) {
+            match self
+                .tokens
+                .compare_exchange(cur, cur - 1, Ordering::AcqRel, Ordering::Acquire)
+            {
                 Ok(_) => return true,
                 Err(actual) => cur = actual,
             }
@@ -151,7 +149,10 @@ mod tests {
     use super::*;
     #[tokio::test]
     async fn burst_exhausts_then_refills() {
-        let rl = SenderRateLimiter::new(SenderRateLimitConfig { rps: 10.0, burst: 3 });
+        let rl = SenderRateLimiter::new(SenderRateLimitConfig {
+            rps: 10.0,
+            burst: 3,
+        });
         // Burst of 3 allows 3 calls in a row.
         assert!(rl.try_acquire("a", Some("u1")).await);
         assert!(rl.try_acquire("a", Some("u1")).await);
@@ -180,5 +181,25 @@ mod tests {
         for _ in 0..5 {
             assert!(rl.try_acquire("a", None).await);
         }
+    }
+
+    #[tokio::test]
+    async fn cap_evicts_stalest_bucket() {
+        let rl = SenderRateLimiter::with_cap(
+            SenderRateLimitConfig {
+                rps: 1000.0,
+                burst: 10,
+            },
+            3,
+        );
+        // Fill to cap; u1 stamped earliest.
+        rl.try_acquire("a", Some("u1")).await;
+        rl.try_acquire("a", Some("u2")).await;
+        rl.try_acquire("a", Some("u3")).await;
+        assert_eq!(rl.active_buckets(), 3);
+
+        // u4 causes u1 (oldest last_touch) to be evicted.
+        rl.try_acquire("a", Some("u4")).await;
+        assert_eq!(rl.active_buckets(), 3);
     }
 }

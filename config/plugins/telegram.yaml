@@ -1,10 +1,5 @@
 telegram:
-  token: ${TELEGRAM_BOT_TOKEN:-}
-  # Optional instance label. Leave unset for legacy single-bot behavior
-  # (publishes to `plugin.inbound.telegram`). Set it to route this bot's
-  # events to `plugin.inbound.telegram.<instance>` so agents can pin
-  # themselves via `inbound_bindings: [{plugin: telegram, instance: X}]`.
-  # instance: "main_bot"
+  token: ${file:./secrets/telegram_bot_token.txt}
   polling:
     enabled: true
     interval_ms: 1000

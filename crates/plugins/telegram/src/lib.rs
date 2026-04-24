@@ -8,7 +8,9 @@ pub mod bot;
 pub mod events;
 pub mod plugin;
 pub mod session_id;
+pub mod tool;
 
 pub use events::InboundEvent;
 pub use plugin::{TelegramPlugin, TOPIC_INBOUND, TOPIC_OUTBOUND};
 pub use session_id::session_id_for_chat;
+pub use tool::register_telegram_tools;

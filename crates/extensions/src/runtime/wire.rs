@@ -28,14 +28,19 @@ pub fn encode<P: serde::Serialize>(
     params: P,
     id: u64,
 ) -> Result<String, serde_json::Error> {
-    let req = Request { jsonrpc: "2.0", method, params, id };
+    let req = Request {
+        jsonrpc: "2.0",
+        method,
+        params,
+        id,
+    };
     let mut s = serde_json::to_string(&req)?;
     s.push('\n');
     Ok(s)
 }
 
 pub fn decode_response(line: &str) -> Result<Response, serde_json::Error> {
-    let trimmed = line.trim_end_matches(|c| c == '\r' || c == '\n');
+    let trimmed = line.trim_end_matches(['\r', '\n']);
     serde_json::from_str(trimmed)
 }
 
@@ -50,7 +55,12 @@ mod tests {
 
     #[test]
     fn encode_adds_newline_and_wraps_jsonrpc() {
-        let out = encode("initialize", serde_json::json!({"agent_version":"0.1.0"}), 1).unwrap();
+        let out = encode(
+            "initialize",
+            serde_json::json!({"agent_version":"0.1.0"}),
+            1,
+        )
+        .unwrap();
         assert!(out.ends_with('\n'));
         assert!(out.contains("\"jsonrpc\":\"2.0\""));
         assert!(out.contains("\"method\":\"initialize\""));

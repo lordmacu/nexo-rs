@@ -29,7 +29,8 @@ fn cfg(timeout_ms: u64) -> WhatsappPluginConfig {
             apology_text: "sorry".into(),
         },
         transcriber: WhatsappTranscriberConfig::default(),
-        daemon: WhatsappDaemonConfig::default(), public_tunnel: Default::default(),
+        daemon: WhatsappDaemonConfig::default(),
+        public_tunnel: Default::default(),
         instance: None,
     }
 }

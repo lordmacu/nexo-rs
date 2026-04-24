@@ -10,6 +10,9 @@ tools = ["status", "probe", "extract_frames", "extract_audio"]
 [requires]
 bins = ["ffmpeg", "ffprobe"]
 
+[context]
+passthrough = true
+
 [transport]
 kind = "stdio"
 command = "./target/release/video-frames"

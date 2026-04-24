@@ -10,9 +10,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::io::AsyncWriteExt;
 
-/// Maximum characters Telegram accepts in a single `sendMessage`.
-/// Wire limit is 4096 UTF-16 code units; we use a conservative char cap.
-pub const MAX_TEXT_LEN: usize = 4000;
+/// Maximum length Telegram accepts in a single `sendMessage`.
+/// Wire limit is 4096 UTF-16 code units.
+pub const MAX_TEXT_LEN: usize = 4096;
 /// Maximum caption length on media messages.
 pub const MAX_CAPTION_LEN: usize = 1024;
 
@@ -286,8 +286,16 @@ impl BotClient {
         caption: Option<&str>,
         parse_mode: Option<&str>,
     ) -> anyhow::Result<SendMessageResponse> {
-        self.send_media(chat_id, "sendPhoto", "photo", source, caption, parse_mode, &[])
-            .await
+        self.send_media(
+            chat_id,
+            "sendPhoto",
+            "photo",
+            source,
+            caption,
+            parse_mode,
+            &[],
+        )
+        .await
     }
 
     pub async fn send_audio(
@@ -301,12 +309,26 @@ impl BotClient {
         parse_mode: Option<&str>,
     ) -> anyhow::Result<SendMessageResponse> {
         let mut extra: Vec<(&str, String)> = Vec::new();
-        if let Some(t) = title { extra.push(("title", t.to_string())); }
-        if let Some(p) = performer { extra.push(("performer", p.to_string())); }
-        if let Some(d) = duration { extra.push(("duration", d.to_string())); }
+        if let Some(t) = title {
+            extra.push(("title", t.to_string()));
+        }
+        if let Some(p) = performer {
+            extra.push(("performer", p.to_string()));
+        }
+        if let Some(d) = duration {
+            extra.push(("duration", d.to_string()));
+        }
         let extra_ref: Vec<(&str, &str)> = extra.iter().map(|(k, v)| (*k, v.as_str())).collect();
-        self.send_media(chat_id, "sendAudio", "audio", source, caption, parse_mode, &extra_ref)
-            .await
+        self.send_media(
+            chat_id,
+            "sendAudio",
+            "audio",
+            source,
+            caption,
+            parse_mode,
+            &extra_ref,
+        )
+        .await
     }
 
     pub async fn send_voice(
@@ -323,8 +345,16 @@ impl BotClient {
             dur_s = d.to_string();
             extra.push(("duration", &dur_s));
         }
-        self.send_media(chat_id, "sendVoice", "voice", source, caption, parse_mode, &extra)
-            .await
+        self.send_media(
+            chat_id,
+            "sendVoice",
+            "voice",
+            source,
+            caption,
+            parse_mode,
+            &extra,
+        )
+        .await
     }
 
     pub async fn send_video(
@@ -341,8 +371,16 @@ impl BotClient {
             dur_s = d.to_string();
             extra.push(("duration", &dur_s));
         }
-        self.send_media(chat_id, "sendVideo", "video", source, caption, parse_mode, &extra)
-            .await
+        self.send_media(
+            chat_id,
+            "sendVideo",
+            "video",
+            source,
+            caption,
+            parse_mode,
+            &extra,
+        )
+        .await
     }
 
     pub async fn send_document(
@@ -352,8 +390,16 @@ impl BotClient {
         caption: Option<&str>,
         parse_mode: Option<&str>,
     ) -> anyhow::Result<SendMessageResponse> {
-        self.send_media(chat_id, "sendDocument", "document", source, caption, parse_mode, &[])
-            .await
+        self.send_media(
+            chat_id,
+            "sendDocument",
+            "document",
+            source,
+            caption,
+            parse_mode,
+            &[],
+        )
+        .await
     }
 
     pub async fn send_animation(
@@ -363,8 +409,16 @@ impl BotClient {
         caption: Option<&str>,
         parse_mode: Option<&str>,
     ) -> anyhow::Result<SendMessageResponse> {
-        self.send_media(chat_id, "sendAnimation", "animation", source, caption, parse_mode, &[])
-            .await
+        self.send_media(
+            chat_id,
+            "sendAnimation",
+            "animation",
+            source,
+            caption,
+            parse_mode,
+            &[],
+        )
+        .await
     }
 
     /// Shared backbone: URL / file_id variants go as JSON, local paths as multipart.
@@ -381,22 +435,30 @@ impl BotClient {
         match source {
             MediaSource::Url(u) => {
                 let mut body = json!({ "chat_id": chat_id, field: u });
-                if let Some(c) = caption { body["caption"] = json!(truncate(c, MAX_CAPTION_LEN)); }
+                if let Some(c) = caption {
+                    body["caption"] = json!(truncate_utf16(c, MAX_CAPTION_LEN));
+                }
                 if let Some(pm) = parse_mode {
                     body["parse_mode"] =
                         json!(normalize_parse_mode(pm).map_err(|e| anyhow::anyhow!(e))?);
                 }
-                for (k, v) in extras { body[*k] = json!(v); }
+                for (k, v) in extras {
+                    body[*k] = json!(v);
+                }
                 self.call_json(endpoint, &body).await
             }
             MediaSource::FileId(fid) => {
                 let mut body = json!({ "chat_id": chat_id, field: fid });
-                if let Some(c) = caption { body["caption"] = json!(truncate(c, MAX_CAPTION_LEN)); }
+                if let Some(c) = caption {
+                    body["caption"] = json!(truncate_utf16(c, MAX_CAPTION_LEN));
+                }
                 if let Some(pm) = parse_mode {
                     body["parse_mode"] =
                         json!(normalize_parse_mode(pm).map_err(|e| anyhow::anyhow!(e))?);
                 }
-                for (k, v) in extras { body[*k] = json!(v); }
+                for (k, v) in extras {
+                    body[*k] = json!(v);
+                }
                 self.call_json(endpoint, &body).await
             }
             MediaSource::Path(p) => {
@@ -420,17 +482,15 @@ impl BotClient {
                     .map_err(|e| anyhow::anyhow!("open {}: {e}", p.display()))?;
                 let reader = tokio_util::io::ReaderStream::new(file);
                 let body = reqwest::Body::wrap_stream(reader);
-                let part = Part::stream_with_length(body, file_size)
-                    .file_name(filename);
+                let part = Part::stream_with_length(body, file_size).file_name(filename);
                 let mut form = Form::new()
                     .text("chat_id", chat_id.to_string())
                     .part(field.to_string(), part);
                 if let Some(c) = caption {
-                    form = form.text("caption", truncate(c, MAX_CAPTION_LEN));
+                    form = form.text("caption", truncate_utf16(c, MAX_CAPTION_LEN));
                 }
                 if let Some(pm) = parse_mode {
-                    let normalized = normalize_parse_mode(pm)
-                        .map_err(|e| anyhow::anyhow!(e))?;
+                    let normalized = normalize_parse_mode(pm).map_err(|e| anyhow::anyhow!(e))?;
                     form = form.text("parse_mode", normalized.to_string());
                 }
                 for (k, v) in extras {
@@ -443,17 +503,16 @@ impl BotClient {
                 if !status.is_success() {
                     anyhow::bail!("{endpoint} HTTP {status}: {text}");
                 }
-                let parsed: ApiEnvelope<SendMessageResponse> =
-                    serde_json::from_str(&text).map_err(|e| {
-                        anyhow::anyhow!("parse {endpoint}: {e}: {text}")
-                    })?;
+                let parsed: ApiEnvelope<SendMessageResponse> = serde_json::from_str(&text)
+                    .map_err(|e| anyhow::anyhow!("parse {endpoint}: {e}: {text}"))?;
                 parsed.unwrap(endpoint)
             }
         }
     }
 
     pub async fn get_file(&self, file_id: &str) -> anyhow::Result<FileInfo> {
-        self.call_json("getFile", &json!({ "file_id": file_id })).await
+        self.call_json("getFile", &json!({ "file_id": file_id }))
+            .await
     }
 
     /// Stream a file to `dest`. Returns bytes written.
@@ -501,16 +560,16 @@ impl BotClient {
 /// Length in UTF-16 code units (what Telegram actually measures against
 /// its wire caps). A supplementary-plane emoji is 1 `char` but 2 UTF-16
 /// units, so `chars().count()` underestimates for emoji-heavy text.
-fn u16_len(s: &str) -> usize {
+pub(crate) fn utf16_len(s: &str) -> usize {
     s.encode_utf16().count()
 }
 
-fn truncate(s: &str, max: usize) -> String {
-    if u16_len(s) <= max {
+pub(crate) fn truncate_utf16(s: &str, max: usize) -> String {
+    if utf16_len(s) <= max {
         return s.to_string();
     }
     tracing::warn!(
-        original_utf16_units = u16_len(s),
+        original_utf16_units = utf16_len(s),
         max,
         "telegram: caption/text truncated to fit per-message limit (visible ellipsis added)"
     );
@@ -536,7 +595,7 @@ pub fn split_text(text: &str, max: usize) -> Vec<String> {
     let mut cur = String::new();
     let mut cur_units: usize = 0;
     for line in text.split_inclusive('\n') {
-        let line_units = u16_len(line);
+        let line_units = utf16_len(line);
         if line_units > max {
             if !cur.is_empty() {
                 out.push(std::mem::take(&mut cur));
@@ -879,7 +938,7 @@ mod tests {
         let s = "aaaa\nbbbb\ncccc\ndddd\n";
         let out = split_text(s, 10);
         for seg in &out {
-            assert!(u16_len(seg) <= 10, "segment too long: {seg:?}");
+            assert!(utf16_len(seg) <= 10, "segment too long: {seg:?}");
         }
         assert_eq!(out.concat(), s);
     }
@@ -888,7 +947,7 @@ mod tests {
     fn split_hard_breaks_oversize_line() {
         let long_line = "x".repeat(25);
         let out = split_text(&long_line, 10);
-        assert!(out.iter().all(|s| u16_len(s) <= 10));
+        assert!(out.iter().all(|s| utf16_len(s) <= 10));
         assert_eq!(out.concat(), long_line);
     }
 
@@ -898,9 +957,17 @@ mod tests {
         // With max=4, we should fit at most 2 emojis per segment.
         let s = "🎉🎉🎉🎉".to_string();
         let out = split_text(&s, 4);
-        assert!(out.iter().all(|seg| u16_len(seg) <= 4));
+        assert!(out.iter().all(|seg| utf16_len(seg) <= 4));
         assert_eq!(out.concat(), s);
         assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn truncate_respects_utf16_budget() {
+        let s = "🎉🎉🎉";
+        let out = truncate_utf16(s, 4);
+        assert!(utf16_len(&out) <= 4);
+        assert!(out.ends_with('…'));
     }
 
     #[test]

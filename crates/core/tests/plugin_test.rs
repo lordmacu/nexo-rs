@@ -23,8 +23,14 @@ async fn mock_plugin_send_command_records_in_order() {
     let plugin = MockPlugin::new("telegram");
     let received = Arc::clone(&plugin.received);
 
-    let cmd1 = Command::SendMessage { to: "+57300".to_string(), text: "hello".to_string() };
-    let cmd2 = Command::SendMessage { to: "+57300".to_string(), text: "world".to_string() };
+    let cmd1 = Command::SendMessage {
+        to: "+57300".to_string(),
+        text: "hello".to_string(),
+    };
+    let cmd2 = Command::SendMessage {
+        to: "+57300".to_string(),
+        text: "world".to_string(),
+    };
 
     plugin.send_command(cmd1).await.unwrap();
     plugin.send_command(cmd2).await.unwrap();
@@ -43,10 +49,15 @@ async fn mock_plugin_send_command_records_in_order() {
 
 #[tokio::test]
 async fn mock_plugin_with_response() {
-    let expected = Response::MessageSent { message_id: "msg-42".to_string() };
+    let expected = Response::MessageSent {
+        message_id: "msg-42".to_string(),
+    };
     let plugin = MockPlugin::with_response("browser", expected.clone());
 
-    let cmd = Command::SendMessage { to: "user".to_string(), text: "hi".to_string() };
+    let cmd = Command::SendMessage {
+        to: "user".to_string(),
+        text: "hi".to_string(),
+    };
     let resp = plugin.send_command(cmd).await.unwrap();
 
     match resp {
@@ -101,8 +112,12 @@ async fn stop_all_continues_on_error() {
 
     #[async_trait]
     impl Plugin for FailingPlugin {
-        fn name(&self) -> &str { "failing" }
-        async fn start(&self, _broker: AnyBroker) -> anyhow::Result<()> { Ok(()) }
+        fn name(&self) -> &str {
+            "failing"
+        }
+        async fn start(&self, _broker: AnyBroker) -> anyhow::Result<()> {
+            Ok(())
+        }
         async fn stop(&self) -> anyhow::Result<()> {
             anyhow::bail!("intentional stop failure")
         }

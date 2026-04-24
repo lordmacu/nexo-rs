@@ -9,11 +9,11 @@
 //! Extension handler errors (timeout, transport, RPC error) are logged and
 //! treated as `Continue`. Philosophy: extension misbehavior must not take
 //! down agent flow.
-use std::sync::Arc;
+use agent_extensions::HookResponse;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use serde_json::Value;
-use agent_extensions::HookResponse;
+use std::sync::Arc;
 #[async_trait]
 pub trait HookHandler: Send + Sync {
     async fn on_hook(&self, name: &str, event: Value) -> anyhow::Result<HookResponse>;
@@ -72,17 +72,47 @@ impl HookRegistry {
         priority: i32,
         handler: impl HookHandler + 'static,
     ) {
+        let plugin_id = plugin_id.into();
         let seq = self
             .next_seq
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut entry = self.handlers.entry(hook_name.to_string()).or_default();
+        // Defensive cap — a buggy extension that re-registers hooks on
+        // every event would otherwise grow the Vec without bound and
+        // blow up the hot path. 128 is far above any realistic extension
+        // count (typical deployments have <10 registered per hook).
+        const MAX_HANDLERS_PER_HOOK: usize = 128;
+        if entry.len() >= MAX_HANDLERS_PER_HOOK {
+            tracing::warn!(
+                hook = %hook_name,
+                plugin = %plugin_id,
+                count = entry.len(),
+                cap = MAX_HANDLERS_PER_HOOK,
+                "refusing hook registration: cap reached"
+            );
+            return;
+        }
         entry.push(HandlerEntry {
-            plugin_id: plugin_id.into(),
+            plugin_id,
             priority,
             seq,
             handler: Arc::new(handler),
         });
         entry.sort_by(|a, b| a.priority.cmp(&b.priority).then(a.seq.cmp(&b.seq)));
+    }
+
+    /// Drop every handler registered under `plugin_id` across all
+    /// hooks. Used on extension reload / unload so the caller can
+    /// re-register a fresh handler without the old one still firing.
+    /// Returns the number of handler entries removed.
+    pub fn deregister_plugin(&self, plugin_id: &str) -> usize {
+        let mut removed = 0usize;
+        for mut entry in self.handlers.iter_mut() {
+            let before = entry.len();
+            entry.retain(|h| h.plugin_id != plugin_id);
+            removed += before - entry.len();
+        }
+        removed
     }
     pub fn handler_count(&self, hook_name: &str) -> usize {
         self.handlers.get(hook_name).map(|v| v.len()).unwrap_or(0)
@@ -100,20 +130,14 @@ impl HookRegistry {
     /// keys shallow-merged onto `event` before the next handler sees
     /// it. On return, `event` contains the final merged state. An
     /// aborted handler's `override` is discarded (abort wins).
-    pub async fn fire_with_merge(
-        &self,
-        hook_name: &str,
-        event: &mut Value,
-    ) -> HookOutcome {
+    pub async fn fire_with_merge(&self, hook_name: &str, event: &mut Value) -> HookOutcome {
         let handlers: Vec<HandlerEntry> = match self.handlers.get(hook_name) {
             Some(v) => v.iter().cloned().collect(),
             None => return HookOutcome::Continue,
         };
         let advisory = hook_name.starts_with("after_");
         for HandlerEntry {
-            plugin_id,
-            handler,
-            ..
+            plugin_id, handler, ..
         } in handlers
         {
             match handler.on_hook(hook_name, event.clone()).await {
@@ -308,7 +332,11 @@ mod tests {
         let out = reg.fire("after_tool_call", serde_json::json!({})).await;
         assert_eq!(out, HookOutcome::Continue, "after_* abort must be ignored");
         assert_eq!(h1.count(), 1);
-        assert_eq!(h2.count(), 1, "second handler still runs after after_* abort");
+        assert_eq!(
+            h2.count(),
+            1,
+            "second handler still runs after after_* abort"
+        );
     }
 
     #[tokio::test]
@@ -413,6 +441,42 @@ mod tests {
         // The caller sees the final merged event too.
         assert_eq!(event["text"], "rewritten");
         assert_eq!(event["agent_id"], "kate");
+    }
+
+    #[tokio::test]
+    async fn deregister_plugin_drops_all_its_handlers() {
+        struct Dummy;
+        #[async_trait]
+        impl HookHandler for Dummy {
+            async fn on_hook(&self, _n: &str, _e: Value) -> anyhow::Result<HookResponse> {
+                Ok(HookResponse::default())
+            }
+        }
+        let reg = HookRegistry::new();
+        reg.register("before_message", "alpha", Dummy);
+        reg.register("after_message", "alpha", Dummy);
+        reg.register("before_message", "beta", Dummy);
+        assert_eq!(reg.handler_count("before_message"), 2);
+        let removed = reg.deregister_plugin("alpha");
+        assert_eq!(removed, 2);
+        assert_eq!(reg.handler_count("before_message"), 1);
+        assert_eq!(reg.handler_count("after_message"), 0);
+    }
+
+    #[test]
+    fn registration_cap_refuses_after_128() {
+        struct Dummy;
+        #[async_trait]
+        impl HookHandler for Dummy {
+            async fn on_hook(&self, _n: &str, _e: Value) -> anyhow::Result<HookResponse> {
+                Ok(HookResponse::default())
+            }
+        }
+        let reg = HookRegistry::new();
+        for i in 0..200 {
+            reg.register("before_message", format!("ext{i}"), Dummy);
+        }
+        assert_eq!(reg.handler_count("before_message"), 128);
     }
 
     #[tokio::test]

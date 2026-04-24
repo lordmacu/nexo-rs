@@ -118,9 +118,7 @@ impl SamplingPolicy {
         // forever for this peer.
         let mut bucket = bucket_mu.lock().unwrap_or_else(|p| p.into_inner());
         bucket.refresh_capacity(per_minute);
-        bucket
-            .try_take()
-            .map_err(|ms| SamplingError::RateLimited(ms))
+        bucket.try_take().map_err(SamplingError::RateLimited)
     }
 }
 

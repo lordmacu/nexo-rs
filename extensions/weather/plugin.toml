@@ -7,6 +7,9 @@ description = "Rust extension exposing current weather and short forecast tools 
 [capabilities]
 tools = ["status", "current", "forecast"]
 
+[context]
+passthrough = true
+
 [transport]
 kind = "stdio"
 command = "./target/release/weather"

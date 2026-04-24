@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 agent-config = { path = "../config" }
+agent-core   = { path = "../core" }
 anyhow       = { workspace = true }
 serde        = { workspace = true }
 serde_json   = { workspace = true }
@@ -22,3 +23,5 @@ uuid         = { workspace = true, features = ["v4"] }
 chrono       = { workspace = true }
 rand         = "0.8"
 indicatif    = "0.17"
+agent-plugin-whatsapp = { path = "../plugins/whatsapp" }
+agent-plugin-google   = { path = "../plugins/google" }

@@ -30,15 +30,12 @@ impl PeerDirectory {
     /// `allowed_delegates` uses the same trailing-`*` glob semantics as
     /// `DelegationTool`. Empty list = every peer reachable (back-compat).
     pub fn render_for(&self, self_id: &str, allowed_delegates: &[String]) -> Option<String> {
-        let others: Vec<&PeerSummary> =
-            self.peers.iter().filter(|p| p.id != self_id).collect();
+        let others: Vec<&PeerSummary> = self.peers.iter().filter(|p| p.id != self_id).collect();
         if others.is_empty() {
             return None;
         }
         let mut out = String::from("# PEERS\n");
-        out.push_str(
-            "Other agents you can reach via `delegate({agent_id, task, ...})`:\n\n",
-        );
+        out.push_str("Other agents you can reach via `delegate({agent_id, task, ...})`:\n\n");
         for p in others {
             let reachable = allowed_delegates.is_empty()
                 || allowed_delegates
@@ -51,11 +48,7 @@ impl PeerDirectory {
             if p.description.is_empty() {
                 out.push_str(&format!("- {mark} `{}`\n", p.id));
             } else {
-                out.push_str(&format!(
-                    "- {mark} `{}` — {}\n",
-                    p.id,
-                    p.description.trim()
-                ));
+                out.push_str(&format!("- {mark} `{}` — {}\n", p.id, p.description.trim()));
             }
         }
         Some(out)
@@ -71,7 +64,10 @@ mod tests {
     use super::*;
 
     fn peer(id: &str, desc: &str) -> PeerSummary {
-        PeerSummary { id: id.into(), description: desc.into() }
+        PeerSummary {
+            id: id.into(),
+            description: desc.into(),
+        }
     }
 
     #[test]
@@ -94,10 +90,7 @@ mod tests {
 
     #[test]
     fn empty_allowlist_marks_everything_reachable() {
-        let dir = PeerDirectory::new(vec![
-            peer("a", ""),
-            peer("b", "desc b"),
-        ]);
+        let dir = PeerDirectory::new(vec![peer("a", ""), peer("b", "desc b")]);
         let block = dir.render_for("a", &[]).expect("block");
         assert!(block.contains("✓ `b`"));
         assert!(block.contains("desc b"));
@@ -105,11 +98,7 @@ mod tests {
 
     #[test]
     fn unreachable_peers_marked() {
-        let dir = PeerDirectory::new(vec![
-            peer("a", ""),
-            peer("b", ""),
-            peer("c", ""),
-        ]);
+        let dir = PeerDirectory::new(vec![peer("a", ""), peer("b", ""), peer("c", "")]);
         let block = dir.render_for("a", &["b".into()]).expect("block");
         assert!(block.contains("✓ `b`"));
         assert!(block.contains("✗ `c`"));

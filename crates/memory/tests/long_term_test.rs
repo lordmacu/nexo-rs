@@ -12,9 +12,15 @@ async fn remember_and_recall_by_keyword() {
     let db = open_temp_db().await;
     let agent = "test-agent";
 
-    db.remember(agent, "The user prefers short responses", &["preferences"]).await.unwrap();
-    db.remember(agent, "The user lives in Madrid", &["location"]).await.unwrap();
-    db.remember(agent, "The user drinks coffee every morning", &["habits"]).await.unwrap();
+    db.remember(agent, "The user prefers short responses", &["preferences"])
+        .await
+        .unwrap();
+    db.remember(agent, "The user lives in Madrid", &["location"])
+        .await
+        .unwrap();
+    db.remember(agent, "The user drinks coffee every morning", &["habits"])
+        .await
+        .unwrap();
 
     let results = db.recall(agent, "Madrid", 5).await.unwrap();
     assert_eq!(results.len(), 1);
@@ -27,7 +33,9 @@ async fn recall_returns_multiple_matches_ordered_by_rank() {
     let agent = "agent-x";
 
     db.remember(agent, "user likes coffee", &[]).await.unwrap();
-    db.remember(agent, "user loves coffee and tea", &[]).await.unwrap();
+    db.remember(agent, "user loves coffee and tea", &[])
+        .await
+        .unwrap();
     db.remember(agent, "user prefers water", &[]).await.unwrap();
 
     let results = db.recall(agent, "coffee", 10).await.unwrap();
@@ -42,7 +50,10 @@ async fn forget_removes_from_fts() {
     let db = open_temp_db().await;
     let agent = "agent-y";
 
-    let id = db.remember(agent, "secret password hint", &["secret"]).await.unwrap();
+    let id = db
+        .remember(agent, "secret password hint", &["secret"])
+        .await
+        .unwrap();
 
     let before = db.recall(agent, "secret", 5).await.unwrap();
     assert_eq!(before.len(), 1);
@@ -70,7 +81,8 @@ async fn save_and_load_interactions_ordered() {
     for i in 0..5u32 {
         let role = if i % 2 == 0 { "user" } else { "assistant" };
         db.save_interaction(session, agent, role, &format!("message {i}"))
-            .await.unwrap();
+            .await
+            .unwrap();
         // Ensure distinct timestamps
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
@@ -237,13 +249,19 @@ async fn record_recall_event_increments_signals() {
 
     db.record_recall_event("ag", id, "dark", 1.0).await.unwrap();
     db.record_recall_event("ag", id, "mode", 0.5).await.unwrap();
-    db.record_recall_event("ag", id, "dark", 0.75).await.unwrap();
+    db.record_recall_event("ag", id, "dark", 0.75)
+        .await
+        .unwrap();
 
     let sig = db.recall_signals("ag", id, None).await.unwrap();
     assert_eq!(sig.recall_count, 3);
     assert!(sig.frequency > 0.0);
     // relevance = mean(1.0, 0.5, 0.75) = 0.75
-    assert!((sig.relevance - 0.75).abs() < 1e-4, "relevance={}", sig.relevance);
+    assert!(
+        (sig.relevance - 0.75).abs() < 1e-4,
+        "relevance={}",
+        sig.relevance
+    );
     // Two distinct queries, one day, so diversity comes from query count.
     assert!(sig.diversity > 0.0);
 }
@@ -254,9 +272,15 @@ async fn recall_signals_isolated_per_memory_and_agent() {
     let a_mem = db.remember("ag-a", "aaa", &[]).await.unwrap();
     let b_mem = db.remember("ag-b", "bbb", &[]).await.unwrap();
 
-    db.record_recall_event("ag-a", a_mem, "q", 1.0).await.unwrap();
-    db.record_recall_event("ag-a", a_mem, "q", 1.0).await.unwrap();
-    db.record_recall_event("ag-b", b_mem, "q", 1.0).await.unwrap();
+    db.record_recall_event("ag-a", a_mem, "q", 1.0)
+        .await
+        .unwrap();
+    db.record_recall_event("ag-a", a_mem, "q", 1.0)
+        .await
+        .unwrap();
+    db.record_recall_event("ag-b", b_mem, "q", 1.0)
+        .await
+        .unwrap();
 
     let a = db.recall_signals("ag-a", a_mem, None).await.unwrap();
     let b = db.recall_signals("ag-b", b_mem, None).await.unwrap();
@@ -308,7 +332,9 @@ async fn count_sessions_distinct() {
     let s1 = Uuid::new_v4();
     let s2 = Uuid::new_v4();
     db.save_interaction(s1, "a", "user", "hi").await.unwrap();
-    db.save_interaction(s1, "a", "assistant", "hello").await.unwrap();
+    db.save_interaction(s1, "a", "assistant", "hello")
+        .await
+        .unwrap();
     db.save_interaction(s2, "a", "user", "q2").await.unwrap();
     db.save_interaction(s1, "b", "user", "hi-b").await.unwrap();
     assert_eq!(db.count_sessions("a").await.unwrap(), 2);
@@ -357,17 +383,34 @@ async fn recall_events_since_windowed() {
 #[tokio::test]
 async fn top_concept_tags_since_tallies() {
     let db = open_temp_db().await;
-    let m_openai = db.remember("a", "We call OpenAI endpoints", &[]).await.unwrap();
-    let m_router = db.remember("a", "Router VLAN config on switch", &[]).await.unwrap();
+    let m_openai = db
+        .remember("a", "We call OpenAI endpoints", &[])
+        .await
+        .unwrap();
+    let m_router = db
+        .remember("a", "Router VLAN config on switch", &[])
+        .await
+        .unwrap();
 
     // Three recall hits on openai, one on router.
-    db.record_recall_event("a", m_openai, "q1", 1.0).await.unwrap();
-    db.record_recall_event("a", m_openai, "q2", 0.5).await.unwrap();
-    db.record_recall_event("a", m_openai, "q3", 0.3).await.unwrap();
-    db.record_recall_event("a", m_router, "q4", 0.9).await.unwrap();
+    db.record_recall_event("a", m_openai, "q1", 1.0)
+        .await
+        .unwrap();
+    db.record_recall_event("a", m_openai, "q2", 0.5)
+        .await
+        .unwrap();
+    db.record_recall_event("a", m_openai, "q3", 0.3)
+        .await
+        .unwrap();
+    db.record_recall_event("a", m_router, "q4", 0.9)
+        .await
+        .unwrap();
 
     let now = Utc::now().timestamp_millis();
-    let top = db.top_concept_tags_since("a", now - 60_000, 5).await.unwrap();
+    let top = db
+        .top_concept_tags_since("a", now - 60_000, 5)
+        .await
+        .unwrap();
     assert!(!top.is_empty());
     // `openai` should rank higher than `router` because it was recalled more.
     let openai_rank = top.iter().position(|(t, _)| t == "openai");
@@ -375,6 +418,10 @@ async fn top_concept_tags_since_tallies() {
     if let (Some(oi), Some(ri)) = (openai_rank, router_rank) {
         assert!(oi < ri, "openai {oi} should outrank router {ri}");
     } else {
-        assert!(openai_rank.is_some(), "openai tag must appear, got {:?}", top);
+        assert!(
+            openai_rank.is_some(),
+            "openai tag must appear, got {:?}",
+            top
+        );
     }
 }

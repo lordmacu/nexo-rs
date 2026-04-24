@@ -35,7 +35,10 @@ fn server_config(name: &str, mode: &str) -> McpServerConfig {
 
 fn runtime_config(servers: Vec<McpServerConfig>, ttl_ms: u64) -> McpRuntimeConfig {
     McpRuntimeConfig {
-        servers: servers.into_iter().map(McpServerRuntimeConfig::Stdio).collect(),
+        servers: servers
+            .into_iter()
+            .map(McpServerRuntimeConfig::Stdio)
+            .collect(),
         session_ttl: Duration::from_millis(ttl_ms),
         idle_reap_interval: Duration::from_millis((ttl_ms / 2).max(20)),
         reset_level_on_unset: false,
@@ -68,10 +71,7 @@ async fn recreates_runtime_on_fingerprint_change() {
     let sid = Uuid::new_v4();
     let a = mgr.get_or_create(sid).await;
 
-    let new_cfg = runtime_config(
-        vec![server_config("different_name", "happy")],
-        60_000,
-    );
+    let new_cfg = runtime_config(vec![server_config("different_name", "happy")], 60_000);
     assert_ne!(new_cfg.fingerprint(), a.config_fingerprint());
     mgr.update_config(new_cfg).await;
 
@@ -91,11 +91,13 @@ async fn concurrent_get_or_create_deduplicates() {
 
     let mgr_a = mgr.clone();
     let mgr_b = mgr.clone();
-    let (a, b) = tokio::join!(
-        async move { mgr_a.get_or_create(sid).await },
-        async move { mgr_b.get_or_create(sid).await }
+    let (a, b) = tokio::join!(async move { mgr_a.get_or_create(sid).await }, async move {
+        mgr_b.get_or_create(sid).await
+    });
+    assert!(
+        Arc::ptr_eq(&a, &b),
+        "concurrent creates must share one runtime"
     );
-    assert!(Arc::ptr_eq(&a, &b), "concurrent creates must share one runtime");
     mgr.shutdown_all().await;
 }
 

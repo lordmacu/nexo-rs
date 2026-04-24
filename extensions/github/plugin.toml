@@ -7,6 +7,9 @@ description = "Rust extension for GitHub repository operations via REST API (PAT
 [capabilities]
 tools = ["status", "pr_list", "pr_view", "pr_checks", "issue_list"]
 
+[context]
+passthrough = true
+
 [transport]
 kind = "stdio"
 command = "./target/release/github"

@@ -10,7 +10,10 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::errors::McpError;
-use crate::types::{McpServerInfo, McpTool, McpToolResult};
+use crate::types::{
+    McpPrompt, McpPromptResult, McpResource, McpResourceContent, McpResourceTemplate,
+    McpServerInfo, McpTool, McpToolResult,
+};
 
 #[async_trait]
 pub trait McpServerHandler: Send + Sync {
@@ -26,6 +29,45 @@ pub trait McpServerHandler: Send + Sync {
     async fn list_tools(&self) -> Result<Vec<McpTool>, McpError>;
 
     async fn call_tool(&self, name: &str, arguments: Value) -> Result<McpToolResult, McpError>;
+
+    /// Optional `resources/list` support.
+    async fn list_resources(&self) -> Result<Vec<McpResource>, McpError> {
+        Err(McpError::Protocol(
+            "resources not supported by this server".into(),
+        ))
+    }
+
+    /// Optional `resources/read` support.
+    async fn read_resource(&self, _uri: &str) -> Result<Vec<McpResourceContent>, McpError> {
+        Err(McpError::Protocol(
+            "resources not supported by this server".into(),
+        ))
+    }
+
+    /// Optional `resources/templates/list` support.
+    async fn list_resource_templates(&self) -> Result<Vec<McpResourceTemplate>, McpError> {
+        Err(McpError::Protocol(
+            "resource templates not supported by this server".into(),
+        ))
+    }
+
+    /// Optional `prompts/list` support.
+    async fn list_prompts(&self) -> Result<Vec<McpPrompt>, McpError> {
+        Err(McpError::Protocol(
+            "prompts not supported by this server".into(),
+        ))
+    }
+
+    /// Optional `prompts/get` support.
+    async fn get_prompt(
+        &self,
+        _name: &str,
+        _arguments: Value,
+    ) -> Result<McpPromptResult, McpError> {
+        Err(McpError::Protocol(
+            "prompts not supported by this server".into(),
+        ))
+    }
 }
 
 pub use stdio::{run_stdio_server, run_stdio_server_with_auth, run_with_io, run_with_io_auth};

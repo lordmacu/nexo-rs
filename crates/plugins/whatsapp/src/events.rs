@@ -47,16 +47,26 @@ pub enum InboundEvent {
         png_base64: String,
         expires_at: i64,
     },
-    Connected { our_jid: String },
-    Disconnected { reason: String },
-    Reconnecting { attempt: u32 },
-    PairingSuccess { device_jid: String },
+    Connected {
+        our_jid: String,
+    },
+    Disconnected {
+        reason: String,
+    },
+    Reconnecting {
+        attempt: u32,
+    },
+    PairingSuccess {
+        device_jid: String,
+    },
     CredentialsExpired,
     /// Emitted by the bridge when an inbound message didn't receive an
     /// outbound reply within `bridge.response_timeout_ms`. Observability
     /// only — the actual user-facing fallback is handled by
     /// `bridge.on_timeout`.
-    BridgeTimeout { session_id: uuid::Uuid },
+    BridgeTimeout {
+        session_id: uuid::Uuid,
+    },
 }
 
 impl InboundEvent {

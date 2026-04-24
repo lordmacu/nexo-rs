@@ -10,6 +10,9 @@ tools = ["status", "exec", "scp_upload", "scp_download"]
 [requires]
 bins = ["ssh", "scp"]
 
+[context]
+passthrough = true
+
 [transport]
 kind = "stdio"
 command = "./target/release/ssh-exec"

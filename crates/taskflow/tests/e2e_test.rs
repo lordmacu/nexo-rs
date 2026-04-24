@@ -14,7 +14,11 @@ use agent_taskflow::{
 
 fn tempdir_db() -> (TempDir, String) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("taskflow.db").to_string_lossy().into_owned();
+    let path = dir
+        .path()
+        .join("taskflow.db")
+        .to_string_lossy()
+        .into_owned();
     (dir, path)
 }
 
@@ -41,11 +45,7 @@ async fn flow_state_survives_reopen() {
         let f = m.create_managed(seed_input()).await.unwrap();
         let f = m.start_running(f.id).await.unwrap();
         let f = m
-            .update_state(
-                f.id,
-                json!({ "verses_done": 10 }),
-                Some("verse-10".into()),
-            )
+            .update_state(f.id, json!({ "verses_done": 10 }), Some("verse-10".into()))
             .await
             .unwrap();
         let f = m
@@ -95,12 +95,8 @@ async fn concurrent_mutations_serialize_via_revision_retry() {
     let m2 = Arc::clone(&m);
     let flow_id = f.id;
 
-    let t1 = tokio::spawn(async move {
-        m1.update_state(flow_id, json!({ "a": 1 }), None).await
-    });
-    let t2 = tokio::spawn(async move {
-        m2.update_state(flow_id, json!({ "b": 2 }), None).await
-    });
+    let t1 = tokio::spawn(async move { m1.update_state(flow_id, json!({ "a": 1 }), None).await });
+    let t2 = tokio::spawn(async move { m2.update_state(flow_id, json!({ "b": 2 }), None).await });
 
     let r1 = t1.await.expect("join1");
     let r2 = t2.await.expect("join2");

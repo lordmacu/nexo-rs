@@ -13,6 +13,7 @@ members = [
     "crates/plugins/whatsapp",
     "crates/plugins/telegram",
     "crates/plugins/email",
+    "crates/plugins/google",
     "crates/setup",
     "crates/tunnel",
 ]
@@ -86,6 +87,7 @@ uuid                = { workspace = true }
 agent-plugin-browser = { path = "crates/plugins/browser" }
 agent-plugin-whatsapp = { path = "crates/plugins/whatsapp" }
 agent-plugin-telegram = { path = "crates/plugins/telegram" }
+agent-plugin-google   = { path = "crates/plugins/google" }
 agent-setup          = { path = "crates/setup" }
 agent-tunnel         = { path = "crates/tunnel" }
 agent-config        = { path = "crates/config" }

@@ -10,10 +10,12 @@ use agent_resilience::{CircuitBreaker, CircuitBreakerConfig, CircuitError};
 use crate::client::LlmClient;
 use crate::rate_limiter::RateLimiter;
 use crate::retry::{parse_retry_after_ms, with_retry, LlmError};
-use crate::stream::{parse_openai_sse, record_usage_tap, StreamChunk};
+use crate::stream::{
+    ensure_event_stream, parse_openai_sse, record_usage_tap, stream_metrics_tap, StreamChunk,
+};
 use crate::types::{
-    Attachment, AttachmentData, ChatRequest, ChatResponse, ChatRole, FinishReason,
-    ResponseContent, TokenUsage, ToolCall, ToolChoice,
+    Attachment, AttachmentData, ChatRequest, ChatResponse, ChatRole, FinishReason, ResponseContent,
+    TokenUsage, ToolCall, ToolChoice,
 };
 use futures::stream::BoxStream;
 
@@ -74,8 +76,7 @@ impl OpenAiClient {
     ) -> Result<reqwest::Response, LlmError> {
         let status = response.status().as_u16();
         if status == 429 {
-            let retry_after_ms =
-                parse_retry_after_ms(response.headers(), "retry-after", 30_000);
+            let retry_after_ms = parse_retry_after_ms(response.headers(), "retry-after", 30_000);
             return Err(LlmError::RateLimit { retry_after_ms });
         }
         if status >= 500 {
@@ -146,6 +147,7 @@ impl OpenAiClient {
             .await
             .map_err(|e| LlmError::Other(e.into()))?;
         let response = self.classify_response(response).await?;
+        let response = ensure_event_stream(response).map_err(LlmError::Other)?;
 
         let byte_stream = response.bytes_stream();
         Ok(parse_openai_sse(byte_stream))
@@ -295,7 +297,10 @@ mod tests {
         let assistant = messages.iter().find(|m| m["role"] == "assistant").unwrap();
         assert_eq!(assistant["tool_calls"][0]["id"], "call_1");
         assert_eq!(assistant["tool_calls"][0]["type"], "function");
-        assert_eq!(assistant["tool_calls"][0]["function"]["name"], "get_weather");
+        assert_eq!(
+            assistant["tool_calls"][0]["function"]["name"],
+            "get_weather"
+        );
         // arguments field is a JSON-encoded string per OpenAI wire.
         let args_str = assistant["tool_calls"][0]["function"]["arguments"]
             .as_str()
@@ -374,7 +379,10 @@ impl LlmClient for OpenAiClient {
             .call(|| with_retry(&retry, || self.open_stream(&req)))
             .await
         {
-            Ok(s) => Ok(record_usage_tap(s, self.rate_limiter.clone())),
+            Ok(s) => Ok(stream_metrics_tap(
+                record_usage_tap(s, self.rate_limiter.clone()),
+                self.provider(),
+            )),
             Err(CircuitError::Open(name)) => {
                 Err(anyhow::anyhow!("circuit breaker `{name}` is open"))
             }

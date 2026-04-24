@@ -149,7 +149,10 @@ mod tests {
         write_atomic(&path, &cfg).unwrap();
 
         let back = load_or_default(&path).unwrap();
-        assert_eq!(back.disabled, vec!["weather".to_string(), "calendar".into()]);
+        assert_eq!(
+            back.disabled,
+            vec!["weather".to_string(), "calendar".into()]
+        );
         assert_eq!(back.transport_defaults.nats.heartbeat_grace_factor, 3);
     }
 
@@ -174,9 +177,8 @@ mod tests {
             .unwrap();
         // Kick off a reader thread; it should be blocked on the lock.
         let path_bg = path.clone();
-        let handle = std::thread::spawn(move || {
-            write_atomic(&path_bg, &ExtensionsConfig::default())
-        });
+        let handle =
+            std::thread::spawn(move || write_atomic(&path_bg, &ExtensionsConfig::default()));
         // Let the blocked writer spin a few polls …
         std::thread::sleep(Duration::from_millis(120));
         // Release the lock and let the thread complete.
@@ -233,6 +235,9 @@ mod tests {
             !tmp.exists(),
             "temporary file should be removed after rename failure"
         );
-        assert!(path.is_dir(), "existing target directory should stay untouched");
+        assert!(
+            path.is_dir(),
+            "existing target directory should stay untouched"
+        );
     }
 }

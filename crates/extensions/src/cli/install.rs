@@ -164,8 +164,7 @@ pub fn run_uninstall(ctx: CliContext<'_>, opts: UninstallOptions) -> Result<(), 
     let was_symlink = meta.file_type().is_symlink();
 
     if was_symlink {
-        fs::remove_file(&path)
-            .map_err(|e| CliError::CopyFailed(format!("remove_file: {e}")))?;
+        fs::remove_file(&path).map_err(|e| CliError::CopyFailed(format!("remove_file: {e}")))?;
     } else {
         fs::remove_dir_all(&path)
             .map_err(|e| CliError::CopyFailed(format!("remove_dir_all: {e}")))?;
@@ -234,10 +233,7 @@ fn validate_id_not_reserved(id: &str) -> Result<(), CliError> {
     Ok(())
 }
 
-fn compute_target(
-    cfg: &agent_config::ExtensionsConfig,
-    id: &str,
-) -> Result<PathBuf, CliError> {
+fn compute_target(cfg: &agent_config::ExtensionsConfig, id: &str) -> Result<PathBuf, CliError> {
     let first = cfg
         .search_paths
         .first()
@@ -286,10 +282,7 @@ fn detect_collision(
     Ok(())
 }
 
-fn find_symlinked_install(
-    cfg: &agent_config::ExtensionsConfig,
-    id: &str,
-) -> Option<PathBuf> {
+fn find_symlinked_install(cfg: &agent_config::ExtensionsConfig, id: &str) -> Option<PathBuf> {
     for base in &cfg.search_paths {
         let p = PathBuf::from(base).join(id);
         if let Ok(meta) = fs::symlink_metadata(&p) {
@@ -308,8 +301,7 @@ fn canonicalize_lossy(p: &Path) -> PathBuf {
 fn install_copy(src: &Path, target: &Path) -> Result<(), CliError> {
     let tmp = sibling_tmp(target);
     cleanup_path_if_exists(&tmp)?;
-    copy_dir_all(src, &tmp)
-        .map_err(|e| CliError::CopyFailed(format!("copy to tmp: {e}")))?;
+    copy_dir_all(src, &tmp).map_err(|e| CliError::CopyFailed(format!("copy to tmp: {e}")))?;
     fs::rename(&tmp, target).map_err(|e| {
         let _ = cleanup_path_if_exists(&tmp);
         map_rename_err(e)
@@ -338,8 +330,7 @@ fn install_link(src: &Path, target: &Path) -> Result<(), CliError> {
 fn install_update(src: &Path, target: &Path) -> Result<(), CliError> {
     let tmp = sibling_tmp(target);
     cleanup_path_if_exists(&tmp)?;
-    copy_dir_all(src, &tmp)
-        .map_err(|e| CliError::CopyFailed(format!("copy to tmp: {e}")))?;
+    copy_dir_all(src, &tmp).map_err(|e| CliError::CopyFailed(format!("copy to tmp: {e}")))?;
 
     let old_side = with_suffix(target, ".old-");
     cleanup_path_if_exists(&old_side)?;
@@ -369,20 +360,14 @@ fn map_rename_err(e: std::io::Error) -> CliError {
 
 fn sibling_tmp(target: &Path) -> PathBuf {
     let pid = std::process::id();
-    let name = target
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("ext");
+    let name = target.file_name().and_then(|n| n.to_str()).unwrap_or("ext");
     let parent = target.parent().unwrap_or_else(|| Path::new("."));
     parent.join(format!("{name}.tmp-{pid}"))
 }
 
 fn with_suffix(target: &Path, suffix: &str) -> PathBuf {
     let pid = std::process::id();
-    let name = target
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("ext");
+    let name = target.file_name().and_then(|n| n.to_str()).unwrap_or("ext");
     let parent = target.parent().unwrap_or_else(|| Path::new("."));
     parent.join(format!("{name}{suffix}{pid}"))
 }
@@ -589,7 +574,10 @@ command = "/bin/true"
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = fs::metadata(dst.join("run.sh")).unwrap().permissions().mode();
+            let mode = fs::metadata(dst.join("run.sh"))
+                .unwrap()
+                .permissions()
+                .mode();
             assert_eq!(mode & 0o777, 0o755);
         }
     }

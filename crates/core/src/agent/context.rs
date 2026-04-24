@@ -1,12 +1,12 @@
-use std::sync::Arc;
+use super::peer_directory::PeerDirectory;
+use super::routing::AgentRouter;
+use crate::session::SessionManager;
 use agent_broker::AnyBroker;
 use agent_config::types::agents::AgentConfig;
 use agent_mcp::SessionMcpRuntime;
 use agent_memory::LongTermMemory;
+use std::sync::Arc;
 use uuid::Uuid;
-use super::peer_directory::PeerDirectory;
-use super::routing::AgentRouter;
-use crate::session::SessionManager;
 #[derive(Clone)]
 pub struct AgentContext {
     pub agent_id: String,

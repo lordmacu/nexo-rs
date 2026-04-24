@@ -70,6 +70,14 @@ pub enum McpContent {
     },
 }
 
+impl Default for McpContent {
+    fn default() -> Self {
+        McpContent::Text {
+            text: String::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct McpResourceRef {
     pub uri: String,
@@ -217,7 +225,7 @@ pub struct McpPromptResult {
     pub messages: Vec<McpPromptMessage>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct McpPromptMessage {
     #[serde(default)]
     pub role: String,

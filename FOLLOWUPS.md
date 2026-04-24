@@ -118,26 +118,38 @@
 - SSE parsing vía `eventsource-stream = "0.2"` (maneja `\n\n` boundaries, `data:` multi-línea, comments `:`, marker `[DONE]`).
 - Tests: 11 unit tests en `crates/llm/src/stream.rs` (text, tool calls, malformed skip, Anthropic deltas, default impl) + `crates/llm/tests/stream_http_smoke.rs` (wiremock: SSE real sobre HTTP + 400 open-error).
 - **Follow-ups abiertos** (ver abajo):
-  - Métricas Prometheus `agent_llm_stream_ttft_seconds` / `agent_llm_stream_chunks_total` — la telemetry vive en `crates/core` (dep cycle con `agent-llm`), necesita refactor: mover telemetry a crate propio o exponer callback instrumentable.
-  - Wiring del agent loop para consumir `stream()` (hoy sigue llamando `chat()`). Se abre cuando un plugin (WhatsApp) pida preview streaming.
   - Chunker (paragraph/newline/code-fence splitting), coalescing, human-like pacing — son concern de plugin, no del trait.
   - Reconnect mid-stream tras caída de conexión — decisión explícita: no soportado.
   - Reasoning-token deltas — ningún provider soportado los expone estable.
 
-### Phase 3 (follow-up) — métricas Prometheus de streaming
-- `agent_llm_stream_ttft_seconds{provider}` (histogram) + `agent_llm_stream_chunks_total{provider,kind}` (counter) no implementados.
-- Bloqueo: registry de métricas vive en `crates/core/src/telemetry.rs`; `agent-llm` no puede depender de `agent-core` (circular).
-- Opciones: (a) extraer `telemetry` a crate propio `agent-telemetry`, (b) inyectar instrumentación via callback/trait desde el agent loop, (c) exponer hooks `Fn(&StreamChunk)` en `LlmClient::stream`.
-- Acción: tratar en brainstorm separado junto con extracción de telemetry.
+### ~~Phase 3 (follow-up) — métricas Prometheus de streaming~~ ✅ Resuelto 2026-04-24
+- `agent-llm` ahora expone módulo propio `crates/llm/src/telemetry.rs` (sin depender de `agent-core`) con:
+  - `agent_llm_stream_ttft_seconds{provider}` (histogram).
+  - `agent_llm_stream_chunks_total{provider,kind}` (counter).
+- Instrumentación via `stream_metrics_tap(...)` en `crates/llm/src/stream.rs`:
+  - TTFT se observa al primer chunk contentful (`TextDelta` o `ToolCall*`).
+  - Cada chunk incrementa su `kind` (`text_delta`, `tool_call_start`, `tool_call_args_delta`, `tool_call_end`, `usage`, `end`).
+- Wiring aplicado en `OpenAiClient`, `MiniMaxClient`, `GeminiClient`, `AnthropicClient` y en el default `stream()` synth de `chat()`.
+- `/metrics` concatena `agent_llm::telemetry::render_prometheus()` desde `src/main.rs`.
+- Tests: `crates/llm/src/telemetry.rs` + `metrics_tap_records_ttft_and_chunk_kinds` en `crates/llm/src/stream.rs`.
+
+### ~~Phase 3 (follow-up) — wiring del agent loop a `stream()`~~ ✅ Resuelto 2026-04-24
+- `crates/core/src/agent/llm_behavior.rs` ya no llama `llm.chat(req)` en el loop principal.
+- Ahora abre stream con `llm.stream(req)` y reconstruye respuesta final vía `agent_llm::collect_stream(...)`.
+- Efecto: providers con SSE nativo pasan por el mismo camino productivo del runtime; providers sin stream real siguen funcionando por el default `stream()` del trait (fallback a `chat()`).
 
 ### ~~Phase 3 (follow-up) — cancelación de streams tested~~ ✅ Resuelto 2026-04-24
 - `crates/llm/tests/stream_cancel.rs`: wiremock con 2s delay, cliente abre stream, `drop()` inmediato → verifica que el test termina en <1500ms (la drop cancela el TCP sin esperar el body completo).
 - Test tolerante a timing variable en CI (skip-pass si el mock retiene headers >500ms).
 - Construcción de `LlmProviderConfig` vía `serde_json::from_value` para sobrevivir los refactors en vuelo que añaden campos.
-- Backpressure explícito (`mpsc` acotado) queda abierto — sin caso real de leak bajo carga.
 
-### Phase 3 (follow-up) — backpressure explícita de streams
-- No hay `mpsc` acotado — si el consumer se retrasa, `eventsource-stream` acumula bytes en memoria. En runtime normal el parser va por delta (pequeños KB); reevaluar si aparece leak bajo carga.
+### ~~Phase 3 (follow-up) — backpressure explícita de streams~~ ✅ Resuelto 2026-04-24
+- `crates/llm/src/stream.rs`: `parse_openai_sse`, `parse_anthropic_sse` y `parse_gemini_sse` ahora usan un canal acotado (`tokio::sync::mpsc`, `SSE_CHUNK_BUFFER=128`) entre parser SSE y consumer.
+- El parser hace `send().await` sobre el canal; cuando el consumer se retrasa, el canal aplica backpressure y frena el pull de bytes upstream.
+- Validado con suites de streaming:
+  - `cargo test -p agent-llm parser_tests`
+  - `cargo test -p agent-llm --test stream_http_smoke`
+  - `cargo test -p agent-llm --test stream_cancel`
 
 ### ~~Phase 3 — `AgentConfig.system_prompt` no existe~~ ✅ Resuelto 2026-04-22
 - `AgentConfig.system_prompt: String` (default `""`) añadido al struct + YAML loader.
@@ -667,18 +679,31 @@ Plugins telegram/, email/, whatsapp/: cada uno tiene `src/lib.rs` vacío (1 lín
 - Mapping: `messages` MCP (text-only) → `ChatMessage::user/assistant`; `modelPreferences.hints` → exact match contra `provider()`/`model_id()` de clientes named + fallback a default; `temperature/maxTokens/stopSequences` → `ChatRequest`; `finish_reason` → `stopReason` (`Stop→endTurn`, `Length→maxTokens`, `ToolUse→endTurn`+warn).
 - Rejects: multimodal content → `-32602`, tool_calls response → `-32603`, rate-limited → `-32000`, disabled → `-32000`, no provider → `-32601 method not found`.
 - `SamplingPolicy::cap()` trunca `max_tokens` a `min(per_server_cap, global_cap)` sin rechazar.
-- Métricas Prometheus: **pendientes** (spec las pedía; quedan como follow-up junto con las de streaming por el mismo ciclo de deps).
 - Tests: 20 unit (`wire`, `policy`, `default_provider`, `mod::error_codes`) + 3 integration (`tests/sampling_test.rs`: happy path, disabled returns -32601, llm-failure returns -32603). Mock server extendido con `MOCK_MODE=sampling_trigger`.
 - **Follow-ups abiertos**:
-  - Métricas Prometheus `agent_mcp_sampling_requests_total` + `agent_mcp_sampling_duration_ms` — mismo bloqueo que streaming (telemetry en `crates/core`).
   - Multimodal content (image/audio) — requiere extender `ChatRequest`.
   - Human-in-the-loop approval via canal de usuario (WhatsApp/Telegram) — nuevo `ConfirmationGatedProvider`.
   - `includeContext: "thisServer"/"allServers"` — hoy se ignora con warn.
   - Hot reload de `sampling_provider` cuando `mcp.yaml` cambia — provider se fija al startup.
-  - Wiring en `src/main.rs` (leer `cfg.mcp.sampling`, construir `DefaultSamplingProvider` desde `LlmRegistry`, pasar al `McpRuntimeManager`) — API lista, wiring diferido para no expandir scope.
 - **Original note** (now stale):
 - MCP spec permite al server invocar LLM del cliente vía `sampling/createMessage`. 12.1 ignora estas requests con log-debug.
 - **Acción:** cuando sea requerido, integrar con `agent_llm::LlmClient` y manejar `sampling/*` requests en reader_task.
+
+### ~~Phase 12.1 (follow-up) — métricas Prometheus de sampling~~ ✅ Resuelto 2026-04-24
+- `crates/mcp/src/telemetry.rs` agrega:
+  - `agent_mcp_sampling_requests_total{server,outcome}` (counter).
+  - `agent_mcp_sampling_duration_ms{server,le}` (histogram).
+- `crates/mcp/src/client.rs::handle_incoming` instrumenta `sampling/createMessage`:
+  - outcome labels: `ok`, `unsupported`, `invalid_params`, `disabled`, `rate_limited`, `tool_calls_rejected`, `llm_error`, `no_provider`.
+  - duración medida end-to-end del request de sampling (parse + provider.sample + encode response/error).
+- No requiere wiring extra: `/metrics` ya concatena `agent_mcp::telemetry::render_prometheus()`.
+
+### ~~Phase 12.1 (follow-up) — wiring de `mcp.sampling` en main~~ ✅ Resuelto 2026-04-24
+- `crates/config/src/types/mcp.rs` ahora incluye `mcp.sampling`:
+  - `enabled`, `default_hint`, `global_max_tokens_cap`, `deny_servers`, `per_server.{enabled,rate_limit_per_minute,max_tokens_cap}`.
+- `src/main.rs` construye `DefaultSamplingProvider` desde `LlmRegistry` + modelos de agentes y lo inyecta a `McpRuntimeManager::new_with_sampling(...)`.
+- `crates/mcp/src/manager.rs` y `crates/mcp/src/session.rs` propagan ese provider a conexiones stdio (`StdioMcpClient::connect_with_sampling`), habilitando capability `sampling` en handshake cuando aplica.
+- `config/mcp.yaml` documenta la sección `sampling` (default off).
 
 ### ~~Sin validación client-side del input_schema~~ ✅ Ya cubierto 2026-04-24
 - MCP tools se registran como `McpTool` (handler) en el `ToolRegistry` del agente. El `LlmAgentBehavior::execute_one_call` ya pasa cada `args` por `ToolArgsValidator` antes de invocar el handler (gated por `agents[].tool_args_validation.enabled`, default true).
@@ -983,9 +1008,19 @@ Formalizada en `PHASES.md` como sub-fase 10.9. Resumen del trade-off para no olv
 - El valor principal sería "Claude Desktop pregunta al agente algo" → correr LLM loop completo. Scope grande, follow-up.
 - **Acción:** nuevo tool `chat` que dispara turn completo con el agente configurado; requiere AgentRuntime wired.
 
-### Sin resources/prompts server-side
-- No exponemos MEMORY.md/SOUL.md como MCP resources ni prompts templated.
-- **Acción:** espejo de 12.5 client-side: implementar resources + prompts como handler methods; bridge lee del workspace.
+### ~~Sin resources/prompts server-side~~ ✅ Resuelto 2026-04-24
+- `McpServerHandler` ahora soporta métodos opcionales server-side para:
+  - `resources/list`, `resources/read`, `resources/templates/list`,
+  - `prompts/list`, `prompts/get`.
+- `server::stdio::dispatch` enruta esos métodos y responde envelopes MCP válidos (`resources`, `contents`, `prompts`, `messages`), con validación de params requeridos y mapeo de errores `Protocol -> -32602`.
+- `ToolRegistryBridge` expone recursos de workspace:
+  - `agent://workspace/soul` ↔ `SOUL.md`,
+  - `agent://workspace/memory` ↔ `MEMORY.md`,
+  junto con prompts templated `workspace_soul_context` / `workspace_memory_context`.
+- `initialize.capabilities` del bridge ahora anuncia `tools`, `resources` y `prompts`.
+- Cobertura añadida:
+  - `server::stdio`: `resources_list_and_read_roundtrip`, `prompts_list_and_get_roundtrip`.
+  - `core::mcp_server_bridge`: `list_resources_exposes_workspace_docs`, `read_resource_returns_workspace_markdown`, `prompts_list_and_get_use_workspace_docs`.
 
 ### Sin notifications push
 - Servidor no emite `tools/list_changed` al añadir extensions en runtime. Cliente ve snapshot del arranque.
@@ -1508,46 +1543,61 @@ Formalizada en `PHASES.md` como sub-fase 10.9. Resumen del trade-off para no olv
 
 ## 🟡 Extensions add-on batch (cloudflare, dns-tools, wikipedia, rss, translate, yt-dlp, ssh-exec, tesseract-ocr) — 2026-04-24
 
-### Manifest schema gap
-- Todos los `plugin.toml` incluyen `[requires]` pero `ExtensionManifest` tenía `deny_unknown_fields` sin ese campo → discovery fallaba para los 30 extensions.
-- **Acción aplicada:** agregado `pub struct Requires { bins, env }` a `crates/extensions/src/manifest.rs`.
+### ~~Manifest schema gap~~ ✅ Resuelto 2026-04-24
+- Todos los `plugin.toml` con `[requires]` parsean correctamente en `ExtensionManifest`.
+- Cobertura añadida en `crates/extensions/src/manifest.rs`:
+  - `requires_defaults_to_empty_lists`
+  - `requires_parses_bins_and_env`
+  - `requires_rejects_unknown_fields`
 
-### Tests integration wiremock por extension
-- Los 8 nuevos extensions pasaron smoke-test (`status` live) pero no tienen suites wiremock por tool.
-- **Acción:** añadir wiremock suites si surgen regresiones.
+### ~~Tests integration wiremock por extension~~ ✅ Resuelto 2026-04-24
+- Suites wiremock añadidas para extensiones HTTP del batch:
+  - `extensions/cloudflare/tests/cloudflare_mock.rs`
+  - `extensions/wikipedia/tests/wikipedia_mock.rs`
+  - `extensions/rss/tests/rss_mock.rs`
+  - `extensions/translate/tests/translate_mock.rs`
+- Validación local:
+  - `extensions/cloudflare`: 2 tests ok
+  - `extensions/wikipedia`: 2 tests ok
+  - `extensions/rss`: 2 tests ok
+  - `extensions/translate`: 2 tests ok
+- Nota: `dns-tools`, `ssh-exec`, `yt-dlp`, `tesseract-ocr` son principalmente wrappers de binarios/local tools; su cobertura no requiere wiremock.
 
 ### cloudflare / yt-dlp / ssh-exec — write gates
 - `CLOUDFLARE_ALLOW_WRITES`, `YTDLP_ALLOW_DOWNLOAD`, `SSH_EXEC_ALLOW_WRITES` como env flags sin UI/setup wizard.
 - **Acción:** si aparecen fricciones, integrar al setup wizard + doctor.
 
-### tesseract-ocr status no hint install
-- Si `tesseract` no está en PATH, `status` retorna `ok:false` pero no explica cómo instalarlo.
-- **Acción:** mejorar mensaje de error en status.
+### ~~tesseract-ocr status no hint install~~ ✅ Resuelto 2026-04-24
+- `extensions/tesseract-ocr/src/tools.rs` ahora devuelve `install_hint` cuando `status.ok=false`.
+- `status` también expone `status_error` y mejora el probe de versión (`stdout`/`stderr`) para diagnósticos más claros.
 
 ## 🟡 Telegram plugin — media + typing + LLM vision — 2026-04-24
 
-### auto_transcribe voz pendiente
-- Inbound voz descarga archivo a `media_path` pero no se auto-transcribe. Agente debe llamar `openai-whisper` explícito.
-- **Acción:** opt-in `telegram.auto_transcribe: true` que invoque whisper antes de publicar y sustituya `text` por la transcripción.
+### ~~auto_transcribe voz pendiente~~ ✅ Resuelto 2026-04-24
+- `TelegramPluginConfig` ya expone `auto_transcribe: { enabled, command, timeout_ms, language }`.
+- En el poller (`telegram/src/plugin.rs`), cuando `auto_transcribe.enabled=true` y llega `voice/audio` sin texto, llama `transcribe_voice(...)` antes de publicar y reemplaza `text` con la transcripción.
+- El `media_path` original se conserva en `InboundEvent.media` para skills que requieran el archivo crudo.
 
-### Typing indicator solo en bridge path
-- Typing ticker se dispara sólo cuando kate responde a mensaje recién llegado. Proactive sends (heartbeat, agent-to-agent) salen sin indicador.
-- **Acción:** añadir `send_chat_action("typing")` en `spawn_dispatcher` antes de `send_message`.
+### ~~Typing indicator solo en bridge path~~ ✅ Resuelto 2026-04-24
+- `crates/plugins/telegram/src/plugin.rs` (`spawn_dispatcher`) ya dispara `send_chat_action(...)` en path proactive antes de enviar texto/media.
+- Mapea `kind`→acción (`upload_photo`, `record_voice`, `upload_video`, `upload_document`, fallback `typing`).
 
-### Tests dispatcher nuevos
-- Los 11 Custom commands (send_photo/audio/voice/video/document/animation/location/edit/reaction/send_with_format/reply) no están cubiertos con wiremock.
-- **Acción:** `tests/dispatch_test.rs` con wiremock-server.
+### ~~Tests dispatcher nuevos~~ ✅ Resuelto 2026-04-24
+- Cobertura wiremock agregada en `crates/plugins/telegram/tests/dispatch_test.rs`.
+- Incluye los custom commands: `send_photo`, `send_audio`, `send_voice`, `send_video`, `send_document`, `send_animation`, `send_location`, `edit_message`, `reaction`, `send_with_format`, `reply` (además de `chat_action` y `unknown custom`).
 
-### MediaDescriptor solo primer media
-- `download_media` escoge uno y descarta si el mensaje tiene varios.
-- **Acción:** si surge caso real, cambiar `media: Option<MediaDescriptor>` a `media: Vec<MediaDescriptor>`.
+### ~~MediaDescriptor solo primer media~~ ✅ Resuelto 2026-04-24
+- `download_media` ahora recolecta y descarga **todos** los adjuntos detectables del mensaje (`photo/voice/audio/video/video_note/animation/document/sticker`).
+- `InboundEvent::Message.media` cambió de `Option<MediaDescriptor>` a `Vec<MediaDescriptor>`.
+- `to_payload` mantiene `media_kind/media_path` top-level usando el primer elemento para compatibilidad con el runtime actual.
 
 ### ~~InboundMedia sin reutilización de cache~~ ✅ Ya hecho 2026-04-24
 - `telegram/src/plugin.rs:969-975`: antes de llamar `bot.download_file`, hace `tokio::fs::metadata(&dest).await.ok().map(|m| m.len())`. Si existe → debug log `telegram media cache hit` y skip download. Re-deliveries del mismo `(chat, msg, file_id_prefix)` reutilizan.
 
-### MAX_TEXT_LEN conservador
-- Split a 4000 chars Rust. Wire real es 4096 UTF-16 code units.
-- **Acción:** si fragmenta en exceso, medir en UTF-16 code units.
+### ~~MAX_TEXT_LEN conservador~~ ✅ Resuelto 2026-04-24
+- `MAX_TEXT_LEN` subió a `4096` en `telegram/src/bot.rs` (alineado al límite real del wire en UTF-16 code units).
+- `send_with_format` ahora usa truncado por UTF-16 (`truncate_utf16`) en lugar de `chars().count()`.
+- Cobertura añadida: `truncate_respects_utf16_budget`.
 
 ### ~~dead_code warning: `pending()` helper en telegram + whatsapp~~ ✅ Resuelto 2026-04-24
 - `whatsapp/src/plugin.rs:81` ya lleva `#[allow(dead_code)]` sobre `pub(crate) fn pending()`.
@@ -1560,17 +1610,23 @@ Formalizada en `PHASES.md` como sub-fase 10.9. Resumen del trade-off para no olv
 - `LlmClient::embed()` default error. Anthropic no tiene endpoint oficial — usan Voyage como partner.
 - **Acción:** crear `voyage.rs` standalone o añadir fallback en `AnthropicClient`.
 
-### MiniMax sin embeddings
-- MiniMax sí tiene `embeddings` API oficial; no lo cableé.
-- **Acción:** añadir `embed()` override en `MiniMaxClient` flavor=OpenAiCompat.
+### ~~MiniMax sin embeddings~~ ✅ Resuelto 2026-04-24
+- `crates/llm/src/minimax.rs` ya implementa `embed()` para flavor `openai_compat` contra `POST /embeddings`.
+- El flavor `anthropic_messages` devuelve error explícito de no soportado (comportamiento esperado).
+- Cobertura agregada: `crates/llm/tests/providers_http_audit.rs` (`minimax_embed_openai_compat_returns_sorted_vectors`, `minimax_embed_rejects_anthropic_flavor`).
 
-### build_media_attachment solo imágenes
-- Voice/audio/video se publican con media_path pero no se adjuntan al LLM. Gemini acepta audio/video inline.
-- **Acción:** extender a `audio/*` y `video/*` para providers que lo soportan.
+### ~~build_media_attachment solo imágenes~~ ✅ Resuelto 2026-04-24
+- `crates/core/src/agent/llm_behavior.rs` mapea `voice/audio`→`audio/*` y `video/video_note/animation`→`video/*`, materializando base64 para el wire del LLM.
+- Gemini consume esos adjuntos inline; providers que no soportan un tipo lo ignoran sin romper el turno.
+- Cobertura agregada: `build_media_attachment_voice_materializes_as_audio`, `build_media_attachment_video_uses_kind_and_guessed_mime`.
 
-### ExtensionContextConfig.passthrough por default off
-- Ningún extension nuevo opta por `_meta.agent_id/session_id` injection. Si se usa memory por agent en extension, falta el contexto.
-- **Acción:** revisar per-extension si vale la pena activar.
+### ~~ExtensionContextConfig.passthrough por default off~~ ✅ Resuelto 2026-04-24
+- Se activó `[context] passthrough = true` en extensions con valor claro de contexto por sesión/agente:
+  `cloudflare`, `dns-tools`, `fetch-url`, `github`, `onepassword`, `openai-whisper`,
+  `openstreetmap`, `pdf-extract`, `rss`, `ssh-exec`, `summarize`, `tesseract-ocr`,
+  `translate`, `video-frames`, `weather`, `wikipedia`, `yt-dlp`.
+- Validación: `cargo test -p agent-extensions context_defaults_to_false` y
+  `cargo test -p agent-extensions context_passthrough_parses_true` verdes.
 
 ---
 
@@ -1614,3 +1670,26 @@ Tier 3 (#17, #19, #20 + admin HTTP):
 No abordado (low ROI):
 - #18 cache persistence a disco (TTL 60s lo hace marginal).
 - Auth header en admin HTTP (loopback-only mitigación suficiente por ahora).
+
+---
+
+## Phase 15 — claude-subscription-auth (deferred items)
+
+- **Multi-profile round-robin**: OpenClaw keeps several Anthropic
+  profiles (`anthropic:manual`, `anthropic:default-oauth`, …) with
+  cooldowns and `order`. Not ported — one provider = one auth in V1.
+  Revisit only if a real failover case appears.
+- **Device-code OAuth flow**: we rely on `claude login` or a pasted
+  bundle. A native device-code flow would mean pinning Anthropic's
+  client_id + endpoints ourselves. Deferred; YAGNI for now.
+- **macOS Keychain write**: we only read. User rotates by re-running
+  `claude login` and `agent setup anthropic`.
+- **Live smoke test**: `anthropic_live.rs` gated by
+  `CHAT_LIVE_ANTHROPIC_OAUTH=1` was sketched in the plan but not
+  landed — CI has no Anthropic creds. Add later if we get a service
+  account for regression.
+- **Refresh endpoint / client_id hardcoded default**: the Claude Code
+  CLI's public client_id and `console.anthropic.com/v1/oauth/token`
+  are baked in as defaults. Both are overridable via YAML, but if
+  Anthropic rotates them upstream we'll need to ship a new default
+  release.

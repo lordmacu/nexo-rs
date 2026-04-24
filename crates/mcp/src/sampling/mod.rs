@@ -15,7 +15,7 @@ pub mod types;
 pub mod wire;
 
 pub use default_provider::DefaultSamplingProvider;
-pub use policy::SamplingPolicy;
+pub use policy::{PerServerPolicy, SamplingPolicy};
 pub use types::{
     IncludeContext, ModelPreferences, SamplingMessage, SamplingRequest, SamplingResponse,
     SamplingRole, StopReason,

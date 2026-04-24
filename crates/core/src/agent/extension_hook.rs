@@ -1,12 +1,12 @@
 //! Phase 11.6 — bridge extension-registered hooks into the agent's
 //! `HookRegistry`. The handler routes `on_hook(name, event)` to the owning
 //! `StdioRuntime` via JSON-RPC method `hooks/<name>`.
-use std::sync::Arc;
-use std::time::Duration;
+use super::hook_registry::HookHandler;
+use agent_extensions::{HookResponse, StdioRuntime};
 use async_trait::async_trait;
 use serde_json::Value;
-use agent_extensions::{HookResponse, StdioRuntime};
-use super::hook_registry::HookHandler;
+use std::sync::Arc;
+use std::time::Duration;
 pub struct ExtensionHook {
     plugin_id: String,
     runtime: Arc<StdioRuntime>,

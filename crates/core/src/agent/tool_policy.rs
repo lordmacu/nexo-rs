@@ -9,13 +9,13 @@
 //!
 //! Zero impact on `ToolDef` or the public tool registry — this is a
 //! sidecar lookup keyed by `name`.
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 use dashmap::DashMap;
 use serde::Deserialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 /// YAML shape loaded from `config/tool_policy.yaml`. Optional file —
 /// when absent the policy is "cache nothing, nothing parallel" (i.e.
 /// current behavior, fully back-compat).
@@ -77,8 +77,12 @@ impl Default for ParallelConfig {
         }
     }
 }
-fn default_parallel_limit() -> usize { 4 }
-fn default_parallel_timeout_secs() -> u64 { 30 }
+fn default_parallel_limit() -> usize {
+    4
+}
+fn default_parallel_timeout_secs() -> u64 {
+    30
+}
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CacheConfig {
@@ -139,8 +143,17 @@ struct CacheEntry {
 impl ToolPolicy {
     pub fn from_config(cfg: &ToolPolicyConfig) -> Arc<Self> {
         Arc::new(Self {
-            cache_patterns: cfg.cache.tools.iter().map(|p| GlobPattern::new(p)).collect(),
-            parallel_patterns: cfg.parallel_safe.iter().map(|p| GlobPattern::new(p)).collect(),
+            cache_patterns: cfg
+                .cache
+                .tools
+                .iter()
+                .map(|p| GlobPattern::new(p))
+                .collect(),
+            parallel_patterns: cfg
+                .parallel_safe
+                .iter()
+                .map(|p| GlobPattern::new(p))
+                .collect(),
             ttl: Duration::from_secs(cfg.cache.ttl_secs),
             max_entries: cfg.cache.max_entries,
             max_value_bytes: cfg.cache.max_value_bytes,
@@ -175,11 +188,7 @@ impl ToolPolicy {
         if !self.is_cacheable(tool_name) {
             return None;
         }
-        let key = (
-            agent_id.to_string(),
-            tool_name.to_string(),
-            hash_args(args),
-        );
+        let key = (agent_id.to_string(), tool_name.to_string(), hash_args(args));
         let entry = match self.cache.get(&key) {
             Some(e) => e,
             None => {
@@ -214,11 +223,7 @@ impl ToolPolicy {
                 return;
             }
         }
-        let key = (
-            agent_id.to_string(),
-            tool_name.to_string(),
-            hash_args(args),
-        );
+        let key = (agent_id.to_string(), tool_name.to_string(), hash_args(args));
         // LRU eviction: when at capacity, scan for the oldest
         // `stored_at` and drop it. O(n) on a 1024-entry map is
         // negligible (~100μs) and guarantees the eviction order is
@@ -238,11 +243,7 @@ impl ToolPolicy {
                 let evicted_tool = k.1.clone();
                 let evicted_agent = k.0.clone();
                 self.cache.remove(&k);
-                crate::telemetry::inc_tool_cache_event(
-                    &evicted_agent,
-                    &evicted_tool,
-                    "evict",
-                );
+                crate::telemetry::inc_tool_cache_event(&evicted_agent, &evicted_tool, "evict");
             }
         }
         self.cache.insert(
@@ -258,7 +259,11 @@ impl ToolPolicy {
     /// (can all run concurrently) and sequential (must run in order
     /// one after another). Order is preserved so the LLM's original
     /// call order stays consistent for logs and tool_use ids.
-    pub fn partition<'a, T>(&self, calls: &'a [T], name_of: impl Fn(&T) -> &str) -> (Vec<&'a T>, Vec<&'a T>) {
+    pub fn partition<'a, T>(
+        &self,
+        calls: &'a [T],
+        name_of: impl Fn(&T) -> &str,
+    ) -> (Vec<&'a T>, Vec<&'a T>) {
         let mut par = Vec::new();
         let mut seq = Vec::new();
         for c in calls {
@@ -275,7 +280,8 @@ impl ToolPolicy {
     /// drops but `max_entries` hasn't kicked in.
     pub fn sweep_expired(&self) {
         let ttl = self.ttl;
-        self.cache.retain(|_, entry| entry.stored_at.elapsed() <= ttl);
+        self.cache
+            .retain(|_, entry| entry.stored_at.elapsed() <= ttl);
     }
     /// Drop every entry matching `(agent_id, tool_name)`. Ops hook —
     /// when an underlying plugin changes behavior (new API version,
@@ -540,16 +546,24 @@ mod tests {
         let policy = ToolPolicy::from_config(&cfg);
         let args = json!({"city": "Bogotá"});
         let agent = "kate";
-        assert!(policy.cache_get(agent, "ext_weather_forecast", &args).is_none());
+        assert!(policy
+            .cache_get(agent, "ext_weather_forecast", &args)
+            .is_none());
         policy.cache_put(agent, "ext_weather_forecast", &args, json!({"temp": 22}));
-        let hit = policy.cache_get(agent, "ext_weather_forecast", &args).unwrap();
+        let hit = policy
+            .cache_get(agent, "ext_weather_forecast", &args)
+            .unwrap();
         assert_eq!(hit["temp"], 22);
         // Different agent — same tool, same args — MUST miss. Cross-
         // agent cache scopes are hard-partitioned.
-        assert!(policy.cache_get("other", "ext_weather_forecast", &args).is_none());
+        assert!(policy
+            .cache_get("other", "ext_weather_forecast", &args)
+            .is_none());
         // Not-cacheable tool bypasses the store entirely.
         policy.cache_put(agent, "ext_github_comment", &args, json!({"ok": true}));
-        assert!(policy.cache_get(agent, "ext_github_comment", &args).is_none());
+        assert!(policy
+            .cache_get(agent, "ext_github_comment", &args)
+            .is_none());
     }
     #[test]
     fn cache_put_skips_when_value_exceeds_bytesize_cap() {
@@ -588,7 +602,12 @@ mod tests {
             per_agent: HashMap::new(),
         };
         let p2 = ToolPolicy::from_config(&cfg0);
-        p2.cache_put("a", "ext_big_huge", &args, json!({"payload": "x".repeat(1024)}));
+        p2.cache_put(
+            "a",
+            "ext_big_huge",
+            &args,
+            json!({"payload": "x".repeat(1024)}),
+        );
         assert!(p2.cache_get("a", "ext_big_huge", &args).is_some());
     }
     #[test]
@@ -615,10 +634,16 @@ mod tests {
         // Invalidate one (agent, tool) pair — wipes both arg variants.
         let removed = policy.cache_invalidate("agent", "ext_weather_forecast");
         assert_eq!(removed, 2);
-        assert!(policy.cache_get("agent", "ext_weather_forecast", &a1).is_none());
-        assert!(policy.cache_get("agent", "ext_weather_forecast", &a2).is_none());
+        assert!(policy
+            .cache_get("agent", "ext_weather_forecast", &a1)
+            .is_none());
+        assert!(policy
+            .cache_get("agent", "ext_weather_forecast", &a2)
+            .is_none());
         // Untargeted tool still cached.
-        assert!(policy.cache_get("agent", "ext_wikipedia_summary", &a1).is_some());
+        assert!(policy
+            .cache_get("agent", "ext_wikipedia_summary", &a1)
+            .is_some());
         // Invalidating a non-existent pair is a harmless zero.
         assert_eq!(policy.cache_invalidate("agent", "does_not_exist"), 0);
         // Clear drops the rest.
@@ -663,12 +688,8 @@ mod tests {
         let (_, body, _) = admin_dispatch("GET", "/admin/tool-cache/stats", "", &reg);
         assert!(body.contains(r#""entries":0"#));
         // Invalidate with missing params → 400.
-        let (status, body, _) = admin_dispatch(
-            "POST",
-            "/admin/tool-cache/invalidate",
-            "agent=kate",
-            &reg,
-        );
+        let (status, body, _) =
+            admin_dispatch("POST", "/admin/tool-cache/invalidate", "agent=kate", &reg);
         assert_eq!(status, 400);
         assert!(body.contains("missing"));
         // Clear path returns 200 even on empty cache.
@@ -695,7 +716,10 @@ mod tests {
                     max_value_bytes: 0,
                 },
                 parallel_safe: vec!["ext_kate_only_*".into()],
-                parallel: ParallelConfig { max_in_flight: 2, call_timeout_secs: 5 },
+                parallel: ParallelConfig {
+                    max_in_flight: 2,
+                    call_timeout_secs: 5,
+                },
                 relevance: Default::default(),
             },
         );

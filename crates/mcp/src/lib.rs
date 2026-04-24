@@ -36,7 +36,7 @@ pub use server::{
 };
 pub use session::{RuntimeCallError, SessionMcpRuntime};
 pub use types::{
-    McpAnnotations, McpCapabilities, McpClientInfo, McpContent, McpResource, McpResourceContent,
-    McpPrompt, McpPromptArgument, McpPromptMessage, McpPromptResult, McpResourceRef,
+    McpAnnotations, McpCapabilities, McpClientInfo, McpContent, McpPrompt, McpPromptArgument,
+    McpPromptMessage, McpPromptResult, McpResource, McpResourceContent, McpResourceRef,
     McpResourceTemplate, McpServerInfo, McpTool, McpToolResult,
 };

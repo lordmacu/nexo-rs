@@ -1,4 +1,5 @@
 pub mod anthropic;
+pub mod anthropic_auth;
 pub mod client;
 pub mod gemini;
 pub mod minimax;
@@ -9,6 +10,7 @@ pub mod rate_limiter;
 pub mod registry;
 pub mod retry;
 pub mod stream;
+pub mod telemetry;
 pub mod types;
 
 pub use anthropic::{AnthropicClient, AnthropicFactory};

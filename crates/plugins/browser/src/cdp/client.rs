@@ -1,15 +1,15 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::anyhow;
 use dashmap::DashMap;
-use serde_json::{Value, json};
+use futures::{SinkExt, StreamExt};
+use serde_json::{json, Value};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
-use futures::{SinkExt, StreamExt};
 
 struct CdpRequest {
     id: u64,
@@ -41,7 +41,8 @@ pub struct CdpClient {
 impl CdpClient {
     /// Connect to a raw CDP WebSocket URL (ws://...).
     pub async fn connect(ws_url: &str) -> anyhow::Result<Self> {
-        let (ws_stream, _) = connect_async(ws_url).await
+        let (ws_stream, _) = connect_async(ws_url)
+            .await
             .map_err(|e| anyhow!("CDP WebSocket connect failed: {e}"))?;
 
         let (mut sink, mut stream) = ws_stream.split();
@@ -66,7 +67,7 @@ impl CdpClient {
                         if let Some(sid) = req.session_id {
                             msg["sessionId"] = json!(sid);
                         }
-                        if sink.send(Message::Text(msg.to_string().into())).await.is_err() {
+                        if sink.send(Message::Text(msg.to_string())).await.is_err() {
                             // Socket is gone — fail every caller waiting
                             // on a response so they unblock immediately
                             // rather than sitting until their timeout.
@@ -334,10 +335,7 @@ mod tests {
 
     #[test]
     fn rewrites_host_and_port() {
-        let out = rewrite_ws_authority(
-            "ws://localhost/devtools/browser/abc",
-            "http://chrome:9222",
-        );
+        let out = rewrite_ws_authority("ws://localhost/devtools/browser/abc", "http://chrome:9222");
         assert_eq!(out, "ws://chrome:9222/devtools/browser/abc");
     }
 
@@ -365,12 +363,12 @@ mod tests {
         // that silently eats requests and never replies. `send_with_
         // timeout` must return an Err that mentions "timed out" (and
         // not hang the test runner).
-        use std::sync::Arc as StdArc;
+        use super::CdpClient;
+        use dashmap::DashMap;
         use std::sync::atomic::AtomicU64;
+        use std::sync::Arc as StdArc;
         use tokio::sync::{broadcast, mpsc};
         use tokio_util::sync::CancellationToken;
-        use dashmap::DashMap;
-        use super::CdpClient;
 
         let (tx, mut rx) = mpsc::channel::<super::CdpRequest>(8);
         let (events_tx, _) = broadcast::channel(4);

@@ -55,6 +55,7 @@ impl FlowStatus {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         Some(match s {
             "created" => FlowStatus::Created,
@@ -143,6 +144,7 @@ impl StepRuntime {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         Some(match s {
             "managed" => StepRuntime::Managed,
@@ -173,6 +175,7 @@ impl FlowStepStatus {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         Some(match s {
             "pending" => FlowStepStatus::Pending,
@@ -280,10 +283,14 @@ mod tests {
     #[test]
     fn legal_transitions_succeed() {
         let mut f = flow(FlowStatus::Created);
-        f.transition_to(FlowStatus::Running).expect("created→running");
-        f.transition_to(FlowStatus::Waiting).expect("running→waiting");
-        f.transition_to(FlowStatus::Running).expect("waiting→running");
-        f.transition_to(FlowStatus::Finished).expect("running→finished");
+        f.transition_to(FlowStatus::Running)
+            .expect("created→running");
+        f.transition_to(FlowStatus::Waiting)
+            .expect("running→waiting");
+        f.transition_to(FlowStatus::Running)
+            .expect("waiting→running");
+        f.transition_to(FlowStatus::Finished)
+            .expect("running→finished");
         assert_eq!(f.status, FlowStatus::Finished);
     }
 
@@ -292,14 +299,17 @@ mod tests {
         let mut f = flow(FlowStatus::Created);
         let err = f
             .transition_to(FlowStatus::Waiting)
-            .err()
-            .expect("created→waiting illegal");
+            .expect_err("created→waiting illegal");
         assert!(matches!(err, FlowError::IllegalTransition { .. }));
     }
 
     #[test]
     fn cancel_allowed_from_any_non_terminal() {
-        for start in [FlowStatus::Created, FlowStatus::Running, FlowStatus::Waiting] {
+        for start in [
+            FlowStatus::Created,
+            FlowStatus::Running,
+            FlowStatus::Waiting,
+        ] {
             let mut f = flow(start);
             f.transition_to(FlowStatus::Cancelled)
                 .unwrap_or_else(|_| panic!("{start:?}→Cancelled must be legal"));
@@ -309,12 +319,15 @@ mod tests {
 
     #[test]
     fn terminal_flow_rejects_any_transition() {
-        for term in [FlowStatus::Cancelled, FlowStatus::Finished, FlowStatus::Failed] {
+        for term in [
+            FlowStatus::Cancelled,
+            FlowStatus::Finished,
+            FlowStatus::Failed,
+        ] {
             let mut f = flow(term);
             let err = f
                 .transition_to(FlowStatus::Running)
-                .err()
-                .expect("terminal must reject");
+                .expect_err("terminal must reject");
             assert!(matches!(err, FlowError::AlreadyTerminal { .. }));
         }
     }
@@ -324,7 +337,9 @@ mod tests {
         let mut f = flow(FlowStatus::Running);
         f.request_cancel();
         assert!(f.cancel_requested);
-        let err = f.transition_to(FlowStatus::Finished).err().expect("blocked");
+        let err = f
+            .transition_to(FlowStatus::Finished)
+            .expect_err("blocked");
         assert!(matches!(err, FlowError::CancelPending { .. }));
         // But Cancelled is still allowed.
         f.transition_to(FlowStatus::Cancelled).expect("cancel ok");
@@ -335,7 +350,10 @@ mod tests {
     fn request_cancel_is_idempotent_and_no_op_on_terminal() {
         let mut f = flow(FlowStatus::Finished);
         f.request_cancel();
-        assert!(!f.cancel_requested, "terminal flow should not gain cancel intent");
+        assert!(
+            !f.cancel_requested,
+            "terminal flow should not gain cancel intent"
+        );
 
         let mut g = flow(FlowStatus::Running);
         g.request_cancel();

@@ -50,6 +50,10 @@ pub struct McpConfig {
     /// requests via `params._meta`.
     #[serde(default)]
     pub context: McpContextConfig,
+    /// Phase 12.1 follow-up — client-side sampling policy for
+    /// server-originated `sampling/createMessage`.
+    #[serde(default)]
+    pub sampling: McpSamplingConfig,
     /// Phase 12.8 follow-up — when `true`, removing `log_level` from a
     /// server on hot-reload fires `set_log_level` (with
     /// `default_reset_level`) instead of leaving the previous level in
@@ -122,6 +126,79 @@ pub struct McpContextConfig {
     pub passthrough: bool,
 }
 
+/// Phase 12.1 follow-up — policy knobs for MCP sampling.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpSamplingConfig {
+    /// Global on/off switch. Default false to avoid exposing client LLM
+    /// to MCP servers unless explicitly requested by the operator.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Optional default hint key used to choose a client from the
+    /// `named` map built in main.rs (keys include provider/model names).
+    #[serde(default)]
+    pub default_hint: Option<String>,
+    /// Global hard cap for `maxTokens` applied before the request is
+    /// forwarded to the LLM.
+    #[serde(default = "default_sampling_global_max_tokens_cap")]
+    pub global_max_tokens_cap: u32,
+    /// Hard deny list by MCP server id.
+    #[serde(default)]
+    pub deny_servers: Vec<String>,
+    /// Per-server overrides.
+    #[serde(default)]
+    pub per_server: BTreeMap<String, McpSamplingServerPolicy>,
+}
+
+impl Default for McpSamplingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            default_hint: None,
+            global_max_tokens_cap: default_sampling_global_max_tokens_cap(),
+            deny_servers: Vec::new(),
+            per_server: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpSamplingServerPolicy {
+    #[serde(default = "default_sampling_server_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_sampling_server_rate_limit_per_minute")]
+    pub rate_limit_per_minute: u32,
+    #[serde(default = "default_sampling_server_max_tokens_cap")]
+    pub max_tokens_cap: u32,
+}
+
+impl Default for McpSamplingServerPolicy {
+    fn default() -> Self {
+        Self {
+            enabled: default_sampling_server_enabled(),
+            rate_limit_per_minute: default_sampling_server_rate_limit_per_minute(),
+            max_tokens_cap: default_sampling_server_max_tokens_cap(),
+        }
+    }
+}
+
+fn default_sampling_global_max_tokens_cap() -> u32 {
+    4096
+}
+
+fn default_sampling_server_enabled() -> bool {
+    true
+}
+
+fn default_sampling_server_rate_limit_per_minute() -> u32 {
+    10
+}
+
+fn default_sampling_server_max_tokens_cap() -> u32 {
+    4096
+}
+
 /// Phase 12.8 — watcher knobs. Off by default.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -189,6 +266,7 @@ impl Default for McpConfig {
             servers: BTreeMap::new(),
             watch: McpWatchConfig::default(),
             context: McpContextConfig::default(),
+            sampling: McpSamplingConfig::default(),
             reset_level_on_unset: false,
             default_reset_level: default_reset_level(),
             resource_cache: McpResourceCacheConfig::default(),
@@ -475,6 +553,42 @@ mcp:
 "#;
         let f: McpConfigFile = serde_yaml::from_str(yaml).unwrap();
         assert!(f.mcp.context.passthrough);
+    }
+
+    #[test]
+    fn mcp_sampling_defaults_disabled() {
+        let yaml = "mcp:\n  enabled: true\n";
+        let f: McpConfigFile = serde_yaml::from_str(yaml).unwrap();
+        assert!(!f.mcp.sampling.enabled);
+        assert_eq!(f.mcp.sampling.global_max_tokens_cap, 4096);
+        assert!(f.mcp.sampling.per_server.is_empty());
+    }
+
+    #[test]
+    fn mcp_sampling_parses_full_policy() {
+        let yaml = r#"
+mcp:
+  enabled: true
+  sampling:
+    enabled: true
+    default_hint: "openai"
+    global_max_tokens_cap: 2048
+    deny_servers: ["unsafe"]
+    per_server:
+      weather:
+        enabled: true
+        rate_limit_per_minute: 30
+        max_tokens_cap: 512
+"#;
+        let f: McpConfigFile = serde_yaml::from_str(yaml).unwrap();
+        assert!(f.mcp.sampling.enabled);
+        assert_eq!(f.mcp.sampling.default_hint.as_deref(), Some("openai"));
+        assert_eq!(f.mcp.sampling.global_max_tokens_cap, 2048);
+        assert_eq!(f.mcp.sampling.deny_servers, vec!["unsafe"]);
+        let weather = f.mcp.sampling.per_server.get("weather").unwrap();
+        assert!(weather.enabled);
+        assert_eq!(weather.rate_limit_per_minute, 30);
+        assert_eq!(weather.max_tokens_cap, 512);
     }
 
     #[test]

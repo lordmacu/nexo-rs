@@ -26,9 +26,8 @@ async fn main() -> anyhow::Result<()> {
         .nth(1)
         .unwrap_or_else(|| "Responde sólo con la palabra PONG.".into());
 
-    let config_dir = PathBuf::from(
-        std::env::var("AGENT_CONFIG_DIR").unwrap_or_else(|_| "./config".into()),
-    );
+    let config_dir =
+        PathBuf::from(std::env::var("AGENT_CONFIG_DIR").unwrap_or_else(|_| "./config".into()));
     println!("▸ loading config from {}", config_dir.display());
     let cfg = AppConfig::load(&config_dir)?;
 
@@ -39,7 +38,10 @@ async fn main() -> anyhow::Result<()> {
         .first()
         .ok_or_else(|| anyhow::anyhow!("no agents in agents.yaml"))?;
     println!("▸ agent        : {}", agent.id);
-    println!("▸ model        : {}/{}", agent.model.provider, agent.model.model);
+    println!(
+        "▸ model        : {}/{}",
+        agent.model.provider, agent.model.model
+    );
 
     if let Some(provider) = cfg.llm.providers.get(&agent.model.provider) {
         println!("▸ base_url     : {}", provider.base_url);
@@ -49,7 +51,11 @@ async fn main() -> anyhow::Result<()> {
         );
         println!(
             "▸ auth.mode    : {}",
-            provider.auth.as_ref().map(|a| a.mode.as_str()).unwrap_or("(none)")
+            provider
+                .auth
+                .as_ref()
+                .map(|a| a.mode.as_str())
+                .unwrap_or("(none)")
         );
     }
 

@@ -1,15 +1,15 @@
 //! Phase 12.5 — 2 meta-tools per MCP server that exposes `resources/*`:
 //! `mcp_{server}_list_resources` and `mcp_{server}_read_resource`. The LLM
 //! uses them to browse and pull data surfaces on demand.
-use std::sync::Arc;
-use async_trait::async_trait;
-use base64::Engine;
-use serde_json::Value;
-use agent_llm::ToolDef;
-use agent_mcp::{McpClient, McpResourceContent, ResourceCache};
 use super::context::AgentContext;
 use super::mcp_tool::{sanitize_name_fragment, MCP_NAME_PREFIX};
 use super::tool_registry::ToolHandler;
+use agent_llm::ToolDef;
+use agent_mcp::{McpClient, McpResourceContent, ResourceCache};
+use async_trait::async_trait;
+use base64::Engine;
+use serde_json::Value;
+use std::sync::Arc;
 /// Tail fragment used when composing the list-resources meta-tool name.
 /// Kept public so downstream code can pattern-match on suffix if needed.
 /// The underscore separator between server name and this fragment is
@@ -225,11 +225,16 @@ fn make_meta(ctx: &AgentContext) -> Value {
 #[async_trait]
 impl ToolHandler for McpResourceListTool {
     async fn call(&self, ctx: &AgentContext, _args: Value) -> anyhow::Result<Value> {
-        let meta = if self.context_passthrough { Some(make_meta(ctx)) } else { None };
-        let resources =
-            self.client.list_resources_with_meta(meta).await.map_err(|e| {
-                anyhow::anyhow!("mcp '{}' list_resources error: {e}", self.server_name)
-            })?;
+        let meta = if self.context_passthrough {
+            Some(make_meta(ctx))
+        } else {
+            None
+        };
+        let resources = self
+            .client
+            .list_resources_with_meta(meta)
+            .await
+            .map_err(|e| anyhow::anyhow!("mcp '{}' list_resources error: {e}", self.server_name))?;
         let list: Vec<Value> = resources
             .into_iter()
             .map(|r| {
@@ -249,9 +254,7 @@ impl ToolHandler for McpResourceListTool {
                     if !ann.audience.is_empty() {
                         ann_obj.insert(
                             "audience".into(),
-                            Value::Array(
-                                ann.audience.into_iter().map(Value::String).collect(),
-                            ),
+                            Value::Array(ann.audience.into_iter().map(Value::String).collect()),
                         );
                     }
                     if let Some(p) = ann.priority {
@@ -305,11 +308,16 @@ impl ToolHandler for McpResourceReadTool {
             }
             agent_mcp::telemetry::inc_resource_cache_miss(&self.server_name);
         }
-        let meta = if self.context_passthrough { Some(make_meta(ctx)) } else { None };
-        let contents =
-            self.client.read_resource_with_meta(uri, meta).await.map_err(|e| {
-                anyhow::anyhow!("mcp '{}' read_resource error: {e}", self.server_name)
-            })?;
+        let meta = if self.context_passthrough {
+            Some(make_meta(ctx))
+        } else {
+            None
+        };
+        let contents = self
+            .client
+            .read_resource_with_meta(uri, meta)
+            .await
+            .map_err(|e| anyhow::anyhow!("mcp '{}' read_resource error: {e}", self.server_name))?;
         if use_cache && contents.iter().any(|c| c.text.is_some()) {
             if let Some(cache) = self.cache.as_ref() {
                 cache.put(&self.server_name, uri, contents.clone());

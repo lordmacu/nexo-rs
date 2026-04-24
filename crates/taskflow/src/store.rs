@@ -175,9 +175,9 @@ impl FlowStore for SqliteFlowStore {
         let state_json = serde_json::to_string(&flow.state_json)
             .map_err(|e| FlowError::InvalidData(e.to_string()))?;
         let wait_json = match &flow.wait_json {
-            Some(v) => Some(
-                serde_json::to_string(v).map_err(|e| FlowError::InvalidData(e.to_string()))?,
-            ),
+            Some(v) => {
+                Some(serde_json::to_string(v).map_err(|e| FlowError::InvalidData(e.to_string()))?)
+            }
             None => None,
         };
         sqlx::query(
@@ -212,12 +212,11 @@ impl FlowStore for SqliteFlowStore {
     }
 
     async fn list_by_owner(&self, owner_session_key: &str) -> Result<Vec<Flow>, FlowError> {
-        let rows = sqlx::query(
-            "SELECT * FROM flows WHERE owner_session_key = ? ORDER BY created_at DESC",
-        )
-        .bind(owner_session_key)
-        .fetch_all(&self.pool)
-        .await?;
+        let rows =
+            sqlx::query("SELECT * FROM flows WHERE owner_session_key = ? ORDER BY created_at DESC")
+                .bind(owner_session_key)
+                .fetch_all(&self.pool)
+                .await?;
         rows.into_iter().map(row_to_flow).collect()
     }
 
@@ -233,9 +232,9 @@ impl FlowStore for SqliteFlowStore {
         let state_json = serde_json::to_string(&flow.state_json)
             .map_err(|e| FlowError::InvalidData(e.to_string()))?;
         let wait_json = match &flow.wait_json {
-            Some(v) => Some(
-                serde_json::to_string(v).map_err(|e| FlowError::InvalidData(e.to_string()))?,
-            ),
+            Some(v) => {
+                Some(serde_json::to_string(v).map_err(|e| FlowError::InvalidData(e.to_string()))?)
+            }
             None => None,
         };
         let new_revision = flow.revision + 1;
@@ -274,9 +273,7 @@ impl FlowStore for SqliteFlowStore {
             };
         }
         // Refetch to return the canonical post-update state.
-        self.get(flow.id)
-            .await?
-            .ok_or(FlowError::NotFound(flow.id))
+        self.get(flow.id).await?.ok_or(FlowError::NotFound(flow.id))
     }
 
     async fn append_event(
@@ -347,9 +344,9 @@ impl FlowStore for SqliteFlowStore {
 
     async fn insert_step(&self, step: &FlowStep) -> Result<(), FlowError> {
         let result_s = match &step.result_json {
-            Some(v) => Some(
-                serde_json::to_string(v).map_err(|e| FlowError::InvalidData(e.to_string()))?,
-            ),
+            Some(v) => {
+                Some(serde_json::to_string(v).map_err(|e| FlowError::InvalidData(e.to_string()))?)
+            }
             None => None,
         };
         sqlx::query(
@@ -373,9 +370,9 @@ impl FlowStore for SqliteFlowStore {
 
     async fn update_step(&self, step: &FlowStep) -> Result<FlowStep, FlowError> {
         let result_s = match &step.result_json {
-            Some(v) => Some(
-                serde_json::to_string(v).map_err(|e| FlowError::InvalidData(e.to_string()))?,
-            ),
+            Some(v) => {
+                Some(serde_json::to_string(v).map_err(|e| FlowError::InvalidData(e.to_string()))?)
+            }
             None => None,
         };
         let now = Utc::now();
@@ -410,12 +407,11 @@ impl FlowStore for SqliteFlowStore {
     }
 
     async fn list_steps(&self, flow_id: Uuid) -> Result<Vec<FlowStep>, FlowError> {
-        let rows = sqlx::query(
-            "SELECT * FROM flow_steps WHERE flow_id = ? ORDER BY created_at ASC",
-        )
-        .bind(flow_id.to_string())
-        .fetch_all(&self.pool)
-        .await?;
+        let rows =
+            sqlx::query("SELECT * FROM flow_steps WHERE flow_id = ? ORDER BY created_at ASC")
+                .bind(flow_id.to_string())
+                .fetch_all(&self.pool)
+                .await?;
         rows.into_iter().map(row_to_step).collect()
     }
 
@@ -461,9 +457,9 @@ impl FlowStore for SqliteFlowStore {
         let state_json = serde_json::to_string(&flow.state_json)
             .map_err(|e| FlowError::InvalidData(e.to_string()))?;
         let wait_json = match &flow.wait_json {
-            Some(v) => Some(
-                serde_json::to_string(v).map_err(|e| FlowError::InvalidData(e.to_string()))?,
-            ),
+            Some(v) => {
+                Some(serde_json::to_string(v).map_err(|e| FlowError::InvalidData(e.to_string()))?)
+            }
             None => None,
         };
         let payload_json = serde_json::to_string(&event_payload)
@@ -724,7 +720,7 @@ mod tests {
         // Second update with stale revision (still 0) should fail.
         let mut stale = flow.clone();
         stale.status = FlowStatus::Waiting;
-        let err = s.update_with_revision(&stale).await.err().expect("err");
+        let err = s.update_with_revision(&stale).await.expect_err("err");
         match err {
             FlowError::RevisionMismatch { expected, actual } => {
                 assert_eq!(expected, 0);
@@ -834,7 +830,7 @@ mod tests {
         s.insert(&flow).await.unwrap();
         let step = sample_step(flow.id, "ghost");
         // Never inserted — update should fail.
-        let err = s.update_step(&step).await.err().expect("err");
+        let err = s.update_step(&step).await.expect_err("err");
         assert!(matches!(err, FlowError::NotFound(_)));
     }
 

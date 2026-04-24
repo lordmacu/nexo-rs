@@ -27,7 +27,9 @@ async fn spawn_handshake_responder(
                 Ok(m) => m,
                 Err(_) => continue,
             };
-            let Some(reply_to) = msg.reply_to.clone() else { continue };
+            let Some(reply_to) = msg.reply_to.clone() else {
+                continue;
+            };
             let line = match &msg.payload {
                 serde_json::Value::String(s) => s.clone(),
                 other => other.to_string(),
@@ -73,7 +75,9 @@ async fn spawn_one_shot_handshake_responder(
             Ok(m) => m,
             Err(_) => return,
         };
-        let Some(reply_to) = msg.reply_to.clone() else { return };
+        let Some(reply_to) = msg.reply_to.clone() else {
+            return;
+        };
         let line = match &msg.payload {
             serde_json::Value::String(s) => s.clone(),
             other => other.to_string(),
@@ -137,7 +141,10 @@ async fn publish_heartbeat(broker: &Arc<dyn BrokerHandle>, id: &str, version: &s
 }
 
 async fn publish_shutdown(broker: &Arc<dyn BrokerHandle>, id: &str) {
-    let payload = ShutdownPayload { id: id.into(), reason: Some("test".into()) };
+    let payload = ShutdownPayload {
+        id: id.into(),
+        reason: Some("test".into()),
+    };
     let subject = format!("ext.registry.shutdown.{id}");
     let ev = Event::new(
         &subject,
@@ -149,11 +156,7 @@ async fn publish_shutdown(broker: &Arc<dyn BrokerHandle>, id: &str) {
 
 async fn publish_event(broker: &Arc<dyn BrokerHandle>, id: &str, payload: serde_json::Value) {
     let subject = format!("ext.{id}.event");
-    let ev = Event::new(
-        &subject,
-        "mock-extension",
-        payload,
-    );
+    let ev = Event::new(&subject, "mock-extension", payload);
     broker.publish(&subject, ev).await.unwrap();
 }
 
@@ -167,8 +170,10 @@ fn fast_opts() -> NatsRuntimeOptions {
     }
 }
 
-async fn wait_for<F>(rx: &mut tokio::sync::mpsc::Receiver<DirectoryEvent>, mut pred: F)
-    -> DirectoryEvent
+async fn wait_for<F>(
+    rx: &mut tokio::sync::mpsc::Receiver<DirectoryEvent>,
+    mut pred: F,
+) -> DirectoryEvent
 where
     F: FnMut(&DirectoryEvent) -> bool,
 {
@@ -292,7 +297,11 @@ async fn version_bump_replaces_runtime() {
     publish_announce(&broker, "vbump", "1.1.0").await;
     let removed = wait_for(&mut rx, |e| matches!(e, DirectoryEvent::Removed { .. })).await;
     match removed {
-        DirectoryEvent::Removed { id, version, reason } => {
+        DirectoryEvent::Removed {
+            id,
+            version,
+            reason,
+        } => {
             assert_eq!(id, "vbump");
             assert_eq!(version, "1.0.0");
             assert!(matches!(reason, RemovalReason::Announced { .. }));
@@ -332,7 +341,10 @@ async fn failed_version_bump_keeps_previous_runtime_live() {
 
     // No remove/add events should fire for failed replacement.
     let maybe_event = tokio::time::timeout(Duration::from_millis(150), rx.recv()).await;
-    assert!(maybe_event.is_err(), "unexpected directory event after failed bump");
+    assert!(
+        maybe_event.is_err(),
+        "unexpected directory event after failed bump"
+    );
 
     let entries = dir.list();
     assert_eq!(entries.len(), 1);
@@ -352,8 +364,16 @@ async fn extension_event_is_forwarded_as_notification() {
     publish_announce(&broker, "ev", "1.0.0").await;
     wait_for(&mut rx, |e| matches!(e, DirectoryEvent::Added { .. })).await;
 
-    publish_event(&broker, "ev", serde_json::json!({"kind":"progress","pct":40})).await;
-    let ev = wait_for(&mut rx, |e| matches!(e, DirectoryEvent::Notification { .. })).await;
+    publish_event(
+        &broker,
+        "ev",
+        serde_json::json!({"kind":"progress","pct":40}),
+    )
+    .await;
+    let ev = wait_for(&mut rx, |e| {
+        matches!(e, DirectoryEvent::Notification { .. })
+    })
+    .await;
     match ev {
         DirectoryEvent::Notification { id, payload } => {
             assert_eq!(id, "ev");

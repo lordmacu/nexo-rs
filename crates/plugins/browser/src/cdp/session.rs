@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::anyhow;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use super::client::CdpClient;
 
@@ -23,10 +23,12 @@ impl CdpSession {
         target_id: &str,
         command_timeout_ms: u64,
     ) -> anyhow::Result<Self> {
-        let result = client.send(
-            "Target.attachToTarget",
-            json!({ "targetId": target_id, "flatten": true }),
-        ).await?;
+        let result = client
+            .send(
+                "Target.attachToTarget",
+                json!({ "targetId": target_id, "flatten": true }),
+            )
+            .await?;
 
         let session_id = result
             .get("sessionId")
@@ -45,17 +47,31 @@ impl CdpSession {
     async fn cdp(&self, method: &str, params: Value) -> anyhow::Result<Value> {
         tokio::time::timeout(
             self.command_timeout,
-            self.client.send_with_session(method, params, Some(self.session_id.clone())),
+            self.client
+                .send_with_session(method, params, Some(self.session_id.clone())),
         )
         .await
         .map_err(|_| anyhow!("CDP command '{method}' timed out"))?
     }
 
     pub async fn navigate(&mut self, url: &str) -> anyhow::Result<()> {
+        // Scheme whitelist — blocks `file://`, `data:`, `javascript:`
+        // and other vectors that would let an LLM-controlled URL read
+        // local files or execute arbitrary script in the page context.
+        // The upstream `BrowserNavigateTool` description already says
+        // http/https only, but the actual navigate call used to pass
+        // anything the LLM emitted straight to CDP.
+        let trimmed = url.trim();
+        let lower = trimmed.to_ascii_lowercase();
+        if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+            anyhow::bail!(
+                "navigate rejected: only http:// and https:// URLs are allowed, got `{url}`"
+            );
+        }
         self.cdp("Page.enable", json!({})).await?;
         // Subscribe BEFORE sending Page.navigate so we don't race the event.
         let mut events = self.client.subscribe_session_events(&self.session_id);
-        self.cdp("Page.navigate", json!({ "url": url })).await?;
+        self.cdp("Page.navigate", json!({ "url": trimmed })).await?;
 
         // Wait for the real load event. Cap with command_timeout to avoid
         // hanging on pages that never fire loadEventFired (e.g. infinite SPAs).
@@ -66,7 +82,9 @@ impl CdpSession {
                     Ok(_) => continue,
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        return Err(anyhow!("CDP event stream closed before Page.loadEventFired"));
+                        return Err(anyhow!(
+                            "CDP event stream closed before Page.loadEventFired"
+                        ));
                     }
                 }
             }
@@ -77,7 +95,9 @@ impl CdpSession {
     }
 
     pub async fn screenshot(&self) -> anyhow::Result<Vec<u8>> {
-        let result = self.cdp("Page.captureScreenshot", json!({ "format": "png" })).await?;
+        let result = self
+            .cdp("Page.captureScreenshot", json!({ "format": "png" }))
+            .await?;
         let b64 = result
             .get("data")
             .and_then(|v| v.as_str())
@@ -89,15 +109,24 @@ impl CdpSession {
     }
 
     pub async fn evaluate(&self, script: &str) -> anyhow::Result<Value> {
-        let result = self.cdp("Runtime.evaluate", json!({
-            "expression": script,
-            "returnByValue": true,
-            "awaitPromise": true,
-        })).await?;
+        let result = self
+            .cdp(
+                "Runtime.evaluate",
+                json!({
+                    "expression": script,
+                    "returnByValue": true,
+                    "awaitPromise": true,
+                }),
+            )
+            .await?;
         if let Some(exc) = result.get("exceptionDetails") {
             return Err(anyhow!("JS exception: {exc}"));
         }
-        Ok(result.get("result").and_then(|r| r.get("value")).cloned().unwrap_or(Value::Null))
+        Ok(result
+            .get("result")
+            .and_then(|r| r.get("value"))
+            .cloned()
+            .unwrap_or(Value::Null))
     }
 
     pub async fn snapshot(&mut self) -> anyhow::Result<String> {
@@ -150,10 +179,8 @@ impl CdpSession {
     }
 
     pub async fn click(&self, target: &str) -> anyhow::Result<()> {
-        let script = if target.starts_with('@') {
-            format!(
-                r#"document.querySelector('[data-agent-ref="{target}"]')?.click()"#
-            )
+        let script = if let Some(ref_id) = validate_element_ref(target) {
+            format!(r#"document.querySelector('[data-agent-ref="{ref_id}"]')?.click()"#)
         } else {
             format!(r#"document.querySelector({:?})?.click()"#, target)
         };
@@ -163,10 +190,10 @@ impl CdpSession {
 
     pub async fn fill(&self, target: &str, value: &str) -> anyhow::Result<()> {
         let escaped_value = value.replace('\\', "\\\\").replace('"', "\\\"");
-        let script = if target.starts_with('@') {
+        let script = if let Some(ref_id) = validate_element_ref(target) {
             format!(
                 r#"
-                var el = document.querySelector('[data-agent-ref="{target}"]');
+                var el = document.querySelector('[data-agent-ref="{ref_id}"]');
                 if (el) {{ el.focus(); el.value = "{escaped_value}"; el.dispatchEvent(new Event('input', {{bubbles:true}})); el.dispatchEvent(new Event('change', {{bubbles:true}})); }}
                 "#
             )
@@ -184,9 +211,9 @@ impl CdpSession {
     }
 
     pub async fn scroll_to(&self, target: &str) -> anyhow::Result<()> {
-        let script = if target.starts_with('@') {
+        let script = if let Some(ref_id) = validate_element_ref(target) {
             format!(
-                r#"document.querySelector('[data-agent-ref="{target}"]')?.scrollIntoView({{behavior:'smooth',block:'center'}})"#
+                r#"document.querySelector('[data-agent-ref="{ref_id}"]')?.scrollIntoView({{behavior:'smooth',block:'center'}})"#
             )
         } else {
             format!(
@@ -196,5 +223,51 @@ impl CdpSession {
         };
         self.evaluate(&script).await?;
         Ok(())
+    }
+}
+
+/// Verify an `@eN` element reference has the expected shape before it's
+/// interpolated into an attribute selector. Without this, an LLM that
+/// emits `@e1"]` would close the attribute early and inject arbitrary
+/// selector syntax (or JS, via a crafted follow-up). Returns `None` if
+/// the string is not an element ref at all (caller falls back to CSS
+/// selector via Debug-escaped `{:?}`).
+pub(crate) fn validate_element_ref(target: &str) -> Option<&str> {
+    let stripped = target.strip_prefix('@')?;
+    if stripped.is_empty()
+        || !stripped
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+    {
+        return None;
+    }
+    Some(target)
+}
+
+#[cfg(test)]
+mod validation_tests {
+    use super::validate_element_ref;
+
+    #[test]
+    fn accepts_well_formed_refs() {
+        assert_eq!(validate_element_ref("@e1"), Some("@e1"));
+        assert_eq!(validate_element_ref("@e42"), Some("@e42"));
+        assert_eq!(validate_element_ref("@e_x"), Some("@e_x"));
+    }
+
+    #[test]
+    fn rejects_injection_shapes() {
+        assert!(validate_element_ref("@e1\"]").is_none());
+        assert!(validate_element_ref("@e1 or 1=1").is_none());
+        assert!(validate_element_ref("@").is_none());
+        assert!(validate_element_ref("@e1;alert(1)").is_none());
+    }
+
+    #[test]
+    fn passes_through_css_selectors() {
+        // CSS selector path: returns None so caller uses Debug format.
+        assert!(validate_element_ref("#id").is_none());
+        assert!(validate_element_ref(".cls").is_none());
+        assert!(validate_element_ref("button[type=submit]").is_none());
     }
 }

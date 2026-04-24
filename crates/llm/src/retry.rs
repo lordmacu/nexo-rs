@@ -12,10 +12,7 @@ pub fn parse_retry_after_ms(
     header_name: &str,
     fallback_ms: u64,
 ) -> u64 {
-    let Some(raw) = headers
-        .get(header_name)
-        .and_then(|v| v.to_str().ok())
-    else {
+    let Some(raw) = headers.get(header_name).and_then(|v| v.to_str().ok()) else {
         return fallback_ms;
     };
     if let Ok(secs) = raw.parse::<u64>() {
@@ -37,6 +34,13 @@ pub enum LlmError {
 
     #[error("server error {status}: {body}")]
     ServerError { status: u16, body: String },
+
+    /// Credential rejected by the provider (401 invalid_grant, expired
+    /// setup-token, wrong API key). Never retried — the operator must
+    /// re-authenticate. Not counted as a circuit-breaker failure
+    /// because the provider is healthy; our key is not.
+    #[error("credential invalid: {hint}")]
+    CredentialInvalid { hint: String },
 
     #[error(transparent)]
     Other(#[from] anyhow::Error),
@@ -137,13 +141,13 @@ mod tests {
     fn jitter_bounded_by_range() {
         for _ in 0..50 {
             let b = jittered_backoff(100, 400, 2.0, 10_000);
-            assert!(b >= 100 && b <= 800, "got {b}");
+            assert!((100..=800).contains(&b), "got {b}");
         }
     }
 
     #[test]
     fn jitter_respects_max() {
         let b = jittered_backoff(100, 10_000, 2.0, 5_000);
-        assert!(b >= 100 && b <= 5_000, "got {b}");
+        assert!((100..=5_000).contains(&b), "got {b}");
     }
 }

@@ -314,11 +314,7 @@ impl FlowManager {
     {
         let mut last_err: Option<FlowError> = None;
         for _ in 0..RETRY_ATTEMPTS {
-            let mut current = self
-                .store
-                .get(id)
-                .await?
-                .ok_or(FlowError::NotFound(id))?;
+            let mut current = self.store.get(id).await?.ok_or(FlowError::NotFound(id))?;
             mutate(&mut current)?;
             match self
                 .store
@@ -397,16 +393,16 @@ mod tests {
         assert!(f.wait_json.is_some());
         assert_eq!(f.revision, 2);
 
-        let f = m
-            .resume(f.id, Some(json!({"processed": 5})))
-            .await
-            .unwrap();
+        let f = m.resume(f.id, Some(json!({"processed": 5}))).await.unwrap();
         assert_eq!(f.status, FlowStatus::Running);
         assert!(f.wait_json.is_none());
         assert_eq!(f.state_json["processed"], 5);
         assert_eq!(f.state_json["messages"], 10);
 
-        let f = m.finish(f.id, Some(json!({"summary": "10 done"}))).await.unwrap();
+        let f = m
+            .finish(f.id, Some(json!({"summary": "10 done"})))
+            .await
+            .unwrap();
         assert_eq!(f.status, FlowStatus::Finished);
         assert_eq!(f.state_json["summary"], "10 done");
     }
@@ -443,7 +439,7 @@ mod tests {
         assert!(f.cancel_requested);
         assert_eq!(f.status, FlowStatus::Running);
 
-        let err = m.finish(f.id, None).await.err().expect("blocked");
+        let err = m.finish(f.id, None).await.expect_err("blocked");
         assert!(matches!(err, FlowError::CancelPending { .. }));
 
         // But cancel still works.
@@ -481,8 +477,7 @@ mod tests {
         let err = m
             .update_state(f.id, json!({"x": 1}), None)
             .await
-            .err()
-            .expect("blocked");
+            .expect_err("blocked");
         assert!(matches!(err, FlowError::CancelPending { .. }));
     }
 
@@ -560,8 +555,7 @@ mod tests {
                 result_json: None,
             })
             .await
-            .err()
-            .expect("err");
+            .expect_err("err");
         assert!(matches!(err, FlowError::NotFound(_)));
     }
 
@@ -591,7 +585,7 @@ mod tests {
         let f = m.create_managed(input()).await.unwrap();
         let f = m.start_running(f.id).await.unwrap();
         let _ = m.finish(f.id, None).await.unwrap();
-        let err = m.finish(f.id, None).await.err().expect("terminal");
+        let err = m.finish(f.id, None).await.expect_err("terminal");
         assert!(matches!(err, FlowError::AlreadyTerminal { .. }));
     }
 }

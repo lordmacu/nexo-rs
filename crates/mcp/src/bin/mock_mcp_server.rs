@@ -65,11 +65,7 @@ fn main() {
         let Some(id_value) = id else {
             if method == "notifications/cancelled" {
                 if let Some(path) = &cancelled_log {
-                    if let Ok(mut f) = OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(path)
-                    {
+                    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
                         let _ = writeln!(f, "{trimmed}");
                     }
                 }
@@ -99,11 +95,7 @@ fn main() {
         // continue (no reply to emit).
         if mode == "sampling_trigger" && method.is_empty() {
             if let Some(path) = &sampling_log {
-                if let Ok(mut f) = OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(path)
-                {
+                if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
                     let _ = writeln!(f, "{trimmed}");
                 }
             }
@@ -132,11 +124,7 @@ fn main() {
                         .and_then(|p| p.get("level"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
-                    if let Ok(mut f) = OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(path)
-                    {
+                    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
                         let _ = writeln!(f, "{level}");
                     }
                 }

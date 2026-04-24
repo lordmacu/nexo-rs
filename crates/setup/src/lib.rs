@@ -35,61 +35,239 @@ use anyhow::Result;
 pub use registry::{Category, FieldDef, FieldKind, FieldTarget, ServiceDef, ServiceValues};
 pub use status::{ServiceStatus, StatusReport};
 
-/// Run the interactive menu loop: pick a service, fill fields, persist,
-/// repeat until the user exits.
+/// Interactive entry point. Routes to a guided first-run wizard when
+/// the system looks empty; otherwise drops the operator at a "what do
+/// you want to do?" hub. Both paths delegate to the same per-service
+/// handlers below.
 pub fn run_interactive(config_dir: &Path) -> Result<()> {
-    let secrets_dir = config_dir.parent().unwrap_or(Path::new(".")).join("secrets");
+    let secrets_dir = config_dir
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("secrets");
     writer::ensure_secrets_dir(&secrets_dir)?;
     let services = services::all();
-    let picked = prompt::select_services(&services, &secrets_dir, config_dir)?;
-    if picked.is_empty() {
-        println!("No se seleccionó nada. Bye.");
-        return Ok(());
+    let report = status::audit(&services, &secrets_dir, config_dir);
+    if is_first_run(&report) {
+        run_guided_first_run(&services, &secrets_dir, config_dir, &report)
+    } else {
+        run_hub_menu(&services, &secrets_dir, config_dir, &report)
     }
-    let mut failures: Vec<(String, anyhow::Error)> = Vec::new();
-    for svc in picked {
-        if let Err(e) = run_service(svc, &secrets_dir, config_dir) {
-            eprintln!("⚠  {}: {e:#}", svc.label);
-            failures.push((svc.label.to_string(), e));
+}
+
+/// "Nothing is wired yet" heuristic: no LLM provider has all required
+/// fields filled. Everything else (memory, skills, channels) is
+/// meaningful only after an LLM is up, so that's the gate.
+fn is_first_run(report: &status::StatusReport) -> bool {
+    !report
+        .services
+        .iter()
+        .any(|s| s.category == registry::Category::Llm && s.is_fully_configured())
+}
+
+/// Linear 4-step wizard for a cold install: agent → LLM → channel →
+/// skills. Each step can be escaped (esc) to drop into the hub menu.
+fn run_guided_first_run(
+    services: &[ServiceDef],
+    secrets_dir: &Path,
+    config_dir: &Path,
+    _report: &status::StatusReport,
+) -> Result<()> {
+    println!();
+    println!("╭────────────────────────────────────────────────────────────╮");
+    println!("│  Setup guiado — primera corrida                            │");
+    println!("│  4 pasos: agente → LLM → canal → skills                    │");
+    println!("╰────────────────────────────────────────────────────────────╯");
+
+    // Step 1 — agent context. Single-agent installs auto-confirm; the
+    // YAML is already seeded by git so we don't create agents here.
+    let agents_yaml = config_dir.join("agents.yaml");
+    let agent_ids = yaml_patch::list_agent_ids(&agents_yaml).unwrap_or_default();
+    if agent_ids.is_empty() {
+        anyhow::bail!(
+            "agents.yaml sin agentes — editá el archivo o clonás el template antes del setup"
+        );
+    }
+    let agent_id = prompt::pick_agent(&agent_ids)?;
+    println!();
+    println!("▎Paso 1/4 — Agente: `{agent_id}` ✔");
+
+    // Step 2 — LLM. First-run cannot continue without at least one.
+    println!();
+    println!("▎Paso 2/4 — LLM");
+    let llm_services: Vec<&ServiceDef> = services
+        .iter()
+        .filter(|s| s.category == registry::Category::Llm)
+        .collect();
+    let llm_labels: Vec<&str> = llm_services.iter().map(|s| s.label).collect();
+    let idx = prompt::pick_from_list("¿Qué proveedor de LLM?", &llm_labels)?;
+    let svc = llm_services[idx];
+    run_service(svc, secrets_dir, config_dir)?;
+
+    // Step 3 — Channel. `link` handles the inline pairing.
+    println!();
+    println!("▎Paso 3/4 — Canal");
+    if let Some(link_svc) = services.iter().find(|s| s.id == "link") {
+        run_service(link_svc, secrets_dir, config_dir)?;
+    }
+
+    // Step 4 — Skills (optional, pre-selects common ones).
+    println!();
+    println!("▎Paso 4/4 — Skills (Enter salta)");
+    let skill_services: Vec<&ServiceDef> = services
+        .iter()
+        .filter(|s| s.category == registry::Category::Skill)
+        .collect();
+    let skill_labels: Vec<&str> = skill_services.iter().map(|s| s.label).collect();
+    let defaults: Vec<bool> = skill_services
+        .iter()
+        .map(|s| {
+            matches!(
+                s.id,
+                "weather" | "summarize" | "openstreetmap" | "goplaces" | "browser"
+            )
+        })
+        .collect();
+    let picked = prompt::multi_select(
+        "Elegí skills (space = toggle, enter = confirmar, vacío = ninguno)",
+        &skill_labels,
+        &defaults,
+    )?;
+    for label in &picked {
+        if let Some(svc) = skill_services.iter().find(|s| s.label == label) {
+            if let Err(e) = run_service(svc, secrets_dir, config_dir) {
+                eprintln!("⚠  {}: {e:#}", svc.label);
+            }
         }
     }
+
     println!();
-    if failures.is_empty() {
-        println!("Listo. `agent setup list` para ver el estado global.");
-        Ok(())
-    } else {
-        // Non-zero exit so scripted runs can detect the partial failure;
-        // the operator already saw per-service output above and the list
-        // command can confirm what stuck.
-        anyhow::bail!(
-            "{} servicio(s) con error: {}. Corre `agent setup list` para ver el estado.",
-            failures.len(),
-            failures
-                .iter()
-                .map(|(name, _)| name.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
+    println!("✔ Setup guiado listo. Ejecutá `./target/debug/agent --config {}`", config_dir.display());
+    Ok(())
+}
+
+/// Post-first-run menu. Groups follow-up actions by intent rather than
+/// by category. "Avanzado" falls through to the legacy multi-select
+/// for power users.
+fn run_hub_menu(
+    services: &[ServiceDef],
+    secrets_dir: &Path,
+    config_dir: &Path,
+    _report: &status::StatusReport,
+) -> Result<()> {
+    let actions = [
+        "Ver estado (qué está configurado)",
+        "Vincular canal adicional (whatsapp / telegram / …)",
+        "Agregar skills",
+        "Rotar credencial (LLM key, token, etc)",
+        "Avanzado ⚙  (memory, broker, runtime, per-service)",
+        "Salir",
+    ];
+    loop {
+        println!();
+        let idx = prompt::pick_from_list("¿Qué querés hacer?", &actions)?;
+        match idx {
+            0 => {
+                let report = status::audit(services, secrets_dir, config_dir);
+                status::print_report(&report);
+            }
+            1 => {
+                if let Some(link) = services.iter().find(|s| s.id == "link") {
+                    if let Err(e) = run_service(link, secrets_dir, config_dir) {
+                        eprintln!("⚠  {}: {e:#}", link.label);
+                    }
+                }
+            }
+            2 => {
+                let skill_services: Vec<&ServiceDef> = services
+                    .iter()
+                    .filter(|s| s.category == registry::Category::Skill)
+                    .collect();
+                let labels: Vec<&str> = skill_services.iter().map(|s| s.label).collect();
+                let defaults = vec![false; labels.len()];
+                let picked = prompt::multi_select(
+                    "Skills (space = toggle, enter = confirmar)",
+                    &labels,
+                    &defaults,
+                )?;
+                for lbl in &picked {
+                    if let Some(svc) = skill_services.iter().find(|s| s.label == lbl) {
+                        if let Err(e) = run_service(svc, secrets_dir, config_dir) {
+                            eprintln!("⚠  {}: {e:#}", svc.label);
+                        }
+                    }
+                }
+            }
+            3 => {
+                // Credential rotation: present every configured service
+                // in Llm/Plugin/Skill and run its form again.
+                let rotatable: Vec<&ServiceDef> = services
+                    .iter()
+                    .filter(|s| {
+                        matches!(
+                            s.category,
+                            registry::Category::Llm
+                                | registry::Category::Plugin
+                                | registry::Category::Skill
+                        )
+                    })
+                    .collect();
+                let labels: Vec<&str> = rotatable.iter().map(|s| s.label).collect();
+                let pick = prompt::pick_from_list("¿Qué servicio rotar?", &labels)?;
+                run_service(rotatable[pick], secrets_dir, config_dir)?;
+            }
+            4 => {
+                // Legacy advanced path — reuse the old multi-category
+                // picker scoped to the technical bits.
+                let advanced_services: Vec<ServiceDef> = services
+                    .iter()
+                    .filter(|s| {
+                        matches!(
+                            s.category,
+                            registry::Category::Memory
+                                | registry::Category::Infra
+                                | registry::Category::Runtime
+                        )
+                    })
+                    .cloned()
+                    .collect();
+                let picked =
+                    prompt::select_services(&advanced_services, secrets_dir, config_dir)?;
+                for svc in picked {
+                    if let Err(e) = run_service(svc, secrets_dir, config_dir) {
+                        eprintln!("⚠  {}: {e:#}", svc.label);
+                    }
+                }
+            }
+            _ => return Ok(()),
+        }
     }
 }
 
 /// Run the wizard for a single service id (non-menu path).
 pub fn run_one(config_dir: &Path, service_id: &str) -> Result<()> {
-    let secrets_dir = config_dir.parent().unwrap_or(Path::new(".")).join("secrets");
+    let secrets_dir = config_dir
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("secrets");
     writer::ensure_secrets_dir(&secrets_dir)?;
     let services = services::all();
     let svc = services
         .iter()
         .find(|s| s.id == service_id)
-        .ok_or_else(|| anyhow::anyhow!(
-            "unknown service '{service_id}'. Run `agent setup --list` for the catalog.",
-        ))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "unknown service '{service_id}'. Run `agent setup --list` for the catalog.",
+            )
+        })?;
     run_service(svc, &secrets_dir, config_dir)
 }
 
 /// Print the catalog + per-service configuration status to stdout.
 pub fn run_list(config_dir: &Path) -> Result<()> {
-    let secrets_dir = config_dir.parent().unwrap_or(Path::new(".")).join("secrets");
+    let secrets_dir = config_dir
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("secrets");
     let services = services::all();
     let report = status::audit(&services, &secrets_dir, config_dir);
     status::print_report(&report);
@@ -100,7 +278,10 @@ pub fn run_list(config_dir: &Path) -> Result<()> {
 /// poll for the user's first message, append their chat_id to the
 /// allowlist.
 pub fn run_telegram_link(config_dir: &Path) -> Result<()> {
-    let secrets_dir = config_dir.parent().unwrap_or(Path::new(".")).join("secrets");
+    let secrets_dir = config_dir
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("secrets");
     // Detect if we're being called from within an existing tokio
     // runtime (interactive setup is launched from `#[tokio::main]`)
     // vs a fresh sync context (standalone `agent setup telegram-link`).
@@ -122,7 +303,10 @@ pub fn run_telegram_link(config_dir: &Path) -> Result<()> {
 /// Non-interactive audit — exits with non-zero when any required field
 /// is missing.
 pub fn run_doctor(config_dir: &Path) -> Result<()> {
-    let secrets_dir = config_dir.parent().unwrap_or(Path::new(".")).join("secrets");
+    let secrets_dir = config_dir
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("secrets");
     let services = services::all();
     let report = status::audit(&services, &secrets_dir, config_dir);
     let missing = report.missing_required();

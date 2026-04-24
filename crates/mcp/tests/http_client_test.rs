@@ -89,15 +89,16 @@ async fn streamable_handler(
         reqwest::header::CONTENT_TYPE,
         HeaderValue::from_static("application/json"),
     );
-    response.headers_mut().insert(
-        "mcp-session-id",
-        HeaderValue::from_static("sess-1"),
-    );
+    response
+        .headers_mut()
+        .insert("mcp-session-id", HeaderValue::from_static("sess-1"));
     response
 }
 
 async fn spawn_streamable_server(state: ServerState) -> (SocketAddr, tokio::task::JoinHandle<()>) {
-    let app = Router::new().route("/", post(streamable_handler)).with_state(state);
+    let app = Router::new()
+        .route("/", post(streamable_handler))
+        .with_state(state);
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let handle = tokio::spawn(async move {
@@ -248,7 +249,10 @@ async fn shutdown_sends_cancelled_streamable() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     let recorded = state.cancelled.lock().await.clone();
     assert!(!recorded.is_empty(), "no cancelled recorded");
-    assert!(recorded.iter().any(|&id| id > 0), "recorded ids: {recorded:?}");
+    assert!(
+        recorded.iter().any(|&id| id > 0),
+        "recorded ids: {recorded:?}"
+    );
     server.abort();
 }
 
@@ -297,9 +301,9 @@ async fn sse_get_handler(
     // For test simplicity we include the initialize response inline after
     // a 50ms delay, matching what the client POSTs.
     let post_url = "/sse/message".to_string();
-    let messages: Vec<Result<Event, std::convert::Infallible>> = vec![
-        Ok(Event::default().event("endpoint").data(post_url.clone())),
-    ];
+    let messages: Vec<Result<Event, std::convert::Infallible>> = vec![Ok(Event::default()
+        .event("endpoint")
+        .data(post_url.clone()))];
     *state.lock().await = Some(post_url);
     let stream = stream::iter(messages);
     Sse::new(stream).into_response()
@@ -321,17 +325,14 @@ async fn sse_connect_receives_endpoint_event() {
     // Because this test server lacks the response-push plumbing, only
     // verify that the endpoint event is received. A full SSE round-trip is
     // validated by the unit-level `sse::tests::*` suite.
-    let state_after = tokio::time::timeout(
-        Duration::from_millis(500),
-        async {
-            loop {
-                if state.lock().await.is_some() {
-                    return;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
+    let state_after = tokio::time::timeout(Duration::from_millis(500), async {
+        loop {
+            if state.lock().await.is_some() {
+                return;
             }
-        },
-    )
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
     .await;
     drop(state_after);
 
@@ -499,9 +500,7 @@ async fn streamable_retries_without_session_on_404() {
         1,
         "retry must arrive without Mcp-Session-Id"
     );
-    assert!(state
-        .retried_ok
-        .load(std::sync::atomic::Ordering::SeqCst));
+    assert!(state.retried_ok.load(std::sync::atomic::Ordering::SeqCst));
 
     client.shutdown().await;
     server.abort();
@@ -564,21 +563,21 @@ async fn auto_fallback_sse_get_handler() -> axum::response::Response {
     use futures_util::stream;
 
     let events = vec![
+        Ok::<_, std::convert::Infallible>(Event::default().event("endpoint").data("/sse/messages")),
         Ok::<_, std::convert::Infallible>(
-            Event::default().event("endpoint").data("/sse/messages"),
+            Event::default().event("message").data(
+                serde_json::json!({
+                    "jsonrpc":"2.0",
+                    "id": 1,
+                    "result": {
+                        "protocolVersion":"2024-11-05",
+                        "capabilities": {"tools":{}},
+                        "serverInfo": {"name":"auto-sse-mock","version":"0.1.0"}
+                    }
+                })
+                .to_string(),
+            ),
         ),
-        Ok::<_, std::convert::Infallible>(Event::default().event("message").data(
-            serde_json::json!({
-                "jsonrpc":"2.0",
-                "id": 1,
-                "result": {
-                    "protocolVersion":"2024-11-05",
-                    "capabilities": {"tools":{}},
-                    "serverInfo": {"name":"auto-sse-mock","version":"0.1.0"}
-                }
-            })
-            .to_string(),
-        )),
     ];
     Sse::new(stream::iter(events))
         .keep_alive(axum::response::sse::KeepAlive::new())
@@ -654,12 +653,13 @@ async fn auto_picks_streamable_when_available() {
 #[tokio::test]
 async fn auto_surfaces_non_fallback_errors() {
     // Always returns 500 — must NOT trigger fallback (not in 404/405/415 set).
-    let app = Router::new().route(
-        "/",
-        post(|_body: String| async move {
-            (StatusCode::INTERNAL_SERVER_ERROR, "boom").into_response()
-        }),
-    );
+    let app =
+        Router::new().route(
+            "/",
+            post(|_body: String| async move {
+                (StatusCode::INTERNAL_SERVER_ERROR, "boom").into_response()
+            }),
+        );
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {

@@ -40,12 +40,15 @@ pub struct TokenPlanBundle {
 
 impl TokenPlanBundle {
     pub fn load(path: &Path) -> Result<Self> {
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("read {}", path.display()))?;
-        let bundle: Self = serde_json::from_str(&text)
-            .with_context(|| format!("parse {}", path.display()))?;
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+        let bundle: Self =
+            serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
         if bundle.access_token.is_empty() || bundle.refresh_token.is_empty() {
-            bail!("bundle {} is missing access_token or refresh_token", path.display());
+            bail!(
+                "bundle {} is missing access_token or refresh_token",
+                path.display()
+            );
         }
         Ok(bundle)
     }
@@ -54,9 +57,7 @@ impl TokenPlanBundle {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
-        let tmp = tempfile::NamedTempFile::new_in(
-            path.parent().unwrap_or(Path::new(".")),
-        )?;
+        let tmp = tempfile::NamedTempFile::new_in(path.parent().unwrap_or(Path::new(".")))?;
         serde_json::to_writer_pretty(&tmp, self)?;
         tmp.as_file().sync_all().ok();
         tmp.persist(path)
@@ -157,8 +158,8 @@ impl AuthSource {
         if !status.is_success() {
             bail!("MiniMax refresh HTTP {status}: {text}");
         }
-        let parsed: RefreshResp = serde_json::from_str(&text)
-            .context("parsing MiniMax refresh response")?;
+        let parsed: RefreshResp =
+            serde_json::from_str(&text).context("parsing MiniMax refresh response")?;
         let new_access = parsed
             .access_token
             .ok_or_else(|| anyhow!("refresh response missing access_token: {text}"))?;
@@ -237,7 +238,7 @@ pub fn build_auth_source(cfg: &agent_config::LlmProviderConfig) -> Result<AuthSo
     let mode = auth.map(|a| a.mode.as_str()).unwrap_or("auto");
     let bundle_path = auth
         .and_then(|a| a.bundle.as_ref())
-        .map(|s| PathBuf::from(s))
+        .map(PathBuf::from)
         .unwrap_or_else(default_bundle_path);
 
     match mode {
@@ -348,9 +349,13 @@ mod tests {
             auth: Some(agent_config::LlmAuthConfig {
                 mode: "auto".into(),
                 bundle: Some("/tmp/definitely-does-not-exist-xyz.json".into()),
+                setup_token_file: None,
+                refresh_endpoint: None,
+                client_id: None,
             }),
             api_flavor: None,
-            embedding_model: None, safety_settings: None,
+            embedding_model: None,
+            safety_settings: None,
         };
         let src = build_auth_source(&cfg).unwrap();
         match src {

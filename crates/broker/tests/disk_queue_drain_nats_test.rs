@@ -58,11 +58,18 @@ async fn drain_nats_publishes_pending_events_in_order() -> anyhow::Result<()> {
                 .to_string(),
         );
     }
-    assert_eq!(labels, vec!["one", "two", "three"], "drain_nats must preserve enqueue order");
+    assert_eq!(
+        labels,
+        vec!["one", "two", "three"],
+        "drain_nats must preserve enqueue order"
+    );
 
     // A second drain must report zero — the pending rows were removed on success.
     let residue = queue.drain_nats(&client).await?;
-    assert_eq!(residue, 0, "pending_events not emptied after successful drain");
+    assert_eq!(
+        residue, 0,
+        "pending_events not emptied after successful drain"
+    );
 
     Ok(())
 }

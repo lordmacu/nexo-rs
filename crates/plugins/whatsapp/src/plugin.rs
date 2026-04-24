@@ -141,13 +141,10 @@ impl Plugin for WhatsappPlugin {
         crate::session::ensure_session_dirs(&self.cfg)?;
         crate::session::check_daemon_collision(&self.cfg)?;
 
-        let session = crate::session::connect_session(
-            &self.cfg,
-            broker.clone(),
-            self.pairing.clone(),
-        )
-        .await
-        .context("wa-agent Session bootstrap failed")?;
+        let session =
+            crate::session::connect_session(&self.cfg, broker.clone(), self.pairing.clone())
+                .await
+                .context("wa-agent Session bootstrap failed")?;
         let session = Arc::new(session);
         self.session
             .set(session.clone())
@@ -175,9 +172,7 @@ impl Plugin for WhatsappPlugin {
                     let t = crate::transcriber::NatsTranscriber::new(
                         broker_for_transcribe,
                         &cfg_for_transcribe.transcriber.skill,
-                        std::time::Duration::from_millis(
-                            cfg_for_transcribe.transcriber.timeout_ms,
-                        ),
+                        std::time::Duration::from_millis(cfg_for_transcribe.transcriber.timeout_ms),
                     );
                     session_for_task
                         .run_agent_with_transcribe(acl, t, handler)
@@ -218,11 +213,7 @@ impl Plugin for WhatsappPlugin {
             inbound_topic,
         );
 
-        *self.spawned.lock().await = vec![
-            inbound_handle,
-            dispatch_handle,
-            lifecycle_handle,
-        ];
+        *self.spawned.lock().await = vec![inbound_handle, dispatch_handle, lifecycle_handle];
 
         Ok(())
     }

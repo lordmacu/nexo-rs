@@ -20,7 +20,7 @@
 # `inbound_bindings: [{plugin: whatsapp, instance: X}]`.
 whatsapp:
   enabled: true
-  session_dir: ./data/whatsapp-session
+  session_dir: ./data/workspace/ana/whatsapp/default
   media_dir: ./data/media/whatsapp
   acl:
     allow_list: []
@@ -46,6 +46,9 @@ whatsapp:
   # Spawn a Cloudflare Tunnel on boot so /whatsapp/pair is reachable
   # from a public *.trycloudflare.com URL without VPN / port-forward.
   # Auto-downloads cloudflared for the host platform on first run.
+  # Pairing se hace via `./target/debug/agent setup link` (wizard).
+  # El tunnel público + la URL de pair en boot quedan desactivados —
+  # el agente asume que la sesión ya está emparejada en disco.
   public_tunnel:
-    enabled: true
+    enabled: false
     only_until_paired: true

@@ -1,13 +1,13 @@
 //! Phase 10.9 — `forge_memory_checkpoint` native tool. Lets the LLM mark a
 //! moment in the workspace git history (end of project, significant fact
 //! learned, etc.) with an arbitrary note.
-use std::sync::Arc;
-use async_trait::async_trait;
-use serde_json::{json, Value};
-use agent_llm::ToolDef;
 use super::context::AgentContext;
 use super::tool_registry::ToolHandler;
 use super::workspace_git::MemoryGitRepo;
+use agent_llm::ToolDef;
+use async_trait::async_trait;
+use serde_json::{json, Value};
+use std::sync::Arc;
 pub struct MemoryCheckpointTool {
     git: Arc<MemoryGitRepo>,
 }
@@ -90,7 +90,7 @@ mod tests {
             transcripts_dir: String::new(),
             dreaming: Default::default(),
             workspace_git: Default::default(),
-        tool_rate_limits: None,
+            tool_rate_limits: None,
             tool_args_validation: None,
             extra_docs: Vec::new(),
             inbound_bindings: Vec::new(),
@@ -99,6 +99,8 @@ mod tests {
             allowed_delegates: Vec::new(),
             accept_delegates_from: Vec::new(),
             description: String::new(),
+            outbound_allowlist: Default::default(),
+            google_auth: None,
         });
         let broker = AnyBroker::local();
         let sessions = Arc::new(SessionManager::new(std::time::Duration::from_secs(60), 20));

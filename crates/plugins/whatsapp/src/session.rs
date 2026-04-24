@@ -6,13 +6,57 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use agent_broker::{AnyBroker, BrokerHandle, Event};
+use agent_broker::AnyBroker;
 use agent_config::WhatsappPluginConfig;
 use anyhow::{Context, Result};
 
-use crate::bridge::SOURCE;
-use crate::events::InboundEvent;
-use crate::pairing::{QrSnapshot, SharedPairingState};
+use crate::pairing::SharedPairingState;
+
+/// One-shot pairing helper used by the setup wizard. Spawns a
+/// `wa-agent` Client with a terminal QR renderer, blocks on
+/// `connect()` until the user scans. First successful connect
+/// persists to `<session_dir>/.whatsapp-rs/` so later boots of the
+/// main agent resume silently.
+///
+/// Lives here (not in the setup crate) so the "how to pair" knowledge
+/// stays next to the rest of the wa-agent wrapping — callers don't
+/// need to pull `wa-agent` themselves.
+pub async fn pair_once(session_dir: &Path) -> Result<()> {
+    tokio::fs::create_dir_all(session_dir)
+        .await
+        .with_context(|| format!("mkdir {}", session_dir.display()))?;
+
+    let client = whatsapp_rs::Client::new_in_dir(session_dir)
+        .context("wa-agent Client::new_in_dir failed")?
+        .on_qr(|qr_payload| {
+            let payload = qr_payload.to_string();
+            match qrcode::QrCode::new(payload.as_bytes()) {
+                Ok(code) => {
+                    // Inverted colors so the QR scans from both dark
+                    // and light terminal themes. Quiet zone keeps
+                    // phones from losing the finder patterns.
+                    let rendered = code
+                        .render::<qrcode::render::unicode::Dense1x2>()
+                        .dark_color(qrcode::render::unicode::Dense1x2::Light)
+                        .light_color(qrcode::render::unicode::Dense1x2::Dark)
+                        .quiet_zone(true)
+                        .build();
+                    println!();
+                    println!("{rendered}");
+                    println!("Esperando scan…");
+                }
+                Err(e) => {
+                    eprintln!("QR render failed: {e} (payload: {payload})");
+                }
+            }
+        });
+
+    let _session = client
+        .connect()
+        .await
+        .context("wa-agent connect failed — ¿QR expirado? ¿conectividad?")?;
+    Ok(())
+}
 
 /// Ensure `session_dir` and `media_dir` exist; return the resolved XDG
 /// base we want `wa-agent` to use (i.e. `session_dir` itself — the crate
@@ -31,7 +75,9 @@ pub fn ensure_session_dirs(cfg: &WhatsappPluginConfig) -> Result<PathBuf> {
 /// We look relative to the plugin's `session_dir` first (honors our XDG
 /// override), then fall back to the system default for safety.
 pub fn daemon_handle_path(cfg: &WhatsappPluginConfig) -> PathBuf {
-    PathBuf::from(&cfg.session_dir).join(".whatsapp-rs").join("daemon.json")
+    PathBuf::from(&cfg.session_dir)
+        .join(".whatsapp-rs")
+        .join("daemon.json")
 }
 
 /// Returns an error when `daemon.prefer_existing` is true and a daemon
@@ -81,6 +127,21 @@ pub async fn connect_session(
     let session_dir = ensure_session_dirs(cfg)?;
     check_daemon_collision(cfg)?;
 
+    // Pairing is a setup-time operation only. If no credentials exist
+    // we refuse to boot instead of silently launching the QR flow —
+    // that keeps runtime lean and forces the operator through the
+    // wizard, where allowlist / token / device name are collected
+    // consistently.
+    let creds_path = session_dir.join(".whatsapp-rs").join("creds.json");
+    if !creds_path.exists() {
+        anyhow::bail!(
+            "WhatsApp session not found at {}. \
+             Pair via `agent setup` (the runtime no longer emits QRs). \
+             After pairing, restart the agent.",
+            creds_path.display()
+        );
+    }
+
     let broker_for_qr = Arc::new(broker);
     let qr_broker = broker_for_qr.clone();
     let qr_pairing = pairing.clone();
@@ -90,47 +151,22 @@ pub async fn connect_session(
     // That's the change that unblocks multi-account in a single
     // process: every instance gets its own `FileStore` rooted at its
     // own `session_dir/.whatsapp-rs/...` with no shared global state.
+    // Intentionally no `on_qr` handler: pairing lives in the setup
+    // wizard. If creds go stale server-side (401 loop) the operator
+    // must re-pair via setup — the runtime never surfaces a QR.
+    let _ = (qr_broker, qr_pairing, qr_inbound_topic); // silence unused
     let client = whatsapp_rs::Client::new_in_dir(&session_dir)
-        .context("wa-agent Client::new_in_dir failed")?
-        .on_qr(move |qr_payload| {
-            let payload = qr_payload.to_string();
-            let broker = qr_broker.clone();
-            let pairing = qr_pairing.clone();
-            let inbound_topic = qr_inbound_topic.clone();
-            tokio::spawn(async move {
-                let ascii = whatsapp_rs::qr::ascii::render_qr(payload.as_bytes());
-                eprintln!("\n{ascii}\nEscanea con WhatsApp → Dispositivos vinculados\n");
-                let png_base64 = render_qr_png(&payload);
-                let now = chrono::Utc::now().timestamp();
-                let expires_at = now + 60;
-                // Stash into pairing state for the HTTP API — this is
-                // what `/whatsapp/pair/qr` serves.
-                pairing
-                    .set_qr(QrSnapshot {
-                        ascii: ascii.clone(),
-                        png_b64: png_base64.clone(),
-                        expires_at,
-                        captured_at: now,
-                    })
-                    .await;
-                let ev = InboundEvent::Qr {
-                    ascii,
-                    png_base64,
-                    expires_at,
-                };
-                let event = Event::new(&inbound_topic, SOURCE, ev.to_payload());
-                if let Err(e) = broker.publish(&inbound_topic, event).await {
-                    tracing::warn!(error = %e, "QR event publish failed");
-                }
-            });
-        });
+        .context("wa-agent Client::new_in_dir failed")?;
     let session = client.connect().await.context("wa-agent connect failed")?;
     Ok(session)
 }
 
 /// Render the pairing payload as a base64-encoded PNG for UIs. Fails
 /// soft — returns an empty string when rendering fails so the ascii
-/// QR is still usable.
+/// QR is still usable. `#[cfg(test)]` — runtime no longer renders QRs
+/// (pairing moved to the setup wizard), but the helper stays covered
+/// so we can re-enable if a future UI wants PNG QRs again.
+#[cfg(test)]
 fn render_qr_png(payload: &str) -> String {
     use base64::Engine;
     let code = match qrcode::QrCode::new(payload.as_bytes()) {
@@ -146,10 +182,7 @@ fn render_qr_png(payload: &str) -> String {
         .quiet_zone(true)
         .build();
     let mut buf: Vec<u8> = Vec::with_capacity(4096);
-    if let Err(e) = image.write_to(
-        &mut std::io::Cursor::new(&mut buf),
-        image::ImageFormat::Png,
-    ) {
+    if let Err(e) = image.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png) {
         tracing::warn!(error = %e, "png encode failed");
         return String::new();
     }

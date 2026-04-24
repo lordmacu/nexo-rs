@@ -76,7 +76,11 @@ impl MediaVariant {
 /// related enums.
 pub(crate) fn variant_of_content(
     content: &whatsapp_rs::MessageContent,
-) -> Option<(MediaVariant, whatsapp_rs::media::MediaType, String /*mime*/)> {
+) -> Option<(
+    MediaVariant,
+    whatsapp_rs::media::MediaType,
+    String, /*mime*/
+)> {
     use whatsapp_rs::MessageContent as C;
     match content {
         C::Image { info, .. } => Some((
@@ -173,24 +177,34 @@ pub async fn send_media_auto(
     let variant = MediaVariant::from_mime(mime);
     match variant {
         MediaVariant::Image => {
-            session.send_image(to, bytes, caption).await
+            session
+                .send_image(to, bytes, caption)
+                .await
                 .map_err(|e| anyhow::anyhow!("send_image: {e}"))?;
         }
         MediaVariant::Video => {
-            session.send_video(to, bytes, caption).await
+            session
+                .send_video(to, bytes, caption)
+                .await
                 .map_err(|e| anyhow::anyhow!("send_video: {e}"))?;
         }
         MediaVariant::Audio => {
-            session.send_audio(to, bytes, mime).await
+            session
+                .send_audio(to, bytes, mime)
+                .await
                 .map_err(|e| anyhow::anyhow!("send_audio: {e}"))?;
         }
         MediaVariant::VoiceNote => {
-            session.send_voice_note(to, bytes, mime).await
+            session
+                .send_voice_note(to, bytes, mime)
+                .await
                 .map_err(|e| anyhow::anyhow!("send_voice_note: {e}"))?;
         }
         MediaVariant::Document => {
             let name = file_name.unwrap_or("file.bin");
-            session.send_document(to, bytes, mime, name).await
+            session
+                .send_document(to, bytes, mime, name)
+                .await
                 .map_err(|e| anyhow::anyhow!("send_document: {e}"))?;
         }
     }
@@ -206,7 +220,9 @@ pub async fn download_inbound(
     cfg: &WhatsappPluginConfig,
     msg: &whatsapp_rs::WAMessage,
 ) -> Result<()> {
-    let Some(content) = msg.message.as_ref() else { return Ok(()) };
+    let Some(content) = msg.message.as_ref() else {
+        return Ok(());
+    };
     let Some((variant, media_type, mime)) = variant_of_content(content) else {
         return Ok(());
     };
@@ -226,16 +242,18 @@ pub async fn download_inbound(
         .map_err(|e| anyhow::anyhow!("download_media: {e}"))?;
 
     let dir = PathBuf::from(&cfg.media_dir);
-    std::fs::create_dir_all(&dir)
-        .with_context(|| format!("mkdir {}", dir.display()))?;
+    std::fs::create_dir_all(&dir).with_context(|| format!("mkdir {}", dir.display()))?;
     let ext = variant.default_ext();
     let path = dir.join(format!("{}.{}", sanitize(&msg.key.id), ext));
-    std::fs::write(&path, &bytes)
-        .with_context(|| format!("write {}", path.display()))?;
+    std::fs::write(&path, &bytes).with_context(|| format!("write {}", path.display()))?;
 
     let session_id = session_id_for_jid(&msg.key.remote_jid);
     let ev = InboundEvent::MediaReceived {
-        from: msg.key.participant.clone().unwrap_or_else(|| msg.key.remote_jid.clone()),
+        from: msg
+            .key
+            .participant
+            .clone()
+            .unwrap_or_else(|| msg.key.remote_jid.clone()),
         chat: msg.key.remote_jid.clone(),
         msg_id: msg.key.id.clone(),
         local_path: path,
@@ -253,7 +271,13 @@ pub async fn download_inbound(
 /// file system. WA ids are typically alphanumeric but belt-and-braces.
 fn sanitize(id: &str) -> String {
     id.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -279,7 +303,10 @@ mod tests {
             MediaVariant::from_mime("audio/ogg;codecs=opus"),
             MediaVariant::VoiceNote
         );
-        assert_eq!(MediaVariant::from_mime("audio/opus"), MediaVariant::VoiceNote);
+        assert_eq!(
+            MediaVariant::from_mime("audio/opus"),
+            MediaVariant::VoiceNote
+        );
     }
 
     #[test]
@@ -289,7 +316,10 @@ mod tests {
             MediaVariant::Document
         );
         assert_eq!(MediaVariant::from_mime(""), MediaVariant::Document);
-        assert_eq!(MediaVariant::from_mime("weird/format"), MediaVariant::Document);
+        assert_eq!(
+            MediaVariant::from_mime("weird/format"),
+            MediaVariant::Document
+        );
     }
 
     #[test]
@@ -304,5 +334,4 @@ mod tests {
         assert_eq!(sanitize("../../etc/passwd"), "______etc_passwd");
         assert_eq!(sanitize("3EB0ABCD-42_a"), "3EB0ABCD-42_a");
     }
-
 }

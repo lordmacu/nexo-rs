@@ -3,14 +3,14 @@
 //! Parallel to `extension_tool.rs` (11.5). The LLM sees tools prefixed with
 //! `mcp_` and attributed with `[mcp:<server>]` in the description; calls
 //! are routed to the owning `dyn McpClient`.
-use std::sync::Arc;
+use super::context::AgentContext;
+use super::tool_registry::ToolHandler;
+use agent_llm::ToolDef;
+use agent_mcp::{McpClient, McpContent, McpTool as McpToolDescriptor};
 use async_trait::async_trait;
 use base64::Engine;
 use serde_json::Value;
-use agent_llm::ToolDef;
-use agent_mcp::{McpClient, McpContent, McpTool as McpToolDescriptor};
-use super::context::AgentContext;
-use super::tool_registry::ToolHandler;
+use std::sync::Arc;
 pub const MCP_NAME_PREFIX: &str = "mcp_";
 /// Replace every character outside `[a-zA-Z0-9_-]` with `_`. Used on both
 /// server and tool name before building the prefixed LLM-facing name so no

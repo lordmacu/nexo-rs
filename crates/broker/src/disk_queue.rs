@@ -103,7 +103,12 @@ impl DiskQueue {
             let over = (count - half) as u64;
             let ms = (over * MAX_BACKPRESSURE_MS) / range;
             if ms > 0 {
-                tracing::debug!(topic, pending = count, sleep_ms = ms, "applying backpressure");
+                tracing::debug!(
+                    topic,
+                    pending = count,
+                    sleep_ms = ms,
+                    "applying backpressure"
+                );
                 tokio::time::sleep(Duration::from_millis(ms)).await;
             }
         }
@@ -139,7 +144,8 @@ impl DiskQueue {
                 Ok(e) => e,
                 Err(e) => {
                     tracing::error!(id = %row.id, error = %e, "failed to deserialize pending event — moving to DLQ");
-                    self.move_to_dlq(&row.id, &row.topic, &row.payload, "deserialize_error").await?;
+                    self.move_to_dlq(&row.id, &row.topic, &row.payload, "deserialize_error")
+                        .await?;
                     continue;
                 }
             };
@@ -156,7 +162,8 @@ impl DiskQueue {
                     let new_attempts = row.attempts + 1;
                     if new_attempts >= DEFAULT_MAX_ATTEMPTS {
                         tracing::warn!(id = %row.id, topic = %row.topic, "max attempts reached — moving to DLQ");
-                        self.move_to_dlq(&row.id, &row.topic, &row.payload, &e.to_string()).await?;
+                        self.move_to_dlq(&row.id, &row.topic, &row.payload, &e.to_string())
+                            .await?;
                     } else {
                         sqlx::query("UPDATE pending_events SET attempts = ? WHERE id = ?")
                             .bind(new_attempts)
@@ -172,7 +179,13 @@ impl DiskQueue {
         Ok(published)
     }
 
-    async fn move_to_dlq(&self, id: &str, topic: &str, payload: &str, reason: &str) -> anyhow::Result<()> {
+    async fn move_to_dlq(
+        &self,
+        id: &str,
+        topic: &str,
+        payload: &str,
+        reason: &str,
+    ) -> anyhow::Result<()> {
         let now = Self::now_ms();
         sqlx::query(
             "INSERT OR IGNORE INTO dead_letters (id, topic, payload, failed_at, reason) VALUES (?, ?, ?, ?, ?)"
@@ -291,7 +304,8 @@ impl DiskQueue {
                 Ok(e) => e,
                 Err(e) => {
                     tracing::error!(id = %row.id, error = %e, "deserialize error in drain_nats — moving to DLQ");
-                    self.move_to_dlq(&row.id, &row.topic, &row.payload, "deserialize_error").await?;
+                    self.move_to_dlq(&row.id, &row.topic, &row.payload, "deserialize_error")
+                        .await?;
                     continue;
                 }
             };
@@ -308,7 +322,8 @@ impl DiskQueue {
                 Err(e) => {
                     let new_attempts = row.attempts + 1;
                     if new_attempts >= DEFAULT_MAX_ATTEMPTS {
-                        self.move_to_dlq(&row.id, &row.topic, &row.payload, &e.to_string()).await?;
+                        self.move_to_dlq(&row.id, &row.topic, &row.payload, &e.to_string())
+                            .await?;
                     } else {
                         sqlx::query("UPDATE pending_events SET attempts = ? WHERE id = ?")
                             .bind(new_attempts)

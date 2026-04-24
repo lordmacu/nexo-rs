@@ -20,7 +20,10 @@ fn write_fixtures(dir: &std::path::Path) {
     std::env::set_var("SMTP_PASSWORD", "pass");
     std::env::set_var("IMAP_HOST", "imap.test.com");
 
-    write_file(dir, "agents.yaml", r#"
+    write_file(
+        dir,
+        "agents.yaml",
+        r#"
 agents:
   - id: "kate"
     model:
@@ -30,20 +33,32 @@ agents:
     heartbeat:
       enabled: true
       interval: "5m"
-"#);
-    write_file(dir, "broker.yaml", r#"
+"#,
+    );
+    write_file(
+        dir,
+        "broker.yaml",
+        r#"
 broker:
   type: "nats"
   url: "nats://localhost:4222"
-"#);
-    write_file(dir, "llm.yaml", r#"
+"#,
+    );
+    write_file(
+        dir,
+        "llm.yaml",
+        r#"
 providers:
   minimax:
     api_key: "${MINIMAX_API_KEY}"
     group_id: "${MINIMAX_GROUP_ID}"
     base_url: "https://api.minimax.chat/v1"
-"#);
-    write_file(dir, "memory.yaml", r#"
+"#,
+    );
+    write_file(
+        dir,
+        "memory.yaml",
+        r#"
 short_term:
   max_history_turns: 50
   session_ttl: "24h"
@@ -57,19 +72,31 @@ vector:
     provider: "minimax"
     model: "embo-01"
     dimensions: 1536
-"#);
+"#,
+    );
 
     fs::create_dir_all(dir.join("plugins")).unwrap();
-    write_file(&dir.join("plugins"), "whatsapp.yaml", r#"
+    write_file(
+        &dir.join("plugins"),
+        "whatsapp.yaml",
+        r#"
 whatsapp:
   session_dir: "./data/sessions"
   credentials_file: "${WA_CREDENTIALS_FILE}"
-"#);
-    write_file(&dir.join("plugins"), "telegram.yaml", r#"
+"#,
+    );
+    write_file(
+        &dir.join("plugins"),
+        "telegram.yaml",
+        r#"
 telegram:
   token: "${TELEGRAM_BOT_TOKEN}"
-"#);
-    write_file(&dir.join("plugins"), "email.yaml", r#"
+"#,
+    );
+    write_file(
+        &dir.join("plugins"),
+        "email.yaml",
+        r#"
 email:
   smtp:
     host: "${SMTP_HOST}"
@@ -77,7 +104,8 @@ email:
     password: "${SMTP_PASSWORD}"
   imap:
     host: "${IMAP_HOST}"
-"#);
+"#,
+    );
 }
 
 #[test]
@@ -98,7 +126,10 @@ fn whatsapp_supports_multi_account_list_shape() {
     let _lock = ENV_LOCK.lock().unwrap();
     let dir = tempfile::tempdir().unwrap();
     write_fixtures(dir.path());
-    write_file(&dir.path().join("plugins"), "whatsapp.yaml", r#"
+    write_file(
+        &dir.path().join("plugins"),
+        "whatsapp.yaml",
+        r#"
 whatsapp:
   - session_dir: "./data/sessions/biz"
     credentials_file: "${WA_CREDENTIALS_FILE}"
@@ -106,7 +137,8 @@ whatsapp:
   - session_dir: "./data/sessions/support"
     credentials_file: "${WA_CREDENTIALS_FILE}"
     instance: "support"
-"#);
+"#,
+    );
     let cfg = AppConfig::load(dir.path()).expect("should load");
     assert_eq!(cfg.plugins.whatsapp.len(), 2);
     assert_eq!(cfg.plugins.whatsapp[0].instance.as_deref(), Some("biz"));
@@ -125,17 +157,27 @@ fn telegram_supports_multi_bot_list_shape() {
     let dir = tempfile::tempdir().unwrap();
     write_fixtures(dir.path());
     // Overwrite the telegram fixture with the list-shape variant.
-    write_file(&dir.path().join("plugins"), "telegram.yaml", r#"
+    write_file(
+        &dir.path().join("plugins"),
+        "telegram.yaml",
+        r#"
 telegram:
   - token: "${TELEGRAM_BOT_TOKEN}"
     instance: "bot_boss"
   - token: "${TELEGRAM_BOT_TOKEN}"
     instance: "bot_sales"
-"#);
+"#,
+    );
     let cfg = AppConfig::load(dir.path()).expect("should load");
     assert_eq!(cfg.plugins.telegram.len(), 2);
-    assert_eq!(cfg.plugins.telegram[0].instance.as_deref(), Some("bot_boss"));
-    assert_eq!(cfg.plugins.telegram[1].instance.as_deref(), Some("bot_sales"));
+    assert_eq!(
+        cfg.plugins.telegram[0].instance.as_deref(),
+        Some("bot_boss")
+    );
+    assert_eq!(
+        cfg.plugins.telegram[1].instance.as_deref(),
+        Some("bot_sales")
+    );
 }
 
 #[test]
@@ -163,17 +205,24 @@ fn unknown_field_in_agents_yaml() {
     let _lock = ENV_LOCK.lock().unwrap();
     let dir = tempfile::tempdir().unwrap();
     write_fixtures(dir.path());
-    write_file(dir.path(), "agents.yaml", r#"
+    write_file(
+        dir.path(),
+        "agents.yaml",
+        r#"
 agents:
   - id: "kate"
     model:
       provider: "minimax"
       model: "MiniMax-M2.5"
     typo_field: "oops"
-"#);
+"#,
+    );
     let err = AppConfig::load(dir.path()).unwrap_err();
     let msg = format!("{:#}", err);
-    assert!(msg.contains("typo_field") || msg.contains("unknown"), "got: {msg}");
+    assert!(
+        msg.contains("typo_field") || msg.contains("unknown"),
+        "got: {msg}"
+    );
 }
 
 #[test]
@@ -190,13 +239,19 @@ fn file_secret_resolved() {
     // by the `${file:...}` traversal fix; otherwise /tmp is rejected.
     std::env::set_var("CONFIG_SECRETS_DIR", &parent);
 
-    write_file(dir.path(), "llm.yaml", &format!(r#"
+    write_file(
+        dir.path(),
+        "llm.yaml",
+        &format!(
+            r#"
 providers:
   minimax:
     api_key: "${{file:{secret_path}}}"
     group_id: "${{MINIMAX_GROUP_ID}}"
     base_url: "https://api.minimax.chat/v1"
-"#));
+"#
+        ),
+    );
 
     std::env::set_var("MINIMAX_API_KEY", "not_used");
     let cfg = AppConfig::load(dir.path()).unwrap();
@@ -209,13 +264,17 @@ fn defaults_applied() {
     let _lock = ENV_LOCK.lock().unwrap();
     let dir = tempfile::tempdir().unwrap();
     write_fixtures(dir.path());
-    write_file(dir.path(), "agents.yaml", r#"
+    write_file(
+        dir.path(),
+        "agents.yaml",
+        r#"
 agents:
   - id: "kate"
     model:
       provider: "minimax"
       model: "MiniMax-M2.5"
-"#);
+"#,
+    );
     let cfg = AppConfig::load(dir.path()).unwrap();
     assert_eq!(cfg.agents.agents[0].heartbeat.interval, "5m");
     assert_eq!(cfg.agents.agents[0].config.debounce_ms, 2000);

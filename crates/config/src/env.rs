@@ -1,6 +1,6 @@
+use anyhow::{anyhow, bail, Result};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use anyhow::{anyhow, bail, Result};
 
 pub fn resolve_placeholders(content: &str, source: &str) -> Result<String> {
     let mut result = String::with_capacity(content.len());
@@ -83,9 +83,8 @@ fn find_placeholders(content: &str) -> Vec<(usize, usize, &str)> {
 
 fn resolve_one(inner: &str, source: &str) -> Result<String> {
     if let Some(path) = inner.strip_prefix("file:") {
-        let safe = validate_file_ref(path).map_err(|e| {
-            anyhow!("${{{inner}}}: refusing to read '{path}': {e} (in {source})")
-        })?;
+        let safe = validate_file_ref(path)
+            .map_err(|e| anyhow!("${{{inner}}}: refusing to read '{path}': {e} (in {source})"))?;
         let content = fs::read_to_string(&safe).map_err(|e| {
             anyhow!(
                 "${{{inner}}}: cannot read file '{}': {e} (in {source})",
@@ -225,10 +224,7 @@ mod tests {
         std::env::remove_var("CONFIG_SECRETS_DIR");
         let err = resolve_placeholders("key: ${file:/etc/passwd}", "t.yaml").unwrap_err();
         let msg = err.to_string();
-        assert!(
-            msg.contains("absolute paths must be under"),
-            "got: {msg}"
-        );
+        assert!(msg.contains("absolute paths must be under"), "got: {msg}");
     }
 
     #[test]

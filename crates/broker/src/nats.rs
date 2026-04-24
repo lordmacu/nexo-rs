@@ -140,11 +140,7 @@ impl BrokerHandle for NatsBroker {
 
         let topic_owned = topic.to_string();
 
-        match self
-            .client
-            .publish(topic_owned, Bytes::from(payload))
-            .await
-        {
+        match self.client.publish(topic_owned, Bytes::from(payload)).await {
             Ok(()) => {
                 self.circuit.on_success();
                 Ok(())

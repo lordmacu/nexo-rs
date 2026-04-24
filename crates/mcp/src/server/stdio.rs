@@ -211,10 +211,7 @@ async fn dispatch<H: McpServerHandler>(
             }
             Err(e) => {
                 tracing::warn!(error = %e, "mcp tools/list failed");
-                DispatchOutcome::Error {
-                    code: -32000,
-                    message: e.to_string(),
-                }
+                map_handler_error(e)
             }
         },
         "tools/call" => {
@@ -266,10 +263,83 @@ async fn dispatch<H: McpServerHandler>(
                         error = %e,
                         "mcp tool call failed"
                     );
-                    DispatchOutcome::Error {
-                        code: -32000,
-                        message: e.to_string(),
-                    }
+                    map_handler_error(e)
+                }
+            }
+        }
+        "resources/list" => match handler.list_resources().await {
+            Ok(resources) => {
+                tracing::debug!(count = resources.len(), "mcp resources/list");
+                DispatchOutcome::Reply(serde_json::json!({
+                    "resources": resources,
+                    "nextCursor": Value::Null,
+                }))
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "mcp resources/list failed");
+                map_handler_error(e)
+            }
+        },
+        "resources/read" => {
+            let uri = params.get("uri").and_then(|n| n.as_str()).unwrap_or("");
+            if uri.is_empty() {
+                tracing::warn!("mcp resources/read missing 'uri'");
+                return DispatchOutcome::Error {
+                    code: -32602,
+                    message: "resources/read missing 'uri'".into(),
+                };
+            }
+            match handler.read_resource(uri).await {
+                Ok(contents) => DispatchOutcome::Reply(serde_json::json!({
+                    "contents": contents,
+                })),
+                Err(e) => {
+                    tracing::warn!(uri, error = %e, "mcp resources/read failed");
+                    map_handler_error(e)
+                }
+            }
+        }
+        "resources/templates/list" => match handler.list_resource_templates().await {
+            Ok(templates) => DispatchOutcome::Reply(serde_json::json!({
+                "resourceTemplates": templates,
+                "nextCursor": Value::Null,
+            })),
+            Err(e) => {
+                tracing::warn!(error = %e, "mcp resources/templates/list failed");
+                map_handler_error(e)
+            }
+        },
+        "prompts/list" => match handler.list_prompts().await {
+            Ok(prompts) => DispatchOutcome::Reply(serde_json::json!({
+                "prompts": prompts,
+                "nextCursor": Value::Null,
+            })),
+            Err(e) => {
+                tracing::warn!(error = %e, "mcp prompts/list failed");
+                map_handler_error(e)
+            }
+        },
+        "prompts/get" => {
+            let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            if name.is_empty() {
+                tracing::warn!("mcp prompts/get missing 'name'");
+                return DispatchOutcome::Error {
+                    code: -32602,
+                    message: "prompts/get missing 'name'".into(),
+                };
+            }
+            let args = params.get("arguments").cloned().unwrap_or(Value::Null);
+            match handler.get_prompt(name, args).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(v) => DispatchOutcome::Reply(v),
+                    Err(e) => DispatchOutcome::Error {
+                        code: -32603,
+                        message: format!("encode result: {e}"),
+                    },
+                },
+                Err(e) => {
+                    tracing::warn!(prompt = %name, error = %e, "mcp prompts/get failed");
+                    map_handler_error(e)
                 }
             }
         }
@@ -280,6 +350,19 @@ async fn dispatch<H: McpServerHandler>(
                 message: format!("method not found: {method}"),
             }
         }
+    }
+}
+
+fn map_handler_error(err: McpError) -> DispatchOutcome {
+    match err {
+        McpError::Protocol(message) => DispatchOutcome::Error {
+            code: -32602,
+            message,
+        },
+        other => DispatchOutcome::Error {
+            code: -32000,
+            message: other.to_string(),
+        },
     }
 }
 
@@ -295,81 +378,20 @@ fn extract_auth_token(params: &Value) -> Option<&str> {
         })
 }
 
-// Serialize McpTool/McpToolResult: the types derive Deserialize only; we
-// need Serialize to put them back on the wire. Keep it local to avoid
-// polluting the public types.
-mod _impl_serialize {
-    use crate::types::{McpContent, McpResourceRef, McpTool, McpToolResult};
-    use serde::ser::SerializeMap;
-    use serde::Serialize;
-
-    impl Serialize for McpTool {
-        fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-            let mut map = s.serialize_map(Some(3))?;
-            map.serialize_entry("name", &self.name)?;
-            if let Some(d) = &self.description {
-                map.serialize_entry("description", d)?;
-            }
-            map.serialize_entry("inputSchema", &self.input_schema)?;
-            map.end()
-        }
-    }
-
-    impl Serialize for McpContent {
-        fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-            let mut map = s.serialize_map(Some(3))?;
-            match self {
-                McpContent::Text { text } => {
-                    map.serialize_entry("type", "text")?;
-                    map.serialize_entry("text", text)?;
-                }
-                McpContent::Image { data, mime_type } => {
-                    map.serialize_entry("type", "image")?;
-                    map.serialize_entry("data", data)?;
-                    map.serialize_entry("mimeType", mime_type)?;
-                }
-                McpContent::Resource { resource } => {
-                    map.serialize_entry("type", "resource")?;
-                    map.serialize_entry("resource", resource)?;
-                }
-            }
-            map.end()
-        }
-    }
-
-    impl Serialize for McpResourceRef {
-        fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-            let mut map = s.serialize_map(Some(3))?;
-            map.serialize_entry("uri", &self.uri)?;
-            if let Some(t) = &self.text {
-                map.serialize_entry("text", t)?;
-            }
-            if let Some(m) = &self.mime_type {
-                map.serialize_entry("mimeType", m)?;
-            }
-            map.end()
-        }
-    }
-
-    impl Serialize for McpToolResult {
-        fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-            let mut map = s.serialize_map(Some(2))?;
-            map.serialize_entry("content", &self.content)?;
-            map.serialize_entry("isError", &self.is_error)?;
-            map.end()
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{McpContent, McpServerInfo, McpTool, McpToolResult};
+    use crate::types::{
+        McpContent, McpPrompt, McpPromptMessage, McpPromptResult, McpResource, McpResourceContent,
+        McpServerInfo, McpTool, McpToolResult,
+    };
     use async_trait::async_trait;
     use tokio::io::{duplex, AsyncReadExt, AsyncWriteExt};
 
     struct MockHandler {
         tools: Vec<McpTool>,
+        resources: Vec<McpResource>,
+        prompts: Vec<McpPrompt>,
     }
 
     #[async_trait]
@@ -395,6 +417,42 @@ mod tests {
                 })
             }
         }
+        async fn list_resources(&self) -> Result<Vec<McpResource>, McpError> {
+            Ok(self.resources.clone())
+        }
+        async fn read_resource(&self, uri: &str) -> Result<Vec<McpResourceContent>, McpError> {
+            let found = self.resources.iter().any(|r| r.uri == uri);
+            if !found {
+                return Err(McpError::Protocol("resource not found".into()));
+            }
+            Ok(vec![McpResourceContent {
+                uri: uri.to_string(),
+                mime_type: Some("text/plain".into()),
+                text: Some(format!("contents {uri}")),
+                blob: None,
+            }])
+        }
+        async fn list_prompts(&self) -> Result<Vec<McpPrompt>, McpError> {
+            Ok(self.prompts.clone())
+        }
+        async fn get_prompt(
+            &self,
+            name: &str,
+            _arguments: Value,
+        ) -> Result<McpPromptResult, McpError> {
+            if self.prompts.iter().all(|p| p.name != name) {
+                return Err(McpError::Protocol("prompt not found".into()));
+            }
+            Ok(McpPromptResult {
+                description: Some(format!("prompt {name}")),
+                messages: vec![McpPromptMessage {
+                    role: "user".into(),
+                    content: McpContent::Text {
+                        text: format!("run {name}"),
+                    },
+                }],
+            })
+        }
     }
 
     fn mock_tool(name: &str) -> McpTool {
@@ -402,6 +460,24 @@ mod tests {
             name: name.into(),
             description: Some("x".into()),
             input_schema: serde_json::json!({"type":"object"}),
+        }
+    }
+
+    fn mock_resource(uri: &str, name: &str) -> McpResource {
+        McpResource {
+            uri: uri.into(),
+            name: name.into(),
+            description: Some("resource".into()),
+            mime_type: Some("text/plain".into()),
+            annotations: None,
+        }
+    }
+
+    fn mock_prompt(name: &str) -> McpPrompt {
+        McpPrompt {
+            name: name.into(),
+            description: Some("prompt".into()),
+            arguments: vec![],
         }
     }
 
@@ -428,6 +504,8 @@ mod tests {
         let shutdown = CancellationToken::new();
         let handler = MockHandler {
             tools: vec![mock_tool("ping")],
+            resources: vec![],
+            prompts: vec![],
         };
 
         let sh = shutdown.clone();
@@ -459,6 +537,8 @@ mod tests {
         let shutdown = CancellationToken::new();
         let handler = MockHandler {
             tools: vec![mock_tool("ping")],
+            resources: vec![],
+            prompts: vec![],
         };
 
         let sh = shutdown.clone();
@@ -497,7 +577,11 @@ mod tests {
         let (mut client_tx, server_rx) = duplex(4096);
         let (server_tx, mut client_rx) = duplex(4096);
         let shutdown = CancellationToken::new();
-        let handler = MockHandler { tools: vec![] };
+        let handler = MockHandler {
+            tools: vec![],
+            resources: vec![],
+            prompts: vec![],
+        };
         let sh = shutdown.clone();
         let server = tokio::spawn(async move {
             run_with_io(handler, server_rx, server_tx, sh)
@@ -523,7 +607,11 @@ mod tests {
         let (mut client_tx, server_rx) = duplex(4096);
         let (server_tx, mut client_rx) = duplex(4096);
         let shutdown = CancellationToken::new();
-        let handler = MockHandler { tools: vec![] };
+        let handler = MockHandler {
+            tools: vec![],
+            resources: vec![],
+            prompts: vec![],
+        };
         let sh = shutdown.clone();
         let server = tokio::spawn(async move {
             run_with_io(handler, server_rx, server_tx, sh)
@@ -552,7 +640,11 @@ mod tests {
         let (mut client_tx, server_rx) = duplex(4096);
         let (server_tx, mut client_rx) = duplex(4096);
         let shutdown = CancellationToken::new();
-        let handler = MockHandler { tools: vec![] };
+        let handler = MockHandler {
+            tools: vec![],
+            resources: vec![],
+            prompts: vec![],
+        };
         let sh = shutdown.clone();
         let server = tokio::spawn(async move {
             run_with_io_auth(
@@ -587,6 +679,8 @@ mod tests {
         let shutdown = CancellationToken::new();
         let handler = MockHandler {
             tools: vec![mock_tool("ping")],
+            resources: vec![],
+            prompts: vec![],
         };
         let sh = shutdown.clone();
         let server = tokio::spawn(async move {
@@ -622,7 +716,11 @@ mod tests {
         let (mut client_tx, server_rx) = duplex(4096);
         let (server_tx, mut client_rx) = duplex(4096);
         let shutdown = CancellationToken::new();
-        let handler = MockHandler { tools: vec![] };
+        let handler = MockHandler {
+            tools: vec![],
+            resources: vec![],
+            prompts: vec![],
+        };
         let sh = shutdown.clone();
         let server = tokio::spawn(async move {
             run_with_io(handler, server_rx, server_tx, sh)
@@ -654,11 +752,111 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn resources_list_and_read_roundtrip() {
+        let (mut client_tx, server_rx) = duplex(4096);
+        let (server_tx, mut client_rx) = duplex(4096);
+        let shutdown = CancellationToken::new();
+        let handler = MockHandler {
+            tools: vec![],
+            resources: vec![mock_resource("agent://workspace/soul", "SOUL.md")],
+            prompts: vec![],
+        };
+        let sh = shutdown.clone();
+        let server = tokio::spawn(async move {
+            run_with_io(handler, server_rx, server_tx, sh)
+                .await
+                .unwrap();
+        });
+
+        client_tx
+            .write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"resources/list\",\"id\":15}\n")
+            .await
+            .unwrap();
+        let list_line = read_line(&mut client_rx).await;
+        let list_response: Value = serde_json::from_str(list_line.trim()).unwrap();
+        assert_eq!(list_response["id"], 15);
+        assert_eq!(
+            list_response["result"]["resources"][0]["uri"],
+            "agent://workspace/soul"
+        );
+
+        client_tx
+            .write_all(
+                b"{\"jsonrpc\":\"2.0\",\"method\":\"resources/read\",\"params\":{\"uri\":\"agent://workspace/soul\"},\"id\":16}\n",
+            )
+            .await
+            .unwrap();
+        let read_line = read_line(&mut client_rx).await;
+        let read_response: Value = serde_json::from_str(read_line.trim()).unwrap();
+        assert_eq!(read_response["id"], 16);
+        assert_eq!(
+            read_response["result"]["contents"][0]["text"],
+            "contents agent://workspace/soul"
+        );
+
+        shutdown.cancel();
+        drop(client_tx);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn prompts_list_and_get_roundtrip() {
+        let (mut client_tx, server_rx) = duplex(4096);
+        let (server_tx, mut client_rx) = duplex(4096);
+        let shutdown = CancellationToken::new();
+        let handler = MockHandler {
+            tools: vec![],
+            resources: vec![],
+            prompts: vec![mock_prompt("workspace_soul")],
+        };
+        let sh = shutdown.clone();
+        let server = tokio::spawn(async move {
+            run_with_io(handler, server_rx, server_tx, sh)
+                .await
+                .unwrap();
+        });
+
+        client_tx
+            .write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"prompts/list\",\"id\":17}\n")
+            .await
+            .unwrap();
+        let list_line = read_line(&mut client_rx).await;
+        let list_response: Value = serde_json::from_str(list_line.trim()).unwrap();
+        assert_eq!(list_response["id"], 17);
+        assert_eq!(
+            list_response["result"]["prompts"][0]["name"],
+            "workspace_soul"
+        );
+
+        client_tx
+            .write_all(
+                b"{\"jsonrpc\":\"2.0\",\"method\":\"prompts/get\",\"params\":{\"name\":\"workspace_soul\",\"arguments\":{}},\"id\":18}\n",
+            )
+            .await
+            .unwrap();
+        let get_line = read_line(&mut client_rx).await;
+        let get_response: Value = serde_json::from_str(get_line.trim()).unwrap();
+        assert_eq!(get_response["id"], 18);
+        assert_eq!(
+            get_response["result"]["messages"][0]["content"]["text"],
+            "run workspace_soul"
+        );
+
+        shutdown.cancel();
+        drop(client_tx);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn notification_produces_no_response() {
         let (mut client_tx, server_rx) = duplex(4096);
         let (server_tx, mut client_rx) = duplex(4096);
         let shutdown = CancellationToken::new();
-        let handler = MockHandler { tools: vec![] };
+        let handler = MockHandler {
+            tools: vec![],
+            resources: vec![],
+            prompts: vec![],
+        };
         let sh = shutdown.clone();
         let server = tokio::spawn(async move {
             run_with_io(handler, server_rx, server_tx, sh)

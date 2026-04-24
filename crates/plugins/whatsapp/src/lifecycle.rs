@@ -114,7 +114,9 @@ async fn forward(
             whatsapp_rs::MessageEvent::Disconnected { reason, .. } => {
                 s.connected = false;
                 pairing.set_connected(false);
-                out = Some(InboundEvent::Disconnected { reason: reason.clone() });
+                out = Some(InboundEvent::Disconnected {
+                    reason: reason.clone(),
+                });
             }
             whatsapp_rs::MessageEvent::Reconnecting { attempt, .. } => {
                 s.last_reconnect_attempt = Some(*attempt);

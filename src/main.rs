@@ -29,7 +29,6 @@ use agent_llm::LlmRegistry;
 use agent_memory::LongTermMemory;
 use agent_plugin_browser::BrowserPlugin;
 use agent_plugin_whatsapp::WhatsappPlugin;
-use agent_setup;
 
 enum Mode {
     Run,
@@ -308,6 +307,12 @@ async fn main() -> Result<()> {
         Mode::Run => {}
     }
 
+    // Single-instance guard: if another `agent` process is already
+    // running against the same data dir, terminate it before we start.
+    // Prevents the "two agents on one NATS" bug where both processes
+    // subscribe to `plugin.outbound.*` and every message is sent twice.
+    let _lock = acquire_single_instance_lock().context("failed to acquire agent lock")?;
+
     let config_dir = args.config_dir;
     tracing::info!(config_dir = %config_dir.display(), "loading config");
     let cfg = AppConfig::load(&config_dir).context("failed to load config")?;
@@ -358,6 +363,9 @@ async fn main() -> Result<()> {
             }
         }
     }
+    let llm_registry = LlmRegistry::with_builtins();
+    let mcp_sampling_provider = build_mcp_sampling_provider(&cfg, &llm_registry)
+        .context("failed to initialize MCP sampling provider")?;
     let mcp_manager: Option<Arc<agent_mcp::McpRuntimeManager>> = match cfg.mcp.as_ref() {
         Some(mcp_cfg) if mcp_cfg.enabled => {
             let ext_decls: Vec<agent_mcp::runtime_config::ExtensionServerDecl> = ext_mcp_decls
@@ -378,7 +386,10 @@ async fn main() -> Result<()> {
                 extension_decls = ext_decls.len(),
                 "initializing mcp runtime manager"
             );
-            let mgr = agent_mcp::McpRuntimeManager::new(rt_cfg);
+            let mgr = agent_mcp::McpRuntimeManager::new_with_sampling(
+                rt_cfg,
+                mcp_sampling_provider.clone(),
+            );
             if mcp_cfg.watch.enabled {
                 let debounce = std::time::Duration::from_millis(mcp_cfg.watch.debounce_ms.max(50));
                 agent_mcp::spawn_mcp_config_watcher(
@@ -521,9 +532,21 @@ async fn main() -> Result<()> {
 
     // Plugins --------------------------------------------------------------
     let plugins = PluginRegistry::new();
-    if let Some(browser_cfg) = cfg.plugins.browser.clone() {
-        plugins.register(BrowserPlugin::new(browser_cfg));
-        tracing::info!("registered plugin: browser");
+    // Keep an Arc<BrowserPlugin> aside so agents with `plugins: [browser]`
+    // can register the full `browser_*` tool family against it. Tool
+    // handlers call `plugin.execute(...)` directly — no broker round-trip
+    // — so each tool call hits the CDP session exactly once.
+    let browser_plugin: Option<Arc<agent_plugin_browser::BrowserPlugin>> =
+        cfg.plugins.browser.clone().map(|browser_cfg| {
+            let plugin = Arc::new(BrowserPlugin::new(browser_cfg));
+            tracing::info!("registered plugin: browser");
+            plugin
+        });
+    if let Some(plugin) = browser_plugin.clone() {
+        // Register into the PluginRegistry via the Plugin trait. The
+        // registry stores `Arc<dyn Plugin>` so we keep our Arc handle
+        // alive for tool registration below.
+        plugins.register_arc(plugin as Arc<dyn agent_core::agent::plugin::Plugin>);
     }
     // WhatsApp plugins — zero, one, or many accounts. Each one registers
     // under `whatsapp` (legacy single-account) or `whatsapp.<instance>`.
@@ -699,7 +722,6 @@ async fn main() -> Result<()> {
         });
     }
 
-    let llm_registry = LlmRegistry::with_builtins();
     // Build a shared peer directory once so every agent's context sees
     // the same snapshot. Rendered as a `# PEERS` block in the system
     // prompt (filtered + annotated against `allowed_delegates`).
@@ -780,6 +802,68 @@ async fn main() -> Result<()> {
                     "agent requests `memory` plugin but long-term memory is disabled"
                 );
             }
+        }
+        // Register the full browser_* tool family when the agent opts
+        // in via `plugins: [browser]`. Tools call the shared
+        // `Arc<BrowserPlugin>` directly so every LLM invocation hits
+        // the CDP session exactly once (no broker round-trip).
+        if agent_cfg.plugins.iter().any(|p| p == "browser") {
+            if let Some(plugin) = browser_plugin.as_ref() {
+                agent_plugin_browser::register_browser_tools(&tools, plugin);
+                tracing::info!(
+                    agent = %agent_id,
+                    "registered browser_* tools for agent"
+                );
+            } else {
+                tracing::warn!(
+                    agent = %agent_id,
+                    "agent requests `browser` plugin but config/plugins/browser.yaml is absent"
+                );
+            }
+        }
+        // WhatsApp outbound tools — gated on `plugins: [whatsapp]`.
+        // Tools publish to `plugin.outbound.whatsapp`; the plugin's
+        // dispatcher handles transport. Each tool honors the agent's
+        // `outbound_allowlist.whatsapp` at call time.
+        if agent_cfg.plugins.iter().any(|p| p == "whatsapp") {
+            agent_plugin_whatsapp::register_whatsapp_tools(&tools);
+            tracing::info!(agent = %agent_id, "registered whatsapp_* tools for agent");
+        }
+        // Telegram outbound tools — same shape as WhatsApp; gated on
+        // `plugins: [telegram]` + per-agent allowlist.
+        if agent_cfg.plugins.iter().any(|p| p == "telegram") {
+            agent_plugin_telegram::register_telegram_tools(&tools);
+            tracing::info!(agent = %agent_id, "registered telegram_* tools for agent");
+        }
+        // Google OAuth tools — gated on `agents.<id>.google_auth` being
+        // set. The client holds the refresh_token on disk at
+        // `<workspace>/<token_file>` so consent only runs once.
+        if let Some(gcfg) = agent_cfg.google_auth.as_ref() {
+            let core_cfg = agent_plugin_google::GoogleAuthConfig {
+                client_id: gcfg.client_id.clone(),
+                client_secret: gcfg.client_secret.clone(),
+                scopes: gcfg.scopes.clone(),
+                token_file: gcfg.token_file.clone(),
+                redirect_port: gcfg.redirect_port,
+            };
+            let workspace_dir = if agent_cfg.workspace.trim().is_empty() {
+                PathBuf::from("./data/workspace")
+            } else {
+                PathBuf::from(&agent_cfg.workspace)
+            };
+            let client = agent_plugin_google::GoogleAuthClient::new(core_cfg, &workspace_dir);
+            if let Err(e) = client.load_from_disk().await {
+                tracing::warn!(
+                    agent = %agent_id,
+                    error = %e,
+                    "google_auth: failed to load persisted tokens; agent will need to re-consent"
+                );
+            }
+            agent_plugin_google::register_tools(&tools, client);
+            tracing::info!(
+                agent = %agent_id,
+                "registered google_* tools for agent"
+            );
         }
         if agent_cfg.heartbeat.enabled {
             if let Some(mem) = memory.clone() {
@@ -1344,6 +1428,99 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+fn build_mcp_sampling_provider(
+    cfg: &AppConfig,
+    llm_registry: &LlmRegistry,
+) -> anyhow::Result<Option<Arc<dyn agent_mcp::sampling::SamplingProvider>>> {
+    let Some(mcp_cfg) = cfg.mcp.as_ref() else {
+        return Ok(None);
+    };
+    if !mcp_cfg.enabled || !mcp_cfg.sampling.enabled {
+        return Ok(None);
+    }
+    if cfg.agents.agents.is_empty() {
+        tracing::warn!("mcp.sampling.enabled=true but no agents are configured; sampling disabled");
+        return Ok(None);
+    }
+
+    let mut named: std::collections::HashMap<String, Arc<dyn agent_llm::LlmClient>> =
+        std::collections::HashMap::new();
+    let mut default_client: Option<Arc<dyn agent_llm::LlmClient>> = None;
+    for (idx, agent_cfg) in cfg.agents.agents.iter().enumerate() {
+        let client = llm_registry
+            .build(&cfg.llm, &agent_cfg.model)
+            .with_context(|| {
+                format!(
+                    "failed to build sampling client for agent `{}` (provider={}, model={})",
+                    agent_cfg.id, agent_cfg.model.provider, agent_cfg.model.model
+                )
+            })?;
+        if idx == 0 {
+            default_client = Some(client.clone());
+        }
+        named
+            .entry(agent_cfg.model.provider.clone())
+            .or_insert_with(|| client.clone());
+        named
+            .entry(agent_cfg.model.model.clone())
+            .or_insert_with(|| client.clone());
+        named
+            .entry(format!(
+                "{}/{}",
+                agent_cfg.model.provider, agent_cfg.model.model
+            ))
+            .or_insert_with(|| client.clone());
+    }
+    let mut default_client = default_client
+        .ok_or_else(|| anyhow::anyhow!("mcp.sampling: failed to resolve default client"))?;
+    if let Some(hint) = mcp_cfg.sampling.default_hint.as_deref() {
+        if let Some(c) = named.get(hint) {
+            default_client = c.clone();
+        } else {
+            tracing::warn!(
+                hint = %hint,
+                "mcp.sampling.default_hint not found in named clients; using first agent model"
+            );
+        }
+    }
+
+    let per_server: std::collections::HashMap<String, agent_mcp::sampling::PerServerPolicy> =
+        mcp_cfg
+            .sampling
+            .per_server
+            .iter()
+            .map(|(server, p)| {
+                (
+                    server.clone(),
+                    agent_mcp::sampling::PerServerPolicy {
+                        enabled: p.enabled,
+                        rate_limit_per_minute: p.rate_limit_per_minute,
+                        max_tokens_cap: p.max_tokens_cap,
+                    },
+                )
+            })
+            .collect();
+
+    let policy = agent_mcp::sampling::SamplingPolicy::new(
+        mcp_cfg.sampling.enabled,
+        mcp_cfg.sampling.deny_servers.clone(),
+        mcp_cfg.sampling.global_max_tokens_cap,
+        per_server,
+    );
+    tracing::info!(
+        named_clients = named.len(),
+        default_hint = ?mcp_cfg.sampling.default_hint,
+        "mcp sampling provider enabled"
+    );
+    Ok(Some(
+        Arc::new(agent_mcp::sampling::DefaultSamplingProvider::new(
+            default_client,
+            named,
+            policy,
+        )) as Arc<dyn agent_mcp::sampling::SamplingProvider>,
+    ))
+}
+
 /// Phase 11.2/11.3 — discover extensions and spawn stdio runtimes.
 /// Never fatal: bad manifests or spawn failures produce diagnostics; the
 /// agent keeps starting. Returns runtimes that the caller must keep alive
@@ -1442,6 +1619,80 @@ async fn run_extension_discovery(
         }
     }
     (runtimes, mcp_decls)
+}
+
+/// RAII handle for the agent's single-instance lockfile.
+/// Removes the file on drop — but only if the PID inside still matches
+/// ours, so a second-instance takeover doesn't wipe the new owner's lock.
+struct SingleInstanceLock {
+    path: PathBuf,
+    pid: u32,
+}
+
+impl Drop for SingleInstanceLock {
+    fn drop(&mut self) {
+        if let Ok(contents) = std::fs::read_to_string(&self.path) {
+            if contents.trim().parse::<u32>().ok() == Some(self.pid) {
+                let _ = std::fs::remove_file(&self.path);
+            }
+        }
+    }
+}
+
+fn acquire_single_instance_lock() -> Result<SingleInstanceLock> {
+    // Path kept stable regardless of --config so two configs against the
+    // same cwd still collide (that's the case that caused dupes).
+    let lock_path = PathBuf::from("./data/agent.lock");
+    if let Some(parent) = lock_path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+
+    if let Ok(contents) = std::fs::read_to_string(&lock_path) {
+        if let Ok(prev_pid) = contents.trim().parse::<u32>() {
+            if pid_alive(prev_pid) {
+                tracing::warn!(prev_pid, "existing agent instance detected — terminating");
+                terminate_pid(prev_pid);
+                // Give it up to 5s to exit cleanly, then SIGKILL.
+                for _ in 0..50 {
+                    if !pid_alive(prev_pid) {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                if pid_alive(prev_pid) {
+                    tracing::warn!(prev_pid, "previous agent still alive — SIGKILL");
+                    kill_pid(prev_pid);
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+            } else {
+                tracing::info!(prev_pid, "stale agent lockfile — overwriting");
+            }
+        }
+    }
+
+    let pid = std::process::id();
+    std::fs::write(&lock_path, pid.to_string())
+        .with_context(|| format!("write lockfile {}", lock_path.display()))?;
+    tracing::info!(path = %lock_path.display(), pid, "acquired single-instance lock");
+    Ok(SingleInstanceLock { path: lock_path, pid })
+}
+
+fn pid_alive(pid: u32) -> bool {
+    // /proc/<pid> exists iff the process is alive on Linux. Good enough
+    // for single-instance detection without pulling in a libc dep.
+    std::path::Path::new(&format!("/proc/{pid}")).exists()
+}
+
+fn terminate_pid(pid: u32) {
+    let _ = std::process::Command::new("kill")
+        .arg(pid.to_string())
+        .status();
+}
+
+fn kill_pid(pid: u32) {
+    let _ = std::process::Command::new("kill")
+        .args(["-9", &pid.to_string()])
+        .status();
 }
 
 fn init_tracing() {
@@ -1746,6 +1997,8 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         allowed_delegates: primary.allowed_delegates.clone(),
         accept_delegates_from: primary.accept_delegates_from.clone(),
         description: primary.description.clone(),
+        google_auth: primary.google_auth.clone(),
+        outbound_allowlist: primary.outbound_allowlist.clone(),
     });
     let broker = AnyBroker::local();
     let sessions = Arc::new(SessionManager::new(std::time::Duration::from_secs(300), 20));
@@ -2196,6 +2449,7 @@ async fn handle_metrics_conn(mut stream: TcpStream, health: RuntimeHealth) -> an
     let nats_open = !health.broker.is_ready();
     agent_core::telemetry::set_circuit_breaker_state("nats", nats_open);
     let mut body = render_prometheus(nats_open);
+    body.push_str(&agent_llm::telemetry::render_prometheus());
     body.push_str(&agent_mcp::telemetry::render_prometheus());
     write_http_response(&mut stream, 200, "text/plain; version=0.0.4", &body).await?;
     Ok(())
@@ -2559,8 +2813,8 @@ async fn run_status(json: bool, endpoint: Option<String>, agent_id: Option<Strin
     // is meant for humans piping through `less`, not a fixed-width
     // terminal UI.
     println!(
-        "{:<16} {:<16} {:<24} {:<28} {}",
-        "ID", "MODEL", "BINDINGS", "DELEGATES", "DESCRIPTION"
+        "{:<16} {:<16} {:<24} {:<28} DESCRIPTION",
+        "ID", "MODEL", "BINDINGS", "DELEGATES"
     );
     println!("{}", "─".repeat(120));
     for a in agents {

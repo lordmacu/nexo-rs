@@ -13,9 +13,9 @@
 //! Zero network cost — pure TF-on-words. Good enough for the tool
 //! routing problem: we're not doing semantic search over a 10k-doc
 //! corpus, we're ranking 150 short tool descriptions.
-use std::collections::{HashMap, HashSet};
 use agent_llm::ToolDef;
 use serde::Deserialize;
+use std::collections::{HashMap, HashSet};
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct RelevanceConfig {
@@ -35,8 +35,12 @@ pub struct RelevanceConfig {
     #[serde(default)]
     pub always_include: Vec<String>,
 }
-fn default_top_k() -> usize { 24 }
-fn default_min_score() -> f32 { 0.01 }
+fn default_top_k() -> usize {
+    24
+}
+fn default_min_score() -> f32 {
+    0.01
+}
 pub struct ToolFilter {
     cfg: RelevanceConfig,
     /// tool_name → token-frequency vector
@@ -187,14 +191,13 @@ fn tokenize_tf(text: &str) -> HashMap<String, f32> {
 /// Short stoplist for Spanish + English. Not exhaustive — covers the
 /// common filler that dominates a user prompt without adding signal.
 const STOPWORDS: &[&str] = &[
-    "the", "and", "for", "that", "you", "your", "with", "this", "from", "what", "when",
-    "where", "which", "how", "can", "could", "would", "should", "will", "has", "have",
-    "are", "was", "were", "been", "being", "into", "onto", "about", "over", "under",
-    "also", "just", "some", "any", "all", "out", "off", "per", "via", "not", "but",
-    "una", "uno", "unas", "unos", "los", "las", "del", "las", "por", "para", "con",
-    "sin", "sobre", "entre", "cuando", "donde", "como", "que", "qué", "cual", "cuál",
-    "quien", "quién", "cuanto", "cuánto", "ese", "esa", "eso", "este", "esta", "esto",
-    "aquel", "aquella", "aquello", "hay", "has", "haz", "son", "era", "fue", "ser",
+    "the", "and", "for", "that", "you", "your", "with", "this", "from", "what", "when", "where",
+    "which", "how", "can", "could", "would", "should", "will", "has", "have", "are", "was", "were",
+    "been", "being", "into", "onto", "about", "over", "under", "also", "just", "some", "any",
+    "all", "out", "off", "per", "via", "not", "but", "una", "uno", "unas", "unos", "los", "las",
+    "del", "las", "por", "para", "con", "sin", "sobre", "entre", "cuando", "donde", "como", "que",
+    "qué", "cual", "cuál", "quien", "quién", "cuanto", "cuánto", "ese", "esa", "eso", "este",
+    "esta", "esto", "aquel", "aquella", "aquello", "hay", "has", "haz", "son", "era", "fue", "ser",
     "soy", "eres", "esta", "está", "están", "estaba", "estaban", "estoy",
 ];
 #[cfg(test)]
@@ -228,7 +231,10 @@ mod tests {
     #[test]
     fn ranks_weather_higher_for_weather_prompt() {
         let tools = vec![
-            td("ext_weather_forecast", "Weather forecast (clima, pronóstico) for any city (ciudad)"),
+            td(
+                "ext_weather_forecast",
+                "Weather forecast (clima, pronóstico) for any city (ciudad)",
+            ),
             td("ext_github_comment", "Post a comment to a github issue"),
             td("ext_spotify_play", "Play a song on Spotify"),
         ];

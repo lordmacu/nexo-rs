@@ -10,7 +10,6 @@ use std::sync::Arc;
 
 use agent_plugin_telegram::plugin::{PendingEntry, PendingMap};
 use dashmap::DashMap;
-use std::collections::VecDeque;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 

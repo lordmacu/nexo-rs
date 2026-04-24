@@ -27,48 +27,138 @@ pub enum ScriptFamily {
 
 // Shared tech noise — words that are ubiquitous across any project log/notes.
 const SHARED_STOP: &[&str] = &[
-    "about", "after", "agent", "again", "also", "because", "before", "being",
-    "between", "build", "called", "could", "daily", "default", "deploy",
-    "during", "every", "file", "files", "from", "have", "into", "just", "line",
-    "lines", "long", "main", "make", "memory", "month", "more", "most", "move",
-    "much", "next", "note", "notes", "over", "part", "past", "port", "same",
-    "score", "search", "session", "sessions", "short", "should", "since",
-    "some", "than", "that", "their", "there", "these", "they", "this",
-    "through", "today", "using", "with", "work", "workspace", "year",
+    "about",
+    "after",
+    "agent",
+    "again",
+    "also",
+    "because",
+    "before",
+    "being",
+    "between",
+    "build",
+    "called",
+    "could",
+    "daily",
+    "default",
+    "deploy",
+    "during",
+    "every",
+    "file",
+    "files",
+    "from",
+    "have",
+    "into",
+    "just",
+    "line",
+    "lines",
+    "long",
+    "main",
+    "make",
+    "memory",
+    "month",
+    "more",
+    "most",
+    "move",
+    "much",
+    "next",
+    "note",
+    "notes",
+    "over",
+    "part",
+    "past",
+    "port",
+    "same",
+    "score",
+    "search",
+    "session",
+    "sessions",
+    "short",
+    "should",
+    "since",
+    "some",
+    "than",
+    "that",
+    "their",
+    "there",
+    "these",
+    "they",
+    "this",
+    "through",
+    "today",
+    "using",
+    "with",
+    "work",
+    "workspace",
+    "year",
 ];
 
 const ENGLISH_STOP: &[&str] = &["and", "are", "for", "into", "its", "our", "then", "were"];
 
 const SPANISH_STOP: &[&str] = &[
-    "al", "con", "como", "de", "del", "el", "en", "es", "la", "las", "los",
-    "para", "por", "que", "se", "sin", "su", "sus", "una", "uno", "unos",
-    "unas", "y",
+    "al", "con", "como", "de", "del", "el", "en", "es", "la", "las", "los", "para", "por", "que",
+    "se", "sin", "su", "sus", "una", "uno", "unos", "unas", "y",
 ];
 
 const PATH_NOISE: &[&str] = &[
-    "cjs", "cpp", "cts", "jsx", "json", "md", "mjs", "mts", "text", "toml",
-    "ts", "tsx", "txt", "yaml", "yml",
+    "cjs", "cpp", "cts", "jsx", "json", "md", "mjs", "mts", "text", "toml", "ts", "tsx", "txt",
+    "yaml", "yml",
 ];
 
 // Protected glossary — tech terms we always keep even if short.
 const GLOSSARY_RAW: &[&str] = &[
-    "backup", "backups", "embedding", "embeddings", "failover", "gateway",
-    "glacier", "gpt", "openai", "router", "network", "vlan", "s3", "kv", "qmd",
+    "backup",
+    "backups",
+    "embedding",
+    "embeddings",
+    "failover",
+    "gateway",
+    "glacier",
+    "gpt",
+    "openai",
+    "router",
+    "network",
+    "vlan",
+    "s3",
+    "kv",
+    "qmd",
     // Spanish
-    "configuración", "respaldo", "enrutador",
+    "configuración",
+    "respaldo",
+    "enrutador",
     // French
-    "sauvegarde", "routeur", "passerelle",
+    "sauvegarde",
+    "routeur",
+    "passerelle",
     // German
-    "konfiguration", "sicherung",
+    "konfiguration",
+    "sicherung",
     // CJK
-    "备份", "故障转移", "网络", "网关", "路由器",
-    "バックアップ", "フェイルオーバー", "ルーター", "ネットワーク", "ゲートウェイ",
-    "라우터", "백업", "페일오버", "네트워크", "게이트웨이",
+    "备份",
+    "故障转移",
+    "网络",
+    "网关",
+    "路由器",
+    "バックアップ",
+    "フェイルオーバー",
+    "ルーター",
+    "ネットワーク",
+    "ゲートウェイ",
+    "라우터",
+    "백업",
+    "페일오버",
+    "네트워크",
+    "게이트웨이",
 ];
 
 static STOP_WORDS: LazyLock<HashSet<String>> = LazyLock::new(|| {
     let mut set = HashSet::new();
-    for w in SHARED_STOP.iter().chain(ENGLISH_STOP).chain(SPANISH_STOP).chain(PATH_NOISE) {
+    for w in SHARED_STOP
+        .iter()
+        .chain(ENGLISH_STOP)
+        .chain(SPANISH_STOP)
+        .chain(PATH_NOISE)
+    {
         set.insert(nfkc_lower(w));
     }
     set
@@ -324,7 +414,11 @@ mod tests {
     #[test]
     fn derive_picks_glossary_term() {
         let tags = derive_concept_tags("ops/notes.md", "OpenAI quota monitoring endpoint", 8);
-        assert!(tags.iter().any(|t| t == "openai"), "expected 'openai' in tags: {:?}", tags);
+        assert!(
+            tags.iter().any(|t| t == "openai"),
+            "expected 'openai' in tags: {:?}",
+            tags
+        );
     }
 
     #[test]

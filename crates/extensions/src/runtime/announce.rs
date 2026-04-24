@@ -128,14 +128,21 @@ mod tests {
 
     #[test]
     fn heartbeat_round_trip() {
-        let h = HeartbeatPayload { id: "x".into(), version: "1.0.0".into(), uptime_secs: 42 };
-        let back: HeartbeatPayload = serde_json::from_value(serde_json::to_value(&h).unwrap()).unwrap();
+        let h = HeartbeatPayload {
+            id: "x".into(),
+            version: "1.0.0".into(),
+            uptime_secs: 42,
+        };
+        let back: HeartbeatPayload =
+            serde_json::from_value(serde_json::to_value(&h).unwrap()).unwrap();
         assert_eq!(h, back);
     }
 
     #[test]
     fn request_round_trip() {
-        let r = RegistryRequestPayload { requested_by: "agent-uuid".into() };
+        let r = RegistryRequestPayload {
+            requested_by: "agent-uuid".into(),
+        };
         let back: RegistryRequestPayload =
             serde_json::from_value(serde_json::to_value(&r).unwrap()).unwrap();
         assert_eq!(r, back);
@@ -143,7 +150,10 @@ mod tests {
 
     #[test]
     fn shutdown_round_trip_minimal() {
-        let s = ShutdownPayload { id: "x".into(), reason: None };
+        let s = ShutdownPayload {
+            id: "x".into(),
+            reason: None,
+        };
         let j = serde_json::to_string(&s).unwrap();
         assert!(!j.contains("reason"));
         let back: ShutdownPayload = serde_json::from_str(&j).unwrap();

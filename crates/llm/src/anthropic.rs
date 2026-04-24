@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use anyhow::Context;
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 use serde::Deserialize;
@@ -15,14 +16,20 @@ use serde_json::{json, Value};
 use agent_config::types::llm::{LlmProviderConfig, RetryConfig};
 use agent_resilience::{CircuitBreaker, CircuitBreakerConfig, CircuitError};
 
+use crate::anthropic_auth::{
+    validate_setup_token, AnthropicAuth, OAuthBundle, OAuthState, DEFAULT_CLIENT_ID,
+    DEFAULT_REFRESH_ENDPOINT,
+};
 use crate::client::LlmClient;
 use crate::rate_limiter::RateLimiter;
 use crate::registry::LlmProviderFactory;
 use crate::retry::{parse_retry_after_ms, with_retry, LlmError};
-use crate::stream::{parse_anthropic_sse, record_usage_tap, StreamChunk};
+use crate::stream::{
+    ensure_event_stream, parse_anthropic_sse, record_usage_tap, stream_metrics_tap, StreamChunk,
+};
 use crate::types::{
-    Attachment, AttachmentData, ChatRequest, ChatResponse, ChatRole, FinishReason,
-    ResponseContent, TokenUsage, ToolCall, ToolChoice,
+    Attachment, AttachmentData, ChatRequest, ChatResponse, ChatRole, FinishReason, ResponseContent,
+    TokenUsage, ToolCall, ToolChoice,
 };
 
 const DEFAULT_BASE: &str = "https://api.anthropic.com";
@@ -42,7 +49,7 @@ fn api_version() -> String {
 pub struct AnthropicClient {
     http: reqwest::Client,
     base_url: String,
-    api_key: String,
+    auth: AnthropicAuth,
     api_version: String,
     model: String,
     rate_limiter: Arc<RateLimiter>,
@@ -51,12 +58,17 @@ pub struct AnthropicClient {
 }
 
 impl AnthropicClient {
-    pub fn new(cfg: &LlmProviderConfig, model: impl Into<String>, retry: RetryConfig) -> Self {
-        if cfg.api_key.trim().is_empty() {
-            tracing::warn!(
-                "anthropic: api_key is empty — requests will fail with 401 until a valid key is set"
-            );
-        }
+    /// Construct a client, resolving the auth mode from `cfg.auth`.
+    /// Falls back to the legacy `cfg.api_key` path when `auth` is
+    /// absent or `mode = api_key`. Returns `Err` only for explicit
+    /// modes whose preconditions cannot be satisfied (e.g.
+    /// `oauth_bundle` with a missing bundle file).
+    pub fn new(
+        cfg: &LlmProviderConfig,
+        model: impl Into<String>,
+        retry: RetryConfig,
+    ) -> anyhow::Result<Self> {
+        let auth = resolve_auth(cfg)?;
         let rate_limiter = Arc::new(RateLimiter::with_quota(
             cfg.rate_limit.requests_per_second,
             cfg.rate_limit.quota_alert_threshold,
@@ -74,16 +86,16 @@ impl AnthropicClient {
             "llm.anthropic",
             CircuitBreakerConfig::default(),
         ));
-        Self {
+        Ok(Self {
             http,
             base_url: base,
-            api_key: cfg.api_key.clone(),
+            auth,
             api_version: api_version(),
             model: model.into(),
             rate_limiter,
             circuit,
             retry,
-        }
+        })
     }
 
     /// Classify an HTTP response into our error taxonomy. Shared between
@@ -101,6 +113,25 @@ impl AnthropicClient {
             let body = response.text().await.unwrap_or_default();
             return Err(LlmError::ServerError { status, body });
         }
+        if status == 401 || status == 403 {
+            let body = response.text().await.unwrap_or_default();
+            // OAuth/setup-token: mark stale so the next request tries
+            // a fresh refresh. Static API keys simply fail — user
+            // needs to fix them in `secrets/` + re-run setup.
+            self.auth.mark_stale();
+            let hint = if self.auth.is_subscription() {
+                format!(
+                    "HTTP {status} from Anthropic; run `agent setup anthropic` to re-authenticate. Body: {}",
+                    truncate_for_log(&body, 200)
+                )
+            } else {
+                format!(
+                    "HTTP {status} from Anthropic; check ANTHROPIC_API_KEY or `agent setup anthropic`. Body: {}",
+                    truncate_for_log(&body, 200)
+                )
+            };
+            return Err(LlmError::CredentialInvalid { hint });
+        }
         if !response.status().is_success() {
             let body = response.text().await.unwrap_or_default();
             return Err(LlmError::Other(anyhow::anyhow!("HTTP {status}: {body}")));
@@ -113,13 +144,22 @@ impl AnthropicClient {
         self.rate_limiter.acquire().await;
         let url = format!("{}/v1/messages", self.base_url);
         let body = build_body(&self.model, req);
+        let headers = self
+            .auth
+            .resolve_headers(&self.http)
+            .await
+            .map_err(LlmError::Other)?;
 
-        let response = self
+        let mut builder = self
             .http
             .post(&url)
-            .header("x-api-key", &self.api_key)
+            .header(headers.auth.0, headers.auth.1.as_str())
             .header("anthropic-version", &self.api_version)
-            .header("content-type", "application/json")
+            .header("content-type", "application/json");
+        if let Some(beta) = headers.beta {
+            builder = builder.header("anthropic-beta", beta);
+        }
+        let response = builder
             .json(&body)
             .send()
             .await
@@ -157,13 +197,22 @@ impl AnthropicClient {
         let mut body = build_body(&self.model, req);
         body["stream"] = json!(true);
 
-        let response = self
+        let headers = self
+            .auth
+            .resolve_headers(&self.http)
+            .await
+            .map_err(LlmError::Other)?;
+        let mut builder = self
             .http
             .post(&url)
-            .header("x-api-key", &self.api_key)
+            .header(headers.auth.0, headers.auth.1.as_str())
             .header("anthropic-version", &self.api_version)
             .header("content-type", "application/json")
-            .header("accept", "text/event-stream")
+            .header("accept", "text/event-stream");
+        if let Some(beta) = headers.beta {
+            builder = builder.header("anthropic-beta", beta);
+        }
+        let response = builder
             .json(&body)
             .send()
             .await
@@ -182,7 +231,9 @@ impl LlmClient for AnthropicClient {
             .await
         {
             Ok(r) => Ok(r),
-            Err(CircuitError::Open(name)) => Err(anyhow::anyhow!("circuit breaker `{name}` is open")),
+            Err(CircuitError::Open(name)) => {
+                Err(anyhow::anyhow!("circuit breaker `{name}` is open"))
+            }
             Err(CircuitError::Inner(e)) => Err(anyhow::anyhow!("{e}")),
         }
     }
@@ -211,12 +262,16 @@ impl LlmClient for AnthropicClient {
             }
             Err(CircuitError::Inner(e)) => return Err(anyhow::anyhow!("{e}")),
         };
+        let resp = ensure_event_stream(resp)?;
         // Quota tracker: the non-streaming path records usage inline;
         // streaming pipes it through a tap that fires on the final Usage
         // chunk so threshold alerts still trigger.
-        Ok(record_usage_tap(
-            parse_anthropic_sse(resp.bytes_stream()),
-            self.rate_limiter.clone(),
+        Ok(stream_metrics_tap(
+            record_usage_tap(
+                parse_anthropic_sse(resp.bytes_stream()),
+                self.rate_limiter.clone(),
+            ),
+            self.provider(),
         ))
     }
 }
@@ -435,7 +490,11 @@ fn to_chat_response(resp: AnthropicResponse) -> ChatResponse {
                 + u.and_then(|u| u.cache_creation_input_tokens).unwrap_or(0)
                 + u.and_then(|u| u.cache_read_input_tokens).unwrap_or(0)
         },
-        completion_tokens: resp.usage.as_ref().and_then(|u| u.output_tokens).unwrap_or(0),
+        completion_tokens: resp
+            .usage
+            .as_ref()
+            .and_then(|u| u.output_tokens)
+            .unwrap_or(0),
     };
     let content = if !tool_calls.is_empty() {
         ResponseContent::ToolCalls(tool_calls)
@@ -492,8 +551,139 @@ impl LlmProviderFactory for AnthropicFactory {
         model: &str,
         retry: RetryConfig,
     ) -> anyhow::Result<Arc<dyn LlmClient>> {
-        Ok(Arc::new(AnthropicClient::new(provider_cfg, model, retry)))
+        Ok(Arc::new(AnthropicClient::new(provider_cfg, model, retry)?))
     }
+}
+
+/// Resolve an [`AnthropicAuth`] for the given provider config.
+///
+/// Modes:
+/// * `api_key` (default when `auth` missing) — uses `cfg.api_key`.
+/// * `setup_token` — reads `setup_token_file` (or falls back to
+///   `cfg.api_key` if the file is unset), validates prefix+length.
+/// * `oauth_bundle` — loads the bundle from `auth.bundle` and
+///   constructs a refreshing [`OAuthState`].
+/// * `cli_import` — reads `~/.claude/.credentials.json` (resolved at
+///   startup), copies the bundle to `auth.bundle` for subsequent
+///   runs, then behaves like `oauth_bundle`.
+/// * `auto` — tries in order: oauth_bundle (if file exists) →
+///   cli_import (if available) → setup_token (if file exists) →
+///   api_key.
+fn resolve_auth(cfg: &LlmProviderConfig) -> anyhow::Result<AnthropicAuth> {
+    let auth = cfg.auth.as_ref();
+    let mode = auth.map(|a| a.mode.as_str()).unwrap_or("api_key");
+    let bundle_path = auth
+        .and_then(|a| a.bundle.as_ref())
+        .map(std::path::PathBuf::from);
+    let setup_token_file = auth.and_then(|a| a.setup_token_file.as_ref());
+    let refresh_endpoint = auth
+        .and_then(|a| a.refresh_endpoint.clone())
+        .unwrap_or_else(|| DEFAULT_REFRESH_ENDPOINT.to_string());
+    let client_id = auth
+        .and_then(|a| a.client_id.clone())
+        .unwrap_or_else(|| DEFAULT_CLIENT_ID.to_string());
+
+    match mode {
+        "api_key" | "static" => Ok(AnthropicAuth::api_key(trim_or_warn(cfg.api_key.clone()))),
+        "setup_token" => {
+            let raw = read_setup_token(setup_token_file, cfg)?;
+            let validated = validate_setup_token(&raw)?;
+            Ok(AnthropicAuth::setup_token(validated))
+        }
+        "oauth_bundle" => {
+            let path = bundle_path.ok_or_else(|| {
+                anyhow::anyhow!("anthropic auth.mode=oauth_bundle requires auth.bundle path")
+            })?;
+            let bundle = OAuthBundle::load(&path)?;
+            let state = OAuthState::new(bundle, path, refresh_endpoint, client_id);
+            Ok(AnthropicAuth::oauth(Arc::new(state)))
+        }
+        "cli_import" => {
+            let bundle = crate::anthropic_auth::read_claude_cli_credentials().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "anthropic auth.mode=cli_import: no Claude Code credentials found. \
+                     Run `claude login` (or `agent setup anthropic` to paste manually)."
+                )
+            })?;
+            let path = bundle_path
+                .unwrap_or_else(|| std::path::PathBuf::from("./secrets/anthropic_oauth.json"));
+            // Snapshot into our own bundle so subsequent starts don't
+            // depend on the CLI file shape staying stable.
+            if let Err(e) = bundle.save_atomic(&path) {
+                tracing::warn!(error = %e, path = %path.display(), "persist CLI-imported bundle");
+            }
+            let state = OAuthState::new(bundle, path, refresh_endpoint, client_id);
+            Ok(AnthropicAuth::oauth(Arc::new(state)))
+        }
+        "auto" => {
+            // oauth_bundle first
+            if let Some(path) = bundle_path.clone() {
+                if path.is_file() {
+                    if let Ok(bundle) = OAuthBundle::load(&path) {
+                        let state = OAuthState::new(
+                            bundle,
+                            path,
+                            refresh_endpoint.clone(),
+                            client_id.clone(),
+                        );
+                        return Ok(AnthropicAuth::oauth(Arc::new(state)));
+                    }
+                }
+            }
+            // cli_import
+            if let Some(bundle) = crate::anthropic_auth::read_claude_cli_credentials() {
+                let path = bundle_path
+                    .clone()
+                    .unwrap_or_else(|| std::path::PathBuf::from("./secrets/anthropic_oauth.json"));
+                let _ = bundle.save_atomic(&path);
+                let state = OAuthState::new(bundle, path, refresh_endpoint, client_id);
+                return Ok(AnthropicAuth::oauth(Arc::new(state)));
+            }
+            // setup_token file
+            if let Some(f) = setup_token_file {
+                if std::path::Path::new(f).is_file() {
+                    if let Ok(raw) = std::fs::read_to_string(f) {
+                        if let Ok(validated) = validate_setup_token(&raw) {
+                            return Ok(AnthropicAuth::setup_token(validated));
+                        }
+                    }
+                }
+            }
+            // Fallback api_key
+            if !cfg.api_key.trim().is_empty() {
+                return Ok(AnthropicAuth::api_key(cfg.api_key.trim().to_string()));
+            }
+            anyhow::bail!(
+                "anthropic auth.mode=auto: no bundle, no Claude CLI credentials, no setup-token, no api_key"
+            )
+        }
+        other => anyhow::bail!("anthropic: unknown auth.mode `{other}`"),
+    }
+}
+
+fn read_setup_token(file: Option<&String>, cfg: &LlmProviderConfig) -> anyhow::Result<String> {
+    if let Some(path) = file {
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("read setup-token file {path}"))?;
+        return Ok(text);
+    }
+    if !cfg.api_key.trim().is_empty() {
+        // Allow pasting the setup-token directly into `api_key` for
+        // Docker/ENV-driven deployments.
+        return Ok(cfg.api_key.clone());
+    }
+    anyhow::bail!(
+        "anthropic auth.mode=setup_token requires either auth.setup_token_file or a non-empty api_key"
+    )
+}
+
+fn trim_or_warn(key: String) -> String {
+    if key.trim().is_empty() {
+        tracing::warn!(
+            "anthropic: api_key is empty — requests will fail with 401 until a valid key is set"
+        );
+    }
+    key
 }
 
 #[cfg(test)]
@@ -562,7 +752,8 @@ mod tests {
             ],
             "stop_reason":"tool_use",
             "usage":{"input_tokens":10,"output_tokens":5}
-        })).unwrap();
+        }))
+        .unwrap();
         let resp = to_chat_response(raw);
         match resp.content {
             ResponseContent::ToolCalls(calls) => {
@@ -585,10 +776,7 @@ mod tests {
             tool_call_id: None,
             name: None,
             tool_calls: Vec::new(),
-            attachments: vec![Attachment::image_base64(
-                "image/png",
-                "aGVsbG8=",
-            )],
+            attachments: vec![Attachment::image_base64("image/png", "aGVsbG8=")],
         }];
         let body = build_body("claude-sonnet-4", &r);
         let content = &body["messages"][0]["content"];
@@ -636,7 +824,10 @@ mod tests {
         let body = build_body("claude-sonnet-4", &r);
         let content = &body["messages"][0]["content"];
         // Must start with the image block — no leading empty text.
-        assert_eq!(content[0]["type"], "image", "expected first block to be image, got {content}");
+        assert_eq!(
+            content[0]["type"], "image",
+            "expected first block to be image, got {content}"
+        );
         assert_eq!(content.as_array().unwrap().len(), 1);
     }
 
@@ -680,7 +871,9 @@ mod tests {
         let att = Attachment {
             kind: "audio".into(),
             mime_type: "audio/ogg".into(),
-            data: crate::types::AttachmentData::Base64 { base64: "AAAA".into() },
+            data: crate::types::AttachmentData::Base64 {
+                base64: "AAAA".into(),
+            },
         };
         assert!(anthropic_image_block(&att).is_none());
     }
@@ -697,7 +890,10 @@ mod tests {
         // A future HTTP-date — we should NOT fall back to 1000ms.
         let mut h = reqwest::header::HeaderMap::new();
         // Use a date well in the future so the parsed delta >> 1s.
-        h.insert("retry-after", "Wed, 31 Dec 2099 23:59:59 GMT".parse().unwrap());
+        h.insert(
+            "retry-after",
+            "Wed, 31 Dec 2099 23:59:59 GMT".parse().unwrap(),
+        );
         let got = parse_retry_after(&h).unwrap();
         assert!(got > 10_000, "expected >10s, got {got}ms");
     }
@@ -750,7 +946,8 @@ mod tests {
                 "cache_creation_input_tokens": 500,
                 "cache_read_input_tokens": 1500
             }
-        })).unwrap();
+        }))
+        .unwrap();
         let resp = to_chat_response(raw);
         // 100 + 500 + 1500 = 2100
         assert_eq!(resp.usage.prompt_tokens, 2100);

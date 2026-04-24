@@ -53,7 +53,14 @@ pub const MAX_CAPABILITY_NAME_LEN: usize = 64;
 /// IDs owned by native (compiled-in) plugins. Extensions cannot claim these,
 /// even if the native crate is not loaded on a given deployment.
 pub const RESERVED_IDS: &[&str] = &[
-    "agent", "browser", "core", "email", "heartbeat", "memory", "telegram", "whatsapp",
+    "agent",
+    "browser",
+    "core",
+    "email",
+    "heartbeat",
+    "memory",
+    "telegram",
+    "whatsapp",
 ];
 
 /// Host-side extension of [`RESERVED_IDS`]. The `agent` binary can add
@@ -154,16 +161,14 @@ impl Requires {
         let missing_bins = self
             .bins
             .iter()
-            .filter(|b| {
-                match &path_var {
-                    None => true,
-                    Some(pv) => !std::env::split_paths(pv).any(|dir| {
-                        let candidate = dir.join(b);
-                        candidate.is_file()
-                            || (cfg!(target_os = "windows")
-                                && candidate.with_extension("exe").is_file())
-                    }),
-                }
+            .filter(|b| match &path_var {
+                None => true,
+                Some(pv) => !std::env::split_paths(pv).any(|dir| {
+                    let candidate = dir.join(b);
+                    candidate.is_file()
+                        || (cfg!(target_os = "windows")
+                            && candidate.with_extension("exe").is_file())
+                }),
             })
             .cloned()
             .collect();
@@ -180,8 +185,7 @@ impl Requires {
 /// Max length of an MCP server key declared inside an extension manifest.
 pub const MAX_MCP_SERVER_NAME_LEN: usize = 32;
 
-static MCP_NAME_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[a-z][a-z0-9_-]*$").unwrap());
+static MCP_NAME_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-z][a-z0-9_-]*$").unwrap());
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -285,16 +289,10 @@ pub enum ManifestError {
     NoCapabilities,
 
     #[error("{field} name `{name}` is invalid (expected `^[a-z][a-z0-9_]*$`, max 64 chars)")]
-    InvalidCapabilityName {
-        field: &'static str,
-        name: String,
-    },
+    InvalidCapabilityName { field: &'static str, name: String },
 
     #[error("duplicate {field} name `{name}`")]
-    DuplicateCapabilityName {
-        field: &'static str,
-        name: String,
-    },
+    DuplicateCapabilityName { field: &'static str, name: String },
 
     #[error("transport.stdio requires non-empty `command`")]
     EmptyStdioCommand,
@@ -303,10 +301,7 @@ pub enum ManifestError {
     EmptyNatsPrefix,
 
     #[error("transport.http url `{url}` is invalid: {reason}")]
-    InvalidHttpUrl {
-        url: String,
-        reason: &'static str,
-    },
+    InvalidHttpUrl { url: String, reason: &'static str },
 
     #[error("description exceeds 512 characters")]
     DescriptionTooLong,
@@ -325,6 +320,7 @@ pub enum ManifestError {
 
 impl ExtensionManifest {
     /// Parse a manifest from TOML source and run full semantic validation.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(src: &str) -> Result<Self, ManifestError> {
         let manifest: ExtensionManifest = toml::from_str(src)?;
         manifest.validate()?;
@@ -377,17 +373,15 @@ fn validate_mcp_servers(
             }
             agent_config::McpServerYaml::StreamableHttp { url, .. }
             | agent_config::McpServerYaml::Sse { url, .. }
-            | agent_config::McpServerYaml::Auto { url, .. } => {
-                match url::Url::parse(url) {
-                    Ok(parsed) if parsed.scheme() == "http" || parsed.scheme() == "https" => {}
-                    _ => {
-                        return Err(ManifestError::McpInvalidHttpUrl {
-                            name: name.clone(),
-                            url: url.clone(),
-                        })
-                    }
+            | agent_config::McpServerYaml::Auto { url, .. } => match url::Url::parse(url) {
+                Ok(parsed) if parsed.scheme() == "http" || parsed.scheme() == "https" => {}
+                _ => {
+                    return Err(ManifestError::McpInvalidHttpUrl {
+                        name: name.clone(),
+                        url: url.clone(),
+                    })
                 }
-            }
+            },
         }
     }
     Ok(())
@@ -415,7 +409,9 @@ fn validate_version(version: &str) -> Result<(), ManifestError> {
 }
 
 fn validate_min_agent_version(required: Option<&str>) -> Result<(), ManifestError> {
-    let Some(required) = required else { return Ok(()) };
+    let Some(required) = required else {
+        return Ok(());
+    };
     let parsed_required = semver::Version::parse(required).map_err(|source| {
         ManifestError::InvalidMinAgentVersion {
             required: required.to_string(),
@@ -460,8 +456,7 @@ fn validate_description(desc: Option<&str>) -> Result<(), ManifestError> {
 }
 
 fn validate_capabilities(caps: &Capabilities) -> Result<(), ManifestError> {
-    let total =
-        caps.tools.len() + caps.hooks.len() + caps.channels.len() + caps.providers.len();
+    let total = caps.tools.len() + caps.hooks.len() + caps.channels.len() + caps.providers.len();
     if total == 0 {
         return Err(ManifestError::NoCapabilities);
     }
@@ -586,6 +581,58 @@ command = "./ctx-ext"
 "#;
         let m = ExtensionManifest::from_str(src).unwrap();
         assert!(m.context.passthrough);
+    }
+
+    #[test]
+    fn requires_defaults_to_empty_lists() {
+        let m = ExtensionManifest::from_str(MINIMAL_STDIO).unwrap();
+        assert!(m.requires.bins.is_empty());
+        assert!(m.requires.env.is_empty());
+    }
+
+    #[test]
+    fn requires_parses_bins_and_env() {
+        let src = r#"
+[plugin]
+id = "req-ext"
+version = "0.1.0"
+
+[capabilities]
+tools = ["status"]
+
+[requires]
+bins = ["curl", "jq"]
+env = ["API_TOKEN", "API_BASE_URL"]
+
+[transport]
+kind = "stdio"
+command = "./req-ext"
+"#;
+        let m = ExtensionManifest::from_str(src).unwrap();
+        assert_eq!(m.requires.bins, vec!["curl", "jq"]);
+        assert_eq!(m.requires.env, vec!["API_TOKEN", "API_BASE_URL"]);
+    }
+
+    #[test]
+    fn requires_rejects_unknown_fields() {
+        let src = r#"
+[plugin]
+id = "req-bad"
+version = "0.1.0"
+
+[capabilities]
+tools = ["status"]
+
+[requires]
+bins = ["curl"]
+unexpected = true
+
+[transport]
+kind = "stdio"
+command = "./req-bad"
+"#;
+        let err = ExtensionManifest::from_str(src).unwrap_err();
+        assert!(matches!(err, ManifestError::Parse(_)));
     }
 
     #[test]
@@ -778,7 +825,10 @@ command = "./x"
 "#;
         let err = ExtensionManifest::from_str(src).unwrap_err();
         assert!(
-            matches!(err, ManifestError::DuplicateCapabilityName { field: "tools", .. }),
+            matches!(
+                err,
+                ManifestError::DuplicateCapabilityName { field: "tools", .. }
+            ),
             "got {:?}",
             err
         );

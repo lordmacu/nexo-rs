@@ -14,15 +14,6 @@ services:
       retries: 5
       start_period: 5s
 
-  chrome:
-    image: chromedp/headless-shell:latest
-    healthcheck:
-      test: ["CMD", "headless-shell", "--version"]
-      interval: 10s
-      timeout: 3s
-      retries: 8
-      start_period: 8s
-
   agent:
     build:
       context: .
@@ -30,8 +21,11 @@ services:
     depends_on:
       nats:
         condition: service_healthy
-      chrome:
-        condition: service_healthy
+    # Chrome (installed in the agent image, launched by the browser
+    # plugin) needs more than the default 64MB /dev/shm — otherwise
+    # heavy pages crash with "session closed: OOPS, mmap for
+    # /dev/shm/... failed".
+    shm_size: "1gb"
     # Secrets are pulled in directly by the config loader via `${file:/run/secrets/...}`
     # placeholders in config/docker/llm.yaml — no shell export hack required.
     command: ["--config", "/app/config/docker"]
@@ -48,6 +42,8 @@ services:
     secrets:
       - minimax_api_key
       - minimax_group_id
+      - google_client_id
+      - google_client_secret
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/health | grep -q 'ok'"]
       interval: 10s

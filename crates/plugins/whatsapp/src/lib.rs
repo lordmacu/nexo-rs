@@ -14,6 +14,8 @@ pub mod pairing;
 pub mod plugin;
 pub mod session;
 pub mod session_id;
+pub mod tool;
 pub mod transcriber;
 
 pub use plugin::WhatsappPlugin;
+pub use tool::register_whatsapp_tools;

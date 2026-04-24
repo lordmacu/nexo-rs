@@ -7,6 +7,9 @@ description = "Rust extension for extracting plain text from PDF files (no exter
 [capabilities]
 tools = ["status", "extract_text"]
 
+[context]
+passthrough = true
+
 [transport]
 kind = "stdio"
 command = "./target/release/pdf-extract"

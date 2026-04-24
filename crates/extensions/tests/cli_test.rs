@@ -27,7 +27,11 @@ impl Fixture {
         let ext_dir = td.path().join("extensions");
         fs::create_dir_all(&config_dir).unwrap();
         fs::create_dir_all(&ext_dir).unwrap();
-        Self { _td: td, config_dir, ext_dir }
+        Self {
+            _td: td,
+            config_dir,
+            ext_dir,
+        }
     }
 
     fn base_cfg(&self) -> ExtensionsConfig {
@@ -219,7 +223,10 @@ fn doctor_reports_errors_for_broken_manifests() {
         run_doctor(ctx).unwrap();
     });
     assert!(s.contains("candidates"));
-    assert!(s.contains("ERRORS") || s.contains("error"), "should flag the broken manifest: {s}");
+    assert!(
+        s.contains("ERRORS") || s.contains("error"),
+        "should flag the broken manifest: {s}"
+    );
 }
 
 #[test]
@@ -257,7 +264,10 @@ fn disable_then_enable_round_trip() {
     run_enable(ctx, "weather").expect("enable");
     let yaml = fs::read_to_string(&yaml_path).unwrap();
     let f: agent_config::ExtensionsConfigFile = serde_yaml::from_str(&yaml).unwrap();
-    assert!(f.extensions.disabled.is_empty(), "weather should be enabled again");
+    assert!(
+        f.extensions.disabled.is_empty(),
+        "weather should be enabled again"
+    );
 }
 
 #[test]

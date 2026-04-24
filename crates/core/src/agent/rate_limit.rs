@@ -5,11 +5,11 @@
 //! `outcome="rate_limited"` turn result so the model can pick a
 //! different tool. No sleep-based backpressure here — the agent loop
 //! must stay live.
+use dashmap::DashMap;
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
-use dashmap::DashMap;
-use serde::Deserialize;
 use tokio::sync::Mutex;
 /// Per-tool config: requests-per-second refill rate and burst capacity.
 #[derive(Debug, Clone, Deserialize)]
@@ -75,7 +75,7 @@ impl TokenBucket {
                     // Advance last_refill proportionally to tokens added
                     // to avoid starvation from rounding loss.
                     let consumed_secs = add as f64 / self.rate_per_sec;
-                    *last = *last + std::time::Duration::from_secs_f64(consumed_secs);
+                    *last += std::time::Duration::from_secs_f64(consumed_secs);
                 }
             }
         }
@@ -185,7 +185,10 @@ mod tests {
     }
     #[tokio::test]
     async fn token_bucket_burst_then_refill() {
-        let cfg = ToolRateLimitConfig { rps: 10.0, burst: 3 };
+        let cfg = ToolRateLimitConfig {
+            rps: 10.0,
+            burst: 3,
+        };
         let b = TokenBucket::new(&cfg);
         assert!(b.try_acquire().await);
         assert!(b.try_acquire().await);
@@ -211,7 +214,10 @@ mod tests {
         );
         patterns.insert(
             "_default".to_string(),
-            ToolRateLimitConfig { rps: 100.0, burst: 100 },
+            ToolRateLimitConfig {
+                rps: 100.0,
+                burst: 100,
+            },
         );
         let rl = ToolRateLimiter::new(ToolRateLimitsConfig { patterns });
         // memory_recall uses memory_* → burst=1

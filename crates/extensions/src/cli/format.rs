@@ -29,11 +29,7 @@ pub struct ListRow {
 }
 
 impl ListRow {
-    pub fn from_manifest(
-        manifest: &ExtensionManifest,
-        status: &CliStatus,
-        path: String,
-    ) -> Self {
+    pub fn from_manifest(manifest: &ExtensionManifest, status: &CliStatus, path: String) -> Self {
         let transport = match manifest.transport {
             crate::manifest::Transport::Stdio { .. } => "stdio",
             crate::manifest::Transport::Nats { .. } => "nats",
@@ -227,10 +223,18 @@ pub fn render_info_plain(info: &InfoOut<'_>, out: &mut dyn Write) -> std::io::Re
     writeln!(out, "tools:       {}", info.capabilities.tools.join(", "))?;
     writeln!(out, "hooks:       {}", info.capabilities.hooks.join(", "))?;
     if !info.capabilities.channels.is_empty() {
-        writeln!(out, "channels:    {}", info.capabilities.channels.join(", "))?;
+        writeln!(
+            out,
+            "channels:    {}",
+            info.capabilities.channels.join(", ")
+        )?;
     }
     if !info.capabilities.providers.is_empty() {
-        writeln!(out, "providers:   {}", info.capabilities.providers.join(", "))?;
+        writeln!(
+            out,
+            "providers:   {}",
+            info.capabilities.providers.join(", ")
+        )?;
     }
     if let Some(a) = info.author {
         writeln!(out, "author:      {a}")?;

@@ -23,8 +23,9 @@ pub struct ChromeLauncher;
 impl ChromeLauncher {
     pub async fn launch(config: &BrowserConfig) -> anyhow::Result<RunningChrome> {
         let exe = if config.executable.is_empty() {
-            find_chrome_executable()
-                .ok_or_else(|| anyhow!("no Chrome/Chromium executable found — install google-chrome or chromium"))?
+            find_chrome_executable().ok_or_else(|| {
+                anyhow!("no Chrome/Chromium executable found — install google-chrome or chromium")
+            })?
         } else {
             config.executable.clone()
         };
@@ -32,7 +33,10 @@ impl ChromeLauncher {
         let mut args = vec![
             format!("--remote-debugging-port=0"),
             format!("--user-data-dir={}", config.user_data_dir),
-            format!("--window-size={},{}", config.window_width, config.window_height),
+            format!(
+                "--window-size={},{}",
+                config.window_width, config.window_height
+            ),
             "--no-first-run".to_string(),
             "--no-default-browser-check".to_string(),
             "--disable-background-networking".to_string(),
@@ -64,13 +68,15 @@ impl ChromeLauncher {
 
         let pid = child.id().unwrap_or(0);
 
-        let stderr = child.stderr.take()
+        let stderr = child
+            .stderr
+            .take()
             .ok_or_else(|| anyhow!("failed to capture Chrome stderr"))?;
 
-        let ws_url = wait_for_devtools_url(stderr, config.connect_timeout_ms).await
-            .map_err(|e| {
+        let ws_url = wait_for_devtools_url(stderr, config.connect_timeout_ms)
+            .await
+            .inspect_err(|_e| {
                 let _ = child.start_kill();
-                e
             })?;
 
         Ok(RunningChrome { ws_url, pid, child })

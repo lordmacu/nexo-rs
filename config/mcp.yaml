@@ -75,3 +75,21 @@ mcp:
   # params fields gracefully.
   context:
     passthrough: false
+
+  # Phase 12.1 follow-up — client-side policy for
+  # `sampling/createMessage` (server asks the client's LLM to generate).
+  # Disabled by default for safety.
+  sampling:
+    enabled: false
+    # Optional hint key to pick the default client from the named pool
+    # built at startup (keys include provider/model names).
+    # default_hint: "openai"
+    global_max_tokens_cap: 4096
+    deny_servers: []
+    per_server: {}
+    # Example:
+    # per_server:
+    #   weather:
+    #     enabled: true
+    #     rate_limit_per_minute: 30
+    #     max_tokens_cap: 512

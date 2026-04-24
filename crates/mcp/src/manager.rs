@@ -14,7 +14,8 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::runtime_config::{McpRuntimeConfig, McpServerRuntimeConfig};
-use crate::session::{connect_all, SessionMcpRuntime};
+use crate::sampling::SamplingProvider;
+use crate::session::{connect_all_with_sampling, SessionMcpRuntime};
 
 type SharedRuntime = Shared<BoxFuture<'static, Arc<SessionMcpRuntime>>>;
 
@@ -22,6 +23,7 @@ pub struct McpRuntimeManager {
     config: Arc<RwLock<McpRuntimeConfig>>,
     runtimes: Arc<DashMap<Uuid, Arc<SessionMcpRuntime>>>,
     in_flight: Arc<Mutex<HashMap<Uuid, SharedRuntime>>>,
+    sampling_provider: Option<Arc<dyn SamplingProvider>>,
     shutdown: CancellationToken,
     reap_handle: std::sync::Mutex<Option<JoinHandle<()>>>,
 }
@@ -30,11 +32,21 @@ impl McpRuntimeManager {
     /// Build the manager and spawn its reap task. Return an `Arc` so the
     /// reap task and callers share the same instance.
     pub fn new(config: McpRuntimeConfig) -> Arc<Self> {
+        Self::new_with_sampling(config, None)
+    }
+
+    /// Variant with optional sampling provider. When set, stdio MCP
+    /// clients advertise and handle `sampling/createMessage`.
+    pub fn new_with_sampling(
+        config: McpRuntimeConfig,
+        sampling_provider: Option<Arc<dyn SamplingProvider>>,
+    ) -> Arc<Self> {
         let shutdown = CancellationToken::new();
         let manager = Arc::new(Self {
             config: Arc::new(RwLock::new(config.clone())),
             runtimes: Arc::new(DashMap::new()),
             in_flight: Arc::new(Mutex::new(HashMap::new())),
+            sampling_provider,
             shutdown: shutdown.clone(),
             reap_handle: std::sync::Mutex::new(None),
         });
@@ -209,6 +221,7 @@ impl McpRuntimeManager {
         ManagerHandle {
             config: self.config.clone(),
             runtimes: self.runtimes.clone(),
+            sampling_provider: self.sampling_provider.clone(),
         }
     }
 }
@@ -219,6 +232,7 @@ impl McpRuntimeManager {
 struct ManagerHandle {
     config: Arc<RwLock<McpRuntimeConfig>>,
     runtimes: Arc<DashMap<Uuid, Arc<SessionMcpRuntime>>>,
+    sampling_provider: Option<Arc<dyn SamplingProvider>>,
 }
 
 async fn build_runtime(
@@ -238,7 +252,7 @@ async fn build_runtime(
             cfg.resource_uri_allowlist.clone(),
         )
     };
-    let clients = connect_all(&servers).await;
+    let clients = connect_all_with_sampling(&servers, handle.sampling_provider).await;
     let cache = Arc::new(crate::resource_cache::ResourceCache::new(cache_cfg));
     let rt = Arc::new(
         SessionMcpRuntime::new(session_id, expected_fp, clients)

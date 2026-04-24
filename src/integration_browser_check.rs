@@ -1,11 +1,11 @@
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use async_nats::Client;
 use base64::Engine;
 use futures::StreamExt;
 use serde_json::json;
-use tokio::time::{Instant, timeout};
+use tokio::time::{timeout, Instant};
 use uuid::Uuid;
 
 use agent_broker::Event;
@@ -15,7 +15,8 @@ const OUTBOUND_TOPIC: &str = "plugin.outbound.browser";
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let nats_url = std::env::var("NATS_URL").unwrap_or_else(|_| "nats://127.0.0.1:4222".to_string());
+    let nats_url =
+        std::env::var("NATS_URL").unwrap_or_else(|_| "nats://127.0.0.1:4222".to_string());
     let timeout_ms = std::env::var("BROWSER_CHECK_TIMEOUT_MS")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
@@ -91,7 +92,11 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn publish_browser_cmd(client: &Client, session_id: Uuid, payload: serde_json::Value) -> Result<()> {
+async fn publish_browser_cmd(
+    client: &Client,
+    session_id: Uuid,
+    payload: serde_json::Value,
+) -> Result<()> {
     let mut event = Event::new(INBOUND_TOPIC, "integration-browser-check", payload);
     event.session_id = Some(session_id);
     let body = serde_json::to_vec(&event).context("failed to serialize browser command event")?;

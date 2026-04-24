@@ -59,7 +59,9 @@ pub(crate) struct OutboundPayload {
     pub(crate) file_name: Option<String>,
 }
 
-pub(crate) fn default_kind() -> String { "text".to_string() }
+pub(crate) fn default_kind() -> String {
+    "text".to_string()
+}
 
 /// Spawn the dispatcher loop. Returns a `JoinHandle` so callers can
 /// await it on shutdown — otherwise `cancel.cancel()` just signals the
@@ -101,8 +103,14 @@ async fn dispatch_event(
     session: &whatsapp_rs::Session,
     pending: &PendingMap,
 ) -> Result<()> {
-    let payload: OutboundPayload = serde_json::from_value(ev.payload.clone())
-        .unwrap_or(OutboundPayload {
+    tracing::info!(
+        session_id = ?ev.session_id,
+        topic = %ev.topic,
+        payload_len = ev.payload.to_string().len(),
+        "DISPATCH_EVENT received"
+    );
+    let payload: OutboundPayload =
+        serde_json::from_value(ev.payload.clone()).unwrap_or(OutboundPayload {
             to: None,
             text: None,
             kind: default_kind(),
@@ -150,7 +158,15 @@ async fn dispatch_event(
                 debug!("dropping empty outbound text");
                 return Ok(());
             }
-            session.send_text(&to, &text).await
+            tracing::info!(
+                to = %to,
+                text_preview = %text.chars().take(60).collect::<String>(),
+                session_id = ?ev.session_id,
+                "DISPATCH_EVENT proactive send_text"
+            );
+            session
+                .send_text(&to, &text)
+                .await
                 .map_err(|e| anyhow::anyhow!("send_text: {e}"))?;
         }
         "reply" => {
@@ -159,7 +175,9 @@ async fn dispatch_event(
                 .msg_id
                 .ok_or_else(|| anyhow::anyhow!("reply missing `msg_id`"))?;
             let text = payload.text.unwrap_or_default();
-            session.send_reply(&to, &msg_id, &text).await
+            session
+                .send_reply(&to, &msg_id, &text)
+                .await
                 .map_err(|e| anyhow::anyhow!("send_reply: {e}"))?;
         }
         "react" => {
@@ -170,16 +188,35 @@ async fn dispatch_event(
             let emoji = payload
                 .emoji
                 .ok_or_else(|| anyhow::anyhow!("react missing `emoji`"))?;
-            session.send_reaction(&to, &msg_id, &emoji).await
+            session
+                .send_reaction(&to, &msg_id, &emoji)
+                .await
                 .map_err(|e| anyhow::anyhow!("send_reaction: {e}"))?;
         }
         "media" => {
-            let to = payload.to.ok_or_else(|| anyhow::anyhow!("media missing `to`"))?;
+            let to = payload
+                .to
+                .ok_or_else(|| anyhow::anyhow!("media missing `to`"))?;
             let url = payload
                 .url
                 .ok_or_else(|| anyhow::anyhow!("media missing `url`"))?;
-            let (bytes, mime) =
-                crate::media::download_from_url(&url, MAX_DOWNLOAD_BYTES).await?;
+            // Cap how long we wait on the media origin. Without the
+            // timeout a slow or deliberately-hanging URL would pin the
+            // whole dispatcher task — blocking every other outbound
+            // message for this account.
+            const MEDIA_DOWNLOAD_TIMEOUT: std::time::Duration =
+                std::time::Duration::from_secs(60);
+            let (bytes, mime) = tokio::time::timeout(
+                MEDIA_DOWNLOAD_TIMEOUT,
+                crate::media::download_from_url(&url, MAX_DOWNLOAD_BYTES),
+            )
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "media download timed out after {}s for {url}",
+                    MEDIA_DOWNLOAD_TIMEOUT.as_secs()
+                )
+            })??;
             crate::media::send_media_auto(
                 session,
                 &to,

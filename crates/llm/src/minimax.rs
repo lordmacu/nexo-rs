@@ -25,10 +25,13 @@ use crate::client::LlmClient;
 use crate::minimax_auth::{build_auth_source, AuthSource};
 use crate::rate_limiter::RateLimiter;
 use crate::retry::{parse_retry_after_ms, with_retry, LlmError};
-use crate::stream::{parse_anthropic_sse, parse_openai_sse, record_usage_tap, StreamChunk};
+use crate::stream::{
+    ensure_event_stream, parse_anthropic_sse, parse_openai_sse, record_usage_tap,
+    stream_metrics_tap, StreamChunk,
+};
 use crate::types::{
-    Attachment, AttachmentData, ChatRequest, ChatResponse, ChatRole, FinishReason,
-    ResponseContent, TokenUsage, ToolCall, ToolChoice,
+    Attachment, AttachmentData, ChatRequest, ChatResponse, ChatRole, FinishReason, ResponseContent,
+    TokenUsage, ToolCall, ToolChoice,
 };
 use futures::stream::BoxStream;
 
@@ -165,11 +168,7 @@ impl MiniMaxClient {
         self.finish(resp).await
     }
 
-    async fn post_once(
-        &self,
-        url: &str,
-        body: &Value,
-    ) -> Result<reqwest::Response, LlmError> {
+    async fn post_once(&self, url: &str, body: &Value) -> Result<reqwest::Response, LlmError> {
         let token = self
             .auth
             .bearer(&self.http)
@@ -224,8 +223,7 @@ impl MiniMaxClient {
 
         let status = resp.status().as_u16();
         if status == 429 {
-            let retry_after_ms =
-                parse_retry_after_ms(resp.headers(), "retry-after", 30_000);
+            let retry_after_ms = parse_retry_after_ms(resp.headers(), "retry-after", 30_000);
             return Err(LlmError::RateLimit { retry_after_ms });
         }
         if status >= 500 {
@@ -236,6 +234,7 @@ impl MiniMaxClient {
             let body = resp.text().await.unwrap_or_default();
             return Err(LlmError::Other(anyhow::anyhow!("HTTP {status}: {body}")));
         }
+        let resp = ensure_event_stream(resp).map_err(LlmError::Other)?;
 
         let byte_stream = resp.bytes_stream();
         let parsed = match self.flavor {
@@ -273,8 +272,7 @@ impl MiniMaxClient {
     async fn finish(&self, response: reqwest::Response) -> Result<ChatResponse, LlmError> {
         let status = response.status().as_u16();
         if status == 429 {
-            let retry_after_ms =
-                parse_retry_after_ms(response.headers(), "retry-after", 30_000);
+            let retry_after_ms = parse_retry_after_ms(response.headers(), "retry-after", 30_000);
             return Err(LlmError::RateLimit { retry_after_ms });
         }
         if status >= 500 {
@@ -357,7 +355,10 @@ impl LlmClient for MiniMaxClient {
             .call(|| with_retry(&retry, || self.do_stream_request(&req)))
             .await
         {
-            Ok(s) => Ok(record_usage_tap(s, self.rate_limiter.clone())),
+            Ok(s) => Ok(stream_metrics_tap(
+                record_usage_tap(s, self.rate_limiter.clone()),
+                self.provider(),
+            )),
             Err(CircuitError::Open(name)) => {
                 Err(anyhow::anyhow!("circuit breaker `{name}` is open"))
             }
@@ -814,8 +815,14 @@ struct AnthropicResponse {
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum AnthropicContentBlock {
-    Text { text: String },
-    ToolUse { id: String, name: String, input: Value },
+    Text {
+        text: String,
+    },
+    ToolUse {
+        id: String,
+        name: String,
+        input: Value,
+    },
     #[serde(other)]
     Unknown,
 }
@@ -839,13 +846,11 @@ fn parse_anthropic_response(raw: AnthropicResponse) -> anyhow::Result<ChatRespon
     for block in raw.content {
         match block {
             AnthropicContentBlock::Text { text } => text_parts.push(text),
-            AnthropicContentBlock::ToolUse { id, name, input } => {
-                tool_calls.push(ToolCall {
-                    id,
-                    name,
-                    arguments: input,
-                })
-            }
+            AnthropicContentBlock::ToolUse { id, name, input } => tool_calls.push(ToolCall {
+                id,
+                name,
+                arguments: input,
+            }),
             AnthropicContentBlock::Unknown => {}
         }
     }
@@ -885,7 +890,8 @@ mod tests {
             rate_limit: Default::default(),
             auth: None,
             api_flavor: flavor.map(str::to_string),
-            embedding_model: None, safety_settings: None,
+            embedding_model: None,
+            safety_settings: None,
         }
     }
 
@@ -917,14 +923,14 @@ mod tests {
                 content: "hi".into(),
                 tool_call_id: None,
                 name: None,
-            tool_calls: Vec::new(),
-            attachments: Vec::new(),
+                tool_calls: Vec::new(),
+                attachments: Vec::new(),
             }],
             tools: vec![],
             max_tokens: 32,
             temperature: 0.7,
-        stop_sequences: Vec::new(),
-        tool_choice: Default::default(),
+            stop_sequences: Vec::new(),
+            tool_choice: Default::default(),
         };
         let body = build_anthropic_body(&req);
         assert_eq!(body["system"], "be helpful");
@@ -939,14 +945,15 @@ mod tests {
             model: "MiniMax-M2.7".into(),
             system_prompt: None,
             messages: vec![],
-            tools: vec![crate::types::ToolDef { name: "weather".into(),
+            tools: vec![crate::types::ToolDef {
+                name: "weather".into(),
                 description: "...".into(),
                 parameters: json!({"type":"object"}),
             }],
             max_tokens: 1,
             temperature: 0.0,
-        stop_sequences: Vec::new(),
-        tool_choice: Default::default(),
+            stop_sequences: Vec::new(),
+            tool_choice: Default::default(),
         };
         let body = build_anthropic_body(&req);
         assert_eq!(body["tools"][0]["name"], "weather");
@@ -1034,7 +1041,8 @@ mod tests {
             "content": [{"type":"text","text":"hi there"}],
             "stop_reason": "end_turn",
             "usage": {"input_tokens": 5, "output_tokens": 3}
-        })).unwrap();
+        }))
+        .unwrap();
         let parsed = parse_anthropic_response(resp).unwrap();
         match parsed.content {
             ResponseContent::Text(t) => assert_eq!(t, "hi there"),
@@ -1054,7 +1062,8 @@ mod tests {
             ],
             "stop_reason": "tool_use",
             "usage": {"input_tokens": 7, "output_tokens": 4}
-        })).unwrap();
+        }))
+        .unwrap();
         let parsed = parse_anthropic_response(resp).unwrap();
         match parsed.content {
             ResponseContent::ToolCalls(calls) => {

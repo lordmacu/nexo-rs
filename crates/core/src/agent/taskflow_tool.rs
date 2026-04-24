@@ -1,11 +1,11 @@
-use std::sync::Arc;
-use async_trait::async_trait;
-use serde_json::{json, Value};
-use uuid::Uuid;
-use agent_llm::ToolDef;
-use agent_taskflow::{CreateManagedInput, Flow, FlowError, FlowManager, FlowStatus};
 use super::context::AgentContext;
 use super::tool_registry::ToolHandler;
+use agent_llm::ToolDef;
+use agent_taskflow::{CreateManagedInput, Flow, FlowError, FlowManager, FlowStatus};
+use async_trait::async_trait;
+use serde_json::{json, Value};
+use std::sync::Arc;
+use uuid::Uuid;
 /// LLM-facing tool that lets an agent start and drive durable multi-step
 /// flows. Revision handling is hidden from the model — every mutating call
 /// refetches the latest record internally.
@@ -75,8 +75,8 @@ impl ToolHandler for TaskFlowTool {
             "start" => {
                 let controller_id = required_string(&args, "controller_id")?;
                 let goal = required_string(&args, "goal")?;
-                let current_step = optional_string(&args, "current_step")
-                    .unwrap_or_else(|| "init".to_string());
+                let current_step =
+                    optional_string(&args, "current_step").unwrap_or_else(|| "init".to_string());
                 let state_json = args.get("state").cloned().unwrap_or_else(|| json!({}));
                 let flow = self
                     .manager
@@ -104,7 +104,9 @@ impl ToolHandler for TaskFlowTool {
                         require_owner(&f, &owner_key)?;
                         Ok(render_flow(&f))
                     }
-                    None => Ok(json!({ "ok": false, "error": "not_found", "flow_id": id.to_string() })),
+                    None => {
+                        Ok(json!({ "ok": false, "error": "not_found", "flow_id": id.to_string() }))
+                    }
                 }
             }
             "advance" => {
@@ -113,7 +115,9 @@ impl ToolHandler for TaskFlowTool {
                 if let Some(f) = self.manager.get(id).await? {
                     require_owner(&f, &owner_key)?;
                 } else {
-                    return Ok(json!({ "ok": false, "error": "not_found", "flow_id": id.to_string() }));
+                    return Ok(
+                        json!({ "ok": false, "error": "not_found", "flow_id": id.to_string() }),
+                    );
                 }
                 let patch = args.get("patch").cloned().unwrap_or_else(|| json!({}));
                 let next_step = optional_string(&args, "current_step");
@@ -125,7 +129,9 @@ impl ToolHandler for TaskFlowTool {
                 if let Some(f) = self.manager.get(id).await? {
                     require_owner(&f, &owner_key)?;
                 } else {
-                    return Ok(json!({ "ok": false, "error": "not_found", "flow_id": id.to_string() }));
+                    return Ok(
+                        json!({ "ok": false, "error": "not_found", "flow_id": id.to_string() }),
+                    );
                 }
                 let flow = self.manager.cancel(id).await?;
                 Ok(render_flow(&flow))
@@ -219,7 +225,9 @@ mod tests {
     use super::*;
     use crate::session::SessionManager;
     use agent_broker::{AnyBroker, BrokerHandle};
-    use agent_config::types::agents::{AgentConfig, AgentRuntimeConfig, HeartbeatConfig, ModelConfig};
+    use agent_config::types::agents::{
+        AgentConfig, AgentRuntimeConfig, HeartbeatConfig, ModelConfig,
+    };
     use agent_taskflow::SqliteFlowStore;
     use std::sync::Arc as StdArc;
     use std::time::Duration;
@@ -242,7 +250,7 @@ mod tests {
             transcripts_dir: String::new(),
             dreaming: Default::default(),
             workspace_git: Default::default(),
-        tool_rate_limits: None,
+            tool_rate_limits: None,
             tool_args_validation: None,
             extra_docs: Vec::new(),
             inbound_bindings: Vec::new(),
@@ -251,6 +259,8 @@ mod tests {
             allowed_delegates: Vec::new(),
             accept_delegates_from: Vec::new(),
             description: String::new(),
+            outbound_allowlist: Default::default(),
+            google_auth: None,
         });
         let sessions = StdArc::new(SessionManager::new(Duration::from_secs(60), 20));
         let sid = Uuid::new_v4();
@@ -287,7 +297,10 @@ mod tests {
         let tool = tool().await;
         let (ctx, _) = ctx_with_session().await;
         let created = tool
-            .call(&ctx, json!({ "action": "start", "controller_id": "c", "goal": "g" }))
+            .call(
+                &ctx,
+                json!({ "action": "start", "controller_id": "c", "goal": "g" }),
+            )
             .await
             .unwrap();
         let id = created["flow"]["id"].as_str().unwrap().to_string();
@@ -334,7 +347,10 @@ mod tests {
         let tool = tool().await;
         let (ctx, _) = ctx_with_session().await;
         let created = tool
-            .call(&ctx, json!({ "action": "start", "controller_id": "c", "goal": "g" }))
+            .call(
+                &ctx,
+                json!({ "action": "start", "controller_id": "c", "goal": "g" }),
+            )
             .await
             .unwrap();
         let id = created["flow"]["id"].as_str().unwrap().to_string();
@@ -349,17 +365,32 @@ mod tests {
         let tool = tool().await;
         let (ctx_a, _) = ctx_with_session().await;
         let (ctx_b, _) = ctx_with_session().await;
-        tool.call(&ctx_a, json!({ "action": "start", "controller_id": "c1", "goal": "A" }))
+        tool.call(
+            &ctx_a,
+            json!({ "action": "start", "controller_id": "c1", "goal": "A" }),
+        )
+        .await
+        .unwrap();
+        tool.call(
+            &ctx_a,
+            json!({ "action": "start", "controller_id": "c2", "goal": "A2" }),
+        )
+        .await
+        .unwrap();
+        tool.call(
+            &ctx_b,
+            json!({ "action": "start", "controller_id": "c3", "goal": "B" }),
+        )
+        .await
+        .unwrap();
+        let list_a = tool
+            .call(&ctx_a, json!({ "action": "list_mine" }))
             .await
             .unwrap();
-        tool.call(&ctx_a, json!({ "action": "start", "controller_id": "c2", "goal": "A2" }))
+        let list_b = tool
+            .call(&ctx_b, json!({ "action": "list_mine" }))
             .await
             .unwrap();
-        tool.call(&ctx_b, json!({ "action": "start", "controller_id": "c3", "goal": "B" }))
-            .await
-            .unwrap();
-        let list_a = tool.call(&ctx_a, json!({ "action": "list_mine" })).await.unwrap();
-        let list_b = tool.call(&ctx_b, json!({ "action": "list_mine" })).await.unwrap();
         assert_eq!(list_a["count"], 2);
         assert_eq!(list_b["count"], 1);
     }
@@ -369,15 +400,17 @@ mod tests {
         let (ctx_a, _) = ctx_with_session().await;
         let (ctx_b, _) = ctx_with_session().await;
         let created = tool
-            .call(&ctx_a, json!({ "action": "start", "controller_id": "c", "goal": "g" }))
+            .call(
+                &ctx_a,
+                json!({ "action": "start", "controller_id": "c", "goal": "g" }),
+            )
             .await
             .unwrap();
         let id = created["flow"]["id"].as_str().unwrap().to_string();
         let err = tool
             .call(&ctx_b, json!({ "action": "status", "flow_id": id }))
             .await
-            .err()
-            .expect("cross-session must fail");
+            .expect_err("cross-session must fail");
         let msg = err.to_string();
         assert!(msg.contains("different session"), "unexpected msg: {msg}");
     }
@@ -402,7 +435,7 @@ mod tests {
             transcripts_dir: String::new(),
             dreaming: Default::default(),
             workspace_git: Default::default(),
-        tool_rate_limits: None,
+            tool_rate_limits: None,
             tool_args_validation: None,
             extra_docs: Vec::new(),
             inbound_bindings: Vec::new(),
@@ -411,6 +444,8 @@ mod tests {
             allowed_delegates: Vec::new(),
             accept_delegates_from: Vec::new(),
             description: String::new(),
+            outbound_allowlist: Default::default(),
+            google_auth: None,
         });
         let sessions = StdArc::new(SessionManager::new(Duration::from_secs(60), 20));
         let ctx = AgentContext::new("kate", cfg, broker, sessions);

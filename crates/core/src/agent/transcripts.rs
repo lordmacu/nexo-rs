@@ -13,9 +13,9 @@
 //! The writer is intentionally decoupled from `SessionManager` — transcripts
 //! are a *record*, not a source of truth. `SessionManager` still owns live
 //! history; transcripts are what dreaming (Phase 10.6) will later ingest.
-use std::path::{Path, PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 pub const TRANSCRIPT_VERSION: u32 = 1;
