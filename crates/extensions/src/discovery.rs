@@ -2,7 +2,7 @@
 //! and turn them into candidates. Synchronous (one-shot at boot). Never
 //! panics: every failure becomes a diagnostic so agent startup continues.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use walkdir::WalkDir;
@@ -75,6 +75,10 @@ pub struct DiscoveryReport {
     pub candidates: Vec<ExtensionCandidate>,
     pub diagnostics: Vec<DiscoveryDiagnostic>,
     pub scanned_dirs: usize,
+    /// Number of candidates filtered out by `disabled`.
+    pub disabled_count: usize,
+    /// Number of error-level diagnostics observed during scan.
+    pub invalid_count: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,6 +162,8 @@ impl ExtensionDiscovery {
             candidates: Vec::new(),
             diagnostics: Vec::new(),
             scanned_dirs: 0,
+            disabled_count: 0,
+            invalid_count: 0,
         };
         // Annotate each raw candidate with the root_index it came from so the
         // final sort is deterministic across runs.
@@ -175,6 +181,8 @@ impl ExtensionDiscovery {
                     continue;
                 }
             };
+            let display_path =
+                |path: &Path| normalize_path_for_display(path, root, &canonical_root);
 
             let ignore = &self.ignore_dirs;
             let walker = WalkDir::new(&canonical_root)
@@ -199,7 +207,10 @@ impl ExtensionDiscovery {
                     Err(e) => {
                         report.diagnostics.push(DiscoveryDiagnostic {
                             level: DiagnosticLevel::Warn,
-                            path: e.path().map(PathBuf::from).unwrap_or_else(|| root.clone()),
+                            path: e
+                                .path()
+                                .map(|p| display_path(p))
+                                .unwrap_or_else(|| root.clone()),
                             message: format!("walk error: {e}"),
                         });
                         continue;
@@ -219,7 +230,7 @@ impl ExtensionDiscovery {
                     Err(e) => {
                         report.diagnostics.push(DiscoveryDiagnostic {
                             level: DiagnosticLevel::Error,
-                            path: manifest_path.clone(),
+                            path: display_path(&manifest_path),
                             message: format!("failed to canonicalize manifest: {e}"),
                         });
                         continue;
@@ -234,7 +245,7 @@ impl ExtensionDiscovery {
                     // root by design.
                     report.diagnostics.push(DiscoveryDiagnostic {
                         level: DiagnosticLevel::Error,
-                        path: manifest_path.clone(),
+                        path: display_path(&manifest_path),
                         message: "manifest path escapes search root via symlink".into(),
                     });
                     continue;
@@ -255,7 +266,7 @@ impl ExtensionDiscovery {
                                         if let Err(e) = manifest.validate() {
                                             report.diagnostics.push(DiscoveryDiagnostic {
                                                 level: DiagnosticLevel::Warn,
-                                                path: sidecar_path.clone(),
+                                                path: display_path(&sidecar_path),
                                                 message: format!(
                                                     "ignoring invalid sidecar MCP declaration: {e}"
                                                 ),
@@ -267,7 +278,7 @@ impl ExtensionDiscovery {
                                     Err(e) => {
                                         report.diagnostics.push(DiscoveryDiagnostic {
                                             level: DiagnosticLevel::Warn,
-                                            path: sidecar_path.clone(),
+                                            path: display_path(&sidecar_path),
                                             message: format!(
                                                 "failed to parse sidecar MCP file: {e}"
                                             ),
@@ -289,7 +300,7 @@ impl ExtensionDiscovery {
                     Err(e) => {
                         report.diagnostics.push(DiscoveryDiagnostic {
                             level: DiagnosticLevel::Error,
-                            path: manifest_path,
+                            path: display_path(&manifest_path),
                             message: e.to_string(),
                         });
                     }
@@ -320,7 +331,15 @@ impl ExtensionDiscovery {
 
         // Disabled filter.
         let disabled: HashSet<&String> = self.disabled.iter().collect();
-        survivors.retain(|(_, c)| !disabled.contains(&c.manifest.id().to_string()));
+        let mut kept: Vec<(usize, ExtensionCandidate)> = Vec::new();
+        for cand in survivors {
+            if disabled.contains(&cand.1.manifest.id().to_string()) {
+                report.disabled_count += 1;
+            } else {
+                kept.push(cand);
+            }
+        }
+        survivors = kept;
 
         // Allowlist (only when non-empty).
         if !self.allowlist.is_empty() {
@@ -356,8 +375,23 @@ impl ExtensionDiscovery {
                 .cmp(&b.path.to_string_lossy())
                 .then_with(|| a.message.cmp(&b.message))
         });
+        report.invalid_count = report
+            .diagnostics
+            .iter()
+            .filter(|d| d.level == DiagnosticLevel::Error)
+            .count();
 
         report
+    }
+}
+
+/// Prefer a path rooted at the operator-provided `search_root` for logs.
+/// When the scanner walks a canonicalized path (e.g. `/private/...` on macOS),
+/// this remaps diagnostics to the configured root when possible.
+fn normalize_path_for_display(path: &Path, search_root: &Path, canonical_root: &Path) -> PathBuf {
+    match path.strip_prefix(canonical_root) {
+        Ok(rel) => search_root.join(rel),
+        Err(_) => path.to_path_buf(),
     }
 }
 
@@ -466,29 +500,37 @@ fn load_sidecar_mcp_servers(
 }
 
 /// In-place removal of candidates whose `root_dir` is a strict descendant of
-/// another candidate's `root_dir`. O(N²) over typically a handful of
-/// candidates.
+/// another candidate's `root_dir`. Complexity is O(N * depth): candidates are
+/// sorted once, then each path checks only its ancestor chain against a
+/// `BTreeSet` of already-kept roots.
 fn prune_nested(items: &mut Vec<(usize, ExtensionCandidate)>) {
     if items.len() < 2 {
         return;
     }
-    // Collect root_dirs up front; we want to compare against siblings, not
-    // against the item being tested.
-    let roots: Vec<PathBuf> = items.iter().map(|(_, c)| c.root_dir.clone()).collect();
+
+    let mut order: Vec<usize> = (0..items.len()).collect();
+    order.sort_by(|a, b| items[*a].1.root_dir.cmp(&items[*b].1.root_dir));
+
+    let mut kept_roots: BTreeSet<PathBuf> = BTreeSet::new();
     let mut keep = vec![true; items.len()];
-    for (i, r_i) in roots.iter().enumerate() {
-        for (j, r_j) in roots.iter().enumerate() {
-            if i == j {
-                continue;
-            }
-            // r_i is a strict descendant of r_j → drop i.
-            if r_i != r_j && r_i.starts_with(r_j) {
-                keep[i] = false;
+    for idx in order {
+        let path = &items[idx].1.root_dir;
+        let mut parent = path.parent();
+        let mut is_nested = false;
+        while let Some(p) = parent {
+            if kept_roots.contains(p) {
+                is_nested = true;
                 break;
             }
+            parent = p.parent();
+        }
+        if is_nested {
+            keep[idx] = false;
+        } else {
+            kept_roots.insert(path.clone());
         }
     }
-    // Retain with parallel iteration.
+
     let mut idx = 0;
     items.retain(|_| {
         let k = keep[idx];
@@ -557,6 +599,8 @@ command = "./bin"
         let r = d.discover();
         assert!(r.candidates.is_empty());
         assert!(r.diagnostics.is_empty());
+        assert_eq!(r.disabled_count, 0);
+        assert_eq!(r.invalid_count, 0);
     }
 
     #[test]
@@ -579,6 +623,7 @@ command = "./bin"
         assert!(r.candidates.is_empty());
         assert_eq!(r.diagnostics.len(), 1);
         assert_eq!(r.diagnostics[0].level, DiagnosticLevel::Error);
+        assert_eq!(r.invalid_count, 1);
     }
 
     #[test]
@@ -738,6 +783,7 @@ command = "/bin/true"
         let r = d.discover();
         let ids: Vec<&str> = r.candidates.iter().map(|c| c.manifest.id()).collect();
         assert_eq!(ids, vec!["ext_b"]);
+        assert_eq!(r.disabled_count, 1);
     }
 
     #[test]
@@ -784,6 +830,29 @@ command = "/bin/true"
         let r = d.discover();
         let ids: Vec<&str> = r.candidates.iter().map(|c| c.manifest.id()).collect();
         assert_eq!(ids, vec!["monorepo_plugin"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn diagnostics_use_configured_search_path_prefix_when_root_is_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = TempDir::new().unwrap();
+        let real = tmp.path().join("real");
+        fs::create_dir_all(real.join("broken")).unwrap();
+        fs::write(real.join("broken").join(MANIFEST_FILENAME), "not = valid [toml").unwrap();
+
+        let search = tmp.path().join("search");
+        symlink(&real, &search).unwrap();
+
+        let d = ExtensionDiscovery::new(vec![search.clone()], vec![], vec![], vec![], 3);
+        let r = d.discover();
+        assert_eq!(r.diagnostics.len(), 1);
+        assert!(
+            r.diagnostics[0].path.starts_with(&search),
+            "diagnostic path should be under configured search path, got: {}",
+            r.diagnostics[0].path.display()
+        );
     }
 
     #[test]

@@ -280,9 +280,6 @@ fn persist_google_auth(
     // edit is needed and nothing binds this port locally.
     let redirect_port: u16 = 8766;
 
-    write_secret(secrets_dir, "google_client_id.txt", &client_id)?;
-    write_secret(secrets_dir, "google_client_secret.txt", &client_secret)?;
-
     let scopes_vec: Vec<String> = scopes
         .split(',')
         .map(str::trim)
@@ -290,9 +287,9 @@ fn persist_google_auth(
         .map(str::to_string)
         .collect();
 
-    // Pick target agent from agents.yaml. Always prompt interactively
-    // so the operator sees (and can redirect) which agent gets touched
-    // — even if only one exists. Zero agents → skip YAML patch.
+    // Pick target agent FIRST — secrets + YAML refs are scoped under
+    // that agent's folder so two agents can hold different Google
+    // OAuth apps without colliding. Zero agents → bail.
     let agents_yaml = config_dir.join("agents.yaml");
     let agent_ids = crate::yaml_patch::list_agent_ids(&agents_yaml).unwrap_or_default();
     let agent_id = if agent_ids.is_empty() {
@@ -301,32 +298,34 @@ fn persist_google_auth(
         Some(crate::prompt::pick_agent(&agent_ids)?)
     };
 
-    // Use `${file:/run/secrets/...}` when patching the compose config
-    // (Docker reads secrets from files); fall back to `${ENV_VAR}` for
-    // the non-docker config dir so a plain `cargo run` still works
-    // after `export` of the two vars.
     let is_docker = config_dir
         .file_name()
         .map(|n| n == "docker")
         .unwrap_or(false);
-    // Use `${file:...}` in both modes — config loader resolves the
-    // path, so no shell `export` dance is needed. In docker the files
-    // are Docker secrets at `/run/secrets/...`; on host they're the
-    // `./secrets/*.txt` files the wizard just wrote.
-    let (client_id_ref, client_secret_ref) = if is_docker {
-        (
-            "${file:/run/secrets/google_client_id}".to_string(),
-            "${file:/run/secrets/google_client_secret}".to_string(),
-        )
-    } else {
-        (
-            "${file:./secrets/google_client_id.txt}".to_string(),
-            "${file:./secrets/google_client_secret.txt}".to_string(),
-        )
-    };
 
+    // Per-agent secret files → each agent holds its own Google OAuth
+    // app. Two agents can point at different Cloud Console projects
+    // without ever colliding on disk.
     let mut patched_agent = false;
     if let Some(id) = agent_id.as_deref() {
+        let agent_secrets = secrets_dir.join(id);
+        std::fs::create_dir_all(&agent_secrets).with_context(|| {
+            format!("mkdir {}", agent_secrets.display())
+        })?;
+        write_secret(&agent_secrets, "google_client_id.txt", &client_id)?;
+        write_secret(&agent_secrets, "google_client_secret.txt", &client_secret)?;
+
+        let (client_id_ref, client_secret_ref) = if is_docker {
+            (
+                format!("${{file:/run/secrets/{id}_google_client_id}}"),
+                format!("${{file:/run/secrets/{id}_google_client_secret}}"),
+            )
+        } else {
+            (
+                format!("${{file:./secrets/{id}/google_client_id.txt}}"),
+                format!("${{file:./secrets/{id}/google_client_secret.txt}}"),
+            )
+        };
         crate::yaml_patch::patch_agent_google_auth(
             &agents_yaml,
             id,
@@ -335,9 +334,13 @@ fn persist_google_auth(
             redirect_port,
             &scopes_vec,
         )?;
-        // Also register the skill doc so the LLM learns the workflow.
         crate::yaml_patch::add_skill_to_agent(&agents_yaml, id, "google-auth")?;
         patched_agent = true;
+    } else {
+        // No agent available → write to the shared path as a fallback
+        // so the files still exist for manual wiring later.
+        write_secret(secrets_dir, "google_client_id.txt", &client_id)?;
+        write_secret(secrets_dir, "google_client_secret.txt", &client_secret)?;
     }
 
     // Docker compose patch — only meaningful when the config dir is
@@ -373,8 +376,8 @@ fn persist_google_auth(
         println!("⚠  No encontré agentes en agents.yaml. Pegá el bloque a mano:");
         println!();
         println!("    google_auth:");
-        println!("      client_id: \"{client_id_ref}\"");
-        println!("      client_secret: \"{client_secret_ref}\"");
+        println!("      client_id: \"${{file:./secrets/google_client_id.txt}}\"");
+        println!("      client_secret: \"${{file:./secrets/google_client_secret.txt}}\"");
         println!("      redirect_port: {redirect_port}");
         println!("      scopes:");
         for s in &scopes_vec {
@@ -701,22 +704,43 @@ fn wipe_channel_session(canal_id: &str, agent_id: &str, config_dir: &Path) -> Re
     Ok(())
 }
 
-/// Per-agent WhatsApp session path — derived from the agent's
-/// workspace in `agents.yaml`. Resolves docker-style `/app/` prefixes
-/// to host paths so the wizard (run on host) touches the same dir the
-/// container agent would.
+/// Per-agent WhatsApp session path. Resolution order:
+///   1. `config/plugins/whatsapp.yaml::whatsapp.session_dir` if present —
+///      lets the operator pin a custom location (Docker bind mount,
+///      encrypted volume, shared team storage) and have setup honor it
+///      instead of silently overwriting on the next pair.
+///   2. Otherwise derive from the agent's workspace:
+///      `<workspace>/whatsapp/default`.
+/// Docker-style `/app/` prefixes (from config files authored inside a
+/// container image) are rewritten to host-relative paths so the wizard
+/// running on the host touches the same dir the container agent would.
 fn agent_whatsapp_session_dir(config_dir: &Path, agent_id: &str) -> PathBuf {
+    let wa_yaml = config_dir.join("plugins").join("whatsapp.yaml");
+    if let Ok(Some(existing)) =
+        crate::yaml_patch::get_string(&wa_yaml, "whatsapp.session_dir")
+    {
+        let trimmed = existing.trim();
+        if !trimmed.is_empty() {
+            return resolve_docker_path(trimmed);
+        }
+    }
     let agents_yaml = config_dir.join("agents.yaml");
     let raw = crate::yaml_patch::get_agent_workspace(&agents_yaml, agent_id)
         .ok()
         .flatten()
         .unwrap_or_else(|| format!("./data/workspace/{agent_id}"));
-    let ws = if let Some(rest) = raw.strip_prefix("/app/") {
+    let ws = resolve_docker_path(&raw);
+    ws.join("whatsapp").join("default")
+}
+
+/// Rewrite `/app/foo` → `./foo` so YAML authored for a container still
+/// resolves correctly when the wizard runs on the host.
+fn resolve_docker_path(raw: &str) -> PathBuf {
+    if let Some(rest) = raw.strip_prefix("/app/") {
         PathBuf::from(format!("./{rest}"))
     } else {
         PathBuf::from(raw)
-    };
-    ws.join("whatsapp").join("default")
+    }
 }
 
 /// Update `config/plugins/whatsapp.yaml::whatsapp.session_dir` to

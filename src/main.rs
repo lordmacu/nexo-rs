@@ -19,7 +19,7 @@ use agent_broker::{AnyBroker, DiskQueue};
 use agent_config::AppConfig;
 use agent_core::agent::dreaming::{DreamEngine, DreamingConfig};
 use agent_core::session::SessionManager;
-use agent_core::telemetry::render_prometheus;
+use agent_core::telemetry::{add_extensions_discovered, render_prometheus};
 use agent_core::{
     Agent, AgentRuntime, DelegationTool, ExtensionHook, ExtensionTool, HeartbeatTool, HookRegistry,
     LlmAgentBehavior, MemoryTool, MyStatsTool, PluginRegistry, ToolRegistry, WhatDoIKnowTool,
@@ -1568,6 +1568,9 @@ async fn run_extension_discovery(
         cfg.max_depth,
     );
     let report = discovery.discover();
+    add_extensions_discovered("ok", report.candidates.len() as u64);
+    add_extensions_discovered("disabled", report.disabled_count as u64);
+    add_extensions_discovered("invalid", report.invalid_count as u64);
 
     for d in &report.diagnostics {
         match d.level {
@@ -1622,6 +1625,19 @@ async fn run_extension_discovery(
             continue;
         }
         let id = c.manifest.id().to_string();
+        // Gate: skip spawn when declared `requires.bins` or `requires.env`
+        // are missing. Prevents tools from being registered with an agent
+        // only to fail on every invocation with an opaque PATH/env error.
+        let (missing_bins, missing_env) = c.manifest.requires.missing();
+        if !missing_bins.is_empty() || !missing_env.is_empty() {
+            tracing::warn!(
+                ext = %id,
+                missing_bins = ?missing_bins,
+                missing_env = ?missing_env,
+                "extension skipped: declared preconditions not satisfied"
+            );
+            continue;
+        }
         match agent_extensions::StdioRuntime::spawn(&c.manifest, c.root_dir.clone()).await {
             Ok(rt) => {
                 tracing::info!(

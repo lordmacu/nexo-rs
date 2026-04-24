@@ -23,6 +23,16 @@ gmail_poller:
     # regexes if the form copy changes.
     - name: solicitud-llamada
       query: 'subject:"Nueva solicitud de llamada" is:unread'
+      # First deploy: solo mira las últimas 24h. Así no revienta si hay
+      # 500 emails históricos con ese asunto. Bajalo a `2h` en prod
+      # estable, o remové el campo para escanear todo el inbox.
+      newer_than: "1d"
+      # Cap por tick — si llegan 50 emails al mismo tiempo, procesa 20
+      # y los otros 30 esperan al próximo minuto. Previene flood a WA.
+      max_per_tick: 20
+      # 1 segundo entre dispatches. WhatsApp rate-limita ~1 msg/sec
+      # por chat, por arriba te shadow-bannean.
+      dispatch_delay_ms: 1000
       forward_to_subject: plugin.outbound.whatsapp.default
       forward_to: "573115728852@s.whatsapp.net"
       extract:
@@ -30,6 +40,15 @@ gmail_poller:
         telefono: '(?is)tel[eé]fono[:\s]+([+\d\s\-]+)'
         email:    '(?is)e-?mail[:\s]+([\w.@+-]+)'
         mensaje:  '(?is)mensaje[:\s]+(.+?)(?:\n\n|$)'
+      # No dispatch si alguno de estos salió vacío del regex — email
+      # malformado queda marcado como leído pero sin avisar. Ajustá
+      # según qué campos son críticos para tu flujo.
+      require_fields:
+        - nombre
+        - telefono
+      # Opcional: solo aceptá emails de estos remitentes/dominios.
+      # Substring match, case-insensitive. Lista vacía = todos.
+      sender_allowlist: []
       message_template: |
         📞 Nueva solicitud de llamada
         Cliente: {nombre}
