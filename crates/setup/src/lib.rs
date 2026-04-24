@@ -20,6 +20,7 @@
 //!
 //! See `src/services/` for the exhaustive service catalog.
 
+pub mod credentials_check;
 pub mod prompt;
 pub mod registry;
 pub mod services;
@@ -138,6 +139,13 @@ fn run_guided_first_run(
                 eprintln!("⚠  {}: {e:#}", svc.label);
             }
         }
+    }
+
+    // Phase 17 — gauntlet at wizard close. Surfaces any
+    // `credentials.<ch>` binding that points at a non-existent
+    // instance / account before the user boots the daemon.
+    if let Ok(summary) = credentials_check::run(config_dir) {
+        credentials_check::print(&summary);
     }
 
     println!();
@@ -282,7 +290,13 @@ fn run_hub_menu(
                     }
                 }
             }
-            _ => return Ok(()),
+            _ => {
+                // Phase 17 — final gauntlet before leaving the hub.
+                if let Ok(summary) = credentials_check::run(config_dir) {
+                    credentials_check::print(&summary);
+                }
+                return Ok(());
+            }
         }
     }
 }
@@ -303,7 +317,18 @@ pub fn run_one(config_dir: &Path, service_id: &str) -> Result<()> {
                 "unknown service '{service_id}'. Run `agent setup --list` for the catalog.",
             )
         })?;
-    run_service(svc, &secrets_dir, config_dir)
+    run_service(svc, &secrets_dir, config_dir)?;
+    // Phase 17 — always close a setup run with the gauntlet so the
+    // user sees stale `credentials` bindings immediately.
+    if matches!(
+        svc.id,
+        "whatsapp" | "telegram" | "google" | "google-auth" | "gmail-poller"
+    ) {
+        if let Ok(summary) = credentials_check::run(config_dir) {
+            credentials_check::print(&summary);
+        }
+    }
+    Ok(())
 }
 
 /// Print the catalog + per-service configuration status to stdout.
@@ -345,7 +370,7 @@ pub fn run_telegram_link(config_dir: &Path) -> Result<()> {
 }
 
 /// Non-interactive audit — exits with non-zero when any required field
-/// is missing.
+/// is missing OR the credential gauntlet reports errors.
 pub fn run_doctor(config_dir: &Path) -> Result<()> {
     let secrets_dir = config_dir
         .parent()
@@ -355,8 +380,24 @@ pub fn run_doctor(config_dir: &Path) -> Result<()> {
     let report = status::audit(&services, &secrets_dir, config_dir);
     let missing = report.missing_required();
     status::print_report(&report);
-    if missing.is_empty() {
+
+    // Phase 17 — credential gauntlet on top of the per-service audit.
+    // Non-fatal on missing optional services but surfaces binding /
+    // allow_agents mismatches before the daemon tries to boot.
+    let cred_summary = credentials_check::run(config_dir).ok();
+    if let Some(ref s) = cred_summary {
+        credentials_check::print(s);
+    }
+
+    let cred_errors = cred_summary.as_ref().map(|s| s.errors.len()).unwrap_or(0);
+    if missing.is_empty() && cred_errors == 0 {
         Ok(())
+    } else if cred_errors > 0 {
+        anyhow::bail!(
+            "{} required field(s) missing + {} credential error(s); fix and re-run `agent setup doctor`",
+            missing.len(),
+            cred_errors
+        )
     } else {
         anyhow::bail!(
             "{} required field(s) missing: {}",
