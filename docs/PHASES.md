@@ -11,7 +11,7 @@ beyond surface docs.
 
 Legend: `⬜ pending  🔄 in progress  ✅ done`
 
-Progress: **15 / 18 phases done, 0 in progress**
+Progress: **16 / 18 phases done, 0 in progress**
 
 ---
 
@@ -378,15 +378,21 @@ the same domain.
 
 ---
 
-## Phase D15 — Architecture Decision Records   ⬜
+## Phase D15 — Architecture Decision Records   ✅
 
-- [ ] Create `docs/src/adr/` with an `README.md` index
-- [ ] Backfill major decisions as ADRs: NATS over RabbitMQ, sqlite-vec
-  over Qdrant, workspace-git memory, per-agent sandboxing, Signal
-  Protocol (via whatsapp-rs), drop-in agents directory, MCP dual role
-
-**Done criteria:** a reader reviewing `adr/` can see every "why we
-chose X over Y" decision.
+- [x] Create `docs/src/adr/` with an `index.md` catalog + ADR
+  template instructions
+- [x] Backfill 9 major decisions:
+  - 0001 single-process runtime
+  - 0002 NATS as the broker (with natsio anti-pattern warning)
+  - 0003 sqlite-vec for vector search
+  - 0004 per-agent tool sandboxing (build-time pruning)
+  - 0005 drop-in agents.d/ directory
+  - 0006 workspace-git memory forensics
+  - 0007 WhatsApp via whatsapp-rs (Signal Protocol)
+  - 0008 MCP dual role — client and server
+  - 0009 dual MIT / Apache-2 licensing + NOTICE
+- [x] Register every ADR in SUMMARY under new section
 
 ---
 
