@@ -50,6 +50,7 @@ Ext subcommand has its own richer code table — see below.
 | [`ext`](#ext) | Extension management |
 | [`flow`](#flow) | TaskFlow operations |
 | [`mcp-server`](#mcp-server) | Run as MCP stdio server |
+| [`reload`](#reload) | Trigger config hot-reload on a running daemon |
 | `--check-config` | Pre-flight config validation |
 | `--dry-run` | Load config and print the plan |
 
@@ -214,6 +215,37 @@ agent mcp-server
 
 See [MCP — Agent as MCP server](../mcp/server.md) for deployment
 recipes (Claude Desktop config, allowlist, auth token).
+
+---
+
+## `reload`
+
+Triggers a config hot-reload on a running daemon. Publishes
+`control.reload` on the broker the daemon is listening to (resolved
+from `broker.yaml`), subscribes-before-publish to
+`control.reload.ack`, waits up to 5 s, and prints the outcome.
+
+```bash
+agent reload                 # human-readable summary
+agent reload --json          # serialized ReloadOutcome
+```
+
+Example output:
+
+```
+$ agent reload
+reload v7: applied=2 rejected=0 elapsed=18ms
+  ✓ ana
+  ✓ bob
+```
+
+**Exit codes:**
+- `0` — at least one agent reloaded
+- `1` — no ack within 5 s (daemon not running)
+- `2` — every agent rejected
+
+Full semantics — what's reloaded, apply-on-next-message, failure
+modes — in [Config hot-reload](../ops/hot-reload.md).
 
 ---
 

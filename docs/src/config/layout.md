@@ -21,6 +21,7 @@ config/
 ├── mcp.yaml                 # optional — MCP servers the agent consumes
 ├── mcp_server.yaml          # optional — expose this agent as an MCP server
 ├── tool_policy.yaml         # optional — per-tool / per-agent policy
+├── runtime.yaml             # optional — hot-reload watcher settings
 ├── plugins/
 │   ├── whatsapp.yaml
 │   ├── telegram.yaml
@@ -50,6 +51,7 @@ only if present.
 | `mcp.yaml` | optional |
 | `mcp_server.yaml` | optional |
 | `tool_policy.yaml` | optional |
+| `runtime.yaml` | optional — hot-reload knobs; defaults enable reload at 500 ms debounce. See [Config hot-reload](../ops/hot-reload.md). |
 | `plugins/*.yaml` | optional (only needed for plugins you enable) |
 
 ## Drop-in agents

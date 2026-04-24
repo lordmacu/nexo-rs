@@ -40,3 +40,21 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --locked
       - run: cargo test --workspace --locked
+
+  cross-arm64:
+    # Sanity-check that the workspace still compiles for aarch64 so
+    # Termux-on-phone and Linux-ARM server deploys don't regress. Uses
+    # `cross` (Docker-based cross-compile). Not required by branch
+    # protection — it's a portability smoke test, not a release gate.
+    name: cross-check aarch64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: aarch64
+      - name: Install cross
+        run: cargo install cross --locked --version ^0.2
+      - name: cross check --target aarch64-unknown-linux-gnu
+        run: cross check --workspace --target aarch64-unknown-linux-gnu --locked
