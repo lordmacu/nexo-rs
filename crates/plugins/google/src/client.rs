@@ -126,9 +126,19 @@ impl GoogleTokens {
     }
 }
 
+/// Source-of-truth files for the OAuth secrets. When set, the client
+/// re-reads them on every network call if their mtime advanced — so
+/// `agent --check-config --strict` + admin reload pick up rotated
+/// client_id / client_secret without a daemon restart.
+#[derive(Debug)]
+pub struct SecretSources {
+    pub client_id_path: PathBuf,
+    pub client_secret_path: PathBuf,
+}
+
 /// Async-safe OAuth client used by all `google_*` tools.
 pub struct GoogleAuthClient {
-    config: Arc<GoogleAuthConfig>,
+    config: arc_swap::ArcSwap<GoogleAuthConfig>,
     /// Path (absolute) where `token_file` lands. Computed at
     /// construction from `<workspace>/<token_file>`.
     token_path: PathBuf,
@@ -138,17 +148,38 @@ pub struct GoogleAuthClient {
     /// `start_auth_flow` cancels the previous.
     pending_auth: RwLock<Option<oneshot::Sender<Result<GoogleTokens>>>>,
     http: reqwest::Client,
+    /// Optional file paths the client consults for lazy-refresh of
+    /// client_id / client_secret. Mtime stored alongside so we only
+    /// re-read when the file actually changes.
+    secret_sources: tokio::sync::Mutex<Option<(SecretSources, std::time::SystemTime)>>,
 }
 
 impl GoogleAuthClient {
     pub fn new(config: GoogleAuthConfig, workspace_dir: &std::path::Path) -> Arc<Self> {
+        Self::new_with_sources(config, workspace_dir, None)
+    }
+
+    pub fn new_with_sources(
+        config: GoogleAuthConfig,
+        workspace_dir: &std::path::Path,
+        sources: Option<SecretSources>,
+    ) -> Arc<Self> {
         let token_path = if std::path::Path::new(&config.token_file).is_absolute() {
             PathBuf::from(&config.token_file)
         } else {
             workspace_dir.join(&config.token_file)
         };
+        let initial_mtime = sources
+            .as_ref()
+            .and_then(|s| {
+                let a = std::fs::metadata(&s.client_id_path).ok()?.modified().ok()?;
+                let b = std::fs::metadata(&s.client_secret_path).ok()?.modified().ok()?;
+                Some(a.max(b))
+            })
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        let stored = sources.map(|s| (s, initial_mtime));
         Arc::new(Self {
-            config: Arc::new(config),
+            config: arc_swap::ArcSwap::from_pointee(config),
             token_path,
             tokens: RwLock::new(None),
             pending_auth: RwLock::new(None),
@@ -156,11 +187,44 @@ impl GoogleAuthClient {
                 .timeout(Duration::from_secs(30))
                 .build()
                 .expect("reqwest client"),
+            secret_sources: tokio::sync::Mutex::new(stored),
         })
     }
 
-    pub fn config(&self) -> &GoogleAuthConfig {
-        &self.config
+    pub fn config(&self) -> Arc<GoogleAuthConfig> {
+        self.config.load_full()
+    }
+
+    /// Re-read `client_id_path` + `client_secret_path` if their mtime
+    /// advanced since the last load. Cheap: a single `metadata` call
+    /// when no rotation has happened. Called before every network
+    /// hop in `google_*` tools so a `chmod 600` rewrite of the secrets
+    /// is picked up without a daemon restart.
+    pub async fn refresh_secrets_if_changed(&self) -> Result<()> {
+        let mut guard = self.secret_sources.lock().await;
+        let Some((sources, last_mtime)) = guard.as_mut() else {
+            return Ok(()); // No file-backed sources; nothing to do.
+        };
+        let cid_mtime = std::fs::metadata(&sources.client_id_path)?.modified()?;
+        let cs_mtime = std::fs::metadata(&sources.client_secret_path)?.modified()?;
+        let newest = cid_mtime.max(cs_mtime);
+        if newest <= *last_mtime {
+            return Ok(());
+        }
+        let cid = tokio::fs::read_to_string(&sources.client_id_path).await?;
+        let csec = tokio::fs::read_to_string(&sources.client_secret_path).await?;
+        let prev = self.config.load_full();
+        let mut next = (*prev).clone();
+        next.client_id = cid.trim().to_string();
+        next.client_secret = csec.trim().to_string();
+        self.config.store(Arc::new(next));
+        *last_mtime = newest;
+        tracing::info!(
+            target: "credentials.audit",
+            event = "google_secrets_refreshed",
+            "google_*: re-read client_id/client_secret after on-disk rotation",
+        );
+        Ok(())
     }
 
     pub fn token_path(&self) -> &std::path::Path {
@@ -207,11 +271,12 @@ impl GoogleAuthClient {
     /// approval yields a refresh_token. Subsequent prompts reuse that
     /// refresh — see `GoogleTokens::refresh_token` docstring.
     pub fn build_auth_url(&self, state: &str) -> String {
-        let redirect_uri = self.redirect_uri();
-        let scopes = canonicalize_scopes(&self.config.scopes).join(" ");
+        let cfg = self.config.load_full();
+        let redirect_uri = format!("http://127.0.0.1:{}/callback", cfg.redirect_port);
+        let scopes = canonicalize_scopes(&cfg.scopes).join(" ");
         let params = [
-            ("client_id", self.config.client_id.as_str()),
-            ("redirect_uri", &redirect_uri),
+            ("client_id", cfg.client_id.as_str()),
+            ("redirect_uri", redirect_uri.as_str()),
             ("response_type", "code"),
             ("scope", &scopes),
             ("access_type", "offline"),
@@ -223,7 +288,7 @@ impl GoogleAuthClient {
     }
 
     fn redirect_uri(&self) -> String {
-        format!("http://127.0.0.1:{}/callback", self.config.redirect_port)
+        format!("http://127.0.0.1:{}/callback", self.config.load_full().redirect_port)
     }
 
     /// Bind the loopback listener AND return the auth URL. The listener
@@ -237,12 +302,13 @@ impl GoogleAuthClient {
     pub async fn start_auth_flow(
         self: &Arc<Self>,
     ) -> Result<(String, tokio::task::JoinHandle<Result<GoogleTokens>>)> {
-        let listener = TcpListener::bind(("127.0.0.1", self.config.redirect_port))
+        let cfg = self.config.load_full();
+        let listener = TcpListener::bind(("127.0.0.1", cfg.redirect_port))
             .await
             .with_context(|| {
                 format!(
                     "cannot bind 127.0.0.1:{} for OAuth callback — another process using it?",
-                    self.config.redirect_port
+                    cfg.redirect_port
                 )
             })?;
         // Short-lived random state lets the listener verify the redirect
@@ -341,12 +407,14 @@ impl GoogleAuthClient {
     }
 
     pub async fn exchange_code(&self, code: &str) -> Result<GoogleTokens> {
+        self.refresh_secrets_if_changed().await.ok();
+        let cfg = self.config.load_full();
         let redirect_uri = self.redirect_uri();
         let form = [
             ("code", code),
-            ("client_id", &self.config.client_id),
-            ("client_secret", &self.config.client_secret),
-            ("redirect_uri", &redirect_uri),
+            ("client_id", cfg.client_id.as_str()),
+            ("client_secret", cfg.client_secret.as_str()),
+            ("redirect_uri", redirect_uri.as_str()),
             ("grant_type", "authorization_code"),
         ];
         let resp = self
@@ -368,7 +436,8 @@ impl GoogleAuthClient {
                     .unwrap_or("(no error body)")
             ));
         }
-        let tokens = tokens_from_response(&body, &canonicalize_scopes(&self.config.scopes))?;
+        let scope_cfg = self.config.load_full();
+        let tokens = tokens_from_response(&body, &canonicalize_scopes(&scope_cfg.scopes))?;
         *self.tokens.write().await = Some(tokens.clone());
         self.save_to_disk(&tokens).await?;
         Ok(tokens)
@@ -382,9 +451,11 @@ impl GoogleAuthClient {
     /// **"TVs and Limited Input devices"** — Desktop/Web OAuth clients
     /// get `client_type_disabled` here.
     pub async fn request_device_code(&self) -> Result<DeviceChallenge> {
-        let scopes_joined = canonicalize_scopes(&self.config.scopes).join(" ");
+        self.refresh_secrets_if_changed().await.ok();
+        let cfg = self.config.load_full();
+        let scopes_joined = canonicalize_scopes(&cfg.scopes).join(" ");
         let form = [
-            ("client_id", self.config.client_id.as_str()),
+            ("client_id", cfg.client_id.as_str()),
             ("scope", scopes_joined.as_str()),
         ];
         let resp = self
@@ -438,9 +509,11 @@ impl GoogleAuthClient {
                 return Err(anyhow!("device code expired before user approved"));
             }
             tokio::time::sleep(interval).await;
+            self.refresh_secrets_if_changed().await.ok();
+            let cfg = self.config.load_full();
             let form = [
-                ("client_id", self.config.client_id.as_str()),
-                ("client_secret", self.config.client_secret.as_str()),
+                ("client_id", cfg.client_id.as_str()),
+                ("client_secret", cfg.client_secret.as_str()),
                 ("device_code", challenge.device_code.as_str()),
                 (
                     "grant_type",
@@ -457,8 +530,9 @@ impl GoogleAuthClient {
             let status = resp.status();
             let body: Value = resp.json().await.context("malformed token response")?;
             if status.is_success() {
+                let scope_cfg = self.config.load_full();
                 let tokens =
-                    tokens_from_response(&body, &canonicalize_scopes(&self.config.scopes))?;
+                    tokens_from_response(&body, &canonicalize_scopes(&scope_cfg.scopes))?;
                 *self.tokens.write().await = Some(tokens.clone());
                 self.save_to_disk(&tokens).await?;
                 return Ok(tokens);
@@ -510,10 +584,12 @@ impl GoogleAuthClient {
                     )
                 })?
         };
+        self.refresh_secrets_if_changed().await.ok();
+        let cfg = self.config.load_full();
         let form = [
-            ("client_id", self.config.client_id.as_str()),
-            ("client_secret", self.config.client_secret.as_str()),
-            ("refresh_token", &refresh),
+            ("client_id", cfg.client_id.as_str()),
+            ("client_secret", cfg.client_secret.as_str()),
+            ("refresh_token", refresh.as_str()),
             ("grant_type", "refresh_token"),
         ];
         let resp = self
@@ -542,7 +618,8 @@ impl GoogleAuthClient {
         }
         // Google keeps the same refresh unless it rotates (uncommon);
         // merge into the existing stored copy so we don't lose it.
-        let mut new_tokens = tokens_from_response(&body, &canonicalize_scopes(&self.config.scopes))?;
+        let scope_cfg = self.config.load_full();
+        let mut new_tokens = tokens_from_response(&body, &canonicalize_scopes(&scope_cfg.scopes))?;
         if new_tokens.refresh_token.is_none() {
             new_tokens.refresh_token = Some(refresh);
         }
