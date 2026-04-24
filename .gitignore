@@ -24,6 +24,10 @@ device_cache.json
 screenshot.png
 *.patch
 
+# Agent runtime logs
+agent.log
+*.log
+
 # IDE
 .idea/
 .vscode/

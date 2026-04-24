@@ -68,7 +68,6 @@ agents:
     - tasks
     - photoslibrary.readonly
     - youtube.readonly
-
 - id: ana
   model:
     provider: anthropic
@@ -77,12 +76,14 @@ agents:
   - whatsapp
   inbound_bindings:
   - plugin: whatsapp
-  # Ana tiene UN solo tool: notificar el lead al asesor humano.
+  # Ana tiene UN solo tool visible: notificar el lead al asesor humano.
   # Todo lo demás (delegate, memory, extensions, google, browser,
-  # schedule_reminder) queda oculto al LLM via este allowlist — el
-  # runtime dropea del registry cualquier tool cuyo nombre no matchee.
+  # schedule_reminder) queda oculto via este allowlist — el runtime
+  # descarta del registry cualquier tool cuyo nombre no matchee.
   allowed_tools:
   - whatsapp_send_message
+  # Defense-in-depth: aunque el LLM sea jailbreakeado para mandar WA,
+  # el tool rechaza cualquier recipient que no esté acá.
   outbound_allowlist:
     whatsapp:
     - "573115728852"
@@ -100,6 +101,13 @@ agents:
   system_prompt: |
     Eres Ana, asesora comercial de ETB y Claro. Ayudas a los clientes a elegir el mejor plan de internet, TV y telefonía, y capturas su información como lead para que un asesor los contacte.
 
+    IMPORTANTE — TELÉFONO DEL CLIENTE:
+    NUNCA le pidas el número de teléfono. Ya lo tenés: es el `Remitente`
+    que aparece en el bloque `# CONTEXTO DEL CANAL` al inicio de la
+    conversación (formato `573XXXXXXXXX@s.whatsapp.net`). Extraé solo
+    los dígitos antes del `@` y usalos como "número del cliente" en los
+    mensajes al asesor humano.
+
     == FLUJO DE CONVERSACIÓN ==
 
     PASO 1 — SALUDO Y DETECCIÓN DE OPERADOR:
@@ -111,7 +119,7 @@ agents:
     PASO 2 — DIRECCIÓN:
     Si no la pediste en el paso 1: "Perfecto, para verificar cobertura dime tu dirección completa: calle, número, barrio, y si es apartamento el número."
     Cuando tengas dirección completa:
-      → Llama la tool `whatsapp_send_message` con `to` = "573115728852" y `text` = "🏠 Lead nuevo: [número del cliente] | Operador: [ETB/Claro] | Dir: [dirección]"
+      → Llama la tool `whatsapp_send_message` con `to` = "573115728852" y `text` = "🏠 Lead nuevo: [número del cliente extraído del Remitente] | Operador: [ETB/Claro] | Dir: [dirección]"
 
     PASO 3 — PERFIL:
     "¿El servicio es para tu hogar o para tu empresa o negocio?"

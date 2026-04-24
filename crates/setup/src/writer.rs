@@ -608,7 +608,7 @@ fn run_agent_link_once(
     if !already_linked {
         crate::yaml_patch::add_plugin_to_agent(agents_yaml, &target, canal_id)?;
         println!("✔ `{canal_id}` agregado a `agents.{target}.plugins`");
-        run_channel_pairing(canal_id, secrets_dir, config_dir)?;
+        run_channel_pairing(canal_id, &target, secrets_dir, config_dir)?;
     } else {
         println!("`{canal_label}` ya está en `agents.{target}.plugins`.");
         let options = [
@@ -620,10 +620,10 @@ fn run_agent_link_once(
         let choice = crate::prompt::pick_from_list("¿Qué querés hacer?", &options)?;
         match choice {
             0 => {}
-            1 => run_channel_pairing(canal_id, secrets_dir, config_dir)?,
+            1 => run_channel_pairing(canal_id, &target, secrets_dir, config_dir)?,
             2 => {
                 wipe_channel_session(canal_id, &target, config_dir)?;
-                run_channel_pairing(canal_id, secrets_dir, config_dir)?;
+                run_channel_pairing(canal_id, &target, secrets_dir, config_dir)?;
             }
             3 => {
                 let removed = crate::yaml_patch::remove_list_entry(
@@ -652,7 +652,12 @@ fn run_agent_link_once(
 /// Dispatch the per-channel pairing ritual. For channels without a
 /// dedicated flow, just print a note — they're ready as soon as the
 /// plugin is in the YAML.
-fn run_channel_pairing(canal_id: &str, secrets_dir: &Path, config_dir: &Path) -> Result<()> {
+fn run_channel_pairing(
+    canal_id: &str,
+    agent_id: &str,
+    secrets_dir: &Path,
+    config_dir: &Path,
+) -> Result<()> {
     match canal_id {
         "telegram" => {
             println!();
@@ -665,7 +670,7 @@ fn run_channel_pairing(canal_id: &str, secrets_dir: &Path, config_dir: &Path) ->
             // implies successful pairing).
             println!();
             println!("── Pairing WhatsApp ────────────────────────────────");
-            run_whatsapp_pairing_sync(config_dir)?;
+            run_whatsapp_pairing_sync(agent_id, config_dir)?;
         }
         "email" => {
             println!();
@@ -678,32 +683,55 @@ fn run_channel_pairing(canal_id: &str, secrets_dir: &Path, config_dir: &Path) ->
     Ok(())
 }
 
-/// Blow away the on-disk session for a channel so the next pairing
-/// starts from scratch (fresh QR, new account). Uses the agent's
-/// workspace dir; idempotent if nothing exists yet.
+/// Blow away the on-disk session for a channel scoped to ONE agent.
+/// Resolves the path from that agent's workspace (`<workspace>/<channel>/default`)
+/// so wiping `ana` never touches `kate`.
 fn wipe_channel_session(canal_id: &str, agent_id: &str, config_dir: &Path) -> Result<()> {
-    let agents_yaml = config_dir.join("agents.yaml");
-    let ws_raw = crate::yaml_patch::get_agent_workspace(&agents_yaml, agent_id)
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| format!("./data/workspace/{agent_id}"));
-    let ws = if let Some(rest) = ws_raw.strip_prefix("/app/") {
-        PathBuf::from(format!("./{rest}"))
-    } else {
-        PathBuf::from(ws_raw)
-    };
     let target = match canal_id {
-        "whatsapp" => ws.join("whatsapp"),
-        // Telegram state lives in config + secrets, not a session dir;
-        // wiping requires clearing the bot token + allowlist. Out of
-        // scope here — user can re-run `setup telegram`.
+        "whatsapp" => agent_whatsapp_session_dir(config_dir, agent_id),
         _ => return Ok(()),
     };
     if target.exists() {
         std::fs::remove_dir_all(&target)
             .with_context(|| format!("rm -rf {}", target.display()))?;
         println!("✔ Sesión borrada: {}", target.display());
+    } else {
+        println!("ℹ  Nada que borrar en {} (ya vacío).", target.display());
     }
+    Ok(())
+}
+
+/// Per-agent WhatsApp session path — derived from the agent's
+/// workspace in `agents.yaml`. Resolves docker-style `/app/` prefixes
+/// to host paths so the wizard (run on host) touches the same dir the
+/// container agent would.
+fn agent_whatsapp_session_dir(config_dir: &Path, agent_id: &str) -> PathBuf {
+    let agents_yaml = config_dir.join("agents.yaml");
+    let raw = crate::yaml_patch::get_agent_workspace(&agents_yaml, agent_id)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| format!("./data/workspace/{agent_id}"));
+    let ws = if let Some(rest) = raw.strip_prefix("/app/") {
+        PathBuf::from(format!("./{rest}"))
+    } else {
+        PathBuf::from(raw)
+    };
+    ws.join("whatsapp").join("default")
+}
+
+/// Update `config/plugins/whatsapp.yaml::whatsapp.session_dir` to
+/// point at the given agent's session. Needed because the plugin
+/// runtime reads this path as the active WhatsApp account; when
+/// pairing for a different agent we switch it. Multi-account is
+/// future work (list shape in the yaml).
+fn set_active_whatsapp_session(config_dir: &Path, session_dir: &Path) -> Result<()> {
+    let yaml_path = config_dir.join("plugins").join("whatsapp.yaml");
+    crate::yaml_patch::upsert(
+        &yaml_path,
+        "whatsapp.session_dir",
+        &session_dir.display().to_string(),
+        crate::yaml_patch::ValueKind::String,
+    )?;
     Ok(())
 }
 
@@ -714,26 +742,15 @@ fn wipe_channel_session(canal_id: &str, agent_id: &str, config_dir: &Path) -> Re
 ///
 /// Runs on its own thread+runtime (same pattern as the google consent
 /// flow) because `persist` is sync.
-fn run_whatsapp_pairing_sync(config_dir: &Path) -> Result<()> {
-    // Default workspace location. Mirrors the agent runtime's choice
-    // of `<workspace>/whatsapp/default` for single-instance setups.
-    let agents_yaml = config_dir.join("agents.yaml");
-    let agent_ids = crate::yaml_patch::list_agent_ids(&agents_yaml).unwrap_or_default();
-    let first = agent_ids.first().cloned().unwrap_or_else(|| "default".into());
-    let ws = crate::yaml_patch::get_agent_workspace(&agents_yaml, &first)
-        .ok()
-        .flatten()
-        .map(|raw| {
-            if let Some(rest) = raw.strip_prefix("/app/") {
-                PathBuf::from(format!("./{rest}"))
-            } else {
-                PathBuf::from(raw)
-            }
-        })
-        .unwrap_or_else(|| PathBuf::from(format!("./data/workspace/{first}")));
-    let session_dir = ws.join("whatsapp").join("default");
+fn run_whatsapp_pairing_sync(agent_id: &str, config_dir: &Path) -> Result<()> {
+    // Session dir is scoped to the agent — each agent has its own
+    // credentials under <workspace>/whatsapp/default. The plugin
+    // config points at exactly one of these at a time; we flip that
+    // pointer before pairing so the runtime picks up the new session.
+    let session_dir = agent_whatsapp_session_dir(config_dir, agent_id);
     std::fs::create_dir_all(&session_dir)
         .with_context(|| format!("mkdir {}", session_dir.display()))?;
+    set_active_whatsapp_session(config_dir, &session_dir)?;
 
     println!("Session: {}", session_dir.display());
     println!("Abrí WhatsApp → Settings → Linked Devices → Link a Device");

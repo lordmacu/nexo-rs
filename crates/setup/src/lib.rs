@@ -145,6 +145,20 @@ fn run_guided_first_run(
     Ok(())
 }
 
+/// Decorate a service label with a status circle based on the audit
+/// report. Green ● = fully configured, yellow ● = partial,
+/// red ● = nothing. Returns an owned String since `console::style`
+/// injects ANSI codes.
+fn labeled_with_status(svc: &ServiceDef, report: &status::StatusReport) -> String {
+    let st = report.services.iter().find(|s| s.service_id == svc.id);
+    let dot = match st {
+        Some(s) if s.is_fully_configured() => console::style("●").green(),
+        Some(s) if s.is_partially_configured() => console::style("●").yellow(),
+        _ => console::style("●").red(),
+    };
+    format!("{dot} {}", svc.label)
+}
+
 /// Post-first-run menu. Groups follow-up actions by intent rather than
 /// by category. "Avanzado" falls through to the legacy multi-select
 /// for power users.
@@ -158,7 +172,8 @@ fn run_hub_menu(
         "Ver estado (qué está configurado)",
         "Vincular canal adicional (whatsapp / telegram / …)",
         "Agregar skills",
-        "Rotar credencial (LLM key, token, etc)",
+        "LLM (agregar / cambiar / re-autenticar proveedor)",
+        "Rotar credencial (plugin / skill — no LLMs)",
         "Avanzado ⚙  (memory, broker, runtime, per-service)",
         "Salir",
     ];
@@ -178,44 +193,73 @@ fn run_hub_menu(
                 }
             }
             2 => {
+                let report = status::audit(services, secrets_dir, config_dir);
                 let skill_services: Vec<&ServiceDef> = services
                     .iter()
                     .filter(|s| s.category == registry::Category::Skill)
                     .collect();
-                let labels: Vec<&str> = skill_services.iter().map(|s| s.label).collect();
+                let labels: Vec<String> = skill_services
+                    .iter()
+                    .map(|s| labeled_with_status(s, &report))
+                    .collect();
                 let defaults = vec![false; labels.len()];
-                let picked = prompt::multi_select(
-                    "Skills (space = toggle, enter = confirmar)",
+                let idxs = prompt::multi_select_strings(
+                    "Skills (space = toggle, enter = confirmar, ESC = volver)",
                     &labels,
                     &defaults,
                 )?;
-                for lbl in &picked {
-                    if let Some(svc) = skill_services.iter().find(|s| s.label == lbl) {
-                        if let Err(e) = run_service(svc, secrets_dir, config_dir) {
-                            eprintln!("⚠  {}: {e:#}", svc.label);
-                        }
+                for i in idxs {
+                    let svc = skill_services[i];
+                    if let Err(e) = run_service(svc, secrets_dir, config_dir) {
+                        eprintln!("⚠  {}: {e:#}", svc.label);
                     }
                 }
             }
             3 => {
-                // Credential rotation: present every configured service
-                // in Llm/Plugin/Skill and run its form again.
+                // Dedicated LLM path: pick provider → run its service
+                // (covers add / swap / re-auth uniformly). Each entry
+                // gets a colored status dot — green = fully configured,
+                // yellow = partial, red = none.
+                let report = status::audit(services, secrets_dir, config_dir);
+                let llm_services: Vec<&ServiceDef> = services
+                    .iter()
+                    .filter(|s| s.category == registry::Category::Llm)
+                    .collect();
+                let mut labels: Vec<String> = vec!["← Volver al menú".to_string()];
+                labels.extend(
+                    llm_services
+                        .iter()
+                        .map(|s| labeled_with_status(s, &report)),
+                );
+                let pick = prompt::pick_from_strings("¿Qué proveedor de LLM?", &labels)?;
+                if pick == 0 {
+                    continue;
+                }
+                run_service(llm_services[pick - 1], secrets_dir, config_dir)?;
+            }
+            4 => {
+                // Non-LLM credential rotation: plugin + skill services.
+                let report = status::audit(services, secrets_dir, config_dir);
                 let rotatable: Vec<&ServiceDef> = services
                     .iter()
                     .filter(|s| {
                         matches!(
                             s.category,
-                            registry::Category::Llm
-                                | registry::Category::Plugin
-                                | registry::Category::Skill
+                            registry::Category::Plugin | registry::Category::Skill
                         )
                     })
                     .collect();
-                let labels: Vec<&str> = rotatable.iter().map(|s| s.label).collect();
-                let pick = prompt::pick_from_list("¿Qué servicio rotar?", &labels)?;
-                run_service(rotatable[pick], secrets_dir, config_dir)?;
+                let mut labels: Vec<String> = vec!["← Volver al menú".to_string()];
+                labels.extend(
+                    rotatable.iter().map(|s| labeled_with_status(s, &report)),
+                );
+                let pick = prompt::pick_from_strings("¿Qué servicio rotar?", &labels)?;
+                if pick == 0 {
+                    continue;
+                }
+                run_service(rotatable[pick - 1], secrets_dir, config_dir)?;
             }
-            4 => {
+            5 => {
                 // Legacy advanced path — reuse the old multi-category
                 // picker scoped to the technical bits.
                 let advanced_services: Vec<ServiceDef> = services

@@ -358,6 +358,24 @@ pub fn pick_from_list(prompt: &str, items: &[&str]) -> anyhow::Result<usize> {
     Ok(idx)
 }
 
+/// Same as `pick_from_list` but accepts owned Strings so the caller
+/// can embed ANSI escapes (status circles, colors).
+pub fn pick_from_strings(prompt: &str, items: &[String]) -> anyhow::Result<usize> {
+    if items.is_empty() {
+        anyhow::bail!("empty list");
+    }
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        return Ok(0);
+    }
+    let t = theme();
+    let idx = Select::with_theme(&t)
+        .with_prompt(prompt)
+        .items(items)
+        .default(0)
+        .interact()?;
+    Ok(idx)
+}
+
 /// Multi-select checkbox prompt. `preselected` is the set of items
 /// ticked on entry (already-attached plugins, typically). Returns the
 /// full list the user confirmed.
@@ -376,6 +394,26 @@ pub fn multi_select(
         .defaults(preselected)
         .interact()?;
     Ok(idxs.into_iter().map(|i| items[i].to_string()).collect())
+}
+
+/// Multi-select variant with owned-string labels (for ANSI colors).
+/// The returned list contains the DISPLAY strings; callers that need
+/// a stable id should pair labels with ids via an index lookup.
+pub fn multi_select_strings(
+    prompt: &str,
+    items: &[String],
+    preselected: &[bool],
+) -> anyhow::Result<Vec<usize>> {
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        return Ok(Vec::new());
+    }
+    let t = theme();
+    let idxs = MultiSelect::with_theme(&t)
+        .with_prompt(prompt)
+        .items(items)
+        .defaults(preselected)
+        .interact()?;
+    Ok(idxs)
 }
 
 /// Pick one agent id from a list. Non-TTY callers auto-pick the first
