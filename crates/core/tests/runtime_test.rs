@@ -387,6 +387,7 @@ async fn two_agents_receive_only_their_bound_plugin_instances() {
         vec![InboundBinding {
             plugin: "telegram".into(),
             instance: Some("boss".into()),
+            ..Default::default()
         }],
         Arc::clone(&boss_received),
         broker.clone(),
@@ -399,6 +400,7 @@ async fn two_agents_receive_only_their_bound_plugin_instances() {
         vec![InboundBinding {
             plugin: "telegram".into(),
             instance: Some("sales".into()),
+            ..Default::default()
         }],
         Arc::clone(&ventas_received),
         broker.clone(),
@@ -474,6 +476,7 @@ async fn plugin_wide_binding_accepts_any_instance() {
         vec![InboundBinding {
             plugin: "telegram".into(),
             instance: None,
+            ..Default::default()
         }],
         Arc::clone(&received),
         broker.clone(),

@@ -242,10 +242,12 @@ mod tests {
             InboundBinding {
                 plugin: "telegram".into(),
                 instance: Some("sales".into()),
+                ..Default::default()
             },
             InboundBinding {
                 plugin: "whatsapp".into(),
                 instance: None,
+                ..Default::default()
             },
         ];
         let dir = AgentsDirectory::new(vec![a]);
