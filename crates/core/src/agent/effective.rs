@@ -94,6 +94,40 @@ impl EffectiveBindingPolicy {
     pub fn resolved(agent: &AgentConfig, binding_index: usize) -> Arc<Self> {
         Arc::new(Self::resolve(agent, binding_index))
     }
+
+    /// Check whether a tool `name` is permitted by this binding's
+    /// allowlist. Rules:
+    /// - empty list → every tool allowed (back-compat: agents that
+    ///   don't narrow the set).
+    /// - `"*"` entry → every tool allowed.
+    /// - pattern ending in `*` → prefix match.
+    /// - anything else → exact match.
+    ///
+    /// Used in the LLM turn loop both to prune the tool list shown to
+    /// the model and to deny execution of anything the model calls
+    /// from outside the allowlist (defense-in-depth).
+    pub fn tool_allowed(&self, name: &str) -> bool {
+        allowlist_matches(&self.allowed_tools, name)
+    }
+}
+
+/// Shared allowlist matcher used by both [`EffectiveBindingPolicy::tool_allowed`]
+/// and [`crate::agent::tool_registry::ToolRegistry::retain_matching`]. Kept as
+/// a free function so the exact matching semantics stay in one place and
+/// cannot drift between the two call sites.
+pub fn allowlist_matches(patterns: &[String], name: &str) -> bool {
+    if patterns.is_empty() {
+        return true;
+    }
+    patterns.iter().any(|p| {
+        if p == "*" {
+            return true;
+        }
+        match p.strip_suffix('*') {
+            Some(stem) => name.starts_with(stem),
+            None => p == name,
+        }
+    })
 }
 
 fn resolve_allowed_tools(agent: &AgentConfig, binding: Option<&InboundBinding>) -> Vec<String> {
