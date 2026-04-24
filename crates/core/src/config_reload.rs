@@ -48,7 +48,7 @@ pub struct ConfigReloadCoordinator {
 }
 
 /// Result returned by [`ConfigReloadCoordinator::reload`].
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ReloadOutcome {
     pub version: u64,
     pub applied: Vec<String>,
@@ -56,7 +56,7 @@ pub struct ReloadOutcome {
     pub elapsed_ms: u64,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ReloadRejection {
     pub agent_id: Option<String>,
     pub reason: String,

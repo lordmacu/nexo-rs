@@ -15,7 +15,7 @@ use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::Layer;
 
-use agent_broker::{AnyBroker, DiskQueue};
+use agent_broker::{AnyBroker, BrokerHandle, DiskQueue};
 use agent_config::AppConfig;
 use agent_core::agent::dreaming::{DreamEngine, DreamingConfig};
 use agent_core::session::SessionManager;
