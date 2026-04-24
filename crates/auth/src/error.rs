@@ -1,8 +1,21 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
 use crate::handle::{Channel, Fingerprint};
+
+/// Render a credential path for user-facing messages. Paths carrying
+/// the synthetic `inline:` prefix (legacy `agents.<id>.google_auth`
+/// migrated into the store) are replaced with `<inline credential>`
+/// so error output never echoes raw client_id / client_secret values.
+pub fn display_path(p: &Path) -> String {
+    let s = p.to_string_lossy();
+    if s.starts_with("inline:") {
+        "<inline credential>".to_string()
+    } else {
+        s.into_owned()
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum CredentialError {
@@ -21,14 +34,14 @@ pub enum CredentialError {
 
     #[error(
         "credential file '{path}' has insecure permissions (mode {mode:o}); run `chmod 600 {path}`",
-        path = path.display()
+        path = display_path(path)
     )]
     InsecurePermissions { path: PathBuf, mode: u32 },
 
-    #[error("credential file missing: {path}", path = path.display())]
+    #[error("credential file missing: {path}", path = display_path(path))]
     FileMissing { path: PathBuf },
 
-    #[error("credential file unreadable ({path}): {source}", path = path.display())]
+    #[error("credential file unreadable ({path}): {source}", path = display_path(path))]
     Unreadable {
         path: PathBuf,
         #[source]
@@ -46,7 +59,7 @@ pub enum CredentialError {
 pub enum BuildError {
     #[error(
         "duplicate credential path: '{path}' used by both {a_channel}:{a_instance} and {b_channel}:{b_instance}",
-        path = path.display()
+        path = display_path(path)
     )]
     DuplicatePath {
         path: PathBuf,
@@ -58,7 +71,7 @@ pub enum BuildError {
 
     #[error(
         "overlapping session_dir: '{inner}' is a sub-path of '{outer}' — both would collide on Signal keys",
-        inner = inner.display(), outer = outer.display()
+        inner = display_path(inner), outer = display_path(outer)
     )]
     PathPrefixOverlap { outer: PathBuf, inner: PathBuf },
 
