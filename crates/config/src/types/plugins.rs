@@ -135,6 +135,13 @@ pub struct WhatsappPluginConfig {
     /// each other's Signal keys). Empty / absent = legacy single-account.
     #[serde(default)]
     pub instance: Option<String>,
+    /// Phase 17 — agents permitted to publish from this instance.
+    /// Enforced by the plugin before broker dispatch as a second layer
+    /// on top of the resolver's per-agent `credentials.whatsapp`
+    /// binding. Empty = accept any agent that holds a valid resolver
+    /// handle for this instance (back-compat).
+    #[serde(default)]
+    pub allow_agents: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -384,6 +391,12 @@ pub struct TelegramPluginConfig {
     /// Empty / absent = legacy single-bot topic.
     #[serde(default)]
     pub instance: Option<String>,
+    /// Phase 17 — agents permitted to publish from this bot.
+    /// Enforced by the plugin before broker dispatch on top of the
+    /// resolver's `credentials.telegram` binding. Empty = accept any
+    /// agent holding a valid resolver handle (back-compat).
+    #[serde(default)]
+    pub allow_agents: Vec<String>,
 }
 
 fn default_bridge_timeout_ms() -> u64 {

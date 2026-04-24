@@ -105,6 +105,7 @@ fn two_binding_agent() -> AgentConfig {
             telegram: vec![500],
         },
         google_auth: None,
+        credentials: Default::default(),
         inbound_bindings: vec![
             // Sales WhatsApp — narrow.
             InboundBinding {
@@ -286,6 +287,7 @@ async fn legacy_agent_without_bindings_synthesises_agent_level_policy() {
             telegram: Vec::new(),
         },
         google_auth: None,
+        credentials: Default::default(),
     };
     let (runtime, captures, broker) = spawn_runtime(cfg).await;
 

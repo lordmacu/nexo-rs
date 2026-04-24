@@ -15,7 +15,11 @@ pub mod handle;
 pub mod resolver;
 pub mod store;
 pub mod telegram;
+pub mod telemetry;
 pub mod whatsapp;
+pub mod wire;
+
+pub use wire::{build_credentials, load_google_auth, print_report, CredentialsBundle};
 
 pub use error::{BuildError, CredentialError, ResolveError};
 pub use handle::{AgentId, Channel, CredentialHandle, Fingerprint};

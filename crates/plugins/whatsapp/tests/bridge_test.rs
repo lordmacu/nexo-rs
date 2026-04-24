@@ -32,6 +32,7 @@ fn cfg(timeout_ms: u64) -> WhatsappPluginConfig {
         daemon: WhatsappDaemonConfig::default(),
         public_tunnel: Default::default(),
         instance: None,
+        allow_agents: Vec::new(),
     }
 }
 

@@ -76,6 +76,7 @@ fn make_config(
         description: String::new(),
         outbound_allowlist: Default::default(),
         google_auth: None,
+        credentials: Default::default(),
     }
 }
 
@@ -280,6 +281,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             description: String::new(),
             outbound_allowlist: Default::default(),
             google_auth: None,
+            credentials: Default::default(),
         },
         behavior_a,
     ));
@@ -320,6 +322,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             description: String::new(),
             outbound_allowlist: Default::default(),
             google_auth: None,
+            credentials: Default::default(),
         },
         behavior_b,
     ));

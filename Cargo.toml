@@ -94,6 +94,7 @@ agent-plugin-google   = { path = "crates/plugins/google" }
 agent-plugin-gmail-poller = { path = "crates/plugins/gmail-poller" }
 agent-setup          = { path = "crates/setup" }
 agent-tunnel         = { path = "crates/tunnel" }
+agent-auth          = { path = "crates/auth" }
 agent-config        = { path = "crates/config" }
 agent-broker        = { path = "crates/broker" }
 agent-core          = { path = "crates/core" }

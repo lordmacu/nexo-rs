@@ -35,26 +35,26 @@ pub struct AgentRuntime {
     session_txs: Arc<DashMap<Uuid, mpsc::Sender<InboundMessage>>>,
     debounce_ms: Duration,
     queue_cap: usize,
-    /// Per-binding sender rate limiters, keyed by binding index. Built
-    /// lazily on first matching intake from the binding's effective
-    /// `sender_rate_limit`; `None` in a slot means "this binding opted
-    /// out of rate limiting". Legacy bindingless agents key their single
-    /// limiter at `usize::MAX` via
-    /// `EffectiveBindingPolicy::from_agent_defaults`.
+    /// Per-binding sender rate limiters, keyed by
+    /// `EffectiveBindingPolicy::binding_index`. Built lazily on first
+    /// matching intake from the binding's effective `sender_rate_limit`;
+    /// `None` in a slot means "this binding opted out of rate
+    /// limiting". `None` as a key is the legacy bucket synthesised from
+    /// agent-level defaults — its key space stays disjoint from real
+    /// bindings (0..N).
     ///
     /// Rationale for per-binding (instead of one per agent): an agent
     /// that exposes a narrow sales surface on WhatsApp and a trusted
     /// owner-only surface on Telegram typically wants very different
     /// throttles, and keeping buckets segregated means flood on one
     /// channel cannot exhaust the quota on the other.
-    sender_rate_limiters: Arc<DashMap<usize, Option<Arc<SenderRateLimiter>>>>,
-    /// Pre-resolved per-binding capability policies, keyed by binding
-    /// index. `usize::MAX` is reserved for the legacy "no bindings"
-    /// bucket synthesised from agent-level defaults. Policies are
-    /// immutable for the lifetime of the runtime so we allocate each
-    /// one exactly once at `new()` time — the hot intake path just
-    /// clones an `Arc`.
-    effective_policies: Arc<DashMap<usize, Arc<EffectiveBindingPolicy>>>,
+    sender_rate_limiters: Arc<DashMap<Option<usize>, Option<Arc<SenderRateLimiter>>>>,
+    /// Pre-resolved per-binding capability policies. The `None` key is
+    /// reserved for the legacy "no bindings" bucket synthesised from
+    /// agent-level defaults. Policies are immutable for the lifetime
+    /// of the runtime so we allocate each one exactly once at `new()`
+    /// time — the hot intake path just clones an `Arc`.
+    effective_policies: Arc<DashMap<Option<usize>, Arc<EffectiveBindingPolicy>>>,
     /// Base tool registry (plugins + MCP + extensions + skills). Used
     /// together with `tool_cache` to hand each session a filtered
     /// `Arc<ToolRegistry>` that only exposes the binding's allowed
@@ -75,16 +75,17 @@ impl AgentRuntime {
         // hot path doesn't allocate. The set is bounded by the number
         // of bindings (typically 1-3) plus the legacy sentinel slot
         // for agents that haven't adopted bindings yet.
-        let effective_policies: DashMap<usize, Arc<EffectiveBindingPolicy>> = DashMap::new();
+        let effective_policies: DashMap<Option<usize>, Arc<EffectiveBindingPolicy>> =
+            DashMap::new();
         if agent.config.inbound_bindings.is_empty() {
             effective_policies.insert(
-                usize::MAX,
+                None,
                 Arc::new(EffectiveBindingPolicy::from_agent_defaults(&agent.config)),
             );
         } else {
             for idx in 0..agent.config.inbound_bindings.len() {
                 effective_policies
-                    .insert(idx, EffectiveBindingPolicy::resolved(&agent.config, idx));
+                    .insert(Some(idx), EffectiveBindingPolicy::resolved(&agent.config, idx));
             }
         }
         Self {
@@ -183,10 +184,10 @@ impl AgentRuntime {
                         let bindings = &agent.config.inbound_bindings;
                         let effective = if bindings.is_empty() {
                             // Pre-binding YAML: use the pre-resolved
-                            // legacy slot keyed at usize::MAX so the
-                            // hot path only bumps an Arc refcount.
+                            // legacy slot keyed at `None` so the hot
+                            // path only bumps an Arc refcount.
                             effective_policies
-                                .get(&usize::MAX)
+                                .get(&None)
                                 .map(|e| Arc::clone(e.value()))
                                 .expect("legacy effective policy is seeded at runtime::new")
                         } else {
@@ -204,7 +205,7 @@ impl AgentRuntime {
                                         "inbound matched binding",
                                     );
                                     effective_policies
-                                        .get(&idx)
+                                        .get(&Some(idx))
                                         .map(|e| Arc::clone(e.value()))
                                         .expect("per-binding effective policy is seeded at runtime::new")
                                 }
@@ -247,7 +248,7 @@ impl AgentRuntime {
                                     agent_id = %agent.id,
                                     plugin = %source_plugin,
                                     sender = sender_id.as_deref().unwrap_or("-"),
-                                    binding_index = effective.binding_index,
+                                    binding_index = ?effective.binding_index,
                                     "inbound dropped by sender rate limit",
                                 );
                                 continue;

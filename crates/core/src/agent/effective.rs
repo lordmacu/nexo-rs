@@ -35,10 +35,13 @@ use agent_config::{
 /// tool handlers, and rate-limiter lookups.
 #[derive(Debug, Clone)]
 pub struct EffectiveBindingPolicy {
-    /// Index of the matched binding in `AgentConfig::inbound_bindings`.
+    /// Index of the matched binding in `AgentConfig::inbound_bindings`
+    /// when the runtime resolved the event to a concrete binding.
+    /// `None` for policies synthesised from agent-level defaults
+    /// (legacy bindingless agents, delegation receive, heartbeat).
     /// Used for tracing/telemetry and as the cache key for per-binding
-    /// tool registries.
-    pub binding_index: usize,
+    /// tool registries and sender rate limiters.
+    pub binding_index: Option<usize>,
     /// Replaces `AgentConfig::allowed_tools` for this session. The special
     /// value `["*"]` means "every registered tool"; any other content is
     /// matched with the usual trailing-`*` glob convention.
@@ -62,7 +65,7 @@ impl EffectiveBindingPolicy {
     pub fn resolve(agent: &AgentConfig, binding_index: usize) -> Self {
         let binding = agent.inbound_bindings.get(binding_index);
         Self {
-            binding_index,
+            binding_index: Some(binding_index),
             allowed_tools: resolve_allowed_tools(agent, binding),
             outbound_allowlist: resolve_outbound(agent, binding),
             skills: resolve_skills(agent, binding),
@@ -75,11 +78,12 @@ impl EffectiveBindingPolicy {
 
     /// Build a policy that simply mirrors agent-level settings, used by
     /// code paths that don't have a matched binding (delegation intake,
-    /// heartbeat wake-ups, tests). `binding_index` is set to `usize::MAX`
-    /// to make it obvious in traces that this isn't a real binding.
+    /// heartbeat wake-ups, tests). `binding_index` is `None` so the
+    /// cache key space for real bindings (0..N) stays disjoint from
+    /// the legacy/unbound path.
     pub fn from_agent_defaults(agent: &AgentConfig) -> Self {
         Self {
-            binding_index: usize::MAX,
+            binding_index: None,
             allowed_tools: agent.allowed_tools.clone(),
             outbound_allowlist: agent.outbound_allowlist.clone(),
             skills: agent.skills.clone(),
@@ -234,6 +238,7 @@ mod tests {
             accept_delegates_from: Vec::new(),
             description: String::new(),
             google_auth: None,
+            credentials: Default::default(),
             outbound_allowlist: OutboundAllowlistConfig {
                 whatsapp: vec!["573000000000".into()],
                 telegram: Vec::new(),
