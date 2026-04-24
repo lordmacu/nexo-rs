@@ -66,7 +66,7 @@ async fn publish_outbound(
     // `plugin.outbound.whatsapp` when no resolver is attached (early
     // boot paths, tests) or when the agent has no `credentials.whatsapp`
     // declared (back-compat single-account deployments).
-    let topic = match ctx.credentials.as_ref() {
+    let (topic, breaker_handle) = match ctx.credentials.as_ref() {
         Some(resolver) => match resolver.resolve(&ctx.agent_id, agent_auth::handle::WHATSAPP) {
             Ok(handle) => {
                 agent_auth::audit::audit_outbound(&handle, "plugin.outbound.whatsapp");
@@ -76,15 +76,61 @@ async fn publish_outbound(
                     &ctx.agent_id,
                     "outbound",
                 );
-                format!("plugin.outbound.whatsapp.{}", handle.account_id_raw())
+                let topic = format!("plugin.outbound.whatsapp.{}", handle.account_id_raw());
+                (topic, Some(handle))
             }
-            Err(_) => "plugin.outbound.whatsapp".to_string(),
+            Err(_) => ("plugin.outbound.whatsapp".to_string(), None),
         },
-        None => "plugin.outbound.whatsapp".to_string(),
+        None => ("plugin.outbound.whatsapp".to_string(), None),
     };
+
+    // Per-instance circuit breaker — a 429 from one number must not
+    // trip the breaker for another. The breaker registry lives on the
+    // AgentContext attached by `AgentRuntime::with_breakers`.
+    let breaker = match (breaker_handle.as_ref(), ctx.breakers.as_ref()) {
+        (Some(h), Some(reg)) => Some(reg.for_handle(h)),
+        _ => None,
+    };
+    if let Some(ref b) = breaker {
+        if !b.allow() {
+            if let Some(ref h) = breaker_handle {
+                agent_auth::telemetry::set_breaker_state(
+                    agent_auth::handle::WHATSAPP,
+                    h.account_id_raw(),
+                    agent_auth::telemetry::BreakerState::Open,
+                );
+            }
+            return Err(anyhow::anyhow!(
+                "circuit breaker open for whatsapp instance — back off and retry"
+            ));
+        }
+    }
+
     let event = Event::new(&topic, &ctx.agent_id, payload);
-    ctx.broker.publish(&topic, event).await?;
-    Ok(())
+    let result = ctx.broker.publish(&topic, event).await;
+    if let (Some(b), Some(h)) = (&breaker, &breaker_handle) {
+        match &result {
+            Ok(_) => {
+                b.on_success();
+                agent_auth::telemetry::set_breaker_state(
+                    agent_auth::handle::WHATSAPP,
+                    h.account_id_raw(),
+                    agent_auth::telemetry::BreakerState::Closed,
+                );
+            }
+            Err(_) => {
+                b.on_failure();
+                if b.is_open() {
+                    agent_auth::telemetry::set_breaker_state(
+                        agent_auth::handle::WHATSAPP,
+                        h.account_id_raw(),
+                        agent_auth::telemetry::BreakerState::Open,
+                    );
+                }
+            }
+        }
+    }
+    result.map_err(anyhow::Error::from)
 }
 
 // ─────────────────────────────────────────────────────────────────────

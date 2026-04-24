@@ -74,6 +74,9 @@ pub struct AgentRuntime {
     /// AgentContext the runtime builds. `None` in tests / no-credential
     /// boot paths; consumers fall back to legacy topics in that case.
     credentials: Option<Arc<agent_auth::AgentCredentialResolver>>,
+    /// Phase 17 — per-(channel, instance) breaker registry; cloned
+    /// onto every AgentContext alongside `credentials`.
+    breakers: Option<Arc<agent_auth::BreakerRegistry>>,
     /// Legacy cache — still owned by the runtime for back-compat with
     /// any test construction path. Hot-reload reads the per-snapshot
     /// `tool_cache` instead; see [`RuntimeSnapshot::tool_cache`].
@@ -134,6 +137,7 @@ impl AgentRuntime {
             snapshot: Arc::new(ArcSwap::from_pointee(initial_snapshot)),
             tool_base: None,
             credentials: None,
+            breakers: None,
             tool_cache: Arc::new(super::tool_registry_cache::ToolRegistryCache::new()),
             reload_tx,
             reload_rx: Arc::new(Mutex::new(Some(reload_rx))),
@@ -188,6 +192,10 @@ impl AgentRuntime {
         self.credentials = Some(credentials);
         self
     }
+    pub fn with_breakers(mut self, breakers: Arc<agent_auth::BreakerRegistry>) -> Self {
+        self.breakers = Some(breakers);
+        self
+    }
     pub fn router(&self) -> Arc<AgentRouter> {
         Arc::clone(&self.router)
     }
@@ -217,14 +225,21 @@ impl AgentRuntime {
         let memory = self.memory.clone();
         let peers = self.peers.clone();
         let credentials = self.credentials.clone();
+        let breakers = self.breakers.clone();
         let router = Arc::clone(&self.router);
         let session_txs = Arc::clone(&self.session_txs);
         let debounce_ms = self.debounce_ms;
         let queue_cap = self.queue_cap;
         let sender_rate_limiters = Arc::clone(&self.sender_rate_limiters);
         let effective_policies = Arc::clone(&self.effective_policies);
+        // Phase 18 — every event reads the current snapshot so hot-
+        // reload takes effect immediately on the next message without
+        // touching the legacy per-runtime caches (kept around during
+        // the migration so tests that construct runtimes without a
+        // coordinator still work).
+        let snapshot_ref = Arc::clone(&self.snapshot);
         let tool_base = self.tool_base.clone();
-        let tool_cache = Arc::clone(&self.tool_cache);
+        let _tool_cache = Arc::clone(&self.tool_cache);
         let shutdown = self.shutdown.clone();
         let tasks = Arc::clone(&self.tasks);
         let shutdown2 = shutdown.clone();
@@ -243,6 +258,9 @@ impl AgentRuntime {
             }
             if let Some(ref c) = credentials {
                 ctx = ctx.with_credentials(Arc::clone(c));
+            }
+            if let Some(ref b) = breakers {
+                ctx = ctx.with_breakers(Arc::clone(b));
             }
             ctx = ctx.with_router(Arc::clone(&router));
             loop {
@@ -295,14 +313,20 @@ impl AgentRuntime {
                         // session task can pick up its per-binding
                         // capability overrides (tools, outbound allowlist,
                         // skills, model, prompt, rate limit, delegates).
-                        let bindings = &agent.config.inbound_bindings;
+                        // Load once per event so an in-flight reload
+                        // (ReloadCommand::Apply racing against the
+                        // event) can't give us a partial view: we
+                        // either see the old snapshot fully or the
+                        // new one fully. Matches the apply-on-next
+                        // semantic — a reload that swaps while an
+                        // event is being *parsed* still gets applied
+                        // on the NEXT event because biased select
+                        // drains reload first.
+                        let snap = snapshot_ref.load_full();
+                        let bindings = &snap.agent_config.inbound_bindings;
                         let effective = if bindings.is_empty() {
-                            // Pre-binding YAML: use the pre-resolved
-                            // legacy slot keyed at `None` so the hot
-                            // path only bumps an Arc refcount.
-                            effective_policies
-                                .get(&None)
-                                .map(|e| Arc::clone(e.value()))
+                            snap.policy_for(None)
+                                .or_else(|| effective_policies.get(&None).map(|e| Arc::clone(e.value())))
                                 .expect("legacy effective policy is seeded at runtime::new")
                         } else {
                             match match_binding_index(
@@ -316,11 +340,11 @@ impl AgentRuntime {
                                         plugin = %source_plugin,
                                         instance = source_instance.as_deref().unwrap_or("-"),
                                         binding_index = idx,
+                                        snapshot_version = snap.version,
                                         "inbound matched binding",
                                     );
-                                    effective_policies
-                                        .get(&Some(idx))
-                                        .map(|e| Arc::clone(e.value()))
+                                    snap.policy_for(Some(idx))
+                                        .or_else(|| effective_policies.get(&Some(idx)).map(|e| Arc::clone(e.value())))
                                         .expect("per-binding effective policy is seeded at runtime::new")
                                 }
                                 None => {
@@ -404,13 +428,14 @@ impl AgentRuntime {
                         // race where a newer session replaced us).
                         let effective_for_session = Arc::clone(&effective);
                         // Pre-filtered tool registry for this binding.
-                        // Built lazily and cached per `(agent, binding_index)`
-                        // so the per-turn tool list is an `Arc` clone, not
-                        // a rebuild. `None` when the runtime wasn't given a
-                        // base registry (tests); llm_behavior falls back to
-                        // its own tool set in that case.
+                        // Pulls the cache from the active snapshot so a
+                        // reload that changed allowed_tools produces a
+                        // fresh filtered clone (old snapshot's cache
+                        // stays with its in-flight sessions). `None`
+                        // base registry (tests) → llm_behavior falls
+                        // back to its own tool set.
                         let effective_tools_for_session = tool_base.as_ref().map(|base| {
-                            tool_cache.get_or_build(
+                            snap.tool_cache.get_or_build(
                                 &agent.id,
                                 effective_for_session.binding_index,
                                 base,

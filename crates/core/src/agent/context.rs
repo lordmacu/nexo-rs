@@ -48,6 +48,9 @@ pub struct AgentContext {
     /// as "no credentials configured" (tools return an unbound error
     /// rather than publishing from an arbitrary account).
     pub credentials: Option<Arc<agent_auth::AgentCredentialResolver>>,
+    /// Phase 17 — per-(channel, instance) breaker registry shared by
+    /// plugin outbound tools. `None` for runtimes without credentials.
+    pub breakers: Option<Arc<agent_auth::BreakerRegistry>>,
 }
 impl AgentContext {
     pub fn new(
@@ -69,6 +72,7 @@ impl AgentContext {
             effective: None,
             effective_tools: None,
             credentials: None,
+            breakers: None,
         }
     }
     pub fn with_memory(mut self, memory: Arc<LongTermMemory>) -> Self {
@@ -104,6 +108,10 @@ impl AgentContext {
         credentials: Arc<agent_auth::AgentCredentialResolver>,
     ) -> Self {
         self.credentials = Some(credentials);
+        self
+    }
+    pub fn with_breakers(mut self, breakers: Arc<agent_auth::BreakerRegistry>) -> Self {
+        self.breakers = Some(breakers);
         self
     }
     /// Returns the active effective policy, synthesising one from the
