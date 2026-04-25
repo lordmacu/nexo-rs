@@ -406,14 +406,44 @@ becomes instant.
 Done when `nix run github:lordmacu/nexo-rs -- --help` builds and
 prints help (currently ~3-5 min cold; sub-30s once cachix is on).
 
-#### 27.8 — Termux package recipe
+#### 27.8 — Termux package recipe   🔄
 
-- `packaging/termux/build.sh` building `nexo-rs.deb` for
-  `aarch64-linux-android`.
-- A small repo at `https://lordmacu.github.io/nexo-rs/termux/`
-  serving a Termux pkg index.
-- Fallback: a pre-built binary tarball that `pkg install` can
-  unpack.
+Recipe + docs shipped; release-workflow upload + pkg-index host
+deferred (block on Phase 27.2).
+
+Shipped:
+- `packaging/termux/build.sh` builds
+  `dist/nexo-rs_<version>_aarch64.deb` either by cross-compiling
+  via `cargo-zigbuild` (host path) or by accepting a pre-built
+  binary (`--binary <path>` for native Termux builds). Reads
+  version + description from `Cargo.toml` — no drift. Falls back
+  to `fakeroot + ar` on hosts without `dpkg-deb`.
+- The deb stages under `data/data/com.termux/files/usr/` (Termux
+  `$PREFIX`), drops `nexo` in `bin/`, ships LICENSE-APACHE +
+  LICENSE-MIT + README.md under `share/`, and ships a `postinst`
+  that scaffolds `~/.nexo/{data,secret}` on first install +
+  prints next steps.
+- `Depends:` pulls hard runtime deps (`libsqlite`, `openssl`,
+  `ca-certificates`); `Recommends:` covers optional skill deps
+  (`git`, `ffmpeg`, `tesseract`, `python`, `yt-dlp`,
+  `dumb-init`) so a minimal install still boots.
+- `packaging/termux/README.md` documents local cross-compile
+  path, native-on-phone build path, install command, why Termux
+  needs its own deb (bionic libc + non-standard `$PREFIX`
+  layout), and the Termux-specific limitations (no browser
+  plugin, no `cloudflared`).
+- `docs/src/getting-started/install-termux.md` adds a "Quickest
+  path — pre-built .deb" section above the existing
+  source-build walkthrough.
+
+Deferred:
+- Release workflow upload of the .deb as a GitHub release
+  artifact — needs Phase 27.2 (cargo-dist + GH Actions release
+  workflow) to land first.
+- Termux pkg index hosted at
+  `https://lordmacu.github.io/nexo-rs/termux/` with `Packages`
+  + `Release` files so users can add it as a `pkg` repo. Today
+  the .deb is downloaded directly from the GitHub release.
 
 Done when on a fresh Termux a user runs
 `pkg install -y nexo-rs` (after adding the repo) and the
