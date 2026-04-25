@@ -58,7 +58,10 @@ impl GeminiClient {
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(120))
             .build()
-            .expect("failed to build reqwest client");
+            .unwrap_or_else(|e| {
+                tracing::error!(error = %e, "reqwest client build failed; falling back to default client (no timeout)");
+                reqwest::Client::new()
+            });
         let base = if cfg.base_url.trim().is_empty() {
             DEFAULT_BASE.to_string()
         } else {
@@ -305,10 +308,40 @@ fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Option<u64> {
     }
 }
 
+/// Phase A.3 — Gemini does not honor `ChatRequest.system_blocks` /
+/// `cache_tools`. The native equivalent is the `cachedContents` API,
+/// which has a different lifecycle (server-side resource) and is not
+/// wired here yet. Warn once per process so the operator sees the
+/// silent degradation, then degrade gracefully (the legacy flat
+/// system path still runs, with `system_blocks` text flattened in).
+fn warn_unsupported_caching_once() {
+    use std::sync::OnceLock;
+    static SEEN: OnceLock<()> = OnceLock::new();
+    SEEN.get_or_init(|| {
+        tracing::warn!(
+            provider = "gemini",
+            "prompt-cache fields (system_blocks / cache_tools) are not honored on Gemini — \
+             cachedContents wiring is deferred. Falls back to flat system_prompt."
+        );
+    });
+}
+
 fn build_body(req: &ChatRequest) -> Value {
+    if !req.system_blocks.is_empty() || req.cache_tools {
+        warn_unsupported_caching_once();
+    }
     let mut system_parts: Vec<String> = Vec::new();
     if let Some(s) = &req.system_prompt {
         system_parts.push(s.clone());
+    }
+    // Phase A.3 — flatten any prompt-cache blocks into the legacy
+    // system path so callers that opt in still get the content into
+    // the model, just without provider-side caching.
+    if !req.system_blocks.is_empty() {
+        let flat = crate::prompt_block::flatten_blocks(&req.system_blocks);
+        if !flat.is_empty() {
+            system_parts.push(flat);
+        }
     }
     let mut contents: Vec<Value> = Vec::new();
     for m in &req.messages {
