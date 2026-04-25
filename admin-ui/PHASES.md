@@ -417,6 +417,14 @@ IOUs — features that landed in the daemon but have no UI yet.
     (`llm_prompt_tokens_drift{agent,provider,model}`) so operators can
     spot when an approximate counter is misjudging the budget
   - workspace cache hit/miss/invalidation counters per workspace path
+- [ ] **Web search (Phase 25)** — `agents.<id>.web_search` block
+  (`enabled`, `provider`, `default_count`, `cache_ttl_secs`,
+  `expand_default`) with per-binding override. Phase A3 "Brain" tab
+  needs a provider picker (auto / brave / tavily / duckduckgo /
+  perplexity), credential-presence indicator pulled from Phase 17
+  credentials store, and the per-binding override row in the matrix.
+  Phase A4 dashboard needs `web_search_calls_total` counter (planned)
+  and breaker-state gauge per provider.
 - [ ] **Link understanding (Phase 21)** — `agents.<id>.link_understanding`
   block (`enabled`, `max_links_per_turn`, `max_bytes`, `timeout_ms`,
   `cache_ttl_secs`, `deny_hosts`) with per-binding override.

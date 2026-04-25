@@ -94,6 +94,7 @@ fn base_agent() -> AgentConfig {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
             language: None,
         inbound_bindings: vec![InboundBinding {
             plugin: "whatsapp".into(),

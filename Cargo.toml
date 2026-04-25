@@ -115,6 +115,7 @@ agent-llm           = { path = "crates/llm" }
 agent-mcp           = { path = "crates/mcp" }
 agent-memory        = { path = "crates/memory" }
 agent-taskflow      = { path = "crates/taskflow" }
+agent-web-search    = { path = "crates/web-search" }
 tokio-util          = { workspace = true }
 tracing             = { workspace = true }
 tracing-subscriber  = { workspace = true }

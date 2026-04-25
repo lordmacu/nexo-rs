@@ -64,6 +64,19 @@ pub struct AgentContext {
     /// `None` in early-boot / test contexts; llm_behavior treats
     /// that as "link understanding disabled regardless of config".
     pub link_extractor: Option<Arc<crate::link_understanding::LinkExtractor>>,
+    /// Phase 25 — shared multi-provider web-search router. `None`
+    /// when no provider is configured for this process; the
+    /// `web_search` tool errors out cleanly in that case.
+    pub web_search_router: Option<Arc<agent_web_search::WebSearchRouter>>,
+    /// Phase F follow-up (hot-reload) — current effective enables for
+    /// the four context-optimization mechanisms. Set per-event by
+    /// `AgentRuntime` from `RuntimeSnapshot::context_optimization`, so
+    /// a config reload that flips a flag is observed on the *next*
+    /// turn without restarting the behavior. `None` for legacy /
+    /// test contexts that haven't been wired through the snapshot —
+    /// in that case `llm_behavior` falls back to the boot-time
+    /// `prompt_cache_enabled` / `compaction_runtime.enabled` flags.
+    pub context_optimization: Option<agent_config::types::llm::ResolvedContextOptimization>,
 }
 impl AgentContext {
     pub fn new(
@@ -89,7 +102,27 @@ impl AgentContext {
             redactor: None,
             transcripts_index: None,
             link_extractor: None,
+            web_search_router: None,
+            context_optimization: None,
         }
+    }
+    pub fn with_web_search_router(
+        mut self,
+        router: Arc<agent_web_search::WebSearchRouter>,
+    ) -> Self {
+        self.web_search_router = Some(router);
+        self
+    }
+    /// Set the per-turn context-optimization snapshot. Called by the
+    /// agent runtime intake after loading the active `RuntimeSnapshot`,
+    /// so a hot-reload that swaps the snapshot is observed without
+    /// rebuilding the behavior.
+    pub fn with_context_optimization(
+        mut self,
+        co: agent_config::types::llm::ResolvedContextOptimization,
+    ) -> Self {
+        self.context_optimization = Some(co);
+        self
     }
     pub fn with_redactor(mut self, redactor: Arc<Redactor>) -> Self {
         self.redactor = Some(redactor);

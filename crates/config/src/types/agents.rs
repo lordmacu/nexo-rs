@@ -60,6 +60,12 @@ pub struct AgentConfig {
     /// JSON value to avoid a config → core dep cycle.
     #[serde(default)]
     pub link_understanding: serde_json::Value,
+    /// Phase 25 — web search. Toggle + provider + caps for the
+    /// `web_search` built-in tool. Same opaque-Value discipline as
+    /// `link_understanding`: parsed lazily by `EffectiveBindingPolicy`
+    /// so the config crate stays agent-web-search-free.
+    #[serde(default)]
+    pub web_search: serde_json::Value,
     /// Optional workspace directory (IDENTITY.md, SOUL.md, USER.md, AGENTS.md,
     /// MEMORY.md, memory/YYYY-MM-DD.md). Loaded at turn start and prepended
     /// to the system prompt. Empty = no workspace layer.
@@ -293,6 +299,10 @@ pub struct InboundBinding {
     /// public WhatsApp where every URL fetch would burn quota).
     #[serde(default)]
     pub link_understanding: serde_json::Value,
+    /// Phase 25 — per-binding override of the web-search config.
+    /// `Value::Null` (default) inherits the agent-level value.
+    #[serde(default)]
+    pub web_search: serde_json::Value,
 }
 
 /// Per-binding override for the sender rate limit.

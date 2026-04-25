@@ -431,6 +431,15 @@ schema, caps, and SSRF denylist live on
 `inbound_bindings[]` entry; binding value replaces agent default,
 omitted = inherit.
 
+## Web search
+
+Per-agent (and per-binding) toggle that exposes a `web_search` tool
+backed by Brave / Tavily / DuckDuckGo / Perplexity. Off by default.
+Full schema, providers, cache, and circuit-breaker behaviour live on
+[Web search](../ops/web-search.md). The field is `web_search` at
+agent scope and at each `inbound_bindings[]` entry; binding value
+replaces agent default, omitted = inherit.
+
 ## Common mistakes
 
 - **Forgetting `plugins: [...]`.** An agent without `plugins` has no

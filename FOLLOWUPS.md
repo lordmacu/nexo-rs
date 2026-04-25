@@ -89,6 +89,49 @@ L-2. **`readability`-style extraction**
 - Target: when an operator complains about noisy `# LINK CONTEXT`
   blocks polluting the prompt.
 
+### Phase 25 — Web search
+
+W-1. **Telemetry counters not wired**
+- Missing: `web_search_calls_total{provider,result}`,
+  `web_search_latency_seconds_bucket{provider}`,
+  `web_search_cache_hit_total{provider}`,
+  `web_search_breaker_open_total{provider}`. Spec called for them;
+  shipped without to keep the first commit reviewable.
+- Why deferred: nothing currently consumes them; metrics surface area
+  can grow once the admin-ui dashboard (Phase A4) is the consumer.
+- Target: Phase A4 dashboard work.
+
+W-2. **`web_fetch` built-in tool not shipped**
+- Missing: spec'd a `web_fetch` companion tool that replaces the
+  `fetch-url` extension. We deliberately scoped to `web_search` only
+  in this round.
+- Why deferred: Phase 21 `link_understanding` already auto-expands
+  URLs the user shares. A generic `web_fetch` matters mostly for
+  agentic workflows that compose `web_search → web_fetch → summarise`,
+  and the `expand: true` flag on `web_search` covers most of that
+  same loop today via the LinkExtractor reuse.
+- Target: when a recipe surfaces the gap.
+
+W-3. **Setup wizard entry not shipped**
+- Missing: `agent setup web-search` to write API keys to credentials
+  store. Currently operators set `BRAVE_SEARCH_API_KEY` /
+  `TAVILY_API_KEY` in env directly.
+- Why deferred: env vars work and the wizard is a pure UX win.
+- Target: alongside admin-ui Phase A3 web-search panel.
+
+W-4. **Decision: `agent-resilience::CircuitBreaker` directly, not via `BreakerRegistry`**
+- The `agent-auth` registry is keyed on `Channel { Whatsapp,
+  Telegram, Google }`. Web search isn't a channel; jamming it into
+  that enum would force unrelated changes. We instead hold a
+  per-provider `Arc<CircuitBreaker>` map inside the router. Worth
+  unifying if more "non-channel external HTTP" surfaces land —
+  bring it up next brainstorm.
+
+W-5. **Cache `:memory:` SQLite quirk**
+- The router cache pins `max_connections=1` when `path == ":memory:"`
+  because SQLite's in-memory database is per-connection. File-backed
+  paths use the normal pool size. Documented inline; not a defect.
+
 ## Resolved (recent highlights)
 
 - Streaming telemetry and streaming runtime wiring completed.

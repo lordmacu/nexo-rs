@@ -52,6 +52,7 @@ async fn memory_recall_records_events_for_every_hit() -> anyhow::Result<()> {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     });

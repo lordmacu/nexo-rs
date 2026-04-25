@@ -108,6 +108,7 @@ fn two_binding_agent() -> AgentConfig {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
             language: None,
         inbound_bindings: vec![
             // Sales WhatsApp — narrow.
@@ -148,6 +149,7 @@ fn two_binding_agent() -> AgentConfig {
                 allowed_delegates: Some(vec!["*".into()]),
                 language: None,
                 link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
             },
         ],
         context_optimization: None,
@@ -296,6 +298,7 @@ async fn legacy_agent_without_bindings_synthesises_agent_level_policy() {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     };

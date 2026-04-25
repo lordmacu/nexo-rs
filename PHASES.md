@@ -122,7 +122,7 @@ Reference: `research/extensions/fal/`,
 `research/extensions/runway/`, `research/extensions/comfy/`,
 `research/src/image-generation/`.
 
-### Phase 25 — Auto-fetch web pages and search
+### Phase 25 — Auto-fetch web pages and search   ✅ (web_search shipped; web_fetch deferred — see follow-ups)
 
 **Goal:** Make `web_search` and `web_fetch` first-class agent tools
 backed by a provider registry — so any agent can search the web
