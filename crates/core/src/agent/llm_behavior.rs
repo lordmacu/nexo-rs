@@ -112,10 +112,12 @@ impl LlmAgentBehavior {
     }
     /// Execute a single tool call end-to-end: hooks → rate limit →
     /// schema → cache lookup → handler → cache store. Caller picks the
-    /// concurrency pattern (serial vs `join_all`). Returns
-    /// `(result_text, tool_err, outcome_label, duration_ms)`; telemetry
-    /// + `after_tool_call` hook are fired by the caller so those
-    /// observations stay in LLM-emitted order even when we parallelise.
+    /// concurrency pattern (serial vs `join_all`).
+    ///
+    /// Returns `(result_text, tool_err, outcome_label, duration_ms)`;
+    /// telemetry + `after_tool_call` hook are fired by the caller so
+    /// those observations stay in LLM-emitted order even when we
+    /// parallelise.
     async fn execute_one_call(
         &self,
         call: &agent_llm::ToolCall,

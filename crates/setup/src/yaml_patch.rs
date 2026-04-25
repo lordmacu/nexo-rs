@@ -476,6 +476,7 @@ pub fn patch_agent_model(
 ///   `services.agent.secrets` (if not already present)
 /// - add matching top-level `secrets.<name>.file` entries pointing at
 ///   `./secrets/<name>.txt`.
+///
 /// No-op if the compose file is missing.
 pub fn patch_compose_google_secrets(file: &Path) -> Result<()> {
     if !file.exists() {
@@ -569,6 +570,10 @@ fn set_path(root: &mut Value, parts: &[&str], value: Value) -> Result<()> {
     set_path(next, &parts[1..], value)
 }
 
+// Historical test module — additional helpers are intentionally
+// defined below. Moving this to the end of the file would churn diffs
+// across every future helper added to the Phase 17 section.
+#[allow(clippy::items_after_test_module)]
 #[cfg(test)]
 mod tests {
     use super::*;

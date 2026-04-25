@@ -19,7 +19,6 @@ use serde_json::Value;
 use std::mem;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::JoinSet;
 use tokio::time::{sleep_until, Instant};
@@ -733,11 +732,8 @@ async fn session_debounce_task(
             biased;
             _ = shutdown.cancelled() => {
                 // Drain what is already queued and flush before stopping.
-                loop {
-                    match rx.try_recv() {
-                        Ok(m) => buffer.push(m),
-                        Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
-                    }
+                while let Ok(m) = rx.try_recv() {
+                    buffer.push(m);
                 }
                 if !buffer.is_empty() {
                     flush(&behavior, &ctx, mem::take(&mut buffer)).await;

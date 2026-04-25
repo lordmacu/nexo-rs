@@ -259,9 +259,7 @@ impl ExtensionDirectory {
 }
 
 fn parse_notification_id(topic: &str, prefix: &str) -> Option<String> {
-    let Some(rest) = topic.strip_prefix(prefix) else {
-        return None;
-    };
+    let rest = topic.strip_prefix(prefix)?;
     let rest = rest.strip_prefix('.')?;
     let id = rest.strip_suffix(".event")?;
     if id.is_empty() || id.contains('.') {

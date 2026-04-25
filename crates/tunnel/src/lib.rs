@@ -15,7 +15,7 @@
 //!    Cloudflare prints once the tunnel is live.
 //! 4. Exposes that URL through a small [`TunnelHandle`] whose `Drop`
 //!    + explicit [`TunnelHandle::shutdown`] reliably terminate the
-//!    child.
+//!      child.
 //!
 //! The crate is tunnel-framework agnostic within its contract — nothing
 //! here knows about WhatsApp. Integrators call `TunnelManager::start`

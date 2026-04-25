@@ -5,7 +5,7 @@
 
 use uuid::Uuid;
 
-const NAMESPACE: Uuid = Uuid::from_u128(0x7b3e_4d9a_5f21_4b73_9c8a_aaaabbbbcccc);
+const NAMESPACE: Uuid = Uuid::from_u128(0x7b3e_4d9a_5f21_4b73_9c8a_aaaa_bbbb_cccc);
 
 pub fn session_id_for_chat(chat_id: i64) -> Uuid {
     Uuid::new_v5(&NAMESPACE, chat_id.to_string().as_bytes())

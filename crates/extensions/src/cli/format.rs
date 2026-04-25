@@ -115,8 +115,7 @@ pub fn render_list_table(rows: &[ListRow], out: &mut dyn Write) -> std::io::Resu
         .map(|r| r.id.chars().count())
         .max()
         .unwrap_or(ID_MIN)
-        .max(ID_MIN)
-        .min(ID_MAX);
+        .clamp(ID_MIN, ID_MAX);
 
     writeln!(
         out,

@@ -35,9 +35,10 @@ impl Fixture {
     }
 
     fn base_cfg(&self) -> ExtensionsConfig {
-        let mut cfg = ExtensionsConfig::default();
-        cfg.search_paths = vec![self.ext_dir.display().to_string()];
-        cfg
+        ExtensionsConfig {
+            search_paths: vec![self.ext_dir.display().to_string()],
+            ..Default::default()
+        }
     }
 
     fn write_manifest(&self, id: &str, body: &str) -> PathBuf {

@@ -711,6 +711,7 @@ fn wipe_channel_session(canal_id: &str, agent_id: &str, config_dir: &Path) -> Re
 ///      instead of silently overwriting on the next pair.
 ///   2. Otherwise derive from the agent's workspace:
 ///      `<workspace>/whatsapp/default`.
+///
 /// Docker-style `/app/` prefixes (from config files authored inside a
 /// container image) are rewritten to host-relative paths so the wizard
 /// running on the host touches the same dir the container agent would.

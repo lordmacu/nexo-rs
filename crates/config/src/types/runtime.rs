@@ -5,19 +5,11 @@
 
 use serde::Deserialize;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeConfig {
     #[serde(default)]
     pub reload: RuntimeReloadConfig,
-}
-
-impl Default for RuntimeConfig {
-    fn default() -> Self {
-        Self {
-            reload: RuntimeReloadConfig::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

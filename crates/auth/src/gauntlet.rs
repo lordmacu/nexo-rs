@@ -143,7 +143,7 @@ pub fn check_permissions(
                 Ok(m) => m,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                     out.push(BuildError::Credential {
-                        channel: *channel,
+                        channel,
                         instance: instance.clone(),
                         source: crate::error::CredentialError::FileMissing {
                             path: path.clone(),
@@ -153,7 +153,7 @@ pub fn check_permissions(
                 }
                 Err(e) => {
                     out.push(BuildError::Credential {
-                        channel: *channel,
+                        channel,
                         instance: instance.clone(),
                         source: crate::error::CredentialError::Unreadable {
                             path: path.clone(),
@@ -168,7 +168,7 @@ pub fn check_permissions(
             // catches every lax case (0o644, 0o755, 0o777, …).
             if mode & 0o077 != 0 {
                 out.push(BuildError::Credential {
-                    channel: *channel,
+                    channel,
                     instance: instance.clone(),
                     source: crate::error::CredentialError::InsecurePermissions {
                         path: path.clone(),

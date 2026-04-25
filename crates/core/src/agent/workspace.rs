@@ -94,6 +94,10 @@ impl WorkspaceLoader {
     /// (workspace-relative) into `WorkspaceBundle::extra_docs`. Intended
     /// for topic-scoped rule files (`SALES_SCRIPT.md`, etc.) that the
     /// agent should treat as hard context alongside IDENTITY/SOUL.
+    // Sequential awaits against a shared budget make a single struct-literal
+    // init unreadable; per-field mutation is clearer here. Silence the lint
+    // for this one function rather than hurt legibility.
+    #[allow(clippy::field_reassign_with_default)]
     pub async fn load_with_extras(
         &self,
         scope: SessionScope,

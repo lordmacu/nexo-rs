@@ -191,7 +191,7 @@ pub async fn spawn(cfg: GmailPollerConfig, broker: AnyBroker) -> Result<()> {
 /// capped at 300s. Resets on first success.
 fn extra_backoff_secs(errors: u32) -> u64 {
     match errors {
-        0 | 1 | 2 | 3 => 0,
+        0..=3 => 0,
         4 => 30,
         5 => 60,
         6 => 120,

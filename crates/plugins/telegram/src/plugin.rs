@@ -1,5 +1,5 @@
 use std::collections::{HashSet, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -882,7 +882,7 @@ fn extract_forward_info(msg: &TgMessage) -> Option<ForwardInfo> {
     None
 }
 
-fn resolve_offset_path(cfg: &TelegramPluginConfig, media_dir: &PathBuf) -> PathBuf {
+fn resolve_offset_path(cfg: &TelegramPluginConfig, media_dir: &Path) -> PathBuf {
     cfg.polling
         .offset_path
         .as_ref()
@@ -915,7 +915,7 @@ pub async fn save_offset(path: &PathBuf, offset: i64) -> std::io::Result<()> {
 async fn download_media(
     bot: &BotClient,
     msg: &TgMessage,
-    media_dir: &PathBuf,
+    media_dir: &Path,
 ) -> Vec<MediaDescriptor> {
     let mut candidates: Vec<MediaDownloadInput> = Vec::new();
     // Pick highest-quality photo variant.
@@ -1042,7 +1042,7 @@ async fn download_media(
 async fn download_one_media(
     bot: &BotClient,
     msg: &TgMessage,
-    media_dir: &PathBuf,
+    media_dir: &Path,
     c: MediaDownloadInput,
 ) -> Option<MediaDescriptor> {
     let info = match bot.get_file(&c.file_id).await {

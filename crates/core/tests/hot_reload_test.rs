@@ -26,6 +26,7 @@ use uuid::Uuid;
 struct Capture {
     allowed_tools: Vec<String>,
     version: u64,
+    #[allow(dead_code)]
     text: String,
 }
 

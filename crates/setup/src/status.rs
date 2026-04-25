@@ -140,9 +140,9 @@ fn audit_anthropic(svc: &ServiceDef, secrets_dir: &Path) -> ServiceStatus {
     let any = plan_configured_or(&api)
         || plan_configured_or(&setup)
         || plan_configured_or(&bundle);
-    let source = format!(
-        "secrets/anthropic_{{api_key.txt, setup_token.txt, oauth.json}}; env:ANTHROPIC_API_KEY"
-    );
+    let source =
+        "secrets/anthropic_{api_key.txt, setup_token.txt, oauth.json}; env:ANTHROPIC_API_KEY"
+            .to_string();
     let env_ok = std::env::var("ANTHROPIC_API_KEY")
         .map(|v| !v.is_empty())
         .unwrap_or(false);
