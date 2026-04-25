@@ -7,6 +7,9 @@ depend on it are published.
 ## Quick reference
 
 ```bash
+# See which crates are already on crates.io and at what version:
+scripts/check-registry.sh
+
 # Print the current topological order:
 scripts/publish-order.sh
 
