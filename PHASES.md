@@ -220,6 +220,17 @@ Tracks **PR-6** in `FOLLOWUPS.md`. Move hardcoded paths
 `ws_cleartext_allow`. Also unblocks `nexo-tunnel` URL accessor
 work in 26.z.
 
+#### 26.ac — TaskFlow-backed companion-tui pairing   ⬜
+
+When the deferred companion-tui lands, model the multi-step flow
+(operator runs `nexo pair start` → QR shown → app scans → app
+posts setup-code → server validates → session token issued) as
+a `Flow` with `WaitCondition::ExternalEvent("pair.codes.{code}")`
+between steps. Survives operator-side restart; the `WaitEngine`
+wakes the flow when the app posts the code. Today the CLI blocks
+on a synchronous spinner — fragile if the operator backgrounds
+the process or the app takes >TTL to scan.
+
 #### 19.x — Pollers V2 backlog   ⬜
 
 Tracks **P-1**, **P-2**, **P-3** in `FOLLOWUPS.md`:
@@ -231,6 +242,12 @@ Tracks **P-1**, **P-2**, **P-3** in `FOLLOWUPS.md`:
 - **P-3** Push-based watchers (Gmail Push, generic inbound
   webhooks) — likely its own crate / phase. Needs public TLS
   surface + inbound auth.
+- **P-4** TaskFlow-backed batch polls — when a poll yields >100
+  items (RSS dump, Gmail history sync after long offline), spawn
+  a `Flow` that processes batches of N with cursor persisted per
+  step. Resumes on crash; survives reboot. Today the runner just
+  drops the cursor on panic. Low effort: `nexo-poller` already
+  has `flow_manager` available via boot wiring.
 
 #### 38.x — Test flakes & real concurrency races   ⬜
 
