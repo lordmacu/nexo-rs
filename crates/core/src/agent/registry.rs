@@ -1,5 +1,5 @@
 use super::plugin::Plugin;
-use agent_broker::AnyBroker;
+use nexo_broker::AnyBroker;
 use dashmap::DashMap;
 use std::sync::Arc;
 #[derive(Default, Clone)]

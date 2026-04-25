@@ -2,8 +2,8 @@
 
 use std::time::Duration;
 
-use agent_mcp::types::{McpContent, McpServerInfo, McpTool, McpToolResult};
-use agent_mcp::{run_with_io, McpError, McpServerHandler};
+use nexo_mcp::types::{McpContent, McpServerInfo, McpTool, McpToolResult};
+use nexo_mcp::{run_with_io, McpError, McpServerHandler};
 use async_trait::async_trait;
 use serde_json::Value;
 use tokio::io::{duplex, AsyncReadExt, AsyncWriteExt};

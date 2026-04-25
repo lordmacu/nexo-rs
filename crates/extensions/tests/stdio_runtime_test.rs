@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use agent_extensions::{ExtensionManifest, StdioRuntime, StdioSpawnOptions};
+use nexo_extensions::{ExtensionManifest, StdioRuntime, StdioSpawnOptions};
 
 /// Locate `target/debug/examples/echo_ext` relative to this crate.
 /// Builds it on demand the first time any test needs it, so `cargo test`
@@ -28,7 +28,7 @@ fn echo_ext_path() -> PathBuf {
                         "build",
                         "--quiet",
                         "-p",
-                        "agent-extensions",
+                        "nexo-extensions",
                         "--example",
                         "echo_ext",
                     ])
@@ -45,7 +45,7 @@ fn manifest_for_echo() -> ExtensionManifest {
     let path = echo_ext_path();
     assert!(
         path.exists(),
-        "echo_ext example not built; run `cargo build --example echo_ext -p agent-extensions` before tests. path={}",
+        "echo_ext example not built; run `cargo build --example echo_ext -p nexo-extensions` before tests. path={}",
         path.display()
     );
     let toml_src = format!(
@@ -139,7 +139,7 @@ args = ["-c", "cat > /dev/null"]
     let m = ExtensionManifest::from_str(toml_src).unwrap();
     let result = StdioRuntime::spawn_with(&m, opts).await;
     match result {
-        Err(agent_extensions::StartError::HandshakeTimeout(_)) => {}
+        Err(nexo_extensions::StartError::HandshakeTimeout(_)) => {}
         Err(other) => panic!("expected handshake timeout, got {other:?}"),
         Ok(_) => panic!("expected failure, got Ok"),
     }
@@ -158,7 +158,7 @@ async fn spawn_fails_for_missing_binary() {
     let m = manifest_with_command("/definitely/not/a/real/path-xyz");
     let result = StdioRuntime::spawn(&m, std::env::temp_dir()).await;
     match result {
-        Err(agent_extensions::StartError::Spawn(_)) => {}
+        Err(nexo_extensions::StartError::Spawn(_)) => {}
         Err(other) => panic!("expected Spawn error, got {other:?}"),
         Ok(_) => panic!("expected failure, got Ok"),
     }

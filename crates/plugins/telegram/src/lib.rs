@@ -1,4 +1,4 @@
-//! `agent-plugin-telegram` — Telegram Bot channel plugin.
+//! `nexo-plugin-telegram` — Telegram Bot channel plugin.
 //!
 //! Uses the HTTP Bot API (long polling). Complements the WhatsApp plugin
 //! for multi-channel deployments: one agent, two surfaces, same session

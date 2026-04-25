@@ -1,4 +1,4 @@
-use agent_broker::{AnyBroker, BrokerHandle, Event};
+use nexo_broker::{AnyBroker, BrokerHandle, Event};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -178,7 +178,7 @@ mod tests {
         // future parked in place even after the `Pin` wrapper is
         // dropped. An aborted task is guaranteed to release state.
         let router = Arc::new(AgentRouter::new());
-        let broker = agent_broker::AnyBroker::local();
+        let broker = nexo_broker::AnyBroker::local();
         let router_in = Arc::clone(&router);
         let broker_in = broker.clone();
         let handle = tokio::spawn(async move {
@@ -204,7 +204,7 @@ mod tests {
     #[tokio::test]
     async fn delegate_cycle_is_rejected() {
         let router = AgentRouter::new();
-        let broker = agent_broker::AnyBroker::local();
+        let broker = nexo_broker::AnyBroker::local();
         // Simulate A → B delegation that's now about to route back to A
         // (B calling delegate(to="A") with the inherited chain).
         let ctx = serde_json::json!({ "_delegate_chain": ["A"] });

@@ -1,8 +1,17 @@
 [package]
-name = "agent-plugin-browser"
-version = "0.1.0"
-edition = "2021"
-
+name = "nexo-plugin-browser"
+description   = "Chrome DevTools Protocol (CDP) browser channel plugin for Nexo agents."
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+homepage      = { workspace = true }
+documentation = { workspace = true }
+readme        = { workspace = true }
+keywords      = { workspace = true }
+categories    = { workspace = true }
 [dependencies]
 tokio             = { workspace = true }
 serde             = { workspace = true }
@@ -18,8 +27,8 @@ base64            = { workspace = true }
 reqwest           = { workspace = true }
 futures           = { workspace = true }
 uuid              = { workspace = true }
-agent-broker      = { path = "../../broker" }
-agent-config      = { path = "../../config" }
-agent-core        = { path = "../../core" }
-agent-llm         = { path = "../../llm" }
-agent-resilience  = { path = "../../resilience" }
+nexo-broker = { version = "0.1.0", path = "../../broker" }
+nexo-config = { version = "0.1.0", path = "../../config" }
+nexo-core = { version = "0.1.0", path = "../../core" }
+nexo-llm = { version = "0.1.0", path = "../../llm" }
+nexo-resilience = { version = "0.1.0", path = "../../resilience" }

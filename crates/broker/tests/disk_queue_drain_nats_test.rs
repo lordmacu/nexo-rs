@@ -5,11 +5,11 @@
 //! client reconnects.
 //!
 //! Typical invocation against the docker-compose stack:
-//!     NATS_URL=nats://127.0.0.1:4222 cargo test -p agent-broker --test disk_queue_drain_nats_test -- --nocapture
+//!     NATS_URL=nats://127.0.0.1:4222 cargo test -p nexo-broker --test disk_queue_drain_nats_test -- --nocapture
 
 use std::time::Duration;
 
-use agent_broker::{DiskQueue, Event};
+use nexo_broker::{DiskQueue, Event};
 use futures::StreamExt;
 use uuid::Uuid;
 

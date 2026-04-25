@@ -43,7 +43,7 @@ Output:
   "char_count": 16,
   "max_chars": 200000,
   "path": "tests/fixtures/hello.pdf",
-  "text": "Hola mundo PDF",
+  "text": "Hello PDF world",
   "total_char_count": 16,
   "truncated": false
 }

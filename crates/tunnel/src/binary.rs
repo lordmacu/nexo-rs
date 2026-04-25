@@ -76,7 +76,7 @@ fn exe_name(name: &str) -> String {
 }
 
 fn cache_binary_path() -> Result<PathBuf> {
-    let proj = directories::ProjectDirs::from("co", "agent", "agent-tunnel")
+    let proj = directories::ProjectDirs::from("co", "agent", "nexo-tunnel")
         .ok_or_else(|| anyhow!("cannot resolve platform data directory"))?;
     let dir = proj.data_local_dir().join("bin");
     Ok(dir.join(exe_name("cloudflared")))

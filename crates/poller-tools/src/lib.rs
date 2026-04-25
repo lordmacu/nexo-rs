@@ -1,8 +1,8 @@
 //! LLM-callable tools for the Phase 19 poller subsystem.
 //!
-//! Lives outside `agent-core` so the dependency graph stays acyclic
+//! Lives outside `nexo-core` so the dependency graph stays acyclic
 //! (core → poller → plugin-google → core would loop). `main.rs`
-//! pulls this crate alongside `agent-core` and registers the tools
+//! pulls this crate alongside `nexo-core` and registers the tools
 //! per agent.
 //!
 //! Six tools, all read + control on already-declared jobs:
@@ -19,10 +19,10 @@
 
 use std::sync::Arc;
 
-use agent_core::agent::context::AgentContext;
-use agent_core::agent::tool_registry::{ToolHandler, ToolRegistry};
-use agent_llm::ToolDef;
-use agent_poller::PollerRunner;
+use nexo_core::agent::context::AgentContext;
+use nexo_core::agent::tool_registry::{ToolHandler, ToolRegistry};
+use nexo_llm::ToolDef;
+use nexo_poller::PollerRunner;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
@@ -214,12 +214,12 @@ impl ToolHandler for PollersResetTool {
     }
 }
 
-/// Adapter wrapping a `agent_poller::CustomToolHandler` into the
-/// `agent_core::ToolHandler` shape. Captures the runner so each
+/// Adapter wrapping a `nexo_poller::CustomToolHandler` into the
+/// `nexo_core::ToolHandler` shape. Captures the runner so each
 /// LLM call gets a fresh handle.
 struct CustomToolAdapter {
     runner: Arc<PollerRunner>,
-    inner: Arc<dyn agent_poller::CustomToolHandler>,
+    inner: Arc<dyn nexo_poller::CustomToolHandler>,
 }
 #[async_trait]
 impl ToolHandler for CustomToolAdapter {

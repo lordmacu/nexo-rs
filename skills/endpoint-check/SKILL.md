@@ -14,16 +14,16 @@ naturally with Phase 7 heartbeat for periodic monitoring.
 
 ## Use when
 
-- "¿Está arriba mi API?"
-- "¿Cuánto falta para que venza el cert de X?"
-- "Revisa mis endpoints y avísame si algo falla" (wrap in heartbeat)
-- Verificar que un deploy publicó el código nuevo (compare response body)
+- "Is my API up?"
+- "How long until cert X expires?"
+- "Check my endpoints and alert me if something fails" (pair with heartbeat)
+- Verify that a deployment published new code (compare response body)
 
 ## Do not use when
 
-- Necesitas auth compleja (OAuth, mTLS) — usa fetch-url o una extension específica
-- Querés descargar el body — usa fetch-url
-- Es un health check interno a un container — usa el propio orquestador
+- You need complex auth (OAuth, mTLS) — use `fetch-url` or a dedicated extension
+- You need full body download — use `fetch-url`
+- It is an internal container health check — use the orchestrator-native check
 
 ## Tools
 
@@ -31,33 +31,32 @@ naturally with Phase 7 heartbeat for periodic monitoring.
 No args. Info + limits.
 
 ### `http_probe { url, method?, timeout_secs?, follow_redirects?, expected_status? }`
-- `url` obligatorio (http/https)
-- `method` GET (default) o HEAD
+- `url` required (http/https)
+- `method` GET (default) or HEAD
 - `timeout_secs` 1..60 (default 10)
 - `follow_redirects` default true
-- `expected_status` opcional: devuelve `matches_expected: bool`
+- `expected_status` optional: returns `matches_expected: bool`
 
 Returns `{status, latency_ms, final_url, content_type, body_preview (≤500 chars), [matches_expected]}`.
 
 ### `ssl_cert { host, port?, timeout_secs?, warn_days? }`
-- `host` obligatorio
+- `host` required
 - `port` default 443
 - `timeout_secs` 1..60 (default 10)
-- `warn_days` default 30 — flag `expiring_soon: true` si quedan menos
+- `warn_days` default 30 — sets `expiring_soon: true` below threshold
 
 Returns `{subject, issuer, sans, serial_hex, signature_algorithm, chain_length, not_before_unix, not_after_unix, seconds_until_expiry, days_until_expiry, expiring_soon, expired}`.
 
-Aviso: **no valida la cadena de confianza** — expired/self-signed certs
-devuelven datos normalmente. Usa `expired`/`expiring_soon` para decidir.
+Note: this tool **does not validate trust chains** — expired/self-signed
+certs still return parsed metadata. Use `expired`/`expiring_soon` to decide.
 
 ## Execution guidance
 
-- Para monitoreo periódico, combina con heartbeat: probe cada N minutos,
-  alerta si `status` cambia o `expiring_soon` se prende.
-- Para comparar estados entre deploys, guarda el primer probe en
-  `state_json` del TaskFlow y compara.
-- `ssl_cert` es informativo; para alertas accionables usa `days_until_expiry`
-  con un umbral agresivo (14 días) en producción.
-- Error `-32005` timeout → el servidor no respondió en `timeout_secs`.
-- Error `-32060/-32061` en ssl_cert → DNS o TCP connect fallaron (probablemente
-  el host no existe o no escucha en `port`).
+- For periodic monitoring, combine with heartbeat: probe every N minutes
+  and alert when `status` changes or `expiring_soon` flips true.
+- For deploy comparisons, store baseline probe output in TaskFlow
+  `state_json` and diff against new runs.
+- `ssl_cert` is informational; for actionable alerts, use
+  `days_until_expiry` with a stricter threshold (e.g., 14 days).
+- Error `-32005` timeout means server did not reply within `timeout_secs`.
+- Errors `-32060/-32061` in `ssl_cert` usually indicate DNS/TCP connect issues.

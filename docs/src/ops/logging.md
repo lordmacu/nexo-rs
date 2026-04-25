@@ -10,7 +10,7 @@ Source: `src/main.rs::init_tracing`.
 
 | Env var | Default | Meaning |
 |---------|---------|---------|
-| `RUST_LOG` | `info` | `EnvFilter` syntax (`agent_core=debug,async_nats=warn,*=info`) |
+| `RUST_LOG` | `info` | `EnvFilter` syntax (`nexo_core=debug,async_nats=warn,*=info`) |
 | `AGENT_LOG_FORMAT` | `pretty` (`json` in `AGENT_ENV=production`) | `pretty` \| `compact` \| `json` |
 | `AGENT_ENV` | unset | Set to `production` to default to JSON logs |
 
@@ -113,7 +113,7 @@ writes non-JSON to stdout.
 ### Local dev
 
 ```bash
-export RUST_LOG=agent=debug,agent_core=debug,info
+export RUST_LOG=agent=debug,nexo_core=debug,info
 cargo run --bin agent -- --config ./config
 ```
 

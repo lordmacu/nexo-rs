@@ -3,9 +3,9 @@
 //! End-to-end provider test: stand up a tokio TCP listener, return a
 //! canned Brave response, and assert the parsed `WebSearchHit`s.
 
-use agent_web_search::provider::WebSearchProvider;
-use agent_web_search::providers::brave::BraveProvider;
-use agent_web_search::WebSearchArgs;
+use nexo_web_search::provider::WebSearchProvider;
+use nexo_web_search::providers::brave::BraveProvider;
+use nexo_web_search::WebSearchArgs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 

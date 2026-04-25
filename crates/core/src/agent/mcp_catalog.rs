@@ -3,8 +3,8 @@
 //! session-scoped refresh on `notifications/tools/list_changed`.
 use super::mcp_tool::McpTool;
 use super::tool_registry::ToolRegistry;
-use agent_llm::ToolDef as LlmToolDef;
-use agent_mcp::{McpClient, ResourceCache};
+use nexo_llm::ToolDef as LlmToolDef;
+use nexo_mcp::{McpClient, ResourceCache};
 use futures::future::join_all;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -218,7 +218,7 @@ impl McpToolCatalog {
                     continue;
                 }
             };
-            let desc = agent_mcp::McpTool {
+            let desc = nexo_mcp::McpTool {
                 name: entry.tool_name.clone(),
                 description: entry.description.clone(),
                 input_schema: entry.input_schema.clone(),

@@ -9,7 +9,7 @@
 //! Extension handler errors (timeout, transport, RPC error) are logged and
 //! treated as `Continue`. Philosophy: extension misbehavior must not take
 //! down agent flow.
-use agent_extensions::HookResponse;
+use nexo_extensions::HookResponse;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use serde_json::Value;

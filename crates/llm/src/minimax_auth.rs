@@ -233,7 +233,7 @@ struct RefreshResp {
 /// 4. Env `MINIMAX_CODING_API_KEY` → static.
 /// 5. `secrets/minimax_code_plan_key.txt` on disk → static.
 /// 6. Fall back to `cfg.api_key` (typically `${MINIMAX_API_KEY}`).
-pub fn build_auth_source(cfg: &agent_config::LlmProviderConfig) -> Result<AuthSource> {
+pub fn build_auth_source(cfg: &nexo_config::LlmProviderConfig) -> Result<AuthSource> {
     let auth = cfg.auth.as_ref();
     let mode = auth.map(|a| a.mode.as_str()).unwrap_or("auto");
     let bundle_path = auth
@@ -270,7 +270,7 @@ pub fn build_auth_source(cfg: &agent_config::LlmProviderConfig) -> Result<AuthSo
 /// runtime without patching config files. File-on-disk checks come
 /// last so the wizard's `secrets/*.txt` files flow through even when
 /// the operator didn't remember to `export`.
-fn resolve_static_key(cfg: &agent_config::LlmProviderConfig) -> String {
+fn resolve_static_key(cfg: &nexo_config::LlmProviderConfig) -> String {
     for env_var in ["MINIMAX_CODE_PLAN_KEY", "MINIMAX_CODING_API_KEY"] {
         if let Ok(v) = std::env::var(env_var) {
             if !v.is_empty() {
@@ -341,12 +341,12 @@ mod tests {
 
     #[test]
     fn auto_mode_falls_back_when_bundle_missing() {
-        let cfg = agent_config::LlmProviderConfig {
+        let cfg = nexo_config::LlmProviderConfig {
             api_key: "sk-fallback".into(),
             base_url: "https://x".into(),
             group_id: None,
             rate_limit: Default::default(),
-            auth: Some(agent_config::LlmAuthConfig {
+            auth: Some(nexo_config::LlmAuthConfig {
                 mode: "auto".into(),
                 bundle: Some("/tmp/definitely-does-not-exist-xyz.json".into()),
                 setup_token_file: None,

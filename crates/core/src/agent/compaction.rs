@@ -16,7 +16,7 @@
 //! `Vec<ChatMessage>`, where one bloated tool result can blow the
 //! context window all by itself.
 
-use agent_llm::{ChatMessage, ChatRequest, ChatRole, LlmClient, ResponseContent};
+use nexo_llm::{ChatMessage, ChatRequest, ChatRole, LlmClient, ResponseContent};
 use std::sync::Arc;
 
 use crate::session::types::{Interaction, Role};
@@ -164,7 +164,7 @@ pub fn truncate_large_tool_results(messages: &mut [ChatMessage], max_chars: usiz
 /// LLM-backed compactor. Builds a summarizer request from
 /// `history[..tail_start_index]` and asks the secondary LLM to fold
 /// it into a single summary string. Caller is responsible for the
-/// lock + persistence (see `agent_memory::CompactionStore`).
+/// lock + persistence (see `nexo_memory::CompactionStore`).
 pub struct LlmCompactor {
     llm: Arc<dyn LlmClient>,
 }
@@ -214,7 +214,7 @@ impl LlmCompactor {
             temperature: 0.2,
             system_prompt: Some(SUMMARIZER_SYSTEM_PROMPT.to_string()),
             stop_sequences: Vec::new(),
-            tool_choice: agent_llm::ToolChoice::None,
+            tool_choice: nexo_llm::ToolChoice::None,
             system_blocks: Vec::new(),
             cache_tools: false,
         };
@@ -249,7 +249,7 @@ impl LlmCompactor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_llm::{ChatResponse, FinishReason, LlmError, TokenUsage};
+    use nexo_llm::{ChatResponse, FinishReason, LlmError, TokenUsage};
     use async_trait::async_trait;
     use chrono::Utc;
     use futures::stream::BoxStream;
@@ -362,7 +362,7 @@ mod tests {
         async fn stream<'a>(
             &'a self,
             _req: ChatRequest,
-        ) -> anyhow::Result<BoxStream<'a, anyhow::Result<agent_llm::StreamChunk>>> {
+        ) -> anyhow::Result<BoxStream<'a, anyhow::Result<nexo_llm::StreamChunk>>> {
             anyhow::bail!("stream not implemented in stub")
         }
     }
@@ -383,7 +383,7 @@ mod tests {
         async fn stream<'a>(
             &'a self,
             _req: ChatRequest,
-        ) -> anyhow::Result<BoxStream<'a, anyhow::Result<agent_llm::StreamChunk>>> {
+        ) -> anyhow::Result<BoxStream<'a, anyhow::Result<nexo_llm::StreamChunk>>> {
             anyhow::bail!("stream not implemented in stub")
         }
     }

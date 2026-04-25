@@ -1,7 +1,7 @@
 //! Phase 12.4 — `mcp.yaml` schema.
 //!
 //! Loads a declarative list of MCP servers plus session/reap timing knobs.
-//! `agent-mcp` converts this into `McpRuntimeConfig` at startup; subsequent
+//! `nexo-mcp` converts this into `McpRuntimeConfig` at startup; subsequent
 //! `update_config` calls are possible without re-parsing YAML.
 
 use std::collections::BTreeMap;

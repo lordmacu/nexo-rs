@@ -7,8 +7,8 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use agent_config::ExtensionsConfig;
-use agent_extensions::cli::{
+use nexo_config::ExtensionsConfig;
+use nexo_extensions::cli::{
     run_disable, run_doctor, run_enable, run_info, run_list, run_validate, CliContext,
 };
 
@@ -264,7 +264,7 @@ fn disable_then_enable_round_trip() {
     };
     run_enable(ctx, "weather").expect("enable");
     let yaml = fs::read_to_string(&yaml_path).unwrap();
-    let f: agent_config::ExtensionsConfigFile = serde_yaml::from_str(&yaml).unwrap();
+    let f: nexo_config::ExtensionsConfigFile = serde_yaml::from_str(&yaml).unwrap();
     assert!(
         f.extensions.disabled.is_empty(),
         "weather should be enabled again"
@@ -343,7 +343,7 @@ fn doctor_clean_when_no_issues() {
 // Used to check exit-code helper isn't drifting away from the spec.
 #[test]
 fn exit_codes_are_documented() {
-    use agent_extensions::cli::CliError;
+    use nexo_extensions::cli::CliError;
     assert_eq!(CliError::NotFound("x".into()).exit_code(), 1);
     assert_eq!(CliError::InvalidManifest("x".into()).exit_code(), 2);
     assert_eq!(CliError::ConfigWrite("x".into()).exit_code(), 3);

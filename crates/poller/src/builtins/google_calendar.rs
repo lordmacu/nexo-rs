@@ -8,8 +8,8 @@
 
 use std::sync::Arc;
 
-use agent_auth::handle::GOOGLE;
-use agent_plugin_google::GoogleAuthClient;
+use nexo_auth::handle::GOOGLE;
+use nexo_plugin_google::GoogleAuthClient;
 use async_trait::async_trait;
 use chrono::Utc;
 use dashmap::DashMap;
@@ -124,9 +124,9 @@ impl Poller for GoogleCalendarPoller {
             .and_then(Value::as_str)
             .map(str::to_string);
 
-        let target_channel: agent_auth::Channel = match cfg.deliver.channel.as_str() {
-            "whatsapp" => agent_auth::handle::WHATSAPP,
-            "telegram" => agent_auth::handle::TELEGRAM,
+        let target_channel: nexo_auth::Channel = match cfg.deliver.channel.as_str() {
+            "whatsapp" => nexo_auth::handle::WHATSAPP,
+            "telegram" => nexo_auth::handle::TELEGRAM,
             other => {
                 return Err(PollerError::Config {
                     job: ctx.job_id.clone(),
@@ -197,7 +197,7 @@ impl Poller for GoogleCalendarPoller {
 
 async fn build_client(
     ctx: &PollContext,
-    handle: &agent_auth::CredentialHandle,
+    handle: &nexo_auth::CredentialHandle,
     cache: &DashMap<String, Arc<GoogleAuthClient>>,
 ) -> Result<Arc<GoogleAuthClient>, PollerError> {
     let id = handle.account_id_raw().to_string();
@@ -220,7 +220,7 @@ async fn build_client(
     let cs = std::fs::read_to_string(&account.client_secret_path)
         .map(|s| s.trim().to_string())
         .map_err(|e| PollerError::Transient(anyhow::Error::from(e)))?;
-    let cfg = agent_plugin_google::GoogleAuthConfig {
+    let cfg = nexo_plugin_google::GoogleAuthConfig {
         client_id: cid,
         client_secret: cs,
         scopes: account.scopes.clone(),
@@ -235,7 +235,7 @@ async fn build_client(
     let client = GoogleAuthClient::new_with_sources(
         cfg,
         &workspace,
-        Some(agent_plugin_google::SecretSources {
+        Some(nexo_plugin_google::SecretSources {
             client_id_path: account.client_id_path.clone(),
             client_secret_path: account.client_secret_path.clone(),
         }),

@@ -13,10 +13,10 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 
-use agent_mcp::sampling::{
+use nexo_mcp::sampling::{
     SamplingError, SamplingProvider, SamplingRequest, SamplingResponse, SamplingRole, StopReason,
 };
-use agent_mcp::{McpServerConfig, StdioMcpClient};
+use nexo_mcp::{McpServerConfig, StdioMcpClient};
 
 fn mock_server_path() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_mock_mcp_server"))

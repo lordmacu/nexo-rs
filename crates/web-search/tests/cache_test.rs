@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use agent_web_search::cache::WebSearchCache;
-use agent_web_search::{WebSearchHit, WebSearchResult};
+use nexo_web_search::cache::WebSearchCache;
+use nexo_web_search::{WebSearchHit, WebSearchResult};
 
 fn sample(provider: &str) -> WebSearchResult {
     WebSearchResult {

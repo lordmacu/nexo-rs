@@ -13,7 +13,7 @@
 //! Zero network cost — pure TF-on-words. Good enough for the tool
 //! routing problem: we're not doing semantic search over a 10k-doc
 //! corpus, we're ranking 150 short tool descriptions.
-use agent_llm::ToolDef;
+use nexo_llm::ToolDef;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 #[derive(Debug, Clone, Deserialize, Default)]

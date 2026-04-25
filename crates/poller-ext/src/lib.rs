@@ -1,5 +1,5 @@
-//! `ExtensionPoller` — wraps an `agent-extensions::StdioRuntime` and
-//! implements `agent_poller::Poller`. The runner treats it just like
+//! `ExtensionPoller` — wraps an `nexo-extensions::StdioRuntime` and
+//! implements `nexo_poller::Poller`. The runner treats it just like
 //! a built-in module, so operators can ship a `poller` extension
 //! written in any language that speaks JSON-RPC over stdio.
 //!
@@ -42,8 +42,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_extensions::StdioRuntime;
-use agent_poller::{
+use nexo_extensions::StdioRuntime;
+use nexo_poller::{
     OutboundDelivery, PollContext, Poller, PollerError, TickOutcome,
 };
 use async_trait::async_trait;
@@ -109,7 +109,7 @@ impl Poller for ExtensionPoller {
         Ok(())
     }
 
-    fn custom_tools(&self) -> Vec<agent_poller::CustomToolSpec> {
+    fn custom_tools(&self) -> Vec<nexo_poller::CustomToolSpec> {
         let mut out = Vec::with_capacity(self.tools_cache.len());
         for t in &self.tools_cache {
             // Capture the kind + tool name in the handler so calls
@@ -124,10 +124,10 @@ impl Poller for ExtensionPoller {
                 tool_name: String,
             }
             #[async_trait]
-            impl agent_poller::CustomToolHandler for ExtToolHandler {
+            impl nexo_poller::CustomToolHandler for ExtToolHandler {
                 async fn call(
                     &self,
-                    _runner: Arc<agent_poller::PollerRunner>,
+                    _runner: Arc<nexo_poller::PollerRunner>,
                     args: Value,
                 ) -> anyhow::Result<Value> {
                     let params = json!({
@@ -142,8 +142,8 @@ impl Poller for ExtensionPoller {
                 }
             }
 
-            out.push(agent_poller::CustomToolSpec {
-                def: agent_llm::ToolDef {
+            out.push(nexo_poller::CustomToolSpec {
+                def: nexo_llm::ToolDef {
                     name: t.name.clone(),
                     description: t.description.clone(),
                     parameters: t.parameters.clone(),
@@ -228,7 +228,7 @@ impl Poller for ExtensionPoller {
 ///
 /// Returns the count of registered pollers so the caller can log it.
 pub async fn register_for_runtime(
-    runner: &agent_poller::PollerRunner,
+    runner: &nexo_poller::PollerRunner,
     runtime: &Arc<StdioRuntime>,
     pollers: &[String],
 ) -> usize {
@@ -292,11 +292,11 @@ pub async fn register_for_runtime(
     count
 }
 
-fn channel_from_str(s: &str) -> Result<agent_auth::Channel, PollerError> {
+fn channel_from_str(s: &str) -> Result<nexo_auth::Channel, PollerError> {
     match s {
-        "whatsapp" => Ok(agent_auth::handle::WHATSAPP),
-        "telegram" => Ok(agent_auth::handle::TELEGRAM),
-        "google" => Ok(agent_auth::handle::GOOGLE),
+        "whatsapp" => Ok(nexo_auth::handle::WHATSAPP),
+        "telegram" => Ok(nexo_auth::handle::TELEGRAM),
+        "google" => Ok(nexo_auth::handle::GOOGLE),
         other => Err(PollerError::Config {
             job: "<extension>".into(),
             reason: format!("unknown deliver.channel '{other}' from extension"),
@@ -304,8 +304,8 @@ fn channel_from_str(s: &str) -> Result<agent_auth::Channel, PollerError> {
     }
 }
 
-fn map_call_error(err: agent_extensions::CallError) -> PollerError {
-    use agent_extensions::CallError::*;
+fn map_call_error(err: nexo_extensions::CallError) -> PollerError {
+    use nexo_extensions::CallError::*;
     match err {
         Rpc(rpc) => match rpc.code {
             ERR_PERMANENT => PollerError::Permanent(anyhow::anyhow!("ext: {}", rpc.message)),
@@ -375,34 +375,34 @@ mod tests {
 
     #[test]
     fn permanent_error_is_classified() {
-        let rpc = agent_extensions::RpcError {
+        let rpc = nexo_extensions::RpcError {
             code: ERR_PERMANENT,
             message: "revoked".into(),
             data: None,
         };
-        let mapped = map_call_error(agent_extensions::CallError::Rpc(rpc));
+        let mapped = map_call_error(nexo_extensions::CallError::Rpc(rpc));
         assert!(matches!(mapped, PollerError::Permanent(_)));
     }
 
     #[test]
     fn transient_error_is_classified() {
-        let rpc = agent_extensions::RpcError {
+        let rpc = nexo_extensions::RpcError {
             code: ERR_TRANSIENT,
             message: "503".into(),
             data: None,
         };
-        let mapped = map_call_error(agent_extensions::CallError::Rpc(rpc));
+        let mapped = map_call_error(nexo_extensions::CallError::Rpc(rpc));
         assert!(matches!(mapped, PollerError::Transient(_)));
     }
 
     #[test]
     fn config_error_is_classified() {
-        let rpc = agent_extensions::RpcError {
+        let rpc = nexo_extensions::RpcError {
             code: ERR_CONFIG,
             message: "missing field x".into(),
             data: None,
         };
-        let mapped = map_call_error(agent_extensions::CallError::Rpc(rpc));
+        let mapped = map_call_error(nexo_extensions::CallError::Rpc(rpc));
         assert!(matches!(mapped, PollerError::Config { .. }));
     }
 }

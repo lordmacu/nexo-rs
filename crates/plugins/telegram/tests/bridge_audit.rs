@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use agent_plugin_telegram::plugin::{PendingEntry, PendingMap};
+use nexo_plugin_telegram::plugin::{PendingEntry, PendingMap};
 use dashmap::DashMap;
 use tokio::sync::oneshot;
 use uuid::Uuid;
@@ -107,7 +107,7 @@ async fn allowlist_hashset_membership_is_o1() {
 
 #[tokio::test]
 async fn offset_round_trip_through_file() {
-    use agent_plugin_telegram::plugin::{load_offset, save_offset};
+    use nexo_plugin_telegram::plugin::{load_offset, save_offset};
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("offset");
 

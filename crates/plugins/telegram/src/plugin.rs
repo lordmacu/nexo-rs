@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_broker::{AnyBroker, BrokerHandle, Event};
-use agent_config::types::plugins::TelegramPluginConfig;
-use agent_core::agent::plugin::{Command, Plugin, Response};
+use nexo_broker::{AnyBroker, BrokerHandle, Event};
+use nexo_config::types::plugins::TelegramPluginConfig;
+use nexo_core::agent::plugin::{Command, Plugin, Response};
 use async_trait::async_trait;
 use dashmap::DashMap;
 use serde::Deserialize;
@@ -1103,7 +1103,7 @@ struct MediaDownloadInput {
 /// for the reply line, and return the transcribed text (or None on any
 /// failure — caller proceeds with empty text).
 async fn transcribe_voice(
-    cfg: &agent_config::types::plugins::TelegramAutoTranscribeConfig,
+    cfg: &nexo_config::types::plugins::TelegramAutoTranscribeConfig,
     audio_path: &str,
 ) -> Option<String> {
     let command = cfg.command.trim();

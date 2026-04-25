@@ -1,6 +1,6 @@
 ---
 name: Docker API
-description: Inspeccionar y controlar containers Docker locales.
+description: Inspect and control local Docker containers.
 requires:
   bins: [docker]
   env: []
@@ -8,8 +8,9 @@ requires:
 
 # Docker API
 
-Wraps el CLI `docker` para que kate pueda reportar/controlar containers.
-Reads son libres; lifecycle (start/stop/restart) gated por `DOCKER_API_ALLOW_WRITE=true`.
+Wraps the `docker` CLI so kate can report on and control containers.
+Read operations are unrestricted; lifecycle actions (start/stop/restart)
+are gated by `DOCKER_API_ALLOW_WRITE=true`.
 
 ## Tools
 - `status`
@@ -19,4 +20,4 @@ Reads son libres; lifecycle (start/stop/restart) gated por `DOCKER_API_ALLOW_WRI
 - `stats(target)` — one-shot CPU/mem/net
 - `start†(target)`, `stop†(target, timeout_secs?)`, `restart†(target, timeout_secs?)`
 
-Container names regex-validated `[A-Za-z0-9][A-Za-z0-9_.-]*` para blocking shell injection.
+Container names are regex-validated as `[A-Za-z0-9][A-Za-z0-9_.-]*` to block shell injection.

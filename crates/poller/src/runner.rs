@@ -9,10 +9,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use agent_auth::CredentialsBundle;
-use agent_broker::AnyBroker;
-use agent_config::types::pollers::{PollerJob, PollersConfig};
-use agent_resilience::{CircuitBreaker, CircuitBreakerConfig};
+use nexo_auth::CredentialsBundle;
+use nexo_broker::AnyBroker;
+use nexo_config::types::pollers::{PollerJob, PollersConfig};
+use nexo_resilience::{CircuitBreaker, CircuitBreakerConfig};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
@@ -88,8 +88,8 @@ pub struct PollerRunner {
     /// Boot wires this from the same `LlmRegistry` + `LlmConfig` the
     /// agent runtimes use; pollers without LLM-driven kinds leave
     /// it `None` and pay no cost.
-    llm_registry: Option<Arc<agent_llm::LlmRegistry>>,
-    llm_config: Option<Arc<agent_config::LlmConfig>>,
+    llm_registry: Option<Arc<nexo_llm::LlmRegistry>>,
+    llm_config: Option<Arc<nexo_config::LlmConfig>>,
     leaseholder: String,
     shutdown: CancellationToken,
 }
@@ -122,8 +122,8 @@ impl PollerRunner {
     /// only do data ingestion (gmail, rss, webhook) work without it.
     pub fn with_llm(
         mut self,
-        registry: Arc<agent_llm::LlmRegistry>,
-        config: Arc<agent_config::LlmConfig>,
+        registry: Arc<nexo_llm::LlmRegistry>,
+        config: Arc<nexo_config::LlmConfig>,
     ) -> Self {
         self.llm_registry = Some(registry);
         self.llm_config = Some(config);
@@ -150,7 +150,7 @@ impl PollerRunner {
     }
 
     /// Walk every registered Poller and collect its `custom_tools()`.
-    /// Adapter in `agent-poller-tools` consumes this and registers
+    /// Adapter in `nexo-poller-tools` consumes this and registers
     /// each spec as a `ToolHandler` per agent.
     pub fn collect_custom_tools(&self) -> Vec<crate::CustomToolSpec> {
         let mut out = Vec::new();
@@ -461,8 +461,8 @@ struct TaskCtx {
     cancel: CancellationToken,
     cfg: PollersConfig,
     breaker: Arc<CircuitBreaker>,
-    llm_registry: Option<Arc<agent_llm::LlmRegistry>>,
-    llm_config: Option<Arc<agent_config::LlmConfig>>,
+    llm_registry: Option<Arc<nexo_llm::LlmRegistry>>,
+    llm_config: Option<Arc<nexo_config::LlmConfig>>,
 }
 
 async fn run_job_loop(tctx: TaskCtx) {
@@ -698,13 +698,13 @@ async fn handle_tick_error(
 
 async fn send_failure_alert(
     tctx: &TaskCtx,
-    target: &agent_config::types::pollers::DeliveryTarget,
+    target: &nexo_config::types::pollers::DeliveryTarget,
     error_text: &str,
 ) -> Result<()> {
-    let channel: agent_auth::Channel = match target.channel.as_str() {
-        "whatsapp" => agent_auth::handle::WHATSAPP,
-        "telegram" => agent_auth::handle::TELEGRAM,
-        "google" => agent_auth::handle::GOOGLE,
+    let channel: nexo_auth::Channel = match target.channel.as_str() {
+        "whatsapp" => nexo_auth::handle::WHATSAPP,
+        "telegram" => nexo_auth::handle::TELEGRAM,
+        "google" => nexo_auth::handle::GOOGLE,
         other => anyhow::bail!("unknown failure_to.channel '{other}'"),
     };
     let payload = serde_json::json!({
@@ -763,9 +763,9 @@ mod tests {
 
     fn empty_creds() -> Arc<CredentialsBundle> {
         Arc::new(CredentialsBundle {
-            stores: agent_auth::resolver::CredentialStores::empty(),
-            resolver: Arc::new(agent_auth::AgentCredentialResolver::empty()),
-            breakers: Arc::new(agent_auth::breaker::BreakerRegistry::default()),
+            stores: nexo_auth::resolver::CredentialStores::empty(),
+            resolver: Arc::new(nexo_auth::AgentCredentialResolver::empty()),
+            breakers: Arc::new(nexo_auth::breaker::BreakerRegistry::default()),
             warnings: Vec::new(),
         })
     }

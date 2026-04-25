@@ -118,7 +118,7 @@ pub struct ExtensionManifest {
     /// runtime with keys `{ext_id}.{name}`; `${EXTENSION_ROOT}` placeholders
     /// are resolved at merge time.
     #[serde(default)]
-    pub mcp_servers: std::collections::BTreeMap<String, agent_config::McpServerYaml>,
+    pub mcp_servers: std::collections::BTreeMap<String, nexo_config::McpServerYaml>,
     /// Phase 11.5 follow-up — opt-in context propagation. When enabled,
     /// `ExtensionTool::call` injects `_meta.agent_id` and
     /// `_meta.session_id` into the JSON-RPC args object.
@@ -364,21 +364,21 @@ impl ExtensionManifest {
 }
 
 fn validate_mcp_servers(
-    servers: &std::collections::BTreeMap<String, agent_config::McpServerYaml>,
+    servers: &std::collections::BTreeMap<String, nexo_config::McpServerYaml>,
 ) -> Result<(), ManifestError> {
     for (name, server) in servers {
         if name.is_empty() || name.len() > MAX_MCP_SERVER_NAME_LEN || !MCP_NAME_RE.is_match(name) {
             return Err(ManifestError::InvalidMcpServerName { name: name.clone() });
         }
         match server {
-            agent_config::McpServerYaml::Stdio { command, .. } => {
+            nexo_config::McpServerYaml::Stdio { command, .. } => {
                 if command.trim().is_empty() {
                     return Err(ManifestError::McpEmptyStdioCommand { name: name.clone() });
                 }
             }
-            agent_config::McpServerYaml::StreamableHttp { url, .. }
-            | agent_config::McpServerYaml::Sse { url, .. }
-            | agent_config::McpServerYaml::Auto { url, .. } => match url::Url::parse(url) {
+            nexo_config::McpServerYaml::StreamableHttp { url, .. }
+            | nexo_config::McpServerYaml::Sse { url, .. }
+            | nexo_config::McpServerYaml::Auto { url, .. } => match url::Url::parse(url) {
                 Ok(parsed) if parsed.scheme() == "http" || parsed.scheme() == "https" => {}
                 _ => {
                     return Err(ManifestError::McpInvalidHttpUrl {

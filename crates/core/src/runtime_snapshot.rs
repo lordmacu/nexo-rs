@@ -16,8 +16,9 @@
 
 use std::sync::Arc;
 
-use agent_config::{AgentConfig, LlmConfig};
-use agent_llm::{LlmClient, LlmRegistry};
+use nexo_config::types::llm::ResolvedContextOptimization;
+use nexo_config::{AgentConfig, LlmConfig};
+use nexo_llm::{LlmClient, LlmRegistry};
 
 use crate::agent::effective::EffectiveBindingPolicy;
 use crate::agent::tool_registry::ToolRegistry;
@@ -35,7 +36,7 @@ pub struct RuntimeSnapshot {
     /// consumers (delegation ACL, heartbeat interval lookups) read
     /// agent-level fields from here instead of holding a separate
     /// `Arc<AgentConfig>`.
-    pub agent_config: Arc<AgentConfig>,
+    pub nexo_config: Arc<AgentConfig>,
     /// Pre-resolved per-binding capability policies, keyed by
     /// `binding_index` (Some(n) for real bindings, None for the
     /// legacy agent-level fallback). Built at snapshot construction so
@@ -57,14 +58,24 @@ pub struct RuntimeSnapshot {
     /// with this so operators can correlate "session X used version Y"
     /// when debugging a reload.
     pub version: u64,
+    /// Phase F follow-up — the four context-optimization enables,
+    /// already resolved against `llm.context_optimization` and the
+    /// agent's per-agent override. Captured at snapshot-build time so
+    /// the agent loop reads the *current* enables on every turn (a
+    /// reload that swaps the snapshot is observed on the next
+    /// `snapshot_ref.load()`). The boot-time wiring on
+    /// `LlmAgentBehavior` (compactor / token_counter / workspace_cache
+    /// instances) stays put — these flags only gate whether the agent
+    /// loop *uses* those instances on a given turn.
+    pub context_optimization: ResolvedContextOptimization,
 }
 
 impl std::fmt::Debug for RuntimeSnapshot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RuntimeSnapshot")
-            .field("agent_id", &self.agent_config.id)
+            .field("agent_id", &self.nexo_config.id)
             .field("version", &self.version)
-            .field("bindings", &self.agent_config.inbound_bindings.len())
+            .field("bindings", &self.nexo_config.inbound_bindings.len())
             .field("effective_slots", &self.effective_policies.len())
             .field("tool_cache_entries", &self.tool_cache.len())
             .finish()
@@ -84,67 +95,83 @@ impl RuntimeSnapshot {
     /// `AgentRuntime::new` before the registry is wired, and in tests.
     /// Production reloads use [`RuntimeSnapshot::build`] to also pin
     /// the LLM client.
-    pub fn bare(agent_config: Arc<AgentConfig>, version: u64) -> Self {
+    /// Resolve the four enables from a (global, agent) pair. Used by
+    /// both `bare` (global=default) and `build` (real config).
+    fn resolve_co(
+        nexo_config: &AgentConfig,
+        global: &nexo_config::types::llm::ContextOptimizationConfig,
+    ) -> ResolvedContextOptimization {
+        ResolvedContextOptimization::resolve(global, nexo_config.context_optimization.as_ref())
+    }
+
+    pub fn bare(nexo_config: Arc<AgentConfig>, version: u64) -> Self {
         let effective_policies: dashmap::DashMap<Option<usize>, Arc<EffectiveBindingPolicy>> =
             dashmap::DashMap::new();
-        if agent_config.inbound_bindings.is_empty() {
+        if nexo_config.inbound_bindings.is_empty() {
             effective_policies.insert(
                 None,
-                Arc::new(EffectiveBindingPolicy::from_agent_defaults(&agent_config)),
+                Arc::new(EffectiveBindingPolicy::from_agent_defaults(&nexo_config)),
             );
         } else {
-            for idx in 0..agent_config.inbound_bindings.len() {
+            for idx in 0..nexo_config.inbound_bindings.len() {
                 effective_policies.insert(
                     Some(idx),
-                    EffectiveBindingPolicy::resolved(&agent_config, idx),
+                    EffectiveBindingPolicy::resolved(&nexo_config, idx),
                 );
             }
         }
+        let context_optimization = Self::resolve_co(
+            &nexo_config,
+            &nexo_config::types::llm::ContextOptimizationConfig::default(),
+        );
         Self {
-            agent_config,
+            nexo_config,
             effective_policies: Arc::new(effective_policies),
             tool_cache: Arc::new(ToolRegistryCache::new()),
             llm_client: None,
             version,
+            context_optimization,
         }
     }
 
     pub fn build(
-        agent_config: Arc<AgentConfig>,
+        nexo_config: Arc<AgentConfig>,
         llm_registry: &LlmRegistry,
         llm_cfg: &LlmConfig,
         version: u64,
     ) -> anyhow::Result<Self> {
         let effective_policies: dashmap::DashMap<Option<usize>, Arc<EffectiveBindingPolicy>> =
             dashmap::DashMap::new();
-        if agent_config.inbound_bindings.is_empty() {
+        if nexo_config.inbound_bindings.is_empty() {
             effective_policies.insert(
                 None,
-                Arc::new(EffectiveBindingPolicy::from_agent_defaults(&agent_config)),
+                Arc::new(EffectiveBindingPolicy::from_agent_defaults(&nexo_config)),
             );
         } else {
-            for idx in 0..agent_config.inbound_bindings.len() {
+            for idx in 0..nexo_config.inbound_bindings.len() {
                 effective_policies.insert(
                     Some(idx),
-                    EffectiveBindingPolicy::resolved(&agent_config, idx),
+                    EffectiveBindingPolicy::resolved(&nexo_config, idx),
                 );
             }
         }
         let llm_client = llm_registry
-            .build(llm_cfg, &agent_config.model)
+            .build(llm_cfg, &nexo_config.model)
             .map_err(|e| {
                 anyhow::anyhow!(
                     "snapshot build: LLM client for agent '{}' failed: {}",
-                    agent_config.id,
+                    nexo_config.id,
                     e
                 )
             })?;
+        let context_optimization = Self::resolve_co(&nexo_config, &llm_cfg.context_optimization);
         Ok(Self {
-            agent_config,
+            nexo_config,
             effective_policies: Arc::new(effective_policies),
             tool_cache: Arc::new(ToolRegistryCache::new()),
             llm_client: Some(llm_client),
             version,
+            context_optimization,
         })
     }
 
@@ -178,7 +205,7 @@ impl RuntimeSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_config::{
+    use nexo_config::{
         AgentRuntimeConfig, DreamingYamlConfig, HeartbeatConfig, ModelConfig,
         OutboundAllowlistConfig, WorkspaceGitConfig,
     };
@@ -223,6 +250,8 @@ mod tests {
             google_auth: None,
             credentials: Default::default(),
             link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
             outbound_allowlist: OutboundAllowlistConfig::default(),
             context_optimization: None,

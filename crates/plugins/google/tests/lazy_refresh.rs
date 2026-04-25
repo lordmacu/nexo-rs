@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use agent_plugin_google::{GoogleAuthClient, GoogleAuthConfig, SecretSources};
+use nexo_plugin_google::{GoogleAuthClient, GoogleAuthConfig, SecretSources};
 
 fn write(p: &PathBuf, body: &str) {
     std::fs::write(p, body).unwrap();

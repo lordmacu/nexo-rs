@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Wizard } from "./wizard/Wizard";
 import { AgentsSection } from "./dashboard/Agents";
 import { ChannelsSection } from "./dashboard/Channels";
+import { McpServersSection } from "./dashboard/McpServers";
 
 type DebugEnv = { debug: boolean; build: string };
 type Bootstrap = { needs_wizard: boolean; agent_count: number };
@@ -129,6 +130,7 @@ export default function App() {
 
         <AgentsSection />
         <ChannelsSection />
+        <McpServersSection />
 
         <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4">
           <h3 className="text-sm uppercase tracking-wide text-neutral-500 mb-2">

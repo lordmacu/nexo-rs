@@ -256,7 +256,7 @@ Planned change:
 
 ### Skill loading
 
-Add a small loader module in `agent_core`.
+Add a small loader module in `nexo_core`.
 
 Proposed new file:
 

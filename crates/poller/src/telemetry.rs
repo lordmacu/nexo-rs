@@ -1,6 +1,6 @@
 //! Prometheus surface for the poller subsystem. Self-contained:
 //! `main.rs` concatenates `render_prometheus()` into the same body
-//! served at `/metrics` — same pattern as `agent_auth::telemetry`.
+//! served at `/metrics` — same pattern as `nexo_auth::telemetry`.
 
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::LazyLock;

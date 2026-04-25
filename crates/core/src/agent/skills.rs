@@ -1,4 +1,4 @@
-pub use agent_config::types::agents::SkillDepsMode;
+pub use nexo_config::types::agents::SkillDepsMode;
 use semver::{Version, VersionReq};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
@@ -697,7 +697,7 @@ pub fn render_system_blocks(skills: &[LoadedSkill]) -> Option<String> {
 mod tests {
     use super::{render_system_blocks, SkillLoader};
     fn tmpdir() -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("agent-core-skills-{}", uuid::Uuid::new_v4()))
+        std::env::temp_dir().join(format!("nexo-core-skills-{}", uuid::Uuid::new_v4()))
     }
     #[tokio::test]
     async fn load_many_skips_missing_and_renders_loaded() -> anyhow::Result<()> {

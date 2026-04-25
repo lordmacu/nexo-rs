@@ -4,7 +4,7 @@ use anyhow::anyhow;
 use tokio::io::AsyncBufReadExt;
 use tokio::process::Command;
 
-use agent_config::BrowserConfig;
+use nexo_config::BrowserConfig;
 
 pub struct RunningChrome {
     pub ws_url: String,

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_core::session::{Interaction, Role, SessionManager};
+use nexo_core::session::{Interaction, Role, SessionManager};
 use uuid::Uuid;
 
 fn mgr_with_ttl(ttl: Duration) -> SessionManager {

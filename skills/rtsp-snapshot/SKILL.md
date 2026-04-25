@@ -9,21 +9,21 @@ requires:
 # RTSP Snapshot
 
 Use to grab stills or short clips from IP security cameras (RTSP, HTTP
-HLS) so kate can report "qué está pasando en el patio" o guardar
-evidencia. Todo output va bajo un sandbox dir (`RTSP_SNAPSHOT_OUTPUT_ROOT`,
+HLS) so Kate can report what is happening in a scene or store
+evidence. All output stays under a sandbox dir (`RTSP_SNAPSHOT_OUTPUT_ROOT`,
 default `$TMPDIR`).
 
 ## Use when
 
-- "toma foto de la cámara del garaje"
-- "graba 30s del timbre ahora"
-- "hay movimiento? snap y me lo mandas"
+- "take a snapshot from the garage camera"
+- "record 30s from the doorbell now"
+- "is there motion? capture and send me a snapshot"
 
 ## Do not use when
 
-- La cámara no está en la LAN y no tiene URL RTSP/HTTP expuesta
+- The camera is not reachable over LAN/public RTSP/HTTP URL
 - Necesitas streaming continuo o WebRTC
-- Clips > 5 minutos (cap duro por diseño)
+- Clips > 5 minutes (hard cap by design)
 
 ## Tools
 
@@ -32,7 +32,7 @@ ffmpeg bin + sandbox + limits.
 
 ### `snapshot { url, output_path, transport?, width? }`
 - `url` — `rtsp://user:pass@host/stream`, `rtsps://`, `http://`, `https://` (NO `file://`, NO `concat:`)
-- `output_path` — debe estar dentro del sandbox root; `.jpg` recomendado
+- `output_path` — must stay under the sandbox root; `.jpg` recommended
 - `transport` — `tcp` (default, estable sobre NAT) o `udp`
 - `width` — resize manteniendo aspecto
 
@@ -40,19 +40,18 @@ Returns `{url, output_path, bytes, transport}`.
 
 ### `clip { url, output_path, duration_secs, transport? }`
 - `duration_secs` 1..=300
-- Usa stream copy (sin re-encode) — extremadamente rápido
+- Uses stream copy (no re-encode) — very fast
 
 Returns `{url, output_path, bytes, duration_secs, transport}`.
 
 ## Execution guidance
 
-- Prefiere TCP transport para evitar pérdida de paquetes sobre Wi-Fi/VPN
-- Credenciales van inline en la URL (`rtsp://user:pass@host/...`); **guárdalas
-  en 1Password** y léelas con `read_secret` cuando reveal esté on
-- Output path fuera del sandbox → `-32034` IoError; ajusta operator config
-- Cámara unreachable → `-32032` NonZeroExit con el stderr de ffmpeg dentro
-- Para detección de movimiento fuera de scope — chain con tu pipeline
-  vision-enabled LLM consumiendo los frames
+- Prefer TCP transport to avoid packet loss over Wi-Fi/VPN
+- Credentials are inline in URL (`rtsp://user:pass@host/...`); store
+  them in 1Password and read them with `read_secret` when reveal is enabled
+- Output path outside sandbox → `-32034` IoError; adjust operator config
+- Unreachable camera → `-32032` NonZeroExit with ffmpeg stderr included
+- Motion detection is out of scope here — chain with a vision-enabled pipeline
 
 ## Pipelines
 

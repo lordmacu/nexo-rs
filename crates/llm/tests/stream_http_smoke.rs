@@ -1,9 +1,9 @@
 //! HTTP-level smoke test: a wiremock server returns SSE bytes,
 //! the OpenAI-compat client's `stream()` produces the expected chunks.
 
-use agent_config::types::llm::{LlmProviderConfig, RateLimitConfig, RetryConfig};
-use agent_llm::types::{ChatMessage, ChatRequest};
-use agent_llm::{collect_stream, LlmClient, OpenAiClient, ResponseContent};
+use nexo_config::types::llm::{LlmProviderConfig, RateLimitConfig, RetryConfig};
+use nexo_llm::types::{ChatMessage, ChatRequest};
+use nexo_llm::{collect_stream, LlmClient, OpenAiClient, ResponseContent};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 

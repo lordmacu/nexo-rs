@@ -1,14 +1,23 @@
 [package]
-name = "agent-plugin-whatsapp"
-version = "0.1.0"
-edition = "2021"
-
+name = "nexo-plugin-whatsapp"
+description   = "WhatsApp channel plugin (wa-agent + Signal Protocol) for Nexo agents."
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+homepage      = { workspace = true }
+documentation = { workspace = true }
+readme        = { workspace = true }
+keywords      = { workspace = true }
+categories    = { workspace = true }
 [dependencies]
-agent-core   = { path = "../../core" }
-agent-broker = { path = "../../broker" }
-agent-config = { path = "../../config" }
-agent-llm    = { path = "../../llm" }
-agent-auth   = { path = "../../auth" }
+nexo-core = { version = "0.1.0", path = "../../core" }
+nexo-broker = { version = "0.1.0", path = "../../broker" }
+nexo-config = { version = "0.1.0", path = "../../config" }
+nexo-llm = { version = "0.1.0", path = "../../llm" }
+nexo-auth = { version = "0.1.0", path = "../../auth" }
 
 wa-agent = "0.1.1"
 
@@ -37,9 +46,9 @@ live-wa = []
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 serde_yaml = { workspace = true }
-agent-config = { path = "../../config" }
-agent-broker = { path = "../../broker" }
-agent-core = { path = "../../core" }
+nexo-config = { version = "0.1.0", path = "../../config" }
+nexo-broker = { version = "0.1.0", path = "../../broker" }
+nexo-core = { version = "0.1.0", path = "../../core" }
 dashmap = { workspace = true }
 uuid = { workspace = true, features = ["v4", "v5", "serde"] }
 chrono = { workspace = true }

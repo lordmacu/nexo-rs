@@ -7,7 +7,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_mcp::{HttpMcpClient, HttpMcpOptions, HttpTransportMode, McpError};
+use nexo_mcp::{HttpMcpClient, HttpMcpOptions, HttpTransportMode, McpError};
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::{HeaderValue, StatusCode};
@@ -483,7 +483,7 @@ async fn streamable_retries_without_session_on_404() {
         .expect("call recovers");
     assert!(!result.is_error);
     match &result.content[0] {
-        agent_mcp::McpContent::Text { text } => assert_eq!(text, "ok-after-retry"),
+        nexo_mcp::McpContent::Text { text } => assert_eq!(text, "ok-after-retry"),
         _ => panic!("expected text content"),
     }
     assert_eq!(

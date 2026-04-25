@@ -8,12 +8,20 @@
 //! Cursor: not used today — Gmail's `is:unread` + post-dispatch
 //! `mark_read` is the dedup. The cursor slot stays reserved so a
 //! future migration to `historyId` is non-breaking.
+//!
+//! Layout: self-contained directory module. `Poller` impl here;
+//! per-kind LLM tools in [`tools`] so `Poller::custom_tools` stays
+//! one line. New built-ins follow same shape: drop a
+//! `crates/poller/src/builtins/<kind>/{mod.rs,tools.rs}` directory
+//! and add one `pub mod <kind>;` line in `builtins/mod.rs`.
+
+mod tools;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use agent_auth::handle::GOOGLE;
-use agent_plugin_google::{GoogleAuthClient, GoogleAuthConfig, SecretSources};
+use nexo_auth::handle::GOOGLE;
+use nexo_plugin_google::{GoogleAuthClient, GoogleAuthConfig, SecretSources};
 use anyhow::Context;
 use async_trait::async_trait;
 use base64::Engine;
@@ -121,7 +129,7 @@ impl Poller for GmailPoller {
     }
 
     fn custom_tools(&self) -> Vec<crate::CustomToolSpec> {
-        crate::builtins::gmail_tools::build_tools(Arc::clone(&self.inner))
+        tools::build_tools(Arc::clone(&self.inner))
     }
 
     async fn tick(&self, ctx: &PollContext) -> Result<TickOutcome, PollerError> {
@@ -173,10 +181,10 @@ impl Poller for GmailPoller {
             compiled_extract.insert(name.clone(), re);
         }
 
-        let target_channel: agent_auth::Channel = match cfg.deliver.channel.as_str() {
-            "whatsapp" => agent_auth::handle::WHATSAPP,
-            "telegram" => agent_auth::handle::TELEGRAM,
-            "google" => agent_auth::handle::GOOGLE,
+        let target_channel: nexo_auth::Channel = match cfg.deliver.channel.as_str() {
+            "whatsapp" => nexo_auth::handle::WHATSAPP,
+            "telegram" => nexo_auth::handle::TELEGRAM,
+            "google" => nexo_auth::handle::GOOGLE,
             other => {
                 return Err(PollerError::Config {
                     job: ctx.job_id.clone(),
@@ -285,7 +293,7 @@ impl GmailPoller {
     async fn client_for(
         &self,
         ctx: &PollContext,
-        handle: &agent_auth::CredentialHandle,
+        handle: &nexo_auth::CredentialHandle,
     ) -> Result<Arc<GoogleAuthClient>, PollerError> {
         let account_id = handle.account_id_raw().to_string();
         if let Some(existing) = self.inner.clients.get(&account_id) {
@@ -341,7 +349,7 @@ impl GmailPoller {
         id: &str,
         cfg: &GmailJobConfig,
         extract: &HashMap<String, Regex>,
-        target_channel: agent_auth::Channel,
+        target_channel: nexo_auth::Channel,
         client: &Arc<GoogleAuthClient>,
     ) -> Result<Option<OutboundDelivery>, anyhow::Error> {
         let url = format!(

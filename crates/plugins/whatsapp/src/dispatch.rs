@@ -20,7 +20,7 @@
 
 use std::sync::Arc;
 
-use agent_broker::{AnyBroker, BrokerHandle, Event};
+use nexo_broker::{AnyBroker, BrokerHandle, Event};
 use anyhow::Result;
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
@@ -240,7 +240,7 @@ async fn dispatch_event(
 pub mod __test {
     use super::{default_kind, OutboundPayload};
     use crate::plugin::PendingMap;
-    use agent_broker::Event;
+    use nexo_broker::Event;
 
     /// Resolve the reactive oneshot without calling `Session`. Exposes
     /// the session-id → oneshot routing logic so tests can assert it

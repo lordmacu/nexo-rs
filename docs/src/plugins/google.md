@@ -100,13 +100,13 @@ environments. The wizard:
 
 ```
 ╭─ Device-code OAuth ───────────────────────────────────────
-│  Abrí en cualquier navegador:  https://www.google.com/device
-│  Código a escribir:            HBQM-WLNF
-│  (válido por 1800s)
+│  Open in any browser:          https://www.google.com/device
+│  Code to enter:                HBQM-WLNF
+│  (valid for 1800s)
 ╰───────────────────────────────────────────────────────────
 
-Esperando aprobación…
-✔ Tokens persistidos en ./secrets/ana_google_token.json.
+Waiting for approval...
+✔ Tokens persisted at ./secrets/ana_google_token.json.
 ```
 
 The Google Cloud Console OAuth client must be type **"TVs and

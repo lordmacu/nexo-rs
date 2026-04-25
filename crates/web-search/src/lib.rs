@@ -9,8 +9,8 @@
 //! Boundary:
 //! - This crate owns the trait, the router, the cache, the providers,
 //!   and the result types.
-//! - It does **not** know about [`agent_core::AgentContext`], the LLM
-//!   tool registry, or YAML loading. Wiring lives in `agent-core` and
+//! - It does **not** know about [`nexo_core::AgentContext`], the LLM
+//!   tool registry, or YAML loading. Wiring lives in `nexo-core` and
 //!   `src/main.rs`.
 
 pub mod cache;

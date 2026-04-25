@@ -14,7 +14,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use agent_resilience::{CircuitBreaker, CircuitBreakerConfig};
+use nexo_resilience::{CircuitBreaker, CircuitBreakerConfig};
 
 use crate::manifest::{ExtensionManifest, Transport};
 

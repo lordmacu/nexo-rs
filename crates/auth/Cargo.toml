@@ -1,8 +1,17 @@
 [package]
-name = "agent-auth"
-version = "0.1.0"
-edition = "2021"
-
+name = "nexo-auth"
+description   = "Per-agent credential resolver and gauntlet validation for Nexo channels."
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+homepage      = { workspace = true }
+documentation = { workspace = true }
+readme        = { workspace = true }
+keywords      = { workspace = true }
+categories    = { workspace = true }
 [dependencies]
 serde      = { workspace = true }
 serde_json = { workspace = true }
@@ -15,8 +24,8 @@ sha2       = { workspace = true }
 hex        = { workspace = true }
 tokio      = { workspace = true }
 arc-swap   = { workspace = true }
-agent-config = { path = "../config" }
-agent-resilience = { path = "../resilience" }
+nexo-config = { version = "0.1.0", path = "../config" }
+nexo-resilience = { version = "0.1.0", path = "../resilience" }
 
 [dev-dependencies]
 tempfile           = "3"

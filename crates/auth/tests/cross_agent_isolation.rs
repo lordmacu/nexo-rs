@@ -5,13 +5,13 @@
 //! [`BuildError::AllowAgentsExcludes`] because Ana's instance lists
 //! `allow_agents: [ana]` and Kate is not on the list.
 
-use agent_auth::error::BuildError;
-use agent_auth::handle::{TELEGRAM, WHATSAPP};
-use agent_auth::resolver::{
+use nexo_auth::error::BuildError;
+use nexo_auth::handle::{TELEGRAM, WHATSAPP};
+use nexo_auth::resolver::{
     AgentCredentialResolver, AgentCredentialsInput, CredentialStores, StrictLevel,
 };
-use agent_auth::telegram::{TelegramAccount, TelegramCredentialStore};
-use agent_auth::whatsapp::{WhatsappAccount, WhatsappCredentialStore};
+use nexo_auth::telegram::{TelegramAccount, TelegramCredentialStore};
+use nexo_auth::whatsapp::{WhatsappAccount, WhatsappCredentialStore};
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -58,7 +58,7 @@ fn stores_of(
     CredentialStores {
         whatsapp: Arc::new(WhatsappCredentialStore::new(wa_accounts)),
         telegram: Arc::new(TelegramCredentialStore::new(tg_accounts)),
-        google: Arc::new(agent_auth::google::GoogleCredentialStore::empty()),
+        google: Arc::new(nexo_auth::google::GoogleCredentialStore::empty()),
     }
 }
 

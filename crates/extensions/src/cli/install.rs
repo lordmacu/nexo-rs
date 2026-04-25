@@ -233,7 +233,7 @@ fn validate_id_not_reserved(id: &str) -> Result<(), CliError> {
     Ok(())
 }
 
-fn compute_target(cfg: &agent_config::ExtensionsConfig, id: &str) -> Result<PathBuf, CliError> {
+fn compute_target(cfg: &nexo_config::ExtensionsConfig, id: &str) -> Result<PathBuf, CliError> {
     let first = cfg
         .search_paths
         .first()
@@ -246,7 +246,7 @@ fn compute_target(cfg: &agent_config::ExtensionsConfig, id: &str) -> Result<Path
     Ok(base.join(id))
 }
 
-fn build_discovery(cfg: &agent_config::ExtensionsConfig) -> ExtensionDiscovery {
+fn build_discovery(cfg: &nexo_config::ExtensionsConfig) -> ExtensionDiscovery {
     let search_paths: Vec<PathBuf> = cfg.search_paths.iter().map(PathBuf::from).collect();
     ExtensionDiscovery::new(
         search_paths,
@@ -259,7 +259,7 @@ fn build_discovery(cfg: &agent_config::ExtensionsConfig) -> ExtensionDiscovery {
 }
 
 fn detect_collision(
-    cfg: &agent_config::ExtensionsConfig,
+    cfg: &nexo_config::ExtensionsConfig,
     id: &str,
     target: &Path,
 ) -> Result<(), CliError> {
@@ -282,7 +282,7 @@ fn detect_collision(
     Ok(())
 }
 
-fn find_symlinked_install(cfg: &agent_config::ExtensionsConfig, id: &str) -> Option<PathBuf> {
+fn find_symlinked_install(cfg: &nexo_config::ExtensionsConfig, id: &str) -> Option<PathBuf> {
     for base in &cfg.search_paths {
         let p = PathBuf::from(base).join(id);
         if let Ok(meta) = fs::symlink_metadata(&p) {
@@ -538,7 +538,7 @@ command = "/bin/true"
     #[test]
     fn computes_target_under_first_search_path() {
         let tmp = TempDir::new().unwrap();
-        let cfg = agent_config::ExtensionsConfig {
+        let cfg = nexo_config::ExtensionsConfig {
             search_paths: vec![tmp.path().join("exts").to_string_lossy().to_string()],
             ..Default::default()
         };
@@ -549,7 +549,7 @@ command = "/bin/true"
 
     #[test]
     fn rejects_empty_search_paths() {
-        let cfg = agent_config::ExtensionsConfig {
+        let cfg = nexo_config::ExtensionsConfig {
             search_paths: vec![],
             ..Default::default()
         };

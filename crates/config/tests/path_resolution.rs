@@ -1,7 +1,7 @@
 //! Regression coverage for `AppConfig::load` canonicalising
 //! agent filesystem paths against the config directory.
 
-use agent_config::AppConfig;
+use nexo_config::AppConfig;
 use std::fs;
 use std::sync::Mutex;
 use tempfile::TempDir;

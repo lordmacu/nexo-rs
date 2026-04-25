@@ -5,11 +5,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_broker::{BrokerHandle, Event, LocalBroker, Message};
-use agent_extensions::runtime::announce::{
+use nexo_broker::{BrokerHandle, Event, LocalBroker, Message};
+use nexo_extensions::runtime::announce::{
     AnnounceCapabilities, AnnouncePayload, HeartbeatPayload, ShutdownPayload,
 };
-use agent_extensions::runtime::{
+use nexo_extensions::runtime::{
     DirectoryEvent, ExtensionDirectory, NatsRuntimeOptions, RemovalReason,
 };
 

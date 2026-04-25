@@ -1,5 +1,5 @@
 use super::behavior::AgentBehavior;
-use agent_config::types::agents::AgentConfig;
+use nexo_config::types::agents::AgentConfig;
 use std::sync::Arc;
 pub struct Agent {
     pub id: String,

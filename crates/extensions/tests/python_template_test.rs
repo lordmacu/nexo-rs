@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-use agent_extensions::{ExtensionManifest, StdioRuntime};
+use nexo_extensions::{ExtensionManifest, StdioRuntime};
 
 fn template_dir() -> PathBuf {
     // CARGO_MANIFEST_DIR → crates/extensions

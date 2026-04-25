@@ -38,7 +38,7 @@ async fn mock_cdp_server(
 
 #[tokio::test]
 async fn send_receives_correct_response() {
-    use agent_plugin_browser::CdpClient;
+    use nexo_plugin_browser::CdpClient;
 
     let ws_url = mock_cdp_server(|_req| json!({ "title": "Test Page" })).await;
     let client = CdpClient::connect(&ws_url).await.unwrap();
@@ -52,7 +52,7 @@ async fn send_receives_correct_response() {
 
 #[tokio::test]
 async fn multiple_concurrent_sends_correlate_correctly() {
-    use agent_plugin_browser::CdpClient;
+    use nexo_plugin_browser::CdpClient;
 
     let ws_url = mock_cdp_server(|req| {
         // Echo back the method name as the result
@@ -75,7 +75,7 @@ async fn multiple_concurrent_sends_correlate_correctly() {
 
 #[tokio::test]
 async fn error_response_propagates_as_err() {
-    use agent_plugin_browser::CdpClient;
+    use nexo_plugin_browser::CdpClient;
     use futures::{SinkExt, StreamExt};
     use tokio_tungstenite::accept_async;
     use tokio_tungstenite::tungstenite::Message;
@@ -111,7 +111,7 @@ async fn connect_timeout_on_unreachable_host() {
     // Port that has nothing listening — should fail fast
     let result = tokio::time::timeout(
         Duration::from_secs(3),
-        agent_plugin_browser::CdpClient::connect("ws://127.0.0.1:19999"),
+        nexo_plugin_browser::CdpClient::connect("ws://127.0.0.1:19999"),
     )
     .await;
 

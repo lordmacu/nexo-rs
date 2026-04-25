@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use agent_memory::{EmbeddingProvider, LongTermMemory};
+use nexo_memory::{EmbeddingProvider, LongTermMemory};
 use async_trait::async_trait;
 use tempfile::TempDir;
 

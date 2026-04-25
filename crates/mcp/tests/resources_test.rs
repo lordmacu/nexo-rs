@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use agent_mcp::{McpError, McpServerConfig, StdioMcpClient};
+use nexo_mcp::{McpError, McpServerConfig, StdioMcpClient};
 
 fn mock_server_path() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_mock_mcp_server"))

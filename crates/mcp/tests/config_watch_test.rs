@@ -4,10 +4,10 @@
 use std::io::Write;
 use std::time::Duration;
 
-use agent_mcp::config_watch::{
+use nexo_mcp::config_watch::{
     spawn_mcp_config_watcher, EXTENSIONS_YAML_FILENAME, MCP_YAML_FILENAME,
 };
-use agent_mcp::{McpRuntimeConfig, McpRuntimeManager};
+use nexo_mcp::{McpRuntimeConfig, McpRuntimeManager};
 use tokio_util::sync::CancellationToken;
 
 fn write_yaml(path: &std::path::Path, body: &str) {
@@ -56,7 +56,7 @@ async fn reload_on_valid_edit() {
 "#,
     );
 
-    let empty = agent_config::McpConfig::default();
+    let empty = nexo_config::McpConfig::default();
     let mgr = McpRuntimeManager::new(McpRuntimeConfig::from_yaml(&empty));
     let initial_fp = mgr.current_fingerprint().await;
 
@@ -104,7 +104,7 @@ async fn invalid_yaml_skipped() {
 "#,
     );
 
-    let empty = agent_config::McpConfig::default();
+    let empty = nexo_config::McpConfig::default();
     let mgr = McpRuntimeManager::new(McpRuntimeConfig::from_yaml(&empty));
     let initial_fp = mgr.current_fingerprint().await;
 
@@ -181,7 +181,7 @@ command = "/bin/true"
         ),
     );
 
-    let empty = agent_config::McpConfig::default();
+    let empty = nexo_config::McpConfig::default();
     let mgr = McpRuntimeManager::new(McpRuntimeConfig::from_yaml(&empty));
     let initial_fp = mgr.current_fingerprint().await;
 

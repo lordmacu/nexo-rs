@@ -1,7 +1,7 @@
 //! Phase 9.2 follow-up — Prometheus metrics for MCP session lifecycle.
 //!
-//! Lives in `agent-mcp` (not `agent-core::telemetry`) because
-//! `agent-mcp` is deliberately kept free of an `agent-core` dep to
+//! Lives in `nexo-mcp` (not `nexo-core::telemetry`) because
+//! `nexo-mcp` is deliberately kept free of an `nexo-core` dep to
 //! avoid the cycle. `main.rs` concatenates `render_mcp_prometheus()` into
 //! the `/metrics` response alongside core helpers.
 
@@ -306,11 +306,11 @@ pub fn render_prometheus() -> String {
     }
 
     out.push_str(
-        "# HELP agent_mcp_sampling_requests_total sampling/createMessage requests by server and outcome.\n",
+        "# HELP nexo_mcp_sampling_requests_total sampling/createMessage requests by server and outcome.\n",
     );
-    out.push_str("# TYPE agent_mcp_sampling_requests_total counter\n");
+    out.push_str("# TYPE nexo_mcp_sampling_requests_total counter\n");
     if MCP_SAMPLING_REQUESTS.is_empty() {
-        out.push_str("agent_mcp_sampling_requests_total{server=\"\",outcome=\"\"} 0\n");
+        out.push_str("nexo_mcp_sampling_requests_total{server=\"\",outcome=\"\"} 0\n");
     } else {
         let mut rows: Vec<_> = MCP_SAMPLING_REQUESTS
             .iter()
@@ -322,7 +322,7 @@ pub fn render_prometheus() -> String {
         });
         for (key, v) in rows {
             out.push_str(&format!(
-                "agent_mcp_sampling_requests_total{{server=\"{}\",outcome=\"{}\"}} {}\n",
+                "nexo_mcp_sampling_requests_total{{server=\"{}\",outcome=\"{}\"}} {}\n",
                 escape(&key.server),
                 escape(&key.outcome),
                 v
@@ -331,18 +331,18 @@ pub fn render_prometheus() -> String {
     }
 
     out.push_str(
-        "# HELP agent_mcp_sampling_duration_ms sampling/createMessage duration in milliseconds.\n",
+        "# HELP nexo_mcp_sampling_duration_ms sampling/createMessage duration in milliseconds.\n",
     );
-    out.push_str("# TYPE agent_mcp_sampling_duration_ms histogram\n");
+    out.push_str("# TYPE nexo_mcp_sampling_duration_ms histogram\n");
     if MCP_SAMPLING_DURATION_MS.is_empty() {
         for upper in SAMPLING_BUCKET_LIMITS_MS.iter() {
             out.push_str(&format!(
-                "agent_mcp_sampling_duration_ms_bucket{{server=\"\",le=\"{upper}\"}} 0\n"
+                "nexo_mcp_sampling_duration_ms_bucket{{server=\"\",le=\"{upper}\"}} 0\n"
             ));
         }
-        out.push_str("agent_mcp_sampling_duration_ms_bucket{server=\"\",le=\"+Inf\"} 0\n");
-        out.push_str("agent_mcp_sampling_duration_ms_sum{server=\"\"} 0\n");
-        out.push_str("agent_mcp_sampling_duration_ms_count{server=\"\"} 0\n");
+        out.push_str("nexo_mcp_sampling_duration_ms_bucket{server=\"\",le=\"+Inf\"} 0\n");
+        out.push_str("nexo_mcp_sampling_duration_ms_sum{server=\"\"} 0\n");
+        out.push_str("nexo_mcp_sampling_duration_ms_count{server=\"\"} 0\n");
     } else {
         let mut servers: Vec<_> = MCP_SAMPLING_DURATION_MS
             .iter()
@@ -357,20 +357,20 @@ pub fn render_prometheus() -> String {
             let server = escape(&server);
             for (idx, upper) in SAMPLING_BUCKET_LIMITS_MS.iter().enumerate() {
                 out.push_str(&format!(
-                    "agent_mcp_sampling_duration_ms_bucket{{server=\"{server}\",le=\"{upper}\"}} {}\n",
+                    "nexo_mcp_sampling_duration_ms_bucket{{server=\"{server}\",le=\"{upper}\"}} {}\n",
                     series.buckets[idx].load(Ordering::Relaxed)
                 ));
             }
             let count = series.count.load(Ordering::Relaxed);
             out.push_str(&format!(
-                "agent_mcp_sampling_duration_ms_bucket{{server=\"{server}\",le=\"+Inf\"}} {count}\n"
+                "nexo_mcp_sampling_duration_ms_bucket{{server=\"{server}\",le=\"+Inf\"}} {count}\n"
             ));
             out.push_str(&format!(
-                "agent_mcp_sampling_duration_ms_sum{{server=\"{server}\"}} {}\n",
+                "nexo_mcp_sampling_duration_ms_sum{{server=\"{server}\"}} {}\n",
                 series.sum_ms.load(Ordering::Relaxed)
             ));
             out.push_str(&format!(
-                "agent_mcp_sampling_duration_ms_count{{server=\"{server}\"}} {count}\n"
+                "nexo_mcp_sampling_duration_ms_count{{server=\"{server}\"}} {count}\n"
             ));
         }
     }
@@ -459,13 +459,13 @@ mod tests {
 
         let body = render_prometheus();
         assert!(
-            body.contains("agent_mcp_sampling_requests_total{server=\"srv-a\",outcome=\"ok\"} 2")
+            body.contains("nexo_mcp_sampling_requests_total{server=\"srv-a\",outcome=\"ok\"} 2")
         );
         assert!(body.contains(
-            "agent_mcp_sampling_requests_total{server=\"srv-a\",outcome=\"llm_error\"} 1"
+            "nexo_mcp_sampling_requests_total{server=\"srv-a\",outcome=\"llm_error\"} 1"
         ));
-        assert!(body.contains("agent_mcp_sampling_duration_ms_count{server=\"srv-a\"} 2"));
-        assert!(body.contains("agent_mcp_sampling_duration_ms_sum{server=\"srv-a\"} 162"));
+        assert!(body.contains("nexo_mcp_sampling_duration_ms_count{server=\"srv-a\"} 2"));
+        assert!(body.contains("nexo_mcp_sampling_duration_ms_sum{server=\"srv-a\"} 162"));
     }
 
     #[test]
@@ -473,7 +473,7 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap();
         reset_for_test();
         let body = render_prometheus();
-        assert!(body.contains("agent_mcp_sampling_requests_total{server=\"\",outcome=\"\"} 0"));
-        assert!(body.contains("agent_mcp_sampling_duration_ms_count{server=\"\"} 0"));
+        assert!(body.contains("nexo_mcp_sampling_requests_total{server=\"\",outcome=\"\"} 0"));
+        assert!(body.contains("nexo_mcp_sampling_duration_ms_count{server=\"\"} 0"));
     }
 }

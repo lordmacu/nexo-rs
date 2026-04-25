@@ -1,6 +1,6 @@
 //! Mini-redactor used to scrub stdout/stderr before returning to the
 //! LLM. Pattern set is deliberately narrow — this extension lives in
-//! its own workspace and must not depend on `agent-core`. The same
+//! its own workspace and must not depend on `nexo-core`. The same
 //! built-in shapes the runtime redactor uses are duplicated here.
 //!
 //! **Mirror invariant:** `crates/core/src/agent/redaction.rs::builtin_patterns`

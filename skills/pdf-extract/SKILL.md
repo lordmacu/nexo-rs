@@ -15,8 +15,8 @@ result within a safe LLM window.
 
 ## Use when
 
-- "Lee este PDF"
-- "Qué dice este documento" (after a PDF attachment)
+- "Read this PDF"
+- "What does this document say?" (after a PDF attachment)
 - Summarizing a PDF — call this first, then pass the output to `summarize_text`
 - Searching for specific text inside a PDF
 

@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use agent_resilience::{CircuitBreaker, CircuitBreakerConfig, CircuitError};
+use nexo_resilience::{CircuitBreaker, CircuitBreakerConfig, CircuitError};
 
 use super::tiktoken_fallback::TiktokenCounter;
 use super::TokenCounter;

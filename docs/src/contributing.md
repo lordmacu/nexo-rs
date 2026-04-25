@@ -15,8 +15,7 @@ Per-sub-phase done criteria live in
 
 ## Rules of the road
 
-- **All code and code comments in English.** User-facing prose can be
-  Spanish or English depending on context.
+- **All code, code comments, and Markdown docs in English.**
 - **No hardcoded secrets.** Use `${ENV_VAR}` or `${file:...}` in YAML.
 - **Every external call goes through `CircuitBreaker`.** No exceptions.
 - **Don't commit anything under `secrets/`.**
@@ -29,6 +28,7 @@ Any change that touches user-visible behavior — features, config
 fields, CLI flags, tool surfaces, retry policies — must update the
 mdBook under `docs/` in the **same commit**. Docs phase plan:
 [`docs/PHASES.md`](https://github.com/lordmacu/nexo-rs/blob/main/docs/PHASES.md).
+All mdBook pages must be written in English.
 
 Pure-internal changes (private renames, refactors, test-only) are
 exempt — mention that explicitly in the commit body.
@@ -39,6 +39,8 @@ exempt — mention that explicitly in the commit body.
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+./scripts/check_mdbook_english.sh
+./scripts/check_markdown_english.sh
 mdbook build docs
 ```
 

@@ -25,7 +25,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use agent_config::{AgentConfig, TelegramPluginConfig};
+use nexo_config::{AgentConfig, TelegramPluginConfig};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -438,7 +438,7 @@ fn validate_agent_into(
     }
 }
 
-fn has_any_override(b: &agent_config::InboundBinding) -> bool {
+fn has_any_override(b: &nexo_config::InboundBinding) -> bool {
     b.allowed_tools.is_some()
         || b.outbound_allowlist.is_some()
         || b.skills.is_some()
@@ -447,8 +447,8 @@ fn has_any_override(b: &agent_config::InboundBinding) -> bool {
         || b.allowed_delegates.is_some()
         || !matches!(
             b.sender_rate_limit,
-            agent_config::SenderRateLimitOverride::Keyword(
-                agent_config::SenderRateLimitKeyword::Inherit
+            nexo_config::SenderRateLimitOverride::Keyword(
+                nexo_config::SenderRateLimitKeyword::Inherit
             )
         )
 }
@@ -456,7 +456,7 @@ fn has_any_override(b: &agent_config::InboundBinding) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_config::{
+    use nexo_config::{
         AgentRuntimeConfig, DreamingYamlConfig, HeartbeatConfig, InboundBinding, ModelConfig,
         OutboundAllowlistConfig, TelegramAllowlistConfig, TelegramAutoTranscribeConfig,
         TelegramPluginConfig, TelegramPollingConfig, WorkspaceGitConfig,
@@ -494,6 +494,8 @@ mod tests {
             google_auth: None,
             credentials: Default::default(),
             link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
             outbound_allowlist: OutboundAllowlistConfig::default(),
             context_optimization: None,

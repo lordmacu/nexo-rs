@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use agent_mcp::{McpError, McpServerConfig, StdioMcpClient};
+use nexo_mcp::{McpError, McpServerConfig, StdioMcpClient};
 
 fn mock_server_path() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_mock_mcp_server"))
@@ -265,7 +265,7 @@ async fn tools_call_with_meta_is_forwarded_to_server() {
         .expect("call");
     assert!(!result.is_error);
     let text = match &result.content[0] {
-        agent_mcp::McpContent::Text { text } => text.clone(),
+        nexo_mcp::McpContent::Text { text } => text.clone(),
         other => panic!("unexpected: {other:?}"),
     };
     let echoed: serde_json::Value = serde_json::from_str(&text).expect("json");
@@ -284,7 +284,7 @@ async fn tools_call_without_meta_omits_the_field() {
         .await
         .expect("call");
     let text = match &result.content[0] {
-        agent_mcp::McpContent::Text { text } => text.clone(),
+        nexo_mcp::McpContent::Text { text } => text.clone(),
         other => panic!("unexpected: {other:?}"),
     };
     // Server echoes "null" when no _meta was sent.
@@ -344,8 +344,8 @@ async fn set_log_level_rejects_invalid_level() {
 
 #[tokio::test]
 async fn update_config_hot_reloads_log_level_on_live_client() {
-    use agent_mcp::runtime_config::{McpRuntimeConfig, McpServerRuntimeConfig};
-    use agent_mcp::McpRuntimeManager;
+    use nexo_mcp::runtime_config::{McpRuntimeConfig, McpServerRuntimeConfig};
+    use nexo_mcp::McpRuntimeManager;
     use uuid::Uuid;
 
     let log = tempfile::NamedTempFile::new().expect("tmp");
@@ -437,8 +437,8 @@ async fn read_resource_with_meta_forwards_to_server() {
 
 #[tokio::test]
 async fn update_config_resets_level_to_info_when_flag_on_and_unset() {
-    use agent_mcp::runtime_config::{McpRuntimeConfig, McpServerRuntimeConfig};
-    use agent_mcp::McpRuntimeManager;
+    use nexo_mcp::runtime_config::{McpRuntimeConfig, McpServerRuntimeConfig};
+    use nexo_mcp::McpRuntimeManager;
     use uuid::Uuid;
 
     let log = tempfile::NamedTempFile::new().expect("tmp");

@@ -1,6 +1,6 @@
 ---
 name: Wolfram Alpha
-description: Computational queries — mate, ciencia, conversiones, datos.
+description: Computational queries — math, science, conversions, and verified facts.
 requires:
   bins: []
   env: [WOLFRAM_APP_ID]
@@ -8,14 +8,14 @@ requires:
 
 # Wolfram Alpha
 
-Use cuando necesites una **respuesta computacional precisa**: conversiones de
-unidad, cálculos matemáticos, propiedades químicas, datos astronómicos,
-historia/geografía con data verificable. El LLM tiende a alucinar en esos
-casos — Wolfram no.
+Use this when you need a **precise computational answer**: unit
+conversions, math calculations, chemical properties, astronomical data,
+or history/geography with verifiable facts. LLMs tend to hallucinate in
+those cases; Wolfram does not.
 
 ## Tools
 - `wolfram_short(input, units?)` — single-line answer. "distance earth to moon", "sqrt(2)", "capital of Colombia"
-- `wolfram_query(input, format?, units?)` — full `queryresult` con pods (input, result, alternative forms, plots)
+- `wolfram_query(input, format?, units?)` — full `queryresult` with pods (input, result, alternative forms, plots)
 
 ## Setup
-Registrate en [developer.wolframalpha.com](https://developer.wolframalpha.com/) — AppID free tier 2000 queries/mes.
+Register at [developer.wolframalpha.com](https://developer.wolframalpha.com/) — AppID free tier: 2000 queries/month.

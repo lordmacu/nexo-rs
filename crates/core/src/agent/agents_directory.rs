@@ -12,7 +12,7 @@
 
 use std::sync::Arc;
 
-use agent_config::types::agents::{AgentConfig, InboundBinding};
+use nexo_config::types::agents::{AgentConfig, InboundBinding};
 
 /// Serialisable snapshot of one agent. Fields are the operator-relevant
 /// bits of `AgentConfig` (skip secrets like tokens, skip heavy stuff
@@ -83,7 +83,7 @@ impl AgentsDirectory {
     }
 
     fn render_list(&self) -> String {
-        // Handwritten JSON keeps agent-core free of a serde_json
+        // Handwritten JSON keeps nexo-core free of a serde_json
         // dependency for this module — the payload is tiny and the
         // field set is stable, so the cost of pulling in serde_json
         // isn't worth paying here.

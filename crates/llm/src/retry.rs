@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use agent_config::types::llm::RetryConfig;
+use nexo_config::types::llm::RetryConfig;
 
 /// Parse an HTTP `Retry-After` header into milliseconds. Handles both the
 /// seconds form (`"42"`) and the HTTP-date form (`"Wed, 21 Oct 2026 …"`).

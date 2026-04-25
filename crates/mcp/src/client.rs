@@ -1,5 +1,5 @@
 //! Stdio MCP client — spawns an MCP server process and speaks JSON-RPC 2.0
-//! over line-delimited stdio. Modelled after `agent_extensions::runtime::stdio`
+//! over line-delimited stdio. Modelled after `nexo_extensions::runtime::stdio`
 //! (11.3) but narrowed to MCP semantics (initialize + notifications).
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -12,8 +12,8 @@ use tokio::process::{ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
-use agent_extensions::runtime::wire;
-use agent_resilience::{CircuitBreaker, CircuitBreakerConfig};
+use nexo_extensions::runtime::wire;
+use nexo_resilience::{CircuitBreaker, CircuitBreakerConfig};
 
 use crate::config::McpServerConfig;
 use crate::errors::McpError;

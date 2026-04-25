@@ -1,7 +1,7 @@
-//! Streaming telemetry for `agent-llm`.
+//! Streaming telemetry for `nexo-llm`.
 //!
-//! Lives in `agent-llm` so parser/client code can emit metrics without
-//! depending on `agent-core` (which would create a circular dependency).
+//! Lives in `nexo-llm` so parser/client code can emit metrics without
+//! depending on `nexo-core` (which would create a circular dependency).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::LazyLock;
@@ -89,19 +89,19 @@ pub fn render_prometheus() -> String {
     let mut out = String::new();
 
     out.push_str(
-        "# HELP agent_llm_stream_ttft_seconds Time-to-first-token for streaming responses.\n",
+        "# HELP nexo_llm_stream_ttft_seconds Time-to-first-token for streaming responses.\n",
     );
-    out.push_str("# TYPE agent_llm_stream_ttft_seconds histogram\n");
+    out.push_str("# TYPE nexo_llm_stream_ttft_seconds histogram\n");
     if STREAM_TTFT.is_empty() {
         for upper in TTFT_BUCKET_LIMITS_MS.iter() {
             out.push_str(&format!(
-                "agent_llm_stream_ttft_seconds_bucket{{provider=\"\",le=\"{}\"}} 0\n",
+                "nexo_llm_stream_ttft_seconds_bucket{{provider=\"\",le=\"{}\"}} 0\n",
                 fmt_secs(*upper)
             ));
         }
-        out.push_str("agent_llm_stream_ttft_seconds_bucket{provider=\"\",le=\"+Inf\"} 0\n");
-        out.push_str("agent_llm_stream_ttft_seconds_sum{provider=\"\"} 0\n");
-        out.push_str("agent_llm_stream_ttft_seconds_count{provider=\"\"} 0\n");
+        out.push_str("nexo_llm_stream_ttft_seconds_bucket{provider=\"\",le=\"+Inf\"} 0\n");
+        out.push_str("nexo_llm_stream_ttft_seconds_sum{provider=\"\"} 0\n");
+        out.push_str("nexo_llm_stream_ttft_seconds_count{provider=\"\"} 0\n");
     } else {
         let mut providers: Vec<String> = STREAM_TTFT.iter().map(|e| e.key().clone()).collect();
         providers.sort();
@@ -113,31 +113,31 @@ pub fn render_prometheus() -> String {
             let provider = escape(&provider);
             for (idx, upper) in TTFT_BUCKET_LIMITS_MS.iter().enumerate() {
                 out.push_str(&format!(
-                    "agent_llm_stream_ttft_seconds_bucket{{provider=\"{provider}\",le=\"{}\"}} {}\n",
+                    "nexo_llm_stream_ttft_seconds_bucket{{provider=\"{provider}\",le=\"{}\"}} {}\n",
                     fmt_secs(*upper),
                     series.buckets[idx].load(Ordering::Relaxed)
                 ));
             }
             let count = series.count.load(Ordering::Relaxed);
             out.push_str(&format!(
-                "agent_llm_stream_ttft_seconds_bucket{{provider=\"{provider}\",le=\"+Inf\"}} {count}\n"
+                "nexo_llm_stream_ttft_seconds_bucket{{provider=\"{provider}\",le=\"+Inf\"}} {count}\n"
             ));
             out.push_str(&format!(
-                "agent_llm_stream_ttft_seconds_sum{{provider=\"{provider}\"}} {}\n",
+                "nexo_llm_stream_ttft_seconds_sum{{provider=\"{provider}\"}} {}\n",
                 fmt_secs(series.sum_ms.load(Ordering::Relaxed))
             ));
             out.push_str(&format!(
-                "agent_llm_stream_ttft_seconds_count{{provider=\"{provider}\"}} {count}\n"
+                "nexo_llm_stream_ttft_seconds_count{{provider=\"{provider}\"}} {count}\n"
             ));
         }
     }
 
     out.push_str(
-        "# HELP agent_llm_stream_chunks_total Streaming chunks emitted by provider/kind.\n",
+        "# HELP nexo_llm_stream_chunks_total Streaming chunks emitted by provider/kind.\n",
     );
-    out.push_str("# TYPE agent_llm_stream_chunks_total counter\n");
+    out.push_str("# TYPE nexo_llm_stream_chunks_total counter\n");
     if STREAM_CHUNKS.is_empty() {
-        out.push_str("agent_llm_stream_chunks_total{provider=\"\",kind=\"\"} 0\n");
+        out.push_str("nexo_llm_stream_chunks_total{provider=\"\",kind=\"\"} 0\n");
     } else {
         let mut rows: Vec<_> = STREAM_CHUNKS
             .iter()
@@ -148,7 +148,7 @@ pub fn render_prometheus() -> String {
         });
         for (key, v) in rows {
             out.push_str(&format!(
-                "agent_llm_stream_chunks_total{{provider=\"{}\",kind=\"{}\"}} {}\n",
+                "nexo_llm_stream_chunks_total{{provider=\"{}\",kind=\"{}\"}} {}\n",
                 escape(&key.provider),
                 escape(&key.kind),
                 v
@@ -187,19 +187,19 @@ mod tests {
         let body = render_prometheus();
         assert!(contains_line(
             &body,
-            "agent_llm_stream_ttft_seconds_count{provider=\"openai\"} 2"
+            "nexo_llm_stream_ttft_seconds_count{provider=\"openai\"} 2"
         ));
         assert!(contains_line(
             &body,
-            "agent_llm_stream_chunks_total{provider=\"openai\",kind=\"text_delta\"} 1"
+            "nexo_llm_stream_chunks_total{provider=\"openai\",kind=\"text_delta\"} 1"
         ));
         assert!(contains_line(
             &body,
-            "agent_llm_stream_chunks_total{provider=\"openai\",kind=\"usage\"} 1"
+            "nexo_llm_stream_chunks_total{provider=\"openai\",kind=\"usage\"} 1"
         ));
         assert!(contains_line(
             &body,
-            "agent_llm_stream_chunks_total{provider=\"prov\\\"x\",kind=\"line\\nbreak\"} 1"
+            "nexo_llm_stream_chunks_total{provider=\"prov\\\"x\",kind=\"line\\nbreak\"} 1"
         ));
     }
 
@@ -210,11 +210,11 @@ mod tests {
         let body = render_prometheus();
         assert!(contains_line(
             &body,
-            "agent_llm_stream_ttft_seconds_count{provider=\"\"} 0"
+            "nexo_llm_stream_ttft_seconds_count{provider=\"\"} 0"
         ));
         assert!(contains_line(
             &body,
-            "agent_llm_stream_chunks_total{provider=\"\",kind=\"\"} 0"
+            "nexo_llm_stream_chunks_total{provider=\"\",kind=\"\"} 0"
         ));
     }
 }

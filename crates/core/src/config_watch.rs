@@ -1,6 +1,6 @@
 //! Phase 18 — debounced file watcher for config hot-reload.
 //!
-//! Mirrors the pattern established in `agent-extensions::watch` but
+//! Mirrors the pattern established in `nexo-extensions::watch` but
 //! emits plain `()` notifications on a tokio channel instead of parsing
 //! the content — the coordinator does the reload after debounced
 //! events settle.

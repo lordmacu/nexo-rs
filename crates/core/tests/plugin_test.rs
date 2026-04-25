@@ -1,7 +1,7 @@
 use std::sync::{atomic::Ordering, Arc};
 
-use agent_broker::AnyBroker;
-use agent_core::agent::{Command, MockPlugin, Plugin, PluginRegistry, Response};
+use nexo_broker::AnyBroker;
+use nexo_core::agent::{Command, MockPlugin, Plugin, PluginRegistry, Response};
 use async_trait::async_trait;
 
 #[tokio::test]

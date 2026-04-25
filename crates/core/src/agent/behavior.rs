@@ -1,6 +1,6 @@
 use super::context::AgentContext;
 use super::types::InboundMessage;
-use agent_broker::Event;
+use nexo_broker::Event;
 use async_trait::async_trait;
 #[async_trait]
 pub trait AgentBehavior: Send + Sync {

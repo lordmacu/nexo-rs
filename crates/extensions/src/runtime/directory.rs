@@ -14,7 +14,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use agent_broker::{BrokerHandle, Event};
+use nexo_broker::{BrokerHandle, Event};
 
 use super::announce::{AnnouncePayload, HeartbeatPayload, RegistryRequestPayload, ShutdownPayload};
 use super::nats::{NatsRuntime, NatsRuntimeOptions};

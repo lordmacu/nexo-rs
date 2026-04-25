@@ -1,5 +1,5 @@
-//! Phase 12.4 — `agent-core` helpers that bridge `SessionMcpRuntime` to
-//! the agent's `ToolRegistry`. Reuses the manager from `agent-mcp` and the
+//! Phase 12.4 — `nexo-core` helpers that bridge `SessionMcpRuntime` to
+//! the agent's `ToolRegistry`. Reuses the manager from `nexo-mcp` and the
 //! mock server binary (rebuilt on demand).
 
 use std::collections::HashMap;
@@ -8,11 +8,11 @@ use std::process::Command;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use agent_core::agent::tool_registry::ToolRegistry;
-use agent_core::agent::{build_session_catalog, register_session_tools};
-use agent_mcp::config::McpServerConfig;
-use agent_mcp::runtime_config::{McpRuntimeConfig, McpServerRuntimeConfig};
-use agent_mcp::McpRuntimeManager;
+use nexo_core::agent::tool_registry::ToolRegistry;
+use nexo_core::agent::{build_session_catalog, register_session_tools};
+use nexo_mcp::config::McpServerConfig;
+use nexo_mcp::runtime_config::{McpRuntimeConfig, McpServerRuntimeConfig};
+use nexo_mcp::McpRuntimeManager;
 use uuid::Uuid;
 
 static BUILT: OnceLock<PathBuf> = OnceLock::new();
@@ -31,7 +31,7 @@ fn mock_bin_path() -> PathBuf {
             let path = workspace_root().join("target/debug/mock_mcp_server");
             if !path.exists() {
                 let status = Command::new(env!("CARGO"))
-                    .args(["build", "--bin", "mock_mcp_server", "-p", "agent-mcp"])
+                    .args(["build", "--bin", "mock_mcp_server", "-p", "nexo-mcp"])
                     .status()
                     .expect("cargo build mock_mcp_server");
                 assert!(status.success(), "failed to build mock_mcp_server");

@@ -1,4 +1,4 @@
-use agent_memory::LongTermMemory;
+use nexo_memory::LongTermMemory;
 use chrono::{Duration, Utc};
 use uuid::Uuid;
 

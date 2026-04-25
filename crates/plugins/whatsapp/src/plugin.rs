@@ -12,9 +12,9 @@
 
 use std::sync::Arc;
 
-use agent_broker::{AnyBroker, BrokerHandle, Event};
-use agent_config::WhatsappPluginConfig;
-use agent_core::agent::plugin::{Command, Plugin, Response};
+use nexo_broker::{AnyBroker, BrokerHandle, Event};
+use nexo_config::WhatsappPluginConfig;
+use nexo_core::agent::plugin::{Command, Plugin, Response};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use dashmap::DashMap;

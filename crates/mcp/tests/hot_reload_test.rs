@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use agent_mcp::{ClientEvent, McpClient, McpServerConfig, SessionMcpRuntime, StdioMcpClient};
+use nexo_mcp::{ClientEvent, McpClient, McpServerConfig, SessionMcpRuntime, StdioMcpClient};
 use uuid::Uuid;
 
 fn mock_server_path() -> PathBuf {

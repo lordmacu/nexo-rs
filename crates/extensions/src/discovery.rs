@@ -102,7 +102,7 @@ pub struct ExtensionMcpDecl {
     pub ext_id: String,
     pub ext_version: String,
     pub ext_root: PathBuf,
-    pub servers: std::collections::BTreeMap<String, agent_config::McpServerYaml>,
+    pub servers: std::collections::BTreeMap<String, nexo_config::McpServerYaml>,
 }
 
 /// Pick up every candidate in the report that declares at least one MCP
@@ -394,10 +394,10 @@ fn normalize_path_for_display(path: &Path, search_root: &Path, canonical_root: &
 
 fn load_sidecar_mcp_servers(
     path: &Path,
-) -> anyhow::Result<BTreeMap<String, agent_config::McpServerYaml>> {
+) -> anyhow::Result<BTreeMap<String, nexo_config::McpServerYaml>> {
     let raw = std::fs::read_to_string(path)?;
     let sidecar: SidecarMcpFile = serde_json::from_str(&raw)?;
-    let mut out: BTreeMap<String, agent_config::McpServerYaml> = BTreeMap::new();
+    let mut out: BTreeMap<String, nexo_config::McpServerYaml> = BTreeMap::new();
     for (name, server) in sidecar.mcp_servers {
         let transport = server
             .transport
@@ -409,7 +409,7 @@ fn load_sidecar_mcp_servers(
                 let command = server
                     .command
                     .ok_or_else(|| anyhow::anyhow!("server `{name}` is missing `command`"))?;
-                agent_config::McpServerYaml::Stdio {
+                nexo_config::McpServerYaml::Stdio {
                     command,
                     args: server.args,
                     env: server.env,
@@ -422,7 +422,7 @@ fn load_sidecar_mcp_servers(
                 let url = server
                     .url
                     .ok_or_else(|| anyhow::anyhow!("server `{name}` is missing `url`"))?;
-                agent_config::McpServerYaml::StreamableHttp {
+                nexo_config::McpServerYaml::StreamableHttp {
                     url,
                     headers: server.headers,
                     log_level: server.log_level,
@@ -433,7 +433,7 @@ fn load_sidecar_mcp_servers(
                 let url = server
                     .url
                     .ok_or_else(|| anyhow::anyhow!("server `{name}` is missing `url`"))?;
-                agent_config::McpServerYaml::StreamableHttp {
+                nexo_config::McpServerYaml::StreamableHttp {
                     url,
                     headers: server.headers,
                     log_level: server.log_level,
@@ -444,7 +444,7 @@ fn load_sidecar_mcp_servers(
                 let url = server
                     .url
                     .ok_or_else(|| anyhow::anyhow!("server `{name}` is missing `url`"))?;
-                agent_config::McpServerYaml::Sse {
+                nexo_config::McpServerYaml::Sse {
                     url,
                     headers: server.headers,
                     log_level: server.log_level,
@@ -455,7 +455,7 @@ fn load_sidecar_mcp_servers(
                 let url = server
                     .url
                     .ok_or_else(|| anyhow::anyhow!("server `{name}` is missing `url`"))?;
-                agent_config::McpServerYaml::Auto {
+                nexo_config::McpServerYaml::Auto {
                     url,
                     headers: server.headers,
                     log_level: server.log_level,
@@ -469,7 +469,7 @@ fn load_sidecar_mcp_servers(
             }
             None => {
                 if let Some(command) = server.command {
-                    agent_config::McpServerYaml::Stdio {
+                    nexo_config::McpServerYaml::Stdio {
                         command,
                         args: server.args,
                         env: server.env,
@@ -478,7 +478,7 @@ fn load_sidecar_mcp_servers(
                         context_passthrough: server.context_passthrough,
                     }
                 } else if let Some(url) = server.url {
-                    agent_config::McpServerYaml::Auto {
+                    nexo_config::McpServerYaml::Auto {
                         url,
                         headers: server.headers,
                         log_level: server.log_level,

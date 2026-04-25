@@ -4,7 +4,7 @@
 //! vector prevents an accidental algorithm switch from silently
 //! invalidating existing log / metric tags.
 
-use agent_auth::handle::Fingerprint;
+use nexo_auth::handle::Fingerprint;
 
 #[test]
 fn same_input_produces_same_fingerprint() {

@@ -13,8 +13,8 @@ use futures::stream::BoxStream;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use agent_config::types::llm::{LlmProviderConfig, RetryConfig};
-use agent_resilience::{CircuitBreaker, CircuitBreakerConfig, CircuitError};
+use nexo_config::types::llm::{LlmProviderConfig, RetryConfig};
+use nexo_resilience::{CircuitBreaker, CircuitBreakerConfig, CircuitError};
 
 use crate::anthropic_auth::{
     validate_setup_token, AnthropicAuth, OAuthBundle, OAuthState, DEFAULT_CLIENT_ID,
@@ -107,6 +107,18 @@ pub(crate) fn merge_beta_headers(
     }
 }
 
+/// Read a reqwest response body lossily — `text()` returns `Err` on
+/// invalid UTF-8 or transport-level read errors, both of which lose
+/// the body entirely and leave us with empty error logs. Read raw
+/// bytes and run them through `from_utf8_lossy` so we always keep
+/// *something* on disk for debugging.
+async fn read_body_lossy(response: reqwest::Response) -> String {
+    match response.bytes().await {
+        Ok(b) => String::from_utf8_lossy(&b).into_owned(),
+        Err(_) => String::new(),
+    }
+}
+
 pub struct AnthropicClient {
     http: reqwest::Client,
     base_url: String,
@@ -137,7 +149,10 @@ impl AnthropicClient {
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(120))
             .build()
-            .expect("failed to build reqwest client");
+            .unwrap_or_else(|e| {
+                tracing::error!(error = %e, "reqwest client build failed; falling back to default client (no timeout)");
+                reqwest::Client::new()
+            });
         let base = if cfg.base_url.trim().is_empty() {
             DEFAULT_BASE.to_string()
         } else {
@@ -171,11 +186,11 @@ impl AnthropicClient {
             return Err(LlmError::RateLimit { retry_after_ms });
         }
         if status >= 500 {
-            let body = response.text().await.unwrap_or_default();
+            let body = read_body_lossy(response).await;
             return Err(LlmError::ServerError { status, body });
         }
         if status == 401 || status == 403 {
-            let body = response.text().await.unwrap_or_default();
+            let body = read_body_lossy(response).await;
             // OAuth/setup-token: mark stale so the next request tries
             // a fresh refresh. Static API keys simply fail — user
             // needs to fix them in `secrets/` + re-run setup.
@@ -194,7 +209,7 @@ impl AnthropicClient {
             return Err(LlmError::CredentialInvalid { hint });
         }
         if !response.status().is_success() {
-            let body = response.text().await.unwrap_or_default();
+            let body = read_body_lossy(response).await;
             return Err(LlmError::Other(anyhow::anyhow!("HTTP {status}: {body}")));
         }
         Ok(response)

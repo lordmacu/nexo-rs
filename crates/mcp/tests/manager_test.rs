@@ -9,9 +9,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_mcp::config::McpServerConfig;
-use agent_mcp::runtime_config::{McpRuntimeConfig, McpServerRuntimeConfig};
-use agent_mcp::{McpRuntimeManager, RuntimeCallError};
+use nexo_mcp::config::McpServerConfig;
+use nexo_mcp::runtime_config::{McpRuntimeConfig, McpServerRuntimeConfig};
+use nexo_mcp::{McpRuntimeManager, RuntimeCallError};
 use uuid::Uuid;
 
 fn mock_server_path() -> PathBuf {

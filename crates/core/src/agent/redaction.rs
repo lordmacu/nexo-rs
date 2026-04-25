@@ -9,7 +9,7 @@
 //! gone from disk. This is intentional — keeping a mapping would
 //! recreate the leak surface.
 
-use agent_config::types::transcripts::{RedactionConfig, RedactionPattern};
+use nexo_config::types::transcripts::{RedactionConfig, RedactionPattern};
 use anyhow::Context;
 use regex::Regex;
 
@@ -100,7 +100,7 @@ fn compile_extra(idx: usize, p: &RedactionPattern) -> anyhow::Result<Regex> {
 /// so they don't get partially shadowed by generic catch-alls below.
 ///
 /// **Mirror invariant:** `extensions/onepassword/src/redact.rs` ships
-/// the same pattern set (it can't depend on `agent-core` because the
+/// the same pattern set (it can't depend on `nexo-core` because the
 /// extension lives in its own workspace). When you edit either list,
 /// edit both. CI grep enforces nothing — discipline is on the author.
 fn builtin_patterns() -> &'static [(&'static str, &'static str)] {

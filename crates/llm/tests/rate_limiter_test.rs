@@ -1,4 +1,4 @@
-use agent_llm::RateLimiter;
+use nexo_llm::RateLimiter;
 use std::time::{Duration, Instant};
 
 #[tokio::test]

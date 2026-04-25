@@ -11,9 +11,9 @@ use super::types::{InboundMedia, InboundMessage, RunTrigger};
 use crate::heartbeat::{heartbeat_interval, heartbeat_topic, publish_heartbeat};
 use crate::session::SessionManager;
 use crate::telemetry::inc_messages_processed_total;
-use agent_broker::{AnyBroker, BrokerHandle};
-use agent_config::types::agents::InboundBinding;
-use agent_memory::LongTermMemory;
+use nexo_broker::{AnyBroker, BrokerHandle};
+use nexo_config::types::agents::InboundBinding;
+use nexo_memory::LongTermMemory;
 use dashmap::DashMap;
 use serde_json::Value;
 use std::mem;
@@ -72,10 +72,10 @@ pub struct AgentRuntime {
     /// Phase 17 — per-agent credential resolver attached to every
     /// AgentContext the runtime builds. `None` in tests / no-credential
     /// boot paths; consumers fall back to legacy topics in that case.
-    credentials: Option<Arc<agent_auth::AgentCredentialResolver>>,
+    credentials: Option<Arc<nexo_auth::AgentCredentialResolver>>,
     /// Phase 17 — per-(channel, instance) breaker registry; cloned
     /// onto every AgentContext alongside `credentials`.
-    breakers: Option<Arc<agent_auth::BreakerRegistry>>,
+    breakers: Option<Arc<nexo_auth::BreakerRegistry>>,
     /// Optional pre-persistence redactor cloned onto every
     /// AgentContext. `None` keeps transcripts un-redacted.
     redactor: Option<Arc<super::redaction::Redactor>>,
@@ -89,7 +89,7 @@ pub struct AgentRuntime {
     /// Phase 25 — shared web-search router (one per process, every
     /// runtime gets the same Arc). `None` disables the `web_search`
     /// tool regardless of YAML.
-    web_search_router: Option<Arc<agent_web_search::WebSearchRouter>>,
+    web_search_router: Option<Arc<nexo_web_search::WebSearchRouter>>,
     /// Legacy cache — still owned by the runtime for back-compat with
     /// any test construction path. Hot-reload reads the per-snapshot
     /// `tool_cache` instead; see [`RuntimeSnapshot::tool_cache`].
@@ -191,7 +191,7 @@ impl AgentRuntime {
     /// by this runtime inherits it so the `web_search` tool can route.
     pub fn with_web_search_router(
         mut self,
-        router: Arc<agent_web_search::WebSearchRouter>,
+        router: Arc<nexo_web_search::WebSearchRouter>,
     ) -> Self {
         self.web_search_router = Some(router);
         self
@@ -234,12 +234,12 @@ impl AgentRuntime {
     /// single-account topic.
     pub fn with_credentials(
         mut self,
-        credentials: Arc<agent_auth::AgentCredentialResolver>,
+        credentials: Arc<nexo_auth::AgentCredentialResolver>,
     ) -> Self {
         self.credentials = Some(credentials);
         self
     }
-    pub fn with_breakers(mut self, breakers: Arc<agent_auth::BreakerRegistry>) -> Self {
+    pub fn with_breakers(mut self, breakers: Arc<nexo_auth::BreakerRegistry>) -> Self {
         self.breakers = Some(breakers);
         self
     }
@@ -390,7 +390,7 @@ impl AgentRuntime {
                         // on the NEXT event because biased select
                         // drains reload first.
                         let snap = snapshot_ref.load_full();
-                        let bindings = &snap.agent_config.inbound_bindings;
+                        let bindings = &snap.nexo_config.inbound_bindings;
                         let effective = if bindings.is_empty() {
                             snap.policy_for(None)
                                 .or_else(|| effective_policies.get(&None).map(|e| Arc::clone(e.value())))
@@ -648,7 +648,7 @@ impl AgentRuntime {
                                     };
                                     let topic = route_topic(&msg.from);
                                     if let Ok(payload) = serde_json::to_value(response) {
-                                        let evt = agent_broker::Event::new(
+                                        let evt = nexo_broker::Event::new(
                                             &topic,
                                             &agent.id,
                                             payload,
@@ -692,7 +692,7 @@ impl AgentRuntime {
                                         continue;
                                     }
                                 };
-                                let evt = agent_broker::Event::new(&topic, &agent.id, payload);
+                                let evt = nexo_broker::Event::new(&topic, &agent.id, payload);
                                 if let Err(e) = broker.publish(&topic, evt).await {
                                     tracing::error!(agent_id = %agent.id, error = %e, "failed to publish route result");
                                 } else {
@@ -724,7 +724,7 @@ impl AgentRuntime {
                                 }
                             }
                             AgentPayload::Broadcast { event, data } => {
-                                let evt = agent_broker::Event::new(
+                                let evt = nexo_broker::Event::new(
                                     format!("agent.broadcast.{event}"),
                                     &msg.from,
                                     data,
@@ -904,7 +904,7 @@ async fn flush(behavior: &Arc<dyn AgentBehavior>, ctx: &AgentContext, items: Vec
             // can attach alerting / retry tooling. Never blocks the
             // loop — a broker hiccup here is logged and we move on.
             let dlq_topic = format!("agent.dlq.{}", ctx.agent_id);
-            let mut ev = agent_broker::Event::new(
+            let mut ev = nexo_broker::Event::new(
                 &dlq_topic,
                 &ctx.agent_id,
                 serde_json::json!({

@@ -27,10 +27,10 @@ Exposed metrics:
 | `llm_requests_total` | counter | `agent`, `provider`, `model` | Every LLM completion request |
 | `llm_latency_ms` | histogram | `agent`, `provider`, `model` | Buckets 50, 100, 250, 500, 1000, 2500, 5000, 10000 ms |
 | `messages_processed_total` | counter | `agent` | Inbound messages that reached an agent |
-| `agent_extensions_discovered` | counter | `status={ok,disabled,invalid}` | Emitted on every discovery sweep |
-| `agent_tool_calls_total` | counter | `agent`, `outcome={ok,error,blocked,unknown}`, `tool` | Tool invocations |
-| `agent_tool_cache_events_total` | counter | `agent`, `event={hit,miss,put,evict}`, `tool` | Tool-level memoization |
-| `agent_tool_latency_ms` | histogram | `agent`, `tool` | Per-tool latency |
+| `nexo_extensions_discovered` | counter | `status={ok,disabled,invalid}` | Emitted on every discovery sweep |
+| `nexo_tool_calls_total` | counter | `agent`, `outcome={ok,error,blocked,unknown}`, `tool` | Tool invocations |
+| `nexo_tool_cache_events_total` | counter | `agent`, `event={hit,miss,put,evict}`, `tool` | Tool-level memoization |
+| `nexo_tool_latency_ms` | histogram | `agent`, `tool` | Per-tool latency |
 | `circuit_breaker_state` | gauge | `breaker` | `0 = Closed`, `1 = Open`; always includes `nats` |
 | `credentials_accounts_total` | gauge | `channel` | Per-channel labelled instance count (Phase 17) |
 | `credentials_bindings_total` | gauge | `agent`, `channel` | `1` when the agent has a credential bound, `0` otherwise |
@@ -74,7 +74,7 @@ never the raw JID or email, so scraped metrics stay safe to share.
 ```yaml
 - alert: ToolErrorSpike
   expr: |
-    sum(rate(agent_tool_calls_total{outcome="error"}[5m])) by (tool) > 0.5
+    sum(rate(nexo_tool_calls_total{outcome="error"}[5m])) by (tool) > 0.5
   for: 10m
 ```
 

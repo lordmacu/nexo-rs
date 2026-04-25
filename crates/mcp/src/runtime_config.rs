@@ -1,6 +1,6 @@
 //! Runtime-side MCP config — per-server launch descriptors.
 //!
-//! Produced from `agent_config::McpConfig` at startup. 12.2 expanded the
+//! Produced from `nexo_config::McpConfig` at startup. 12.2 expanded the
 //! shape with HTTP variants; the existing stdio `McpServerConfig` (12.1)
 //! is unchanged and embedded in `McpServerRuntimeConfig::Stdio`.
 
@@ -68,18 +68,18 @@ pub struct McpRuntimeConfig {
 }
 
 /// Phase 12.7 — extension-declared MCP servers to merge into the runtime.
-/// Caller (agent-core / main) obtains these via
-/// `agent_extensions::collect_mcp_declarations`.
+/// Caller (nexo-core / main) obtains these via
+/// `nexo_extensions::collect_mcp_declarations`.
 #[derive(Debug, Clone)]
 pub struct ExtensionServerDecl {
     pub ext_id: String,
     pub ext_version: String,
     pub ext_root: std::path::PathBuf,
-    pub servers: std::collections::BTreeMap<String, agent_config::McpServerYaml>,
+    pub servers: std::collections::BTreeMap<String, nexo_config::McpServerYaml>,
 }
 
 impl McpRuntimeConfig {
-    pub fn from_yaml(cfg: &agent_config::McpConfig) -> Self {
+    pub fn from_yaml(cfg: &nexo_config::McpConfig) -> Self {
         Self::from_yaml_with_extensions(cfg, &[])
     }
 
@@ -91,7 +91,7 @@ impl McpRuntimeConfig {
     /// explicit namespace keys and are primarily intended for this
     /// shadowing behavior.
     pub fn from_yaml_with_extensions(
-        cfg: &agent_config::McpConfig,
+        cfg: &nexo_config::McpConfig,
         extensions: &[ExtensionServerDecl],
     ) -> Self {
         let mut servers: Vec<McpServerRuntimeConfig> = cfg
@@ -190,11 +190,11 @@ impl McpRuntimeConfig {
 
 fn server_from_yaml(
     name: &str,
-    raw: &agent_config::McpServerYaml,
-    cfg: &agent_config::McpConfig,
+    raw: &nexo_config::McpServerYaml,
+    cfg: &nexo_config::McpConfig,
 ) -> McpServerRuntimeConfig {
     match raw {
-        agent_config::McpServerYaml::Stdio {
+        nexo_config::McpServerYaml::Stdio {
             command,
             args,
             env,
@@ -218,7 +218,7 @@ fn server_from_yaml(
                 context_passthrough: *context_passthrough,
             })
         }
-        agent_config::McpServerYaml::StreamableHttp {
+        nexo_config::McpServerYaml::StreamableHttp {
             url,
             headers,
             log_level,
@@ -239,7 +239,7 @@ fn server_from_yaml(
             log_level: log_level.clone(),
             context_passthrough: *context_passthrough,
         },
-        agent_config::McpServerYaml::Sse {
+        nexo_config::McpServerYaml::Sse {
             url,
             headers,
             log_level,
@@ -260,7 +260,7 @@ fn server_from_yaml(
             log_level: log_level.clone(),
             context_passthrough: *context_passthrough,
         },
-        agent_config::McpServerYaml::Auto {
+        nexo_config::McpServerYaml::Auto {
             url,
             headers,
             log_level,
@@ -314,11 +314,11 @@ enum FingerprintEntry<'a> {
 /// Other `${...}` tokens are left literal here and handled by
 /// `apply_manifest_env_placeholders`.
 fn apply_extension_root(
-    server: agent_config::McpServerYaml,
+    server: nexo_config::McpServerYaml,
     ext_root: &std::path::Path,
     ext_id: &str,
     ext_version: &str,
-) -> agent_config::McpServerYaml {
+) -> nexo_config::McpServerYaml {
     let root = ext_root.to_string_lossy().to_string();
     let agent_version = env!("CARGO_PKG_VERSION");
     let sub = |s: String| {
@@ -328,14 +328,14 @@ fn apply_extension_root(
             .replace("${AGENT_VERSION}", agent_version)
     };
     match server {
-        agent_config::McpServerYaml::Stdio {
+        nexo_config::McpServerYaml::Stdio {
             command,
             args,
             env,
             cwd,
             log_level,
             context_passthrough,
-        } => agent_config::McpServerYaml::Stdio {
+        } => nexo_config::McpServerYaml::Stdio {
             command: sub(command),
             args: args.into_iter().map(sub).collect(),
             env: env.into_iter().map(|(k, v)| (k, sub(v))).collect(),
@@ -343,34 +343,34 @@ fn apply_extension_root(
             log_level: log_level.map(sub),
             context_passthrough,
         },
-        agent_config::McpServerYaml::StreamableHttp {
+        nexo_config::McpServerYaml::StreamableHttp {
             url,
             headers,
             log_level,
             context_passthrough,
-        } => agent_config::McpServerYaml::StreamableHttp {
+        } => nexo_config::McpServerYaml::StreamableHttp {
             url,
             headers: headers.into_iter().map(|(k, v)| (k, sub(v))).collect(),
             log_level: log_level.map(sub),
             context_passthrough,
         },
-        agent_config::McpServerYaml::Sse {
+        nexo_config::McpServerYaml::Sse {
             url,
             headers,
             log_level,
             context_passthrough,
-        } => agent_config::McpServerYaml::Sse {
+        } => nexo_config::McpServerYaml::Sse {
             url,
             headers: headers.into_iter().map(|(k, v)| (k, sub(v))).collect(),
             log_level: log_level.map(sub),
             context_passthrough,
         },
-        agent_config::McpServerYaml::Auto {
+        nexo_config::McpServerYaml::Auto {
             url,
             headers,
             log_level,
             context_passthrough,
-        } => agent_config::McpServerYaml::Auto {
+        } => nexo_config::McpServerYaml::Auto {
             url,
             headers: headers.into_iter().map(|(k, v)| (k, sub(v))).collect(),
             log_level: log_level.map(sub),
@@ -383,10 +383,10 @@ fn apply_extension_root(
 /// declarations. We intentionally fail-open (warn + keep literal) so a
 /// missing env var doesn't drop the entire declaration at runtime.
 fn apply_manifest_env_placeholders(
-    server: agent_config::McpServerYaml,
+    server: nexo_config::McpServerYaml,
     source: &str,
-) -> agent_config::McpServerYaml {
-    let sub = |s: String| match agent_config::env::resolve_placeholders(&s, source) {
+) -> nexo_config::McpServerYaml {
+    let sub = |s: String| match nexo_config::env::resolve_placeholders(&s, source) {
         Ok(v) => v,
         Err(e) => {
             tracing::warn!(
@@ -398,14 +398,14 @@ fn apply_manifest_env_placeholders(
         }
     };
     match server {
-        agent_config::McpServerYaml::Stdio {
+        nexo_config::McpServerYaml::Stdio {
             command,
             args,
             env,
             cwd,
             log_level,
             context_passthrough,
-        } => agent_config::McpServerYaml::Stdio {
+        } => nexo_config::McpServerYaml::Stdio {
             command: sub(command),
             args: args.into_iter().map(sub).collect(),
             env: env.into_iter().map(|(k, v)| (k, sub(v))).collect(),
@@ -413,34 +413,34 @@ fn apply_manifest_env_placeholders(
             log_level: log_level.map(sub),
             context_passthrough,
         },
-        agent_config::McpServerYaml::StreamableHttp {
+        nexo_config::McpServerYaml::StreamableHttp {
             url,
             headers,
             log_level,
             context_passthrough,
-        } => agent_config::McpServerYaml::StreamableHttp {
+        } => nexo_config::McpServerYaml::StreamableHttp {
             url: sub(url),
             headers: headers.into_iter().map(|(k, v)| (k, sub(v))).collect(),
             log_level: log_level.map(sub),
             context_passthrough,
         },
-        agent_config::McpServerYaml::Sse {
+        nexo_config::McpServerYaml::Sse {
             url,
             headers,
             log_level,
             context_passthrough,
-        } => agent_config::McpServerYaml::Sse {
+        } => nexo_config::McpServerYaml::Sse {
             url: sub(url),
             headers: headers.into_iter().map(|(k, v)| (k, sub(v))).collect(),
             log_level: log_level.map(sub),
             context_passthrough,
         },
-        agent_config::McpServerYaml::Auto {
+        nexo_config::McpServerYaml::Auto {
             url,
             headers,
             log_level,
             context_passthrough,
-        } => agent_config::McpServerYaml::Auto {
+        } => nexo_config::McpServerYaml::Auto {
             url: sub(url),
             headers: headers.into_iter().map(|(k, v)| (k, sub(v))).collect(),
             log_level: log_level.map(sub),
@@ -453,10 +453,10 @@ fn apply_manifest_env_placeholders(
 /// Returns the offending path (for logging) or None. Commands without path
 /// separators are treated as PATH lookups (never "escape").
 fn detect_escape(
-    server: &agent_config::McpServerYaml,
+    server: &nexo_config::McpServerYaml,
     ext_root: &std::path::Path,
 ) -> Option<String> {
-    let agent_config::McpServerYaml::Stdio { command, .. } = server else {
+    let nexo_config::McpServerYaml::Stdio { command, .. } = server else {
         return None;
     };
     let candidate = std::path::Path::new(command);
@@ -473,10 +473,10 @@ fn detect_escape(
 /// `${EXTENSION_ROOT}`. Returns the raw command plus the extension-root
 /// joined path used for debug logs.
 fn detect_relative_stdio_without_root_placeholder(
-    server: &agent_config::McpServerYaml,
+    server: &nexo_config::McpServerYaml,
     ext_root: &std::path::Path,
 ) -> Option<(String, String)> {
-    let agent_config::McpServerYaml::Stdio { command, .. } = server else {
+    let nexo_config::McpServerYaml::Stdio { command, .. } = server else {
         return None;
     };
     if command.contains("${EXTENSION_ROOT}") {
@@ -533,11 +533,11 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap as YamlMap;
 
-    fn yaml_cfg() -> agent_config::McpConfig {
+    fn yaml_cfg() -> nexo_config::McpConfig {
         let mut servers = YamlMap::new();
         servers.insert(
             "b".to_string(),
-            agent_config::McpServerYaml::Stdio {
+            nexo_config::McpServerYaml::Stdio {
                 command: "cmd_b".into(),
                 args: vec!["--flag".into()],
                 env: YamlMap::new(),
@@ -548,7 +548,7 @@ mod tests {
         );
         servers.insert(
             "a".to_string(),
-            agent_config::McpServerYaml::Stdio {
+            nexo_config::McpServerYaml::Stdio {
                 command: "cmd_a".into(),
                 args: vec![],
                 env: YamlMap::from([("K".into(), "v".into())]),
@@ -557,7 +557,7 @@ mod tests {
                 context_passthrough: None,
             },
         );
-        agent_config::McpConfig {
+        nexo_config::McpConfig {
             servers,
             ..Default::default()
         }
@@ -573,7 +573,7 @@ mod tests {
     fn fingerprint_changes_with_command() {
         let mut yaml = yaml_cfg();
         let c1 = McpRuntimeConfig::from_yaml(&yaml);
-        if let agent_config::McpServerYaml::Stdio { command, .. } =
+        if let nexo_config::McpServerYaml::Stdio { command, .. } =
             yaml.servers.get_mut("a").unwrap()
         {
             *command = "different".into();
@@ -598,7 +598,7 @@ mod tests {
         let mut a = YamlMap::new();
         a.insert(
             "x".into(),
-            agent_config::McpServerYaml::Stdio {
+            nexo_config::McpServerYaml::Stdio {
                 command: "cx".into(),
                 args: vec![],
                 env: YamlMap::new(),
@@ -609,7 +609,7 @@ mod tests {
         );
         a.insert(
             "y".into(),
-            agent_config::McpServerYaml::Stdio {
+            nexo_config::McpServerYaml::Stdio {
                 command: "cy".into(),
                 args: vec![],
                 env: YamlMap::new(),
@@ -621,7 +621,7 @@ mod tests {
         let mut b = YamlMap::new();
         b.insert(
             "y".into(),
-            agent_config::McpServerYaml::Stdio {
+            nexo_config::McpServerYaml::Stdio {
                 command: "cy".into(),
                 args: vec![],
                 env: YamlMap::new(),
@@ -632,7 +632,7 @@ mod tests {
         );
         b.insert(
             "x".into(),
-            agent_config::McpServerYaml::Stdio {
+            nexo_config::McpServerYaml::Stdio {
                 command: "cx".into(),
                 args: vec![],
                 env: YamlMap::new(),
@@ -642,11 +642,11 @@ mod tests {
             },
         );
 
-        let c1 = McpRuntimeConfig::from_yaml(&agent_config::McpConfig {
+        let c1 = McpRuntimeConfig::from_yaml(&nexo_config::McpConfig {
             servers: a,
             ..Default::default()
         });
-        let c2 = McpRuntimeConfig::from_yaml(&agent_config::McpConfig {
+        let c2 = McpRuntimeConfig::from_yaml(&nexo_config::McpConfig {
             servers: b,
             ..Default::default()
         });
@@ -658,7 +658,7 @@ mod tests {
         let mut a = YamlMap::new();
         a.insert(
             "x".into(),
-            agent_config::McpServerYaml::Stdio {
+            nexo_config::McpServerYaml::Stdio {
                 command: "cmd".into(),
                 args: vec![],
                 env: YamlMap::new(),
@@ -670,18 +670,18 @@ mod tests {
         let mut b = YamlMap::new();
         b.insert(
             "x".into(),
-            agent_config::McpServerYaml::StreamableHttp {
+            nexo_config::McpServerYaml::StreamableHttp {
                 url: "https://x.example/".into(),
                 headers: YamlMap::new(),
                 log_level: None,
                 context_passthrough: None,
             },
         );
-        let c1 = McpRuntimeConfig::from_yaml(&agent_config::McpConfig {
+        let c1 = McpRuntimeConfig::from_yaml(&nexo_config::McpConfig {
             servers: a,
             ..Default::default()
         });
-        let c2 = McpRuntimeConfig::from_yaml(&agent_config::McpConfig {
+        let c2 = McpRuntimeConfig::from_yaml(&nexo_config::McpConfig {
             servers: b,
             ..Default::default()
         });
@@ -695,7 +695,7 @@ mod tests {
             "DB_PATH".to_string(),
             "${EXTENSION_ROOT}/data/db".to_string(),
         );
-        let server = agent_config::McpServerYaml::Stdio {
+        let server = nexo_config::McpServerYaml::Stdio {
             command: "${EXTENSION_ROOT}/bin/geo".into(),
             args: vec!["--root".into(), "${EXTENSION_ROOT}/assets".into()],
             env,
@@ -710,7 +710,7 @@ mod tests {
             "1.2.3",
         );
         match out {
-            agent_config::McpServerYaml::Stdio {
+            nexo_config::McpServerYaml::Stdio {
                 command,
                 args,
                 env,
@@ -734,7 +734,7 @@ mod tests {
             "${EXTENSION_ID}:${EXTENSION_VERSION}".to_string(),
         );
         env.insert("X-AGENT".to_string(), "${AGENT_VERSION}".to_string());
-        let server = agent_config::McpServerYaml::Stdio {
+        let server = nexo_config::McpServerYaml::Stdio {
             command: "${EXTENSION_ID}".into(),
             args: vec!["${EXTENSION_VERSION}".into(), "${AGENT_VERSION}".into()],
             env,
@@ -749,7 +749,7 @@ mod tests {
             "1.2.3",
         );
         match out {
-            agent_config::McpServerYaml::Stdio {
+            nexo_config::McpServerYaml::Stdio {
                 command,
                 args,
                 env,
@@ -771,7 +771,7 @@ mod tests {
     fn apply_extension_root_leaves_url_but_substitutes_headers() {
         let mut headers = YamlMap::new();
         headers.insert("X-Root".into(), "${EXTENSION_ROOT}/tokens".into());
-        let server = agent_config::McpServerYaml::StreamableHttp {
+        let server = nexo_config::McpServerYaml::StreamableHttp {
             url: "https://example.com/mcp".into(),
             headers,
             log_level: None,
@@ -779,7 +779,7 @@ mod tests {
         };
         let out = apply_extension_root(server, std::path::Path::new("/ext/x"), "weather", "1.2.3");
         match out {
-            agent_config::McpServerYaml::StreamableHttp { url, headers, .. } => {
+            nexo_config::McpServerYaml::StreamableHttp { url, headers, .. } => {
                 assert_eq!(url, "https://example.com/mcp");
                 assert_eq!(headers.get("X-Root").unwrap(), "/ext/x/tokens");
             }
@@ -794,7 +794,7 @@ mod tests {
         let mut ext_servers = YamlMap::new();
         ext_servers.insert(
             "inside".into(),
-            agent_config::McpServerYaml::Stdio {
+            nexo_config::McpServerYaml::Stdio {
                 command: "${EXTENSION_ROOT}/bin/x".into(),
                 args: vec![],
                 env: YamlMap::new(),
@@ -822,7 +822,7 @@ mod tests {
         let mut yaml_servers = YamlMap::new();
         yaml_servers.insert(
             "weather.local".to_string(),
-            agent_config::McpServerYaml::Stdio {
+            nexo_config::McpServerYaml::Stdio {
                 command: "/yaml/cmd".into(),
                 args: vec![],
                 env: YamlMap::new(),
@@ -831,14 +831,14 @@ mod tests {
                 context_passthrough: None,
             },
         );
-        let yaml = agent_config::McpConfig {
+        let yaml = nexo_config::McpConfig {
             servers: yaml_servers,
             ..Default::default()
         };
         let mut ext_servers = YamlMap::new();
         ext_servers.insert(
             "local".into(),
-            agent_config::McpServerYaml::Stdio {
+            nexo_config::McpServerYaml::Stdio {
                 command: "/ext/cmd".into(),
                 args: vec![],
                 env: YamlMap::new(),
@@ -870,7 +870,7 @@ mod tests {
         // Absolute command outside ext_root → escapes.
         ext_servers.insert(
             "evil".into(),
-            agent_config::McpServerYaml::Stdio {
+            nexo_config::McpServerYaml::Stdio {
                 command: "/etc/init.d/evil".into(),
                 args: vec![],
                 env: YamlMap::new(),
@@ -902,7 +902,7 @@ mod tests {
         let mut ext_servers = YamlMap::new();
         ext_servers.insert(
             "evil".into(),
-            agent_config::McpServerYaml::Stdio {
+            nexo_config::McpServerYaml::Stdio {
                 command: "/etc/init.d/evil".into(),
                 args: vec![],
                 env: YamlMap::new(),
@@ -935,7 +935,7 @@ mod tests {
         let mut ext_servers = YamlMap::new();
         ext_servers.insert(
             "local".into(),
-            agent_config::McpServerYaml::Stdio {
+            nexo_config::McpServerYaml::Stdio {
                 command: "${MCP_EXT_CMD}".into(),
                 args: vec!["--token=${MCP_EXT_TOKEN}".into()],
                 env: YamlMap::new(),
@@ -973,7 +973,7 @@ mod tests {
     #[test]
     fn apply_manifest_env_placeholders_fail_open_when_missing_var() {
         std::env::remove_var("MCP_EXT_NOT_SET");
-        let in_server = agent_config::McpServerYaml::Stdio {
+        let in_server = nexo_config::McpServerYaml::Stdio {
             command: "${MCP_EXT_NOT_SET}".into(),
             args: vec![],
             env: YamlMap::new(),
@@ -983,7 +983,7 @@ mod tests {
         };
         let out = apply_manifest_env_placeholders(in_server, "weather.local");
         match out {
-            agent_config::McpServerYaml::Stdio { command, .. } => {
+            nexo_config::McpServerYaml::Stdio { command, .. } => {
                 assert_eq!(command, "${MCP_EXT_NOT_SET}");
             }
             _ => panic!("expected stdio"),
@@ -992,7 +992,7 @@ mod tests {
 
     #[test]
     fn detect_relative_stdio_warns_without_extension_root_placeholder() {
-        let s = agent_config::McpServerYaml::Stdio {
+        let s = nexo_config::McpServerYaml::Stdio {
             command: "bin/local-server".into(),
             args: vec![],
             env: YamlMap::new(),
@@ -1011,7 +1011,7 @@ mod tests {
 
     #[test]
     fn detect_relative_stdio_ignores_absolute_and_root_placeholder() {
-        let abs = agent_config::McpServerYaml::Stdio {
+        let abs = nexo_config::McpServerYaml::Stdio {
             command: "/usr/bin/mcp-server".into(),
             args: vec![],
             env: YamlMap::new(),
@@ -1025,7 +1025,7 @@ mod tests {
         )
         .is_none());
 
-        let templated = agent_config::McpServerYaml::Stdio {
+        let templated = nexo_config::McpServerYaml::Stdio {
             command: "${EXTENSION_ROOT}/bin/mcp-server".into(),
             args: vec![],
             env: YamlMap::new(),
@@ -1045,7 +1045,7 @@ mod tests {
         let mut base = YamlMap::new();
         base.insert(
             "x".into(),
-            agent_config::McpServerYaml::StreamableHttp {
+            nexo_config::McpServerYaml::StreamableHttp {
                 url: "https://x.example/".into(),
                 headers: YamlMap::from([("A".into(), "1".into())]),
                 log_level: None,
@@ -1055,18 +1055,18 @@ mod tests {
         let mut bumped = YamlMap::new();
         bumped.insert(
             "x".into(),
-            agent_config::McpServerYaml::StreamableHttp {
+            nexo_config::McpServerYaml::StreamableHttp {
                 url: "https://x.example/".into(),
                 headers: YamlMap::from([("A".into(), "2".into())]),
                 log_level: None,
                 context_passthrough: None,
             },
         );
-        let c1 = McpRuntimeConfig::from_yaml(&agent_config::McpConfig {
+        let c1 = McpRuntimeConfig::from_yaml(&nexo_config::McpConfig {
             servers: base,
             ..Default::default()
         });
-        let c2 = McpRuntimeConfig::from_yaml(&agent_config::McpConfig {
+        let c2 = McpRuntimeConfig::from_yaml(&nexo_config::McpConfig {
             servers: bumped,
             ..Default::default()
         });

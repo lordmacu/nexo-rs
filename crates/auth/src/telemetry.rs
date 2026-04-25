@@ -1,6 +1,6 @@
 //! Prometheus metrics for the credential layer. Kept self-contained
 //! in this crate so the wiring (main.rs) only has to concatenate
-//! [`render_prometheus`] output with the existing `agent-core`
+//! [`render_prometheus`] output with the existing `nexo-core`
 //! telemetry body.
 
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
