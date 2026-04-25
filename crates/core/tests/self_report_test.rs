@@ -4,11 +4,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_broker::AnyBroker;
-use agent_config::types::agents::{AgentConfig, AgentRuntimeConfig, HeartbeatConfig, ModelConfig};
-use agent_core::agent::{AgentContext, MyStatsTool, ToolHandler, WhatDoIKnowTool, WhoAmITool};
-use agent_core::session::SessionManager;
-use agent_memory::LongTermMemory;
+use nexo_broker::AnyBroker;
+use nexo_config::types::agents::{AgentConfig, AgentRuntimeConfig, HeartbeatConfig, ModelConfig};
+use nexo_core::agent::{AgentContext, MyStatsTool, ToolHandler, WhatDoIKnowTool, WhoAmITool};
+use nexo_core::session::SessionManager;
+use nexo_memory::LongTermMemory;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -44,6 +44,7 @@ fn agent_cfg() -> Arc<AgentConfig> {
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
             web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     })

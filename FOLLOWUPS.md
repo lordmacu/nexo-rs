@@ -51,7 +51,7 @@ P-3. **Push-based watchers (Gmail Push, generic inbound webhooks)**
 ### Hardening
 
 H-1. **CircuitBreaker missing on Telegram + Google plugins**
-- Missing: `agent_resilience::CircuitBreaker` wrap around the
+- Missing: `nexo_resilience::CircuitBreaker` wrap around the
   Telegram bot HTTP calls (`crates/plugins/telegram/src/bot.rs`)
   and the Google OAuth + API calls
   (`crates/plugins/google/src/client.rs`). LLM clients, MCP HTTP
@@ -119,8 +119,8 @@ W-3. **Setup wizard entry not shipped**
 - Why deferred: env vars work and the wizard is a pure UX win.
 - Target: alongside admin-ui Phase A3 web-search panel.
 
-W-4. **Decision: `agent-resilience::CircuitBreaker` directly, not via `BreakerRegistry`**
-- The `agent-auth` registry is keyed on `Channel { Whatsapp,
+W-4. **Decision: `nexo-resilience::CircuitBreaker` directly, not via `BreakerRegistry`**
+- The `nexo-auth` registry is keyed on `Channel { Whatsapp,
   Telegram, Google }`. Web search isn't a channel; jamming it into
   that enum would force unrelated changes. We instead hold a
   per-provider `Arc<CircuitBreaker>` map inside the router. Worth
@@ -131,6 +131,71 @@ W-5. **Cache `:memory:` SQLite quirk**
 - The router cache pins `max_connections=1` when `path == ":memory:"`
   because SQLite's in-memory database is per-connection. File-backed
   paths use the normal pool size. Documented inline; not a defect.
+
+### Phase 26 — Pairing protocol
+
+PR-1. **Plugin gate hooks for WhatsApp + Telegram**
+- Missing: actual `gate.should_admit(...)` call in
+  `crates/plugins/whatsapp/src/inbound.rs` and
+  `crates/plugins/telegram/src/bot.rs` before the broker publish.
+- Why deferred: both plugins have parallel in-flight changes from
+  other agents this cycle; jamming the hook in alongside risks
+  conflict on rebases. The gate + store + CLI are landed and tested
+  in isolation, so once the parallel work settles, wiring the hook
+  is ~10 lines per plugin.
+- Target: next plugin-side cycle. Pattern is documented in the spec
+  (`PairingChannelAdapter` impl + gate call site).
+
+PR-2. **Telemetry counters not wired**
+- Missing: `pairing_requests_pending{channel}` (gauge),
+  `pairing_approvals_total{channel,result}`,
+  `pairing_codes_expired_total`,
+  `pairing_bootstrap_tokens_issued_total`,
+  `pairing_inbound_challenged_total{channel,result}`. Spec called
+  for them; shipped without to keep the foundation commit small.
+- Why deferred: same pattern as Phase 25 W-1 — admin-ui (Phase A4)
+  is the eventual consumer.
+- Target: Phase A4 dashboard work.
+
+PR-3. **`tunnel.url` integration in URL resolver**
+- Missing: `nexo pair start` currently honours only `--public-url`
+  on the CLI. The spec'd priority chain includes `tunnel.url` as
+  the second-highest source.
+- Why deferred: the `nexo-tunnel` crate doesn't yet expose a
+  read-only public-URL accessor. Adding one is a small refactor
+  but slides into tunnel maintenance, not pairing.
+- Target: when the tunnel crate ships an accessor.
+
+PR-4. **Companion-tui not shipped**
+- Missing: `apps/companion-tui/` reference companion that scans QR
+  / accepts paste and opens the WS using the bootstrap token. Spec
+  marks this as out of scope for the foundational phase.
+- Why deferred: the protocol + CLI are sufficient for any third
+  party to build a companion. A reference implementation is UX
+  polish, not a blocker.
+- Target: Phase 26.x or as a separate `companion-*` crate when
+  demand arises.
+
+PR-5. **`pair_approve` as scope-gated agent tool**
+- Missing: a built-in tool that lets agents approve pending
+  pairings from a trusted channel, scoped via
+  `EffectiveBindingPolicy::allowed_tools`.
+- Why deferred: opens prompt-injection vectors (an agent could be
+  coerced into approving an attacker). Operator-driven approve via
+  CLI / admin-ui is the safe default. Worth revisiting if a clear
+  trust model emerges.
+- Target: separate brainstorm.
+
+PR-6. **`nexo-tunnel` URL accessor + `nexo-config::pairing.yaml` loader**
+- Missing: spec'd a `config/pairing.yaml` with `storage.path`,
+  `setup_code.secret_path`, `default_ttl_secs`, `public_url`,
+  `ws_cleartext_allow`. Daemon currently hardcodes the paths
+  (`<memory_dir>/pairing.db`, `~/.nexo/secret/pairing.key`) and
+  reads `--public-url` only from the CLI flag.
+- Why deferred: env vars / CLI flags cover the boot path; YAML
+  adds a config surface with no current customer ask.
+- Target: when an operator needs to override the path (for
+  containerised deployments mounting `/var/lib/nexo/pairing/...`).
 
 ## Resolved (recent highlights)
 

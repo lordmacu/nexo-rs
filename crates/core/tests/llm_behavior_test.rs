@@ -1,19 +1,19 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_broker::{AnyBroker, BrokerHandle};
-use agent_config::types::agents::{AgentConfig, AgentRuntimeConfig, HeartbeatConfig, ModelConfig};
-use agent_core::agent::tool_policy::{CacheConfig, ParallelConfig, ToolPolicy, ToolPolicyConfig};
-use agent_core::agent::{
+use nexo_broker::{AnyBroker, BrokerHandle};
+use nexo_config::types::agents::{AgentConfig, AgentRuntimeConfig, HeartbeatConfig, ModelConfig};
+use nexo_core::agent::tool_policy::{CacheConfig, ParallelConfig, ToolPolicy, ToolPolicyConfig};
+use nexo_core::agent::{
     Agent, AgentBehavior, AgentContext, AgentMessage, AgentPayload, AgentRouter, AgentRuntime,
     DelegationTool, InboundMessage, LlmAgentBehavior, ToolHandler, ToolRegistry,
 };
-use agent_core::session::SessionManager;
-use agent_llm::{
+use nexo_core::session::SessionManager;
+use nexo_llm::{
     ChatRequest, ChatResponse, FinishReason, LlmClient, ResponseContent, TokenUsage, ToolCall,
     ToolDef,
 };
-use agent_memory::LongTermMemory;
+use nexo_memory::LongTermMemory;
 use async_trait::async_trait;
 use chrono::{Duration as ChronoDuration, Utc};
 use serde_json::Value;
@@ -84,7 +84,7 @@ impl LlmClient for ReminderThenTextLlm {
         let has_tool_result = req
             .messages
             .iter()
-            .any(|m| m.role == agent_llm::ChatRole::Tool);
+            .any(|m| m.role == nexo_llm::ChatRole::Tool);
         if !has_tool_result {
             Ok(ChatResponse {
                 content: ResponseContent::ToolCalls(vec![ToolCall {
@@ -122,7 +122,7 @@ impl LlmClient for DelegateThenTextLlm {
         let has_tool_result = req
             .messages
             .iter()
-            .any(|m| m.role == agent_llm::ChatRole::Tool);
+            .any(|m| m.role == nexo_llm::ChatRole::Tool);
         if !has_tool_result {
             Ok(ChatResponse {
                 content: ResponseContent::ToolCalls(vec![ToolCall {
@@ -186,6 +186,7 @@ fn make_context(broker: AnyBroker) -> AgentContext {
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
             web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     });
@@ -271,6 +272,7 @@ async fn system_prompt_prepended_to_llm_request() {
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
             web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     });
@@ -298,7 +300,7 @@ async fn system_prompt_prepended_to_llm_request() {
     let reqs = captured.lock().unwrap();
     assert_eq!(reqs.len(), 1);
     let first = &reqs[0].messages[0];
-    assert_eq!(first.role, agent_llm::ChatRole::System);
+    assert_eq!(first.role, nexo_llm::ChatRole::System);
     assert_eq!(first.content, "You are Kate, a caring assistant.");
 }
 
@@ -341,6 +343,7 @@ async fn output_language_directive_renders_when_configured() {
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
             web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
         language: Some("es".into()),
         context_optimization: None,
     });
@@ -366,7 +369,7 @@ async fn output_language_directive_renders_when_configured() {
     let system = reqs[0]
         .messages
         .iter()
-        .find(|m| m.role == agent_llm::ChatRole::System)
+        .find(|m| m.role == nexo_llm::ChatRole::System)
         .expect("at least one System message");
     assert!(system.content.contains("You are Kate."), "persona block present");
     assert!(
@@ -409,7 +412,7 @@ async fn empty_system_prompt_emits_no_system_message() {
         reqs[0]
             .messages
             .iter()
-            .all(|m| m.role != agent_llm::ChatRole::System),
+            .all(|m| m.role != nexo_llm::ChatRole::System),
         "no System message expected when system_prompt is empty"
     );
 }
@@ -466,6 +469,7 @@ async fn workspace_bundle_prepended_to_system_message() -> anyhow::Result<()> {
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
             web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     });
@@ -490,7 +494,7 @@ async fn workspace_bundle_prepended_to_system_message() -> anyhow::Result<()> {
     {
         let reqs = captured.lock().unwrap();
         let system = &reqs[0].messages[0];
-        assert_eq!(system.role, agent_llm::ChatRole::System);
+        assert_eq!(system.role, nexo_llm::ChatRole::System);
         let body = &system.content;
         assert!(
             body.contains("# IDENTITY"),
@@ -562,6 +566,7 @@ async fn skills_loaded_between_workspace_and_system_prompt() -> anyhow::Result<(
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
             web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     });
@@ -650,6 +655,7 @@ async fn workspace_memory_skipped_when_source_is_peer_agent() -> anyhow::Result<
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
             web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     });
@@ -688,7 +694,7 @@ async fn workspace_memory_skipped_when_source_is_peer_agent() -> anyhow::Result<
 
 #[tokio::test]
 async fn transcript_written_when_dir_configured() -> anyhow::Result<()> {
-    use agent_core::agent::{TranscriptLine, TranscriptRole, TranscriptWriter};
+    use nexo_core::agent::{TranscriptLine, TranscriptRole, TranscriptWriter};
 
     let transcripts =
         std::env::temp_dir().join(format!("llm-behavior-transcripts-{}", Uuid::new_v4()));
@@ -726,6 +732,7 @@ async fn transcript_written_when_dir_configured() -> anyhow::Result<()> {
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
             web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     });
@@ -884,6 +891,7 @@ async fn heartbeat_delivers_due_reminders_once() {
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
             web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     });
@@ -966,6 +974,7 @@ async fn schedule_reminder_tool_uses_current_conversation_context() {
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
             web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     });
@@ -976,8 +985,8 @@ async fn schedule_reminder_tool_uses_current_conversation_context() {
 
     let tools = Arc::new(ToolRegistry::new());
     tools.register(
-        agent_core::agent::HeartbeatTool::tool_def(),
-        agent_core::agent::HeartbeatTool::new(Arc::clone(&memory)),
+        nexo_core::agent::HeartbeatTool::tool_def(),
+        nexo_core::agent::HeartbeatTool::new(Arc::clone(&memory)),
     );
     let behavior =
         LlmAgentBehavior::new(Arc::new(ReminderThenTextLlm) as Arc<dyn LlmClient>, tools);
@@ -1051,6 +1060,7 @@ async fn llm_can_call_delegate_tool_and_receive_result() {
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
             web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     };
@@ -1092,6 +1102,7 @@ async fn llm_can_call_delegate_tool_and_receive_result() {
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
             web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     });
@@ -1447,8 +1458,8 @@ async fn reply_falls_back_to_legacy_outbound_when_no_instance() {
 async fn delegation_rejects_target_outside_allowed_delegates() {
     // agent-a is configured to only delegate to `soporte_*`. Attempt
     // to delegate to `ventas` must fail before any NATS roundtrip.
-    use agent_core::agent::AgentRouter;
-    use agent_core::agent::DelegationTool;
+    use nexo_core::agent::AgentRouter;
+    use nexo_core::agent::DelegationTool;
 
     let broker = AnyBroker::local();
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
@@ -1483,6 +1494,7 @@ async fn delegation_rejects_target_outside_allowed_delegates() {
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
             web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     });
@@ -1530,7 +1542,7 @@ async fn delegation_rejects_target_outside_allowed_delegates() {
 
 #[tokio::test]
 async fn peer_directory_renders_into_system_prompt() {
-    use agent_core::agent::{PeerDirectory, PeerSummary};
+    use nexo_core::agent::{PeerDirectory, PeerSummary};
 
     let broker = AnyBroker::local();
     let _sub = broker.subscribe("plugin.outbound.telegram").await.unwrap();
@@ -1581,6 +1593,7 @@ async fn peer_directory_renders_into_system_prompt() {
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
             web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     });
@@ -1604,7 +1617,7 @@ async fn peer_directory_renders_into_system_prompt() {
     let sys = req
         .messages
         .iter()
-        .find(|m| m.role == agent_llm::ChatRole::System)
+        .find(|m| m.role == nexo_llm::ChatRole::System)
         .expect("system message present");
     let sys_text = sys.content.as_str();
     assert!(

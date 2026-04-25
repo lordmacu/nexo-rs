@@ -417,6 +417,17 @@ IOUs — features that landed in the daemon but have no UI yet.
     (`llm_prompt_tokens_drift{agent,provider,model}`) so operators can
     spot when an approximate counter is misjudging the budget
   - workspace cache hit/miss/invalidation counters per workspace path
+- [ ] **Pairing (Phase 26)** — `inbound_bindings[].pairing_policy` toggle
+  (`auto_challenge: bool`) + a Pending Requests panel that lists
+  `pairing_pending` rows with one-click approve and a soft-delete
+  Revoke action against `pairing_allow_from`. Phase A3 "Brain" tab
+  needs the per-binding toggle in the override matrix; a top-level
+  Pairing tab needs the pending list, allow-from list with revoke,
+  setup-code button (calls `nexo pair start --json` or its admin
+  endpoint equivalent), and operator audit of `revoked_at`
+  timestamps. Phase A4 dashboard needs `pairing_requests_pending`
+  and `pairing_inbound_challenged_total` counters when the runtime
+  starts emitting them (currently deferred — see FOLLOWUPS PR-1).
 - [ ] **Web search (Phase 25)** — `agents.<id>.web_search` block
   (`enabled`, `provider`, `default_count`, `cache_ttl_secs`,
   `expand_default`) with per-binding override. Phase A3 "Brain" tab

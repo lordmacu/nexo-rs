@@ -1,8 +1,17 @@
 [package]
-name = "agent-core"
-version = "0.1.0"
-edition = "2021"
-
+name = "nexo-core"
+description   = "Agent runtime: event bus, sessions, plugin trait, heartbeat, A2A delegation."
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+homepage      = { workspace = true }
+documentation = { workspace = true }
+readme        = { workspace = true }
+keywords      = { workspace = true }
+categories    = { workspace = true }
 [features]
 default = ["schema-validation"]
 # Enables pre-handler JSON Schema validation of tool arguments.
@@ -21,18 +30,19 @@ dashmap     = { workspace = true }
 humantime   = { workspace = true }
 anyhow      = { workspace = true }
 thiserror   = { workspace = true }
-agent-config  = { path = "../config" }
-agent-broker  = { path = "../broker" }
-agent-auth    = { path = "../auth" }
+nexo-config = { version = "0.1.0", path = "../config" }
+nexo-broker = { version = "0.1.0", path = "../broker" }
+nexo-auth = { version = "0.1.0", path = "../auth" }
 tracing       = { workspace = true }
 async-trait   = { workspace = true }
 tokio-util    = { workspace = true }
-agent-llm     = { path = "../llm" }
-agent-memory  = { path = "../memory" }
-agent-extensions = { path = "../extensions" }
-agent-mcp       = { path = "../mcp" }
-agent-taskflow  = { path = "../taskflow" }
-agent-web-search = { path = "../web-search" }
+nexo-llm = { version = "0.1.0", path = "../llm" }
+nexo-memory = { version = "0.1.0", path = "../memory" }
+nexo-extensions = { version = "0.1.0", path = "../extensions" }
+nexo-mcp = { version = "0.1.0", path = "../mcp" }
+nexo-taskflow = { version = "0.1.0", path = "../taskflow" }
+nexo-web-search = { version = "0.1.0", path = "../web-search" }
+nexo-pairing    = { version = "0.1.0", path = "../pairing" }
 futures         = { workspace = true }
 arc-swap        = { workspace = true }
 lru             = { workspace = true }
@@ -49,7 +59,7 @@ sqlx            = { workspace = true }
 semver          = { workspace = true }
 
 [dev-dependencies]
-agent-llm     = { path = "../llm", features = ["stub"] }
+nexo-llm = { version = "0.1.0", path = "../llm", features = ["stub"] }
 async-nats    = { workspace = true }
 futures       = { workspace = true }
 tempfile      = "3"

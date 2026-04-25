@@ -1,9 +1,9 @@
 //! Phase 12.3 — integration tests for `McpToolCatalog` backed by the
-//! `mock_mcp_server` binary shipped in the `agent-mcp` crate.
+//! `mock_mcp_server` binary shipped in the `nexo-mcp` crate.
 //!
 //! The mock is a sibling workspace bin; we locate it via
 //! `CARGO_MANIFEST_DIR` and rebuild it on demand so the test is self-
-//! contained (`cargo test -p agent-core --test mcp_catalog_test` works
+//! contained (`cargo test -p nexo-core --test mcp_catalog_test` works
 //! from a fresh checkout).
 
 use std::collections::HashMap;
@@ -12,12 +12,12 @@ use std::process::Command;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use agent_broker::AnyBroker;
-use agent_config::types::agents::{AgentConfig, AgentRuntimeConfig, HeartbeatConfig, ModelConfig};
-use agent_core::agent::tool_registry::ToolRegistry;
-use agent_core::agent::{AgentContext, McpToolCatalog};
-use agent_core::session::SessionManager;
-use agent_mcp::{McpServerConfig, StdioMcpClient};
+use nexo_broker::AnyBroker;
+use nexo_config::types::agents::{AgentConfig, AgentRuntimeConfig, HeartbeatConfig, ModelConfig};
+use nexo_core::agent::tool_registry::ToolRegistry;
+use nexo_core::agent::{AgentContext, McpToolCatalog};
+use nexo_core::session::SessionManager;
+use nexo_mcp::{McpServerConfig, StdioMcpClient};
 
 static BUILT: OnceLock<PathBuf> = OnceLock::new();
 
@@ -35,7 +35,7 @@ fn mock_bin_path() -> PathBuf {
             let path = workspace_root().join("target/debug/mock_mcp_server");
             if !path.exists() {
                 let status = Command::new(env!("CARGO"))
-                    .args(["build", "--bin", "mock_mcp_server", "-p", "agent-mcp"])
+                    .args(["build", "--bin", "mock_mcp_server", "-p", "nexo-mcp"])
                     .status()
                     .expect("cargo build mock_mcp_server");
                 assert!(status.success(), "failed to build mock_mcp_server");
@@ -65,8 +65,8 @@ fn resolve_handler(
     registry: &ToolRegistry,
     name: &str,
 ) -> Option<(
-    agent_llm::ToolDef,
-    Arc<dyn agent_core::agent::tool_registry::ToolHandler>,
+    nexo_llm::ToolDef,
+    Arc<dyn nexo_core::agent::tool_registry::ToolHandler>,
 )> {
     registry.get(name)
 }
@@ -103,6 +103,7 @@ fn agent_cfg() -> Arc<AgentConfig> {
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
             web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     })

@@ -2,18 +2,18 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use agent_broker::AnyBroker;
-use agent_config::types::agents::{
+use nexo_broker::AnyBroker;
+use nexo_config::types::agents::{
     AgentConfig, AgentRuntimeConfig, HeartbeatConfig, InboundBinding, ModelConfig,
     SenderRateLimitConfig,
 };
-use agent_core::agent::{Agent, AgentBehavior, AgentContext, AgentRuntime, InboundMessage};
+use nexo_core::agent::{Agent, AgentBehavior, AgentContext, AgentRuntime, InboundMessage};
 use async_trait::async_trait;
 use serde_json::json;
 use tokio::time::sleep;
 use uuid::Uuid;
 
-use agent_core::session::SessionManager;
+use nexo_core::session::SessionManager;
 
 struct CaptureBehavior {
     received: Arc<Mutex<Vec<String>>>,
@@ -80,6 +80,7 @@ fn make_config(
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
             web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     }
@@ -104,8 +105,8 @@ fn make_runtime(
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-use agent_broker::types::Event;
-use agent_broker::BrokerHandle;
+use nexo_broker::types::Event;
+use nexo_broker::BrokerHandle;
 
 async fn publish_text(broker: &AnyBroker, session_id: Uuid, text: &str) {
     let mut event = Event::new("plugin.inbound.test", "test", json!({ "text": text }));
@@ -290,6 +291,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             credentials: Default::default(),
             link_understanding: serde_json::Value::Null,
             web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
             context_optimization: None,
         },
@@ -336,6 +338,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             credentials: Default::default(),
             link_understanding: serde_json::Value::Null,
             web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
             context_optimization: None,
         },

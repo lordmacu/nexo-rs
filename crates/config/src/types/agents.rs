@@ -9,8 +9,8 @@ pub struct AgentsConfig {
 
 /// Skill dependency-failure mode. Skill authors set this in
 /// `requires.mode`; operators override it per-agent via
-/// `agents.<id>.skill_overrides`. Defined in `agent-config` rather
-/// than `agent-core` so the config layer can carry it without
+/// `agents.<id>.skill_overrides`. Defined in `nexo-config` rather
+/// than `nexo-core` so the config layer can carry it without
 /// pulling in the runtime crate.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -63,9 +63,14 @@ pub struct AgentConfig {
     /// Phase 25 — web search. Toggle + provider + caps for the
     /// `web_search` built-in tool. Same opaque-Value discipline as
     /// `link_understanding`: parsed lazily by `EffectiveBindingPolicy`
-    /// so the config crate stays agent-web-search-free.
+    /// so the config crate stays nexo-web-search-free.
     #[serde(default)]
     pub web_search: serde_json::Value,
+    /// Phase 26 — pairing policy default (per-binding overrides this).
+    /// Same opaque-Value discipline; `Value::Null` (default) = the
+    /// gate is a no-op so existing setups don't see any change.
+    #[serde(default)]
+    pub pairing_policy: serde_json::Value,
     /// Optional workspace directory (IDENTITY.md, SOUL.md, USER.md, AGENTS.md,
     /// MEMORY.md, memory/YYYY-MM-DD.md). Loaded at turn start and prepended
     /// to the system prompt. Empty = no workspace layer.
@@ -208,9 +213,9 @@ pub struct OutboundAllowlistConfig {
 }
 
 /// Thin YAML surface for Google OAuth creds. Mirrors the shape
-/// `agent_core::agent::google_auth::GoogleAuthConfig` expects; the
+/// `nexo_core::agent::google_auth::GoogleAuthConfig` expects; the
 /// runtime converts between the two at boot (keeps the config crate
-/// independent of agent-core).
+/// independent of nexo-core).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GoogleAuthAgentConfig {
@@ -303,6 +308,13 @@ pub struct InboundBinding {
     /// `Value::Null` (default) inherits the agent-level value.
     #[serde(default)]
     pub web_search: serde_json::Value,
+    /// Phase 26 — pairing policy. Same opaque-Value discipline as
+    /// `link_understanding` and `web_search`. `Value::Null` (default)
+    /// = the gate is a no-op (every message admitted). When the
+    /// binding sets `{auto_challenge: true}`, unknown senders get a
+    /// challenge reply and the message is dropped.
+    #[serde(default)]
+    pub pairing_policy: serde_json::Value,
 }
 
 /// Per-binding override for the sender rate limit.
@@ -393,7 +405,7 @@ fn default_skills_dir() -> String {
     "./skills".to_string()
 }
 
-/// YAML surface for dreaming. Mirrors `agent_core::agent::DreamingConfig`
+/// YAML surface for dreaming. Mirrors `nexo_core::agent::DreamingConfig`
 /// but lives in the config crate to keep the dependency graph acyclic.
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(deny_unknown_fields)]

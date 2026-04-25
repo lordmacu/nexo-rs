@@ -5,11 +5,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_broker::AnyBroker;
-use agent_config::types::agents::{AgentConfig, AgentRuntimeConfig, HeartbeatConfig, ModelConfig};
-use agent_core::agent::{AgentContext, ExtensionTool, ToolRegistry};
-use agent_core::session::SessionManager;
-use agent_extensions::{ExtensionManifest, StdioRuntime};
+use nexo_broker::AnyBroker;
+use nexo_config::types::agents::{AgentConfig, AgentRuntimeConfig, HeartbeatConfig, ModelConfig};
+use nexo_core::agent::{AgentContext, ExtensionTool, ToolRegistry};
+use nexo_core::session::SessionManager;
+use nexo_extensions::{ExtensionManifest, StdioRuntime};
 use serde_json::json;
 
 fn echo_ext_path() -> PathBuf {
@@ -33,7 +33,7 @@ fn echo_ext_path() -> PathBuf {
                         "build",
                         "--quiet",
                         "-p",
-                        "agent-extensions",
+                        "nexo-extensions",
                         "--example",
                         "echo_ext",
                     ])
@@ -50,7 +50,7 @@ fn manifest_for_echo() -> ExtensionManifest {
     let path = echo_ext_path();
     assert!(
         path.exists(),
-        "echo_ext example not built; run `cargo build --example echo_ext -p agent-extensions`. \
+        "echo_ext example not built; run `cargo build --example echo_ext -p nexo-extensions`. \
          path={}",
         path.display()
     );
@@ -104,6 +104,7 @@ fn agent_cfg() -> Arc<AgentConfig> {
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
             web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     })
