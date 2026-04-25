@@ -2246,11 +2246,13 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sqlx",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tokio-util",
  "tracing",
+ "uuid",
  "which",
 ]
 

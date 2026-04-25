@@ -13,6 +13,12 @@ readme        = "README.md"
 keywords      = { workspace = true }
 categories    = { workspace = true }
 
+[features]
+default = ["sqlite"]
+# Pulls in `sqlx` for the file-backed `SqliteBindingStore`. Without
+# this feature only `MemoryBindingStore` is available.
+sqlite = ["dep:sqlx"]
+
 [dependencies]
 nexo-driver-types = { path = "../driver-types" }
 async-trait       = { workspace = true }
@@ -21,10 +27,12 @@ dashmap           = { workspace = true }
 humantime-serde   = { workspace = true }
 serde             = { workspace = true }
 serde_json        = { workspace = true }
+sqlx              = { workspace = true, optional = true }
 thiserror         = { workspace = true }
 tokio             = { workspace = true }
 tokio-util        = { workspace = true }
 tracing           = { workspace = true }
+uuid              = { workspace = true }
 which             = { workspace = true }
 
 [dev-dependencies]

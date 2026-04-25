@@ -30,3 +30,27 @@ forced_kill_after: 1s
 # Per-turn wall-clock cap. The goal-level budget (Phase 67.0)
 # governs the cumulative budget across turns.
 turn_timeout: 10m
+
+# Phase 67.2 — where Claude session bindings get persisted so the
+# next turn can `--resume <id>` after a daemon restart. Loader is
+# wired up in Phase 67.4; the `binding_store:` section is documented
+# here ahead of time.
+#
+# `kind`: `sqlite` (file-backed) or `memory` (process-local; bindings
+# are lost on restart — only useful for tests/dev).
+#
+# `idle_ttl`: a binding whose `last_active_at` is older than this is
+# treated as expired (`get` returns `None`). `0s` or absent means
+# "no idle filter".
+#
+# `max_age`: a binding whose `created_at + max_age` is in the past is
+# expired regardless of activity. Caps how long Anthropic-side
+# session ids remain trusted.
+#
+# Both filters apply on top of `last_session_invalid` — invalidated
+# bindings are always hidden from `get`.
+binding_store:
+  kind: sqlite
+  path: ${NEXO_DRIVER_DB:-/var/lib/nexo-rs/driver.db}
+  idle_ttl: 24h
+  max_age: 30d

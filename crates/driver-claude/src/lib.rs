@@ -5,6 +5,8 @@
 //! `README.md` for the layering rationale and a quick example.
 
 pub mod binding;
+#[cfg(feature = "sqlite")]
+pub mod binding_sqlite;
 pub mod child;
 pub mod command;
 pub mod config;
@@ -14,6 +16,8 @@ pub mod stream;
 pub mod turn;
 
 pub use binding::{MemoryBindingStore, SessionBinding, SessionBindingStore};
+#[cfg(feature = "sqlite")]
+pub use binding_sqlite::SqliteBindingStore;
 pub use child::ChildHandle;
 pub use command::ClaudeCommand;
 pub use config::{ClaudeConfig, ClaudeDefaultArgs, OutputFormat};
