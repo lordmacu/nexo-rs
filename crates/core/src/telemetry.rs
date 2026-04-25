@@ -818,6 +818,7 @@ pub fn render_prometheus(fallback_nats_open: bool) -> String {
     }
 
     nexo_web_search::telemetry::render(&mut out);
+    nexo_pairing::telemetry::render(&mut out);
 
     out.push_str("# HELP circuit_breaker_state Circuit breaker state (0=closed,1=open).\n");
     out.push_str("# TYPE circuit_breaker_state gauge\n");

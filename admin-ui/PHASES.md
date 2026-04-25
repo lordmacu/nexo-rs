@@ -393,6 +393,13 @@ IOUs — features that landed in the daemon but have no UI yet.
   counter ready to surface in admin metrics tab; per-channel
   delivery split (adapter vs broker fallback) needs a small panel
   alongside the existing pairing operator list
+- [ ] Pairing health tile (Phase 26.y) — surface
+  `pairing_requests_pending{channel}` (gauge), `pairing_approvals_total{channel,result}`,
+  `pairing_codes_expired_total`, `pairing_bootstrap_tokens_issued_total{profile}`
+  in the runtime dashboard. Approval ratio (`ok` vs `expired`) flags
+  setup codes that age out before operators act; pending gauge needs
+  a "refresh" button that calls `PairingStore::refresh_pending_gauge`
+  to recover from in-memory drift after a daemon restart
 - [ ] Capability toggles surface — pull
   `agent doctor capabilities --json`, render risk-coloured table,
   surface env var name and paste-ready export hint per row;

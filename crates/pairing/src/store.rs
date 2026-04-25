@@ -149,6 +149,7 @@ impl PairingStore {
         .execute(&self.pool)
         .await
         .map_err(|e| PairingError::Storage(e.to_string()))?;
+        crate::telemetry::inc_requests_pending(channel);
         Ok(UpsertOutcome {
             code,
             created: true,
@@ -208,11 +209,14 @@ impl PairingStore {
         .await
         .map_err(|e| PairingError::Storage(e.to_string()))?;
         let Some((channel, account_id, sender_id, created_at)) = row else {
+            crate::telemetry::inc_approvals("", "not_found");
             return Err(PairingError::UnknownCode);
         };
         // Reject if expired (the prune may not have run since insert).
         let age = Utc::now().timestamp() - created_at;
         if age > PENDING_TTL.as_secs() as i64 {
+            crate::telemetry::inc_approvals(&channel, "expired");
+            crate::telemetry::add_codes_expired(1);
             return Err(PairingError::Expired);
         }
         sqlx::query(
@@ -233,6 +237,8 @@ impl PairingStore {
         tx.commit()
             .await
             .map_err(|e| PairingError::Storage(e.to_string()))?;
+        crate::telemetry::inc_approvals(&channel, "ok");
+        crate::telemetry::dec_requests_pending(&channel);
         Ok(ApprovedRequest {
             channel,
             account_id,
@@ -301,13 +307,61 @@ impl PairingStore {
         Ok(count)
     }
 
+    /// Test-only access to the underlying pool. Lets integration tests
+    /// in this crate backdate rows or assert raw state without
+    /// duplicating the schema setup. Hidden from rustdoc; do not
+    /// rely on this from production callers.
+    #[doc(hidden)]
+    pub fn pool_for_test(&self) -> &SqlitePool {
+        &self.pool
+    }
+
+    /// Resync the `pairing_requests_pending` gauge from the database.
+    /// Call after process restart (the gauge is in-memory state and
+    /// resets to 0, so without a refresh it under-reports until the
+    /// next `upsert_pending`). Channels that had a value but no longer
+    /// have any pending rows are clamped to 0 to avoid ghost gauges.
+    pub async fn refresh_pending_gauge(&self) -> Result<(), PairingError> {
+        let rows: Vec<(String, i64)> =
+            sqlx::query_as("SELECT channel, COUNT(*) FROM pairing_pending GROUP BY channel")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| PairingError::Storage(e.to_string()))?;
+        let live: std::collections::HashSet<String> = rows.iter().map(|(c, _)| c.clone()).collect();
+        for prior in crate::telemetry::pending_channels() {
+            if !live.contains(&prior) {
+                crate::telemetry::set_requests_pending(&prior, 0);
+            }
+        }
+        for (channel, count) in rows {
+            crate::telemetry::set_requests_pending(&channel, count);
+        }
+        Ok(())
+    }
+
     pub async fn purge_expired(&self) -> Result<u64, PairingError> {
         let cutoff = Utc::now().timestamp() - PENDING_TTL.as_secs() as i64;
+        // Count rows about to die per-channel so we can keep the
+        // pending gauge in sync without a follow-up query / refresh.
+        let by_channel: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT channel, COUNT(*) FROM pairing_pending WHERE created_at < ? GROUP BY channel",
+        )
+        .bind(cutoff)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| PairingError::Storage(e.to_string()))?;
         let res = sqlx::query("DELETE FROM pairing_pending WHERE created_at < ?")
             .bind(cutoff)
             .execute(&self.pool)
             .await
             .map_err(|e| PairingError::Storage(e.to_string()))?;
-        Ok(res.rows_affected())
+        let n = res.rows_affected();
+        if n > 0 {
+            crate::telemetry::add_codes_expired(n);
+            for (channel, count) in by_channel {
+                crate::telemetry::sub_requests_pending(&channel, count);
+            }
+        }
+        Ok(n)
     }
 }

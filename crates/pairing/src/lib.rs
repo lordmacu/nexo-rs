@@ -23,6 +23,7 @@ pub mod qr;
 pub mod registry;
 pub mod setup_code;
 pub mod store;
+pub mod telemetry;
 pub mod types;
 pub mod url_resolver;
 

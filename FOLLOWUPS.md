@@ -168,17 +168,20 @@ PR-1.1. ~~**Challenge reply through channel adapter**~~  ✅ shipped (Phase 26.x
   system; skipping the broker round-trip is a separate refactor and
   not on the critical path.
 
-PR-2. **Telemetry counters not wired**
-- Missing: `pairing_requests_pending{channel}` (gauge),
-  `pairing_approvals_total{channel,result}`,
-  `pairing_codes_expired_total`,
-  `pairing_bootstrap_tokens_issued_total`. Spec called for them;
-  shipped without to keep the foundation commit small.
+PR-2. **Telemetry counters not wired** ✅ Closed 2026-04-25 (Phase 26.y).
+- ~~`pairing_requests_pending{channel}`~~ ✅ gauge, push-tracked, with
+  `PairingStore::refresh_pending_gauge` exposed for drift recovery.
+- ~~`pairing_approvals_total{channel,result}`~~ ✅ counter, three results:
+  `ok | expired | not_found`.
+- ~~`pairing_codes_expired_total`~~ ✅ counter, bumped from
+  `purge_expired` (per row) and from `approve` (per expired hit).
+- ~~`pairing_bootstrap_tokens_issued_total{profile}`~~ ✅ counter on
+  every `BootstrapTokenIssuer::issue`.
 - ~~`pairing_inbound_challenged_total{channel,result}`~~ ✅ shipped
-  with Phase 26.x adapter work (2026-04-25).
-- Why deferred: same pattern as Phase 25 W-1 — admin-ui (Phase A4)
-  is the eventual consumer.
-- Target: Phase A4 dashboard work.
+  with Phase 26.x adapter work.
+- All four counters live in `nexo-pairing::telemetry` (leaf crate);
+  `nexo_core::telemetry::render_prometheus` stitches them in next to
+  the web-search block. Consumer: admin-ui Phase A4.
 
 PR-3. **`tunnel.url` integration in URL resolver**
 - Missing: `nexo pair start` currently honours only `--public-url`

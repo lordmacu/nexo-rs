@@ -184,7 +184,7 @@ Done criteria:
 
 Reference: `research/src/pairing/`, `research/apps/`.
 
-#### 26.y — Pairing telemetry counters (rest)   ⬜
+#### 26.y — Pairing telemetry counters (rest)   ✅
 
 Tracks **PR-2** in `FOLLOWUPS.md`. Wire the remaining counters
 the spec called for, on top of `pairing_inbound_challenged_total`
