@@ -686,7 +686,7 @@ LLM token usage is logged. The operator can't act on it.
 - Per-binding token rate limits (e.g. "sales WA capped at 5k
   tokens/hour") on top of the existing `sender_rate_limit`.
 - A cost prediction tool: pre-flight token counter (already
-  partly in `agent_llm::TokenCounter`) drives an estimate that
+  partly in `nexo_llm::TokenCounter`) drives an estimate that
   the agent can include in its system prompt ("you have 80% of
   budget remaining today").
 - `agent costs` CLI: rolling 24h, 7d, 30d, by agent / binding /
