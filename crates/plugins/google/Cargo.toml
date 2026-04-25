@@ -9,15 +9,15 @@ authors       = { workspace = true }
 repository    = { workspace = true }
 homepage      = { workspace = true }
 documentation = { workspace = true }
-readme        = { workspace = true }
+readme        = "README.md"
 keywords      = { workspace = true }
 categories    = { workspace = true }
 [dependencies]
 # Native Google OAuth client + the 4 google_* tools. Lives outside of
 # nexo-core so the runtime doesn't ship the reqwest OAuth machinery
 # when an agent has no `google_auth:` block.
-nexo-core = { version = "0.1.0", path = "../../core" }
-nexo-llm = { version = "0.1.0", path = "../../llm" }
+nexo-core = { version = "0.1.1", path = "../../core" }
+nexo-llm = { version = "0.1.1", path = "../../llm" }
 anyhow      = { workspace = true }
 async-trait = { workspace = true }
 chrono      = { workspace = true }

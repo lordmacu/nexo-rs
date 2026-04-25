@@ -9,15 +9,15 @@ authors       = { workspace = true }
 repository    = { workspace = true }
 homepage      = { workspace = true }
 documentation = { workspace = true }
-readme        = { workspace = true }
+readme        = "README.md"
 keywords      = { workspace = true }
 categories    = { workspace = true }
 [dependencies]
-nexo-core = { version = "0.1.0", path = "../../core" }
-nexo-broker = { version = "0.1.0", path = "../../broker" }
-nexo-config = { version = "0.1.0", path = "../../config" }
-nexo-llm = { version = "0.1.0", path = "../../llm" }
-nexo-auth = { version = "0.1.0", path = "../../auth" }
+nexo-core = { version = "0.1.1", path = "../../core" }
+nexo-broker = { version = "0.1.1", path = "../../broker" }
+nexo-config = { version = "0.1.1", path = "../../config" }
+nexo-llm = { version = "0.1.1", path = "../../llm" }
+nexo-auth = { version = "0.1.1", path = "../../auth" }
 
 wa-agent = "0.1.1"
 
@@ -46,9 +46,9 @@ live-wa = []
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 serde_yaml = { workspace = true }
-nexo-config = { version = "0.1.0", path = "../../config" }
-nexo-broker = { version = "0.1.0", path = "../../broker" }
-nexo-core = { version = "0.1.0", path = "../../core" }
+nexo-config = { version = "0.1.1", path = "../../config" }
+nexo-broker = { version = "0.1.1", path = "../../broker" }
+nexo-core = { version = "0.1.1", path = "../../core" }
 dashmap = { workspace = true }
 uuid = { workspace = true, features = ["v4", "v5", "serde"] }
 chrono = { workspace = true }

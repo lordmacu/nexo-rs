@@ -1,6 +1,6 @@
-# nexo-taskflow
+# nexo-pairing
 
-> Long-running multi-step task orchestration runtime for Nexo agents.
+> Setup-code pairing store and DM-challenge gate for Nexo channel plugins.
 
 This crate is part of **[Nexo](https://github.com/lordmacu/nexo-rs)** — a multi-agent Rust framework with a NATS event bus, pluggable LLM providers (MiniMax, Anthropic, OpenAI-compat, Gemini, DeepSeek), per-agent credentials, MCP support, and channel plugins for WhatsApp, Telegram, Email, and Browser (CDP).
 
@@ -9,23 +9,27 @@ This crate is part of **[Nexo](https://github.com/lordmacu/nexo-rs)** — a mult
 
 ## What this crate does
 
-- **State machine** for multi-step flows that can pause, resume, and survive process restarts.
-- **FlowStore** persistence so flows are durable across boots.
-- **Wait/resume primitives** — flows can suspend on a human reply, an external webhook, or a timer.
-- **Agent tools** to start, list, and resume flows from inside an LLM turn.
-- CLI mirroring so operators can inspect and intervene from the shell.
+- Setup-code generation + verification (HMAC-backed, constant-time compare).
+- Persistent pairing store (SQLite via `sqlx`) for paired peers, challenges, and revocations.
+- DM-challenge gate that channel plugins call before forwarding traffic from an unpaired peer.
+- QR-code rendering (text + optional PNG via the `qr-png` feature) for setup-code handoff.
 
 ## Install
 
 ```toml
 [dependencies]
-nexo-taskflow = "0.1"
+nexo-pairing = "0.1"
+```
+
+Disable the PNG renderer if you only need text QR:
+
+```toml
+nexo-pairing = { version = "0.1", default-features = false }
 ```
 
 ## Documentation for this crate
 
-- [TaskFlow model](https://lordmacu.github.io/nexo-rs/taskflow/model.html)
-- [FlowManager](https://lordmacu.github.io/nexo-rs/taskflow/manager.html)
+- [Pairing protocol](https://lordmacu.github.io/nexo-rs/config/pairing.html)
 
 ## License
 

@@ -9,7 +9,7 @@ authors       = { workspace = true }
 repository    = { workspace = true }
 homepage      = { workspace = true }
 documentation = { workspace = true }
-readme        = { workspace = true }
+readme        = "README.md"
 keywords      = { workspace = true }
 categories    = { workspace = true }
 [dependencies]
@@ -24,8 +24,8 @@ sha2       = { workspace = true }
 hex        = { workspace = true }
 tokio      = { workspace = true }
 arc-swap   = { workspace = true }
-nexo-config = { version = "0.1.0", path = "../config" }
-nexo-resilience = { version = "0.1.0", path = "../resilience" }
+nexo-config = { version = "0.1.1", path = "../config" }
+nexo-resilience = { version = "0.1.1", path = "../resilience" }
 
 [dev-dependencies]
 tempfile           = "3"

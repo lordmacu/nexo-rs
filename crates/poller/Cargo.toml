@@ -9,15 +9,15 @@ authors       = { workspace = true }
 repository    = { workspace = true }
 homepage      = { workspace = true }
 documentation = { workspace = true }
-readme        = { workspace = true }
+readme        = "README.md"
 keywords      = { workspace = true }
 categories    = { workspace = true }
 [dependencies]
-nexo-broker = { version = "0.1.0", path = "../broker" }
-nexo-config = { version = "0.1.0", path = "../config" }
-nexo-auth = { version = "0.1.0", path = "../auth" }
-nexo-resilience = { version = "0.1.0", path = "../resilience" }
-nexo-llm = { version = "0.1.0", path = "../llm" }
+nexo-broker = { version = "0.1.1", path = "../broker" }
+nexo-config = { version = "0.1.1", path = "../config" }
+nexo-auth = { version = "0.1.1", path = "../auth" }
+nexo-resilience = { version = "0.1.1", path = "../resilience" }
+nexo-llm = { version = "0.1.1", path = "../llm" }
 
 tokio        = { workspace = true }
 async-trait  = { workspace = true }
@@ -37,7 +37,7 @@ cron         = "0.12"
 humantime    = { workspace = true }
 regex        = "1"
 base64       = { workspace = true }
-nexo-plugin-google = { version = "0.1.0", path = "../plugins/google" }
+nexo-plugin-google = { version = "0.1.1", path = "../plugins/google" }
 
 [features]
 default = []
