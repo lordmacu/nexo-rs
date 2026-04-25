@@ -14,7 +14,12 @@ fn issuer() -> (SetupCodeIssuer, tempfile::TempDir) {
 fn issue_then_verify_round_trip() {
     let (issuer, _d) = issuer();
     let code = issuer
-        .issue("wss://example.com", "companion-v1", Duration::from_secs(600), Some("phone-7"))
+        .issue(
+            "wss://example.com",
+            "companion-v1",
+            Duration::from_secs(600),
+            Some("phone-7"),
+        )
         .unwrap();
     let claims = issuer.verify(&code.bootstrap_token).unwrap();
     assert_eq!(claims.profile, "companion-v1");

@@ -1,7 +1,7 @@
 use super::context::AgentContext;
 use super::tool_registry::ToolHandler;
-use nexo_llm::ToolDef;
 use async_trait::async_trait;
+use nexo_llm::ToolDef;
 use serde_json::{json, Value};
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 pub struct DelegationTool;

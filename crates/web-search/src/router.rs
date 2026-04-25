@@ -127,8 +127,7 @@ impl WebSearchRouter {
                     if let Some(b) = &breaker {
                         if matches!(
                             &e,
-                            WebSearchError::Transport(_)
-                                | WebSearchError::ProviderHttp { .. }
+                            WebSearchError::Transport(_) | WebSearchError::ProviderHttp { .. }
                         ) {
                             b.trip();
                         }
@@ -143,7 +142,10 @@ impl WebSearchRouter {
 
     /// Returns the ordered list of provider ids to try, given an
     /// (optional) explicit pick.
-    fn resolve_candidates(&self, explicit: Option<&str>) -> Result<Vec<&'static str>, WebSearchError> {
+    fn resolve_candidates(
+        &self,
+        explicit: Option<&str>,
+    ) -> Result<Vec<&'static str>, WebSearchError> {
         if let Some(name) = explicit {
             for id in self.providers.keys() {
                 if *id == name {
@@ -243,7 +245,11 @@ mod tests {
         }
     }
 
-    fn stub(id: &'static str, requires_cred: bool, fail: Option<u16>) -> Arc<dyn WebSearchProvider> {
+    fn stub(
+        id: &'static str,
+        requires_cred: bool,
+        fail: Option<u16>,
+    ) -> Arc<dyn WebSearchProvider> {
         Arc::new(StubProvider {
             id,
             requires_cred,
@@ -292,16 +298,16 @@ mod tests {
     async fn explicit_failing_provider_returns_error() {
         let r = WebSearchRouter::new(vec![stub("brave", true, Some(500))], None);
         let err = r.search(args("rust"), Some("brave")).await.unwrap_err();
-        assert!(matches!(err, WebSearchError::ProviderHttp { status: 500, .. }));
+        assert!(matches!(
+            err,
+            WebSearchError::ProviderHttp { status: 500, .. }
+        ));
     }
 
     #[tokio::test]
     async fn auto_falls_through_failing_provider() {
         let r = WebSearchRouter::new(
-            vec![
-                stub("brave", true, Some(500)),
-                stub("tavily", true, None),
-            ],
+            vec![stub("brave", true, Some(500)), stub("tavily", true, None)],
             None,
         );
         let res = r.search(args("rust"), None).await.unwrap();

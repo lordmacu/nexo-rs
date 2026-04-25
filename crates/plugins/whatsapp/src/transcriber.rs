@@ -13,8 +13,8 @@
 
 use std::time::Duration;
 
-use nexo_broker::{AnyBroker, BrokerHandle, Message};
 use base64::Engine;
+use nexo_broker::{AnyBroker, BrokerHandle, Message};
 use serde::Deserialize;
 use std::future::Future;
 use std::pin::Pin;

@@ -7,12 +7,12 @@
 
 use std::sync::Arc;
 
+use chrono::Utc;
 use nexo_taskflow::{
     manager::{CreateManagedInput, FlowManager},
     store::{FlowStore, SqliteFlowStore},
     types::{FlowStep, FlowStepStatus, StepRuntime},
 };
-use chrono::Utc;
 use serde_json::json;
 use uuid::Uuid;
 

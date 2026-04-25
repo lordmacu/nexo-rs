@@ -151,7 +151,10 @@ fn run_guided_first_run(
     }
 
     println!();
-    println!("✔ Setup guiado listo. Ejecutá `./target/debug/agent --config {}`", config_dir.display());
+    println!(
+        "✔ Setup guiado listo. Ejecutá `./target/debug/agent --config {}`",
+        config_dir.display()
+    );
     Ok(())
 }
 
@@ -236,11 +239,7 @@ fn run_hub_menu(
                     .filter(|s| s.category == registry::Category::Llm)
                     .collect();
                 let mut labels: Vec<String> = vec!["← Volver al menú".to_string()];
-                labels.extend(
-                    llm_services
-                        .iter()
-                        .map(|s| labeled_with_status(s, &report)),
-                );
+                labels.extend(llm_services.iter().map(|s| labeled_with_status(s, &report)));
                 let pick = prompt::pick_from_strings("¿Qué proveedor de LLM?", &labels)?;
                 if pick == 0 {
                     continue;
@@ -260,9 +259,7 @@ fn run_hub_menu(
                     })
                     .collect();
                 let mut labels: Vec<String> = vec!["← Volver al menú".to_string()];
-                labels.extend(
-                    rotatable.iter().map(|s| labeled_with_status(s, &report)),
-                );
+                labels.extend(rotatable.iter().map(|s| labeled_with_status(s, &report)));
                 let pick = prompt::pick_from_strings("¿Qué servicio rotar?", &labels)?;
                 if pick == 0 {
                     continue;
@@ -284,8 +281,7 @@ fn run_hub_menu(
                     })
                     .cloned()
                     .collect();
-                let picked =
-                    prompt::select_services(&advanced_services, secrets_dir, config_dir)?;
+                let picked = prompt::select_services(&advanced_services, secrets_dir, config_dir)?;
                 for svc in picked {
                     if let Err(e) = run_service(svc, secrets_dir, config_dir) {
                         eprintln!("⚠  {}: {e:#}", svc.label);

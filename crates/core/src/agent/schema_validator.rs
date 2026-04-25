@@ -5,10 +5,10 @@
 //! When the feature is off the validator is a no-op; when on, callers
 //! get detailed error messages with JSON pointer paths that the LLM can
 //! use to fix its next attempt.
-use nexo_llm::ToolDef;
 use dashmap::DashMap;
 #[cfg(feature = "schema-validation")]
 use jsonschema::Validator;
+use nexo_llm::ToolDef;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;

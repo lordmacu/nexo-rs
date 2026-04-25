@@ -4,8 +4,8 @@
 use super::context::AgentContext;
 use super::tool_registry::ToolHandler;
 use super::workspace_git::MemoryGitRepo;
-use nexo_llm::ToolDef;
 use async_trait::async_trait;
+use nexo_llm::ToolDef;
 use serde_json::{json, Value};
 use std::sync::Arc;
 pub struct MemoryCheckpointTool {

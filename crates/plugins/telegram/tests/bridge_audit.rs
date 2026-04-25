@@ -8,8 +8,8 @@
 
 use std::sync::Arc;
 
-use nexo_plugin_telegram::plugin::{PendingEntry, PendingMap};
 use dashmap::DashMap;
+use nexo_plugin_telegram::plugin::{PendingEntry, PendingMap};
 use tokio::sync::oneshot;
 use uuid::Uuid;
 

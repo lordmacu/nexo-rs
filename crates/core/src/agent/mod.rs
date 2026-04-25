@@ -6,6 +6,7 @@ pub mod agent;
 pub mod agents_directory;
 pub mod behavior;
 pub mod binding_validate;
+pub mod compaction;
 pub mod context;
 pub mod delegation_tool;
 pub mod dreaming;
@@ -27,7 +28,9 @@ pub mod mock_plugin;
 pub mod noop;
 pub mod peer_directory;
 pub mod plugin;
+pub mod prompt_assembly;
 pub mod rate_limit;
+pub mod redaction;
 pub mod registry;
 pub mod routing;
 pub mod runtime;
@@ -36,18 +39,15 @@ pub mod self_report;
 pub mod sender_rate_limit;
 pub mod session_logs_tool;
 pub mod skills;
-pub mod redaction;
 pub mod taskflow_tool;
-pub mod web_search_tool;
-pub mod transcripts_index;
 pub mod tool_filter;
 pub mod tool_policy;
 pub mod tool_registry;
 pub mod tool_registry_cache;
 pub mod transcripts;
+pub mod transcripts_index;
 pub mod types;
-pub mod compaction;
-pub mod prompt_assembly;
+pub mod web_search_tool;
 pub mod workspace;
 pub mod workspace_cache;
 pub mod workspace_git;
@@ -55,9 +55,8 @@ pub use agent::Agent;
 pub use agents_directory::{AgentInfo, AgentsDirectory};
 pub use behavior::AgentBehavior;
 pub use binding_validate::{
-    collect_binding_errors, collect_binding_errors_with_providers, validate_agent,
-    validate_agents, validate_agents_with_providers, BindingValidationError, KnownProviders,
-    KnownTools,
+    collect_binding_errors, collect_binding_errors_with_providers, validate_agent, validate_agents,
+    validate_agents_with_providers, BindingValidationError, KnownProviders, KnownTools,
 };
 pub use context::AgentContext;
 pub use delegation_tool::DelegationTool;
@@ -98,7 +97,6 @@ pub use skills::{
     VersionFailReason,
 };
 pub use taskflow_tool::{TaskFlowTool, TaskFlowToolGuardrails};
-pub use web_search_tool::WebSearchTool;
 pub use tool_registry::{ToolHandler, ToolRegistry};
 pub use tool_registry_cache::ToolRegistryCache;
 pub use transcripts::{
@@ -107,6 +105,7 @@ pub use transcripts::{
 };
 pub use transcripts_index::{IndexedHit, TranscriptsIndex};
 pub use types::{InboundMessage, RunTrigger};
+pub use web_search_tool::WebSearchTool;
 pub use workspace::{
     AgentIdentity, DailyNote, LoadLimits, SessionScope, WorkspaceBundle, WorkspaceLoader,
 };

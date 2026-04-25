@@ -9,8 +9,8 @@
 //! its own quota, isolated across agents. Unlike `ToolRateLimiter`
 //! this is fully sync (DashMap entry lock only) because the hot path
 //! is per-message and must not yield.
-use nexo_config::types::agents::SenderRateLimitConfig;
 use dashmap::DashMap;
+use nexo_config::types::agents::SenderRateLimitConfig;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 use tokio::sync::Mutex;

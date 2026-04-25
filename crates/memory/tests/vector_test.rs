@@ -4,8 +4,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use nexo_memory::{EmbeddingProvider, LongTermMemory};
 use async_trait::async_trait;
+use nexo_memory::{EmbeddingProvider, LongTermMemory};
 use tempfile::TempDir;
 
 struct MockProvider {

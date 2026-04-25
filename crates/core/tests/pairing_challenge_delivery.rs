@@ -62,11 +62,10 @@ impl PairingChannelAdapter for CapturingAdapter {
         format!("CUSTOM:{code}")
     }
     async fn send_reply(&self, account: &str, to: &str, text: &str) -> anyhow::Result<()> {
-        self.calls.lock().unwrap().push((
-            account.to_string(),
-            to.to_string(),
-            text.to_string(),
-        ));
+        self.calls
+            .lock()
+            .unwrap()
+            .push((account.to_string(), to.to_string(), text.to_string()));
         Ok(())
     }
 }
@@ -149,15 +148,26 @@ async fn challenge_delivers_via_registered_adapter() {
         .with_pairing_adapters(registry);
     runtime.start().await.unwrap();
 
-    publish(&broker, "plugin.inbound.whatsapp", "573001112222@c.us", "hola").await;
+    publish(
+        &broker,
+        "plugin.inbound.whatsapp",
+        "573001112222@c.us",
+        "hola",
+    )
+    .await;
     sleep(Duration::from_millis(80)).await;
 
-    let calls = adapter.calls.lock().unwrap();
-    assert_eq!(calls.len(), 1, "adapter.send_reply should be called once");
-    let (account, to, text) = &calls[0];
-    assert_eq!(account, "default");
-    assert_eq!(to, "+573001112222", "sender id was normalised");
-    assert!(text.starts_with("CUSTOM:"), "format_challenge_text was used");
+    {
+        let calls = adapter.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1, "adapter.send_reply should be called once");
+        let (account, to, text) = &calls[0];
+        assert_eq!(account, "default");
+        assert_eq!(to, "+573001112222", "sender id was normalised");
+        assert!(
+            text.starts_with("CUSTOM:"),
+            "format_challenge_text was used"
+        );
+    }
 
     runtime.stop().await;
 }

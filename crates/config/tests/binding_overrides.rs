@@ -4,9 +4,7 @@
 //! only locks down the serde schema so the downstream work can rely on
 //! what each form deserializes to.
 
-use nexo_config::{
-    InboundBinding, SenderRateLimitKeyword, SenderRateLimitOverride,
-};
+use nexo_config::{InboundBinding, SenderRateLimitKeyword, SenderRateLimitOverride};
 
 fn parse(yaml: &str) -> InboundBinding {
     serde_yaml::from_str(yaml).expect("valid binding YAML")
@@ -62,7 +60,11 @@ language: en
     let m = b.model.expect("model override present");
     assert_eq!(m.provider, "anthropic");
     assert_eq!(m.model, "claude-sonnet-4-5");
-    assert!(b.system_prompt_extra.as_deref().unwrap().contains("Private"));
+    assert!(b
+        .system_prompt_extra
+        .as_deref()
+        .unwrap()
+        .contains("Private"));
     assert!(matches!(
         b.sender_rate_limit,
         SenderRateLimitOverride::Config(_)

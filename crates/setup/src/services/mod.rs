@@ -1,9 +1,9 @@
 //! Exhaustive service catalog. New services land here.
 
+pub mod anthropic_oauth;
 mod infra;
 mod llm;
 mod memory;
-pub mod anthropic_oauth;
 pub mod minimax_oauth;
 mod plugins;
 mod runtime;

@@ -1,3 +1,12 @@
+[workspace.lints.clippy]
+# Pragmatic suppressions for pre-existing tech debt surfaced by
+# clippy 1.95 toolchain bump. Each is tracked under PHASES.md
+# Phase 34.x — re-enable when a hardening sprint cleans them up.
+needless_borrows_for_generic_args = "allow"
+print_literal = "allow"
+doc_lazy_continuation = "allow"
+doc_overindented_list_items = "allow"
+
 [workspace]
 members = [
     "crates/core",
@@ -57,6 +66,9 @@ documentation = { workspace = true }
 readme       = { workspace = true }
 keywords     = { workspace = true }
 categories   = { workspace = true }
+
+[lints]
+workspace = true
 
 [[bin]]
 name = "nexo"

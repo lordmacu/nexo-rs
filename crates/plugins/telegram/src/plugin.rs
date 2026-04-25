@@ -3,11 +3,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
+use dashmap::DashMap;
 use nexo_broker::{AnyBroker, BrokerHandle, Event};
 use nexo_config::types::plugins::TelegramPluginConfig;
 use nexo_core::agent::plugin::{Command, Plugin, Response};
-use async_trait::async_trait;
-use dashmap::DashMap;
 use serde::Deserialize;
 use tokio::sync::{oneshot, Mutex, OnceCell};
 use tokio::task::{AbortHandle, JoinHandle};
@@ -620,7 +620,9 @@ fn spawn_poller(
                 // Original audio path stays on the InboundEvent.media
                 // field for skills that want the raw file.
                 if cfg.auto_transcribe.enabled {
-                    if let Some(m) = media.iter().find(|m| m.kind == "voice" || m.kind == "audio")
+                    if let Some(m) = media
+                        .iter()
+                        .find(|m| m.kind == "voice" || m.kind == "audio")
                     {
                         if text.is_empty() {
                             // Pre-announce so the user sees feedback for

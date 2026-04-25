@@ -2,8 +2,8 @@ use super::context::AgentContext;
 use super::tool_registry::ToolHandler;
 use super::transcripts::{SessionHeader, TranscriptEntry, TranscriptLine, TranscriptWriter};
 use super::transcripts_index::TranscriptsIndex;
-use nexo_llm::ToolDef;
 use async_trait::async_trait;
+use nexo_llm::ToolDef;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -409,11 +409,11 @@ fn optional_usize(args: &Value, key: &str) -> anyhow::Result<Option<usize>> {
 mod tests {
     use super::*;
     use crate::session::SessionManager;
+    use chrono::Utc;
     use nexo_broker::{AnyBroker, BrokerHandle};
     use nexo_config::types::agents::{
         AgentConfig, AgentRuntimeConfig, HeartbeatConfig, ModelConfig,
     };
-    use chrono::Utc;
     use std::sync::Arc;
     use std::time::Duration;
     async fn setup() -> (SessionLogsTool, AgentContext, PathBuf, Uuid) {

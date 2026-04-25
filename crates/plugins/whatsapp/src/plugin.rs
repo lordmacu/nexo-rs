@@ -12,12 +12,12 @@
 
 use std::sync::Arc;
 
-use nexo_broker::{AnyBroker, BrokerHandle, Event};
-use nexo_config::WhatsappPluginConfig;
-use nexo_core::agent::plugin::{Command, Plugin, Response};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use dashmap::DashMap;
+use nexo_broker::{AnyBroker, BrokerHandle, Event};
+use nexo_config::WhatsappPluginConfig;
+use nexo_core::agent::plugin::{Command, Plugin, Response};
 use tokio::sync::{oneshot, Mutex, OnceCell};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;

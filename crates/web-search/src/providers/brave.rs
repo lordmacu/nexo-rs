@@ -91,10 +91,7 @@ impl WebSearchProvider for BraveProvider {
             .get(&self.endpoint)
             .header("X-Subscription-Token", &self.api_key)
             .header("Accept", "application/json")
-            .query(&[
-                ("q", args.query.as_str()),
-                ("count", &count.to_string()),
-            ]);
+            .query(&[("q", args.query.as_str()), ("count", &count.to_string())]);
         if let Some(f) = args.freshness {
             req = req.query(&[("freshness", freshness_param(f))]);
         }
@@ -137,4 +134,3 @@ impl WebSearchProvider for BraveProvider {
             .collect())
     }
 }
-

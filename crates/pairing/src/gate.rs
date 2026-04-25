@@ -92,7 +92,11 @@ impl PairingGate {
             }
         }
 
-        let decision = if self.store.is_allowed(channel, account_id, sender_id).await? {
+        let decision = if self
+            .store
+            .is_allowed(channel, account_id, sender_id)
+            .await?
+        {
             Decision::Admit
         } else {
             match self
@@ -126,17 +130,24 @@ mod tests {
     use super::*;
 
     fn allow() -> PairingPolicy {
-        PairingPolicy { auto_challenge: true }
+        PairingPolicy {
+            auto_challenge: true,
+        }
     }
     fn off() -> PairingPolicy {
-        PairingPolicy { auto_challenge: false }
+        PairingPolicy {
+            auto_challenge: false,
+        }
     }
 
     #[tokio::test]
     async fn gate_admits_when_policy_off() {
         let store = Arc::new(PairingStore::open_memory().await.unwrap());
         let gate = PairingGate::new(store);
-        let d = gate.should_admit("wa", "p", "+57", &off(), None).await.unwrap();
+        let d = gate
+            .should_admit("wa", "p", "+57", &off(), None)
+            .await
+            .unwrap();
         assert!(matches!(d, Decision::Admit));
     }
 
@@ -144,7 +155,10 @@ mod tests {
     async fn first_unknown_sender_gets_challenge_with_code() {
         let store = Arc::new(PairingStore::open_memory().await.unwrap());
         let gate = PairingGate::new(store);
-        let d = gate.should_admit("wa", "p", "+57", &allow(), None).await.unwrap();
+        let d = gate
+            .should_admit("wa", "p", "+57", &allow(), None)
+            .await
+            .unwrap();
         match d {
             Decision::Challenge { code } => assert_eq!(code.len(), crate::code::LENGTH),
             other => panic!("expected challenge, got {other:?}"),
@@ -155,14 +169,20 @@ mod tests {
     async fn approved_sender_admits_after_cache_flush() {
         let store = Arc::new(PairingStore::open_memory().await.unwrap());
         let gate = PairingGate::new(Arc::clone(&store));
-        let d1 = gate.should_admit("wa", "p", "+57", &allow(), None).await.unwrap();
+        let d1 = gate
+            .should_admit("wa", "p", "+57", &allow(), None)
+            .await
+            .unwrap();
         let code = match d1 {
             Decision::Challenge { code } => code,
             other => panic!("{other:?}"),
         };
         store.approve(&code).await.unwrap();
         gate.flush_cache();
-        let d2 = gate.should_admit("wa", "p", "+57", &allow(), None).await.unwrap();
+        let d2 = gate
+            .should_admit("wa", "p", "+57", &allow(), None)
+            .await
+            .unwrap();
         assert_eq!(d2, Decision::Admit);
     }
 
@@ -170,8 +190,14 @@ mod tests {
     async fn cache_returns_same_decision_within_ttl() {
         let store = Arc::new(PairingStore::open_memory().await.unwrap());
         let gate = PairingGate::new(store);
-        let d1 = gate.should_admit("wa", "p", "+57", &allow(), None).await.unwrap();
-        let d2 = gate.should_admit("wa", "p", "+57", &allow(), None).await.unwrap();
+        let d1 = gate
+            .should_admit("wa", "p", "+57", &allow(), None)
+            .await
+            .unwrap();
+        let d2 = gate
+            .should_admit("wa", "p", "+57", &allow(), None)
+            .await
+            .unwrap();
         assert_eq!(d1, d2);
     }
 
@@ -181,10 +207,16 @@ mod tests {
         let gate = PairingGate::new(store);
         for i in 1..=3 {
             let s = format!("+5710000000{i}");
-            let d = gate.should_admit("wa", "p", &s, &allow(), None).await.unwrap();
+            let d = gate
+                .should_admit("wa", "p", &s, &allow(), None)
+                .await
+                .unwrap();
             assert!(matches!(d, Decision::Challenge { .. }));
         }
-        let d4 = gate.should_admit("wa", "p", "+571000000099", &allow(), None).await.unwrap();
+        let d4 = gate
+            .should_admit("wa", "p", "+571000000099", &allow(), None)
+            .await
+            .unwrap();
         assert_eq!(d4, Decision::Drop);
     }
 }

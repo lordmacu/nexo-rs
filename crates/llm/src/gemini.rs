@@ -680,7 +680,6 @@ mod tests {
             system_blocks: Vec::new(),
             cache_tools: false,
         }
-    
     }
 
     #[test]
@@ -877,7 +876,7 @@ mod tests {
             system_prompt: None,
             stop_sequences: Vec::new(),
             tool_choice: ToolChoice::Auto,
-        
+
             system_blocks: Vec::new(),
             cache_tools: false,
         };

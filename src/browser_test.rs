@@ -4,9 +4,9 @@ use std::path::PathBuf;
 /// Run with:  cargo run --bin browser-test -- https://example.com
 use std::sync::Arc;
 
+use anyhow::Context;
 use nexo_config::BrowserConfig;
 use nexo_plugin_browser::{CdpClient, CdpSession, ChromeLauncher};
-use anyhow::Context;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

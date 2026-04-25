@@ -99,7 +99,13 @@ fn enforce_security(url: &str, extras: &[String]) -> Result<(), ResolveError> {
         )));
     }
     let after = url.split("://").nth(1).unwrap_or("");
-    let host = after.split('/').next().unwrap_or("").split(':').next().unwrap_or("");
+    let host = after
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .split(':')
+        .next()
+        .unwrap_or("");
     if host.is_empty() {
         return Err(ResolveError::Invalid(url.into()));
     }

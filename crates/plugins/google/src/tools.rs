@@ -18,8 +18,8 @@
 
 use std::sync::Arc;
 
-use nexo_llm::ToolDef;
 use async_trait::async_trait;
+use nexo_llm::ToolDef;
 use serde_json::{json, Value};
 
 use nexo_core::agent::context::AgentContext;
@@ -169,9 +169,7 @@ impl ToolHandler for GoogleCallTool {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("google_call requires `url`"))?;
         if !url.starts_with("https://") || !url.contains("googleapis.com") {
-            anyhow::bail!(
-                "google_call only accepts https://*.googleapis.com URLs — got `{url}`"
-            );
+            anyhow::bail!("google_call only accepts https://*.googleapis.com URLs — got `{url}`");
         }
         let body = if args.get("body").is_some() && !args["body"].is_null() {
             Some(args["body"].clone())

@@ -160,11 +160,10 @@ impl LongTermMemory {
         // Idempotent: swallow the "duplicate column" error on re-runs but
         // surface anything else (disk full, permission denied, etc.) so a
         // real migration failure doesn't leave the schema half-applied.
-        if let Err(e) = sqlx::query(
-            "ALTER TABLE memories ADD COLUMN concept_tags TEXT NOT NULL DEFAULT '[]'",
-        )
-        .execute(&self.pool)
-        .await
+        if let Err(e) =
+            sqlx::query("ALTER TABLE memories ADD COLUMN concept_tags TEXT NOT NULL DEFAULT '[]'")
+                .execute(&self.pool)
+                .await
         {
             if !is_duplicate_column_error(&e) {
                 return Err(e.into());

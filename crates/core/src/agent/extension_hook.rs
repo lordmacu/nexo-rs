@@ -2,8 +2,8 @@
 //! `HookRegistry`. The handler routes `on_hook(name, event)` to the owning
 //! `StdioRuntime` via JSON-RPC method `hooks/<name>`.
 use super::hook_registry::HookHandler;
-use nexo_extensions::{HookResponse, StdioRuntime};
 use async_trait::async_trait;
+use nexo_extensions::{HookResponse, StdioRuntime};
 use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;

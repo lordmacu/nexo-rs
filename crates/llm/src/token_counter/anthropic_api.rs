@@ -83,7 +83,9 @@ impl AnthropicTokenCounter {
         if status == 429 {
             // Tell the caller this is transient so the breaker can
             // open promptly and the agent loop falls back to tiktoken.
-            return Err(LlmError::RateLimit { retry_after_ms: 30_000 });
+            return Err(LlmError::RateLimit {
+                retry_after_ms: 30_000,
+            });
         }
         if status.is_server_error() {
             return Err(LlmError::ServerError {
@@ -142,11 +144,7 @@ impl TokenCounter for AnthropicTokenCounter {
         Ok(raw.saturating_sub(4))
     }
 
-    async fn count_messages(
-        &self,
-        model: &str,
-        messages: &[ChatMessage],
-    ) -> Result<u32, LlmError> {
+    async fn count_messages(&self, model: &str, messages: &[ChatMessage]) -> Result<u32, LlmError> {
         if messages.is_empty() {
             return Ok(0);
         }

@@ -9,8 +9,8 @@
 //! gone from disk. This is intentional — keeping a mapping would
 //! recreate the leak surface.
 
-use nexo_config::types::transcripts::{RedactionConfig, RedactionPattern};
 use anyhow::Context;
+use nexo_config::types::transcripts::{RedactionConfig, RedactionPattern};
 use regex::Regex;
 
 /// Compiled redactor. Construct via `from_config` (returns disabled
@@ -194,7 +194,8 @@ mod tests {
     fn redacts_hex_token_at_or_above_64_chars() {
         let r = Redactor::from_config(&enabled_default()).unwrap();
         // SHA-256 shape (64 chars) — should redact.
-        let out = r.apply("digest: 5d41402abc4b2a76b9719d911017c5925d41402abc4b2a76b9719d911017c592");
+        let out =
+            r.apply("digest: 5d41402abc4b2a76b9719d911017c5925d41402abc4b2a76b9719d911017c592");
         assert!(out.redacted_text.contains("[REDACTED:hex_token_64]"));
     }
 

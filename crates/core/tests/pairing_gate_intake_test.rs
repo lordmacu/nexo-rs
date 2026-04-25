@@ -14,9 +14,7 @@ use nexo_config::types::agents::{
     AgentConfig, AgentRuntimeConfig, HeartbeatConfig, InboundBinding, ModelConfig,
     OutboundAllowlistConfig,
 };
-use nexo_core::agent::{
-    Agent, AgentBehavior, AgentContext, AgentRuntime, InboundMessage,
-};
+use nexo_core::agent::{Agent, AgentBehavior, AgentContext, AgentRuntime, InboundMessage};
 use nexo_core::session::SessionManager;
 use nexo_pairing::{PairingGate, PairingStore};
 use serde_json::json;
@@ -141,9 +139,11 @@ async fn unknown_sender_dropped_admitted_after_seed() {
     publish(&broker, "plugin.inbound.whatsapp", "+57222", "hola known").await;
     sleep(Duration::from_millis(60)).await;
 
-    let captured = recorder.0.lock().unwrap();
-    assert_eq!(captured.len(), 1);
-    assert_eq!(captured[0], "hola known");
+    {
+        let captured = recorder.0.lock().unwrap();
+        assert_eq!(captured.len(), 1);
+        assert_eq!(captured[0], "hola known");
+    }
 
     runtime.stop().await;
 }

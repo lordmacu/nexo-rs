@@ -3,13 +3,13 @@
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use nexo_auth::resolver::CredentialStores;
 use nexo_auth::{AgentCredentialResolver, BreakerRegistry, CredentialsBundle};
 use nexo_broker::AnyBroker;
 use nexo_config::types::pollers::{PollerJob, PollersConfig};
 use nexo_poller::poller::{PollContext, Poller, TickOutcome};
 use nexo_poller::{PollState, PollerError, PollerRunner};
-use async_trait::async_trait;
 use tokio::sync::Mutex;
 
 fn empty_creds() -> Arc<CredentialsBundle> {
@@ -25,7 +25,9 @@ struct Mock;
 
 #[async_trait]
 impl Poller for Mock {
-    fn kind(&self) -> &'static str { "mock" }
+    fn kind(&self) -> &'static str {
+        "mock"
+    }
     async fn tick(&self, _ctx: &PollContext) -> Result<TickOutcome, PollerError> {
         Ok(TickOutcome::default())
     }
@@ -51,7 +53,12 @@ async fn diff_classifies_add_remove_keep_replace() {
         ..PollersConfig::default()
     };
     let state = Arc::new(PollState::open_in_memory().await.unwrap());
-    let runner = PollerRunner::new(cfg_v1, Arc::clone(&state), AnyBroker::local(), empty_creds());
+    let runner = PollerRunner::new(
+        cfg_v1,
+        Arc::clone(&state),
+        AnyBroker::local(),
+        empty_creds(),
+    );
     runner.register(Arc::new(Mock));
     runner.start().await.unwrap();
 
@@ -63,7 +70,7 @@ async fn diff_classifies_add_remove_keep_replace() {
             job("a", 60),  // keep
             job("b", 120), // replace
             job("c", 60),  // add
-            // (no entry for any prior id) — there is nothing else live
+                           // (no entry for any prior id) — there is nothing else live
         ],
         ..PollersConfig::default()
     };
@@ -83,7 +90,12 @@ async fn reload_drops_removed_jobs() {
         ..PollersConfig::default()
     };
     let state = Arc::new(PollState::open_in_memory().await.unwrap());
-    let runner = PollerRunner::new(cfg_v1, Arc::clone(&state), AnyBroker::local(), empty_creds());
+    let runner = PollerRunner::new(
+        cfg_v1,
+        Arc::clone(&state),
+        AnyBroker::local(),
+        empty_creds(),
+    );
     runner.register(Arc::new(Mock));
     runner.start().await.unwrap();
 
@@ -105,7 +117,12 @@ async fn reload_rejects_invalid_kind_atomically() {
         ..PollersConfig::default()
     };
     let state = Arc::new(PollState::open_in_memory().await.unwrap());
-    let runner = PollerRunner::new(cfg_v1, Arc::clone(&state), AnyBroker::local(), empty_creds());
+    let runner = PollerRunner::new(
+        cfg_v1,
+        Arc::clone(&state),
+        AnyBroker::local(),
+        empty_creds(),
+    );
     runner.register(Arc::new(Mock));
     runner.start().await.unwrap();
 

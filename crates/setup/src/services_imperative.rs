@@ -68,12 +68,7 @@ fn pick_allow_agents(all_agents: &[String], default: &str) -> Result<Vec<String>
     println!(
         "  Agentes autorizados para publicar desde esta cuenta (coma-separado, vacío = solo `{default}`):"
     );
-    let raw = ask(
-        "allow_agents",
-        Some(default),
-        None,
-        false,
-    )?;
+    let raw = ask("allow_agents", Some(default), None, false)?;
     let chosen: Vec<String> = raw
         .split(',')
         .map(|s| s.trim().to_string())
@@ -117,7 +112,9 @@ pub fn run_whatsapp(config_dir: &Path, _secrets_dir: &Path) -> Result<Outcome> {
     let instance = ask(
         "instance",
         Some(&default_instance),
-        Some("Etiqueta única de esta cuenta (usada en el topic plugin.outbound.whatsapp.<instance>)"),
+        Some(
+            "Etiqueta única de esta cuenta (usada en el topic plugin.outbound.whatsapp.<instance>)",
+        ),
         true,
     )?;
     let instance = instance.trim().to_string();
@@ -129,16 +126,13 @@ pub fn run_whatsapp(config_dir: &Path, _secrets_dir: &Path) -> Result<Outcome> {
     let session_dir = ask(
         "session_dir",
         Some(&default_session_dir),
-        Some("Directorio donde wa-agent persiste Signal keys + pairing (cada cuenta su propio dir)."),
+        Some(
+            "Directorio donde wa-agent persiste Signal keys + pairing (cada cuenta su propio dir).",
+        ),
         true,
     )?;
     let default_media_dir = format!("./data/media/whatsapp/{instance}");
-    let media_dir = ask(
-        "media_dir",
-        Some(&default_media_dir),
-        None,
-        true,
-    )?;
+    let media_dir = ask("media_dir", Some(&default_media_dir), None, true)?;
     let all_agents = list_all_agent_ids(config_dir);
     let allow_agents = pick_allow_agents(&all_agents, &agent_id)?;
     let final_allow = if allow_agents.is_empty() {
@@ -148,13 +142,7 @@ pub fn run_whatsapp(config_dir: &Path, _secrets_dir: &Path) -> Result<Outcome> {
     };
 
     let file = config_dir.join("plugins").join("whatsapp.yaml");
-    yaml_patch::whatsapp_upsert_instance(
-        &file,
-        &instance,
-        &session_dir,
-        &media_dir,
-        &final_allow,
-    )?;
+    yaml_patch::whatsapp_upsert_instance(&file, &instance, &session_dir, &media_dir, &final_allow)?;
     println!("✔ whatsapp.yaml: instancia `{instance}` escrita.");
 
     // Bind the agent.
@@ -187,12 +175,7 @@ pub fn run_telegram(config_dir: &Path, secrets_dir: &Path) -> Result<Outcome> {
     if instance.is_empty() {
         return Ok(Outcome::Handled);
     }
-    let token = ask(
-        "bot_token",
-        None,
-        Some("Token del bot (@BotFather)."),
-        true,
-    )?;
+    let token = ask("bot_token", None, Some("Token del bot (@BotFather)."), true)?;
     // Persist token to secrets/<instance>_telegram_token.txt.
     let secret_name = format!("{instance}_telegram_token.txt");
     let secret_path = secrets_dir.join(&secret_name);
@@ -228,13 +211,7 @@ pub fn run_telegram(config_dir: &Path, secrets_dir: &Path) -> Result<Outcome> {
     };
 
     let file = config_dir.join("plugins").join("telegram.yaml");
-    yaml_patch::telegram_upsert_instance(
-        &file,
-        &instance,
-        &placeholder,
-        &final_allow,
-        &chat_ids,
-    )?;
+    yaml_patch::telegram_upsert_instance(&file, &instance, &placeholder, &final_allow, &chat_ids)?;
     println!("✔ telegram.yaml: instancia `{instance}` escrita.");
 
     let agent_file = yaml_patch::find_agent_file(config_dir, &agent_id)?.ok_or_else(|| {
@@ -319,13 +296,7 @@ async fn run_google_inner(config_dir: &Path, secrets_dir: &Path) -> Result<Outco
     let rel_cs = format!("./secrets/{cs_name}");
     let rel_tok = format!("./secrets/{tok_name}");
     yaml_patch::google_auth_upsert_account(
-        &file,
-        &id,
-        &agent_id,
-        &rel_cid,
-        &rel_cs,
-        &rel_tok,
-        &scopes,
+        &file, &id, &agent_id, &rel_cid, &rel_cs, &rel_tok, &scopes,
     )?;
     println!("✔ google-auth.yaml: cuenta `{id}` escrita.");
     println!(
@@ -337,10 +308,7 @@ async fn run_google_inner(config_dir: &Path, secrets_dir: &Path) -> Result<Outco
         anyhow::anyhow!("no pude encontrar el archivo YAML del agente `{agent_id}`")
     })?;
     yaml_patch::patch_agent_credentials(&agent_file, &agent_id, "google", &id)?;
-    println!(
-        "✔ {}: credentials.google = `{id}`.",
-        agent_file.display()
-    );
+    println!("✔ {}: credentials.google = `{id}`.", agent_file.display());
 
     // Phase 17 — offer the device-code consent flow inline so headless
     // setups (servers without a browser) can get a refresh_token
@@ -363,7 +331,9 @@ async fn run_google_inner(config_dir: &Path, secrets_dir: &Path) -> Result<Outco
             );
         }
     } else {
-        println!("   Salta consent. token_path se crea al primer `google_auth_start` desde el agente.");
+        println!(
+            "   Salta consent. token_path se crea al primer `google_auth_start` desde el agente."
+        );
     }
 
     Ok(Outcome::Handled)
@@ -393,7 +363,10 @@ async fn run_google_device_code(
     let challenge = client.request_device_code().await?;
     println!();
     println!("╭─ Device-code OAuth ───────────────────────────────────────");
-    println!("│  Abrí en cualquier navegador:  {}", challenge.verification_url);
+    println!(
+        "│  Abrí en cualquier navegador:  {}",
+        challenge.verification_url
+    );
     println!("│  Código a escribir:            {}", challenge.user_code);
     println!("│  (válido por {}s)", challenge.expires_in);
     println!("╰───────────────────────────────────────────────────────────");

@@ -27,8 +27,8 @@ fn agent_with_inline_google(id: &str) -> AgentConfig {
         skills_dir: "./skills".into(),
         skill_overrides: Default::default(),
         link_understanding: serde_json::Value::Null,
-            web_search: serde_json::Value::Null,
-            pairing_policy: serde_json::Value::Null,
+        web_search: serde_json::Value::Null,
+        pairing_policy: serde_json::Value::Null,
         transcripts_dir: String::new(),
         dreaming: Default::default(),
         workspace_git: Default::default(),
@@ -111,7 +111,10 @@ fn strict_error_never_leaks_client_id() {
             !msg.contains("706186208439"),
             "error leaked client_id: {msg}"
         );
-        assert!(!msg.contains("gocspx-literal"), "error leaked secret: {msg}");
+        assert!(
+            !msg.contains("gocspx-literal"),
+            "error leaked secret: {msg}"
+        );
     }
     // Silence unused import warning in strict mode for PathBuf.
     let _ = PathBuf::new();

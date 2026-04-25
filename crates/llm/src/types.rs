@@ -257,9 +257,8 @@ impl CacheUsage {
     /// Cache hit ratio for this turn: `read / (read + creation + uncached_input)`.
     /// Returns 0.0 when no input tokens were billed.
     pub fn hit_ratio(&self) -> f32 {
-        let denom = self.cache_read_input_tokens
-            + self.cache_creation_input_tokens
-            + self.input_tokens;
+        let denom =
+            self.cache_read_input_tokens + self.cache_creation_input_tokens + self.input_tokens;
         if denom == 0 {
             return 0.0;
         }

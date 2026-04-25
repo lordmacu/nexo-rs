@@ -47,9 +47,15 @@ pub struct WebhookJobConfig {
     pub allow_private_networks: bool,
 }
 
-fn default_method() -> String { "GET".into() }
-fn default_id_field() -> String { "id".into() }
-fn default_max() -> usize { 20 }
+fn default_method() -> String {
+    "GET".into()
+}
+fn default_id_field() -> String {
+    "id".into()
+}
+fn default_max() -> usize {
+    20
+}
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct CursorState {
@@ -74,12 +80,16 @@ impl WebhookPoller {
 }
 
 impl Default for WebhookPoller {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[async_trait]
 impl Poller for WebhookPoller {
-    fn kind(&self) -> &'static str { "webhook_poll" }
+    fn kind(&self) -> &'static str {
+        "webhook_poll"
+    }
 
     fn description(&self) -> &'static str {
         "Generic HTTP-poller: hits a URL, parses JSON, dispatches new items."
@@ -116,8 +126,8 @@ impl Poller for WebhookPoller {
             .and_then(|b| serde_json::from_slice(b).ok())
             .unwrap_or_default();
 
-        let method = Method::from_bytes(cfg.method.as_bytes())
-            .map_err(|e| PollerError::Config {
+        let method =
+            Method::from_bytes(cfg.method.as_bytes()).map_err(|e| PollerError::Config {
                 job: ctx.job_id.clone(),
                 reason: format!("invalid method '{}': {e}", cfg.method),
             })?;
@@ -136,7 +146,9 @@ impl Poller for WebhookPoller {
             .map_err(|e| PollerError::Transient(anyhow::Error::from(e)))?;
         let status = resp.status();
         let body: Value = if status.is_success() {
-            resp.json().await.map_err(|e| PollerError::Transient(anyhow::Error::from(e)))?
+            resp.json()
+                .await
+                .map_err(|e| PollerError::Transient(anyhow::Error::from(e)))?
         } else if status.as_u16() == 401 || status.as_u16() == 403 {
             return Err(PollerError::Permanent(anyhow::anyhow!(
                 "HTTP {status} — credentials may need rotation"
@@ -201,7 +213,10 @@ impl Poller for WebhookPoller {
 
 fn pluck_items<'a>(body: &'a Value, path: &str) -> Vec<&'a Value> {
     if path.is_empty() {
-        return body.as_array().map(|a| a.iter().collect()).unwrap_or_default();
+        return body
+            .as_array()
+            .map(|a| a.iter().collect())
+            .unwrap_or_default();
     }
     let mut cur = body;
     for seg in path.split('.') {
@@ -210,7 +225,9 @@ fn pluck_items<'a>(body: &'a Value, path: &str) -> Vec<&'a Value> {
             None => return Vec::new(),
         }
     }
-    cur.as_array().map(|a| a.iter().collect()).unwrap_or_default()
+    cur.as_array()
+        .map(|a| a.iter().collect())
+        .unwrap_or_default()
 }
 
 fn render(template: &str, item: &Value) -> String {

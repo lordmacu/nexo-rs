@@ -319,11 +319,7 @@ pub fn observe_prompt_tokens_drift(
     if actual == 0 {
         return;
     }
-    let diff = if estimated > actual {
-        estimated - actual
-    } else {
-        actual - estimated
-    };
+    let diff = estimated.abs_diff(actual);
     let pct = ((diff as f64) * 100.0 / (actual as f64)).round() as u64;
     let key = LlmKey {
         agent: agent_id.to_string(),
@@ -350,11 +346,7 @@ pub fn prompt_tokens_estimated(agent_id: &str, provider: &str, model: &str) -> u
 }
 
 /// Test helper: rolling drift histogram count (number of observations).
-pub fn prompt_tokens_drift_observations(
-    agent_id: &str,
-    provider: &str,
-    model: &str,
-) -> u64 {
+pub fn prompt_tokens_drift_observations(agent_id: &str, provider: &str, model: &str) -> u64 {
     let key = LlmKey {
         agent: agent_id.to_string(),
         provider: provider.to_string(),
@@ -735,7 +727,9 @@ pub fn render_prometheus(fallback_nats_open: bool) -> String {
         }
     }
 
-    out.push_str("# HELP nexo_link_understanding_fetch_total Link-understanding fetch outcomes by result.\n");
+    out.push_str(
+        "# HELP nexo_link_understanding_fetch_total Link-understanding fetch outcomes by result.\n",
+    );
     out.push_str("# TYPE nexo_link_understanding_fetch_total counter\n");
     if LINK_FETCH_TOTAL.is_empty() {
         out.push_str("nexo_link_understanding_fetch_total{result=\"\"} 0\n");
@@ -754,7 +748,9 @@ pub fn render_prometheus(fallback_nats_open: bool) -> String {
         }
     }
 
-    out.push_str("# HELP nexo_link_understanding_cache_total Link-understanding cache lookups by hit.\n");
+    out.push_str(
+        "# HELP nexo_link_understanding_cache_total Link-understanding cache lookups by hit.\n",
+    );
     out.push_str("# TYPE nexo_link_understanding_cache_total counter\n");
     if LINK_CACHE_TOTAL.is_empty() {
         out.push_str("nexo_link_understanding_cache_total{hit=\"\"} 0\n");

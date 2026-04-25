@@ -3,8 +3,8 @@
 //! `proyecto/docs/credentials.md`.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 
@@ -140,16 +140,14 @@ impl AgentCredentialResolver {
     ) -> Result<Self, Vec<BuildError>> {
         let mut errors: Vec<BuildError> = Vec::new();
         let mut warnings: Vec<String> = Vec::new();
-        let mut bindings: HashMap<AgentId, HashMap<Channel, CredentialHandle>> =
-            HashMap::new();
+        let mut bindings: HashMap<AgentId, HashMap<Channel, CredentialHandle>> = HashMap::new();
 
         for agent in agents {
             let mut per_channel: HashMap<Channel, CredentialHandle> = HashMap::new();
             for channel in [WHATSAPP, TELEGRAM, GOOGLE] {
                 let outbound = agent.outbound.get(channel).cloned();
                 let inbound = agent.inbound.get(channel).cloned().unwrap_or_default();
-                let asymmetric_ok =
-                    *agent.asymmetric_allowed.get(channel).unwrap_or(&false);
+                let asymmetric_ok = *agent.asymmetric_allowed.get(channel).unwrap_or(&false);
 
                 // Back-compat inference: no explicit outbound + single
                 // inbound instance → use that one.
@@ -259,20 +257,14 @@ impl AgentCredentialResolver {
         let new_bindings = fresh.bindings.load_full();
         let new_warnings = fresh.warnings.load_full();
         let new_strict = **fresh.strict.load();
-        self.replace_state(
-            (*new_bindings).clone(),
-            (*new_warnings).clone(),
-            new_strict,
-        );
+        self.replace_state((*new_bindings).clone(), (*new_warnings).clone(), new_strict);
         Ok(())
     }
 
     /// Test-only constructor that takes raw bindings. Not intended for
     /// production code — [`Self::build`] is the only validated path.
     #[doc(hidden)]
-    pub fn from_raw(
-        bindings: HashMap<AgentId, HashMap<Channel, CredentialHandle>>,
-    ) -> Self {
+    pub fn from_raw(bindings: HashMap<AgentId, HashMap<Channel, CredentialHandle>>) -> Self {
         Self {
             bindings: ArcSwap::from_pointee(bindings),
             warnings: ArcSwap::from_pointee(Vec::new()),
@@ -358,7 +350,11 @@ mod tests {
         }
     }
 
-    fn stores(wa_list: Vec<WhatsappAccount>, tg_list: Vec<TelegramAccount>, g_list: Vec<GoogleAccount>) -> CredentialStores {
+    fn stores(
+        wa_list: Vec<WhatsappAccount>,
+        tg_list: Vec<TelegramAccount>,
+        g_list: Vec<GoogleAccount>,
+    ) -> CredentialStores {
         CredentialStores {
             whatsapp: Arc::new(WhatsappCredentialStore::new(wa_list)),
             telegram: Arc::new(TelegramCredentialStore::new(tg_list)),
@@ -366,7 +362,11 @@ mod tests {
         }
     }
 
-    fn input(id: &str, out: &[(Channel, &str)], inb: &[(Channel, &[&str])]) -> AgentCredentialsInput {
+    fn input(
+        id: &str,
+        out: &[(Channel, &str)],
+        inb: &[(Channel, &[&str])],
+    ) -> AgentCredentialsInput {
         let mut outbound = HashMap::new();
         for (c, a) in out {
             outbound.insert(*c, a.to_string());
@@ -392,7 +392,11 @@ mod tests {
         );
         let inp = input(
             "ana",
-            &[(WHATSAPP, "personal"), (TELEGRAM, "ana_bot"), (GOOGLE, "ana@x")],
+            &[
+                (WHATSAPP, "personal"),
+                (TELEGRAM, "ana_bot"),
+                (GOOGLE, "ana@x"),
+            ],
             &[],
         );
         let r = AgentCredentialResolver::build(&[inp], &s, StrictLevel::Strict).unwrap();
@@ -409,7 +413,10 @@ mod tests {
         assert_eq!(err.len(), 1);
         match &err[0] {
             BuildError::MissingInstance {
-                agent, account, available, ..
+                agent,
+                account,
+                available,
+                ..
             } => {
                 assert_eq!(agent, "ana");
                 assert_eq!(account, "personal");
@@ -421,11 +428,7 @@ mod tests {
 
     #[test]
     fn ambiguous_inbound_rejected() {
-        let s = stores(
-            vec![wa("a", &[]), wa("b", &[])],
-            vec![],
-            vec![],
-        );
+        let s = stores(vec![wa("a", &[]), wa("b", &[])], vec![], vec![]);
         let inp = input("ana", &[], &[(WHATSAPP, &["a", "b"])]);
         let err = AgentCredentialResolver::build(&[inp], &s, StrictLevel::Lenient).unwrap_err();
         assert!(matches!(err[0], BuildError::AmbiguousOutbound { .. }));
@@ -473,11 +476,7 @@ mod tests {
             vec![], // telegram empty — missing instance
             vec![],
         );
-        let inp = input(
-            "ana",
-            &[(WHATSAPP, "work"), (TELEGRAM, "nope")],
-            &[],
-        );
+        let inp = input("ana", &[(WHATSAPP, "work"), (TELEGRAM, "nope")], &[]);
         let err = AgentCredentialResolver::build(&[inp], &s, StrictLevel::Lenient).unwrap_err();
         assert_eq!(err.len(), 2, "both errors should surface: {err:#?}");
     }

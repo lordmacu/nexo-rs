@@ -5,13 +5,13 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use nexo_auth::resolver::CredentialStores;
 use nexo_auth::{AgentCredentialResolver, BreakerRegistry, CredentialsBundle};
 use nexo_broker::AnyBroker;
 use nexo_config::types::pollers::{PollerJob, PollersConfig};
 use nexo_poller::poller::{PollContext, Poller, TickOutcome};
 use nexo_poller::{PollState, PollerError, PollerRunner};
-use async_trait::async_trait;
 
 fn empty_creds() -> Arc<CredentialsBundle> {
     Arc::new(CredentialsBundle {
@@ -28,7 +28,9 @@ struct AlwaysTransient {
 
 #[async_trait]
 impl Poller for AlwaysTransient {
-    fn kind(&self) -> &'static str { "always_transient" }
+    fn kind(&self) -> &'static str {
+        "always_transient"
+    }
     async fn tick(&self, _ctx: &PollContext) -> Result<TickOutcome, PollerError> {
         self.calls.fetch_add(1, Ordering::Relaxed);
         Err(PollerError::Transient(anyhow::anyhow!("503 from upstream")))
@@ -39,7 +41,9 @@ struct AlwaysPermanent;
 
 #[async_trait]
 impl Poller for AlwaysPermanent {
-    fn kind(&self) -> &'static str { "always_permanent" }
+    fn kind(&self) -> &'static str {
+        "always_permanent"
+    }
     async fn tick(&self, _ctx: &PollContext) -> Result<TickOutcome, PollerError> {
         Err(PollerError::Permanent(anyhow::anyhow!(
             "refresh_token revoked"

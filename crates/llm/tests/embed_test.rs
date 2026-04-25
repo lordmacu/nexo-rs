@@ -4,11 +4,11 @@
 //! now we pin the default-error behaviour and the zero-input shortcut so
 //! providers that opt out return predictable errors to callers.
 
+use async_trait::async_trait;
 use nexo_config::types::llm::{LlmProviderConfig, RateLimitConfig, RetryConfig};
 use nexo_llm::{
     ChatRequest, ChatResponse, FinishReason, LlmClient, OpenAiClient, ResponseContent, TokenUsage,
 };
-use async_trait::async_trait;
 
 struct NoEmbedProvider;
 

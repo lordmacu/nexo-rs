@@ -1,5 +1,5 @@
-use nexo_memory::LongTermMemory;
 use chrono::{Duration, Utc};
+use nexo_memory::LongTermMemory;
 use uuid::Uuid;
 
 async fn open_temp_db() -> LongTermMemory {

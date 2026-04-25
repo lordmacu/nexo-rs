@@ -452,7 +452,10 @@ fn truncate_for_log(s: &str, max: usize) -> String {
 /// empty so we don't send a blank header.
 fn resolve_group_id(cfg: &LlmProviderConfig) -> Option<String> {
     let candidates: [(&str, Option<String>); 3] = [
-        ("env:MINIMAX_GROUP_ID", std::env::var("MINIMAX_GROUP_ID").ok()),
+        (
+            "env:MINIMAX_GROUP_ID",
+            std::env::var("MINIMAX_GROUP_ID").ok(),
+        ),
         (
             "file:./secrets/minimax_group_id.txt",
             std::fs::read_to_string("./secrets/minimax_group_id.txt").ok(),
@@ -707,7 +710,7 @@ fn parse_openai_response(raw: MiniMaxResponse) -> anyhow::Result<ChatResponse> {
             content: ResponseContent::ToolCalls(calls),
             usage,
             finish_reason: FinishReason::ToolUse,
-        
+
             cache_usage: None,
         });
     }
@@ -727,7 +730,7 @@ fn parse_openai_response(raw: MiniMaxResponse) -> anyhow::Result<ChatResponse> {
         content: ResponseContent::Text(text),
         usage,
         finish_reason,
-    
+
         cache_usage: None,
     })
 }
@@ -937,7 +940,7 @@ fn parse_anthropic_response(raw: AnthropicResponse) -> anyhow::Result<ChatRespon
             content: ResponseContent::ToolCalls(tool_calls),
             usage,
             finish_reason: FinishReason::ToolUse,
-        
+
             cache_usage: None,
         });
     }
@@ -946,7 +949,7 @@ fn parse_anthropic_response(raw: AnthropicResponse) -> anyhow::Result<ChatRespon
         content: ResponseContent::Text(text_parts.join("")),
         usage,
         finish_reason,
-    
+
         cache_usage: None,
     })
 }
@@ -1004,7 +1007,7 @@ mod tests {
             temperature: 0.7,
             stop_sequences: Vec::new(),
             tool_choice: Default::default(),
-        
+
             system_blocks: Vec::new(),
             cache_tools: false,
         };
@@ -1030,7 +1033,7 @@ mod tests {
             temperature: 0.0,
             stop_sequences: Vec::new(),
             tool_choice: Default::default(),
-        
+
             system_blocks: Vec::new(),
             cache_tools: false,
         };
@@ -1072,7 +1075,7 @@ mod tests {
             temperature: 0.0,
             stop_sequences: Vec::new(),
             tool_choice: Default::default(),
-        
+
             system_blocks: Vec::new(),
             cache_tools: false,
         };
@@ -1108,7 +1111,7 @@ mod tests {
             temperature: 0.0,
             stop_sequences: Vec::new(),
             tool_choice: Default::default(),
-        
+
             system_blocks: Vec::new(),
             cache_tools: false,
         };

@@ -32,6 +32,6 @@ pub use registry::PairingAdapterRegistry;
 pub use setup_code::SetupCodeIssuer;
 pub use store::PairingStore;
 pub use types::{
-    ApprovedRequest, Decision, PairingError, PairingPolicy, PendingRequest, SetupCode,
-    TokenClaims, UpsertOutcome,
+    ApprovedRequest, Decision, PairingError, PairingPolicy, PendingRequest, SetupCode, TokenClaims,
+    UpsertOutcome,
 };

@@ -9,13 +9,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
+use dashmap::DashMap;
 use nexo_auth::CredentialsBundle;
 use nexo_broker::AnyBroker;
 use nexo_config::types::pollers::{PollerJob, PollersConfig};
 use nexo_resilience::{CircuitBreaker, CircuitBreakerConfig};
-use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
-use dashmap::DashMap;
 use serde_yaml::Value as YamlValue;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -286,10 +286,14 @@ impl PollerRunner {
         };
 
         let handle = tokio::spawn(run_job_loop(runner_ctx));
-        self.tasks
-            .lock()
-            .await
-            .insert(job.id.clone(), JobTask { job, cancel, handle });
+        self.tasks.lock().await.insert(
+            job.id.clone(),
+            JobTask {
+                job,
+                cancel,
+                handle,
+            },
+        );
     }
 
     /// Cancel + join every task, in parallel. Caller awaits.
@@ -311,8 +315,7 @@ impl PollerRunner {
     /// Returns the apply plan so callers can preview before executing.
     pub async fn diff(&self, new_cfg: &PollersConfig) -> ReloadPlan {
         let tasks = self.tasks.lock().await;
-        let live: std::collections::HashSet<String> =
-            tasks.keys().cloned().collect();
+        let live: std::collections::HashSet<String> = tasks.keys().cloned().collect();
         let live_jobs: HashMap<String, Arc<PollerJob>> = tasks
             .iter()
             .map(|(k, v)| (k.clone(), Arc::clone(&v.job)))
@@ -324,8 +327,8 @@ impl PollerRunner {
         let mut keep = Vec::new();
         let mut remove: Vec<String> = live
             .iter()
+            .filter(|id| !new_cfg.jobs.iter().any(|j| &j.id == *id))
             .cloned()
-            .filter(|id| !new_cfg.jobs.iter().any(|j| &j.id == id))
             .collect();
         remove.sort();
 
@@ -524,8 +527,7 @@ async fn run_job_loop(tctx: TaskCtx) {
         // worker is mid-tick; we skip and try again next slot.
         let now_ms_v = now_ms();
         let interval_secs = tctx.schedule.nominal_interval().as_secs().max(30);
-        let ttl_ms =
-            ((interval_secs as f32) * tctx.cfg.lease_ttl_factor.max(1.0)) as i64 * 1_000;
+        let ttl_ms = ((interval_secs as f32) * tctx.cfg.lease_ttl_factor.max(1.0)) as i64 * 1_000;
         let until_ms = now_ms_v + ttl_ms.max(30_000);
         match tctx
             .state
@@ -549,7 +551,10 @@ async fn run_job_loop(tctx: TaskCtx) {
         if !tctx.breaker.allow() {
             telemetry::inc_tick(tctx.kind.kind(), &tctx.job.agent, &tctx.job.id, "skipped");
             telemetry::set_breaker_state(&tctx.job.id, telemetry::BreakerState::Open);
-            tctx.state.release_lease(&tctx.job.id, &tctx.leaseholder).await.ok();
+            tctx.state
+                .release_lease(&tctx.job.id, &tctx.leaseholder)
+                .await
+                .ok();
             continue;
         }
 
@@ -581,8 +586,8 @@ async fn run_job_loop(tctx: TaskCtx) {
         let elapsed_ms = started.elapsed().as_millis() as u64;
         telemetry::observe_latency(tctx.kind.kind(), &tctx.job.agent, &tctx.job.id, elapsed_ms);
 
-        let next_run_at_ms = (next + chrono::Duration::milliseconds(jitter_ms as i64))
-            .timestamp_millis();
+        let next_run_at_ms =
+            (next + chrono::Duration::milliseconds(jitter_ms as i64)).timestamp_millis();
 
         match outcome {
             Ok(o) => {
@@ -603,9 +608,13 @@ async fn run_job_loop(tctx: TaskCtx) {
                     o.items_dispatched,
                 );
                 for d in &o.deliver {
-                    if let Err(e) =
-                        dispatch::publish(&tctx.broker, &tctx.credentials.resolver, &tctx.job.agent, d)
-                            .await
+                    if let Err(e) = dispatch::publish(
+                        &tctx.broker,
+                        &tctx.credentials.resolver,
+                        &tctx.job.agent,
+                        d,
+                    )
+                    .await
                     {
                         warn!(job = %tctx.job.id, error = %e, "dispatch failed");
                     }
@@ -629,19 +638,17 @@ async fn run_job_loop(tctx: TaskCtx) {
             }
         }
 
-        tctx.state.release_lease(&tctx.job.id, &tctx.leaseholder).await.ok();
+        tctx.state
+            .release_lease(&tctx.job.id, &tctx.leaseholder)
+            .await
+            .ok();
     }
 }
 
 /// Handle a `PollerError` from `tick`: classify, update breaker,
 /// persist state, and (when threshold hit) dispatch the failure
 /// alert. Cooldown for the alert is honored from `poll_state`.
-async fn handle_tick_error(
-    tctx: &TaskCtx,
-    err: PollerError,
-    next_run_at_ms: i64,
-    elapsed_ms: i64,
-) {
+async fn handle_tick_error(tctx: &TaskCtx, err: PollerError, next_run_at_ms: i64, elapsed_ms: i64) {
     let class = err.classify();
     let msg = err.to_string();
     let status_label = match class {
@@ -657,7 +664,12 @@ async fn handle_tick_error(
     };
     telemetry::set_breaker_state(&tctx.job.id, breaker_state);
 
-    telemetry::inc_tick(tctx.kind.kind(), &tctx.job.agent, &tctx.job.id, status_label);
+    telemetry::inc_tick(
+        tctx.kind.kind(),
+        &tctx.job.agent,
+        &tctx.job.id,
+        status_label,
+    );
 
     let now_ms_v = now_ms();
     let _ = tctx
@@ -690,7 +702,10 @@ async fn handle_tick_error(
                 if let Err(e) = send_failure_alert(tctx, target, &msg).await {
                     warn!(job = %tctx.job.id, error = %e, "failure alert dispatch failed");
                 }
-                let _ = tctx.state.record_failure_alert(&tctx.job.id, now_ms_v).await;
+                let _ = tctx
+                    .state
+                    .record_failure_alert(&tctx.job.id, now_ms_v)
+                    .await;
             }
         }
     }
@@ -718,9 +733,14 @@ async fn send_failure_alert(
         recipient: target.to.clone(),
         payload,
     };
-    dispatch::publish(&tctx.broker, &tctx.credentials.resolver, &tctx.job.agent, &delivery)
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))
+    dispatch::publish(
+        &tctx.broker,
+        &tctx.credentials.resolver,
+        &tctx.job.agent,
+        &delivery,
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 fn now_ms() -> i64 {
@@ -777,14 +797,13 @@ mod tests {
 
     #[async_trait]
     impl Poller for MockPoller {
-        fn kind(&self) -> &'static str { "mock" }
+        fn kind(&self) -> &'static str {
+            "mock"
+        }
         async fn tick(&self, _ctx: &PollContext) -> Result<TickOutcome, PollerError> {
             self.ticks.fetch_add(1, Ordering::Relaxed);
             let mut g = self.next_outcome.lock().await;
-            std::mem::replace(
-                &mut *g,
-                Ok(TickOutcome::default()),
-            )
+            std::mem::replace(&mut *g, Ok(TickOutcome::default()))
         }
     }
 

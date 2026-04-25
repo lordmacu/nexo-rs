@@ -2,13 +2,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use async_trait::async_trait;
 use nexo_broker::AnyBroker;
 use nexo_config::types::agents::{
     AgentConfig, AgentRuntimeConfig, HeartbeatConfig, InboundBinding, ModelConfig,
     SenderRateLimitConfig,
 };
 use nexo_core::agent::{Agent, AgentBehavior, AgentContext, AgentRuntime, InboundMessage};
-use async_trait::async_trait;
 use serde_json::json;
 use tokio::time::sleep;
 use uuid::Uuid;
@@ -62,7 +62,7 @@ fn make_config(
         workspace: String::new(),
         skills: vec![],
         skills_dir: "./skills".into(),
-            skill_overrides: Default::default(),
+        skill_overrides: Default::default(),
         transcripts_dir: String::new(),
         dreaming: Default::default(),
         workspace_git: Default::default(),
@@ -79,9 +79,9 @@ fn make_config(
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
-            web_search: serde_json::Value::Null,
-            pairing_policy: serde_json::Value::Null,
-            language: None,
+        web_search: serde_json::Value::Null,
+        pairing_policy: serde_json::Value::Null,
+        language: None,
         context_optimization: None,
     }
 }

@@ -150,8 +150,8 @@ async fn run_flow_async() -> Result<OAuthToken> {
     if !status.is_success() {
         bail!("Anthropic /v1/oauth/token HTTP {status}: {text}");
     }
-    let parsed: TokenResp = serde_json::from_str(&text)
-        .with_context(|| format!("parse token response: {text}"))?;
+    let parsed: TokenResp =
+        serde_json::from_str(&text).with_context(|| format!("parse token response: {text}"))?;
 
     let now = chrono::Utc::now().timestamp();
     let ttl = parsed.expires_in.unwrap_or(3600).max(60);
@@ -311,8 +311,7 @@ mod tests {
 
     #[test]
     fn parse_code_payload_accepts_full_url() {
-        let url =
-            "https://console.anthropic.com/oauth/code/callback?code=abc123&state=mystate";
+        let url = "https://console.anthropic.com/oauth/code/callback?code=abc123&state=mystate";
         let (c, s) = parse_code_payload(url).unwrap();
         assert_eq!(c, "abc123");
         assert_eq!(s, "mystate");

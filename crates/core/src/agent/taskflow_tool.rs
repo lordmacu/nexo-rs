@@ -1,9 +1,9 @@
 use super::context::AgentContext;
 use super::tool_registry::ToolHandler;
-use nexo_llm::ToolDef;
-use nexo_taskflow::{CreateManagedInput, Flow, FlowError, FlowManager, FlowStatus, WaitCondition};
 use async_trait::async_trait;
 use chrono::Utc;
+use nexo_llm::ToolDef;
+use nexo_taskflow::{CreateManagedInput, Flow, FlowError, FlowManager, FlowStatus, WaitCondition};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -103,10 +103,7 @@ impl TaskFlowTool {
     }
 }
 
-fn validate_wait_condition(
-    cond: &WaitCondition,
-    g: &TaskFlowToolGuardrails,
-) -> anyhow::Result<()> {
+fn validate_wait_condition(cond: &WaitCondition, g: &TaskFlowToolGuardrails) -> anyhow::Result<()> {
     match cond {
         WaitCondition::Timer { at } => {
             let now = Utc::now();
@@ -738,7 +735,10 @@ mod tests {
             .await
             .unwrap();
         assert!(__for_tests_status_is(&out, FlowStatus::Failed));
-        assert_eq!(out["flow"]["state"]["failure"]["reason"], "downstream-error");
+        assert_eq!(
+            out["flow"]["state"]["failure"]["reason"],
+            "downstream-error"
+        );
     }
 
     #[tokio::test]

@@ -35,7 +35,7 @@ async fn memory_recall_records_events_for_every_hit() -> anyhow::Result<()> {
         workspace: String::new(),
         skills: vec![],
         skills_dir: "./skills".into(),
-            skill_overrides: Default::default(),
+        skill_overrides: Default::default(),
         transcripts_dir: String::new(),
         dreaming: Default::default(),
         workspace_git: Default::default(),
@@ -52,9 +52,9 @@ async fn memory_recall_records_events_for_every_hit() -> anyhow::Result<()> {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
-            web_search: serde_json::Value::Null,
-            pairing_policy: serde_json::Value::Null,
-            language: None,
+        web_search: serde_json::Value::Null,
+        pairing_policy: serde_json::Value::Null,
+        language: None,
         context_optimization: None,
     });
     let broker = AnyBroker::local();

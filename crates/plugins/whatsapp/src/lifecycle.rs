@@ -11,8 +11,8 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use nexo_broker::{AnyBroker, BrokerHandle, Event};
 use anyhow::Result;
+use nexo_broker::{AnyBroker, BrokerHandle, Event};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;

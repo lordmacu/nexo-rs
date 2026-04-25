@@ -1,6 +1,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
+use chrono::{Duration as ChronoDuration, Utc};
 use nexo_broker::{AnyBroker, BrokerHandle};
 use nexo_config::types::agents::{AgentConfig, AgentRuntimeConfig, HeartbeatConfig, ModelConfig};
 use nexo_core::agent::tool_policy::{CacheConfig, ParallelConfig, ToolPolicy, ToolPolicyConfig};
@@ -14,8 +16,6 @@ use nexo_llm::{
     ToolDef,
 };
 use nexo_memory::LongTermMemory;
-use async_trait::async_trait;
-use chrono::{Duration as ChronoDuration, Utc};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -168,7 +168,7 @@ fn make_context(broker: AnyBroker) -> AgentContext {
         workspace: String::new(),
         skills: vec![],
         skills_dir: "./skills".into(),
-            skill_overrides: Default::default(),
+        skill_overrides: Default::default(),
         transcripts_dir: String::new(),
         dreaming: Default::default(),
         workspace_git: Default::default(),
@@ -185,9 +185,9 @@ fn make_context(broker: AnyBroker) -> AgentContext {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
-            web_search: serde_json::Value::Null,
-            pairing_policy: serde_json::Value::Null,
-            language: None,
+        web_search: serde_json::Value::Null,
+        pairing_policy: serde_json::Value::Null,
+        language: None,
         context_optimization: None,
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
@@ -254,7 +254,7 @@ async fn system_prompt_prepended_to_llm_request() {
         workspace: String::new(),
         skills: vec![],
         skills_dir: "./skills".into(),
-            skill_overrides: Default::default(),
+        skill_overrides: Default::default(),
         transcripts_dir: String::new(),
         dreaming: Default::default(),
         workspace_git: Default::default(),
@@ -271,9 +271,9 @@ async fn system_prompt_prepended_to_llm_request() {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
-            web_search: serde_json::Value::Null,
-            pairing_policy: serde_json::Value::Null,
-            language: None,
+        web_search: serde_json::Value::Null,
+        pairing_policy: serde_json::Value::Null,
+        language: None,
         context_optimization: None,
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
@@ -325,7 +325,7 @@ async fn output_language_directive_renders_when_configured() {
         workspace: String::new(),
         skills: vec![],
         skills_dir: "./skills".into(),
-            skill_overrides: Default::default(),
+        skill_overrides: Default::default(),
         transcripts_dir: String::new(),
         dreaming: Default::default(),
         workspace_git: Default::default(),
@@ -342,8 +342,8 @@ async fn output_language_directive_renders_when_configured() {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
-            web_search: serde_json::Value::Null,
-            pairing_policy: serde_json::Value::Null,
+        web_search: serde_json::Value::Null,
+        pairing_policy: serde_json::Value::Null,
         language: Some("es".into()),
         context_optimization: None,
     });
@@ -371,7 +371,10 @@ async fn output_language_directive_renders_when_configured() {
         .iter()
         .find(|m| m.role == nexo_llm::ChatRole::System)
         .expect("at least one System message");
-    assert!(system.content.contains("You are Kate."), "persona block present");
+    assert!(
+        system.content.contains("You are Kate."),
+        "persona block present"
+    );
     assert!(
         system.content.contains("# OUTPUT LANGUAGE"),
         "language block header present, got:\n{}",
@@ -451,7 +454,7 @@ async fn workspace_bundle_prepended_to_system_message() -> anyhow::Result<()> {
         workspace: tmp.to_string_lossy().into_owned(),
         skills: vec![],
         skills_dir: "./skills".into(),
-            skill_overrides: Default::default(),
+        skill_overrides: Default::default(),
         transcripts_dir: String::new(),
         dreaming: Default::default(),
         workspace_git: Default::default(),
@@ -468,9 +471,9 @@ async fn workspace_bundle_prepended_to_system_message() -> anyhow::Result<()> {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
-            web_search: serde_json::Value::Null,
-            pairing_policy: serde_json::Value::Null,
-            language: None,
+        web_search: serde_json::Value::Null,
+        pairing_policy: serde_json::Value::Null,
+        language: None,
         context_optimization: None,
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
@@ -548,7 +551,7 @@ async fn skills_loaded_between_workspace_and_system_prompt() -> anyhow::Result<(
         workspace: workspace.to_string_lossy().into_owned(),
         skills: vec!["weather".into()],
         skills_dir: skills_root.to_string_lossy().into_owned(),
-            skill_overrides: Default::default(),
+        skill_overrides: Default::default(),
         transcripts_dir: String::new(),
         dreaming: Default::default(),
         workspace_git: Default::default(),
@@ -565,9 +568,9 @@ async fn skills_loaded_between_workspace_and_system_prompt() -> anyhow::Result<(
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
-            web_search: serde_json::Value::Null,
-            pairing_policy: serde_json::Value::Null,
-            language: None,
+        web_search: serde_json::Value::Null,
+        pairing_policy: serde_json::Value::Null,
+        language: None,
         context_optimization: None,
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
@@ -637,7 +640,7 @@ async fn workspace_memory_skipped_when_source_is_peer_agent() -> anyhow::Result<
         workspace: tmp.to_string_lossy().into_owned(),
         skills: vec![],
         skills_dir: "./skills".into(),
-            skill_overrides: Default::default(),
+        skill_overrides: Default::default(),
         transcripts_dir: String::new(),
         dreaming: Default::default(),
         workspace_git: Default::default(),
@@ -654,9 +657,9 @@ async fn workspace_memory_skipped_when_source_is_peer_agent() -> anyhow::Result<
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
-            web_search: serde_json::Value::Null,
-            pairing_policy: serde_json::Value::Null,
-            language: None,
+        web_search: serde_json::Value::Null,
+        pairing_policy: serde_json::Value::Null,
+        language: None,
         context_optimization: None,
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
@@ -714,7 +717,7 @@ async fn transcript_written_when_dir_configured() -> anyhow::Result<()> {
         workspace: String::new(),
         skills: vec![],
         skills_dir: "./skills".into(),
-            skill_overrides: Default::default(),
+        skill_overrides: Default::default(),
         transcripts_dir: transcripts.to_string_lossy().into_owned(),
         dreaming: Default::default(),
         workspace_git: Default::default(),
@@ -731,9 +734,9 @@ async fn transcript_written_when_dir_configured() -> anyhow::Result<()> {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
-            web_search: serde_json::Value::Null,
-            pairing_policy: serde_json::Value::Null,
-            language: None,
+        web_search: serde_json::Value::Null,
+        pairing_policy: serde_json::Value::Null,
+        language: None,
         context_optimization: None,
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
@@ -873,7 +876,7 @@ async fn heartbeat_delivers_due_reminders_once() {
         workspace: String::new(),
         skills: vec![],
         skills_dir: "./skills".into(),
-            skill_overrides: Default::default(),
+        skill_overrides: Default::default(),
         transcripts_dir: String::new(),
         dreaming: Default::default(),
         workspace_git: Default::default(),
@@ -890,9 +893,9 @@ async fn heartbeat_delivers_due_reminders_once() {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
-            web_search: serde_json::Value::Null,
-            pairing_policy: serde_json::Value::Null,
-            language: None,
+        web_search: serde_json::Value::Null,
+        pairing_policy: serde_json::Value::Null,
+        language: None,
         context_optimization: None,
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
@@ -956,7 +959,7 @@ async fn schedule_reminder_tool_uses_current_conversation_context() {
         workspace: String::new(),
         skills: vec![],
         skills_dir: "./skills".into(),
-            skill_overrides: Default::default(),
+        skill_overrides: Default::default(),
         transcripts_dir: String::new(),
         dreaming: Default::default(),
         workspace_git: Default::default(),
@@ -973,9 +976,9 @@ async fn schedule_reminder_tool_uses_current_conversation_context() {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
-            web_search: serde_json::Value::Null,
-            pairing_policy: serde_json::Value::Null,
-            language: None,
+        web_search: serde_json::Value::Null,
+        pairing_policy: serde_json::Value::Null,
+        language: None,
         context_optimization: None,
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
@@ -1042,7 +1045,7 @@ async fn llm_can_call_delegate_tool_and_receive_result() {
         workspace: String::new(),
         skills: vec![],
         skills_dir: "./skills".into(),
-            skill_overrides: Default::default(),
+        skill_overrides: Default::default(),
         transcripts_dir: String::new(),
         dreaming: Default::default(),
         workspace_git: Default::default(),
@@ -1059,9 +1062,9 @@ async fn llm_can_call_delegate_tool_and_receive_result() {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
-            web_search: serde_json::Value::Null,
-            pairing_policy: serde_json::Value::Null,
-            language: None,
+        web_search: serde_json::Value::Null,
+        pairing_policy: serde_json::Value::Null,
+        language: None,
         context_optimization: None,
     };
     let runtime_b = AgentRuntime::new(
@@ -1084,7 +1087,7 @@ async fn llm_can_call_delegate_tool_and_receive_result() {
         workspace: String::new(),
         skills: vec![],
         skills_dir: "./skills".into(),
-            skill_overrides: Default::default(),
+        skill_overrides: Default::default(),
         transcripts_dir: String::new(),
         dreaming: Default::default(),
         workspace_git: Default::default(),
@@ -1101,9 +1104,9 @@ async fn llm_can_call_delegate_tool_and_receive_result() {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
-            web_search: serde_json::Value::Null,
-            pairing_policy: serde_json::Value::Null,
-            language: None,
+        web_search: serde_json::Value::Null,
+        pairing_policy: serde_json::Value::Null,
+        language: None,
         context_optimization: None,
     });
     let mut sub = broker.subscribe("plugin.outbound.telegram").await.unwrap();
@@ -1476,7 +1479,7 @@ async fn delegation_rejects_target_outside_allowed_delegates() {
         workspace: String::new(),
         skills: vec![],
         skills_dir: "./skills".into(),
-            skill_overrides: Default::default(),
+        skill_overrides: Default::default(),
         transcripts_dir: String::new(),
         dreaming: Default::default(),
         workspace_git: Default::default(),
@@ -1493,9 +1496,9 @@ async fn delegation_rejects_target_outside_allowed_delegates() {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
-            web_search: serde_json::Value::Null,
-            pairing_policy: serde_json::Value::Null,
-            language: None,
+        web_search: serde_json::Value::Null,
+        pairing_policy: serde_json::Value::Null,
+        language: None,
         context_optimization: None,
     });
     let router = Arc::new(AgentRouter::new());
@@ -1575,7 +1578,7 @@ async fn peer_directory_renders_into_system_prompt() {
         workspace: String::new(),
         skills: vec![],
         skills_dir: "./skills".into(),
-            skill_overrides: Default::default(),
+        skill_overrides: Default::default(),
         transcripts_dir: String::new(),
         dreaming: Default::default(),
         workspace_git: Default::default(),
@@ -1592,9 +1595,9 @@ async fn peer_directory_renders_into_system_prompt() {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
-            web_search: serde_json::Value::Null,
-            pairing_policy: serde_json::Value::Null,
-            language: None,
+        web_search: serde_json::Value::Null,
+        pairing_policy: serde_json::Value::Null,
+        language: None,
         context_optimization: None,
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));

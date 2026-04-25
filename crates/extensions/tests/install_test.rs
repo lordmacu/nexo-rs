@@ -513,9 +513,11 @@ fn install_outcome_variant_matches_spec() {
     res.unwrap();
     // Round-trip check for the InstallMode type — mostly here so the
     // public enum keeps its shape as the CLI grows.
-    let modes = [InstallMode::Copy,
+    let modes = [
+        InstallMode::Copy,
         InstallMode::Link,
         InstallMode::Update,
-        InstallMode::DryRun];
+        InstallMode::DryRun,
+    ];
     assert_eq!(modes.len(), 4);
 }

@@ -1,6 +1,6 @@
 use super::plugin::{Command, Plugin, Response};
-use nexo_broker::AnyBroker;
 use async_trait::async_trait;
+use nexo_broker::AnyBroker;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,

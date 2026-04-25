@@ -264,8 +264,10 @@ mod tests {
         let err = RuntimeSnapshot::build(minimal_agent("ana"), &registry, &empty_llm_cfg(), 1)
             .unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("stub") || msg.contains("not registered") || msg.contains("agent 'ana'"),
-            "error should mention the offending provider: {msg}");
+        assert!(
+            msg.contains("stub") || msg.contains("not registered") || msg.contains("agent 'ana'"),
+            "error should mention the offending provider: {msg}"
+        );
     }
 
     #[test]

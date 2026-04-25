@@ -169,9 +169,7 @@ pub fn render_prometheus() -> String {
             ))
         });
         if rows.is_empty() {
-            out.push_str(
-                "poller_ticks_total{agent=\"\",job_id=\"\",kind=\"\",status=\"\"} 0\n",
-            );
+            out.push_str("poller_ticks_total{agent=\"\",job_id=\"\",kind=\"\",status=\"\"} 0\n");
         }
         for (k, v) in rows {
             out.push_str(&format!(
@@ -188,9 +186,7 @@ pub fn render_prometheus() -> String {
     out.push_str("# TYPE poller_latency_ms histogram\n");
     {
         let mut keys: Vec<_> = LATENCY.iter().map(|e| e.key().clone()).collect();
-        keys.sort_by(|a, b| {
-            (a.kind, &a.agent, &a.job_id).cmp(&(b.kind, &b.agent, &b.job_id))
-        });
+        keys.sort_by(|a, b| (a.kind, &a.agent, &a.job_id).cmp(&(b.kind, &b.agent, &b.job_id)));
         if keys.is_empty() {
             for upper in LATENCY_BUCKETS_MS.iter() {
                 out.push_str(&format!(
@@ -253,9 +249,7 @@ pub fn render_prometheus() -> String {
             (a.0.kind, &a.0.agent, &a.0.job_id).cmp(&(b.0.kind, &b.0.agent, &b.0.job_id))
         });
         if rows.is_empty() {
-            out.push_str(&format!(
-                "{name}{{agent=\"\",job_id=\"\",kind=\"\"}} 0\n"
-            ));
+            out.push_str(&format!("{name}{{agent=\"\",job_id=\"\",kind=\"\"}} 0\n"));
         }
         for (k, v) in rows {
             out.push_str(&format!(
@@ -305,7 +299,9 @@ pub fn render_prometheus() -> String {
         }
     }
 
-    out.push_str("# HELP poller_lease_takeovers_total Times another worker took over an expired lease.\n");
+    out.push_str(
+        "# HELP poller_lease_takeovers_total Times another worker took over an expired lease.\n",
+    );
     out.push_str("# TYPE poller_lease_takeovers_total counter\n");
     {
         let mut rows: Vec<_> = LEASE_TAKEOVERS

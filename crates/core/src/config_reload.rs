@@ -16,11 +16,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use arc_swap::ArcSwapOption;
+use dashmap::DashMap;
 use nexo_broker::{AnyBroker, BrokerHandle};
 use nexo_config::{AppConfig, TelegramPluginConfig};
 use nexo_llm::LlmRegistry;
-use arc_swap::ArcSwapOption;
-use dashmap::DashMap;
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 
@@ -178,7 +178,8 @@ impl ConfigReloadCoordinator {
                 rejected.push(ReloadRejection {
                     agent_id: Some(agent_cfg.id.clone()),
                     reason: "adding a new agent at runtime is not supported in Phase 18; \
-                             restart to spawn".into(),
+                             restart to spawn"
+                        .into(),
                 });
                 continue;
             };
@@ -188,14 +189,10 @@ impl ConfigReloadCoordinator {
             // `allowed_tools` rejects the reload instead of silently
             // landing a config that the runtime then has to translate
             // into a "tool not available" error every turn.
-            let known_strs: Vec<&str> =
-                handle.known_tools.iter().map(|s| s.as_str()).collect();
+            let known_strs: Vec<&str> = handle.known_tools.iter().map(|s| s.as_str()).collect();
             let catalog = crate::agent::KnownTools::new(known_strs);
-            if let Err(e) = crate::agent::validate_agent(
-                agent_cfg,
-                &cfg.plugins.telegram,
-                &catalog,
-            ) {
+            if let Err(e) = crate::agent::validate_agent(agent_cfg, &cfg.plugins.telegram, &catalog)
+            {
                 rejected.push(ReloadRejection {
                     agent_id: Some(agent_cfg.id.clone()),
                     reason: format!("post-assembly validation: {e}"),
@@ -235,7 +232,8 @@ impl ConfigReloadCoordinator {
                 rejected.push(ReloadRejection {
                     agent_id: Some(id.clone()),
                     reason: "removing an agent at runtime is not supported in Phase 18; \
-                             restart to drop".into(),
+                             restart to drop"
+                        .into(),
                 });
             }
         }
@@ -335,9 +333,8 @@ impl ConfigReloadCoordinator {
                 };
                 let outcome = coord_broker.reload().await;
                 let ack_topic = "control.reload.ack";
-                let payload = serde_json::to_value(&outcome).unwrap_or_else(|e| {
-                    serde_json::json!({ "error": e.to_string() })
-                });
+                let payload = serde_json::to_value(&outcome)
+                    .unwrap_or_else(|e| serde_json::json!({ "error": e.to_string() }));
                 let evt = nexo_broker::Event::new(ack_topic, "config-reload", payload);
                 if let Err(e) = broker_clone.publish(ack_topic, evt).await {
                     tracing::warn!(error = %e, "failed to publish control.reload.ack");

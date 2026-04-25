@@ -4,10 +4,10 @@
 use super::context::AgentContext;
 use super::mcp_tool::{sanitize_name_fragment, MCP_NAME_PREFIX};
 use super::tool_registry::ToolHandler;
-use nexo_llm::ToolDef;
-use nexo_mcp::{McpClient, McpResourceContent, ResourceCache};
 use async_trait::async_trait;
 use base64::Engine;
+use nexo_llm::ToolDef;
+use nexo_mcp::{McpClient, McpResourceContent, ResourceCache};
 use serde_json::Value;
 use std::sync::Arc;
 /// Tail fragment used when composing the list-resources meta-tool name.

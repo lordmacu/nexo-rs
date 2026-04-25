@@ -77,13 +77,12 @@ impl WebSearchCache {
         }
         let now = chrono::Utc::now().timestamp();
         let cutoff = now - self.ttl.as_secs() as i64;
-        let row: Option<(String, i64)> = sqlx::query_as(
-            "SELECT result_json, inserted_at FROM web_search_cache WHERE key = ?",
-        )
-        .bind(key)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| WebSearchError::Cache(e.to_string()))?;
+        let row: Option<(String, i64)> =
+            sqlx::query_as("SELECT result_json, inserted_at FROM web_search_cache WHERE key = ?")
+                .bind(key)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| WebSearchError::Cache(e.to_string()))?;
         match row {
             Some((json, inserted_at)) if inserted_at >= cutoff => {
                 let mut parsed: WebSearchResult = serde_json::from_str(&json)
@@ -96,8 +95,8 @@ impl WebSearchCache {
     }
 
     pub async fn put(&self, key: &str, value: &WebSearchResult) -> Result<(), WebSearchError> {
-        let json = serde_json::to_string(value)
-            .map_err(|e| WebSearchError::Cache(e.to_string()))?;
+        let json =
+            serde_json::to_string(value).map_err(|e| WebSearchError::Cache(e.to_string()))?;
         sqlx::query(
             "INSERT OR REPLACE INTO web_search_cache(key, provider, query, result_json, inserted_at) VALUES(?, ?, ?, ?, ?)",
         )

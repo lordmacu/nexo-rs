@@ -3,9 +3,9 @@
 //! session-scoped refresh on `notifications/tools/list_changed`.
 use super::mcp_tool::McpTool;
 use super::tool_registry::ToolRegistry;
+use futures::future::join_all;
 use nexo_llm::ToolDef as LlmToolDef;
 use nexo_mcp::{McpClient, ResourceCache};
-use futures::future::join_all;
 use std::collections::HashSet;
 use std::sync::Arc;
 /// One tool exposed by a connected MCP server.

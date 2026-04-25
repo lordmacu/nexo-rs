@@ -15,10 +15,10 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use nexo_core::agent::context::AgentContext;
 use nexo_core::agent::tool_registry::ToolHandler;
 use nexo_llm::ToolDef;
-use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use crate::command::{BrowserCmd, BrowserResult};
@@ -62,7 +62,9 @@ pub struct BrowserNavigateTool {
 
 impl BrowserNavigateTool {
     pub fn new(plugin: &Arc<BrowserPlugin>) -> Self {
-        Self { plugin: shared_plugin_arg(plugin) }
+        Self {
+            plugin: shared_plugin_arg(plugin),
+        }
     }
 
     pub fn tool_def() -> ToolDef {
@@ -94,7 +96,9 @@ impl ToolHandler for BrowserNavigateTool {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("browser_navigate requires `url`"))?
             .to_string();
-        Ok(result_to_json(self.plugin.execute(BrowserCmd::Navigate { url }).await))
+        Ok(result_to_json(
+            self.plugin.execute(BrowserCmd::Navigate { url }).await,
+        ))
     }
 }
 
@@ -106,7 +110,9 @@ pub struct BrowserClickTool {
 
 impl BrowserClickTool {
     pub fn new(plugin: &Arc<BrowserPlugin>) -> Self {
-        Self { plugin: shared_plugin_arg(plugin) }
+        Self {
+            plugin: shared_plugin_arg(plugin),
+        }
     }
 
     pub fn tool_def() -> ToolDef {
@@ -139,7 +145,9 @@ impl ToolHandler for BrowserClickTool {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("browser_click requires `target`"))?
             .to_string();
-        Ok(result_to_json(self.plugin.execute(BrowserCmd::Click { target }).await))
+        Ok(result_to_json(
+            self.plugin.execute(BrowserCmd::Click { target }).await,
+        ))
     }
 }
 
@@ -151,7 +159,9 @@ pub struct BrowserFillTool {
 
 impl BrowserFillTool {
     pub fn new(plugin: &Arc<BrowserPlugin>) -> Self {
-        Self { plugin: shared_plugin_arg(plugin) }
+        Self {
+            plugin: shared_plugin_arg(plugin),
+        }
     }
 
     pub fn tool_def() -> ToolDef {
@@ -192,7 +202,11 @@ impl ToolHandler for BrowserFillTool {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("browser_fill requires `value`"))?
             .to_string();
-        Ok(result_to_json(self.plugin.execute(BrowserCmd::Fill { target, value }).await))
+        Ok(result_to_json(
+            self.plugin
+                .execute(BrowserCmd::Fill { target, value })
+                .await,
+        ))
     }
 }
 
@@ -204,7 +218,9 @@ pub struct BrowserScreenshotTool {
 
 impl BrowserScreenshotTool {
     pub fn new(plugin: &Arc<BrowserPlugin>) -> Self {
-        Self { plugin: shared_plugin_arg(plugin) }
+        Self {
+            plugin: shared_plugin_arg(plugin),
+        }
     }
 
     pub fn tool_def() -> ToolDef {
@@ -223,7 +239,9 @@ impl BrowserScreenshotTool {
 #[async_trait]
 impl ToolHandler for BrowserScreenshotTool {
     async fn call(&self, _ctx: &AgentContext, _args: Value) -> anyhow::Result<Value> {
-        Ok(result_to_json(self.plugin.execute(BrowserCmd::Screenshot).await))
+        Ok(result_to_json(
+            self.plugin.execute(BrowserCmd::Screenshot).await,
+        ))
     }
 }
 
@@ -235,7 +253,9 @@ pub struct BrowserEvaluateTool {
 
 impl BrowserEvaluateTool {
     pub fn new(plugin: &Arc<BrowserPlugin>) -> Self {
-        Self { plugin: shared_plugin_arg(plugin) }
+        Self {
+            plugin: shared_plugin_arg(plugin),
+        }
     }
 
     pub fn tool_def() -> ToolDef {
@@ -270,7 +290,9 @@ impl ToolHandler for BrowserEvaluateTool {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("browser_evaluate requires `script`"))?
             .to_string();
-        Ok(result_to_json(self.plugin.execute(BrowserCmd::Evaluate { script }).await))
+        Ok(result_to_json(
+            self.plugin.execute(BrowserCmd::Evaluate { script }).await,
+        ))
     }
 }
 
@@ -282,7 +304,9 @@ pub struct BrowserSnapshotTool {
 
 impl BrowserSnapshotTool {
     pub fn new(plugin: &Arc<BrowserPlugin>) -> Self {
-        Self { plugin: shared_plugin_arg(plugin) }
+        Self {
+            plugin: shared_plugin_arg(plugin),
+        }
     }
 
     pub fn tool_def() -> ToolDef {
@@ -304,7 +328,9 @@ impl BrowserSnapshotTool {
 #[async_trait]
 impl ToolHandler for BrowserSnapshotTool {
     async fn call(&self, _ctx: &AgentContext, _args: Value) -> anyhow::Result<Value> {
-        Ok(result_to_json(self.plugin.execute(BrowserCmd::Snapshot).await))
+        Ok(result_to_json(
+            self.plugin.execute(BrowserCmd::Snapshot).await,
+        ))
     }
 }
 
@@ -316,7 +342,9 @@ pub struct BrowserScrollToTool {
 
 impl BrowserScrollToTool {
     pub fn new(plugin: &Arc<BrowserPlugin>) -> Self {
-        Self { plugin: shared_plugin_arg(plugin) }
+        Self {
+            plugin: shared_plugin_arg(plugin),
+        }
     }
 
     pub fn tool_def() -> ToolDef {
@@ -348,7 +376,9 @@ impl ToolHandler for BrowserScrollToTool {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("browser_scroll_to requires `target`"))?
             .to_string();
-        Ok(result_to_json(self.plugin.execute(BrowserCmd::ScrollTo { target }).await))
+        Ok(result_to_json(
+            self.plugin.execute(BrowserCmd::ScrollTo { target }).await,
+        ))
     }
 }
 
@@ -364,7 +394,9 @@ pub struct BrowserCurrentUrlTool {
 
 impl BrowserCurrentUrlTool {
     pub fn new(plugin: &Arc<BrowserPlugin>) -> Self {
-        Self { plugin: shared_plugin_arg(plugin) }
+        Self {
+            plugin: shared_plugin_arg(plugin),
+        }
     }
 
     pub fn tool_def() -> ToolDef {
@@ -384,7 +416,9 @@ impl ToolHandler for BrowserCurrentUrlTool {
     async fn call(&self, _ctx: &AgentContext, _args: Value) -> anyhow::Result<Value> {
         Ok(result_to_json(
             self.plugin
-                .execute(BrowserCmd::Evaluate { script: "location.href".into() })
+                .execute(BrowserCmd::Evaluate {
+                    script: "location.href".into(),
+                })
                 .await,
         ))
     }
@@ -399,7 +433,9 @@ pub struct BrowserWaitForTool {
 
 impl BrowserWaitForTool {
     pub fn new(plugin: &Arc<BrowserPlugin>) -> Self {
-        Self { plugin: shared_plugin_arg(plugin) }
+        Self {
+            plugin: shared_plugin_arg(plugin),
+        }
     }
 
     pub fn tool_def() -> ToolDef {
@@ -437,10 +473,12 @@ impl ToolHandler for BrowserWaitForTool {
             .ok_or_else(|| anyhow::anyhow!("browser_wait_for requires `selector`"))?
             .to_string();
         let timeout_ms = args["timeout_ms"].as_u64().unwrap_or(5_000).min(30_000);
-        let deadline = std::time::Instant::now()
-            + std::time::Duration::from_millis(timeout_ms);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
         loop {
-            let script = format!("!!document.querySelector({})", serde_json::to_string(&selector)?);
+            let script = format!(
+                "!!document.querySelector({})",
+                serde_json::to_string(&selector)?
+            );
             let res = self.plugin.execute(BrowserCmd::Evaluate { script }).await;
             if res.ok {
                 if let Some(Value::Bool(true)) = res.result.as_ref() {
@@ -464,7 +502,9 @@ pub struct BrowserGoBackTool {
 
 impl BrowserGoBackTool {
     pub fn new(plugin: &Arc<BrowserPlugin>) -> Self {
-        Self { plugin: shared_plugin_arg(plugin) }
+        Self {
+            plugin: shared_plugin_arg(plugin),
+        }
     }
 
     pub fn tool_def() -> ToolDef {
@@ -483,7 +523,9 @@ impl ToolHandler for BrowserGoBackTool {
     async fn call(&self, _ctx: &AgentContext, _args: Value) -> anyhow::Result<Value> {
         Ok(result_to_json(
             self.plugin
-                .execute(BrowserCmd::Evaluate { script: "history.back()".into() })
+                .execute(BrowserCmd::Evaluate {
+                    script: "history.back()".into(),
+                })
                 .await,
         ))
     }
@@ -495,7 +537,9 @@ pub struct BrowserGoForwardTool {
 
 impl BrowserGoForwardTool {
     pub fn new(plugin: &Arc<BrowserPlugin>) -> Self {
-        Self { plugin: shared_plugin_arg(plugin) }
+        Self {
+            plugin: shared_plugin_arg(plugin),
+        }
     }
 
     pub fn tool_def() -> ToolDef {
@@ -515,7 +559,9 @@ impl ToolHandler for BrowserGoForwardTool {
     async fn call(&self, _ctx: &AgentContext, _args: Value) -> anyhow::Result<Value> {
         Ok(result_to_json(
             self.plugin
-                .execute(BrowserCmd::Evaluate { script: "history.forward()".into() })
+                .execute(BrowserCmd::Evaluate {
+                    script: "history.forward()".into(),
+                })
                 .await,
         ))
     }
@@ -529,7 +575,9 @@ pub struct BrowserPressKeyTool {
 
 impl BrowserPressKeyTool {
     pub fn new(plugin: &Arc<BrowserPlugin>) -> Self {
-        Self { plugin: shared_plugin_arg(plugin) }
+        Self {
+            plugin: shared_plugin_arg(plugin),
+        }
     }
 
     pub fn tool_def() -> ToolDef {
@@ -585,11 +633,7 @@ impl ToolHandler for BrowserPressKeyTool {
         // sequences like `"x';alert(1);//"`.
         let named = ALLOWED_KEY_NAMES.contains(&key);
         let is_single_char = key.chars().count() == 1
-            && key
-                .chars()
-                .next()
-                .map(|c| !c.is_control())
-                .unwrap_or(false);
+            && key.chars().next().map(|c| !c.is_control()).unwrap_or(false);
         if !named && !is_single_char {
             anyhow::bail!(
                 "browser_press_key rejected: expected a known key name or a single character, got `{key}`"
@@ -615,7 +659,9 @@ impl ToolHandler for BrowserPressKeyTool {
             }})()"#,
             serde_json::to_string(key)?
         );
-        Ok(result_to_json(self.plugin.execute(BrowserCmd::Evaluate { script }).await))
+        Ok(result_to_json(
+            self.plugin.execute(BrowserCmd::Evaluate { script }).await,
+        ))
     }
 }
 
@@ -629,16 +675,46 @@ pub fn register_all(
     registry: &nexo_core::agent::tool_registry::ToolRegistry,
     plugin: &Arc<BrowserPlugin>,
 ) {
-    registry.register(BrowserNavigateTool::tool_def(), BrowserNavigateTool::new(plugin));
+    registry.register(
+        BrowserNavigateTool::tool_def(),
+        BrowserNavigateTool::new(plugin),
+    );
     registry.register(BrowserClickTool::tool_def(), BrowserClickTool::new(plugin));
     registry.register(BrowserFillTool::tool_def(), BrowserFillTool::new(plugin));
-    registry.register(BrowserScreenshotTool::tool_def(), BrowserScreenshotTool::new(plugin));
-    registry.register(BrowserEvaluateTool::tool_def(), BrowserEvaluateTool::new(plugin));
-    registry.register(BrowserSnapshotTool::tool_def(), BrowserSnapshotTool::new(plugin));
-    registry.register(BrowserScrollToTool::tool_def(), BrowserScrollToTool::new(plugin));
-    registry.register(BrowserCurrentUrlTool::tool_def(), BrowserCurrentUrlTool::new(plugin));
-    registry.register(BrowserWaitForTool::tool_def(), BrowserWaitForTool::new(plugin));
-    registry.register(BrowserGoBackTool::tool_def(), BrowserGoBackTool::new(plugin));
-    registry.register(BrowserGoForwardTool::tool_def(), BrowserGoForwardTool::new(plugin));
-    registry.register(BrowserPressKeyTool::tool_def(), BrowserPressKeyTool::new(plugin));
+    registry.register(
+        BrowserScreenshotTool::tool_def(),
+        BrowserScreenshotTool::new(plugin),
+    );
+    registry.register(
+        BrowserEvaluateTool::tool_def(),
+        BrowserEvaluateTool::new(plugin),
+    );
+    registry.register(
+        BrowserSnapshotTool::tool_def(),
+        BrowserSnapshotTool::new(plugin),
+    );
+    registry.register(
+        BrowserScrollToTool::tool_def(),
+        BrowserScrollToTool::new(plugin),
+    );
+    registry.register(
+        BrowserCurrentUrlTool::tool_def(),
+        BrowserCurrentUrlTool::new(plugin),
+    );
+    registry.register(
+        BrowserWaitForTool::tool_def(),
+        BrowserWaitForTool::new(plugin),
+    );
+    registry.register(
+        BrowserGoBackTool::tool_def(),
+        BrowserGoBackTool::new(plugin),
+    );
+    registry.register(
+        BrowserGoForwardTool::tool_def(),
+        BrowserGoForwardTool::new(plugin),
+    );
+    registry.register(
+        BrowserPressKeyTool::tool_def(),
+        BrowserPressKeyTool::new(plugin),
+    );
 }

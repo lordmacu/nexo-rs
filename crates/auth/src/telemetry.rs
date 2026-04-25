@@ -253,9 +253,7 @@ pub fn render_prometheus() -> String {
             (a.0.channel, &a.0.instance, &a.0.agent).cmp(&(b.0.channel, &b.0.instance, &b.0.agent))
         });
         if rows.is_empty() {
-            out.push_str(
-                "channel_acl_denied_total{agent=\"\",channel=\"\",instance=\"\"} 0\n",
-            );
+            out.push_str("channel_acl_denied_total{agent=\"\",channel=\"\",instance=\"\"} 0\n");
         }
         for (key, v) in rows {
             out.push_str(&format!(

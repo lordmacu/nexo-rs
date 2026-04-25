@@ -431,8 +431,7 @@ mod tests {
     }
     #[tokio::test]
     async fn extra_docs_render_after_standard_blocks() -> anyhow::Result<()> {
-        let tmp =
-            std::env::temp_dir().join(format!("nexo-core-ws-extra-{}", uuid::Uuid::new_v4()));
+        let tmp = std::env::temp_dir().join(format!("nexo-core-ws-extra-{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&tmp).await?;
         tokio::fs::write(tmp.join("SOUL.md"), "be useful").await?;
         tokio::fs::write(
@@ -476,8 +475,7 @@ mod tests {
     }
     #[tokio::test]
     async fn per_file_truncation_applied() -> anyhow::Result<()> {
-        let tmp =
-            std::env::temp_dir().join(format!("nexo-core-ws-trunc-{}", uuid::Uuid::new_v4()));
+        let tmp = std::env::temp_dir().join(format!("nexo-core-ws-trunc-{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&tmp).await?;
         let big = "a".repeat(20_000);
         tokio::fs::write(tmp.join("SOUL.md"), &big).await?;

@@ -20,8 +20,8 @@
 
 use std::sync::Arc;
 
-use nexo_broker::{AnyBroker, BrokerHandle, Event};
 use anyhow::Result;
+use nexo_broker::{AnyBroker, BrokerHandle, Event};
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
@@ -204,8 +204,7 @@ async fn dispatch_event(
             // timeout a slow or deliberately-hanging URL would pin the
             // whole dispatcher task — blocking every other outbound
             // message for this account.
-            const MEDIA_DOWNLOAD_TIMEOUT: std::time::Duration =
-                std::time::Duration::from_secs(60);
+            const MEDIA_DOWNLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
             let (bytes, mime) = tokio::time::timeout(
                 MEDIA_DOWNLOAD_TIMEOUT,
                 crate::media::download_from_url(&url, MAX_DOWNLOAD_BYTES),

@@ -56,7 +56,8 @@ mod tests {
         let s = render_ansi("hello").unwrap();
         // Dense1x2 uses upper/lower half block runes.
         assert!(
-            s.chars().any(|c| c == '█' || c == '▀' || c == '▄' || c == ' '),
+            s.chars()
+                .any(|c| c == '█' || c == '▀' || c == '▄' || c == ' '),
             "no block chars in QR ANSI output: {s:?}"
         );
     }
@@ -66,6 +67,9 @@ mod tests {
     fn png_starts_with_signature() {
         let bytes = render_png("hello").unwrap();
         // PNG file signature.
-        assert_eq!(&bytes[..8], &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+        assert_eq!(
+            &bytes[..8],
+            &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+        );
     }
 }

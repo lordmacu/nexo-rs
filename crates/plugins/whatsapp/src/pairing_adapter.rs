@@ -81,7 +81,10 @@ mod tests {
     #[test]
     fn strips_c_us_suffix_and_adds_plus() {
         let a = adapter();
-        assert_eq!(a.normalize_sender("573001112222@c.us").as_deref(), Some("+573001112222"));
+        assert_eq!(
+            a.normalize_sender("573001112222@c.us").as_deref(),
+            Some("+573001112222")
+        );
     }
 
     #[test]
@@ -96,13 +99,19 @@ mod tests {
     #[test]
     fn keeps_existing_plus_prefix() {
         let a = adapter();
-        assert_eq!(a.normalize_sender("+573001112222@c.us").as_deref(), Some("+573001112222"));
+        assert_eq!(
+            a.normalize_sender("+573001112222@c.us").as_deref(),
+            Some("+573001112222")
+        );
     }
 
     #[test]
     fn no_suffix_still_normalises() {
         let a = adapter();
-        assert_eq!(a.normalize_sender("573001112222").as_deref(), Some("+573001112222"));
+        assert_eq!(
+            a.normalize_sender("573001112222").as_deref(),
+            Some("+573001112222")
+        );
     }
 
     #[test]
@@ -114,7 +123,10 @@ mod tests {
 
     #[test]
     fn outbound_topic_handles_empty_and_named_account() {
-        assert_eq!(WhatsappPairingAdapter::outbound_topic(""), "plugin.outbound.whatsapp");
+        assert_eq!(
+            WhatsappPairingAdapter::outbound_topic(""),
+            "plugin.outbound.whatsapp"
+        );
         assert_eq!(
             WhatsappPairingAdapter::outbound_topic("primary"),
             "plugin.outbound.whatsapp.primary",

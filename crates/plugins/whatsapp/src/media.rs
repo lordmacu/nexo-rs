@@ -16,9 +16,9 @@
 
 use std::path::PathBuf;
 
+use anyhow::{Context, Result};
 use nexo_broker::{AnyBroker, BrokerHandle, Event};
 use nexo_config::WhatsappPluginConfig;
-use anyhow::{Context, Result};
 
 use crate::bridge::SOURCE;
 use crate::events::InboundEvent;

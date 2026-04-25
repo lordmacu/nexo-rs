@@ -75,8 +75,8 @@ async fn multiple_concurrent_sends_correlate_correctly() {
 
 #[tokio::test]
 async fn error_response_propagates_as_err() {
-    use nexo_plugin_browser::CdpClient;
     use futures::{SinkExt, StreamExt};
+    use nexo_plugin_browser::CdpClient;
     use tokio_tungstenite::accept_async;
     use tokio_tungstenite::tungstenite::Message;
 

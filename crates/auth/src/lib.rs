@@ -25,7 +25,5 @@ pub use wire::{build_credentials, load_google_auth, print_report, CredentialsBun
 
 pub use error::{BuildError, CredentialError, ResolveError};
 pub use handle::{AgentId, Channel, CredentialHandle, Fingerprint};
-pub use resolver::{
-    AgentCredentialResolver, AgentCredentialsInput, CredentialStores, StrictLevel,
-};
+pub use resolver::{AgentCredentialResolver, AgentCredentialsInput, CredentialStores, StrictLevel};
 pub use store::{CredentialStore, ValidationReport};

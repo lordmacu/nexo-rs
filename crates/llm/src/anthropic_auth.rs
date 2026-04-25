@@ -325,16 +325,16 @@ pub fn read_claude_cli_credentials() -> Option<OAuthBundle> {
         }
     }
     let home = std::env::var("HOME").ok()?;
-    let path = PathBuf::from(home).join(".claude").join(".credentials.json");
+    let path = PathBuf::from(home)
+        .join(".claude")
+        .join(".credentials.json");
     read_claude_cli_credentials_from_file(&path).ok()
 }
 
 /// Pure-file variant used by tests (no Keychain access).
 pub fn read_claude_cli_credentials_from_file(path: &Path) -> Result<OAuthBundle> {
-    let text =
-        std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    parse_claude_cli_json(&text)
-        .with_context(|| format!("parse {}", path.display()))
+    let text = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    parse_claude_cli_json(&text).with_context(|| format!("parse {}", path.display()))
 }
 
 fn parse_claude_cli_json(text: &str) -> Result<OAuthBundle> {
@@ -353,10 +353,7 @@ fn parse_claude_cli_json(text: &str) -> Result<OAuthBundle> {
         .unwrap_or_default()
         .to_string();
     // Claude CLI stores `expiresAt` in **milliseconds** since epoch.
-    let expires_ms = creds
-        .get("expiresAt")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0);
+    let expires_ms = creds.get("expiresAt").and_then(|v| v.as_i64()).unwrap_or(0);
     let expires_at = if expires_ms > 10_000_000_000 {
         expires_ms / 1000
     } else {

@@ -27,8 +27,12 @@ pub struct RssJobConfig {
     pub deliver: super::gmail::DeliverCfg,
 }
 
-fn default_max() -> usize { 5 }
-fn default_template() -> String { "{title}\n{link}".to_string() }
+fn default_max() -> usize {
+    5
+}
+fn default_template() -> String {
+    "{title}\n{link}".to_string()
+}
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct CursorState {
@@ -54,24 +58,27 @@ impl RssPoller {
 }
 
 impl Default for RssPoller {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[async_trait]
 impl Poller for RssPoller {
-    fn kind(&self) -> &'static str { "rss" }
+    fn kind(&self) -> &'static str {
+        "rss"
+    }
 
     fn description(&self) -> &'static str {
         "Polls an RSS / Atom feed and dispatches new items via the agent's bound channel."
     }
 
     fn validate(&self, config: &Value) -> Result<(), PollerError> {
-        let _: RssJobConfig = serde_json::from_value(config.clone()).map_err(|e| {
-            PollerError::Config {
+        let _: RssJobConfig =
+            serde_json::from_value(config.clone()).map_err(|e| PollerError::Config {
                 job: "<rss>".into(),
                 reason: e.to_string(),
-            }
-        })?;
+            })?;
         Ok(())
     }
 
@@ -185,15 +192,15 @@ fn parse_feed(body: &str) -> Vec<FeedItem> {
     // <description>/<summary>. Skips malformed blocks silently.
     let mut out = Vec::new();
     for chunk in split_blocks(body) {
-        let title = tag_text(&chunk, "title").unwrap_or_default();
-        let link = tag_attr(&chunk, "link", "href")
-            .or_else(|| tag_text(&chunk, "link"))
+        let title = tag_text(chunk, "title").unwrap_or_default();
+        let link = tag_attr(chunk, "link", "href")
+            .or_else(|| tag_text(chunk, "link"))
             .unwrap_or_default();
-        let id = tag_text(&chunk, "guid")
-            .or_else(|| tag_text(&chunk, "id"))
+        let id = tag_text(chunk, "guid")
+            .or_else(|| tag_text(chunk, "id"))
             .unwrap_or_else(|| link.clone());
-        let summary = tag_text(&chunk, "description")
-            .or_else(|| tag_text(&chunk, "summary"))
+        let summary = tag_text(chunk, "description")
+            .or_else(|| tag_text(chunk, "summary"))
             .unwrap_or_default();
         if !id.is_empty() {
             out.push(FeedItem {
@@ -210,12 +217,18 @@ fn parse_feed(body: &str) -> Vec<FeedItem> {
 fn split_blocks(body: &str) -> Vec<&str> {
     let mut out = Vec::new();
     for tag in ["<item", "<entry"] {
-        let close: &str = if tag == "<item" { "</item>" } else { "</entry>" };
+        let close: &str = if tag == "<item" {
+            "</item>"
+        } else {
+            "</entry>"
+        };
         let mut idx = 0;
         while let Some(open) = body[idx..].find(tag) {
             let abs_open = idx + open;
             let after = abs_open + tag.len();
-            let Some(end) = body[after..].find(close) else { break };
+            let Some(end) = body[after..].find(close) else {
+                break;
+            };
             let abs_end = after + end + close.len();
             out.push(&body[abs_open..abs_end]);
             idx = abs_end;

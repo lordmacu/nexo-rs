@@ -88,7 +88,10 @@ reload:
         );
         assert!(!cfg.reload.enabled);
         assert_eq!(cfg.reload.debounce_ms, 1000);
-        assert_eq!(cfg.reload.extra_watch_paths, vec!["custom.yaml".to_string()]);
+        assert_eq!(
+            cfg.reload.extra_watch_paths,
+            vec!["custom.yaml".to_string()]
+        );
     }
 
     #[test]

@@ -173,7 +173,10 @@ impl GoogleAuthClient {
             .as_ref()
             .and_then(|s| {
                 let a = std::fs::metadata(&s.client_id_path).ok()?.modified().ok()?;
-                let b = std::fs::metadata(&s.client_secret_path).ok()?.modified().ok()?;
+                let b = std::fs::metadata(&s.client_secret_path)
+                    .ok()?
+                    .modified()
+                    .ok()?;
                 Some(a.max(b))
             })
             .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
@@ -237,8 +240,8 @@ impl GoogleAuthClient {
     pub async fn load_from_disk(&self) -> Result<()> {
         match tokio::fs::read(&self.token_path).await {
             Ok(bytes) => {
-                let t: GoogleTokens = serde_json::from_slice(&bytes)
-                    .context("google_tokens.json malformed")?;
+                let t: GoogleTokens =
+                    serde_json::from_slice(&bytes).context("google_tokens.json malformed")?;
                 *self.tokens.write().await = Some(t);
                 Ok(())
             }
@@ -288,7 +291,10 @@ impl GoogleAuthClient {
     }
 
     fn redirect_uri(&self) -> String {
-        format!("http://127.0.0.1:{}/callback", self.config.load_full().redirect_port)
+        format!(
+            "http://127.0.0.1:{}/callback",
+            self.config.load_full().redirect_port
+        )
     }
 
     /// Bind the loopback listener AND return the auth URL. The listener
@@ -377,13 +383,17 @@ impl GoogleAuthClient {
         };
 
         if state.as_deref() != Some(expected_state) {
-            let _ = stream.write_all(html_err("state mismatch").as_bytes()).await;
+            let _ = stream
+                .write_all(html_err("state mismatch").as_bytes())
+                .await;
             return Err(anyhow!("oauth state mismatch — possibly a replayed tab"));
         }
         let code = match code {
             Some(c) => c,
             None => {
-                let _ = stream.write_all(html_err("no code in callback").as_bytes()).await;
+                let _ = stream
+                    .write_all(html_err("no code in callback").as_bytes())
+                    .await;
                 return Err(anyhow!("oauth callback missing ?code parameter"));
             }
         };
@@ -466,7 +476,10 @@ impl GoogleAuthClient {
             .await
             .context("POST oauth2.googleapis.com/device/code failed")?;
         let status = resp.status();
-        let body: Value = resp.json().await.context("malformed device/code response")?;
+        let body: Value = resp
+            .json()
+            .await
+            .context("malformed device/code response")?;
         if !status.is_success() {
             return Err(anyhow!(
                 "device/code HTTP {}: {}",
@@ -515,10 +528,7 @@ impl GoogleAuthClient {
                 ("client_id", cfg.client_id.as_str()),
                 ("client_secret", cfg.client_secret.as_str()),
                 ("device_code", challenge.device_code.as_str()),
-                (
-                    "grant_type",
-                    "urn:ietf:params:oauth:grant-type:device_code",
-                ),
+                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
             ];
             let resp = self
                 .http
@@ -531,8 +541,7 @@ impl GoogleAuthClient {
             let body: Value = resp.json().await.context("malformed token response")?;
             if status.is_success() {
                 let scope_cfg = self.config.load_full();
-                let tokens =
-                    tokens_from_response(&body, &canonicalize_scopes(&scope_cfg.scopes))?;
+                let tokens = tokens_from_response(&body, &canonicalize_scopes(&scope_cfg.scopes))?;
                 *self.tokens.write().await = Some(tokens.clone());
                 self.save_to_disk(&tokens).await?;
                 return Ok(tokens);
@@ -544,9 +553,7 @@ impl GoogleAuthClient {
                     interval = interval.saturating_add(Duration::from_secs(5));
                     continue;
                 }
-                "access_denied" => {
-                    return Err(anyhow!("user denied the consent request"))
-                }
+                "access_denied" => return Err(anyhow!("user denied the consent request")),
                 "expired_token" => return Err(anyhow!("device code expired")),
                 other => {
                     return Err(anyhow!(
@@ -813,9 +820,8 @@ mod tests {
 
     #[test]
     fn parse_callback_roundtrip() {
-        let (code, state) = parse_callback_query(
-            "/callback?code=4%2F0AbcdEF&state=abc123&scope=email+profile",
-        );
+        let (code, state) =
+            parse_callback_query("/callback?code=4%2F0AbcdEF&state=abc123&scope=email+profile");
         assert_eq!(code.as_deref(), Some("4/0AbcdEF"));
         assert_eq!(state.as_deref(), Some("abc123"));
     }

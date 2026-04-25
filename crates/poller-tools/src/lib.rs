@@ -19,18 +19,20 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use nexo_core::agent::context::AgentContext;
 use nexo_core::agent::tool_registry::{ToolHandler, ToolRegistry};
 use nexo_llm::ToolDef;
 use nexo_poller::PollerRunner;
-use async_trait::async_trait;
 use serde_json::{json, Value};
 
 pub struct PollersListTool {
     runner: Arc<PollerRunner>,
 }
 impl PollersListTool {
-    pub fn new(runner: Arc<PollerRunner>) -> Self { Self { runner } }
+    pub fn new(runner: Arc<PollerRunner>) -> Self {
+        Self { runner }
+    }
     pub fn tool_def() -> ToolDef {
         ToolDef {
             name: "pollers_list".to_string(),
@@ -53,7 +55,9 @@ pub struct PollersShowTool {
     runner: Arc<PollerRunner>,
 }
 impl PollersShowTool {
-    pub fn new(runner: Arc<PollerRunner>) -> Self { Self { runner } }
+    pub fn new(runner: Arc<PollerRunner>) -> Self {
+        Self { runner }
+    }
     pub fn tool_def() -> ToolDef {
         ToolDef {
             name: "pollers_show".to_string(),
@@ -87,7 +91,9 @@ pub struct PollersRunTool {
     runner: Arc<PollerRunner>,
 }
 impl PollersRunTool {
-    pub fn new(runner: Arc<PollerRunner>) -> Self { Self { runner } }
+    pub fn new(runner: Arc<PollerRunner>) -> Self {
+        Self { runner }
+    }
     pub fn tool_def() -> ToolDef {
         ToolDef {
             name: "pollers_run".to_string(),
@@ -124,13 +130,14 @@ pub struct PollersPauseTool {
     runner: Arc<PollerRunner>,
 }
 impl PollersPauseTool {
-    pub fn new(runner: Arc<PollerRunner>) -> Self { Self { runner } }
+    pub fn new(runner: Arc<PollerRunner>) -> Self {
+        Self { runner }
+    }
     pub fn tool_def() -> ToolDef {
         ToolDef {
             name: "pollers_pause".to_string(),
             description:
-                "Pause a poll job. The schedule stops firing until pollers_resume is called."
-                    .into(),
+                "Pause a poll job. The schedule stops firing until pollers_resume is called.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -156,7 +163,9 @@ pub struct PollersResumeTool {
     runner: Arc<PollerRunner>,
 }
 impl PollersResumeTool {
-    pub fn new(runner: Arc<PollerRunner>) -> Self { Self { runner } }
+    pub fn new(runner: Arc<PollerRunner>) -> Self {
+        Self { runner }
+    }
     pub fn tool_def() -> ToolDef {
         ToolDef {
             name: "pollers_resume".to_string(),
@@ -186,7 +195,9 @@ pub struct PollersResetTool {
     runner: Arc<PollerRunner>,
 }
 impl PollersResetTool {
-    pub fn new(runner: Arc<PollerRunner>) -> Self { Self { runner } }
+    pub fn new(runner: Arc<PollerRunner>) -> Self {
+        Self { runner }
+    }
     pub fn tool_def() -> ToolDef {
         ToolDef {
             name: "pollers_reset".to_string(),
@@ -230,10 +241,7 @@ impl ToolHandler for CustomToolAdapter {
         // arbitrary args from the LLM cannot override it because
         // we set after the fact.
         if let Value::Object(map) = &mut args {
-            map.insert(
-                "_agent_id".to_string(),
-                Value::String(ctx.agent_id.clone()),
-            );
+            map.insert("_agent_id".to_string(), Value::String(ctx.agent_id.clone()));
         }
         self.inner.call(Arc::clone(&self.runner), args).await
     }
@@ -243,15 +251,30 @@ impl ToolHandler for CustomToolAdapter {
 /// tool exposed by the registered `Poller` impls. Called from `main.rs`
 /// per agent.
 pub fn register_all(registry: &ToolRegistry, runner: Arc<PollerRunner>) {
-    registry.register(PollersListTool::tool_def(), PollersListTool::new(runner.clone()));
-    registry.register(PollersShowTool::tool_def(), PollersShowTool::new(runner.clone()));
-    registry.register(PollersRunTool::tool_def(), PollersRunTool::new(runner.clone()));
-    registry.register(PollersPauseTool::tool_def(), PollersPauseTool::new(runner.clone()));
+    registry.register(
+        PollersListTool::tool_def(),
+        PollersListTool::new(runner.clone()),
+    );
+    registry.register(
+        PollersShowTool::tool_def(),
+        PollersShowTool::new(runner.clone()),
+    );
+    registry.register(
+        PollersRunTool::tool_def(),
+        PollersRunTool::new(runner.clone()),
+    );
+    registry.register(
+        PollersPauseTool::tool_def(),
+        PollersPauseTool::new(runner.clone()),
+    );
     registry.register(
         PollersResumeTool::tool_def(),
         PollersResumeTool::new(runner.clone()),
     );
-    registry.register(PollersResetTool::tool_def(), PollersResetTool::new(runner.clone()));
+    registry.register(
+        PollersResetTool::tool_def(),
+        PollersResetTool::new(runner.clone()),
+    );
 
     // Per-kind custom tools — each registered Poller impl can return
     // a Vec<CustomToolSpec>. Empty by default.

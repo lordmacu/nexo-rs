@@ -337,9 +337,7 @@ mod tests {
         let mut f = flow(FlowStatus::Running);
         f.request_cancel();
         assert!(f.cancel_requested);
-        let err = f
-            .transition_to(FlowStatus::Finished)
-            .expect_err("blocked");
+        let err = f.transition_to(FlowStatus::Finished).expect_err("blocked");
         assert!(matches!(err, FlowError::CancelPending { .. }));
         // But Cancelled is still allowed.
         f.transition_to(FlowStatus::Cancelled).expect("cancel ok");

@@ -46,7 +46,9 @@ async fn custom_chat_action_hits_send_chat_action() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path(telegram_path("sendChatAction")))
-        .and(body_partial_json(json!({"chat_id": 123, "action": "typing"})))
+        .and(body_partial_json(
+            json!({"chat_id": 123, "action": "typing"}),
+        ))
         .respond_with(bool_ok())
         .expect(1)
         .mount(&server)

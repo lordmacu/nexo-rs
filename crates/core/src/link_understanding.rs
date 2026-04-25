@@ -314,7 +314,7 @@ fn host_allowed(url: &str, deny: &[String]) -> bool {
         .or_else(|| url.strip_prefix("http://"))
         .unwrap_or(url);
     let host = after_scheme
-        .split(|c| c == '/' || c == '?' || c == '#')
+        .split(['/', '?', '#'])
         .next()
         .unwrap_or("")
         .split('@')
@@ -327,9 +327,9 @@ fn host_allowed(url: &str, deny: &[String]) -> bool {
     if host.is_empty() {
         return false;
     }
-    !deny
-        .iter()
-        .any(|pat| host == pat.to_lowercase() || host.ends_with(&format!(".{}", pat.to_lowercase())))
+    !deny.iter().any(|pat| {
+        host == pat.to_lowercase() || host.ends_with(&format!(".{}", pat.to_lowercase()))
+    })
 }
 
 async fn read_capped(resp: reqwest::Response, cap: usize) -> Result<String, reqwest::Error> {
@@ -371,7 +371,17 @@ pub fn extract_main_text(html: &str, max_bytes: usize) -> String {
                 let lname = name.trim_start_matches('/').to_ascii_lowercase();
                 if matches!(
                     lname.as_str(),
-                    "p" | "br" | "div" | "li" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "tr" | "section"
+                    "p" | "br"
+                        | "div"
+                        | "li"
+                        | "h1"
+                        | "h2"
+                        | "h3"
+                        | "h4"
+                        | "h5"
+                        | "h6"
+                        | "tr"
+                        | "section"
                 ) {
                     buf.push('\n');
                 }
@@ -460,7 +470,9 @@ fn strip_block(html: &str, tag: &str) -> String {
         out.push_str(&html[cursor..open_abs]);
         let after_open = lower[open_abs..].find('>').map(|p| open_abs + p + 1);
         let Some(after) = after_open else { break };
-        let Some(close_rel) = lower[after..].find(&close_pat) else { break };
+        let Some(close_rel) = lower[after..].find(&close_pat) else {
+            break;
+        };
         let close_abs = after + close_rel;
         let close_end = lower[close_abs..]
             .find('>')
@@ -563,11 +575,11 @@ mod tests {
         let deny = default_deny_hosts();
         assert!(!host_allowed("http://localhost:8080/x", &deny));
         assert!(!host_allowed("http://127.0.0.1/", &deny));
+        assert!(!host_allowed("http://metadata.google.internal/x", &deny));
         assert!(!host_allowed(
-            "http://metadata.google.internal/x",
+            "http://api.metadata.google.internal/x",
             &deny
         ));
-        assert!(!host_allowed("http://api.metadata.google.internal/x", &deny));
         assert!(host_allowed("https://example.com/x", &deny));
     }
 
@@ -642,8 +654,10 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_skips_denylisted_host() {
-        let mut cfg = LinkUnderstandingConfig::default();
-        cfg.enabled = true;
+        let cfg = LinkUnderstandingConfig {
+            enabled: true,
+            ..LinkUnderstandingConfig::default()
+        };
         let ext = LinkExtractor::new(&cfg);
         // Even with enabled = true, localhost is on the deny list
         // and we never attempt the fetch (so this test does not

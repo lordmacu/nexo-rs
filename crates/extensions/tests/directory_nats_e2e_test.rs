@@ -9,6 +9,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use futures::StreamExt;
 use nexo_broker::{BrokerHandle, Event, Message, NatsBroker};
 use nexo_config::types::broker::{
     BrokerAuthConfig, BrokerFallbackConfig, BrokerInner, BrokerKind, BrokerLimitsConfig,
@@ -16,7 +17,6 @@ use nexo_config::types::broker::{
 };
 use nexo_extensions::runtime::announce::{AnnounceCapabilities, AnnouncePayload, ShutdownPayload};
 use nexo_extensions::runtime::{DirectoryEvent, ExtensionDirectory, NatsRuntimeOptions};
-use futures::StreamExt;
 use uuid::Uuid;
 
 fn fast_opts() -> NatsRuntimeOptions {

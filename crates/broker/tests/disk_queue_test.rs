@@ -92,11 +92,11 @@ async fn disk_queue_applies_backpressure_over_halfway() {
 
 #[tokio::test]
 async fn disk_queue_moves_to_dlq_after_max_attempts() {
+    use async_trait::async_trait;
     use nexo_broker::handle::Subscription;
     use nexo_broker::types::BrokerError;
     use nexo_broker::types::Message;
     use nexo_broker::BrokerHandle;
-    use async_trait::async_trait;
     use std::time::Duration;
 
     // Broker that always fails publish

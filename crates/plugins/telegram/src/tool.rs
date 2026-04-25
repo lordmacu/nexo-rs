@@ -6,11 +6,11 @@
 //! `outbound_allowlist.telegram` (configured in `agents.yaml`). Empty
 //! list = unrestricted; populated = only listed chat_ids reachable.
 
+use async_trait::async_trait;
 use nexo_broker::{BrokerHandle, Event};
 use nexo_core::agent::context::AgentContext;
 use nexo_core::agent::tool_registry::{ToolHandler, ToolRegistry};
 use nexo_llm::ToolDef;
-use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -118,12 +118,11 @@ impl TelegramSendMessageTool {
     pub fn tool_def() -> ToolDef {
         ToolDef {
             name: "telegram_send_message".to_string(),
-            description:
-                "Send a Telegram text message to an arbitrary chat_id. Use \
+            description: "Send a Telegram text message to an arbitrary chat_id. Use \
                  when you need to notify a third party or post to a group/channel \
                  that isn't the current conversation. Honor the agent's outbound \
                  allowlist."
-                    .to_string(),
+                .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -190,9 +189,14 @@ impl ToolHandler for TelegramSendReplyTool {
         let chat_id = parse_chat_id(&args)?;
         let reply_to = args
             .get("reply_to_message_id")
-            .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+            .and_then(|v| {
+                v.as_i64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            })
             .ok_or_else(|| anyhow::anyhow!("`reply_to_message_id` required"))?;
-        let text = args["text"].as_str().ok_or_else(|| anyhow::anyhow!("`text` required"))?;
+        let text = args["text"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("`text` required"))?;
         if allowlist_denied(ctx, chat_id) {
             anyhow::bail!("chat_id {chat_id} not in telegram allowlist");
         }
@@ -240,7 +244,10 @@ impl ToolHandler for TelegramSendReactionTool {
         let chat_id = parse_chat_id(&args)?;
         let message_id = args
             .get("message_id")
-            .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+            .and_then(|v| {
+                v.as_i64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            })
             .ok_or_else(|| anyhow::anyhow!("`message_id` required"))?;
         let emoji = args["emoji"].as_str().unwrap_or("");
         if allowlist_denied(ctx, chat_id) {
@@ -270,9 +277,8 @@ impl TelegramEditMessageTool {
     pub fn tool_def() -> ToolDef {
         ToolDef {
             name: "telegram_edit_message".to_string(),
-            description:
-                "Edit the text of a Telegram message previously sent by this bot."
-                    .to_string(),
+            description: "Edit the text of a Telegram message previously sent by this bot."
+                .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -293,9 +299,14 @@ impl ToolHandler for TelegramEditMessageTool {
         let chat_id = parse_chat_id(&args)?;
         let message_id = args
             .get("message_id")
-            .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+            .and_then(|v| {
+                v.as_i64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            })
             .ok_or_else(|| anyhow::anyhow!("`message_id` required"))?;
-        let text = args["text"].as_str().ok_or_else(|| anyhow::anyhow!("`text` required"))?;
+        let text = args["text"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("`text` required"))?;
         let parse_mode = args["parse_mode"].as_str();
         if allowlist_denied(ctx, chat_id) {
             anyhow::bail!("chat_id {chat_id} not in telegram allowlist");
@@ -375,10 +386,9 @@ impl TelegramSendMediaTool {
     pub fn tool_def() -> ToolDef {
         ToolDef {
             name: "telegram_send_media".to_string(),
-            description:
-                "Send media (photo/video/document/audio/voice/animation) to a \
+            description: "Send media (photo/video/document/audio/voice/animation) to a \
                  Telegram chat by URL or local file path."
-                    .to_string(),
+                .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -437,8 +447,14 @@ impl ToolHandler for TelegramSendMediaTool {
 pub fn register_telegram_tools(tools: &Arc<ToolRegistry>) {
     tools.register(TelegramSendMessageTool::tool_def(), TelegramSendMessageTool);
     tools.register(TelegramSendReplyTool::tool_def(), TelegramSendReplyTool);
-    tools.register(TelegramSendReactionTool::tool_def(), TelegramSendReactionTool);
+    tools.register(
+        TelegramSendReactionTool::tool_def(),
+        TelegramSendReactionTool,
+    );
     tools.register(TelegramEditMessageTool::tool_def(), TelegramEditMessageTool);
-    tools.register(TelegramSendLocationTool::tool_def(), TelegramSendLocationTool);
+    tools.register(
+        TelegramSendLocationTool::tool_def(),
+        TelegramSendLocationTool,
+    );
     tools.register(TelegramSendMediaTool::tool_def(), TelegramSendMediaTool);
 }

@@ -105,7 +105,10 @@ mod tests {
         });
         assert_eq!(out.len(), 4);
         let labels: Vec<_> = out.iter().map(|b| b.label).collect();
-        assert_eq!(labels, vec!["workspace", "skills", "binding_glue", "channel_meta"]);
+        assert_eq!(
+            labels,
+            vec!["workspace", "skills", "binding_glue", "channel_meta"]
+        );
     }
 
     #[test]

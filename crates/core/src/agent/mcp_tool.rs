@@ -5,10 +5,10 @@
 //! are routed to the owning `dyn McpClient`.
 use super::context::AgentContext;
 use super::tool_registry::ToolHandler;
-use nexo_llm::ToolDef;
-use nexo_mcp::{McpClient, McpContent, McpTool as McpToolDescriptor};
 use async_trait::async_trait;
 use base64::Engine;
+use nexo_llm::ToolDef;
+use nexo_mcp::{McpClient, McpContent, McpTool as McpToolDescriptor};
 use serde_json::Value;
 use std::sync::Arc;
 pub const MCP_NAME_PREFIX: &str = "mcp_";
