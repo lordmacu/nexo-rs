@@ -359,7 +359,7 @@ async fn main() -> Result<()> {
 
     let config_dir = args.config_dir;
     tracing::info!(config_dir = %config_dir.display(), "loading config");
-    let mut cfg = AppConfig::load(&config_dir).context("failed to load config")?;
+    let cfg = AppConfig::load(&config_dir).context("failed to load config")?;
 
     // First pass of per-binding override validation — structural
     // checks only (duplicate bindings, unknown telegram instances,
@@ -795,46 +795,11 @@ async fn main() -> Result<()> {
     // interval and routes matching emails to channel plugins. No LLM
     // in the hot path; dedup via Gmail UNREAD label. Absent config
     // file = feature off.
-    // Phase 19 — legacy `gmail-poller.yaml` no longer drives its own
-    // loop; we translate it into PollerJob entries that get folded
-    // into `pollers.yaml` (loaded earlier in `cfg.pollers`). The
-    // generic runner spawns + schedules + persists them. Each
-    // translated job logs a deprecation warn pointing at the new
-    // shape.
-    match agent_plugin_gmail_poller::GmailPollerConfig::load(&config_dir) {
-        Ok(Some(legacy_cfg)) => {
-            let translated = agent_plugin_gmail_poller::translate(&legacy_cfg);
-            if !translated.jobs.is_empty() {
-                tracing::warn!(
-                    jobs = translated.jobs.len(),
-                    "gmail-poller.yaml is deprecated; jobs translated into the generic poller runner. Migrate to config/pollers.yaml at your convenience."
-                );
-                // Merge into cfg.pollers — explicit pollers.yaml entries
-                // win on id collision so a manual migration does not
-                // get clobbered by the legacy translator.
-                let merged = match cfg.pollers.take() {
-                    Some(mut existing) => {
-                        let known: std::collections::HashSet<String> =
-                            existing.jobs.iter().map(|j| j.id.clone()).collect();
-                        for j in translated.jobs {
-                            if !known.contains(&j.id) {
-                                existing.jobs.push(j);
-                            }
-                        }
-                        existing
-                    }
-                    None => translated,
-                };
-                cfg.pollers = Some(merged);
-            }
-        }
-        Ok(None) => {
-            tracing::debug!("gmail-poller: config absent, skipping");
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "gmail-poller: failed to load config");
-        }
-    }
+    // Phase 19 — `gmail-poller` legacy crate retired. Operators
+    // declare gmail jobs directly in `config/pollers.yaml` under
+    // `kind: gmail`. The generic runner handles scheduling, cursor
+    // persistence, dispatch via Phase 17, and the `pollers_*` +
+    // `gmail_*` LLM tools.
 
     // Optional sidecar policy for tool caching / parallel-safety /
     // relevance filtering. File absence = feature off (back-compat).

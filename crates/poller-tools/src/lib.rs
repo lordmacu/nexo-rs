@@ -223,7 +223,18 @@ struct CustomToolAdapter {
 }
 #[async_trait]
 impl ToolHandler for CustomToolAdapter {
-    async fn call(&self, _ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
+    async fn call(&self, ctx: &AgentContext, mut args: Value) -> anyhow::Result<Value> {
+        // Inject the calling agent's id so handlers can resolve
+        // per-agent credentials without trusting LLM-supplied args.
+        // The handler reads `_agent_id` from the value object;
+        // arbitrary args from the LLM cannot override it because
+        // we set after the fact.
+        if let Value::Object(map) = &mut args {
+            map.insert(
+                "_agent_id".to_string(),
+                Value::String(ctx.agent_id.clone()),
+            );
+        }
         self.inner.call(Arc::clone(&self.runner), args).await
     }
 }

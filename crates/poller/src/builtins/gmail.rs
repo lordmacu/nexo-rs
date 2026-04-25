@@ -79,13 +79,22 @@ pub struct GmailPoller {
     /// Cached `GoogleAuthClient`s keyed by Google account id. Multiple
     /// gmail jobs for the same agent share the same cached client so
     /// token refreshes happen once.
-    clients: DashMap<String, Arc<GoogleAuthClient>>,
+    inner: Arc<GmailInner>,
+}
+
+/// Shared state — held by the poller AND by every custom-tool
+/// handler so tools can reuse the same `GoogleAuthClient` cache the
+/// tick path warms up.
+pub struct GmailInner {
+    pub clients: DashMap<String, Arc<GoogleAuthClient>>,
 }
 
 impl GmailPoller {
     pub fn new() -> Self {
         Self {
-            clients: DashMap::new(),
+            inner: Arc::new(GmailInner {
+                clients: DashMap::new(),
+            }),
         }
     }
 }
@@ -112,45 +121,7 @@ impl Poller for GmailPoller {
     }
 
     fn custom_tools(&self) -> Vec<crate::CustomToolSpec> {
-        use agent_llm::ToolDef;
-        use serde_json::json;
-        struct CountUnread;
-        #[async_trait::async_trait]
-        impl crate::CustomToolHandler for CountUnread {
-            async fn call(
-                &self,
-                runner: std::sync::Arc<crate::PollerRunner>,
-                args: serde_json::Value,
-            ) -> anyhow::Result<serde_json::Value> {
-                let id = args["id"]
-                    .as_str()
-                    .ok_or_else(|| anyhow::anyhow!("gmail_count_unread requires `id`"))?;
-                // Trigger one tick out-of-band; report items_seen as a
-                // proxy for "currently unread matching the query".
-                let outcome = runner.run_once(id).await?;
-                Ok(json!({
-                    "ok": true,
-                    "matching": outcome.items_seen,
-                    "would_dispatch": outcome.items_dispatched,
-                }))
-            }
-        }
-        vec![crate::CustomToolSpec {
-            def: ToolDef {
-                name: "gmail_count_unread".into(),
-                description:
-                    "Run the gmail job's query once without persisting state — returns how many messages currently match. Useful as a sanity check before changing the template or pause/resume."
-                        .into(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "id": { "type": "string", "description": "Gmail poll job id" }
-                    },
-                    "required": ["id"]
-                }),
-            },
-            handler: std::sync::Arc::new(CountUnread),
-        }]
+        crate::builtins::gmail_tools::build_tools(Arc::clone(&self.inner))
     }
 
     async fn tick(&self, ctx: &PollContext) -> Result<TickOutcome, PollerError> {
@@ -317,7 +288,7 @@ impl GmailPoller {
         handle: &agent_auth::CredentialHandle,
     ) -> Result<Arc<GoogleAuthClient>, PollerError> {
         let account_id = handle.account_id_raw().to_string();
-        if let Some(existing) = self.clients.get(&account_id) {
+        if let Some(existing) = self.inner.clients.get(&account_id) {
             return Ok(existing.clone());
         }
 
@@ -361,7 +332,7 @@ impl GmailPoller {
             .await
             .map_err(|e| PollerError::Permanent(e.context("google: load_from_disk")))?;
 
-        self.clients.insert(account_id.clone(), client.clone());
+        self.inner.clients.insert(account_id.clone(), client.clone());
         Ok(client)
     }
 

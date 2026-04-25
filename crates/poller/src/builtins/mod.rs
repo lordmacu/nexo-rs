@@ -14,6 +14,7 @@ use std::sync::Arc;
 use crate::PollerRunner;
 
 pub mod gmail;
+pub mod gmail_tools;
 pub mod google_calendar;
 pub mod rss;
 pub mod webhook_poll;
