@@ -86,13 +86,24 @@ fn fmt_secs(ms: u64) -> String {
 }
 
 pub fn render_prometheus() -> String {
+    render_into(&STREAM_TTFT, &STREAM_CHUNKS)
+}
+
+/// Pure renderer — takes the telemetry maps explicitly so tests can
+/// pass their own isolated `DashMap`s and never touch the global
+/// static. Production callers go through `render_prometheus()` which
+/// reads the global. Phase 38.x.1 fix.
+fn render_into(
+    ttft: &DashMap<String, Histogram>,
+    chunks: &DashMap<ChunkKey, AtomicU64>,
+) -> String {
     let mut out = String::new();
 
     out.push_str(
         "# HELP nexo_llm_stream_ttft_seconds Time-to-first-token for streaming responses.\n",
     );
     out.push_str("# TYPE nexo_llm_stream_ttft_seconds histogram\n");
-    if STREAM_TTFT.is_empty() {
+    if ttft.is_empty() {
         for upper in TTFT_BUCKET_LIMITS_MS.iter() {
             out.push_str(&format!(
                 "nexo_llm_stream_ttft_seconds_bucket{{provider=\"\",le=\"{}\"}} 0\n",
@@ -103,11 +114,11 @@ pub fn render_prometheus() -> String {
         out.push_str("nexo_llm_stream_ttft_seconds_sum{provider=\"\"} 0\n");
         out.push_str("nexo_llm_stream_ttft_seconds_count{provider=\"\"} 0\n");
     } else {
-        let mut providers: Vec<String> = STREAM_TTFT.iter().map(|e| e.key().clone()).collect();
+        let mut providers: Vec<String> = ttft.iter().map(|e| e.key().clone()).collect();
         providers.sort();
         providers.dedup();
         for provider in providers {
-            let Some(series) = STREAM_TTFT.get(&provider) else {
+            let Some(series) = ttft.get(&provider) else {
                 continue;
             };
             let provider = escape(&provider);
@@ -136,10 +147,10 @@ pub fn render_prometheus() -> String {
         "# HELP nexo_llm_stream_chunks_total Streaming chunks emitted by provider/kind.\n",
     );
     out.push_str("# TYPE nexo_llm_stream_chunks_total counter\n");
-    if STREAM_CHUNKS.is_empty() {
+    if chunks.is_empty() {
         out.push_str("nexo_llm_stream_chunks_total{provider=\"\",kind=\"\"} 0\n");
     } else {
-        let mut rows: Vec<_> = STREAM_CHUNKS
+        let mut rows: Vec<_> = chunks
             .iter()
             .map(|e| (e.key().clone(), e.value().load(Ordering::Relaxed)))
             .collect();
@@ -203,16 +214,14 @@ mod tests {
         ));
     }
 
-    // Flakes under `cargo test --workspace` because the prometheus
-    // registry global is shared across test binaries — reset_for_test()
-    // only races with the in-crate TEST_LOCK, not with sibling crates.
-    // Tracked as Phase 38.x.1 in PHASES.md.
-    #[ignore = "global registry race across test binaries — see Phase 38.x.1"]
+    // Phase 38.x.1 fix: render against a local registry instead of
+    // the shared global. No `TEST_LOCK`, no `reset_for_test`, no race
+    // with sibling crate tests under `cargo test --workspace`.
     #[test]
     fn render_empty_series_when_no_samples() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-        reset_for_test();
-        let body = render_prometheus();
+        let ttft: DashMap<String, Histogram> = DashMap::new();
+        let chunks: DashMap<ChunkKey, AtomicU64> = DashMap::new();
+        let body = render_into(&ttft, &chunks);
         assert!(contains_line(
             &body,
             "nexo_llm_stream_ttft_seconds_count{provider=\"\"} 0"
@@ -220,6 +229,34 @@ mod tests {
         assert!(contains_line(
             &body,
             "nexo_llm_stream_chunks_total{provider=\"\",kind=\"\"} 0"
+        ));
+    }
+
+    // Same isolation pattern for a populated render — exercises the
+    // non-empty branch without ever touching the globals.
+    #[test]
+    fn render_into_local_registry_with_samples() {
+        let ttft: DashMap<String, Histogram> = DashMap::new();
+        let chunks: DashMap<ChunkKey, AtomicU64> = DashMap::new();
+        ttft.entry("openai".to_string())
+            .or_insert_with(Histogram::new)
+            .observe(120);
+        chunks
+            .entry(ChunkKey {
+                provider: "openai".into(),
+                kind: "text_delta".into(),
+            })
+            .or_insert_with(|| AtomicU64::new(0))
+            .fetch_add(1, Ordering::Relaxed);
+
+        let body = render_into(&ttft, &chunks);
+        assert!(contains_line(
+            &body,
+            "nexo_llm_stream_ttft_seconds_count{provider=\"openai\"} 1"
+        ));
+        assert!(contains_line(
+            &body,
+            "nexo_llm_stream_chunks_total{provider=\"openai\",kind=\"text_delta\"} 1"
         ));
     }
 }
