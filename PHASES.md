@@ -1741,6 +1741,36 @@ de `libllama` para 4 targets. Se aísla la dep en un crate hoja
 (`nexo-llm-local`) detrás de feature flag para que el resto del
 workspace no la cargue.
 
+**Modelo intercambiable**: el backend acepta **cualquier GGUF**
+compatible con `llama.cpp` — gemma3, llama3.x, qwen2.5, phi3, mistral,
+smolLM, deepseek-r1-distill, etc. El operador elige por config:
+
+```yaml
+# config/llm.yaml
+local:
+  models:
+    general:
+      path: ~/.nexo/models/gemma3-270m-q4_k_m.gguf
+      chat_template: gemma         # gemma | llama3 | qwen2 | chatml | auto
+      context_size: 8192
+      max_concurrent: 4
+    classifier:
+      path: ~/.nexo/models/qwen2.5-0.5b-q4_k_m.gguf  # mismo trait, otro modelo
+      chat_template: qwen2
+    embeddings:
+      path: ~/.nexo/models/bge-small-q4.gguf
+      kind: embedding              # marca que es embedding-only
+  jobs:
+    pii_redactor:    general
+    intent_router:   classifier
+    vector_search:   embeddings
+```
+
+Nada en el runtime asume gemma3 — el `LocalLlm` trait abstrae el
+modelo. Los modelos defaults shipados son una recomendación operativa,
+no un hardcode. El operador puede swap a cualquier GGUF que entre en
+su presupuesto de RAM y mantener todo el resto del pipeline igual.
+
 **Stack** (propuesto en brainstorm):
 
 #### 68.1 — Crate `nexo-llm-local` scaffold + `LocalLlm` trait      ⬜
@@ -1750,13 +1780,18 @@ Crate hoja con `LocalLlm` trait (espejo reducido de `LlmClient`),
 BudgetExhausted), feature flags `cpu` (default), `metal`, `cuda`. Sin
 backend aún — solo el contrato.
 
-#### 68.2 — `llama-cpp-2` backend gemma3 + GGUF loader              ⬜
+#### 68.2 — `llama-cpp-2` backend + GGUF loader (model-agnostic)    ⬜
 
-Implementación del trait sobre `llama-cpp-2`. Carga GGUF Q4_K_M, expone
-`generate(prompt, max_tokens, cancel)` y `embed(texts) -> Vec<Vec<f32>>`.
-CI cross-compile para linux-x86_64, linux-aarch64, macos, termux-arm64;
-artifact `libllama.a` cacheado. Smoke test con el modelo más pequeño
-(`gemma3-270m-q4_k_m.gguf`, ~150 MB) en CI.
+Implementación del trait sobre `llama-cpp-2`. Carga **cualquier GGUF**
+compatible con `llama.cpp` (gemma3, llama3.x, qwen2.5, phi3, mistral,
+smolLM, deepseek-distill, …). Detecta el `chat_template` del header
+GGUF; si falta, lee el campo `chat_template` de la config; si tampoco
+está, falla con error claro al boot. Expone `generate(prompt,
+max_tokens, cancel)` y `embed(texts) -> Vec<Vec<f32>>`. CI
+cross-compile para linux-x86_64, linux-aarch64, macos, termux-arm64;
+artifact `libllama.a` cacheado. Smoke matrix con 3 modelos
+representativos (gemma3-270m, qwen2.5-0.5b, smolLM-135m) para
+verificar que el path es genuinamente model-agnostic.
 
 #### 68.3 — `ModelHost` (load / unload / LRU / memory budget)       ⬜
 
@@ -1837,10 +1872,25 @@ latencias P50/P99 por job.
 #### 68.13 — Docs + admin-ui knobs                                  ⬜
 
 Docs: nueva sección `docs/src/llm/local.md` con la matriz de jobs por
-device (Termux / desktop CPU / desktop GPU), tamaño/RAM por modelo,
-cómo descargar GGUF (`nexo setup --download-models`), límites
-honestos. admin-ui: tile A8 con loaded models, queue depth en tiempo
-real, toggle on/off por job, presupuesto memoria editable.
+device (Termux / desktop CPU / desktop GPU), catálogo de **modelos
+recomendados** (gemma3, qwen2.5, llama3.2, phi3, smolLM) con
+tamaño/RAM/quality trade-offs, cómo bajar GGUF arbitrarios
+(`nexo setup --model <name|url>`), cómo escribir un perfil custom para
+un modelo no listado, límites honestos por device. admin-ui: tile A8
+con loaded models, queue depth en tiempo real, toggle on/off por job,
+presupuesto memoria editable, dropdown para cambiar el GGUF asignado a
+cada job sin tocar YAML.
+
+#### 68.14 — Model catalog + auto-download                          ⬜
+
+`nexo setup --download-model <name>` con un catálogo curado
+(`crates/setup/data/local-models.toml`) que mapea nombres cortos
+(`gemma3-270m`, `qwen2.5-0.5b`, `bge-small`, `llama3.2-1b`, …) a la
+URL HuggingFace + sha256 + `chat_template` apropiado. El comando
+verifica el sha256 al descargar, resume descargas parciales, y guarda
+en `~/.nexo/models/`. Permitir URL custom (`--from-url <url>`) para
+modelos fuera del catálogo. Catálogo extensible vía PR — un nuevo
+modelo se añade con una entrada toml, sin tocar código.
 
 ---
 
