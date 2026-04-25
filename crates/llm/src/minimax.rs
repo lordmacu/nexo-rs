@@ -90,7 +90,10 @@ impl MiniMaxClient {
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(120))
             .build()
-            .expect("failed to build reqwest client");
+            .unwrap_or_else(|e| {
+                tracing::error!(error = %e, "reqwest client build failed; falling back to default client (no timeout)");
+                reqwest::Client::new()
+            });
 
         let circuit = Arc::new(CircuitBreaker::new(
             "llm.minimax",
@@ -448,25 +451,51 @@ fn truncate_for_log(s: &str, max: usize) -> String {
 /// `cfg.group_id` from YAML. Returns `None` when every source is
 /// empty so we don't send a blank header.
 fn resolve_group_id(cfg: &LlmProviderConfig) -> Option<String> {
-    let mut candidates: Vec<String> = Vec::new();
-    if let Ok(v) = std::env::var("MINIMAX_GROUP_ID") {
-        candidates.push(v);
+    let candidates: [(&str, Option<String>); 3] = [
+        ("env:MINIMAX_GROUP_ID", std::env::var("MINIMAX_GROUP_ID").ok()),
+        (
+            "file:./secrets/minimax_group_id.txt",
+            std::fs::read_to_string("./secrets/minimax_group_id.txt").ok(),
+        ),
+        ("yaml:cfg.group_id", cfg.group_id.clone()),
+    ];
+    for (source, raw) in candidates {
+        let Some(v) = raw else { continue };
+        let trimmed = v.trim().to_string();
+        if !trimmed.is_empty() {
+            tracing::debug!(source, "minimax group_id resolved");
+            return Some(trimmed);
+        }
     }
-    if let Ok(v) = std::fs::read_to_string("./secrets/minimax_group_id.txt") {
-        candidates.push(v);
-    }
-    if let Some(v) = cfg.group_id.clone() {
-        candidates.push(v);
-    }
-    candidates
-        .into_iter()
-        .map(|s| s.trim().to_string())
-        .find(|s| !s.is_empty())
+    None
 }
 
 // ── OpenAI-compat wire ────────────────────────────────────────────────────────
 
+/// Phase A.3 — MiniMax has no public docs for prompt-cache breakpoints
+/// (their Anthropic-flavor wire mirrors Claude shapes but the platform
+/// has not exposed pricing/breakpoint behavior). Treat `system_blocks`
+/// / `cache_tools` as a no-op for now: flatten the blocks into the
+/// system prompt so the content reaches the model, log once per process
+/// so the gap is visible to operators, and leave native caching as a
+/// follow-up to revisit when MiniMax publishes the spec.
+fn warn_unsupported_caching_once() {
+    use std::sync::OnceLock;
+    static SEEN: OnceLock<()> = OnceLock::new();
+    SEEN.get_or_init(|| {
+        tracing::warn!(
+            provider = "minimax",
+            "prompt-cache fields (system_blocks / cache_tools) are not natively supported on \
+             MiniMax — content is flattened into the system prompt; revisit when the platform \
+             publishes cache_control semantics."
+        );
+    });
+}
+
 fn build_openai_body(req: &ChatRequest) -> Value {
+    if !req.system_blocks.is_empty() || req.cache_tools {
+        warn_unsupported_caching_once();
+    }
     let messages: Vec<Value> = build_openai_messages(req);
     let mut body = json!({
         "model": req.model,
@@ -512,8 +541,25 @@ fn openai_tool_choice(tc: &ToolChoice) -> Value {
 
 fn build_openai_messages(req: &ChatRequest) -> Vec<Value> {
     let mut messages: Vec<Value> = Vec::new();
-    if let Some(system) = &req.system_prompt {
-        messages.push(json!({ "role": "system", "content": system }));
+    // Phase A.3 — flatten cache blocks into the system slot so the
+    // content actually reaches the model on providers without native
+    // breakpoint support. system_prompt (legacy) wins precedence —
+    // we append the flattened blocks after it.
+    let mut system_text = String::new();
+    if let Some(s) = &req.system_prompt {
+        system_text.push_str(s);
+    }
+    if !req.system_blocks.is_empty() {
+        let flat = crate::prompt_block::flatten_blocks(&req.system_blocks);
+        if !flat.is_empty() {
+            if !system_text.is_empty() {
+                system_text.push_str("\n\n");
+            }
+            system_text.push_str(&flat);
+        }
+    }
+    if !system_text.is_empty() {
+        messages.push(json!({ "role": "system", "content": system_text }));
     }
     for msg in &req.messages {
         let role = match msg.role {
@@ -689,6 +735,9 @@ fn parse_openai_response(raw: MiniMaxResponse) -> anyhow::Result<ChatResponse> {
 // ── Anthropic Messages wire ───────────────────────────────────────────────────
 
 fn build_anthropic_body(req: &ChatRequest) -> Value {
+    if !req.system_blocks.is_empty() || req.cache_tools {
+        warn_unsupported_caching_once();
+    }
     // Anthropic splits system out to a top-level field. Turn history +
     // our tool-result messages translate into content blocks.
     let mut messages: Vec<Value> = Vec::new();
@@ -752,8 +801,24 @@ fn build_anthropic_body(req: &ChatRequest) -> Value {
         "max_tokens": req.max_tokens,
         "temperature": req.temperature,
     });
-    if let Some(system) = &req.system_prompt {
-        body["system"] = json!(system);
+    // Phase A.3 — flatten system_blocks into the system slot so cache
+    // opt-in callers don't lose the content even though MiniMax does
+    // not support cache_control natively.
+    let mut system_text = String::new();
+    if let Some(s) = &req.system_prompt {
+        system_text.push_str(s);
+    }
+    if !req.system_blocks.is_empty() {
+        let flat = crate::prompt_block::flatten_blocks(&req.system_blocks);
+        if !flat.is_empty() {
+            if !system_text.is_empty() {
+                system_text.push_str("\n\n");
+            }
+            system_text.push_str(&flat);
+        }
+    }
+    if !system_text.is_empty() {
+        body["system"] = json!(system_text);
     }
     if !req.stop_sequences.is_empty() {
         body["stop_sequences"] = json!(req.stop_sequences);

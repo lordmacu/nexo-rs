@@ -43,7 +43,10 @@ impl OpenAiClient {
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(120))
             .build()
-            .expect("failed to build reqwest client");
+            .unwrap_or_else(|e| {
+                tracing::error!(error = %e, "reqwest client build failed; falling back to default client (no timeout)");
+                reqwest::Client::new()
+            });
 
         let circuit = Arc::new(CircuitBreaker::new(
             "llm.openai",
@@ -345,6 +348,54 @@ mod tests {
         // actual URL correctness is covered by the integration test.
         assert_eq!(c.model_id(), "gpt-4o-mini");
     }
+
+    // ---- Phase A.3 cache_usage parsing ----
+
+    #[test]
+    fn parse_response_with_cached_tokens_emits_cache_usage() {
+        let raw_json = r#"{
+          "choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop","index":0}],
+          "usage":{
+            "prompt_tokens": 1500,
+            "completion_tokens": 20,
+            "prompt_tokens_details": { "cached_tokens": 1200 }
+          }
+        }"#;
+        let parsed: OpenAiResponse = serde_json::from_str(raw_json).unwrap();
+        let resp = parse_openai_response(parsed).unwrap();
+        let cu = resp.cache_usage.expect("cache_usage populated");
+        assert_eq!(cu.cache_read_input_tokens, 1200);
+        assert_eq!(cu.cache_creation_input_tokens, 0);
+        assert_eq!(cu.input_tokens, 300); // 1500 - 1200
+        assert_eq!(cu.output_tokens, 20);
+        assert!(cu.hit_ratio() > 0.79);
+    }
+
+    #[test]
+    fn parse_response_without_cached_tokens_leaves_none() {
+        let raw_json = r#"{
+          "choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop","index":0}],
+          "usage":{ "prompt_tokens": 100, "completion_tokens": 10 }
+        }"#;
+        let parsed: OpenAiResponse = serde_json::from_str(raw_json).unwrap();
+        let resp = parse_openai_response(parsed).unwrap();
+        assert!(resp.cache_usage.is_none());
+    }
+
+    #[test]
+    fn parse_response_with_zero_cached_tokens_is_treated_as_no_hit() {
+        let raw_json = r#"{
+          "choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop","index":0}],
+          "usage":{
+            "prompt_tokens": 100,
+            "completion_tokens": 10,
+            "prompt_tokens_details": { "cached_tokens": 0 }
+          }
+        }"#;
+        let parsed: OpenAiResponse = serde_json::from_str(raw_json).unwrap();
+        let resp = parse_openai_response(parsed).unwrap();
+        assert!(resp.cache_usage.is_none());
+    }
 }
 
 #[async_trait]
@@ -464,6 +515,19 @@ struct OpenAiUsage {
     prompt_tokens: u32,
     #[serde(default)]
     completion_tokens: u32,
+    /// OpenAI / DeepSeek / OpenAI-compat providers report cache hits
+    /// inside `prompt_tokens_details.cached_tokens`. The field appears
+    /// only when the prefix matched (>1024 tokens for OpenAI today),
+    /// so the optional wrapper covers both pre-caching APIs and
+    /// first-write turns where nothing was hit.
+    #[serde(default)]
+    prompt_tokens_details: Option<OpenAiPromptTokensDetails>,
+}
+
+#[derive(Deserialize, Default)]
+struct OpenAiPromptTokensDetails {
+    #[serde(default)]
+    cached_tokens: u32,
 }
 
 fn parse_openai_response(raw: OpenAiResponse) -> anyhow::Result<ChatResponse> {
@@ -486,6 +550,35 @@ fn parse_openai_response(raw: OpenAiResponse) -> anyhow::Result<ChatResponse> {
         completion_tokens: raw.usage.completion_tokens,
     };
 
+    // Phase A.3 — OpenAI-style automatic prefix caching reports hits
+    // through `prompt_tokens_details.cached_tokens`. Only emit a
+    // `CacheUsage` when at least one cached token came back so
+    // dashboards don't accumulate denominator-only entries on every
+    // turn. Same field shape works for DeepSeek (OpenAI-compat) and
+    // most OpenAI-compatible gateways.
+    let cache_usage = raw
+        .usage
+        .prompt_tokens_details
+        .as_ref()
+        .and_then(|d| {
+            if d.cached_tokens == 0 {
+                None
+            } else {
+                Some(crate::types::CacheUsage {
+                    cache_read_input_tokens: d.cached_tokens,
+                    // OpenAI's caching is automatic (no per-write
+                    // accounting); leave creation at zero.
+                    cache_creation_input_tokens: 0,
+                    // `prompt_tokens` here is total (cached + uncached),
+                    // so the uncached portion is the difference. Saturating
+                    // sub keeps the field non-negative if a future API
+                    // change inverts the semantics.
+                    input_tokens: raw.usage.prompt_tokens.saturating_sub(d.cached_tokens),
+                    output_tokens: raw.usage.completion_tokens,
+                })
+            }
+        });
+
     if !choice.message.tool_calls.is_empty() {
         let calls = choice
             .message
@@ -504,8 +597,7 @@ fn parse_openai_response(raw: OpenAiResponse) -> anyhow::Result<ChatResponse> {
             content: ResponseContent::ToolCalls(calls),
             usage,
             finish_reason: FinishReason::ToolUse,
-        
-            cache_usage: None,
+            cache_usage,
         });
     }
 
@@ -513,8 +605,7 @@ fn parse_openai_response(raw: OpenAiResponse) -> anyhow::Result<ChatResponse> {
         content: ResponseContent::Text(choice.message.content.unwrap_or_default()),
         usage,
         finish_reason,
-    
-        cache_usage: None,
+        cache_usage,
     })
 }
 
