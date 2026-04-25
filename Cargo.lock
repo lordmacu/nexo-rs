@@ -2646,12 +2646,14 @@ name = "nexo-project-tracker"
 version = "0.1.1"
 dependencies = [
  "async-trait",
+ "humantime-serde",
  "nexo-resilience",
  "notify",
  "parking_lot",
  "regex",
  "serde",
  "serde_json",
+ "serde_yaml",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
