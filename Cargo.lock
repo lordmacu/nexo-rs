@@ -2646,6 +2646,7 @@ name = "nexo-project-tracker"
 version = "0.1.1"
 dependencies = [
  "async-trait",
+ "nexo-resilience",
  "notify",
  "parking_lot",
  "regex",

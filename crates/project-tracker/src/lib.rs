@@ -7,9 +7,12 @@
 //! markdown. Edits keep going through the existing `/forge ejecutar`
 //! commit flow.
 
+pub mod git;
 pub mod parser;
 pub mod tracker;
 pub mod types;
+
+pub use git::{CommitRow, GitError, GitLogReader};
 
 pub use parser::followups::{
     parse_file as parse_followups_file, parse_str as parse_followups_str,
