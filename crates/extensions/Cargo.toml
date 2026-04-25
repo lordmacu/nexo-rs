@@ -1,7 +1,7 @@
 [package]
 name = "nexo-extensions"
 description   = "Extension manifest, discovery, lifecycle, and stdio/NATS runtimes for Nexo."
-version       = "0.1.1"
+version       = "0.1.2"
 edition       = { workspace = true }
 rust-version  = { workspace = true }
 license       = { workspace = true }
@@ -25,9 +25,9 @@ toml       = "0.8"
 semver     = "1"
 regex      = "1.10"
 walkdir    = "2"
-nexo-resilience = { version = "0.1.1", path = "../resilience" }
-nexo-broker = { version = "0.1.1", path = "../broker" }
-nexo-config = { version = "0.1.1", path = "../config" }
+nexo-resilience = { version = "0.1.2", path = "../resilience" }
+nexo-broker = { version = "0.1.2", path = "../broker" }
+nexo-config = { version = "0.1.2", path = "../config" }
 url             = "2"
 async-trait     = { workspace = true }
 uuid            = { workspace = true }
