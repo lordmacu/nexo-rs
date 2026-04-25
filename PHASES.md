@@ -142,6 +142,31 @@ Reference: `research/src/web-search/`, `research/src/web-fetch/`,
 
 ### Phase 26 — Pairing protocol + companion app stub   ✅ (DM-challenge gate + setup-code CLI shipped; companion-tui deferred)
 
+#### 26.x — Pairing challenge reply via adapter   ✅
+
+- `PairingChannelAdapter` extended with default
+  `format_challenge_text` and a default `bail!`-ing
+  `send_qr_image` so plugins only override what they need.
+- `PairingAdapterRegistry` added in `nexo-pairing` and re-exported.
+- `PairingGate::should_admit` accepts an
+  `Option<&dyn PairingChannelAdapter>` so the canonical sender form
+  (e.g. WA `+digits` after `@c.us` strip, TG `@username` lower-case)
+  is used for both store lookup and cache key.
+- WhatsApp + Telegram plugins ship `WhatsappPairingAdapter` /
+  `TelegramPairingAdapter`; Telegram escapes MarkdownV2 reserved
+  chars so the pairing code renders as inline code.
+- Runtime gained `with_pairing_adapters(reg)`; on
+  `Decision::Challenge` it delegates to the registered adapter and
+  falls back to a hardcoded broker publish for unregistered
+  channels.
+- New counter `pairing_inbound_challenged_total{channel,result}`
+  with results `delivered_via_adapter`, `delivered_via_broker`,
+  `publish_failed`, `no_adapter_no_broker_topic`.
+- Bin (`src/main.rs`) wires the WA + TG adapters at boot.
+- Direct in-process `Session::send_text` delivery (skipping the
+  broker entirely) remains deferred — adapters publish via broker
+  too in this pass.
+
 **Goal:** Replace ad-hoc `agent setup whatsapp` QR / token flows
 with a pairing protocol that any companion app (CLI, mobile, web
 UI) can drive. Sets up the foundation for native apps later.

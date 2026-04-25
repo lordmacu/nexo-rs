@@ -126,7 +126,12 @@ fn is_cleartext_allowed(host: &str, extras: &[String]) -> bool {
             }
             false
         }
-        Ok(IpAddr::V6(v6)) => v6.is_loopback() || v6.is_unicast_link_local(),
+        Ok(IpAddr::V6(v6)) => {
+            // `Ipv6Addr::is_unicast_link_local` is unstable on MSRV 1.80;
+            // hand-rolled check: fe80::/10
+            let segs = v6.segments();
+            v6.is_loopback() || (segs[0] & 0xffc0) == 0xfe80
+        }
         Err(_) => false,
     }
 }

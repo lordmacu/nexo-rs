@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 
+use crate::adapter::PairingChannelAdapter;
 use crate::store::PairingStore;
 use crate::types::{Decision, PairingError, PairingPolicy};
 
@@ -65,12 +66,24 @@ impl PairingGate {
         account_id: &str,
         sender_id: &str,
         policy: &PairingPolicy,
+        adapter: Option<&dyn PairingChannelAdapter>,
     ) -> Result<Decision, PairingError> {
         // Gate disabled → always admit. Skip the store entirely so a
         // setup with `auto_challenge: false` pays zero overhead.
         if !policy.auto_challenge {
             return Ok(Decision::Admit);
         }
+
+        // Normalise via the channel adapter when one is registered, so
+        // store lookup + cache key both use the canonical form (e.g.
+        // strip `@c.us`, lowercase `@User`). The adapter is allowed to
+        // return `None` for "raw form is fine" — we keep the original
+        // string in that case rather than rejecting, mirroring the
+        // legacy zero-adapter behaviour.
+        let normalized: String = adapter
+            .and_then(|a| a.normalize_sender(sender_id))
+            .unwrap_or_else(|| sender_id.to_string());
+        let sender_id = normalized.as_str();
 
         let key = cache_key(channel, account_id, sender_id);
         if let Some(entry) = self.cache.get(&key) {
@@ -123,7 +136,7 @@ mod tests {
     async fn gate_admits_when_policy_off() {
         let store = Arc::new(PairingStore::open_memory().await.unwrap());
         let gate = PairingGate::new(store);
-        let d = gate.should_admit("wa", "p", "+57", &off()).await.unwrap();
+        let d = gate.should_admit("wa", "p", "+57", &off(), None).await.unwrap();
         assert!(matches!(d, Decision::Admit));
     }
 
@@ -131,7 +144,7 @@ mod tests {
     async fn first_unknown_sender_gets_challenge_with_code() {
         let store = Arc::new(PairingStore::open_memory().await.unwrap());
         let gate = PairingGate::new(store);
-        let d = gate.should_admit("wa", "p", "+57", &allow()).await.unwrap();
+        let d = gate.should_admit("wa", "p", "+57", &allow(), None).await.unwrap();
         match d {
             Decision::Challenge { code } => assert_eq!(code.len(), crate::code::LENGTH),
             other => panic!("expected challenge, got {other:?}"),
@@ -142,14 +155,14 @@ mod tests {
     async fn approved_sender_admits_after_cache_flush() {
         let store = Arc::new(PairingStore::open_memory().await.unwrap());
         let gate = PairingGate::new(Arc::clone(&store));
-        let d1 = gate.should_admit("wa", "p", "+57", &allow()).await.unwrap();
+        let d1 = gate.should_admit("wa", "p", "+57", &allow(), None).await.unwrap();
         let code = match d1 {
             Decision::Challenge { code } => code,
             other => panic!("{other:?}"),
         };
         store.approve(&code).await.unwrap();
         gate.flush_cache();
-        let d2 = gate.should_admit("wa", "p", "+57", &allow()).await.unwrap();
+        let d2 = gate.should_admit("wa", "p", "+57", &allow(), None).await.unwrap();
         assert_eq!(d2, Decision::Admit);
     }
 
@@ -157,8 +170,8 @@ mod tests {
     async fn cache_returns_same_decision_within_ttl() {
         let store = Arc::new(PairingStore::open_memory().await.unwrap());
         let gate = PairingGate::new(store);
-        let d1 = gate.should_admit("wa", "p", "+57", &allow()).await.unwrap();
-        let d2 = gate.should_admit("wa", "p", "+57", &allow()).await.unwrap();
+        let d1 = gate.should_admit("wa", "p", "+57", &allow(), None).await.unwrap();
+        let d2 = gate.should_admit("wa", "p", "+57", &allow(), None).await.unwrap();
         assert_eq!(d1, d2);
     }
 
@@ -168,10 +181,10 @@ mod tests {
         let gate = PairingGate::new(store);
         for i in 1..=3 {
             let s = format!("+5710000000{i}");
-            let d = gate.should_admit("wa", "p", &s, &allow()).await.unwrap();
+            let d = gate.should_admit("wa", "p", &s, &allow(), None).await.unwrap();
             assert!(matches!(d, Decision::Challenge { .. }));
         }
-        let d4 = gate.should_admit("wa", "p", "+571000000099", &allow()).await.unwrap();
+        let d4 = gate.should_admit("wa", "p", "+571000000099", &allow(), None).await.unwrap();
         assert_eq!(d4, Decision::Drop);
     }
 }

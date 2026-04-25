@@ -125,6 +125,45 @@ static LLM_CACHE_TURNS: LazyLock<DashMap<LlmKey, AtomicU64>> = LazyLock::new(Das
 /// `status` is one of `"ok" | "disabled" | "invalid"`.
 static EXTENSIONS_DISCOVERED: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
 
+/// Phase 26.x — pairing inbound challenge delivery outcomes per
+/// `(channel, result)`. `result` is one of `"delivered_via_adapter"
+/// | "delivered_via_broker" | "publish_failed"
+/// | "no_adapter_no_broker_topic"`. Lets ops watch how often the
+/// adapter path is exercised vs. the legacy hardcoded broker fallback,
+/// and surfaces failure rates per channel.
+#[derive(Clone, Debug, Hash, Eq, PartialEq)]
+struct PairingChallengeKey {
+    channel: String,
+    result: String,
+}
+static PAIRING_INBOUND_CHALLENGED: LazyLock<DashMap<PairingChallengeKey, AtomicU64>> =
+    LazyLock::new(DashMap::new);
+
+/// Bump the pairing-challenge counter for a `(channel, result)` pair.
+pub fn inc_pairing_inbound_challenged(channel: &str, result: &str) {
+    let key = PairingChallengeKey {
+        channel: channel.to_string(),
+        result: result.to_string(),
+    };
+    PAIRING_INBOUND_CHALLENGED
+        .entry(key)
+        .or_insert_with(|| AtomicU64::new(0))
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Test helper — read a pairing-challenge counter for a `(channel,
+/// result)` pair.
+pub fn pairing_inbound_challenged_total(channel: &str, result: &str) -> u64 {
+    let key = PairingChallengeKey {
+        channel: channel.to_string(),
+        result: result.to_string(),
+    };
+    PAIRING_INBOUND_CHALLENGED
+        .get(&key)
+        .map(|v| v.value().load(Ordering::Relaxed))
+        .unwrap_or(0)
+}
+
 /// Phase 21 follow-up (L-1) — link-understanding fetch outcome counter.
 /// `result` is one of `"ok" | "blocked" | "timeout" | "non_html" | "too_big" | "error"`.
 static LINK_FETCH_TOTAL: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
@@ -469,6 +508,7 @@ pub fn reset_for_test() {
     EXTENSIONS_DISCOVERED.clear();
     LINK_FETCH_TOTAL.clear();
     LINK_CACHE_TOTAL.clear();
+    PAIRING_INBOUND_CHALLENGED.clear();
     CONFIG_RELOAD_APPLIED.store(0, Ordering::Relaxed);
     CONFIG_RELOAD_REJECTED.store(0, Ordering::Relaxed);
     RUNTIME_CONFIG_VERSION.clear();
@@ -754,6 +794,31 @@ pub fn render_prometheus(fallback_nats_open: bool) -> String {
         out.push_str(&format!(
             "nexo_link_understanding_fetch_duration_ms_count {count}\n"
         ));
+    }
+
+    out.push_str(
+        "# HELP pairing_inbound_challenged_total Pairing challenge delivery attempts by channel and result.\n",
+    );
+    out.push_str("# TYPE pairing_inbound_challenged_total counter\n");
+    if PAIRING_INBOUND_CHALLENGED.is_empty() {
+        out.push_str("pairing_inbound_challenged_total{channel=\"\",result=\"\"} 0\n");
+    } else {
+        let mut rows: Vec<(PairingChallengeKey, u64)> = PAIRING_INBOUND_CHALLENGED
+            .iter()
+            .map(|e| (e.key().clone(), e.value().load(Ordering::Relaxed)))
+            .collect();
+        rows.sort_by(|a, b| {
+            (a.0.channel.clone(), a.0.result.clone())
+                .cmp(&(b.0.channel.clone(), b.0.result.clone()))
+        });
+        for (key, v) in rows {
+            out.push_str(&format!(
+                "pairing_inbound_challenged_total{{channel=\"{}\",result=\"{}\"}} {}\n",
+                escape(&key.channel),
+                escape(&key.result),
+                v,
+            ));
+        }
     }
 
     nexo_web_search::telemetry::render(&mut out);
