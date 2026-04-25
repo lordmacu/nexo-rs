@@ -123,6 +123,15 @@ enum Mode {
     Reload {
         json: bool,
     },
+    /// Run the web admin UI exposed through a fresh Cloudflare quick
+    /// tunnel. Ensures `cloudflared` is installed (downloads it per
+    /// OS/arch if absent), starts a loopback HTTP server, opens a new
+    /// trycloudflare.com URL on every launch, prints it to stdout,
+    /// and blocks until SIGTERM / Ctrl+C. Useful for reaching the
+    /// admin page from anywhere without DNS, TLS certs, or an account.
+    Admin {
+        port: u16,
+    },
     Help,
 }
 
@@ -322,6 +331,7 @@ async fn main() -> Result<()> {
         Mode::ExtUninstall { id, yes, json } => {
             return run_ext_cli(&args.config_dir, ExtCmd::Uninstall { id, yes, json })
         }
+        Mode::Admin { port } => return run_admin_web(port).await,
         Mode::Run => {}
     }
 
@@ -2108,6 +2118,27 @@ fn parse_args() -> CliArgs {
         [cmd] if cmd == "reload" => Mode::Reload {
             json: has_json_flag,
         },
+        [cmd] if cmd == "admin" => {
+            // --port <N> or --port=<N>. Default 9099 (away from 8080 /
+            // 9090 / 9091 used by the main daemon's health / metrics /
+            // admin servers so `agent admin` can run alongside them).
+            let mut port: u16 = 9099;
+            let mut iter = positional.iter();
+            while let Some(a) = iter.next() {
+                if a == "--port" {
+                    if let Some(v) = iter.next() {
+                        if let Ok(n) = v.parse() {
+                            port = n;
+                        }
+                    }
+                } else if let Some(rest) = a.strip_prefix("--port=") {
+                    if let Ok(n) = rest.parse() {
+                        port = n;
+                    }
+                }
+            }
+            Mode::Admin { port }
+        }
         [cmd] if cmd == "status" => Mode::Status {
             json: has_json_flag,
             endpoint: positional
@@ -2194,6 +2225,226 @@ fn run_ext_help() -> Result<()> {
     Ok(())
 }
 
+/// `agent admin` — boot the web admin UI behind a fresh Cloudflare
+/// quick tunnel. Returns on Ctrl+C / SIGTERM after shutting the tunnel
+/// and the local HTTP listener down cleanly.
+///
+/// Flow:
+///   1. `agent_tunnel::binary::ensure_cloudflared()` — downloads the
+///      right cloudflared binary for this OS/arch if it isn't already
+///      on disk. First-run is chatty on stdout so the operator sees
+///      what's being fetched.
+///   2. Start a loopback HTTP server on `127.0.0.1:<port>` that
+///      responds with a minimal "hello" page — placeholder until the
+///      real admin UI lands.
+///   3. `TunnelManager::start()` opens a new trycloudflare.com URL
+///      (ephemeral — a fresh one every invocation, no login required).
+///   4. Print the URL and wait for a shutdown signal.
+async fn run_admin_web(port: u16) -> Result<()> {
+    use tokio::io::AsyncWriteExt;
+
+    // Step 1: make sure cloudflared is installed.
+    println!("[admin] checking cloudflared…");
+    let bin = agent_tunnel::binary::ensure_cloudflared()
+        .await
+        .context("failed to install cloudflared")?;
+    println!("[admin] cloudflared ready ({})", bin.display());
+
+    // Step 2: mint a fresh Basic-Auth password for this run. The tunnel
+    // URL is public; anyone with it must authenticate before reaching
+    // the admin page. Username is fixed ("admin"), password is 24
+    // URL-safe chars from an OS RNG. Printed once to stdout — copy it
+    // when you open the URL; there is no recovery.
+    let password = generate_admin_password();
+    let auth_token = encode_basic_auth("admin", &password);
+
+    // Step 3: bind the loopback HTTP listener.
+    let bind = format!("127.0.0.1:{port}");
+    let listener = TcpListener::bind(&bind)
+        .await
+        .with_context(|| format!("failed to bind admin web on {bind}"))?;
+    println!("[admin] listening on http://{bind}");
+
+    // Serve every request: Basic Auth gate → placeholder HTML. When the
+    // React bundle lands, swap the body for served-from-disk or
+    // rust-embed'd static assets, keep the auth gate identical.
+    let auth_token_for_task = auth_token.clone();
+    let http_task = tokio::spawn(async move {
+        loop {
+            let (mut stream, _) = match listener.accept().await {
+                Ok(pair) => pair,
+                Err(e) => {
+                    tracing::warn!(error = %e, "admin accept failed");
+                    continue;
+                }
+            };
+            let expected = auth_token_for_task.clone();
+            tokio::spawn(async move {
+                let request = read_http_head(&mut stream).await.unwrap_or_default();
+                let authorized = request
+                    .lines()
+                    .find_map(|line| line.strip_prefix("Authorization: Basic "))
+                    .map(|token| token.trim())
+                    .map(|token| token == expected)
+                    .unwrap_or(false);
+                let response = if authorized {
+                    let body = ADMIN_HELLO_HTML;
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\
+                         Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                } else {
+                    let body = "401 Unauthorized";
+                    format!(
+                        "HTTP/1.1 401 Unauthorized\r\n\
+                         WWW-Authenticate: Basic realm=\"nexo-rs admin\"\r\n\
+                         Content-Type: text/plain\r\nContent-Length: {}\r\n\
+                         Connection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                };
+                let _ = stream.write_all(response.as_bytes()).await;
+                let _ = stream.shutdown().await;
+            });
+        }
+    });
+
+    // Step 4: open the tunnel.
+    println!("[admin] opening Cloudflare quick tunnel (ephemeral URL, no account)…");
+    let tunnel = agent_tunnel::TunnelManager::new(port)
+        .start()
+        .await
+        .context("failed to start Cloudflare tunnel")?;
+    println!();
+    println!("    ┌────────────────────────────────────────────────────────────");
+    println!("    │  admin URL : {}", tunnel.url);
+    println!("    │  username  : admin");
+    println!("    │  password  : {password}");
+    println!("    └────────────────────────────────────────────────────────────");
+    println!();
+    println!("    (Ctrl+C to stop. Fresh URL + password on every launch —");
+    println!("     the password is never stored to disk.)");
+    println!();
+
+    // Step 5: wait for shutdown.
+    tokio::signal::ctrl_c()
+        .await
+        .context("install Ctrl+C handler")?;
+    println!();
+    println!("[admin] shutting down…");
+    tunnel.shutdown().await;
+    http_task.abort();
+    Ok(())
+}
+
+/// 24 URL-safe random chars from an OS-grade RNG. The password is
+/// printed once at launch and never persisted — the operator copies
+/// it into the browser prompt. Losing the value means restarting
+/// `agent admin` to mint a new one (which also re-spins the tunnel
+/// URL).
+fn generate_admin_password() -> String {
+    use rand::Rng;
+    const CHARS: &[u8] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    let mut rng = rand::thread_rng();
+    (0..24)
+        .map(|_| {
+            let idx = rng.gen_range(0..CHARS.len());
+            CHARS[idx] as char
+        })
+        .collect()
+}
+
+/// Returns the base64-encoded credential value that a browser would
+/// send in `Authorization: Basic <...>`. Manual encoding avoids a new
+/// crate dep — the charset is fixed and the input is tiny.
+fn encode_basic_auth(user: &str, pass: &str) -> String {
+    base64_standard(format!("{user}:{pass}").as_bytes())
+}
+
+/// RFC 4648 §4 base64 (no URL-safe swaps, with padding). Small,
+/// dependency-free, correct for the inputs we feed it here.
+fn base64_standard(input: &[u8]) -> String {
+    const CHARS: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
+    for chunk in input.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(CHARS[((triple >> 18) & 0x3f) as usize] as char);
+        out.push(CHARS[((triple >> 12) & 0x3f) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(CHARS[((triple >> 6) & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(CHARS[(triple & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
+}
+
+/// Drain a raw HTTP request head (everything up to the first blank
+/// line). Discards the body — the placeholder admin page doesn't
+/// inspect it. Returns an empty string on EOF / read error so a
+/// malformed request still gets a 401 response.
+async fn read_http_head(stream: &mut TcpStream) -> std::io::Result<String> {
+    use tokio::io::AsyncReadExt;
+    let mut buf = [0u8; 4096];
+    let mut head = String::new();
+    loop {
+        let n = stream.read(&mut buf).await?;
+        if n == 0 {
+            break;
+        }
+        head.push_str(&String::from_utf8_lossy(&buf[..n]));
+        if head.contains("\r\n\r\n") {
+            break;
+        }
+        if head.len() > 65_536 {
+            break;
+        }
+    }
+    Ok(head)
+}
+
+/// Placeholder admin page. Gets replaced once the real UI lands; the
+/// current content is deliberately terse so the tunnel-wiring
+/// acceptance test doesn't depend on UI copy.
+const ADMIN_HELLO_HTML: &str = r#"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>nexo-rs admin</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font: 16px/1.5 system-ui, -apple-system, sans-serif;
+           max-width: 40rem; margin: 3rem auto; padding: 0 1rem;
+           color: #222; background: #fafafa; }
+    code { background: #eee; padding: .1em .3em; border-radius: 3px; }
+    a { color: #0066cc; }
+    h1 { margin-bottom: .3em; }
+    .badge { display: inline-block; background: #0066cc; color: #fff;
+             padding: .1em .5em; border-radius: 3px; font-size: .8em; }
+  </style>
+</head>
+<body>
+  <h1>Hello from <code>nexo-rs</code> admin <span class="badge">dev</span></h1>
+  <p>If you can read this, the Cloudflare quick tunnel reached your local
+     agent. The real admin UI lands next.</p>
+  <p>Docs: <a href="https://lordmacu.github.io/nexo-rs/">lordmacu.github.io/nexo-rs</a></p>
+</body>
+</html>
+"#;
+
 async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
     use agent_core::agent::self_report::WhoAmITool;
     use agent_core::agent::tool_registry::ToolRegistry;
@@ -2251,6 +2502,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         google_auth: primary.google_auth.clone(),
         outbound_allowlist: primary.outbound_allowlist.clone(),
         credentials: primary.credentials.clone(),
+        language: primary.language.clone(),
     });
     let broker = AnyBroker::local();
     let sessions = Arc::new(SessionManager::new(std::time::Duration::from_secs(300), 20));

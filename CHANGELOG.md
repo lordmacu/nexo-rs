@@ -10,6 +10,13 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- `agent admin` subcommand: runs a web admin UI behind a Cloudflare
+  quick tunnel. Auto-installs `cloudflared` per OS/arch on first run,
+  starts a loopback HTTP server, mints a fresh 24-char random
+  password per launch, and prints a new `https://…trycloudflare.com`
+  URL every time. HTTP Basic Auth (`admin` / `<password>`) gates
+  every request. Placeholder "hello" page today — React UI lands
+  next. See [CLI reference — admin](https://lordmacu.github.io/nexo-rs/cli/reference.html#admin).
 - Native / no-Docker install path: `docs/src/getting-started/install-native.md` +
   idempotent `scripts/bootstrap.sh` (Linux, macOS, Termux).
 - Termux (Android) support:

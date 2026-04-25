@@ -50,6 +50,7 @@ Ext subcommand has its own richer code table — see below.
 | [`ext`](#ext) | Extension management |
 | [`flow`](#flow) | TaskFlow operations |
 | [`mcp-server`](#mcp-server) | Run as MCP stdio server |
+| [`admin`](#admin) | Run the web admin UI behind a Cloudflare quick tunnel |
 | [`reload`](#reload) | Trigger config hot-reload on a running daemon |
 | `--check-config` | Pre-flight config validation |
 | `--dry-run` | Load config and print the plan |
@@ -215,6 +216,55 @@ agent mcp-server
 
 See [MCP — Agent as MCP server](../mcp/server.md) for deployment
 recipes (Claude Desktop config, allowlist, auth token).
+
+---
+
+## `admin`
+
+Run the web admin UI behind a fresh Cloudflare quick tunnel. A new
+ephemeral trycloudflare.com URL is minted on every launch — no
+account, no DNS, no TLS setup.
+
+```bash
+agent admin                  # listen on 127.0.0.1:9099 (default)
+agent admin --port 9199      # pick a different loopback port
+agent admin --port=9199      # same thing, equals form
+```
+
+What happens on launch:
+
+1. **Install cloudflared if missing.** The tunnel crate detects the
+   host OS/arch and downloads the matching cloudflared binary into
+   the platform data dir. Subsequent launches reuse the cached copy.
+2. **Mint a fresh random password.** 24 URL-safe characters from the
+   OS RNG. Printed once to stdout — copy it now; there is no
+   recovery short of relaunching `agent admin`.
+3. **Start a loopback HTTP server.** Listens on
+   `127.0.0.1:<port>`; currently serves a placeholder "hello" page
+   behind HTTP Basic Auth (real React UI lands next).
+4. **Open a quick tunnel.** `cloudflared tunnel --url http://127.0.0.1:<port>`
+   returns an ephemeral `https://…trycloudflare.com` URL, which the
+   command prints to stdout alongside the username (`admin`) and the
+   freshly-minted password.
+5. **Wait for Ctrl+C / SIGTERM.** Graceful shutdown kills the
+   cloudflared child and stops the HTTP listener.
+
+**Exit codes:**
+- `0` — clean shutdown
+- `1` — cloudflared install failed, port already bound, or tunnel
+  negotiation failed
+
+**Notes:**
+- URL is re-generated every launch. If you need a stable URL,
+  switch to a named Cloudflare tunnel (requires an account and
+  wrangler config — out of scope for this command).
+- Auth is **HTTP Basic** for now; the browser prompts for
+  `admin` / `<password>` on first load. Username is fixed; password
+  is fresh every launch. Keep the shell scrollback if you need to
+  re-paste it.
+- The password is **never persisted** — losing it means stopping
+  `agent admin` and starting again (which also rotates the tunnel
+  URL).
 
 ---
 
