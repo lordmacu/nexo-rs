@@ -25,6 +25,9 @@ pub struct AppConfig {
     /// Phase 18 — runtime-level knobs (hot-reload). Always populated;
     /// an absent `runtime.yaml` yields [`RuntimeConfig::default`].
     pub runtime: RuntimeConfig,
+    /// Phase 19 — generic poller subsystem. `None` when
+    /// `pollers.yaml` is absent (subsystem off).
+    pub pollers: Option<PollersConfig>,
 }
 
 /// Minimal config bundle for the `agent mcp-server` subcommand.
@@ -57,6 +60,8 @@ impl AppConfig {
         let mcp_server =
             load_optional::<McpServerConfigFile>(dir, "mcp_server.yaml")?.map(|f| f.mcp_server);
         let runtime = load_optional::<RuntimeConfig>(dir, "runtime.yaml")?.unwrap_or_default();
+        let pollers =
+            load_optional::<PollersConfigFile>(dir, "pollers.yaml")?.map(|f| f.pollers);
         Ok(AppConfig {
             agents,
             broker,
@@ -67,6 +72,7 @@ impl AppConfig {
             mcp,
             mcp_server,
             runtime,
+            pollers,
         })
     }
 

@@ -7,6 +7,7 @@ pub mod mcp;
 pub mod mcp_server;
 pub mod memory;
 pub mod plugins;
+pub mod pollers;
 pub mod runtime;
 
 pub use agents::*;
@@ -18,4 +19,5 @@ pub use mcp::*;
 pub use mcp_server::*;
 pub use memory::*;
 pub use plugins::*;
+pub use pollers::*;
 pub use runtime::*;
