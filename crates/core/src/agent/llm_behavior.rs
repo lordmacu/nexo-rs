@@ -664,9 +664,7 @@ impl LlmAgentBehavior {
                             tail_keep_tokens: (self.compaction_runtime.tail_keep_chars / 4) as u32,
                             model: model.clone(),
                         };
-                        let result = compactor
-                            .compact(&session.history, boundary, &budget)
-                            .await;
+                        let result = compactor.compact(&session.history, boundary, &budget).await;
                         let elapsed_ms = started.elapsed().as_millis() as u64;
                         match result {
                             Ok(r) => {

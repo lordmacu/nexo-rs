@@ -6775,7 +6775,7 @@ async fn run_flow_list(json: bool) -> Result<()> {
     for status in [Created, Running, Waiting, Cancelled, Finished, Failed] {
         all.extend(m.list_by_status(status).await?);
     }
-    all.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    all.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
 
     if json {
         let out: Vec<_> = all.iter().map(flow_to_summary_json).collect();
