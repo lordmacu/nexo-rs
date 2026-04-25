@@ -38,7 +38,7 @@ pub fn pack_f32(vec: &[f32]) -> Vec<u8> {
 
 /// Reverse of `pack_f32`. Returns `None` if `bytes.len() % 4 != 0`.
 pub fn unpack_f32(bytes: &[u8]) -> Option<Vec<f32>> {
-    if !bytes.len().is_multiple_of(4) {
+    if bytes.len() % 4 != 0 {
         return None;
     }
     let mut out = Vec::with_capacity(bytes.len() / 4);

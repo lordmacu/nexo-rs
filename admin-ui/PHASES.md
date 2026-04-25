@@ -389,6 +389,10 @@ IOUs — features that landed in the daemon but have no UI yet.
   (`OP_AUDIT_LOG_PATH`) — Channels/Secrets panel needs an
   allowlist editor with live syntax check and a JSONL tail with
   filters by agent / session / action / ok-or-fail
+- [ ] Pairing adapter registry — `pairing_inbound_challenged_total{channel,result}`
+  counter ready to surface in admin metrics tab; per-channel
+  delivery split (adapter vs broker fallback) needs a small panel
+  alongside the existing pairing operator list
 - [ ] Capability toggles surface — pull
   `agent doctor capabilities --json`, render risk-coloured table,
   surface env var name and paste-ready export hint per row;

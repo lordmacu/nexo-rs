@@ -176,7 +176,7 @@ impl PairingStore {
             let meta: serde_json::Value =
                 serde_json::from_str(&meta_json).unwrap_or(serde_json::Value::Null);
             let created_at = DateTime::<Utc>::from_timestamp(created_at, 0)
-                .unwrap_or_else(|| Utc::now());
+                .unwrap_or_else(Utc::now);
             out.push(PendingRequest {
                 channel,
                 account_id,

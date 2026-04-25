@@ -1981,6 +1981,18 @@ async fn main() -> Result<()> {
             runtime = runtime.with_web_search_router(Arc::clone(ws));
         }
         runtime = runtime.with_pairing_gate(Arc::clone(&pairing_gate));
+        // Phase 26.x — register per-channel adapters so challenge
+        // delivery uses the right outbound topic + format. Channels
+        // without a registered adapter fall back to the legacy
+        // hardcoded broker publish in `deliver_pairing_challenge`.
+        let pairing_registry = nexo_pairing::PairingAdapterRegistry::new();
+        pairing_registry.register(std::sync::Arc::new(
+            nexo_plugin_whatsapp::WhatsappPairingAdapter::new(broker.clone()),
+        ));
+        pairing_registry.register(std::sync::Arc::new(
+            nexo_plugin_telegram::TelegramPairingAdapter::new(broker.clone()),
+        ));
+        runtime = runtime.with_pairing_adapters(pairing_registry);
         runtime
             .start()
             .await

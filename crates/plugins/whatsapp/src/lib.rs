@@ -11,11 +11,13 @@ pub mod events;
 pub mod lifecycle;
 pub mod media;
 pub mod pairing;
+pub mod pairing_adapter;
 pub mod plugin;
 pub mod session;
 pub mod session_id;
 pub mod tool;
 pub mod transcriber;
 
+pub use pairing_adapter::WhatsappPairingAdapter;
 pub use plugin::WhatsappPlugin;
 pub use tool::register_whatsapp_tools;

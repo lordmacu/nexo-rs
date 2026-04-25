@@ -149,29 +149,33 @@ PR-1. ~~**Plugin gate hooks for WhatsApp + Telegram**~~  ✅ shipped (in agent-c
   their chat is PR-1.1, separate work that needs a per-channel
   outbound publish helper.
 
-PR-1.1. **Challenge reply through channel adapter**
-- Missing: when the gate issues `Decision::Challenge { code }`, the
-  sender sees nothing — they have to ask the operator out-of-band
-  for the code. Spec called for the reply to flow back through the
-  channel.
-- Why deferred: the runtime would need to publish a synthetic
-  outbound event with the right shape per channel
-  (`plugin.outbound.whatsapp` / `plugin.outbound.telegram`); each
-  plugin's outbound dispatcher currently expects an LLM-shaped
-  message, not a raw "send this text to this sender" call. Cleanest
-  fix is a `PairingChannelAdapter::send_reply` invocation from the
-  runtime, which means resolving an `Arc<dyn PairingChannelAdapter>`
-  per channel — needs a registry the bin populates at boot.
-- Target: when an operator complains they have no way to tell the
-  user how to get approved.
+PR-1.1. ~~**Challenge reply through channel adapter**~~  ✅ shipped (Phase 26.x, 2026-04-25)
+- `PairingAdapterRegistry` lives in `nexo-pairing`; bin registers
+  `WhatsappPairingAdapter` + `TelegramPairingAdapter` at boot.
+- Per-channel `normalize_sender` is plumbed through
+  `PairingGate::should_admit` so store lookup + cache key use the
+  canonical form (WA strips `@c.us`, TG lower-cases `@username`).
+- Telegram challenges escape MarkdownV2 reserved chars and wrap the
+  code in backticks; WhatsApp ships the legacy plain-text shape.
+- New counter
+  `pairing_inbound_challenged_total{channel,result}` covers the
+  delivery outcomes (`delivered_via_adapter`,
+  `delivered_via_broker`, `publish_failed`,
+  `no_adapter_no_broker_topic`).
+- **Still deferred:** direct in-process `Session::send_text` —
+  adapters currently publish on
+  `plugin.outbound.{channel}[.<account>]` like the rest of the
+  system; skipping the broker round-trip is a separate refactor and
+  not on the critical path.
 
 PR-2. **Telemetry counters not wired**
 - Missing: `pairing_requests_pending{channel}` (gauge),
   `pairing_approvals_total{channel,result}`,
   `pairing_codes_expired_total`,
-  `pairing_bootstrap_tokens_issued_total`,
-  `pairing_inbound_challenged_total{channel,result}`. Spec called
-  for them; shipped without to keep the foundation commit small.
+  `pairing_bootstrap_tokens_issued_total`. Spec called for them;
+  shipped without to keep the foundation commit small.
+- ~~`pairing_inbound_challenged_total{channel,result}`~~ ✅ shipped
+  with Phase 26.x adapter work (2026-04-25).
 - Why deferred: same pattern as Phase 25 W-1 — admin-ui (Phase A4)
   is the eventual consumer.
 - Target: Phase A4 dashboard work.

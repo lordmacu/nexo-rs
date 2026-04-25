@@ -98,6 +98,14 @@ pub struct AgentRuntime {
     /// `nexo pair approve`. `None` disables the gate regardless of
     /// YAML.
     pairing_gate: Option<Arc<nexo_pairing::PairingGate>>,
+    /// Channel adapter registry consulted alongside `pairing_gate`. The
+    /// registry maps `source_plugin` (`"whatsapp"`, `"telegram"`, …) to
+    /// a `PairingChannelAdapter` so the gate can normalise sender ids
+    /// and so challenge replies can be delivered through the channel-
+    /// specific outbound path. `None` keeps the legacy zero-adapter
+    /// path: senders pass through verbatim and challenges are published
+    /// raw on `plugin.outbound.{channel}`.
+    pairing_adapters: nexo_pairing::PairingAdapterRegistry,
     /// Legacy cache — still owned by the runtime for back-compat with
     /// any test construction path. Hot-reload reads the per-snapshot
     /// `tool_cache` instead; see [`RuntimeSnapshot::tool_cache`].
@@ -164,6 +172,7 @@ impl AgentRuntime {
             link_extractor: None,
             web_search_router: None,
             pairing_gate: None,
+            pairing_adapters: nexo_pairing::PairingAdapterRegistry::new(),
             tool_cache: Arc::new(super::tool_registry_cache::ToolRegistryCache::new()),
             reload_tx,
             reload_rx: Arc::new(Mutex::new(Some(reload_rx))),
@@ -210,6 +219,18 @@ impl AgentRuntime {
     /// reach the agent's behavior.
     pub fn with_pairing_gate(mut self, gate: Arc<nexo_pairing::PairingGate>) -> Self {
         self.pairing_gate = Some(gate);
+        self
+    }
+    /// Attach the pairing channel-adapter registry. Adapters registered
+    /// here are looked up by `source_plugin` on every inbound message
+    /// when the gate is active, and used to normalise sender ids before
+    /// store lookup. `None` (default) preserves legacy zero-adapter
+    /// behaviour.
+    pub fn with_pairing_adapters(
+        mut self,
+        registry: nexo_pairing::PairingAdapterRegistry,
+    ) -> Self {
+        self.pairing_adapters = registry;
         self
     }
     pub fn with_peers(mut self, peers: Arc<PeerDirectory>) -> Self {
@@ -294,6 +315,7 @@ impl AgentRuntime {
         let link_extractor = self.link_extractor.clone();
         let web_search_router = self.web_search_router.clone();
         let pairing_gate = self.pairing_gate.clone();
+        let pairing_adapters = self.pairing_adapters.clone();
         let router = Arc::clone(&self.router);
         let session_txs = Arc::clone(&self.session_txs);
         let debounce_ms = self.debounce_ms;
@@ -462,8 +484,17 @@ impl AgentRuntime {
                             {
                                 let channel = source_plugin.as_str();
                                 let account = source_instance.as_deref().unwrap_or("default");
+                                let adapter = pairing_adapters.get(channel);
                                 match gate
-                                    .should_admit(channel, account, sender, &effective.pairing)
+                                    .should_admit(
+                                        channel,
+                                        account,
+                                        sender,
+                                        &effective.pairing,
+                                        adapter
+                                            .as_deref()
+                                            .map(|a| a as &dyn nexo_pairing::PairingChannelAdapter),
+                                    )
                                     .await
                                 {
                                     Ok(nexo_pairing::Decision::Admit) => {}
@@ -477,10 +508,12 @@ impl AgentRuntime {
                                             "pairing challenge issued — run `nexo pair approve {}` to admit",
                                             code,
                                         );
-                                        publish_pairing_challenge(
+                                        deliver_pairing_challenge(
                                             &broker,
+                                            adapter.as_deref(),
                                             channel,
                                             source_instance.as_deref(),
+                                            account,
                                             sender,
                                             &code,
                                         )
@@ -1084,22 +1117,52 @@ fn binding_matches(bindings: &[InboundBinding], plugin: &str, instance: Option<&
     match_binding_index(bindings, plugin, instance).is_some()
 }
 
-/// Phase 26 (PR-1) — when the gate issues a Challenge, deliver the
-/// pairing code back to the sender via the channel's outbound topic.
-/// WhatsApp and Telegram share the same `{kind:"text", to, text}`
-/// payload shape; for unknown channels we no-op (the operator still
-/// sees the code in the warn log emitted just before).
-async fn publish_pairing_challenge(
+/// Phase 26.x — deliver the pairing challenge to the sender. When a
+/// channel adapter is registered we use it for both sender-id
+/// normalisation and channel-correct formatting (e.g. Telegram
+/// MarkdownV2). For unregistered channels we fall back to the legacy
+/// hardcoded broker publish so the operator still gets a log line and
+/// the challenge text on `plugin.outbound.{whatsapp,telegram}`.
+async fn deliver_pairing_challenge(
     broker: &AnyBroker,
+    adapter: Option<&dyn nexo_pairing::PairingChannelAdapter>,
     channel: &str,
     instance: Option<&str>,
+    account: &str,
     sender: &str,
     code: &str,
 ) {
+    if let Some(adapter) = adapter {
+        let to = adapter
+            .normalize_sender(sender)
+            .unwrap_or_else(|| sender.to_string());
+        let text = adapter.format_challenge_text(code);
+        match adapter.send_reply(account, &to, &text).await {
+            Ok(()) => crate::telemetry::inc_pairing_inbound_challenged(
+                channel,
+                "delivered_via_adapter",
+            ),
+            Err(e) => {
+                tracing::warn!(error = %e, %channel, "pairing adapter send_reply failed");
+                crate::telemetry::inc_pairing_inbound_challenged(channel, "publish_failed");
+            }
+        }
+        return;
+    }
+
+    // Fallback: legacy hardcoded broker publish for channels with no
+    // registered adapter. Mirrors the pre-26.x payload shape so any
+    // existing dispatcher still recognises the message.
     let topic_base = match channel {
         "whatsapp" => "plugin.outbound.whatsapp",
         "telegram" => "plugin.outbound.telegram",
-        _ => return,
+        _ => {
+            crate::telemetry::inc_pairing_inbound_challenged(
+                channel,
+                "no_adapter_no_broker_topic",
+            );
+            return;
+        }
     };
     let topic = match instance {
         Some(inst) if !inst.is_empty() => format!("{topic_base}.{inst}"),
@@ -1114,8 +1177,14 @@ async fn publish_pairing_challenge(
         "text": text,
     });
     let evt = nexo_broker::Event::new(&topic, "core.pairing", payload);
-    if let Err(e) = broker.publish(&topic, evt).await {
-        tracing::warn!(error = %e, %topic, "pairing challenge outbound publish failed");
+    match broker.publish(&topic, evt).await {
+        Ok(_) => {
+            crate::telemetry::inc_pairing_inbound_challenged(channel, "delivered_via_broker");
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, %topic, "pairing challenge outbound publish failed");
+            crate::telemetry::inc_pairing_inbound_challenged(channel, "publish_failed");
+        }
     }
 }
 #[cfg(test)]

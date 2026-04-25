@@ -173,6 +173,39 @@ later see "+57311 was approved on X, revoked on Y" for audit.
 - Until you have an `agent setup web-search`-style wizard, manual
   `pair seed` is the only friendly migration path.
 
+## Adapter registry
+
+Each channel that participates in pairing implements
+`PairingChannelAdapter` in its plugin crate. The adapter owns three
+channel-specific decisions the runtime cannot make on its own:
+
+- **`normalize_sender(raw)`** — canonicalise inbound sender ids before
+  the gate hits the store. WhatsApp strips `@c.us` /
+  `@s.whatsapp.net` and prepends `+`; Telegram lower-cases `@username`
+  and passes numeric chat ids through.
+- **`format_challenge_text(code)`** — render the operator-facing
+  pairing message. The default is plain UTF-8; the Telegram adapter
+  overrides it to escape MarkdownV2 reserved characters and wrap the
+  code in backticks so the user can long-press to copy.
+- **`send_reply(account, to, text)`** — publish the challenge through
+  the channel's outbound topic
+  (`plugin.outbound.{whatsapp,telegram}[.<account>]`) using the
+  payload shape that channel's dispatcher expects.
+
+The bin (`src/main.rs`) constructs a `PairingAdapterRegistry` at boot
+and registers the WhatsApp + Telegram adapters. The runtime consults
+the registry on every inbound event whose binding has
+`pairing.auto_challenge: true`. Channels with **no** registered
+adapter fall back to a hardcoded broker publish that mirrors the
+legacy text on `plugin.outbound.{channel}` — operators still see the
+challenge in their channel, but without per-channel formatting.
+
+Telemetry lives under
+`pairing_inbound_challenged_total{channel,result}` with `result` one of
+`delivered_via_adapter`, `delivered_via_broker`, `publish_failed`,
+`no_adapter_no_broker_topic`, so dashboards can split adapter vs.
+fallback delivery rates per channel.
+
 ## CLI reference
 
 ```

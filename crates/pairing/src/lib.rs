@@ -20,6 +20,7 @@ pub mod adapter;
 pub mod code;
 pub mod gate;
 pub mod qr;
+pub mod registry;
 pub mod setup_code;
 pub mod store;
 pub mod types;
@@ -27,6 +28,7 @@ pub mod url_resolver;
 
 pub use adapter::PairingChannelAdapter;
 pub use gate::PairingGate;
+pub use registry::PairingAdapterRegistry;
 pub use setup_code::SetupCodeIssuer;
 pub use store::PairingStore;
 pub use types::{
