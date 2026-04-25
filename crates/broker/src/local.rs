@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -17,11 +18,21 @@ type SubMap = Arc<DashMap<Uuid, (String, mpsc::Sender<Event>)>>;
 #[derive(Clone, Default)]
 pub struct LocalBroker {
     subs: SubMap,
+    /// Process-wide counter of events dropped because a subscriber's
+    /// channel was full. Exposed via `dropped_slow_consumer_count`
+    /// so tests and operators can detect silent data loss without
+    /// scraping logs.
+    dropped_slow: Arc<AtomicU64>,
 }
 
 impl LocalBroker {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Total events dropped due to slow consumers since process start.
+    pub fn dropped_slow_consumer_count(&self) -> u64 {
+        self.dropped_slow.load(Ordering::Relaxed)
     }
 }
 
@@ -43,9 +54,11 @@ impl BrokerHandle for LocalBroker {
                     // log; do NOT remove the subscription — it may catch
                     // up. Matches the NATS semantics of "slow consumer"
                     // where messages are shed but the sub stays live.
+                    let total = self.dropped_slow.fetch_add(1, Ordering::Relaxed) + 1;
                     tracing::warn!(
                         topic,
                         pattern,
+                        dropped_total = total,
                         "local broker dropping event: subscriber channel full (slow consumer)"
                     );
                 }

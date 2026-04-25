@@ -47,6 +47,12 @@ fn allowlist_denied(ctx: &AgentContext, digits: &str) -> bool {
     let effective = ctx.effective_policy();
     let list = &effective.outbound_allowlist.whatsapp;
     if list.is_empty() {
+        // Empty list = unrestricted (back-compat), but operators
+        // migrating from older config without an explicit
+        // `outbound_allowlist.whatsapp:` may not realise the agent
+        // can DM any number. Warn once per agent to surface the
+        // gap. Using a process-wide map so we don't spam logs.
+        warn_once_unrestricted(&ctx.agent_id);
         return false;
     }
     // Normalize each allowlist entry the same way we normalize the target
@@ -55,6 +61,24 @@ fn allowlist_denied(ctx: &AgentContext, digits: &str) -> bool {
         let (entry_digits, _) = normalize_to(entry);
         entry_digits == digits
     })
+}
+
+fn warn_once_unrestricted(agent_id: &str) {
+    use std::collections::HashSet;
+    use std::sync::{Mutex, OnceLock};
+    static SEEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    let set = SEEN.get_or_init(|| Mutex::new(HashSet::new()));
+    let mut guard = match set.lock() {
+        Ok(g) => g,
+        Err(_) => return,
+    };
+    if guard.insert(agent_id.to_string()) {
+        tracing::warn!(
+            agent = %agent_id,
+            "WhatsApp outbound_allowlist is empty — unrestricted sends enabled (any number can be DM'd). \
+             Set `outbound_allowlist.whatsapp` in agents.yaml or the binding override to lock down."
+        );
+    }
 }
 
 async fn publish_outbound(

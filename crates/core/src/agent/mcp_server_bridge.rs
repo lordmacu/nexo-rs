@@ -83,6 +83,11 @@ pub struct ToolRegistryBridge {
     registry: Arc<ToolRegistry>,
     ctx: AgentContext,
     allowlist: Option<HashSet<String>>,
+    /// Reserved for future non-proxy categories. Today proxy tools
+    /// (`ext_*`, `mcp_*`) are unconditionally filtered, so this flag
+    /// is kept on the struct for source compatibility but doesn't
+    /// affect filtering. See `is_allowed`.
+    #[allow(dead_code)]
     expose_proxies: bool,
 }
 impl ToolRegistryBridge {
@@ -105,9 +110,17 @@ impl ToolRegistryBridge {
         name.starts_with("ext_") || name.starts_with("mcp_")
     }
     fn is_allowed(&self, name: &str) -> bool {
+        // Proxy tools (`ext_*`, `mcp_*`) are NEVER exposed to external
+        // MCP clients regardless of `expose_proxies`. Letting them
+        // through would turn the agent into an open relay for any
+        // sub-MCP server it has registered. The flag retains its
+        // role for future non-proxy categories.
+        if Self::is_proxy_tool(name) {
+            return false;
+        }
         match &self.allowlist {
             Some(set) => set.contains(name),
-            None => self.expose_proxies || !Self::is_proxy_tool(name),
+            None => true,
         }
     }
     /// Convert a tool handler result into the MCP tool_result envelope.
@@ -528,7 +541,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn explicit_allowlist_can_expose_proxy_tool_even_when_expose_proxies_false() {
+    async fn explicit_allowlist_does_not_expose_proxy_tools() {
+        // Proxy tools (ext_*, mcp_*) are now never exposed to external
+        // MCP clients regardless of allowlist or `expose_proxies`.
+        // Letting them through would turn the agent-as-MCP-server
+        // into an open relay for any sub-MCP server it has wired.
+        // See `is_allowed`.
         let mut allow = HashSet::new();
         allow.insert("ext_weather_ping".to_string());
         let (bridge, registry) = build_bridge(Some(allow), false, None);
@@ -539,8 +557,10 @@ mod tests {
             },
         );
         let tools = bridge.list_tools().await.unwrap();
-        assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0].name, "ext_weather_ping");
+        assert!(
+            tools.iter().all(|t| !t.name.starts_with("ext_")),
+            "proxy tools must be filtered even with explicit allowlist"
+        );
     }
 
     #[tokio::test]

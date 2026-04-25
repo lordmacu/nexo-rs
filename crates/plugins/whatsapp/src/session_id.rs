@@ -43,8 +43,25 @@ fn bare_string(jid: &str) -> String {
 }
 
 /// Derive the session id for a given WhatsApp JID.
+///
+/// **Note:** this overload predates multi-instance support and hashes
+/// only the bare JID. When two WhatsApp accounts (e.g. ana and kate)
+/// receive a message from the same external JID, they produce the
+/// same session id — dedup collisions can drop one of them. Prefer
+/// [`session_id_for_jid_in_instance`] in new code; this one stays
+/// for back-compat with code paths that don't have an instance
+/// label in scope yet.
 pub fn session_id_for_jid(jid: &str) -> Uuid {
     Uuid::new_v5(&NAMESPACE, bare_string(jid).as_bytes())
+}
+
+/// Instance-scoped session id. Use this whenever the caller knows
+/// which WhatsApp instance ("ana" / "kate" / etc.) handled the
+/// message — two accounts receiving from the same JID get distinct
+/// session ids.
+pub fn session_id_for_jid_in_instance(instance: &str, jid: &str) -> Uuid {
+    let key = format!("{}.{}", instance, bare_string(jid));
+    Uuid::new_v5(&NAMESPACE, key.as_bytes())
 }
 
 #[cfg(test)]
@@ -76,5 +93,29 @@ mod tests {
     fn deterministic_across_calls() {
         let jid = "573999999999:3@s.whatsapp.net";
         assert_eq!(session_id_for_jid(jid), session_id_for_jid(jid));
+    }
+
+    #[test]
+    fn instance_scoped_ids_differ_across_instances() {
+        let jid = "573111111111@s.whatsapp.net";
+        let ana = session_id_for_jid_in_instance("ana", jid);
+        let kate = session_id_for_jid_in_instance("kate", jid);
+        assert_ne!(ana, kate, "two accounts must not collide on the same JID");
+    }
+
+    #[test]
+    fn instance_scoped_strips_device_suffix() {
+        let with_dev = session_id_for_jid_in_instance("ana", "5731:20@s.whatsapp.net");
+        let bare = session_id_for_jid_in_instance("ana", "5731@s.whatsapp.net");
+        assert_eq!(with_dev, bare);
+    }
+
+    #[test]
+    fn instance_scoped_deterministic() {
+        let jid = "5731@s.whatsapp.net";
+        assert_eq!(
+            session_id_for_jid_in_instance("ana", jid),
+            session_id_for_jid_in_instance("ana", jid)
+        );
     }
 }

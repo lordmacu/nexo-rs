@@ -284,6 +284,16 @@ impl StdioMcpClient {
         let line = protocol::encode_request(method, &params, id).map_err(McpError::Encode)?;
         let (tx, rx) = oneshot::channel();
         self.pending.insert(id, tx);
+        // Race fence: between the `state()` check above and the insert
+        // we just did, the child-exit supervisor may have flipped the
+        // state to `Failed` and called `drain_pending`. Without this
+        // re-check, a request inserted *after* the drain pass would
+        // wait until timeout — silently. Recheck and remove eagerly.
+        if !matches!(self.state(), McpClientState::Ready) {
+            self.pending.remove(&id);
+            self.breaker.on_failure();
+            return Err(McpError::ChildExited);
+        }
         if self.outbox_tx.send(line).await.is_err() {
             self.pending.remove(&id);
             self.breaker.on_failure();

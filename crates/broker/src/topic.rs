@@ -5,10 +5,28 @@
 /// - `>` matches one or more remaining segments (only valid as the last token)
 /// - Literal tokens must match exactly
 pub fn topic_matches(pattern: &str, subject: &str) -> bool {
+    // Reject pathological inputs that would otherwise produce
+    // surprising matches: empty strings, leading/trailing dots, or
+    // empty internal segments. NATS itself rejects these subjects;
+    // accepting them silently means a typo'd subscription appears
+    // to work but never receives messages.
+    if !is_valid_topic(pattern) || !is_valid_topic(subject) {
+        return false;
+    }
     let pat_parts: Vec<&str> = pattern.split('.').collect();
     let sub_parts: Vec<&str> = subject.split('.').collect();
 
     match_parts(&pat_parts, &sub_parts)
+}
+
+/// Returns `true` when the topic has no empty segments and isn't an
+/// empty string. Wildcards (`*`, `>`) are allowed; their semantic
+/// validity is enforced by the matcher.
+pub fn is_valid_topic(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    !s.split('.').any(|seg| seg.is_empty())
 }
 
 fn match_parts(pat: &[&str], sub: &[&str]) -> bool {
