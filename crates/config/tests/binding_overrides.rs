@@ -47,6 +47,7 @@ sender_rate_limit:
   rps: 1.0
   burst: 3
 allowed_delegates: ["*"]
+language: en
 "#;
     let b = parse(yaml);
     assert_eq!(b.plugin, "telegram");
@@ -67,6 +68,13 @@ allowed_delegates: ["*"]
         SenderRateLimitOverride::Config(_)
     ));
     assert_eq!(b.allowed_delegates.as_deref(), Some(&["*".to_string()][..]));
+    assert_eq!(b.language.as_deref(), Some("en"));
+}
+
+#[test]
+fn legacy_binding_omits_language() {
+    let b = parse("plugin: whatsapp\n");
+    assert!(b.language.is_none());
 }
 
 #[test]

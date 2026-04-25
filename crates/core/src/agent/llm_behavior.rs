@@ -362,6 +362,19 @@ impl LlmAgentBehavior {
         if !system_prompt.is_empty() {
             system_parts.push(system_prompt.to_string());
         }
+        // Per-binding output language directive. Workspace docs stay in
+        // English (so recall, dreaming, and dev tooling read them
+        // unchanged); this block tells the model to reply in the
+        // configured language instead. Resolved with binding > agent
+        // > none precedence inside EffectiveBindingPolicy.
+        if let Some(lang) = effective.language.as_deref() {
+            system_parts.push(format!(
+                "# OUTPUT LANGUAGE\n\nRespond to the user in {lang}. \
+                 Workspace docs (IDENTITY, SOUL, MEMORY, USER, AGENTS) and \
+                 tool descriptions are in English — read them as-is, but \
+                 your turn-final reply to the user must be in {lang}."
+            ));
+        }
         // Inbound metadata — give the LLM the current sender so it
         // doesn't have to ask ("¿cuál es tu teléfono?") when the
         // channel already carries it (WhatsApp JID, Telegram user id,

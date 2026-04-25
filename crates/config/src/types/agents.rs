@@ -21,6 +21,18 @@ pub struct AgentConfig {
     /// style, and hard constraints. Empty string = no system message.
     #[serde(default)]
     pub system_prompt: String,
+    /// Output language directive for LLM replies. ISO code (`"es"`,
+    /// `"en"`, `"pt"`) or human name (`"español"`). When set, the
+    /// runtime injects a `# OUTPUT LANGUAGE` block at the top of the
+    /// system prompt so the model speaks the configured language to
+    /// the user — workspace docs (IDENTITY, SOUL, MEMORY) stay in
+    /// English regardless. `None` = no directive (model picks based
+    /// on user input).
+    ///
+    /// Per-binding `InboundBinding::language` overrides this for the
+    /// matched channel.
+    #[serde(default)]
+    pub language: Option<String>,
     /// Optional workspace directory (IDENTITY.md, SOUL.md, USER.md, AGENTS.md,
     /// MEMORY.md, memory/YYYY-MM-DD.md). Loaded at turn start and prepended
     /// to the system prompt. Empty = no workspace layer.
@@ -221,6 +233,13 @@ pub struct InboundBinding {
     /// Replace the agent-level `allowed_delegates` list for this binding.
     #[serde(default)]
     pub allowed_delegates: Option<Vec<String>>,
+    /// Override the agent-level output language for this binding. Use
+    /// when the same agent answers different channels in different
+    /// languages (e.g. Spanish on a local WhatsApp, English on a
+    /// support Telegram). `None` (default) inherits the agent-level
+    /// `language` field.
+    #[serde(default)]
+    pub language: Option<String>,
 }
 
 /// Per-binding override for the sender rate limit.

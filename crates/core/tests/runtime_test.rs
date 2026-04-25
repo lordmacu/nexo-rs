@@ -77,6 +77,7 @@ fn make_config(
         outbound_allowlist: Default::default(),
         google_auth: None,
         credentials: Default::default(),
+            language: None,
     }
 }
 
@@ -282,6 +283,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             outbound_allowlist: Default::default(),
             google_auth: None,
             credentials: Default::default(),
+            language: None,
         },
         behavior_a,
     ));
@@ -323,6 +325,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             outbound_allowlist: Default::default(),
             google_auth: None,
             credentials: Default::default(),
+            language: None,
         },
         behavior_b,
     ));

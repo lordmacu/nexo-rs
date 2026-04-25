@@ -176,6 +176,7 @@ fn make_context(broker: AnyBroker) -> AgentContext {
         outbound_allowlist: Default::default(),
         google_auth: None,
         credentials: Default::default(),
+            language: None,
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     AgentContext::new("test-agent", cfg, broker, sessions)
@@ -255,6 +256,7 @@ async fn system_prompt_prepended_to_llm_request() {
         outbound_allowlist: Default::default(),
         google_auth: None,
         credentials: Default::default(),
+            language: None,
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     let ctx = AgentContext::new("test-agent", cfg, broker, sessions);
@@ -282,6 +284,80 @@ async fn system_prompt_prepended_to_llm_request() {
     let first = &reqs[0].messages[0];
     assert_eq!(first.role, agent_llm::ChatRole::System);
     assert_eq!(first.content, "You are Kate, a caring assistant.");
+}
+
+#[tokio::test]
+async fn output_language_directive_renders_when_configured() {
+    // Agent with language="es" should produce a System message that
+    // contains both the persona prompt AND a `# OUTPUT LANGUAGE`
+    // block telling the model to reply in Spanish.
+    let broker = AnyBroker::local();
+    let _sub = broker.subscribe("plugin.outbound.whatsapp").await.unwrap();
+
+    let cfg = Arc::new(AgentConfig {
+        id: "test-agent".into(),
+        model: ModelConfig {
+            provider: "stub".into(),
+            model: "m1".into(),
+        },
+        plugins: vec![],
+        heartbeat: HeartbeatConfig::default(),
+        config: AgentRuntimeConfig::default(),
+        system_prompt: "You are Kate.".into(),
+        workspace: String::new(),
+        skills: vec![],
+        skills_dir: "./skills".into(),
+        transcripts_dir: String::new(),
+        dreaming: Default::default(),
+        workspace_git: Default::default(),
+        tool_rate_limits: None,
+        tool_args_validation: None,
+        extra_docs: Vec::new(),
+        inbound_bindings: Vec::new(),
+        allowed_tools: Vec::new(),
+        sender_rate_limit: None,
+        allowed_delegates: Vec::new(),
+        accept_delegates_from: Vec::new(),
+        description: String::new(),
+        outbound_allowlist: Default::default(),
+        google_auth: None,
+        credentials: Default::default(),
+        language: Some("es".into()),
+    });
+    let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
+    let ctx = AgentContext::new("test-agent", cfg, broker, sessions);
+
+    let captured: Arc<Mutex<Vec<ChatRequest>>> = Arc::new(Mutex::new(Vec::new()));
+    let llm = CapturingLlm {
+        captured: Arc::clone(&captured),
+        reply: "ok".into(),
+    };
+    let behavior = LlmAgentBehavior::new(
+        Arc::new(llm) as Arc<dyn LlmClient>,
+        Arc::new(ToolRegistry::new()),
+    );
+
+    behavior
+        .on_message(&ctx, make_msg_no_sender(Uuid::new_v4(), "whatsapp"))
+        .await
+        .unwrap();
+
+    let reqs = captured.lock().unwrap();
+    let system = reqs[0]
+        .messages
+        .iter()
+        .find(|m| m.role == agent_llm::ChatRole::System)
+        .expect("at least one System message");
+    assert!(system.content.contains("You are Kate."), "persona block present");
+    assert!(
+        system.content.contains("# OUTPUT LANGUAGE"),
+        "language block header present, got:\n{}",
+        system.content
+    );
+    assert!(
+        system.content.contains("Respond to the user in es"),
+        "directive mentions the configured language"
+    );
 }
 
 #[tokio::test]
@@ -367,6 +443,7 @@ async fn workspace_bundle_prepended_to_system_message() -> anyhow::Result<()> {
         outbound_allowlist: Default::default(),
         google_auth: None,
         credentials: Default::default(),
+            language: None,
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     let ctx = AgentContext::new("test-agent", cfg, broker, sessions);
@@ -458,6 +535,7 @@ async fn skills_loaded_between_workspace_and_system_prompt() -> anyhow::Result<(
         outbound_allowlist: Default::default(),
         google_auth: None,
         credentials: Default::default(),
+            language: None,
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     let ctx = AgentContext::new("test-agent", cfg, broker, sessions);
@@ -541,6 +619,7 @@ async fn workspace_memory_skipped_when_source_is_peer_agent() -> anyhow::Result<
         outbound_allowlist: Default::default(),
         google_auth: None,
         credentials: Default::default(),
+            language: None,
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     let ctx = AgentContext::new("test-agent", cfg, broker, sessions);
@@ -612,6 +691,7 @@ async fn transcript_written_when_dir_configured() -> anyhow::Result<()> {
         outbound_allowlist: Default::default(),
         google_auth: None,
         credentials: Default::default(),
+            language: None,
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     let ctx = AgentContext::new("test-agent", cfg, broker, sessions);
@@ -765,6 +845,7 @@ async fn heartbeat_delivers_due_reminders_once() {
         outbound_allowlist: Default::default(),
         google_auth: None,
         credentials: Default::default(),
+            language: None,
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     let memory = Arc::new(LongTermMemory::open(":memory:").await.unwrap());
@@ -842,6 +923,7 @@ async fn schedule_reminder_tool_uses_current_conversation_context() {
         outbound_allowlist: Default::default(),
         google_auth: None,
         credentials: Default::default(),
+            language: None,
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     let memory = Arc::new(LongTermMemory::open(":memory:").await.unwrap());
@@ -922,6 +1004,7 @@ async fn llm_can_call_delegate_tool_and_receive_result() {
         outbound_allowlist: Default::default(),
         google_auth: None,
         credentials: Default::default(),
+            language: None,
     };
     let runtime_b = AgentRuntime::new(
         Arc::new(Agent::new(cfg_b, ResponderBehavior)),
@@ -958,6 +1041,7 @@ async fn llm_can_call_delegate_tool_and_receive_result() {
         outbound_allowlist: Default::default(),
         google_auth: None,
         credentials: Default::default(),
+            language: None,
     });
     let mut sub = broker.subscribe("plugin.outbound.telegram").await.unwrap();
     let router = Arc::new(AgentRouter::new());
@@ -1340,6 +1424,7 @@ async fn delegation_rejects_target_outside_allowed_delegates() {
         outbound_allowlist: Default::default(),
         google_auth: None,
         credentials: Default::default(),
+            language: None,
     });
     let router = Arc::new(AgentRouter::new());
     let ctx = AgentContext::new("agent-a", cfg, broker, sessions).with_router(router);
@@ -1433,6 +1518,7 @@ async fn peer_directory_renders_into_system_prompt() {
         outbound_allowlist: Default::default(),
         google_auth: None,
         credentials: Default::default(),
+            language: None,
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     let ctx = AgentContext::new("ventas", cfg, broker, sessions).with_peers(peers);
