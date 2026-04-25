@@ -30,8 +30,15 @@ use crate::telemetry;
 
 /// Per-agent state the coordinator needs to dispatch a reload. Held
 /// in a `DashMap<String, AgentReloadHandle>` keyed by agent id.
+///
+/// `known_tools` captures the agent's tool surface at boot time —
+/// builtins + plugins + MCP + extensions + skills, after the per-agent
+/// allowlist prune. The coordinator uses it during reload so a typo
+/// in `allowed_tools` (binding-level) fails the swap instead of
+/// silently degrading to "agent has no tools at runtime".
 pub struct AgentReloadHandle {
     pub reload_tx: mpsc::Sender<ReloadCommand>,
+    pub known_tools: Arc<Vec<String>>,
 }
 
 /// Reload coordinator. One instance per process; `start` spawns the
@@ -87,9 +94,19 @@ impl ConfigReloadCoordinator {
 
     /// Register a live agent runtime's reload channel. Called once per
     /// agent during boot; subsequent reloads look these up to dispatch.
-    pub fn register(&self, agent_id: impl Into<String>, reload_tx: mpsc::Sender<ReloadCommand>) {
-        self.runtimes
-            .insert(agent_id.into(), AgentReloadHandle { reload_tx });
+    pub fn register(
+        &self,
+        agent_id: impl Into<String>,
+        reload_tx: mpsc::Sender<ReloadCommand>,
+        known_tools: Arc<Vec<String>>,
+    ) {
+        self.runtimes.insert(
+            agent_id.into(),
+            AgentReloadHandle {
+                reload_tx,
+                known_tools,
+            },
+        );
     }
 
     /// Re-read config, validate, build snapshots, dispatch. Returns an
@@ -165,6 +182,26 @@ impl ConfigReloadCoordinator {
                 });
                 continue;
             };
+
+            // Per-agent post-assembly tool-name validation. Mirrors
+            // the boot-path second-pass check so a binding's typo'd
+            // `allowed_tools` rejects the reload instead of silently
+            // landing a config that the runtime then has to translate
+            // into a "tool not available" error every turn.
+            let known_strs: Vec<&str> =
+                handle.known_tools.iter().map(|s| s.as_str()).collect();
+            let catalog = crate::agent::KnownTools::new(known_strs);
+            if let Err(e) = crate::agent::validate_agent(
+                agent_cfg,
+                &cfg.plugins.telegram,
+                &catalog,
+            ) {
+                rejected.push(ReloadRejection {
+                    agent_id: Some(agent_cfg.id.clone()),
+                    reason: format!("post-assembly validation: {e}"),
+                });
+                continue;
+            }
 
             let snap = match RuntimeSnapshot::build(
                 Arc::new(agent_cfg.clone()),
