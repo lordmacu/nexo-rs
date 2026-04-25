@@ -3318,10 +3318,18 @@ fn commit_bootstrap(body: &str) -> Result<String, String> {
     // Seed workspace.
     let workspace = format!("./data/workspace/{slug}");
     std::fs::create_dir_all(&workspace).map_err(|e| format!("mkdir {workspace}: {e}"))?;
-    let identity_md = format!(
+    let avatar = identity
+        .get("avatar")
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .trim();
+    let mut identity_md = format!(
         "- **Name:** {name}\n- **Emoji:** {emoji}\n- **Vibe:** {}\n",
         if vibe.is_empty() { "warm and sharp" } else { vibe }
     );
+    if !avatar.is_empty() {
+        identity_md.push_str(&format!("- **Avatar:** {avatar}\n"));
+    }
     let id_path = format!("{workspace}/IDENTITY.md");
     std::fs::write(&id_path, identity_md).map_err(|e| format!("write {id_path}: {e}"))?;
     written.push(id_path);

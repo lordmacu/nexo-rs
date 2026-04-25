@@ -218,6 +218,11 @@ pub struct Capabilities {
     pub channels: Vec<String>,
     #[serde(default)]
     pub providers: Vec<String>,
+    /// Phase 19 follow-up — one entry per `kind` the extension
+    /// implements as a poller module. The runtime calls
+    /// `poll_tick { kind, ctx }` on the extension for each tick.
+    #[serde(default)]
+    pub pollers: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -456,7 +461,11 @@ fn validate_description(desc: Option<&str>) -> Result<(), ManifestError> {
 }
 
 fn validate_capabilities(caps: &Capabilities) -> Result<(), ManifestError> {
-    let total = caps.tools.len() + caps.hooks.len() + caps.channels.len() + caps.providers.len();
+    let total = caps.tools.len()
+        + caps.hooks.len()
+        + caps.channels.len()
+        + caps.providers.len()
+        + caps.pollers.len();
     if total == 0 {
         return Err(ManifestError::NoCapabilities);
     }
@@ -464,6 +473,7 @@ fn validate_capabilities(caps: &Capabilities) -> Result<(), ManifestError> {
     validate_capability_list("hooks", &caps.hooks)?;
     validate_capability_list("channels", &caps.channels)?;
     validate_capability_list("providers", &caps.providers)?;
+    validate_capability_list("pollers", &caps.pollers)?;
     Ok(())
 }
 
