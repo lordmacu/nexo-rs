@@ -103,14 +103,17 @@ page.
 - [x] **Edit channel** (`PATCH /api/channels/telegram/<instance>`)
   rotates token and/or swaps `allow_agents` in place; empty
   token preserves the current `${file:...}` reference.
-- [ ] Chat-id allowlist editor (`allowlist.chat_ids`)
-- [ ] Auto-transcribe toggle for voice messages
+- [x] Chat-id allowlist editor (`allowlist.chat_ids`) — textarea in
+  the Edit form, comma/newline-separated ints
+- [x] Auto-transcribe toggle for voice messages with command +
+  language sub-fields (shown when the checkbox is on)
+- [x] Per-agent `credentials.telegram` pinning — dropdown panel on
+  each agent card backed by `PATCH /api/agents/<id>/credentials`.
+  Same panel handles `credentials.whatsapp` + `credentials.google`
 - [ ] Live status card: polling cadence, last update offset, last
   error, bridge timeouts in the past hour
 - [ ] **Pairing test**: "Send /ping to @yourbot" → UI waits for the
   webhook and flashes green
-- [ ] Per-agent `credentials.telegram` pinning from the channel
-  card (today only the plugin-side `allow_agents` gets written)
 
 ### WhatsApp
 

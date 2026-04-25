@@ -5,6 +5,8 @@ type Channel = {
   instance: string;
   source_file: string;
   allow_agents: string[];
+  allowlist_chat_ids?: number[];
+  auto_transcribe?: { enabled: boolean; command: string; language: string };
 };
 type ChannelsResponse = { channels: Channel[] };
 
@@ -183,6 +185,14 @@ export function ChannelsSection() {
                       mode="edit"
                       initialInstance={c.instance}
                       initialAllowAgents={c.allow_agents}
+                      initialChatIds={c.allowlist_chat_ids ?? []}
+                      initialAutoTranscribe={
+                        c.auto_transcribe ?? {
+                          enabled: false,
+                          command: "",
+                          language: "",
+                        }
+                      }
                       onDone={async () => {
                         setEditingInstance(null);
                         await load();
@@ -204,6 +214,8 @@ interface FormProps {
   mode: "create" | "edit";
   initialInstance?: string;
   initialAllowAgents?: string[];
+  initialChatIds?: number[];
+  initialAutoTranscribe?: { enabled: boolean; command: string; language: string };
   onDone: () => void | Promise<void>;
   onError: (msg: string | null) => void;
 }
@@ -212,6 +224,8 @@ function TelegramForm({
   mode,
   initialInstance,
   initialAllowAgents,
+  initialChatIds,
+  initialAutoTranscribe,
   onDone,
   onError,
 }: FormProps) {
@@ -219,6 +233,18 @@ function TelegramForm({
   const [token, setToken] = useState("");
   const [allowAgents, setAllowAgents] = useState(
     (initialAllowAgents ?? []).join(", "),
+  );
+  const [chatIdsText, setChatIdsText] = useState(
+    (initialChatIds ?? []).join(", "),
+  );
+  const [atEnabled, setAtEnabled] = useState(
+    initialAutoTranscribe?.enabled ?? false,
+  );
+  const [atCommand, setAtCommand] = useState(
+    initialAutoTranscribe?.command ?? "",
+  );
+  const [atLanguage, setAtLanguage] = useState(
+    initialAutoTranscribe?.language ?? "",
   );
   const [probe, setProbe] = useState<ProbeState>({ state: "idle" });
   const [submitting, setSubmitting] = useState(false);
@@ -280,10 +306,27 @@ function TelegramForm({
           onError(d.error ?? `HTTP ${r.status}`);
         }
       } else {
-        const body: { token?: string; allow_agents: string[] } = {
+        const body: {
+          token?: string;
+          allow_agents: string[];
+          allowlist_chat_ids?: number[];
+          auto_transcribe?: { enabled: boolean; command?: string; language?: string };
+        } = {
           allow_agents: agents,
         };
         if (token.trim()) body.token = token.trim();
+        const parsedIds = chatIdsText
+          .split(/[\s,\n]+/)
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .map((s) => Number(s))
+          .filter((n) => Number.isFinite(n));
+        body.allowlist_chat_ids = parsedIds;
+        body.auto_transcribe = {
+          enabled: atEnabled,
+          command: atCommand.trim(),
+          language: atLanguage.trim(),
+        };
         const r = await fetch(
           `/api/channels/telegram/${encodeURIComponent(initialInstance ?? "")}`,
           {
@@ -304,7 +347,19 @@ function TelegramForm({
     } finally {
       setSubmitting(false);
     }
-  }, [mode, instance, token, allowAgents, initialInstance, onDone, onError]);
+  }, [
+    mode,
+    instance,
+    token,
+    allowAgents,
+    chatIdsText,
+    atEnabled,
+    atCommand,
+    atLanguage,
+    initialInstance,
+    onDone,
+    onError,
+  ]);
 
   const isCreate = mode === "create";
   return (
@@ -376,13 +431,65 @@ function TelegramForm({
           className={inputCls + " mt-1"}
         />
       </label>
+      {!isCreate && (
+        <>
+          <label className="block">
+            <span className="text-xs uppercase tracking-wide text-neutral-500">
+              Chat-id allowlist (comma- or newline-separated ints; empty = accept all)
+            </span>
+            <textarea
+              value={chatIdsText}
+              onChange={(e) => setChatIdsText(e.target.value)}
+              placeholder="1194292426, -1001234567890"
+              rows={2}
+              className={inputCls + " mt-1 font-mono text-sm"}
+            />
+          </label>
+          <div className="rounded-md border border-neutral-300 dark:border-neutral-700 p-3 space-y-2">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={atEnabled}
+                onChange={(e) => setAtEnabled(e.target.checked)}
+                className="h-4 w-4"
+              />
+              <span className="font-medium">Auto-transcribe voice messages</span>
+            </label>
+            {atEnabled && (
+              <>
+                <label className="block">
+                  <span className="text-xs uppercase tracking-wide text-neutral-500">
+                    Transcriber command (path to whisper binary; default uses
+                    the shipped openai-whisper extension)
+                  </span>
+                  <input
+                    value={atCommand}
+                    onChange={(e) => setAtCommand(e.target.value)}
+                    placeholder="./extensions/openai-whisper/target/release/openai-whisper"
+                    className={inputCls + " mt-1 font-mono text-sm"}
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-xs uppercase tracking-wide text-neutral-500">
+                    Force language (ISO code, optional)
+                  </span>
+                  <input
+                    value={atLanguage}
+                    onChange={(e) => setAtLanguage(e.target.value)}
+                    placeholder="es"
+                    className={inputCls + " mt-1 w-24"}
+                  />
+                </label>
+              </>
+            )}
+          </div>
+        </>
+      )}
       <button
         type="button"
         onClick={submit}
         disabled={
-          submitting ||
-          (isCreate && (!instance.trim() || !token.trim())) ||
-          (!isCreate && !token.trim() && allowAgents === (initialAllowAgents ?? []).join(", "))
+          submitting || (isCreate && (!instance.trim() || !token.trim()))
         }
         className="text-sm min-h-11 px-3 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60"
       >
