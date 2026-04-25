@@ -27,9 +27,10 @@ use crate::retry::{parse_retry_after_ms, with_retry, LlmError};
 use crate::stream::{
     ensure_event_stream, parse_anthropic_sse, record_usage_tap, stream_metrics_tap, StreamChunk,
 };
+use crate::prompt_block::{CachePolicy, PromptBlock};
 use crate::types::{
-    Attachment, AttachmentData, ChatRequest, ChatResponse, ChatRole, FinishReason, ResponseContent,
-    TokenUsage, ToolCall, ToolChoice,
+    Attachment, AttachmentData, CacheUsage, ChatRequest, ChatResponse, ChatRole, FinishReason,
+    ResponseContent, TokenUsage, ToolCall, ToolChoice,
 };
 
 const DEFAULT_BASE: &str = "https://api.anthropic.com";
@@ -44,6 +45,66 @@ fn api_version() -> String {
         .ok()
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| DEFAULT_API_VERSION.to_string())
+}
+
+/// Anthropic beta headers needed when a request asks for prompt caching.
+/// `prompt-caching-2024-07-31` unlocks the basic 5min ephemeral cache;
+/// `extended-cache-ttl-2025-04-11` unlocks the 1h TTL. Both can be
+/// listed together — Anthropic ignores betas the model doesn't honor.
+/// Operators can override either via env so a renamed beta doesn't
+/// require a release.
+const CACHE_BETA_BASIC: &str = "prompt-caching-2024-07-31";
+const CACHE_BETA_LONG_TTL: &str = "extended-cache-ttl-2025-04-11";
+
+/// Merge an existing beta header (set by the auth layer for OAuth /
+/// Claude Code paths) with the prompt-caching betas. Returns `None`
+/// when neither side wants a beta header. `want_long_ttl` adds the
+/// extended-TTL beta on top of the basic one (only when at least one
+/// `Ephemeral1h` block or `cache_tools=true` was present).
+pub(crate) fn merge_beta_headers(
+    existing: Option<&str>,
+    want_cache_beta: bool,
+    want_long_ttl: bool,
+) -> Option<String> {
+    let mut cache_pieces: Vec<String> = Vec::new();
+    if want_cache_beta {
+        cache_pieces.push(
+            std::env::var("ANTHROPIC_CACHE_BETA")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| CACHE_BETA_BASIC.to_string()),
+        );
+    }
+    if want_long_ttl {
+        cache_pieces.push(
+            std::env::var("ANTHROPIC_CACHE_LONG_TTL_BETA")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| CACHE_BETA_LONG_TTL.to_string()),
+        );
+    }
+    if existing.is_none() && cache_pieces.is_empty() {
+        return None;
+    }
+    let mut seen: Vec<String> = Vec::new();
+    let from_existing: Vec<&str> = existing.map(|s| s.split(',').collect()).unwrap_or_default();
+    for piece in from_existing
+        .into_iter()
+        .chain(cache_pieces.iter().flat_map(|s| s.split(',')))
+    {
+        let t = piece.trim();
+        if t.is_empty() {
+            continue;
+        }
+        if !seen.iter().any(|s| s == t) {
+            seen.push(t.to_string());
+        }
+    }
+    if seen.is_empty() {
+        None
+    } else {
+        Some(seen.join(","))
+    }
 }
 
 pub struct AnthropicClient {
@@ -156,7 +217,12 @@ impl AnthropicClient {
             .header(headers.auth.0, headers.auth.1.as_str())
             .header("anthropic-version", &self.api_version)
             .header("content-type", "application/json");
-        if let Some(beta) = headers.beta {
+        let cache_flags = caching_flags(&self.model, req);
+        if let Some(beta) = merge_beta_headers(
+            headers.beta.as_deref(),
+            cache_flags.any_cache,
+            cache_flags.any_long_ttl,
+        ) {
             builder = builder.header("anthropic-beta", beta);
         }
         let response = builder
@@ -209,7 +275,12 @@ impl AnthropicClient {
             .header("anthropic-version", &self.api_version)
             .header("content-type", "application/json")
             .header("accept", "text/event-stream");
-        if let Some(beta) = headers.beta {
+        let cache_flags = caching_flags(&self.model, req);
+        if let Some(beta) = merge_beta_headers(
+            headers.beta.as_deref(),
+            cache_flags.any_cache,
+            cache_flags.any_long_ttl,
+        ) {
             builder = builder.header("anthropic-beta", beta);
         }
         let response = builder
@@ -290,7 +361,100 @@ fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Option<u64> {
         .map(|s| s.saturating_mul(1000))
 }
 
+/// Models that pre-date prompt-caching (claude-2.x). Trying to attach
+/// `cache_control` to one of these returns HTTP 400; emit one warning
+/// then strip the markers before building the body.
+fn model_supports_caching(model: &str) -> bool {
+    !model.starts_with("claude-2")
+}
+
+/// Materialize a contiguous run of `PromptBlock`s into a JSON array of
+/// Anthropic content blocks, placing `cache_control` on the LAST block
+/// of each contiguous same-policy run with policy != None. Anthropic
+/// caps requests at 4 breakpoints — we silently drop the 5th and
+/// onwards (the prefix-cache still hits, the tail just won't).
+fn render_system_blocks(blocks: &[PromptBlock], allow_cache: bool) -> Vec<Value> {
+    let mut out: Vec<Value> = Vec::with_capacity(blocks.len());
+    let mut breakpoints_used: u8 = 0;
+    let n = blocks.len();
+    for (i, b) in blocks.iter().enumerate() {
+        if b.text.is_empty() {
+            continue;
+        }
+        let mut block = json!({ "type": "text", "text": b.text });
+        if allow_cache && b.cache.is_cached() && breakpoints_used < 4 {
+            // Place breakpoint when the next block has a different
+            // policy (or this is the last block). Within a same-policy
+            // run we let the marker land on the tail block — Anthropic
+            // matches prefix-up-to-and-including the marker.
+            let next_policy = blocks.get(i + 1).map(|nb| nb.cache);
+            let last_in_run = match next_policy {
+                None => true,
+                Some(p) => p != b.cache,
+            };
+            if last_in_run || i + 1 == n {
+                block["cache_control"] = cache_control_for(b.cache);
+                breakpoints_used = breakpoints_used.saturating_add(1);
+            }
+        }
+        out.push(block);
+    }
+    out
+}
+
+fn cache_control_for(policy: CachePolicy) -> Value {
+    match policy {
+        CachePolicy::None => Value::Null,
+        CachePolicy::Ephemeral5m => json!({ "type": "ephemeral" }),
+        CachePolicy::Ephemeral1h => json!({ "type": "ephemeral", "ttl": "1h" }),
+    }
+}
+
+/// Detects whether a request would actually request prompt-caching from
+/// Anthropic, given the model's eligibility. The do_request / open_stream
+/// paths use this to decide whether to attach the `prompt-caching` /
+/// `extended-cache-ttl` beta headers.
+pub(crate) struct CachingFlags {
+    pub any_cache: bool,
+    pub any_long_ttl: bool,
+}
+
+pub(crate) fn caching_flags(model: &str, req: &ChatRequest) -> CachingFlags {
+    if !model_supports_caching(model) {
+        return CachingFlags {
+            any_cache: false,
+            any_long_ttl: false,
+        };
+    }
+    let mut any_cache = false;
+    let mut any_long_ttl = false;
+    for b in &req.system_blocks {
+        if b.text.is_empty() {
+            continue;
+        }
+        if b.cache.is_cached() {
+            any_cache = true;
+        }
+        if matches!(b.cache, CachePolicy::Ephemeral1h) {
+            any_long_ttl = true;
+        }
+    }
+    if req.cache_tools && !req.tools.is_empty() {
+        any_cache = true;
+        any_long_ttl = true; // tools always use 1h (stable catalog)
+    }
+    CachingFlags {
+        any_cache,
+        any_long_ttl,
+    }
+}
+
 fn build_body(model: &str, req: &ChatRequest) -> Value {
+    let allow_cache = model_supports_caching(model);
+    if !allow_cache && (!req.system_blocks.is_empty() || req.cache_tools) {
+        // Warn once-per-process per legacy model so logs don't drown.
+        log_unsupported_caching_once(model);
+    }
     let mut system_parts: Vec<String> = Vec::new();
     if let Some(s) = &req.system_prompt {
         system_parts.push(s.clone());
@@ -355,22 +519,47 @@ fn build_body(model: &str, req: &ChatRequest) -> Value {
         "messages": messages,
         "temperature": req.temperature,
     });
-    if !system_parts.is_empty() {
+    // System: prefer structured `system_blocks` when present (enables
+    // cache_control breakpoints). Fallback to flat string from legacy
+    // `system_prompt` + any role=System messages collected above. When
+    // both are present, the blocks come first and the legacy parts are
+    // appended as one trailing uncached text block (back-compat).
+    let blocks_present = req.system_blocks.iter().any(|b| !b.text.is_empty());
+    if blocks_present {
+        let mut sys = render_system_blocks(&req.system_blocks, allow_cache);
+        if !system_parts.is_empty() {
+            sys.push(json!({
+                "type": "text",
+                "text": system_parts.join("\n\n"),
+            }));
+        }
+        body["system"] = Value::Array(sys);
+    } else if !system_parts.is_empty() {
         body["system"] = Value::String(system_parts.join("\n\n"));
     }
     if !req.stop_sequences.is_empty() {
         body["stop_sequences"] = json!(req.stop_sequences);
     }
     if !req.tools.is_empty() {
-        let tools: Vec<Value> = req
-            .tools
+        // Sort tools by name for cache stability — order matters for
+        // Anthropic's prefix matching, and the tool registry can boot
+        // them in non-deterministic order (DashMap iteration).
+        let mut tools_sorted: Vec<&crate::types::ToolDef> = req.tools.iter().collect();
+        tools_sorted.sort_by(|a, b| a.name.cmp(&b.name));
+        let last_idx = tools_sorted.len() - 1;
+        let tools: Vec<Value> = tools_sorted
             .iter()
-            .map(|t| {
-                json!({
+            .enumerate()
+            .map(|(i, t)| {
+                let mut obj = json!({
                     "name": t.name,
                     "description": t.description,
                     "input_schema": t.parameters,
-                })
+                });
+                if i == last_idx && req.cache_tools && allow_cache {
+                    obj["cache_control"] = cache_control_for(CachePolicy::Ephemeral1h);
+                }
+                obj
             })
             .collect();
         body["tools"] = json!(tools);
@@ -379,6 +568,23 @@ fn build_body(model: &str, req: &ChatRequest) -> Value {
         }
     }
     body
+}
+
+fn log_unsupported_caching_once(model: &str) {
+    use std::collections::HashSet;
+    use std::sync::Mutex;
+    use std::sync::OnceLock;
+    static SEEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    let set = SEEN.get_or_init(|| Mutex::new(HashSet::new()));
+    if let Ok(mut g) = set.lock() {
+        if g.insert(model.to_string()) {
+            tracing::warn!(
+                model,
+                "anthropic: model predates prompt-caching — stripping cache_control markers \
+                 (PromptBlock/cache_tools fields are silently passed through as plain content)"
+            );
+        }
+    }
 }
 
 /// Fail fast on obvious request-shape problems so the caller sees a clear
@@ -501,11 +707,28 @@ fn to_chat_response(resp: AnthropicResponse) -> ChatResponse {
     } else {
         ResponseContent::Text(text_parts.join(""))
     };
+    // Cache accounting: only emit `cache_usage` when at least one cache
+    // counter came back set (otherwise providers / models without
+    // caching would muddy hit-ratio dashboards with denominator-only
+    // entries).
+    let cache_usage = resp.usage.as_ref().and_then(|u| {
+        let read = u.cache_read_input_tokens.unwrap_or(0);
+        let creation = u.cache_creation_input_tokens.unwrap_or(0);
+        if read == 0 && creation == 0 {
+            return None;
+        }
+        Some(CacheUsage {
+            cache_read_input_tokens: read,
+            cache_creation_input_tokens: creation,
+            input_tokens: u.input_tokens.unwrap_or(0),
+            output_tokens: u.output_tokens.unwrap_or(0),
+        })
+    });
     ChatResponse {
         content,
         usage,
         finish_reason,
-        cache_usage: None,
+        cache_usage,
     }
 }
 
@@ -983,5 +1206,201 @@ mod tests {
             cache_tools: false,
         };
         assert!(validate_request(&r).is_ok());
+    }
+
+    // -------- prompt-caching tests (Phase A) --------
+
+    use crate::prompt_block::{CachePolicy, PromptBlock};
+
+    #[test]
+    fn model_caching_eligibility() {
+        assert!(model_supports_caching("claude-sonnet-4-5"));
+        assert!(model_supports_caching("claude-opus-4-5"));
+        assert!(model_supports_caching("claude-haiku-4-5"));
+        assert!(!model_supports_caching("claude-2.1"));
+        assert!(!model_supports_caching("claude-2.0"));
+    }
+
+    fn req_with_blocks() -> ChatRequest {
+        ChatRequest {
+            model: "claude-sonnet-4-5".into(),
+            messages: vec![ChatMessage::user("hi")],
+            tools: vec![
+                ToolDef {
+                    name: "b_tool".into(),
+                    description: "b".into(),
+                    parameters: json!({"type":"object"}),
+                },
+                ToolDef {
+                    name: "a_tool".into(),
+                    description: "a".into(),
+                    parameters: json!({"type":"object"}),
+                },
+            ],
+            max_tokens: 1024,
+            temperature: 0.7,
+            system_prompt: None,
+            stop_sequences: Vec::new(),
+            tool_choice: ToolChoice::Auto,
+            system_blocks: vec![
+                PromptBlock::cached_long("identity", "You are Ana."),
+                PromptBlock::cached_long("skills", "## SKILLS\n- weather"),
+                PromptBlock::cached_short("tail", "current time: 12:00"),
+            ],
+            cache_tools: true,
+        }
+    }
+
+    #[test]
+    fn system_blocks_render_with_cache_control() {
+        let body = build_body("claude-sonnet-4-5", &req_with_blocks());
+        let sys = body["system"].as_array().expect("system is array");
+        assert_eq!(sys.len(), 3);
+        assert_eq!(sys[0]["text"], "You are Ana.");
+        // Two consecutive Ephemeral1h: marker only on the LAST of the run.
+        assert!(sys[0].get("cache_control").is_none());
+        assert_eq!(sys[1]["cache_control"]["type"], "ephemeral");
+        assert_eq!(sys[1]["cache_control"]["ttl"], "1h");
+        // Different policy on tail → its own marker.
+        assert_eq!(sys[2]["cache_control"]["type"], "ephemeral");
+        assert!(sys[2]["cache_control"].get("ttl").is_none());
+    }
+
+    #[test]
+    fn tools_sorted_and_last_gets_cache_control() {
+        let body = build_body("claude-sonnet-4-5", &req_with_blocks());
+        let tools = body["tools"].as_array().expect("tools is array");
+        assert_eq!(tools[0]["name"], "a_tool");
+        assert_eq!(tools[1]["name"], "b_tool");
+        assert!(tools[0].get("cache_control").is_none());
+        assert_eq!(tools[1]["cache_control"]["type"], "ephemeral");
+        assert_eq!(tools[1]["cache_control"]["ttl"], "1h");
+    }
+
+    #[test]
+    fn legacy_model_strips_cache_control() {
+        let mut r = req_with_blocks();
+        r.model = "claude-2.1".into();
+        let body = build_body("claude-2.1", &r);
+        // Blocks still render but no cache_control fields.
+        let sys = body["system"].as_array().unwrap();
+        for b in sys {
+            assert!(b.get("cache_control").is_none());
+        }
+        let tools = body["tools"].as_array().unwrap();
+        for t in tools {
+            assert!(t.get("cache_control").is_none());
+        }
+    }
+
+    #[test]
+    fn empty_blocks_fallback_to_string_system() {
+        let mut r = req_with_blocks();
+        r.system_blocks.clear();
+        r.system_prompt = Some("legacy text".into());
+        let body = build_body("claude-sonnet-4-5", &r);
+        assert_eq!(body["system"], "legacy text");
+    }
+
+    #[test]
+    fn breakpoint_cap_at_four_silently_drops_extras() {
+        let blocks: Vec<PromptBlock> = (0..6)
+            .map(|i| PromptBlock {
+                label: "x",
+                text: format!("block {i}"),
+                cache: if i % 2 == 0 {
+                    CachePolicy::Ephemeral1h
+                } else {
+                    CachePolicy::Ephemeral5m
+                },
+            })
+            .collect();
+        let rendered = render_system_blocks(&blocks, true);
+        let with_marker = rendered.iter().filter(|b| b.get("cache_control").is_some()).count();
+        assert!(with_marker <= 4, "got {with_marker}");
+    }
+
+    #[test]
+    fn caching_flags_detect_long_ttl() {
+        let r = req_with_blocks();
+        let f = caching_flags("claude-sonnet-4-5", &r);
+        assert!(f.any_cache);
+        assert!(f.any_long_ttl);
+    }
+
+    #[test]
+    fn caching_flags_legacy_model_disables_all() {
+        let mut r = req_with_blocks();
+        r.model = "claude-2.1".into();
+        let f = caching_flags("claude-2.1", &r);
+        assert!(!f.any_cache);
+        assert!(!f.any_long_ttl);
+    }
+
+    #[test]
+    fn merge_beta_headers_combines_existing_and_cache() {
+        let m = merge_beta_headers(Some("foo-2024-01-01"), true, true).unwrap();
+        assert!(m.contains("foo-2024-01-01"));
+        assert!(m.contains("prompt-caching-2024-07-31"));
+        assert!(m.contains("extended-cache-ttl-2025-04-11"));
+    }
+
+    #[test]
+    fn merge_beta_headers_dedupes() {
+        let m = merge_beta_headers(
+            Some("prompt-caching-2024-07-31,foo"),
+            true,
+            false,
+        )
+        .unwrap();
+        assert_eq!(m.matches("prompt-caching-2024-07-31").count(), 1);
+        assert!(m.contains("foo"));
+    }
+
+    #[test]
+    fn merge_beta_headers_returns_none_when_no_input() {
+        assert!(merge_beta_headers(None, false, false).is_none());
+    }
+
+    #[test]
+    fn merge_beta_headers_no_long_ttl_when_only_short() {
+        let m = merge_beta_headers(None, true, false).unwrap();
+        assert!(m.contains("prompt-caching-2024-07-31"));
+        assert!(!m.contains("extended-cache-ttl"));
+    }
+
+    #[test]
+    fn parse_response_with_cache_usage_populates_field() {
+        let raw = r#"{
+          "content":[{"type":"text","text":"ok"}],
+          "stop_reason":"end_turn",
+          "usage":{
+            "input_tokens": 50,
+            "output_tokens": 10,
+            "cache_read_input_tokens": 8000,
+            "cache_creation_input_tokens": 0
+          }
+        }"#;
+        let parsed: AnthropicResponse = serde_json::from_str(raw).unwrap();
+        let resp = to_chat_response(parsed);
+        let cu = resp.cache_usage.expect("cache_usage populated");
+        assert_eq!(cu.cache_read_input_tokens, 8000);
+        assert_eq!(cu.cache_creation_input_tokens, 0);
+        assert_eq!(cu.input_tokens, 50);
+        assert_eq!(cu.output_tokens, 10);
+        // hit_ratio: 8000 / (8000 + 0 + 50) ≈ 0.99
+        assert!(cu.hit_ratio() > 0.99);
+    }
+
+    #[test]
+    fn parse_response_without_cache_usage_leaves_none() {
+        let raw = r#"{
+          "content":[{"type":"text","text":"ok"}],
+          "stop_reason":"end_turn",
+          "usage":{ "input_tokens": 50, "output_tokens": 10 }
+        }"#;
+        let parsed: AnthropicResponse = serde_json::from_str(raw).unwrap();
+        let resp = to_chat_response(parsed);
+        assert!(resp.cache_usage.is_none());
     }
 }

@@ -12,6 +12,7 @@ pub mod registry;
 pub mod retry;
 pub mod stream;
 pub mod telemetry;
+pub mod token_counter;
 pub mod types;
 
 pub use anthropic::{AnthropicClient, AnthropicFactory};
@@ -25,6 +26,9 @@ pub use rate_limiter::RateLimiter;
 pub use registry::{LlmProviderFactory, LlmRegistry, MiniMaxFactory, OpenAiFactory};
 pub use retry::{parse_retry_after_ms, with_retry, LlmError};
 pub use stream::{collect_stream, default_stream_from_chat, StreamChunk};
+pub use token_counter::{
+    AnthropicTokenCounter, TiktokenCounter, TokenCounter,
+};
 pub use types::{
     Attachment, AttachmentData, ChatMessage, ChatRequest, ChatResponse, ChatRole, FinishReason,
     ResponseContent, TokenUsage, ToolCall, ToolChoice, ToolDef,
