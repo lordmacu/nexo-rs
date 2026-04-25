@@ -606,7 +606,18 @@ impl LlmAgentBehavior {
         // the head with a stored summary. The summary then gets
         // injected into `messages` below as a user/assistant pair so
         // role alternation stays valid for Anthropic.
+        // Phase F follow-up — gate on BOTH the boot-wired flag AND the
+        // current snapshot's resolved enable. A hot-reload that flips
+        // `compaction: false` takes effect on this turn without
+        // rebuilding the behavior. Legacy paths without a snapshot
+        // (tests, heartbeat bootstrap) treat the live flag as `true`
+        // so the boot-wired enable stays the only gate.
+        let live_compaction = ctx
+            .context_optimization
+            .map(|co| co.compaction)
+            .unwrap_or(true);
         if self.compaction_runtime.enabled
+            && live_compaction
             && self.compactor.is_some()
             && self.compaction_store.is_some()
         {
@@ -844,7 +855,11 @@ impl LlmAgentBehavior {
             // caching opt-in. Provider clients that don't honor the
             // fields fall back to flat `system_prompt`; the fields
             // are otherwise inert.
-            if self.prompt_cache_enabled {
+            let live_prompt_cache = ctx
+                .context_optimization
+                .map(|co| co.prompt_cache)
+                .unwrap_or(true);
+            if self.prompt_cache_enabled && live_prompt_cache {
                 req.system_blocks = system_blocks.clone();
                 req.cache_tools = !filtered_tools.is_empty();
             }
