@@ -20,6 +20,7 @@ members = [
     "crates/poller",
     "crates/poller-tools",
     "crates/poller-ext",
+    "crates/web-search",
 ]
 # Keep standalone extension templates out of the agent workspace so they don't
 # inherit our deps or lockfile. Users copy them verbatim and build separately.

@@ -1,0 +1,30 @@
+[package]
+name = "agent-web-search"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["brave", "tavily", "duckduckgo"]
+brave = []
+tavily = []
+duckduckgo = ["dep:scraper"]
+perplexity = []
+
+[dependencies]
+agent-resilience = { path = "../resilience" }
+tokio        = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+async-trait  = { workspace = true }
+reqwest      = { workspace = true }
+sqlx         = { workspace = true }
+sha2         = { workspace = true }
+hex          = { workspace = true }
+thiserror    = { workspace = true }
+tracing      = { workspace = true }
+chrono       = { workspace = true }
+scraper      = { version = "0.20", optional = true }
+
+[dev-dependencies]
+tokio        = { workspace = true }
+serde_json   = { workspace = true }
