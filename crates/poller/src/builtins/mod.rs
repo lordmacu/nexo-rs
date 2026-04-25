@@ -9,10 +9,21 @@
 //! `register_all` once at boot. See `docs/src/recipes/build-a-poller.md`
 //! for the full pattern.
 
-// Step 17 of the plan registers the four V1 built-ins here.
-// Stubs for now so the crate compiles before the runner exists.
+use std::sync::Arc;
 
-#[allow(dead_code)]
-pub fn register_all_placeholder() {
-    // No-op until step 17 wires the registry.
+use crate::PollerRunner;
+
+pub mod gmail;
+pub mod google_calendar;
+pub mod rss;
+pub mod webhook_poll;
+
+/// Register every built-in poller. Single touch point — adding a new
+/// module means dropping a `pub mod x;` above and one `runner.register`
+/// line below. Idempotent: re-registering replaces the previous impl.
+pub fn register_all(runner: &PollerRunner) {
+    runner.register(Arc::new(gmail::GmailPoller::new()));
+    runner.register(Arc::new(rss::RssPoller::new()));
+    runner.register(Arc::new(webhook_poll::WebhookPoller::new()));
+    runner.register(Arc::new(google_calendar::GoogleCalendarPoller::new()));
 }

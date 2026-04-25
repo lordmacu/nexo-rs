@@ -4,6 +4,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use agent_auth::resolver::CredentialStores;
 use agent_auth::{AgentCredentialResolver, Channel};
 use agent_broker::AnyBroker;
 use async_trait::async_trait;
@@ -49,6 +50,11 @@ pub struct PollContext {
     /// `GOOGLE` for inbound fetch, then `WHATSAPP`/`TELEGRAM` for
     /// outbound, but the trait is channel-agnostic).
     pub credentials: Arc<AgentCredentialResolver>,
+    /// Read-only handles to the per-channel credential stores. Pollers
+    /// that need paths (gmail → Google client_id_path / token_path,
+    /// future calendar → same store) borrow this. `None` in test
+    /// fixtures that don't wire a full bundle.
+    pub stores: Option<Arc<CredentialStores>>,
     /// Local broker handle. Modules SHOULD NOT publish directly —
     /// return `OutboundDelivery` and let the runner dispatch.
     /// Exposed in case a module needs to subscribe (rare).
