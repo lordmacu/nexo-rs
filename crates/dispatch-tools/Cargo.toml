@@ -1,0 +1,27 @@
+[package]
+name = "nexo-dispatch-tools"
+description = "Phase 67.D — agent-loop tools that dispatch / control / chain driver goals through DispatchGate."
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+homepage      = { workspace = true }
+documentation = { workspace = true }
+keywords      = { workspace = true }
+categories    = { workspace = true }
+
+[dependencies]
+async-trait        = { workspace = true }
+nexo-config        = { version = "0.1.1", path = "../config" }
+nexo-driver-types  = { version = "0.1.1", path = "../driver-types" }
+nexo-driver-claude = { version = "0.1.1", path = "../driver-claude" }
+nexo-agent-registry = { version = "0.1.1", path = "../agent-registry" }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+thiserror          = { workspace = true }
+tracing            = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

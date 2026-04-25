@@ -2257,6 +2257,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexo-dispatch-tools"
+version = "0.1.1"
+dependencies = [
+ "async-trait",
+ "nexo-agent-registry",
+ "nexo-config",
+ "nexo-driver-claude",
+ "nexo-driver-types",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "nexo-driver-claude"
 version = "0.1.1"
 dependencies = [
