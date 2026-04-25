@@ -97,13 +97,39 @@ the cancel token, the per-turn deadline, and the JSONL stream. Errors
 land as `Cancelled`, `Timeout`, `ParseLine`, etc. Cleanup is always
 `shutdown()` — `ChildHandle::Drop` is the panic safety net.
 
+## Persistence (Phase 67.2)
+
+`SqliteBindingStore` keeps `(goal_id → claude session_id)` plus
+timestamps in a single `claude_session_bindings` table. Two filters
+are applied on `get`:
+
+- **idle TTL** — `last_active_at` must be within `idle_ttl` of now;
+- **max age** — `created_at + max_age` must be in the future.
+
+Either filter can be `None` (no filter) or `Duration::ZERO` (alias).
+
+Three soft-delete-friendly operations live alongside `clear`:
+
+- `mark_invalid(goal_id)` flips `last_session_invalid = 1` instead of
+  deleting the row. Phase 67.8 (replay-policy) calls this when Claude
+  rejects a session id mid-turn; the row stays for forensics.
+- `touch(goal_id)` bumps `last_active_at` only. Driver loop calls it
+  per observed event so the idle filter doesn't need a structural
+  upsert per turn.
+- `purge_older_than(cutoff)` reaps rows the operator no longer cares
+  about. Phase 67.6 (worktree janitor) calls it nightly.
+
+Schema migrations: `PRAGMA user_version = 1` is the sentinel; every
+`open()` runs `CREATE TABLE/INDEX IF NOT EXISTS`. Future v2 will
+extend that helper.
+
 ## Sub-phases
 
 | Phase | What | Status |
 |-------|------|--------|
 | 67.0 | `AgentHarness` trait + types | ✅ |
 | 67.1 | `claude_cli` skill (spawn + stream-json + resume) | ✅ |
-| 67.2 | Session-binding store (SQLite) | ⬜ |
+| 67.2 | Session-binding store (SQLite) | ✅ |
 | 67.3 | MCP `permission_prompt` in-process | ⬜ |
 | 67.4 | Driver agent loop + budget guards | ⬜ |
 | 67.5 | Acceptance evaluator | ⬜ |

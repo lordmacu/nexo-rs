@@ -30,6 +30,13 @@ pub enum ClaudeError {
     Binding(String),
 }
 
+#[cfg(feature = "sqlite")]
+impl From<sqlx::Error> for ClaudeError {
+    fn from(e: sqlx::Error) -> Self {
+        ClaudeError::Binding(e.to_string())
+    }
+}
+
 impl From<ClaudeError> for HarnessError {
     fn from(e: ClaudeError) -> Self {
         match e {
