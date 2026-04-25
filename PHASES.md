@@ -255,10 +255,15 @@ Two unrelated flakes that surface under CI parallelism. Bundled
 because Phase 38 (chaos / property tests) is where this kind of
 work lives.
 
-- **38.x.1** `nexo_llm::telemetry::tests::render_empty_series_when_no_samples`
-  flakes under `cargo test --workspace` due to global `LazyLock`
-  state shared across parallel test binaries. Fix: `serial_test`
-  guard, or scope the global behind a `cfg(test)`-only registry
+- **38.x.1** ✅ Fixed by extracting `render_into(ttft, chunks)`
+  pure renderer — production keeps `render_prometheus()` over
+  the globals, the test path passes its own local `DashMap`s
+  and never touches the static. Same fix powers a new
+  `render_into_local_registry_with_samples` test that exercises
+  the non-empty branch in isolation. No more `#[ignore]`, no
+  `serial_test` lock needed across crates. Original wording
+  preserved below for history:
+  Old: `nexo_llm::telemetry::tests::render_empty_series_when_no_samples`
   reset.
 - **38.x.2** `nexo_core::agent::transcripts::tests::concurrent_first_appends_only_write_one_header`
   is `#[ignore]`'d today — it surfaces a real race in
