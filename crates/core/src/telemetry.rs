@@ -68,6 +68,51 @@ static TOOL_LATENCY: LazyLock<DashMap<ToolKey, Histogram>> = LazyLock::new(DashM
 /// rate without instrumenting each handler by hand.
 static TOOL_CACHE_EVENTS: LazyLock<DashMap<ToolCallKey, AtomicU64>> = LazyLock::new(DashMap::new);
 
+/// Phase B — compaction outcome counters per (agent, outcome). Outcomes:
+/// `"ok"`, `"failed"`, `"lock_held"`, `"no_boundary"`,
+/// `"tool_result_truncated"`. Histogram on duration is keyed by
+/// (agent, outcome="ok"|"failed") only — lock_held / no_boundary cases
+/// never run the LLM, so 0 ms entries would skew the percentiles.
+#[derive(Clone, Debug, Hash, Eq, PartialEq)]
+struct CompactionKey {
+    agent: String,
+    outcome: String,
+}
+static COMPACTION_TOTAL: LazyLock<DashMap<CompactionKey, AtomicU64>> = LazyLock::new(DashMap::new);
+static COMPACTION_DURATION: LazyLock<DashMap<CompactionKey, Histogram>> =
+    LazyLock::new(DashMap::new);
+
+/// Bump the counter and (when meaningful) record duration for a
+/// compaction outcome.
+pub fn observe_compaction(agent_id: &str, outcome: &str, duration_ms: u64) {
+    let key = CompactionKey {
+        agent: agent_id.to_string(),
+        outcome: outcome.to_string(),
+    };
+    COMPACTION_TOTAL
+        .entry(key.clone())
+        .or_insert_with(|| AtomicU64::new(0))
+        .fetch_add(1, Ordering::Relaxed);
+    if matches!(outcome, "ok" | "failed") && duration_ms > 0 {
+        COMPACTION_DURATION
+            .entry(key)
+            .or_insert_with(Histogram::new)
+            .observe(duration_ms);
+    }
+}
+
+/// Test helper: read a compaction counter for a given outcome.
+pub fn compaction_total(agent_id: &str, outcome: &str) -> u64 {
+    let key = CompactionKey {
+        agent: agent_id.to_string(),
+        outcome: outcome.to_string(),
+    };
+    COMPACTION_TOTAL
+        .get(&key)
+        .map(|v| v.value().load(Ordering::Relaxed))
+        .unwrap_or(0)
+}
+
 /// Phase A.2 — provider-level prompt cache counters per (agent, provider).
 /// Field meaning matches `agent_llm::CacheUsage`. The model is part of
 /// the key so a binding-driven model swap shows up as a fresh hit-ratio
