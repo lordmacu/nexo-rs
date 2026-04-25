@@ -78,6 +78,22 @@ pub struct WorkspaceConfig {
     pub root: PathBuf,
     #[serde(default)]
     pub cleanup_on_done: bool,
+    #[serde(default)]
+    pub git: WorkspaceGitConfig,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct WorkspaceGitConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub source_repo: Option<PathBuf>,
+    #[serde(default = "default_base_ref")]
+    pub base_ref: String,
+}
+
+fn default_base_ref() -> String {
+    "HEAD".into()
 }
 
 #[derive(Clone, Debug, Deserialize)]

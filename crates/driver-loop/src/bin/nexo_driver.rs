@@ -18,7 +18,7 @@ use anyhow::{anyhow, Result};
 use nexo_driver_claude::{MemoryBindingStore, SessionBindingStore, SqliteBindingStore};
 use nexo_driver_loop::{
     AcceptanceEvaluator, BindingStoreKind, DeciderConfig, DefaultAcceptanceEvaluator, DriverConfig,
-    DriverOrchestrator, NoopEventSink, WorkspaceManager,
+    DriverOrchestrator, GitWorktreeMode, NoopEventSink, WorkspaceManager,
 };
 use nexo_driver_permission::{AllowAllDecider, DenyAllDecider, PermissionDecider};
 use nexo_driver_types::Goal;
@@ -43,6 +43,8 @@ async fn run() -> Result<ExitCode> {
     match cmd.as_str() {
         "run" => cmd_run(args).await,
         "list-active" => cmd_list_active(args).await,
+        "list-worktrees" => cmd_list_worktrees(args).await,
+        "rollback" => cmd_rollback(args).await,
         "-h" | "--help" => {
             print_help();
             Ok(ExitCode::SUCCESS)
@@ -54,8 +56,112 @@ async fn run() -> Result<ExitCode> {
 fn print_help() {
     eprintln!(
         "nexo-driver run <goal-yaml> [--config <claude.yaml>] [--no-events]\n\
-         nexo-driver list-active [--config <claude.yaml>]"
+         nexo-driver list-active [--config <claude.yaml>]\n\
+         nexo-driver list-worktrees [--config <claude.yaml>]\n\
+         nexo-driver rollback <goal-id> --to <sha> [--config <claude.yaml>]"
     );
+}
+
+async fn cmd_list_worktrees(mut args: impl Iterator<Item = String>) -> Result<ExitCode> {
+    let mut config_path: Option<PathBuf> = None;
+    while let Some(a) = args.next() {
+        match a.as_str() {
+            "--config" => {
+                config_path = Some(
+                    args.next()
+                        .ok_or_else(|| anyhow!("--config requires path"))?
+                        .into(),
+                );
+            }
+            other => return Err(anyhow!("unknown flag: {other}")),
+        }
+    }
+    let cfg = load_config(config_path.as_deref())?;
+    if !cfg.workspace.git.enabled {
+        println!("git mode disabled in config — nothing to list");
+        return Ok(ExitCode::SUCCESS);
+    }
+    let Some(source_repo) = cfg.workspace.git.source_repo.clone() else {
+        println!("workspace.git.source_repo missing — nothing to list");
+        return Ok(ExitCode::SUCCESS);
+    };
+    use nexo_driver_loop::ShellRunner;
+    let shell = ShellRunner::default();
+    let res = shell
+        .run(
+            &format!(
+                "git -C {} worktree list --porcelain",
+                shell_escape(&source_repo.display().to_string())
+            ),
+            &source_repo,
+            std::time::Duration::from_secs(15),
+        )
+        .await
+        .map_err(|e| anyhow!("git worktree list failed: {e}"))?;
+    if res.exit_code != Some(0) {
+        return Err(anyhow!("git worktree list exit {:?}", res.exit_code));
+    }
+    let mut worktree: Option<String> = None;
+    let mut head: Option<String> = None;
+    for line in res.stdout.lines() {
+        if let Some(p) = line.strip_prefix("worktree ") {
+            worktree = Some(p.to_string());
+            head = None;
+        } else if let Some(b) = line.strip_prefix("branch refs/heads/") {
+            if b.starts_with("nexo-driver/") {
+                if let (Some(w), Some(h)) = (worktree.as_ref(), head.as_ref()) {
+                    println!("{w}\t{b}\t{}", &h[..h.len().min(7)]);
+                }
+            }
+        } else if let Some(h) = line.strip_prefix("HEAD ") {
+            head = Some(h.to_string());
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+async fn cmd_rollback(mut args: impl Iterator<Item = String>) -> Result<ExitCode> {
+    let goal_id = args
+        .next()
+        .ok_or_else(|| anyhow!("rollback: <goal-id> required"))?;
+    let mut to_sha: Option<String> = None;
+    let mut config_path: Option<PathBuf> = None;
+    while let Some(a) = args.next() {
+        match a.as_str() {
+            "--to" => {
+                to_sha = Some(args.next().ok_or_else(|| anyhow!("--to requires <sha>"))?);
+            }
+            "--config" => {
+                config_path = Some(
+                    args.next()
+                        .ok_or_else(|| anyhow!("--config requires path"))?
+                        .into(),
+                );
+            }
+            other => return Err(anyhow!("unknown flag: {other}")),
+        }
+    }
+    let sha = to_sha.ok_or_else(|| anyhow!("rollback: --to <sha> required"))?;
+    let cfg = load_config(config_path.as_deref())?;
+    let wm = build_workspace_manager(&cfg)?;
+    let workspace = cfg.workspace.root.join(&goal_id);
+    wm.rollback(&workspace, &sha).await?;
+    println!("rollback ok: {goal_id} → {sha}");
+    Ok(ExitCode::SUCCESS)
+}
+
+fn shell_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for ch in s.chars() {
+        if ch == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
 }
 
 async fn cmd_run(mut args: impl Iterator<Item = String>) -> Result<ExitCode> {
@@ -119,6 +225,23 @@ async fn cmd_list_active(mut args: impl Iterator<Item = String>) -> Result<ExitC
     Ok(ExitCode::SUCCESS)
 }
 
+fn build_workspace_manager(cfg: &DriverConfig) -> Result<WorkspaceManager> {
+    let mut wm = WorkspaceManager::new(&cfg.workspace.root);
+    if cfg.workspace.git.enabled {
+        let path = cfg
+            .workspace
+            .git
+            .source_repo
+            .clone()
+            .ok_or_else(|| anyhow!("workspace.git.enabled=true but source_repo missing"))?;
+        wm = wm.with_git(GitWorktreeMode::SourceRepo {
+            path,
+            base_ref: cfg.workspace.git.base_ref.clone(),
+        });
+    }
+    Ok(wm)
+}
+
 fn load_config(path: Option<&std::path::Path>) -> Result<DriverConfig> {
     let path = path
         .map(PathBuf::from)
@@ -156,7 +279,7 @@ async fn open_binding_store(
 
 async fn build_orchestrator(cfg: &DriverConfig, no_events: bool) -> Result<DriverOrchestrator> {
     let binding_store = open_binding_store(&cfg.binding_store).await?;
-    let workspace_manager = Arc::new(WorkspaceManager::new(&cfg.workspace.root));
+    let workspace_manager = Arc::new(build_workspace_manager(cfg)?);
     let decider: Arc<dyn PermissionDecider> = match &cfg.permission.decider {
         DeciderConfig::AllowAll => Arc::new(AllowAllDecider),
         DeciderConfig::DenyAll { reason } => Arc::new(DenyAllDecider {
