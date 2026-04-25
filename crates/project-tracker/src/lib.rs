@@ -8,9 +8,14 @@
 //! commit flow.
 
 pub mod parser;
+pub mod tracker;
 pub mod types;
 
+pub use parser::followups::{
+    parse_file as parse_followups_file, parse_str as parse_followups_str,
+};
 pub use parser::phases::{parse_file as parse_phases_file, parse_str as parse_phases_str};
+pub use tracker::{FsProjectTracker, ProjectTracker};
 
 pub use types::{
     FollowUp, FollowUpStatus, Phase, PhaseStatus, SubPhase, TrackerError,
