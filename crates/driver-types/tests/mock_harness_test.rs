@@ -56,6 +56,7 @@ async fn dyn_harness_can_run_an_attempt() {
             max_wall_time: Duration::from_secs(60),
             max_tokens: 1000,
             max_consecutive_denies: 1,
+            max_consecutive_errors: 5,
         },
         workspace: None,
         metadata: serde_json::Map::new(),

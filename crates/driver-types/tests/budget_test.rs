@@ -8,6 +8,7 @@ fn guards() -> BudgetGuards {
         max_wall_time: Duration::from_secs(60),
         max_tokens: 1000,
         max_consecutive_denies: 3,
+        max_consecutive_errors: 5,
     }
 }
 
@@ -40,6 +41,7 @@ fn each_axis_exhausts_independently() {
 
     let u = BudgetUsage {
         consecutive_denies: 3,
+        consecutive_errors: 0,
         ..Default::default()
     };
     assert_eq!(g.is_exhausted(&u), Some(BudgetAxis::ConsecutiveDenies));
@@ -56,6 +58,7 @@ fn turns_axis_takes_precedence_when_multiple_exhausted() {
         wall_time: Duration::from_secs(99),
         tokens: 9999,
         consecutive_denies: 99,
+        consecutive_errors: 0,
     };
     assert_eq!(g.is_exhausted(&u), Some(BudgetAxis::Turns));
 }
@@ -68,6 +71,28 @@ fn under_limit_returns_none() {
         wall_time: Duration::from_secs(59),
         tokens: 999,
         consecutive_denies: 2,
+        consecutive_errors: 0,
+    };
+    assert_eq!(g.is_exhausted(&u), None);
+}
+
+#[test]
+fn consecutive_errors_axis_fires_when_cap_nonzero() {
+    let g = guards();
+    let u = BudgetUsage {
+        consecutive_errors: 5,
+        ..Default::default()
+    };
+    assert_eq!(g.is_exhausted(&u), Some(BudgetAxis::ConsecutiveErrors));
+}
+
+#[test]
+fn consecutive_errors_axis_disabled_when_cap_is_zero() {
+    let mut g = guards();
+    g.max_consecutive_errors = 0;
+    let u = BudgetUsage {
+        consecutive_errors: 999,
+        ..Default::default()
     };
     assert_eq!(g.is_exhausted(&u), None);
 }

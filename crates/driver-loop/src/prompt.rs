@@ -64,6 +64,7 @@ mod tests {
                 max_wall_time: Duration::from_secs(60),
                 max_tokens: 1_000,
                 max_consecutive_denies: 3,
+                max_consecutive_errors: 5,
             },
             workspace: None,
             metadata: serde_json::Map::new(),

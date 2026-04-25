@@ -21,6 +21,7 @@ fn budget() -> BudgetGuards {
         max_wall_time: Duration::from_secs(5400),
         max_tokens: 250_000,
         max_consecutive_denies: 5,
+        max_consecutive_errors: 5,
     }
 }
 
@@ -55,6 +56,7 @@ fn roundtrip_budget_usage() {
         wall_time: Duration::from_secs(120),
         tokens: 12_345,
         consecutive_denies: 1,
+        consecutive_errors: 0,
     };
     assert_eq!(rt(&u), u);
 }
