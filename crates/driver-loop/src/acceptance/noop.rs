@@ -1,26 +1,14 @@
-//! `AcceptanceEvaluator` trait. Phase 67.4 ships only `Noop`; 67.5
-//! implements the real shell-command / file-match / custom verifier
-//! dispatcher.
-
 use std::path::Path;
 
 use async_trait::async_trait;
 use chrono::Utc;
 use nexo_driver_types::{AcceptanceCriterion, AcceptanceVerdict};
 
+use crate::acceptance::AcceptanceEvaluator;
 use crate::error::DriverError;
 
-#[async_trait]
-pub trait AcceptanceEvaluator: Send + Sync + 'static {
-    async fn evaluate(
-        &self,
-        criteria: &[AcceptanceCriterion],
-        workspace: &Path,
-    ) -> Result<AcceptanceVerdict, DriverError>;
-}
-
 /// Default — every goal that reaches it returns `met=true`. Useful
-/// for 67.4 tests that orchestrate without 67.5's real evaluator.
+/// when 67.5's real evaluator is overkill (tests, dev runs).
 #[derive(Default)]
 pub struct NoopAcceptanceEvaluator;
 

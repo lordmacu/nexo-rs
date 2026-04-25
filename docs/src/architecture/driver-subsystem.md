@@ -225,7 +225,7 @@ NATS subjects emitted (when `feature = "nats"` and
 | 67.2 | Session-binding store (SQLite) | ✅ |
 | 67.3 | MCP `permission_prompt` in-process | ✅ |
 | 67.4 | Driver agent loop + budget guards | ✅ |
-| 67.5 | Acceptance evaluator | ⬜ |
+| 67.5 | Acceptance evaluator | ✅ |
 | 67.6 | Git worktree sandboxing + per-turn checkpoint | ⬜ |
 | 67.7 | Memoria semántica de decisiones | ⬜ |
 | 67.8 | Replay-policy (resume tras crash mid-turn) | ⬜ |

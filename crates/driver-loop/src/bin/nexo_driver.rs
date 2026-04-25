@@ -17,8 +17,8 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use nexo_driver_claude::{MemoryBindingStore, SessionBindingStore, SqliteBindingStore};
 use nexo_driver_loop::{
-    BindingStoreKind, DeciderConfig, DriverConfig, DriverOrchestrator, NoopEventSink,
-    WorkspaceManager,
+    AcceptanceEvaluator, BindingStoreKind, DeciderConfig, DefaultAcceptanceEvaluator, DriverConfig,
+    DriverOrchestrator, NoopEventSink, WorkspaceManager,
 };
 use nexo_driver_permission::{AllowAllDecider, DenyAllDecider, PermissionDecider};
 use nexo_driver_types::Goal;
@@ -177,9 +177,22 @@ async fn build_orchestrator(cfg: &DriverConfig, no_events: bool) -> Result<Drive
             // orchestrator programmatically with NatsEventSink.
             Arc::new(NoopEventSink)
         };
+    // 67.5 — wire the real acceptance evaluator with operator-supplied
+    // shell timeout / evidence cap, plus the two built-in custom
+    // verifiers (no_paths_touched, git_clean).
+    let mut acceptance = DefaultAcceptanceEvaluator::new();
+    if let Some(t) = cfg.acceptance.default_shell_timeout {
+        acceptance = acceptance.with_default_shell_timeout(t);
+    }
+    if let Some(n) = cfg.acceptance.evidence_byte_limit {
+        acceptance = acceptance.with_evidence_byte_limit(n);
+    }
+    let acceptance: Arc<dyn AcceptanceEvaluator> = Arc::new(acceptance);
+
     let orch = DriverOrchestrator::builder()
         .claude_config(cfg.claude.clone())
         .binding_store(binding_store)
+        .acceptance(acceptance)
         .decider(decider)
         .workspace_manager(workspace_manager)
         .event_sink(event_sink)

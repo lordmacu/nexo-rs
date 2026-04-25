@@ -89,9 +89,12 @@ pub struct DriverBinConfig {
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct AcceptanceConfig {
-    /// Phase 67.5 will populate this. Empty in 67.4.
     #[serde(default, with = "humantime_serde::option")]
     pub default_shell_timeout: Option<Duration>,
+    /// Phase 67.5 — bytes of stdout+stderr attached as evidence on
+    /// each `AcceptanceFailure`. Default 4 KiB.
+    #[serde(default)]
+    pub evidence_byte_limit: Option<usize>,
 }
 
 fn default_setup_timeout() -> Duration {
