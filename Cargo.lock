@@ -2229,6 +2229,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexo-driver-types"
+version = "0.1.1"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "humantime-serde",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "uuid",
+]
+
+[[package]]
 name = "nexo-extensions"
 version = "0.1.1"
 dependencies = [

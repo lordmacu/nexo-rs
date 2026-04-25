@@ -1686,6 +1686,45 @@ the graph plus citations to the conversations that built it.
 
 ---
 
+### Phase 67 — Claude Code self-driving agent
+
+Use the `nexo-rs` agent runtime to drive the `claude` CLI as a
+sub-process under a verifiable goal. The driver agent reads Claude's
+stream, decides allow/deny on every tool call (humano-en-el-loop via
+MCP `permission_prompt`), feeds back acceptance failures, and
+terminates only when Claude claims "done" AND objective verification
+(cargo build/test/clippy/PHASES check) passes. Goal-bound. Memory
+across turns so rejected approaches feed forward.
+
+**Stack** (proposed in brainstorm):
+
+#### 67.0 — `AgentHarness` trait + Goal/Attempt/Decision types   ✅
+
+Crate hoja `nexo-driver-types` con el contrato fundacional. Trait
+`AgentHarness` (id/label/supports/run_attempt/compact/reset/dispose),
+tipos serde `Goal`, `BudgetGuards`, `BudgetUsage`,
+`AcceptanceCriterion`, `Decision`, `AttemptOutcome` (Done | NeedsRetry
+| Continue | BudgetExhausted | Cancelled | Escalate), wrapper
+`CancellationToken` opaco. Mirrors OpenClaw `AgentHarness` shape,
+adaptado para Rust + microservicios (todo serializable para NATS).
+Sin runtime — solo el contrato sobre el que 67.1+ se montan.
+
+#### 67.1 — `claude_cli` skill (spawn + stream-json + resume)   ⬜
+#### 67.2 — Session-binding store (SQLite)                      ⬜
+#### 67.3 — MCP `permission_prompt` in-process                   ⬜
+#### 67.4 — Driver agent loop + budget guards                    ⬜
+#### 67.5 — Acceptance evaluator (cargo + custom verifiers)      ⬜
+#### 67.6 — Git worktree sandboxing + per-turn checkpoint        ⬜
+#### 67.7 — Memoria semántica de decisiones (vector recall)      ⬜
+#### 67.8 — Replay-policy (resume tras crash mid-turn)           ⬜
+#### 67.9 — Compact opportunista                                 ⬜
+#### 67.10 — Escalación a WhatsApp/Telegram                      ⬜
+#### 67.11 — Shadow mode (calibración antes de auto)             ⬜
+#### 67.12 — Multi-goal paralelo                                 ⬜
+#### 67.13 — Cost dashboard + admin-ui A4 tile                   ⬜
+
+---
+
 ## Deliberately NOT roadmapped
 
 These OpenClaw features were considered and deferred — listing them
