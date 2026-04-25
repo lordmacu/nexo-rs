@@ -1715,7 +1715,7 @@ Sin runtime — solo el contrato sobre el que 67.1+ se montan.
 #### 67.4 — Driver agent loop + budget guards                    ✅
 #### 67.5 — Acceptance evaluator (cargo + custom verifiers)      ✅
 #### 67.6 — Git worktree sandboxing + per-turn checkpoint        ✅
-#### 67.7 — Memoria semántica de decisiones (vector recall)      ⬜
+#### 67.7 — Memoria semántica de decisiones (vector recall)      ✅
 #### 67.8 — Replay-policy (resume tras crash mid-turn)           ⬜
 #### 67.9 — Compact opportunista                                 ⬜
 #### 67.10 — Escalación a WhatsApp/Telegram                      ⬜

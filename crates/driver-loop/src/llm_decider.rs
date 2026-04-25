@@ -213,11 +213,46 @@ impl PermissionDecider for LlmDecider {
         let rationale = serde_json::from_str::<DeciderJson>(strip_markdown_fences(&text).trim())
             .map(|d| rationale_from(&d))
             .unwrap_or_default();
+
+        // Phase 67.7 — record this decision into long-term memory so
+        // future similar requests can recall it. Best-effort.
+        let decision = Decision {
+            id: nexo_driver_types::DecisionId::new(),
+            goal_id: request.goal_id,
+            turn_index: 0,
+            tool: request.tool_name.clone(),
+            input: request.input.clone(),
+            choice: outcome_to_choice(&outcome),
+            rationale: rationale.clone(),
+            decided_at: chrono::Utc::now(),
+        };
+        if let Err(e) = self.memory.record(&decision).await {
+            tracing::warn!(target: "llm-decider", "record decision failed: {e}");
+        }
+
         Ok(PermissionResponse {
             tool_use_id: request.tool_use_id,
             outcome,
             rationale,
         })
+    }
+}
+
+fn outcome_to_choice(o: &PermissionOutcome) -> nexo_driver_types::DecisionChoice {
+    use nexo_driver_types::DecisionChoice;
+    match o {
+        PermissionOutcome::AllowOnce { .. } | PermissionOutcome::AllowSession { .. } => {
+            DecisionChoice::Allow
+        }
+        PermissionOutcome::Deny { message } => DecisionChoice::Deny {
+            message: message.clone(),
+        },
+        PermissionOutcome::Unavailable { reason } => DecisionChoice::Deny {
+            message: reason.clone(),
+        },
+        PermissionOutcome::Cancelled => DecisionChoice::Deny {
+            message: "cancelled".into(),
+        },
     }
 }
 

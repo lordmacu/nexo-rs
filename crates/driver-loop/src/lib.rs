@@ -20,8 +20,9 @@ pub use acceptance::{
     GitClean, NoPathsTouched, NoopAcceptanceEvaluator, ShellResult, ShellRunner,
 };
 pub use config::{
-    AcceptanceConfig, BindingStoreConfig, BindingStoreKind, DeciderConfig, DriverBinConfig,
-    DriverConfig, PermissionConfig, WorkspaceConfig, WorkspaceGitConfig,
+    AcceptanceConfig, BindingStoreConfig, BindingStoreKind, DeciderConfig, DeciderMemoryConfig,
+    DriverBinConfig, DriverConfig, EmbeddingProviderConfig, NamespaceConfig, PermissionConfig,
+    WorkspaceConfig, WorkspaceGitConfig,
 };
 pub use error::DriverError;
 #[cfg(feature = "nats")]
@@ -30,7 +31,7 @@ pub use events::{DriverEvent, DriverEventSink, NoopEventSink};
 pub use harness::ClaudeHarness;
 pub use llm_decider::LlmDecider;
 pub use mcp_config::write_mcp_config;
-pub use memory::{DecisionMemory, NoopDecisionMemory};
+pub use memory::{DecisionMemory, Namespace, NoopDecisionMemory, SqliteVecDecisionMemory};
 pub use orchestrator::{DriverOrchestrator, DriverOrchestratorBuilder, GoalOutcome};
 pub use prompt::compose_turn_prompt;
 pub use socket::{DriverSocketServer, SocketMessage};
