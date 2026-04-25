@@ -552,19 +552,51 @@ Done when on a fresh Termux a user runs
 `pkg install -y nexo-rs` (after adding the repo) and the
 binary lands in `$PREFIX/bin/`.
 
-#### 27.9 — SBOM + reproducibility
+#### 27.9 — SBOM + reproducibility   🔄
 
-- SBOM (CycloneDX or SPDX) emitted per artifact via
-  `cargo cyclonedx` or `syft`.
-- Attached to each GH release as `sbom-*.json`.
-- Reproducible build attestation: same git sha + same toolchain
-  → bit-identical artifacts. Documented test reproduction steps.
-- SLSA Level 2 attestation (provenance via GitHub Actions OIDC
-  + sigstore).
+SBOM workflow + reproducibility docs shipped; SLSA-verifier integration
++ pinned-Debian-package Docker layer deferred.
 
-Done when `slsa-verifier verify-artifact …` against any
-release passes and a third party can rebuild the artifact and
-get the same sha256.
+Shipped:
+- `.github/workflows/sbom.yml` (NEW) — `workflow_run` triggered
+  after release. Generates two SBOMs:
+  - `sbom-cyclonedx.json` via `cargo cyclonedx --all` (cargo dep
+    tree with versions + hashes).
+  - `sbom-spdx.json` via `syft .` (full filesystem scan; catches
+    bundled binaries / generated assets that cargo doesn't track).
+  - Both signed with Cosign keyless OIDC (`*.bundle`) reusing
+    the Phase 27.3 chain.
+  - Attached to the release with `gh release upload --clobber`.
+- Docker image SBOM continues to ride via `provenance: true,
+  sbom: true` in `docker.yml` (Phase 27.5).
+- `docs/src/getting-started/reproducibility.md` (NEW) — operator
+  guide. How to read the CycloneDX + SPDX SBOMs (`jq` recipes,
+  `cargo audit`, `grype` against the SBOM file). The
+  reproducible-build claim spelled out: pinned Rust toolchain
+  (`rust-toolchain.toml`), pinned deps (`Cargo.lock` + `--locked`),
+  pinned environment (`ubuntu-latest`), no `RUSTFLAGS` overrides.
+  Local-reproduction recipe, common reasons hashes diverge
+  (different glibc, different LLVM, local `~/.cargo/config.toml`),
+  guaranteed-reproducible recipe via `docker run rust:1.80-bookworm`.
+  Pre-emptive `slsa-verifier verify-artifact` snippet for when
+  Phase 27.2 wires the SLSA attestation.
+- `docs/src/SUMMARY.md` registers the new page.
+
+Deferred:
+- SLSA Level 2 attestation produced by
+  `actions/attest-build-provenance` per binary asset (snippet
+  documented; wires up when 27.2 release.yml lands).
+- `slsa-verifier verify-artifact` smoke test in CI to catch
+  attestation regressions.
+- Pinned-version `apt-get install` in `Dockerfile` so the
+  Debian-slim runtime layer is itself reproducible. Today
+  `apt-get install` pulls whatever's latest. Tracked under
+  Phase 34 hardening cross-link.
+
+Done when (revised): `slsa-verifier verify-artifact` against a
+release passes AND a third party rebuilds the binary in the
+documented Docker container and gets the same sha256. SBOM half
+done now; verifier wiring blocks on 27.2.
 
 #### 27.10 — Install docs + first-run   🔄
 
