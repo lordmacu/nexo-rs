@@ -328,22 +328,54 @@ a GH release with all 5 platform tarballs + sha256 sums within
 Done when an operator can `cosign verify-blob --bundle …
 nexo-rs.tar.gz` on a downloaded artifact and get green.
 
-#### 27.4 — Debian + RPM packages
+#### 27.4 — Debian + RPM packages   🔄
 
-- `cargo dist` extension producing `.deb` (Ubuntu / Debian) and
-  `.rpm` (Fedora / RHEL / openSUSE) from the same artifact set.
-- systemd unit file shipped at
-  `/lib/systemd/system/nexo-rs.service`.
-- Pre/post scripts: create `nexo` user, set ownership on
-  `/var/lib/nexo-rs/`, enable the unit on first install.
-- Package signing: GPG key for the apt repo, RPM-GPG-KEY for the
-  yum repo.
-- Apt repo hosted at `https://deb.lordmacu.dev/nexo-rs/` (or
-  GitHub Pages); yum repo equivalent.
+Build recipes + systemd unit + maintainer scripts shipped; signed
+apt / yum repo deferred (block on Phase 27.3 GPG/cosign infra).
 
-Done when an Ubuntu user runs the documented one-liner
-(`curl … | sudo apt-key add - && apt install nexo-rs`) and
-ends up with a running daemon under systemd.
+Shipped:
+- `packaging/debian/build.sh` — produces
+  `dist/nexo-rs_<version>_<arch>.deb` for amd64 (native) and arm64
+  (cross via `cargo-zigbuild`). Reads version + description from
+  `Cargo.toml`. Pre-install creates the `nexo` system user;
+  post-install owns `/var/lib/nexo-rs/`, `/var/log/nexo-rs/`,
+  `/etc/nexo-rs/` mode 0750; pre-removal stops the unit;
+  post-purge wipes state + drops the user.
+- `packaging/debian/nexo-rs.service` — systemd unit with hardening
+  defaults: `NoNewPrivileges`, `ProtectSystem=strict`,
+  `ProtectHome`, `PrivateTmp`, `PrivateDevices`,
+  `ProtectKernel*`, `ProtectControlGroups`, `RestrictNamespaces`,
+  `LockPersonality`, `RestrictRealtime`, `RestrictSUIDSGID`,
+  `RemoveIPC`, `ReadWritePaths` scoped to state + log dirs,
+  `LimitNOFILE=65536`, `TasksMax=4096`. `Restart=on-failure`
+  with backoff. 30s SIGTERM grace.
+- `packaging/debian/README.md` — local build paths, install
+  command, what the postinst sets up, hardening notes, removal
+  semantics, deferred apt-repo publish plan.
+- `packaging/rpm/nexo-rs.spec` — RPM spec for Fedora / RHEL /
+  openSUSE. Same systemd unit reused as `Source1`. `%pre` creates
+  the `nexo` user, `%post` chowns + prints next steps,
+  `%preun`/`%postun` use the systemd-rpm-macros for proper
+  service handling, `%postun` on full removal wipes state.
+- `packaging/rpm/build.sh` — produces `dist/nexo-rs-<version>-1.<dist>.<arch>.rpm`
+  for x86_64 (native) and aarch64 (cross). Stages a source tarball,
+  invokes `rpmbuild` with the workspace version injected.
+
+Deferred:
+- Apt repo at `https://lordmacu.github.io/nexo-rs/apt/` with a
+  signed `Release` file + GPG key — needs the key infra from
+  Phase 27.3.
+- Yum / dnf repo equivalent at `.../yum/` with `RPM-GPG-KEY-nexo`.
+- GitHub Pages publish job that mirrors `dist/*.deb` /
+  `dist/*.rpm` into the repo layout — needs Phase 27.2 release
+  workflow.
+- Auto-test that the deb actually installs cleanly on a fresh
+  Debian 12 / Ubuntu 24.04 container (CI matrix step).
+
+Done when (revised): an Ubuntu user adds the apt repo, runs
+`apt install nexo-rs`, and ends up with a daemon under systemd
+that came from a signed package. Recipe + unit + scripts done
+now; signed-repo half blocks on 27.2 + 27.3.
 
 #### 27.5 — Docker image at GHCR   ✅
 
