@@ -2142,6 +2142,7 @@ dependencies = [
  "humantime-serde",
  "nexo-driver-claude",
  "nexo-driver-types",
+ "parking_lot",
  "serde",
  "serde_json",
  "sqlx",

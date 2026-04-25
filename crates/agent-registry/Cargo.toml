@@ -17,6 +17,7 @@ arc-swap         = { workspace = true }
 async-trait      = { workspace = true }
 chrono           = { workspace = true }
 dashmap          = { workspace = true }
+parking_lot      = "0.12"
 humantime-serde  = { workspace = true }
 nexo-driver-claude = { version = "0.1.1", path = "../driver-claude" }
 nexo-driver-types  = { version = "0.1.1", path = "../driver-types" }

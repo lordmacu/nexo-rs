@@ -1,0 +1,333 @@
+//! `AgentRegistry` façade — single in-memory source of truth for
+//! every goal that has been admitted into the driver subsystem.
+//!
+//! Two layers:
+//!
+//! - In-process map keyed by `GoalId`, holding an `Arc<RegistryEntry>`
+//!   whose `snapshot: ArcSwap<AgentSnapshot>` lets readers
+//!   (`list_agents`, `agent_status`) see the latest turn / acceptance
+//!   without locking writers.
+//! - Optional persistent store (`AgentRegistryStore`) — every state
+//!   transition is mirrored to disk so reattach (67.B.4) can
+//!   rehydrate `Running` goals after a daemon restart.
+//!
+//! Capacity + queue: `admit()` enforces a global cap. Beyond it, the
+//! caller chooses to enqueue (FIFO) or reject. `release()` (called
+//! when a goal terminates) pops the next queued goal and returns it
+//! so the caller can hand it to the orchestrator.
+
+use std::collections::VecDeque;
+use std::sync::Arc;
+
+use arc_swap::ArcSwap;
+use chrono::Utc;
+use dashmap::DashMap;
+use nexo_driver_types::{AcceptanceVerdict, AttemptResult, GoalId};
+use parking_lot::Mutex;
+
+use crate::store::AgentRegistryStore;
+use crate::types::{
+    AgentHandle, AgentRunStatus, AgentSnapshot, AgentSummary, RegistryError,
+};
+
+/// Outcome of an `admit()` call.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum AdmitOutcome {
+    /// Slot was available; goal is now `Running`.
+    Admitted,
+    /// Cap reached and `enqueue=true`; goal is `Queued` at position N.
+    Queued { position: usize },
+    /// Cap reached and `enqueue=false`.
+    Rejected,
+}
+
+/// Internal entry — wraps the persistable handle behind an
+/// `ArcSwap<AgentSnapshot>` so readers never block on a writer.
+#[derive(Clone)]
+struct RegistryEntry {
+    handle_meta: Arc<Mutex<HandleMeta>>,
+    snapshot: Arc<ArcSwap<AgentSnapshot>>,
+}
+
+/// Mutable parts of `AgentHandle` that aren't the live snapshot.
+/// `phase_id` / `started_at` are immutable for the goal's lifetime
+/// so they live outside the lock for cheap reads.
+#[derive(Clone)]
+struct HandleMeta {
+    phase_id: String,
+    status: AgentRunStatus,
+    origin: Option<nexo_driver_claude::OriginChannel>,
+    dispatcher: Option<nexo_driver_claude::DispatcherIdentity>,
+    started_at: chrono::DateTime<Utc>,
+    finished_at: Option<chrono::DateTime<Utc>>,
+}
+
+pub struct AgentRegistry {
+    inner: DashMap<GoalId, RegistryEntry>,
+    queue: Mutex<VecDeque<GoalId>>,
+    cap: u32,
+    store: Arc<dyn AgentRegistryStore>,
+}
+
+impl AgentRegistry {
+    pub fn new(store: Arc<dyn AgentRegistryStore>, cap: u32) -> Self {
+        Self {
+            inner: DashMap::new(),
+            queue: Mutex::new(VecDeque::new()),
+            cap,
+            store,
+        }
+    }
+
+    /// Try to admit a fresh goal. If the cap is reached, either
+    /// enqueue (FIFO) or reject depending on `enqueue`.
+    pub async fn admit(
+        &self,
+        handle: AgentHandle,
+        enqueue: bool,
+    ) -> Result<AdmitOutcome, RegistryError> {
+        let goal_id = handle.goal_id;
+        let running = self.count_running();
+
+        let outcome = if running >= self.cap {
+            if !enqueue {
+                return Ok(AdmitOutcome::Rejected);
+            }
+            let mut q = self.queue.lock();
+            q.push_back(goal_id);
+            let position = q.len();
+            AdmitOutcome::Queued { position }
+        } else {
+            AdmitOutcome::Admitted
+        };
+
+        let mut h = handle;
+        h.status = match outcome {
+            AdmitOutcome::Admitted => AgentRunStatus::Running,
+            AdmitOutcome::Queued { .. } => AgentRunStatus::Queued,
+            AdmitOutcome::Rejected => unreachable!(),
+        };
+        let entry = RegistryEntry {
+            handle_meta: Arc::new(Mutex::new(HandleMeta {
+                phase_id: h.phase_id.clone(),
+                status: h.status,
+                origin: h.origin.clone(),
+                dispatcher: h.dispatcher.clone(),
+                started_at: h.started_at,
+                finished_at: h.finished_at,
+            })),
+            snapshot: Arc::new(ArcSwap::from_pointee(h.snapshot.clone())),
+        };
+        self.inner.insert(goal_id, entry);
+        self.store.upsert(&h).await?;
+        Ok(outcome)
+    }
+
+    /// Promote a queued goal to `Running` — called by the orchestrator
+    /// once the dispatch infrastructure is ready to spawn it. Returns
+    /// `false` if the goal was not queued (already running, or unknown).
+    pub async fn promote_queued(&self, goal_id: GoalId) -> Result<bool, RegistryError> {
+        let mut q = self.queue.lock();
+        if !q.iter().any(|g| *g == goal_id) {
+            return Ok(false);
+        }
+        q.retain(|g| *g != goal_id);
+        drop(q);
+        self.set_status(goal_id, AgentRunStatus::Running).await?;
+        Ok(true)
+    }
+
+    /// Mark a goal terminal and surface the next queued goal (if any).
+    pub async fn release(
+        &self,
+        goal_id: GoalId,
+        terminal: AgentRunStatus,
+    ) -> Result<Option<GoalId>, RegistryError> {
+        if !terminal.is_terminal() {
+            return Err(RegistryError::InvalidTransition {
+                from: AgentRunStatus::Running,
+                to: terminal,
+            });
+        }
+        // Set finished_at + status, persist.
+        if let Some(entry) = self.inner.get(&goal_id) {
+            let mut meta = entry.handle_meta.lock();
+            meta.status = terminal;
+            meta.finished_at = Some(Utc::now());
+        } else {
+            return Err(RegistryError::NotFound(goal_id));
+        }
+        self.persist(goal_id).await?;
+        // Peek the next queued goal — caller drives promotion via
+        // `promote_queued` so the queue and status flip stay in
+        // sync with the orchestrator's spawn cadence.
+        let next = self.queue.lock().front().copied();
+        Ok(next)
+    }
+
+    /// Apply a status change in-place. The caller is responsible for
+    /// validating the transition; we accept anything here so
+    /// `pause` / `resume` can move between Running ↔ Paused freely.
+    pub async fn set_status(
+        &self,
+        goal_id: GoalId,
+        status: AgentRunStatus,
+    ) -> Result<(), RegistryError> {
+        let entry = self
+            .inner
+            .get(&goal_id)
+            .ok_or(RegistryError::NotFound(goal_id))?;
+        {
+            let mut meta = entry.handle_meta.lock();
+            meta.status = status;
+            if status.is_terminal() && meta.finished_at.is_none() {
+                meta.finished_at = Some(Utc::now());
+            }
+        }
+        drop(entry);
+        self.persist(goal_id).await
+    }
+
+    /// Live snapshot. Cheap — readers never wait.
+    pub fn snapshot(&self, goal_id: GoalId) -> Option<AgentSnapshot> {
+        self.inner.get(&goal_id).map(|e| (**e.snapshot.load()).clone())
+    }
+
+    /// Compose a full `AgentHandle` for `agent_status`.
+    pub fn handle(&self, goal_id: GoalId) -> Option<AgentHandle> {
+        let entry = self.inner.get(&goal_id)?;
+        let meta = entry.handle_meta.lock().clone();
+        let snap = (**entry.snapshot.load()).clone();
+        Some(AgentHandle {
+            goal_id,
+            phase_id: meta.phase_id,
+            status: meta.status,
+            origin: meta.origin,
+            dispatcher: meta.dispatcher,
+            started_at: meta.started_at,
+            finished_at: meta.finished_at,
+            snapshot: snap,
+        })
+    }
+
+    /// Snapshot of every in-flight + queued goal, sorted by start
+    /// time descending. Combines memory state with persisted
+    /// terminal goals so the consumer sees one unified list.
+    pub async fn list(&self) -> Result<Vec<AgentSummary>, RegistryError> {
+        let mut out: Vec<AgentSummary> = self
+            .inner
+            .iter()
+            .map(|e| {
+                let meta = e.value().handle_meta.lock().clone();
+                let snap = (**e.value().snapshot.load()).clone();
+                let h = AgentHandle {
+                    goal_id: *e.key(),
+                    phase_id: meta.phase_id,
+                    status: meta.status,
+                    origin: meta.origin,
+                    dispatcher: meta.dispatcher,
+                    started_at: meta.started_at,
+                    finished_at: meta.finished_at,
+                    snapshot: snap,
+                };
+                AgentSummary::from_handle(&h)
+            })
+            .collect();
+        // Add terminal-only rows from store the registry no longer
+        // tracks in-memory (e.g. evicted by `release`).
+        let persisted = self.store.list().await?;
+        for h in persisted {
+            if !out.iter().any(|r| r.goal_id == h.goal_id) {
+                out.push(AgentSummary::from_handle(&h));
+            }
+        }
+        out.sort_by(|a, b| b.wall.cmp(&a.wall));
+        Ok(out)
+    }
+
+    /// Count of `Running` goals — used to enforce the global cap.
+    /// Does not count `Queued` or terminal states.
+    pub fn count_running(&self) -> u32 {
+        self.inner
+            .iter()
+            .filter(|e| e.value().handle_meta.lock().status == AgentRunStatus::Running)
+            .count() as u32
+    }
+
+    /// Apply the next `AttemptResult` to the snapshot. Idempotent on
+    /// the same `(goal_id, turn_index)` — repeated events from
+    /// at-least-once delivery don't double-bump anything.
+    pub async fn apply_attempt(&self, ev: &AttemptResult) -> Result<(), RegistryError> {
+        let entry = self
+            .inner
+            .get(&ev.goal_id)
+            .ok_or(RegistryError::NotFound(ev.goal_id))?;
+        let cur = (**entry.snapshot.load()).clone();
+        if ev.turn_index < cur.turn_index {
+            // Out-of-order replay — ignore.
+            return Ok(());
+        }
+        let next = AgentSnapshot {
+            turn_index: ev.turn_index,
+            max_turns: cur.max_turns,
+            usage: ev.usage_after.clone(),
+            last_acceptance: ev.acceptance.clone(),
+            last_decision_summary: summarise_decisions(ev),
+            last_event_at: Utc::now(),
+            last_diff_stat: ev
+                .harness_extras
+                .get("worktree.diff_stat")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned)
+                .or(cur.last_diff_stat),
+            last_progress_text: ev.final_text.clone().or(cur.last_progress_text),
+        };
+        entry.snapshot.store(Arc::new(next));
+        self.persist(ev.goal_id).await
+    }
+
+    /// Override the snapshot's `max_turns` — called once at admit
+    /// time when the orchestrator knows the budget cap. We keep it
+    /// out of `admit()` to avoid threading it through callers that
+    /// don't have the budget yet.
+    pub fn set_max_turns(&self, goal_id: GoalId, max_turns: u32) {
+        if let Some(entry) = self.inner.get(&goal_id) {
+            let cur = (**entry.snapshot.load()).clone();
+            entry.snapshot.store(Arc::new(AgentSnapshot {
+                max_turns,
+                ..cur
+            }));
+        }
+    }
+
+    /// Force-update a single field of the snapshot for callers that
+    /// learn data outside an `AttemptResult` (e.g. an acceptance
+    /// verdict published separately).
+    pub fn set_acceptance(&self, goal_id: GoalId, verdict: AcceptanceVerdict) {
+        if let Some(entry) = self.inner.get(&goal_id) {
+            let cur = (**entry.snapshot.load()).clone();
+            entry.snapshot.store(Arc::new(AgentSnapshot {
+                last_acceptance: Some(verdict),
+                last_event_at: Utc::now(),
+                ..cur
+            }));
+        }
+    }
+
+    async fn persist(&self, goal_id: GoalId) -> Result<(), RegistryError> {
+        let Some(handle) = self.handle(goal_id) else {
+            return Err(RegistryError::NotFound(goal_id));
+        };
+        self.store.upsert(&handle).await?;
+        Ok(())
+    }
+}
+
+fn summarise_decisions(ev: &AttemptResult) -> Option<String> {
+    if ev.decisions_recorded.is_empty() {
+        return None;
+    }
+    let last = ev.decisions_recorded.last()?;
+    let json = serde_json::to_string(last).ok()?;
+    Some(json.chars().take(200).collect())
+}
