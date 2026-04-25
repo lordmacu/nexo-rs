@@ -30,31 +30,49 @@ Historical detailed notes that were previously written in Spanish are preserved 
 - Why deferred: medium-priority compliance/forensics feature.
 - Target: security observability pass.
 
-### Memory and transcripts
+### Pollers (Phase 19 V2)
 
-3. **Session log search has no index (substring scan only)**
-- Missing: scalable indexing (likely SQLite FTS) for large transcript sets.
-- Why deferred: current workloads are still small/fast enough.
-- Target: when transcript volume grows.
+P-1. **`inventory!` macro registry for built-in pollers**
+- Missing: compile-time auto-discovery so a new built-in lands by
+  adding a single `pub mod` line, no `register_all` edit.
+- Why deferred: pre-optimisation. The four current built-ins
+  (gmail, rss, webhook_poll, google_calendar) plus extension-loaded
+  pollers via the new `capabilities.pollers` capability are easy to
+  maintain by hand; the explicit `register_all` is a useful audit
+  point. Worth revisiting only when the list crosses ~20 entries.
+- Target: when poller count grows.
 
-4. **Transcript-level sensitive redaction is optional but not implemented**
-- Missing: redaction pass for sensitive fields before persistence.
-- Why deferred: depends on final secret handling policy and false-positive tolerance.
-- Target: privacy hardening.
+P-2. **Multi-host runner orchestration**
+- Missing: a coordinator that decides which host owns which job
+  (the cross-process SQLite lease already prevents double-tick;
+  what's missing is balanced placement and failover for tens of
+  thousands of jobs spread across N daemons).
+- Why deferred: speculative without a real multi-host deploy.
+  Single-host workloads scale fine on the current model.
+- Target: when a deployment actually needs >1 daemon.
+
+P-3. **Push-based watchers (Gmail Push, generic inbound webhooks)**
+- Missing: an HTTP server that accepts pushed events and adapts
+  them to the same downstream `OutboundDelivery` plumbing the
+  poller uses.
+- Why deferred: opposite shape from polling — needs a public TLS
+  surface (Cloudflare tunnel?) plus auth on inbound. Better as
+  its own crate (Phase 20?), not an extension of the poller.
+- Target: separate phase; keep notes here while it's only an idea.
 
 ### Extensions and platform
 
-5. **Skill dependency strict mode is optional and not implemented**
+3. **Skill dependency strict mode is optional and not implemented**
 - Missing: strict load mode for missing env/bin requirements.
 - Why deferred: current design prefers warn-only startup behavior.
 - Target: extension UX hardening.
 
-6. **Version constraints for required binaries are not enforced**
+4. **Version constraints for required binaries are not enforced**
 - Missing: `requires.bin_versions` support.
 - Why deferred: implementation effort vs low current demand.
 - Target: extension manifest evolution.
 
-7. **Some write-capability toggles are env-only (no setup UX yet)**
+5. **Some write-capability toggles are env-only (no setup UX yet)**
 - Missing: setup/doctor wizard integration for operational toggles.
 - Why deferred: functionality exists; UX layer postponed.
 - Target: setup polish.
@@ -68,6 +86,7 @@ Historical detailed notes that were previously written in Spanish are preserved 
 - Docs sync gate and mdBook English checks enabled.
 - 2026-04-25 — SessionLogs tool registered in agent bootstrap and mcp-server (gated on non-empty `transcripts_dir`).
 - 2026-04-25 — TaskFlow runtime wiring: shared `FlowManager`, `WaitEngine` tick loop, `taskflow.resume` NATS bridge, and tool actions `wait`/`finish`/`fail` with guardrails (`timer_max_horizon`, non-empty topic+correlation).
+- 2026-04-25 — Transcripts FTS5 index + redaction module: `transcripts.yaml` config, write-through index from `TranscriptWriter`, `session_logs search` uses FTS when present (substring fallback otherwise), opt-in regex redactor with 6 built-in patterns (Bearer JWT, sk-/sk-ant-, AWS access key, hex token, home path) and operator-defined `extra_patterns`.
 
 ## Maintenance note
 
