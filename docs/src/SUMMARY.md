@@ -97,6 +97,7 @@
 - [Config hot-reload](./ops/hot-reload.md)
 - [Capability toggles](./ops/capabilities.md)
 - [Context optimization](./ops/context-optimization.md)
+- [Link understanding](./ops/link-understanding.md)
 
 # Recipes
 

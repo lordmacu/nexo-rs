@@ -40,7 +40,7 @@ written).
 Each entry lists the gap surfaced by the comparison with `research/`
 (OpenClaw reference impl) plus the proposed shape.
 
-### Phase 21 — Link understanding
+### Phase 21 — Link understanding   ✅
 
 **Goal:** When a user message contains a URL, automatically fetch,
 parse, and inject a summary block into the agent's context for that

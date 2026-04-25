@@ -421,6 +421,16 @@ old policy; subsequent turns flip to the new one.
 - Per-channel rotation walkthrough lives in
   [Recipes — A/B prompt swap](../recipes/hot-reload.md#2-ab-test-a-system-prompt).
 
+## Link understanding
+
+Per-agent (and per-binding) toggle that fetches URLs in the user's
+message and injects a `# LINK CONTEXT` block. Off by default. Full
+schema, caps, and SSRF denylist live on
+[Link understanding](../ops/link-understanding.md). The field is
+`link_understanding` at agent scope and at each
+`inbound_bindings[]` entry; binding value replaces agent default,
+omitted = inherit.
+
 ## Common mistakes
 
 - **Forgetting `plugins: [...]`.** An agent without `plugins` has no

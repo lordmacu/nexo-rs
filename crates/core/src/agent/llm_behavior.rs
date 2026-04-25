@@ -515,6 +515,36 @@ impl LlmAgentBehavior {
                  your turn-final reply to the user must be in {lang}."
             ));
         }
+        // Phase 21 — link understanding. When the agent has it
+        // enabled and the user message contains URLs, fetch each one
+        // and inject a `# LINK CONTEXT` block so the LLM has grounded
+        // facts to reason over. Lives in `channel_meta_parts` so it
+        // sits in the per-turn (non-cached) section of the prompt —
+        // every turn fetches fresh and the cache is keyed on URL,
+        // not on the prompt blob.
+        if effective.link_understanding.enabled {
+            if let Some(extractor) = ctx.link_extractor.as_ref() {
+                let urls = crate::link_understanding::detect_urls(
+                    &msg.text,
+                    effective.link_understanding.max_links_per_turn,
+                );
+                if !urls.is_empty() {
+                    let cfg = effective.link_understanding.clone();
+                    let extractor = Arc::clone(extractor);
+                    let mut summaries = Vec::with_capacity(urls.len());
+                    for u in urls {
+                        if let Some(s) = extractor.fetch(&u, &cfg).await {
+                            summaries.push(s);
+                        }
+                    }
+                    let block = crate::link_understanding::render_block(&summaries);
+                    if !block.is_empty() {
+                        channel_meta_parts.push(block);
+                    }
+                }
+            }
+        }
+
         // Inbound metadata — give the LLM the current sender so it
         // doesn't have to ask ("¿cuál es tu teléfono?") when the
         // channel already carries it (WhatsApp JID, Telegram user id,

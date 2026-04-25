@@ -60,6 +60,10 @@ pub struct AgentContext {
     /// is disabled or initialization failed; consumers fall back to
     /// JSONL-only persistence + substring scan.
     pub transcripts_index: Option<Arc<TranscriptsIndex>>,
+    /// Phase 21 — shared link extractor (HTTP client + LRU cache).
+    /// `None` in early-boot / test contexts; llm_behavior treats
+    /// that as "link understanding disabled regardless of config".
+    pub link_extractor: Option<Arc<crate::link_understanding::LinkExtractor>>,
 }
 impl AgentContext {
     pub fn new(
@@ -84,6 +88,7 @@ impl AgentContext {
             breakers: None,
             redactor: None,
             transcripts_index: None,
+            link_extractor: None,
         }
     }
     pub fn with_redactor(mut self, redactor: Arc<Redactor>) -> Self {
@@ -92,6 +97,13 @@ impl AgentContext {
     }
     pub fn with_transcripts_index(mut self, index: Arc<TranscriptsIndex>) -> Self {
         self.transcripts_index = Some(index);
+        self
+    }
+    pub fn with_link_extractor(
+        mut self,
+        ext: Arc<crate::link_understanding::LinkExtractor>,
+    ) -> Self {
+        self.link_extractor = Some(ext);
         self
     }
     pub fn with_memory(mut self, memory: Arc<LongTermMemory>) -> Self {

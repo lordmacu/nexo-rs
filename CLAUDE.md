@@ -83,7 +83,7 @@ Full detail with sub-phases and done criteria: `proyecto/PHASES.md`
 | 18 | Config hot-reload | 18.1 deps+schema, 18.2 RuntimeSnapshot+ArcSwap, 18.3 ReloadCommand channel, 18.4 file watcher, 18.5 coordinator, 18.6 intake migration, 18.7 telemetry, 18.8 CLI+boot wiring, 18.9 tests | 9/9 ✅ |
 | 20 | `agent_turn` poller | 20.1 PollContext.llm_*, 20.2 with_llm builder, 20.3 agent_turn builtin (cron-style scheduled LLM turn → channel), 20.4 tests + example YAML | 4/4 ✅ |
 
-**Progress: 144 / 144 implemented sub-phases (0 deferred). Phases 21–26 backlogged in `PHASES.md` as OpenClaw-parity work (link understanding, Slack/Discord plugins, realtime voice, image generation, web search, pairing).**
+**Progress: 145 / 145 implemented sub-phases (0 deferred). Phase 21 (link understanding) shipped. Phases 22–26 backlogged in `PHASES.md` as OpenClaw-parity work (Slack/Discord plugins, realtime voice, image generation, web search, pairing).**
 
 ### Progress tracking rule
 

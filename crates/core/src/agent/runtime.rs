@@ -83,6 +83,9 @@ pub struct AgentRuntime {
     /// `None` keeps `session_logs` action `search` on the JSONL
     /// substring fallback.
     transcripts_index: Option<Arc<super::transcripts_index::TranscriptsIndex>>,
+    /// Phase 21 — shared link extractor (HTTP client + LRU cache).
+    /// `None` keeps link understanding off regardless of YAML.
+    link_extractor: Option<Arc<crate::link_understanding::LinkExtractor>>,
     /// Legacy cache — still owned by the runtime for back-compat with
     /// any test construction path. Hot-reload reads the per-snapshot
     /// `tool_cache` instead; see [`RuntimeSnapshot::tool_cache`].
@@ -146,6 +149,7 @@ impl AgentRuntime {
             breakers: None,
             redactor: None,
             transcripts_index: None,
+            link_extractor: None,
             tool_cache: Arc::new(super::tool_registry_cache::ToolRegistryCache::new()),
             reload_tx,
             reload_rx: Arc::new(Mutex::new(Some(reload_rx))),
@@ -166,6 +170,16 @@ impl AgentRuntime {
         index: Arc<super::transcripts_index::TranscriptsIndex>,
     ) -> Self {
         self.transcripts_index = Some(index);
+        self
+    }
+    /// Attach the shared link extractor. All `AgentContext`s built by
+    /// this runtime inherit it so `llm_behavior` can fetch URLs in
+    /// inbound messages and build the `# LINK CONTEXT` block.
+    pub fn with_link_extractor(
+        mut self,
+        ext: Arc<crate::link_understanding::LinkExtractor>,
+    ) -> Self {
+        self.link_extractor = Some(ext);
         self
     }
     pub fn with_peers(mut self, peers: Arc<PeerDirectory>) -> Self {
@@ -247,6 +261,7 @@ impl AgentRuntime {
         let breakers = self.breakers.clone();
         let redactor = self.redactor.clone();
         let transcripts_index = self.transcripts_index.clone();
+        let link_extractor = self.link_extractor.clone();
         let router = Arc::clone(&self.router);
         let session_txs = Arc::clone(&self.session_txs);
         let debounce_ms = self.debounce_ms;
@@ -285,6 +300,9 @@ impl AgentRuntime {
             }
             if let Some(ref r) = redactor {
                 ctx = ctx.with_redactor(Arc::clone(r));
+            }
+            if let Some(ref ext) = link_extractor {
+                ctx = ctx.with_link_extractor(Arc::clone(ext));
             }
             if let Some(ref idx) = transcripts_index {
                 ctx = ctx.with_transcripts_index(Arc::clone(idx));
@@ -499,6 +517,9 @@ impl AgentRuntime {
                             }
                             if let Some(ref idx) = transcripts_index {
                                 ctx = ctx.with_transcripts_index(Arc::clone(idx));
+                            }
+                            if let Some(ref ext) = link_extractor {
+                                ctx = ctx.with_link_extractor(Arc::clone(ext));
                             }
                             let behavior = Arc::clone(&agent.behavior);
                             let cancel = shutdown.clone();
