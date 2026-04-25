@@ -1,0 +1,46 @@
+# Phase 67.A — project tracker subsystem.
+#
+# `tracker:` is read-only. It parses PHASES.md and FOLLOWUPS.md from
+# `root` (or cwd if blank) and exposes them through the read tools
+# `project_status`, `project_phases_list`, `followup_detail`,
+# `git_log_for_phase`. These tools are always safe to register even
+# for non-trusted senders — they never mutate state.
+#
+# `program_phase:` and `agent_registry:` are consumed by Phase 67.E /
+# 67.B which add async multi-agent dispatch from chat / CLI. They are
+# documented here so the YAML is the single source of truth, but
+# `program_phase.enabled: false` keeps dispatch tools off until the
+# operator opts in explicitly.
+
+tracker:
+  enabled: true
+  # Blank → use current working directory of the daemon process.
+  root: ${NEXO_PROJECT_ROOT:-}
+  watch: true
+  ttl: 60s
+  git_log:
+    enabled: true
+    timeout: 5s
+    max_commits: 5
+
+program_phase:
+  enabled: false              # opt-in once 67.E.1 lands
+  require_trusted: true       # only pairing.trusted=true senders may dispatch
+  max_concurrent_agents: 4    # global cap across all dispatchers
+  max_concurrent_per_sender: 2
+  progress_every_turns: 5
+  # Shell hooks run arbitrary commands inside the daemon. Stays off
+  # by default; honours the PROGRAM_PHASE_ALLOW_SHELL_HOOKS env
+  # toggle reported by `agent doctor capabilities`.
+  allow_shell_hooks: false
+  hook_timeout: 30s
+  summary_byte_cap: 3500
+  max_chain_depth: 5          # cap on dispatch_phase hook fan-out
+
+agent_registry:
+  # Empty path → in-memory only (registry state is lost on daemon
+  # restart). File path → SQLite, survives restart and powers
+  # reattach + audit.
+  store: ${NEXO_AGENT_REGISTRY_DB:-/var/lib/nexo-rs/agents.db}
+  reattach_on_boot: true
+  log_buffer_lines: 200

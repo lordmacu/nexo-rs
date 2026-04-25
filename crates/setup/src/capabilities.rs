@@ -152,6 +152,14 @@ const INVENTORY: &[CapabilityToggle] = &[
         effect: "Allow `scp_upload` (write to remote filesystem).",
         hint: "export SSH_EXEC_ALLOW_WRITES=true",
     },
+    CapabilityToggle {
+        extension: "project-tracker",
+        env_var: "PROGRAM_PHASE_ALLOW_SHELL_HOOKS",
+        kind: ToggleKind::Boolean,
+        risk: Risk::High,
+        effect: "Let `program_phase` register shell-cmd completion hooks that run inside the daemon process.",
+        hint: "export PROGRAM_PHASE_ALLOW_SHELL_HOOKS=true",
+    },
 ];
 
 pub fn inventory() -> &'static [CapabilityToggle] {
