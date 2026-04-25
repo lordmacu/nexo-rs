@@ -15,8 +15,14 @@ and the project adheres to [Semantic Versioning](https://semver.org)
   starts a loopback HTTP server, mints a fresh 24-char random
   password per launch, and prints a new `https://…trycloudflare.com`
   URL every time. HTTP Basic Auth (`admin` / `<password>`) gates
-  every request. Placeholder "hello" page today — React UI lands
-  next. See [CLI reference — admin](https://lordmacu.github.io/nexo-rs/cli/reference.html#admin).
+  every request. Serves the React + Vite + Tailwind bundle from
+  `admin-ui/` embedded at Rust compile time via `rust-embed`. See
+  [CLI reference — admin](https://lordmacu.github.io/nexo-rs/cli/reference.html#admin).
+- `admin-ui/` scaffold (React 18, Vite 5, TS 5, Tailwind 3). First
+  page is a minimal "hello" layout; the full admin surface (agent
+  directory, DLQ, live reload, config editor) lands in follow-ups.
+  `scripts/bootstrap.sh` runs `npm install && npm run build`
+  automatically when `npm` is on PATH.
 - Native / no-Docker install path: `docs/src/getting-started/install-native.md` +
   idempotent `scripts/bootstrap.sh` (Linux, macOS, Termux).
 - Termux (Android) support:

@@ -330,6 +330,18 @@ fi
 if [[ "$SKIP_BUILD" == "1" ]]; then
   warn "--skip-build: not running cargo build"
 else
+  # Build the React admin bundle first so rust-embed picks up the
+  # current dist/ tree at Rust compile time. Skipped when node isn't
+  # around — the Rust side ships a fallback page for that case.
+  if [[ -f "admin-ui/package.json" ]] && have npm; then
+    say "Building admin-ui (npm run build)"
+    (cd admin-ui && (npm ci --prefer-offline --no-audit --no-fund >/dev/null 2>&1 || npm install --no-audit --no-fund) && npm run build)
+    ok "admin-ui dist rebuilt"
+  elif [[ -f "admin-ui/package.json" ]]; then
+    warn "skipping admin-ui build — 'npm' not on PATH"
+    warn "  the agent binary will fall back to the built-in bundle-missing page"
+  fi
+
   say "Building agent (cargo build --release)"
   cargo build --release --bin agent
   ok "binary at ./target/release/agent"
