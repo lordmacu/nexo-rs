@@ -15,7 +15,9 @@ pub mod event;
 pub mod stream;
 pub mod turn;
 
-pub use binding::{MemoryBindingStore, SessionBinding, SessionBindingStore};
+pub use binding::{
+    DispatcherIdentity, MemoryBindingStore, OriginChannel, SessionBinding, SessionBindingStore,
+};
 #[cfg(feature = "sqlite")]
 pub use binding_sqlite::SqliteBindingStore;
 pub use child::ChildHandle;
