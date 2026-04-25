@@ -1,0 +1,42 @@
+# release-plz workspace config. Defaults aim for: open a Release PR on every
+# main push, only bump crates that actually changed, publish in topological
+# order on merge.
+#
+# Reference: https://release-plz.ieni.dev/docs/config
+
+[workspace]
+# Tag every crate individually so cargo can resolve `nexo-X = "0.1.Y"` deps
+# precisely. The default `vX.Y.Z` workspace-wide tag would conflate them.
+git_tag_name = "{{ package }}-v{{ version }}"
+git_release_name = "{{ package }} v{{ version }}"
+
+# Generate / update each crate's CHANGELOG.md from conventional commits.
+changelog_update = true
+changelog_path = "./CHANGELOG.md"
+
+# Open a single "release-plz" PR that batches every crate to bump, instead of
+# one PR per crate. Easier to review when many crates changed in one cycle.
+pr_name = "release({{ package }}): {{ version }}"
+pr_branch_prefix = "release-plz/"
+
+# Default semver intent: patch bumps for fix:/chore:/docs:, minor for feat:,
+# major for `!` or `BREAKING CHANGE:`. Override per-crate below if needed.
+semver_check = true
+
+# Publish settings shared by every crate.
+publish_allow_dirty = false      # CI tree must be clean — no uncommitted WIP
+publish_no_verify   = false      # full verify (compile) before upload
+publish_timeout     = "30m"      # generous: cold cache builds can be slow
+
+# The workspace bin (`nexo-rs`) is published last so all internal deps are
+# already on the registry before its `Cargo.toml` is resolved.
+[[package]]
+name = "nexo-rs"
+publish = true
+release = true
+
+# Internal crates intentionally not published yet (none currently).
+# To skip a crate, add:
+#   [[package]]
+#   name = "nexo-internal"
+#   publish = false

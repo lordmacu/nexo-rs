@@ -1,0 +1,44 @@
+name: release-plz
+
+# release-plz watches the workspace for crate-source changes since the last
+# release tag. On every push to `main` it:
+#   1. opens (or updates) a "Release PR" that bumps changed crates' versions
+#      following semver intent inferred from commit messages + cargo-semver-checks,
+#      regenerates each crate's CHANGELOG.md, and tags.
+#   2. on merge of that PR, publishes the bumped crates to crates.io in
+#      topological order, sleeping between each so the index has time to
+#      propagate.
+#
+# Required repo secrets:
+#   CARGO_REGISTRY_TOKEN — crates.io API token (https://crates.io/me)
+#   GITHUB_TOKEN         — provided by Actions, no setup needed
+#
+# Workflow is skipped when the commit message contains `[skip release-plz]`.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  pull-requests: write
+  contents: write
+
+jobs:
+  release-plz:
+    name: release-plz
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '[skip release-plz]')"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # release-plz needs full history to compute diffs
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run release-plz
+        uses: MarcoIeni/release-plz-action@v0.5
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
