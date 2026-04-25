@@ -45,11 +45,20 @@ You should see a Telegram message every 30 s saying
 
 The extension speaks one JSON-RPC method per line on stdin/stdout:
 
-| method        | params                                                 | result                                                                      |
-|---------------|---------------------------------------------------------|------------------------------------------------------------------------------|
-| `initialize`  | `{ name, version }`                                     | `{ name, version, capabilities: { pollers: [...] } }`                        |
-| `poll_tick`   | `{ kind, job_id, agent_id, cursor, config, now }`       | `{ items_seen, items_dispatched, deliver: [...], next_cursor, next_interval_secs }` |
-| `shutdown`    | `{}`                                                    | `{}`                                                                          |
+| method            | params                                                 | result                                                                      |
+|-------------------|---------------------------------------------------------|------------------------------------------------------------------------------|
+| `initialize`      | `{ name, version }`                                     | `{ name, version, capabilities: { pollers: [...] } }`                        |
+| `poll_tick`       | `{ kind, job_id, agent_id, cursor, config, now }`       | `{ items_seen, items_dispatched, deliver: [...], next_cursor, next_interval_secs }` |
+| `poll_list_tools` | `{ kind }`                                              | `[{ name, description, parameters }, ...]` (JSON Schema each)                |
+| `poll_tool_call`  | `{ kind, tool_name, args }`                             | `<JSON>` — whatever the tool returns                                         |
+| `shutdown`        | `{}`                                                    | `{}`                                                                          |
+
+`poll_list_tools` is queried once at boot. The runtime caches the
+result and exposes each entry as an LLM tool registered on the
+agent's `ToolRegistry` — same shape as the six generic
+`pollers_*`. When the LLM invokes the tool, the runtime forwards
+it as `poll_tool_call { kind, tool_name, args }` to the same
+extension subprocess.
 
 `cursor` is base64-url (no padding). The extension persists its
 own opaque bytes — Gmail's `historyId`, RSS's `etag`, Calendar's
