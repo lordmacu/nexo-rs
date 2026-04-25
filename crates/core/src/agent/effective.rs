@@ -56,6 +56,12 @@ pub struct EffectiveBindingPolicy {
     /// keyword and an absent agent-level limit resolve to `None`.
     pub sender_rate_limit: Option<SenderRateLimitConfig>,
     pub allowed_delegates: Vec<String>,
+    /// Output language for LLM replies. `None` = no directive (model
+    /// picks based on user input). When `Some(lang)`, the runtime
+    /// renders a `# OUTPUT LANGUAGE` system block telling the model
+    /// to reply in that language while keeping workspace docs
+    /// (English) as-is.
+    pub language: Option<String>,
 }
 
 impl EffectiveBindingPolicy {
@@ -73,6 +79,7 @@ impl EffectiveBindingPolicy {
             system_prompt: resolve_prompt(agent, binding),
             sender_rate_limit: resolve_rate_limit(agent, binding),
             allowed_delegates: resolve_delegates(agent, binding),
+            language: resolve_language(agent, binding),
         }
     }
 
@@ -89,6 +96,7 @@ impl EffectiveBindingPolicy {
             skills: agent.skills.clone(),
             model: agent.model.clone(),
             system_prompt: agent.system_prompt.clone(),
+            language: agent.language.clone(),
             sender_rate_limit: agent.sender_rate_limit.clone(),
             allowed_delegates: agent.allowed_delegates.clone(),
         }
@@ -199,6 +207,14 @@ fn resolve_delegates(agent: &AgentConfig, binding: Option<&InboundBinding>) -> V
         .unwrap_or_else(|| agent.allowed_delegates.clone())
 }
 
+fn resolve_language(agent: &AgentConfig, binding: Option<&InboundBinding>) -> Option<String> {
+    binding
+        .and_then(|b| b.language.clone())
+        .or_else(|| agent.language.clone())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,6 +255,7 @@ mod tests {
             description: String::new(),
             google_auth: None,
             credentials: Default::default(),
+            language: None,
             outbound_allowlist: OutboundAllowlistConfig {
                 whatsapp: vec!["573000000000".into()],
                 telegram: Vec::new(),
@@ -411,6 +428,70 @@ mod tests {
         // unbound paths rely on this).
         assert_eq!(eff.allowed_tools, a.allowed_tools);
         assert_eq!(eff.skills, a.skills);
+    }
+
+    #[test]
+    fn language_inherits_from_agent_when_binding_omits_it() {
+        let mut a = sample_agent();
+        a.language = Some("es".into());
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "telegram".into(),
+            ..Default::default()
+        });
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+        assert_eq!(eff.language.as_deref(), Some("es"));
+    }
+
+    #[test]
+    fn language_binding_override_wins_over_agent_level() {
+        let mut a = sample_agent();
+        a.language = Some("es".into());
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "telegram".into(),
+            language: Some("en".into()),
+            ..Default::default()
+        });
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+        assert_eq!(eff.language.as_deref(), Some("en"));
+    }
+
+    #[test]
+    fn language_none_when_neither_agent_nor_binding_set_it() {
+        let mut a = sample_agent();
+        a.language = None;
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "telegram".into(),
+            ..Default::default()
+        });
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+        assert_eq!(eff.language, None);
+    }
+
+    #[test]
+    fn language_whitespace_only_treated_as_none() {
+        // Operator typo: `language: "  "`. We don't want to render an
+        // empty `# OUTPUT LANGUAGE` block — better to fall through.
+        let mut a = sample_agent();
+        a.language = Some("   ".into());
+        let eff = EffectiveBindingPolicy::from_agent_defaults(&a);
+        assert_eq!(
+            EffectiveBindingPolicy {
+                language: a.language.clone(),
+                ..eff.clone()
+            }
+            .language
+            .as_deref(),
+            Some("   "),
+            "from_agent_defaults preserves the raw string (no trim)"
+        );
+        // resolve() goes through resolve_language which trims; that's
+        // the path the runtime takes.
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "telegram".into(),
+            ..Default::default()
+        });
+        let resolved = EffectiveBindingPolicy::resolve(&a, 0);
+        assert_eq!(resolved.language, None);
     }
 
     #[test]

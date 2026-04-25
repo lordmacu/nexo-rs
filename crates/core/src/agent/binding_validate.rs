@@ -492,6 +492,7 @@ mod tests {
             description: String::new(),
             google_auth: None,
             credentials: Default::default(),
+            language: None,
             outbound_allowlist: OutboundAllowlistConfig::default(),
         }
     }

@@ -46,6 +46,7 @@ fn agent_with_inline_google(id: &str) -> AgentConfig {
         }),
         outbound_allowlist: OutboundAllowlistConfig::default(),
         credentials: AgentCredentialsConfig::default(),
+        language: None,
     }
 }
 

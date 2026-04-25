@@ -92,6 +92,7 @@ fn base_agent() -> AgentConfig {
         outbound_allowlist: OutboundAllowlistConfig::default(),
         google_auth: None,
         credentials: Default::default(),
+            language: None,
         inbound_bindings: vec![InboundBinding {
             plugin: "whatsapp".into(),
             allowed_tools: Some(vec!["old_tool".into()]),

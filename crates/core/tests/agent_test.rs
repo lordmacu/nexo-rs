@@ -42,6 +42,7 @@ fn test_config(id: &str) -> AgentConfig {
         outbound_allowlist: Default::default(),
         google_auth: None,
         credentials: Default::default(),
+            language: None,
     }
 }
 
