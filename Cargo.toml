@@ -136,10 +136,10 @@ nexo-core = { version = "0.1.1", path = "crates/core" }
 nexo-extensions = { version = "0.1.1", path = "crates/extensions" }
 nexo-llm = { version = "0.1.1", path = "crates/llm" }
 nexo-mcp = { version = "0.1.1", path = "crates/mcp" }
-nexo-memory = { version = "0.1.1", path = "crates/memory" }
+nexo-memory = { version = "0.1.2", path = "crates/memory" }
 nexo-taskflow = { version = "0.1.1", path = "crates/taskflow" }
 nexo-web-search = { version = "0.1.1", path = "crates/web-search" }
-nexo-pairing = { version = "0.1.1", path = "crates/pairing" }
+nexo-pairing = { version = "0.1.2", path = "crates/pairing" }
 tokio-util          = { workspace = true }
 tracing             = { workspace = true }
 tracing-subscriber  = { workspace = true }

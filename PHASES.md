@@ -184,6 +184,62 @@ Done criteria:
 
 Reference: `research/src/pairing/`, `research/apps/`.
 
+#### 26.y — Pairing telemetry counters (rest)   ⬜
+
+Tracks **PR-2** in `FOLLOWUPS.md`. Wire the remaining counters
+the spec called for, on top of `pairing_inbound_challenged_total`
+already shipped in 26.x:
+
+- `pairing_requests_pending{channel}` (gauge)
+- `pairing_approvals_total{channel,result}`
+- `pairing_codes_expired_total`
+- `pairing_bootstrap_tokens_issued_total`
+
+Consumer: admin-ui Phase A4 dashboard.
+
+#### 26.z — `tunnel.url` integration in URL resolver   ⬜
+
+Tracks **PR-3** in `FOLLOWUPS.md`. `nexo pair start` honours only
+`--public-url` today; spec'd priority chain places `tunnel.url`
+second. Blocked on `nexo-tunnel` exposing a read-only public-URL
+accessor (small refactor in tunnel crate).
+
+#### 26.aa — `pair_approve` scope-gated agent tool   ⬜  (security review required)
+
+Tracks **PR-5** in `FOLLOWUPS.md`. Built-in tool that lets agents
+approve pending pairings from a trusted channel, scoped via
+`EffectiveBindingPolicy::allowed_tools`. Opens prompt-injection
+vectors — needs a clear trust model before landing.
+
+#### 26.ab — `config/pairing.yaml` loader   ⬜
+
+Tracks **PR-6** in `FOLLOWUPS.md`. Move hardcoded paths
+(`<memory_dir>/pairing.db`, `~/.nexo/secret/pairing.key`) and
+`--public-url` to a `config/pairing.yaml` with `storage.path`,
+`setup_code.secret_path`, `default_ttl_secs`, `public_url`,
+`ws_cleartext_allow`. Also unblocks `nexo-tunnel` URL accessor
+work in 26.z.
+
+#### 19.x — Pollers V2 backlog   ⬜
+
+Tracks **P-1**, **P-2**, **P-3** in `FOLLOWUPS.md`:
+
+- **P-1** `inventory!` macro registry for built-in pollers —
+  revisit when poller count > ~20.
+- **P-2** Multi-host runner orchestration — covered by
+  Phase 32; this entry is the cross-link.
+- **P-3** Push-based watchers (Gmail Push, generic inbound
+  webhooks) — likely its own crate / phase. Needs public TLS
+  surface + inbound auth.
+
+#### 38.x — `nexo-llm` telemetry test serial guard   ⬜  (XS)
+
+`nexo_llm::telemetry::tests::render_empty_series_when_no_samples`
+flakes under `cargo test --workspace` due to global `LazyLock`
+state shared across parallel test binaries. Add `serial_test`
+guard. Bookkept under Phase 38 (chaos / property tests) since
+that's where flake-fix work lives.
+
 ---
 
 ## Closing the gap to OpenClaw

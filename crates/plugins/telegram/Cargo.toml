@@ -30,7 +30,7 @@ nexo-core = { version = "0.1.1", path = "../../core" }
 nexo-config = { version = "0.1.1", path = "../../config" }
 nexo-llm = { version = "0.1.1", path = "../../llm" }
 nexo-auth = { version = "0.1.1", path = "../../auth" }
-nexo-pairing = { version = "0.1.1", path = "../../pairing", default-features = false }
+nexo-pairing = { version = "0.1.2", path = "../../pairing", default-features = false }
 
 [dev-dependencies]
 wiremock     = "0.6"

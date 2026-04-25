@@ -37,12 +37,12 @@ tracing       = { workspace = true }
 async-trait   = { workspace = true }
 tokio-util    = { workspace = true }
 nexo-llm = { version = "0.1.1", path = "../llm" }
-nexo-memory = { version = "0.1.1", path = "../memory" }
+nexo-memory = { version = "0.1.2", path = "../memory" }
 nexo-extensions = { version = "0.1.1", path = "../extensions" }
 nexo-mcp = { version = "0.1.1", path = "../mcp" }
 nexo-taskflow = { version = "0.1.1", path = "../taskflow" }
 nexo-web-search = { version = "0.1.1", path = "../web-search" }
-nexo-pairing    = { version = "0.1.1", path = "../pairing" }
+nexo-pairing    = { version = "0.1.2", path = "../pairing" }
 futures         = { workspace = true }
 arc-swap        = { workspace = true }
 lru             = { workspace = true }
