@@ -4,8 +4,8 @@
 //! one place that touches Phase 17 resolver semantics so audit /
 //! metrics happen in a single spot.
 
-use agent_auth::{AgentCredentialResolver, Channel};
-use agent_broker::{AnyBroker, BrokerHandle, Event};
+use nexo_auth::{AgentCredentialResolver, Channel};
+use nexo_broker::{AnyBroker, BrokerHandle, Event};
 use serde_json::json;
 
 use crate::error::PollerError;
@@ -45,8 +45,8 @@ pub async fn publish(
         payload = json!({ "text": payload, "to": delivery.recipient });
     }
 
-    agent_auth::audit::audit_outbound(&handle, &topic);
-    agent_auth::telemetry::inc_usage(
+    nexo_auth::audit::audit_outbound(&handle, &topic);
+    nexo_auth::telemetry::inc_usage(
         delivery.channel,
         handle.account_id_raw(),
         agent_id,
@@ -64,9 +64,9 @@ pub async fn publish(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_auth::handle::{CredentialHandle, WHATSAPP};
-    use agent_auth::resolver::AgentCredentialResolver;
-    use agent_broker::AnyBroker;
+    use nexo_auth::handle::{CredentialHandle, WHATSAPP};
+    use nexo_auth::resolver::AgentCredentialResolver;
+    use nexo_broker::AnyBroker;
     use std::collections::HashMap;
     use std::sync::Arc;
 

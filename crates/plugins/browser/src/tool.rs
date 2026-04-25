@@ -15,9 +15,9 @@
 
 use std::sync::Arc;
 
-use agent_core::agent::context::AgentContext;
-use agent_core::agent::tool_registry::ToolHandler;
-use agent_llm::ToolDef;
+use nexo_core::agent::context::AgentContext;
+use nexo_core::agent::tool_registry::ToolHandler;
+use nexo_llm::ToolDef;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
@@ -626,7 +626,7 @@ impl ToolHandler for BrowserPressKeyTool {
 /// registration here means adding a new tool only requires editing this
 /// file, not every call site.
 pub fn register_all(
-    registry: &agent_core::agent::tool_registry::ToolRegistry,
+    registry: &nexo_core::agent::tool_registry::ToolRegistry,
     plugin: &Arc<BrowserPlugin>,
 ) {
     registry.register(BrowserNavigateTool::tool_def(), BrowserNavigateTool::new(plugin));

@@ -12,8 +12,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
-use agent_broker::{BrokerHandle, Message};
-use agent_resilience::{CircuitBreaker, CircuitBreakerConfig};
+use nexo_broker::{BrokerHandle, Message};
+use nexo_resilience::{CircuitBreaker, CircuitBreakerConfig};
 
 use super::transport::ExtensionTransport;
 use super::wire;

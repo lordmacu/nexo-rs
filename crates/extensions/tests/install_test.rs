@@ -3,8 +3,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use agent_config::ExtensionsConfig;
-use agent_extensions::cli::{
+use nexo_config::ExtensionsConfig;
+use nexo_extensions::cli::{
     run_install, run_uninstall, CliContext, CliError, InstallMode, InstallOptions, UninstallOptions,
 };
 use tempfile::TempDir;

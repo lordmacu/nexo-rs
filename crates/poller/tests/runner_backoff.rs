@@ -5,12 +5,12 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
-use agent_auth::resolver::CredentialStores;
-use agent_auth::{AgentCredentialResolver, BreakerRegistry, CredentialsBundle};
-use agent_broker::AnyBroker;
-use agent_config::types::pollers::{PollerJob, PollersConfig};
-use agent_poller::poller::{PollContext, Poller, TickOutcome};
-use agent_poller::{PollState, PollerError, PollerRunner};
+use nexo_auth::resolver::CredentialStores;
+use nexo_auth::{AgentCredentialResolver, BreakerRegistry, CredentialsBundle};
+use nexo_broker::AnyBroker;
+use nexo_config::types::pollers::{PollerJob, PollersConfig};
+use nexo_poller::poller::{PollContext, Poller, TickOutcome};
+use nexo_poller::{PollState, PollerError, PollerRunner};
 use async_trait::async_trait;
 
 fn empty_creds() -> Arc<CredentialsBundle> {

@@ -876,11 +876,11 @@ config = "0.14"
 - Prompt management
 - Rate limiter + quota tracker
 - **Streaming** (`LlmClient::stream()` → `BoxStream<Result<StreamChunk>>`): providers SSE
-  (MiniMax OpenAI-compat + Anthropic flavors, OpenAiClient) producen token-level deltas;
-  providers sin SSE heredan default que sintetiza stream de un chunk desde `chat()`.
+  (MiniMax OpenAI-compat + Anthropic flavors, OpenAiClient) produce token-level deltas;
+  providers without SSE inherit a default that synthesizes a one-chunk stream from `chat()`.
   `StreamChunk` variants: `TextDelta`, `ToolCallStart/ArgsDelta/End`, `Usage`, `End{finish_reason}`.
-  Circuit breaker + retry aplican al request-open; mid-stream errors no se reintentan.
-  `collect_stream()` helper reconstruye `ChatResponse` desde el stream.
+  Circuit breaker + retry apply to request-open; mid-stream errors are not retried.
+  `collect_stream()` helper rebuilds `ChatResponse` from the stream.
 
 ### Phase 4: Browser Plugin
 - CDP client

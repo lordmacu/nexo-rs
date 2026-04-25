@@ -1,8 +1,17 @@
 [package]
-name = "agent-extensions"
-version = "0.1.0"
-edition = "2021"
-
+name = "nexo-extensions"
+description   = "Extension manifest, discovery, lifecycle, and stdio/NATS runtimes for Nexo."
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+homepage      = { workspace = true }
+documentation = { workspace = true }
+readme        = { workspace = true }
+keywords      = { workspace = true }
+categories    = { workspace = true }
 [dependencies]
 serde      = { workspace = true }
 serde_json = { workspace = true }
@@ -16,9 +25,9 @@ toml       = "0.8"
 semver     = "1"
 regex      = "1.10"
 walkdir    = "2"
-agent-resilience = { path = "../resilience" }
-agent-broker    = { path = "../broker" }
-agent-config    = { path = "../config" }
+nexo-resilience = { version = "0.1.0", path = "../resilience" }
+nexo-broker = { version = "0.1.0", path = "../broker" }
+nexo-config = { version = "0.1.0", path = "../config" }
 url             = "2"
 async-trait     = { workspace = true }
 uuid            = { workspace = true }
@@ -34,7 +43,7 @@ reqwest         = { workspace = true }
 async-nats = { workspace = true }
 tempfile   = "3"
 wiremock   = "0.6"
-agent-mcp  = { path = "../mcp" }
+nexo-mcp = { path = "../mcp" }
 tokio      = { workspace = true, features = ["macros", "rt-multi-thread", "process", "io-util", "time", "sync"] }
 tracing-subscriber = { workspace = true }
 

@@ -19,8 +19,8 @@ use notify_debouncer_full::{new_debouncer, DebounceEventResult};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use agent_config::env::resolve_placeholders;
-use agent_config::types::{ExtensionsConfig, ExtensionsConfigFile, McpConfig, McpConfigFile};
+use nexo_config::env::resolve_placeholders;
+use nexo_config::types::{ExtensionsConfig, ExtensionsConfigFile, McpConfig, McpConfigFile};
 
 use crate::manager::McpRuntimeManager;
 use crate::runtime_config::{ExtensionServerDecl, McpRuntimeConfig};
@@ -164,7 +164,7 @@ fn collect_extension_servers(
         return Ok(Vec::new());
     }
     let search_paths: Vec<PathBuf> = cfg.search_paths.iter().map(PathBuf::from).collect();
-    let report = agent_extensions::ExtensionDiscovery::new(
+    let report = nexo_extensions::ExtensionDiscovery::new(
         search_paths,
         cfg.ignore_dirs.clone(),
         cfg.disabled.clone(),
@@ -176,12 +176,12 @@ fn collect_extension_servers(
 
     for d in &report.diagnostics {
         match d.level {
-            agent_extensions::DiagnosticLevel::Warn => tracing::warn!(
+            nexo_extensions::DiagnosticLevel::Warn => tracing::warn!(
                 path = %d.path.display(),
                 message = %d.message,
                 "extension discovery during mcp reload"
             ),
-            agent_extensions::DiagnosticLevel::Error => tracing::error!(
+            nexo_extensions::DiagnosticLevel::Error => tracing::error!(
                 path = %d.path.display(),
                 message = %d.message,
                 "extension discovery during mcp reload"
@@ -189,7 +189,7 @@ fn collect_extension_servers(
         }
     }
 
-    let out = agent_extensions::collect_mcp_declarations(&report, &cfg.disabled)
+    let out = nexo_extensions::collect_mcp_declarations(&report, &cfg.disabled)
         .into_iter()
         .map(|d| ExtensionServerDecl {
             ext_id: d.ext_id,
@@ -206,7 +206,7 @@ fn read_extensions_config(
     fallback: Option<&ExtensionsConfig>,
 ) -> Result<ExtensionsConfig> {
     let on_disk =
-        agent_config::load_optional::<ExtensionsConfigFile>(config_dir, EXTENSIONS_YAML_FILENAME)?
+        nexo_config::load_optional::<ExtensionsConfigFile>(config_dir, EXTENSIONS_YAML_FILENAME)?
             .map(|f| f.extensions);
     Ok(on_disk.or_else(|| fallback.cloned()).unwrap_or_default())
 }

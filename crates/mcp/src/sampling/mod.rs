@@ -6,7 +6,7 @@
 //! replies on the same JSON-RPC channel.
 //!
 //! The framework ships a [`DefaultSamplingProvider`] that wraps any
-//! `agent_llm::LlmClient` and applies a [`SamplingPolicy`] (rate limit
+//! `nexo_llm::LlmClient` and applies a [`SamplingPolicy`] (rate limit
 //! + token cap + deny list) before forwarding.
 
 pub mod default_provider;

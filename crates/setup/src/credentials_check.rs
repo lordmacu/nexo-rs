@@ -1,7 +1,7 @@
 //! Phase 17 — run the credential gauntlet from inside the wizard.
 //!
 //! The wizard finishes by calling [`run`] which loads the just-written
-//! config, runs `agent_auth::build_credentials` in lenient mode, and
+//! config, runs `nexo_auth::build_credentials` in lenient mode, and
 //! pretty-prints the report. Errors do not abort the wizard — the
 //! user can always re-run `agent --check-config` later — but they are
 //! surfaced immediately so the user catches missing `credentials`
@@ -21,16 +21,16 @@ pub struct Summary {
 }
 
 pub fn run(config_dir: &Path) -> Result<Summary> {
-    use agent_auth::CredentialStore;
+    use nexo_auth::CredentialStore;
 
-    let cfg = agent_config::AppConfig::load(config_dir)?;
-    let google = agent_auth::load_google_auth(config_dir)?;
-    let result = agent_auth::build_credentials(
+    let cfg = nexo_config::AppConfig::load(config_dir)?;
+    let google = nexo_auth::load_google_auth(config_dir)?;
+    let result = nexo_auth::build_credentials(
         &cfg.agents.agents,
         &cfg.plugins.whatsapp,
         &cfg.plugins.telegram,
         &google,
-        agent_auth::StrictLevel::Lenient,
+        nexo_auth::StrictLevel::Lenient,
     );
 
     match result {
@@ -39,9 +39,9 @@ pub fn run(config_dir: &Path) -> Result<Summary> {
             for agent in &cfg.agents.agents {
                 let mut per: Vec<(String, String)> = Vec::new();
                 for channel in [
-                    agent_auth::handle::WHATSAPP,
-                    agent_auth::handle::TELEGRAM,
-                    agent_auth::handle::GOOGLE,
+                    nexo_auth::handle::WHATSAPP,
+                    nexo_auth::handle::TELEGRAM,
+                    nexo_auth::handle::GOOGLE,
                 ] {
                     if let Ok(handle) = bundle.resolver.resolve(&agent.id, channel) {
                         per.push((

@@ -13,7 +13,7 @@
 
 use std::time::Duration;
 
-use agent_broker::{AnyBroker, BrokerHandle, Message};
+use nexo_broker::{AnyBroker, BrokerHandle, Message};
 use base64::Engine;
 use serde::Deserialize;
 use std::future::Future;
@@ -76,7 +76,7 @@ impl whatsapp_rs::agent::Transcriber for NatsTranscriber {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_broker::AnyBroker;
+    use nexo_broker::AnyBroker;
     use std::time::Duration;
 
     #[test]

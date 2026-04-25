@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use agent_taskflow::{
+use nexo_taskflow::{
     manager::{CreateManagedInput, FlowManager},
     store::{FlowStore, SqliteFlowStore},
     types::{FlowStep, FlowStepStatus, StepRuntime},
@@ -181,7 +181,7 @@ async fn update_and_append_rollback_on_stale_revision() {
     // Forge a stale flow handle with wrong revision.
     let mut stale = flow.clone();
     stale.revision = 999;
-    stale.status = agent_taskflow::types::FlowStatus::Running;
+    stale.status = nexo_taskflow::types::FlowStatus::Running;
 
     let before_events = s.list_events(flow.id, 10).await.unwrap().len();
     let err = s
@@ -190,7 +190,7 @@ async fn update_and_append_rollback_on_stale_revision() {
         .unwrap_err();
     assert!(matches!(
         err,
-        agent_taskflow::types::FlowError::RevisionMismatch { .. }
+        nexo_taskflow::types::FlowError::RevisionMismatch { .. }
     ));
     // Atomicity: the event must NOT have been inserted even though the
     // stale revision check was done mid-transaction.

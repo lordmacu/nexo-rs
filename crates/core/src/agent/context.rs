@@ -5,10 +5,10 @@ use super::routing::AgentRouter;
 use super::tool_registry::ToolRegistry;
 use super::transcripts_index::TranscriptsIndex;
 use crate::session::SessionManager;
-use agent_broker::AnyBroker;
-use agent_config::types::agents::AgentConfig;
-use agent_mcp::SessionMcpRuntime;
-use agent_memory::LongTermMemory;
+use nexo_broker::AnyBroker;
+use nexo_config::types::agents::AgentConfig;
+use nexo_mcp::SessionMcpRuntime;
+use nexo_memory::LongTermMemory;
 use std::sync::Arc;
 use uuid::Uuid;
 #[derive(Clone)]
@@ -49,10 +49,10 @@ pub struct AgentContext {
     /// `None` in early-boot / test contexts; consumers must treat that
     /// as "no credentials configured" (tools return an unbound error
     /// rather than publishing from an arbitrary account).
-    pub credentials: Option<Arc<agent_auth::AgentCredentialResolver>>,
+    pub credentials: Option<Arc<nexo_auth::AgentCredentialResolver>>,
     /// Phase 17 — per-(channel, instance) breaker registry shared by
     /// plugin outbound tools. `None` for runtimes without credentials.
-    pub breakers: Option<Arc<agent_auth::BreakerRegistry>>,
+    pub breakers: Option<Arc<nexo_auth::BreakerRegistry>>,
     /// Pre-persistence redactor for transcript content. `None` in
     /// test/bootstrap contexts → behavior keeps content untouched.
     pub redactor: Option<Arc<Redactor>>,
@@ -67,7 +67,7 @@ pub struct AgentContext {
     /// Phase 25 — shared multi-provider web-search router. `None`
     /// when no provider is configured for this process; the
     /// `web_search` tool errors out cleanly in that case.
-    pub web_search_router: Option<Arc<agent_web_search::WebSearchRouter>>,
+    pub web_search_router: Option<Arc<nexo_web_search::WebSearchRouter>>,
     /// Phase F follow-up (hot-reload) — current effective enables for
     /// the four context-optimization mechanisms. Set per-event by
     /// `AgentRuntime` from `RuntimeSnapshot::context_optimization`, so
@@ -76,7 +76,7 @@ pub struct AgentContext {
     /// test contexts that haven't been wired through the snapshot —
     /// in that case `llm_behavior` falls back to the boot-time
     /// `prompt_cache_enabled` / `compaction_runtime.enabled` flags.
-    pub context_optimization: Option<agent_config::types::llm::ResolvedContextOptimization>,
+    pub context_optimization: Option<nexo_config::types::llm::ResolvedContextOptimization>,
 }
 impl AgentContext {
     pub fn new(
@@ -108,7 +108,7 @@ impl AgentContext {
     }
     pub fn with_web_search_router(
         mut self,
-        router: Arc<agent_web_search::WebSearchRouter>,
+        router: Arc<nexo_web_search::WebSearchRouter>,
     ) -> Self {
         self.web_search_router = Some(router);
         self
@@ -119,7 +119,7 @@ impl AgentContext {
     /// rebuilding the behavior.
     pub fn with_context_optimization(
         mut self,
-        co: agent_config::types::llm::ResolvedContextOptimization,
+        co: nexo_config::types::llm::ResolvedContextOptimization,
     ) -> Self {
         self.context_optimization = Some(co);
         self
@@ -169,12 +169,12 @@ impl AgentContext {
     }
     pub fn with_credentials(
         mut self,
-        credentials: Arc<agent_auth::AgentCredentialResolver>,
+        credentials: Arc<nexo_auth::AgentCredentialResolver>,
     ) -> Self {
         self.credentials = Some(credentials);
         self
     }
-    pub fn with_breakers(mut self, breakers: Arc<agent_auth::BreakerRegistry>) -> Self {
+    pub fn with_breakers(mut self, breakers: Arc<nexo_auth::BreakerRegistry>) -> Self {
         self.breakers = Some(breakers);
         self
     }

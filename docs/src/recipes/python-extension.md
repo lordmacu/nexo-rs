@@ -149,7 +149,7 @@ the logs for `tools/count_words` on stderr.
 - **Handshake failures** are visible in `ext doctor --runtime` and
   prevent the tool from being registered at all.
 - **Per-tool latency** shows up in the
-  `agent_tool_latency_ms{tool="ext_word-count_count_words"}`
+  `nexo_tool_latency_ms{tool="ext_word-count_count_words"}`
   Prometheus histogram.
 
 ## Productionizing

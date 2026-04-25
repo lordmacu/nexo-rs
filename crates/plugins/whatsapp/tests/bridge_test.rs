@@ -4,14 +4,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_broker::{AnyBroker, BrokerHandle, Event};
-use agent_config::{
+use nexo_broker::{AnyBroker, BrokerHandle, Event};
+use nexo_config::{
     WhatsappAclConfig, WhatsappBehaviorConfig, WhatsappBridgeConfig, WhatsappDaemonConfig,
     WhatsappPluginConfig, WhatsappRateLimitConfig, WhatsappTranscriberConfig,
 };
-use agent_plugin_whatsapp::bridge::{bridge_step, TOPIC_INBOUND};
-use agent_plugin_whatsapp::events::InboundEvent;
-use agent_plugin_whatsapp::session_id::session_id_for_jid;
+use nexo_plugin_whatsapp::bridge::{bridge_step, TOPIC_INBOUND};
+use nexo_plugin_whatsapp::events::InboundEvent;
+use nexo_plugin_whatsapp::session_id::session_id_for_jid;
 use dashmap::DashMap;
 
 fn cfg(timeout_ms: u64) -> WhatsappPluginConfig {

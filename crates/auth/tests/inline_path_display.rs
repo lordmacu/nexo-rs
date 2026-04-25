@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use agent_auth::error::{display_path, BuildError, CredentialError};
+use nexo_auth::error::{display_path, BuildError, CredentialError};
 
 #[test]
 fn display_path_redacts_inline_prefix() {
@@ -36,9 +36,9 @@ fn file_missing_error_redacts_inline() {
 fn duplicate_path_build_error_redacts_inline() {
     let err = BuildError::DuplicatePath {
         path: PathBuf::from("inline:706186208439-secret"),
-        a_channel: agent_auth::handle::GOOGLE,
+        a_channel: nexo_auth::handle::GOOGLE,
         a_instance: "ana".into(),
-        b_channel: agent_auth::handle::GOOGLE,
+        b_channel: nexo_auth::handle::GOOGLE,
         b_instance: "kate".into(),
     };
     let msg = err.to_string();

@@ -1,4 +1,4 @@
-use agent_auth::Channel;
+use nexo_auth::Channel;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -66,7 +66,7 @@ mod tests {
 
         let e = PollerError::CredentialsMissing {
             agent: "ana".into(),
-            channel: agent_auth::handle::GOOGLE,
+            channel: nexo_auth::handle::GOOGLE,
         };
         // Cred-missing is treated as Permanent — no retry helps.
         assert_eq!(e.classify(), ErrorClass::Permanent);

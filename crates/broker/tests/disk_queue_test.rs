@@ -1,5 +1,5 @@
-use agent_broker::types::Event;
-use agent_broker::{AnyBroker, DiskQueue};
+use nexo_broker::types::Event;
+use nexo_broker::{AnyBroker, DiskQueue};
 use serde_json::json;
 
 async fn make_queue(max_pending: usize) -> DiskQueue {
@@ -92,10 +92,10 @@ async fn disk_queue_applies_backpressure_over_halfway() {
 
 #[tokio::test]
 async fn disk_queue_moves_to_dlq_after_max_attempts() {
-    use agent_broker::handle::Subscription;
-    use agent_broker::types::BrokerError;
-    use agent_broker::types::Message;
-    use agent_broker::BrokerHandle;
+    use nexo_broker::handle::Subscription;
+    use nexo_broker::types::BrokerError;
+    use nexo_broker::types::Message;
+    use nexo_broker::BrokerHandle;
     use async_trait::async_trait;
     use std::time::Duration;
 

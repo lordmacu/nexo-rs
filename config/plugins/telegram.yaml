@@ -1,5 +1,5 @@
 telegram:
-  token: ${file:./secrets/telegram_bot_token.txt}
+- token: ${file:./secrets/telegram_bot_token.txt}
   polling:
     enabled: true
     interval_ms: 1000

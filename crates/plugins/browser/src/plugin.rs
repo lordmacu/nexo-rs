@@ -8,10 +8,10 @@ use tokio_util::sync::CancellationToken;
 
 use uuid::Uuid;
 
-use agent_broker::{AnyBroker, BrokerHandle, Event};
-use agent_config::BrowserConfig;
-use agent_core::agent::{Command, Plugin, Response};
-use agent_resilience::{CircuitBreaker, CircuitBreakerConfig};
+use nexo_broker::{AnyBroker, BrokerHandle, Event};
+use nexo_config::BrowserConfig;
+use nexo_core::agent::{Command, Plugin, Response};
+use nexo_resilience::{CircuitBreaker, CircuitBreakerConfig};
 
 use crate::cdp::{CdpClient, CdpSession};
 use crate::chrome::ChromeLauncher;

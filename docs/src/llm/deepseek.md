@@ -46,8 +46,8 @@ against the reasoner endpoint return an error from upstream.
 ## Streaming
 
 Identical to OpenAI's SSE format, so `OpenAiClient::chat_stream` parses
-it without per-provider code. `agent_llm_stream_ttft_seconds` and
-`agent_llm_stream_chunks_total` Prometheus series labelled with
+it without per-provider code. `nexo_llm_stream_ttft_seconds` and
+`nexo_llm_stream_chunks_total` Prometheus series labelled with
 `provider="deepseek"` show up automatically.
 
 ## Tool calling

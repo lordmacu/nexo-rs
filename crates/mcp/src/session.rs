@@ -1,8 +1,8 @@
 //! Phase 12.4 — session-scoped MCP runtime.
 //!
 //! Owns one `StdioMcpClient` per configured server. The catalog lives
-//! outside this crate (agent-core builds it from the runtime's client
-//! snapshot) to keep `agent-mcp` independent of `ToolRegistry`.
+//! outside this crate (nexo-core builds it from the runtime's client
+//! snapshot) to keep `nexo-mcp` independent of `ToolRegistry`.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -153,7 +153,7 @@ impl SessionMcpRuntime {
     }
 
     /// Signal that the catalog view of this session is stale. The runtime
-    /// itself caches nothing (catalog lives in agent-core's
+    /// itself caches nothing (catalog lives in nexo-core's
     /// `ToolRegistry`), so this just bumps `last_used_at` and logs. The
     /// real reload path is `on_tools_changed`, which fires a user-supplied
     /// closure that rebuilds the registry view.

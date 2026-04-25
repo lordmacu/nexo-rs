@@ -1,4 +1,4 @@
-# agent-taskflow
+# nexo-taskflow
 
 Durable multi-step flow runtime for the Rust agent framework. Phase 14 of
 `proyecto`. Inspired by OpenClaw's `taskflow` skill; rewritten around
@@ -33,13 +33,13 @@ tests/
 - Business branching logic — keep it in the controller (caller)
 - Message transport — engine is broker-agnostic; a NATS subscriber or
   agent-to-agent bridge calls `try_resume_external` / `record_step_observation`
-- LLM dispatch — exposed through the `taskflow` agent tool in `agent-core`
+- LLM dispatch — exposed through the `taskflow` agent tool in `nexo-core`
 
 ## Quick start
 
 ```rust
 use std::sync::Arc;
-use agent_taskflow::{CreateManagedInput, FlowManager, SqliteFlowStore};
+use nexo_taskflow::{CreateManagedInput, FlowManager, SqliteFlowStore};
 use serde_json::json;
 
 # tokio_test::block_on(async {
@@ -58,14 +58,14 @@ let flow = manager.create_managed(CreateManagedInput {
 let flow = manager.start_running(flow.id).await?;
 let flow = manager.update_state(flow.id, json!({ "processed": 5 }), None).await?;
 let _ = manager.finish(flow.id, None).await?;
-# Result::<_, agent_taskflow::FlowError>::Ok(())
+# Result::<_, nexo_taskflow::FlowError>::Ok(())
 # }).unwrap();
 ```
 
 ## Tests
 
 ```bash
-cargo test -p agent-taskflow
+cargo test -p nexo-taskflow
 ```
 
 Coverage (2026-04-23):
@@ -98,7 +98,7 @@ Errors bubble to the `taskflow` agent tool with these JSON-RPC codes:
 | `AlreadyTerminal` | -32602 |
 | `CancelPending` | -32602 |
 
-The `taskflow` tool (in `agent-core`) does not expose every variant to the
+The `taskflow` tool (in `nexo-core`) does not expose every variant to the
 LLM — user-friendly summaries are rendered per action.
 
 ## Related phases

@@ -1,5 +1,5 @@
-use agent_broker::types::Event;
-use agent_broker::{AnyBroker, BrokerHandle};
+use nexo_broker::types::Event;
+use nexo_broker::{AnyBroker, BrokerHandle};
 use serde_json::json;
 use uuid::Uuid;
 

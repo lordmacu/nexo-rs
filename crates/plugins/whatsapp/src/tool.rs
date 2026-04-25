@@ -9,10 +9,10 @@
 //! match or the call is rejected before any broker publish. That
 //! keeps a prompt-injected agent from spraying arbitrary numbers.
 
-use agent_broker::{BrokerHandle, Event};
-use agent_core::agent::context::AgentContext;
-use agent_core::agent::tool_registry::{ToolHandler, ToolRegistry};
-use agent_llm::ToolDef;
+use nexo_broker::{BrokerHandle, Event};
+use nexo_core::agent::context::AgentContext;
+use nexo_core::agent::tool_registry::{ToolHandler, ToolRegistry};
+use nexo_llm::ToolDef;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -91,11 +91,11 @@ async fn publish_outbound(
     // boot paths, tests) or when the agent has no `credentials.whatsapp`
     // declared (back-compat single-account deployments).
     let (topic, breaker_handle) = match ctx.credentials.as_ref() {
-        Some(resolver) => match resolver.resolve(&ctx.agent_id, agent_auth::handle::WHATSAPP) {
+        Some(resolver) => match resolver.resolve(&ctx.agent_id, nexo_auth::handle::WHATSAPP) {
             Ok(handle) => {
-                agent_auth::audit::audit_outbound(&handle, "plugin.outbound.whatsapp");
-                agent_auth::telemetry::inc_usage(
-                    agent_auth::handle::WHATSAPP,
+                nexo_auth::audit::audit_outbound(&handle, "plugin.outbound.whatsapp");
+                nexo_auth::telemetry::inc_usage(
+                    nexo_auth::handle::WHATSAPP,
                     handle.account_id_raw(),
                     &ctx.agent_id,
                     "outbound",
@@ -118,10 +118,10 @@ async fn publish_outbound(
     if let Some(ref b) = breaker {
         if !b.allow() {
             if let Some(ref h) = breaker_handle {
-                agent_auth::telemetry::set_breaker_state(
-                    agent_auth::handle::WHATSAPP,
+                nexo_auth::telemetry::set_breaker_state(
+                    nexo_auth::handle::WHATSAPP,
                     h.account_id_raw(),
-                    agent_auth::telemetry::BreakerState::Open,
+                    nexo_auth::telemetry::BreakerState::Open,
                 );
             }
             return Err(anyhow::anyhow!(
@@ -136,19 +136,19 @@ async fn publish_outbound(
         match &result {
             Ok(_) => {
                 b.on_success();
-                agent_auth::telemetry::set_breaker_state(
-                    agent_auth::handle::WHATSAPP,
+                nexo_auth::telemetry::set_breaker_state(
+                    nexo_auth::handle::WHATSAPP,
                     h.account_id_raw(),
-                    agent_auth::telemetry::BreakerState::Closed,
+                    nexo_auth::telemetry::BreakerState::Closed,
                 );
             }
             Err(_) => {
                 b.on_failure();
                 if b.is_open() {
-                    agent_auth::telemetry::set_breaker_state(
-                        agent_auth::handle::WHATSAPP,
+                    nexo_auth::telemetry::set_breaker_state(
+                        nexo_auth::handle::WHATSAPP,
                         h.account_id_raw(),
-                        agent_auth::telemetry::BreakerState::Open,
+                        nexo_auth::telemetry::BreakerState::Open,
                     );
                 }
             }

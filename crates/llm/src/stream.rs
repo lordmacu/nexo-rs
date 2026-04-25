@@ -73,9 +73,9 @@ where
 
 /// Wrap a stream to emit per-provider TTFT/chunk telemetry.
 ///
-/// `agent_llm_stream_ttft_seconds`: observed once, on first contentful chunk
+/// `nexo_llm_stream_ttft_seconds`: observed once, on first contentful chunk
 /// (`TextDelta` or any `ToolCall*` variant).
-/// `agent_llm_stream_chunks_total`: incremented for every emitted chunk kind.
+/// `nexo_llm_stream_chunks_total`: incremented for every emitted chunk kind.
 pub fn stream_metrics_tap<S>(
     stream: S,
     provider: &str,
@@ -503,13 +503,13 @@ mod tests {
         let _ = collect_stream(stream).await.unwrap();
         let body = crate::telemetry::render_prometheus();
         assert!(body.contains(
-            "agent_llm_stream_chunks_total{provider=\"zz_stream_metrics_probe\",kind=\"text_delta\"} 1"
+            "nexo_llm_stream_chunks_total{provider=\"zz_stream_metrics_probe\",kind=\"text_delta\"} 1"
         ));
         assert!(body.contains(
-            "agent_llm_stream_chunks_total{provider=\"zz_stream_metrics_probe\",kind=\"usage\"} 1"
+            "nexo_llm_stream_chunks_total{provider=\"zz_stream_metrics_probe\",kind=\"usage\"} 1"
         ));
         assert!(body.contains(
-            "agent_llm_stream_ttft_seconds_count{provider=\"zz_stream_metrics_probe\"} 1"
+            "nexo_llm_stream_ttft_seconds_count{provider=\"zz_stream_metrics_probe\"} 1"
         ));
     }
 }

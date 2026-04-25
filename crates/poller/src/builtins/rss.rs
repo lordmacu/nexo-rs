@@ -122,9 +122,9 @@ impl Poller for RssPoller {
         let items = parse_feed(&body);
         let known: HashSet<String> = state.seen_ids.iter().cloned().collect();
 
-        let target_channel: agent_auth::Channel = match cfg.deliver.channel.as_str() {
-            "whatsapp" => agent_auth::handle::WHATSAPP,
-            "telegram" => agent_auth::handle::TELEGRAM,
+        let target_channel: nexo_auth::Channel = match cfg.deliver.channel.as_str() {
+            "whatsapp" => nexo_auth::handle::WHATSAPP,
+            "telegram" => nexo_auth::handle::TELEGRAM,
             other => {
                 return Err(PollerError::Config {
                     job: ctx.job_id.clone(),

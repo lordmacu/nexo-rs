@@ -8,8 +8,8 @@ use bytes::Bytes;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use agent_config::types::broker::BrokerInner;
-use agent_resilience::{CircuitBreaker, CircuitBreakerConfig};
+use nexo_config::types::broker::BrokerInner;
+use nexo_resilience::{CircuitBreaker, CircuitBreakerConfig};
 
 use crate::disk_queue::DiskQueue;
 use crate::handle::{BrokerHandle, Subscription};

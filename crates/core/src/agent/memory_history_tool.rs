@@ -3,7 +3,7 @@
 use super::context::AgentContext;
 use super::tool_registry::ToolHandler;
 use super::workspace_git::MemoryGitRepo;
-use agent_llm::ToolDef;
+use nexo_llm::ToolDef;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -73,8 +73,8 @@ impl ToolHandler for MemoryHistoryTool {
 mod tests {
     use super::*;
     use crate::session::SessionManager;
-    use agent_broker::AnyBroker;
-    use agent_config::types::agents::{
+    use nexo_broker::AnyBroker;
+    use nexo_config::types::agents::{
         AgentConfig, AgentRuntimeConfig, HeartbeatConfig, ModelConfig,
     };
     use tempfile::TempDir;
@@ -109,6 +109,8 @@ mod tests {
             google_auth: None,
             credentials: Default::default(),
             link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
             context_optimization: None,
         });

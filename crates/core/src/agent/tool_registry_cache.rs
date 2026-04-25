@@ -79,7 +79,7 @@ impl ToolRegistryCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_llm::ToolDef;
+    use nexo_llm::ToolDef;
     use async_trait::async_trait;
     use serde_json::{json, Value};
 

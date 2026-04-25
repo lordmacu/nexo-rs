@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use agent_broker::{BrokerHandle, Event, LocalBroker, Message};
+use nexo_broker::{BrokerHandle, Event, LocalBroker, Message};
 use serde_json::json;
 
 #[tokio::test]

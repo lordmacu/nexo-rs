@@ -4,8 +4,8 @@
 use super::context::AgentContext;
 use super::mcp_tool::{sanitize_name_fragment, MCP_NAME_PREFIX};
 use super::tool_registry::ToolHandler;
-use agent_llm::ToolDef;
-use agent_mcp::{McpClient, McpResourceContent, ResourceCache};
+use nexo_llm::ToolDef;
+use nexo_mcp::{McpClient, McpResourceContent, ResourceCache};
 use async_trait::async_trait;
 use base64::Engine;
 use serde_json::Value;
@@ -291,7 +291,7 @@ impl ToolHandler for McpResourceReadTool {
                     allowed = ?self.uri_allowlist,
                     "mcp read_resource: URI scheme outside allowlist"
                 );
-                agent_mcp::telemetry::inc_resource_uri_allowlist_violation(&self.server_name);
+                nexo_mcp::telemetry::inc_resource_uri_allowlist_violation(&self.server_name);
             }
         }
         // Cache is bypassed when `_meta` is propagated: the server may
@@ -303,10 +303,10 @@ impl ToolHandler for McpResourceReadTool {
                 .as_ref()
                 .and_then(|c| c.get(&self.server_name, uri))
             {
-                agent_mcp::telemetry::inc_resource_cache_hit(&self.server_name);
+                nexo_mcp::telemetry::inc_resource_cache_hit(&self.server_name);
                 return Ok(McpResourceReadTool::flatten_read_result(&cached));
             }
-            agent_mcp::telemetry::inc_resource_cache_miss(&self.server_name);
+            nexo_mcp::telemetry::inc_resource_cache_miss(&self.server_name);
         }
         let meta = if self.context_passthrough {
             Some(make_meta(ctx))
@@ -358,7 +358,7 @@ mod tests {
     }
     #[test]
     fn flatten_text_resource() {
-        use agent_mcp::McpResourceContent;
+        use nexo_mcp::McpResourceContent;
         let c = vec![McpResourceContent {
             uri: "file:///x".into(),
             mime_type: Some("text/plain".into()),
@@ -370,7 +370,7 @@ mod tests {
     }
     #[test]
     fn flatten_blob_shows_mime_and_byte_count() {
-        use agent_mcp::McpResourceContent;
+        use nexo_mcp::McpResourceContent;
         let c = vec![McpResourceContent {
             uri: "file:///x".into(),
             mime_type: Some("image/png".into()),
@@ -387,7 +387,7 @@ mod tests {
     }
     #[test]
     fn flatten_mixed_text_and_blob() {
-        use agent_mcp::McpResourceContent;
+        use nexo_mcp::McpResourceContent;
         let c = vec![
             McpResourceContent {
                 uri: "a".into(),

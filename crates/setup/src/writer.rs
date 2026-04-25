@@ -455,7 +455,7 @@ fn run_google_consent_callback_url(
             .build()
             .context("build tokio runtime for callback-url flow")?;
         rt.block_on(async move {
-            use agent_plugin_google::{GoogleAuthClient, GoogleAuthConfig};
+            use nexo_plugin_google::{GoogleAuthClient, GoogleAuthConfig};
             let cfg = GoogleAuthConfig {
                 client_id,
                 client_secret,
@@ -788,7 +788,7 @@ fn run_whatsapp_pairing_sync(agent_id: &str, config_dir: &Path) -> Result<()> {
             .build()
             .context("build tokio runtime for whatsapp pairing")?;
         rt.block_on(async move {
-            agent_plugin_whatsapp::session::pair_once(&session_dir).await?;
+            nexo_plugin_whatsapp::session::pair_once(&session_dir).await?;
             println!();
             println!("✔ WhatsApp paired — session en {}", session_dir.display());
             Ok::<(), anyhow::Error>(())

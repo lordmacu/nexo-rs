@@ -38,6 +38,40 @@ through a single UI. Real deployments aren't that shape:
 
 nexo-rs is opinionated toward that shape.
 
+## How it compares to OpenClaw
+
+[OpenClaw](https://github.com/openclaw/openclaw) is the closest
+reference point — a TypeScript / Node single-process multi-channel
+agent gateway. nexo-rs took inspiration from the OpenClaw plugin
+SDK and channel architecture, then re-implemented the parts that
+matter on a different substrate:
+
+| Dimension | OpenClaw | nexo-rs |
+|-----------|----------|---------|
+| Language / runtime | TypeScript on Node 22+ | Rust, no runtime — single binary |
+| Install footprint | `pnpm install` (~42 runtime deps) + Node | one **34 MB** binary (29 MB stripped, 13 MB gzipped) |
+| Process model | single Node process | multi-process via NATS broker; in-process fallback when broker is offline |
+| Fault tolerance | best-effort | broker has disk queue + DLQ + circuit breaker; events survive NATS outages |
+| Concurrency | JS event loop | tokio async + per-agent runtimes, share-nothing per session |
+| Hot reload | restart | `agent reload` swaps `RuntimeSnapshot` via `ArcSwap` — in-flight turns keep the old config |
+| Per-agent capability sandbox | global plugin allowlist | `agents.<id>` has `allowed_tools`, `outbound_allowlist`, `skill_overrides`, `accept_delegates_from`, per-binding overrides |
+| Secret ops | env vars | `agents.<id>.credentials` per-channel + 1Password `inject_template` + JSONL audit log + `agent doctor capabilities` inventory |
+| Transcripts | JSONL (line-grep) | JSONL **plus** SQLite FTS5 index + opt-in regex redactor (Bearer JWT, sk-…, AKIA…, paths) |
+| Durable workflows | n/a | TaskFlow: `wait`/`finish`/`fail` LLM tools with `Timer`/`ExternalEvent`/`Manual` resume + `taskflow.resume` NATS bridge |
+| Claude auth | API key only | API key **and** `claude_subscription` OAuth PKCE flow (uses your Claude Code subscription quota) |
+| MCP | client only | client (stdio + HTTP) **and** agent-as-MCP-server (`agent mcp-server`) |
+| Mobile-friendly | requires Node + npm runtime | runs on Termux without root (no Docker, no Node) |
+| Memory safety | runtime errors | Rust ownership model — whole classes of bugs (use-after-free, data races, null deref) refused at compile time |
+| Bundled skills/extensions | many in `extensions/` | 22 skills + 30+ extensions (browser, gmail-poller, 1password, proxmox, ssh-exec, brave-search, wolfram-alpha, …) |
+
+**What we did not improve.** OpenClaw has a richer installer flow,
+a longer track record, and a TypeScript surface that's familiar to
+a wider audience. If your shop is JS-first, picking it up is
+faster than learning Rust. nexo-rs trades that approachability for
+the operational properties above.
+
+Full side-by-side: [docs → vs-openclaw](https://lordmacu.github.io/nexo-rs/architecture/vs-openclaw.html).
+
 ## Status
 
 | Phase | Area | Done |

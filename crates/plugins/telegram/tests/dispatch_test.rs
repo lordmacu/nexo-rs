@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use agent_core::agent::plugin::Response;
-use agent_plugin_telegram::bot::BotClient;
-use agent_plugin_telegram::plugin::dispatch_custom;
+use nexo_core::agent::plugin::Response;
+use nexo_plugin_telegram::bot::BotClient;
+use nexo_plugin_telegram::plugin::dispatch_custom;
 use serde_json::json;
 use wiremock::matchers::{body_partial_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};

@@ -114,7 +114,7 @@ pub fn compaction_total(agent_id: &str, outcome: &str) -> u64 {
 }
 
 /// Phase A.2 — provider-level prompt cache counters per (agent, provider).
-/// Field meaning matches `agent_llm::CacheUsage`. The model is part of
+/// Field meaning matches `nexo_llm::CacheUsage`. The model is part of
 /// the key so a binding-driven model swap shows up as a fresh hit-ratio
 /// curve in dashboards.
 static LLM_CACHE_READ: LazyLock<DashMap<LlmKey, AtomicU64>> = LazyLock::new(DashMap::new);
@@ -153,7 +153,7 @@ pub fn observe_cache_usage(
     agent_id: &str,
     provider: &str,
     model: &str,
-    usage: &agent_llm::CacheUsage,
+    usage: &nexo_llm::CacheUsage,
 ) {
     let key = LlmKey {
         agent: agent_id.to_string(),
@@ -523,24 +523,24 @@ pub fn render_prometheus(fallback_nats_open: bool) -> String {
     }
 
     out.push_str(
-        "# HELP agent_extensions_discovered Total extension discovery outcomes by status.\n",
+        "# HELP nexo_extensions_discovered Total extension discovery outcomes by status.\n",
     );
-    out.push_str("# TYPE agent_extensions_discovered counter\n");
+    out.push_str("# TYPE nexo_extensions_discovered counter\n");
     for status in ["ok", "disabled", "invalid"] {
         let v = EXTENSIONS_DISCOVERED
             .get(status)
             .map(|x| x.load(Ordering::Relaxed))
             .unwrap_or(0);
         out.push_str(&format!(
-            "agent_extensions_discovered{{status=\"{status}\"}} {v}\n"
+            "nexo_extensions_discovered{{status=\"{status}\"}} {v}\n"
         ));
     }
 
     // Phase 9.2 follow-up — per-tool counter.
-    out.push_str("# HELP agent_tool_calls_total Total tool invocations from the LLM loop.\n");
-    out.push_str("# TYPE agent_tool_calls_total counter\n");
+    out.push_str("# HELP nexo_tool_calls_total Total tool invocations from the LLM loop.\n");
+    out.push_str("# TYPE nexo_tool_calls_total counter\n");
     if TOOL_CALLS.is_empty() {
-        out.push_str("agent_tool_calls_total 0\n");
+        out.push_str("nexo_tool_calls_total 0\n");
     } else {
         let mut rows: Vec<_> = TOOL_CALLS
             .iter()
@@ -555,7 +555,7 @@ pub fn render_prometheus(fallback_nats_open: bool) -> String {
         });
         for (key, v) in rows {
             out.push_str(&format!(
-                "agent_tool_calls_total{{agent=\"{}\",outcome=\"{}\",tool=\"{}\"}} {}\n",
+                "nexo_tool_calls_total{{agent=\"{}\",outcome=\"{}\",tool=\"{}\"}} {}\n",
                 escape(&key.agent),
                 escape(&key.outcome),
                 escape(&key.tool),
@@ -565,10 +565,10 @@ pub fn render_prometheus(fallback_nats_open: bool) -> String {
     }
 
     // Tool policy cache observability.
-    out.push_str("# HELP agent_tool_cache_events_total Tool cache events by agent/tool/event.\n");
-    out.push_str("# TYPE agent_tool_cache_events_total counter\n");
+    out.push_str("# HELP nexo_tool_cache_events_total Tool cache events by agent/tool/event.\n");
+    out.push_str("# TYPE nexo_tool_cache_events_total counter\n");
     if TOOL_CACHE_EVENTS.is_empty() {
-        out.push_str("agent_tool_cache_events_total 0\n");
+        out.push_str("nexo_tool_cache_events_total 0\n");
     } else {
         let mut rows: Vec<_> = TOOL_CACHE_EVENTS
             .iter()
@@ -583,7 +583,7 @@ pub fn render_prometheus(fallback_nats_open: bool) -> String {
         });
         for (key, v) in rows {
             out.push_str(&format!(
-                "agent_tool_cache_events_total{{agent=\"{}\",event=\"{}\",tool=\"{}\"}} {}\n",
+                "nexo_tool_cache_events_total{{agent=\"{}\",event=\"{}\",tool=\"{}\"}} {}\n",
                 escape(&key.agent),
                 escape(&key.outcome),
                 escape(&key.tool),
@@ -593,17 +593,17 @@ pub fn render_prometheus(fallback_nats_open: bool) -> String {
     }
 
     // Phase 9.2 follow-up — per-tool latency histogram.
-    out.push_str("# HELP agent_tool_latency_ms Tool handler latency histogram in milliseconds.\n");
-    out.push_str("# TYPE agent_tool_latency_ms histogram\n");
+    out.push_str("# HELP nexo_tool_latency_ms Tool handler latency histogram in milliseconds.\n");
+    out.push_str("# TYPE nexo_tool_latency_ms histogram\n");
     if TOOL_LATENCY.is_empty() {
         for upper in LATENCY_BUCKET_LIMITS_MS.iter() {
             out.push_str(&format!(
-                "agent_tool_latency_ms_bucket{{agent=\"\",tool=\"\",le=\"{upper}\"}} 0\n"
+                "nexo_tool_latency_ms_bucket{{agent=\"\",tool=\"\",le=\"{upper}\"}} 0\n"
             ));
         }
-        out.push_str("agent_tool_latency_ms_bucket{agent=\"\",tool=\"\",le=\"+Inf\"} 0\n");
-        out.push_str("agent_tool_latency_ms_sum{agent=\"\",tool=\"\"} 0\n");
-        out.push_str("agent_tool_latency_ms_count{agent=\"\",tool=\"\"} 0\n");
+        out.push_str("nexo_tool_latency_ms_bucket{agent=\"\",tool=\"\",le=\"+Inf\"} 0\n");
+        out.push_str("nexo_tool_latency_ms_sum{agent=\"\",tool=\"\"} 0\n");
+        out.push_str("nexo_tool_latency_ms_count{agent=\"\",tool=\"\"} 0\n");
     } else {
         let keys: Vec<ToolKey> = {
             let mut ks: Vec<_> = TOOL_LATENCY.iter().map(|e| e.key().clone()).collect();
@@ -620,20 +620,20 @@ pub fn render_prometheus(fallback_nats_open: bool) -> String {
             let tool = escape(&key.tool);
             for (idx, upper) in LATENCY_BUCKET_LIMITS_MS.iter().enumerate() {
                 out.push_str(&format!(
-                    "agent_tool_latency_ms_bucket{{agent=\"{agent}\",tool=\"{tool}\",le=\"{upper}\"}} {}\n",
+                    "nexo_tool_latency_ms_bucket{{agent=\"{agent}\",tool=\"{tool}\",le=\"{upper}\"}} {}\n",
                     series.buckets[idx].load(Ordering::Relaxed)
                 ));
             }
             let count = series.count.load(Ordering::Relaxed);
             out.push_str(&format!(
-                "agent_tool_latency_ms_bucket{{agent=\"{agent}\",tool=\"{tool}\",le=\"+Inf\"}} {count}\n"
+                "nexo_tool_latency_ms_bucket{{agent=\"{agent}\",tool=\"{tool}\",le=\"+Inf\"}} {count}\n"
             ));
             out.push_str(&format!(
-                "agent_tool_latency_ms_sum{{agent=\"{agent}\",tool=\"{tool}\"}} {}\n",
+                "nexo_tool_latency_ms_sum{{agent=\"{agent}\",tool=\"{tool}\"}} {}\n",
                 series.sum_ms.load(Ordering::Relaxed)
             ));
             out.push_str(&format!(
-                "agent_tool_latency_ms_count{{agent=\"{agent}\",tool=\"{tool}\"}} {count}\n"
+                "nexo_tool_latency_ms_count{{agent=\"{agent}\",tool=\"{tool}\"}} {count}\n"
             ));
         }
     }
@@ -695,21 +695,21 @@ mod tests {
         assert!(
             contains_line(
                 &body,
-                "agent_tool_calls_total{agent=\"kate\",outcome=\"ok\",tool=\"mcp_fs_read\"} 2"
+                "nexo_tool_calls_total{agent=\"kate\",outcome=\"ok\",tool=\"mcp_fs_read\"} 2"
             ),
             "missing ok counter:\n{body}"
         );
         assert!(contains_line(
             &body,
-            "agent_tool_calls_total{agent=\"kate\",outcome=\"error\",tool=\"mcp_fs_read\"} 1"
+            "nexo_tool_calls_total{agent=\"kate\",outcome=\"error\",tool=\"mcp_fs_read\"} 1"
         ));
         assert!(contains_line(
             &body,
-            "agent_tool_latency_ms_count{agent=\"kate\",tool=\"mcp_fs_read\"} 2"
+            "nexo_tool_latency_ms_count{agent=\"kate\",tool=\"mcp_fs_read\"} 2"
         ));
         assert!(
             body.contains(
-                "agent_tool_latency_ms_bucket{agent=\"kate\",tool=\"mcp_fs_read\",le=\"50\"}"
+                "nexo_tool_latency_ms_bucket{agent=\"kate\",tool=\"mcp_fs_read\",le=\"50\"}"
             ),
             "missing 50ms bucket:\n{body}"
         );
@@ -773,9 +773,9 @@ mod tests {
         add_extensions_discovered("ok", 2);
         add_extensions_discovered("disabled", 1);
         let body = render_prometheus(false);
-        assert!(body.contains("agent_extensions_discovered{status=\"ok\"} 2"));
-        assert!(body.contains("agent_extensions_discovered{status=\"disabled\"} 1"));
-        assert!(body.contains("agent_extensions_discovered{status=\"invalid\"} 0"));
+        assert!(body.contains("nexo_extensions_discovered{status=\"ok\"} 2"));
+        assert!(body.contains("nexo_extensions_discovered{status=\"disabled\"} 1"));
+        assert!(body.contains("nexo_extensions_discovered{status=\"invalid\"} 0"));
     }
 
     #[test]

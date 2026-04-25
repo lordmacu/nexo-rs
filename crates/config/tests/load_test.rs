@@ -1,4 +1,4 @@
-use agent_config::AppConfig;
+use nexo_config::AppConfig;
 use std::fs;
 use std::io::Write;
 use std::sync::Mutex;

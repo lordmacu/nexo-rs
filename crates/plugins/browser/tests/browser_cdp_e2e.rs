@@ -6,11 +6,11 @@
 //! captureScreenshot → evaluate flow against a live Chrome.
 //!
 //! Typical invocation against the docker-compose stack:
-//!     CDP_URL=http://127.0.0.1:9222 cargo test -p agent-plugin-browser --test browser_cdp_e2e -- --nocapture
+//!     CDP_URL=http://127.0.0.1:9222 cargo test -p nexo-plugin-browser --test browser_cdp_e2e -- --nocapture
 
 use std::sync::Arc;
 
-use agent_plugin_browser::{CdpClient, CdpSession};
+use nexo_plugin_browser::{CdpClient, CdpSession};
 use serde_json::json;
 
 #[tokio::test]

@@ -1,7 +1,7 @@
 use super::context::AgentContext;
 use super::tool_registry::ToolHandler;
-use agent_llm::ToolDef;
-use agent_taskflow::{CreateManagedInput, Flow, FlowError, FlowManager, FlowStatus, WaitCondition};
+use nexo_llm::ToolDef;
+use nexo_taskflow::{CreateManagedInput, Flow, FlowError, FlowManager, FlowStatus, WaitCondition};
 use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::{json, Value};
@@ -345,11 +345,11 @@ fn _suppress_flowerror_use(e: FlowError) -> FlowError {
 mod tests {
     use super::*;
     use crate::session::SessionManager;
-    use agent_broker::{AnyBroker, BrokerHandle};
-    use agent_config::types::agents::{
+    use nexo_broker::{AnyBroker, BrokerHandle};
+    use nexo_config::types::agents::{
         AgentConfig, AgentRuntimeConfig, HeartbeatConfig, ModelConfig,
     };
-    use agent_taskflow::SqliteFlowStore;
+    use nexo_taskflow::SqliteFlowStore;
     use std::sync::Arc as StdArc;
     use std::time::Duration;
     async fn ctx_with_session() -> (AgentContext, Uuid) {
@@ -385,6 +385,8 @@ mod tests {
             google_auth: None,
             credentials: Default::default(),
             link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
             context_optimization: None,
         });
@@ -575,6 +577,8 @@ mod tests {
             google_auth: None,
             credentials: Default::default(),
             link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
             context_optimization: None,
         });

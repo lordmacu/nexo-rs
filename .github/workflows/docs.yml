@@ -45,6 +45,12 @@ jobs:
           curl -sSL "https://github.com/badboy/mdbook-mermaid/releases/download/v${MDBOOK_MERMAID_VERSION}/mdbook-mermaid-v${MDBOOK_MERMAID_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
             | tar -xz -C /usr/local/bin
 
+      - name: Enforce English-only mdBook content
+        run: ./scripts/check_mdbook_english.sh
+
+      - name: Enforce English-only Markdown content
+        run: ./scripts/check_markdown_english.sh
+
       - name: Build mdBook
         run: mdbook build docs
 

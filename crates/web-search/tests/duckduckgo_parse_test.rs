@@ -1,6 +1,6 @@
 #![cfg(feature = "duckduckgo")]
 
-use agent_web_search::providers::duckduckgo::DuckDuckGoProvider;
+use nexo_web_search::providers::duckduckgo::DuckDuckGoProvider;
 
 const SAMPLE: &str = r#"
 <html><body>

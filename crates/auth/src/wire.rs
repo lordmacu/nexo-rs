@@ -1,6 +1,6 @@
 //! Wire layer — turns `AppConfig` + `google-auth.yaml` into the
 //! credential stores and resolver the runtime needs. Kept in this
-//! crate (not `agent-config`) so the config crate stays a pure data
+//! crate (not `nexo-config`) so the config crate stays a pure data
 //! shape and never pulls `tokio` / `dashmap`.
 //!
 //! The entry point is [`build_credentials`], called from `main.rs`
@@ -10,9 +10,9 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use agent_config::types::agents::AgentConfig;
-use agent_config::types::credentials::{GoogleAccountConfig, GoogleAuthConfig, GoogleAuthFile};
-use agent_config::types::plugins::{TelegramPluginConfig, WhatsappPluginConfig};
+use nexo_config::types::agents::AgentConfig;
+use nexo_config::types::credentials::{GoogleAccountConfig, GoogleAuthConfig, GoogleAuthFile};
+use nexo_config::types::plugins::{TelegramPluginConfig, WhatsappPluginConfig};
 use anyhow::{Context, Result};
 
 use crate::error::BuildError;
@@ -63,7 +63,7 @@ pub fn load_google_auth(dir: &Path) -> Result<GoogleAuthConfig> {
     }
     let raw = std::fs::read_to_string(&path)
         .with_context(|| format!("cannot read {}", path.display()))?;
-    let resolved = agent_config::env::resolve_placeholders(&raw, "google-auth.yaml")?;
+    let resolved = nexo_config::env::resolve_placeholders(&raw, "google-auth.yaml")?;
     let file: GoogleAuthFile = serde_yaml::from_str(&resolved)
         .with_context(|| format!("invalid config in {}", path.display()))?;
     Ok(file.google_auth)
@@ -344,7 +344,7 @@ pub fn reload_resolver(
     bundle: &CredentialsBundle,
     strict: StrictLevel,
 ) -> Result<ReloadOutcome, Vec<BuildError>> {
-    let cfg = match agent_config::AppConfig::load(config_dir) {
+    let cfg = match nexo_config::AppConfig::load(config_dir) {
         Ok(c) => c,
         Err(e) => {
             return Err(vec![BuildError::Credential {
@@ -444,10 +444,10 @@ pub fn print_report(bundle: &Result<CredentialsBundle, Vec<BuildError>>) -> i32 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_config::types::agents::{
+    use nexo_config::types::agents::{
         AgentConfig, HeartbeatConfig, ModelConfig, OutboundAllowlistConfig,
     };
-    use agent_config::types::credentials::AgentCredentialsConfig;
+    use nexo_config::types::credentials::AgentCredentialsConfig;
     use tempfile::TempDir;
 
     fn minimal_agent(id: &str, wa_cred: Option<&str>) -> AgentConfig {
@@ -486,12 +486,14 @@ mod tests {
             language: None,
             skill_overrides: Default::default(),
             link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             context_optimization: None,
         }
     }
 
     fn wa_cfg(instance: Option<&str>, dir: &Path, allow: &[&str]) -> WhatsappPluginConfig {
-        use agent_config::types::plugins::*;
+        use nexo_config::types::plugins::*;
         WhatsappPluginConfig {
             enabled: true,
             session_dir: dir.to_string_lossy().into_owned(),

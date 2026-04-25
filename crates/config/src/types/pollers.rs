@@ -1,7 +1,7 @@
 //! YAML shape for `config/pollers.yaml`. The `Schedule` enum lives in
-//! `agent-poller` to keep that crate self-contained, but here we
-//! mirror its struct shape via `serde_yaml::Value` so `agent-config`
-//! does not depend on `agent-poller` (avoids a cycle: config ← poller ← config).
+//! `nexo-poller` to keep that crate self-contained, but here we
+//! mirror its struct shape via `serde_yaml::Value` so `nexo-config`
+//! does not depend on `nexo-poller` (avoids a cycle: config ← poller ← config).
 
 use std::collections::HashMap;
 
@@ -51,7 +51,7 @@ pub struct PollerJob {
     pub kind: String,
     /// Agent whose Phase 17 credentials this job uses.
     pub agent: String,
-    /// `Every`, `Cron`, or `At` — parsed by `agent-poller`.
+    /// `Every`, `Cron`, or `At` — parsed by `nexo-poller`.
     pub schedule: serde_yaml::Value,
     /// Module-specific options. Validated by the module's `validate`.
     #[serde(default)]

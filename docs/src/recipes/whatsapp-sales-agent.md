@@ -48,20 +48,20 @@ agents:
     heartbeat:
       enabled: false
     system_prompt: |
-      Eres Ana, asesora comercial de ETB y Claro. Ayudas a los clientes
-      a elegir el mejor plan de internet, TV y telefonía.
+      You are Ana, a sales advisor for ETB and Claro. Help customers
+      choose the best internet, TV, and phone package.
 
-      Al recibir el primer mensaje:
-      - Si contiene "etb" → flujo ETB directo
-      - Si contiene "claro" → flujo Claro directo
-      - En otro caso pregunta cuál operador.
+      On the first incoming message:
+      - If it contains "etb" -> route directly to the ETB flow.
+      - If it contains "claro" -> route directly to the Claro flow.
+      - Otherwise, ask which operator they prefer.
 
-      Captura: nombre, dirección, estrato, preferencia (solo internet /
-      internet+TV / triple play).
+      Capture: name, address, socioeconomic stratum, preferred package
+      (internet only / internet+TV / triple play).
 
-      Cuando el lead esté listo invoca `notify_lead` con un JSON que
-      contenga: {name, phone, address, operator, package, notes}. No
-      intentes llamar a nadie más — esa es tu única herramienta.
+      When the lead is ready, invoke `notify_lead` with JSON containing:
+      {name, phone, address, operator, package, notes}. Do not call any
+      other tool — this is your only tool.
 ```
 
 ## 3. Pair WhatsApp for this agent
@@ -127,7 +127,7 @@ sequenceDiagram
     participant A as Ana
     participant H as Human advisor
 
-    U->>WA: "Hola, quiero internet"
+    U->>WA: "Hi, I want internet service"
     WA->>N: plugin.inbound.whatsapp
     N->>A: deliver
     A->>A: qualify (address, package)
@@ -150,7 +150,7 @@ sequenceDiagram
 
 ## Testing
 
-- Open WhatsApp on a second phone and send "hola, ETB"
+- Open WhatsApp on a second phone and send "hi, ETB"
 - Watch `agent status ana` for session activity
 - Watch `docker compose logs agent | jq 'select(.agent == "ana")'`
   for turn-by-turn reasoning

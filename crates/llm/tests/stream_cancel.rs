@@ -8,10 +8,10 @@
 
 use std::time::Duration;
 
-use agent_config::types::llm::LlmProviderConfig;
-use agent_config::types::llm::RetryConfig;
-use agent_llm::types::{ChatMessage, ChatRequest};
-use agent_llm::{LlmClient, OpenAiClient};
+use nexo_config::types::llm::LlmProviderConfig;
+use nexo_config::types::llm::RetryConfig;
+use nexo_llm::types::{ChatMessage, ChatRequest};
+use nexo_llm::{LlmClient, OpenAiClient};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 

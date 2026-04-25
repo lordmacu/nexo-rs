@@ -2,7 +2,7 @@ use super::context::AgentContext;
 use super::tool_registry::ToolHandler;
 use super::transcripts::{SessionHeader, TranscriptEntry, TranscriptLine, TranscriptWriter};
 use super::transcripts_index::TranscriptsIndex;
-use agent_llm::ToolDef;
+use nexo_llm::ToolDef;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -409,8 +409,8 @@ fn optional_usize(args: &Value, key: &str) -> anyhow::Result<Option<usize>> {
 mod tests {
     use super::*;
     use crate::session::SessionManager;
-    use agent_broker::{AnyBroker, BrokerHandle};
-    use agent_config::types::agents::{
+    use nexo_broker::{AnyBroker, BrokerHandle};
+    use nexo_config::types::agents::{
         AgentConfig, AgentRuntimeConfig, HeartbeatConfig, ModelConfig,
     };
     use chrono::Utc;
@@ -450,6 +450,8 @@ mod tests {
             google_auth: None,
             credentials: Default::default(),
             link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
             context_optimization: None,
         });
@@ -648,6 +650,8 @@ mod tests {
             google_auth: None,
             credentials: Default::default(),
             link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
             context_optimization: None,
         });

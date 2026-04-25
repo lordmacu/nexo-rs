@@ -1,14 +1,23 @@
 [package]
-name = "agent-poller"
-version = "0.1.0"
-edition = "2021"
-
+name = "nexo-poller"
+description   = "Generic polling runtime: cron schedules, retries, ack semantics."
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+homepage      = { workspace = true }
+documentation = { workspace = true }
+readme        = { workspace = true }
+keywords      = { workspace = true }
+categories    = { workspace = true }
 [dependencies]
-agent-broker     = { path = "../broker" }
-agent-config     = { path = "../config" }
-agent-auth       = { path = "../auth" }
-agent-resilience = { path = "../resilience" }
-agent-llm        = { path = "../llm" }
+nexo-broker = { version = "0.1.0", path = "../broker" }
+nexo-config = { version = "0.1.0", path = "../config" }
+nexo-auth = { version = "0.1.0", path = "../auth" }
+nexo-resilience = { version = "0.1.0", path = "../resilience" }
+nexo-llm = { version = "0.1.0", path = "../llm" }
 
 tokio        = { workspace = true }
 async-trait  = { workspace = true }
@@ -28,7 +37,7 @@ cron         = "0.12"
 humantime    = { workspace = true }
 regex        = "1"
 base64       = { workspace = true }
-agent-plugin-google = { path = "../plugins/google" }
+nexo-plugin-google = { version = "0.1.0", path = "../plugins/google" }
 
 [features]
 default = []

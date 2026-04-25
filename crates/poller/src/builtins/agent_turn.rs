@@ -52,8 +52,8 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use agent_auth::handle::{Channel, GOOGLE, TELEGRAM, WHATSAPP};
-use agent_llm::{ChatMessage, ChatRequest, ChatRole, ResponseContent};
+use nexo_auth::handle::{Channel, GOOGLE, TELEGRAM, WHATSAPP};
+use nexo_llm::{ChatMessage, ChatRequest, ChatRole, ResponseContent};
 
 use crate::error::PollerError;
 use crate::poller::{OutboundDelivery, PollContext, Poller, TickOutcome};
@@ -170,7 +170,7 @@ impl Poller for AgentTurnPoller {
             reason: "agent_turn requires LlmConfig — wire with_llm(registry, config)".into(),
         })?;
 
-        let model_cfg = agent_config::types::agents::ModelConfig {
+        let model_cfg = nexo_config::types::agents::ModelConfig {
             provider: cfg.llm.provider.clone(),
             model: cfg.llm.model.clone(),
         };

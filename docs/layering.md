@@ -101,7 +101,7 @@ agent's system prompt.
 ## "Native tool bundle" (antipattern, avoid)
 
 A fifth pattern existed briefly: ToolHandler instances compiled into
-`agent-core` with shared `Arc<State>` (Google OAuth, Anthropic OAuth).
+`nexo-core` with shared `Arc<State>` (Google OAuth, Anthropic OAuth).
 This blurred the layers — the runtime shipped integration-specific
 machinery even for agents that didn't use it.
 

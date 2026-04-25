@@ -379,14 +379,14 @@ async fn run_google_device_code(
     scopes: &[String],
     token_path: &std::path::Path,
 ) -> anyhow::Result<()> {
-    let cfg = agent_plugin_google::GoogleAuthConfig {
+    let cfg = nexo_plugin_google::GoogleAuthConfig {
         client_id: client_id.to_string(),
         client_secret: client_secret.to_string(),
         scopes: scopes.to_vec(),
         token_file: token_path.to_string_lossy().into_owned(),
         redirect_port: 0,
     };
-    let client = agent_plugin_google::GoogleAuthClient::new(
+    let client = nexo_plugin_google::GoogleAuthClient::new(
         cfg,
         token_path.parent().unwrap_or(std::path::Path::new(".")),
     );

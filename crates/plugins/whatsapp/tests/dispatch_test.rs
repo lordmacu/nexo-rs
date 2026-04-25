@@ -4,9 +4,9 @@
 
 use std::sync::Arc;
 
-use agent_broker::Event;
-use agent_plugin_whatsapp::dispatch::{self, TOPIC_OUTBOUND};
-use agent_plugin_whatsapp::session_id::session_id_for_jid;
+use nexo_broker::Event;
+use nexo_plugin_whatsapp::dispatch::{self, TOPIC_OUTBOUND};
+use nexo_plugin_whatsapp::session_id::session_id_for_jid;
 use dashmap::DashMap;
 use tokio::sync::oneshot;
 

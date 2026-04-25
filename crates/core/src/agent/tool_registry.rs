@@ -1,5 +1,5 @@
 use super::context::AgentContext;
-use agent_llm::ToolDef;
+use nexo_llm::ToolDef;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use serde_json::Value;

@@ -4,7 +4,7 @@ use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use agent_extensions::{spawn_extensions_watcher, KnownPluginSnapshot};
+use nexo_extensions::{spawn_extensions_watcher, KnownPluginSnapshot};
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::{fmt, EnvFilter};

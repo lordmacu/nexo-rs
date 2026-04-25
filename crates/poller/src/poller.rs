@@ -4,10 +4,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_auth::resolver::CredentialStores;
-use agent_auth::{AgentCredentialResolver, Channel};
-use agent_broker::AnyBroker;
-use agent_llm::ToolDef;
+use nexo_auth::resolver::CredentialStores;
+use nexo_auth::{AgentCredentialResolver, Channel};
+use nexo_broker::AnyBroker;
+use nexo_llm::ToolDef;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -57,17 +57,17 @@ pub trait Poller: Send + Sync + 'static {
 }
 
 /// One per-kind tool. Returned by [`Poller::custom_tools`] and
-/// adapted into an `agent-core` `ToolHandler` by the
-/// `agent-poller-tools` crate at registration time.
+/// adapted into an `nexo-core` `ToolHandler` by the
+/// `nexo-poller-tools` crate at registration time.
 pub struct CustomToolSpec {
     pub def: ToolDef,
     pub handler: Arc<dyn CustomToolHandler>,
 }
 
-/// Local handler trait — kept inside `agent-poller` so the crate
-/// stays free of `agent-core` (and therefore free of the
+/// Local handler trait — kept inside `nexo-poller` so the crate
+/// stays free of `nexo-core` (and therefore free of the
 /// `plugin-google ↔ core` cycle). The adapter lives in
-/// `agent-poller-tools`.
+/// `nexo-poller-tools`.
 #[async_trait]
 pub trait CustomToolHandler: Send + Sync + 'static {
     async fn call(
@@ -117,8 +117,8 @@ pub struct PollContext {
     /// runner was not wired with `with_llm` at boot — modules MUST
     /// surface a clean `PollerError::Config` in that case rather than
     /// panicking.
-    pub llm_registry: Option<Arc<agent_llm::LlmRegistry>>,
-    pub llm_config: Option<Arc<agent_config::LlmConfig>>,
+    pub llm_registry: Option<Arc<nexo_llm::LlmRegistry>>,
+    pub llm_config: Option<Arc<nexo_config::LlmConfig>>,
 }
 
 /// What a module returns on a successful tick.

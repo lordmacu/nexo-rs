@@ -10,8 +10,8 @@ use crate::telemetry::{
     inc_llm_requests_total, observe_cache_usage, observe_llm_latency_ms,
     observe_prompt_tokens_drift, observe_prompt_tokens_estimated,
 };
-use agent_broker::{BrokerHandle, Event};
-use agent_llm::{
+use nexo_broker::{BrokerHandle, Event};
+use nexo_llm::{
     collect_stream, Attachment, ChatMessage, ChatRequest, ChatRole, LlmClient, ResponseContent,
 };
 use async_trait::async_trait;
@@ -59,13 +59,13 @@ pub struct LlmAgentBehavior {
     /// `llm_prompt_tokens_estimated` and post-response we record drift
     /// vs the provider's reported total. When `None`, counting is
     /// skipped entirely (zero overhead).
-    token_counter: Option<Arc<dyn agent_llm::TokenCounter>>,
+    token_counter: Option<Arc<dyn nexo_llm::TokenCounter>>,
     /// Phase B — online history compaction. All three must be wired
     /// together (compactor + store + runtime config). When any is
     /// missing, the compaction path is silently skipped — the agent
     /// loop falls back to the legacy "send the whole history" mode.
     compactor: Option<Arc<super::compaction::LlmCompactor>>,
-    compaction_store: Option<Arc<agent_memory::CompactionStore>>,
+    compaction_store: Option<Arc<nexo_memory::CompactionStore>>,
     compaction_runtime: CompactionRuntime,
 }
 
@@ -132,7 +132,7 @@ impl LlmAgentBehavior {
     pub fn with_compaction(
         mut self,
         summarizer: Arc<dyn LlmClient>,
-        store: Arc<agent_memory::CompactionStore>,
+        store: Arc<nexo_memory::CompactionStore>,
         runtime: CompactionRuntime,
     ) -> Self {
         self.compactor = Some(Arc::new(super::compaction::LlmCompactor::new(summarizer)));
@@ -141,12 +141,12 @@ impl LlmAgentBehavior {
         self
     }
     /// Phase C — attach a `TokenCounter`. Boot time pick this from
-    /// `agent_llm::token_counter::build()` based on
+    /// `nexo_llm::token_counter::build()` based on
     /// `llm.context_optimization.token_counter.backend`. When omitted,
     /// pre-flight sizing is skipped (zero metrics, zero overhead).
     pub fn with_token_counter(
         mut self,
-        counter: Arc<dyn agent_llm::TokenCounter>,
+        counter: Arc<dyn nexo_llm::TokenCounter>,
     ) -> Self {
         self.token_counter = Some(counter);
         self
@@ -235,7 +235,7 @@ impl LlmAgentBehavior {
     /// parallelise.
     async fn execute_one_call(
         &self,
-        call: &agent_llm::ToolCall,
+        call: &nexo_llm::ToolCall,
         msg: &InboundMessage,
         ctx: &AgentContext,
     ) -> (String, Option<String>, &'static str, u64) {
@@ -579,7 +579,7 @@ impl LlmAgentBehavior {
         // `system_blocks` (and as a back-compat path when prompt_cache
         // is disabled). Cheap to build — `flatten_blocks` walks the
         // same Vec we just assembled.
-        let flat_system = agent_llm::flatten_blocks(&system_blocks);
+        let flat_system = nexo_llm::flatten_blocks(&system_blocks);
         if !flat_system.is_empty() {
             prefix_messages.push(ChatMessage::system(flat_system));
         }
@@ -674,7 +674,7 @@ impl LlmAgentBehavior {
                         let elapsed_ms = started.elapsed().as_millis() as u64;
                         match result {
                             Ok(r) => {
-                                let row = agent_memory::CompactionRow {
+                                let row = nexo_memory::CompactionRow {
                                     session_id: session.id.to_string(),
                                     compacted_at: chrono::Utc::now().timestamp_millis(),
                                     head_turn_count: r.head_turns_summarized as i64,
@@ -989,7 +989,7 @@ impl LlmAgentBehavior {
                     > = HashMap::new();
                     let mut par_queue = par_idx.into_iter();
                     let msg_ref: &InboundMessage = &msg;
-                    let calls_ref: &[agent_llm::ToolCall] = &calls;
+                    let calls_ref: &[nexo_llm::ToolCall] = &calls;
                     // Prime the in-flight window.
                     while in_flight.len() < par_cap.max(1) {
                         match par_queue.next() {
@@ -1307,7 +1307,7 @@ fn build_media_attachment(media: &super::types::InboundMedia) -> Option<Attachme
     let mut att = Attachment {
         kind: att_kind.to_string(),
         mime_type: mime,
-        data: agent_llm::AttachmentData::Path {
+        data: nexo_llm::AttachmentData::Path {
             path: media.path.clone(),
         },
     };
@@ -1393,7 +1393,7 @@ fn inject_runtime_tool_args(
 mod tests {
     use super::super::types::InboundMedia;
     use super::*;
-    use agent_llm::AttachmentData;
+    use nexo_llm::AttachmentData;
 
     fn temp_media_file(name: &str, bytes: &[u8]) -> tempfile::NamedTempFile {
         let file = tempfile::Builder::new()

@@ -8,7 +8,7 @@ use serde_json::json;
 use tokio::time::{timeout, Instant};
 use uuid::Uuid;
 
-use agent_broker::Event;
+use nexo_broker::Event;
 
 const INBOUND_TOPIC: &str = "plugin.inbound.browser";
 const OUTBOUND_TOPIC: &str = "plugin.outbound.browser";

@@ -348,7 +348,7 @@ mod tests {
 
     #[tokio::test]
     async fn with_extras_redactor_redacts_jsonl() -> anyhow::Result<()> {
-        use agent_config::types::transcripts::RedactionConfig;
+        use nexo_config::types::transcripts::RedactionConfig;
         let root = tmp_dir("redact");
         let cfg = RedactionConfig {
             enabled: true,

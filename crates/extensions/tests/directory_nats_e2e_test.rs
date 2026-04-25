@@ -4,18 +4,18 @@
 //! directory Added event, then shutdown beacon -> Removed event.
 //!
 //! Typical invocation against the docker-compose stack:
-//!     NATS_URL=nats://127.0.0.1:4222 cargo test -p agent-extensions --test directory_nats_e2e_test -- --nocapture
+//!     NATS_URL=nats://127.0.0.1:4222 cargo test -p nexo-extensions --test directory_nats_e2e_test -- --nocapture
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_broker::{BrokerHandle, Event, Message, NatsBroker};
-use agent_config::types::broker::{
+use nexo_broker::{BrokerHandle, Event, Message, NatsBroker};
+use nexo_config::types::broker::{
     BrokerAuthConfig, BrokerFallbackConfig, BrokerInner, BrokerKind, BrokerLimitsConfig,
     BrokerPersistenceConfig,
 };
-use agent_extensions::runtime::announce::{AnnounceCapabilities, AnnouncePayload, ShutdownPayload};
-use agent_extensions::runtime::{DirectoryEvent, ExtensionDirectory, NatsRuntimeOptions};
+use nexo_extensions::runtime::announce::{AnnounceCapabilities, AnnouncePayload, ShutdownPayload};
+use nexo_extensions::runtime::{DirectoryEvent, ExtensionDirectory, NatsRuntimeOptions};
 use futures::StreamExt;
 use uuid::Uuid;
 

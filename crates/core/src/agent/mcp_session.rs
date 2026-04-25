@@ -1,14 +1,14 @@
-//! Phase 12.4 — bridges between `SessionMcpRuntime` (owned by `agent-mcp`)
+//! Phase 12.4 — bridges between `SessionMcpRuntime` (owned by `nexo-mcp`)
 //! and the agent's `ToolRegistry` (lives here).
 //!
 //! The runtime intentionally does NOT cache a catalog to avoid pulling in
-//! the `agent-core` dep cycle. Instead this module rebuilds on demand.
+//! the `nexo-core` dep cycle. Instead this module rebuilds on demand.
 //! Future `notifications/tools/list_changed` wiring will call
 //! `SessionMcpRuntime::invalidate_catalog`, and any cache held by the
 //! caller should refresh through these helpers.
 use super::mcp_catalog::McpToolCatalog;
 use super::tool_registry::ToolRegistry;
-use agent_mcp::SessionMcpRuntime;
+use nexo_mcp::SessionMcpRuntime;
 use std::sync::Arc;
 /// Build a fresh `McpToolCatalog` from the runtime's currently connected
 /// clients. Touches `last_used_at` so building the catalog counts as

@@ -5,8 +5,8 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
-use agent_extensions::{collect_mcp_declarations, ExtensionDiscovery};
-use agent_mcp::runtime_config::{ExtensionServerDecl, McpRuntimeConfig, McpServerRuntimeConfig};
+use nexo_extensions::{collect_mcp_declarations, ExtensionDiscovery};
+use nexo_mcp::runtime_config::{ExtensionServerDecl, McpRuntimeConfig, McpServerRuntimeConfig};
 
 fn write_manifest(dir: &Path, body: &str) {
     fs::create_dir_all(dir).unwrap();
@@ -126,7 +126,7 @@ args = ["--db", "${EXTENSION_ROOT}/data/cities.db"]
 
     let report = discovery_for(td.path()).discover();
     let ext_decls = collect_mcp_declarations(&report, &[]);
-    // bridge agent-extensions ExtensionMcpDecl → agent-mcp ExtensionServerDecl
+    // bridge nexo-extensions ExtensionMcpDecl → nexo-mcp ExtensionServerDecl
     let decls: Vec<ExtensionServerDecl> = ext_decls
         .into_iter()
         .map(|d| ExtensionServerDecl {
@@ -137,7 +137,7 @@ args = ["--db", "${EXTENSION_ROOT}/data/cities.db"]
         })
         .collect();
 
-    let yaml = agent_config::McpConfig::default();
+    let yaml = nexo_config::McpConfig::default();
     let rt = McpRuntimeConfig::from_yaml_with_extensions(&yaml, &decls);
     assert_eq!(rt.servers.len(), 1);
     let entry = &rt.servers[0];

@@ -10,15 +10,15 @@
 
 use std::path::PathBuf;
 
-use agent_config::AppConfig;
-use agent_llm::{ChatMessage, ChatRequest, ChatRole, LlmRegistry, ResponseContent};
+use nexo_config::AppConfig;
+use nexo_llm::{ChatMessage, ChatRequest, ChatRole, LlmRegistry, ResponseContent};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,agent_llm=debug")),
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,nexo_llm=debug")),
         )
         .init();
 

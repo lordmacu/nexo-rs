@@ -5,8 +5,8 @@
 //! are routed to the owning `dyn McpClient`.
 use super::context::AgentContext;
 use super::tool_registry::ToolHandler;
-use agent_llm::ToolDef;
-use agent_mcp::{McpClient, McpContent, McpTool as McpToolDescriptor};
+use nexo_llm::ToolDef;
+use nexo_mcp::{McpClient, McpContent, McpTool as McpToolDescriptor};
 use async_trait::async_trait;
 use base64::Engine;
 use serde_json::Value;
@@ -149,7 +149,7 @@ impl ToolHandler for McpTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_mcp::McpResourceRef;
+    use nexo_mcp::McpResourceRef;
     #[test]
     fn sanitize_passes_alphanumeric_hyphen_underscore() {
         assert_eq!(sanitize_name_fragment("abc_123-xyz"), "abc_123-xyz");

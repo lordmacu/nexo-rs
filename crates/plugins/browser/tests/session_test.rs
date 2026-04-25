@@ -46,7 +46,7 @@ async fn mock_cdp_server_stateful() -> String {
 
 #[tokio::test]
 async fn snapshot_generates_element_refs() {
-    use agent_plugin_browser::{CdpClient, CdpSession};
+    use nexo_plugin_browser::{CdpClient, CdpSession};
 
     let ws_url = mock_cdp_server_stateful().await;
     let client = Arc::new(CdpClient::connect(&ws_url).await.unwrap());
@@ -70,7 +70,7 @@ async fn snapshot_generates_element_refs() {
 
 #[tokio::test]
 async fn session_attaches_with_session_id() {
-    use agent_plugin_browser::{CdpClient, CdpSession};
+    use nexo_plugin_browser::{CdpClient, CdpSession};
 
     let ws_url = mock_cdp_server_stateful().await;
     let client = Arc::new(CdpClient::connect(&ws_url).await.unwrap());

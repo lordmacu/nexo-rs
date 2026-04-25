@@ -148,9 +148,9 @@ impl Poller for WebhookPoller {
         };
 
         let items = pluck_items(&body, &cfg.items_path);
-        let target_channel: agent_auth::Channel = match cfg.deliver.channel.as_str() {
-            "whatsapp" => agent_auth::handle::WHATSAPP,
-            "telegram" => agent_auth::handle::TELEGRAM,
+        let target_channel: nexo_auth::Channel = match cfg.deliver.channel.as_str() {
+            "whatsapp" => nexo_auth::handle::WHATSAPP,
+            "telegram" => nexo_auth::handle::TELEGRAM,
             other => {
                 return Err(PollerError::Config {
                     job: ctx.job_id.clone(),

@@ -9,9 +9,9 @@
 
 use std::sync::Arc;
 
-use agent_config::types::llm::{LlmProviderConfig, RateLimitConfig, RetryConfig};
-use agent_llm::types::{ChatMessage, ChatRequest};
-use agent_llm::{
+use nexo_config::types::llm::{LlmProviderConfig, RateLimitConfig, RetryConfig};
+use nexo_llm::types::{ChatMessage, ChatRequest};
+use nexo_llm::{
     collect_stream, AnthropicClient, GeminiClient, LlmClient, MiniMaxClient, OpenAiClient,
     ResponseContent,
 };

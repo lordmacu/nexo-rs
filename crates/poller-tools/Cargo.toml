@@ -1,17 +1,26 @@
 [package]
-name = "agent-poller-tools"
-version = "0.1.0"
-edition = "2021"
-
+name = "nexo-poller-tools"
+description   = "Built-in tools and builders for the Nexo poller (LLM turn, channel ops)."
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+homepage      = { workspace = true }
+documentation = { workspace = true }
+readme        = { workspace = true }
+keywords      = { workspace = true }
+categories    = { workspace = true }
 # LLM-callable tools for the poller subsystem. Lives in its own crate
-# so `agent-core` can stay free of the `agent-plugin-google`
-# transitive dep that `agent-poller` carries (would be a cycle:
+# so `nexo-core` can stay free of the `nexo-plugin-google`
+# transitive dep that `nexo-poller` carries (would be a cycle:
 # core → poller → plugin-google → core).
 
 [dependencies]
-agent-core   = { path = "../core" }
-agent-llm    = { path = "../llm" }
-agent-poller = { path = "../poller" }
+nexo-core = { version = "0.1.0", path = "../core" }
+nexo-llm = { version = "0.1.0", path = "../llm" }
+nexo-poller = { version = "0.1.0", path = "../poller" }
 async-trait  = { workspace = true }
 serde_json   = { workspace = true }
 anyhow       = { workspace = true }

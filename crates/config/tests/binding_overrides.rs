@@ -4,7 +4,7 @@
 //! only locks down the serde schema so the downstream work can rely on
 //! what each form deserializes to.
 
-use agent_config::{
+use nexo_config::{
     InboundBinding, SenderRateLimitKeyword, SenderRateLimitOverride,
 };
 

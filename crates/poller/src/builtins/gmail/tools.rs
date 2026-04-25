@@ -12,20 +12,20 @@
 //! - `gmail_labels_list` — enumerate the calling agent's labels.
 //!
 //! Every tool resolves the agent via `_agent_id` injected by
-//! `agent-poller-tools::CustomToolAdapter`. The `_` prefix prevents
+//! `nexo-poller-tools::CustomToolAdapter`. The `_` prefix prevents
 //! a prompt-injection from spoofing the agent — the LLM cannot
 //! override that key after the adapter sets it.
 
 use std::sync::Arc;
 
-use agent_auth::handle::GOOGLE;
-use agent_llm::ToolDef;
-use agent_plugin_google::{GoogleAuthClient, GoogleAuthConfig, SecretSources};
+use nexo_auth::handle::GOOGLE;
+use nexo_llm::ToolDef;
+use nexo_plugin_google::{GoogleAuthClient, GoogleAuthConfig, SecretSources};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use super::gmail::GmailInner;
+use super::GmailInner;
 use crate::{CustomToolHandler, CustomToolSpec, PollerRunner};
 
 pub fn build_tools(inner: Arc<GmailInner>) -> Vec<CustomToolSpec> {
@@ -262,7 +262,7 @@ async fn client_for_agent(
         .map_err(|_| anyhow!("agent '{agent_id}' has no Google credential bound"))?;
     let account_id = handle.account_id_raw().to_string();
     if let Some(c) = inner.clients.get(&account_id) {
-        return Ok(c.clone());
+        return Ok(Arc::clone(c.value()));
     }
     let account = bundle
         .stores

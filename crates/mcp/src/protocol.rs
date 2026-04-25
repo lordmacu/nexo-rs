@@ -1,4 +1,4 @@
-//! MCP wire helpers on top of `agent_extensions::runtime::wire` (JSON-RPC 2.0
+//! MCP wire helpers on top of `nexo_extensions::runtime::wire` (JSON-RPC 2.0
 //! over line-delimited stdio). MCP adds notifications (no `id`) and a fixed
 //! protocol version string.
 
@@ -16,7 +16,7 @@ pub fn encode_request<P: Serialize>(
     params: P,
     id: u64,
 ) -> Result<String, serde_json::Error> {
-    agent_extensions::runtime::wire::encode(method, params, id)
+    nexo_extensions::runtime::wire::encode(method, params, id)
 }
 
 /// Encode a JSON-RPC 2.0 notification (no `id`). MCP uses this for

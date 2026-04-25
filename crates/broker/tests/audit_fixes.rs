@@ -7,7 +7,7 @@
 
 use std::time::Duration;
 
-use agent_broker::{BrokerHandle, DiskQueue, Event, LocalBroker};
+use nexo_broker::{BrokerHandle, DiskQueue, Event, LocalBroker};
 use serde_json::json;
 use tokio::time::sleep;
 

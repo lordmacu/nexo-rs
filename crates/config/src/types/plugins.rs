@@ -101,7 +101,7 @@ impl WhatsappPluginShape {
     }
 }
 
-/// Runtime configuration for `agent-plugin-whatsapp`.
+/// Runtime configuration for `nexo-plugin-whatsapp`.
 ///
 /// Every section ships defaults so minimal config files stay valid; the
 /// plugin reads this struct and drives `wa-agent` accordingly. See

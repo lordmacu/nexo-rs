@@ -82,7 +82,7 @@ impl CliError {
 
 pub struct CliContext<'a> {
     pub config_dir: PathBuf,
-    pub extensions: agent_config::ExtensionsConfig,
+    pub extensions: nexo_config::ExtensionsConfig,
     pub out: &'a mut dyn Write,
     pub err: &'a mut dyn Write,
 }

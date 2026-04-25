@@ -1,18 +1,27 @@
 [package]
-name = "agent-poller-ext"
-version = "0.1.0"
-edition = "2021"
-
-# Bridge crate — adapts an `agent-extensions::StdioRuntime` (a
+name = "nexo-poller-ext"
+description   = "Extension integration for the Nexo poller runtime."
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+homepage      = { workspace = true }
+documentation = { workspace = true }
+readme        = { workspace = true }
+keywords      = { workspace = true }
+categories    = { workspace = true }
+# Bridge crate — adapts an `nexo-extensions::StdioRuntime` (a
 # subprocess speaking JSON-RPC over stdio) into an
-# `agent_poller::Poller` impl. Lets operators write poller modules
+# `nexo_poller::Poller` impl. Lets operators write poller modules
 # in any language (Python, Bash, Go, …) without touching Rust.
 
 [dependencies]
-agent-poller     = { path = "../poller" }
-agent-extensions = { path = "../extensions" }
-agent-auth       = { path = "../auth" }
-agent-llm        = { path = "../llm" }
+nexo-poller = { version = "0.1.0", path = "../poller" }
+nexo-extensions = { version = "0.1.0", path = "../extensions" }
+nexo-auth = { version = "0.1.0", path = "../auth" }
+nexo-llm = { version = "0.1.0", path = "../llm" }
 base64           = { workspace = true }
 async-trait      = { workspace = true }
 serde            = { workspace = true }

@@ -1,4 +1,4 @@
-//! `DefaultSamplingProvider` — wraps `agent_llm::LlmClient` instances
+//! `DefaultSamplingProvider` — wraps `nexo_llm::LlmClient` instances
 //! and maps between MCP sampling requests and our `ChatRequest` /
 //! `ChatResponse`.
 //!
@@ -12,8 +12,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 
-use agent_llm::types::{ChatMessage, ChatRequest, FinishReason, ResponseContent};
-use agent_llm::LlmClient;
+use nexo_llm::types::{ChatMessage, ChatRequest, FinishReason, ResponseContent};
+use nexo_llm::LlmClient;
 
 use super::policy::SamplingPolicy;
 use super::types::{
@@ -105,7 +105,7 @@ fn map_to_chat_request(req: &SamplingRequest, model: &str) -> ChatRequest {
 }
 
 fn map_from_chat_response(
-    resp: agent_llm::types::ChatResponse,
+    resp: nexo_llm::types::ChatResponse,
     model: &str,
 ) -> Result<SamplingResponse, SamplingError> {
     let text = match resp.content {
@@ -136,7 +136,7 @@ fn map_from_chat_response(
 mod tests {
     use super::*;
     use crate::sampling::types::{ModelPreferences, SamplingMessage};
-    use agent_llm::types::{ChatResponse, TokenUsage, ToolCall};
+    use nexo_llm::types::{ChatResponse, TokenUsage, ToolCall};
 
     struct FakeClient {
         provider: &'static str,

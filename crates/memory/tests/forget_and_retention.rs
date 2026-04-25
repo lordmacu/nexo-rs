@@ -5,7 +5,7 @@
 //!   vector recall returned ids whose JOIN was null.
 //! * `prune_recall_events()` trims the ever-growing log.
 
-use agent_memory::LongTermMemory;
+use nexo_memory::LongTermMemory;
 use tempfile::tempdir;
 
 #[tokio::test]

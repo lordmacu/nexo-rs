@@ -28,8 +28,8 @@ pub enum StrictLevel {
 }
 
 /// View of the per-agent config that the resolver needs — keeps this
-/// crate independent of `agent-config`. The wiring crate maps from
-/// [`AgentConfig`](agent_config::types::agents::AgentConfig) into this
+/// crate independent of `nexo-config`. The wiring crate maps from
+/// [`AgentConfig`](nexo_config::types::agents::AgentConfig) into this
 /// shape just before calling [`AgentCredentialResolver::build`].
 #[derive(Debug, Clone)]
 pub struct AgentCredentialsInput {

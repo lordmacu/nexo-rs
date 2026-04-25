@@ -14,8 +14,8 @@
 //! OpenClaw's defaults. Weights likewise. Promoted memories are recorded in
 //! `memory_promotions` so subsequent sweeps skip them — the sweep is
 //! idempotent even if the cron fires twice.
-use agent_config::types::agents::{DreamingWeightsYaml, DreamingYamlConfig};
-use agent_memory::{LongTermMemory, RecallSignals};
+use nexo_config::types::agents::{DreamingWeightsYaml, DreamingYamlConfig};
+use nexo_memory::{LongTermMemory, RecallSignals};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -217,10 +217,10 @@ impl DreamEngine {
                 // Phase 10.7: backfill concept_tags on promoted rows so recall
                 // query expansion can find them later. Rows inserted before
                 // 10.7 (or via paths that bypassed `remember`) have '[]'.
-                let tags = agent_memory::derive_concept_tags(
+                let tags = nexo_memory::derive_concept_tags(
                     "",
                     &cand.content,
-                    agent_memory::MAX_CONCEPT_TAGS,
+                    nexo_memory::MAX_CONCEPT_TAGS,
                 );
                 if !tags.is_empty() {
                     if let Err(e) = self.memory.set_concept_tags(cand.memory_id, &tags).await {

@@ -25,13 +25,13 @@
 
 use std::time::Duration;
 
-use agent_broker::AnyBroker;
-use agent_config::{
+use nexo_broker::AnyBroker;
+use nexo_config::{
     WhatsappAclConfig, WhatsappBehaviorConfig, WhatsappBridgeConfig, WhatsappDaemonConfig,
     WhatsappPluginConfig, WhatsappRateLimitConfig, WhatsappTranscriberConfig,
 };
-use agent_core::agent::plugin::{Command, Plugin, Response};
-use agent_plugin_whatsapp::WhatsappPlugin;
+use nexo_core::agent::plugin::{Command, Plugin, Response};
+use nexo_plugin_whatsapp::WhatsappPlugin;
 
 fn live_cfg(session_dir: String) -> WhatsappPluginConfig {
     WhatsappPluginConfig {
@@ -101,7 +101,7 @@ async fn live_boot_and_proactive_send() {
         .send_command(Command::SendMessage {
             to: peer_jid,
             text: format!(
-                "agent-plugin-whatsapp live check at {}",
+                "nexo-plugin-whatsapp live check at {}",
                 chrono::Utc::now().timestamp()
             ),
         })

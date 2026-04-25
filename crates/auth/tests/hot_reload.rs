@@ -6,12 +6,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use agent_auth::handle::{CredentialHandle, WHATSAPP};
-use agent_auth::resolver::{
+use nexo_auth::handle::{CredentialHandle, WHATSAPP};
+use nexo_auth::resolver::{
     AgentCredentialResolver, AgentCredentialsInput, CredentialStores, StrictLevel,
 };
-use agent_auth::telegram::TelegramCredentialStore;
-use agent_auth::whatsapp::{WhatsappAccount, WhatsappCredentialStore};
+use nexo_auth::telegram::TelegramCredentialStore;
+use nexo_auth::whatsapp::{WhatsappAccount, WhatsappCredentialStore};
 
 fn wa(instance: &str, agents: &[&str]) -> WhatsappAccount {
     WhatsappAccount {
@@ -41,7 +41,7 @@ fn rebuild_swaps_bindings_in_place() {
             wa("work", &["kate"]),
         ])),
         telegram: Arc::new(TelegramCredentialStore::empty()),
-        google: Arc::new(agent_auth::google::GoogleCredentialStore::empty()),
+        google: Arc::new(nexo_auth::google::GoogleCredentialStore::empty()),
     };
 
     let resolver = Arc::new(
@@ -85,7 +85,7 @@ fn rebuild_failure_leaves_old_state_intact() {
     let stores = CredentialStores {
         whatsapp: Arc::new(WhatsappCredentialStore::new(vec![wa("personal", &["ana"])])),
         telegram: Arc::new(TelegramCredentialStore::empty()),
-        google: Arc::new(agent_auth::google::GoogleCredentialStore::empty()),
+        google: Arc::new(nexo_auth::google::GoogleCredentialStore::empty()),
     };
     let resolver = AgentCredentialResolver::build(
         &[input("ana", "personal")],
@@ -116,7 +116,7 @@ fn handles_issued_before_reload_keep_working() {
     let stores = CredentialStores {
         whatsapp: Arc::new(WhatsappCredentialStore::new(vec![wa("personal", &["ana"])])),
         telegram: Arc::new(TelegramCredentialStore::empty()),
-        google: Arc::new(agent_auth::google::GoogleCredentialStore::empty()),
+        google: Arc::new(nexo_auth::google::GoogleCredentialStore::empty()),
     };
     let resolver = AgentCredentialResolver::build(
         &[input("ana", "personal")],

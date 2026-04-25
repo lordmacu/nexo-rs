@@ -4,7 +4,7 @@
 //! to satisfy reqwest, then drives `LinkExtractor::fetch` against it
 //! and asserts the extracted summary.
 
-use agent_core::link_understanding::{LinkExtractor, LinkUnderstandingConfig};
+use nexo_core::link_understanding::{LinkExtractor, LinkUnderstandingConfig};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 

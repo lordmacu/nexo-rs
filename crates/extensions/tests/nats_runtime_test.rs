@@ -4,8 +4,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_broker::{BrokerHandle, Event, LocalBroker, Message};
-use agent_extensions::runtime::{NatsRuntime, NatsRuntimeOptions, RuntimeState};
+use nexo_broker::{BrokerHandle, Event, LocalBroker, Message};
+use nexo_extensions::runtime::{NatsRuntime, NatsRuntimeOptions, RuntimeState};
 
 /// Spawn a task that pretends to be the extension process: it subscribes to
 /// `ext.{id}.rpc`, decodes each JSON-RPC request, and replies on

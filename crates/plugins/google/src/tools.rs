@@ -18,12 +18,12 @@
 
 use std::sync::Arc;
 
-use agent_llm::ToolDef;
+use nexo_llm::ToolDef;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use agent_core::agent::context::AgentContext;
-use agent_core::agent::tool_registry::ToolHandler;
+use nexo_core::agent::context::AgentContext;
+use nexo_core::agent::tool_registry::ToolHandler;
 
 use crate::client::GoogleAuthClient;
 
@@ -223,7 +223,7 @@ impl ToolHandler for GoogleAuthRevokeTool {
 /// Register all `google_*` tools against the given registry. Mirrors
 /// the `register_browser_tools` convention so `main.rs` stays readable.
 pub fn register_all(
-    registry: &agent_core::agent::tool_registry::ToolRegistry,
+    registry: &nexo_core::agent::tool_registry::ToolRegistry,
     client: Arc<GoogleAuthClient>,
 ) {
     registry.register(

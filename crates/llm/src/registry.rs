@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use agent_config::types::agents::ModelConfig;
-use agent_config::types::llm::{LlmConfig, LlmProviderConfig, RetryConfig};
+use nexo_config::types::agents::ModelConfig;
+use nexo_config::types::llm::{LlmConfig, LlmProviderConfig, RetryConfig};
 
 use crate::anthropic::AnthropicFactory;
 use crate::client::LlmClient;
@@ -145,7 +145,7 @@ impl LlmProviderFactory for OpenAiFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_config::types::llm::RateLimitConfig;
+    use nexo_config::types::llm::RateLimitConfig;
     use std::collections::HashMap;
 
     fn provider_cfg() -> LlmProviderConfig {

@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 
-use agent_config::types::broker::{BrokerInner, BrokerKind};
+use nexo_config::types::broker::{BrokerInner, BrokerKind};
 
 use crate::handle::{BrokerHandle, Subscription};
 use crate::local::LocalBroker;

@@ -1,8 +1,17 @@
 [package]
-name = "agent-plugin-telegram"
-version = "0.1.0"
-edition = "2021"
-
+name = "nexo-plugin-telegram"
+description   = "Telegram bot channel plugin for Nexo agents."
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+homepage      = { workspace = true }
+documentation = { workspace = true }
+readme        = { workspace = true }
+keywords      = { workspace = true }
+categories    = { workspace = true }
 [dependencies]
 tokio        = { workspace = true }
 tokio-util   = { workspace = true, features = ["io"] }
@@ -16,11 +25,11 @@ reqwest      = { workspace = true, features = ["multipart"] }
 dashmap      = { workspace = true }
 futures-util = "0.3"
 chrono       = { workspace = true }
-agent-broker = { path = "../../broker" }
-agent-core   = { path = "../../core" }
-agent-config = { path = "../../config" }
-agent-llm    = { path = "../../llm" }
-agent-auth   = { path = "../../auth" }
+nexo-broker = { version = "0.1.0", path = "../../broker" }
+nexo-core = { version = "0.1.0", path = "../../core" }
+nexo-config = { version = "0.1.0", path = "../../config" }
+nexo-llm = { version = "0.1.0", path = "../../llm" }
+nexo-auth = { version = "0.1.0", path = "../../auth" }
 
 [dev-dependencies]
 wiremock     = "0.6"

@@ -1,6 +1,6 @@
 ---
 name: Brave Search
-description: Web search via Brave Search API — JSON results sin el noise de SEO spam.
+description: Web search via Brave Search API with clean JSON results and minimal SEO noise.
 requires:
   bins: []
   env: [BRAVE_SEARCH_API_KEY]
@@ -8,15 +8,17 @@ requires:
 
 # Brave Search
 
-Use cuando el user quiera buscar en internet: "busca noticias de X", "qué
-pasó con Y", "encontrame un artículo sobre Z". Complementa
-fetch-url + summarize.
+Use this skill when the user asks for web search:
+"find news about X", "what happened to Y", "find an article about Z".
+It pairs well with `fetch-url` + `summarize`.
 
 ## Tools
 - `status`
-- `brave_search(query, count?, freshness?, country?, safesearch?)` — `freshness` es `pd|pw|pm|py` (past day/week/month/year)
+- `brave_search(query, count?, freshness?, country?, safesearch?)` —
+  `freshness` accepts `pd|pw|pm|py` (past day/week/month/year)
 
 Returns `{results: [{title, url, description, page_age, language}]}`.
 
 ## Setup
-API key en [brave.com/search/api](https://brave.com/search/api) (free tier ~2k queries/día).
+Get an API key at [brave.com/search/api](https://brave.com/search/api)
+(free tier: ~2k queries/day).

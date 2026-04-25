@@ -14,7 +14,7 @@ Reference: `crates/poller/src/builtins/` for in-tree examples (`gmail.rs`,
 // crates/poller/src/builtins/jira.rs
 use std::sync::Arc;
 
-use agent_poller::{
+use nexo_poller::{
     OutboundDelivery, PollContext, Poller, PollerError, TickOutcome,
 };
 use async_trait::async_trait;
@@ -26,7 +26,7 @@ use serde_json::{json, Value};
 struct JiraConfig {
     base_url: String,
     project_key: String,
-    deliver: agent_poller::builtins::gmail::DeliverCfg,
+    deliver: nexo_poller::builtins::gmail::DeliverCfg,
 }
 
 pub struct JiraPoller;
@@ -65,7 +65,7 @@ impl Poller for JiraPoller {
             items_seen: 0,
             items_dispatched: 1,
             deliver: vec![OutboundDelivery {
-                channel: agent_auth::handle::TELEGRAM,
+                channel: nexo_auth::handle::TELEGRAM,
                 recipient: cfg.deliver.to.clone(),
                 payload,
             }],
@@ -146,9 +146,9 @@ Your module can ship its own tools alongside the generic
 `pollers_*` ones. Override `Poller::custom_tools`:
 
 ```rust
-fn custom_tools(&self) -> Vec<agent_poller::CustomToolSpec> {
-    use agent_llm::ToolDef;
-    use agent_poller::{CustomToolHandler, CustomToolSpec, PollerRunner};
+fn custom_tools(&self) -> Vec<nexo_poller::CustomToolSpec> {
+    use nexo_llm::ToolDef;
+    use nexo_poller::{CustomToolHandler, CustomToolSpec, PollerRunner};
     use async_trait::async_trait;
 
     struct JiraSearch;
@@ -189,7 +189,7 @@ fn custom_tools(&self) -> Vec<agent_poller::CustomToolSpec> {
 
 The agent then sees `jira_search` automatically — no extra
 registration step. The adapter in
-`agent-poller-tools::register_all` walks every registered Poller's
+`nexo-poller-tools::register_all` walks every registered Poller's
 `custom_tools()` and wires each spec into the per-agent
 `ToolRegistry`.
 

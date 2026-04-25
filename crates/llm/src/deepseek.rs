@@ -43,7 +43,7 @@
 
 use std::sync::Arc;
 
-use agent_config::types::llm::{LlmProviderConfig, RateLimitConfig, RetryConfig};
+use nexo_config::types::llm::{LlmProviderConfig, RateLimitConfig, RetryConfig};
 
 use crate::client::LlmClient;
 use crate::openai_compat::OpenAiClient;
@@ -95,7 +95,7 @@ impl LlmProviderFactory for DeepSeekFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_config::types::llm::{LlmProviderConfig, RateLimitConfig};
+    use nexo_config::types::llm::{LlmProviderConfig, RateLimitConfig};
 
     fn empty_cfg() -> LlmProviderConfig {
         LlmProviderConfig {

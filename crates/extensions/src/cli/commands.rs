@@ -183,7 +183,7 @@ pub fn run_disable(ctx: CliContext<'_>, id: &str) -> Result<(), CliError> {
 /// CLI discovery differs from runtime discovery: we must still see
 /// disabled extensions so `list`/`info`/`enable` can address them. The
 /// disabled filter is applied only when rendering status.
-fn build_discovery(cfg: &agent_config::ExtensionsConfig) -> ExtensionDiscovery {
+fn build_discovery(cfg: &nexo_config::ExtensionsConfig) -> ExtensionDiscovery {
     let search_paths: Vec<PathBuf> = cfg.search_paths.iter().map(PathBuf::from).collect();
     ExtensionDiscovery::new(
         search_paths,

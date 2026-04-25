@@ -1,7 +1,7 @@
 //! HTTP handler for `/admin/pollers/*`. Returns
 //! `(status, body, content_type)` so `main.rs` can plug it into the
 //! existing loopback admin dispatch chain alongside
-//! `agent-core::AgentsDirectory` and `agent-auth` reload.
+//! `nexo-core::AgentsDirectory` and `nexo-auth` reload.
 
 use std::sync::Arc;
 
@@ -143,7 +143,7 @@ async fn reload(
     runner: &Arc<PollerRunner>,
     config_dir: &std::path::Path,
 ) -> (u16, String, &'static str) {
-    use agent_config::types::pollers::PollersConfigFile;
+    use nexo_config::types::pollers::PollersConfigFile;
     let path = config_dir.join("pollers.yaml");
     if !path.exists() {
         return (
@@ -156,7 +156,7 @@ async fn reload(
         Ok(s) => s,
         Err(e) => return (500, json!({"error": e.to_string()}).to_string(), JSON),
     };
-    let resolved = match agent_config::env::resolve_placeholders(&raw, "pollers.yaml") {
+    let resolved = match nexo_config::env::resolve_placeholders(&raw, "pollers.yaml") {
         Ok(s) => s,
         Err(e) => return (400, json!({"error": e.to_string()}).to_string(), JSON),
     };
@@ -190,10 +190,10 @@ mod tests {
     use super::*;
     use crate::poller::{PollContext, Poller, TickOutcome};
     use crate::{PollState, PollerError, PollerRunner};
-    use agent_auth::resolver::CredentialStores;
-    use agent_auth::{AgentCredentialResolver, BreakerRegistry, CredentialsBundle};
-    use agent_broker::AnyBroker;
-    use agent_config::types::pollers::{PollerJob, PollersConfig};
+    use nexo_auth::resolver::CredentialStores;
+    use nexo_auth::{AgentCredentialResolver, BreakerRegistry, CredentialsBundle};
+    use nexo_broker::AnyBroker;
+    use nexo_config::types::pollers::{PollerJob, PollersConfig};
     use async_trait::async_trait;
 
     struct Mock;

@@ -1,7 +1,7 @@
 //! Smoke tests that the shipped `config/plugins/whatsapp.yaml` example
 //! parses and the serde defaults fill in every optional section.
 
-use agent_config::{WhatsappPluginConfig, WhatsappPluginConfigFile};
+use nexo_config::{WhatsappPluginConfig, WhatsappPluginConfigFile};
 
 fn load_yaml(s: &str) -> WhatsappPluginConfig {
     let file: WhatsappPluginConfigFile = serde_yaml::from_str(s).expect("yaml parses");

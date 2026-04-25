@@ -3,13 +3,13 @@
 
 use std::path::PathBuf;
 
-use agent_auth::error::BuildError;
-use agent_auth::resolver::StrictLevel;
-use agent_auth::wire::build_credentials;
-use agent_config::types::agents::{
+use nexo_auth::error::BuildError;
+use nexo_auth::resolver::StrictLevel;
+use nexo_auth::wire::build_credentials;
+use nexo_config::types::agents::{
     AgentConfig, GoogleAuthAgentConfig, HeartbeatConfig, ModelConfig, OutboundAllowlistConfig,
 };
-use agent_config::types::credentials::{AgentCredentialsConfig, GoogleAuthConfig};
+use nexo_config::types::credentials::{AgentCredentialsConfig, GoogleAuthConfig};
 
 fn agent_with_inline_google(id: &str) -> AgentConfig {
     AgentConfig {
@@ -27,6 +27,8 @@ fn agent_with_inline_google(id: &str) -> AgentConfig {
         skills_dir: "./skills".into(),
         skill_overrides: Default::default(),
         link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
         transcripts_dir: String::new(),
         dreaming: Default::default(),
         workspace_git: Default::default(),

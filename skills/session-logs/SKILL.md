@@ -9,8 +9,8 @@ requires:
 # Session Logs
 
 Use this skill when the agent needs to look at its own prior conversations:
-"¿qué te dije ayer?", "busca si alguna vez hablamos de X", "muéstrame las
-últimas 5 cosas de esta sesión". Reads the JSONL transcripts under
+"what did I tell you yesterday?", "search whether we ever discussed X",
+"show me the last 5 things from this session". Reads the JSONL transcripts under
 `transcripts_dir` (Phase 10.4 writes them).
 
 ## Use when

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use agent_resilience::{CircuitBreaker, CircuitBreakerConfig};
+use nexo_resilience::{CircuitBreaker, CircuitBreakerConfig};
 
 use crate::cache::WebSearchCache;
 use crate::provider::WebSearchProvider;
@@ -154,10 +154,10 @@ impl WebSearchRouter {
         v
     }
 
-    /// Optional `LinkExtractor` integration. Owners (agent-core) call
+    /// Optional `LinkExtractor` integration. Owners (nexo-core) call
     /// this *after* `search` to populate `body` on the top hits. Kept
     /// here as a free function so the router doesn't depend on
-    /// agent-core types.
+    /// nexo-core types.
     pub fn top_urls(result: &WebSearchResult, limit: usize) -> Vec<String> {
         result
             .results
@@ -168,7 +168,7 @@ impl WebSearchRouter {
     }
 
     /// Replace `body` on hits whose URL matches a key in the supplied
-    /// map. The caller (agent-core) owns the actual fetch via
+    /// map. The caller (nexo-core) owns the actual fetch via
     /// `LinkExtractor` and hands us back a url→body map.
     pub fn merge_bodies(result: &mut WebSearchResult, bodies: HashMap<String, String>) {
         for hit in &mut result.results {

@@ -6,10 +6,10 @@
 //! `outbound_allowlist.telegram` (configured in `agents.yaml`). Empty
 //! list = unrestricted; populated = only listed chat_ids reachable.
 
-use agent_broker::{BrokerHandle, Event};
-use agent_core::agent::context::AgentContext;
-use agent_core::agent::tool_registry::{ToolHandler, ToolRegistry};
-use agent_llm::ToolDef;
+use nexo_broker::{BrokerHandle, Event};
+use nexo_core::agent::context::AgentContext;
+use nexo_core::agent::tool_registry::{ToolHandler, ToolRegistry};
+use nexo_llm::ToolDef;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -45,11 +45,11 @@ async fn publish_outbound(ctx: &AgentContext, payload: Value) -> anyhow::Result<
     // `credentials.telegram` binding. Legacy single-bot deployments
     // without a resolver stay on the un-suffixed topic for back-compat.
     let (topic, breaker_handle) = match ctx.credentials.as_ref() {
-        Some(resolver) => match resolver.resolve(&ctx.agent_id, agent_auth::handle::TELEGRAM) {
+        Some(resolver) => match resolver.resolve(&ctx.agent_id, nexo_auth::handle::TELEGRAM) {
             Ok(handle) => {
-                agent_auth::audit::audit_outbound(&handle, "plugin.outbound.telegram");
-                agent_auth::telemetry::inc_usage(
-                    agent_auth::handle::TELEGRAM,
+                nexo_auth::audit::audit_outbound(&handle, "plugin.outbound.telegram");
+                nexo_auth::telemetry::inc_usage(
+                    nexo_auth::handle::TELEGRAM,
                     handle.account_id_raw(),
                     &ctx.agent_id,
                     "outbound",
@@ -69,10 +69,10 @@ async fn publish_outbound(ctx: &AgentContext, payload: Value) -> anyhow::Result<
     if let Some(ref b) = breaker {
         if !b.allow() {
             if let Some(ref h) = breaker_handle {
-                agent_auth::telemetry::set_breaker_state(
-                    agent_auth::handle::TELEGRAM,
+                nexo_auth::telemetry::set_breaker_state(
+                    nexo_auth::handle::TELEGRAM,
                     h.account_id_raw(),
-                    agent_auth::telemetry::BreakerState::Open,
+                    nexo_auth::telemetry::BreakerState::Open,
                 );
             }
             return Err(anyhow::anyhow!(
@@ -87,19 +87,19 @@ async fn publish_outbound(ctx: &AgentContext, payload: Value) -> anyhow::Result<
         match &result {
             Ok(_) => {
                 b.on_success();
-                agent_auth::telemetry::set_breaker_state(
-                    agent_auth::handle::TELEGRAM,
+                nexo_auth::telemetry::set_breaker_state(
+                    nexo_auth::handle::TELEGRAM,
                     h.account_id_raw(),
-                    agent_auth::telemetry::BreakerState::Closed,
+                    nexo_auth::telemetry::BreakerState::Closed,
                 );
             }
             Err(_) => {
                 b.on_failure();
                 if b.is_open() {
-                    agent_auth::telemetry::set_breaker_state(
-                        agent_auth::handle::TELEGRAM,
+                    nexo_auth::telemetry::set_breaker_state(
+                        nexo_auth::handle::TELEGRAM,
                         h.account_id_raw(),
-                        agent_auth::telemetry::BreakerState::Open,
+                        nexo_auth::telemetry::BreakerState::Open,
                     );
                 }
             }

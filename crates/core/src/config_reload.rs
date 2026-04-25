@@ -16,9 +16,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use agent_broker::{AnyBroker, BrokerHandle};
-use agent_config::{AppConfig, TelegramPluginConfig};
-use agent_llm::LlmRegistry;
+use nexo_broker::{AnyBroker, BrokerHandle};
+use nexo_config::{AppConfig, TelegramPluginConfig};
+use nexo_llm::LlmRegistry;
 use arc_swap::ArcSwapOption;
 use dashmap::DashMap;
 use tokio::sync::{mpsc, Mutex};
@@ -264,7 +264,7 @@ impl ConfigReloadCoordinator {
                     "elapsed_ms": elapsed_ms,
                 });
                 let topic = "events.runtime.config.reloaded";
-                let evt = agent_broker::Event::new(topic, "config-reload", payload);
+                let evt = nexo_broker::Event::new(topic, "config-reload", payload);
                 if let Err(e) = broker.publish(topic, evt).await {
                     tracing::warn!(error = %e, "failed to publish events.runtime.config.reloaded");
                 }
@@ -291,7 +291,7 @@ impl ConfigReloadCoordinator {
     pub async fn start(
         self: Arc<Self>,
         broker: AnyBroker,
-        reload: agent_config::RuntimeReloadConfig,
+        reload: nexo_config::RuntimeReloadConfig,
     ) -> anyhow::Result<()> {
         if !reload.enabled {
             tracing::info!("config hot-reload disabled via runtime.yaml");
@@ -338,7 +338,7 @@ impl ConfigReloadCoordinator {
                 let payload = serde_json::to_value(&outcome).unwrap_or_else(|e| {
                     serde_json::json!({ "error": e.to_string() })
                 });
-                let evt = agent_broker::Event::new(ack_topic, "config-reload", payload);
+                let evt = nexo_broker::Event::new(ack_topic, "config-reload", payload);
                 if let Err(e) = broker_clone.publish(ack_topic, evt).await {
                     tracing::warn!(error = %e, "failed to publish control.reload.ack");
                 }

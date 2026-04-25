@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use agent_config::{ExtensionsConfig, ExtensionsConfigFile};
+use nexo_config::{ExtensionsConfig, ExtensionsConfigFile};
 
 use super::CliError;
 

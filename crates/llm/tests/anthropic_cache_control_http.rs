@@ -18,9 +18,9 @@
 //! pins the contract at the HTTP boundary so a future refactor of the
 //! request builder cannot silently break cache hits.
 
-use agent_config::types::llm::{LlmProviderConfig, RateLimitConfig, RetryConfig};
-use agent_llm::types::{ChatMessage, ChatRequest, ToolChoice, ToolDef};
-use agent_llm::{AnthropicClient, CachePolicy, LlmClient, PromptBlock};
+use nexo_config::types::llm::{LlmProviderConfig, RateLimitConfig, RetryConfig};
+use nexo_llm::types::{ChatMessage, ChatRequest, ToolChoice, ToolDef};
+use nexo_llm::{AnthropicClient, CachePolicy, LlmClient, PromptBlock};
 use serde_json::{json, Value};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};

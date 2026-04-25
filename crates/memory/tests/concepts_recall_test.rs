@@ -1,4 +1,4 @@
-use agent_memory::{derive_concept_tags, LongTermMemory, MAX_CONCEPT_TAGS};
+use nexo_memory::{derive_concept_tags, LongTermMemory, MAX_CONCEPT_TAGS};
 
 async fn open_temp_db() -> LongTermMemory {
     LongTermMemory::open(":memory:").await.unwrap()

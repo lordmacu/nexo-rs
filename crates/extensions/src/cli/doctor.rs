@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use futures::stream::{self, StreamExt};
 use serde::Serialize;
 
-use agent_config::types::extensions::ExtensionsDoctorConfig;
+use nexo_config::types::extensions::ExtensionsDoctorConfig;
 
 use crate::discovery::{ExtensionCandidate, ExtensionDiscovery};
 use crate::manifest::Transport;
@@ -60,7 +60,7 @@ struct DoctorRuntimeReport<'a> {
 }
 
 /// Minimal broker surface the doctor needs. Implemented by the binary
-/// against `agent_broker::AnyBroker::Nats`; for the local broker the
+/// against `nexo_broker::AnyBroker::Nats`; for the local broker the
 /// binary passes `None` and nats checks skip.
 #[async_trait::async_trait]
 pub trait BrokerClientForDoctor: Send + Sync {
@@ -283,7 +283,7 @@ fn transport_label(t: &Transport) -> &'static str {
     }
 }
 
-fn build_discovery(cfg: &agent_config::ExtensionsConfig) -> ExtensionDiscovery {
+fn build_discovery(cfg: &nexo_config::ExtensionsConfig) -> ExtensionDiscovery {
     let search_paths: Vec<PathBuf> = cfg.search_paths.iter().map(PathBuf::from).collect();
     ExtensionDiscovery::new(
         search_paths,

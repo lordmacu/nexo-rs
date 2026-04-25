@@ -1,8 +1,17 @@
 [package]
-name = "agent-mcp"
-version = "0.1.0"
-edition = "2021"
-
+name = "nexo-mcp"
+description   = "MCP (Model Context Protocol) client and server runtime for Nexo agents."
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+homepage      = { workspace = true }
+documentation = { workspace = true }
+readme        = { workspace = true }
+keywords      = { workspace = true }
+categories    = { workspace = true }
 [dependencies]
 serde      = { workspace = true }
 serde_json = { workspace = true }
@@ -12,10 +21,10 @@ tokio      = { workspace = true }
 tokio-util = { workspace = true }
 dashmap    = { workspace = true }
 async-trait = { workspace = true }
-agent-resilience = { path = "../resilience" }
-agent-extensions = { path = "../extensions" }
-agent-config     = { path = "../config" }
-agent-llm        = { path = "../llm" }
+nexo-resilience = { version = "0.1.0", path = "../resilience" }
+nexo-extensions = { version = "0.1.0", path = "../extensions" }
+nexo-config = { version = "0.1.0", path = "../config" }
+nexo-llm = { version = "0.1.0", path = "../llm" }
 chrono           = { workspace = true }
 uuid             = { workspace = true }
 futures          = { workspace = true }

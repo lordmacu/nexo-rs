@@ -4,8 +4,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agent_core::agent::{ExtensionHook, HookOutcome, HookRegistry};
-use agent_extensions::{ExtensionManifest, StdioRuntime};
+use nexo_core::agent::{ExtensionHook, HookOutcome, HookRegistry};
+use nexo_extensions::{ExtensionManifest, StdioRuntime};
 use serde_json::json;
 
 fn echo_ext_path() -> PathBuf {
@@ -27,7 +27,7 @@ fn echo_ext_path() -> PathBuf {
                         "build",
                         "--quiet",
                         "-p",
-                        "agent-extensions",
+                        "nexo-extensions",
                         "--example",
                         "echo_ext",
                     ])
@@ -44,7 +44,7 @@ fn manifest_for_echo() -> ExtensionManifest {
     let path = echo_ext_path();
     assert!(
         path.exists(),
-        "echo_ext example not built; run `cargo build --example echo_ext -p agent-extensions`. \
+        "echo_ext example not built; run `cargo build --example echo_ext -p nexo-extensions`. \
          path={}",
         path.display()
     );

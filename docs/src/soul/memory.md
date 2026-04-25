@@ -82,7 +82,7 @@ Every memory row has a `concept_tags` JSON column populated at insert
 time — **not** via TF-IDF but via a deterministic pipeline:
 
 1. **Glossary match.** Hard-coded list of protected tech terms
-   (multilingual) — `backup`, `openai`, `migración`, etc.
+   (multilingual) — `backup`, `openai`, `migration`, etc.
 2. **Compound tokens.** Regex preserves file paths and identifiers
    (`src/main.rs`, `camelCaseNames`).
 3. **Unicode word segmentation.** `UAX #29` word boundaries split

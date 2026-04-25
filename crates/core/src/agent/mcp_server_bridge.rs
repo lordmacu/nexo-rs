@@ -3,7 +3,7 @@
 //! Cursor) can call the agent's registered tools.
 use super::context::AgentContext;
 use super::tool_registry::ToolRegistry;
-use agent_mcp::{
+use nexo_mcp::{
     McpAnnotations, McpContent, McpError, McpPrompt, McpPromptArgument, McpPromptMessage,
     McpPromptResult, McpResource, McpResourceContent, McpServerHandler, McpServerInfo, McpTool,
     McpToolResult,
@@ -322,11 +322,11 @@ mod tests {
     use super::super::tool_registry::ToolHandler;
     use super::*;
     use crate::session::SessionManager;
-    use agent_broker::AnyBroker;
-    use agent_config::types::agents::{
+    use nexo_broker::AnyBroker;
+    use nexo_config::types::agents::{
         AgentConfig, AgentRuntimeConfig, HeartbeatConfig, ModelConfig,
     };
-    use agent_llm::ToolDef;
+    use nexo_llm::ToolDef;
     use async_trait::async_trait;
     use tempfile::tempdir;
     struct FixedHandler {
@@ -374,6 +374,8 @@ mod tests {
             google_auth: None,
             credentials: Default::default(),
             link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
             context_optimization: None,
         });

@@ -25,7 +25,7 @@
 //! the same content see byte-identical bytes, which is what
 //! Anthropic's prefix matcher needs.
 
-use agent_llm::PromptBlock;
+use nexo_llm::PromptBlock;
 
 /// Inputs for the system prompt. Each is `Option<String>` because
 /// every block is genuinely optional (an agent without skills, an
@@ -110,7 +110,7 @@ mod tests {
 
     #[test]
     fn workspace_skills_glue_get_long_ttl_and_meta_short() {
-        use agent_llm::CachePolicy;
+        use nexo_llm::CachePolicy;
         let out = build_blocks(PromptInputs {
             workspace: Some("ws".into()),
             skills: Some("sk".into()),

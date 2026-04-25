@@ -1,14 +1,23 @@
 [package]
-name    = "agent-plugin-google"
-version = "0.1.0"
-edition = "2021"
-
+name    = "nexo-plugin-google"
+description   = "Google APIs (Gmail, Calendar, Drive) tool plugin for Nexo agents."
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+homepage      = { workspace = true }
+documentation = { workspace = true }
+readme        = { workspace = true }
+keywords      = { workspace = true }
+categories    = { workspace = true }
 [dependencies]
 # Native Google OAuth client + the 4 google_* tools. Lives outside of
-# agent-core so the runtime doesn't ship the reqwest OAuth machinery
+# nexo-core so the runtime doesn't ship the reqwest OAuth machinery
 # when an agent has no `google_auth:` block.
-agent-core  = { path = "../../core" }
-agent-llm   = { path = "../../llm" }
+nexo-core = { version = "0.1.0", path = "../../core" }
+nexo-llm = { version = "0.1.0", path = "../../llm" }
 anyhow      = { workspace = true }
 async-trait = { workspace = true }
 chrono      = { workspace = true }

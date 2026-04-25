@@ -8,7 +8,7 @@ use std::sync::Arc;
 use serde_json::json;
 use tempfile::TempDir;
 
-use agent_taskflow::{
+use nexo_taskflow::{
     CreateManagedInput, Flow, FlowError, FlowManager, FlowStatus, SqliteFlowStore,
 };
 
@@ -163,11 +163,11 @@ async fn mirrored_steps_survive_reopen() {
         let m = FlowManager::new(store);
         let f = m.create_mirrored(seed_input()).await.unwrap();
         for i in 0..3 {
-            m.record_step_observation(agent_taskflow::StepObservation {
+            m.record_step_observation(nexo_taskflow::StepObservation {
                 flow_id: f.id,
                 run_id: format!("cron-{i}"),
                 task: format!("task-{i}"),
-                status: agent_taskflow::FlowStepStatus::Succeeded,
+                status: nexo_taskflow::FlowStepStatus::Succeeded,
                 child_session_key: None,
                 result_json: Some(json!({ "idx": i })),
             })

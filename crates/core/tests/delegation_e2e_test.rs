@@ -8,11 +8,11 @@
 //! independently of any live LLM credentials.
 //!
 //! Typical invocation against the docker-compose stack:
-//!     NATS_URL=nats://127.0.0.1:4222 cargo test -p agent-core --test delegation_e2e_test -- --nocapture
+//!     NATS_URL=nats://127.0.0.1:4222 cargo test -p nexo-core --test delegation_e2e_test -- --nocapture
 
 use std::time::Duration;
 
-use agent_core::agent::{AgentMessage, AgentPayload};
+use nexo_core::agent::{AgentMessage, AgentPayload};
 use futures::StreamExt;
 use serde_json::json;
 use uuid::Uuid;

@@ -111,7 +111,7 @@ Operators that want a separate cache file or schema migration set
 
 ## Circuit breaker
 
-Every provider call goes through `agent_resilience::CircuitBreaker`
+Every provider call goes through `nexo_resilience::CircuitBreaker`
 keyed `web_search:<provider>`. Default config: 5 consecutive failures
 trip the breaker, exponential backoff up to 120 s. Open-state calls
 return `ProviderUnavailable(provider)` immediately and the router

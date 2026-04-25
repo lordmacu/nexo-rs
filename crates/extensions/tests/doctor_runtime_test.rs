@@ -16,9 +16,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_config::types::extensions::ExtensionsDoctorConfig;
-use agent_config::ExtensionsConfig;
-use agent_extensions::cli::{
+use nexo_config::types::extensions::ExtensionsDoctorConfig;
+use nexo_config::ExtensionsConfig;
+use nexo_extensions::cli::{
     run_doctor_runtime, BrokerClientForDoctor, CliContext, CliError, DoctorOptions,
 };
 use async_trait::async_trait;
@@ -44,7 +44,7 @@ fn echo_ext_path() -> PathBuf {
                         "build",
                         "--quiet",
                         "-p",
-                        "agent-extensions",
+                        "nexo-extensions",
                         "--example",
                         "echo_ext",
                     ])

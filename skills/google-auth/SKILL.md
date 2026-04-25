@@ -17,26 +17,26 @@ persistent refresh tokens.
 
 ## Use when
 
-- "Léeme los últimos 10 emails de Gmail"
-- "Crea un evento en mi Calendar para mañana a las 3pm"
-- "Busca el doc 'Q4 budget' en mi Drive"
-- "Agrega una fila al Sheet de gastos"
-- "Borra los videos que subí a YouTube este mes"
+- "Read my last 10 Gmail emails"
+- "Create a Calendar event for tomorrow at 3pm"
+- "Find the 'Q4 budget' document in my Drive"
+- "Add a row to my expenses Sheet"
+- "Delete the videos I uploaded to YouTube this month"
 
 ## Do not use when
 
-- **Apps de Google que no son del usuario** (Drive de un admin, Gmail
-  de otra persona) — cada agente solo accede a la cuenta con la que se
-  autorizó.
-- **Acciones gratuitas que no requieren cuenta** (búsqueda pública,
-  Maps sin cuenta, etc.) — hay tools dedicadas (`ext_wikipedia_search`,
-  etc.) que no gastan el rate-limit de Google APIs.
-- **Gemini/AI Studio** — ese no va por OAuth, va por la API key directa
-  (variable `GEMINI_API_KEY`), distinto universo.
+- **Google apps that do not belong to this user** (an admin's Drive,
+  someone else's Gmail) — each agent can only access the account that
+  granted consent.
+- **Free actions that do not require account auth** (public search,
+  no-account maps, etc.) — use dedicated tools (`ext_wikipedia_search`,
+  etc.) that do not consume Google API quota.
+- **Gemini / AI Studio** — that path does not use OAuth; it uses
+  direct API-key auth (`GEMINI_API_KEY`).
 
 ## Canonical workflow
 
-Primer turno donde el user pide algo de Google:
+First turn where the user asks for a Google action:
 
 ```
 1. google_auth_status()
@@ -47,36 +47,36 @@ Primer turno donde el user pide algo de Google:
        redirect_uri: "http://127.0.0.1:8765/callback",
        instructions: "Open this URL..." }
 
-3. Mandas al usuario vía chat:
-   "Para que pueda leer tu Gmail, abrí este link y aceptá los permisos:
-    <url>. Si estás conectando desde un server remoto, necesitás un SSH
-    tunnel: `ssh -L 8765:127.0.0.1:8765 <host>`. Avisame cuando termines."
+3. Send this to the user in chat:
+   "To let me read your Gmail, open this link and approve permissions:
+    <url>. If you're connected through a remote server, use an SSH
+    tunnel: `ssh -L 8765:127.0.0.1:8765 <host>`. Tell me when you're done."
 
-4. Espera el próximo mensaje del user. NO reintentes tools mientras tanto.
+4. Wait for the user's next message. DO NOT retry tools meanwhile.
 
-5. Cuando user responda "listo" o algo similar:
+5. When the user replies "done" (or similar):
    google_auth_status()
    → { authenticated: true, expires_in_secs: 3589, has_refresh: true,
        scopes: [...] }
 
-6. Ya puedes hacer google_call(...) con lo que necesite el user.
+6. Now run `google_call(...)` for the user's requested task.
 ```
 
-Todas las llamadas siguientes (incluso en conversaciones futuras días
-después) solo necesitan **`google_call`** directo. El refresh_token
-persistido renueva el access_token automáticamente — el usuario NO
-vuelve a ver un popup de consentimiento hasta que revoque.
+All following calls (including future sessions days later) only need
+direct **`google_call`**. The persisted refresh token automatically
+renews access tokens — the user does not see consent again unless they
+revoke access.
 
 ## Tool reference
 
-| Tool | Cuándo llamar |
+| Tool | When to call |
 |---|---|
-| `google_auth_status` | Antes de la primera operación Google de cada sesión. Diagnóstico rápido — no toca red. |
-| `google_auth_start` | Solo si `status.authenticated == false`. Requiere intervención humana (click + consent en browser). No reintenta, no hace polling — espera al siguiente mensaje del user. |
-| `google_call` | El workhorse. 99% de tus llamadas. |
-| `google_auth_revoke` | Solo si el user explícitamente pide "olvida mi Gmail" / "desconecta Google". Invalida el token en Google. |
+| `google_auth_status` | Before the first Google operation in each session. Fast diagnostic — no network calls. |
+| `google_auth_start` | Only if `status.authenticated == false`. Requires human action (click + browser consent). No retries/polling by the LLM — wait for the next user message. |
+| `google_call` | The workhorse. 99% of your calls. |
+| `google_auth_revoke` | Only if the user explicitly asks to disconnect Google. Invalidates the token in Google. |
 
-## `google_call` — ejemplos por API
+## `google_call` — API examples
 
 ### Gmail
 
@@ -92,7 +92,7 @@ vuelve a ver un popup de consentimiento hasta que revoque.
   "body": { "raw": "<base64-encoded RFC 2822 message>" } }
 ```
 
-Scope requerido: `gmail.readonly` (read) o `gmail.modify` (send/trash).
+Required scope: `gmail.readonly` (read) or `gmail.modify` (send/trash).
 
 ### Calendar
 
@@ -109,7 +109,7 @@ Scope requerido: `gmail.readonly` (read) o `gmail.modify` (send/trash).
   } }
 ```
 
-Scope: `calendar.readonly` o `calendar.events`.
+Scope: `calendar.readonly` or `calendar.events`.
 
 ### Drive
 
@@ -121,7 +121,7 @@ Scope: `calendar.readonly` o `calendar.events`.
   "url": "https://www.googleapis.com/drive/v3/files/{fileId}?fields=*" }
 ```
 
-Scope: `drive.readonly` o `drive`.
+Scope: `drive.readonly` or `drive`.
 
 ### Sheets
 
@@ -134,52 +134,48 @@ Scope: `drive.readonly` o `drive`.
   "body": { "values": [["2026-04-24", "coffee", 5.50, "food"]] } }
 ```
 
-Scope: `spreadsheets.readonly` o `spreadsheets`.
+Scope: `spreadsheets.readonly` or `spreadsheets`.
 
 ## Scopes commonly requested
 
-Configúralos en `agents.yaml` → `google_auth.scopes`:
+Configure these in `agents.yaml` → `google_auth.scopes`:
 
-| Corto | URL canónica | Alcance |
+| Short name | Canonical URL | Scope |
 |---|---|---|
-| `userinfo.email` | `https://www.googleapis.com/auth/userinfo.email` | email del user |
-| `userinfo.profile` | `https://www.googleapis.com/auth/userinfo.profile` | nombre + foto |
-| `gmail.readonly` | `/auth/gmail.readonly` | leer mails (no marcar, no enviar) |
-| `gmail.send` | `/auth/gmail.send` | enviar, sin leer |
-| `gmail.modify` | `/auth/gmail.modify` | todo excepto borrar permanente |
-| `calendar.readonly` | `/auth/calendar.readonly` | ver agenda |
-| `calendar.events` | `/auth/calendar.events` | crear/editar eventos |
-| `drive.readonly` | `/auth/drive.readonly` | leer Drive |
-| `drive.file` | `/auth/drive.file` | solo archivos creados por esta app |
-| `drive` | `/auth/drive` | acceso total (peligroso) |
-| `spreadsheets.readonly` | `/auth/spreadsheets.readonly` | leer Sheets |
-| `spreadsheets` | `/auth/spreadsheets` | leer + escribir |
-| `youtube.readonly` | `/auth/youtube.readonly` | ver info de tu canal |
+| `userinfo.email` | `https://www.googleapis.com/auth/userinfo.email` | user's email |
+| `userinfo.profile` | `https://www.googleapis.com/auth/userinfo.profile` | profile name + picture |
+| `gmail.readonly` | `/auth/gmail.readonly` | read-only email (no label changes, no send) |
+| `gmail.send` | `/auth/gmail.send` | send only, no read |
+| `gmail.modify` | `/auth/gmail.modify` | everything except permanent delete |
+| `calendar.readonly` | `/auth/calendar.readonly` | read calendar |
+| `calendar.events` | `/auth/calendar.events` | create/edit events |
+| `drive.readonly` | `/auth/drive.readonly` | read Drive |
+| `drive.file` | `/auth/drive.file` | only files created by this app |
+| `drive` | `/auth/drive` | full access (high risk) |
+| `spreadsheets.readonly` | `/auth/spreadsheets.readonly` | read Sheets |
+| `spreadsheets` | `/auth/spreadsheets` | read + write |
+| `youtube.readonly` | `/auth/youtube.readonly` | read your channel data |
 
 ## Failure modes
 
-- `401 Unauthorized` → token murió. Intenta `google_auth_status`; si
-  `authenticated: false`, llama `google_auth_start` y pide re-consent.
-- `403 Forbidden` → el scope no fue otorgado. Updatea
-  `google_auth.scopes` en config, corre `google_auth_revoke` + de nuevo
-  `google_auth_start` (Google no mezcla scopes viejos con nuevos).
-- `refresh_token` "invalid_grant" → user revocó acceso, o la app está
-  en "Testing" y pasaron 7 días. `google_auth_start` para refrescar.
-- Puerto 8765 ocupado → `google_auth.redirect_port` a otro libre en
-  `agents.yaml`, también actualizá el "Authorized redirect URI" en
+- `401 Unauthorized` -> token expired. Run `google_auth_status`; if
+  `authenticated: false`, call `google_auth_start` and request re-consent.
+- `403 Forbidden` -> missing scope grant. Update
+  `google_auth.scopes` in config, run `google_auth_revoke`, then run
+  `google_auth_start` again (Google does not merge old and new scopes).
+- `refresh_token` "invalid_grant" -> user revoked access, or the app is
+  in "Testing" and 7 days passed. Run `google_auth_start` to refresh.
+- Port 8765 is busy -> set `google_auth.redirect_port` to another free
+  port in `agents.yaml`, and also update "Authorized redirect URI" in
   Google Cloud Console.
 
 ## Gotchas
 
-- **No compartas refresh_token entre agentes.** Cada agente tiene su
-  propio profile y archivo de tokens. El agente "kate" logueado no
-  autoriza al agente "alex" — eso es por diseño.
-- **Los scopes se granulan en el primer consent.** Si después querés
-  añadir uno nuevo, revoke + re-start. Google no expande scopes sobre
-  un refresh_token existente.
-- **App en "Testing" mode**: refresh_tokens expiran a los 7 días. Para
-  prod, publicá la app en Google Cloud Console (verificación opcional
-  para scopes sensibles como `gmail.modify`).
-- **Rate limits son por proyecto Cloud, no por usuario**: si varios
-  agentes usan el mismo `client_id` y explotan Gmail, comparten la
-  quota. Crear un proyecto por agente es caro pero aisla.
+- **Do not share refresh tokens across agents.** Each agent has its
+  own profile and token file.
+- **Scopes are fixed at consent time.** If you add scopes later, revoke
+  and re-consent. Google does not expand scopes on an existing token.
+- **Testing-mode apps**: refresh tokens may expire after 7 days. For
+  production, publish the app in Google Cloud Console.
+- **Rate limits are project-scoped, not user-scoped**: if multiple
+  agents share one `client_id`, they share quota.

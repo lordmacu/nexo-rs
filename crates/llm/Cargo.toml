@@ -1,8 +1,17 @@
 [package]
-name = "agent-llm"
-version = "0.1.0"
-edition = "2021"
-
+name = "nexo-llm"
+description   = "LLM provider clients (MiniMax, OpenAI-compat, Anthropic, Gemini) with rate limiter and tool registry."
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+homepage      = { workspace = true }
+documentation = { workspace = true }
+readme        = { workspace = true }
+keywords      = { workspace = true }
+categories    = { workspace = true }
 [features]
 default = []
 # Historical: stubbed `AnyLlmClient::Stub` variant. After the registry refactor,
@@ -23,8 +32,8 @@ futures      = { workspace = true }
 eventsource-stream = { workspace = true }
 bytes        = { workspace = true }
 dashmap      = { workspace = true }
-agent-config = { path = "../config" }
-agent-resilience = { path = "../resilience" }
+nexo-config = { version = "0.1.0", path = "../config" }
+nexo-resilience = { version = "0.1.0", path = "../resilience" }
 sha2         = { workspace = true }
 hex          = { workspace = true }
 chrono       = { workspace = true }

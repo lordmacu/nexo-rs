@@ -14,8 +14,8 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
-use agent_extensions::runtime::wire;
-use agent_resilience::{CircuitBreaker, CircuitBreakerConfig};
+use nexo_extensions::runtime::wire;
+use nexo_resilience::{CircuitBreaker, CircuitBreakerConfig};
 
 use crate::client::McpClientState;
 use crate::client_trait::McpClient;

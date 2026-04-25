@@ -379,7 +379,7 @@ mod tests {
     #[tokio::test]
     async fn missing_workspace_yields_empty_bundle() {
         let tmp =
-            std::env::temp_dir().join(format!("agent-core-ws-missing-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("nexo-core-ws-missing-{}", uuid::Uuid::new_v4()));
         let loader = WorkspaceLoader::new(&tmp);
         let bundle = loader.load(SessionScope::Main).await.unwrap();
         assert!(bundle.identity.is_none());
@@ -390,7 +390,7 @@ mod tests {
     #[tokio::test]
     async fn shared_scope_omits_long_term_memory() -> anyhow::Result<()> {
         let tmp =
-            std::env::temp_dir().join(format!("agent-core-ws-shared-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("nexo-core-ws-shared-{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&tmp).await?;
         tokio::fs::write(tmp.join("MEMORY.md"), "secret preferences").await?;
         tokio::fs::write(tmp.join("SOUL.md"), "be useful").await?;
@@ -410,7 +410,7 @@ mod tests {
     #[tokio::test]
     async fn render_system_blocks_includes_only_loaded_sections() -> anyhow::Result<()> {
         let tmp =
-            std::env::temp_dir().join(format!("agent-core-ws-render-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("nexo-core-ws-render-{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&tmp).await?;
         tokio::fs::write(
             tmp.join("IDENTITY.md"),
@@ -432,7 +432,7 @@ mod tests {
     #[tokio::test]
     async fn extra_docs_render_after_standard_blocks() -> anyhow::Result<()> {
         let tmp =
-            std::env::temp_dir().join(format!("agent-core-ws-extra-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("nexo-core-ws-extra-{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&tmp).await?;
         tokio::fs::write(tmp.join("SOUL.md"), "be useful").await?;
         tokio::fs::write(
@@ -477,7 +477,7 @@ mod tests {
     #[tokio::test]
     async fn per_file_truncation_applied() -> anyhow::Result<()> {
         let tmp =
-            std::env::temp_dir().join(format!("agent-core-ws-trunc-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("nexo-core-ws-trunc-{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&tmp).await?;
         let big = "a".repeat(20_000);
         tokio::fs::write(tmp.join("SOUL.md"), &big).await?;
