@@ -14,14 +14,18 @@ services:
       retries: 5
       start_period: 5s
 
-  agent:
+  nexo:
+    # Default to the published GHCR image; `docker compose build` overrides
+    # with a local build when iterating. Tag pinning recommended in prod
+    # (e.g. `ghcr.io/lordmacu/nexo-rs:v0.1.1` instead of `:latest`).
+    image: ghcr.io/lordmacu/nexo-rs:latest
     build:
       context: .
       dockerfile: Dockerfile
     depends_on:
       nats:
         condition: service_healthy
-    # Chrome (installed in the agent image, launched by the browser
+    # Chrome (installed in the nexo image, launched by the browser
     # plugin) needs more than the default 64MB /dev/shm — otherwise
     # heavy pages crash with "session closed: OOPS, mmap for
     # /dev/shm/... failed".

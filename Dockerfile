@@ -6,7 +6,10 @@ COPY crates ./crates
 COPY src ./src
 COPY config ./config
 
-RUN cargo build --release --bin agent
+# Build the renamed `nexo` bin. The legacy `agent` binary name was
+# retired in commit 4bccdc3 (rename: agent_* crates → nexo_*, agent
+# bin → nexo).
+RUN cargo build --release --bin nexo
 
 FROM debian:bookworm-slim AS runtime
 
@@ -81,12 +84,17 @@ RUN if [ "${TARGETARCH}" = "amd64" ]; then \
     fi
 
 WORKDIR /app
-COPY --from=builder /app/target/release/agent /usr/local/bin/agent
+COPY --from=builder /app/target/release/nexo /usr/local/bin/nexo
 COPY config ./config
 
 RUN mkdir -p /app/data /run/secrets
 
+# OCI labels for ghcr.io (filled in by the build workflow via --label).
+LABEL org.opencontainers.image.source="https://github.com/lordmacu/nexo-rs" \
+      org.opencontainers.image.description="Nexo — multi-agent Rust framework" \
+      org.opencontainers.image.licenses="MIT OR Apache-2.0"
+
 EXPOSE 8080 9090
 
-ENTRYPOINT ["/usr/local/bin/agent"]
+ENTRYPOINT ["/usr/bin/dumb-init", "--", "/usr/local/bin/nexo"]
 CMD ["--config", "/app/config"]
