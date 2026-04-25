@@ -15,20 +15,20 @@ use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::Layer;
 
-use agent_broker::{AnyBroker, BrokerHandle, DiskQueue};
-use agent_config::AppConfig;
-use agent_core::agent::dreaming::{DreamEngine, DreamingConfig};
-use agent_core::session::SessionManager;
-use agent_core::telemetry::{add_extensions_discovered, render_prometheus};
-use agent_core::{
+use nexo_broker::{AnyBroker, BrokerHandle, DiskQueue};
+use nexo_config::AppConfig;
+use nexo_core::agent::dreaming::{DreamEngine, DreamingConfig};
+use nexo_core::session::SessionManager;
+use nexo_core::telemetry::{add_extensions_discovered, render_prometheus};
+use nexo_core::{
     Agent, AgentRuntime, DelegationTool, ExtensionHook, ExtensionTool, HeartbeatTool, HookRegistry,
     LlmAgentBehavior, MemoryTool, MyStatsTool, PluginRegistry, SessionLogsTool, ToolRegistry,
     WhatDoIKnowTool, WhoAmITool,
 };
-use agent_llm::LlmRegistry;
-use agent_memory::LongTermMemory;
-use agent_plugin_browser::BrowserPlugin;
-use agent_plugin_whatsapp::WhatsappPlugin;
+use nexo_llm::LlmRegistry;
+use nexo_memory::LongTermMemory;
+use nexo_plugin_browser::BrowserPlugin;
+use nexo_plugin_whatsapp::WhatsappPlugin;
 
 enum Mode {
     Run,
@@ -91,6 +91,34 @@ enum Mode {
     SetupList,
     SetupDoctor,
     SetupTelegramLink,
+    /// Phase 26 — pairing CLI subcommands. Each one opens the
+    /// pairing.db + secret file inline (no daemon connection needed)
+    /// so the operator can manage senders before / after the daemon
+    /// is up.
+    PairStart {
+        device_label: Option<String>,
+        public_url: Option<String>,
+        qr_png_path: Option<PathBuf>,
+        ttl_secs: u64,
+        json: bool,
+    },
+    PairList {
+        channel: Option<String>,
+        json: bool,
+    },
+    PairApprove {
+        code: String,
+        json: bool,
+    },
+    PairRevoke {
+        target: String, // "<channel>:<sender_id>"
+    },
+    PairSeed {
+        channel: String,
+        account_id: String,
+        senders: Vec<String>,
+    },
+    PairHelp,
     /// `agent doctor capabilities [--json]` — enumerate write/reveal
     /// env toggles exposed by the bundled extensions.
     DoctorCapabilities {
@@ -165,7 +193,7 @@ struct RuntimeHealth {
     ///   `/whatsapp/<instance>/pair{,/qr,/status}` — targeted
     ///   `/whatsapp/instances` — JSON list of available instances
     wa_pairing:
-        std::collections::BTreeMap<String, agent_plugin_whatsapp::pairing::SharedPairingState>,
+        std::collections::BTreeMap<String, nexo_plugin_whatsapp::pairing::SharedPairingState>,
 }
 
 #[derive(Clone, Copy)]
@@ -276,10 +304,10 @@ async fn main() -> Result<()> {
 
     // Phase 11.1 follow-up — make the `agent` binary's version the one
     // compared against `plugin.min_agent_version`, instead of the
-    // `agent-extensions` crate version. Ignore the result: if the
+    // `nexo-extensions` crate version. Ignore the result: if the
     // override was already set (double-init in tests), the existing
     // value wins — safe default.
-    let _ = agent_extensions::set_agent_version(env!("CARGO_PKG_VERSION"));
+    let _ = nexo_extensions::set_agent_version(env!("CARGO_PKG_VERSION"));
 
     let args = parse_args();
     match args.mode {
@@ -309,21 +337,57 @@ async fn main() -> Result<()> {
         Mode::FlowShow { id, json } => return run_flow_show(&id, json).await,
         Mode::FlowCancel { id } => return run_flow_cancel(&id).await,
         Mode::FlowResume { id } => return run_flow_resume(&id).await,
-        Mode::SetupInteractive => return agent_setup::run_interactive(&args.config_dir),
-        Mode::SetupOne { service } => return agent_setup::run_one(&args.config_dir, &service),
-        Mode::SetupList => return agent_setup::run_list(&args.config_dir),
-        Mode::SetupDoctor => return agent_setup::run_doctor(&args.config_dir),
+        Mode::SetupInteractive => return nexo_setup::run_interactive(&args.config_dir),
+        Mode::SetupOne { service } => return nexo_setup::run_one(&args.config_dir, &service),
+        Mode::SetupList => return nexo_setup::run_list(&args.config_dir),
+        Mode::SetupDoctor => return nexo_setup::run_doctor(&args.config_dir),
         Mode::DoctorCapabilities { json } => {
-            let statuses = agent_setup::capabilities::evaluate_all();
+            let statuses = nexo_setup::capabilities::evaluate_all();
             if json {
-                let v = agent_setup::capabilities::render_json(&statuses);
+                let v = nexo_setup::capabilities::render_json(&statuses);
                 println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
             } else {
-                print!("{}", agent_setup::capabilities::render_tty(&statuses));
+                print!("{}", nexo_setup::capabilities::render_tty(&statuses));
             }
             return Ok(());
         }
-        Mode::SetupTelegramLink => return agent_setup::run_telegram_link(&args.config_dir),
+        Mode::SetupTelegramLink => return nexo_setup::run_telegram_link(&args.config_dir),
+        Mode::PairHelp => {
+            return run_pair_help();
+        }
+        Mode::PairStart {
+            device_label,
+            public_url,
+            qr_png_path,
+            ttl_secs,
+            json,
+        } => {
+            return run_pair_start(
+                &args.config_dir,
+                device_label.as_deref(),
+                public_url.as_deref(),
+                qr_png_path.as_deref(),
+                ttl_secs,
+                json,
+            )
+            .await;
+        }
+        Mode::PairList { channel, json } => {
+            return run_pair_list(&args.config_dir, channel.as_deref(), json).await;
+        }
+        Mode::PairApprove { code, json } => {
+            return run_pair_approve(&args.config_dir, &code, json).await;
+        }
+        Mode::PairRevoke { target } => {
+            return run_pair_revoke(&args.config_dir, &target).await;
+        }
+        Mode::PairSeed {
+            channel,
+            account_id,
+            senders,
+        } => {
+            return run_pair_seed(&args.config_dir, &channel, &account_id, &senders).await;
+        }
         Mode::Status {
             json,
             endpoint,
@@ -332,13 +396,13 @@ async fn main() -> Result<()> {
         Mode::DryRun { json } => return run_dry_run(&args.config_dir, json),
         Mode::CheckConfig { strict } => return run_check_config(&args.config_dir, strict),
         Mode::Reload { json } => return run_reload(&args.config_dir, json).await,
-        Mode::PollersList { json } => return agent_poller::cli::list(json).await,
-        Mode::PollersShow { id, json } => return agent_poller::cli::show(&id, json).await,
-        Mode::PollersRun { id } => return agent_poller::cli::run(&id).await,
-        Mode::PollersPause { id } => return agent_poller::cli::pause(&id).await,
-        Mode::PollersResume { id } => return agent_poller::cli::resume(&id).await,
-        Mode::PollersReset { id, yes } => return agent_poller::cli::reset(&id, yes).await,
-        Mode::PollersReload => return agent_poller::cli::reload().await,
+        Mode::PollersList { json } => return nexo_poller::cli::list(json).await,
+        Mode::PollersShow { id, json } => return nexo_poller::cli::show(&id, json).await,
+        Mode::PollersRun { id } => return nexo_poller::cli::run(&id).await,
+        Mode::PollersPause { id } => return nexo_poller::cli::pause(&id).await,
+        Mode::PollersResume { id } => return nexo_poller::cli::resume(&id).await,
+        Mode::PollersReset { id, yes } => return nexo_poller::cli::reset(&id, yes).await,
+        Mode::PollersReload => return nexo_poller::cli::reload().await,
         Mode::ExtInstall {
             source,
             update,
@@ -381,10 +445,10 @@ async fn main() -> Result<()> {
     // missing skill dirs, same-provider model override). The tool-name
     // and known-provider checks run a few statements below once the
     // LLM registry and tool registry are assembled.
-    agent_core::agent::validate_agents(
+    nexo_core::agent::validate_agents(
         &cfg.agents.agents,
         &cfg.plugins.telegram,
-        &agent_core::agent::KnownTools::default(),
+        &nexo_core::agent::KnownTools::default(),
     )
     .context("per-binding override validation failed")?;
 
@@ -392,21 +456,21 @@ async fn main() -> Result<()> {
     // across WhatsApp / Telegram / Google in one pass. Lenient level
     // on boot so legacy deployments keep working; CI should run
     // `agent --check-config --strict` to gate PRs.
-    let google_auth = agent_auth::load_google_auth(&config_dir)
+    let google_auth = nexo_auth::load_google_auth(&config_dir)
         .context("failed to load google-auth.yaml")?;
-    let credentials = match agent_auth::build_credentials(
+    let credentials = match nexo_auth::build_credentials(
         &cfg.agents.agents,
         &cfg.plugins.whatsapp,
         &cfg.plugins.telegram,
         &google_auth,
-        agent_auth::StrictLevel::Lenient,
+        nexo_auth::StrictLevel::Lenient,
     ) {
         Ok(bundle) => {
             for w in &bundle.warnings {
                 tracing::warn!(target: "credentials", "{w}");
             }
             {
-                use agent_auth::CredentialStore;
+                use nexo_auth::CredentialStore;
                 tracing::info!(
                     wa = bundle.stores.whatsapp.list().len(),
                     tg = bundle.stores.telegram.list().len(),
@@ -448,7 +512,7 @@ async fn main() -> Result<()> {
     // changes; requires operator restart to apply.
     if let Some(ext_cfg) = cfg.extensions.as_ref() {
         if ext_cfg.watch.enabled {
-            let mut snapshot = agent_extensions::KnownPluginSnapshot::new();
+            let mut snapshot = nexo_extensions::KnownPluginSnapshot::new();
             for (_rt, cand) in &extension_runtimes {
                 snapshot.insert(cand.manifest.id(), cand.manifest_path.clone());
             }
@@ -464,7 +528,7 @@ async fn main() -> Result<()> {
                 );
             } else {
                 let debounce = std::time::Duration::from_millis(ext_cfg.watch.debounce_ms.max(50));
-                agent_extensions::spawn_extensions_watcher(
+                nexo_extensions::spawn_extensions_watcher(
                     roots,
                     snapshot,
                     debounce,
@@ -485,11 +549,11 @@ async fn main() -> Result<()> {
     // above so multi-agent configs surface every typo in one error.
     {
         let names = llm_registry.names();
-        let known_providers = agent_core::agent::KnownProviders::new(names);
-        agent_core::agent::validate_agents_with_providers(
+        let known_providers = nexo_core::agent::KnownProviders::new(names);
+        nexo_core::agent::validate_agents_with_providers(
             &cfg.agents.agents,
             &cfg.plugins.telegram,
-            &agent_core::agent::KnownTools::default(),
+            &nexo_core::agent::KnownTools::default(),
             &known_providers,
         )
         .context("per-binding provider validation failed")?;
@@ -497,18 +561,18 @@ async fn main() -> Result<()> {
 
     let mcp_sampling_provider = build_mcp_sampling_provider(&cfg, &llm_registry)
         .context("failed to initialize MCP sampling provider")?;
-    let mcp_manager: Option<Arc<agent_mcp::McpRuntimeManager>> = match cfg.mcp.as_ref() {
+    let mcp_manager: Option<Arc<nexo_mcp::McpRuntimeManager>> = match cfg.mcp.as_ref() {
         Some(mcp_cfg) if mcp_cfg.enabled => {
-            let ext_decls: Vec<agent_mcp::runtime_config::ExtensionServerDecl> = ext_mcp_decls
+            let ext_decls: Vec<nexo_mcp::runtime_config::ExtensionServerDecl> = ext_mcp_decls
                 .iter()
-                .map(|d| agent_mcp::runtime_config::ExtensionServerDecl {
+                .map(|d| nexo_mcp::runtime_config::ExtensionServerDecl {
                     ext_id: d.ext_id.clone(),
                     ext_version: d.ext_version.clone(),
                     ext_root: d.ext_root.clone(),
                     servers: d.servers.clone(),
                 })
                 .collect();
-            let rt_cfg = agent_mcp::runtime_config::McpRuntimeConfig::from_yaml_with_extensions(
+            let rt_cfg = nexo_mcp::runtime_config::McpRuntimeConfig::from_yaml_with_extensions(
                 mcp_cfg, &ext_decls,
             );
             tracing::info!(
@@ -517,13 +581,13 @@ async fn main() -> Result<()> {
                 extension_decls = ext_decls.len(),
                 "initializing mcp runtime manager"
             );
-            let mgr = agent_mcp::McpRuntimeManager::new_with_sampling(
+            let mgr = nexo_mcp::McpRuntimeManager::new_with_sampling(
                 rt_cfg,
                 mcp_sampling_provider.clone(),
             );
             if mcp_cfg.watch.enabled {
                 let debounce = std::time::Duration::from_millis(mcp_cfg.watch.debounce_ms.max(50));
-                agent_mcp::spawn_mcp_config_watcher(
+                nexo_mcp::spawn_mcp_config_watcher(
                     config_dir.clone(),
                     Arc::clone(&mgr),
                     ext_decls,
@@ -563,7 +627,7 @@ async fn main() -> Result<()> {
                 .unwrap_or("./data/memory.db");
 
             // Phase 5.4 — build optional embedding provider for vector recall.
-            let embedding_provider: Option<Arc<dyn agent_memory::EmbeddingProvider>> = if cfg
+            let embedding_provider: Option<Arc<dyn nexo_memory::EmbeddingProvider>> = if cfg
                 .memory
                 .vector
                 .enabled
@@ -577,7 +641,7 @@ async fn main() -> Result<()> {
                             } else {
                                 Some(emb.api_key.clone())
                             };
-                            match agent_memory::HttpEmbeddingProvider::new(
+                            match nexo_memory::HttpEmbeddingProvider::new(
                                 url,
                                 emb.model.clone(),
                                 api_key,
@@ -591,7 +655,7 @@ async fn main() -> Result<()> {
                                         dim = emb.dimensions,
                                         "embedding provider initialised"
                                     );
-                                    Some(Arc::new(p) as Arc<dyn agent_memory::EmbeddingProvider>)
+                                    Some(Arc::new(p) as Arc<dyn nexo_memory::EmbeddingProvider>)
                                 }
                                 Err(e) => {
                                     tracing::warn!(error = %e, "embedding provider init failed; vector disabled");
@@ -667,7 +731,7 @@ async fn main() -> Result<()> {
     // can register the full `browser_*` tool family against it. Tool
     // handlers call `plugin.execute(...)` directly — no broker round-trip
     // — so each tool call hits the CDP session exactly once.
-    let browser_plugin: Option<Arc<agent_plugin_browser::BrowserPlugin>> =
+    let browser_plugin: Option<Arc<nexo_plugin_browser::BrowserPlugin>> =
         cfg.plugins.browser.clone().map(|browser_cfg| {
             let plugin = Arc::new(BrowserPlugin::new(browser_cfg));
             tracing::info!("registered plugin: browser");
@@ -677,7 +741,7 @@ async fn main() -> Result<()> {
         // Register into the PluginRegistry via the Plugin trait. The
         // registry stores `Arc<dyn Plugin>` so we keep our Arc handle
         // alive for tool registration below.
-        plugins.register_arc(plugin as Arc<dyn agent_core::agent::plugin::Plugin>);
+        plugins.register_arc(plugin as Arc<dyn nexo_core::agent::plugin::Plugin>);
     }
     // WhatsApp plugins — zero, one, or many accounts. Each one registers
     // under `whatsapp` (legacy single-account) or `whatsapp.<instance>`.
@@ -686,9 +750,9 @@ async fn main() -> Result<()> {
     // `/whatsapp/pair*` that targets the first account for back-compat.
     let mut wa_pairing: std::collections::BTreeMap<
         String,
-        agent_plugin_whatsapp::pairing::SharedPairingState,
+        nexo_plugin_whatsapp::pairing::SharedPairingState,
     > = std::collections::BTreeMap::new();
-    let mut wa_tunnel_cfg: Option<agent_config::WhatsappPublicTunnelConfig> = None;
+    let mut wa_tunnel_cfg: Option<nexo_config::WhatsappPublicTunnelConfig> = None;
     for (idx, wa_cfg) in cfg.plugins.whatsapp.clone().into_iter().enumerate() {
         if !wa_cfg.enabled {
             let label = wa_cfg.instance.clone().unwrap_or_else(|| "default".into());
@@ -713,7 +777,7 @@ async fn main() -> Result<()> {
             .instance
             .clone()
             .unwrap_or_else(|| "<default>".into());
-        let plugin = agent_plugin_telegram::TelegramPlugin::new(tg_cfg);
+        let plugin = nexo_plugin_telegram::TelegramPlugin::new(tg_cfg);
         plugins.register(plugin);
         tracing::info!(instance = %instance_label, "registered plugin: telegram");
     }
@@ -762,7 +826,7 @@ async fn main() -> Result<()> {
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 }
-                match agent_tunnel::TunnelManager::new(8080).start().await {
+                match nexo_tunnel::TunnelManager::new(8080).start().await {
                     Ok(handle) => {
                         // Big, hard-to-miss banner on stderr so
                         // operators see the URL even in noisy logs.
@@ -826,7 +890,7 @@ async fn main() -> Result<()> {
             match std::fs::read_to_string(&path)
                 .map_err(anyhow::Error::from)
                 .and_then(|t| {
-                    serde_yaml::from_str::<agent_core::agent::tool_policy::ToolPolicyConfig>(&t)
+                    serde_yaml::from_str::<nexo_core::agent::tool_policy::ToolPolicyConfig>(&t)
                         .map_err(anyhow::Error::from)
                 }) {
                 Ok(cfg) => {
@@ -836,15 +900,15 @@ async fn main() -> Result<()> {
                         per_agent_overrides = cfg.per_agent.len(),
                         "tool policy loaded"
                     );
-                    agent_core::agent::tool_policy::ToolPolicyRegistry::from_config(&cfg)
+                    nexo_core::agent::tool_policy::ToolPolicyRegistry::from_config(&cfg)
                 }
                 Err(e) => {
                     tracing::warn!(error = %e, "tool_policy.yaml parse failed — feature off");
-                    agent_core::agent::tool_policy::ToolPolicyRegistry::disabled()
+                    nexo_core::agent::tool_policy::ToolPolicyRegistry::disabled()
                 }
             }
         } else {
-            agent_core::agent::tool_policy::ToolPolicyRegistry::disabled()
+            nexo_core::agent::tool_policy::ToolPolicyRegistry::disabled()
         }
     };
 
@@ -866,11 +930,11 @@ async fn main() -> Result<()> {
     // Build a shared peer directory once so every agent's context sees
     // the same snapshot. Rendered as a `# PEERS` block in the system
     // prompt (filtered + annotated against `allowed_delegates`).
-    let peer_directory = agent_core::agent::PeerDirectory::new(
+    let peer_directory = nexo_core::agent::PeerDirectory::new(
         cfg.agents
             .agents
             .iter()
-            .map(|a| agent_core::agent::PeerSummary {
+            .map(|a| nexo_core::agent::PeerSummary {
                 id: a.id.clone(),
                 description: a.description.clone(),
             })
@@ -880,11 +944,11 @@ async fn main() -> Result<()> {
     // of the operator-relevant bits of each agent's config (no secrets,
     // no runtime state) so a dashboard / CLI can answer "who's running
     // and what are they configured to do?"
-    let agents_directory = agent_core::agent::AgentsDirectory::new(
+    let agents_directory = nexo_core::agent::AgentsDirectory::new(
         cfg.agents
             .agents
             .iter()
-            .map(agent_core::agent::AgentInfo::from_config)
+            .map(nexo_core::agent::AgentInfo::from_config)
             .collect(),
     );
     // Loopback-only admin HTTP server. Bound to `127.0.0.1` — nothing
@@ -900,13 +964,13 @@ async fn main() -> Result<()> {
     //   4) start runner (spawns one tokio task per job)
     // Failure at any step logs + skips: the daemon keeps running for
     // the rest of the agents.
-    let pollers_runner: Option<Arc<agent_poller::PollerRunner>> = match (
+    let pollers_runner: Option<Arc<nexo_poller::PollerRunner>> = match (
         cfg.pollers.clone(),
         credentials.as_ref().map(Arc::clone),
     ) {
         (Some(pcfg), Some(bundle)) if pcfg.enabled => {
             let state_db = std::path::PathBuf::from(&pcfg.state_db);
-            match agent_poller::PollState::open(&state_db).await {
+            match nexo_poller::PollState::open(&state_db).await {
                 Ok(state) => {
                     // Phase 20 — feed the LLM registry + config into
                     // the runner so the `agent_turn` built-in can build
@@ -914,7 +978,7 @@ async fn main() -> Result<()> {
                     // webhook) ignore the field — wiring it
                     // unconditionally keeps the boot path uniform.
                     let runner = Arc::new(
-                        agent_poller::PollerRunner::new(
+                        nexo_poller::PollerRunner::new(
                             pcfg,
                             Arc::new(state),
                             broker.clone(),
@@ -925,7 +989,7 @@ async fn main() -> Result<()> {
                             Arc::new(cfg.llm.clone()),
                         ),
                     );
-                    agent_poller::builtins::register_all(&runner);
+                    nexo_poller::builtins::register_all(&runner);
 
                     // Phase 19 follow-up — register extension-provided
                     // pollers. Walk every loaded stdio extension and
@@ -936,7 +1000,7 @@ async fn main() -> Result<()> {
                     for (rt, cand) in &extension_runtimes {
                         let kinds = &cand.manifest.capabilities.pollers;
                         if !kinds.is_empty() {
-                            let n = agent_poller_ext::register_for_runtime(
+                            let n = nexo_poller_ext::register_for_runtime(
                                 &runner,
                                 rt,
                                 kinds,
@@ -993,34 +1057,34 @@ async fn main() -> Result<()> {
     // Phase 21 — single shared link extractor (HTTP client + LRU cache).
     // Per-binding config gates whether each turn actually fetches; the
     // extractor itself is cheap to keep around always.
-    let link_extractor = Arc::new(agent_core::link_understanding::LinkExtractor::new(
-        &agent_core::link_understanding::LinkUnderstandingConfig::default(),
+    let link_extractor = Arc::new(nexo_core::link_understanding::LinkExtractor::new(
+        &nexo_core::link_understanding::LinkUnderstandingConfig::default(),
     ));
 
     // Phase 25 — single shared web-search router. Builds at most one
     // provider per backend from env credentials. `None` if no provider
     // is configured (no env keys + DDG feature off); the `web_search`
     // tool is then never registered.
-    let web_search_router: Option<Arc<agent_web_search::WebSearchRouter>> = {
-        let mut providers: Vec<Arc<dyn agent_web_search::WebSearchProvider>> = Vec::new();
+    let web_search_router: Option<Arc<nexo_web_search::WebSearchRouter>> = {
+        let mut providers: Vec<Arc<dyn nexo_web_search::WebSearchProvider>> = Vec::new();
         if let Ok(k) = std::env::var("BRAVE_SEARCH_API_KEY") {
             providers.push(Arc::new(
-                agent_web_search::providers::brave::BraveProvider::new(k, 8000),
+                nexo_web_search::providers::brave::BraveProvider::new(k, 8000),
             ));
         }
         if let Ok(k) = std::env::var("TAVILY_API_KEY") {
             providers.push(Arc::new(
-                agent_web_search::providers::tavily::TavilyProvider::new(k, 10000),
+                nexo_web_search::providers::tavily::TavilyProvider::new(k, 10000),
             ));
         }
         // DuckDuckGo bundles by default (no key) so every install has
         // at least one usable provider. Operators that ban scraping
-        // can rebuild agent-web-search without the `duckduckgo`
+        // can rebuild nexo-web-search without the `duckduckgo`
         // feature.
         providers.push(Arc::new(
-            agent_web_search::providers::duckduckgo::DuckDuckGoProvider::new(12000),
+            nexo_web_search::providers::duckduckgo::DuckDuckGoProvider::new(12000),
         ));
-        Some(Arc::new(agent_web_search::WebSearchRouter::new(
+        Some(Arc::new(nexo_web_search::WebSearchRouter::new(
             providers, None,
         )))
     };
@@ -1030,12 +1094,46 @@ async fn main() -> Result<()> {
         tracing::info!("web-search router disabled (no providers configured)");
     }
 
+    // Phase 26 — pairing protocol. Builds the SQLite store + the
+    // HMAC-signed setup-code issuer once per process. The store path
+    // sits beside `memory.db` so backups follow the same operator
+    // convention; the secret file lands in `~/.nexo/secret/pairing.key`
+    // with 0600 perms (auto-generated on first boot).
+    let (pairing_store, pairing_gate, setup_code_issuer) = {
+        let memory_dir: std::path::PathBuf = cfg
+            .memory
+            .long_term
+            .sqlite
+            .as_ref()
+            .map(|s| {
+                std::path::Path::new(&s.path)
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| std::path::PathBuf::from("."))
+            })
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let store_path = memory_dir.join("pairing.db");
+        let store = Arc::new(
+            nexo_pairing::PairingStore::open(store_path.to_str().unwrap_or("pairing.db")).await?,
+        );
+        let gate = Arc::new(nexo_pairing::PairingGate::new(Arc::clone(&store)));
+        let secret_path = std::env::var_os("HOME")
+            .map(|h| std::path::PathBuf::from(h).join(".nexo").join("secret").join("pairing.key"))
+            .unwrap_or_else(|| std::path::PathBuf::from("./pairing.key"));
+        let issuer = Arc::new(nexo_pairing::SetupCodeIssuer::open_or_create(&secret_path)?);
+        tracing::info!(store = %store_path.display(), secret = %secret_path.display(), "pairing initialised");
+        (store, gate, issuer)
+    };
+    // Touch them so unused-var checks pass while the plugin/CLI
+    // wiring lands in the next commit.
+    let _ = (Arc::clone(&pairing_store), Arc::clone(&pairing_gate), Arc::clone(&setup_code_issuer));
+
     let mut runtimes: Vec<AgentRuntime> = Vec::with_capacity(cfg.agents.agents.len());
     // Phase 18 — collect each agent's reload channel so the coordinator
     // can dispatch `Apply(snapshot)` on hot-reload.
     let mut reload_senders: Vec<(
         String,
-        tokio::sync::mpsc::Sender<agent_core::agent::runtime::ReloadCommand>,
+        tokio::sync::mpsc::Sender<nexo_core::agent::runtime::ReloadCommand>,
         std::sync::Arc<Vec<String>>,
     )> = Vec::with_capacity(cfg.agents.agents.len());
     // Dreaming-side cancellation + handles. Each enabled agent spawns a
@@ -1048,7 +1146,7 @@ async fn main() -> Result<()> {
     // NATS resume bridge. Engine runs as a single global task; the
     // bridge wakes flows whose `external_event` waits arrive over NATS.
     let flow_manager = Arc::new(open_flow_manager_from_cfg(&cfg.taskflow).await?);
-    let wait_engine = agent_taskflow::WaitEngine::new((*flow_manager).clone());
+    let wait_engine = nexo_taskflow::WaitEngine::new((*flow_manager).clone());
     let tick_interval = humantime::parse_duration(&cfg.taskflow.tick_interval)
         .with_context(|| {
             format!(
@@ -1078,9 +1176,9 @@ async fn main() -> Result<()> {
 
     // Transcripts subsystem — optional FTS5 index + optional redactor.
     // Built once and shared across every agent via runtime.with_*.
-    let transcripts_index: Option<Arc<agent_core::agent::TranscriptsIndex>> =
+    let transcripts_index: Option<Arc<nexo_core::agent::TranscriptsIndex>> =
         if cfg.transcripts.fts.enabled {
-            match agent_core::agent::TranscriptsIndex::open(std::path::Path::new(
+            match nexo_core::agent::TranscriptsIndex::open(std::path::Path::new(
                 &cfg.transcripts.fts.db_path,
             ))
             .await
@@ -1104,8 +1202,8 @@ async fn main() -> Result<()> {
         } else {
             None
         };
-    let transcripts_redactor: Arc<agent_core::agent::Redactor> = Arc::new(
-        agent_core::agent::Redactor::from_config(&cfg.transcripts.redaction)
+    let transcripts_redactor: Arc<nexo_core::agent::Redactor> = Arc::new(
+        nexo_core::agent::Redactor::from_config(&cfg.transcripts.redaction)
             .context("invalid transcripts.redaction config")?,
     );
     if transcripts_redactor.is_active() {
@@ -1123,7 +1221,7 @@ async fn main() -> Result<()> {
     //   the long-term memory file so backups + permissions follow the
     //   same operator convention. Always built — agents that never opt
     //   into compaction simply never touch it.
-    let workspace_cache: Option<Arc<agent_core::agent::workspace_cache::WorkspaceCache>> = {
+    let workspace_cache: Option<Arc<nexo_core::agent::workspace_cache::WorkspaceCache>> = {
         let cfg_co = &cfg.llm.context_optimization.workspace_cache;
         if !cfg_co.enabled {
             None
@@ -1142,7 +1240,7 @@ async fn main() -> Result<()> {
             if roots.is_empty() {
                 None
             } else {
-                match agent_core::agent::workspace_cache::WorkspaceCache::new(
+                match nexo_core::agent::workspace_cache::WorkspaceCache::new(
                     &roots,
                     cfg_co.watch_debounce_ms,
                     cfg_co.max_age_seconds,
@@ -1163,7 +1261,7 @@ async fn main() -> Result<()> {
             }
         }
     };
-    let compaction_store: Option<Arc<agent_memory::CompactionStore>> = {
+    let compaction_store: Option<Arc<nexo_memory::CompactionStore>> = {
         let memory_dir = cfg
             .memory
             .long_term
@@ -1186,7 +1284,7 @@ async fn main() -> Result<()> {
         } else {
             let path = memory_dir.join("compactions.db");
             let path_str = path.display().to_string();
-            match agent_memory::CompactionStore::open(&path_str).await {
+            match nexo_memory::CompactionStore::open(&path_str).await {
                 Ok(s) => {
                     tracing::info!(path = %path_str, "compaction store ready");
                     Some(Arc::new(s))
@@ -1248,7 +1346,7 @@ async fn main() -> Result<()> {
         // the CDP session exactly once (no broker round-trip).
         if agent_cfg.plugins.iter().any(|p| p == "browser") {
             if let Some(plugin) = browser_plugin.as_ref() {
-                agent_plugin_browser::register_browser_tools(&tools, plugin);
+                nexo_plugin_browser::register_browser_tools(&tools, plugin);
                 tracing::info!(
                     agent = %agent_id,
                     "registered browser_* tools for agent"
@@ -1265,13 +1363,13 @@ async fn main() -> Result<()> {
         // dispatcher handles transport. Each tool honors the agent's
         // `outbound_allowlist.whatsapp` at call time.
         if agent_cfg.plugins.iter().any(|p| p == "whatsapp") {
-            agent_plugin_whatsapp::register_whatsapp_tools(&tools);
+            nexo_plugin_whatsapp::register_whatsapp_tools(&tools);
             tracing::info!(agent = %agent_id, "registered whatsapp_* tools for agent");
         }
         // Telegram outbound tools — same shape as WhatsApp; gated on
         // `plugins: [telegram]` + per-agent allowlist.
         if agent_cfg.plugins.iter().any(|p| p == "telegram") {
-            agent_plugin_telegram::register_telegram_tools(&tools);
+            nexo_plugin_telegram::register_telegram_tools(&tools);
             tracing::info!(agent = %agent_id, "registered telegram_* tools for agent");
         }
         // Google OAuth tools — gated on either `agents.<id>.google_auth`
@@ -1284,14 +1382,14 @@ async fn main() -> Result<()> {
             .as_ref()
             .map(|gcfg| {
                 (
-                    agent_plugin_google::GoogleAuthConfig {
+                    nexo_plugin_google::GoogleAuthConfig {
                         client_id: gcfg.client_id.clone(),
                         client_secret: gcfg.client_secret.clone(),
                         scopes: gcfg.scopes.clone(),
                         token_file: gcfg.token_file.clone(),
                         redirect_port: gcfg.redirect_port,
                     },
-                    None::<agent_plugin_google::SecretSources>,
+                    None::<nexo_plugin_google::SecretSources>,
                 )
             })
             .or_else(|| {
@@ -1307,14 +1405,14 @@ async fn main() -> Result<()> {
                             .and_then(|n| n.to_str())
                             .unwrap_or("google_tokens.json")
                             .to_string();
-                        let cfg = agent_plugin_google::GoogleAuthConfig {
+                        let cfg = nexo_plugin_google::GoogleAuthConfig {
                             client_id: cid.trim().to_string(),
                             client_secret: csec.trim().to_string(),
                             scopes: acct.scopes.clone(),
                             token_file,
                             redirect_port: 8765,
                         };
-                        let sources = agent_plugin_google::SecretSources {
+                        let sources = nexo_plugin_google::SecretSources {
                             client_id_path: acct.client_id_path.clone(),
                             client_secret_path: acct.client_secret_path.clone(),
                         };
@@ -1327,7 +1425,7 @@ async fn main() -> Result<()> {
             } else {
                 PathBuf::from(&agent_cfg.workspace)
             };
-            let client = agent_plugin_google::GoogleAuthClient::new_with_sources(
+            let client = nexo_plugin_google::GoogleAuthClient::new_with_sources(
                 core_cfg,
                 &workspace_dir,
                 sources,
@@ -1339,7 +1437,7 @@ async fn main() -> Result<()> {
                     "google_auth: failed to load persisted tokens; agent will need to re-consent"
                 );
             }
-            agent_plugin_google::register_tools(&tools, client);
+            nexo_plugin_google::register_tools(&tools, client);
             tracing::info!(
                 agent = %agent_id,
                 "registered google_* tools for agent"
@@ -1351,7 +1449,7 @@ async fn main() -> Result<()> {
         // disabled. Create / delete are intentionally not exposed
         // (prompt-injection concern); operators own pollers.yaml.
         if let Some(runner) = pollers_runner.as_ref() {
-            agent_poller_tools::register_all(&tools, Arc::clone(runner));
+            nexo_poller_tools::register_all(&tools, Arc::clone(runner));
             tracing::info!(
                 agent = %agent_id,
                 "registered pollers_* tools for agent"
@@ -1380,8 +1478,8 @@ async fn main() -> Result<()> {
         if agent_ws_enabled {
             if let Some(ws_router) = web_search_router.as_ref() {
                 tools.register(
-                    agent_core::agent::WebSearchTool::tool_def(),
-                    agent_core::agent::WebSearchTool::new(Arc::clone(ws_router)),
+                    nexo_core::agent::WebSearchTool::tool_def(),
+                    nexo_core::agent::WebSearchTool::new(Arc::clone(ws_router)),
                 );
                 tracing::info!(agent = %agent_id, "registered web_search tool");
             } else {
@@ -1438,22 +1536,22 @@ async fn main() -> Result<()> {
         // enforced by `owner_session_key` so agents cannot read or
         // mutate flows of other sessions.
         if agent_cfg.plugins.iter().any(|p| p == "taskflow") {
-            let guardrails = agent_core::agent::TaskFlowToolGuardrails {
+            let guardrails = nexo_core::agent::TaskFlowToolGuardrails {
                 timer_max_horizon: chrono::Duration::seconds(_timer_max_horizon.as_secs() as i64),
             };
-            let tool = agent_core::agent::TaskFlowTool::new((*flow_manager).clone())
+            let tool = nexo_core::agent::TaskFlowTool::new((*flow_manager).clone())
                 .with_guardrails(guardrails);
-            tools.register(agent_core::agent::TaskFlowTool::tool_def(), tool);
+            tools.register(nexo_core::agent::TaskFlowTool::tool_def(), tool);
             tracing::info!(agent = %agent_id, "registered taskflow tool for agent");
         }
 
         // Phase 10.9 — optional git-backed workspace. Registers
         // `forge_memory_checkpoint` + `memory_history` tools and feeds the
         // dreaming spawn closure below so sweeps auto-commit.
-        let agent_git: Option<Arc<agent_core::agent::MemoryGitRepo>> =
+        let agent_git: Option<Arc<nexo_core::agent::MemoryGitRepo>> =
             if agent_cfg.workspace_git.enabled {
                 match workspace_path.as_deref() {
-                    Some(ws) => match agent_core::agent::MemoryGitRepo::open_or_init(
+                    Some(ws) => match nexo_core::agent::MemoryGitRepo::open_or_init(
                         ws,
                         agent_cfg.workspace_git.author_name.clone(),
                         agent_cfg.workspace_git.author_email.clone(),
@@ -1488,12 +1586,12 @@ async fn main() -> Result<()> {
             };
         if let Some(g) = &agent_git {
             tools.register(
-                agent_core::agent::MemoryCheckpointTool::tool_def(),
-                agent_core::agent::MemoryCheckpointTool::new(Arc::clone(g)),
+                nexo_core::agent::MemoryCheckpointTool::tool_def(),
+                nexo_core::agent::MemoryCheckpointTool::new(Arc::clone(g)),
             );
             tools.register(
-                agent_core::agent::MemoryHistoryTool::tool_def(),
-                agent_core::agent::MemoryHistoryTool::new(Arc::clone(g)),
+                nexo_core::agent::MemoryHistoryTool::tool_def(),
+                nexo_core::agent::MemoryHistoryTool::new(Arc::clone(g)),
             );
             // Wire session-close commit: when a session expires, snapshot
             // the workspace so the day's memory edits land in history
@@ -1553,7 +1651,7 @@ async fn main() -> Result<()> {
                 }
             }
             for hook_name in &rt.handshake().hooks {
-                if !agent_extensions::is_valid_hook(hook_name) {
+                if !nexo_extensions::is_valid_hook(hook_name) {
                     hooks_skipped += 1;
                     tracing::warn!(
                         ext = %pid,
@@ -1601,15 +1699,15 @@ async fn main() -> Result<()> {
                     m.servers
                         .iter()
                         .filter_map(|(name, yaml)| match yaml {
-                            agent_config::McpServerYaml::Stdio {
+                            nexo_config::McpServerYaml::Stdio {
                                 context_passthrough: Some(v),
                                 ..
                             }
-                            | agent_config::McpServerYaml::StreamableHttp {
+                            | nexo_config::McpServerYaml::StreamableHttp {
                                 context_passthrough: Some(v),
                                 ..
                             }
-                            | agent_config::McpServerYaml::Sse {
+                            | nexo_config::McpServerYaml::Sse {
                                 context_passthrough: Some(v),
                                 ..
                             } => Some((name.clone(), *v)),
@@ -1618,7 +1716,7 @@ async fn main() -> Result<()> {
                         .collect()
                 })
                 .unwrap_or_default();
-            agent_core::agent::register_session_tools_with_overrides(
+            nexo_core::agent::register_session_tools_with_overrides(
                 &rt,
                 &tools,
                 mcp_ctx_pt,
@@ -1644,7 +1742,7 @@ async fn main() -> Result<()> {
             rt.on_tools_changed(move |server_id| {
                 let prefix = format!(
                     "mcp_{}_",
-                    agent_core::agent::sanitize_name_fragment(&server_id)
+                    nexo_core::agent::sanitize_name_fragment(&server_id)
                 );
                 let tools = Arc::clone(&tools_for_tools_reload);
                 let rt = Arc::clone(&rt_for_tools_reload);
@@ -1652,7 +1750,7 @@ async fn main() -> Result<()> {
                 let overrides = overrides_for_tools_reload.clone();
                 tokio::spawn(async move {
                     let removed = tools.clear_by_prefix(&prefix);
-                    agent_core::agent::register_session_tools_with_overrides(
+                    nexo_core::agent::register_session_tools_with_overrides(
                         &rt, &tools, mcp_ctx_pt, overrides,
                     )
                     .await;
@@ -1677,7 +1775,7 @@ async fn main() -> Result<()> {
             rt.on_resources_changed(move |server_id| {
                 let prefix = format!(
                     "mcp_{}_",
-                    agent_core::agent::sanitize_name_fragment(&server_id)
+                    nexo_core::agent::sanitize_name_fragment(&server_id)
                 );
                 let tools = Arc::clone(&tools_for_res_reload);
                 let rt = Arc::clone(&rt_for_res_reload);
@@ -1686,7 +1784,7 @@ async fn main() -> Result<()> {
                 tokio::spawn(async move {
                     let cache_purged = rt.resource_cache().invalidate_server(&server_id);
                     let removed = tools.clear_by_prefix(&prefix);
-                    agent_core::agent::register_session_tools_with_overrides(
+                    nexo_core::agent::register_session_tools_with_overrides(
                         &rt, &tools, mcp_ctx_pt, overrides,
                     )
                     .await;
@@ -1734,8 +1832,8 @@ async fn main() -> Result<()> {
         {
             let defs = tools.to_tool_defs();
             let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
-            let catalog = agent_core::agent::KnownTools::new(names);
-            agent_core::agent::validate_agent(
+            let catalog = nexo_core::agent::KnownTools::new(names);
+            nexo_core::agent::validate_agent(
                 &agent_cfg,
                 &cfg.plugins.telegram,
                 &catalog,
@@ -1747,14 +1845,14 @@ async fn main() -> Result<()> {
             .with_hooks(Arc::clone(&hooks))
             .with_tool_policy(tool_policy_registry.for_agent(&agent_id));
         if let Some(rl_cfg) = agent_cfg.tool_rate_limits.clone() {
-            let rl_core = agent_core::agent::ToolRateLimitsConfig {
+            let rl_core = nexo_core::agent::ToolRateLimitsConfig {
                 patterns: rl_cfg
                     .patterns
                     .into_iter()
                     .map(|(k, v)| {
                         (
                             k,
-                            agent_core::agent::ToolRateLimitConfig {
+                            nexo_core::agent::ToolRateLimitConfig {
                                 rps: v.rps,
                                 burst: v.burst,
                             },
@@ -1762,7 +1860,7 @@ async fn main() -> Result<()> {
                     })
                     .collect(),
             };
-            let limiter = Arc::new(agent_core::agent::ToolRateLimiter::new(rl_core));
+            let limiter = Arc::new(nexo_core::agent::ToolRateLimiter::new(rl_core));
             behavior = behavior.with_rate_limiter(limiter);
             tracing::info!(agent = %agent_id, "tool rate limiter enabled");
         }
@@ -1773,7 +1871,7 @@ async fn main() -> Result<()> {
                 .as_ref()
                 .map(|c| c.enabled)
                 .unwrap_or(true);
-            let validator = Arc::new(agent_core::agent::ToolArgsValidator::new(enabled));
+            let validator = Arc::new(nexo_core::agent::ToolArgsValidator::new(enabled));
             behavior = behavior.with_schema_validator(validator);
             tracing::info!(
                 agent = %agent_id,
@@ -1785,7 +1883,7 @@ async fn main() -> Result<()> {
         // the behavior. Per-agent overrides ride on `agent_cfg.context_optimization`;
         // each enable inherits from `cfg.llm.context_optimization` when
         // None on the override.
-        let resolved_co = agent_config::types::llm::ResolvedContextOptimization::resolve(
+        let resolved_co = nexo_config::types::llm::ResolvedContextOptimization::resolve(
             &cfg.llm.context_optimization,
             agent_cfg.context_optimization.as_ref(),
         );
@@ -1804,7 +1902,7 @@ async fn main() -> Result<()> {
             // provider entry is missing — the build() helper degrades
             // to tiktoken in that case.
             if let Some(prov_cfg) = cfg.llm.providers.get(&agent_cfg.model.provider) {
-                let counter = agent_llm::token_counter::build(
+                let counter = nexo_llm::token_counter::build(
                     &cfg.llm.context_optimization.token_counter.backend,
                     &agent_cfg.model.provider,
                     &prov_cfg.base_url,
@@ -1828,7 +1926,7 @@ async fn main() -> Result<()> {
                 // metadata is available — operators can tune the pct
                 // to compensate.
                 let effective_window: f32 = 100_000.0;
-                let runtime = agent_core::agent::llm_behavior::CompactionRuntime {
+                let runtime = nexo_core::agent::llm_behavior::CompactionRuntime {
                     enabled: true,
                     compact_at_tokens: (cfg_compaction.compact_at_pct * effective_window) as u32,
                     tail_keep_chars: (cfg_compaction.tail_keep_tokens as usize) * 4,
@@ -2032,7 +2130,7 @@ async fn main() -> Result<()> {
     // CancellationToken tied to `watcher_shutdown` so the watcher +
     // broker subscriber exit alongside the extensions watcher on
     // SIGTERM.
-    let reload_coord = Arc::new(agent_core::ConfigReloadCoordinator::new(
+    let reload_coord = Arc::new(nexo_core::ConfigReloadCoordinator::new(
         config_dir.clone(),
         Arc::new(llm_registry),
         watcher_shutdown.clone(),
@@ -2122,7 +2220,7 @@ async fn main() -> Result<()> {
 fn build_mcp_sampling_provider(
     cfg: &AppConfig,
     llm_registry: &LlmRegistry,
-) -> anyhow::Result<Option<Arc<dyn agent_mcp::sampling::SamplingProvider>>> {
+) -> anyhow::Result<Option<Arc<dyn nexo_mcp::sampling::SamplingProvider>>> {
     let Some(mcp_cfg) = cfg.mcp.as_ref() else {
         return Ok(None);
     };
@@ -2134,9 +2232,9 @@ fn build_mcp_sampling_provider(
         return Ok(None);
     }
 
-    let mut named: std::collections::HashMap<String, Arc<dyn agent_llm::LlmClient>> =
+    let mut named: std::collections::HashMap<String, Arc<dyn nexo_llm::LlmClient>> =
         std::collections::HashMap::new();
-    let mut default_client: Option<Arc<dyn agent_llm::LlmClient>> = None;
+    let mut default_client: Option<Arc<dyn nexo_llm::LlmClient>> = None;
     for (idx, agent_cfg) in cfg.agents.agents.iter().enumerate() {
         let client = llm_registry
             .build(&cfg.llm, &agent_cfg.model)
@@ -2175,7 +2273,7 @@ fn build_mcp_sampling_provider(
         }
     }
 
-    let per_server: std::collections::HashMap<String, agent_mcp::sampling::PerServerPolicy> =
+    let per_server: std::collections::HashMap<String, nexo_mcp::sampling::PerServerPolicy> =
         mcp_cfg
             .sampling
             .per_server
@@ -2183,7 +2281,7 @@ fn build_mcp_sampling_provider(
             .map(|(server, p)| {
                 (
                     server.clone(),
-                    agent_mcp::sampling::PerServerPolicy {
+                    nexo_mcp::sampling::PerServerPolicy {
                         enabled: p.enabled,
                         rate_limit_per_minute: p.rate_limit_per_minute,
                         max_tokens_cap: p.max_tokens_cap,
@@ -2192,7 +2290,7 @@ fn build_mcp_sampling_provider(
             })
             .collect();
 
-    let policy = agent_mcp::sampling::SamplingPolicy::new(
+    let policy = nexo_mcp::sampling::SamplingPolicy::new(
         mcp_cfg.sampling.enabled,
         mcp_cfg.sampling.deny_servers.clone(),
         mcp_cfg.sampling.global_max_tokens_cap,
@@ -2204,11 +2302,11 @@ fn build_mcp_sampling_provider(
         "mcp sampling provider enabled"
     );
     Ok(Some(
-        Arc::new(agent_mcp::sampling::DefaultSamplingProvider::new(
+        Arc::new(nexo_mcp::sampling::DefaultSamplingProvider::new(
             default_client,
             named,
             policy,
-        )) as Arc<dyn agent_mcp::sampling::SamplingProvider>,
+        )) as Arc<dyn nexo_mcp::sampling::SamplingProvider>,
     ))
 }
 
@@ -2218,13 +2316,13 @@ fn build_mcp_sampling_provider(
 /// (drop → cascades SIGTERM to extension children).
 #[allow(clippy::type_complexity)]
 async fn run_extension_discovery(
-    cfg: Option<&agent_config::ExtensionsConfig>,
+    cfg: Option<&nexo_config::ExtensionsConfig>,
 ) -> (
     Vec<(
-        Arc<agent_extensions::StdioRuntime>,
-        agent_extensions::ExtensionCandidate,
+        Arc<nexo_extensions::StdioRuntime>,
+        nexo_extensions::ExtensionCandidate,
     )>,
-    Vec<agent_extensions::ExtensionMcpDecl>,
+    Vec<nexo_extensions::ExtensionMcpDecl>,
 ) {
     let cfg = cfg.cloned().unwrap_or_default();
     if !cfg.enabled {
@@ -2233,7 +2331,7 @@ async fn run_extension_discovery(
     }
 
     let search_paths: Vec<PathBuf> = cfg.search_paths.iter().map(PathBuf::from).collect();
-    let discovery = agent_extensions::ExtensionDiscovery::new(
+    let discovery = nexo_extensions::ExtensionDiscovery::new(
         search_paths,
         cfg.ignore_dirs.clone(),
         cfg.disabled.clone(),
@@ -2247,12 +2345,12 @@ async fn run_extension_discovery(
 
     for d in &report.diagnostics {
         match d.level {
-            agent_extensions::DiagnosticLevel::Warn => tracing::warn!(
+            nexo_extensions::DiagnosticLevel::Warn => tracing::warn!(
                 path = %d.path.display(),
                 message = %d.message,
                 "extension discovery",
             ),
-            agent_extensions::DiagnosticLevel::Error => tracing::error!(
+            nexo_extensions::DiagnosticLevel::Error => tracing::error!(
                 path = %d.path.display(),
                 message = %d.message,
                 "extension discovery",
@@ -2261,9 +2359,9 @@ async fn run_extension_discovery(
     }
     for c in &report.candidates {
         let transport = match &c.manifest.transport {
-            agent_extensions::Transport::Stdio { .. } => "stdio",
-            agent_extensions::Transport::Nats { .. } => "nats",
-            agent_extensions::Transport::Http { .. } => "http",
+            nexo_extensions::Transport::Stdio { .. } => "stdio",
+            nexo_extensions::Transport::Nats { .. } => "nats",
+            nexo_extensions::Transport::Http { .. } => "http",
         };
         tracing::info!(
             id = %c.manifest.id(),
@@ -2282,18 +2380,18 @@ async fn run_extension_discovery(
 
     // 12.7 — collect extension-declared MCP servers before we consume the
     // candidate list; main() later feeds these into `McpRuntimeManager`.
-    let mcp_decls = agent_extensions::collect_mcp_declarations(&report, &cfg.disabled);
+    let mcp_decls = nexo_extensions::collect_mcp_declarations(&report, &cfg.disabled);
 
     // 11.3 — spawn stdio runtimes for each candidate whose transport is Stdio.
     // 11.5 will iterate the returned runtimes to register tools per agent.
     let mut runtimes: Vec<(
-        Arc<agent_extensions::StdioRuntime>,
-        agent_extensions::ExtensionCandidate,
+        Arc<nexo_extensions::StdioRuntime>,
+        nexo_extensions::ExtensionCandidate,
     )> = Vec::new();
     for c in report.candidates {
         if !matches!(
             c.manifest.transport,
-            agent_extensions::Transport::Stdio { .. }
+            nexo_extensions::Transport::Stdio { .. }
         ) {
             continue;
         }
@@ -2311,7 +2409,7 @@ async fn run_extension_discovery(
             );
             continue;
         }
-        match agent_extensions::StdioRuntime::spawn(&c.manifest, c.root_dir.clone()).await {
+        match nexo_extensions::StdioRuntime::spawn(&c.manifest, c.root_dir.clone()).await {
             Ok(rt) => {
                 tracing::info!(
                     ext = %id,
@@ -2465,6 +2563,295 @@ fn parse_log_format() -> LogFormat {
     }
 }
 
+// ── Phase 26 — pair CLI handlers ─────────────────────────────────────────
+//
+// All commands open the SQLite store + secret file directly so the
+// operator can manage senders without a running daemon. Output is a
+// plain table by default, or JSON when `--json` is set.
+
+fn pair_paths(config_dir: &std::path::Path) -> (PathBuf, PathBuf) {
+    // Store file lives next to memory.db when possible; otherwise
+    // alongside the config dir as a stable fallback.
+    let store = config_dir
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join("data")
+        .join("pairing.db");
+    let secret = std::env::var_os("HOME")
+        .map(|h| PathBuf::from(h).join(".nexo").join("secret").join("pairing.key"))
+        .unwrap_or_else(|| PathBuf::from("./pairing.key"));
+    (store, secret)
+}
+
+async fn open_pair_store(config_dir: &std::path::Path) -> Result<Arc<nexo_pairing::PairingStore>> {
+    let (store_path, _) = pair_paths(config_dir);
+    if let Some(p) = store_path.parent() {
+        std::fs::create_dir_all(p).ok();
+    }
+    let path = store_path.to_string_lossy().to_string();
+    let store = nexo_pairing::PairingStore::open(&path).await?;
+    Ok(Arc::new(store))
+}
+
+fn run_pair_help() -> Result<()> {
+    println!(
+        "nexo pair — manage inbound sender allowlists + companion bootstrap codes\n\n\
+         Usage:\n\
+         \x20 nexo pair start [--for-device <name>] [--public-url <url>] [--qr-png <path>] [--ttl-secs <n>] [--json]\n\
+         \x20 nexo pair list  [--channel <id>] [--json]\n\
+         \x20 nexo pair approve <CODE> [--json]\n\
+         \x20 nexo pair revoke <channel>:<sender_id>\n\
+         \x20 nexo pair seed <channel> <account_id> <sender_id> [<sender_id>...]\n"
+    );
+    Ok(())
+}
+
+async fn run_pair_start(
+    config_dir: &std::path::Path,
+    device_label: Option<&str>,
+    public_url: Option<&str>,
+    qr_png_path: Option<&std::path::Path>,
+    ttl_secs: u64,
+    json: bool,
+) -> Result<()> {
+    let (_, secret_path) = pair_paths(config_dir);
+    if let Some(p) = secret_path.parent() {
+        std::fs::create_dir_all(p).ok();
+    }
+    let issuer = nexo_pairing::SetupCodeIssuer::open_or_create(&secret_path)?;
+
+    // URL resolution: only `--public-url` is honoured at the CLI layer
+    // for now. tunnel/gateway integration lands when their own crates
+    // expose a public accessor; until then operators pass `--public-url`
+    // explicitly. Loopback-only fails closed.
+    let inputs = nexo_pairing::url_resolver::UrlInputs {
+        public_url: public_url.map(str::to_string),
+        tunnel_url: None,
+        gateway_remote_url: None,
+        lan_url: None,
+        ws_cleartext_allow_extra: vec![],
+    };
+    let resolved = nexo_pairing::url_resolver::resolve(&inputs)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let code = issuer.issue(
+        &resolved.url,
+        "companion-v1",
+        std::time::Duration::from_secs(ttl_secs),
+        device_label,
+    )?;
+    let payload = nexo_pairing::setup_code::encode_setup_code(&code)?;
+
+    if let Some(path) = qr_png_path {
+        let png = nexo_pairing::qr::render_png(&payload)?;
+        std::fs::write(path, png)?;
+    }
+
+    if json {
+        let v = serde_json::json!({
+            "url": code.url,
+            "url_source": resolved.source,
+            "bootstrap_token": code.bootstrap_token,
+            "expires_at": code.expires_at,
+            "payload": payload,
+        });
+        println!("{}", serde_json::to_string_pretty(&v).unwrap());
+    } else {
+        println!("Pairing payload (scan or paste into companion):");
+        println!();
+        println!("{}", nexo_pairing::qr::render_ansi(&payload)?);
+        println!();
+        println!("Raw payload : {}", payload);
+        println!("URL         : {}  (source: {})", code.url, resolved.source);
+        println!("Expires at  : {}", code.expires_at);
+        if let Some(path) = qr_png_path {
+            println!("QR PNG      : {}", path.display());
+        }
+    }
+    Ok(())
+}
+
+async fn run_pair_list(
+    config_dir: &std::path::Path,
+    channel: Option<&str>,
+    json: bool,
+) -> Result<()> {
+    let store = open_pair_store(config_dir).await?;
+    let pending = store.list_pending(channel).await?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&pending).unwrap());
+    } else if pending.is_empty() {
+        println!("No pending pairing requests.");
+    } else {
+        println!("{:<10}  {:<14}  {:<16}  {:<26}  {}", "CODE", "CHANNEL", "ACCOUNT", "CREATED", "SENDER");
+        for p in &pending {
+            println!(
+                "{:<10}  {:<14}  {:<16}  {:<26}  {}",
+                p.code, p.channel, p.account_id, p.created_at, p.sender_id
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn run_pair_approve(
+    config_dir: &std::path::Path,
+    code: &str,
+    json: bool,
+) -> Result<()> {
+    let store = open_pair_store(config_dir).await?;
+    let approved = store.approve(code).await?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&approved).unwrap());
+    } else {
+        println!(
+            "Approved {}:{}:{} (added to allow_from)",
+            approved.channel, approved.account_id, approved.sender_id
+        );
+    }
+    Ok(())
+}
+
+async fn run_pair_revoke(config_dir: &std::path::Path, target: &str) -> Result<()> {
+    let (channel, sender) = target
+        .split_once(':')
+        .ok_or_else(|| anyhow::anyhow!("revoke target must be `<channel>:<sender_id>`"))?;
+    let store = open_pair_store(config_dir).await?;
+    let did = store.revoke(channel, sender).await?;
+    if did {
+        println!("Revoked {channel}:{sender}");
+    } else {
+        println!("No active row to revoke for {channel}:{sender}");
+    }
+    Ok(())
+}
+
+async fn run_pair_seed(
+    config_dir: &std::path::Path,
+    channel: &str,
+    account_id: &str,
+    senders: &[String],
+) -> Result<()> {
+    if senders.is_empty() {
+        return Err(anyhow::anyhow!(
+            "pair seed requires at least one sender id"
+        ));
+    }
+    let store = open_pair_store(config_dir).await?;
+    let n = store.seed(channel, account_id, senders).await?;
+    println!(
+        "Seeded {} sender(s) into {}:{} allow_from",
+        n, channel, account_id
+    );
+    Ok(())
+}
+
+/// Route a `nexo pair ...` invocation. Returns `Some(Mode)` for any
+/// recognised subcommand (including `help` and the bare `pair` form),
+/// `None` for unknown so the main dispatcher can show the global
+/// usage as a last resort. Walks `positional` end-to-end so flag
+/// values like `--public-url wss://x` don't shift the arg index.
+fn route_pair_subcommand(positional: &[String], has_json_flag: bool) -> Option<Mode> {
+    // Skip entries that are flag-name-or-value pairs.
+    let known_kv = ["--for-device", "--public-url", "--qr-png", "--ttl-secs", "--channel"];
+    let mut structural: Vec<&str> = Vec::new();
+    let mut i = 0;
+    while i < positional.len() {
+        let a = positional[i].as_str();
+        if known_kv.contains(&a) {
+            i += 2; // skip flag + value
+            continue;
+        }
+        if a.starts_with("--") {
+            i += 1;
+            continue;
+        }
+        if known_kv.iter().any(|f| a.starts_with(&format!("{f}="))) {
+            i += 1;
+            continue;
+        }
+        structural.push(a);
+        i += 1;
+    }
+    let mut iter = structural.into_iter();
+    let cmd = iter.next()?;
+    if cmd != "pair" {
+        return None;
+    }
+    let sub = iter.next();
+    Some(match sub {
+        None | Some("help") => Mode::PairHelp,
+        Some("start") => Mode::PairStart {
+            device_label: parse_kv_flag(positional, "--for-device"),
+            public_url: parse_kv_flag(positional, "--public-url"),
+            qr_png_path: parse_kv_flag(positional, "--qr-png").map(PathBuf::from),
+            ttl_secs: parse_kv_flag(positional, "--ttl-secs")
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(600),
+            json: has_json_flag,
+        },
+        Some("list") => Mode::PairList {
+            channel: parse_kv_flag(positional, "--channel"),
+            json: has_json_flag,
+        },
+        Some("approve") => match iter.next() {
+            Some(code) => Mode::PairApprove {
+                code: code.to_string(),
+                json: has_json_flag,
+            },
+            None => {
+                eprintln!("error: `pair approve` requires a CODE");
+                Mode::PairHelp
+            }
+        },
+        Some("revoke") => match iter.next() {
+            Some(target) => Mode::PairRevoke {
+                target: target.to_string(),
+            },
+            None => {
+                eprintln!("error: `pair revoke` requires `<channel>:<sender_id>`");
+                Mode::PairHelp
+            }
+        },
+        Some("seed") => {
+            let channel = iter.next();
+            let account_id = iter.next();
+            let senders: Vec<String> = iter.map(str::to_string).collect();
+            match (channel, account_id) {
+                (Some(c), Some(a)) if !senders.is_empty() => Mode::PairSeed {
+                    channel: c.to_string(),
+                    account_id: a.to_string(),
+                    senders,
+                },
+                _ => {
+                    eprintln!(
+                        "error: `pair seed` requires <channel> <account_id> <sender_id> [<sender_id>...]"
+                    );
+                    Mode::PairHelp
+                }
+            }
+        }
+        Some(other) => {
+            eprintln!("error: unknown pair subcommand `{other}`");
+            Mode::PairHelp
+        }
+    })
+}
+
+/// Pull a `--name value` pair out of a flat positional list. Used by
+/// the pair CLI and any other subcommand that accepts simple kv args.
+fn parse_kv_flag(positional: &[String], name: &str) -> Option<String> {
+    let mut iter = positional.iter();
+    while let Some(a) = iter.next() {
+        if a == name {
+            return iter.next().cloned();
+        }
+        if let Some(v) = a.strip_prefix(&format!("{name}=")) {
+            return Some(v.to_string());
+        }
+    }
+    None
+}
+
 fn parse_args() -> CliArgs {
     let mut config_dir = PathBuf::from("./config");
     let mut positional: Vec<String> = Vec::new();
@@ -2515,6 +2902,16 @@ fn parse_args() -> CliArgs {
                 json: has_json_flag,
             },
         };
+    }
+
+    // Phase 26 — pair CLI handled first so flag values like
+    // `--public-url wss://example.com` (which the value-only filter
+    // does not strip) don't shift the structural arity of the main
+    // match arms below.
+    if pos_no_flags.first().map(|s| s.as_str()) == Some("pair") {
+        if let Some(mode) = route_pair_subcommand(&positional, has_json_flag) {
+            return CliArgs { config_dir, mode };
+        }
     }
 
     let mode = match pos_no_flags.as_slice() {
@@ -2576,6 +2973,7 @@ fn parse_args() -> CliArgs {
             }
         }
         [cmd, sub] if cmd == "setup" && sub == "telegram-link" => Mode::SetupTelegramLink,
+        // (pair handled by route_pair_subcommand earlier)
         [cmd, service] if cmd == "setup" => Mode::SetupOne {
             service: service.clone(),
         },
@@ -2723,7 +3121,7 @@ enum ExtCmd {
 
 fn run_ext_help() -> Result<()> {
     let mut stdout = std::io::stdout().lock();
-    agent_extensions::cli::print_help(&mut stdout)?;
+    nexo_extensions::cli::print_help(&mut stdout)?;
     Ok(())
 }
 
@@ -2732,7 +3130,7 @@ fn run_ext_help() -> Result<()> {
 /// and the local HTTP listener down cleanly.
 ///
 /// Flow:
-///   1. `agent_tunnel::binary::ensure_cloudflared()` — downloads the
+///   1. `nexo_tunnel::binary::ensure_cloudflared()` — downloads the
 ///      right cloudflared binary for this OS/arch if it isn't already
 ///      on disk. First-run is chatty on stdout so the operator sees
 ///      what's being fetched.
@@ -2751,7 +3149,7 @@ fn run_ext_help() -> Result<()> {
 async fn run_admin_web(port: u16) -> Result<()> {
     // Step 1: make sure cloudflared is installed.
     println!("[admin] checking cloudflared…");
-    let bin = agent_tunnel::binary::ensure_cloudflared()
+    let bin = nexo_tunnel::binary::ensure_cloudflared()
         .await
         .context("failed to install cloudflared")?;
     println!("[admin] cloudflared ready ({})", bin.display());
@@ -2792,7 +3190,7 @@ async fn run_admin_web(port: u16) -> Result<()> {
 
     // Step 4: open the tunnel.
     println!("[admin] opening Cloudflare quick tunnel (ephemeral URL, no account)…");
-    let tunnel = agent_tunnel::TunnelManager::new(port)
+    let tunnel = nexo_tunnel::TunnelManager::new(port)
         .start()
         .await
         .context("failed to start Cloudflare tunnel")?;
@@ -5388,20 +5786,20 @@ fn admin_mime_for(path: &str) -> &'static str {
 }
 
 async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
-    use agent_core::agent::self_report::WhoAmITool;
-    use agent_core::agent::tool_registry::ToolRegistry;
-    use agent_core::agent::{
+    use nexo_core::agent::self_report::WhoAmITool;
+    use nexo_core::agent::tool_registry::ToolRegistry;
+    use nexo_core::agent::{
         AgentContext, MemoryTool, MyStatsTool, SessionLogsTool, ToolRegistryBridge, WhatDoIKnowTool,
     };
-    use agent_core::session::SessionManager;
-    use agent_mcp::{run_stdio_server_with_auth, McpServerInfo};
+    use nexo_core::session::SessionManager;
+    use nexo_mcp::{run_stdio_server_with_auth, McpServerInfo};
     use std::collections::HashSet;
     use std::sync::Arc;
     use tokio_util::sync::CancellationToken;
 
     // Phase 12.6 — tolerant loader: skip llm.yaml / broker.yaml / memory.yaml.
     // The operator exposing tools doesn't need a full runtime configured.
-    let boot = agent_config::AppConfig::load_for_mcp_server(config_dir)
+    let boot = nexo_config::AppConfig::load_for_mcp_server(config_dir)
         .context("failed to load mcp-server config")?;
     let server_cfg = boot.mcp_server.clone().unwrap_or_default();
     if !server_cfg.enabled {
@@ -5416,15 +5814,15 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
     })?;
     // AgentConfig lacks `Clone`; build a synthetic copy with the fields the
     // mcp-server context actually uses (id, model, workspace).
-    let agent_cfg = Arc::new(agent_config::types::agents::AgentConfig {
+    let agent_cfg = Arc::new(nexo_config::types::agents::AgentConfig {
         id: primary.id.clone(),
-        model: agent_config::types::agents::ModelConfig {
+        model: nexo_config::types::agents::ModelConfig {
             provider: primary.model.provider.clone(),
             model: primary.model.model.clone(),
         },
         plugins: primary.plugins.clone(),
-        heartbeat: agent_config::types::agents::HeartbeatConfig::default(),
-        config: agent_config::types::agents::AgentRuntimeConfig::default(),
+        heartbeat: nexo_config::types::agents::HeartbeatConfig::default(),
+        config: nexo_config::types::agents::AgentRuntimeConfig::default(),
         system_prompt: primary.system_prompt.clone(),
         workspace: primary.workspace.clone(),
         skills: primary.skills.clone(),
@@ -5447,6 +5845,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         credentials: primary.credentials.clone(),
         link_understanding: serde_json::Value::Null,
             web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
         language: primary.language.clone(),
         context_optimization: None,
     });
@@ -5463,8 +5862,8 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
     // Best-effort memory bootstrap for mcp-server mode: this subcommand
     // must remain tolerant when memory.yaml is absent/misconfigured.
     let mut memory_default_recall_mode = "keyword".to_string();
-    let long_term_memory: Option<Arc<agent_memory::LongTermMemory>> =
-        match agent_config::load_optional::<agent_config::types::MemoryConfig>(
+    let long_term_memory: Option<Arc<nexo_memory::LongTermMemory>> =
+        match nexo_config::load_optional::<nexo_config::types::MemoryConfig>(
             config_dir,
             "memory.yaml",
         ) {
@@ -5477,7 +5876,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
                         .as_ref()
                         .map(|s| s.path.as_str())
                         .unwrap_or("./data/memory.db");
-                    match agent_memory::LongTermMemory::open(path).await {
+                    match nexo_memory::LongTermMemory::open(path).await {
                         Ok(mem) => Some(Arc::new(mem)),
                         Err(e) => {
                             tracing::warn!(
@@ -5586,9 +5985,9 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
 /// Returns `None` when the broker is `local` — NATS runtime checks are
 /// then reported as `skip` instead of a misleading fail.
 fn build_doctor_broker_adapter(
-    cfg: &agent_config::types::broker::BrokerInner,
-) -> Option<Arc<dyn agent_extensions::cli::BrokerClientForDoctor>> {
-    if cfg.kind != agent_config::types::broker::BrokerKind::Nats {
+    cfg: &nexo_config::types::broker::BrokerInner,
+) -> Option<Arc<dyn nexo_extensions::cli::BrokerClientForDoctor>> {
+    if cfg.kind != nexo_config::types::broker::BrokerKind::Nats {
         return None;
     }
     Some(Arc::new(NatsDoctorAdapter {
@@ -5601,7 +6000,7 @@ struct NatsDoctorAdapter {
 }
 
 #[async_trait::async_trait]
-impl agent_extensions::cli::BrokerClientForDoctor for NatsDoctorAdapter {
+impl nexo_extensions::cli::BrokerClientForDoctor for NatsDoctorAdapter {
     async fn wait_for_subject(
         &self,
         subject: &str,
@@ -5627,14 +6026,14 @@ fn run_ext_cli(config_dir: &std::path::Path, cmd: ExtCmd) -> Result<()> {
         Err(_) => {
             // Ext subcommands only need `extensions.yaml`; tolerate the rest
             // being absent so `agent ext list` works on a fresh checkout.
-            agent_extensions::cli::yaml_edit::load_or_default(&config_dir.join("extensions.yaml"))
+            nexo_extensions::cli::yaml_edit::load_or_default(&config_dir.join("extensions.yaml"))
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?
         }
     };
 
     let mut stdout = std::io::stdout().lock();
     let mut stderr = std::io::stderr().lock();
-    let ctx = agent_extensions::cli::CliContext {
+    let ctx = nexo_extensions::cli::CliContext {
         config_dir: config_dir.to_path_buf(),
         extensions,
         out: &mut stdout,
@@ -5642,14 +6041,14 @@ fn run_ext_cli(config_dir: &std::path::Path, cmd: ExtCmd) -> Result<()> {
     };
 
     let result = match cmd {
-        ExtCmd::List { json } => agent_extensions::cli::run_list(ctx, json),
-        ExtCmd::Info { id, json } => agent_extensions::cli::run_info(ctx, &id, json),
-        ExtCmd::Enable { id } => agent_extensions::cli::run_enable(ctx, &id),
-        ExtCmd::Disable { id } => agent_extensions::cli::run_disable(ctx, &id),
-        ExtCmd::Validate { path } => agent_extensions::cli::run_validate(ctx, &path),
+        ExtCmd::List { json } => nexo_extensions::cli::run_list(ctx, json),
+        ExtCmd::Info { id, json } => nexo_extensions::cli::run_info(ctx, &id, json),
+        ExtCmd::Enable { id } => nexo_extensions::cli::run_enable(ctx, &id),
+        ExtCmd::Disable { id } => nexo_extensions::cli::run_disable(ctx, &id),
+        ExtCmd::Validate { path } => nexo_extensions::cli::run_validate(ctx, &path),
         ExtCmd::Doctor { runtime, json } => {
             if !runtime {
-                return agent_extensions::cli::run_doctor(ctx).map_err(|e| {
+                return nexo_extensions::cli::run_doctor(ctx).map_err(|e| {
                     eprintln!("error: {e}");
                     std::process::exit(e.exit_code());
                 });
@@ -5663,9 +6062,9 @@ fn run_ext_cli(config_dir: &std::path::Path, cmd: ExtCmd) -> Result<()> {
                 .enable_all()
                 .build()
                 .expect("tokio runtime");
-            rt.block_on(agent_extensions::cli::run_doctor_runtime(
+            rt.block_on(nexo_extensions::cli::run_doctor_runtime(
                 ctx,
-                agent_extensions::cli::DoctorOptions { runtime, json },
+                nexo_extensions::cli::DoctorOptions { runtime, json },
                 broker_adapter,
             ))
         }
@@ -5676,9 +6075,9 @@ fn run_ext_cli(config_dir: &std::path::Path, cmd: ExtCmd) -> Result<()> {
             dry_run,
             link,
             json,
-        } => agent_extensions::cli::run_install(
+        } => nexo_extensions::cli::run_install(
             ctx,
-            agent_extensions::cli::InstallOptions {
+            nexo_extensions::cli::InstallOptions {
                 source,
                 update,
                 enable,
@@ -5687,9 +6086,9 @@ fn run_ext_cli(config_dir: &std::path::Path, cmd: ExtCmd) -> Result<()> {
                 json,
             },
         ),
-        ExtCmd::Uninstall { id, yes, json } => agent_extensions::cli::run_uninstall(
+        ExtCmd::Uninstall { id, yes, json } => nexo_extensions::cli::run_uninstall(
             ctx,
-            agent_extensions::cli::UninstallOptions { id, yes, json },
+            nexo_extensions::cli::UninstallOptions { id, yes, json },
         ),
     };
 
@@ -5770,7 +6169,7 @@ async fn run_reload(config_dir: &std::path::Path, json: bool) -> Result<()> {
         .context("failed to subscribe to control.reload.ack")?;
 
     let req_payload = serde_json::json!({ "requested_by": "cli" });
-    let ev = agent_broker::Event::new("control.reload", "cli", req_payload);
+    let ev = nexo_broker::Event::new("control.reload", "cli", req_payload);
     broker
         .publish("control.reload", ev)
         .await
@@ -5788,7 +6187,7 @@ async fn run_reload(config_dir: &std::path::Path, json: bool) -> Result<()> {
         }
     };
 
-    let outcome: agent_core::ReloadOutcome =
+    let outcome: nexo_core::ReloadOutcome =
         serde_json::from_value(ack.payload).context("malformed ack payload")?;
 
     if json {
@@ -5894,10 +6293,10 @@ async fn run_health_server(health: RuntimeHealth) {
 }
 
 async fn run_admin_server(
-    registry: Arc<agent_core::agent::tool_policy::ToolPolicyRegistry>,
-    agents: Arc<agent_core::agent::AgentsDirectory>,
-    credentials_for_admin: Option<Arc<agent_auth::CredentialsBundle>>,
-    pollers: Option<Arc<agent_poller::PollerRunner>>,
+    registry: Arc<nexo_core::agent::tool_policy::ToolPolicyRegistry>,
+    agents: Arc<nexo_core::agent::AgentsDirectory>,
+    credentials_for_admin: Option<Arc<nexo_auth::CredentialsBundle>>,
+    pollers: Option<Arc<nexo_poller::PollerRunner>>,
     admin_config_dir: PathBuf,
 ) {
     let listener = match TcpListener::bind("127.0.0.1:9091").await {
@@ -5933,10 +6332,10 @@ async fn run_admin_server(
 
 async fn handle_admin_conn(
     mut stream: TcpStream,
-    registry: Arc<agent_core::agent::tool_policy::ToolPolicyRegistry>,
-    agents: Arc<agent_core::agent::AgentsDirectory>,
-    credentials: Option<Arc<agent_auth::CredentialsBundle>>,
-    pollers: Option<Arc<agent_poller::PollerRunner>>,
+    registry: Arc<nexo_core::agent::tool_policy::ToolPolicyRegistry>,
+    agents: Arc<nexo_core::agent::AgentsDirectory>,
+    credentials: Option<Arc<nexo_auth::CredentialsBundle>>,
+    pollers: Option<Arc<nexo_poller::PollerRunner>>,
     config_dir: PathBuf,
 ) -> anyhow::Result<()> {
     let (method, full_path) = read_http_method_path(&mut stream).await?;
@@ -5949,7 +6348,7 @@ async fn handle_admin_conn(
     if path.starts_with("/admin/pollers") {
         if let Some(runner) = pollers.as_ref() {
             if let Some(resp) =
-                agent_poller::admin::dispatch(runner, &method, path, &config_dir).await
+                nexo_poller::admin::dispatch(runner, &method, path, &config_dir).await
             {
                 write_http_response(&mut stream, resp.0, resp.2, &resp.1).await?;
                 return Ok(());
@@ -5966,10 +6365,10 @@ async fn handle_admin_conn(
         && method == "POST"
     {
         match credentials.as_deref() {
-            Some(bundle) => match agent_auth::wire::reload_resolver(
+            Some(bundle) => match nexo_auth::wire::reload_resolver(
                 &config_dir,
                 bundle,
-                agent_auth::StrictLevel::Lenient,
+                nexo_auth::StrictLevel::Lenient,
             ) {
                 Ok(outcome) => (
                     200,
@@ -5994,7 +6393,7 @@ async fn handle_admin_conn(
     } else if let Some(resp) = agents.dispatch(&method, path) {
         resp
     } else {
-        agent_core::agent::tool_policy::admin_dispatch(&method, path, query, &registry)
+        nexo_core::agent::tool_policy::admin_dispatch(&method, path, query, &registry)
     };
     write_http_response(&mut stream, status, content_type, &body).await?;
     Ok(())
@@ -6022,11 +6421,11 @@ async fn handle_metrics_conn(mut stream: TcpStream, health: RuntimeHealth) -> an
     }
     // Keep the nats breaker gauge fresh: sample current readiness at scrape time.
     let nats_open = !health.broker.is_ready();
-    agent_core::telemetry::set_circuit_breaker_state("nats", nats_open);
+    nexo_core::telemetry::set_circuit_breaker_state("nats", nats_open);
     let mut body = render_prometheus(nats_open);
-    body.push_str(&agent_llm::telemetry::render_prometheus());
-    body.push_str(&agent_mcp::telemetry::render_prometheus());
-    body.push_str(&agent_poller::telemetry::render_prometheus());
+    body.push_str(&nexo_llm::telemetry::render_prometheus());
+    body.push_str(&nexo_mcp::telemetry::render_prometheus());
+    body.push_str(&nexo_poller::telemetry::render_prometheus());
     write_http_response(&mut stream, 200, "text/plain; version=0.0.4", &body).await?;
     Ok(())
 }
@@ -6034,17 +6433,17 @@ async fn handle_metrics_conn(mut stream: TcpStream, health: RuntimeHealth) -> an
 async fn handle_health_conn(mut stream: TcpStream, health: RuntimeHealth) -> anyhow::Result<()> {
     let path = read_http_path(&mut stream).await?;
     // Try to match `/whatsapp/...` routes first. Routing rules live in
-    // `agent_plugin_whatsapp::pairing::dispatch_route` so they're
+    // `nexo_plugin_whatsapp::pairing::dispatch_route` so they're
     // unit-testable without a TCP listener.
     if let Some(rest) = path.strip_prefix("/whatsapp/") {
-        use agent_plugin_whatsapp::pairing::{dispatch_route, WhatsappRoute};
+        use nexo_plugin_whatsapp::pairing::{dispatch_route, WhatsappRoute};
         match dispatch_route(rest, &health.wa_pairing) {
             Some(WhatsappRoute::Html) => {
                 write_http_response(
                     &mut stream,
                     200,
                     "text/html; charset=utf-8",
-                    agent_plugin_whatsapp::pairing::PAIR_PAGE_HTML,
+                    nexo_plugin_whatsapp::pairing::PAIR_PAGE_HTML,
                 )
                 .await?;
                 return Ok(());
@@ -6176,24 +6575,24 @@ fn flow_db_path() -> std::path::PathBuf {
         .unwrap_or_else(|_| std::path::PathBuf::from("./data/taskflow.db"))
 }
 
-async fn open_flow_manager() -> Result<agent_taskflow::FlowManager> {
+async fn open_flow_manager() -> Result<nexo_taskflow::FlowManager> {
     let path = flow_db_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).ok();
     }
     let path_s = path.to_string_lossy().into_owned();
-    let store = agent_taskflow::SqliteFlowStore::open(&path_s)
+    let store = nexo_taskflow::SqliteFlowStore::open(&path_s)
         .await
         .with_context(|| format!("failed to open taskflow db at {}", path.display()))?;
-    Ok(agent_taskflow::FlowManager::new(std::sync::Arc::new(store)))
+    Ok(nexo_taskflow::FlowManager::new(std::sync::Arc::new(store)))
 }
 
 /// Open a `FlowManager` honoring `taskflow.yaml` overrides. The config
 /// `db_path` takes precedence over `TASKFLOW_DB_PATH` env var, which
 /// itself overrides the `./data/taskflow.db` default.
 async fn open_flow_manager_from_cfg(
-    cfg: &agent_config::TaskflowConfig,
-) -> Result<agent_taskflow::FlowManager> {
+    cfg: &nexo_config::TaskflowConfig,
+) -> Result<nexo_taskflow::FlowManager> {
     let path = match cfg.db_path.as_deref() {
         Some(p) if !p.trim().is_empty() => std::path::PathBuf::from(p),
         _ => flow_db_path(),
@@ -6202,10 +6601,10 @@ async fn open_flow_manager_from_cfg(
         std::fs::create_dir_all(parent).ok();
     }
     let path_s = path.to_string_lossy().into_owned();
-    let store = agent_taskflow::SqliteFlowStore::open(&path_s)
+    let store = nexo_taskflow::SqliteFlowStore::open(&path_s)
         .await
         .with_context(|| format!("failed to open taskflow db at {}", path.display()))?;
-    Ok(agent_taskflow::FlowManager::new(std::sync::Arc::new(store)))
+    Ok(nexo_taskflow::FlowManager::new(std::sync::Arc::new(store)))
 }
 
 /// NATS resume bridge — listens on `taskflow.resume` and wakes flows
@@ -6213,11 +6612,11 @@ async fn open_flow_manager_from_cfg(
 /// correlation_id)`. Tolerant: malformed payloads are logged and
 /// skipped, no panic.
 fn spawn_taskflow_resume_bridge(
-    broker: agent_broker::AnyBroker,
-    engine: agent_taskflow::WaitEngine,
+    broker: nexo_broker::AnyBroker,
+    engine: nexo_taskflow::WaitEngine,
     shutdown: tokio_util::sync::CancellationToken,
 ) {
-    use agent_broker::BrokerHandle;
+    use nexo_broker::BrokerHandle;
     tokio::spawn(async move {
         let mut sub = match broker.subscribe("taskflow.resume").await {
             Ok(s) => {
@@ -6259,8 +6658,8 @@ struct TaskflowResumePayload {
 }
 
 async fn handle_taskflow_resume_event(
-    engine: &agent_taskflow::WaitEngine,
-    event: agent_broker::Event,
+    engine: &nexo_taskflow::WaitEngine,
+    event: nexo_broker::Event,
 ) -> anyhow::Result<()> {
     let body: TaskflowResumePayload = serde_json::from_value(event.payload)
         .with_context(|| "malformed taskflow.resume payload")?;
@@ -6292,7 +6691,7 @@ fn run_flow_help() -> Result<()> {
     Ok(())
 }
 
-fn flow_to_summary_json(f: &agent_taskflow::Flow) -> serde_json::Value {
+fn flow_to_summary_json(f: &nexo_taskflow::Flow) -> serde_json::Value {
     serde_json::json!({
         "id": f.id.to_string(),
         "controller_id": f.controller_id,
@@ -6310,8 +6709,8 @@ fn flow_to_summary_json(f: &agent_taskflow::Flow) -> serde_json::Value {
 async fn run_flow_list(json: bool) -> Result<()> {
     let m = open_flow_manager().await?;
     // list_by_status across all non-terminal + terminals, in one pass.
-    use agent_taskflow::FlowStatus::*;
-    let mut all: Vec<agent_taskflow::Flow> = Vec::new();
+    use nexo_taskflow::FlowStatus::*;
+    let mut all: Vec<nexo_taskflow::Flow> = Vec::new();
     for status in [Created, Running, Waiting, Cancelled, Finished, Failed] {
         all.extend(m.list_by_status(status).await?);
     }
@@ -6525,21 +6924,21 @@ async fn run_status(json: bool, endpoint: Option<String>, agent_id: Option<Strin
 fn run_check_config(config_dir: &std::path::Path, strict: bool) -> Result<()> {
     let cfg = AppConfig::load(config_dir)
         .with_context(|| format!("failed to load config from {}", config_dir.display()))?;
-    let google = agent_auth::load_google_auth(config_dir)
+    let google = nexo_auth::load_google_auth(config_dir)
         .with_context(|| "failed to load google-auth.yaml")?;
     let level = if strict {
-        agent_auth::StrictLevel::Strict
+        nexo_auth::StrictLevel::Strict
     } else {
-        agent_auth::StrictLevel::Lenient
+        nexo_auth::StrictLevel::Lenient
     };
-    let result = agent_auth::build_credentials(
+    let result = nexo_auth::build_credentials(
         &cfg.agents.agents,
         &cfg.plugins.whatsapp,
         &cfg.plugins.telegram,
         &google,
         level,
     );
-    let code = agent_auth::print_report(&result);
+    let code = nexo_auth::print_report(&result);
     // Exit code mapping: main.rs returns Result<()>; wrap non-zero in
     // a dedicated error so the shell sees the intended status.
     if code == 0 {
@@ -6556,15 +6955,15 @@ fn run_dry_run(config_dir: &std::path::Path, json: bool) -> Result<()> {
     // Build the same AgentsDirectory the daemon would serve — same
     // projection code path, catches any mismatch between config schema
     // and runtime expectations.
-    let agents: Vec<agent_core::agent::AgentInfo> = cfg
+    let agents: Vec<nexo_core::agent::AgentInfo> = cfg
         .agents
         .agents
         .iter()
-        .map(agent_core::agent::AgentInfo::from_config)
+        .map(nexo_core::agent::AgentInfo::from_config)
         .collect();
 
     if json {
-        let dir = agent_core::agent::AgentsDirectory::new(agents);
+        let dir = nexo_core::agent::AgentsDirectory::new(agents);
         if let Some((_, body, _)) = dir.dispatch("GET", "/admin/agents") {
             println!("{body}");
         }

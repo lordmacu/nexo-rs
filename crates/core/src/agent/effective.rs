@@ -24,7 +24,7 @@
 
 use std::sync::Arc;
 
-use agent_config::{
+use nexo_config::{
     AgentConfig, InboundBinding, ModelConfig, OutboundAllowlistConfig, SenderRateLimitConfig,
     SenderRateLimitKeyword, SenderRateLimitOverride,
 };
@@ -70,11 +70,15 @@ pub struct EffectiveBindingPolicy {
     /// `provider == "auto"` (or empty) lets the router pick by
     /// available credentials.
     pub web_search: WebSearchPolicy,
+    /// Phase 26 — pairing policy. Default `auto_challenge=false`,
+    /// i.e. the inbound gate is a no-op. Per-binding config can flip
+    /// this on for user-facing surfaces (whatsapp / telegram).
+    pub pairing: nexo_pairing::PairingPolicy,
 }
 
 /// Per-agent / per-binding web-search policy. Mirrors the YAML shape
 /// described in `docs/src/ops/web-search.md`. Lives here (not in the
-/// `agent-web-search` crate) so the policy stays a pure-config view
+/// `nexo-web-search` crate) so the policy stays a pure-config view
 /// disconnected from HTTP / SQLite concerns.
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -140,6 +144,7 @@ impl EffectiveBindingPolicy {
             language: resolve_language(agent, binding),
             link_understanding: resolve_link_understanding(agent, binding),
             web_search: resolve_web_search(agent, binding),
+            pairing: resolve_pairing(agent, binding),
         }
     }
 
@@ -167,6 +172,7 @@ impl EffectiveBindingPolicy {
             allowed_delegates: agent.allowed_delegates.clone(),
             link_understanding: parse_link_understanding(&agent.link_understanding),
             web_search: parse_web_search(&agent.web_search),
+            pairing: parse_pairing(&agent.pairing_policy),
         }
     }
 
@@ -360,6 +366,34 @@ fn resolve_web_search(agent: &AgentConfig, binding: Option<&InboundBinding>) -> 
     parse_web_search(&agent.web_search)
 }
 
+fn parse_pairing(raw: &serde_json::Value) -> nexo_pairing::PairingPolicy {
+    if raw.is_null() {
+        return nexo_pairing::PairingPolicy::default();
+    }
+    match serde_json::from_value::<nexo_pairing::PairingPolicy>(raw.clone()) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "agent.pairing_policy YAML did not parse — falling back to disabled defaults"
+            );
+            nexo_pairing::PairingPolicy::default()
+        }
+    }
+}
+
+fn resolve_pairing(
+    agent: &AgentConfig,
+    binding: Option<&InboundBinding>,
+) -> nexo_pairing::PairingPolicy {
+    if let Some(b) = binding {
+        if !b.pairing_policy.is_null() {
+            return parse_pairing(&b.pairing_policy);
+        }
+    }
+    parse_pairing(&agent.pairing_policy)
+}
+
 fn resolve_language(agent: &AgentConfig, binding: Option<&InboundBinding>) -> Option<String> {
     binding
         .and_then(|b| b.language.clone())
@@ -371,7 +405,7 @@ fn resolve_language(agent: &AgentConfig, binding: Option<&InboundBinding>) -> Op
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_config::{
+    use nexo_config::{
         AgentRuntimeConfig, DreamingYamlConfig, HeartbeatConfig, ModelConfig,
         OutboundAllowlistConfig, SenderRateLimitConfig, SenderRateLimitKeyword,
         SenderRateLimitOverride, WorkspaceGitConfig,
@@ -411,6 +445,7 @@ mod tests {
             credentials: Default::default(),
             link_understanding: serde_json::Value::Null,
             web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
             outbound_allowlist: OutboundAllowlistConfig {
                 whatsapp: vec!["573000000000".into()],

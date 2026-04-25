@@ -79,11 +79,11 @@ Full detail with sub-phases and done criteria: `proyecto/PHASES.md`
 | 14 | TaskFlow runtime | 14.1 schema+FlowStore, 14.2 state machine, 14.3 FlowManager, 14.4 wait/resume, 14.5 agent tools, 14.6 mirrored+CLI, 14.7 e2e+docs | 7/7 ✅ |
 | 15 | Claude subscription auth | 15.1 config schema, 15.2 anthropic_auth module, 15.3 CLI credentials reader, 15.4 AnthropicClient wiring, 15.5 setup wizard, 15.6 error classification, 15.7 docs, 15.8 OAuth browser PKCE flow | 8/8 ✅ |
 | 16 | Per-binding capability override | 16.1 schema, 16.2 EffectiveBindingPolicy, 16.3 boot validation, 16.4 AgentContext + registry cache, 16.5 runtime intake + rate limiter, 16.6 LLM/prompt/skills/outbound/delegation, 16.7 YAML example + e2e tests | 7/7 ✅ |
-| 17 | Per-agent credentials (WA/TG/Google) | 17.1 agent-auth scaffold, 17.2 boot gauntlet, 17.3 per-channel stores, 17.4 resolver, 17.5 telemetry, 17.6 config schemas, 17.7 `--check-config`, 17.8 runtime integration, 17.9 plugin tool migration, 17.10 google tool store lookup, 17.11 e2e + fingerprint stability | 11/11 ✅ |
+| 17 | Per-agent credentials (WA/TG/Google) | 17.1 nexo-auth scaffold, 17.2 boot gauntlet, 17.3 per-channel stores, 17.4 resolver, 17.5 telemetry, 17.6 config schemas, 17.7 `--check-config`, 17.8 runtime integration, 17.9 plugin tool migration, 17.10 google tool store lookup, 17.11 e2e + fingerprint stability | 11/11 ✅ |
 | 18 | Config hot-reload | 18.1 deps+schema, 18.2 RuntimeSnapshot+ArcSwap, 18.3 ReloadCommand channel, 18.4 file watcher, 18.5 coordinator, 18.6 intake migration, 18.7 telemetry, 18.8 CLI+boot wiring, 18.9 tests | 9/9 ✅ |
 | 20 | `agent_turn` poller | 20.1 PollContext.llm_*, 20.2 with_llm builder, 20.3 agent_turn builtin (cron-style scheduled LLM turn → channel), 20.4 tests + example YAML | 4/4 ✅ |
 
-**Progress: 146 / 146 implemented sub-phases (0 deferred). Phase 21 (link understanding) and Phase 25 (web_search) shipped. Phases 22–24 + 26 backlogged in `PHASES.md` (Slack/Discord plugins, realtime voice, image generation, pairing). `web_fetch` deferred — Phase 21 covers user-shared URLs, follow-up if a generic fetch tool is needed.**
+**Progress: 147 / 147 implemented sub-phases (0 deferred). Phase 21 (link understanding), Phase 25 (web_search), and Phase 26 (pairing) shipped. Phases 22–24 backlogged in `PHASES.md` (Slack/Discord plugins, realtime voice, image generation). `web_fetch` deferred — Phase 21 covers user-shared URLs. Pairing companion-tui + WA/TG plugin gate hooks deferred — store + gate + CLI live; plugins call into the gate when the operator turns on `pairing_policy.auto_challenge`.**
 
 ### Progress tracking rule
 

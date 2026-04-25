@@ -44,7 +44,7 @@ keywords     = ["agent", "llm", "ai", "nats", "framework"]
 categories   = ["asynchronous", "api-bindings"]
 
 [package]
-name        = "nexo"
+name        = "nexo-rs"
 description = "Nexo — multi-agent Rust framework: NATS event bus, pluggable LLM providers, channels (WhatsApp, Telegram, Email, Browser), memory, MCP, skills, and TaskFlow."
 version      = { workspace = true }
 edition      = { workspace = true }
@@ -120,25 +120,26 @@ uuid                = { workspace = true }
 rand                = "0.8"
 rust-embed          = { version = "8", features = ["include-exclude"] }
 sha2                = { workspace = true }
-nexo-plugin-browser = { path = "crates/plugins/browser" }
-nexo-plugin-whatsapp = { path = "crates/plugins/whatsapp" }
-nexo-plugin-telegram = { path = "crates/plugins/telegram" }
-nexo-plugin-google   = { path = "crates/plugins/google" }
-nexo-setup          = { path = "crates/setup" }
-nexo-tunnel         = { path = "crates/tunnel" }
-nexo-auth          = { path = "crates/auth" }
-nexo-poller        = { path = "crates/poller" }
-nexo-poller-tools  = { path = "crates/poller-tools" }
-nexo-poller-ext    = { path = "crates/poller-ext" }
-nexo-config        = { path = "crates/config" }
-nexo-broker        = { path = "crates/broker" }
-nexo-core          = { path = "crates/core" }
-nexo-extensions    = { path = "crates/extensions" }
-nexo-llm           = { path = "crates/llm" }
-nexo-mcp           = { path = "crates/mcp" }
-nexo-memory        = { path = "crates/memory" }
-nexo-taskflow      = { path = "crates/taskflow" }
-nexo-web-search    = { path = "crates/web-search" }
+nexo-plugin-browser = { version = "0.1.0", path = "crates/plugins/browser" }
+nexo-plugin-whatsapp = { version = "0.1.0", path = "crates/plugins/whatsapp" }
+nexo-plugin-telegram = { version = "0.1.0", path = "crates/plugins/telegram" }
+nexo-plugin-google = { version = "0.1.0", path = "crates/plugins/google" }
+nexo-setup = { version = "0.1.0", path = "crates/setup" }
+nexo-tunnel = { version = "0.1.0", path = "crates/tunnel" }
+nexo-auth = { version = "0.1.0", path = "crates/auth" }
+nexo-poller = { version = "0.1.0", path = "crates/poller" }
+nexo-poller-tools = { version = "0.1.0", path = "crates/poller-tools" }
+nexo-poller-ext = { version = "0.1.0", path = "crates/poller-ext" }
+nexo-config = { version = "0.1.0", path = "crates/config" }
+nexo-broker = { version = "0.1.0", path = "crates/broker" }
+nexo-core = { version = "0.1.0", path = "crates/core" }
+nexo-extensions = { version = "0.1.0", path = "crates/extensions" }
+nexo-llm = { version = "0.1.0", path = "crates/llm" }
+nexo-mcp = { version = "0.1.0", path = "crates/mcp" }
+nexo-memory = { version = "0.1.0", path = "crates/memory" }
+nexo-taskflow = { version = "0.1.0", path = "crates/taskflow" }
+nexo-web-search = { version = "0.1.0", path = "crates/web-search" }
+nexo-pairing    = { version = "0.1.0", path = "crates/pairing" }
 tokio-util          = { workspace = true }
 tracing             = { workspace = true }
 tracing-subscriber  = { workspace = true }

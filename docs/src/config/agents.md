@@ -440,6 +440,14 @@ Full schema, providers, cache, and circuit-breaker behaviour live on
 agent scope and at each `inbound_bindings[]` entry; binding value
 replaces agent default, omitted = inherit.
 
+## Pairing policy
+
+Per-binding toggle that turns on the DM-challenge gate for inbound
+senders. Off by default. The field is `pairing_policy` on each
+`inbound_bindings[]` entry; `null` (default) = inherit agent value
+or skip the gate entirely. Full protocol, threat model, and CLI
+reference live on [Pairing](../ops/pairing.md).
+
 ## Common mistakes
 
 - **Forgetting `plugins: [...]`.** An agent without `plugins` has no

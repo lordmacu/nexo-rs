@@ -9,15 +9,15 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use agent_broker::{types::Event, AnyBroker, BrokerHandle};
-use agent_config::types::agents::{
+use nexo_broker::{types::Event, AnyBroker, BrokerHandle};
+use nexo_config::types::agents::{
     AgentConfig, AgentRuntimeConfig, HeartbeatConfig, InboundBinding, ModelConfig,
     OutboundAllowlistConfig, SenderRateLimitOverride,
 };
-use agent_core::agent::runtime::ReloadCommand;
-use agent_core::agent::{Agent, AgentBehavior, AgentContext, AgentRuntime, InboundMessage};
-use agent_core::session::SessionManager;
-use agent_core::RuntimeSnapshot;
+use nexo_core::agent::runtime::ReloadCommand;
+use nexo_core::agent::{Agent, AgentBehavior, AgentContext, AgentRuntime, InboundMessage};
+use nexo_core::session::SessionManager;
+use nexo_core::RuntimeSnapshot;
 use async_trait::async_trait;
 use serde_json::json;
 use tokio::time::sleep;
@@ -95,6 +95,7 @@ fn base_agent() -> AgentConfig {
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
             web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
         inbound_bindings: vec![InboundBinding {
             plugin: "whatsapp".into(),

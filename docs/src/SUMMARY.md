@@ -18,6 +18,7 @@
 - [Event bus (NATS)](./architecture/event-bus.md)
 - [Fault tolerance](./architecture/fault-tolerance.md)
 - [Transcripts (FTS + redaction)](./architecture/transcripts.md)
+- [vs OpenClaw](./architecture/vs-openclaw.md)
 
 # Configuration
 
@@ -100,6 +101,7 @@
 - [Context optimization](./ops/context-optimization.md)
 - [Link understanding](./ops/link-understanding.md)
 - [Web search](./ops/web-search.md)
+- [Pairing](./ops/pairing.md)
 
 # Recipes
 

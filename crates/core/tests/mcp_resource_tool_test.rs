@@ -8,14 +8,14 @@ use std::process::Command;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use agent_broker::AnyBroker;
-use agent_config::types::agents::{AgentConfig, AgentRuntimeConfig, HeartbeatConfig, ModelConfig};
-use agent_core::agent::tool_registry::ToolRegistry;
-use agent_core::agent::{AgentContext, McpToolCatalog};
-use agent_core::session::SessionManager;
-use agent_mcp::config::McpServerConfig;
-use agent_mcp::runtime_config::{McpRuntimeConfig, McpServerRuntimeConfig};
-use agent_mcp::McpRuntimeManager;
+use nexo_broker::AnyBroker;
+use nexo_config::types::agents::{AgentConfig, AgentRuntimeConfig, HeartbeatConfig, ModelConfig};
+use nexo_core::agent::tool_registry::ToolRegistry;
+use nexo_core::agent::{AgentContext, McpToolCatalog};
+use nexo_core::session::SessionManager;
+use nexo_mcp::config::McpServerConfig;
+use nexo_mcp::runtime_config::{McpRuntimeConfig, McpServerRuntimeConfig};
+use nexo_mcp::McpRuntimeManager;
 use uuid::Uuid;
 
 static BUILT: OnceLock<PathBuf> = OnceLock::new();
@@ -34,7 +34,7 @@ fn mock_bin_path() -> PathBuf {
             let path = workspace_root().join("target/debug/mock_mcp_server");
             if !path.exists() {
                 let status = Command::new(env!("CARGO"))
-                    .args(["build", "--bin", "mock_mcp_server", "-p", "agent-mcp"])
+                    .args(["build", "--bin", "mock_mcp_server", "-p", "nexo-mcp"])
                     .status()
                     .expect("cargo build mock_mcp_server");
                 assert!(status.success(), "failed to build mock_mcp_server");
@@ -66,14 +66,14 @@ fn manager_with(servers: Vec<McpServerConfig>) -> Arc<McpRuntimeManager> {
 
 fn manager_with_cache(
     servers: Vec<McpServerConfig>,
-    cache: agent_mcp::ResourceCacheConfig,
+    cache: nexo_mcp::ResourceCacheConfig,
 ) -> Arc<McpRuntimeManager> {
     manager_with_cache_and_allowlist(servers, cache, Vec::new())
 }
 
 fn manager_with_cache_and_allowlist(
     servers: Vec<McpServerConfig>,
-    cache: agent_mcp::ResourceCacheConfig,
+    cache: nexo_mcp::ResourceCacheConfig,
     allowlist: Vec<String>,
 ) -> Arc<McpRuntimeManager> {
     McpRuntimeManager::new(McpRuntimeConfig {
@@ -122,6 +122,7 @@ fn agent_cfg() -> Arc<AgentConfig> {
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
             web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     })
@@ -198,8 +199,8 @@ async fn list_resources_handler_returns_array() {
 
 #[tokio::test]
 async fn register_into_does_not_overwrite_native() {
-    use agent_core::agent::tool_registry::ToolHandler;
-    use agent_llm::ToolDef;
+    use nexo_core::agent::tool_registry::ToolHandler;
+    use nexo_llm::ToolDef;
     use async_trait::async_trait;
     use serde_json::Value;
 
@@ -343,11 +344,11 @@ async fn list_resources_surfaces_annotations() {
 
 #[tokio::test]
 async fn read_resource_hits_cache_on_repeated_read() {
-    use agent_core::agent::register_session_tools_with_overrides;
+    use nexo_core::agent::register_session_tools_with_overrides;
 
     let mgr = manager_with_cache(
         vec![server_config("fs", "resources")],
-        agent_mcp::ResourceCacheConfig {
+        nexo_mcp::ResourceCacheConfig {
             enabled: true,
             ttl: Duration::from_secs(60),
             max_entries: 32,
@@ -394,7 +395,7 @@ async fn read_resource_hits_cache_on_repeated_read() {
 
 #[tokio::test]
 async fn read_resource_uri_outside_allowlist_counts_violation() {
-    use agent_core::agent::register_session_tools_with_overrides;
+    use nexo_core::agent::register_session_tools_with_overrides;
 
     let mgr = manager_with_cache_and_allowlist(
         vec![server_config("fsviol", "resources")],
@@ -416,7 +417,7 @@ async fn read_resource_uri_outside_allowlist_counts_violation() {
         .await
         .expect("call still succeeds (permissive)");
 
-    let body = agent_mcp::telemetry::render_prometheus();
+    let body = nexo_mcp::telemetry::render_prometheus();
     assert!(
         body.contains("mcp_resource_uri_allowlist_violations_total{server=\"fsviol\"} 1"),
         "expected violation counter incremented, body:\n{body}"
@@ -426,7 +427,7 @@ async fn read_resource_uri_outside_allowlist_counts_violation() {
 
 #[tokio::test]
 async fn read_resource_uri_in_allowlist_no_violation() {
-    use agent_core::agent::register_session_tools_with_overrides;
+    use nexo_core::agent::register_session_tools_with_overrides;
 
     let mgr = manager_with_cache_and_allowlist(
         vec![server_config("fsok", "resources")],
@@ -446,7 +447,7 @@ async fn read_resource_uri_in_allowlist_no_violation() {
         .await
         .expect("call");
 
-    let body = agent_mcp::telemetry::render_prometheus();
+    let body = nexo_mcp::telemetry::render_prometheus();
     assert!(
         !body.contains("mcp_resource_uri_allowlist_violations_total{server=\"fsok\"}"),
         "unexpected violation counter, body:\n{body}"
@@ -456,7 +457,7 @@ async fn read_resource_uri_in_allowlist_no_violation() {
 
 #[tokio::test]
 async fn read_resource_cache_disabled_by_default() {
-    use agent_core::agent::register_session_tools_with_overrides;
+    use nexo_core::agent::register_session_tools_with_overrides;
 
     let mgr = manager_with(vec![server_config("fs", "resources")]);
     let sid = Uuid::new_v4();

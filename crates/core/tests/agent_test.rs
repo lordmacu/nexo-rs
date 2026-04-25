@@ -4,12 +4,12 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use agent_broker::AnyBroker;
-use agent_config::types::agents::{AgentConfig, AgentRuntimeConfig, HeartbeatConfig, ModelConfig};
-use agent_core::agent::{
+use nexo_broker::AnyBroker;
+use nexo_config::types::agents::{AgentConfig, AgentRuntimeConfig, HeartbeatConfig, ModelConfig};
+use nexo_core::agent::{
     Agent, AgentBehavior, AgentContext, InboundMessage, NoOpAgent, RunTrigger,
 };
-use agent_core::session::SessionManager;
+use nexo_core::session::SessionManager;
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -45,6 +45,7 @@ fn test_config(id: &str) -> AgentConfig {
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
             web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     }
@@ -81,7 +82,7 @@ async fn noop_agent_on_message() {
 
 #[tokio::test]
 async fn noop_agent_default_methods() {
-    use agent_broker::Event;
+    use nexo_broker::Event;
     use serde_json::json;
 
     let agent = NoOpAgent;

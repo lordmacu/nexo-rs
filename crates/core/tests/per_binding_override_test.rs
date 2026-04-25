@@ -8,16 +8,16 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use agent_broker::{types::Event, AnyBroker, BrokerHandle};
-use agent_config::types::agents::{
+use nexo_broker::{types::Event, AnyBroker, BrokerHandle};
+use nexo_config::types::agents::{
     AgentConfig, AgentRuntimeConfig, HeartbeatConfig, InboundBinding, ModelConfig,
     OutboundAllowlistConfig, SenderRateLimitConfig, SenderRateLimitKeyword,
     SenderRateLimitOverride,
 };
-use agent_core::agent::{
+use nexo_core::agent::{
     Agent, AgentBehavior, AgentContext, AgentRuntime, EffectiveBindingPolicy, InboundMessage,
 };
-use agent_core::session::SessionManager;
+use nexo_core::session::SessionManager;
 use async_trait::async_trait;
 use serde_json::json;
 use tokio::time::sleep;
@@ -109,6 +109,7 @@ fn two_binding_agent() -> AgentConfig {
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
             web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
         inbound_bindings: vec![
             // Sales WhatsApp — narrow.
@@ -150,6 +151,7 @@ fn two_binding_agent() -> AgentConfig {
                 language: None,
                 link_understanding: serde_json::Value::Null,
             web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             },
         ],
         context_optimization: None,
@@ -299,6 +301,7 @@ async fn legacy_agent_without_bindings_synthesises_agent_level_policy() {
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
             web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     };
