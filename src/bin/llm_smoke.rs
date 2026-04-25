@@ -80,6 +80,9 @@ async fn main() -> anyhow::Result<()> {
         temperature: 0.2,
         stop_sequences: Vec::new(),
         tool_choice: Default::default(),
+    
+        system_blocks: Vec::new(),
+        cache_tools: false,
     };
 
     let start = std::time::Instant::now();

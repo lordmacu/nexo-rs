@@ -170,6 +170,7 @@ mod tests {
             content: ResponseContent::Text(s.into()),
             usage: TokenUsage::default(),
             finish_reason: FinishReason::Stop,
+            cache_usage: None,
         }
     }
 
@@ -250,6 +251,7 @@ mod tests {
             }]),
             usage: TokenUsage::default(),
             finish_reason: FinishReason::ToolUse,
+            cache_usage: None,
         };
         let provider = DefaultSamplingProvider::new(
             fake(resp),
@@ -266,6 +268,7 @@ mod tests {
             content: ResponseContent::Text("cut".into()),
             usage: TokenUsage::default(),
             finish_reason: FinishReason::Length,
+            cache_usage: None,
         };
         let provider = DefaultSamplingProvider::new(
             fake(resp),

@@ -512,6 +512,7 @@ fn to_chat_response(resp: GeminiResponse) -> ChatResponse {
             content: ResponseContent::Text(String::new()),
             usage,
             finish_reason: FinishReason::Other(format!("BLOCKED:{reason}")),
+            cache_usage: None,
         };
     }
 
@@ -563,6 +564,7 @@ fn to_chat_response(resp: GeminiResponse) -> ChatResponse {
         content,
         usage,
         finish_reason,
+        cache_usage: None,
     }
 }
 
@@ -642,7 +644,10 @@ mod tests {
             system_prompt: Some("be brief".into()),
             stop_sequences: vec!["END".into()],
             tool_choice: ToolChoice::Auto,
+            system_blocks: Vec::new(),
+            cache_tools: false,
         }
+    
     }
 
     #[test]
@@ -839,6 +844,9 @@ mod tests {
             system_prompt: None,
             stop_sequences: Vec::new(),
             tool_choice: ToolChoice::Auto,
+        
+            system_blocks: Vec::new(),
+            cache_tools: false,
         };
         let err = validate_request(&r).unwrap_err();
         assert!(

@@ -7,6 +7,157 @@ pub struct LlmConfig {
     pub providers: HashMap<String, LlmProviderConfig>,
     #[serde(default)]
     pub retry: RetryConfig,
+    /// Per-request input-token reduction knobs. All four mechanisms are
+    /// independent: prompt_cache and workspace_cache default on (safe),
+    /// compaction defaults off (rollout gradual), token_counter on.
+    #[serde(default)]
+    pub context_optimization: ContextOptimizationConfig,
+}
+
+/// Aggregated kill-switches and tunables for the four context-size
+/// optimization mechanisms. Each subsystem can be flipped independently
+/// without recompiling. Per-agent overrides live in `AgentConfig`.
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ContextOptimizationConfig {
+    #[serde(default)]
+    pub prompt_cache: PromptCacheConfig,
+    #[serde(default)]
+    pub compaction: CompactionConfig,
+    #[serde(default)]
+    pub token_counter: TokenCounterConfig,
+    #[serde(default)]
+    pub workspace_cache: WorkspaceCacheConfig,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct PromptCacheConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Providers that get the 1h TTL marker on stable blocks. Others
+    /// fall back to the short (5min) TTL.
+    #[serde(default = "default_long_ttl_providers")]
+    pub long_ttl_providers: Vec<String>,
+    /// Override of the `anthropic-beta` header. Anthropic occasionally
+    /// promotes betas — operators can swap the header without a release.
+    #[serde(default)]
+    pub beta_header: Option<String>,
+}
+
+impl Default for PromptCacheConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            long_ttl_providers: default_long_ttl_providers(),
+            beta_header: None,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct CompactionConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_compact_at_pct")]
+    pub compact_at_pct: f32,
+    #[serde(default = "default_tail_keep_tokens")]
+    pub tail_keep_tokens: u32,
+    #[serde(default = "default_tool_result_max_pct")]
+    pub tool_result_max_pct: f32,
+    /// Empty = reuse the agent's main model for the summary call.
+    #[serde(default)]
+    pub summarizer_model: String,
+    #[serde(default = "default_lock_ttl_seconds")]
+    pub lock_ttl_seconds: u32,
+}
+
+impl Default for CompactionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            compact_at_pct: 0.75,
+            tail_keep_tokens: 20_000,
+            tool_result_max_pct: 0.30,
+            summarizer_model: String::new(),
+            lock_ttl_seconds: 300,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TokenCounterConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// `auto` picks `anthropic_api` when provider is anthropic and an
+    /// API key is available, else `tiktoken`.
+    #[serde(default = "default_token_counter_backend")]
+    pub backend: String,
+    #[serde(default = "default_token_cache_capacity")]
+    pub cache_capacity: u32,
+}
+
+impl Default for TokenCounterConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            backend: default_token_counter_backend(),
+            cache_capacity: default_token_cache_capacity(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceCacheConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_watch_debounce_ms")]
+    pub watch_debounce_ms: u32,
+    /// Optional absolute TTL for filesystems where notify(7) drops
+    /// events (NFS, FUSE). 0 = disabled (default).
+    #[serde(default)]
+    pub max_age_seconds: u32,
+}
+
+impl Default for WorkspaceCacheConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            watch_debounce_ms: default_watch_debounce_ms(),
+            max_age_seconds: 0,
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+fn default_long_ttl_providers() -> Vec<String> {
+    vec!["anthropic".to_string(), "vertex".to_string()]
+}
+fn default_compact_at_pct() -> f32 {
+    0.75
+}
+fn default_tail_keep_tokens() -> u32 {
+    20_000
+}
+fn default_tool_result_max_pct() -> f32 {
+    0.30
+}
+fn default_lock_ttl_seconds() -> u32 {
+    300
+}
+fn default_token_counter_backend() -> String {
+    "auto".to_string()
+}
+fn default_token_cache_capacity() -> u32 {
+    1024
+}
+fn default_watch_debounce_ms() -> u32 {
+    500
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -162,6 +313,59 @@ auth:
         assert!(a.setup_token_file.is_none());
         assert!(a.refresh_endpoint.is_none());
         assert!(a.client_id.is_none());
+    }
+
+    #[test]
+    fn context_optimization_defaults_match_spec() {
+        let cfg = ContextOptimizationConfig::default();
+        assert!(cfg.prompt_cache.enabled, "prompt_cache safe by default");
+        assert!(!cfg.compaction.enabled, "compaction off by default (rollout)");
+        assert!(cfg.token_counter.enabled, "token_counter safe by default");
+        assert!(cfg.workspace_cache.enabled, "workspace_cache safe by default");
+        assert_eq!(cfg.compaction.compact_at_pct, 0.75);
+        assert_eq!(cfg.compaction.tail_keep_tokens, 20_000);
+        assert_eq!(cfg.compaction.tool_result_max_pct, 0.30);
+        assert_eq!(cfg.token_counter.backend, "auto");
+        assert_eq!(cfg.token_counter.cache_capacity, 1024);
+        assert_eq!(cfg.workspace_cache.watch_debounce_ms, 500);
+        assert_eq!(
+            cfg.prompt_cache.long_ttl_providers,
+            vec!["anthropic".to_string(), "vertex".to_string()]
+        );
+    }
+
+    #[test]
+    fn context_optimization_yaml_round_trip() {
+        let yaml = r#"
+providers: {}
+context_optimization:
+  prompt_cache:
+    enabled: false
+    long_ttl_providers: ["anthropic"]
+  compaction:
+    enabled: true
+    compact_at_pct: 0.6
+    tail_keep_tokens: 15000
+    summarizer_model: "claude-haiku-4-5"
+"#;
+        let cfg: LlmConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(!cfg.context_optimization.prompt_cache.enabled);
+        assert!(cfg.context_optimization.compaction.enabled);
+        assert_eq!(cfg.context_optimization.compaction.compact_at_pct, 0.6);
+        assert_eq!(cfg.context_optimization.compaction.tail_keep_tokens, 15_000);
+        // Non-overridden fields take defaults.
+        assert_eq!(cfg.context_optimization.compaction.tool_result_max_pct, 0.30);
+        assert!(cfg.context_optimization.token_counter.enabled);
+    }
+
+    #[test]
+    fn context_optimization_section_is_optional() {
+        let yaml = r#"
+providers: {}
+"#;
+        let cfg: LlmConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(cfg.context_optimization.prompt_cache.enabled);
+        assert!(!cfg.context_optimization.compaction.enabled);
     }
 
     #[test]

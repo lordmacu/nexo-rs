@@ -30,6 +30,7 @@ impl LlmClient for StubLlm {
             content: ResponseContent::Text(self.0.clone()),
             usage: TokenUsage::default(),
             finish_reason: FinishReason::Stop,
+            cache_usage: None,
         })
     }
     fn model_id(&self) -> &str {
@@ -59,12 +60,14 @@ impl LlmClient for ToolThenTextLlm {
                 }]),
                 usage: TokenUsage::default(),
                 finish_reason: FinishReason::ToolUse,
+                cache_usage: None,
             })
         } else {
             Ok(ChatResponse {
                 content: ResponseContent::Text("pong".into()),
                 usage: TokenUsage::default(),
                 finish_reason: FinishReason::Stop,
+                cache_usage: None,
             })
         }
     }
@@ -94,12 +97,14 @@ impl LlmClient for ReminderThenTextLlm {
                 }]),
                 usage: TokenUsage::default(),
                 finish_reason: FinishReason::ToolUse,
+                cache_usage: None,
             })
         } else {
             Ok(ChatResponse {
                 content: ResponseContent::Text("ok, te lo recordaré".into()),
                 usage: TokenUsage::default(),
                 finish_reason: FinishReason::Stop,
+                cache_usage: None,
             })
         }
     }
@@ -130,12 +135,14 @@ impl LlmClient for DelegateThenTextLlm {
                 }]),
                 usage: TokenUsage::default(),
                 finish_reason: FinishReason::ToolUse,
+                cache_usage: None,
             })
         } else {
             Ok(ChatResponse {
                 content: ResponseContent::Text("delegated and done".into()),
                 usage: TokenUsage::default(),
                 finish_reason: FinishReason::Stop,
+                cache_usage: None,
             })
         }
     }
@@ -217,6 +224,7 @@ impl LlmClient for CapturingLlm {
             content: ResponseContent::Text(self.reply.clone()),
             usage: TokenUsage::default(),
             finish_reason: FinishReason::Stop,
+            cache_usage: None,
         })
     }
     fn model_id(&self) -> &str {
@@ -1113,12 +1121,14 @@ impl LlmClient for ToolCallTwiceThenText {
                 }]),
                 usage: TokenUsage::default(),
                 finish_reason: FinishReason::ToolUse,
+                cache_usage: None,
             })
         } else {
             Ok(ChatResponse {
                 content: ResponseContent::Text("done".into()),
                 usage: TokenUsage::default(),
                 finish_reason: FinishReason::Stop,
+                cache_usage: None,
             })
         }
     }
@@ -1155,12 +1165,14 @@ impl LlmClient for TwoToolsInOneCall {
                 ]),
                 usage: TokenUsage::default(),
                 finish_reason: FinishReason::ToolUse,
+                cache_usage: None,
             })
         } else {
             Ok(ChatResponse {
                 content: ResponseContent::Text("both done".into()),
                 usage: TokenUsage::default(),
                 finish_reason: FinishReason::Stop,
+                cache_usage: None,
             })
         }
     }

@@ -226,7 +226,10 @@ mod tests {
             system_prompt: Some("be brief".into()),
             stop_sequences: vec!["END".into()],
             tool_choice: ToolChoice::Auto,
+            system_blocks: Vec::new(),
+            cache_tools: false,
         }
+    
     }
 
     #[test]
@@ -501,6 +504,8 @@ fn parse_openai_response(raw: OpenAiResponse) -> anyhow::Result<ChatResponse> {
             content: ResponseContent::ToolCalls(calls),
             usage,
             finish_reason: FinishReason::ToolUse,
+        
+            cache_usage: None,
         });
     }
 
@@ -508,6 +513,8 @@ fn parse_openai_response(raw: OpenAiResponse) -> anyhow::Result<ChatResponse> {
         content: ResponseContent::Text(choice.message.content.unwrap_or_default()),
         usage,
         finish_reason,
+    
+        cache_usage: None,
     })
 }
 
