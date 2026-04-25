@@ -6,4 +6,5 @@
 //! parser only needs to skip fenced code blocks to be robust. That
 //! beats pulling in `pulldown-cmark` for ~30 lines of state machine.
 
+pub mod followups;
 pub mod phases;

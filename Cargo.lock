@@ -2646,6 +2646,8 @@ name = "nexo-project-tracker"
 version = "0.1.1"
 dependencies = [
  "async-trait",
+ "notify",
+ "parking_lot",
  "regex",
  "serde",
  "serde_json",
