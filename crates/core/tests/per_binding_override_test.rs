@@ -107,6 +107,7 @@ fn two_binding_agent() -> AgentConfig {
         },
         google_auth: None,
         credentials: Default::default(),
+        link_understanding: serde_json::Value::Null,
             language: None,
         inbound_bindings: vec![
             // Sales WhatsApp — narrow.
@@ -148,6 +149,7 @@ fn two_binding_agent() -> AgentConfig {
                 language: None,
             },
         ],
+        context_optimization: None,
     }
 }
 
@@ -292,7 +294,9 @@ async fn legacy_agent_without_bindings_synthesises_agent_level_policy() {
         },
         google_auth: None,
         credentials: Default::default(),
+        link_understanding: serde_json::Value::Null,
             language: None,
+        context_optimization: None,
     };
     let (runtime, captures, broker) = spawn_runtime(cfg).await;
 

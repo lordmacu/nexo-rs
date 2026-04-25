@@ -62,6 +62,10 @@ pub struct EffectiveBindingPolicy {
     /// to reply in that language while keeping workspace docs
     /// (English) as-is.
     pub language: Option<String>,
+    /// Phase 21 — resolved link-understanding config (per-binding
+    /// override over agent-level default). Disabled by default;
+    /// operators opt in per agent or per channel.
+    pub link_understanding: crate::link_understanding::LinkUnderstandingConfig,
 }
 
 impl EffectiveBindingPolicy {
@@ -80,6 +84,7 @@ impl EffectiveBindingPolicy {
             sender_rate_limit: resolve_rate_limit(agent, binding),
             allowed_delegates: resolve_delegates(agent, binding),
             language: resolve_language(agent, binding),
+            link_understanding: resolve_link_understanding(agent, binding),
         }
     }
 
@@ -105,6 +110,7 @@ impl EffectiveBindingPolicy {
             language: agent.language.as_deref().and_then(sanitize_language),
             sender_rate_limit: agent.sender_rate_limit.clone(),
             allowed_delegates: agent.allowed_delegates.clone(),
+            link_understanding: parse_link_understanding(&agent.link_understanding),
         }
     }
 
@@ -236,6 +242,43 @@ fn sanitize_language(raw: &str) -> Option<String> {
     Some(bounded)
 }
 
+/// Parse the agent-level YAML blob into the strongly-typed config.
+/// Failure / Null = defaults (disabled). A bad shape logs a warn so
+/// operators see the typo without failing boot.
+fn parse_link_understanding(
+    raw: &serde_json::Value,
+) -> crate::link_understanding::LinkUnderstandingConfig {
+    if raw.is_null() {
+        return crate::link_understanding::LinkUnderstandingConfig::default();
+    }
+    match serde_json::from_value::<crate::link_understanding::LinkUnderstandingConfig>(raw.clone())
+    {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "agent.link_understanding YAML did not parse — falling back to disabled defaults"
+            );
+            crate::link_understanding::LinkUnderstandingConfig::default()
+        }
+    }
+}
+
+fn resolve_link_understanding(
+    agent: &AgentConfig,
+    binding: Option<&InboundBinding>,
+) -> crate::link_understanding::LinkUnderstandingConfig {
+    // Per-binding override only kicks in when the binding's blob is
+    // present and non-Null. Empty / missing = inherit. Identical
+    // semantic to the language field above.
+    if let Some(b) = binding {
+        if !b.link_understanding.is_null() {
+            return parse_link_understanding(&b.link_understanding);
+        }
+    }
+    parse_link_understanding(&agent.link_understanding)
+}
+
 fn resolve_language(agent: &AgentConfig, binding: Option<&InboundBinding>) -> Option<String> {
     binding
         .and_then(|b| b.language.clone())
@@ -285,11 +328,13 @@ mod tests {
             description: String::new(),
             google_auth: None,
             credentials: Default::default(),
+            link_understanding: serde_json::Value::Null,
             language: None,
             outbound_allowlist: OutboundAllowlistConfig {
                 whatsapp: vec!["573000000000".into()],
                 telegram: Vec::new(),
             },
+            context_optimization: None,
         }
     }
 

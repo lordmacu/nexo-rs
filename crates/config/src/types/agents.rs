@@ -52,6 +52,14 @@ pub struct AgentConfig {
     /// matched channel.
     #[serde(default)]
     pub language: Option<String>,
+    /// Phase 21 — link understanding. When enabled, the runtime
+    /// detects URLs in inbound messages, fetches each one once per
+    /// turn, and renders a `# LINK CONTEXT` system block with the
+    /// extracted text. Disabled by default. Schema lives in
+    /// the config crate sees only the YAML shape via this opaque
+    /// JSON value to avoid a config → core dep cycle.
+    #[serde(default)]
+    pub link_understanding: serde_json::Value,
     /// Optional workspace directory (IDENTITY.md, SOUL.md, USER.md, AGENTS.md,
     /// MEMORY.md, memory/YYYY-MM-DD.md). Loaded at turn start and prepended
     /// to the system prompt. Empty = no workspace layer.
@@ -165,6 +173,20 @@ pub struct AgentConfig {
     /// unavailable).
     #[serde(default)]
     pub credentials: crate::types::credentials::AgentCredentialsConfig,
+    /// Phase F — per-agent override of `llm.context_optimization`
+    /// kill switches. Only the four enables are overridable per-agent
+    /// (numeric knobs stay global). `None` on a sub-flag inherits.
+    /// Shape:
+    /// ```yaml
+    /// agents:
+    ///   - id: ana
+    ///     context_optimization:
+    ///       compaction: true   # opt this agent in early
+    ///       prompt_cache: false  # disable for testing
+    /// ```
+    #[serde(default)]
+    pub context_optimization:
+        Option<crate::types::llm::AgentContextOptimizationOverride>,
 }
 
 /// Per-agent allowlist of outbound recipients. Phone numbers are matched
@@ -263,6 +285,14 @@ pub struct InboundBinding {
     /// `language` field.
     #[serde(default)]
     pub language: Option<String>,
+    /// Phase 21 — per-binding override of the link-understanding
+    /// config. Same opaque-JSON shape as the agent-level field;
+    /// `serde_json::Value::Null` (default) inherits the agent value.
+    /// Use when an agent has link-understanding enabled globally but
+    /// you want it OFF on a specific channel (e.g. a high-volume
+    /// public WhatsApp where every URL fetch would burn quota).
+    #[serde(default)]
+    pub link_understanding: serde_json::Value,
 }
 
 /// Per-binding override for the sender rate limit.

@@ -160,6 +160,66 @@ fn default_watch_debounce_ms() -> u32 {
     500
 }
 
+/// Per-agent override of the four `context_optimization` enables.
+/// Lives under `agents.<id>.context_optimization` in `agents.yaml`.
+/// Only the booleans are overridable per-agent — operators rarely
+/// flip the numeric knobs (`compact_at_pct`, `tail_keep_tokens`)
+/// per agent, so those stay global to keep the surface narrow.
+/// `None` on a field means "inherit from llm.context_optimization".
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub struct AgentContextOptimizationOverride {
+    #[serde(default)]
+    pub prompt_cache: Option<bool>,
+    #[serde(default)]
+    pub compaction: Option<bool>,
+    #[serde(default)]
+    pub token_counter: Option<bool>,
+    #[serde(default)]
+    pub workspace_cache: Option<bool>,
+}
+
+/// Snapshot of the four kill-switches resolved against an agent's
+/// override + the global config. Cheap to copy; the runtime takes a
+/// fresh one per turn so a hot-reload that swaps `RuntimeSnapshot`
+/// (Phase 18) is observed on the next request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResolvedContextOptimization {
+    pub prompt_cache: bool,
+    pub compaction: bool,
+    pub token_counter: bool,
+    pub workspace_cache: bool,
+}
+
+impl ResolvedContextOptimization {
+    /// Apply the precedence rule: a `Some(b)` on the override wins
+    /// over the global flag. `None` (default) inherits.
+    pub fn resolve(
+        global: &ContextOptimizationConfig,
+        agent_override: Option<&AgentContextOptimizationOverride>,
+    ) -> Self {
+        let pick = |sub: Option<bool>, g: bool| sub.unwrap_or(g);
+        Self {
+            prompt_cache: pick(
+                agent_override.and_then(|o| o.prompt_cache),
+                global.prompt_cache.enabled,
+            ),
+            compaction: pick(
+                agent_override.and_then(|o| o.compaction),
+                global.compaction.enabled,
+            ),
+            token_counter: pick(
+                agent_override.and_then(|o| o.token_counter),
+                global.token_counter.enabled,
+            ),
+            workspace_cache: pick(
+                agent_override.and_then(|o| o.workspace_cache),
+                global.workspace_cache.enabled,
+            ),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct LlmProviderConfig {
@@ -366,6 +426,42 @@ providers: {}
         let cfg: LlmConfig = serde_yaml::from_str(yaml).unwrap();
         assert!(cfg.context_optimization.prompt_cache.enabled);
         assert!(!cfg.context_optimization.compaction.enabled);
+    }
+
+    #[test]
+    fn agent_override_resolves_with_precedence() {
+        let global = ContextOptimizationConfig::default();
+        // Default: prompt_cache=true, compaction=false, token=true, ws=true.
+        let none = ResolvedContextOptimization::resolve(&global, None);
+        assert!(none.prompt_cache);
+        assert!(!none.compaction);
+        assert!(none.token_counter);
+        assert!(none.workspace_cache);
+        // Per-agent: opt INTO compaction, opt OUT of cache.
+        let ov = AgentContextOptimizationOverride {
+            prompt_cache: Some(false),
+            compaction: Some(true),
+            token_counter: None,
+            workspace_cache: None,
+        };
+        let resolved = ResolvedContextOptimization::resolve(&global, Some(&ov));
+        assert!(!resolved.prompt_cache);
+        assert!(resolved.compaction);
+        assert!(resolved.token_counter); // inherited
+        assert!(resolved.workspace_cache); // inherited
+    }
+
+    #[test]
+    fn agent_override_yaml_round_trip() {
+        let yaml = r#"
+prompt_cache: false
+compaction: true
+"#;
+        let ov: AgentContextOptimizationOverride = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(ov.prompt_cache, Some(false));
+        assert_eq!(ov.compaction, Some(true));
+        assert!(ov.token_counter.is_none());
+        assert!(ov.workspace_cache.is_none());
     }
 
     #[test]

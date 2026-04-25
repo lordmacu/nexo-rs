@@ -485,6 +485,8 @@ mod tests {
             credentials: creds,
             language: None,
             skill_overrides: Default::default(),
+            link_understanding: serde_json::Value::Null,
+            context_optimization: None,
         }
     }
 
