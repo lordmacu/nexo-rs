@@ -32,6 +32,7 @@ members = [
     "crates/web-search",
     "crates/pairing",
     "crates/driver-types",
+    "crates/driver-claude",
 ]
 # Keep standalone extension templates out of the agent workspace so they don't
 # inherit our deps or lockfile. Users copy them verbatim and build separately.
@@ -107,6 +108,7 @@ async-trait        = "0.1"
 dashmap            = "6"
 humantime          = "2"
 humantime-serde    = "1.1"
+which              = "6"
 tokio-util         = { version = "0.7", features = ["rt"] }
 bytes              = "1"
 futures            = "0.3"

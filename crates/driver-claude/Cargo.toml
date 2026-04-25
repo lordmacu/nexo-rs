@@ -1,0 +1,32 @@
+[package]
+name = "nexo-driver-claude"
+description = "Spawn the `claude` CLI under nexo-rs, parse stream-json events, and resume sessions across turns. Phase 67.1 of the agent framework."
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+homepage      = { workspace = true }
+documentation = { workspace = true }
+readme        = "README.md"
+keywords      = { workspace = true }
+categories    = { workspace = true }
+
+[dependencies]
+nexo-driver-types = { path = "../driver-types" }
+async-trait       = { workspace = true }
+chrono            = { workspace = true }
+dashmap           = { workspace = true }
+humantime-serde   = { workspace = true }
+serde             = { workspace = true }
+serde_json        = { workspace = true }
+thiserror         = { workspace = true }
+tokio             = { workspace = true }
+tokio-util        = { workspace = true }
+tracing           = { workspace = true }
+which             = { workspace = true }
+
+[dev-dependencies]
+serde_yaml = { workspace = true }
+tempfile   = "3"

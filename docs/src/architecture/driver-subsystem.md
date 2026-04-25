@@ -66,12 +66,43 @@ crate `nexo-driver-types`. Every value is `serde`-serializable so the
 contract can travel through NATS, get re-imported by extensions, and
 power admin-ui dashboards without dragging in the daemon.
 
+## How a turn flows (Phase 67.1)
+
+```rust,no_run
+use std::time::Duration;
+use nexo_driver_claude::{ClaudeCommand, spawn_turn};
+use nexo_driver_types::CancellationToken;
+
+# async fn doc(session_id: String) -> anyhow::Result<()> {
+let cmd = ClaudeCommand::discover("Implementa Phase 26.z")?
+    .resume(session_id)
+    .allowed_tools(["Read", "Grep", "Glob", "LS"])
+    .permission_prompt_tool("mcp__nexo-driver__permission_prompt")
+    .cwd("/tmp/claude-runs/26-z");
+
+let cancel = CancellationToken::new();
+let mut turn = spawn_turn(cmd, &cancel, Duration::from_secs(600), Duration::from_secs(1)).await?;
+
+while let Some(ev) = turn.next_event().await? {
+    // dispatch on ev (Assistant tool_use → permission_prompt; Result → done check)
+    let _ = ev;
+}
+let _exit = turn.shutdown().await?;
+# Ok(())
+# }
+```
+
+`next_event` cooperatively races three signals via `tokio::select!`:
+the cancel token, the per-turn deadline, and the JSONL stream. Errors
+land as `Cancelled`, `Timeout`, `ParseLine`, etc. Cleanup is always
+`shutdown()` — `ChildHandle::Drop` is the panic safety net.
+
 ## Sub-phases
 
 | Phase | What | Status |
 |-------|------|--------|
 | 67.0 | `AgentHarness` trait + types | ✅ |
-| 67.1 | `claude_cli` skill (spawn + stream-json + resume) | ⬜ |
+| 67.1 | `claude_cli` skill (spawn + stream-json + resume) | ✅ |
 | 67.2 | Session-binding store (SQLite) | ⬜ |
 | 67.3 | MCP `permission_prompt` in-process | ⬜ |
 | 67.4 | Driver agent loop + budget guards | ⬜ |

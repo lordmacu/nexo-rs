@@ -1709,7 +1709,7 @@ tipos serde `Goal`, `BudgetGuards`, `BudgetUsage`,
 adaptado para Rust + microservicios (todo serializable para NATS).
 Sin runtime — solo el contrato sobre el que 67.1+ se montan.
 
-#### 67.1 — `claude_cli` skill (spawn + stream-json + resume)   ⬜
+#### 67.1 — `claude_cli` skill (spawn + stream-json + resume)   ✅
 #### 67.2 — Session-binding store (SQLite)                      ⬜
 #### 67.3 — MCP `permission_prompt` in-process                   ⬜
 #### 67.4 — Driver agent loop + budget guards                    ⬜
