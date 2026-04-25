@@ -131,6 +131,27 @@ through `sanitise_for_prompt`:
 This is the same defence-in-depth Phase 19 (`language` directive) and
 Phase 21 (`# LINK CONTEXT`) apply: SERPs are attacker-controlled input.
 
+## Telemetry
+
+Exported on `/metrics`:
+
+- `nexo_web_search_calls_total{provider,result}` — counter, one
+  increment per provider attempt. `result` is `ok` (provider returned
+  hits), `error` (network / HTTP / parse failure), or `unavailable`
+  (the breaker short-circuited the call before it left the process).
+- `nexo_web_search_cache_total{provider,hit}` — counter, every
+  TTL-cached lookup. `provider` is the *first* candidate (the one the
+  cache key is built from). Compute hit rate as
+  `cache_total{hit="true"} / sum(cache_total)`.
+- `nexo_web_search_breaker_open_total{provider}` — counter; one
+  increment per request the breaker rejected. Pair with
+  `circuit_breaker_state{breaker="web_search:<provider>"}` to alert on
+  *sustained* open state vs a flap.
+- `nexo_web_search_latency_ms{provider}` — histogram. Only observed
+  for attempts that issued an HTTP request, so the percentile reflects
+  real provider latency (cache hits and breaker short-circuits would
+  pull p50 down to 0 and hide regressions).
+
 ## When to leave it off
 
 - Privacy-sensitive deployments where outbound HTTP from the agent
