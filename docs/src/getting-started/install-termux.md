@@ -7,6 +7,23 @@ Use this path for a **personal agent** (one phone, one WhatsApp,
 one Telegram). For multi-tenant / multi-process deployments the
 regular Linux setup on a server is the right shape.
 
+## Quickest path — pre-built `.deb`
+
+Once a `v*` release is published (recipe lives in
+`packaging/termux/build.sh`), download the asset and install with
+one command:
+
+```bash
+# Inside Termux on the phone:
+curl -LO https://github.com/lordmacu/nexo-rs/releases/latest/download/nexo-rs_aarch64.deb
+pkg install ./nexo-rs_aarch64.deb
+```
+
+The deb pulls the runtime deps Termux already ships (`libsqlite`,
+`openssl`, `ffmpeg`, `tesseract`, `python`, `yt-dlp`). Its
+`postinst` scaffolds `~/.nexo/{data,secret}` and prints the next
+steps. Skip the build-from-source section below if this works.
+
 ## Root vs non-root
 
 **Everything in this guide runs without root.** You do not need to
