@@ -1,0 +1,32 @@
+[package]
+name = "nexo-driver-permission"
+description = "MCP `permission_prompt` tool used by the nexo-rs driver to gate Claude Code tool calls. Phase 67.3."
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+homepage      = { workspace = true }
+documentation = { workspace = true }
+readme        = "README.md"
+keywords      = { workspace = true }
+categories    = { workspace = true }
+
+[dependencies]
+nexo-driver-types  = { path = "../driver-types" }
+nexo-mcp           = { path = "../mcp" }
+anyhow             = { workspace = true }
+async-trait        = { workspace = true }
+dashmap            = { workspace = true }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+thiserror          = { workspace = true }
+tokio              = { workspace = true }
+tokio-util         = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[[bin]]
+name = "nexo-driver-permission-mcp"
+path = "src/bin/permission_mcp.rs"

@@ -2257,6 +2257,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexo-driver-permission"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "dashmap",
+ "nexo-driver-types",
+ "nexo-mcp",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "nexo-driver-types"
 version = "0.1.1"
 dependencies = [

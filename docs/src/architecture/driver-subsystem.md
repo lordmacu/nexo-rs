@@ -123,6 +123,48 @@ Schema migrations: `PRAGMA user_version = 1` is the sentinel; every
 `open()` runs `CREATE TABLE/INDEX IF NOT EXISTS`. Future v2 will
 extend that helper.
 
+## Permission flow (Phase 67.3)
+
+Every Claude tool call that isn't on the static allowlist
+(`Read,Grep,Glob,LS,WebFetch`) goes through the MCP server before
+execution:
+
+```
+Claude Code ─── tools/call mcp__nexo-driver__permission_prompt ───▶
+                                                                    │
+                                                          stdio JSON-RPC
+                                                                    │
+                                                                    ▼
+                                              nexo-driver-permission-mcp (child)
+                                                                    │
+                                                            calls PermissionDecider
+                                                                    │
+                                                                    ▼
+                                                     {behavior: allow|deny, ...}
+```
+
+`PermissionMcpServer` exposes one tool, `permission_prompt`. The
+in-process `AllowSession` cache keyed on `(tool_name, hash(input))`
+short-circuits repeat calls (a Claude turn that re-reads the same
+file pays the decider once).
+
+Outcomes Claude receives are always one of two shapes:
+
+```json
+{ "behavior": "allow" }                   // optional updatedInput
+{ "behavior": "deny", "message": "..." }
+```
+
+Internally the driver tracks five outcomes — `AllowOnce`,
+`AllowSession{scope}`, `Deny`, `Unavailable`, `Cancelled` — collapsing
+the last three to `deny` on the wire. `Unavailable` (timeout) is
+fail-closed by design.
+
+Phase 67.3 ships the bin in placeholder modes (`--allow-all` for dev,
+`--deny-all <reason>` for shadow). Phase 67.4 will swap those flags
+for `--socket <path>` so the bin asks the daemon's `LlmDecider`
+(MiniMax + memory) for each decision.
+
 ## Sub-phases
 
 | Phase | What | Status |
@@ -130,7 +172,7 @@ extend that helper.
 | 67.0 | `AgentHarness` trait + types | ✅ |
 | 67.1 | `claude_cli` skill (spawn + stream-json + resume) | ✅ |
 | 67.2 | Session-binding store (SQLite) | ✅ |
-| 67.3 | MCP `permission_prompt` in-process | ⬜ |
+| 67.3 | MCP `permission_prompt` in-process | ✅ |
 | 67.4 | Driver agent loop + budget guards | ⬜ |
 | 67.5 | Acceptance evaluator | ⬜ |
 | 67.6 | Git worktree sandboxing + per-turn checkpoint | ⬜ |
