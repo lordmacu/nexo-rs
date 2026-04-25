@@ -61,11 +61,34 @@ pub struct ExtensionPoller {
     /// runner.
     kind: &'static str,
     runtime: Arc<StdioRuntime>,
+    /// Snapshot of the extension's custom tools fetched once at
+    /// registration time via `poll_list_tools`. Cached because
+    /// `Poller::custom_tools` is sync — we cannot await on every
+    /// call.
+    tools_cache: Vec<ToolDefinition>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct ToolDefinition {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub parameters: Value,
 }
 
 impl ExtensionPoller {
     pub fn new(kind: &'static str, runtime: Arc<StdioRuntime>) -> Self {
-        Self { kind, runtime }
+        Self {
+            kind,
+            runtime,
+            tools_cache: Vec::new(),
+        }
+    }
+
+    pub fn with_tools_cache(mut self, tools: Vec<ToolDefinition>) -> Self {
+        self.tools_cache = tools;
+        self
     }
 }
 
@@ -84,6 +107,55 @@ impl Poller for ExtensionPoller {
         // could add a `poll_validate` round-trip in the future; for
         // V1 errors surface on the first tick.
         Ok(())
+    }
+
+    fn custom_tools(&self) -> Vec<agent_poller::CustomToolSpec> {
+        let mut out = Vec::with_capacity(self.tools_cache.len());
+        for t in &self.tools_cache {
+            // Capture the kind + tool name in the handler so calls
+            // round-trip back to the right extension.
+            let kind = self.kind;
+            let runtime_for_handler = Arc::clone(&self.runtime);
+            let tool_name = t.name.clone();
+
+            struct ExtToolHandler {
+                runtime: Arc<StdioRuntime>,
+                kind: &'static str,
+                tool_name: String,
+            }
+            #[async_trait]
+            impl agent_poller::CustomToolHandler for ExtToolHandler {
+                async fn call(
+                    &self,
+                    _runner: Arc<agent_poller::PollerRunner>,
+                    args: Value,
+                ) -> anyhow::Result<Value> {
+                    let params = json!({
+                        "kind":      self.kind,
+                        "tool_name": self.tool_name,
+                        "args":      args,
+                    });
+                    self.runtime
+                        .call("poll_tool_call", params)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("ext '{}' poll_tool_call: {e}", self.kind))
+                }
+            }
+
+            out.push(agent_poller::CustomToolSpec {
+                def: agent_llm::ToolDef {
+                    name: t.name.clone(),
+                    description: t.description.clone(),
+                    parameters: t.parameters.clone(),
+                },
+                handler: Arc::new(ExtToolHandler {
+                    runtime: runtime_for_handler,
+                    kind,
+                    tool_name,
+                }),
+            });
+        }
+        out
     }
 
     async fn tick(&self, ctx: &PollContext) -> Result<TickOutcome, PollerError> {
@@ -149,9 +221,13 @@ impl Poller for ExtensionPoller {
 }
 
 /// Walk the runtime's manifest capabilities and register one
-/// `ExtensionPoller` per `kind`. Returns the count of registered
-/// pollers so the caller can log it.
-pub fn register_for_runtime(
+/// `ExtensionPoller` per `kind`. For each kind, fetch the
+/// extension's custom tools via `poll_list_tools` and bake them
+/// into the poller's tool cache so `Poller::custom_tools()` (sync)
+/// can return them without an awaitable round-trip on every call.
+///
+/// Returns the count of registered pollers so the caller can log it.
+pub async fn register_for_runtime(
     runner: &agent_poller::PollerRunner,
     runtime: &Arc<StdioRuntime>,
     pollers: &[String],
@@ -163,7 +239,54 @@ pub fn register_for_runtime(
         // the daemon's lifetime — leaking a few short kind strings is
         // a controlled, bounded cost.
         let leaked: &'static str = Box::leak(kind.clone().into_boxed_str());
-        runner.register(Arc::new(ExtensionPoller::new(leaked, Arc::clone(runtime))));
+
+        // Fetch this kind's custom tools once. Failures degrade
+        // silently to "no custom tools" — the generic pollers_*
+        // tools still work; the operator can debug with the agent
+        // ext doctor command.
+        let tools = match runtime
+            .call("poll_list_tools", json!({ "kind": leaked }))
+            .await
+        {
+            Ok(Value::Array(items)) => {
+                let mut parsed = Vec::with_capacity(items.len());
+                for it in items {
+                    match serde_json::from_value::<ToolDefinition>(it) {
+                        Ok(t) => parsed.push(t),
+                        Err(e) => {
+                            tracing::warn!(
+                                kind = %leaked,
+                                error = %e,
+                                "extension custom-tool entry malformed; skipping"
+                            );
+                        }
+                    }
+                }
+                parsed
+            }
+            Ok(other) => {
+                tracing::warn!(
+                    kind = %leaked,
+                    "poll_list_tools returned non-array ({other}); ignoring"
+                );
+                Vec::new()
+            }
+            Err(e) => {
+                // `Method not found` is a normal "no custom tools"
+                // signal for older / minimal extensions. Any other
+                // error logs at warn but does not abort registration.
+                tracing::debug!(
+                    kind = %leaked,
+                    error = %e,
+                    "extension exposed no custom tools (poll_list_tools failed)"
+                );
+                Vec::new()
+            }
+        };
+
+        let poller = ExtensionPoller::new(leaked, Arc::clone(runtime))
+            .with_tools_cache(tools);
+        runner.register(Arc::new(poller));
         count += 1;
     }
     count

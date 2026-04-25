@@ -96,6 +96,45 @@ def tick_template_poll(params: dict) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Custom LLM tools shipped by this kind
+# ─────────────────────────────────────────────────────────────────────
+
+def list_template_poll_tools() -> list[dict]:
+    """Return the per-kind tools the agent can call. The runtime
+    fetches this once at boot via `poll_list_tools` and caches it
+    in `Poller::custom_tools()`. Agent then sees them alongside
+    the six generic `pollers_*` tools.
+    """
+    return [
+        {
+            "name": "template_poll_status",
+            "description": (
+                "Report the internal counter of the template_poll "
+                "job without persisting state. Useful as a sanity "
+                "check before pause/resume."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Job id (matches pollers.yaml)",
+                    }
+                },
+                "required": ["id"],
+            },
+        }
+    ]
+
+
+def call_template_poll_status(args: dict) -> dict:
+    """Implementation for the `template_poll_status` tool. Replace
+    with whatever introspection your real poller exposes."""
+    job_id = args.get("id") or "<unspecified>"
+    return {"ok": True, "job_id": job_id, "note": "stub status"}
+
+
+# ─────────────────────────────────────────────────────────────────────
 # JSON-RPC dispatch loop — leave alone
 # ─────────────────────────────────────────────────────────────────────
 
@@ -121,6 +160,22 @@ def dispatch(req: dict) -> str | None:
             if kind == "template_poll":
                 return jsonrpc_response(req_id, tick_template_poll(params))
             return jsonrpc_error(req_id, -32602, f"unknown kind '{kind}'")
+        if method == "poll_list_tools":
+            kind = params.get("kind")
+            if kind == "template_poll":
+                return jsonrpc_response(req_id, list_template_poll_tools())
+            return jsonrpc_response(req_id, [])
+        if method == "poll_tool_call":
+            kind = params.get("kind")
+            tool_name = params.get("tool_name")
+            args = params.get("args") or {}
+            if kind == "template_poll" and tool_name == "template_poll_status":
+                return jsonrpc_response(req_id, call_template_poll_status(args))
+            return jsonrpc_error(
+                req_id,
+                -32601,
+                f"unknown tool '{tool_name}' for kind '{kind}'",
+            )
         return jsonrpc_error(req_id, -32601, f"method not found: {method}")
     except Exception as exc:  # noqa: BLE001
         return jsonrpc_error(req_id, -32001, f"transient: {exc}")

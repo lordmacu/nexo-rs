@@ -12,6 +12,7 @@ edition = "2021"
 agent-poller     = { path = "../poller" }
 agent-extensions = { path = "../extensions" }
 agent-auth       = { path = "../auth" }
+agent-llm        = { path = "../llm" }
 base64           = { workspace = true }
 async-trait      = { workspace = true }
 serde            = { workspace = true }

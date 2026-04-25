@@ -484,6 +484,7 @@ mod tests {
             outbound_allowlist: OutboundAllowlistConfig::default(),
             credentials: creds,
             language: None,
+            skill_overrides: Default::default(),
         }
     }
 

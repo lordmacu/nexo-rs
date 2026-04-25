@@ -949,7 +949,8 @@ async fn main() -> Result<()> {
                                 &runner,
                                 rt,
                                 kinds,
-                            );
+                            )
+                            .await;
                             ext_poller_count += n;
                             tracing::info!(
                                 ext = %cand.manifest.id(),
@@ -2775,6 +2776,83 @@ async fn handle_admin_request(
         return Ok(());
     }
 
+    // /api/agents — structured agent directory for the dashboard.
+    // Cookie-gated; reads YAML from disk on every call (no caching
+    // here, the admin is not a hot path and we prefer the live view).
+    if method == "GET" && path == "/api/agents" {
+        if !authorised {
+            write_401_json(&mut stream).await?;
+            return Ok(());
+        }
+        let body = list_agents_json();
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
+             Cache-Control: no-store\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream.write_all(response.as_bytes()).await?;
+        stream.shutdown().await?;
+        return Ok(());
+    }
+
+    // /api/channels — every plugin instance declared in
+    // config/plugins/*.yaml with the bound agents resolved from
+    // `allow_agents` + the per-agent `credentials` block.
+    if method == "GET" && path == "/api/channels" {
+        if !authorised {
+            write_401_json(&mut stream).await?;
+            return Ok(());
+        }
+        let body = list_channels_json();
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
+             Cache-Control: no-store\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream.write_all(response.as_bytes()).await?;
+        stream.shutdown().await?;
+        return Ok(());
+    }
+
+    // /api/channels/telegram — add a new Telegram bot instance.
+    // Body: { instance: "label", token: "...", allow_agents?: [ids] }.
+    // Writes the token to ./secrets/<instance>_telegram_token.txt
+    // (mode 0600) and appends to config/plugins/telegram.yaml in
+    // multi-instance sequence form. Fails if the instance label
+    // already exists.
+    if method == "POST" && path == "/api/channels/telegram" {
+        if !authorised {
+            write_401_json(&mut stream).await?;
+            return Ok(());
+        }
+        let body_str = read_http_body(&request, &mut stream).await.unwrap_or_default();
+        let response_body = match add_telegram_channel(&body_str) {
+            Ok(report) => format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
+                 Cache-Control: no-store\r\nConnection: close\r\n\r\n{}",
+                report.len(),
+                report
+            ),
+            Err(err) => {
+                let body = format!(
+                    "{{\"ok\":false,\"error\":\"{}\"}}",
+                    err.replace('\\', "\\\\").replace('"', "\\\"")
+                );
+                format!(
+                    "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+            }
+        };
+        stream.write_all(response_body.as_bytes()).await?;
+        stream.shutdown().await?;
+        return Ok(());
+    }
+
     // /api/debug/env — feature probe consumed by the SPA so it can
     // show the Reset button only when the dev toggle is on. Gated
     // behind NEXO_ADMIN_DEBUG=1 (or the debug_assertions cfg so
@@ -3377,6 +3455,332 @@ fn commit_bootstrap(body: &str) -> Result<String, String> {
     Ok(report)
 }
 
+/// Shared 401-JSON writer used by every cookie-gated admin API.
+async fn write_401_json(stream: &mut TcpStream) -> std::io::Result<()> {
+    use tokio::io::AsyncWriteExt;
+    let body = r#"{"ok":false,"error":"unauthorised"}"#;
+    let response = format!(
+        "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\n\
+         Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    stream.write_all(response.as_bytes()).await?;
+    stream.shutdown().await
+}
+
+/// Dump the live agent directory as JSON. Shape:
+/// `{"agents":[{"id","description","model":"prov/mod",
+///              "channels":[{"plugin","instance"}]}]}`. Reads
+/// `config/agents.yaml` + every `config/agents.d/*.yaml` (except
+/// `.example.yaml`). No cache — admin is a cold path.
+fn list_agents_json() -> String {
+    #[derive(serde::Deserialize)]
+    struct BindingLite {
+        plugin: Option<String>,
+        instance: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct ModelLite {
+        provider: Option<String>,
+        model: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct AgentLite {
+        id: String,
+        #[serde(default)]
+        description: Option<String>,
+        #[serde(default)]
+        model: Option<ModelLite>,
+        #[serde(default)]
+        inbound_bindings: Vec<BindingLite>,
+        #[serde(default)]
+        plugins: Vec<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct FileLite {
+        #[serde(default)]
+        agents: Vec<AgentLite>,
+    }
+
+    let mut entries: Vec<AgentLite> = Vec::new();
+    let push_from = |buf: &str, into: &mut Vec<AgentLite>| {
+        if let Ok(parsed) = serde_yaml::from_str::<FileLite>(buf) {
+            into.extend(parsed.agents);
+        }
+    };
+    if let Ok(buf) = std::fs::read_to_string("./config/agents.yaml") {
+        push_from(&buf, &mut entries);
+    }
+    if let Ok(read) = std::fs::read_dir("./config/agents.d") {
+        let mut paths: Vec<_> = read
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| {
+                p.extension().and_then(|e| e.to_str()) == Some("yaml")
+                    && !p
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|n| n.ends_with(".example.yaml"))
+                        .unwrap_or(false)
+            })
+            .collect();
+        paths.sort();
+        for p in paths {
+            if let Ok(buf) = std::fs::read_to_string(&p) {
+                push_from(&buf, &mut entries);
+            }
+        }
+    }
+
+    let mut out = String::from("{\"agents\":[");
+    for (i, a) in entries.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        let model_str = match a.model.as_ref() {
+            Some(m) => format!(
+                "{}/{}",
+                m.provider.as_deref().unwrap_or("?"),
+                m.model.as_deref().unwrap_or("?")
+            ),
+            None => String::from("?"),
+        };
+        out.push_str(&format!(
+            "{{\"id\":\"{}\",\"description\":\"{}\",\"model\":\"{}\",\"channels\":[",
+            json_escape(&a.id),
+            json_escape(a.description.as_deref().unwrap_or("")),
+            json_escape(&model_str)
+        ));
+        let mut first = true;
+        // Collect channel surface from inbound_bindings; if empty, fall
+        // back to the legacy `plugins: []` field.
+        for b in &a.inbound_bindings {
+            if let Some(plugin) = &b.plugin {
+                if !first {
+                    out.push(',');
+                }
+                first = false;
+                out.push_str(&format!(
+                    "{{\"plugin\":\"{}\",\"instance\":\"{}\"}}",
+                    json_escape(plugin),
+                    json_escape(b.instance.as_deref().unwrap_or(""))
+                ));
+            }
+        }
+        if first {
+            for plugin in &a.plugins {
+                if !first {
+                    out.push(',');
+                }
+                first = false;
+                out.push_str(&format!(
+                    "{{\"plugin\":\"{}\",\"instance\":\"\"}}",
+                    json_escape(plugin)
+                ));
+            }
+        }
+        out.push_str("]}");
+    }
+    out.push_str("]}");
+    out
+}
+
+/// Dump every channel instance the plugin YAMLs know about. Shape:
+/// `{"channels":[{"plugin","instance","allow_agents":[...], "source_file"}]}`.
+/// Understands both shapes shipped in the repo: the legacy
+/// "single-mapping" form (`whatsapp: { ... }`) and the new
+/// multi-instance sequence form (`telegram: [ { instance, ... }, ... ]`).
+fn list_channels_json() -> String {
+    let mut out = String::from("{\"channels\":[");
+    let mut first = true;
+
+    for (plugin, path) in &[
+        ("telegram", "./config/plugins/telegram.yaml"),
+        ("whatsapp", "./config/plugins/whatsapp.yaml"),
+    ] {
+        let Ok(buf) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let Ok(v) = serde_yaml::from_str::<serde_yaml::Value>(&buf) else {
+            continue;
+        };
+        let entry = v.get(*plugin).cloned().unwrap_or(serde_yaml::Value::Null);
+        let entries_vec = match entry {
+            serde_yaml::Value::Sequence(seq) => seq,
+            serde_yaml::Value::Mapping(m) => vec![serde_yaml::Value::Mapping(m)],
+            _ => continue,
+        };
+        for e in entries_vec {
+            let instance = e
+                .get("instance")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let mut allow_agents: Vec<String> = Vec::new();
+            if let Some(seq) = e.get("allow_agents").and_then(|v| v.as_sequence()) {
+                for a in seq {
+                    if let Some(s) = a.as_str() {
+                        allow_agents.push(s.to_string());
+                    }
+                }
+            }
+            if !first {
+                out.push(',');
+            }
+            first = false;
+            out.push_str(&format!(
+                "{{\"plugin\":\"{}\",\"instance\":\"{}\",\"source_file\":\"{}\",\"allow_agents\":[",
+                json_escape(plugin),
+                json_escape(&instance),
+                json_escape(path)
+            ));
+            for (i, ag) in allow_agents.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push('"');
+                out.push_str(&json_escape(ag));
+                out.push('"');
+            }
+            out.push_str("]}");
+        }
+    }
+    out.push_str("]}");
+    out
+}
+
+/// Append a Telegram bot instance to `config/plugins/telegram.yaml`.
+/// On first-use the file is created in multi-instance sequence form;
+/// existing files are migrated from single-mapping to sequence and
+/// then appended. Token is written to `./secrets/<instance>_telegram_token.txt`
+/// at mode 0600.
+fn add_telegram_channel(body: &str) -> Result<String, String> {
+    let v: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| format!("invalid JSON: {e}"))?;
+    let instance = v
+        .get("instance")
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let token = v
+        .get("token")
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if instance.is_empty() {
+        return Err("instance label is required".into());
+    }
+    if token.is_empty() {
+        return Err("token is required".into());
+    }
+    // Sanity-check the instance label so we don't land invalid YAML
+    // keys on disk.
+    if !instance
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err("instance label must be [a-zA-Z0-9_-]+".into());
+    }
+
+    let allow_agents: Vec<String> = v
+        .get("allow_agents")
+        .and_then(|a| a.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Load whatever shape the file currently has.
+    let path = "./config/plugins/telegram.yaml";
+    let mut existing: Vec<serde_yaml::Value> = Vec::new();
+    if let Ok(buf) = std::fs::read_to_string(path) {
+        if let Ok(parsed) = serde_yaml::from_str::<serde_yaml::Value>(&buf) {
+            let entry = parsed.get("telegram").cloned().unwrap_or(serde_yaml::Value::Null);
+            match entry {
+                serde_yaml::Value::Sequence(seq) => existing = seq,
+                serde_yaml::Value::Mapping(m) => {
+                    existing.push(serde_yaml::Value::Mapping(m));
+                }
+                _ => {}
+            }
+        }
+    }
+    for e in &existing {
+        if e.get("instance").and_then(|v| v.as_str()) == Some(instance.as_str()) {
+            return Err(format!("telegram instance '{instance}' already exists"));
+        }
+    }
+
+    // Write token under ./secrets/ first so a later YAML write race
+    // doesn't leave the YAML pointing at a missing file.
+    std::fs::create_dir_all("./secrets").map_err(|e| format!("mkdir ./secrets: {e}"))?;
+    let secret_path = format!("./secrets/{instance}_telegram_token.txt");
+    write_file_0600(&secret_path, &token)
+        .map_err(|e| format!("write {secret_path}: {e}"))?;
+
+    // Compose the new entry.
+    let mut new_entry = serde_yaml::Mapping::new();
+    new_entry.insert(
+        serde_yaml::Value::String("instance".into()),
+        serde_yaml::Value::String(instance.clone()),
+    );
+    new_entry.insert(
+        serde_yaml::Value::String("token".into()),
+        serde_yaml::Value::String(format!("${{file:{secret_path}}}")),
+    );
+    if !allow_agents.is_empty() {
+        let seq = allow_agents
+            .iter()
+            .map(|a| serde_yaml::Value::String(a.clone()))
+            .collect::<Vec<_>>();
+        new_entry.insert(
+            serde_yaml::Value::String("allow_agents".into()),
+            serde_yaml::Value::Sequence(seq),
+        );
+    }
+    existing.push(serde_yaml::Value::Mapping(new_entry));
+
+    // Serialise back.
+    let mut root = serde_yaml::Mapping::new();
+    root.insert(
+        serde_yaml::Value::String("telegram".into()),
+        serde_yaml::Value::Sequence(existing),
+    );
+    let out =
+        serde_yaml::to_string(&serde_yaml::Value::Mapping(root)).map_err(|e| format!("serialise: {e}"))?;
+    std::fs::create_dir_all("./config/plugins")
+        .map_err(|e| format!("mkdir ./config/plugins: {e}"))?;
+    std::fs::write(path, out).map_err(|e| format!("write {path}: {e}"))?;
+
+    Ok(format!(
+        "{{\"ok\":true,\"instance\":\"{}\",\"secret_path\":\"{}\",\"source_file\":\"{}\"}}",
+        json_escape(&instance),
+        json_escape(&secret_path),
+        json_escape(path)
+    ))
+}
+
+fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 fn escape_yaml(input: &str) -> String {
     input.replace('\\', "\\\\").replace('"', "\\\"")
 }
@@ -3596,9 +4000,56 @@ fn admin_asset_for_path(path: &str) -> Option<(Vec<u8>, &'static str)> {
     } else {
         trimmed.to_string()
     };
+
+    // Dev-loop escape hatch: when NEXO_ADMIN_UI_DIR points at an
+    // existing dist/ tree on disk, serve straight from there. This
+    // lets a running `agent admin` pick up fresh Vite builds from
+    // `npm run build -- --watch` without rebuilding the Rust binary.
+    //
+    // Production (env unset) uses the rust-embed bundle baked in at
+    // compile time — zero runtime filesystem dependency.
+    if let Some(dir) = admin_ui_disk_dir() {
+        if let Some(hit) = read_admin_file_from_disk(&dir, &candidate) {
+            return Some(hit);
+        }
+        // SPA fallback when the client asked for a deep route that
+        // only exists in the JS router.
+        return read_admin_file_from_disk(&dir, "index.html");
+    }
+
     let hit = AdminBundle::get(&candidate).or_else(|| AdminBundle::get("index.html"))?;
     let mime = admin_mime_for(&candidate);
     Some((hit.data.into_owned(), mime))
+}
+
+fn admin_ui_disk_dir() -> Option<std::path::PathBuf> {
+    let raw = std::env::var("NEXO_ADMIN_UI_DIR").ok()?;
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let p = std::path::PathBuf::from(raw);
+    if !p.is_dir() {
+        return None;
+    }
+    Some(p)
+}
+
+fn read_admin_file_from_disk(
+    dir: &std::path::Path,
+    rel: &str,
+) -> Option<(Vec<u8>, &'static str)> {
+    // Reject absolute / parent-traversal paths up front so a request
+    // for `/../../etc/passwd` can't escape the dist tree.
+    if rel.split('/').any(|seg| seg == ".." || seg.starts_with('/')) {
+        return None;
+    }
+    let full = dir.join(rel);
+    if !full.starts_with(dir) {
+        return None;
+    }
+    let bytes = std::fs::read(&full).ok()?;
+    Some((bytes, admin_mime_for(rel)))
 }
 
 fn admin_mime_for(path: &str) -> &'static str {
