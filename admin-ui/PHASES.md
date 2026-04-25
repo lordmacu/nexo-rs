@@ -218,13 +218,66 @@ expose yet.
 
 ## Phase A6 — Extensions / skills / MCP   ⬜
 
+### Extensions
+
 - [ ] Extension discovery mirror: installed / disabled / invalid
-- [ ] `agent ext install/uninstall/doctor --runtime` wrapped as UI
-  actions
-- [ ] MCP server manager: add external stdio / HTTP servers with
-  header editor
-- [ ] `agent mcp-server` on/off toggle with live link + copy
-  snippet for Claude Desktop JSON config
+- [ ] `agent ext install / uninstall / doctor --runtime` wrapped
+  as UI actions
+
+### MCP — admin surface
+
+- [ ] **MCP server manager** (CRUD on `config/mcp.yaml`):
+  - List: every server with transport (stdio/http), command/url,
+    headers (Bearer redacted), live status (handshake ok / failed /
+    spawning), tool count
+  - Add: form with stdio command+args+env or http url+headers, hot-
+    reload trigger via `POST /api/reload`
+  - Edit: rotate token / swap args, same form pre-filled
+  - Delete: drop entry + reload
+- [ ] `agent mcp-server` on/off toggle (writes
+  `config/mcp_server.yaml::enabled`) with live link + copy snippet
+  for Claude Desktop JSON config (same shape doc'd in
+  `docs/src/recipes/mcp-from-claude-desktop.md`)
+- [ ] Allowlist editor for the agent-as-server `tools` allowlist
+  with glob preview ("these tools will reach Claude Desktop")
+
+### MCP — protocol gaps the daemon owes
+
+These all live in `crates/mcp/` and gate features the admin can
+expose. Tracked here because the admin checkbox can't fire until
+the daemon side lands.
+
+- [ ] **MCP server over HTTP** — currently `agent mcp-server` is
+  stdio-only. HTTP transport (cookie-auth same as admin, `/mcp/rpc`
+  endpoint) unlocks remote IDE consumption (Cursor remote, web
+  playgrounds, anything that can't spawn a subprocess). Highest
+  value gap.
+- [ ] **MCP completions** (`completion/complete`): some servers
+  publish argument autocomplete; without it the LLM invents arg
+  values. Cheap fix on the client side.
+- [ ] **MCP resources injected into the prompt** (or surfaced as a
+  pickable list): today the agent can call `resources/read` if it
+  asks, but it doesn't know what's there unless the LLM proactively
+  calls `resources/list`. UX decision needed (anchor docs vs auto-
+  fetch vs tool wrapper).
+- [ ] **MCP prompts** (`prompts/list`, `prompts/get`) — server-
+  published prompt templates. Today ignored entirely. Useful for
+  "summarize this email thread" reusable templates.
+- [ ] **Progress notifications** — long tools emit progress %; we
+  drop them. Cheap to plumb to tracing + the admin live log tail.
+- [ ] **Cancellation** (JSON-RPC `$/cancelRequest`) — hung tool
+  calls wait for `call_timeout` instead of being cancelled. Cheap.
+- [ ] **Logging receiver** (`notifications/logging/message`) —
+  forward server-side log lines to our tracing pipeline. Trivial.
+- [ ] **Live status of MCP children** — every spawned server's
+  handshake state, last call latency, last error. Backs the
+  "MCP server manager" status pill.
+- [ ] **Sampling reverso** (server-initiated LLM calls) — pinned
+  off by config. Niche but specced; flip on with per-server
+  caps to avoid runaway loops.
+- [ ] **MCP roots** advertisement on the server side — niche.
+- [ ] **Subscribe to resources** (`resources/subscribe`) — file
+  watchers, DB triggers; medium effort, niche use.
 
 ---
 
@@ -336,4 +389,14 @@ IOUs — features that landed in the daemon but have no UI yet.
   `agent doctor capabilities --json`, render risk-coloured table,
   surface env var name and paste-ready export hint per row;
   warn on any `enabled` toggle so dangerous defaults are visible
+- [ ] **MCP server over HTTP** (daemon) — `agent mcp-server`
+  currently stdio-only; add HTTP transport (cookie auth, `/mcp/rpc`)
+  to unlock remote IDE consumption. Tracked in detail under Phase A6
+- [ ] **MCP completions / prompts / progress / cancellation /
+  logging-receiver** — protocol gaps in `crates/mcp/`. See Phase A6
+  "MCP — protocol gaps the daemon owes" for the full list
+- [ ] **MCP server manager UI** — `mcp.yaml` CRUD from the admin
+  with hot-reload. Phase A6
+- [ ] **MCP live status** — per-spawned-server handshake / latency /
+  last error. Phase A6 + needs new endpoint
 - [ ] (add lines as features land — see auto-memory rule)
