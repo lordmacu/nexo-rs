@@ -3730,6 +3730,38 @@ fn list_channels_json() -> String {
                     }
                 }
             }
+            // Nested telegram-specific fields. Whatsapp gets empty
+            // defaults which the SPA ignores.
+            let mut chat_ids: Vec<i64> = Vec::new();
+            if let Some(seq) = e
+                .get("allowlist")
+                .and_then(|a| a.get("chat_ids"))
+                .and_then(|a| a.as_sequence())
+            {
+                for n in seq {
+                    if let Some(id) = n.as_i64() {
+                        chat_ids.push(id);
+                    }
+                }
+            }
+            let at_enabled = e
+                .get("auto_transcribe")
+                .and_then(|a| a.get("enabled"))
+                .and_then(|a| a.as_bool())
+                .unwrap_or(false);
+            let at_command = e
+                .get("auto_transcribe")
+                .and_then(|a| a.get("command"))
+                .and_then(|a| a.as_str())
+                .unwrap_or("")
+                .to_string();
+            let at_language = e
+                .get("auto_transcribe")
+                .and_then(|a| a.get("language"))
+                .and_then(|a| a.as_str())
+                .unwrap_or("")
+                .to_string();
+
             if !first {
                 out.push(',');
             }
@@ -3748,7 +3780,19 @@ fn list_channels_json() -> String {
                 out.push_str(&json_escape(ag));
                 out.push('"');
             }
-            out.push_str("]}");
+            out.push_str("],\"allowlist_chat_ids\":[");
+            for (i, id) in chat_ids.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&id.to_string());
+            }
+            out.push_str(&format!(
+                "],\"auto_transcribe\":{{\"enabled\":{},\"command\":\"{}\",\"language\":\"{}\"}}}}",
+                at_enabled,
+                json_escape(&at_command),
+                json_escape(&at_language)
+            ));
         }
     }
     out.push_str("]}");
