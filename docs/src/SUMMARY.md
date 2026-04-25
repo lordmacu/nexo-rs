@@ -12,6 +12,7 @@
 - [Quick start](./getting-started/quickstart.md)
 - [Setup wizard](./getting-started/setup-wizard.md)
 - [Verifying releases](./getting-started/verify.md)
+- [Reproducible builds + SBOM](./getting-started/reproducibility.md)
 
 # Architecture
 
