@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Wizard } from "./wizard/Wizard";
+import { AgentsSection } from "./dashboard/Agents";
+import { ChannelsSection } from "./dashboard/Channels";
 
 type DebugEnv = { debug: boolean; build: string };
 type Bootstrap = { needs_wizard: boolean; agent_count: number };
@@ -115,18 +117,18 @@ export default function App() {
 
       <main className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12 space-y-6 sm:space-y-8">
         <section>
-          <h2 className="text-2xl font-semibold mb-2">
+          <h2 className="text-2xl font-semibold mb-1">Dashboard</h2>
+          <p className="text-neutral-600 dark:text-neutral-400 text-sm">
             {bootstrap.agent_count === 1
-              ? "You have 1 agent."
-              : `You have ${bootstrap.agent_count} agents.`}
-          </h2>
-          <p className="text-neutral-600 dark:text-neutral-400">
-            Real admin routes (agent directory, sessions, DLQ, live config
-            reload) land in upcoming commits. See{" "}
-            <code className="font-mono text-xs">admin-ui/PHASES.md</code> for
-            the roadmap.
+              ? "1 agent registered."
+              : `${bootstrap.agent_count} agents registered.`}{" "}
+            Per-agent edit + channel pairing flows coming next; see{" "}
+            <code className="font-mono text-xs">admin-ui/PHASES.md</code>.
           </p>
         </section>
+
+        <AgentsSection />
+        <ChannelsSection />
 
         <section className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-4">
           <h3 className="text-sm uppercase tracking-wide text-neutral-500 mb-2">
