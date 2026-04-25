@@ -2917,6 +2917,47 @@ async fn handle_admin_request(
         return Ok(());
     }
 
+    // /api/agents/<id>/credentials PATCH — pin a specific channel
+    // instance to the agent. Body keys correspond to the channel
+    // kinds we understand today ({ telegram, whatsapp, google }).
+    // Each value is the instance label to bind, an empty string to
+    // unset, or omitted to leave the current binding alone.
+    if method == "PATCH" && path.starts_with("/api/agents/") && path.ends_with("/credentials") {
+        if !authorised {
+            write_401_json(&mut stream).await?;
+            return Ok(());
+        }
+        let id = path
+            .trim_start_matches("/api/agents/")
+            .trim_end_matches("/credentials")
+            .trim_matches('/')
+            .to_string();
+        let body_str = read_http_body(&request, &mut stream).await.unwrap_or_default();
+        let response_body = match pin_agent_credentials(&id, &body_str) {
+            Ok(report) => format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
+                 Cache-Control: no-store\r\nConnection: close\r\n\r\n{}",
+                report.len(),
+                report
+            ),
+            Err(err) => {
+                let body = format!(
+                    "{{\"ok\":false,\"error\":\"{}\"}}",
+                    err.replace('\\', "\\\\").replace('"', "\\\"")
+                );
+                format!(
+                    "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+            }
+        };
+        stream.write_all(response_body.as_bytes()).await?;
+        stream.shutdown().await?;
+        return Ok(());
+    }
+
     // /api/debug/env — feature probe consumed by the SPA so it can
     // show the Reset button only when the dev toggle is on. Gated
     // behind NEXO_ADMIN_DEBUG=1 (or the debug_assertions cfg so
@@ -3850,6 +3891,18 @@ fn edit_telegram_channel(instance: &str, body: &str) -> Result<String, String> {
                 .collect()
         },
     );
+    // `allowlist_chat_ids: [int, int, ...]` — empty array clears
+    // the allowlist, missing key leaves it untouched.
+    let allowlist_chat_ids: Option<Vec<i64>> = v
+        .get("allowlist_chat_ids")
+        .and_then(|a| a.as_array())
+        .map(|arr| arr.iter().filter_map(|x| x.as_i64()).collect());
+    // `auto_transcribe` — merges into the existing sub-mapping.
+    // Shape: { enabled?, command?, language? }. Missing key leaves
+    // the sub-mapping untouched.
+    let auto_transcribe = v
+        .get("auto_transcribe")
+        .cloned();
 
     let path = "./config/plugins/telegram.yaml";
     let buf = std::fs::read_to_string(path)
@@ -3901,6 +3954,71 @@ fn edit_telegram_channel(instance: &str, body: &str) -> Result<String, String> {
                     serde_yaml::Value::String("allow_agents".into()),
                     serde_yaml::Value::Sequence(yaml_list),
                 );
+            }
+        }
+        if let Some(ids) = &allowlist_chat_ids {
+            // The shipped config schema nests this under `allowlist`:
+            //   allowlist:
+            //     chat_ids: [123, 456]
+            // Create the parent map on-the-fly when it's missing.
+            let allowlist_key = serde_yaml::Value::String("allowlist".into());
+            let mut sub = match m.remove(&allowlist_key) {
+                Some(serde_yaml::Value::Mapping(sub)) => sub,
+                _ => serde_yaml::Mapping::new(),
+            };
+            if ids.is_empty() {
+                sub.remove(&serde_yaml::Value::String("chat_ids".into()));
+            } else {
+                sub.insert(
+                    serde_yaml::Value::String("chat_ids".into()),
+                    serde_yaml::Value::Sequence(
+                        ids.iter()
+                            .map(|&id| serde_yaml::Value::Number(id.into()))
+                            .collect(),
+                    ),
+                );
+            }
+            if !sub.is_empty() {
+                m.insert(allowlist_key, serde_yaml::Value::Mapping(sub));
+            }
+        }
+        if let Some(at) = &auto_transcribe {
+            // Merge the supplied sub-object over what's on disk so a
+            // caller that only sends { enabled: true } doesn't wipe the
+            // existing command / language.
+            let at_key = serde_yaml::Value::String("auto_transcribe".into());
+            let mut sub = match m.remove(&at_key) {
+                Some(serde_yaml::Value::Mapping(sub)) => sub,
+                _ => serde_yaml::Mapping::new(),
+            };
+            if let Some(enabled) = at.get("enabled").and_then(|v| v.as_bool()) {
+                sub.insert(
+                    serde_yaml::Value::String("enabled".into()),
+                    serde_yaml::Value::Bool(enabled),
+                );
+            }
+            if let Some(cmd) = at.get("command").and_then(|v| v.as_str()) {
+                if cmd.trim().is_empty() {
+                    sub.remove(&serde_yaml::Value::String("command".into()));
+                } else {
+                    sub.insert(
+                        serde_yaml::Value::String("command".into()),
+                        serde_yaml::Value::String(cmd.to_string()),
+                    );
+                }
+            }
+            if let Some(lang) = at.get("language").and_then(|v| v.as_str()) {
+                if lang.trim().is_empty() {
+                    sub.remove(&serde_yaml::Value::String("language".into()));
+                } else {
+                    sub.insert(
+                        serde_yaml::Value::String("language".into()),
+                        serde_yaml::Value::String(lang.to_string()),
+                    );
+                }
+            }
+            if !sub.is_empty() {
+                m.insert(at_key, serde_yaml::Value::Mapping(sub));
             }
         }
         break;
@@ -3965,6 +4083,101 @@ fn delete_channel(plugin: &str, instance: &str) -> Result<String, String> {
         json_escape(plugin),
         json_escape(instance)
     ))
+}
+
+/// Update the `credentials:` block on an agent. The agent file is
+/// located in `config/agents.yaml` or `config/agents.d/<id>.yaml`;
+/// both are searched and the first match wins. Supported channel
+/// keys right now: `telegram`, `whatsapp`, `google`. An empty-string
+/// value removes the binding; omitted keys leave the current value
+/// intact.
+fn pin_agent_credentials(id: &str, body: &str) -> Result<String, String> {
+    if id.is_empty() {
+        return Err("agent id is required".into());
+    }
+    if !id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err("agent id must be [a-zA-Z0-9_-]+".into());
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| format!("invalid JSON: {e}"))?;
+
+    // Locate the file + index in its agents[] sequence that owns this
+    // agent id.
+    let candidates: Vec<String> = {
+        let mut out: Vec<String> = vec!["./config/agents.yaml".to_string()];
+        if let Ok(dir) = std::fs::read_dir("./config/agents.d") {
+            for entry in dir.flatten() {
+                let p = entry.path();
+                let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if !name.ends_with(".yaml") || name.ends_with(".example.yaml") {
+                    continue;
+                }
+                out.push(p.display().to_string());
+            }
+        }
+        out.sort();
+        out
+    };
+
+    for path in candidates {
+        let Ok(buf) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let mut parsed: serde_yaml::Value = match serde_yaml::from_str(&buf) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let agents = match parsed.get_mut("agents").and_then(|a| a.as_sequence_mut()) {
+            Some(s) => s,
+            None => continue,
+        };
+        let target_idx = agents.iter().position(|a| {
+            a.get("id").and_then(|v| v.as_str()) == Some(id)
+        });
+        let Some(idx) = target_idx else { continue };
+        let agent_map = agents[idx]
+            .as_mapping_mut()
+            .ok_or_else(|| format!("{path}: agent '{id}' is not a mapping"))?;
+
+        let creds_key = serde_yaml::Value::String("credentials".into());
+        let mut creds = match agent_map.remove(&creds_key) {
+            Some(serde_yaml::Value::Mapping(m)) => m,
+            _ => serde_yaml::Mapping::new(),
+        };
+
+        for channel in ["telegram", "whatsapp", "google"] {
+            if let Some(val) = v.get(channel).and_then(|x| x.as_str()) {
+                let key = serde_yaml::Value::String(channel.into());
+                if val.trim().is_empty() {
+                    creds.remove(&key);
+                } else {
+                    creds.insert(
+                        key,
+                        serde_yaml::Value::String(val.trim().to_string()),
+                    );
+                }
+            }
+        }
+
+        if !creds.is_empty() {
+            agent_map.insert(creds_key, serde_yaml::Value::Mapping(creds));
+        }
+
+        let out =
+            serde_yaml::to_string(&parsed).map_err(|e| format!("serialise: {e}"))?;
+        std::fs::write(&path, out).map_err(|e| format!("write {path}: {e}"))?;
+
+        return Ok(format!(
+            "{{\"ok\":true,\"agent_id\":\"{}\",\"source_file\":\"{}\"}}",
+            json_escape(id),
+            json_escape(&path)
+        ));
+    }
+
+    Err(format!("agent '{id}' not found in agents.yaml or agents.d/"))
 }
 
 fn json_escape(s: &str) -> String {
