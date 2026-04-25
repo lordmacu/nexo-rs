@@ -493,8 +493,10 @@ mod tests {
             description: String::new(),
             google_auth: None,
             credentials: Default::default(),
+            link_understanding: serde_json::Value::Null,
             language: None,
             outbound_allowlist: OutboundAllowlistConfig::default(),
+            context_optimization: None,
         }
     }
 

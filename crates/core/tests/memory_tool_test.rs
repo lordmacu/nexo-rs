@@ -51,7 +51,9 @@ async fn memory_recall_records_events_for_every_hit() -> anyhow::Result<()> {
         outbound_allowlist: Default::default(),
         google_auth: None,
         credentials: Default::default(),
+        link_understanding: serde_json::Value::Null,
             language: None,
+        context_optimization: None,
     });
     let broker = AnyBroker::local();
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));

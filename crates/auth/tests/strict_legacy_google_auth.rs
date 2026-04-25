@@ -25,6 +25,8 @@ fn agent_with_inline_google(id: &str) -> AgentConfig {
         workspace: String::new(),
         skills: vec![],
         skills_dir: "./skills".into(),
+        skill_overrides: Default::default(),
+        link_understanding: serde_json::Value::Null,
         transcripts_dir: String::new(),
         dreaming: Default::default(),
         workspace_git: Default::default(),
@@ -47,6 +49,7 @@ fn agent_with_inline_google(id: &str) -> AgentConfig {
         outbound_allowlist: OutboundAllowlistConfig::default(),
         credentials: AgentCredentialsConfig::default(),
         language: None,
+        context_optimization: None,
     }
 }
 

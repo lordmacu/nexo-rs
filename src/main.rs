@@ -4615,7 +4615,9 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         google_auth: primary.google_auth.clone(),
         outbound_allowlist: primary.outbound_allowlist.clone(),
         credentials: primary.credentials.clone(),
+        link_understanding: serde_json::Value::Null,
         language: primary.language.clone(),
+        context_optimization: None,
     });
     let broker = AnyBroker::local();
     let sessions = Arc::new(SessionManager::new(std::time::Duration::from_secs(300), 20));

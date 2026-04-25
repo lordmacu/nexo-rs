@@ -93,6 +93,7 @@ fn base_agent() -> AgentConfig {
         outbound_allowlist: OutboundAllowlistConfig::default(),
         google_auth: None,
         credentials: Default::default(),
+        link_understanding: serde_json::Value::Null,
             language: None,
         inbound_bindings: vec![InboundBinding {
             plugin: "whatsapp".into(),
@@ -100,6 +101,7 @@ fn base_agent() -> AgentConfig {
             sender_rate_limit: SenderRateLimitOverride::default(),
             ..Default::default()
         }],
+        context_optimization: None,
     }
 }
 

@@ -42,7 +42,9 @@ fn agent_cfg() -> Arc<AgentConfig> {
         outbound_allowlist: Default::default(),
         google_auth: None,
         credentials: Default::default(),
+        link_understanding: serde_json::Value::Null,
             language: None,
+        context_optimization: None,
     })
 }
 
