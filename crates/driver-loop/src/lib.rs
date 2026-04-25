@@ -15,7 +15,10 @@ pub mod prompt;
 pub mod socket;
 pub mod workspace;
 
-pub use acceptance::{AcceptanceEvaluator, NoopAcceptanceEvaluator};
+pub use acceptance::{
+    AcceptanceEvaluator, CustomVerifier, CustomVerifierRegistry, DefaultAcceptanceEvaluator,
+    GitClean, NoPathsTouched, NoopAcceptanceEvaluator, ShellResult, ShellRunner,
+};
 pub use config::{
     AcceptanceConfig, BindingStoreConfig, BindingStoreKind, DeciderConfig, DriverBinConfig,
     DriverConfig, PermissionConfig, WorkspaceConfig,

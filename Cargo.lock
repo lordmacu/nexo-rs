@@ -2270,6 +2270,7 @@ dependencies = [
  "nexo-driver-permission",
  "nexo-driver-types",
  "nexo-llm",
+ "regex",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -2280,6 +2281,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "which",
 ]
 
 [[package]]
