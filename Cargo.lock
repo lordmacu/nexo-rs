@@ -2127,7 +2127,7 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "nexo-auth"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2148,7 +2148,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-broker"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -2171,7 +2171,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-config"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "humantime-serde",
@@ -2184,7 +2184,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2230,7 +2230,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-extensions"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -2266,7 +2266,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-llm"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2296,7 +2296,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-mcp"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2331,7 +2331,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-memory"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2358,7 +2358,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-pairing"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2384,7 +2384,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-plugin-browser"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2409,11 +2409,11 @@ dependencies = [
 
 [[package]]
 name = "nexo-plugin-email"
-version = "0.1.1"
+version = "0.1.2"
 
 [[package]]
 name = "nexo-plugin-google"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2433,7 +2433,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-plugin-telegram"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2460,7 +2460,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-plugin-whatsapp"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2490,7 +2490,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-poller"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2550,7 +2550,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-resilience"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "thiserror 1.0.69",
  "tokio",
@@ -2604,7 +2604,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-setup"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2632,7 +2632,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-taskflow"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2651,7 +2651,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-tunnel"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2670,7 +2670,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-web-search"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "chrono",

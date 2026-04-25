@@ -18,9 +18,9 @@ categories    = { workspace = true }
 # core → poller → plugin-google → core).
 
 [dependencies]
-nexo-core = { version = "0.1.1", path = "../core" }
-nexo-llm = { version = "0.1.1", path = "../llm" }
-nexo-poller = { version = "0.1.1", path = "../poller" }
+nexo-core = { version = "0.1.2", path = "../core" }
+nexo-llm = { version = "0.1.2", path = "../llm" }
+nexo-poller = { version = "0.1.2", path = "../poller" }
 async-trait  = { workspace = true }
 serde_json   = { workspace = true }
 anyhow       = { workspace = true }
