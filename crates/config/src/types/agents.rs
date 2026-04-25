@@ -1,9 +1,28 @@
 use serde::Deserialize;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentsConfig {
     pub agents: Vec<AgentConfig>,
+}
+
+/// Skill dependency-failure mode. Skill authors set this in
+/// `requires.mode`; operators override it per-agent via
+/// `agents.<id>.skill_overrides`. Defined in `agent-config` rather
+/// than `agent-core` so the config layer can carry it without
+/// pulling in the runtime crate.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillDepsMode {
+    /// Default — skip the skill when any dep is missing.
+    #[default]
+    Strict,
+    /// Load anyway and prepend a `> ⚠️ MISSING DEPS …` banner so the
+    /// LLM knows the surface is degraded.
+    Warn,
+    /// Always skip, even if every dep is satisfied.
+    Disable,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -46,6 +65,10 @@ pub struct AgentConfig {
     /// process working directory. Default: `./skills`.
     #[serde(default = "default_skills_dir")]
     pub skills_dir: String,
+    /// Per-skill mode override. Takes precedence over the skill's
+    /// `requires.mode` frontmatter. Empty map by default.
+    #[serde(default)]
+    pub skill_overrides: BTreeMap<String, SkillDepsMode>,
     /// Optional directory for per-session JSONL transcripts. Kept separate
     /// from `workspace` because workspaces are typically git-committed while
     /// transcripts contain PII. Empty = transcripts disabled.

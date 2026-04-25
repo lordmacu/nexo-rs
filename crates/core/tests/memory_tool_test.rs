@@ -35,6 +35,7 @@ async fn memory_recall_records_events_for_every_hit() -> anyhow::Result<()> {
         workspace: String::new(),
         skills: vec![],
         skills_dir: "./skills".into(),
+            skill_overrides: Default::default(),
         transcripts_dir: String::new(),
         dreaming: Default::default(),
         workspace_git: Default::default(),

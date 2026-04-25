@@ -173,6 +173,175 @@ pub fn run(args: &[&str], timeout_secs: u64) -> Result<String, OpError> {
     Ok(stdout)
 }
 
+pub fn inject_command_allowlist() -> Vec<String> {
+    std::env::var("OP_INJECT_COMMAND_ALLOWLIST")
+        .ok()
+        .map(|s| {
+            s.split(',')
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+pub fn inject_timeout_secs() -> u64 {
+    std::env::var("OP_INJECT_TIMEOUT_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .filter(|v: &u64| *v > 0)
+        .map(|v| v.min(MAX_TIMEOUT_SECS))
+        .unwrap_or(30)
+}
+
+/// Extract every `op://Vault/Item/field` reference appearing inside
+/// `{{ ... }}` placeholders in a template. Used for both auditing
+/// and the `dry_run` validation path.
+pub fn extract_template_references(template: &str) -> Vec<String> {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r"\{\{\s*(op://[^\s}]+)\s*\}\}").expect("static regex compiles")
+    });
+    let mut out = Vec::new();
+    for cap in re.captures_iter(template) {
+        if let Some(m) = cap.get(1) {
+            out.push(m.as_str().to_string());
+        }
+    }
+    out
+}
+
+/// Run `op inject` reading the template from stdin, returning the
+/// rendered output on stdout.
+pub fn run_inject_template_only(template: &str, timeout_secs: u64) -> Result<String, OpError> {
+    let bin = bin_path()?;
+    let token = service_token()?;
+
+    let mut child = Command::new(&bin)
+        .args(["inject"])
+        .env("OP_SERVICE_ACCOUNT_TOKEN", token)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| OpError::SpawnFailed(e.to_string()))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        stdin
+            .write_all(template.as_bytes())
+            .map_err(|e| OpError::IoError(e.to_string()))?;
+    }
+
+    let (tx, rx) = mpsc::channel::<()>();
+    let child_id = child.id();
+    let timeout = Duration::from_secs(timeout_secs);
+    let watchdog = std::thread::spawn(move || {
+        if rx.recv_timeout(timeout).is_err() {
+            #[cfg(unix)]
+            unsafe {
+                kill(child_id as i32, 9);
+            }
+            return true;
+        }
+        false
+    });
+
+    let output = child
+        .wait_with_output()
+        .map_err(|e| OpError::IoError(e.to_string()))?;
+    let _ = tx.send(());
+    let killed = watchdog.join().unwrap_or(false);
+    if killed && !output.status.success() {
+        return Err(OpError::Timeout(timeout_secs));
+    }
+    if !output.status.success() {
+        return Err(OpError::NonZeroExit {
+            code: output.status.code(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        });
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// Result of a piped exec invocation.
+pub struct InjectExecResult {
+    pub exit_code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+    pub stdout_total_bytes: usize,
+    pub stdout_returned_bytes: usize,
+    pub stdout_truncated: bool,
+}
+
+/// Pipe `template` through `op inject` and feed its stdout to
+/// `<command> <args...>`. The downstream stdout/stderr are captured
+/// (stdout truncated to `cap_bytes`). The template is rendered in
+/// memory only — the caller never sees it.
+pub fn run_inject_with_command(
+    template: &str,
+    command: &str,
+    args: &[String],
+    cap_bytes: usize,
+    timeout_secs: u64,
+) -> Result<InjectExecResult, OpError> {
+    let rendered = run_inject_template_only(template, timeout_secs)?;
+    let mut child = Command::new(command)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| OpError::SpawnFailed(e.to_string()))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        stdin
+            .write_all(rendered.as_bytes())
+            .map_err(|e| OpError::IoError(e.to_string()))?;
+    }
+    let (tx, rx) = mpsc::channel::<()>();
+    let child_id = child.id();
+    let timeout = Duration::from_secs(timeout_secs);
+    let watchdog = std::thread::spawn(move || {
+        if rx.recv_timeout(timeout).is_err() {
+            #[cfg(unix)]
+            unsafe {
+                kill(child_id as i32, 9);
+            }
+            return true;
+        }
+        false
+    });
+    let output = child
+        .wait_with_output()
+        .map_err(|e| OpError::IoError(e.to_string()))?;
+    let _ = tx.send(());
+    let killed = watchdog.join().unwrap_or(false);
+    if killed && output.status.code().is_none() {
+        return Err(OpError::Timeout(timeout_secs));
+    }
+    let stdout_full = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr_full = String::from_utf8_lossy(&output.stderr).to_string();
+    let total = stdout_full.len();
+    let truncated = total > cap_bytes;
+    let stdout = if truncated {
+        let mut s: String = stdout_full.chars().take(cap_bytes).collect();
+        s.push_str("…[truncated]");
+        s
+    } else {
+        stdout_full
+    };
+    let stdout_returned_bytes = stdout.len();
+    Ok(InjectExecResult {
+        exit_code: output.status.code(),
+        stdout,
+        stderr: stderr_full,
+        stdout_total_bytes: total,
+        stdout_returned_bytes,
+        stdout_truncated: truncated,
+    })
+}
+
 /// Strict validator for `op://Vault/Item/field` references. Rejects
 /// wildcards, empty segments, and query strings.
 pub fn validate_ref(reference: &str) -> Result<(String, String, String), OpError> {

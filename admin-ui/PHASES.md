@@ -94,21 +94,23 @@ page.
 
 ### Telegram
 
-- [ ] **New Telegram channel** → step-by-step:
-  1. Paste Bot API token (validated via a `getMe` probe before
-     save)
-  2. Pick instance label (default `<agent>_bot`)
-  3. Select `allow_agents` (multi-select, defaults to the inviting
-     agent)
-  4. Optionally paste chat-id allowlist
-  5. Toggle auto-transcribe for voice messages
+- [x] **New Telegram channel** (`POST /api/channels/telegram`):
+  instance label, token, allow_agents. `getMe` probe validates the
+  token before save.
+- [x] **Delete channel** (`DELETE /api/channels/<plugin>/<instance>`)
+  drops the YAML entry. Secret token file stays on disk so
+  re-adding the same instance skips re-pasting the token.
+- [x] **Edit channel** (`PATCH /api/channels/telegram/<instance>`)
+  rotates token and/or swaps `allow_agents` in place; empty
+  token preserves the current `${file:...}` reference.
+- [ ] Chat-id allowlist editor (`allowlist.chat_ids`)
+- [ ] Auto-transcribe toggle for voice messages
 - [ ] Live status card: polling cadence, last update offset, last
   error, bridge timeouts in the past hour
 - [ ] **Pairing test**: "Send /ping to @yourbot" → UI waits for the
   webhook and flashes green
-- [ ] Edit form matches the shipped YAML 1:1; rewrites
-  `config/plugins/telegram.yaml` + the agent's
-  `credentials.telegram`
+- [ ] Per-agent `credentials.telegram` pinning from the channel
+  card (today only the plugin-side `allow_agents` gets written)
 
 ### WhatsApp
 
@@ -318,4 +320,17 @@ IOUs — features that landed in the daemon but have no UI yet.
   `redaction.extra_patterns`) — needs a Transcripts panel:
   redaction toggles, pattern editor with live regex validation,
   index size + reindex trigger
+- [ ] `agents.<id>.skill_overrides` + `requires.bin_versions` —
+  Skills tab needs per-skill mode picker (strict/warn/disable)
+  per agent, plus a constraint editor that probes the binary live
+  and shows current version vs required
+- [ ] 1Password inject command allowlist
+  (`OP_INJECT_COMMAND_ALLOWLIST`) + secrets audit log viewer
+  (`OP_AUDIT_LOG_PATH`) — Channels/Secrets panel needs an
+  allowlist editor with live syntax check and a JSONL tail with
+  filters by agent / session / action / ok-or-fail
+- [ ] Capability toggles surface — pull
+  `agent doctor capabilities --json`, render risk-coloured table,
+  surface env var name and paste-ready export hint per row;
+  warn on any `enabled` toggle so dangerous defaults are visible
 - [ ] (add lines as features land — see auto-memory rule)

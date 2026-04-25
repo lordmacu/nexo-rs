@@ -20,6 +20,7 @@
 //!
 //! See `src/services/` for the exhaustive service catalog.
 
+pub mod capabilities;
 pub mod credentials_check;
 pub mod prompt;
 pub mod registry;

@@ -267,6 +267,7 @@ mod tests {
             workspace: String::new(),
             skills: vec!["weather".into()],
             skills_dir: "./skills".into(),
+            skill_overrides: Default::default(),
             transcripts_dir: String::new(),
             dreaming: DreamingYamlConfig::default(),
             workspace_git: WorkspaceGitConfig::default(),
