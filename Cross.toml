@@ -1,0 +1,17 @@
+# cross-rs config — install libssl-dev:arm64 inside the docker image
+# so `openssl-sys` (transitively via `wa-agent` → tokio-tungstenite
+# native-tls) finds its system library on the aarch64 cross-build.
+# We can't disable the native-tls path because `wa-agent` is an
+# external crates.io dep we don't control; once it ships a `rustls`
+# feature, this whole file goes away.
+
+[target.aarch64-unknown-linux-gnu]
+pre-build = [
+    "dpkg --add-architecture arm64",
+    "apt-get update",
+    "apt-get install --assume-yes libssl-dev:arm64 pkg-config",
+]
+
+[target.aarch64-unknown-linux-gnu.env]
+PKG_CONFIG_ALLOW_CROSS = "1"
+PKG_CONFIG_PATH = "/usr/lib/aarch64-linux-gnu/pkgconfig"
