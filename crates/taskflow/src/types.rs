@@ -33,15 +33,15 @@ impl FlowStatus {
         if next == FlowStatus::Cancelled {
             return true; // any non-terminal → Cancelled
         }
-        match (self, next) {
-            (FlowStatus::Created, FlowStatus::Running) => true,
-            (FlowStatus::Running, FlowStatus::Waiting) => true,
-            (FlowStatus::Running, FlowStatus::Finished) => true,
-            (FlowStatus::Running, FlowStatus::Failed) => true,
-            (FlowStatus::Waiting, FlowStatus::Running) => true,
-            (FlowStatus::Waiting, FlowStatus::Failed) => true,
-            _ => false,
-        }
+        matches!(
+            (self, next),
+            (FlowStatus::Created, FlowStatus::Running)
+                | (FlowStatus::Running, FlowStatus::Waiting)
+                | (FlowStatus::Running, FlowStatus::Finished)
+                | (FlowStatus::Running, FlowStatus::Failed)
+                | (FlowStatus::Waiting, FlowStatus::Running)
+                | (FlowStatus::Waiting, FlowStatus::Failed)
+        )
     }
 
     pub fn as_str(&self) -> &'static str {

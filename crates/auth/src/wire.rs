@@ -223,8 +223,8 @@ pub fn build_credentials(
     let mut warnings: Vec<String> = wa_report
         .warnings
         .into_iter()
-        .chain(tg_report.warnings.into_iter())
-        .chain(g_report.warnings.into_iter())
+        .chain(tg_report.warnings)
+        .chain(g_report.warnings)
         .chain(legacy_warnings)
         .collect();
 
@@ -310,10 +310,7 @@ fn agent_to_input(agent: &AgentConfig) -> AgentCredentialsInput {
             _ => continue,
         };
         if let Some(ins) = &binding.instance {
-            inbound
-                .entry(channel)
-                .or_insert_with(Vec::new)
-                .push(ins.clone());
+            inbound.entry(channel).or_default().push(ins.clone());
         }
     }
 
@@ -355,7 +352,7 @@ pub fn reload_resolver(
                 instance: "<config>".into(),
                 source: crate::error::CredentialError::Unreadable {
                     path: config_dir.to_path_buf(),
-                    source: std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
+                    source: std::io::Error::other(e.to_string()),
                 },
             }])
         }
@@ -368,7 +365,7 @@ pub fn reload_resolver(
                 instance: "<google-auth.yaml>".into(),
                 source: crate::error::CredentialError::Unreadable {
                     path: config_dir.join("plugins/google-auth.yaml"),
-                    source: std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
+                    source: std::io::Error::other(e.to_string()),
                 },
             }])
         }

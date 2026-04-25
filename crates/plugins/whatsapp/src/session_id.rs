@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 /// Project-local namespace for WhatsApp session ids. Pinned — changing
 /// this invalidates every persisted conversation.
-const NAMESPACE: Uuid = Uuid::from_u128(0x7b3e_4d9a_5f21_4b73_9c8a_112233445566);
+const NAMESPACE: Uuid = Uuid::from_u128(0x7b3e_4d9a_5f21_4b73_9c8a_1122_3344_5566);
 
 /// Strip the Signal device suffix (`:N`) from a JID before hashing.
 fn bare(jid: &str) -> &str {

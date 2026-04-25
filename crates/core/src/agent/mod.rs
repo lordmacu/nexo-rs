@@ -1,3 +1,7 @@
+// Module name intentionally matches parent — `agent::agent::Agent` is the
+// canonical path for the aggregate type. Splitting the struct out of this
+// module would ripple through every `use agent_core::agent::Agent;`.
+#[allow(clippy::module_inception)]
 pub mod agent;
 pub mod agents_directory;
 pub mod behavior;

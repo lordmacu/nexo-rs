@@ -298,6 +298,7 @@ impl BotClient {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn send_audio(
         &self,
         chat_id: i64,
@@ -422,6 +423,7 @@ impl BotClient {
     }
 
     /// Shared backbone: URL / file_id variants go as JSON, local paths as multipart.
+    #[allow(clippy::too_many_arguments)]
     async fn send_media(
         &self,
         chat_id: i64,

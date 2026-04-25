@@ -370,9 +370,9 @@ async fn run_google_inner(config_dir: &Path, secrets_dir: &Path) -> Result<Outco
 }
 
 /// Phase 17 — device-code OAuth runner. Posts to
-/// `oauth2.googleapis.com/device/code`, prints the verification URL
-/// + user code for the operator, polls until approval, then writes
-/// the token JSON at `token_path` with mode 0o600. Headless-friendly.
+/// `oauth2.googleapis.com/device/code`, prints the verification URL +
+/// user code for the operator, polls until approval, then writes the
+/// token JSON at `token_path` with mode 0o600. Headless-friendly.
 async fn run_google_device_code(
     client_id: &str,
     client_secret: &str,

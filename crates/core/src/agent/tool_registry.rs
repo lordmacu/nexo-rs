@@ -8,9 +8,12 @@ use std::sync::Arc;
 pub trait ToolHandler: Send + Sync {
     async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value>;
 }
+/// `(schema, boxed handler)` pair keyed by tool name inside the registry.
+pub type HandlerEntry = (ToolDef, Arc<dyn ToolHandler>);
+
 #[derive(Default, Clone)]
 pub struct ToolRegistry {
-    handlers: Arc<DashMap<String, (ToolDef, Arc<dyn ToolHandler>)>>,
+    handlers: Arc<DashMap<String, HandlerEntry>>,
 }
 impl ToolRegistry {
     pub fn new() -> Self {

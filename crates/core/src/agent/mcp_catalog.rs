@@ -105,8 +105,7 @@ impl McpToolCatalog {
     }
     async fn build_inner(clients: Vec<Arc<dyn McpClient>>) -> Self {
         let futures: Vec<_> = clients
-            .iter()
-            .cloned()
+            .into_iter()
             .map(|c| async move {
                 let name = c.name().to_string();
                 let result = c.list_tools().await;

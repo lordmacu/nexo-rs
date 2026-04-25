@@ -109,10 +109,7 @@ pub fn print(summary: &Summary) {
         println!(
             "  Corrige los items anteriores antes de arrancar el daemon."
         );
-        println!(
-            "  Re-corre con:  agent --config {} --check-config",
-            "./config"
-        );
+        println!("  Re-corre con:  agent --config ./config --check-config");
     } else if summary.warnings.is_empty() {
         println!();
         println!("  ✔ credenciales OK.");

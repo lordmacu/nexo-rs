@@ -207,10 +207,7 @@ impl ExtensionDiscovery {
                     Err(e) => {
                         report.diagnostics.push(DiscoveryDiagnostic {
                             level: DiagnosticLevel::Warn,
-                            path: e
-                                .path()
-                                .map(|p| display_path(p))
-                                .unwrap_or_else(|| root.clone()),
+                            path: e.path().map(display_path).unwrap_or_else(|| root.clone()),
                             message: format!("walk error: {e}"),
                         });
                         continue;

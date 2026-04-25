@@ -386,26 +386,28 @@ async fn workspace_bundle_prepended_to_system_message() -> anyhow::Result<()> {
         .await
         .unwrap();
 
-    let reqs = captured.lock().unwrap();
-    let system = &reqs[0].messages[0];
-    assert_eq!(system.role, agent_llm::ChatRole::System);
-    let body = &system.content;
-    assert!(
-        body.contains("# IDENTITY"),
-        "IDENTITY block missing: {body}"
-    );
-    assert!(body.contains("name=Kate"));
-    assert!(body.contains("# SOUL"));
-    assert!(body.contains("have opinions"));
-    assert!(body.contains("# MEMORY"));
-    assert!(body.contains("Cristian prefers Spanish"));
-    // system_prompt must come after workspace blocks.
-    let soul_idx = body.find("# SOUL").unwrap();
-    let sp_idx = body.find("Always reply in the user's language").unwrap();
-    assert!(
-        sp_idx > soul_idx,
-        "system_prompt must come after workspace blocks"
-    );
+    {
+        let reqs = captured.lock().unwrap();
+        let system = &reqs[0].messages[0];
+        assert_eq!(system.role, agent_llm::ChatRole::System);
+        let body = &system.content;
+        assert!(
+            body.contains("# IDENTITY"),
+            "IDENTITY block missing: {body}"
+        );
+        assert!(body.contains("name=Kate"));
+        assert!(body.contains("# SOUL"));
+        assert!(body.contains("have opinions"));
+        assert!(body.contains("# MEMORY"));
+        assert!(body.contains("Cristian prefers Spanish"));
+        // system_prompt must come after workspace blocks.
+        let soul_idx = body.find("# SOUL").unwrap();
+        let sp_idx = body.find("Always reply in the user's language").unwrap();
+        assert!(
+            sp_idx > soul_idx,
+            "system_prompt must come after workspace blocks"
+        );
+    }
 
     tokio::fs::remove_dir_all(&tmp).await.ok();
     Ok(())
@@ -475,23 +477,25 @@ async fn skills_loaded_between_workspace_and_system_prompt() -> anyhow::Result<(
         .await
         .unwrap();
 
-    let reqs = captured.lock().unwrap();
-    let body = &reqs[0].messages[0].content;
-    assert!(body.contains("# SOUL"));
-    assert!(body.contains("# SKILLS"));
-    assert!(body.contains("## weather"));
-    assert!(body.contains("Use this skill for weather requests only."));
-    let soul_idx = body.find("# SOUL").unwrap();
-    let skills_idx = body.find("# SKILLS").unwrap();
-    let prompt_idx = body.find("Always answer in Spanish.").unwrap();
-    assert!(
-        skills_idx > soul_idx,
-        "skills block must come after workspace"
-    );
-    assert!(
-        prompt_idx > skills_idx,
-        "system_prompt must come after skills"
-    );
+    {
+        let reqs = captured.lock().unwrap();
+        let body = &reqs[0].messages[0].content;
+        assert!(body.contains("# SOUL"));
+        assert!(body.contains("# SKILLS"));
+        assert!(body.contains("## weather"));
+        assert!(body.contains("Use this skill for weather requests only."));
+        let soul_idx = body.find("# SOUL").unwrap();
+        let skills_idx = body.find("# SKILLS").unwrap();
+        let prompt_idx = body.find("Always answer in Spanish.").unwrap();
+        assert!(
+            skills_idx > soul_idx,
+            "skills block must come after workspace"
+        );
+        assert!(
+            prompt_idx > skills_idx,
+            "system_prompt must come after skills"
+        );
+    }
 
     tokio::fs::remove_dir_all(&workspace).await.ok();
     tokio::fs::remove_dir_all(&skills_root).await.ok();
@@ -557,13 +561,15 @@ async fn workspace_memory_skipped_when_source_is_peer_agent() -> anyhow::Result<
     msg.sender_id = Some("peer-agent".into());
     behavior.on_message(&ctx, msg).await.unwrap();
 
-    let reqs = captured.lock().unwrap();
-    let body = &reqs[0].messages[0].content;
-    assert!(body.contains("# SOUL"), "SOUL.md should still be present");
-    assert!(
-        !body.contains("PRIVATE: user's bank info"),
-        "MEMORY.md must not leak via peer-agent delegation"
-    );
+    {
+        let reqs = captured.lock().unwrap();
+        let body = &reqs[0].messages[0].content;
+        assert!(body.contains("# SOUL"), "SOUL.md should still be present");
+        assert!(
+            !body.contains("PRIVATE: user's bank info"),
+            "MEMORY.md must not leak via peer-agent delegation"
+        );
+    }
 
     tokio::fs::remove_dir_all(&tmp).await.ok();
     Ok(())

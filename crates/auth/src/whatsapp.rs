@@ -106,9 +106,10 @@ impl CredentialStore for WhatsappCredentialStore {
     }
 
     fn validate(&self) -> ValidationReport {
-        let mut report = ValidationReport::default();
-        report.accounts_ok = self.accounts.len();
-        report
+        ValidationReport {
+            accounts_ok: self.accounts.len(),
+            ..Default::default()
+        }
     }
 }
 

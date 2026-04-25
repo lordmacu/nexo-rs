@@ -25,9 +25,11 @@ use super::tool_registry::ToolRegistry;
 /// the same `Arc<DashMap>` — so callers can hold one instance per
 /// runtime and pass it into every session without worrying about
 /// synchronising setup.
+type CacheKey = (String, Option<usize>);
+
 #[derive(Clone, Default)]
 pub struct ToolRegistryCache {
-    entries: Arc<DashMap<(String, Option<usize>), Arc<ToolRegistry>>>,
+    entries: Arc<DashMap<CacheKey, Arc<ToolRegistry>>>,
 }
 
 impl ToolRegistryCache {
