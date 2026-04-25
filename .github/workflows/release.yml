@@ -53,13 +53,18 @@ jobs:
         if: matrix.cross
         run: cargo install cross --locked --version ^0.2
 
+      - name: Cargo fetch (seed deps before --frozen build)
+        run: cargo fetch --target ${{ matrix.target }}
+
       - name: Build agent binary
         shell: bash
         run: |
+          # --frozen: use Cargo.lock as-is; don't try to update it.
+          # We seeded deps above via `cargo fetch`, so this works offline.
           if [[ "${{ matrix.cross }}" == "true" ]]; then
-            cross build --release --bin agent --locked --target ${{ matrix.target }}
+            cross build --release --bin agent --frozen --target ${{ matrix.target }}
           else
-            cargo build --release --bin agent --locked --target ${{ matrix.target }}
+            cargo build --release --bin agent --frozen --target ${{ matrix.target }}
           fi
 
       - name: Package archive
