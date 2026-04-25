@@ -112,6 +112,13 @@ pub struct PollContext {
     /// pagination) should `tokio::select!` on this so reload doesn't
     /// hang behind a stuck request.
     pub cancel: CancellationToken,
+    /// Phase 20 — LLM access for the `agent_turn` built-in (and any
+    /// future module that needs to call a model). `None` when the
+    /// runner was not wired with `with_llm` at boot — modules MUST
+    /// surface a clean `PollerError::Config` in that case rather than
+    /// panicking.
+    pub llm_registry: Option<Arc<agent_llm::LlmRegistry>>,
+    pub llm_config: Option<Arc<agent_config::LlmConfig>>,
 }
 
 /// What a module returns on a successful tick.

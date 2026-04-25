@@ -908,12 +908,23 @@ async fn main() -> Result<()> {
             let state_db = std::path::PathBuf::from(&pcfg.state_db);
             match agent_poller::PollState::open(&state_db).await {
                 Ok(state) => {
-                    let runner = Arc::new(agent_poller::PollerRunner::new(
-                        pcfg,
-                        Arc::new(state),
-                        broker.clone(),
-                        bundle,
-                    ));
+                    // Phase 20 — feed the LLM registry + config into
+                    // the runner so the `agent_turn` built-in can build
+                    // clients on demand. Other built-ins (gmail, rss,
+                    // webhook) ignore the field — wiring it
+                    // unconditionally keeps the boot path uniform.
+                    let runner = Arc::new(
+                        agent_poller::PollerRunner::new(
+                            pcfg,
+                            Arc::new(state),
+                            broker.clone(),
+                            bundle,
+                        )
+                        .with_llm(
+                            Arc::new(LlmRegistry::with_builtins()),
+                            Arc::new(cfg.llm.clone()),
+                        ),
+                    );
                     agent_poller::builtins::register_all(&runner);
 
                     // Phase 19 follow-up — register extension-provided
