@@ -464,8 +464,22 @@ mod tests {
         }
     }
 
+    // std Mutex held across await is intentional — see body.
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn metrics_tap_records_ttft_and_chunk_kinds() {
+        // Share the test lock with `telemetry::tests` so a parallel
+        // `reset_for_test()` from those tests cannot wipe our metrics
+        // mid-render. Keeps the assertion deterministic without
+        // poisoning the global Mutex.
+        //
+        // Held across `.await` — safe because this is a std Mutex (not
+        // Tokio's), holding it blocks the thread at `.await` but we
+        // never call `.await` on a future that touches TEST_LOCK.
+        let _guard = crate::telemetry::TEST_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        crate::telemetry::reset_for_test();
         let provider = "zz_stream_metrics_probe";
         let stream = stream_metrics_tap(
             ok_chunks(vec![

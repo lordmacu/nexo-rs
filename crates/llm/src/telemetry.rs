@@ -159,12 +159,16 @@ pub fn render_prometheus() -> String {
     out
 }
 
+/// Serializes every test that touches the global telemetry state
+/// (telemetry::tests + stream::tests both reset / observe / render).
+/// Without this, parallel tests trip over `reset_for_test` clearing
+/// the maps mid-render and one Mutex panic poisons the rest.
+#[cfg(test)]
+pub(crate) static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn contains_line(haystack: &str, needle: &str) -> bool {
         haystack.lines().any(|line| line == needle)
@@ -172,7 +176,7 @@ mod tests {
 
     #[test]
     fn render_stream_metrics_and_escaping() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         reset_for_test();
         observe_stream_ttft_ms("openai", 120);
         observe_stream_ttft_ms("openai", 920);
@@ -201,7 +205,7 @@ mod tests {
 
     #[test]
     fn render_empty_series_when_no_samples() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         reset_for_test();
         let body = render_prometheus();
         assert!(contains_line(

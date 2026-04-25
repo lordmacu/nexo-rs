@@ -188,6 +188,17 @@ fn make_msg(session_id: Uuid, plugin: &str) -> InboundMessage {
     m
 }
 
+/// `make_msg` variant without a `sender_id`. The behavior injects a
+/// `# CONTEXTO DEL CANAL` System block whenever a sender id is present
+/// — tests focused on system_prompt assembly use this builder so the
+/// channel-context block doesn't show up in their assertions.
+fn make_msg_no_sender(session_id: Uuid, plugin: &str) -> InboundMessage {
+    let mut m = InboundMessage::new(session_id, "test-agent", "hello");
+    m.source_plugin = plugin.to_string();
+    m.sender_id = None;
+    m
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 // Spy that captures every ChatRequest sent to it. Used to assert prompt shape.
@@ -258,8 +269,11 @@ async fn system_prompt_prepended_to_llm_request() {
         Arc::new(ToolRegistry::new()),
     );
 
+    // No sender_id so the behavior's '# CONTEXTO DEL CANAL' block
+    // doesn't append; this test is specifically asserting the
+    // system_prompt assembly path.
     behavior
-        .on_message(&ctx, make_msg(Uuid::new_v4(), "whatsapp"))
+        .on_message(&ctx, make_msg_no_sender(Uuid::new_v4(), "whatsapp"))
         .await
         .unwrap();
 
@@ -286,8 +300,11 @@ async fn empty_system_prompt_emits_no_system_message() {
         Arc::new(ToolRegistry::new()),
     );
 
+    // Same rationale as the test above: skip the channel-context
+    // block by feeding a message with no sender_id, so this test is
+    // strictly about the empty system_prompt path.
     behavior
-        .on_message(&ctx, make_msg(Uuid::new_v4(), "whatsapp"))
+        .on_message(&ctx, make_msg_no_sender(Uuid::new_v4(), "whatsapp"))
         .await
         .unwrap();
 
