@@ -216,7 +216,7 @@ expose yet.
 
 ---
 
-## Phase A6 — Extensions / skills / MCP   ⬜
+## Phase A6 — Extensions / skills / MCP   🔄
 
 ### Extensions
 
@@ -226,14 +226,18 @@ expose yet.
 
 ### MCP — admin surface
 
-- [ ] **MCP server manager** (CRUD on `config/mcp.yaml`):
-  - List: every server with transport (stdio/http), command/url,
-    headers (Bearer redacted), live status (handshake ok / failed /
-    spawning), tool count
-  - Add: form with stdio command+args+env or http url+headers, hot-
-    reload trigger via `POST /api/reload`
-  - Edit: rotate token / swap args, same form pre-filled
-  - Delete: drop entry + reload
+- [x] **MCP server manager** (CRUD on `config/mcp.yaml`):
+  - [x] List: every server with transport (stdio/http), command/url,
+    headers, log_level, context_passthrough override
+  - [x] Add: form with stdio command+args+env or http url+headers
+  - [x] Edit: rotate token / swap args, same form pre-filled
+  - [x] Delete: drop entry from `mcp.servers`
+  - [ ] Header value redaction in list view (Bearer / Authorization)
+  - [ ] Live status pill (handshake ok / failed / spawning) — gated
+    on the "Live status of MCP children" daemon work below
+  - [ ] Tool count per server — gated on tool catalog telemetry
+  - [ ] Hot-reload trigger via `POST /api/reload` (today an operator
+    must restart the daemon or set `mcp.watch.enabled: true`)
 - [ ] `agent mcp-server` on/off toggle (writes
   `config/mcp_server.yaml::enabled`) with live link + copy snippet
   for Claude Desktop JSON config (same shape doc'd in
@@ -399,4 +403,18 @@ IOUs — features that landed in the daemon but have no UI yet.
   with hot-reload. Phase A6
 - [ ] **MCP live status** — per-spawned-server handshake / latency /
   last error. Phase A6 + needs new endpoint
+- [ ] **`llm.context_optimization`** — four kill-switches
+  (`prompt_cache`, `compaction`, `token_counter`, `workspace_cache`)
+  per agent + global. Phase A3 "Brain" tab needs the override matrix
+  (toggle per agent, inherits from global default). Phase A4 dashboard
+  needs:
+  - cache hit-ratio gauge per agent (`llm_cache_read_tokens_total` ÷
+    sum of read+creation+input)
+  - compaction history viewer (`compactions_v1` rows: when, how many
+    head turns folded, summary text, token cost) with a "rebuild from
+    audit" debug action
+  - prompt-token drift histogram per agent
+    (`llm_prompt_tokens_drift{agent,provider,model}`) so operators can
+    spot when an approximate counter is misjudging the budget
+  - workspace cache hit/miss/invalidation counters per workspace path
 - [ ] (add lines as features land — see auto-memory rule)

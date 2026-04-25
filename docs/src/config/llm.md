@@ -102,3 +102,10 @@ auth:
 - **Setting both `api_key` and `auth.mode: oauth_bundle`.** The auth
   mode wins. The `api_key` is kept as a fallback for tools that bypass
   the OAuth path.
+
+## Input-token reduction (`context_optimization`)
+
+Four independent kill switches for prompt caching, online history
+compaction, pre-flight token counting, and the workspace bundle
+cache. Full schema, defaults, and rollout guidance in
+[Operations → Context optimization](../ops/context-optimization.md).
