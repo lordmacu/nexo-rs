@@ -125,6 +125,61 @@ static LLM_CACHE_TURNS: LazyLock<DashMap<LlmKey, AtomicU64>> = LazyLock::new(Das
 /// `status` is one of `"ok" | "disabled" | "invalid"`.
 static EXTENSIONS_DISCOVERED: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
 
+/// Phase 21 follow-up (L-1) — link-understanding fetch outcome counter.
+/// `result` is one of `"ok" | "blocked" | "timeout" | "non_html" | "too_big" | "error"`.
+static LINK_FETCH_TOTAL: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
+/// Phase 21 follow-up (L-1) — cache-hit counter. `hit` is `"true" | "false"`.
+static LINK_CACHE_TOTAL: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
+/// Phase 21 follow-up (L-1) — per-fetch latency histogram (single series,
+/// no labels — keeps cardinality flat; the result counter already
+/// segments outcomes).
+static LINK_FETCH_DURATION: LazyLock<Histogram> = LazyLock::new(Histogram::new);
+
+/// Bump the link-understanding fetch counter for `result`. Call from
+/// the extractor on every HTTP attempt (cache hits use
+/// [`inc_link_cache`] instead).
+pub fn inc_link_fetch(result: &str) {
+    LINK_FETCH_TOTAL
+        .entry(result.to_string())
+        .or_insert_with(|| AtomicU64::new(0))
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Bump the link-understanding cache counter. `hit=true` for a TTL-fresh
+/// cache return, `hit=false` for a miss (about to fetch).
+pub fn inc_link_cache(hit: bool) {
+    let label = if hit { "true" } else { "false" };
+    LINK_CACHE_TOTAL
+        .entry(label.to_string())
+        .or_insert_with(|| AtomicU64::new(0))
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Observe a link-understanding fetch duration in milliseconds.
+/// Recorded for every fetch attempt that actually issued the HTTP
+/// request — cache hits and host-blocked URLs never reach the
+/// network and would distort the histogram.
+pub fn observe_link_fetch_ms(duration_ms: u64) {
+    LINK_FETCH_DURATION.observe(duration_ms);
+}
+
+/// Test helper — read a fetch counter for a given outcome.
+pub fn link_fetch_total(result: &str) -> u64 {
+    LINK_FETCH_TOTAL
+        .get(result)
+        .map(|v| v.value().load(Ordering::Relaxed))
+        .unwrap_or(0)
+}
+
+/// Test helper — read a cache counter for a given hit value.
+pub fn link_cache_total(hit: bool) -> u64 {
+    let label = if hit { "true" } else { "false" };
+    LINK_CACHE_TOTAL
+        .get(label)
+        .map(|v| v.value().load(Ordering::Relaxed))
+        .unwrap_or(0)
+}
+
 pub fn inc_messages_processed_total(agent_id: &str) {
     MESSAGES_PROCESSED
         .entry(agent_id.to_string())
@@ -412,6 +467,8 @@ pub fn reset_for_test() {
     TOOL_LATENCY.clear();
     TOOL_CACHE_EVENTS.clear();
     EXTENSIONS_DISCOVERED.clear();
+    LINK_FETCH_TOTAL.clear();
+    LINK_CACHE_TOTAL.clear();
     CONFIG_RELOAD_APPLIED.store(0, Ordering::Relaxed);
     CONFIG_RELOAD_REJECTED.store(0, Ordering::Relaxed);
     RUNTIME_CONFIG_VERSION.clear();
@@ -636,6 +693,67 @@ pub fn render_prometheus(fallback_nats_open: bool) -> String {
                 "nexo_tool_latency_ms_count{{agent=\"{agent}\",tool=\"{tool}\"}} {count}\n"
             ));
         }
+    }
+
+    out.push_str("# HELP nexo_link_understanding_fetch_total Link-understanding fetch outcomes by result.\n");
+    out.push_str("# TYPE nexo_link_understanding_fetch_total counter\n");
+    if LINK_FETCH_TOTAL.is_empty() {
+        out.push_str("nexo_link_understanding_fetch_total{result=\"\"} 0\n");
+    } else {
+        let mut rows: Vec<(String, u64)> = LINK_FETCH_TOTAL
+            .iter()
+            .map(|e| (e.key().clone(), e.value().load(Ordering::Relaxed)))
+            .collect();
+        rows.sort_by(|a, b| a.0.cmp(&b.0));
+        for (result, v) in rows {
+            out.push_str(&format!(
+                "nexo_link_understanding_fetch_total{{result=\"{}\"}} {}\n",
+                escape(&result),
+                v
+            ));
+        }
+    }
+
+    out.push_str("# HELP nexo_link_understanding_cache_total Link-understanding cache lookups by hit.\n");
+    out.push_str("# TYPE nexo_link_understanding_cache_total counter\n");
+    if LINK_CACHE_TOTAL.is_empty() {
+        out.push_str("nexo_link_understanding_cache_total{hit=\"\"} 0\n");
+    } else {
+        let mut rows: Vec<(String, u64)> = LINK_CACHE_TOTAL
+            .iter()
+            .map(|e| (e.key().clone(), e.value().load(Ordering::Relaxed)))
+            .collect();
+        rows.sort_by(|a, b| a.0.cmp(&b.0));
+        for (hit, v) in rows {
+            out.push_str(&format!(
+                "nexo_link_understanding_cache_total{{hit=\"{}\"}} {}\n",
+                escape(&hit),
+                v
+            ));
+        }
+    }
+
+    out.push_str("# HELP nexo_link_understanding_fetch_duration_ms Per-fetch latency histogram.\n");
+    out.push_str("# TYPE nexo_link_understanding_fetch_duration_ms histogram\n");
+    {
+        let h = &*LINK_FETCH_DURATION;
+        for (idx, upper) in LATENCY_BUCKET_LIMITS_MS.iter().enumerate() {
+            out.push_str(&format!(
+                "nexo_link_understanding_fetch_duration_ms_bucket{{le=\"{upper}\"}} {}\n",
+                h.buckets[idx].load(Ordering::Relaxed)
+            ));
+        }
+        let count = h.count.load(Ordering::Relaxed);
+        out.push_str(&format!(
+            "nexo_link_understanding_fetch_duration_ms_bucket{{le=\"+Inf\"}} {count}\n"
+        ));
+        out.push_str(&format!(
+            "nexo_link_understanding_fetch_duration_ms_sum {}\n",
+            h.sum_ms.load(Ordering::Relaxed)
+        ));
+        out.push_str(&format!(
+            "nexo_link_understanding_fetch_duration_ms_count {count}\n"
+        ));
     }
 
     out.push_str("# HELP circuit_breaker_state Circuit breaker state (0=closed,1=open).\n");

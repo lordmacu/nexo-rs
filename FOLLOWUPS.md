@@ -65,17 +65,15 @@ H-1. **CircuitBreaker missing on Telegram + Google plugins**
 
 ### Phase 21 — Link understanding
 
-L-1. **Telemetry counters for link fetches**
-- Missing: `link_understanding_fetch_total{result}` (ok / blocked /
-  timeout / non-html / too-big), `link_understanding_cache_total{hit}`
-  (true / false), and a per-fetch latency histogram. Doc page in
-  `docs/src/ops/link-understanding.md` already advertises "no
-  telemetry counter wired yet".
-- Why deferred: feature is opt-in and currently unused in any
-  shipped agent; metrics surface area can grow once a real workload
-  exercises it.
-- Target: alongside Phase A4 admin-ui dashboard work, or earlier if
-  an agent enables `link_understanding` in production.
+L-1. ~~**Telemetry counters for link fetches**~~  ✅ shipped
+- `nexo_link_understanding_fetch_total{result}` (ok / blocked /
+  timeout / non_html / too_big / error),
+  `nexo_link_understanding_cache_total{hit}` (true / false), and a
+  single-series `nexo_link_understanding_fetch_duration_ms` histogram
+  emitted from `crates/core/src/link_understanding.rs::fetch`.
+  Counters update on every fetch attempt; the histogram only fires
+  when an HTTP request actually went out (cache hits and host-blocked
+  URLs skip it to keep latency stats honest).
 
 L-2. **`readability`-style extraction**
 - Missing: the current extractor strips `<script>`/`<style>` and

@@ -77,7 +77,16 @@ hits skip the fetch but still render the block.
   256) is built at boot and reused by every agent runtime in the
   process.
 - Cache is in-process only. Restarts cold.
-- No telemetry counter wired yet — follows in a later phase.
+- Telemetry exported on `/metrics`:
+  - `nexo_link_understanding_fetch_total{result="ok|blocked|timeout|non_html|too_big|error"}`
+    — counter, one increment per fetch attempt.
+  - `nexo_link_understanding_cache_total{hit="true|false"}` — counter,
+    incremented on every TTL-cached lookup so dashboards can compute
+    hit-rate without instrumenting the agent loop.
+  - `nexo_link_understanding_fetch_duration_ms` — histogram (single
+    series, no labels). Only observed for attempts that actually
+    issued an HTTP request — cache hits and host-blocked URLs skip it
+    so latency percentiles reflect real network work.
 
 ## When to leave it off
 
