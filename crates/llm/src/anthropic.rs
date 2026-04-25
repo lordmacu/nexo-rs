@@ -505,6 +505,7 @@ fn to_chat_response(resp: AnthropicResponse) -> ChatResponse {
         content,
         usage,
         finish_reason,
+        cache_usage: None,
     }
 }
 
@@ -705,7 +706,10 @@ mod tests {
             system_prompt: Some("you are helpful".into()),
             stop_sequences: vec!["END".into()],
             tool_choice: ToolChoice::Auto,
+            system_blocks: Vec::new(),
+            cache_tools: false,
         }
+    
     }
 
     #[test]
@@ -820,6 +824,9 @@ mod tests {
             system_prompt: None,
             stop_sequences: Vec::new(),
             tool_choice: ToolChoice::Auto,
+        
+            system_blocks: Vec::new(),
+            cache_tools: false,
         };
         let body = build_body("claude-sonnet-4", &r);
         let content = &body["messages"][0]["content"];
@@ -852,6 +859,9 @@ mod tests {
             system_prompt: None,
             stop_sequences: Vec::new(),
             tool_choice: ToolChoice::Auto,
+        
+            system_blocks: Vec::new(),
+            cache_tools: false,
         };
         let body = build_body("claude-sonnet-4", &r);
         let content = &body["messages"][0]["content"];
@@ -927,6 +937,9 @@ mod tests {
             system_prompt: None,
             stop_sequences: Vec::new(),
             tool_choice: ToolChoice::Auto,
+        
+            system_blocks: Vec::new(),
+            cache_tools: false,
         };
         let err = validate_request(&r).unwrap_err();
         assert!(
@@ -965,6 +978,9 @@ mod tests {
             system_prompt: Some("ok".into()),
             stop_sequences: Vec::new(),
             tool_choice: ToolChoice::Auto,
+        
+            system_blocks: Vec::new(),
+            cache_tools: false,
         };
         assert!(validate_request(&r).is_ok());
     }

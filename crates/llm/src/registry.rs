@@ -172,6 +172,7 @@ mod tests {
                 max_backoff_ms: 1,
                 backoff_multiplier: 1.0,
             },
+            context_optimization: Default::default(),
         }
     }
 

@@ -19,6 +19,7 @@ impl LlmClient for NoEmbedProvider {
             content: ResponseContent::Text("ok".into()),
             usage: TokenUsage::default(),
             finish_reason: FinishReason::Stop,
+            cache_usage: None,
         })
     }
     fn model_id(&self) -> &str {

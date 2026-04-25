@@ -661,6 +661,8 @@ fn parse_openai_response(raw: MiniMaxResponse) -> anyhow::Result<ChatResponse> {
             content: ResponseContent::ToolCalls(calls),
             usage,
             finish_reason: FinishReason::ToolUse,
+        
+            cache_usage: None,
         });
     }
 
@@ -679,6 +681,8 @@ fn parse_openai_response(raw: MiniMaxResponse) -> anyhow::Result<ChatResponse> {
         content: ResponseContent::Text(text),
         usage,
         finish_reason,
+    
+        cache_usage: None,
     })
 }
 
@@ -868,6 +872,8 @@ fn parse_anthropic_response(raw: AnthropicResponse) -> anyhow::Result<ChatRespon
             content: ResponseContent::ToolCalls(tool_calls),
             usage,
             finish_reason: FinishReason::ToolUse,
+        
+            cache_usage: None,
         });
     }
 
@@ -875,6 +881,8 @@ fn parse_anthropic_response(raw: AnthropicResponse) -> anyhow::Result<ChatRespon
         content: ResponseContent::Text(text_parts.join("")),
         usage,
         finish_reason,
+    
+        cache_usage: None,
     })
 }
 
@@ -931,6 +939,9 @@ mod tests {
             temperature: 0.7,
             stop_sequences: Vec::new(),
             tool_choice: Default::default(),
+        
+            system_blocks: Vec::new(),
+            cache_tools: false,
         };
         let body = build_anthropic_body(&req);
         assert_eq!(body["system"], "be helpful");
@@ -954,6 +965,9 @@ mod tests {
             temperature: 0.0,
             stop_sequences: Vec::new(),
             tool_choice: Default::default(),
+        
+            system_blocks: Vec::new(),
+            cache_tools: false,
         };
         let body = build_anthropic_body(&req);
         assert_eq!(body["tools"][0]["name"], "weather");
@@ -993,6 +1007,9 @@ mod tests {
             temperature: 0.0,
             stop_sequences: Vec::new(),
             tool_choice: Default::default(),
+        
+            system_blocks: Vec::new(),
+            cache_tools: false,
         };
         let body = build_openai_body(&req);
         let content = &body["messages"][0]["content"];
@@ -1026,6 +1043,9 @@ mod tests {
             temperature: 0.0,
             stop_sequences: Vec::new(),
             tool_choice: Default::default(),
+        
+            system_blocks: Vec::new(),
+            cache_tools: false,
         };
         let body = build_anthropic_body(&req);
         let content = &body["messages"][0]["content"];

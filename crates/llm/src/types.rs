@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::prompt_block::PromptBlock;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ChatRole {
@@ -190,6 +192,18 @@ pub struct ChatRequest {
     /// Constraint on which tool (if any) the model should call. Providers
     /// that don't map this cleanly default to `Auto`.
     pub tool_choice: ToolChoice,
+    /// Optional structured system prompt with explicit cache breakpoints.
+    /// When non-empty, providers that support prompt caching materialize
+    /// each block with its `CachePolicy`. When empty, providers fall back
+    /// to the legacy flat `system_prompt: Option<String>`. Both fields can
+    /// be set simultaneously — providers join `system_prompt` after the
+    /// blocks (uncached) for back-compat with callers that mix the two.
+    pub system_blocks: Vec<PromptBlock>,
+    /// When true and `tools` is non-empty, providers that support prompt
+    /// caching apply `cache_control` (long TTL) to the tool catalog. The
+    /// `system_blocks` path turns this on automatically; raw callers can
+    /// flip it explicitly.
+    pub cache_tools: bool,
 }
 
 impl ChatRequest {
@@ -203,6 +217,8 @@ impl ChatRequest {
             system_prompt: None,
             tool_choice: ToolChoice::Auto,
             stop_sequences: Vec::new(),
+            system_blocks: Vec::new(),
+            cache_tools: false,
         }
     }
 }
@@ -212,6 +228,43 @@ pub struct ChatResponse {
     pub content: ResponseContent,
     pub usage: TokenUsage,
     pub finish_reason: FinishReason,
+    /// Provider-reported prompt-caching counters, when available.
+    /// `None` for providers without caching, or when the response did
+    /// not include cache fields (cache disabled or first-write turn).
+    pub cache_usage: Option<CacheUsage>,
+}
+
+/// Prompt-cache accounting returned by the provider after a request.
+/// Used for telemetry (`llm_cache_read_tokens_total`, hit-ratio gauge)
+/// and to make billing predictable in dashboards.
+///
+/// Field semantics (Anthropic-aligned, generalized):
+/// * `cache_read_input_tokens` — tokens served from cache at 0.1× cost.
+/// * `cache_creation_input_tokens` — tokens written to cache at 1.25×
+///   (5min) or 2× (1h) cost on this turn.
+/// * `input_tokens` — uncached input tokens billed at base rate.
+/// * `output_tokens` — completion tokens (mirrors `TokenUsage` for
+///   provider clients that fill both atomically).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CacheUsage {
+    pub cache_read_input_tokens: u32,
+    pub cache_creation_input_tokens: u32,
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+}
+
+impl CacheUsage {
+    /// Cache hit ratio for this turn: `read / (read + creation + uncached_input)`.
+    /// Returns 0.0 when no input tokens were billed.
+    pub fn hit_ratio(&self) -> f32 {
+        let denom = self.cache_read_input_tokens
+            + self.cache_creation_input_tokens
+            + self.input_tokens;
+        if denom == 0 {
+            return 0.0;
+        }
+        self.cache_read_input_tokens as f32 / denom as f32
+    }
 }
 
 #[derive(Debug, Clone)]

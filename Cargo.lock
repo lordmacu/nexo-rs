@@ -56,11 +56,11 @@ dependencies = [
  "agent-mcp",
  "agent-memory",
  "agent-plugin-browser",
- "agent-plugin-gmail-poller",
  "agent-plugin-google",
  "agent-plugin-telegram",
  "agent-plugin-whatsapp",
  "agent-poller",
+ "agent-poller-ext",
  "agent-poller-tools",
  "agent-setup",
  "agent-taskflow",
@@ -168,12 +168,15 @@ dependencies = [
  "jsonschema",
  "notify",
  "notify-debouncer-full",
+ "regex",
  "reqwest",
+ "semver",
  "serde",
  "serde_json",
  "serde_urlencoded",
  "serde_yaml",
  "sha2",
+ "sqlx",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
@@ -337,24 +340,6 @@ name = "agent-plugin-email"
 version = "0.1.0"
 
 [[package]]
-name = "agent-plugin-gmail-poller"
-version = "0.1.0"
-dependencies = [
- "agent-broker",
- "agent-config",
- "agent-plugin-google",
- "anyhow",
- "base64",
- "regex",
- "serde",
- "serde_json",
- "serde_yaml",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "agent-plugin-google"
 version = "0.1.0"
 dependencies = [
@@ -458,6 +443,22 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "agent-poller-ext"
+version = "0.1.0"
+dependencies = [
+ "agent-auth",
+ "agent-extensions",
+ "agent-llm",
+ "agent-poller",
+ "anyhow",
+ "async-trait",
+ "base64",
+ "serde",
+ "serde_json",
  "tracing",
 ]
 

@@ -189,6 +189,7 @@ mod tests {
         LlmConfig {
             providers: std::collections::HashMap::new(),
             retry: Default::default(),
+            context_optimization: Default::default(),
         }
     }
 
