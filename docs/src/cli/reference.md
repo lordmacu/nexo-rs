@@ -296,6 +296,7 @@ dashboard:
 | `/admin/agents` | GET | `127.0.0.1:9091` | List every agent (JSON) |
 | `/admin/agents/<id>` | GET | `127.0.0.1:9091` | Single agent (JSON) |
 | `/admin/tool-policy` | GET | `127.0.0.1:9091` | Tool policy queries |
+| `/admin/credentials/reload` | POST | `127.0.0.1:9091` | Phase 17 — re-read agents/plugins YAML and atomically swap the credential resolver. Returns `ReloadOutcome` JSON. See [`config/credentials.md`](../config/credentials.md#hot-reload-no-daemon-restart). |
 | `/health` | GET | `0.0.0.0:8080` | Liveness probe |
 | `/ready` | GET | `0.0.0.0:8080` | Readiness probe |
 | `/metrics` | GET | `0.0.0.0:9090` | Prometheus |
