@@ -45,6 +45,7 @@ pub mod tool_registry;
 pub mod tool_registry_cache;
 pub mod transcripts;
 pub mod types;
+pub mod compaction;
 pub mod prompt_assembly;
 pub mod workspace;
 pub mod workspace_cache;

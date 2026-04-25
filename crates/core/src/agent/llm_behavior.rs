@@ -60,6 +60,49 @@ pub struct LlmAgentBehavior {
     /// vs the provider's reported total. When `None`, counting is
     /// skipped entirely (zero overhead).
     token_counter: Option<Arc<dyn agent_llm::TokenCounter>>,
+    /// Phase B — online history compaction. All three must be wired
+    /// together (compactor + store + runtime config). When any is
+    /// missing, the compaction path is silently skipped — the agent
+    /// loop falls back to the legacy "send the whole history" mode.
+    compactor: Option<Arc<super::compaction::LlmCompactor>>,
+    compaction_store: Option<Arc<agent_memory::CompactionStore>>,
+    compaction_runtime: CompactionRuntime,
+}
+
+/// Phase B — flattened compaction config that the agent loop reads on
+/// every turn. Lives alongside the behavior so a hot-reload can swap
+/// the whole struct via `Arc::make_mut` later (Phase F).
+#[derive(Debug, Clone)]
+pub struct CompactionRuntime {
+    pub enabled: bool,
+    /// Trigger threshold in tokens. When the pre-flight estimate
+    /// crosses this, run compaction before the request.
+    pub compact_at_tokens: u32,
+    /// Minimum tail to preserve verbatim, in chars (≈4 chars/token).
+    /// `find_safe_boundary` walks from the end until reaching this.
+    pub tail_keep_chars: usize,
+    /// Per-tool-result hard cap, in chars. Above this, the body is
+    /// replaced by a `[truncated NNN bytes]` marker pre-send.
+    pub tool_result_max_chars: usize,
+    /// Lock TTL for `CompactionStore::try_acquire_lock`. Above this
+    /// after a crash, the next acquire wins automatically.
+    pub lock_ttl_seconds: u32,
+    /// Override of the summary model. Empty = reuse the agent's main
+    /// model.
+    pub summarizer_model: String,
+}
+
+impl Default for CompactionRuntime {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            compact_at_tokens: 75_000,
+            tail_keep_chars: 80_000, // ≈20K tokens
+            tool_result_max_chars: 60_000, // ≈15K tokens; per-turn pre-send only
+            lock_ttl_seconds: 300,
+            summarizer_model: String::new(),
+        }
+    }
 }
 impl LlmAgentBehavior {
     pub fn new(llm: Arc<dyn LlmClient>, tools: Arc<ToolRegistry>) -> Self {
@@ -75,7 +118,27 @@ impl LlmAgentBehavior {
             workspace_cache: None,
             prompt_cache_enabled: false,
             token_counter: None,
+            compactor: None,
+            compaction_store: None,
+            compaction_runtime: CompactionRuntime::default(),
         }
+    }
+    /// Phase B — wire the online compactor. All three handles must be
+    /// supplied together; passing `enabled: true` in `runtime` without
+    /// the wiring is a no-op (logged on first turn so the gap is
+    /// visible). `summarizer` is the LLM client used to produce the
+    /// summary itself — most operators reuse the agent's main model;
+    /// pass a dedicated cheaper client to save spend.
+    pub fn with_compaction(
+        mut self,
+        summarizer: Arc<dyn LlmClient>,
+        store: Arc<agent_memory::CompactionStore>,
+        runtime: CompactionRuntime,
+    ) -> Self {
+        self.compactor = Some(Arc::new(super::compaction::LlmCompactor::new(summarizer)));
+        self.compaction_store = Some(store);
+        self.compaction_runtime = runtime;
+        self
     }
     /// Phase C — attach a `TokenCounter`. Boot time pick this from
     /// `agent_llm::token_counter::build()` based on
@@ -504,8 +567,146 @@ impl LlmAgentBehavior {
             }
         }
         session.push(Interaction::new(Role::User, &msg.text));
-        // Build message list: historical prefix + current session turns
+
+        // Phase B — pre-flight compaction trigger. Only runs when the
+        // compactor is wired AND enabled in runtime config. Estimates
+        // the would-be request size (system blocks + history); when
+        // it exceeds `compact_at_tokens`, runs the summarizer on
+        // `history[..tail_start]`, persists an audit row, and replaces
+        // the head with a stored summary. The summary then gets
+        // injected into `messages` below as a user/assistant pair so
+        // role alternation stays valid for Anthropic.
+        if self.compaction_runtime.enabled
+            && self.compactor.is_some()
+            && self.compaction_store.is_some()
+        {
+            let est = if let Some(counter) = self.token_counter.as_ref() {
+                let blocks_n = counter.count_blocks(&system_blocks).await.unwrap_or(0);
+                let hist_msgs: Vec<ChatMessage> = session
+                    .history
+                    .iter()
+                    .filter_map(|i| match i.role {
+                        Role::User => Some(ChatMessage::user(&i.content)),
+                        Role::Assistant => Some(ChatMessage::assistant(&i.content)),
+                        Role::Tool => None,
+                    })
+                    .collect();
+                let msg_n = counter
+                    .count_messages(&effective.model.model, &hist_msgs)
+                    .await
+                    .unwrap_or(0);
+                blocks_n.saturating_add(msg_n)
+            } else {
+                0
+            };
+            if est >= self.compaction_runtime.compact_at_tokens {
+                if let Some(boundary) =
+                    super::compaction::find_safe_boundary(&session.history, self.compaction_runtime.tail_keep_chars)
+                {
+                    let store = self.compaction_store.as_ref().unwrap();
+                    let acquired = store
+                        .try_acquire_lock(
+                            session.id,
+                            &format!("pid:{}", std::process::id()),
+                            self.compaction_runtime.lock_ttl_seconds,
+                        )
+                        .await
+                        .unwrap_or(false);
+                    if acquired {
+                        let started = std::time::Instant::now();
+                        let model = if self.compaction_runtime.summarizer_model.is_empty() {
+                            effective.model.model.clone()
+                        } else {
+                            self.compaction_runtime.summarizer_model.clone()
+                        };
+                        let budget = super::compaction::CompactionBudget {
+                            target_tokens: self.compaction_runtime.compact_at_tokens,
+                            tail_keep_tokens: (self.compaction_runtime.tail_keep_chars / 4) as u32,
+                            model: model.clone(),
+                        };
+                        let result = self
+                            .compactor
+                            .as_ref()
+                            .unwrap()
+                            .compact(&session.history, boundary, &budget)
+                            .await;
+                        let elapsed_ms = started.elapsed().as_millis() as u64;
+                        match result {
+                            Ok(r) => {
+                                let row = agent_memory::CompactionRow {
+                                    session_id: session.id.to_string(),
+                                    compacted_at: chrono::Utc::now().timestamp_millis(),
+                                    head_turn_count: r.head_turns_summarized as i64,
+                                    tail_start_index: r.tail_start_index as i64,
+                                    summary: r.summary.clone(),
+                                    model_used: model,
+                                    input_tokens: r.input_tokens as i64,
+                                    output_tokens: r.output_tokens as i64,
+                                };
+                                if let Err(e) = store.insert(&row).await {
+                                    tracing::warn!(
+                                        error = %e,
+                                        session_id = %session.id,
+                                        "compaction succeeded but persist failed; \
+                                         applying anyway and continuing"
+                                    );
+                                }
+                                session.apply_compaction(r.summary, r.tail_start_index);
+                                crate::telemetry::observe_compaction(
+                                    &ctx.agent_id,
+                                    "ok",
+                                    elapsed_ms,
+                                );
+                                tracing::info!(
+                                    session_id = %session.id,
+                                    head_turns = r.head_turns_summarized,
+                                    duration_ms = elapsed_ms,
+                                    "compaction applied"
+                                );
+                            }
+                            Err(e) => {
+                                crate::telemetry::observe_compaction(
+                                    &ctx.agent_id,
+                                    "failed",
+                                    elapsed_ms,
+                                );
+                                tracing::warn!(
+                                    error = %e,
+                                    session_id = %session.id,
+                                    "compaction failed — continuing with original history"
+                                );
+                            }
+                        }
+                        let _ = store.release_lock(session.id).await;
+                    } else {
+                        crate::telemetry::observe_compaction(&ctx.agent_id, "lock_held", 0);
+                        tracing::debug!(
+                            session_id = %session.id,
+                            "compaction lock held by another holder; skipping"
+                        );
+                    }
+                } else {
+                    crate::telemetry::observe_compaction(&ctx.agent_id, "no_boundary", 0);
+                }
+            }
+        }
+
+        // Build message list: historical prefix + compacted summary
+        // (when present) + current session turns.
         let mut messages: Vec<ChatMessage> = prefix_messages;
+        if let Some(summary) = session.compacted_summary.as_ref() {
+            // Inject as user/assistant pair so Anthropic's strict
+            // alternation rule never sees user-user. The synthetic
+            // ack tells the model the summary is authoritative
+            // context, not a fresh user request.
+            messages.push(ChatMessage::user(format!(
+                "<COMPACTED SUMMARY OF EARLIER TURNS>\n{}\n</COMPACTED SUMMARY>",
+                summary
+            )));
+            messages.push(ChatMessage::assistant(
+                "Got it — continuing from the summary above.",
+            ));
+        }
         messages.extend(session.history.iter().filter_map(|i| match i.role {
             Role::User => Some(ChatMessage::user(&i.content)),
             Role::Assistant => Some(ChatMessage::assistant(&i.content)),
@@ -587,7 +788,27 @@ impl LlmAgentBehavior {
         };
         let mut reply_text: Option<String> = None;
         for iteration in 0..self.max_tool_iterations {
-            let mut req = ChatRequest::new(&model, messages.clone());
+            // Phase B — tool-result truncation. Some tools (web fetch,
+            // SQL dump) return payloads big enough to blow the context
+            // window on their own. Replace anything past the cap with
+            // a marker before serializing the request. Operates on a
+            // local clone so the in-memory `messages` retains full
+            // detail for downstream introspection.
+            let mut messages_for_send = messages.clone();
+            if self.compaction_runtime.tool_result_max_chars > 0 {
+                let truncated = super::compaction::truncate_large_tool_results(
+                    &mut messages_for_send,
+                    self.compaction_runtime.tool_result_max_chars,
+                );
+                if truncated > 0 {
+                    crate::telemetry::observe_compaction(
+                        &ctx.agent_id,
+                        "tool_result_truncated",
+                        0,
+                    );
+                }
+            }
+            let mut req = ChatRequest::new(&model, messages_for_send);
             req.tools = filtered_tools.clone();
             // Phase A.2 — wire the structured prompt + tool catalog
             // caching opt-in. Provider clients that don't honor the

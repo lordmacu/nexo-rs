@@ -36,6 +36,12 @@ pub struct Session {
     pub created_at: DateTime<Utc>,
     pub last_access: DateTime<Utc>,
     max_history_turns: usize,
+    /// Phase B — when set, the rolling summary of turns that were
+    /// compacted out of `history`. The agent loop prepends it as a
+    /// system framing to every subsequent request so the model can
+    /// continue without losing the history that was folded away.
+    /// Cleared only when the session is reset.
+    pub compacted_summary: Option<String>,
 }
 
 impl Session {
@@ -53,7 +59,21 @@ impl Session {
             created_at: now,
             last_access: now,
             max_history_turns,
+            compacted_summary: None,
         }
+    }
+
+    /// Phase B — apply a compaction result. Drops `history[..tail_start]`
+    /// and stores the summary so subsequent turns prepend it as
+    /// system framing. The replaced range is gone from in-memory
+    /// history; the audit row in `compactions_v1` is the only
+    /// surviving copy.
+    pub fn apply_compaction(&mut self, summary: String, tail_start: usize) {
+        let cap = tail_start.min(self.history.len());
+        if cap > 0 {
+            self.history.drain(..cap);
+        }
+        self.compacted_summary = Some(summary);
     }
 
     /// Appends an interaction, trimming the oldest entry if history exceeds max_history_turns.
