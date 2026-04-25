@@ -315,18 +315,55 @@ Done when pushing `git tag v0.1.0 && git push --tags` produces
 a GH release with all 5 platform tarballs + sha256 sums within
 20 min.
 
-#### 27.3 — Cosign / sigstore signing
+#### 27.3 — Cosign / sigstore signing   🔄
 
-- Sign every tarball with sigstore keyless (OIDC via GH
-  Actions identity) to a Rekor transparency log.
-- Publish `*.sig` and `*.bundle` next to each tarball.
-- A `verify.sh` snippet in `docs/install/verify.md` showing how
-  an operator verifies a download.
-- Optional: a long-lived cosign key for the homebrew tap so
-  `brew` validates without OIDC chain.
+Image signing wired into the docker workflow (active now); binary
+artifact signing wired as a standalone workflow (active once Phase
+27.2 release.yml uploads assets); long-lived Homebrew bottle-key
+deferred to a follow-up.
 
-Done when an operator can `cosign verify-blob --bundle …
-nexo-rs.tar.gz` on a downloaded artifact and get green.
+Shipped:
+- `.github/workflows/docker.yml` extended with a
+  `sigstore/cosign-installer@v3` step + `cosign sign --yes
+  <tag>@<digest>` for every tag the workflow pushes. Keyless OIDC
+  via GitHub Actions identity (`https://token.actions.github
+  usercontent.com`) — no key material to manage. Each tag
+  verifies against the same content digest. `permissions:
+  id-token: write` already in place from Phase 27.5.
+- `.github/workflows/sign-artifacts.yml` (NEW) — `workflow_run`
+  triggered after the main release workflow completes a `v*`
+  build. Downloads every `*.deb` / `*.rpm` / `*.tar.gz` /
+  `nexo-*` asset from the release, runs `cosign sign-blob` with
+  `--bundle` + `--output-signature` + `--output-certificate`,
+  uploads the resulting `<asset>.sig`, `<asset>.bundle`,
+  `<asset>.pem` back to the same release with `gh release
+  upload --clobber`. `workflow_dispatch` input lets operators
+  re-sign an old release on demand.
+- `docs/src/getting-started/verify.md` (NEW) — one-page operator
+  guide: why keyless (no long-lived key), how to install Cosign
+  per OS, how to verify a Docker image (`cosign verify
+  ghcr.io/...`), how to verify a downloaded asset
+  (`cosign verify-blob --bundle`), CI-side verification snippet
+  for deploy pipelines, how to inspect the Rekor transparency
+  log, common failure modes, and what's still out of scope (PGP
+  keys for apt/yum repos — Phase 27.4 follow-up; bottle-signing
+  for Homebrew — Phase 27.6 follow-up).
+- `docs/src/SUMMARY.md` registers the new page.
+
+Deferred:
+- A long-lived Cosign key for the Homebrew tap so `brew install`
+  can validate without the OIDC chain (sigstore-go isn't in
+  Homebrew's tooling yet). Tracked under 27.6.
+- Auto-attestation that signs SBOMs + provenance separately from
+  the image (today they ride together via
+  `provenance: true, sbom: true` in the image build). Phase 27.9
+  delivers separate attestation files.
+
+Done when (revised): an operator can `cosign verify
+ghcr.io/lordmacu/nexo-rs:<tag>` AND `cosign verify-blob
+--bundle <asset>.bundle <asset>` and both pass against the
+public Rekor log. Image side passes now; blob side activates
+when 27.2 lands the release workflow.
 
 #### 27.4 — Debian + RPM packages   🔄
 

@@ -11,6 +11,7 @@
 - [Nix flake](./getting-started/install-nix.md)
 - [Quick start](./getting-started/quickstart.md)
 - [Setup wizard](./getting-started/setup-wizard.md)
+- [Verifying releases](./getting-started/verify.md)
 
 # Architecture
 
