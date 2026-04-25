@@ -1072,6 +1072,93 @@ async fn main() -> Result<()> {
         tracing::info!("transcripts redaction active");
     }
 
+    // Phase context-optimization wiring — built once per process and
+    // shared across agent runtimes.
+    //
+    // - WorkspaceCache: pre-loads + watches every distinct workspace
+    //   directory declared by any agent. Empty when no agent has a
+    //   workspace; in that case the cache is `None` and the legacy
+    //   per-turn `WorkspaceLoader` path runs unchanged.
+    // - CompactionStore: opens (or creates) `compactions.db` next to
+    //   the long-term memory file so backups + permissions follow the
+    //   same operator convention. Always built — agents that never opt
+    //   into compaction simply never touch it.
+    let workspace_cache: Option<Arc<agent_core::agent::workspace_cache::WorkspaceCache>> = {
+        let cfg_co = &cfg.llm.context_optimization.workspace_cache;
+        if !cfg_co.enabled {
+            None
+        } else {
+            let mut roots: Vec<std::path::PathBuf> = Vec::new();
+            for a in &cfg.agents.agents {
+                let ws = a.workspace.trim();
+                if ws.is_empty() {
+                    continue;
+                }
+                let p = std::path::PathBuf::from(ws);
+                if !roots.iter().any(|r| r == &p) && p.exists() {
+                    roots.push(p);
+                }
+            }
+            if roots.is_empty() {
+                None
+            } else {
+                match agent_core::agent::workspace_cache::WorkspaceCache::new(
+                    &roots,
+                    cfg_co.watch_debounce_ms,
+                    cfg_co.max_age_seconds,
+                ) {
+                    Ok(c) => {
+                        tracing::info!(
+                            roots = roots.len(),
+                            debounce_ms = cfg_co.watch_debounce_ms,
+                            "workspace cache enabled"
+                        );
+                        Some(c)
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "workspace cache init failed; falling back to per-turn reads");
+                        None
+                    }
+                }
+            }
+        }
+    };
+    let compaction_store: Option<Arc<agent_memory::CompactionStore>> = {
+        let memory_dir = cfg
+            .memory
+            .long_term
+            .sqlite
+            .as_ref()
+            .map(|s| {
+                std::path::Path::new(&s.path)
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| std::path::PathBuf::from("./data"))
+            })
+            .unwrap_or_else(|| std::path::PathBuf::from("./data"));
+        if let Err(e) = std::fs::create_dir_all(&memory_dir) {
+            tracing::warn!(
+                dir = %memory_dir.display(),
+                error = %e,
+                "compaction store: failed to ensure parent dir; skipping"
+            );
+            None
+        } else {
+            let path = memory_dir.join("compactions.db");
+            let path_str = path.display().to_string();
+            match agent_memory::CompactionStore::open(&path_str).await {
+                Ok(s) => {
+                    tracing::info!(path = %path_str, "compaction store ready");
+                    Some(Arc::new(s))
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "compaction store init failed; compaction will be unavailable");
+                    None
+                }
+            }
+        }
+    };
+
     for agent_cfg in cfg.agents.agents {
         let agent_id = agent_cfg.id.clone();
         let dream_yaml = agent_cfg.dreaming.clone();
@@ -1629,6 +1716,81 @@ async fn main() -> Result<()> {
                 schema_validation = enabled,
                 "tool schema validator attached"
             );
+        }
+        // Phase context-optimization — wire the four mechanisms onto
+        // the behavior. Per-agent overrides ride on `agent_cfg.context_optimization`;
+        // each enable inherits from `cfg.llm.context_optimization` when
+        // None on the override.
+        let resolved_co = agent_config::types::llm::ResolvedContextOptimization::resolve(
+            &cfg.llm.context_optimization,
+            agent_cfg.context_optimization.as_ref(),
+        );
+        if resolved_co.workspace_cache {
+            if let Some(ref wc) = workspace_cache {
+                behavior = behavior.with_workspace_cache(Arc::clone(wc));
+            }
+        }
+        if resolved_co.prompt_cache {
+            behavior = behavior.with_prompt_cache(true);
+        }
+        if resolved_co.token_counter {
+            // Resolve the provider config the agent's LLM was built
+            // against; the API key + base URL are needed to wire the
+            // exact-counts backend. Falls back silently when the
+            // provider entry is missing — the build() helper degrades
+            // to tiktoken in that case.
+            if let Some(prov_cfg) = cfg.llm.providers.get(&agent_cfg.model.provider) {
+                let counter = agent_llm::token_counter::build(
+                    &cfg.llm.context_optimization.token_counter.backend,
+                    &agent_cfg.model.provider,
+                    &prov_cfg.base_url,
+                    &prov_cfg.api_key,
+                    cfg.llm.context_optimization.token_counter.cache_capacity,
+                );
+                tracing::info!(
+                    agent = %agent_id,
+                    backend = counter.backend(),
+                    exact = counter.is_exact(),
+                    "token counter attached"
+                );
+                behavior = behavior.with_token_counter(counter);
+            }
+        }
+        if resolved_co.compaction {
+            if let Some(ref store) = compaction_store {
+                let cfg_compaction = &cfg.llm.context_optimization.compaction;
+                // Convert pct-of-window to a tokens threshold. We use
+                // a conservative 100K effective window when no model
+                // metadata is available — operators can tune the pct
+                // to compensate.
+                let effective_window: f32 = 100_000.0;
+                let runtime = agent_core::agent::llm_behavior::CompactionRuntime {
+                    enabled: true,
+                    compact_at_tokens: (cfg_compaction.compact_at_pct * effective_window) as u32,
+                    tail_keep_chars: (cfg_compaction.tail_keep_tokens as usize) * 4,
+                    tool_result_max_chars: (cfg_compaction.tool_result_max_pct
+                        * effective_window
+                        * 4.0) as usize,
+                    lock_ttl_seconds: cfg_compaction.lock_ttl_seconds,
+                    summarizer_model: cfg_compaction.summarizer_model.clone(),
+                };
+                // Compactor reuses the same LLM client as the agent
+                // by default; operators can ship a dedicated lighter
+                // model later by adding a per-provider lookup.
+                let summarizer = llm_registry
+                    .build(&cfg.llm, &agent_cfg.model)
+                    .with_context(|| {
+                        format!(
+                            "compaction wiring: failed to build summarizer LLM for {agent_id}"
+                        )
+                    })?;
+                behavior = behavior.with_compaction(summarizer, Arc::clone(store), runtime);
+                tracing::info!(
+                    agent = %agent_id,
+                    compact_at_tokens = cfg_compaction.compact_at_pct * effective_window,
+                    "compaction wired"
+                );
+            }
         }
         let agent = Arc::new(Agent::new(agent_cfg, behavior));
 
