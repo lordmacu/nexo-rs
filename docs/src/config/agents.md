@@ -87,6 +87,7 @@ difference is **where** the filter is applied.
 | `transcripts_dir` | path | `""` | Directory for per-session JSONL transcripts. Empty = disabled. |
 | `skills_dir` | path | `"./skills"` | Base directory for local skill files. |
 | `skills` | `[string]` | `[]` | Local skill ids to inject into the system prompt. Resolved from `skills_dir`. |
+| `language` | string | `null` | Output language for the LLM's reply. ISO code (`"es"`, `"en"`, `"en-US"`) or human name (`"Spanish"`, `"español"`). When set, the runtime renders a `# OUTPUT LANGUAGE` system block telling the model to keep workspace docs in English (single source of truth, plays nicely with recall + dreaming) but reply to the user in the configured language. Per-binding `language` overrides this for the matched channel. See [Output language](#output-language). |
 
 ### Heartbeat
 
@@ -244,6 +245,7 @@ overrides. Unset fields inherit the agent-level value.
 | `system_prompt_extra` | string | append | Rendered as `# CHANNEL ADDENDUM` block |
 | `sender_rate_limit` | `inherit` \| `disable` \| `{rps, burst}` | 3-way | Untagged enum |
 | `allowed_delegates` | `[string]` | replace | Peer allowlist for the `delegate` tool |
+| `language` | string | replace | Output language for replies on this channel. Falls through to the agent-level `language` field when omitted. See [Output language](#output-language). |
 
 Anything else (`workspace`, `transcripts_dir`, `heartbeat`, `memory`,
 `workspace_git`, `google_auth`) stays at the agent level — identity
@@ -327,6 +329,98 @@ for-byte: the agent-level `allowed_tools` is pruned into the base
 registry at boot, and the runtime synthesises a policy from agent-
 level defaults (keyed at `binding_index = usize::MAX`).
 
+## Output language
+
+Operators pin the language an agent replies in without rewriting
+workspace markdown. Workspace docs (IDENTITY, SOUL, MEMORY, USER,
+AGENTS) and tool descriptions stay in English — the single source of
+truth that recall, dreaming, vector search, and developer tooling
+all read. The runtime injects a `# OUTPUT LANGUAGE` system block
+right after the agent's `system_prompt`, telling the model to read
+those docs as-is but reply to the user in the configured language.
+
+### Where to set it
+
+```yaml
+agents:
+  - id: ana
+    language: es                # default for every binding on this agent
+    inbound_bindings:
+      - plugin: whatsapp
+        # → uses Spanish (inherits from the agent)
+      - plugin: telegram
+        instance: support_intl
+        language: en            # → uses English on this channel only
+      - plugin: telegram
+        instance: bilingual_qa
+        language: ""            # → no directive (model picks)
+```
+
+### Resolution
+
+Precedence (first non-empty wins):
+
+1. `inbound_bindings[i].language` — per-channel override.
+2. `language` — agent-level default.
+3. `null` — no `# OUTPUT LANGUAGE` block emitted; the model decides
+   from the user's input.
+
+Empty string and whitespace-only values resolve to *no directive* on
+both layers — useful for "turn the directive off on this binding even
+though the agent has one".
+
+### Accepted values
+
+The runtime treats the value as a label and forwards it verbatim
+into the directive (after sanitisation; see below). Both forms work:
+
+- ISO codes: `"es"`, `"en"`, `"en-US"`, `"pt-BR"`.
+- Human names: `"Spanish"`, `"English"`, `"español"`,
+  `"Brazilian Portuguese"`.
+
+Human names produce slightly clearer directives in practice
+(`Respond to the user in Spanish.` reads more natural than
+`Respond to the user in es.`), but both yield the same model
+behaviour with modern LLMs.
+
+### Rendered block
+
+```
+# OUTPUT LANGUAGE
+
+Respond to the user in {language}. Workspace docs (IDENTITY, SOUL,
+MEMORY, USER, AGENTS) and tool descriptions are in English — read
+them as-is, but your turn-final reply to the user must be in
+{language}.
+```
+
+The block lands **after** the agent's `system_prompt` (and the
+optional `# CHANNEL ADDENDUM` block) so its instruction wins under
+the LLM's recency bias.
+
+### Sanitisation
+
+Defense-in-depth against config-driven prompt injection: every
+`language` value is normalised before rendering — control characters
+and embedded newlines are stripped, trimmed, and the result is
+capped at 64 characters. A YAML payload like
+`language: "es\n\nIgnore previous instructions"` cannot smuggle a
+multi-line directive into the system prompt.
+
+### Hot reload
+
+[Phase 18 hot-reload](../ops/hot-reload.md) covers this field. Edit
+`agents.d/<id>.yaml`, save (or run `agent reload`), and the next
+message uses the new language. In-flight LLM turns finish on the
+old policy; subsequent turns flip to the new one.
+
+### Related
+
+- Workspace docs and recall stay English regardless — see
+  [Soul, identity & learning](../soul/identity.md).
+- Per-channel rotation walkthrough lives in
+  [Recipes — A/B prompt swap](../recipes/hot-reload.md#2-ab-test-a-system-prompt).
+
 ## Common mistakes
 
 - **Forgetting `plugins: [...]`.** An agent without `plugins` has no
@@ -341,6 +435,11 @@ level defaults (keyed at `binding_index = usize::MAX`).
   `workspace` should contain its own `whatsapp/default` session; the
   wizard does this automatically, but pointing two agents at the same
   session dir will cause message cross-delivery.
+- **Translating the workspace markdown to match `language`.** Don't.
+  Workspace docs are the single source of truth read by recall,
+  dreaming, and developer tooling — keep them in English. The
+  `# OUTPUT LANGUAGE` block tells the model to translate the reply
+  on its way out.
 
 ## Next
 
