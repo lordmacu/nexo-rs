@@ -36,7 +36,9 @@ pub mod self_report;
 pub mod sender_rate_limit;
 pub mod session_logs_tool;
 pub mod skills;
+pub mod redaction;
 pub mod taskflow_tool;
+pub mod transcripts_index;
 pub mod tool_filter;
 pub mod tool_policy;
 pub mod tool_registry;
@@ -80,13 +82,17 @@ pub use noop::NoOpAgent;
 pub use peer_directory::{PeerDirectory, PeerSummary};
 pub use plugin::{Command, Plugin, Response};
 pub use rate_limit::{ToolRateLimitConfig, ToolRateLimiter, ToolRateLimitsConfig};
+pub use redaction::{RedactionReport, Redactor};
 pub use registry::PluginRegistry;
 pub use routing::{AgentMessage, AgentPayload, AgentRouter};
 pub use runtime::AgentRuntime;
 pub use schema_validator::ToolArgsValidator;
 pub use self_report::{MyStatsTool, WhatDoIKnowTool, WhoAmITool};
 pub use session_logs_tool::SessionLogsTool;
-pub use skills::{LoadedSkill, SkillLoader};
+pub use skills::{
+    BinVersionSpec, LoadedSkill, MissingVersion, SkillLoadAction, SkillLoadStatus, SkillLoader,
+    VersionFailReason,
+};
 pub use taskflow_tool::{TaskFlowTool, TaskFlowToolGuardrails};
 pub use tool_registry::{ToolHandler, ToolRegistry};
 pub use tool_registry_cache::ToolRegistryCache;
@@ -94,6 +100,7 @@ pub use transcripts::{
     SessionHeader, TranscriptEntry, TranscriptLine, TranscriptRole, TranscriptWriter,
     TRANSCRIPT_VERSION,
 };
+pub use transcripts_index::{IndexedHit, TranscriptsIndex};
 pub use types::{InboundMessage, RunTrigger};
 pub use workspace::{
     AgentIdentity, DailyNote, LoadLimits, SessionScope, WorkspaceBundle, WorkspaceLoader,

@@ -1,10 +1,12 @@
 use super::context::AgentContext;
 use super::tool_registry::ToolHandler;
 use super::transcripts::{SessionHeader, TranscriptEntry, TranscriptLine, TranscriptWriter};
+use super::transcripts_index::TranscriptsIndex;
 use agent_llm::ToolDef;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use uuid::Uuid;
 const DEFAULT_LIMIT: usize = 50;
 const MAX_LIMIT: usize = 500;
@@ -16,10 +18,16 @@ const DEFAULT_MAX_CHARS: usize = 200;
 /// The tool is scoped to `ctx.config.transcripts_dir` — it cannot see other
 /// agents' transcripts. Current-session access is allowed by default; other
 /// sessions are readable because they belong to the same agent owner.
-pub struct SessionLogsTool;
+pub struct SessionLogsTool {
+    index: Option<Arc<TranscriptsIndex>>,
+}
 impl SessionLogsTool {
     pub fn new() -> Self {
-        Self
+        Self { index: None }
+    }
+    pub fn with_index(mut self, index: Arc<TranscriptsIndex>) -> Self {
+        self.index = Some(index);
+        self
     }
     pub fn tool_def() -> ToolDef {
         ToolDef {
@@ -90,7 +98,11 @@ impl ToolHandler for SessionLogsTool {
                 let max_chars = optional_usize(&args, "max_chars")?
                     .unwrap_or(DEFAULT_MAX_CHARS)
                     .clamp(20, 4000);
-                search_sessions(&writer, &root, &query, limit, max_chars).await
+                if let Some(index) = self.index.as_ref() {
+                    search_via_fts(index, &ctx.agent_id, &query, limit).await
+                } else {
+                    search_sessions(&writer, &root, &query, limit, max_chars).await
+                }
             }
             "recent" => {
                 let id = match optional_string(&args, "session_id") {
@@ -217,6 +229,37 @@ async fn read_session(
         "entries": render_entries(&slice, max_chars),
     }))
 }
+async fn search_via_fts(
+    index: &TranscriptsIndex,
+    agent_id: &str,
+    query: &str,
+    limit: usize,
+) -> anyhow::Result<Value> {
+    let hits = index.search(agent_id, query, limit).await?;
+    let rows: Vec<Value> = hits
+        .into_iter()
+        .map(|h| {
+            let ts = chrono::DateTime::<chrono::Utc>::from_timestamp(h.timestamp_unix, 0)
+                .map(|d| d.to_rfc3339())
+                .unwrap_or_default();
+            json!({
+                "session_id": h.session_id.to_string(),
+                "timestamp": ts,
+                "role": h.role,
+                "source_plugin": h.source_plugin,
+                "preview": h.snippet,
+            })
+        })
+        .collect();
+    Ok(json!({
+        "ok": true,
+        "query": query,
+        "backend": "fts5",
+        "count": rows.len(),
+        "hits": rows,
+    }))
+}
+
 async fn search_sessions(
     writer: &TranscriptWriter,
     root: &Path,
@@ -390,6 +433,7 @@ mod tests {
             workspace: String::new(),
             skills: vec![],
             skills_dir: "./skills".into(),
+            skill_overrides: Default::default(),
             transcripts_dir: dir.to_string_lossy().to_string(),
             dreaming: Default::default(),
             workspace_git: Default::default(),
@@ -585,6 +629,7 @@ mod tests {
             workspace: String::new(),
             skills: vec![],
             skills_dir: "./skills".into(),
+            skill_overrides: Default::default(),
             transcripts_dir: String::new(), // empty!
             dreaming: Default::default(),
             workspace_git: Default::default(),
@@ -621,5 +666,50 @@ mod tests {
             .err()
             .unwrap();
         assert!(err.to_string().contains("unknown action"));
+    }
+
+    #[tokio::test]
+    async fn search_uses_fts_when_index_present() {
+        let (_tool_unused, ctx, dir, sid) = setup().await;
+        // Build index, write entries through the indexed writer.
+        let idx_path = dir.join("idx.db");
+        let index = std::sync::Arc::new(
+            crate::agent::transcripts_index::TranscriptsIndex::open(&idx_path)
+                .await
+                .unwrap(),
+        );
+        let writer = TranscriptWriter::with_extras(
+            &dir,
+            "kate",
+            std::sync::Arc::new(crate::agent::redaction::Redactor::disabled()),
+            Some(index.clone()),
+        );
+        for (role, content) in [
+            (TranscriptRole::User, "buscame el codigo secreto"),
+            (TranscriptRole::Assistant, "no comparto eso"),
+        ] {
+            writer
+                .append_entry(
+                    sid,
+                    TranscriptEntry {
+                        timestamp: chrono::Utc::now(),
+                        role,
+                        content: content.into(),
+                        message_id: None,
+                        source_plugin: "wa".into(),
+                        sender_id: None,
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        let tool = SessionLogsTool::new().with_index(index);
+        let out = tool
+            .call(&ctx, json!({"action": "search", "query": "codigo"}))
+            .await
+            .unwrap();
+        assert_eq!(out["ok"], true);
+        assert_eq!(out["backend"], "fts5");
+        assert_eq!(out["count"], 1);
     }
 }

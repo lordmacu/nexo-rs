@@ -31,6 +31,7 @@ that were rejected; see `proyecto/design-agent-framework.md`.
 | `agent.events.<agent_id>` | internal | `agent.events.ana` | Runtime internals | Dashboards, tests |
 | `agent.events.<agent_id>.heartbeat` | scheduler → agent | `agent.events.kate.heartbeat` | Heartbeat scheduler | That agent |
 | `agent.route.<target_id>` | agent → agent | `agent.route.ops` | Sending agent's `delegate` tool | Target agent runtime |
+| `taskflow.resume` | external → flow | `taskflow.resume` | Anything (other agents, services, ops) | TaskFlow resume bridge |
 
 Multi-instance plugins append an `.<instance>` suffix so two WhatsApp
 accounts (e.g. Ana's line and Kate's line) can run side by side without

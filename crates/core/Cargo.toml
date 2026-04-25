@@ -42,6 +42,9 @@ reqwest         = { workspace = true }
 # Used by google_auth for URL-encoding OAuth parameters — already a
 # transitive dep via reqwest so no new edges on the resolver.
 serde_urlencoded = "0.7"
+regex           = "1.10"
+sqlx            = { workspace = true }
+semver          = { workspace = true }
 
 [dev-dependencies]
 agent-llm     = { path = "../llm", features = ["stub"] }

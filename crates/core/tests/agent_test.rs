@@ -27,6 +27,7 @@ fn test_config(id: &str) -> AgentConfig {
         workspace: String::new(),
         skills: vec![],
         skills_dir: "./skills".into(),
+            skill_overrides: Default::default(),
         transcripts_dir: String::new(),
         dreaming: Default::default(),
         workspace_git: Default::default(),

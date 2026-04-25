@@ -1,9 +1,14 @@
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
+use crate::audit::{self, AuditEntry};
 use crate::op_cli::{
     self, timeout_from_env, OpError, DEFAULT_TIMEOUT_SECS, MAX_TIMEOUT_SECS,
 };
+use crate::redact;
+
+const DEFAULT_INJECT_STDOUT_CAP: usize = 4096;
+const MAX_INJECT_STDOUT_CAP: usize = 16384;
 
 pub const CLIENT_VERSION: &str = "onepassword-0.1.0";
 
@@ -50,6 +55,40 @@ pub fn tool_schemas() -> Value {
                 "required": ["reference"],
                 "additionalProperties": false
             }
+        },
+        {
+            "name": "inject_template",
+            "description": "Render a template containing op:// references and either return it (template-only mode) or pipe it as stdin to an allowlisted command. The rendered template is never returned when `command` is set — the LLM only sees exit_code and (redacted) stdout/stderr.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "template": {
+                        "type": "string",
+                        "description": "Template body. Embed secrets as {{ op://Vault/Item/field }}."
+                    },
+                    "command": {
+                        "type": "string",
+                        "description": "Optional executable. Must appear in OP_INJECT_COMMAND_ALLOWLIST."
+                    },
+                    "args": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Arguments passed to `command`."
+                    },
+                    "dry_run": {
+                        "type": "boolean",
+                        "description": "Validate references and return the list without resolving values."
+                    },
+                    "max_stdout_bytes": {
+                        "type": "integer",
+                        "minimum": 256,
+                        "maximum": MAX_INJECT_STDOUT_CAP,
+                        "description": "Cap on returned stdout bytes (default 4096, max 16384)."
+                    }
+                },
+                "required": ["template"],
+                "additionalProperties": false
+            }
         }
     ])
 }
@@ -83,6 +122,7 @@ pub fn dispatch(name: &str, args: &Value) -> Result<Value, ToolError> {
         "list_vaults" => list_vaults(),
         "list_items" => list_items(args),
         "read_secret" => read_secret(args),
+        "inject_template" => inject_template(args),
         other => Err(ToolError {
             code: -32601,
             message: format!("unknown tool `{other}`"),
@@ -103,7 +143,10 @@ fn status() -> Value {
         "bin": bin,
         "token_present": token_present,
         "reveal_allowed": reveal_allowed,
-        "tools": ["status", "whoami", "list_vaults", "list_items", "read_secret"],
+        "tools": ["status", "whoami", "list_vaults", "list_items", "read_secret", "inject_template"],
+        "inject_command_allowlist": op_cli::inject_command_allowlist(),
+        "inject_timeout_secs": op_cli::inject_timeout_secs(),
+        "audit_log_path": audit::audit_log_path().display().to_string(),
         "limits": {
             "default_timeout_secs": DEFAULT_TIMEOUT_SECS,
             "max_timeout_secs": MAX_TIMEOUT_SECS
@@ -171,14 +214,49 @@ fn list_items(args: &Value) -> Result<Value, ToolError> {
 
 fn read_secret(args: &Value) -> Result<Value, ToolError> {
     let reference = required_string(args, "reference")?;
-    let (vault, item, field) = op_cli::validate_ref(&reference).map_err(ToolError::from)?;
+    let (vault, item, field) = match op_cli::validate_ref(&reference) {
+        Ok(v) => v,
+        Err(e) => {
+            audit::append(AuditEntry {
+                action: "read_secret",
+                fields: json!({
+                    "op_reference": reference,
+                    "ok": false,
+                    "error": "invalid_reference",
+                }),
+            });
+            return Err(ToolError::from(e));
+        }
+    };
 
-    // `op read` returns the raw value on stdout. We never log or print it;
-    // it only flows through `stdout` -> String in memory.
-    let raw = op_cli::run(&["read", &reference], timeout_from_env())?;
+    let raw = match op_cli::run(&["read", &reference], timeout_from_env()) {
+        Ok(s) => s,
+        Err(e) => {
+            audit::append(AuditEntry {
+                action: "read_secret",
+                fields: json!({
+                    "op_reference": reference,
+                    "ok": false,
+                    "error": e.message(),
+                }),
+            });
+            return Err(ToolError::from(e));
+        }
+    };
     let trimmed = raw.trim_end_matches('\n').to_string();
     let length = trimmed.len();
     let fingerprint = sha256_prefix(&trimmed);
+    let reveal = op_cli::reveal_allowed();
+
+    audit::append(AuditEntry {
+        action: "read_secret",
+        fields: json!({
+            "op_reference": reference,
+            "fingerprint_sha256_prefix": fingerprint,
+            "reveal_allowed": reveal,
+            "ok": true,
+        }),
+    });
 
     let mut out = json!({
         "ok": true,
@@ -190,7 +268,7 @@ fn read_secret(args: &Value) -> Result<Value, ToolError> {
         "fingerprint_sha256_prefix": fingerprint,
     });
 
-    if op_cli::reveal_allowed() {
+    if reveal {
         out["value"] = Value::String(trimmed);
         out["reveal"] = Value::Bool(true);
     } else {
@@ -202,6 +280,180 @@ fn read_secret(args: &Value) -> Result<Value, ToolError> {
     }
 
     Ok(out)
+}
+
+fn inject_template(args: &Value) -> Result<Value, ToolError> {
+    let template = required_string(args, "template")?;
+    let command = optional_string(args, "command");
+    let extra_args: Vec<String> = args
+        .get("args")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let dry_run = args.get("dry_run").and_then(|v| v.as_bool()).unwrap_or(false);
+    let cap = args
+        .get("max_stdout_bytes")
+        .and_then(|v| v.as_u64())
+        .map(|n| (n as usize).min(MAX_INJECT_STDOUT_CAP).max(256))
+        .unwrap_or(DEFAULT_INJECT_STDOUT_CAP);
+
+    let references = op_cli::extract_template_references(&template);
+
+    if dry_run {
+        // Validate each reference's shape; we do not resolve values.
+        let mut bad: Vec<String> = Vec::new();
+        for r in &references {
+            if op_cli::validate_ref(r).is_err() {
+                bad.push(r.clone());
+            }
+        }
+        let ok = bad.is_empty();
+        audit::append(AuditEntry {
+            action: "inject_template",
+            fields: json!({
+                "references": references,
+                "command": command,
+                "dry_run": true,
+                "ok": ok,
+                "error": if ok { Value::Null } else { json!("invalid_reference") },
+            }),
+        });
+        if !ok {
+            return Err(bad_input(format!("invalid op:// references: {bad:?}")));
+        }
+        return Ok(json!({
+            "ok": true,
+            "dry_run": true,
+            "references_validated": references,
+        }));
+    }
+
+    if let Some(cmd) = command.as_deref() {
+        let allowlist = op_cli::inject_command_allowlist();
+        if !allowlist.iter().any(|c| c == cmd) {
+            audit::append(AuditEntry {
+                action: "inject_template",
+                fields: json!({
+                    "references": references,
+                    "command": cmd,
+                    "args_count": extra_args.len(),
+                    "dry_run": false,
+                    "ok": false,
+                    "error": "command_not_in_allowlist",
+                }),
+            });
+            return Err(bad_input(format!(
+                "command `{cmd}` is not in OP_INJECT_COMMAND_ALLOWLIST"
+            )));
+        }
+        let timeout = op_cli::inject_timeout_secs();
+        let result = op_cli::run_inject_with_command(&template, cmd, &extra_args, cap, timeout);
+        match result {
+            Ok(r) => {
+                let stdout = redact::redact(&r.stdout);
+                let stderr = redact::redact(&r.stderr);
+                audit::append(AuditEntry {
+                    action: "inject_template",
+                    fields: json!({
+                        "references": references,
+                        "command": cmd,
+                        "args_count": extra_args.len(),
+                        "dry_run": false,
+                        "ok": true,
+                        "exit_code": r.exit_code,
+                        "stdout_total_bytes": r.stdout_total_bytes,
+                        "stdout_returned_bytes": r.stdout_returned_bytes,
+                        "stdout_truncated": r.stdout_truncated,
+                    }),
+                });
+                Ok(json!({
+                    "ok": true,
+                    "exit_code": r.exit_code,
+                    "stdout": stdout,
+                    "stderr": stderr,
+                    "stdout_truncated": r.stdout_truncated,
+                    "stdout_total_bytes": r.stdout_total_bytes,
+                    "stdout_returned_bytes": r.stdout_returned_bytes,
+                }))
+            }
+            Err(e) => {
+                audit::append(AuditEntry {
+                    action: "inject_template",
+                    fields: json!({
+                        "references": references,
+                        "command": cmd,
+                        "args_count": extra_args.len(),
+                        "dry_run": false,
+                        "ok": false,
+                        "error": e.message(),
+                    }),
+                });
+                Err(ToolError::from(e))
+            }
+        }
+    } else {
+        // Template-only mode.
+        let timeout = op_cli::inject_timeout_secs();
+        let rendered = match op_cli::run_inject_template_only(&template, timeout) {
+            Ok(s) => s,
+            Err(e) => {
+                audit::append(AuditEntry {
+                    action: "inject_template",
+                    fields: json!({
+                        "references": references,
+                        "command": Value::Null,
+                        "dry_run": false,
+                        "ok": false,
+                        "error": e.message(),
+                    }),
+                });
+                return Err(ToolError::from(e));
+            }
+        };
+        let length = rendered.len();
+        let fingerprint = sha256_prefix(&rendered);
+        let reveal = op_cli::reveal_allowed();
+        audit::append(AuditEntry {
+            action: "inject_template",
+            fields: json!({
+                "references": references,
+                "command": Value::Null,
+                "dry_run": false,
+                "ok": true,
+                "fingerprint_sha256_prefix": fingerprint,
+                "reveal_allowed": reveal,
+                "rendered_length": length,
+            }),
+        });
+        let mut out = json!({
+            "ok": true,
+            "references": references,
+            "rendered_length": length,
+            "fingerprint_sha256_prefix": fingerprint,
+        });
+        if reveal {
+            out["rendered"] = Value::String(rendered);
+            out["reveal"] = Value::Bool(true);
+        } else {
+            out["reveal"] = Value::Bool(false);
+            out["reveal_hint"] = Value::String(
+                "set OP_ALLOW_REVEAL=true on the agent process to include the rendered template"
+                    .to_string(),
+            );
+        }
+        Ok(out)
+    }
+}
+
+fn optional_string(args: &Value, key: &str) -> Option<String> {
+    args.get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 fn sha256_prefix(s: &str) -> String {

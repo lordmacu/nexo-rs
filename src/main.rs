@@ -91,6 +91,11 @@ enum Mode {
     SetupList,
     SetupDoctor,
     SetupTelegramLink,
+    /// `agent doctor capabilities [--json]` — enumerate write/reveal
+    /// env toggles exposed by the bundled extensions.
+    DoctorCapabilities {
+        json: bool,
+    },
     /// Query the running agent's admin HTTP endpoint and pretty-print
     /// the agent directory. `json: true` returns raw JSON (machine
     /// consumable); otherwise a plain-text table goes to stdout.
@@ -308,6 +313,16 @@ async fn main() -> Result<()> {
         Mode::SetupOne { service } => return agent_setup::run_one(&args.config_dir, &service),
         Mode::SetupList => return agent_setup::run_list(&args.config_dir),
         Mode::SetupDoctor => return agent_setup::run_doctor(&args.config_dir),
+        Mode::DoctorCapabilities { json } => {
+            let statuses = agent_setup::capabilities::evaluate_all();
+            if json {
+                let v = agent_setup::capabilities::render_json(&statuses);
+                println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
+            } else {
+                print!("{}", agent_setup::capabilities::render_tty(&statuses));
+            }
+            return Ok(());
+        }
         Mode::SetupTelegramLink => return agent_setup::run_telegram_link(&args.config_dir),
         Mode::Status {
             json,
@@ -2314,6 +2329,11 @@ fn parse_args() -> CliArgs {
         [cmd] if cmd == "setup" => Mode::SetupInteractive,
         [cmd, sub] if cmd == "setup" && sub == "list" => Mode::SetupList,
         [cmd, sub] if cmd == "setup" && sub == "doctor" => Mode::SetupDoctor,
+        [cmd, sub] if cmd == "doctor" && sub == "capabilities" => {
+            Mode::DoctorCapabilities {
+                json: has_json_flag,
+            }
+        }
         [cmd, sub] if cmd == "setup" && sub == "telegram-link" => Mode::SetupTelegramLink,
         [cmd, service] if cmd == "setup" => Mode::SetupOne {
             service: service.clone(),
@@ -2399,6 +2419,9 @@ fn print_usage() {
     );
     println!("  agent [--config <dir>] ext uninstall <id> --yes [--json]");
     println!("  agent [--config <dir>] ext doctor [--runtime] [--json]");
+    println!(
+        "  agent doctor capabilities [--json]     List write/reveal env toggles and their state"
+    );
     println!("  agent flow <sub> ...                   TaskFlow admin (run `agent flow` for help)");
     println!("  agent status [<id>] [--json] [--endpoint=URL] Pretty-print running agents (or one by id)");
     println!(
@@ -2794,6 +2817,82 @@ async fn handle_admin_request(
         }
         let body_str = read_http_body(&request, &mut stream).await.unwrap_or_default();
         let response_body = match add_telegram_channel(&body_str) {
+            Ok(report) => format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
+                 Cache-Control: no-store\r\nConnection: close\r\n\r\n{}",
+                report.len(),
+                report
+            ),
+            Err(err) => {
+                let body = format!(
+                    "{{\"ok\":false,\"error\":\"{}\"}}",
+                    err.replace('\\', "\\\\").replace('"', "\\\"")
+                );
+                format!(
+                    "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+            }
+        };
+        stream.write_all(response_body.as_bytes()).await?;
+        stream.shutdown().await?;
+        return Ok(());
+    }
+
+    // /api/channels/telegram/<instance> — rotate token and/or
+    // replace allow_agents for an existing instance. Body matches
+    // the POST shape but `instance` is taken from the URL.
+    if method == "PATCH" && path.starts_with("/api/channels/telegram/") {
+        if !authorised {
+            write_401_json(&mut stream).await?;
+            return Ok(());
+        }
+        let instance = path
+            .trim_start_matches("/api/channels/telegram/")
+            .trim_matches('/')
+            .to_string();
+        let body_str = read_http_body(&request, &mut stream).await.unwrap_or_default();
+        let response_body = match edit_telegram_channel(&instance, &body_str) {
+            Ok(report) => format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
+                 Cache-Control: no-store\r\nConnection: close\r\n\r\n{}",
+                report.len(),
+                report
+            ),
+            Err(err) => {
+                let body = format!(
+                    "{{\"ok\":false,\"error\":\"{}\"}}",
+                    err.replace('\\', "\\\\").replace('"', "\\\"")
+                );
+                format!(
+                    "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+            }
+        };
+        stream.write_all(response_body.as_bytes()).await?;
+        stream.shutdown().await?;
+        return Ok(());
+    }
+
+    // /api/channels/<plugin>/<instance> DELETE — remove an instance
+    // entry from plugins/<plugin>.yaml. Secret token file stays on
+    // disk so the operator can restore by re-adding; Rust does not
+    // delete files the UI didn't create.
+    if method == "DELETE" && path.starts_with("/api/channels/") {
+        if !authorised {
+            write_401_json(&mut stream).await?;
+            return Ok(());
+        }
+        let rest = path.trim_start_matches("/api/channels/").trim_matches('/');
+        let mut parts = rest.splitn(2, '/');
+        let plugin = parts.next().unwrap_or("").to_string();
+        let instance = parts.next().unwrap_or("").to_string();
+        let response_body = match delete_channel(&plugin, &instance) {
             Ok(report) => format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
                  Cache-Control: no-store\r\nConnection: close\r\n\r\n{}",
@@ -3727,6 +3826,144 @@ fn add_telegram_channel(body: &str) -> Result<String, String> {
         json_escape(&instance),
         json_escape(&secret_path),
         json_escape(path)
+    ))
+}
+
+/// Rotate the token (and/or swap `allow_agents`) on an existing
+/// Telegram instance. Keeps the `${file:...}` reference pointing
+/// at the same secret path so consumers don't need to be restarted.
+fn edit_telegram_channel(instance: &str, body: &str) -> Result<String, String> {
+    let instance = instance.trim();
+    if instance.is_empty() {
+        return Err("instance is required".into());
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| format!("invalid JSON: {e}"))?;
+    let new_token = v
+        .get("token")
+        .and_then(|s| s.as_str())
+        .map(|s| s.trim().to_string());
+    let allow_agents: Option<Vec<String>> = v.get("allow_agents").and_then(|a| a.as_array()).map(
+        |arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                .collect()
+        },
+    );
+
+    let path = "./config/plugins/telegram.yaml";
+    let buf = std::fs::read_to_string(path)
+        .map_err(|e| format!("read {path}: {e}"))?;
+    let mut parsed: serde_yaml::Value =
+        serde_yaml::from_str(&buf).map_err(|e| format!("parse {path}: {e}"))?;
+    let telegram_entry = parsed
+        .get_mut("telegram")
+        .ok_or_else(|| format!("{path} has no 'telegram:' key"))?;
+    let mut seq: Vec<serde_yaml::Value> = match std::mem::replace(telegram_entry, serde_yaml::Value::Null) {
+        serde_yaml::Value::Sequence(s) => s,
+        serde_yaml::Value::Mapping(m) => vec![serde_yaml::Value::Mapping(m)],
+        _ => return Err("unexpected telegram: shape".into()),
+    };
+
+    let mut modified = false;
+    for entry in seq.iter_mut() {
+        let Some(m) = entry.as_mapping_mut() else { continue };
+        let matches_instance = m
+            .get(&serde_yaml::Value::String("instance".into()))
+            .and_then(|v| v.as_str())
+            == Some(instance);
+        if !matches_instance {
+            continue;
+        }
+        modified = true;
+        if let Some(token) = &new_token {
+            if token.is_empty() {
+                return Err("token must be non-empty".into());
+            }
+            let secret_path = format!("./secrets/{instance}_telegram_token.txt");
+            std::fs::create_dir_all("./secrets").map_err(|e| format!("mkdir ./secrets: {e}"))?;
+            write_file_0600(&secret_path, token)
+                .map_err(|e| format!("write {secret_path}: {e}"))?;
+            m.insert(
+                serde_yaml::Value::String("token".into()),
+                serde_yaml::Value::String(format!("${{file:{secret_path}}}")),
+            );
+        }
+        if let Some(list) = &allow_agents {
+            let yaml_list = list
+                .iter()
+                .map(|s| serde_yaml::Value::String(s.clone()))
+                .collect::<Vec<_>>();
+            if yaml_list.is_empty() {
+                m.remove(&serde_yaml::Value::String("allow_agents".into()));
+            } else {
+                m.insert(
+                    serde_yaml::Value::String("allow_agents".into()),
+                    serde_yaml::Value::Sequence(yaml_list),
+                );
+            }
+        }
+        break;
+    }
+    if !modified {
+        return Err(format!("telegram instance '{instance}' not found"));
+    }
+
+    *telegram_entry = serde_yaml::Value::Sequence(seq);
+    let out = serde_yaml::to_string(&parsed).map_err(|e| format!("serialise: {e}"))?;
+    std::fs::write(path, out).map_err(|e| format!("write {path}: {e}"))?;
+    Ok(format!(
+        "{{\"ok\":true,\"instance\":\"{}\"}}",
+        json_escape(instance)
+    ))
+}
+
+/// Remove a `<plugin>.<instance>` entry from
+/// `config/plugins/<plugin>.yaml`. The token/secret file stays
+/// untouched — the operator can delete `./secrets/*.txt` by hand
+/// when they're sure (or reuse them by re-adding the instance).
+fn delete_channel(plugin: &str, instance: &str) -> Result<String, String> {
+    let plugin = plugin.trim();
+    let instance = instance.trim();
+    if plugin.is_empty() || instance.is_empty() {
+        return Err("plugin and instance are required".into());
+    }
+    if !plugin
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err("plugin name must be [a-zA-Z0-9_-]+".into());
+    }
+    let path = format!("./config/plugins/{plugin}.yaml");
+    let buf = std::fs::read_to_string(&path)
+        .map_err(|e| format!("read {path}: {e}"))?;
+    let mut parsed: serde_yaml::Value =
+        serde_yaml::from_str(&buf).map_err(|e| format!("parse {path}: {e}"))?;
+    let entry = parsed
+        .get_mut(plugin)
+        .ok_or_else(|| format!("{path} has no '{plugin}:' key"))?;
+    let seq: Vec<serde_yaml::Value> = match std::mem::replace(entry, serde_yaml::Value::Null) {
+        serde_yaml::Value::Sequence(s) => s,
+        serde_yaml::Value::Mapping(m) => vec![serde_yaml::Value::Mapping(m)],
+        _ => return Err(format!("unexpected {plugin}: shape")),
+    };
+    let before = seq.len();
+    let kept: Vec<serde_yaml::Value> = seq
+        .into_iter()
+        .filter(|e| {
+            e.get("instance").and_then(|v| v.as_str()) != Some(instance)
+        })
+        .collect();
+    if kept.len() == before {
+        return Err(format!("{plugin} instance '{instance}' not found"));
+    }
+    *entry = serde_yaml::Value::Sequence(kept);
+    let out = serde_yaml::to_string(&parsed).map_err(|e| format!("serialise: {e}"))?;
+    std::fs::write(&path, out).map_err(|e| format!("write {path}: {e}"))?;
+    Ok(format!(
+        "{{\"ok\":true,\"plugin\":\"{}\",\"instance\":\"{}\"}}",
+        json_escape(plugin),
+        json_escape(instance)
     ))
 }
 

@@ -84,6 +84,8 @@ notify-debouncer-full = "0.3"
 arc-swap           = "1"
 eventsource-stream = "0.2"
 semver             = "1"
+tiktoken-rs        = "0.6"
+blake3             = "1"
 
 [dependencies]
 tokio               = { workspace = true }

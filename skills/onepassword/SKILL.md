@@ -18,16 +18,14 @@ explicitly turns on reveal (`OP_ALLOW_REVEAL=true`).
 ## Use when
 
 - The user asks to use a service that needs a credential you don't have
-  in env vars (e.g. "manda correo con Gmail", "sube este archivo a S3")
-- You need to verify a secret exists without seeing it ("ya está la key
-  de Stripe en Prod?")
+  in env vars (e.g. "send email with Gmail", "upload this file to S3")
+- You need to verify a secret exists without seeing it ("is the Stripe
+  key already in Prod?")
 - Rotating credentials: list items + categories to audit what's stored
 
 ## Do not use when
 
 - You need to **create** or **update** a secret — this tool is read-only
-- You need to do something *with* the secret without ever seeing it —
-  that pattern (`op inject` templating) is a future extension
 - You are asked to dump all secrets or fingerprint them in bulk — that's
   exfiltration, refuse
 
@@ -73,6 +71,60 @@ With `OP_ALLOW_REVEAL=true|1|yes` the response additionally contains
 `{value: "...", reveal: true}`. The value flows through the LLM
 context → transcripts → memory → NATS — assume it is no longer secret
 from the moment reveal is on.
+
+### `inject_template`
+Use this when the agent needs to **act on** a secret without revealing
+it. The tool resolves `{{ op://Vault/Item/field }}` placeholders in a
+template via `op inject` and either returns the rendered template
+(reveal-gated) or pipes it as stdin to an allowlisted command.
+
+- `template` (string, required) — body containing `{{ op://… }}` placeholders
+- `command` (string, optional) — executable to run with the rendered
+  template piped as stdin. Must appear in `OP_INJECT_COMMAND_ALLOWLIST`
+  (comma-separated env var). When set, the rendered template is **never**
+  returned to the LLM; only `exit_code` and (redacted) `stdout`/`stderr`
+- `args` (array of strings, optional) — passed to `command`
+- `dry_run` (bool, optional) — validate references without resolving values
+- `max_stdout_bytes` (int, optional) — cap on returned stdout (default 4096, max 16384)
+
+Modes:
+
+| Mode | OP_ALLOW_REVEAL | Returned |
+|------|-----------------|----------|
+| template-only | false | `length`, `fingerprint`, no value |
+| template-only | true  | `rendered` (full text) |
+| exec, allowed | any   | `exit_code`, redacted `stdout` (capped), redacted `stderr` |
+| exec, not allowed | any | error `command not in OP_INJECT_COMMAND_ALLOWLIST` |
+| `dry_run: true` | any | `references_validated` list |
+
+Example (exec, allowlist `curl,psql`):
+
+```json
+{
+  "action": "inject_template",
+  "template": "Authorization: Bearer {{ op://Prod/API/token }}\n",
+  "command": "curl",
+  "args": ["-H", "@-", "https://api.example.com/v1/me"]
+}
+```
+
+The agent never sees the bearer token. Stdout from `curl` is captured,
+truncated at 4 KB by default, and run through a redactor before being
+returned (Bearer JWT, sk-…, AKIA…, hex tokens).
+
+## Audit log
+
+Every `read_secret` and `inject_template` call appends one JSONL line
+to `OP_AUDIT_LOG_PATH` (default `./data/secrets-audit.jsonl`). Fields:
+`ts`, `action`, `agent_id`, `session_id`, `op_reference` (or
+`references`), `fingerprint_sha256_prefix`, `reveal_allowed`, `ok`,
+plus per-action extras (`exit_code`, `stdout_total_bytes`, etc).
+**Never** the actual secret value. Failures appending the log are
+logged to stderr and do not block the tool — the secret was already
+read; blocking would be worst-of-both-worlds.
+
+`AGENT_ID` and `AGENT_SESSION_ID` are populated from env vars the
+host injects when spawning the extension.
 
 ## Execution guidance
 

@@ -76,6 +76,13 @@ pub struct AgentRuntime {
     /// Phase 17 — per-(channel, instance) breaker registry; cloned
     /// onto every AgentContext alongside `credentials`.
     breakers: Option<Arc<agent_auth::BreakerRegistry>>,
+    /// Optional pre-persistence redactor cloned onto every
+    /// AgentContext. `None` keeps transcripts un-redacted.
+    redactor: Option<Arc<super::redaction::Redactor>>,
+    /// Optional FTS5 transcripts index cloned onto every AgentContext.
+    /// `None` keeps `session_logs` action `search` on the JSONL
+    /// substring fallback.
+    transcripts_index: Option<Arc<super::transcripts_index::TranscriptsIndex>>,
     /// Legacy cache — still owned by the runtime for back-compat with
     /// any test construction path. Hot-reload reads the per-snapshot
     /// `tool_cache` instead; see [`RuntimeSnapshot::tool_cache`].
@@ -137,6 +144,8 @@ impl AgentRuntime {
             tool_base: None,
             credentials: None,
             breakers: None,
+            redactor: None,
+            transcripts_index: None,
             tool_cache: Arc::new(super::tool_registry_cache::ToolRegistryCache::new()),
             reload_tx,
             reload_rx: Arc::new(Mutex::new(Some(reload_rx))),
@@ -146,6 +155,17 @@ impl AgentRuntime {
     }
     pub fn with_memory(mut self, memory: Arc<LongTermMemory>) -> Self {
         self.memory = Some(memory);
+        self
+    }
+    pub fn with_redactor(mut self, redactor: Arc<super::redaction::Redactor>) -> Self {
+        self.redactor = Some(redactor);
+        self
+    }
+    pub fn with_transcripts_index(
+        mut self,
+        index: Arc<super::transcripts_index::TranscriptsIndex>,
+    ) -> Self {
+        self.transcripts_index = Some(index);
         self
     }
     pub fn with_peers(mut self, peers: Arc<PeerDirectory>) -> Self {
@@ -225,6 +245,8 @@ impl AgentRuntime {
         let peers = self.peers.clone();
         let credentials = self.credentials.clone();
         let breakers = self.breakers.clone();
+        let redactor = self.redactor.clone();
+        let transcripts_index = self.transcripts_index.clone();
         let router = Arc::clone(&self.router);
         let session_txs = Arc::clone(&self.session_txs);
         let debounce_ms = self.debounce_ms;
@@ -260,6 +282,12 @@ impl AgentRuntime {
             }
             if let Some(ref b) = breakers {
                 ctx = ctx.with_breakers(Arc::clone(b));
+            }
+            if let Some(ref r) = redactor {
+                ctx = ctx.with_redactor(Arc::clone(r));
+            }
+            if let Some(ref idx) = transcripts_index {
+                ctx = ctx.with_transcripts_index(Arc::clone(idx));
             }
             ctx = ctx.with_router(Arc::clone(&router));
             loop {
@@ -465,6 +493,12 @@ impl AgentRuntime {
                             }
                             if let Some(ref c) = credentials {
                                 ctx = ctx.with_credentials(Arc::clone(c));
+                            }
+                            if let Some(ref r) = redactor {
+                                ctx = ctx.with_redactor(Arc::clone(r));
+                            }
+                            if let Some(ref idx) = transcripts_index {
+                                ctx = ctx.with_transcripts_index(Arc::clone(idx));
                             }
                             let behavior = Arc::clone(&agent.behavior);
                             let cancel = shutdown.clone();

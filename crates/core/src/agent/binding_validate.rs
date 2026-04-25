@@ -478,6 +478,7 @@ mod tests {
             workspace: String::new(),
             skills: Vec::new(),
             skills_dir: skills_dir.into(),
+            skill_overrides: Default::default(),
             transcripts_dir: String::new(),
             dreaming: DreamingYamlConfig::default(),
             workspace_git: WorkspaceGitConfig::default(),

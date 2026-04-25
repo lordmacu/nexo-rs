@@ -117,8 +117,8 @@ Per-session, append-only JSONL files in `transcripts_dir`:
 
 ```jsonl
 {"type":"session","version":1,"id":"<uuid>","timestamp":"2026-04-24T...","agent_id":"kate","source_plugin":"telegram"}
-{"type":"entry","timestamp":"...","role":"user","content":"hola","message_id":"...","source_plugin":"telegram","sender_id":"user123"}
-{"type":"entry","timestamp":"...","role":"assistant","content":"hola Luis","source_plugin":""}
+{"type":"entry","timestamp":"...","role":"user","content":"hello","message_id":"...","source_plugin":"telegram","sender_id":"user123"}
+{"type":"entry","timestamp":"...","role":"assistant","content":"hello Luis","source_plugin":""}
 ```
 
 - One file per session at `<transcripts_dir>/<session_id>.jsonl`
@@ -131,18 +131,27 @@ for replay, audit, and human review, not read-back into the prompt.
 
 ## Self-report tools (phase 10.8)
 
-Three tools let the agent inspect its own state:
+Four tools let the agent inspect its own state:
 
 | Tool | Returns | Use |
 |------|---------|-----|
 | `who_am_i` | `{agent_id, model, workspace_dir, identity{…}, soul_excerpt}` | When asked "who are you?" |
 | `what_do_i_know` | `{sections: [{heading, bullets}], truncated}` with optional filter | Search MEMORY.md by section name |
 | `my_stats` | `{sessions_total, memories_stored, memories_promoted, last_dream_ts, recall_events_7d, top_concept_tags_7d, workspace_files_present}` | Meta-awareness |
+| `session_logs` | `{ok, sessions/entries/hits, …}` — actions: `list_sessions`, `read_session`, `search`, `recent` | Inspect own JSONL transcripts for self-reflection, debugging, cross-session search |
 
-All three return concise JSON designed for the LLM to consume in one
-turn. Soul excerpt in `who_am_i` is truncated to 2 048 chars;
+The first three return concise JSON designed for the LLM to consume in
+one turn. Soul excerpt in `who_am_i` is truncated to 2 048 chars;
 `what_do_i_know` caps at 6 144 bytes serialized with at most 10
 bullets per section.
+
+`session_logs` is registered automatically when the agent has a non-empty
+`transcripts_dir`. It is scoped to that directory — agents cannot read
+each other's transcripts. Default limits: 50 entries per call (max 500),
+200 chars per content preview (max 4 000). When `recent` is invoked
+without `session_id`, it defaults to the current session. If the agent's
+`allowed_tools` patterns exclude `session_logs`, it is filtered after
+registration like every other tool.
 
 ## Load flow
 

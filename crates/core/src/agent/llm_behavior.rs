@@ -339,7 +339,8 @@ impl LlmAgentBehavior {
                     "skills configured but skills_dir is empty; skipping skill injection"
                 );
             } else {
-                let loader = SkillLoader::new(skills_dir);
+                let loader = SkillLoader::new(skills_dir)
+                    .with_overrides(ctx.config.skill_overrides.clone());
                 let loaded = loader.load_many(&effective.skills).await;
                 if let Some(blocks) = render_skill_blocks(&loaded) {
                     system_parts.push(blocks);
@@ -670,7 +671,16 @@ impl LlmAgentBehavior {
         // but never break the reply — transcripts are auxiliary state.
         let transcripts_dir = ctx.config.transcripts_dir.trim();
         if !transcripts_dir.is_empty() {
-            let writer = TranscriptWriter::new(transcripts_dir, &ctx.agent_id);
+            let redactor = ctx
+                .redactor
+                .clone()
+                .unwrap_or_else(|| std::sync::Arc::new(super::redaction::Redactor::disabled()));
+            let writer = TranscriptWriter::with_extras(
+                transcripts_dir,
+                &ctx.agent_id,
+                redactor,
+                ctx.transcripts_index.clone(),
+            );
             let user_entry = TranscriptEntry {
                 timestamp: Utc::now(),
                 role: TranscriptRole::User,

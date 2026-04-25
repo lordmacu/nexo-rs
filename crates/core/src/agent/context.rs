@@ -1,7 +1,9 @@
 use super::effective::EffectiveBindingPolicy;
 use super::peer_directory::PeerDirectory;
+use super::redaction::Redactor;
 use super::routing::AgentRouter;
 use super::tool_registry::ToolRegistry;
+use super::transcripts_index::TranscriptsIndex;
 use crate::session::SessionManager;
 use agent_broker::AnyBroker;
 use agent_config::types::agents::AgentConfig;
@@ -51,6 +53,13 @@ pub struct AgentContext {
     /// Phase 17 — per-(channel, instance) breaker registry shared by
     /// plugin outbound tools. `None` for runtimes without credentials.
     pub breakers: Option<Arc<agent_auth::BreakerRegistry>>,
+    /// Pre-persistence redactor for transcript content. `None` in
+    /// test/bootstrap contexts → behavior keeps content untouched.
+    pub redactor: Option<Arc<Redactor>>,
+    /// FTS5 index over transcript content. `None` when the subsystem
+    /// is disabled or initialization failed; consumers fall back to
+    /// JSONL-only persistence + substring scan.
+    pub transcripts_index: Option<Arc<TranscriptsIndex>>,
 }
 impl AgentContext {
     pub fn new(
@@ -73,7 +82,17 @@ impl AgentContext {
             effective_tools: None,
             credentials: None,
             breakers: None,
+            redactor: None,
+            transcripts_index: None,
         }
+    }
+    pub fn with_redactor(mut self, redactor: Arc<Redactor>) -> Self {
+        self.redactor = Some(redactor);
+        self
+    }
+    pub fn with_transcripts_index(mut self, index: Arc<TranscriptsIndex>) -> Self {
+        self.transcripts_index = Some(index);
+        self
     }
     pub fn with_memory(mut self, memory: Arc<LongTermMemory>) -> Self {
         self.memory = Some(memory);

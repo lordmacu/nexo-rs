@@ -16,8 +16,12 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
+
+use super::redaction::Redactor;
+use super::transcripts_index::TranscriptsIndex;
 pub const TRANSCRIPT_VERSION: u32 = 1;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -59,12 +63,32 @@ pub enum TranscriptRole {
 pub struct TranscriptWriter {
     root: PathBuf,
     agent_id: String,
+    redactor: Arc<Redactor>,
+    index: Option<Arc<TranscriptsIndex>>,
 }
 impl TranscriptWriter {
     pub fn new(root: impl Into<PathBuf>, agent_id: impl Into<String>) -> Self {
         Self {
             root: root.into(),
             agent_id: agent_id.into(),
+            redactor: Arc::new(Redactor::disabled()),
+            index: None,
+        }
+    }
+    /// Wrap the writer with a redactor and/or FTS index. Both are
+    /// optional — `Redactor::disabled()` and `None` reproduce the
+    /// behavior of [`Self::new`].
+    pub fn with_extras(
+        root: impl Into<PathBuf>,
+        agent_id: impl Into<String>,
+        redactor: Arc<Redactor>,
+        index: Option<Arc<TranscriptsIndex>>,
+    ) -> Self {
+        Self {
+            root: root.into(),
+            agent_id: agent_id.into(),
+            redactor,
+            index,
         }
     }
     pub fn root(&self) -> &Path {
@@ -74,12 +98,28 @@ impl TranscriptWriter {
         self.root.join(format!("{session_id}.jsonl"))
     }
     /// Append one entry to the session transcript. Writes a header first if
-    /// the file doesn't exist yet.
+    /// the file doesn't exist yet. When a redactor is active, the entry's
+    /// `content` is rewritten before any persistence path sees it. When an
+    /// FTS index is wired, the (possibly redacted) content is also inserted
+    /// best-effort — JSONL stays the source of truth.
     pub async fn append_entry(
         &self,
         session_id: Uuid,
-        entry: TranscriptEntry,
+        mut entry: TranscriptEntry,
     ) -> anyhow::Result<()> {
+        if self.redactor.is_active() {
+            let report = self.redactor.apply(&entry.content);
+            entry.content = report.redacted_text;
+            for (label, count) in &report.hits {
+                tracing::debug!(
+                    agent = %self.agent_id,
+                    pattern = %label,
+                    count = *count,
+                    "transcript redaction applied"
+                );
+            }
+        }
+
         tokio::fs::create_dir_all(&self.root).await?;
         let path = self.session_path(session_id);
         let exists = tokio::fs::try_exists(&path).await.unwrap_or(false);
@@ -98,8 +138,34 @@ impl TranscriptWriter {
             });
             write_jsonl(&mut file, &header).await?;
         }
-        write_jsonl(&mut file, &TranscriptLine::Entry(entry)).await?;
+        write_jsonl(&mut file, &TranscriptLine::Entry(entry.clone())).await?;
         file.flush().await?;
+
+        if let Some(index) = &self.index {
+            let role = match entry.role {
+                TranscriptRole::User => "user",
+                TranscriptRole::Assistant => "assistant",
+                TranscriptRole::Tool => "tool",
+                TranscriptRole::System => "system",
+            };
+            if let Err(e) = index
+                .insert(
+                    &self.agent_id,
+                    session_id,
+                    entry.timestamp.timestamp(),
+                    role,
+                    &entry.source_plugin,
+                    &entry.content,
+                )
+                .await
+            {
+                tracing::warn!(
+                    agent = %self.agent_id,
+                    error = %e,
+                    "transcripts FTS insert failed; JSONL persisted"
+                );
+            }
+        }
         Ok(())
     }
     /// Read every line of a session transcript back into memory. Unknown
@@ -258,6 +324,58 @@ mod tests {
         let writer = TranscriptWriter::new(&root, "kate");
         let lines = writer.read_session(Uuid::new_v4()).await?;
         assert!(lines.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn with_extras_redactor_redacts_jsonl() -> anyhow::Result<()> {
+        use agent_config::types::transcripts::RedactionConfig;
+        let root = tmp_dir("redact");
+        let cfg = RedactionConfig {
+            enabled: true,
+            use_builtins: true,
+            extra_patterns: Vec::new(),
+        };
+        let redactor = Arc::new(Redactor::from_config(&cfg)?);
+        let writer = TranscriptWriter::with_extras(&root, "kate", redactor, None);
+        let session_id = Uuid::new_v4();
+        writer
+            .append_entry(
+                session_id,
+                user_entry("token sk-abcdefghijklmnopqrstuvwx0123 ok", "wa"),
+            )
+            .await?;
+        let lines = writer.read_session(session_id).await?;
+        let entry = match &lines[1] {
+            TranscriptLine::Entry(e) => e,
+            _ => panic!(),
+        };
+        assert!(entry.content.contains("[REDACTED:openai_key]"));
+        assert!(!entry.content.contains("sk-abcdef"));
+        tokio::fs::remove_dir_all(&root).await.ok();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn with_extras_index_inserts_row() -> anyhow::Result<()> {
+        let root = tmp_dir("idxwire");
+        let idx_path = root.join("transcripts.db");
+        let idx = Arc::new(TranscriptsIndex::open(&idx_path).await?);
+        let writer = TranscriptWriter::with_extras(
+            &root,
+            "kate",
+            Arc::new(Redactor::disabled()),
+            Some(idx.clone()),
+        );
+        let session_id = Uuid::new_v4();
+        writer
+            .append_entry(session_id, user_entry("buscame esto", "wa"))
+            .await?;
+        let n = idx.count_for_agent("kate").await?;
+        assert_eq!(n, 1);
+        let hits = idx.search("kate", "buscame", 10).await?;
+        assert_eq!(hits.len(), 1);
+        tokio::fs::remove_dir_all(&root).await.ok();
         Ok(())
     }
 }

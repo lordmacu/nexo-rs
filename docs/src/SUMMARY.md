@@ -16,6 +16,7 @@
 - [Agent runtime](./architecture/agent-runtime.md)
 - [Event bus (NATS)](./architecture/event-bus.md)
 - [Fault tolerance](./architecture/fault-tolerance.md)
+- [Transcripts (FTS + redaction)](./architecture/transcripts.md)
 
 # Configuration
 
@@ -56,6 +57,7 @@
 - [NATS runtime](./extensions/nats.md)
 - [CLI](./extensions/cli.md)
 - [Templates](./extensions/templates.md)
+- [1Password](./extensions/onepassword.md)
 
 # MCP
 
@@ -67,6 +69,7 @@
 
 - [Catalog](./skills/catalog.md)
 - [Gating by env / bins](./skills/gating.md)
+- [Dependencies (modes + bin versions)](./skills/dependencies.md)
 
 # TaskFlow
 
@@ -91,6 +94,7 @@
 - [Logging](./ops/logging.md)
 - [DLQ](./ops/dlq.md)
 - [Config hot-reload](./ops/hot-reload.md)
+- [Capability toggles](./ops/capabilities.md)
 
 # Recipes
 

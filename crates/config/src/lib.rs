@@ -28,6 +28,11 @@ pub struct AppConfig {
     /// Phase 19 — generic poller subsystem. `None` when
     /// `pollers.yaml` is absent (subsystem off).
     pub pollers: Option<PollersConfig>,
+    /// TaskFlow runtime knobs. Always populated; absent file → defaults.
+    pub taskflow: TaskflowConfig,
+    /// Transcripts subsystem (FTS index + redaction). Always populated;
+    /// absent file → defaults (FTS on, redaction off).
+    pub transcripts: TranscriptsConfig,
 }
 
 /// Minimal config bundle for the `agent mcp-server` subcommand.
@@ -62,6 +67,10 @@ impl AppConfig {
         let runtime = load_optional::<RuntimeConfig>(dir, "runtime.yaml")?.unwrap_or_default();
         let pollers =
             load_optional::<PollersConfigFile>(dir, "pollers.yaml")?.map(|f| f.pollers);
+        let taskflow =
+            load_optional::<TaskflowConfig>(dir, "taskflow.yaml")?.unwrap_or_default();
+        let transcripts =
+            load_optional::<TranscriptsConfig>(dir, "transcripts.yaml")?.unwrap_or_default();
         Ok(AppConfig {
             agents,
             broker,
@@ -73,6 +82,8 @@ impl AppConfig {
             mcp_server,
             runtime,
             pollers,
+            taskflow,
+            transcripts,
         })
     }
 

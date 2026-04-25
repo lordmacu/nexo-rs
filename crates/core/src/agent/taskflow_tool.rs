@@ -1,20 +1,46 @@
 use super::context::AgentContext;
 use super::tool_registry::ToolHandler;
 use agent_llm::ToolDef;
-use agent_taskflow::{CreateManagedInput, Flow, FlowError, FlowManager, FlowStatus};
+use agent_taskflow::{CreateManagedInput, Flow, FlowError, FlowManager, FlowStatus, WaitCondition};
 use async_trait::async_trait;
+use chrono::Utc;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
+
+/// Guardrails applied to tool-driven `wait` requests. The `FlowManager` is
+/// transport-neutral; these limits are LLM-UX concerns kept on the tool side.
+#[derive(Debug, Clone)]
+pub struct TaskFlowToolGuardrails {
+    /// Maximum future deadline allowed for `WaitCondition::Timer`.
+    pub timer_max_horizon: chrono::Duration,
+}
+
+impl Default for TaskFlowToolGuardrails {
+    fn default() -> Self {
+        Self {
+            timer_max_horizon: chrono::Duration::days(30),
+        }
+    }
+}
+
 /// LLM-facing tool that lets an agent start and drive durable multi-step
 /// flows. Revision handling is hidden from the model — every mutating call
 /// refetches the latest record internally.
 pub struct TaskFlowTool {
     manager: FlowManager,
+    guardrails: TaskFlowToolGuardrails,
 }
 impl TaskFlowTool {
     pub fn new(manager: FlowManager) -> Self {
-        Self { manager }
+        Self {
+            manager,
+            guardrails: TaskFlowToolGuardrails::default(),
+        }
+    }
+    pub fn with_guardrails(mut self, g: TaskFlowToolGuardrails) -> Self {
+        self.guardrails = g;
+        self
     }
     pub fn into_arc(self) -> Arc<dyn ToolHandler> {
         Arc::new(self)
@@ -24,17 +50,19 @@ impl TaskFlowTool {
             name: "taskflow".to_string(),
             description: "Create and drive durable multi-step flows that survive process restart. \
                 Actions: start (create a new flow), status (inspect one flow), advance (update state / move to next step), \
-                cancel (stop a flow), list_mine (list this session's flows). Flow identity is a UUID.".to_string(),
+                wait (pause until timer/external_event/manual signal), finish (mark completed with optional final state), \
+                fail (mark failed with reason), cancel (stop a flow), list_mine (list this session's flows). \
+                Flow identity is a UUID.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["start", "status", "advance", "cancel", "list_mine"]
+                        "enum": ["start", "status", "advance", "wait", "finish", "fail", "cancel", "list_mine"]
                     },
                     "flow_id": {
                         "type": "string",
-                        "description": "UUID of the flow. Required for status/advance/cancel."
+                        "description": "UUID of the flow. Required for status/advance/wait/finish/fail/cancel."
                     },
                     "controller_id": {
                         "type": "string",
@@ -55,12 +83,57 @@ impl TaskFlowTool {
                     "patch": {
                         "type": "object",
                         "description": "State patch for advance. Merged shallowly into state_json."
+                    },
+                    "wait_condition": {
+                        "type": "object",
+                        "description": "WaitCondition object. Required for wait. Shape: {kind:'timer', at:'<RFC3339>'} OR {kind:'external_event', topic, correlation_id} OR {kind:'manual'}."
+                    },
+                    "final_state": {
+                        "type": "object",
+                        "description": "Optional final state patch merged before transition to Finished."
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Failure reason. Required for fail."
                     }
                 },
                 "required": ["action"]
             }),
         }
     }
+}
+
+fn validate_wait_condition(
+    cond: &WaitCondition,
+    g: &TaskFlowToolGuardrails,
+) -> anyhow::Result<()> {
+    match cond {
+        WaitCondition::Timer { at } => {
+            let now = Utc::now();
+            if *at <= now {
+                anyhow::bail!("timer.at must be in the future");
+            }
+            if *at - now > g.timer_max_horizon {
+                anyhow::bail!(
+                    "timer.at exceeds max horizon ({} days)",
+                    g.timer_max_horizon.num_days()
+                );
+            }
+        }
+        WaitCondition::ExternalEvent {
+            topic,
+            correlation_id,
+        } => {
+            if topic.trim().is_empty() {
+                anyhow::bail!("external_event.topic cannot be empty");
+            }
+            if correlation_id.trim().is_empty() {
+                anyhow::bail!("external_event.correlation_id cannot be empty");
+            }
+        }
+        WaitCondition::Manual => {}
+    }
+    Ok(())
 }
 #[async_trait]
 impl ToolHandler for TaskFlowTool {
@@ -136,6 +209,54 @@ impl ToolHandler for TaskFlowTool {
                 let flow = self.manager.cancel(id).await?;
                 Ok(render_flow(&flow))
             }
+            "wait" => {
+                let id = required_uuid(&args, "flow_id")?;
+                if let Some(f) = self.manager.get(id).await? {
+                    require_owner(&f, &owner_key)?;
+                } else {
+                    return Ok(
+                        json!({ "ok": false, "error": "not_found", "flow_id": id.to_string() }),
+                    );
+                }
+                let cond_value = args
+                    .get("wait_condition")
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("missing `wait_condition`"))?;
+                let cond = WaitCondition::from_value(&cond_value).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "invalid wait_condition shape; expected {{kind:'timer'|'external_event'|'manual', ...}}"
+                    )
+                })?;
+                validate_wait_condition(&cond, &self.guardrails)?;
+                let flow = self.manager.set_waiting(id, cond.into_value()).await?;
+                Ok(render_flow(&flow))
+            }
+            "finish" => {
+                let id = required_uuid(&args, "flow_id")?;
+                if let Some(f) = self.manager.get(id).await? {
+                    require_owner(&f, &owner_key)?;
+                } else {
+                    return Ok(
+                        json!({ "ok": false, "error": "not_found", "flow_id": id.to_string() }),
+                    );
+                }
+                let final_state = args.get("final_state").cloned();
+                let flow = self.manager.finish(id, final_state).await?;
+                Ok(render_flow(&flow))
+            }
+            "fail" => {
+                let id = required_uuid(&args, "flow_id")?;
+                if let Some(f) = self.manager.get(id).await? {
+                    require_owner(&f, &owner_key)?;
+                } else {
+                    return Ok(
+                        json!({ "ok": false, "error": "not_found", "flow_id": id.to_string() }),
+                    );
+                }
+                let reason = required_string(&args, "reason")?;
+                let flow = self.manager.fail(id, reason).await?;
+                Ok(render_flow(&flow))
+            }
             "list_mine" => {
                 let flows = self.manager.list_by_owner(&owner_key).await?;
                 let items: Vec<Value> = flows.iter().map(render_flow).collect();
@@ -146,7 +267,7 @@ impl ToolHandler for TaskFlowTool {
                 }))
             }
             other => Err(anyhow::anyhow!(
-                "unknown action `{other}`; expected start|status|advance|cancel|list_mine"
+                "unknown action `{other}`; expected start|status|advance|wait|finish|fail|cancel|list_mine"
             )),
         }
     }
@@ -247,6 +368,7 @@ mod tests {
             workspace: String::new(),
             skills: vec![],
             skills_dir: "./skills".into(),
+            skill_overrides: Default::default(),
             transcripts_dir: String::new(),
             dreaming: Default::default(),
             workspace_git: Default::default(),
@@ -434,6 +556,7 @@ mod tests {
             workspace: String::new(),
             skills: vec![],
             skills_dir: "./skills".into(),
+            skill_overrides: Default::default(),
             transcripts_dir: String::new(),
             dreaming: Default::default(),
             workspace_git: Default::default(),
@@ -473,5 +596,173 @@ mod tests {
             .unwrap();
         assert_eq!(out["ok"], false);
         assert_eq!(out["error"], "not_found");
+    }
+
+    async fn started_flow_id(tool: &TaskFlowTool, ctx: &AgentContext) -> String {
+        let created = tool
+            .call(
+                ctx,
+                json!({ "action": "start", "controller_id": "c", "goal": "g" }),
+            )
+            .await
+            .unwrap();
+        created["flow"]["id"].as_str().unwrap().to_string()
+    }
+
+    #[tokio::test]
+    async fn wait_with_past_timer_errors() {
+        let tool = tool().await;
+        let (ctx, _) = ctx_with_session().await;
+        let id = started_flow_id(&tool, &ctx).await;
+        let past = (Utc::now() - chrono::Duration::seconds(60)).to_rfc3339();
+        let err = tool
+            .call(
+                &ctx,
+                json!({
+                    "action": "wait",
+                    "flow_id": id,
+                    "wait_condition": {"kind": "timer", "at": past}
+                }),
+            )
+            .await
+            .expect_err("past timer must fail");
+        assert!(err.to_string().contains("must be in the future"));
+    }
+
+    #[tokio::test]
+    async fn wait_with_future_timer_succeeds_and_sets_status_waiting() {
+        let tool = tool().await;
+        let (ctx, _) = ctx_with_session().await;
+        let id = started_flow_id(&tool, &ctx).await;
+        let future = (Utc::now() + chrono::Duration::minutes(5)).to_rfc3339();
+        let out = tool
+            .call(
+                &ctx,
+                json!({
+                    "action": "wait",
+                    "flow_id": id,
+                    "wait_condition": {"kind": "timer", "at": future}
+                }),
+            )
+            .await
+            .unwrap();
+        assert!(__for_tests_status_is(&out, FlowStatus::Waiting));
+        assert_eq!(out["flow"]["wait"]["kind"], "timer");
+    }
+
+    #[tokio::test]
+    async fn wait_with_external_event_validates_topic_nonempty() {
+        let tool = tool().await;
+        let (ctx, _) = ctx_with_session().await;
+        let id = started_flow_id(&tool, &ctx).await;
+        let err = tool
+            .call(
+                &ctx,
+                json!({
+                    "action": "wait",
+                    "flow_id": id,
+                    "wait_condition": {
+                        "kind": "external_event",
+                        "topic": "   ",
+                        "correlation_id": "c1"
+                    }
+                }),
+            )
+            .await
+            .expect_err("empty topic must fail");
+        assert!(err.to_string().contains("topic cannot be empty"));
+    }
+
+    #[tokio::test]
+    async fn wait_horizon_exceeded_errors() {
+        let tool = tool().await;
+        let (ctx, _) = ctx_with_session().await;
+        let id = started_flow_id(&tool, &ctx).await;
+        let too_far = (Utc::now() + chrono::Duration::days(60)).to_rfc3339();
+        let err = tool
+            .call(
+                &ctx,
+                json!({
+                    "action": "wait",
+                    "flow_id": id,
+                    "wait_condition": {"kind": "timer", "at": too_far}
+                }),
+            )
+            .await
+            .expect_err("horizon must fail");
+        assert!(err.to_string().contains("max horizon"));
+    }
+
+    #[tokio::test]
+    async fn finish_returns_finished_status() {
+        let tool = tool().await;
+        let (ctx, _) = ctx_with_session().await;
+        let id = started_flow_id(&tool, &ctx).await;
+        let out = tool
+            .call(
+                &ctx,
+                json!({
+                    "action": "finish",
+                    "flow_id": id,
+                    "final_state": {"result": "ok"}
+                }),
+            )
+            .await
+            .unwrap();
+        assert!(__for_tests_status_is(&out, FlowStatus::Finished));
+        assert_eq!(out["flow"]["state"]["result"], "ok");
+    }
+
+    #[tokio::test]
+    async fn fail_with_reason_records_failure() {
+        let tool = tool().await;
+        let (ctx, _) = ctx_with_session().await;
+        let id = started_flow_id(&tool, &ctx).await;
+        let out = tool
+            .call(
+                &ctx,
+                json!({
+                    "action": "fail",
+                    "flow_id": id,
+                    "reason": "downstream-error"
+                }),
+            )
+            .await
+            .unwrap();
+        assert!(__for_tests_status_is(&out, FlowStatus::Failed));
+        assert_eq!(out["flow"]["state"]["failure"]["reason"], "downstream-error");
+    }
+
+    #[tokio::test]
+    async fn fail_without_reason_errors() {
+        let tool = tool().await;
+        let (ctx, _) = ctx_with_session().await;
+        let id = started_flow_id(&tool, &ctx).await;
+        let err = tool
+            .call(&ctx, json!({"action": "fail", "flow_id": id}))
+            .await
+            .expect_err("missing reason must fail");
+        assert!(err.to_string().contains("reason"));
+    }
+
+    #[tokio::test]
+    async fn wait_cross_session_rejected() {
+        let tool = tool().await;
+        let (ctx_a, _) = ctx_with_session().await;
+        let (ctx_b, _) = ctx_with_session().await;
+        let id = started_flow_id(&tool, &ctx_a).await;
+        let future = (Utc::now() + chrono::Duration::minutes(5)).to_rfc3339();
+        let err = tool
+            .call(
+                &ctx_b,
+                json!({
+                    "action": "wait",
+                    "flow_id": id,
+                    "wait_condition": {"kind": "timer", "at": future}
+                }),
+            )
+            .await
+            .expect_err("cross-session wait must fail");
+        assert!(err.to_string().contains("different session"));
     }
 }

@@ -78,6 +78,7 @@ fn base_agent() -> AgentConfig {
         workspace: String::new(),
         skills: Vec::new(),
         skills_dir: "./skills".into(),
+            skill_overrides: Default::default(),
         transcripts_dir: String::new(),
         dreaming: Default::default(),
         workspace_git: Default::default(),

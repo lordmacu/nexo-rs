@@ -9,6 +9,8 @@ pub mod memory;
 pub mod plugins;
 pub mod pollers;
 pub mod runtime;
+pub mod taskflow;
+pub mod transcripts;
 
 pub use agents::*;
 pub use broker::*;
@@ -21,3 +23,5 @@ pub use memory::*;
 pub use plugins::*;
 pub use pollers::*;
 pub use runtime::*;
+pub use taskflow::*;
+pub use transcripts::*;
