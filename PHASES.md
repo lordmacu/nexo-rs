@@ -1725,6 +1725,125 @@ Sin runtime — solo el contrato sobre el que 67.1+ se montan.
 
 ---
 
+### Phase 68 — Local LLM tier (llama.cpp)
+
+Capa-0 transversal del runtime: un host de inferencia local sobre
+`llama.cpp` (vía el crate `llama-cpp-2`) que sirve trabajos baratos /
+sensibles / offline a cualquier agente, sin reemplazar al LLM cloud
+principal. Modelos default: `gemma3-270m` (general) y `bge-small`
+(embeddings), quantizados Q4_K_M / IQ4_XS. El target primario es
+Termux ARM CPU; desktop CPU/GPU son acelerados pero no obligatorios.
+
+**Por qué llama.cpp y no candle**: 1.5–3× más rápido en ARM CPU por el
+hand-tuning NEON, ecosistema GGUF maduro, soporte Termux estándar de
+facto. Trade-off: FFI a C++, ABI sync cada 2-3 meses, CI cross-compile
+de `libllama` para 4 targets. Se aísla la dep en un crate hoja
+(`nexo-llm-local`) detrás de feature flag para que el resto del
+workspace no la cargue.
+
+**Stack** (propuesto en brainstorm):
+
+#### 68.1 — Crate `nexo-llm-local` scaffold + `LocalLlm` trait      ⬜
+
+Crate hoja con `LocalLlm` trait (espejo reducido de `LlmClient`),
+`ModelHandle`, `LocalLlmError` (Load / Oom / Timeout / Cancelled /
+BudgetExhausted), feature flags `cpu` (default), `metal`, `cuda`. Sin
+backend aún — solo el contrato.
+
+#### 68.2 — `llama-cpp-2` backend gemma3 + GGUF loader              ⬜
+
+Implementación del trait sobre `llama-cpp-2`. Carga GGUF Q4_K_M, expone
+`generate(prompt, max_tokens, cancel)` y `embed(texts) -> Vec<Vec<f32>>`.
+CI cross-compile para linux-x86_64, linux-aarch64, macos, termux-arm64;
+artifact `libllama.a` cacheado. Smoke test con el modelo más pequeño
+(`gemma3-270m-q4_k_m.gguf`, ~150 MB) en CI.
+
+#### 68.3 — `ModelHost` (load / unload / LRU / memory budget)       ⬜
+
+Wrapper que mantiene un mapa `name → Arc<ModelHandle>` con refcount,
+load lazy en el primer request, eviction LRU cuando el presupuesto de
+RAM (`memory_budget_mb` configurable) se queda corto. `Drop` libera la
+memoria del modelo. Métricas: bytes en uso por modelo, evictions, load
+duration.
+
+#### 68.4 — Pool + concurrency cap + cancellation                   ⬜
+
+Cada modelo lleva un `tokio::sync::Semaphore` con `max_concurrent`
+configurable (CPU inference no escala con threads, hay que limitar).
+Requests adicionales encolan con `request_timeout`. Cada inference
+acepta un `CancellationToken`; al cancelar, el loop de tokens se corta
+en el siguiente token (no a mitad de un kernel call).
+
+#### 68.5 — Integración `nexo-resilience` circuit breaker           ⬜
+
+Wrap del backend con `CircuitBreaker` por modelo. OOM / load fail /
+timeout consecutivo abre el breaker N segundos; mientras abierto el
+job hace fallback a la ruta cloud. Respeta el patrón ya usado en
+`nexo-llm` para Anthropic/MiniMax 5xx.
+
+#### 68.6 — Embeddings backend (`bge-small`) + swap `nexo-memory`   ⬜
+
+Modelo embeddings dedicado (forward pass único, sin generación). Swap
+del callsite actual en `nexo-memory::vector` que hoy depende de
+embeddings cloud → ahora prefiere local cuando `local.embeddings` está
+on. Tests E2E: indexar 100 docs, recall@5 ≥ baseline cloud.
+
+#### 68.7 — PII redactor job (3er backend `redaction.rs`)            ⬜
+
+Tercer modo en `crates/core/src/redaction.rs` (hoy regex + opcional
+LLM cloud): `redaction.mode: local`. Usa `gemma3-270m` con prompt
+estructurado para devolver spans a redactar. Métrica de precisión vs
+modo regex sobre un eval set fijo.
+
+#### 68.8 — Poller pre-filter job                                   ⬜
+
+Builtin extra en `nexo-poller`: `pre_filter` opcional por job que
+manda el preview del item al tier-0 con un yes/no prompt. Solo los
+"yes" disparan la entrega. Reduce ruido de RSS / Gmail antes de
+notificar al agente.
+
+#### 68.9 — Cloud breaker fallback path                             ⬜
+
+Cuando el `CircuitBreaker` del cloud LLM principal está abierto, en
+vez de fallar la request el runtime intenta el tier-0 con un prompt
+simplificado. Modo "degraded mode" señalizado en la respuesta para
+que el agente sepa que el output es de menor calidad.
+
+#### 68.10 — Telemetría + `/healthz/local-llm`                      ⬜
+
+Counters Prometheus: `nexo_local_llm_inference_total{model,job,result}`,
+`nexo_local_llm_latency_ms{model,job}`,
+`nexo_local_llm_tokens_per_sec{model}`,
+`nexo_local_llm_load_total{model,result}`,
+`nexo_local_llm_evict_total{model,reason}`,
+`nexo_local_llm_memory_bytes{model}`. Endpoint `/healthz/local-llm`
+con loaded models, memoria usada, queue depth, OOM 24h, p99.
+
+#### 68.11 — Hot-reload de modelos                                  ⬜
+
+`config/llm.yaml` cambia → `ArcSwap` swap atómico del `ModelHost`
+sin restart. Modelos viejos quedan en flight hasta que sus refcount
+caen a 0, los nuevos arrancan lazy. Mismo patrón que `RuntimeSnapshot`.
+
+#### 68.12 — Build features + Termux package verify                 ⬜
+
+`cargo build --features cpu` (default) — runs en Termux y servidores
+sin GPU. `--features metal` para Mac, `--features cuda` para Linux con
+GPU NVIDIA. Verify pipeline: descarga `gemma3-270m-q4_k_m.gguf` de
+HuggingFace, corre los 9 jobs en Termux real (Pixel/Snapdragon CI
+runner si está disponible, fallback a `qemu-aarch64` si no), reporta
+latencias P50/P99 por job.
+
+#### 68.13 — Docs + admin-ui knobs                                  ⬜
+
+Docs: nueva sección `docs/src/llm/local.md` con la matriz de jobs por
+device (Termux / desktop CPU / desktop GPU), tamaño/RAM por modelo,
+cómo descargar GGUF (`nexo setup --download-models`), límites
+honestos. admin-ui: tile A8 con loaded models, queue depth en tiempo
+real, toggle on/off por job, presupuesto memoria editable.
+
+---
+
 ## Deliberately NOT roadmapped
 
 These OpenClaw features were considered and deferred — listing them
