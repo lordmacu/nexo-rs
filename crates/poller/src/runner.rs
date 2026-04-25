@@ -121,6 +121,13 @@ impl PollerRunner {
         self.pollers.iter().map(|e| *e.key()).collect()
     }
 
+    /// Credential bundle (resolver + stores + breakers). Custom-tool
+    /// handlers use this to look up an agent's Google handle without
+    /// a `PollContext` (tools fire from the LLM loop, not a tick).
+    pub fn credentials(&self) -> Arc<CredentialsBundle> {
+        Arc::clone(&self.credentials)
+    }
+
     /// Walk every registered Poller and collect its `custom_tools()`.
     /// Adapter in `agent-poller-tools` consumes this and registers
     /// each spec as a `ToolHandler` per agent.

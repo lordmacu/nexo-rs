@@ -14,7 +14,6 @@ members = [
     "crates/plugins/telegram",
     "crates/plugins/email",
     "crates/plugins/google",
-    "crates/plugins/gmail-poller",
     "crates/setup",
     "crates/tunnel",
     "crates/auth",
@@ -84,6 +83,7 @@ notify             = "6"
 notify-debouncer-full = "0.3"
 arc-swap           = "1"
 eventsource-stream = "0.2"
+semver             = "1"
 
 [dependencies]
 tokio               = { workspace = true }
@@ -98,7 +98,6 @@ agent-plugin-browser = { path = "crates/plugins/browser" }
 agent-plugin-whatsapp = { path = "crates/plugins/whatsapp" }
 agent-plugin-telegram = { path = "crates/plugins/telegram" }
 agent-plugin-google   = { path = "crates/plugins/google" }
-agent-plugin-gmail-poller = { path = "crates/plugins/gmail-poller" }
 agent-setup          = { path = "crates/setup" }
 agent-tunnel         = { path = "crates/tunnel" }
 agent-auth          = { path = "crates/auth" }
