@@ -87,7 +87,7 @@ pub use schema_validator::ToolArgsValidator;
 pub use self_report::{MyStatsTool, WhatDoIKnowTool, WhoAmITool};
 pub use session_logs_tool::SessionLogsTool;
 pub use skills::{LoadedSkill, SkillLoader};
-pub use taskflow_tool::TaskFlowTool;
+pub use taskflow_tool::{TaskFlowTool, TaskFlowToolGuardrails};
 pub use tool_registry::{ToolHandler, ToolRegistry};
 pub use tool_registry_cache::ToolRegistryCache;
 pub use transcripts::{

@@ -19,6 +19,7 @@ members = [
     "crates/tunnel",
     "crates/auth",
     "crates/poller",
+    "crates/poller-tools",
 ]
 # Keep standalone extension templates out of the agent workspace so they don't
 # inherit our deps or lockfile. Users copy them verbatim and build separately.
@@ -101,6 +102,7 @@ agent-setup          = { path = "crates/setup" }
 agent-tunnel         = { path = "crates/tunnel" }
 agent-auth          = { path = "crates/auth" }
 agent-poller        = { path = "crates/poller" }
+agent-poller-tools  = { path = "crates/poller-tools" }
 agent-config        = { path = "crates/config" }
 agent-broker        = { path = "crates/broker" }
 agent-core          = { path = "crates/core" }
@@ -114,7 +116,9 @@ tracing             = { workspace = true }
 tracing-subscriber  = { workspace = true }
 base64              = { workspace = true }
 reqwest             = { workspace = true }
+serde               = { workspace = true }
 serde_json          = { workspace = true }
 serde_yaml          = { workspace = true }
+chrono              = { workspace = true }
 humantime           = { workspace = true }
 async-trait         = { workspace = true }

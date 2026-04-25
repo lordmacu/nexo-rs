@@ -954,6 +954,39 @@ async fn main() -> Result<()> {
     // bounded timeout so SIGTERM cannot hang on an in-flight sweep.
     let dream_shutdown = tokio_util::sync::CancellationToken::new();
     let mut dream_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+
+    // TaskFlow runtime — shared FlowManager + WaitEngine tick loop +
+    // NATS resume bridge. Engine runs as a single global task; the
+    // bridge wakes flows whose `external_event` waits arrive over NATS.
+    let flow_manager = Arc::new(open_flow_manager_from_cfg(&cfg.taskflow).await?);
+    let wait_engine = agent_taskflow::WaitEngine::new((*flow_manager).clone());
+    let tick_interval = humantime::parse_duration(&cfg.taskflow.tick_interval)
+        .with_context(|| {
+            format!(
+                "invalid taskflow.tick_interval `{}`",
+                cfg.taskflow.tick_interval
+            )
+        })?;
+    let _timer_max_horizon = humantime::parse_duration(&cfg.taskflow.timer_max_horizon)
+        .with_context(|| {
+            format!(
+                "invalid taskflow.timer_max_horizon `{}`",
+                cfg.taskflow.timer_max_horizon
+            )
+        })?;
+    {
+        let we = wait_engine.clone();
+        let tok = watcher_shutdown.clone();
+        tokio::spawn(async move {
+            tracing::info!(
+                interval_ms = tick_interval.as_millis() as u64,
+                "wait engine started"
+            );
+            we.run(tick_interval, tok).await;
+        });
+    }
+    spawn_taskflow_resume_bridge(broker.clone(), wait_engine.clone(), watcher_shutdown.clone());
+
     for agent_cfg in cfg.agents.agents {
         let agent_id = agent_cfg.id.clone();
         let dream_yaml = agent_cfg.dreaming.clone();
@@ -1100,6 +1133,18 @@ async fn main() -> Result<()> {
                 "registered google_* tools for agent"
             );
         }
+        // Phase 19 — pollers_* control tools (list, show, run, pause,
+        // resume, reset). Registered per agent when the poller
+        // subsystem booted; absent when pollers.yaml is missing /
+        // disabled. Create / delete are intentionally not exposed
+        // (prompt-injection concern); operators own pollers.yaml.
+        if let Some(runner) = pollers_runner.as_ref() {
+            agent_poller_tools::register_all(&tools, Arc::clone(runner));
+            tracing::info!(
+                agent = %agent_id,
+                "registered pollers_* tools for agent"
+            );
+        }
         if agent_cfg.heartbeat.enabled {
             if let Some(mem) = memory.clone() {
                 tools.register(HeartbeatTool::tool_def(), HeartbeatTool::new(mem));
@@ -1145,6 +1190,20 @@ async fn main() -> Result<()> {
                 agent = %agent_id,
                 "registered session_logs tool for agent"
             );
+        }
+
+        // TaskFlow tool — gated on `plugins: [taskflow]`. The shared
+        // FlowManager backs every agent's tool instance; ownership is
+        // enforced by `owner_session_key` so agents cannot read or
+        // mutate flows of other sessions.
+        if agent_cfg.plugins.iter().any(|p| p == "taskflow") {
+            let guardrails = agent_core::agent::TaskFlowToolGuardrails {
+                timer_max_horizon: chrono::Duration::seconds(_timer_max_horizon.as_secs() as i64),
+            };
+            let tool = agent_core::agent::TaskFlowTool::new((*flow_manager).clone())
+                .with_guardrails(guardrails);
+            tools.register(agent_core::agent::TaskFlowTool::tool_def(), tool);
+            tracing::info!(agent = %agent_id, "registered taskflow tool for agent");
         }
 
         // Phase 10.9 — optional git-backed workspace. Registers
@@ -3908,6 +3967,96 @@ async fn open_flow_manager() -> Result<agent_taskflow::FlowManager> {
         .await
         .with_context(|| format!("failed to open taskflow db at {}", path.display()))?;
     Ok(agent_taskflow::FlowManager::new(std::sync::Arc::new(store)))
+}
+
+/// Open a `FlowManager` honoring `taskflow.yaml` overrides. The config
+/// `db_path` takes precedence over `TASKFLOW_DB_PATH` env var, which
+/// itself overrides the `./data/taskflow.db` default.
+async fn open_flow_manager_from_cfg(
+    cfg: &agent_config::TaskflowConfig,
+) -> Result<agent_taskflow::FlowManager> {
+    let path = match cfg.db_path.as_deref() {
+        Some(p) if !p.trim().is_empty() => std::path::PathBuf::from(p),
+        _ => flow_db_path(),
+    };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    let path_s = path.to_string_lossy().into_owned();
+    let store = agent_taskflow::SqliteFlowStore::open(&path_s)
+        .await
+        .with_context(|| format!("failed to open taskflow db at {}", path.display()))?;
+    Ok(agent_taskflow::FlowManager::new(std::sync::Arc::new(store)))
+}
+
+/// NATS resume bridge — listens on `taskflow.resume` and wakes flows
+/// whose `external_event` waits match the payload `(flow_id, topic,
+/// correlation_id)`. Tolerant: malformed payloads are logged and
+/// skipped, no panic.
+fn spawn_taskflow_resume_bridge(
+    broker: agent_broker::AnyBroker,
+    engine: agent_taskflow::WaitEngine,
+    shutdown: tokio_util::sync::CancellationToken,
+) {
+    use agent_broker::BrokerHandle;
+    tokio::spawn(async move {
+        let mut sub = match broker.subscribe("taskflow.resume").await {
+            Ok(s) => {
+                tracing::info!("taskflow resume bridge: subscribed to `taskflow.resume`");
+                s
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "taskflow resume bridge: subscribe failed; bridge disabled");
+                return;
+            }
+        };
+        loop {
+            tokio::select! {
+                _ = shutdown.cancelled() => {
+                    tracing::info!("taskflow resume bridge: shutdown");
+                    return;
+                }
+                ev = sub.next() => {
+                    let Some(event) = ev else {
+                        tracing::info!("taskflow resume bridge: subscription closed");
+                        return;
+                    };
+                    if let Err(e) = handle_taskflow_resume_event(&engine, event).await {
+                        tracing::warn!(error = %e, "taskflow resume bridge: handler error");
+                    }
+                }
+            }
+        }
+    });
+}
+
+#[derive(serde::Deserialize)]
+struct TaskflowResumePayload {
+    flow_id: uuid::Uuid,
+    topic: String,
+    correlation_id: String,
+    #[serde(default)]
+    payload: Option<serde_json::Value>,
+}
+
+async fn handle_taskflow_resume_event(
+    engine: &agent_taskflow::WaitEngine,
+    event: agent_broker::Event,
+) -> anyhow::Result<()> {
+    let body: TaskflowResumePayload = serde_json::from_value(event.payload)
+        .with_context(|| "malformed taskflow.resume payload")?;
+    match engine
+        .try_resume_external(body.flow_id, &body.topic, &body.correlation_id, body.payload)
+        .await?
+    {
+        Some(f) => tracing::info!(flow_id = %f.id, topic = %body.topic, "taskflow resumed via NATS"),
+        None => tracing::debug!(
+            flow_id = %body.flow_id,
+            topic = %body.topic,
+            "taskflow resume bridge: no matching waiting flow"
+        ),
+    }
+    Ok(())
 }
 
 fn run_flow_help() -> Result<()> {

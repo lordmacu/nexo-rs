@@ -1,0 +1,17 @@
+[package]
+name = "agent-poller-tools"
+version = "0.1.0"
+edition = "2021"
+
+# LLM-callable tools for the poller subsystem. Lives in its own crate
+# so `agent-core` can stay free of the `agent-plugin-google`
+# transitive dep that `agent-poller` carries (would be a cycle:
+# core → poller → plugin-google → core).
+
+[dependencies]
+agent-core   = { path = "../core" }
+agent-llm    = { path = "../llm" }
+agent-poller = { path = "../poller" }
+async-trait  = { workspace = true }
+serde_json   = { workspace = true }
+anyhow       = { workspace = true }
