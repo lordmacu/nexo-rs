@@ -1,0 +1,51 @@
+[Unit]
+Description=Nexo agent runtime
+Documentation=https://lordmacu.github.io/nexo-rs/
+After=network-online.target nats-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nexo
+Group=nexo
+WorkingDirectory=/var/lib/nexo-rs
+Environment=RUST_LOG=info
+Environment=NEXO_HOME=/var/lib/nexo-rs
+ExecStart=/usr/bin/nexo --config /etc/nexo-rs
+
+# Restart policy. The runtime is fault-tolerant by design (NATS reconnect,
+# disk-queue replay, circuit breakers), so a fast restart on crash is the
+# right move.
+Restart=on-failure
+RestartSec=2s
+StartLimitBurst=5
+StartLimitIntervalSec=30s
+
+# SIGTERM grace period. The runtime drains in-flight turns, flushes
+# transcripts, persists pairing/taskflow state. 30s is generous.
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+KillMode=mixed
+
+# Hardening — what the daemon does NOT need.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+ReadWritePaths=/var/lib/nexo-rs /var/log/nexo-rs
+
+# Resource caps. Adjust per deployment.
+LimitNOFILE=65536
+TasksMax=4096
+
+[Install]
+WantedBy=multi-user.target
