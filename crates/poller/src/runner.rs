@@ -121,6 +121,49 @@ impl PollerRunner {
         self.pollers.iter().map(|e| *e.key()).collect()
     }
 
+    /// Snapshot every configured job + its current persisted state for
+    /// the admin endpoint.
+    pub async fn list_jobs(&self) -> Result<Vec<crate::admin::JobView>> {
+        let cfg = self.cfg.lock().await.clone();
+        let mut out = Vec::with_capacity(cfg.jobs.len());
+        for j in &cfg.jobs {
+            let snap = self.state.load(&j.id).await?.unwrap_or_default();
+            out.push(crate::admin::JobView {
+                id: j.id.clone(),
+                kind: j.kind.clone(),
+                agent: j.agent.clone(),
+                paused: snap.paused,
+                last_run_at_ms: snap.last_run_at_ms,
+                next_run_at_ms: snap.next_run_at_ms,
+                last_status: snap.last_status,
+                last_error: snap.last_error,
+                consecutive_errors: snap.consecutive_errors,
+                items_seen_total: snap.items_seen_total,
+                items_dispatched_total: snap.items_dispatched_total,
+            });
+        }
+        Ok(out)
+    }
+
+    pub async fn set_paused(&self, job_id: &str, paused: bool) -> Result<()> {
+        self.assert_known(job_id).await?;
+        self.state.set_paused(job_id, paused, now_ms()).await
+    }
+
+    pub async fn reset_cursor(&self, job_id: &str) -> Result<()> {
+        self.assert_known(job_id).await?;
+        self.state.reset_cursor(job_id, now_ms()).await
+    }
+
+    async fn assert_known(&self, job_id: &str) -> Result<()> {
+        let cfg = self.cfg.lock().await;
+        if cfg.jobs.iter().any(|j| j.id == job_id) {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("unknown job '{job_id}'"))
+        }
+    }
+
     /// Boot path. Validates every configured job, persists `paused_on_boot`,
     /// then spawns a task per job. Errors here fail boot loud — the
     /// operator wants to see misconfigured jobs immediately.

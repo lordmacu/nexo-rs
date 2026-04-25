@@ -10,7 +10,9 @@
 //! See `docs/src/recipes/build-a-poller.md` for the three-step DX
 //! to plug in a new module.
 
+pub mod admin;
 pub mod builtins;
+pub mod cli;
 pub mod dispatch;
 pub mod error;
 pub mod poller;
