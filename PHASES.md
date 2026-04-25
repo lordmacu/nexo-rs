@@ -433,20 +433,37 @@ Done when `slsa-verifier verify-artifact …` against any
 release passes and a third party can rebuild the artifact and
 get the same sha256.
 
-#### 27.10 — Install docs + first-run
+#### 27.10 — Install docs + first-run   🔄
 
-- `docs/src/install/<channel>.md` per channel: brew, apt, yum,
-  docker, nix, termux, source.
-- An "install" landing page at the top of the docs that picks
-  the right channel based on the operator's OS (JS detection).
-- `agent --version` prints the install channel
-  (`v0.1.0+brew-arm64`) so a bug report carries provenance.
-- `agent self-update` checks GH releases, prompts before
-  pulling.
+Landing page + per-channel pages now in place; `--version` build
+provenance + `self-update` deferred.
 
-Done when the README's install section is one paragraph, links
-to the install page, and that page has every supported channel
-working with copy-paste blocks.
+Shipped:
+- `docs/src/getting-started/installation.md` rewritten as a
+  "pick your channel" landing page with a matrix (Docker /
+  Nix / Native / Termux / source), time-to-first-run, and
+  bundled runtime-tools column. Stale `agent` bin refs swapped
+  to `nexo` (post-rename in 4bccdc3); stale "18 crates, 4
+  binaries" updated to "22 crates".
+- Channel pages already shipped:
+  - [Docker](../ops/docker.md) — Phase 27.5
+  - [Nix flake](./install-nix.md) — Phase 27.7
+  - [Native install](./install-native.md) — pre-existing
+  - [Termux install](./install-termux.md) — pre-existing
+
+Deferred:
+- `nexo --version` printing the install-channel marker
+  (`v0.1.1+brew-arm64`) so bug reports carry provenance —
+  needs `cargo dist`-side metadata injection (Phase 27.1).
+- `nexo self-update` GH-releases poller + prompt — needs
+  `cargo dist` releases as the source of truth (Phase 27.1).
+- `apt`, `yum`, `brew` channel-specific pages — wait for
+  Phases 27.4 / 27.6 to actually ship those packages.
+
+Done when (revised): the install landing page lists every
+channel with copy-paste blocks AND the `nexo --version`
+provenance line is wired. First half done now; second half
+blocks on 27.1.
 
 **Phase 27 done when** an operator can run any one of:
 `brew install nexo-rs`, `apt install nexo-rs`,

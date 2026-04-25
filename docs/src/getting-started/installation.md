@@ -1,78 +1,93 @@
 # Installation
 
-## Prerequisites
+Pick the channel that matches your environment. Every channel
+produces the same `nexo` binary; the differences are in how it
+gets onto your machine and which dependencies come bundled.
 
-- **Rust** 2021 edition (toolchain `stable`, components `rustfmt` + `clippy`)
-- **NATS** running locally or reachable over the network
-- **Chrome / Chromium** (only if you plan to use the browser plugin)
-- **Git** (the memory subsystem uses per-agent workspace-git)
+## Channel matrix
 
-### Rust
+| Channel | When to pick it | Time to first run | Bundled runtime tools |
+|---|---|---|---|
+| **[Docker (GHCR)](../ops/docker.md)** | Production, CI, "just works" | ~30 s | Chrome, Chromium, cloudflared, ffmpeg, tesseract, yt-dlp |
+| **[Nix flake](./install-nix.md)** | NixOS, reproducible dev shell | ~3-5 min cold | None (system-level) |
+| **[Native (no Docker)](./install-native.md)** | Bare-metal Linux / macOS, full control | ~10-15 min | None (apt / brew / pacman) |
+| **[Termux](./install-termux.md)** | Phone-hosted personal agent | ~15-20 min | None (`pkg install`) |
+| **From source** | Contributors | ~5 min after toolchain | None |
+
+## Quickest path — Docker
 
 ```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-rustup component add rustfmt clippy
+docker pull ghcr.io/lordmacu/nexo-rs:latest
+docker run --rm \
+  -v $(pwd)/config:/app/config:ro \
+  -v $(pwd)/data:/app/data \
+  -p 8080:8080 -p 9090:9090 \
+  ghcr.io/lordmacu/nexo-rs:latest --help
 ```
 
-The repo pins the toolchain via `rust-toolchain.toml`, so no manual
-channel selection is needed.
+The image is multi-arch (`linux/amd64` + `linux/arm64`), built
+fresh on every push to `main` and every `v*` tag, with SBOM and
+SLSA provenance attestations. Full guide: [Docker](../ops/docker.md).
 
-### NATS
+## Build from source
 
-For development:
-
-```bash
-docker run -p 4222:4222 nats:2.10-alpine
-```
-
-For production, see [broker.yaml](../config/broker.md) — clustering,
-TLS, and per-user/token auth are supported.
-
-## Build
+For contributors and operators who want to track `main` directly:
 
 ```bash
-git clone git@github.com:lordmacu/nexo-rs.git
+git clone https://github.com/lordmacu/nexo-rs
 cd nexo-rs
-cargo build --release
+cargo build --release --bin nexo
+./target/release/nexo --help
 ```
 
-The workspace compiles 18 crates and 4 binaries: `agent`,
-`browser-test`, `integration-browser-check`, `llm_smoke`.
+The workspace compiles 22 crates and produces the `nexo` binary
+plus a few smoke-test bins (`browser-test`,
+`integration-browser-check`, `llm_smoke`). Toolchain is pinned to
+Rust 1.80 (MSRV) via `rust-toolchain.toml` — no manual channel
+selection needed.
 
-## Verification
+### Prerequisites
+
+- **Rust** 1.80+ (`rustup` recommended)
+- **NATS** running locally or reachable over the network — for
+  development:
+  ```bash
+  docker run -p 4222:4222 nats:2.10-alpine
+  ```
+  Production setup: see [broker.yaml](../config/broker.md).
+- **Git** (the memory subsystem uses per-agent workspace-git)
+- **Chrome / Chromium** (only if you plan to use the browser plugin)
+
+### Verification
 
 ```bash
-./target/release/agent --help
+./target/release/nexo --version
 cargo test --workspace --lib
 ```
 
-## Native install (no Docker)
+`nexo --version` prints the build provenance line (commit + build
+timestamp) so a bug report carries enough context to reproduce.
 
-If you'd rather skip Docker entirely — run the agent as a plain
-process under systemd / launchd, or just local dev — see the full
-walkthrough and use the bootstrap script:
+## Bootstrap script
 
-```bash
-./scripts/bootstrap.sh
-```
-
-Details: [Native install](./install-native.md).
-
-## Termux (Android)
-
-Running on an Android phone under Termux? The same bootstrap script
-detects Termux and does the right thing (no sudo, `$PREFIX/bin`,
-`pkg install`, default to `broker.type: local`):
+For native or Termux installs, `./scripts/bootstrap.sh` automates
+the whole process — installs the system deps, downloads NATS if
+not present, scaffolds `config/`, and runs the setup wizard.
 
 ```bash
-./scripts/bootstrap.sh --yes
+./scripts/bootstrap.sh           # interactive
+./scripts/bootstrap.sh --yes     # accept all defaults
 ```
 
-Details: [Termux install](./install-termux.md).
+The script auto-detects Termux (`$PREFIX` set) and switches to
+`pkg install` + `broker.type: local` so you don't need root or
+NATS on a phone.
 
-## Next
+## Next steps
 
 - [Quick start](./quickstart.md) — first agent running in five minutes
 - [Setup wizard](./setup-wizard.md) — pair channels and wire secrets
+- [Docker](../ops/docker.md) — compose stack, secrets, GHCR pulls
+- [Nix flake](./install-nix.md) — `nix run`, dev shell
 - [Native install](./install-native.md) — detailed no-Docker setup
 - [Termux install](./install-termux.md) — phone-hosted personal agent

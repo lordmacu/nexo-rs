@@ -9,10 +9,14 @@
 //! 67.B.3 adds the cap / queue / live event subscriber. 67.B.4 wires
 //! reattach + log buffer.
 
+pub mod log_buffer;
+pub mod reattach;
 pub mod registry;
 pub mod store;
 pub mod types;
 
+pub use log_buffer::{LogBuffer, LogLine};
+pub use reattach::{reattach, ReattachOptions, ReattachOutcome};
 pub use registry::{AdmitOutcome, AgentRegistry};
 pub use store::{
     AgentRegistryStore, AgentRegistryStoreError, MemoryAgentRegistryStore, SqliteAgentRegistryStore,
