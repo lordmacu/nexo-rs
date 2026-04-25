@@ -210,6 +210,18 @@ impl DriverOrchestrator {
                 extras: build_attempt_extras(&prior_failures, &goal.budget, total_turns),
             };
 
+            // Phase 67.6 — checkpoint pre-attempt. Sentinel
+            // `<no-git>` short-circuits diff_stat below.
+            let cp_label = format!("turn-{total_turns}-pre");
+            let cp_sha = self
+                .workspace_manager
+                .checkpoint(&workspace, &cp_label)
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!(target: "driver-loop", "checkpoint failed: {e}");
+                    crate::workspace::WorkspaceManager::NO_GIT_SENTINEL.to_string()
+                });
+
             let ctx = AttemptContext {
                 claude_cfg: &self.claude_cfg,
                 binding_store: &self.binding_store,
@@ -219,7 +231,23 @@ impl DriverOrchestrator {
                 bin_path: &self.bin_path,
                 cancel: self.cancel_root.clone(),
             };
-            let result = run_attempt(ctx, params).await?;
+            let mut result = run_attempt(ctx, params).await?;
+
+            // Phase 67.6 — best-effort diff_stat injection.
+            if cp_sha != crate::workspace::WorkspaceManager::NO_GIT_SENTINEL {
+                if let Ok(diff) = self.workspace_manager.diff_stat(&workspace, &cp_sha).await {
+                    if !diff.trim().is_empty() {
+                        result
+                            .harness_extras
+                            .insert("worktree.diff_stat".into(), serde_json::Value::String(diff));
+                        result.harness_extras.insert(
+                            "worktree.checkpoint_sha".into(),
+                            serde_json::Value::String(cp_sha),
+                        );
+                    }
+                }
+            }
+
             usage = result.usage_after.clone();
             final_text = result.final_text.clone();
             last_acceptance = result.acceptance.clone();

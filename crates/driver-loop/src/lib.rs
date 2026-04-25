@@ -21,7 +21,7 @@ pub use acceptance::{
 };
 pub use config::{
     AcceptanceConfig, BindingStoreConfig, BindingStoreKind, DeciderConfig, DriverBinConfig,
-    DriverConfig, PermissionConfig, WorkspaceConfig,
+    DriverConfig, PermissionConfig, WorkspaceConfig, WorkspaceGitConfig,
 };
 pub use error::DriverError;
 #[cfg(feature = "nats")]
@@ -34,4 +34,4 @@ pub use memory::{DecisionMemory, NoopDecisionMemory};
 pub use orchestrator::{DriverOrchestrator, DriverOrchestratorBuilder, GoalOutcome};
 pub use prompt::compose_turn_prompt;
 pub use socket::{DriverSocketServer, SocketMessage};
-pub use workspace::WorkspaceManager;
+pub use workspace::{GitWorktreeMode, WorkspaceManager};

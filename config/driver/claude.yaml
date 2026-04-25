@@ -73,3 +73,33 @@ permission:
   socket: ${NEXO_DRIVER_DECISION_SOCKET:-/run/nexo-rs/driver.sock}
   decision_timeout: 30s
   session_cache_max: 1024
+  decider:
+    kind: llm
+    provider: minimax
+    model: ${MINIMAX_MODEL:-M2.5}
+    max_tokens: 256
+    system_prompt_path: ${NEXO_DRIVER_PROMPT:-}
+
+# Phase 67.4 — workspace where each goal runs. Phase 67.6 added the
+# git-worktree mode: when `git.enabled=true`, each goal gets its own
+# branch `nexo-driver/<goal_id>` off `source_repo`, with per-turn
+# checkpoint commits the operator can `nexo-driver rollback` to.
+workspace:
+  root: ${NEXO_DRIVER_WORKSPACE_ROOT:-/tmp/claude-runs}
+  cleanup_on_done: false
+  git:
+    enabled: false
+    source_repo: ${NEXO_DRIVER_SOURCE_REPO:-}
+    base_ref: HEAD
+
+driver:
+  bin_path: ${NEXO_DRIVER_BIN:-/usr/local/bin/nexo-driver-permission-mcp}
+  emit_nats_events: true
+
+# Phase 67.5 — DefaultAcceptanceEvaluator runs each AcceptanceCriterion
+# of the goal in declaration order: shell-command exit-code + optional
+# stdout regex, file-match with workspace path-traversal guard, custom
+# verifiers (built-ins: no_paths_touched, git_clean).
+acceptance:
+  default_shell_timeout: 5m
+  evidence_byte_limit: 4096
