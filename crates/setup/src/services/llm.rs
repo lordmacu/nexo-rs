@@ -82,6 +82,87 @@ pub fn defs() -> Vec<ServiceDef> {
             }],
         },
         ServiceDef {
+            id: "deepseek",
+            label: "DeepSeek LLM",
+            category: Category::Llm,
+            description: Some(
+                "API key DeepSeek (https://platform.deepseek.com). \
+                 Wire-compatible con OpenAI — el conector reusa el cliente. \
+                 Modelos: `deepseek-chat` (general) · `deepseek-reasoner` (razonamiento, sin tools).",
+            ),
+            fields: vec![FieldDef {
+                key: "api_key",
+                label: "DeepSeek API key",
+                help: Some("Empieza con `sk-…` (ver https://platform.deepseek.com/api_keys)"),
+                kind: FieldKind::Secret,
+                required: true,
+                default: None,
+                target: FieldTarget::Secret {
+                    file: "deepseek_api_key.txt",
+                    env_var: "DEEPSEEK_API_KEY",
+                },
+                validator: Some(validate_nonempty),
+            }],
+        },
+        ServiceDef {
+            id: "openai_custom",
+            label: "OpenAI-compatible (Groq, OpenRouter, Together, Ollama, vLLM, ...)",
+            category: Category::Llm,
+            description: Some(
+                "Slot genérico para cualquier proveedor que hable el wire de OpenAI: \
+                 Groq, OpenRouter, Together, Fireworks, LM Studio, vLLM, Ollama, Azure \
+                 OpenAI, o tu propio gateway. \n\
+                 \n\
+                 El wizard guarda la api_key en `secrets/openai_custom_api_key.txt` y \
+                 expone `OPENAI_CUSTOM_API_KEY` + `OPENAI_CUSTOM_BASE_URL`. Después \
+                 agregá el bloque a `llm.yaml`:\n\
+                 \n\
+                 ```yaml\n\
+                 providers:\n\
+                   <tu_nombre>:                  # ej. groq, together, openrouter\n\
+                     api_key: ${OPENAI_CUSTOM_API_KEY}\n\
+                     base_url: ${OPENAI_CUSTOM_BASE_URL}\n\
+                     rate_limit:\n\
+                       requests_per_second: 2.0\n\
+                 ```\n\
+                 \n\
+                 Y referencialo desde el agente con `model.provider: <tu_nombre>` \
+                 (cualquier nombre — el factory `openai` resuelve por base_url). \
+                 Para múltiples gateways simultáneos, edita `llm.yaml` a mano: el \
+                 wizard sólo tiene un slot por nombre.",
+            ),
+            fields: vec![
+                FieldDef {
+                    key: "api_key",
+                    label: "API key",
+                    help: Some("Bearer token del gateway elegido."),
+                    kind: FieldKind::Secret,
+                    required: true,
+                    default: None,
+                    target: FieldTarget::Secret {
+                        file: "openai_custom_api_key.txt",
+                        env_var: "OPENAI_CUSTOM_API_KEY",
+                    },
+                    validator: Some(validate_nonempty),
+                },
+                FieldDef {
+                    key: "base_url",
+                    label: "Base URL (incluyendo /v1 si aplica)",
+                    help: Some(
+                        "Ej. https://api.groq.com/openai/v1 · \
+                         https://openrouter.ai/api/v1 · \
+                         http://localhost:11434/v1 (Ollama) · \
+                         http://localhost:1234/v1 (LM Studio).",
+                    ),
+                    kind: FieldKind::Text,
+                    required: true,
+                    default: Some("https://api.openai.com/v1"),
+                    target: FieldTarget::EnvOnly("OPENAI_CUSTOM_BASE_URL"),
+                    validator: Some(validate_nonempty),
+                },
+            ],
+        },
+        ServiceDef {
             id: "anthropic",
             label: "Anthropic Claude (API key / setup-token / Claude CLI / OAuth)",
             category: Category::Llm,
