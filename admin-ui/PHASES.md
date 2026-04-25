@@ -417,4 +417,9 @@ IOUs — features that landed in the daemon but have no UI yet.
     (`llm_prompt_tokens_drift{agent,provider,model}`) so operators can
     spot when an approximate counter is misjudging the budget
   - workspace cache hit/miss/invalidation counters per workspace path
+- [ ] **Link understanding (Phase 21)** — `agents.<id>.link_understanding`
+  block (`enabled`, `max_links_per_turn`, `max_bytes`, `timeout_ms`,
+  `cache_ttl_secs`, `deny_hosts`) with per-binding override.
+  Phase A3 "Brain" tab needs a toggle + caps editor + denylist
+  textarea, plus per-binding override row in the override matrix.
 - [ ] (add lines as features land — see auto-memory rule)

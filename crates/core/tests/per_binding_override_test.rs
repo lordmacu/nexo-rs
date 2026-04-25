@@ -147,6 +147,7 @@ fn two_binding_agent() -> AgentConfig {
                 system_prompt_extra: Some("Private Telegram.".into()),
                 allowed_delegates: Some(vec!["*".into()]),
                 language: None,
+                link_understanding: serde_json::Value::Null,
             },
         ],
         context_optimization: None,

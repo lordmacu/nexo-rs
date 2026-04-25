@@ -990,6 +990,12 @@ async fn main() -> Result<()> {
         pollers_runner.as_ref().map(Arc::clone),
         config_dir.clone(),
     ));
+    // Phase 21 — single shared link extractor (HTTP client + LRU cache).
+    // Per-binding config gates whether each turn actually fetches; the
+    // extractor itself is cheap to keep around always.
+    let link_extractor = Arc::new(agent_core::link_understanding::LinkExtractor::new(
+        &agent_core::link_understanding::LinkUnderstandingConfig::default(),
+    ));
     let mut runtimes: Vec<AgentRuntime> = Vec::with_capacity(cfg.agents.agents.len());
     // Phase 18 — collect each agent's reload channel so the coordinator
     // can dispatch `Apply(snapshot)` on hot-reload.
@@ -1812,6 +1818,7 @@ async fn main() -> Result<()> {
             runtime = runtime.with_credentials(Arc::clone(&bundle.resolver));
             runtime = runtime.with_breakers(Arc::clone(&bundle.breakers));
         }
+        runtime = runtime.with_link_extractor(Arc::clone(&link_extractor));
         runtime
             .start()
             .await

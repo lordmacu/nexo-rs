@@ -63,6 +63,32 @@ H-1. **CircuitBreaker missing on Telegram + Google plugins**
   agreement before locking it in.
 - Target: dedicated hardening session.
 
+### Phase 21 — Link understanding
+
+L-1. **Telemetry counters for link fetches**
+- Missing: `link_understanding_fetch_total{result}` (ok / blocked /
+  timeout / non-html / too-big), `link_understanding_cache_total{hit}`
+  (true / false), and a per-fetch latency histogram. Doc page in
+  `docs/src/ops/link-understanding.md` already advertises "no
+  telemetry counter wired yet".
+- Why deferred: feature is opt-in and currently unused in any
+  shipped agent; metrics surface area can grow once a real workload
+  exercises it.
+- Target: alongside Phase A4 admin-ui dashboard work, or earlier if
+  an agent enables `link_understanding` in production.
+
+L-2. **`readability`-style extraction**
+- Missing: the current extractor strips `<script>`/`<style>` and
+  collapses whitespace, but it doesn't pick the main article block
+  on noisy pages (sidebars, nav, footer all leak through). A real
+  readability heuristic (or the `scraper` crate + DOM walk) would
+  produce cleaner summaries.
+- Why deferred: comment in `link_understanding.rs:17-20` flags this
+  as a known compromise; naïve extraction is enough to validate the
+  block-rendering pipeline end-to-end.
+- Target: when an operator complains about noisy `# LINK CONTEXT`
+  blocks polluting the prompt.
+
 ## Resolved (recent highlights)
 
 - Streaming telemetry and streaming runtime wiring completed.
