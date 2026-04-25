@@ -51,3 +51,4 @@ agent-llm     = { path = "../llm", features = ["stub"] }
 async-nats    = { workspace = true }
 futures       = { workspace = true }
 tempfile      = "3"
+serial_test   = "3"

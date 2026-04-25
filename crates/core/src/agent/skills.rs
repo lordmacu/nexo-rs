@@ -78,6 +78,10 @@ impl BinVersionSpec {
     }
 }
 
+// Require at least MAJOR.MINOR. Allowing major-only (`\d+`) catches
+// stray digits inside binary names like `oldbin2` before the real
+// version appears later in the string. Tools that emit major-only
+// (rare) can override via `bin_versions.<name>.regex`.
 const DEFAULT_VERSION_REGEX: &str = r"\d+\.\d+(?:\.\d+)?";
 
 #[derive(Debug, Clone)]
@@ -521,7 +525,13 @@ async fn invoke_and_parse(
     command: &str,
     regex_pattern: &str,
 ) -> Result<Version, VersionFailReason> {
-    let re = match regex::Regex::new(regex_pattern) {
+    // Cap the compiled NFA so a hostile or sloppy skill author can't
+    // ship a catastrophic-backtracking pattern that hangs the agent.
+    // 64 KiB is generous for a single-line version regex.
+    let re = match regex::RegexBuilder::new(regex_pattern)
+        .size_limit(64 * 1024)
+        .build()
+    {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(
@@ -742,25 +752,26 @@ mod tests {
         tokio::fs::remove_dir_all(tmp).await.ok();
         Ok(())
     }
-    // TODO: test name says "warn_only" but `load_one` currently SKIPS
-    // (returns None) when `missing_env` is non-empty. Either rename to
-    // `requires_env_skips_skill` or relax `load_one` to keep the
-    // skill. Leaving the test intent for a follow-up — `#[ignore]` so
-    // CI stays green while the policy is decided.
-    #[ignore]
     #[tokio::test]
     async fn requires_env_records_missing_vars_warn_only() -> anyhow::Result<()> {
+        // Resolved by the strict/warn/disable refactor: now the
+        // skill author opts into `mode: warn` and the missing env
+        // is reported in `missing_env` while the skill still loads
+        // (with a banner the LLM can read).
         let tmp = tmpdir();
         tokio::fs::create_dir_all(tmp.join("github")).await?;
-        // Use a uniquely-named env var that is not set in CI.
         let var = "AGENT_CORE_SKILLS_TEST_TOKEN_XYZ";
         std::env::remove_var(var);
-        let body = format!("---\nrequires:\n  env: [\"{var}\"]\n---\n\nbody");
+        let body = format!(
+            "---\nrequires:\n  env: [\"{var}\"]\n  mode: warn\n---\n\nbody"
+        );
         tokio::fs::write(tmp.join("github").join("SKILL.md"), body).await?;
         let loader = SkillLoader::new(&tmp);
         let loaded = loader.load_many(&["github".to_string()]).await;
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].missing_env, vec![var.to_string()]);
+        assert!(loaded[0].content.contains("MISSING DEPS"));
+        assert_eq!(loaded[0].mode_applied, SkillDepsMode::Warn);
         tokio::fs::remove_dir_all(tmp).await.ok();
         Ok(())
     }
@@ -898,6 +909,7 @@ mod tests {
     }
 
     #[cfg(unix)]
+    #[serial_test::serial]
     #[tokio::test]
     async fn bin_version_satisfies_constraint() {
         let bin_name = format!("fakeprobe-{}", uuid::Uuid::new_v4().simple());
@@ -916,6 +928,7 @@ mod tests {
     }
 
     #[cfg(unix)]
+    #[serial_test::serial]
     #[tokio::test]
     async fn bin_version_unsatisfied_in_strict_skips() {
         let bin_name = format!("oldbin-{}", uuid::Uuid::new_v4().simple());
@@ -943,6 +956,7 @@ mod tests {
     }
 
     #[cfg(unix)]
+    #[serial_test::serial]
     #[tokio::test]
     async fn bin_version_unsatisfied_in_warn_loads_with_banner() {
         let bin_name = format!("oldbin2-{}", uuid::Uuid::new_v4().simple());

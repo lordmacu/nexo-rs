@@ -48,6 +48,21 @@ P-3. **Push-based watchers (Gmail Push, generic inbound webhooks)**
   its own crate (Phase 20?), not an extension of the poller.
 - Target: separate phase; keep notes here while it's only an idea.
 
+### Hardening
+
+H-1. **CircuitBreaker missing on Telegram + Google plugins**
+- Missing: `agent_resilience::CircuitBreaker` wrap around the
+  Telegram bot HTTP calls (`crates/plugins/telegram/src/bot.rs`)
+  and the Google OAuth + API calls
+  (`crates/plugins/google/src/client.rs`). LLM clients, MCP HTTP
+  client, and the browser CDP all use a breaker; these two are the
+  outliers.
+- Why deferred: needs a scoping decision (one breaker per
+  channel-instance? one per agent? shared per plugin?). Wrapping
+  every call site is ~100 lines per plugin and the pattern needs
+  agreement before locking it in.
+- Target: dedicated hardening session.
+
 ## Resolved (recent highlights)
 
 - Streaming telemetry and streaming runtime wiring completed.

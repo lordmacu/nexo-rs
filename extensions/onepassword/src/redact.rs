@@ -2,6 +2,9 @@
 //! LLM. Pattern set is deliberately narrow — this extension lives in
 //! its own workspace and must not depend on `agent-core`. The same
 //! built-in shapes the runtime redactor uses are duplicated here.
+//!
+//! **Mirror invariant:** `crates/core/src/agent/redaction.rs::builtin_patterns`
+//! ships the same pattern set. When you edit either list, edit both.
 
 use regex::Regex;
 use std::sync::OnceLock;
@@ -20,9 +23,12 @@ fn rules() -> &'static [(Regex, &'static str)] {
             ),
             (Regex::new(r"sk-[A-Za-z0-9]{20,}").unwrap(), "openai_key"),
             (Regex::new(r"AKIA[0-9A-Z]{16}").unwrap(), "aws_access_key"),
+            // Floor at 64 hex chars: MD5 (32) and git/SHA-1 (40) are
+            // too common as legitimate identifiers. Mirrors the
+            // floor used in `crates/core/src/agent/redaction.rs`.
             (
-                Regex::new(r"\b[a-fA-F0-9]{32,}\b").unwrap(),
-                "hex_token_32",
+                Regex::new(r"\b[a-fA-F0-9]{64,}\b").unwrap(),
+                "hex_token_64",
             ),
         ]
     })
@@ -79,7 +85,17 @@ mod tests {
     }
 
     #[test]
-    fn redacts_hex_token() {
-        assert!(redact("ETag: 5d41402abc4b2a76b9719d911017c592").contains("[REDACTED:hex_token_32]"));
+    fn redacts_hex_token_at_or_above_64_chars() {
+        let sha256 = "5d41402abc4b2a76b9719d911017c5925d41402abc4b2a76b9719d911017c592";
+        assert!(redact(&format!("digest: {sha256}")).contains("[REDACTED:hex_token_64]"));
+    }
+
+    #[test]
+    fn does_not_redact_md5_or_sha1() {
+        let md5 = "5d41402abc4b2a76b9719d911017c592";
+        let sha1 = "356a192b7913b04c54574d18c28d46e6395428ab";
+        let out = redact(&format!("md5={md5} sha1={sha1}"));
+        assert!(out.contains(md5));
+        assert!(out.contains(sha1));
     }
 }

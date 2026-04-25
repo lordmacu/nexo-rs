@@ -55,6 +55,14 @@ pub fn append(entry: AuditEntry<'_>) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
+    // Build the full record (data + trailing newline) into a single
+    // buffer, then issue **one** `write_all`. POSIX guarantees that a
+    // single `write()` to an O_APPEND file is atomic — concurrent
+    // processes/threads can append without interleaving, as long as
+    // each call is one syscall. `writeln!` issues two writes (data
+    // and `\n`), which can interleave under load.
+    let mut buf = line.into_bytes();
+    buf.push(b'\n');
     let mut file = match OpenOptions::new().create(true).append(true).open(&path) {
         Ok(f) => f,
         Err(e) => {
@@ -62,7 +70,7 @@ pub fn append(entry: AuditEntry<'_>) {
             return;
         }
     };
-    if let Err(e) = writeln!(file, "{line}") {
+    if let Err(e) = file.write_all(&buf) {
         eprintln!("audit: write to `{}` failed: {e}", path.display());
     }
 }

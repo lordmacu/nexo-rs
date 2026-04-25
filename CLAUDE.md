@@ -166,6 +166,21 @@ admin silently decays into a marketing page. The tech-debt registry
 is the IOU list that forces the UI to keep pace — same reflex as
 the docs-sync rule below.
 
+## MANDATORY: Register every new write/reveal env toggle
+
+Whenever an extension or plugin introduces a new env-driven toggle
+that gates dangerous behavior (anything matching `*_ALLOW_*`,
+`*_REVEAL`, `*_PURGE`, allowlist-style env vars, etc.), append a
+matching `CapabilityToggle` entry to
+[`crates/setup/src/capabilities.rs::INVENTORY`](crates/setup/src/capabilities.rs)
+**in the same commit**.
+
+Without that entry, `agent doctor capabilities` is silently
+incomplete — the inventory is the operator-facing source of truth
+for "what dangerous capabilities are armed in my shell?". A toggle
+that the inventory doesn't know about is invisible to the operator
+and to the future admin-ui capabilities tab.
+
 ## MANDATORY: Keep docs/ in sync
 
 **The mdBook at `docs/` is the public documentation served at

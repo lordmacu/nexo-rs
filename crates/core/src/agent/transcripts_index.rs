@@ -151,16 +151,22 @@ impl TranscriptsIndex {
         agent_id: &str,
         transcripts_root: &Path,
     ) -> anyhow::Result<usize> {
-        sqlx::query("DELETE FROM transcripts_fts WHERE agent_id = ?")
-            .bind(agent_id)
-            .execute(&self.pool)
-            .await
-            .context("wiping rows for agent")?;
+        // Walk the JSONL files first (read-only; safe outside the
+        // transaction). Then DELETE + INSERT inside a single
+        // transaction so a crash mid-rebuild leaves the index
+        // either fully old or fully new — never half-empty.
         let writer = TranscriptWriter::new(PathBuf::from(transcripts_root), agent_id.to_string());
-        let mut indexed = 0usize;
         let mut entries = match tokio::fs::read_dir(transcripts_root).await {
             Ok(d) => d,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Empty root → just clear the index for this agent.
+                sqlx::query("DELETE FROM transcripts_fts WHERE agent_id = ?")
+                    .bind(agent_id)
+                    .execute(&self.pool)
+                    .await
+                    .context("wiping rows for agent")?;
+                return Ok(0);
+            }
             Err(e) => {
                 return Err(anyhow::anyhow!(
                     "read transcripts_root {}: {e}",
@@ -168,6 +174,16 @@ impl TranscriptsIndex {
                 ))
             }
         };
+
+        // Collect everything we want to insert before touching the DB.
+        struct Row {
+            sid: Uuid,
+            ts: i64,
+            role: &'static str,
+            source_plugin: String,
+            content: String,
+        }
+        let mut rows: Vec<Row> = Vec::new();
         while let Some(entry) = entries.next_entry().await? {
             let p = entry.path();
             if p.extension().and_then(|s| s.to_str()) != Some("jsonl") {
@@ -184,19 +200,41 @@ impl TranscriptsIndex {
             let lines = writer.read_session(sid).await.unwrap_or_default();
             for line in lines {
                 if let TranscriptLine::Entry(e) = line {
-                    self.insert(
-                        agent_id,
+                    rows.push(Row {
                         sid,
-                        e.timestamp.timestamp(),
-                        role_str(e.role),
-                        &e.source_plugin,
-                        &e.content,
-                    )
-                    .await?;
-                    indexed += 1;
+                        ts: e.timestamp.timestamp(),
+                        role: role_str(e.role),
+                        source_plugin: e.source_plugin,
+                        content: e.content,
+                    });
                 }
             }
         }
+
+        let mut tx = self.pool.begin().await.context("begin tx")?;
+        sqlx::query("DELETE FROM transcripts_fts WHERE agent_id = ?")
+            .bind(agent_id)
+            .execute(&mut *tx)
+            .await
+            .context("wiping rows for agent")?;
+        let mut indexed = 0usize;
+        for row in &rows {
+            sqlx::query(
+                "INSERT INTO transcripts_fts (content, agent_id, session_id, timestamp_unix, role, source_plugin) \
+                 VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&row.content)
+            .bind(agent_id)
+            .bind(row.sid.to_string())
+            .bind(row.ts)
+            .bind(row.role)
+            .bind(&row.source_plugin)
+            .execute(&mut *tx)
+            .await
+            .context("insert row in rebuild")?;
+            indexed += 1;
+        }
+        tx.commit().await.context("commit rebuild tx")?;
         Ok(indexed)
     }
 }
@@ -313,6 +351,42 @@ mod tests {
         // matches literal "an OR b" only.
         let hits = idx.search("kate", "OR", 10).await.unwrap();
         assert!(hits.iter().all(|h| h.session_id == sid));
+    }
+
+    #[tokio::test]
+    async fn search_user_input_with_fts_operators_is_safe() {
+        // Adversarial inputs: each one would, if naively concatenated
+        // into the MATCH expression, change the query semantics. Phrase
+        // mode (the wrapping `"`) plus our `"` doubling neutralizes
+        // every operator the docs list (NEAR, AND, OR, NOT, `:` field,
+        // `^` prefix, parens). The query is treated as a literal
+        // phrase against `content`, so none of the inputs below should
+        // ever return rows from a different agent or a different
+        // content string.
+        let idx = fresh().await;
+        let sid = Uuid::new_v4();
+        idx.insert("kate", sid, 1, "user", "wa", "title: hello world")
+            .await
+            .unwrap();
+        idx.insert("ana", Uuid::new_v4(), 2, "user", "wa", "agent_id: leak")
+            .await
+            .unwrap();
+        for adversarial in [
+            "field:value",
+            "agent_id:ana",
+            "OR NOT AND NEAR",
+            "\"injection\"",
+            "(hello)",
+            "^prefix",
+        ] {
+            let hits = idx.search("kate", adversarial, 10).await.unwrap();
+            for h in &hits {
+                assert_eq!(
+                    h.agent_id, "kate",
+                    "input `{adversarial}` leaked rows from another agent"
+                );
+            }
+        }
     }
 
     #[tokio::test]
