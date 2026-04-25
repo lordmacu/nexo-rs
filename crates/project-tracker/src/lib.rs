@@ -7,8 +7,10 @@
 //! markdown. Edits keep going through the existing `/forge ejecutar`
 //! commit flow.
 
+pub mod format;
 pub mod git;
 pub mod parser;
+pub mod tools;
 pub mod tracker;
 pub mod types;
 
