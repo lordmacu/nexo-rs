@@ -116,3 +116,18 @@ driver:
 acceptance:
   default_shell_timeout: 5m
   evidence_byte_limit: 4096
+
+# Phase 67.9 — opportunistic /compact injection. When the running
+# token count crosses `threshold * context_window`, the orchestrator
+# schedules the next turn as a `/compact <focus>` slash command so
+# Claude Code compacts its own context before the next work turn.
+#
+# - `enabled: false` or `context_window: 0` disables the policy.
+# - `threshold` is the fraction (0.0–1.0) of the context window that
+#   triggers a compact. 0.7 = compact when usage hits 70%.
+# - `min_turns_between_compacts` prevents back-to-back compacts.
+compact_policy:
+  enabled: true
+  context_window: ${NEXO_DRIVER_COMPACT_WINDOW:-200000}
+  threshold: 0.7
+  min_turns_between_compacts: 5

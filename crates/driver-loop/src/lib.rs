@@ -3,6 +3,7 @@
 
 pub mod acceptance;
 pub mod attempt;
+pub mod compact;
 pub mod config;
 pub mod error;
 pub mod events;
@@ -21,10 +22,12 @@ pub use acceptance::{
     GitClean, NoPathsTouched, NoopAcceptanceEvaluator, ShellResult, ShellRunner,
 };
 pub use config::{
-    AcceptanceConfig, BindingStoreConfig, BindingStoreKind, DeciderConfig, DeciderMemoryConfig,
-    DenyShortcutConfig, DriverBinConfig, DriverConfig, EmbeddingProviderConfig, NamespaceConfig,
-    PermissionConfig, ReplayPolicyConfig, WorkspaceConfig, WorkspaceGitConfig,
+    AcceptanceConfig, BindingStoreConfig, BindingStoreKind, CompactPolicyConfig, DeciderConfig,
+    DeciderMemoryConfig, DenyShortcutConfig, DriverBinConfig, DriverConfig,
+    EmbeddingProviderConfig, NamespaceConfig, PermissionConfig, ReplayPolicyConfig,
+    WorkspaceConfig, WorkspaceGitConfig,
 };
+pub use compact::{CompactContext, CompactPolicy, DefaultCompactPolicy};
 pub use error::DriverError;
 #[cfg(feature = "nats")]
 pub use events::NatsEventSink;

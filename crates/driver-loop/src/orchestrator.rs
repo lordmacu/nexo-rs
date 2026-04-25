@@ -17,6 +17,7 @@ use tokio_util::sync::CancellationToken as TokioCancel;
 
 use crate::acceptance::{AcceptanceEvaluator, NoopAcceptanceEvaluator};
 use crate::attempt::{run_attempt, AttemptContext};
+use crate::compact::{CompactContext, CompactPolicy, DefaultCompactPolicy};
 use crate::error::DriverError;
 use crate::events::{DriverEvent, DriverEventSink, NoopEventSink};
 use crate::mcp_config::write_mcp_config;
@@ -46,6 +47,9 @@ pub struct DriverOrchestrator {
     event_sink: Arc<dyn DriverEventSink>,
     /// Phase 67.8 — replay-policy classifies mid-turn errors.
     replay_policy: Arc<dyn ReplayPolicy>,
+    /// Phase 67.9 — opportunistic /compact policy.
+    compact_policy: Arc<dyn CompactPolicy>,
+    compact_context_window: u64,
     bin_path: PathBuf,
     socket_path: PathBuf,
     /// Owns the spawned socket server; cancelling kills it.
@@ -63,6 +67,8 @@ pub struct DriverOrchestratorBuilder {
     workspace_manager: Option<Arc<WorkspaceManager>>,
     event_sink: Option<Arc<dyn DriverEventSink>>,
     replay_policy: Option<Arc<dyn ReplayPolicy>>,
+    compact_policy: Option<Arc<dyn CompactPolicy>>,
+    compact_context_window: u64,
     bin_path: Option<PathBuf>,
     socket_path: Option<PathBuf>,
     cancel_root: Option<CancellationToken>,
@@ -109,6 +115,14 @@ impl DriverOrchestratorBuilder {
         self.replay_policy = Some(p);
         self
     }
+    pub fn compact_policy(mut self, p: Arc<dyn CompactPolicy>) -> Self {
+        self.compact_policy = Some(p);
+        self
+    }
+    pub fn compact_context_window(mut self, n: u64) -> Self {
+        self.compact_context_window = n;
+        self
+    }
 
     pub async fn build(self) -> Result<DriverOrchestrator, DriverError> {
         let claude_cfg = self
@@ -137,6 +151,10 @@ impl DriverOrchestratorBuilder {
         let replay_policy: Arc<dyn ReplayPolicy> = self
             .replay_policy
             .unwrap_or_else(|| Arc::new(DefaultReplayPolicy::default()));
+        let compact_policy: Arc<dyn CompactPolicy> = self
+            .compact_policy
+            .unwrap_or_else(|| Arc::new(DefaultCompactPolicy::default()));
+        let compact_context_window = self.compact_context_window;
         let cancel_root = self.cancel_root.unwrap_or_default();
 
         // Bind the socket server.
@@ -151,6 +169,8 @@ impl DriverOrchestratorBuilder {
             workspace_manager,
             event_sink,
             replay_policy,
+            compact_policy,
+            compact_context_window,
             bin_path,
             socket_path,
             _socket_handle: socket_handle,
@@ -185,6 +205,10 @@ impl DriverOrchestrator {
         let mut last_acceptance: Option<AcceptanceVerdict> = None;
         let mut final_text: Option<String> = None;
         let mut total_turns: u32 = 0;
+        // Phase 67.9 compact-policy state.
+        let mut last_compact_turn: Option<u32> = None;
+        let mut next_extras: Option<serde_json::Map<String, serde_json::Value>> = None;
+        let mut last_was_compact = false;
         let final_outcome: AttemptOutcome;
 
         loop {
@@ -215,13 +239,16 @@ impl DriverOrchestrator {
                 .await;
 
             let cancel = self.cancel_root.clone();
+            let extras = next_extras
+                .take()
+                .unwrap_or_else(|| build_attempt_extras(&prior_failures, &goal.budget, total_turns));
             let params = AttemptParams {
                 goal: goal.clone(),
                 turn_index: total_turns,
                 usage: usage.clone(),
                 prior_decisions: Vec::new(),
                 cancel,
-                extras: build_attempt_extras(&prior_failures, &goal.budget, total_turns),
+                extras,
             };
 
             // Phase 67.6 — checkpoint pre-attempt. Sentinel
@@ -263,6 +290,21 @@ impl DriverOrchestrator {
             }
 
             usage = result.usage_after.clone();
+
+            // Phase 67.9 — compact turns are meta: absorb tokens, do
+            // not bump turn counter, do not process outcome as work.
+            if last_was_compact {
+                last_compact_turn = Some(total_turns);
+                last_was_compact = false;
+                let _ = self
+                    .event_sink
+                    .publish(DriverEvent::AttemptCompleted {
+                        result: result.clone(),
+                    })
+                    .await;
+                continue;
+            }
+
             final_text = result.final_text.clone();
             last_acceptance = result.acceptance.clone();
             total_turns += 1;
@@ -274,6 +316,38 @@ impl DriverOrchestrator {
                     result: result.clone(),
                 })
                 .await;
+
+            // Phase 67.9 — opportunistic /compact: if pressure crosses
+            // threshold, schedule next iteration as a compact turn.
+            let compact_ctx = CompactContext {
+                goal_id,
+                turn_index: total_turns,
+                usage: &usage,
+                context_window: self.compact_context_window,
+                last_compact_turn,
+                goal_description: &goal.description,
+            };
+            if let Some(focus) = self.compact_policy.classify(&compact_ctx).await {
+                let pressure = if self.compact_context_window > 0 {
+                    usage.tokens as f64 / self.compact_context_window as f64
+                } else {
+                    0.0
+                };
+                let _ = self
+                    .event_sink
+                    .publish(DriverEvent::CompactRequested {
+                        goal_id,
+                        turn_index: total_turns,
+                        focus: focus.clone(),
+                        token_pressure: pressure,
+                    })
+                    .await;
+                let mut e = serde_json::Map::new();
+                e.insert("compact_turn".into(), serde_json::Value::Bool(true));
+                e.insert("compact_focus".into(), serde_json::Value::String(focus));
+                next_extras = Some(e);
+                last_was_compact = true;
+            }
             if let Some(v) = &result.acceptance {
                 let _ = self
                     .event_sink
