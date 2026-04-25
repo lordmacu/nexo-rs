@@ -20,7 +20,7 @@ duckduckgo = ["dep:scraper"]
 perplexity = []
 
 [dependencies]
-nexo-resilience = { version = "0.1.0", path = "../resilience" }
+nexo-resilience = { version = "0.1.1", path = "../resilience" }
 tokio        = { workspace = true }
 serde        = { workspace = true }
 serde_json   = { workspace = true }

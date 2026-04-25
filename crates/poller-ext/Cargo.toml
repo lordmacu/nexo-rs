@@ -9,7 +9,7 @@ authors       = { workspace = true }
 repository    = { workspace = true }
 homepage      = { workspace = true }
 documentation = { workspace = true }
-readme        = { workspace = true }
+readme        = "README.md"
 keywords      = { workspace = true }
 categories    = { workspace = true }
 # Bridge crate — adapts an `nexo-extensions::StdioRuntime` (a
@@ -18,10 +18,10 @@ categories    = { workspace = true }
 # in any language (Python, Bash, Go, …) without touching Rust.
 
 [dependencies]
-nexo-poller = { version = "0.1.0", path = "../poller" }
-nexo-extensions = { version = "0.1.0", path = "../extensions" }
-nexo-auth = { version = "0.1.0", path = "../auth" }
-nexo-llm = { version = "0.1.0", path = "../llm" }
+nexo-poller = { version = "0.1.1", path = "../poller" }
+nexo-extensions = { version = "0.1.1", path = "../extensions" }
+nexo-auth = { version = "0.1.1", path = "../auth" }
+nexo-llm = { version = "0.1.1", path = "../llm" }
 base64           = { workspace = true }
 async-trait      = { workspace = true }
 serde            = { workspace = true }

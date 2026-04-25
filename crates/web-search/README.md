@@ -1,6 +1,6 @@
-# nexo-taskflow
+# nexo-web-search
 
-> Long-running multi-step task orchestration runtime for Nexo agents.
+> Multi-provider web search client (Brave, Serper, etc.) for Nexo agents.
 
 This crate is part of **[Nexo](https://github.com/lordmacu/nexo-rs)** — a multi-agent Rust framework with a NATS event bus, pluggable LLM providers (MiniMax, Anthropic, OpenAI-compat, Gemini, DeepSeek), per-agent credentials, MCP support, and channel plugins for WhatsApp, Telegram, Email, and Browser (CDP).
 
@@ -9,23 +9,21 @@ This crate is part of **[Nexo](https://github.com/lordmacu/nexo-rs)** — a mult
 
 ## What this crate does
 
-- **State machine** for multi-step flows that can pause, resume, and survive process restarts.
-- **FlowStore** persistence so flows are durable across boots.
-- **Wait/resume primitives** — flows can suspend on a human reply, an external webhook, or a timer.
-- **Agent tools** to start, list, and resume flows from inside an LLM turn.
-- CLI mirroring so operators can inspect and intervene from the shell.
+- Single `WebSearch` trait with multiple provider implementations: **Brave Search**, **Serper**, more.
+- Per-agent / per-binding policy: pick the provider, set quotas, cache results.
+- Wired into the `web_search` agent tool so the LLM can issue searches as part of a turn.
 
 ## Install
 
 ```toml
 [dependencies]
-nexo-taskflow = "0.1"
+nexo-web-search = "0.1"
 ```
 
 ## Documentation for this crate
 
-- [TaskFlow model](https://lordmacu.github.io/nexo-rs/taskflow/model.html)
-- [FlowManager](https://lordmacu.github.io/nexo-rs/taskflow/manager.html)
+- [Web search](https://lordmacu.github.io/nexo-rs/ops/web-search.html)
+- [Link understanding](https://lordmacu.github.io/nexo-rs/ops/link-understanding.html)
 
 ## License
 

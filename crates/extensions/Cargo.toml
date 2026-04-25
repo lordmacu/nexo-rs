@@ -9,7 +9,7 @@ authors       = { workspace = true }
 repository    = { workspace = true }
 homepage      = { workspace = true }
 documentation = { workspace = true }
-readme        = { workspace = true }
+readme        = "README.md"
 keywords      = { workspace = true }
 categories    = { workspace = true }
 [dependencies]
@@ -25,9 +25,9 @@ toml       = "0.8"
 semver     = "1"
 regex      = "1.10"
 walkdir    = "2"
-nexo-resilience = { version = "0.1.0", path = "../resilience" }
-nexo-broker = { version = "0.1.0", path = "../broker" }
-nexo-config = { version = "0.1.0", path = "../config" }
+nexo-resilience = { version = "0.1.1", path = "../resilience" }
+nexo-broker = { version = "0.1.1", path = "../broker" }
+nexo-config = { version = "0.1.1", path = "../config" }
 url             = "2"
 async-trait     = { workspace = true }
 uuid            = { workspace = true }

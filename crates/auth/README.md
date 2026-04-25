@@ -1,6 +1,6 @@
-# nexo-taskflow
+# nexo-auth
 
-> Long-running multi-step task orchestration runtime for Nexo agents.
+> Per-agent credential resolver and gauntlet validation for Nexo channels.
 
 This crate is part of **[Nexo](https://github.com/lordmacu/nexo-rs)** — a multi-agent Rust framework with a NATS event bus, pluggable LLM providers (MiniMax, Anthropic, OpenAI-compat, Gemini, DeepSeek), per-agent credentials, MCP support, and channel plugins for WhatsApp, Telegram, Email, and Browser (CDP).
 
@@ -9,23 +9,22 @@ This crate is part of **[Nexo](https://github.com/lordmacu/nexo-rs)** — a mult
 
 ## What this crate does
 
-- **State machine** for multi-step flows that can pause, resume, and survive process restarts.
-- **FlowStore** persistence so flows are durable across boots.
-- **Wait/resume primitives** — flows can suspend on a human reply, an external webhook, or a timer.
-- **Agent tools** to start, list, and resume flows from inside an LLM turn.
-- CLI mirroring so operators can inspect and intervene from the shell.
+- Per-agent credential stores for WhatsApp, Telegram, and Google APIs — each agent ships with its own keys.
+- **Boot gauntlet**: validates required scopes / pairing state before the runtime accepts traffic.
+- Resolver API used by channel plugins to fetch the right credentials for the right agent at runtime.
+- Telemetry hooks (counters, audit logs) so operators can see which agent used which credential when.
 
 ## Install
 
 ```toml
 [dependencies]
-nexo-taskflow = "0.1"
+nexo-auth = "0.1"
 ```
 
 ## Documentation for this crate
 
-- [TaskFlow model](https://lordmacu.github.io/nexo-rs/taskflow/model.html)
-- [FlowManager](https://lordmacu.github.io/nexo-rs/taskflow/manager.html)
+- [Per-agent credentials](https://lordmacu.github.io/nexo-rs/config/credentials.html)
+- [Capability toggles](https://lordmacu.github.io/nexo-rs/ops/capabilities.html)
 
 ## License
 
