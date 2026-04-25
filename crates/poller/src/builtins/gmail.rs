@@ -214,13 +214,35 @@ impl Poller for GmailPoller {
             }
         };
 
+        // Belt-and-suspenders dedup: parity with the legacy
+        // `gmail-poller`'s `.seen.json` cache. Persisted in the
+        // SQLite cursor as a JSON array of message ids; cap at 5000,
+        // drop oldest when over. Catches the rare case where dispatch
+        // succeeds but `mark_read` fails — Gmail still returns the
+        // message as UNREAD next tick, but `seen` blocks duplicate
+        // dispatch.
+        let mut seen_set: std::collections::HashSet<String> = ctx
+            .cursor
+            .as_deref()
+            .and_then(|b| serde_json::from_slice::<Vec<String>>(b).ok())
+            .map(|v| v.into_iter().collect())
+            .unwrap_or_default();
+
         let mut deliveries = Vec::new();
-        let mut seen = 0u32;
+        let mut items_seen = 0u32;
         for (idx, m) in messages.iter().take(cfg.max_per_tick).enumerate() {
-            seen += 1;
+            items_seen += 1;
             let Some(id) = m.get("id").and_then(Value::as_str) else {
                 continue;
             };
+            if seen_set.contains(id) {
+                tracing::debug!(
+                    job = %ctx.job_id,
+                    message_id = %id,
+                    "gmail tick: skip (already in seen cache)"
+                );
+                continue;
+            }
             match self
                 .process_one(
                     id,
@@ -233,6 +255,7 @@ impl Poller for GmailPoller {
             {
                 Ok(Some(d)) => {
                     deliveries.push(d);
+                    seen_set.insert(id.to_string());
                     if idx + 1 < messages.len() && cfg.dispatch_delay_ms > 0 {
                         tokio::select! {
                             _ = tokio::time::sleep(
@@ -242,7 +265,13 @@ impl Poller for GmailPoller {
                         }
                     }
                 }
-                Ok(None) => {}
+                Ok(None) => {
+                    // Filter miss / required-field empty — remember
+                    // the id so a future tick does not re-attempt
+                    // (mirrors legacy `remember_seen` after
+                    // `try_mark_read`).
+                    seen_set.insert(id.to_string());
+                }
                 Err(e) => {
                     tracing::warn!(
                         job = %ctx.job_id,
@@ -254,12 +283,25 @@ impl Poller for GmailPoller {
             }
         }
 
+        // Cap the seen set, drop oldest 1000 by string sort (Gmail
+        // ids are roughly monotonic). Same trim threshold as the
+        // legacy implementation to keep memory bounded.
+        if seen_set.len() > 5000 {
+            let mut ids: Vec<String> = seen_set.iter().cloned().collect();
+            ids.sort();
+            for id in ids.into_iter().take(1000) {
+                seen_set.remove(&id);
+            }
+        }
+        let next_cursor =
+            serde_json::to_vec(&seen_set.into_iter().collect::<Vec<_>>()).ok();
+
         let dispatched = deliveries.len() as u32;
         Ok(TickOutcome {
-            items_seen: seen,
+            items_seen,
             items_dispatched: dispatched,
             deliver: deliveries,
-            next_cursor: None,
+            next_cursor,
             next_interval_hint: None,
         })
     }
