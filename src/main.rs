@@ -3663,6 +3663,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         workspace: primary.workspace.clone(),
         skills: primary.skills.clone(),
         skills_dir: primary.skills_dir.clone(),
+            skill_overrides: Default::default(),
         transcripts_dir: primary.transcripts_dir.clone(),
         dreaming: primary.dreaming.clone(),
         workspace_git: Default::default(),

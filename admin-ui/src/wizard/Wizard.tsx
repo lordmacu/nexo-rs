@@ -1,15 +1,20 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 type Provider = "minimax" | "anthropic" | "openai" | "gemini";
-
 type ChannelKind = "none" | "telegram" | "whatsapp";
 
 interface Draft {
-  identity: { name: string; emoji: string; vibe: string };
+  identity: { name: string; emoji: string; vibe: string; avatar: string };
   soul: string;
   brain: { provider: Provider; model: string; api_key: string };
-  channel: { kind: ChannelKind; token: string };
+  channel: {
+    kind: ChannelKind;
+    token: string;
+    whatsapp_reuse_session: boolean;
+  };
 }
+
+const DRAFT_KEY = "nexo_wizard_draft_v1";
 
 const DEFAULT_SOUL = `# Identity
 You are warm but sharp. You keep replies short and on the point.
@@ -31,8 +36,40 @@ const DEFAULT_MODELS: Record<Provider, string> = {
   gemini: "gemini-2.0-flash",
 };
 
-type StepId = 1 | 2 | 3 | 4;
+function freshDraft(): Draft {
+  return {
+    identity: {
+      name: "Kate",
+      emoji: "🐙",
+      vibe: "warm but sharp",
+      avatar: "",
+    },
+    soul: DEFAULT_SOUL,
+    brain: { provider: "minimax", model: DEFAULT_MODELS.minimax, api_key: "" },
+    channel: { kind: "none", token: "", whatsapp_reuse_session: false },
+  };
+}
 
+function loadDraft(): Draft {
+  try {
+    const raw = window.localStorage.getItem(DRAFT_KEY);
+    if (!raw) return freshDraft();
+    const parsed = JSON.parse(raw);
+    // Shallow merge with defaults so older drafts (missing avatar,
+    // whatsapp_reuse_session, etc.) still open cleanly.
+    const base = freshDraft();
+    return {
+      identity: { ...base.identity, ...(parsed.identity ?? {}) },
+      soul: parsed.soul ?? base.soul,
+      brain: { ...base.brain, ...(parsed.brain ?? {}) },
+      channel: { ...base.channel, ...(parsed.channel ?? {}) },
+    };
+  } catch {
+    return freshDraft();
+  }
+}
+
+type StepId = 1 | 2 | 3 | 4;
 const STEPS: { id: StepId; label: string; caption: string }[] = [
   { id: 1, label: "Identity", caption: "Name + vibe" },
   { id: 2, label: "Soul", caption: "Character doc" },
@@ -42,20 +79,50 @@ const STEPS: { id: StepId; label: string; caption: string }[] = [
 
 export function Wizard({ onFinish }: { onFinish: () => void }) {
   const [step, setStep] = useState<StepId>(1);
-  const [draft, setDraft] = useState<Draft>(() => ({
-    identity: { name: "Kate", emoji: "🐙", vibe: "warm but sharp" },
-    soul: DEFAULT_SOUL,
-    brain: { provider: "minimax", model: DEFAULT_MODELS.minimax, api_key: "" },
-    channel: { kind: "none", token: "" },
-  }));
+  const [draft, setDraftState] = useState<Draft>(() => loadDraft());
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Persist draft on every change so closing the tab mid-flow
+  // doesn't lose the work. Load happens on mount (see useState
+  // initializer).
+  const setDraft = useCallback(
+    (updater: (prev: Draft) => Draft) => {
+      setDraftState((prev) => {
+        const next = updater(prev);
+        try {
+          window.localStorage.setItem(DRAFT_KEY, JSON.stringify(next));
+        } catch {
+          /* storage might be full or blocked — not load-bearing */
+        }
+        return next;
+      });
+    },
+    [],
+  );
+
+  const startOver = useCallback(() => {
+    const ok = window.confirm(
+      "Discard everything you've filled in and restart the wizard from scratch?",
+    );
+    if (!ok) return;
+    try {
+      window.localStorage.removeItem(DRAFT_KEY);
+    } catch {
+      /* ignore */
+    }
+    setDraftState(freshDraft());
+    setStep(1);
+    setError(null);
+  }, []);
 
   const canAdvance = useMemo(() => {
     if (step === 1) return draft.identity.name.trim().length > 0;
     if (step === 3) return draft.brain.provider.length > 0;
     if (step === 4) {
-      if (draft.channel.kind === "telegram") return draft.channel.token.trim().length > 0;
+      if (draft.channel.kind === "telegram") {
+        return draft.channel.token.trim().length > 0;
+      }
       return true;
     }
     return true;
@@ -78,7 +145,10 @@ export function Wizard({ onFinish }: { onFinish: () => void }) {
       identity: Draft["identity"];
       soul: string;
       brain: Draft["brain"];
-      channel: null | { kind: "telegram"; token: string } | { kind: "whatsapp" };
+      channel:
+        | null
+        | { kind: "telegram"; token: string }
+        | { kind: "whatsapp"; reuse_session: boolean };
     } = {
       identity: draft.identity,
       soul: draft.soul,
@@ -87,7 +157,10 @@ export function Wizard({ onFinish }: { onFinish: () => void }) {
         draft.channel.kind === "telegram"
           ? { kind: "telegram", token: draft.channel.token.trim() }
           : draft.channel.kind === "whatsapp"
-          ? { kind: "whatsapp" }
+          ? {
+              kind: "whatsapp",
+              reuse_session: draft.channel.whatsapp_reuse_session,
+            }
           : null,
     };
     try {
@@ -98,6 +171,11 @@ export function Wizard({ onFinish }: { onFinish: () => void }) {
       });
       const data = await r.json();
       if (r.ok && data.ok) {
+        try {
+          window.localStorage.removeItem(DRAFT_KEY);
+        } catch {
+          /* ignore */
+        }
         onFinish();
       } else {
         setError(data.error ?? `HTTP ${r.status}`);
@@ -112,14 +190,23 @@ export function Wizard({ onFinish }: { onFinish: () => void }) {
   return (
     <div className="min-h-screen bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100 font-sans">
       <div className="max-w-xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
-        <header className="mb-6">
-          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">
-            Welcome to nexo-rs
-          </h1>
-          <p className="text-sm text-neutral-600 dark:text-neutral-400 mt-1">
-            Let's create your first agent. Every field has a default — just
-            click through if you want to see it running fast.
-          </p>
+        <header className="mb-6 flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">
+              Welcome to nexo-rs
+            </h1>
+            <p className="text-sm text-neutral-600 dark:text-neutral-400 mt-1">
+              Let's create your first agent. Every field has a default — just
+              click through if you want to see it running fast.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={startOver}
+            className="text-xs min-h-[2rem] px-2 rounded border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-200 dark:hover:bg-neutral-800"
+          >
+            Start over
+          </button>
         </header>
 
         <ol className="flex flex-wrap gap-2 mb-6">
@@ -197,6 +284,8 @@ interface StepProps {
 }
 
 function Step1Identity({ draft, setDraft }: StepProps) {
+  const avatar = draft.identity.avatar.trim();
+  const showAvatar = /^https?:\/\//i.test(avatar);
   return (
     <section className="space-y-4">
       <h2 className="text-lg font-semibold">Identity</h2>
@@ -205,31 +294,50 @@ function Step1Identity({ draft, setDraft }: StepProps) {
         <code className="font-mono text-xs">IDENTITY.md</code> under the
         agent's workspace.
       </p>
-      <Field label="Name">
-        <input
-          value={draft.identity.name}
-          onChange={(e) =>
-            setDraft((d) => ({
-              ...d,
-              identity: { ...d.identity, name: e.target.value },
-            }))
-          }
-          className={inputCls}
-          autoFocus
-        />
-      </Field>
-      <Field label="Emoji">
-        <input
-          value={draft.identity.emoji}
-          onChange={(e) =>
-            setDraft((d) => ({
-              ...d,
-              identity: { ...d.identity, emoji: e.target.value.slice(0, 4) },
-            }))
-          }
-          className={inputCls + " w-24"}
-        />
-      </Field>
+      <div className="flex items-start gap-4">
+        <div className="shrink-0 h-16 w-16 rounded-full overflow-hidden bg-neutral-200 dark:bg-neutral-800 grid place-items-center text-2xl">
+          {showAvatar ? (
+            <img
+              src={avatar}
+              alt="avatar preview"
+              className="h-full w-full object-cover"
+              onError={(ev) => {
+                // Fallback to the emoji when the URL fails.
+                (ev.currentTarget as HTMLImageElement).style.display = "none";
+              }}
+            />
+          ) : (
+            <span>{draft.identity.emoji || "🤖"}</span>
+          )}
+        </div>
+        <div className="flex-1 space-y-3">
+          <Field label="Name">
+            <input
+              value={draft.identity.name}
+              onChange={(e) =>
+                setDraft((d) => ({
+                  ...d,
+                  identity: { ...d.identity, name: e.target.value },
+                }))
+              }
+              className={inputCls}
+              autoFocus
+            />
+          </Field>
+          <Field label="Emoji">
+            <input
+              value={draft.identity.emoji}
+              onChange={(e) =>
+                setDraft((d) => ({
+                  ...d,
+                  identity: { ...d.identity, emoji: e.target.value.slice(0, 4) },
+                }))
+              }
+              className={inputCls + " w-24"}
+            />
+          </Field>
+        </div>
+      </div>
       <Field label="Vibe">
         <input
           value={draft.identity.vibe}
@@ -241,6 +349,20 @@ function Step1Identity({ draft, setDraft }: StepProps) {
           }
           className={inputCls}
           placeholder="warm but sharp"
+        />
+      </Field>
+      <Field label="Avatar URL (optional)">
+        <input
+          value={draft.identity.avatar}
+          onChange={(e) =>
+            setDraft((d) => ({
+              ...d,
+              identity: { ...d.identity, avatar: e.target.value },
+            }))
+          }
+          className={inputCls}
+          placeholder="https://.../kate.png"
+          inputMode="url"
         />
       </Field>
     </section>
@@ -346,7 +468,52 @@ function Step3Brain({ draft, setDraft }: StepProps) {
   );
 }
 
+type TokenProbe =
+  | { state: "idle" }
+  | { state: "probing" }
+  | { state: "ok"; username: string; first_name: string }
+  | { state: "err"; msg: string };
+
 function Step4Channel({ draft, setDraft }: StepProps) {
+  const [probe, setProbe] = useState<TokenProbe>({ state: "idle" });
+
+  const verifyTelegram = useCallback(async () => {
+    const token = draft.channel.token.trim();
+    if (!token) return;
+    setProbe({ state: "probing" });
+    try {
+      // Telegram Bot API sets Access-Control-Allow-Origin: * on the
+      // public endpoint, so the SPA can probe it directly.
+      const r = await fetch(
+        `https://api.telegram.org/bot${encodeURIComponent(token)}/getMe`,
+      );
+      const data = await r.json();
+      if (data.ok && data.result) {
+        setProbe({
+          state: "ok",
+          username: data.result.username ?? "",
+          first_name: data.result.first_name ?? "",
+        });
+      } else {
+        setProbe({
+          state: "err",
+          msg: data.description ?? "token rejected",
+        });
+      }
+    } catch (e) {
+      setProbe({
+        state: "err",
+        msg: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }, [draft.channel.token]);
+
+  // Reset probe state whenever the token changes so a stale ✓ doesn't
+  // carry over after edits.
+  useEffect(() => {
+    setProbe({ state: "idle" });
+  }, [draft.channel.token]);
+
   return (
     <section className="space-y-4">
       <h2 className="text-lg font-semibold">Channel</h2>
@@ -381,32 +548,96 @@ function Step4Channel({ draft, setDraft }: StepProps) {
           );
         })}
       </div>
+
       {draft.channel.kind === "telegram" && (
-        <Field label="Bot token (from @BotFather)">
-          <input
-            type="password"
-            value={draft.channel.token}
-            onChange={(e) =>
-              setDraft((d) => ({
-                ...d,
-                channel: { ...d.channel, token: e.target.value },
-              }))
-            }
-            className={inputCls + " font-mono"}
-            placeholder="1234567:ABC-..."
-            autoComplete="off"
-          />
-        </Field>
+        <div className="space-y-2">
+          <Field label="Bot token (from @BotFather)">
+            <input
+              type="password"
+              value={draft.channel.token}
+              onChange={(e) =>
+                setDraft((d) => ({
+                  ...d,
+                  channel: { ...d.channel, token: e.target.value },
+                }))
+              }
+              className={inputCls + " font-mono"}
+              placeholder="1234567:ABC-..."
+              autoComplete="off"
+            />
+          </Field>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={verifyTelegram}
+              disabled={probe.state === "probing" || !draft.channel.token.trim()}
+              className="text-sm min-h-11 px-3 rounded-md border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-200 dark:hover:bg-neutral-800 disabled:opacity-60"
+            >
+              {probe.state === "probing" ? "Verifying…" : "Verify token"}
+            </button>
+            {probe.state === "ok" && (
+              <span className="text-sm text-green-700 dark:text-green-400">
+                ✓ {probe.first_name} @{probe.username}
+              </span>
+            )}
+            {probe.state === "err" && (
+              <span className="text-sm text-red-700 dark:text-red-400">
+                ✗ {probe.msg}
+              </span>
+            )}
+            <span className="text-xs text-neutral-500 ml-auto">
+              probes <code className="font-mono">api.telegram.org/getMe</code>
+            </span>
+          </div>
+        </div>
       )}
+
       {draft.channel.kind === "whatsapp" && (
-        <p className="text-sm rounded-md border border-amber-300 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 px-3 py-2">
-          WhatsApp pairing uses a live QR scan from the terminal. After
-          finishing the wizard, run{" "}
-          <code className="font-mono text-xs">agent setup whatsapp</code> on
-          the host to pair the phone. The agent YAML will already be wired
-          for this channel.
-        </p>
+        <div className="space-y-3">
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={draft.channel.whatsapp_reuse_session}
+              onChange={(e) =>
+                setDraft((d) => ({
+                  ...d,
+                  channel: {
+                    ...d.channel,
+                    whatsapp_reuse_session: e.target.checked,
+                  },
+                }))
+              }
+              className="mt-1 h-4 w-4"
+            />
+            <span>
+              I already have a paired WhatsApp session for this agent — reuse
+              the existing
+              {" "}
+              <code className="font-mono text-xs">
+                &lt;workspace&gt;/whatsapp/default
+              </code>
+              {" "}
+              directory and skip re-pairing.
+            </span>
+          </label>
+          {draft.channel.whatsapp_reuse_session ? (
+            <p className="text-sm rounded-md border border-green-300 dark:border-green-900 bg-green-50 dark:bg-green-950/30 text-green-900 dark:text-green-200 px-3 py-2">
+              Using the existing paired session. If the credentials have
+              expired (401 loop), clear them and pair fresh via{" "}
+              <code className="font-mono text-xs">agent setup whatsapp</code>.
+            </p>
+          ) : (
+            <p className="text-sm rounded-md border border-amber-300 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 px-3 py-2">
+              WhatsApp pairing uses a live QR scan from the terminal. After
+              finishing the wizard, run{" "}
+              <code className="font-mono text-xs">agent setup whatsapp</code>{" "}
+              on the host to pair the phone. The agent YAML will already be
+              wired for this channel.
+            </p>
+          )}
+        </div>
       )}
+
       {draft.channel.kind === "none" && (
         <p className="text-sm text-neutral-500">
           No channel — the agent will be reachable only through the admin

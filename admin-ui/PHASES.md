@@ -46,7 +46,7 @@ done.
 
 ---
 
-## Phase A1 — First-run wizard   🔄
+## Phase A1 — First-run wizard   ✅
 
 The moment the operator logs in for the first time and no agents
 exist, route them into a guided wizard. Four steps; every field has
@@ -71,12 +71,17 @@ a sane default so "Next Next Next Finish" produces a working agent.
   `IDENTITY.md` + `SOUL.md` + telegram.yaml (if absent) in one
   call to `POST /api/bootstrap/finish` and bounces into the
   Dashboard
-- [ ] Avatar URL field + avatar preview
-- [ ] Wizard is idempotent — closing mid-flow saves a draft so the
-  operator can resume; "Start over" button is always there
-- [ ] Live validation: probe Telegram token via `getMe` before
-  accepting it
-- [ ] "Use an existing WhatsApp session" shortcut (skip re-pairing)
+- [x] Avatar URL field + avatar preview (circular, falls back to
+  emoji on load failure)
+- [x] Wizard is idempotent — localStorage-backed draft survives
+  tab close / browser restart; "Start over" button clears it and
+  resets to defaults
+- [x] Live validation: probe Telegram token via `getMe` before
+  accepting it (direct SPA → `api.telegram.org` probe, shows bot
+  username + first name on success)
+- [x] "Use an existing WhatsApp session" shortcut — checkbox that
+  skips the "run agent setup whatsapp" prompt and assumes the
+  paired session dir is already on disk
 
 ---
 
