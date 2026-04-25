@@ -13,9 +13,9 @@ readme        = "README.md"
 keywords      = { workspace = true }
 categories    = { workspace = true }
 [dependencies]
-nexo-config = { version = "0.1.1", path = "../config" }
-nexo-core = { version = "0.1.1", path = "../core" }
-nexo-auth = { version = "0.1.1", path = "../auth" }
+nexo-config = { version = "0.1.2", path = "../config" }
+nexo-core = { version = "0.1.2", path = "../core" }
+nexo-auth = { version = "0.1.2", path = "../auth" }
 anyhow       = { workspace = true }
 serde        = { workspace = true }
 serde_json   = { workspace = true }
@@ -33,5 +33,5 @@ uuid         = { workspace = true, features = ["v4"] }
 chrono       = { workspace = true }
 rand         = "0.8"
 indicatif    = "0.17"
-nexo-plugin-whatsapp = { version = "0.1.1", path = "../plugins/whatsapp" }
-nexo-plugin-google = { version = "0.1.1", path = "../plugins/google" }
+nexo-plugin-whatsapp = { version = "0.1.2", path = "../plugins/whatsapp" }
+nexo-plugin-google = { version = "0.1.2", path = "../plugins/google" }
