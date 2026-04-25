@@ -383,19 +383,28 @@ those, which is its own design decision.
 Done when `brew tap lordmacu/nexo && brew install nexo-rs`
 works on a fresh macOS install.
 
-#### 27.7 — Nix flake
+#### 27.7 — Nix flake   ✅
 
-- `flake.nix` at the repo root exposing:
-  - `packages.default` building from source
-  - `packages.nexo-rs` pinned to the release binary
-  - `apps.default` for `nix run`
-  - `devShells.default` with the toolchain + cargo-dist + the
-    contributor tools
-- Cache via `cachix` so `nix build` doesn't recompile.
-- A short `docs/install/nix.md` with the install one-liner.
+- `flake.nix` at repo root: `packages.default` + `packages.nexo-rs`
+  build from source via `rustPlatform.buildRustPackage`, MSRV
+  pinned to 1.80 via `rust-overlay` so the flake stays in lockstep
+  with `[workspace.package].rust-version`. `apps.default` exposes
+  the `nexo` bin for `nix run`. `devShells.default` ships
+  rustc + clippy + rustfmt + cargo-edit/watch/nextest/deny + mdbook
+  + mdbook-mermaid for contributors.
+- `docs/src/getting-started/install-nix.md` documents the install
+  one-liner, the dev-shell command, the runtime tools the flake
+  *doesn't* install (chrome / cloudflared / ffmpeg / tesseract /
+  yt-dlp — those are system-level), pin-to-release pattern, and
+  enabling `experimental-features = nix-command flakes`.
+- `docs/src/SUMMARY.md` registers the new install page.
 
-Done when `nix run github:lordmacu/nexo-rs#nexo-rs -- --help`
-fetches the binary from the cache and prints help in <30s.
+`cachix` binary cache deferred — first push to `main` rebuilds
+from source on the user side. When the cache lands, `nix run`
+becomes instant.
+
+Done when `nix run github:lordmacu/nexo-rs -- --help` builds and
+prints help (currently ~3-5 min cold; sub-30s once cachix is on).
 
 #### 27.8 — Termux package recipe
 
