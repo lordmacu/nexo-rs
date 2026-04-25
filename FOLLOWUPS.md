@@ -89,15 +89,19 @@ L-2. **`readability`-style extraction**
 
 ### Phase 25 — Web search
 
-W-1. **Telemetry counters not wired**
-- Missing: `web_search_calls_total{provider,result}`,
-  `web_search_latency_seconds_bucket{provider}`,
-  `web_search_cache_hit_total{provider}`,
-  `web_search_breaker_open_total{provider}`. Spec called for them;
-  shipped without to keep the first commit reviewable.
-- Why deferred: nothing currently consumes them; metrics surface area
-  can grow once the admin-ui dashboard (Phase A4) is the consumer.
-- Target: Phase A4 dashboard work.
+W-1. ~~**Telemetry counters not wired**~~  ✅ shipped
+- `nexo_web_search_calls_total{provider,result}` (result ∈ ok /
+  error / unavailable), `nexo_web_search_cache_total{provider,hit}`,
+  `nexo_web_search_breaker_open_total{provider}`, and
+  `nexo_web_search_latency_ms{provider}` histogram now emitted from
+  `crates/web-search/src/telemetry.rs` and stitched into the host
+  `/metrics` response by `nexo_core::telemetry::render_prometheus`.
+  Latency is recorded only for attempts that actually issued an HTTP
+  request — cache hits and breaker short-circuits skip it so
+  percentiles reflect real provider work. The "unavailable" label
+  distinguishes a breaker-open short-circuit from a real error so
+  dashboards can alert without false positives during a self-healing
+  cooldown.
 
 W-2. **`web_fetch` built-in tool not shipped**
 - Missing: spec'd a `web_fetch` companion tool that replaces the

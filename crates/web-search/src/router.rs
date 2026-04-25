@@ -74,8 +74,10 @@ impl WebSearchRouter {
             let key = WebSearchCache::key(first, &args.query, &canonical_params(&args));
             if cache.ttl().as_secs() > 0 {
                 if let Some(hit) = cache.get(&key).await? {
+                    crate::telemetry::inc_cache(first, true);
                     return Ok(hit);
                 }
+                crate::telemetry::inc_cache(first, false);
             }
         }
 
@@ -84,6 +86,8 @@ impl WebSearchRouter {
             let breaker = self.breakers.get(id).cloned();
             if let Some(b) = &breaker {
                 if !b.allow() {
+                    crate::telemetry::inc_breaker_open(id);
+                    crate::telemetry::inc_call(id, "unavailable");
                     last_err = Some(WebSearchError::ProviderUnavailable(id.to_string()));
                     continue;
                 }
@@ -92,8 +96,12 @@ impl WebSearchRouter {
                 .providers
                 .get(id)
                 .expect("candidates only contains keys from providers");
+            let started = std::time::Instant::now();
             match provider.search(&args).await {
                 Ok(hits) => {
+                    let elapsed_ms = started.elapsed().as_millis() as u64;
+                    crate::telemetry::observe_latency_ms(id, elapsed_ms);
+                    crate::telemetry::inc_call(id, "ok");
                     if let Some(b) = &breaker {
                         b.on_success();
                     }
@@ -113,6 +121,9 @@ impl WebSearchRouter {
                     return Ok(result);
                 }
                 Err(e) => {
+                    let elapsed_ms = started.elapsed().as_millis() as u64;
+                    crate::telemetry::observe_latency_ms(id, elapsed_ms);
+                    crate::telemetry::inc_call(id, "error");
                     if let Some(b) = &breaker {
                         if matches!(
                             &e,

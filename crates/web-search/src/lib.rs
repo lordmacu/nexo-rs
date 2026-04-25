@@ -18,6 +18,7 @@ pub mod provider;
 pub mod providers;
 pub mod router;
 pub mod sanitise;
+pub mod telemetry;
 pub mod types;
 
 pub use cache::WebSearchCache;
