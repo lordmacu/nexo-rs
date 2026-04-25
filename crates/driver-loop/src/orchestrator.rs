@@ -26,6 +26,8 @@ use crate::replay::{
 };
 use crate::socket::DriverSocketServer;
 use crate::workspace::WorkspaceManager;
+use dashmap::DashMap;
+use tokio::sync::watch;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GoalOutcome {
@@ -54,6 +56,12 @@ pub struct DriverOrchestrator {
     /// completed attempt so chat hooks can show 'still going'. `0`
     /// disables periodic progress beacons.
     progress_every_turns: u32,
+    /// Phase 67.C.2 — per-goal pause flag. `pause_goal(id)` flips
+    /// the watch to `true`; the loop blocks on the next iteration
+    /// until `resume_goal(id)` flips it back. The current Claude
+    /// turn is *not* killed — pause only takes effect at the
+    /// natural boundary between turns.
+    pause_signals: Arc<DashMap<GoalId, watch::Sender<bool>>>,
     bin_path: PathBuf,
     socket_path: PathBuf,
     /// Owns the spawned socket server; cancelling kills it.
@@ -182,6 +190,7 @@ impl DriverOrchestratorBuilder {
             compact_policy,
             compact_context_window,
             progress_every_turns,
+            pause_signals: Arc::new(DashMap::new()),
             bin_path,
             socket_path,
             _socket_handle: socket_handle,
@@ -194,6 +203,34 @@ impl DriverOrchestratorBuilder {
 impl DriverOrchestrator {
     pub fn builder() -> DriverOrchestratorBuilder {
         DriverOrchestratorBuilder::default()
+    }
+
+    /// Phase 67.C.2 — request the goal's loop to hold before its
+    /// next turn. Idempotent. No-op when the goal isn't running.
+    pub fn pause_goal(&self, goal_id: GoalId) -> bool {
+        if let Some(tx) = self.pause_signals.get(&goal_id) {
+            let _ = tx.send(true);
+            return true;
+        }
+        false
+    }
+
+    /// Phase 67.C.2 — release a paused goal's loop. Idempotent.
+    pub fn resume_goal(&self, goal_id: GoalId) -> bool {
+        if let Some(tx) = self.pause_signals.get(&goal_id) {
+            let _ = tx.send(false);
+            return true;
+        }
+        false
+    }
+
+    /// True if the goal is currently paused. False if it's running
+    /// or unknown.
+    pub fn is_paused(&self, goal_id: GoalId) -> bool {
+        self.pause_signals
+            .get(&goal_id)
+            .map(|tx| *tx.borrow())
+            .unwrap_or(false)
     }
 
     /// Phase 67.C.1 — fire-and-forget spawn. Returns the
@@ -213,6 +250,10 @@ impl DriverOrchestrator {
     pub async fn run_goal(&self, goal: Goal) -> Result<GoalOutcome, DriverError> {
         let started = Instant::now();
         let goal_id = goal.id;
+
+        // Phase 67.C.2 — register pause signal for this goal.
+        let (pause_tx, mut pause_rx) = watch::channel(false);
+        self.pause_signals.insert(goal_id, pause_tx);
 
         let _ = self
             .event_sink
@@ -236,6 +277,19 @@ impl DriverOrchestrator {
         let final_outcome: AttemptOutcome;
 
         loop {
+            // Phase 67.C.2 — honour pause requests before advancing
+            // to the next turn. We hold here in a cancellation-aware
+            // wait; cancel still wins over a stuck pause.
+            while *pause_rx.borrow() {
+                if self.cancel_root.is_cancelled() {
+                    break;
+                }
+                tokio::select! {
+                    _ = pause_rx.changed() => {}
+                    _ = self.cancel_root.cancelled() => break,
+                }
+            }
+
             if let Some(axis) = goal.budget.is_exhausted(&usage) {
                 let _ = self
                     .event_sink
@@ -510,6 +564,8 @@ impl DriverOrchestrator {
                 outcome: outcome.clone(),
             })
             .await;
+        // Phase 67.C.2 — clean up pause signal once the loop exits.
+        self.pause_signals.remove(&goal_id);
         Ok(outcome)
     }
 
