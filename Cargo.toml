@@ -46,7 +46,7 @@ categories   = ["asynchronous", "api-bindings"]
 [package]
 name        = "nexo-rs"
 description = "Nexo — multi-agent Rust framework: NATS event bus, pluggable LLM providers, channels (WhatsApp, Telegram, Email, Browser), memory, MCP, skills, and TaskFlow."
-version      = { workspace = true }
+version      = "0.1.1"
 edition      = { workspace = true }
 rust-version = { workspace = true }
 license      = { workspace = true }

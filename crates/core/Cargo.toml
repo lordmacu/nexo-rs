@@ -1,7 +1,7 @@
 [package]
 name = "nexo-core"
 description   = "Agent runtime: event bus, sessions, plugin trait, heartbeat, A2A delegation."
-version       = { workspace = true }
+version       = "0.1.1"
 edition       = { workspace = true }
 rust-version  = { workspace = true }
 license       = { workspace = true }
