@@ -364,6 +364,12 @@ IOUs — features that landed in the daemon but have no UI yet.
 
 - [ ] `credentials:` block (Phase 17) — Phase A3 agent-config tab
   Phase A3 covers this
+- [ ] Driver/goal monitor (Phase 67) — pending tile to surface
+  active goals, decisions taken (allow/deny/observe), budget
+  consumption per axis, acceptance verdicts, escalation status.
+  Backend types ship in `nexo-driver-types` (67.0); the dashboard
+  follows once 67.4 wires the loop and emits `agent.harness.*`
+  events
 - [ ] Config hot-reload (Phase 18) — Phase A5 one-click reload
 - [ ] Per-binding overrides — Phase A3 "Brain" tab needs the
   override matrix

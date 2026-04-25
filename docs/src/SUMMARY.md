@@ -19,6 +19,7 @@
 - [Fault tolerance](./architecture/fault-tolerance.md)
 - [Transcripts (FTS + redaction)](./architecture/transcripts.md)
 - [vs OpenClaw](./architecture/vs-openclaw.md)
+- [Driver subsystem (Phase 67)](./architecture/driver-subsystem.md)
 
 # Configuration
 

@@ -31,6 +31,7 @@ members = [
     "crates/poller-ext",
     "crates/web-search",
     "crates/pairing",
+    "crates/driver-types",
 ]
 # Keep standalone extension templates out of the agent workspace so they don't
 # inherit our deps or lockfile. Users copy them verbatim and build separately.
@@ -105,6 +106,7 @@ serde_yaml         = "0.9"
 async-trait        = "0.1"
 dashmap            = "6"
 humantime          = "2"
+humantime-serde    = "1.1"
 tokio-util         = { version = "0.7", features = ["rt"] }
 bytes              = "1"
 futures            = "0.3"
