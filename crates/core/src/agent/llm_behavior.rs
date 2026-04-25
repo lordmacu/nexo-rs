@@ -6,7 +6,10 @@ use super::transcripts::{TranscriptEntry, TranscriptRole, TranscriptWriter};
 use super::types::InboundMessage;
 use super::workspace::{SessionScope, WorkspaceLoader};
 use crate::session::types::{Interaction, Role};
-use crate::telemetry::{inc_llm_requests_total, observe_cache_usage, observe_llm_latency_ms};
+use crate::telemetry::{
+    inc_llm_requests_total, observe_cache_usage, observe_llm_latency_ms,
+    observe_prompt_tokens_drift, observe_prompt_tokens_estimated,
+};
 use agent_broker::{BrokerHandle, Event};
 use agent_llm::{
     collect_stream, Attachment, ChatMessage, ChatRequest, ChatRole, LlmClient, ResponseContent,
@@ -51,6 +54,12 @@ pub struct LlmAgentBehavior {
     /// tool catalog is marked cacheable. When false, the legacy flat
     /// `system_prompt: String` path runs (no provider-level caching).
     prompt_cache_enabled: bool,
+    /// Phase C — pre-flight token counter. When `Some`, every request
+    /// is sized before send; the estimated count is emitted as
+    /// `llm_prompt_tokens_estimated` and post-response we record drift
+    /// vs the provider's reported total. When `None`, counting is
+    /// skipped entirely (zero overhead).
+    token_counter: Option<Arc<dyn agent_llm::TokenCounter>>,
 }
 impl LlmAgentBehavior {
     pub fn new(llm: Arc<dyn LlmClient>, tools: Arc<ToolRegistry>) -> Self {
@@ -65,7 +74,19 @@ impl LlmAgentBehavior {
             tool_filter: Arc::new(tokio::sync::RwLock::new(None)),
             workspace_cache: None,
             prompt_cache_enabled: false,
+            token_counter: None,
         }
+    }
+    /// Phase C — attach a `TokenCounter`. Boot time pick this from
+    /// `agent_llm::token_counter::build()` based on
+    /// `llm.context_optimization.token_counter.backend`. When omitted,
+    /// pre-flight sizing is skipped (zero metrics, zero overhead).
+    pub fn with_token_counter(
+        mut self,
+        counter: Arc<dyn agent_llm::TokenCounter>,
+    ) -> Self {
+        self.token_counter = Some(counter);
+        self
     }
     /// Attach the shared workspace cache. When set, `run_turn` reads
     /// the workspace bundle via `WorkspaceCache::get` (warm Arc, no
@@ -586,6 +607,39 @@ impl LlmAgentBehavior {
             let provider = self.llm.provider();
             let model_label = self.llm.model_id();
             inc_llm_requests_total(&ctx.agent_id, provider, model_label);
+            // Phase C — pre-flight token sizing. Counted on
+            // (system_blocks + messages); count_tokens-backed
+            // counters cache the stable prefix so 95%+ of the bytes
+            // are a memory hit. Emits the estimate as a gauge; drift
+            // vs actual lands in the histogram below after the
+            // response.
+            let estimated_tokens: u32 = if let Some(counter) = self.token_counter.as_ref() {
+                let blocks_total = match counter.count_blocks(&system_blocks).await {
+                    Ok(n) => n,
+                    Err(e) => {
+                        tracing::debug!(error = %e, "pre-flight count_blocks failed");
+                        0
+                    }
+                };
+                let messages_total = match counter.count_messages(&model, &messages).await {
+                    Ok(n) => n,
+                    Err(e) => {
+                        tracing::debug!(error = %e, "pre-flight count_messages failed");
+                        0
+                    }
+                };
+                let total = blocks_total.saturating_add(messages_total);
+                observe_prompt_tokens_estimated(
+                    &ctx.agent_id,
+                    provider,
+                    model_label,
+                    total,
+                    counter.is_exact(),
+                );
+                total
+            } else {
+                0
+            };
             let started_at = std::time::Instant::now();
             // Phase 3 follow-up: consume the streaming API in the
             // main loop so provider-native SSE paths are exercised
@@ -602,6 +656,20 @@ impl LlmAgentBehavior {
             // pass `None` here, so dashboards only see real activity.
             if let Some(cu) = response.cache_usage.as_ref() {
                 observe_cache_usage(&ctx.agent_id, provider, model_label, cu);
+            }
+            // Phase C — drift observation. Only meaningful when we
+            // actually estimated and the provider actually reported a
+            // total. `prompt_tokens` on Anthropic already folds cache
+            // read+creation into the total, so the comparison stays
+            // apples-to-apples regardless of cache hit status.
+            if estimated_tokens > 0 && response.usage.prompt_tokens > 0 {
+                observe_prompt_tokens_drift(
+                    &ctx.agent_id,
+                    provider,
+                    model_label,
+                    estimated_tokens,
+                    response.usage.prompt_tokens,
+                );
             }
             match response.content {
                 ResponseContent::Text(text) => {

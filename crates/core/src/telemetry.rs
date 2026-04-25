@@ -133,6 +133,100 @@ pub fn observe_cache_usage(
         .fetch_add(1, Ordering::Relaxed);
 }
 
+/// Phase C — pre-flight estimated input tokens (last sample per key).
+/// Stored as last-value gauge; the rolling history lives in the
+/// drift histogram.
+static LLM_PROMPT_TOKENS_ESTIMATED: LazyLock<DashMap<LlmKey, AtomicU64>> =
+    LazyLock::new(DashMap::new);
+/// Phase C — drift between pre-flight estimate and provider-reported
+/// actual prompt_tokens, in **percent** (`abs(est - actual) / actual *
+/// 100`). Histogram so dashboards can alert on p99 drift instead of
+/// average smoothing it away.
+static LLM_PROMPT_TOKENS_DRIFT_PCT: LazyLock<DashMap<LlmKey, Histogram>> =
+    LazyLock::new(DashMap::new);
+
+/// Phase C — record the pre-flight token estimate for a request. The
+/// `exact` flag should reflect `TokenCounter::is_exact()` so dashboards
+/// can group exact vs approximate samples.
+pub fn observe_prompt_tokens_estimated(
+    agent_id: &str,
+    provider: &str,
+    model: &str,
+    estimated: u32,
+    _exact: bool,
+) {
+    let key = LlmKey {
+        agent: agent_id.to_string(),
+        provider: provider.to_string(),
+        model: model.to_string(),
+    };
+    LLM_PROMPT_TOKENS_ESTIMATED
+        .entry(key)
+        .or_insert_with(|| AtomicU64::new(0))
+        .store(estimated as u64, Ordering::Relaxed);
+}
+
+/// Phase C — record the drift between estimate and actual after a
+/// request returned. `actual` should be the provider-reported total
+/// prompt tokens (cached read + cached creation + uncached input).
+/// No-op when `actual == 0` (provider didn't report usage).
+pub fn observe_prompt_tokens_drift(
+    agent_id: &str,
+    provider: &str,
+    model: &str,
+    estimated: u32,
+    actual: u32,
+) {
+    if actual == 0 {
+        return;
+    }
+    let diff = if estimated > actual {
+        estimated - actual
+    } else {
+        actual - estimated
+    };
+    let pct = ((diff as f64) * 100.0 / (actual as f64)).round() as u64;
+    let key = LlmKey {
+        agent: agent_id.to_string(),
+        provider: provider.to_string(),
+        model: model.to_string(),
+    };
+    LLM_PROMPT_TOKENS_DRIFT_PCT
+        .entry(key)
+        .or_insert_with(Histogram::new)
+        .observe(pct);
+}
+
+/// Test helper: read the last estimated-tokens gauge sample.
+pub fn prompt_tokens_estimated(agent_id: &str, provider: &str, model: &str) -> u64 {
+    let key = LlmKey {
+        agent: agent_id.to_string(),
+        provider: provider.to_string(),
+        model: model.to_string(),
+    };
+    LLM_PROMPT_TOKENS_ESTIMATED
+        .get(&key)
+        .map(|v| v.value().load(Ordering::Relaxed))
+        .unwrap_or(0)
+}
+
+/// Test helper: rolling drift histogram count (number of observations).
+pub fn prompt_tokens_drift_observations(
+    agent_id: &str,
+    provider: &str,
+    model: &str,
+) -> u64 {
+    let key = LlmKey {
+        agent: agent_id.to_string(),
+        provider: provider.to_string(),
+        model: model.to_string(),
+    };
+    LLM_PROMPT_TOKENS_DRIFT_PCT
+        .get(&key)
+        .map(|v| v.value().count.load(Ordering::Relaxed))
+        .unwrap_or(0)
+}
+
 /// Snapshot of prompt-cache counters for a given key. Returns
 /// `(read, creation, input, turns)`. Used by tests and the admin
 /// surface to inspect rolling hit ratios.

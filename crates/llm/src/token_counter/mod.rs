@@ -21,9 +21,11 @@ use crate::retry::LlmError;
 use crate::types::ChatMessage;
 
 pub mod anthropic_api;
+pub mod cascading;
 pub mod tiktoken_fallback;
 
 pub use anthropic_api::AnthropicTokenCounter;
+pub use cascading::CascadingTokenCounter;
 pub use tiktoken_fallback::TiktokenCounter;
 
 /// Counts the input-token cost of a prompt before the request is sent.
@@ -72,14 +74,26 @@ pub fn build(
     cache_capacity: u32,
 ) -> std::sync::Arc<dyn TokenCounter> {
     use std::sync::Arc;
+    // Helper: wrap an exact primary in the cascade so a failing API
+    // can't take down the agent loop. Tiktoken stays bare — there's
+    // nothing to fall back from.
+    let cascade = |primary: Arc<dyn TokenCounter>| -> Arc<dyn TokenCounter> {
+        Arc::new(CascadingTokenCounter::new(primary))
+    };
     match backend {
-        "anthropic_api" => {
-            Arc::new(AnthropicTokenCounter::new(base_url, api_key, cache_capacity))
-        }
+        "anthropic_api" => cascade(Arc::new(AnthropicTokenCounter::new(
+            base_url,
+            api_key,
+            cache_capacity,
+        ))),
         "tiktoken" => Arc::new(TiktokenCounter::new()),
         "auto" => {
             if provider == "anthropic" && !api_key.trim().is_empty() {
-                Arc::new(AnthropicTokenCounter::new(base_url, api_key, cache_capacity))
+                cascade(Arc::new(AnthropicTokenCounter::new(
+                    base_url,
+                    api_key,
+                    cache_capacity,
+                )))
             } else {
                 Arc::new(TiktokenCounter::new())
             }
@@ -101,7 +115,9 @@ mod tests {
     #[test]
     fn build_picks_anthropic_when_auto_and_keyed() {
         let c = build("auto", "anthropic", "https://api.anthropic.com", "sk-x", 16);
-        assert_eq!(c.backend(), "anthropic_api");
+        // Wrapped in cascade for resilience.
+        assert_eq!(c.backend(), "cascading");
+        // The primary is exact and the cascade hasn't tripped → still exact.
         assert!(c.is_exact());
     }
 
@@ -127,6 +143,6 @@ mod tests {
     #[test]
     fn build_explicit_anthropic_works_for_other_providers() {
         let c = build("anthropic_api", "openai", "https://api.anthropic.com", "k", 16);
-        assert_eq!(c.backend(), "anthropic_api");
+        assert_eq!(c.backend(), "cascading");
     }
 }
