@@ -11,6 +11,7 @@ are at the top.
 | [Python extension](./python-extension.md) | Write a stdlib-only extension that adds a custom tool to any agent. |
 | [MCP server from Claude Desktop](./mcp-from-claude-desktop.md) | Expose the agent's tools to the Anthropic desktop client. |
 | [NATS with TLS + auth](./nats-tls-auth.md) | Harden the broker for a multi-node deployment. |
+| [Rotating config without downtime](./hot-reload.md) | Three Phase 18 hot-reload scenarios: API key rotation, A/B prompt swap, narrowing an outbound allowlist mid-incident. |
 
 If a recipe drifts from reality, open an issue — it means the docs
 didn't get updated alongside a code change.

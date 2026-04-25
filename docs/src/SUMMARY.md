@@ -98,6 +98,7 @@
 - [Python extension](./recipes/python-extension.md)
 - [MCP server from Claude Desktop](./recipes/mcp-from-claude-desktop.md)
 - [NATS with TLS + auth](./recipes/nats-tls-auth.md)
+- [Rotating config without downtime](./recipes/hot-reload.md)
 
 # Architecture Decision Records
 
