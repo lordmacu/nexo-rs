@@ -1,0 +1,32 @@
+# Phase 67.1 reference config — loader wires this up in 67.4.
+#
+# `binary`:
+#   - omit / set to `null` → `which("claude")` resolves at runtime
+#   - absolute path        → spawn that exact binary
+#
+# Setting `permission_prompt_tool` enables human-in-the-loop approval
+# of every Edit/Bash/Write via the MCP server (Phase 67.3 supplies it).
+
+binary: claude
+
+default_args:
+  output_format: stream_json
+  permission_prompt_tool: mcp__nexo-driver__permission_prompt
+  allowed_tools:
+    - Read
+    - Grep
+    - Glob
+    - LS
+    - WebFetch
+  disallowed_tools: []
+  model: null
+
+# Path to MCP servers config (Phase 67.3 owns this file).
+mcp_config: null
+
+# Grace before SIGKILL after SIGTERM.
+forced_kill_after: 1s
+
+# Per-turn wall-clock cap. The goal-level budget (Phase 67.0)
+# governs the cumulative budget across turns.
+turn_timeout: 10m

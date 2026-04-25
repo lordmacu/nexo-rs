@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"01HZX-SESSION-4","cwd":"/tmp/work","model":"claude-sonnet-4-6","tools":[],"mcp_servers":[],"permission_mode":"default","api_key_source":"env"}
+{"type":"newfeature_2027","payload":{"hello":"world"}}
+{"type":"result","subtype":"success","session_id":"01HZX-SESSION-4","is_error":false,"duration_ms":50,"num_turns":0,"result":"trivial"}
