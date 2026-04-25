@@ -1301,6 +1301,13 @@ Done when a fresh Termux install can `agent llm pull
 qwen2.5:7b` and run a working agent end-to-end with no API key
 set anywhere.
 
+> **Relación con Phase 68**: Phase 46 trata al modelo local como
+> *provider primario* del agente (mismo rol que Anthropic /
+> MiniMax). Phase 68 lo trata como *tier-0 transversal* del runtime
+> (PII redactor, embeddings, classifiers, fallback) — corre **en
+> paralelo** al cloud LLM, no lo reemplaza. Las dos fases son
+> complementarias y comparten el crate hoja `nexo-llm-local`.
+
 ### Phase 47 — Vector store abstraction
 
 Today memory is `sqlite-vec` only. That works on a phone but
@@ -1908,6 +1915,32 @@ verifica el sha256 al descargar, resume descargas parciales, y guarda
 en `~/.nexo/models/`. Permitir URL custom (`--from-url <url>`) para
 modelos fuera del catálogo. Catálogo extensible vía PR — un nuevo
 modelo se añade con una entrada toml, sin tocar código.
+
+#### 68.15 — TaskFlow integration patterns + helpers                ⬜
+
+Recipes documentados + helpers en `nexo-llm-local::flow_helpers`
+para los 5 patrones donde tier-0 + TaskFlow encajan:
+
+- **Batch indexing**: `Flow.start(goal: "embed N docs")` →
+  cada step procesa `batch_size` docs, persiste cursor.
+  Reanuda en el doc N+1 tras crash.
+- **Chunked summarization**: doc largo → chunks 4k tokens →
+  cada step llama `tier_0.summarize(chunk)` → al final
+  `merge_summaries`. Crash a la mitad → reanuda.
+- **Async rerank**: vector search top-100 → step rerank con
+  modelo dedicado → al completar, signal al agente con top-K.
+- **Wait-for-model-load**: primer uso de un GGUF grande
+  bajando de HF → `WaitCondition::ExternalEvent(
+  "local_llm.loaded.<model>")`. Agente puede contestar
+  "bajando modelo, te aviso" sin bloquear.
+- **Eval harness**: 100 test cases × 2 prompt variants → Flow
+  itera, persiste score por case, al final agrega.
+
+Helpers exponen un constructor mínimo (
+`flow_helpers::start_batch(items, |chunk| async {...})`) que
+oculta el boilerplate de `FlowManager::start_managed` +
+`advance` + `finish` para cada llamada al tier-0. Sin los
+helpers cada caller reescribe ~80 LOC de plomería.
 
 ---
 
