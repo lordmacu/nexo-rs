@@ -91,6 +91,7 @@ futures             = { workspace = true }
 uuid                = { workspace = true }
 rand                = "0.8"
 rust-embed          = { version = "8", features = ["include-exclude"] }
+sha2                = { workspace = true }
 agent-plugin-browser = { path = "crates/plugins/browser" }
 agent-plugin-whatsapp = { path = "crates/plugins/whatsapp" }
 agent-plugin-telegram = { path = "crates/plugins/telegram" }
@@ -99,6 +100,7 @@ agent-plugin-gmail-poller = { path = "crates/plugins/gmail-poller" }
 agent-setup          = { path = "crates/setup" }
 agent-tunnel         = { path = "crates/tunnel" }
 agent-auth          = { path = "crates/auth" }
+agent-poller        = { path = "crates/poller" }
 agent-config        = { path = "crates/config" }
 agent-broker        = { path = "crates/broker" }
 agent-core          = { path = "crates/core" }
