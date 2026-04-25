@@ -41,6 +41,11 @@ Exposed metrics:
 | `credentials_boot_validation_errors_total` | counter | `kind` | Gauntlet errors by kind at boot |
 | `credentials_insecure_paths_total` | gauge | — | Credential files with lax permissions at boot |
 | `credentials_google_token_refresh_total` | counter | `account_fp`, `outcome={ok,err}` | Google OAuth refresh attempts (fp = sha256[..8], not raw email) |
+| `pairing_inbound_challenged_total` | counter | `channel`, `result={delivered_via_adapter,delivered_via_broker,publish_failed,no_adapter_no_broker_topic}` | DM-challenge dispatch attempts (Phase 26.x) |
+| `pairing_approvals_total` | counter | `channel`, `result={ok,expired,not_found}` | `nexo pair approve` outcomes (Phase 26.y) |
+| `pairing_codes_expired_total` | counter | — | Setup codes pruned past TTL or rejected as expired on approve |
+| `pairing_bootstrap_tokens_issued_total` | counter | `profile` | Bootstrap tokens minted by `BootstrapTokenIssuer::issue` |
+| `pairing_requests_pending` | gauge | `channel` | Pending pairing requests (push-tracked; `PairingStore::refresh_pending_gauge` exposed for drift recovery after a daemon restart) |
 
 Circuit-breaker state for the `nats` breaker is sampled **at scrape
 time** from broker readiness, so a stalled publish path shows up in

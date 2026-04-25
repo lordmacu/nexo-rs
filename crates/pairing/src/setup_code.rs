@@ -93,6 +93,7 @@ impl SetupCodeIssuer {
             URL_SAFE_NO_PAD.encode(&claims_json),
             URL_SAFE_NO_PAD.encode(sig)
         );
+        crate::telemetry::inc_bootstrap_tokens_issued(profile);
         Ok(SetupCode {
             url: url.to_string(),
             bootstrap_token: token,
