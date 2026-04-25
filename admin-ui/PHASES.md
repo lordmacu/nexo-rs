@@ -362,7 +362,7 @@ Every new backend feature that admits a knob must add a line here
 **in the same commit that ships the feature**. Blank boxes are
 IOUs — features that landed in the daemon but have no UI yet.
 
-- [ ] `credentials:` block (Phase 17) — agent-configuration tab
+- [ ] `credentials:` block (Phase 17) — Phase A3 agent-config tab
   Phase A3 covers this
 - [ ] Config hot-reload (Phase 18) — Phase A5 one-click reload
 - [ ] Per-binding overrides — Phase A3 "Brain" tab needs the

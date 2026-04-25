@@ -300,7 +300,7 @@ Seven Prometheus series exposed under `/metrics`:
 
 ## Migrating from `gmail-poller.yaml`
 
-The legacy crate `agent-plugin-gmail-poller` keeps its YAML schema
+The legacy crate `nexo-plugin-gmail-poller` keeps its YAML schema
 but no longer drives its own loop. On boot the wizard
 auto-translates every legacy job into a `kind: gmail` entry, folds
 it into `cfg.pollers.jobs`, and logs a deprecation warn. Explicit
