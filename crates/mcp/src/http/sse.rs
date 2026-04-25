@@ -39,8 +39,22 @@ pub(crate) async fn run_sse_reader<S>(
                         match std::str::from_utf8(&bytes) {
                             Ok(s) => buffer.push_str(s),
                             Err(e) => {
-                                tracing::warn!(mcp=%log_name, error=%e, "sse: non-utf8 chunk");
-                                continue;
+                                // A non-UTF8 byte means the framing
+                                // parser has lost sync — `continue`
+                                // would skip arbitrary bytes and
+                                // realign on the next `\n\n`, but in
+                                // the meantime any pending JSON-RPC
+                                // response that started in this
+                                // chunk is lost silently and the
+                                // caller times out. Tear the stream
+                                // down so the transport layer
+                                // reconnects with a clean buffer.
+                                tracing::warn!(
+                                    mcp = %log_name,
+                                    error = %e,
+                                    "sse: non-utf8 chunk — closing stream so transport can reconnect"
+                                );
+                                break;
                             }
                         }
                         flush_events(&mut buffer, &event_tx, &log_name).await;

@@ -21,6 +21,12 @@ pub struct DiskQueue {
     /// drains in quick succession; without this they'd both fetch the
     /// same top-100 rows and publish duplicates to NATS.
     drain_running: AtomicBool,
+    /// Serializes concurrent `enqueue` calls hitting the hard-cap
+    /// path. Without this, two enqueues at-cap each sleep
+    /// `MAX_BACKPRESSURE_MS` and *both* execute the "drop oldest"
+    /// DELETE, evicting two rows when only one was meant to fall
+    /// off — backpressure intent partially defeated.
+    cap_serializer: tokio::sync::Mutex<()>,
 }
 
 impl DiskQueue {
@@ -43,6 +49,7 @@ impl DiskQueue {
             pool,
             max_pending,
             drain_running: AtomicBool::new(false),
+            cap_serializer: tokio::sync::Mutex::new(()),
         })
     }
 
@@ -86,18 +93,30 @@ impl DiskQueue {
         // liveness guard, not a silent truncation.
         let half = self.max_pending / 2;
         if count >= self.max_pending {
-            tokio::time::sleep(Duration::from_millis(MAX_BACKPRESSURE_MS)).await;
-            sqlx::query(
-                "DELETE FROM pending_events WHERE id = (SELECT id FROM pending_events ORDER BY enqueued_at ASC LIMIT 1)"
-            )
-            .execute(&self.pool)
-            .await?;
-            tracing::warn!(
-                topic,
-                pending = count,
-                max = self.max_pending,
-                "disk queue at hard cap — slept + dropped oldest event"
-            );
+            // Serialize the sleep+delete so concurrent enqueues at-cap
+            // don't each evict their own "oldest" — without the lock,
+            // two enqueues sleep in parallel and run the DELETE one
+            // after another, dropping two rows when only one was meant
+            // to fall off.
+            let _guard = self.cap_serializer.lock().await;
+            // Re-check inside the critical section: by the time we
+            // own the lock, a previous holder may have already
+            // dropped a row and brought us back under the cap.
+            let recount = self.pending_count().await?;
+            if recount >= self.max_pending {
+                tokio::time::sleep(Duration::from_millis(MAX_BACKPRESSURE_MS)).await;
+                sqlx::query(
+                    "DELETE FROM pending_events WHERE id = (SELECT id FROM pending_events ORDER BY enqueued_at ASC LIMIT 1)"
+                )
+                .execute(&self.pool)
+                .await?;
+                tracing::warn!(
+                    topic,
+                    pending = recount,
+                    max = self.max_pending,
+                    "disk queue at hard cap — slept + dropped oldest event"
+                );
+            }
         } else if count > half {
             let range = (self.max_pending - half).max(1) as u64;
             let over = (count - half) as u64;
@@ -152,10 +171,27 @@ impl DiskQueue {
 
             match broker.publish(&row.topic, event).await {
                 Ok(()) => {
-                    sqlx::query("DELETE FROM pending_events WHERE id = ?")
+                    // Best-effort delete: if it fails, the row stays
+                    // and the next drain replays the event. Disk-queue
+                    // delivery is intentionally **at-least-once** —
+                    // downstream NATS subjects are expected to be
+                    // idempotent (we already ship `event.id` so
+                    // consumers can dedupe). Without this contract,
+                    // any crash between publish and delete would
+                    // either lose the event (delete-first) or hang
+                    // the queue forever (return ?).
+                    if let Err(e) = sqlx::query("DELETE FROM pending_events WHERE id = ?")
                         .bind(&row.id)
                         .execute(&self.pool)
-                        .await?;
+                        .await
+                    {
+                        tracing::warn!(
+                            id = %row.id,
+                            topic = %row.topic,
+                            error = %e,
+                            "publish succeeded but delete failed — event will be replayed (at-least-once)"
+                        );
+                    }
                     published += 1;
                 }
                 Err(e) => {
@@ -179,6 +215,11 @@ impl DiskQueue {
         Ok(published)
     }
 
+    /// Move a row from `pending_events` to `dead_letters` atomically.
+    /// Without the transaction, a crash (or DELETE error) between the
+    /// INSERT and DELETE leaves the same id in *both* tables — the
+    /// next drain re-processes it from `pending_events` and replays
+    /// the event, defeating the DLQ purpose.
     async fn move_to_dlq(
         &self,
         id: &str,
@@ -187,6 +228,7 @@ impl DiskQueue {
         reason: &str,
     ) -> anyhow::Result<()> {
         let now = Self::now_ms();
+        let mut tx = self.pool.begin().await?;
         sqlx::query(
             "INSERT OR IGNORE INTO dead_letters (id, topic, payload, failed_at, reason) VALUES (?, ?, ?, ?, ?)"
         )
@@ -195,14 +237,13 @@ impl DiskQueue {
         .bind(payload)
         .bind(now)
         .bind(reason)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
-
         sqlx::query("DELETE FROM pending_events WHERE id = ?")
             .bind(id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
-
+        tx.commit().await?;
         Ok(())
     }
 

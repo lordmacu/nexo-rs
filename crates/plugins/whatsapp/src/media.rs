@@ -245,7 +245,14 @@ pub async fn download_inbound(
     std::fs::create_dir_all(&dir).with_context(|| format!("mkdir {}", dir.display()))?;
     let ext = variant.default_ext();
     let path = dir.join(format!("{}.{}", sanitize(&msg.key.id), ext));
-    std::fs::write(&path, &bytes).with_context(|| format!("write {}", path.display()))?;
+    // Atomic write: stage to `<path>.tmp` then rename. Without this,
+    // a crash mid-write leaves a truncated file at `path`. Future
+    // dedup checks see the file exists and skip the (now-incomplete)
+    // download forever.
+    let tmp = path.with_extension(format!("{ext}.tmp"));
+    std::fs::write(&tmp, &bytes).with_context(|| format!("write {}", tmp.display()))?;
+    std::fs::rename(&tmp, &path)
+        .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))?;
 
     let session_id = session_id_for_jid(&msg.key.remote_jid);
     let ev = InboundEvent::MediaReceived {

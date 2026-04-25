@@ -317,9 +317,20 @@ impl HttpMcpClient {
                 };
                 let (tx, rx) = oneshot::channel();
                 self.pending.insert(id, tx);
-                if let Err(e) = post_sse_raw(&self.http, &post_url, &self.headers, body).await {
+                let post_outcome = post_sse_raw(&self.http, &post_url, &self.headers, body).await;
+                // If the POST itself errored, the request may still have
+                // reached the server (in-flight packet). Don't drop the
+                // pending slot eagerly — let the timeout absorb any
+                // orphan response that lands afterwards. Surface the
+                // post error only after the slot's lifetime is bounded.
+                if let Err(e) = post_outcome {
+                    let outcome = tokio::time::timeout(timeout, rx).await;
                     self.pending.remove(&id);
-                    return Err(e);
+                    return match outcome {
+                        Ok(Ok(Ok(v))) => Ok(v),
+                        // Server eventually replied — caller wins.
+                        _ => Err(e),
+                    };
                 }
                 match tokio::time::timeout(timeout, rx).await {
                     Ok(Ok(Ok(v))) => Ok(v),

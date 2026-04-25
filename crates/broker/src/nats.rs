@@ -48,11 +48,18 @@ impl NatsBroker {
         let disk_queue =
             Arc::new(DiskQueue::new(&cfg.persistence.path, cfg.limits.max_pending).await?);
 
+        // Tolerate one flaky probe in either direction. With
+        // `failure_threshold: 1` a single hiccup re-opens the
+        // breaker and doubles the backoff; with `success_threshold: 1`
+        // a single success closes it (acceptable but pairs poorly
+        // with a flaky reconnect). Two-of-two gives the breaker a
+        // chance to settle without trapping us in HalfOpen if the
+        // first post-recovery publish jitters.
         let circuit = Arc::new(CircuitBreaker::new(
             "nats",
             CircuitBreakerConfig {
-                failure_threshold: 1,
-                success_threshold: 1,
+                failure_threshold: 2,
+                success_threshold: 2,
                 initial_backoff: Duration::from_secs(10),
                 max_backoff: Duration::from_secs(120),
             },
@@ -93,16 +100,25 @@ impl NatsBroker {
                     (State::Disconnected | State::Pending, State::Connected) => {
                         tracing::info!("NATS reconnected — draining disk queue");
                         circuit.reset();
-                        // Drain disk queue in background
+                        // Drain disk queue in background. If the drain
+                        // itself errors (DB lock, malformed row, NATS
+                        // hiccup mid-drain), re-trip the breaker so the
+                        // next publish lands on disk instead of into the
+                        // void — otherwise the connection looks healthy
+                        // while events go silently undelivered.
                         let dq = Arc::clone(&disk_queue);
                         let c = client2.clone();
+                        let cb = Arc::clone(&circuit);
                         tokio::spawn(async move {
                             match dq.drain_nats(&c).await {
                                 Ok(n) if n > 0 => {
                                     tracing::info!(count = n, "drained pending events")
                                 }
                                 Ok(_) => {}
-                                Err(e) => tracing::error!(error = %e, "disk queue drain failed"),
+                                Err(e) => {
+                                    tracing::error!(error = %e, "disk queue drain failed — re-tripping circuit");
+                                    cb.trip();
+                                }
                             }
                         });
                     }
@@ -169,30 +185,85 @@ impl BrokerHandle for NatsBroker {
 
     async fn subscribe(&self, topic: &str) -> Result<Subscription, BrokerError> {
         let topic_owned = topic.to_string();
-        let mut nats_sub = self
+        // Initial subscribe is the gate — failing here surfaces a clear
+        // error to the caller. After this point the read task survives
+        // reconnects: when `nats_sub.next()` returns None (NATS dropped
+        // the underlying stream), we re-subscribe automatically so a
+        // subscriber created before a reconnect doesn't go dark
+        // forever after the network blip.
+        let initial_sub = self
             .client
             .subscribe(topic_owned.clone())
             .await
             .map_err(|e| BrokerError::SubscribeError(e.to_string()))?;
 
         let (tx, rx) = mpsc::channel(256);
-
+        let client = self.client.clone();
+        let shutdown = self.shutdown.clone();
+        let topic_for_task = topic_owned.clone();
         tokio::spawn(async move {
             use futures::StreamExt;
-            while let Some(msg) = nats_sub.next().await {
-                let event: Event = match serde_json::from_slice(&msg.payload) {
-                    Ok(e) => e,
-                    Err(e) => {
-                        tracing::warn!(
-                            subject = %msg.subject,
-                            error = %e,
-                            "failed to deserialize NATS message — skipping"
-                        );
-                        continue;
+            let mut nats_sub = initial_sub;
+            loop {
+                tokio::select! {
+                    _ = shutdown.cancelled() => return,
+                    next = nats_sub.next() => match next {
+                        Some(msg) => {
+                            let event: Event = match serde_json::from_slice(&msg.payload) {
+                                Ok(e) => e,
+                                Err(e) => {
+                                    tracing::warn!(
+                                        subject = %msg.subject,
+                                        error = %e,
+                                        "failed to deserialize NATS message — skipping"
+                                    );
+                                    continue;
+                                }
+                            };
+                            if tx.send(event).await.is_err() {
+                                return; // receiver dropped
+                            }
+                        }
+                        None => {
+                            // Underlying NATS subscription closed —
+                            // typically a reconnect. Try to re-subscribe
+                            // with a small backoff. If the channel
+                            // receiver was dropped, exit.
+                            if tx.is_closed() {
+                                return;
+                            }
+                            tracing::info!(
+                                topic = %topic_for_task,
+                                "NATS subscription stream ended — attempting re-subscribe"
+                            );
+                            let mut backoff_ms = 250u64;
+                            loop {
+                                tokio::select! {
+                                    _ = shutdown.cancelled() => return,
+                                    _ = tokio::time::sleep(Duration::from_millis(backoff_ms)) => {}
+                                }
+                                match client.subscribe(topic_for_task.clone()).await {
+                                    Ok(s) => {
+                                        nats_sub = s;
+                                        tracing::info!(
+                                            topic = %topic_for_task,
+                                            "NATS re-subscribed"
+                                        );
+                                        break;
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            topic = %topic_for_task,
+                                            error = %e,
+                                            backoff_ms,
+                                            "NATS re-subscribe failed; will retry"
+                                        );
+                                        backoff_ms = (backoff_ms * 2).min(10_000);
+                                    }
+                                }
+                            }
+                        }
                     }
-                };
-                if tx.send(event).await.is_err() {
-                    break; // Subscription receiver dropped
                 }
             }
         });

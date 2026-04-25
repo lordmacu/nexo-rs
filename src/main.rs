@@ -2735,16 +2735,33 @@ async fn run_admin_web(port: u16) -> Result<()> {
         .start()
         .await
         .context("failed to start Cloudflare tunnel")?;
+    let password_came_from_env = std::env::var("AGENT_ADMIN_PASSWORD")
+        .map(|v| v.trim().len() >= 12)
+        .unwrap_or(false);
     println!();
     println!("    ┌────────────────────────────────────────────────────────────");
     println!("    │  admin URL : {}", tunnel.url);
     println!("    │  username  : admin");
-    println!("    │  password  : {}", admin_ctx.password);
+    if password_came_from_env {
+        // Don't print the env-supplied password back to stdout — the
+        // operator has it already; centralised logs shouldn't.
+        println!(
+            "    │  password  : {} (from $AGENT_ADMIN_PASSWORD)",
+            password_fingerprint(&admin_ctx.password)
+        );
+    } else {
+        println!("    │  password  : {}", admin_ctx.password);
+    }
     println!("    └────────────────────────────────────────────────────────────");
     println!();
     println!("    Open the URL, log in with the credentials above.");
     println!("    (Ctrl+C to stop. Fresh URL + password every launch —");
     println!("     the password is never stored to disk.)");
+    if !password_came_from_env {
+        println!();
+        println!("    Tip: in production, set AGENT_ADMIN_PASSWORD before launch");
+        println!("    so the secret never crosses stdout / journald / container logs.");
+    }
     println!();
 
     // Step 5: wait for shutdown.
@@ -3129,6 +3146,133 @@ async fn handle_admin_request(
             .to_string();
         let body_str = read_http_body(&request, &mut stream).await.unwrap_or_default();
         let response_body = match pin_agent_credentials(&id, &body_str) {
+            Ok(report) => format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
+                 Cache-Control: no-store\r\nConnection: close\r\n\r\n{}",
+                report.len(),
+                report
+            ),
+            Err(err) => {
+                let body = format!(
+                    "{{\"ok\":false,\"error\":\"{}\"}}",
+                    err.replace('\\', "\\\\").replace('"', "\\\"")
+                );
+                format!(
+                    "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+            }
+        };
+        stream.write_all(response_body.as_bytes()).await?;
+        stream.shutdown().await?;
+        return Ok(());
+    }
+
+    // /api/mcp/servers — list every MCP server declared in
+    // `config/mcp.yaml`. Read-only view paired with POST/PATCH/DELETE
+    // for full CRUD over the file.
+    if method == "GET" && path == "/api/mcp/servers" {
+        if !authorised {
+            write_401_json(&mut stream).await?;
+            return Ok(());
+        }
+        let body = list_mcp_servers_json();
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
+             Cache-Control: no-store\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream.write_all(response.as_bytes()).await?;
+        stream.shutdown().await?;
+        return Ok(());
+    }
+
+    // /api/mcp/servers POST — add a new server entry. Body shape:
+    //   { name, transport: "stdio"|"streamable_http"|"sse",
+    //     command?, args?: [str], env?: {k:v},
+    //     url?, headers?: {k:v}, log_level?, context_passthrough? }
+    if method == "POST" && path == "/api/mcp/servers" {
+        if !authorised {
+            write_401_json(&mut stream).await?;
+            return Ok(());
+        }
+        let body_str = read_http_body(&request, &mut stream).await.unwrap_or_default();
+        let response_body = match add_mcp_server(&body_str) {
+            Ok(report) => format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
+                 Cache-Control: no-store\r\nConnection: close\r\n\r\n{}",
+                report.len(),
+                report
+            ),
+            Err(err) => {
+                let body = format!(
+                    "{{\"ok\":false,\"error\":\"{}\"}}",
+                    err.replace('\\', "\\\\").replace('"', "\\\"")
+                );
+                format!(
+                    "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+            }
+        };
+        stream.write_all(response_body.as_bytes()).await?;
+        stream.shutdown().await?;
+        return Ok(());
+    }
+
+    // /api/mcp/servers/<name> PATCH — replace an existing entry's
+    // fields. Shape mirrors POST but `name` is read from URL.
+    if method == "PATCH" && path.starts_with("/api/mcp/servers/") {
+        if !authorised {
+            write_401_json(&mut stream).await?;
+            return Ok(());
+        }
+        let name = path
+            .trim_start_matches("/api/mcp/servers/")
+            .trim_matches('/')
+            .to_string();
+        let body_str = read_http_body(&request, &mut stream).await.unwrap_or_default();
+        let response_body = match edit_mcp_server(&name, &body_str) {
+            Ok(report) => format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
+                 Cache-Control: no-store\r\nConnection: close\r\n\r\n{}",
+                report.len(),
+                report
+            ),
+            Err(err) => {
+                let body = format!(
+                    "{{\"ok\":false,\"error\":\"{}\"}}",
+                    err.replace('\\', "\\\\").replace('"', "\\\"")
+                );
+                format!(
+                    "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+            }
+        };
+        stream.write_all(response_body.as_bytes()).await?;
+        stream.shutdown().await?;
+        return Ok(());
+    }
+
+    // /api/mcp/servers/<name> DELETE — drop the entry from mcp.yaml.
+    if method == "DELETE" && path.starts_with("/api/mcp/servers/") {
+        if !authorised {
+            write_401_json(&mut stream).await?;
+            return Ok(());
+        }
+        let name = path
+            .trim_start_matches("/api/mcp/servers/")
+            .trim_matches('/')
+            .to_string();
+        let response_body = match delete_mcp_server(&name) {
             Ok(report) => format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
                  Cache-Control: no-store\r\nConnection: close\r\n\r\n{}",
@@ -3994,12 +4138,48 @@ fn list_channels_json() -> String {
     out
 }
 
+/// Telegram bot token shape: `<digits>:<35+ chars from
+/// [A-Za-z0-9_-]>`. Empty / wrong shape returns `false`; this is a
+/// shape-only check, not a token validity check (only Telegram's
+/// `getMe` can confirm the latter).
+fn is_valid_telegram_token_shape(s: &str) -> bool {
+    let Some((id, rest)) = s.split_once(':') else {
+        return false;
+    };
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    rest.len() >= 30
+        && rest
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// Process-wide lock keyed by absolute YAML path. Every admin handler
+/// that does read-modify-write on a `config/plugins/*.yaml` (or
+/// `agents.yaml`) must take this lock first; without it, two
+/// concurrent admin requests can interleave and silently lose one
+/// agent's update.
+fn yaml_lock(path: &str) -> std::sync::Arc<std::sync::Mutex<()>> {
+    use std::sync::{Arc, Mutex, OnceLock};
+    static LOCKS: OnceLock<Mutex<std::collections::HashMap<String, Arc<Mutex<()>>>>> =
+        OnceLock::new();
+    let map = LOCKS.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    let mut guard = map.lock().expect("yaml_lock map poisoned");
+    guard
+        .entry(path.to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
+}
+
 /// Append a Telegram bot instance to `config/plugins/telegram.yaml`.
 /// On first-use the file is created in multi-instance sequence form;
 /// existing files are migrated from single-mapping to sequence and
 /// then appended. Token is written to `./secrets/<instance>_telegram_token.txt`
 /// at mode 0600.
 fn add_telegram_channel(body: &str) -> Result<String, String> {
+    let _yaml_guard = yaml_lock("./config/plugins/telegram.yaml");
+    let _yaml_guard = _yaml_guard.lock().map_err(|_| "yaml lock poisoned".to_string())?;
     let v: serde_json::Value =
         serde_json::from_str(body).map_err(|e| format!("invalid JSON: {e}"))?;
     let instance = v
@@ -4019,6 +4199,16 @@ fn add_telegram_channel(body: &str) -> Result<String, String> {
     }
     if token.is_empty() {
         return Err("token is required".into());
+    }
+    // Shape-validate against Telegram's canonical bot-token format
+    // (`<numeric_id>:<35+ char alphanumeric>`). Without the check,
+    // a token-shaped string can flow into a downstream HTTP probe
+    // path that interpolates it carelessly — modest SSRF surface.
+    if !is_valid_telegram_token_shape(&token) {
+        return Err(
+            "token does not match Telegram's bot-token format (digits:alphanumeric_and_dashes)"
+                .into(),
+        );
     }
     // Sanity-check the instance label so we don't land invalid YAML
     // keys on disk.
@@ -4113,6 +4303,8 @@ fn add_telegram_channel(body: &str) -> Result<String, String> {
 /// Telegram instance. Keeps the `${file:...}` reference pointing
 /// at the same secret path so consumers don't need to be restarted.
 fn edit_telegram_channel(instance: &str, body: &str) -> Result<String, String> {
+    let _yaml_guard = yaml_lock("./config/plugins/telegram.yaml");
+    let _yaml_guard = _yaml_guard.lock().map_err(|_| "yaml lock poisoned".to_string())?;
     let instance = instance.trim();
     if instance.is_empty() {
         return Err("instance is required".into());
@@ -4280,6 +4472,11 @@ fn edit_telegram_channel(instance: &str, body: &str) -> Result<String, String> {
 /// untouched — the operator can delete `./secrets/*.txt` by hand
 /// when they're sure (or reuse them by re-adding the instance).
 fn delete_channel(plugin: &str, instance: &str) -> Result<String, String> {
+    // Need to hold the lock for whatever file we're about to mutate.
+    // Compute path early so the guard scope is right.
+    let yaml_path = format!("./config/plugins/{plugin}.yaml");
+    let _yaml_guard = yaml_lock(&yaml_path);
+    let _yaml_guard = _yaml_guard.lock().map_err(|_| "yaml lock poisoned".to_string())?;
     let plugin = plugin.trim();
     let instance = instance.trim();
     if plugin.is_empty() || instance.is_empty() {
@@ -4321,6 +4518,380 @@ fn delete_channel(plugin: &str, instance: &str) -> Result<String, String> {
         "{{\"ok\":true,\"plugin\":\"{}\",\"instance\":\"{}\"}}",
         json_escape(plugin),
         json_escape(instance)
+    ))
+}
+
+/// Validate an MCP server name. Dots are reserved for explicit
+/// shadowing of extension-declared servers, so the admin UI rejects
+/// them outright — operators who really want shadowing can hand-edit
+/// `mcp.yaml`.
+fn validate_mcp_name(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("server name is required".into());
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err("server name must be [a-zA-Z0-9_-]+ (no dots)".into());
+    }
+    Ok(())
+}
+
+/// Read `config/mcp.yaml` and return its parsed YAML. If the file is
+/// missing, fabricate a minimal `mcp: { servers: {} }` mapping so the
+/// caller can still write into it.
+fn load_mcp_yaml() -> Result<serde_yaml::Value, String> {
+    let path = "./config/mcp.yaml";
+    match std::fs::read_to_string(path) {
+        Ok(buf) => serde_yaml::from_str(&buf).map_err(|e| format!("parse {path}: {e}")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let mut root = serde_yaml::Mapping::new();
+            let mut mcp = serde_yaml::Mapping::new();
+            mcp.insert(
+                serde_yaml::Value::String("enabled".into()),
+                serde_yaml::Value::Bool(true),
+            );
+            mcp.insert(
+                serde_yaml::Value::String("servers".into()),
+                serde_yaml::Value::Mapping(serde_yaml::Mapping::new()),
+            );
+            root.insert(
+                serde_yaml::Value::String("mcp".into()),
+                serde_yaml::Value::Mapping(mcp),
+            );
+            Ok(serde_yaml::Value::Mapping(root))
+        }
+        Err(e) => Err(format!("read {path}: {e}")),
+    }
+}
+
+fn save_mcp_yaml(v: &serde_yaml::Value) -> Result<(), String> {
+    let out = serde_yaml::to_string(v).map_err(|e| format!("serialise mcp.yaml: {e}"))?;
+    std::fs::write("./config/mcp.yaml", out).map_err(|e| format!("write mcp.yaml: {e}"))
+}
+
+/// Build a `serde_yaml::Value` mapping from a JSON request body for
+/// one MCP server entry. Returns `(yaml_entry)` ready to be inserted
+/// under `mcp.servers.<name>`. The shape mirrors the YAML schema in
+/// `config/mcp.yaml`.
+fn json_to_mcp_entry(v: &serde_json::Value) -> Result<serde_yaml::Value, String> {
+    let transport = v
+        .get("transport")
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if !matches!(transport.as_str(), "stdio" | "streamable_http" | "sse") {
+        return Err("transport must be stdio, streamable_http, or sse".into());
+    }
+    let mut m = serde_yaml::Mapping::new();
+    m.insert(
+        serde_yaml::Value::String("transport".into()),
+        serde_yaml::Value::String(transport.clone()),
+    );
+    if transport == "stdio" {
+        let command = v
+            .get("command")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if command.is_empty() {
+            return Err("command is required for stdio transport".into());
+        }
+        m.insert(
+            serde_yaml::Value::String("command".into()),
+            serde_yaml::Value::String(command),
+        );
+        if let Some(arr) = v.get("args").and_then(|a| a.as_array()) {
+            let seq: Vec<serde_yaml::Value> = arr
+                .iter()
+                .filter_map(|x| x.as_str().map(|s| serde_yaml::Value::String(s.to_string())))
+                .collect();
+            m.insert(
+                serde_yaml::Value::String("args".into()),
+                serde_yaml::Value::Sequence(seq),
+            );
+        }
+        if let Some(obj) = v.get("env").and_then(|a| a.as_object()) {
+            let mut env_map = serde_yaml::Mapping::new();
+            for (k, val) in obj {
+                if let Some(s) = val.as_str() {
+                    env_map.insert(
+                        serde_yaml::Value::String(k.clone()),
+                        serde_yaml::Value::String(s.to_string()),
+                    );
+                }
+            }
+            m.insert(
+                serde_yaml::Value::String("env".into()),
+                serde_yaml::Value::Mapping(env_map),
+            );
+        }
+    } else {
+        // streamable_http or sse — both share url + headers.
+        let url = v
+            .get("url")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if url.is_empty() {
+            return Err("url is required for http/sse transport".into());
+        }
+        m.insert(
+            serde_yaml::Value::String("url".into()),
+            serde_yaml::Value::String(url),
+        );
+        if let Some(obj) = v.get("headers").and_then(|a| a.as_object()) {
+            let mut hmap = serde_yaml::Mapping::new();
+            for (k, val) in obj {
+                if let Some(s) = val.as_str() {
+                    hmap.insert(
+                        serde_yaml::Value::String(k.clone()),
+                        serde_yaml::Value::String(s.to_string()),
+                    );
+                }
+            }
+            m.insert(
+                serde_yaml::Value::String("headers".into()),
+                serde_yaml::Value::Mapping(hmap),
+            );
+        }
+    }
+    if let Some(s) = v.get("log_level").and_then(|x| x.as_str()) {
+        let s = s.trim();
+        if !s.is_empty() {
+            m.insert(
+                serde_yaml::Value::String("log_level".into()),
+                serde_yaml::Value::String(s.to_string()),
+            );
+        }
+    }
+    if let Some(b) = v.get("context_passthrough").and_then(|x| x.as_bool()) {
+        m.insert(
+            serde_yaml::Value::String("context_passthrough".into()),
+            serde_yaml::Value::Bool(b),
+        );
+    }
+    Ok(serde_yaml::Value::Mapping(m))
+}
+
+/// Render the current `mcp.servers` map as a JSON list shaped for the
+/// admin UI. Headers and env values are returned as-is (operator may
+/// have inlined `${VAR}` placeholders — the resolver expands those at
+/// runtime, the UI just displays the literal string).
+fn list_mcp_servers_json() -> String {
+    let mut out = String::from("{\"servers\":[");
+    let v = match load_mcp_yaml() {
+        Ok(v) => v,
+        Err(_) => {
+            out.push_str("]}");
+            return out;
+        }
+    };
+    let servers = v
+        .get("mcp")
+        .and_then(|m| m.get("servers"))
+        .and_then(|s| s.as_mapping())
+        .cloned()
+        .unwrap_or_default();
+    let mut first = true;
+    for (k, val) in &servers {
+        let Some(name) = k.as_str() else { continue };
+        if !first {
+            out.push(',');
+        }
+        first = false;
+        let transport = val
+            .get("transport")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
+        out.push_str(&format!(
+            "{{\"name\":\"{}\",\"transport\":\"{}\"",
+            json_escape(name),
+            json_escape(&transport),
+        ));
+        if transport == "stdio" {
+            let command = val
+                .get("command")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            out.push_str(&format!(",\"command\":\"{}\"", json_escape(&command)));
+            out.push_str(",\"args\":[");
+            if let Some(seq) = val.get("args").and_then(|a| a.as_sequence()) {
+                for (i, a) in seq.iter().enumerate() {
+                    if let Some(s) = a.as_str() {
+                        if i > 0 {
+                            out.push(',');
+                        }
+                        out.push('"');
+                        out.push_str(&json_escape(s));
+                        out.push('"');
+                    }
+                }
+            }
+            out.push_str("],\"env\":{");
+            if let Some(map) = val.get("env").and_then(|a| a.as_mapping()) {
+                let mut i = 0;
+                for (ek, ev) in map {
+                    let (Some(k), Some(v)) = (ek.as_str(), ev.as_str()) else {
+                        continue;
+                    };
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    i += 1;
+                    out.push_str(&format!(
+                        "\"{}\":\"{}\"",
+                        json_escape(k),
+                        json_escape(v)
+                    ));
+                }
+            }
+            out.push('}');
+        } else {
+            let url = val
+                .get("url")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            out.push_str(&format!(",\"url\":\"{}\"", json_escape(&url)));
+            out.push_str(",\"headers\":{");
+            if let Some(map) = val.get("headers").and_then(|a| a.as_mapping()) {
+                let mut i = 0;
+                for (hk, hv) in map {
+                    let (Some(k), Some(v)) = (hk.as_str(), hv.as_str()) else {
+                        continue;
+                    };
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    i += 1;
+                    out.push_str(&format!(
+                        "\"{}\":\"{}\"",
+                        json_escape(k),
+                        json_escape(v)
+                    ));
+                }
+            }
+            out.push('}');
+        }
+        let log_level = val
+            .get("log_level")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
+        out.push_str(&format!(",\"log_level\":\"{}\"", json_escape(&log_level)));
+        let ctx = val
+            .get("context_passthrough")
+            .and_then(|x| x.as_bool());
+        match ctx {
+            Some(b) => out.push_str(&format!(",\"context_passthrough\":{b}")),
+            None => out.push_str(",\"context_passthrough\":null"),
+        }
+        out.push('}');
+    }
+    out.push_str("]}");
+    out
+}
+
+fn add_mcp_server(body: &str) -> Result<String, String> {
+    let _yaml_guard = yaml_lock("./config/mcp.yaml");
+    let _yaml_guard = _yaml_guard
+        .lock()
+        .map_err(|_| "yaml lock poisoned".to_string())?;
+    let v: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| format!("invalid JSON: {e}"))?;
+    let name = v
+        .get("name")
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    validate_mcp_name(&name)?;
+
+    let entry = json_to_mcp_entry(&v)?;
+    let mut root = load_mcp_yaml()?;
+    let mcp = root
+        .as_mapping_mut()
+        .and_then(|m| m.get_mut(serde_yaml::Value::String("mcp".into())))
+        .ok_or_else(|| "mcp.yaml missing top-level `mcp:` key".to_string())?;
+    let mcp_map = mcp
+        .as_mapping_mut()
+        .ok_or_else(|| "`mcp:` is not a mapping".to_string())?;
+    let servers_val = mcp_map
+        .entry(serde_yaml::Value::String("servers".into()))
+        .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+    let servers = servers_val
+        .as_mapping_mut()
+        .ok_or_else(|| "`mcp.servers` is not a mapping".to_string())?;
+    let key = serde_yaml::Value::String(name.clone());
+    if servers.contains_key(&key) {
+        return Err(format!("mcp server '{name}' already exists"));
+    }
+    servers.insert(key, entry);
+    save_mcp_yaml(&root)?;
+    Ok(format!(
+        "{{\"ok\":true,\"name\":\"{}\"}}",
+        json_escape(&name)
+    ))
+}
+
+fn edit_mcp_server(name: &str, body: &str) -> Result<String, String> {
+    let _yaml_guard = yaml_lock("./config/mcp.yaml");
+    let _yaml_guard = _yaml_guard
+        .lock()
+        .map_err(|_| "yaml lock poisoned".to_string())?;
+    validate_mcp_name(name)?;
+    let v: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| format!("invalid JSON: {e}"))?;
+    let entry = json_to_mcp_entry(&v)?;
+    let mut root = load_mcp_yaml()?;
+    let servers = root
+        .as_mapping_mut()
+        .and_then(|m| m.get_mut(serde_yaml::Value::String("mcp".into())))
+        .and_then(|mcp| mcp.as_mapping_mut())
+        .and_then(|mcp| mcp.get_mut(serde_yaml::Value::String("servers".into())))
+        .and_then(|s| s.as_mapping_mut())
+        .ok_or_else(|| "mcp.yaml missing `mcp.servers` mapping".to_string())?;
+    let key = serde_yaml::Value::String(name.to_string());
+    if !servers.contains_key(&key) {
+        return Err(format!("mcp server '{name}' not found"));
+    }
+    servers.insert(key, entry);
+    save_mcp_yaml(&root)?;
+    Ok(format!(
+        "{{\"ok\":true,\"name\":\"{}\"}}",
+        json_escape(name)
+    ))
+}
+
+fn delete_mcp_server(name: &str) -> Result<String, String> {
+    let _yaml_guard = yaml_lock("./config/mcp.yaml");
+    let _yaml_guard = _yaml_guard
+        .lock()
+        .map_err(|_| "yaml lock poisoned".to_string())?;
+    validate_mcp_name(name)?;
+    let mut root = load_mcp_yaml()?;
+    let servers = root
+        .as_mapping_mut()
+        .and_then(|m| m.get_mut(serde_yaml::Value::String("mcp".into())))
+        .and_then(|mcp| mcp.as_mapping_mut())
+        .and_then(|mcp| mcp.get_mut(serde_yaml::Value::String("servers".into())))
+        .and_then(|s| s.as_mapping_mut())
+        .ok_or_else(|| "mcp.yaml missing `mcp.servers` mapping".to_string())?;
+    let key = serde_yaml::Value::String(name.to_string());
+    if servers.remove(&key).is_none() {
+        return Err(format!("mcp server '{name}' not found"));
+    }
+    save_mcp_yaml(&root)?;
+    Ok(format!(
+        "{{\"ok\":true,\"name\":\"{}\"}}",
+        json_escape(name)
     ))
 }
 
@@ -4557,7 +5128,18 @@ fn debug_reset_now() -> String {
 /// it into the login form. Losing the value means restarting
 /// `agent admin` to mint a new one (which also re-spins the tunnel
 /// URL).
+/// Resolve the admin password. Operators with a centralised logging
+/// pipeline (journald, container stdout → ELK / CloudWatch) should
+/// pass `AGENT_ADMIN_PASSWORD` so the password never crosses stdout
+/// — every other launch falls back to a random 24-char password
+/// printed once to the terminal.
 fn generate_admin_password() -> String {
+    if let Ok(v) = std::env::var("AGENT_ADMIN_PASSWORD") {
+        let trimmed = v.trim().to_string();
+        if trimmed.len() >= 12 {
+            return trimmed;
+        }
+    }
     use rand::Rng;
     const CHARS: &[u8] =
         b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -4568,6 +5150,18 @@ fn generate_admin_password() -> String {
             CHARS[idx] as char
         })
         .collect()
+}
+
+/// First 4 + last 4 chars of the password. Enough for the operator
+/// to confirm "this is the right one" without reproducing the secret
+/// in every log line.
+fn password_fingerprint(pw: &str) -> String {
+    if pw.len() <= 8 {
+        return "[hidden]".to_string();
+    }
+    let head: String = pw.chars().take(4).collect();
+    let tail: String = pw.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
+    format!("{head}…{tail}")
 }
 
 /// Drain a raw HTTP request head (everything up to the first blank
@@ -4694,7 +5288,13 @@ fn read_admin_file_from_disk(
     rel: &str,
 ) -> Option<(Vec<u8>, &'static str)> {
     // Reject absolute / parent-traversal paths up front so a request
-    // for `/../../etc/passwd` can't escape the dist tree.
+    // for `/../../etc/passwd` can't escape the dist tree. Decode
+    // first so a `%2e%2e` escape can't sneak past the segment check
+    // and become a literal `..` once the OS resolves the path.
+    let decoded = url_decode(rel);
+    if decoded.split('/').any(|seg| seg == ".." || seg.starts_with('/')) {
+        return None;
+    }
     if rel.split('/').any(|seg| seg == ".." || seg.starts_with('/')) {
         return None;
     }
