@@ -1,0 +1,20 @@
+[package]
+name = "agent-poller-ext"
+version = "0.1.0"
+edition = "2021"
+
+# Bridge crate — adapts an `agent-extensions::StdioRuntime` (a
+# subprocess speaking JSON-RPC over stdio) into an
+# `agent_poller::Poller` impl. Lets operators write poller modules
+# in any language (Python, Bash, Go, …) without touching Rust.
+
+[dependencies]
+agent-poller     = { path = "../poller" }
+agent-extensions = { path = "../extensions" }
+agent-auth       = { path = "../auth" }
+base64           = { workspace = true }
+async-trait      = { workspace = true }
+serde            = { workspace = true }
+serde_json       = { workspace = true }
+anyhow           = { workspace = true }
+tracing          = { workspace = true }

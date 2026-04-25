@@ -20,6 +20,7 @@ members = [
     "crates/auth",
     "crates/poller",
     "crates/poller-tools",
+    "crates/poller-ext",
 ]
 # Keep standalone extension templates out of the agent workspace so they don't
 # inherit our deps or lockfile. Users copy them verbatim and build separately.
@@ -103,6 +104,7 @@ agent-tunnel         = { path = "crates/tunnel" }
 agent-auth          = { path = "crates/auth" }
 agent-poller        = { path = "crates/poller" }
 agent-poller-tools  = { path = "crates/poller-tools" }
+agent-poller-ext    = { path = "crates/poller-ext" }
 agent-config        = { path = "crates/config" }
 agent-broker        = { path = "crates/broker" }
 agent-core          = { path = "crates/core" }
