@@ -234,7 +234,7 @@ impl AnthropicClient {
             .header("content-type", "application/json");
         let cache_flags = caching_flags(&self.model, req);
         if let Some(beta) = merge_beta_headers(
-            headers.beta.as_deref(),
+            headers.beta,
             cache_flags.any_cache,
             cache_flags.any_long_ttl,
         ) {
@@ -292,7 +292,7 @@ impl AnthropicClient {
             .header("accept", "text/event-stream");
         let cache_flags = caching_flags(&self.model, req);
         if let Some(beta) = merge_beta_headers(
-            headers.beta.as_deref(),
+            headers.beta,
             cache_flags.any_cache,
             cache_flags.any_long_ttl,
         ) {
