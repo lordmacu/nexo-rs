@@ -90,6 +90,7 @@ async-nats          = { workspace = true }
 futures             = { workspace = true }
 uuid                = { workspace = true }
 rand                = "0.8"
+rust-embed          = { version = "8", features = ["include-exclude"] }
 agent-plugin-browser = { path = "crates/plugins/browser" }
 agent-plugin-whatsapp = { path = "crates/plugins/whatsapp" }
 agent-plugin-telegram = { path = "crates/plugins/telegram" }

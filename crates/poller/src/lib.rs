@@ -14,9 +14,12 @@ pub mod builtins;
 pub mod dispatch;
 pub mod error;
 pub mod poller;
+pub mod runner;
 pub mod schedule;
 pub mod state;
 pub mod telemetry;
+
+pub use runner::PollerRunner;
 
 pub use error::PollerError;
 pub use poller::{OutboundDelivery, PollContext, Poller, TickOutcome};
