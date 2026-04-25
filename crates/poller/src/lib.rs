@@ -11,10 +11,12 @@
 //! to plug in a new module.
 
 pub mod builtins;
+pub mod dispatch;
 pub mod error;
 pub mod poller;
 pub mod schedule;
 pub mod state;
+pub mod telemetry;
 
 pub use error::PollerError;
 pub use poller::{OutboundDelivery, PollContext, Poller, TickOutcome};

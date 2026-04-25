@@ -483,6 +483,7 @@ mod tests {
             google_auth: None,
             outbound_allowlist: OutboundAllowlistConfig::default(),
             credentials: creds,
+            language: None,
         }
     }
 
