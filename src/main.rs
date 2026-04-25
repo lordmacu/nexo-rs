@@ -2427,6 +2427,21 @@ fn print_usage() {
     println!(
         "  agent --dry-run [--json]               Validate config and print a summary (no runtime)"
     );
+    println!("  agent --check-config                   Validate config and exit (no runtime)");
+    println!("  agent reload                           Trigger a hot-reload on the running daemon");
+    println!("  agent setup [<service>]                Interactive setup wizard (defaults to menu)");
+    println!("  agent setup list                       Print every credential service the wizard knows");
+    println!("  agent setup doctor                     Audit configured secrets and report what's missing");
+    println!("  agent setup telegram-link              Pair an existing Telegram instance to an agent");
+    println!("  agent admin [--port <n>]               Launch the loopback admin web UI");
+    println!("  agent mcp-server                       Run as an MCP stdio server (expose tools)");
+    println!("  agent pollers list [--json]            List configured poller jobs");
+    println!("  agent pollers show <id> [--json]       Show one poller job's config + last tick");
+    println!("  agent pollers run <id>                 Force a single tick of a poller job");
+    println!("  agent pollers pause <id>               Pause a poller job (no ticks until resume)");
+    println!("  agent pollers resume <id>              Resume a paused poller job");
+    println!("  agent pollers reset <id>               Clear a job's seen-id dedup cache");
+    println!("  agent pollers reload                   Re-read config/pollers.yaml without restart");
 }
 
 enum ExtCmd {

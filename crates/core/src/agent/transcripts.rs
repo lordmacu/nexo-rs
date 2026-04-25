@@ -122,22 +122,41 @@ impl TranscriptWriter {
 
         tokio::fs::create_dir_all(&self.root).await?;
         let path = self.session_path(session_id);
-        let exists = tokio::fs::try_exists(&path).await.unwrap_or(false);
+
+        // Atomic "write header iff first writer" using O_CREAT|O_EXCL.
+        // The naive `try_exists` check leaves a TOCTOU window where two
+        // concurrent appends both see `exists=false` and both write the
+        // header, leaving the file with duplicate Session lines. Here
+        // exactly one writer wins the create-exclusive open and writes
+        // the header; every other writer gets `AlreadyExists` and skips
+        // straight to the append path.
+        match tokio::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&path)
+            .await
+        {
+            Ok(mut header_file) => {
+                let header = TranscriptLine::Session(SessionHeader {
+                    version: TRANSCRIPT_VERSION,
+                    id: session_id,
+                    timestamp: Utc::now(),
+                    agent_id: self.agent_id.clone(),
+                    source_plugin: entry.source_plugin.clone(),
+                });
+                write_jsonl(&mut header_file, &header).await?;
+                header_file.flush().await?;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // Another concurrent writer already wrote the header.
+            }
+            Err(e) => return Err(e.into()),
+        }
+
         let mut file = tokio::fs::OpenOptions::new()
-            .create(true)
             .append(true)
             .open(&path)
             .await?;
-        if !exists {
-            let header = TranscriptLine::Session(SessionHeader {
-                version: TRANSCRIPT_VERSION,
-                id: session_id,
-                timestamp: Utc::now(),
-                agent_id: self.agent_id.clone(),
-                source_plugin: entry.source_plugin.clone(),
-            });
-            write_jsonl(&mut file, &header).await?;
-        }
         write_jsonl(&mut file, &TranscriptLine::Entry(entry.clone())).await?;
         file.flush().await?;
 
@@ -352,6 +371,42 @@ mod tests {
         };
         assert!(entry.content.contains("[REDACTED:openai_key]"));
         assert!(!entry.content.contains("sk-abcdef"));
+        tokio::fs::remove_dir_all(&root).await.ok();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn concurrent_first_appends_only_write_one_header() -> anyhow::Result<()> {
+        let root = tmp_dir("race");
+        let session_id = Uuid::new_v4();
+        let mut handles = Vec::new();
+        for i in 0..16 {
+            let r = root.clone();
+            handles.push(tokio::spawn(async move {
+                let writer = TranscriptWriter::new(r, "kate");
+                writer
+                    .append_entry(
+                        session_id,
+                        user_entry(&format!("msg-{i}"), "wa"),
+                    )
+                    .await
+            }));
+        }
+        for h in handles {
+            h.await.unwrap()?;
+        }
+        let writer = TranscriptWriter::new(&root, "kate");
+        let lines = writer.read_session(session_id).await?;
+        let header_count = lines
+            .iter()
+            .filter(|l| matches!(l, TranscriptLine::Session(_)))
+            .count();
+        let entry_count = lines
+            .iter()
+            .filter(|l| matches!(l, TranscriptLine::Entry(_)))
+            .count();
+        assert_eq!(header_count, 1, "exactly one header expected");
+        assert_eq!(entry_count, 16, "all 16 entries persisted");
         tokio::fs::remove_dir_all(&root).await.ok();
         Ok(())
     }

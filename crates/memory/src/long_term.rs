@@ -157,12 +157,19 @@ impl LongTermMemory {
         .await?;
 
         // concept_tags — auto-derived via `derive_concept_tags`, stored as JSON.
-        // `.ok()` swallows the "duplicate column" error when migrating an
-        // existing DB so startup stays idempotent. Phase 10.7.
-        sqlx::query("ALTER TABLE memories ADD COLUMN concept_tags TEXT NOT NULL DEFAULT '[]'")
-            .execute(&self.pool)
-            .await
-            .ok();
+        // Idempotent: swallow the "duplicate column" error on re-runs but
+        // surface anything else (disk full, permission denied, etc.) so a
+        // real migration failure doesn't leave the schema half-applied.
+        if let Err(e) = sqlx::query(
+            "ALTER TABLE memories ADD COLUMN concept_tags TEXT NOT NULL DEFAULT '[]'",
+        )
+        .execute(&self.pool)
+        .await
+        {
+            if !is_duplicate_column_error(&e) {
+                return Err(e.into());
+            }
+        }
 
         // FTS5 virtual table for full-text search
         sqlx::query(
@@ -212,10 +219,14 @@ impl LongTermMemory {
         .execute(&self.pool)
         .await?;
 
-        sqlx::query("ALTER TABLE reminders ADD COLUMN claimed_at INTEGER")
+        if let Err(e) = sqlx::query("ALTER TABLE reminders ADD COLUMN claimed_at INTEGER")
             .execute(&self.pool)
             .await
-            .ok();
+        {
+            if !is_duplicate_column_error(&e) {
+                return Err(e.into());
+            }
+        }
 
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_reminders_due
@@ -1126,6 +1137,15 @@ impl LongTermMemory {
 /// silently renaming rows. The old `unwrap_or_else(|_| Uuid::new_v4())`
 /// pattern invented a new id for every corrupted row on every read,
 /// making the entries permanently unreachable via their real id.
+/// Heuristic: SQLite reports "duplicate column name: X" when ALTER TABLE
+/// re-adds an already-present column. We treat that as expected on
+/// startup migrations and bubble everything else up.
+fn is_duplicate_column_error(e: &sqlx::Error) -> bool {
+    e.to_string()
+        .to_ascii_lowercase()
+        .contains("duplicate column")
+}
+
 fn parse_uuid_or_warn(raw: &str, context: &str) -> Uuid {
     match Uuid::parse_str(raw) {
         Ok(id) => id,

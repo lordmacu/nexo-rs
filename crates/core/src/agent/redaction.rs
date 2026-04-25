@@ -56,6 +56,14 @@ impl Redactor {
         !self.rules.is_empty()
     }
 
+    /// Apply every loaded rule in declared order. Each pattern runs
+    /// over the **already-replaced** text, so a later pattern can
+    /// match tokens emitted by earlier `[REDACTED:<label>]` markers.
+    /// Built-in patterns are designed not to collide with the
+    /// `[REDACTED:...]` shape, but operators should keep the same
+    /// invariant when shipping `extra_patterns` — a pattern that
+    /// matches `REDACTED` will produce nested markers
+    /// (`[REDACTED:[REDACTED:foo]]`).
     pub fn apply(&self, input: &str) -> RedactionReport {
         if self.rules.is_empty() || input.is_empty() {
             return RedactionReport {
@@ -90,6 +98,11 @@ fn compile_extra(idx: usize, p: &RedactionPattern) -> anyhow::Result<Regex> {
 
 /// Built-in patterns. **Order matters** — more specific shapes go first
 /// so they don't get partially shadowed by generic catch-alls below.
+///
+/// **Mirror invariant:** `extensions/onepassword/src/redact.rs` ships
+/// the same pattern set (it can't depend on `agent-core` because the
+/// extension lives in its own workspace). When you edit either list,
+/// edit both. CI grep enforces nothing — discipline is on the author.
 fn builtin_patterns() -> &'static [(&'static str, &'static str)] {
     &[
         ("bearer_jwt", r"Bearer\s+eyJ[\w-]+\.[\w-]+\.[\w-]+"),
@@ -100,7 +113,11 @@ fn builtin_patterns() -> &'static [(&'static str, &'static str)] {
         // secret keys) was deliberately omitted — too many false
         // positives on legitimate hashes / opaque ids. Operators who
         // need it can add it via `extra_patterns` scoped to their data.
-        ("hex_token_32", r"\b[a-fA-F0-9]{32,}\b"),
+        // Floor at 64 hex chars: 32-char (MD5) and 40-char (SHA-1 /
+        // git SHA) hashes are too common as legitimate identifiers
+        // to redact by default. SHA-256 (64 chars) is the smallest
+        // shape where false positives become unlikely enough.
+        ("hex_token_64", r"\b[a-fA-F0-9]{64,}\b"),
         ("home_path", r"/(?:home|Users)/[^\s/]+"),
     ]
 }
@@ -174,10 +191,22 @@ mod tests {
     }
 
     #[test]
-    fn redacts_hex_token() {
+    fn redacts_hex_token_at_or_above_64_chars() {
         let r = Redactor::from_config(&enabled_default()).unwrap();
-        let out = r.apply("ETag: 5d41402abc4b2a76b9719d911017c592");
-        assert!(out.redacted_text.contains("[REDACTED:hex_token_32]"));
+        // SHA-256 shape (64 chars) — should redact.
+        let out = r.apply("digest: 5d41402abc4b2a76b9719d911017c5925d41402abc4b2a76b9719d911017c592");
+        assert!(out.redacted_text.contains("[REDACTED:hex_token_64]"));
+    }
+
+    #[test]
+    fn does_not_redact_md5_or_sha1_hashes() {
+        let r = Redactor::from_config(&enabled_default()).unwrap();
+        // MD5 (32) and git/SHA-1 (40) are too common as legitimate ids.
+        let md5 = "5d41402abc4b2a76b9719d911017c592";
+        let sha1 = "356a192b7913b04c54574d18c28d46e6395428ab";
+        let out = r.apply(&format!("md5={md5} sha1={sha1}"));
+        assert!(out.redacted_text.contains(md5), "md5 should pass through");
+        assert!(out.redacted_text.contains(sha1), "sha1 should pass through");
     }
 
     #[test]

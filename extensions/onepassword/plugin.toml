@@ -5,7 +5,7 @@ name = "1Password"
 description = "Read 1Password secrets via `op` CLI + service-account token. Secret values are metadata-only by default; enable reveal with OP_ALLOW_REVEAL=true."
 
 [capabilities]
-tools = ["status", "whoami", "list_vaults", "list_items", "read_secret"]
+tools = ["status", "whoami", "list_vaults", "list_items", "read_secret", "inject_template"]
 
 [requires]
 bins = ["op"]

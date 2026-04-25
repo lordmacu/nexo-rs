@@ -47,7 +47,13 @@ pub fn canonicalize_session_dirs(claims: &[PathClaim]) -> (Vec<PathClaim>, Vec<B
                 if let Ok(meta) = std::fs::metadata(&c.path) {
                     let mut perm = meta.permissions();
                     perm.set_mode(0o700);
-                    let _ = std::fs::set_permissions(&c.path, perm);
+                    if let Err(e) = std::fs::set_permissions(&c.path, perm) {
+                        tracing::warn!(
+                            path = %c.path.display(),
+                            error = %e,
+                            "could not chmod 0o700 on credentials file; secrets may be world-readable"
+                        );
+                    }
                 }
             }
         }
