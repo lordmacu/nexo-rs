@@ -165,6 +165,33 @@ If you need a "force-apply now" semantic (terminate in-flight sessions,
 respawn), use `agent reload --kick-sessions` — **not implemented yet**,
 tracked in Phase 19.
 
+## Security model
+
+- **`control.reload` topic has no application-level auth.** Anyone
+  with broker publish rights can trigger a reload. In production with
+  NATS, restrict the `control.>` subject pattern via NATS account
+  permissions; see [NATS with TLS + auth](../recipes/nats-tls-auth.md).
+  The local-broker fallback is in-process only — no remote attack
+  surface.
+- **File-watcher trust = filesystem write.** Whoever can edit
+  `config/agents.d/*.yaml` can change capability surface. Treat the
+  config dir as a privileged resource: 0600 on YAML files, 0700 on
+  the directory.
+- **`events.runtime.config.reloaded` payload includes agent ids and
+  rejection reasons.** Subscribers see them. Single-process
+  deployments are fine; in multi-tenant setups, gate the
+  `events.runtime.>` pattern in NATS auth.
+- **Outbound allowlist scope.** The Phase 16 outbound allowlist
+  governs WhatsApp + Telegram tools only. Google tools are gated by
+  the OAuth scopes granted at credential creation (see
+  [Per-agent credentials](../config/credentials.md)) — there is no
+  per-recipient list for Google.
+- **Apply-on-next-message and tightening reloads.** A reload that
+  narrows an allowlist for security reasons does **not** affect
+  in-flight sessions until they next receive an event. If you need
+  the change to take effect immediately, restart the daemon (or wait
+  for the upcoming `agent reload --kick-sessions` flag in Phase 19).
+
 ## Failure modes
 
 - **Bad YAML**: `AppConfig::load` fails. Old snapshot keeps serving.
