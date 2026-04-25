@@ -17,7 +17,7 @@ categories    = { workspace = true }
 # nexo-core so the runtime doesn't ship the reqwest OAuth machinery
 # when an agent has no `google_auth:` block.
 nexo-core = { version = "0.1.1", path = "../../core" }
-nexo-llm = { version = "0.1.1", path = "../../llm" }
+nexo-llm = { version = "0.1.2", path = "../../llm" }
 anyhow      = { workspace = true }
 async-trait = { workspace = true }
 chrono      = { workspace = true }
