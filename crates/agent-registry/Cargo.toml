@@ -1,0 +1,35 @@
+[package]
+name = "nexo-agent-registry"
+description = "Live registry of in-flight driver goals (Phase 67.B). Persists to SQLite for reattach across daemon restarts."
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+homepage      = { workspace = true }
+documentation = { workspace = true }
+keywords      = { workspace = true }
+categories    = { workspace = true }
+
+[dependencies]
+arc-swap         = { workspace = true }
+async-trait      = { workspace = true }
+chrono           = { workspace = true }
+dashmap          = { workspace = true }
+humantime-serde  = { workspace = true }
+nexo-driver-claude = { version = "0.1.1", path = "../driver-claude" }
+nexo-driver-types  = { version = "0.1.1", path = "../driver-types" }
+serde            = { workspace = true }
+serde_json       = { workspace = true }
+sqlx             = { workspace = true }
+thiserror        = { workspace = true }
+tokio            = { workspace = true, features = ["sync", "time", "rt", "macros"] }
+tokio-util       = { workspace = true }
+tracing          = { workspace = true }
+uuid             = { workspace = true }
+
+[dev-dependencies]
+# in-test temp dirs for SQLite paths.
+nexo-driver-types = { version = "0.1.1", path = "../driver-types" }
+
