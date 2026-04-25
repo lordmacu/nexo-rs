@@ -152,6 +152,7 @@ fn two_binding_agent() -> AgentConfig {
             },
         ],
         context_optimization: None,
+            dispatch_policy: Default::default(),
     }
 }
 
@@ -328,6 +329,7 @@ async fn legacy_agent_without_bindings_synthesises_agent_level_policy() {
         pairing_policy: serde_json::Value::Null,
         language: None,
         context_optimization: None,
+            dispatch_policy: Default::default(),
     };
     let (runtime, captures, broker) = spawn_runtime(cfg).await;
 

@@ -123,6 +123,7 @@ fn agent_with_pairing_on() -> AgentConfig {
             ..Default::default()
         }],
         context_optimization: None,
+            dispatch_policy: Default::default(),
     }
 }
 

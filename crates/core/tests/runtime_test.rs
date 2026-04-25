@@ -83,6 +83,7 @@ fn make_config(
         pairing_policy: serde_json::Value::Null,
         language: None,
         context_optimization: None,
+            dispatch_policy: Default::default(),
     }
 }
 
@@ -294,6 +295,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             pairing_policy: serde_json::Value::Null,
             language: None,
             context_optimization: None,
+            dispatch_policy: Default::default(),
         },
         behavior_a,
     ));
@@ -341,6 +343,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             pairing_policy: serde_json::Value::Null,
             language: None,
             context_optimization: None,
+            dispatch_policy: Default::default(),
         },
         behavior_b,
     ));

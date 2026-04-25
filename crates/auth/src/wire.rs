@@ -484,6 +484,7 @@ mod tests {
             web_search: serde_json::Value::Null,
             pairing_policy: serde_json::Value::Null,
             context_optimization: None,
+            dispatch_policy: Default::default(),
         }
     }
 

@@ -255,6 +255,7 @@ mod tests {
             language: None,
             outbound_allowlist: OutboundAllowlistConfig::default(),
             context_optimization: None,
+            dispatch_policy: Default::default(),
         })
     }
 
