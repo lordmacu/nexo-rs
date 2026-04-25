@@ -29,7 +29,7 @@ One rustdoc page per workspace crate:
 | `nexo-setup` | Wizard field registry, YAML patcher. |
 | `nexo-tunnel` | Cloudflared tunnel helper. |
 | `nexo-auth` | Per-agent credential gauntlet, resolver, audit. |
-| `agent-plugin-*` | Channel plugins (browser, whatsapp, telegram, email, google, gmail-poller). |
+| `nexo-plugin-*` | Channel plugins (browser, whatsapp, telegram, email, google, gmail-poller). |
 
 ## When to read rustdoc vs the book
 
