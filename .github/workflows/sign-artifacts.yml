@@ -1,0 +1,109 @@
+name: sign-artifacts
+
+# Sign every release-asset binary / .deb / .rpm / .tar.gz with
+# keyless Cosign (sigstore). Triggered as a `workflow_run` after
+# the main release workflow (`release.yml`, Phase 27.2) finishes
+# uploading assets to a `v*` release.
+#
+# Verification (operator side):
+#   cosign verify-blob \
+#     --bundle nexo-rs-x86_64-linux.tar.gz.bundle \
+#     --certificate-identity-regexp 'https://github.com/lordmacu/nexo-rs/.*' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+#     nexo-rs-x86_64-linux.tar.gz
+#
+# The signatures + bundles are uploaded back to the same release as
+# `<asset>.sig` + `<asset>.bundle` so a user gets everything from
+# one URL.
+
+on:
+  workflow_run:
+    workflows: [release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to sign (e.g. v0.1.1)"
+        required: true
+
+permissions:
+  contents: write       # to upload .sig / .bundle back to the release
+  id-token: write       # for keyless OIDC
+
+jobs:
+  sign:
+    name: keyless-sign
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    steps:
+      - name: Resolve release tag
+        id: tag
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            # Triggered by workflow_run — the upstream release.yml
+            # exposes the tag as a workflow output. Fallback to
+            # ref_name if the run was tag-triggered.
+            echo "tag=${{ github.event.workflow_run.head_branch }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install GitHub CLI
+        run: |
+          if ! command -v gh >/dev/null; then
+            sudo apt-get update -qq && sudo apt-get install -y gh
+          fi
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: v2.4.1
+
+      - name: Download every asset from the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts && cd artifacts
+          gh release download "$TAG" --repo "${{ github.repository }}" \
+            --pattern '*.deb' \
+            --pattern '*.rpm' \
+            --pattern '*.tar.gz' \
+            --pattern '*.zip' \
+            --pattern 'nexo-*'
+          ls -la
+
+      - name: Sign each asset (keyless OIDC)
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+        run: |
+          set -euo pipefail
+          cd artifacts
+          for asset in *; do
+            # Skip already-emitted signatures / bundles in case the
+            # job is re-run.
+            case "$asset" in *.sig|*.bundle|*.pem) continue;; esac
+            [ -f "$asset" ] || continue
+            echo "==> cosign sign-blob $asset"
+            cosign sign-blob --yes \
+              --output-signature  "${asset}.sig" \
+              --output-certificate "${asset}.pem" \
+              --bundle             "${asset}.bundle" \
+              "$asset"
+          done
+          ls -la
+
+      - name: Upload signatures + bundles back to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          cd artifacts
+          # Only upload the new signing artifacts, not the original
+          # binaries (those are already on the release).
+          gh release upload "$TAG" \
+            --repo "${{ github.repository }}" \
+            --clobber \
+            *.sig *.bundle *.pem
