@@ -6,6 +6,7 @@ use agent_config::types::llm::{LlmConfig, LlmProviderConfig, RetryConfig};
 
 use crate::anthropic::AnthropicFactory;
 use crate::client::LlmClient;
+use crate::deepseek::DeepSeekFactory;
 use crate::gemini::GeminiFactory;
 use crate::minimax::MiniMaxClient;
 use crate::openai_compat::OpenAiClient;
@@ -57,6 +58,8 @@ impl LlmRegistry {
             .expect("builtin anthropic factory");
         r.register(Box::new(GeminiFactory))
             .expect("builtin gemini factory");
+        r.register(Box::new(DeepSeekFactory))
+            .expect("builtin deepseek factory");
         r
     }
 
@@ -182,6 +185,9 @@ mod tests {
         let names = r.names();
         assert!(names.contains(&"minimax"));
         assert!(names.contains(&"openai"));
+        assert!(names.contains(&"anthropic"));
+        assert!(names.contains(&"gemini"));
+        assert!(names.contains(&"deepseek"));
     }
 
     #[test]

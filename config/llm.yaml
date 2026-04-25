@@ -15,6 +15,15 @@ providers:
     auth:
       mode: oauth_bundle
       bundle: ./secrets/anthropic_oauth.json
+  # DeepSeek is OpenAI-compatible — only api_key is required.
+  # base_url defaults to https://api.deepseek.com/v1 when blank.
+  # Models: deepseek-chat (general), deepseek-reasoner (reasoning).
+  deepseek:
+    api_key: ${DEEPSEEK_API_KEY:-}
+    base_url: ""
+    rate_limit:
+      requests_per_second: 2.0
+      quota_alert_threshold: 100000
 retry:
   max_attempts: 5
   initial_backoff_ms: 1000

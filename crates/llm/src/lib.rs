@@ -1,6 +1,7 @@
 pub mod anthropic;
 pub mod anthropic_auth;
 pub mod client;
+pub mod deepseek;
 pub mod gemini;
 pub mod minimax;
 pub mod minimax_auth;
@@ -17,6 +18,7 @@ pub mod types;
 
 pub use anthropic::{AnthropicClient, AnthropicFactory};
 pub use client::LlmClient;
+pub use deepseek::{DeepSeekFactory, DEFAULT_BASE_URL as DEEPSEEK_DEFAULT_BASE_URL};
 pub use gemini::{GeminiClient, GeminiFactory};
 pub use minimax::MiniMaxClient;
 pub use openai_compat::OpenAiClient;
@@ -30,6 +32,6 @@ pub use token_counter::{
     AnthropicTokenCounter, TiktokenCounter, TokenCounter,
 };
 pub use types::{
-    Attachment, AttachmentData, ChatMessage, ChatRequest, ChatResponse, ChatRole, FinishReason,
-    ResponseContent, TokenUsage, ToolCall, ToolChoice, ToolDef,
+    Attachment, AttachmentData, CacheUsage, ChatMessage, ChatRequest, ChatResponse, ChatRole,
+    FinishReason, ResponseContent, TokenUsage, ToolCall, ToolChoice, ToolDef,
 };

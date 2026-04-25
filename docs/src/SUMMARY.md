@@ -34,6 +34,7 @@
 - [MiniMax M2.5](./llm/minimax.md)
 - [Anthropic / Claude](./llm/anthropic.md)
 - [OpenAI-compatible](./llm/openai.md)
+- [DeepSeek](./llm/deepseek.md)
 - [Rate limiting & retry](./llm/retry.md)
 
 # Plugins
