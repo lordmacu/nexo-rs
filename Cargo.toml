@@ -34,6 +34,7 @@ members = [
     "crates/driver-types",
     "crates/driver-claude",
     "crates/driver-permission",
+    "crates/driver-loop",
 ]
 # Keep standalone extension templates out of the agent workspace so they don't
 # inherit our deps or lockfile. Users copy them verbatim and build separately.

@@ -9,6 +9,8 @@ pub mod cache;
 pub mod decider;
 pub mod error;
 pub mod mcp;
+#[cfg(unix)]
+pub mod socket;
 pub mod types;
 
 pub use adapter::outcome_to_claude_value;
@@ -16,4 +18,6 @@ pub use cache::{fingerprint, SessionCacheKey};
 pub use decider::{AllowAllDecider, DenyAllDecider, PermissionDecider, ScriptedDecider};
 pub use error::PermissionError;
 pub use mcp::PermissionMcpServer;
+#[cfg(unix)]
+pub use socket::SocketDecider;
 pub use types::{AllowScope, PermissionOutcome, PermissionRequest, PermissionResponse};

@@ -27,6 +27,9 @@ tokio-util         = { workspace = true }
 tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }
 
+[dev-dependencies]
+tempfile = "3"
+
 [[bin]]
 name = "nexo-driver-permission-mcp"
 path = "src/bin/permission_mcp.rs"
