@@ -137,20 +137,20 @@ nexo-plugin-whatsapp = { version = "0.1.1", path = "crates/plugins/whatsapp" }
 nexo-plugin-telegram = { version = "0.1.1", path = "crates/plugins/telegram" }
 nexo-plugin-google = { version = "0.1.1", path = "crates/plugins/google" }
 nexo-setup = { version = "0.1.1", path = "crates/setup" }
-nexo-tunnel = { version = "0.1.1", path = "crates/tunnel" }
-nexo-auth = { version = "0.1.1", path = "crates/auth" }
+nexo-tunnel = { version = "0.1.2", path = "crates/tunnel" }
+nexo-auth = { version = "0.1.2", path = "crates/auth" }
 nexo-poller = { version = "0.1.1", path = "crates/poller" }
 nexo-poller-tools = { version = "0.1.1", path = "crates/poller-tools" }
 nexo-poller-ext = { version = "0.1.1", path = "crates/poller-ext" }
-nexo-config = { version = "0.1.1", path = "crates/config" }
-nexo-broker = { version = "0.1.1", path = "crates/broker" }
+nexo-config = { version = "0.1.2", path = "crates/config" }
+nexo-broker = { version = "0.1.2", path = "crates/broker" }
 nexo-core = { version = "0.1.1", path = "crates/core" }
-nexo-extensions = { version = "0.1.1", path = "crates/extensions" }
-nexo-llm = { version = "0.1.1", path = "crates/llm" }
-nexo-mcp = { version = "0.1.1", path = "crates/mcp" }
+nexo-extensions = { version = "0.1.2", path = "crates/extensions" }
+nexo-llm = { version = "0.1.2", path = "crates/llm" }
+nexo-mcp = { version = "0.1.2", path = "crates/mcp" }
 nexo-memory = { version = "0.1.2", path = "crates/memory" }
-nexo-taskflow = { version = "0.1.1", path = "crates/taskflow" }
-nexo-web-search = { version = "0.1.1", path = "crates/web-search" }
+nexo-taskflow = { version = "0.1.2", path = "crates/taskflow" }
+nexo-web-search = { version = "0.1.2", path = "crates/web-search" }
 nexo-pairing = { version = "0.1.2", path = "crates/pairing" }
 tokio-util          = { workspace = true }
 tracing             = { workspace = true }

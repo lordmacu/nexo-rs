@@ -27,8 +27,8 @@ base64            = { workspace = true }
 reqwest           = { workspace = true }
 futures           = { workspace = true }
 uuid              = { workspace = true }
-nexo-broker = { version = "0.1.1", path = "../../broker" }
-nexo-config = { version = "0.1.1", path = "../../config" }
+nexo-broker = { version = "0.1.2", path = "../../broker" }
+nexo-config = { version = "0.1.2", path = "../../config" }
 nexo-core = { version = "0.1.1", path = "../../core" }
-nexo-llm = { version = "0.1.1", path = "../../llm" }
-nexo-resilience = { version = "0.1.1", path = "../../resilience" }
+nexo-llm = { version = "0.1.2", path = "../../llm" }
+nexo-resilience = { version = "0.1.2", path = "../../resilience" }
