@@ -22,8 +22,8 @@ use agent_core::session::SessionManager;
 use agent_core::telemetry::{add_extensions_discovered, render_prometheus};
 use agent_core::{
     Agent, AgentRuntime, DelegationTool, ExtensionHook, ExtensionTool, HeartbeatTool, HookRegistry,
-    LlmAgentBehavior, MemoryTool, MyStatsTool, PluginRegistry, ToolRegistry, WhatDoIKnowTool,
-    WhoAmITool,
+    LlmAgentBehavior, MemoryTool, MyStatsTool, PluginRegistry, SessionLogsTool, ToolRegistry,
+    WhatDoIKnowTool, WhoAmITool,
 };
 use agent_llm::LlmRegistry;
 use agent_memory::LongTermMemory;
@@ -123,6 +123,15 @@ enum Mode {
     Reload {
         json: bool,
     },
+    /// Phase 19 — generic poller subsystem. CLI hits the loopback admin
+    /// endpoint at `127.0.0.1:9091` (daemon must be running).
+    PollersList { json: bool },
+    PollersShow { id: String, json: bool },
+    PollersRun { id: String },
+    PollersPause { id: String },
+    PollersResume { id: String },
+    PollersReset { id: String, yes: bool },
+    PollersReload,
     /// Run the web admin UI exposed through a fresh Cloudflare quick
     /// tunnel. Ensures `cloudflared` is installed (downloads it per
     /// OS/arch if absent), starts a loopback HTTP server, opens a new
@@ -308,6 +317,13 @@ async fn main() -> Result<()> {
         Mode::DryRun { json } => return run_dry_run(&args.config_dir, json),
         Mode::CheckConfig { strict } => return run_check_config(&args.config_dir, strict),
         Mode::Reload { json } => return run_reload(&args.config_dir, json).await,
+        Mode::PollersList { json } => return agent_poller::cli::list(json).await,
+        Mode::PollersShow { id, json } => return agent_poller::cli::show(&id, json).await,
+        Mode::PollersRun { id } => return agent_poller::cli::run(&id).await,
+        Mode::PollersPause { id } => return agent_poller::cli::pause(&id).await,
+        Mode::PollersResume { id } => return agent_poller::cli::resume(&id).await,
+        Mode::PollersReset { id, yes } => return agent_poller::cli::reset(&id, yes).await,
+        Mode::PollersReload => return agent_poller::cli::reload().await,
         Mode::ExtInstall {
             source,
             update,
@@ -869,10 +885,60 @@ async fn main() -> Result<()> {
     // flush the cache or inspect the agent list. ssh-tunnel
     // `-L 9091:127.0.0.1:9091` to reach it remotely.
     let credentials_for_admin = credentials.as_ref().map(Arc::clone);
+
+    // Phase 19 — generic poller subsystem. Boot order:
+    //   1) require credentials bundle (resolver lookup is mandatory)
+    //   2) open SQLite state DB
+    //   3) construct runner + register built-ins
+    //   4) start runner (spawns one tokio task per job)
+    // Failure at any step logs + skips: the daemon keeps running for
+    // the rest of the agents.
+    let pollers_runner: Option<Arc<agent_poller::PollerRunner>> = match (
+        cfg.pollers.clone(),
+        credentials.as_ref().map(Arc::clone),
+    ) {
+        (Some(pcfg), Some(bundle)) if pcfg.enabled => {
+            let state_db = std::path::PathBuf::from(&pcfg.state_db);
+            match agent_poller::PollState::open(&state_db).await {
+                Ok(state) => {
+                    let runner = Arc::new(agent_poller::PollerRunner::new(
+                        pcfg,
+                        Arc::new(state),
+                        broker.clone(),
+                        bundle,
+                    ));
+                    agent_poller::builtins::register_all(&runner);
+                    if let Err(e) = runner.start().await {
+                        tracing::error!(error = %format!("{e:#}"), "pollers: start failed");
+                        None
+                    } else {
+                        Some(runner)
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(
+                        path = %state_db.display(),
+                        error = %format!("{e:#}"),
+                        "pollers: failed to open state DB"
+                    );
+                    None
+                }
+            }
+        }
+        (Some(pcfg), None) if pcfg.enabled => {
+            tracing::warn!(
+                "pollers: skipped — credential gauntlet failed earlier so no resolver is available"
+            );
+            None
+        }
+        _ => None,
+    };
+
     let _admin_handle = tokio::spawn(run_admin_server(
         Arc::clone(&tool_policy_registry),
         Arc::clone(&agents_directory),
         credentials_for_admin,
+        pollers_runner.as_ref().map(Arc::clone),
         config_dir.clone(),
     ));
     let mut runtimes: Vec<AgentRuntime> = Vec::with_capacity(cfg.agents.agents.len());
@@ -1068,6 +1134,16 @@ async fn main() -> Result<()> {
             tools.register(
                 MyStatsTool::tool_def(),
                 MyStatsTool::new(mem, workspace_path.clone()),
+            );
+        }
+
+        // Self-introspection over JSONL transcripts. Skip when the agent has
+        // no transcripts_dir configured — the tool would only return errors.
+        if !agent_cfg.transcripts_dir.trim().is_empty() {
+            tools.register(SessionLogsTool::tool_def(), SessionLogsTool::new());
+            tracing::info!(
+                agent = %agent_id,
+                "registered session_logs tool for agent"
             );
         }
 
@@ -2118,6 +2194,26 @@ fn parse_args() -> CliArgs {
         [cmd] if cmd == "reload" => Mode::Reload {
             json: has_json_flag,
         },
+        [cmd] if cmd == "pollers" => Mode::PollersList { json: has_json_flag },
+        [cmd, sub] if cmd == "pollers" && sub == "list" => Mode::PollersList {
+            json: has_json_flag,
+        },
+        [cmd, sub] if cmd == "pollers" && sub == "reload" => Mode::PollersReload,
+        [cmd, sub, id] if cmd == "pollers" && sub == "show" => Mode::PollersShow {
+            id: id.clone(),
+            json: has_json_flag,
+        },
+        [cmd, sub, id] if cmd == "pollers" && sub == "run" => Mode::PollersRun { id: id.clone() },
+        [cmd, sub, id] if cmd == "pollers" && sub == "pause" => Mode::PollersPause {
+            id: id.clone(),
+        },
+        [cmd, sub, id] if cmd == "pollers" && sub == "resume" => Mode::PollersResume {
+            id: id.clone(),
+        },
+        [cmd, sub, id] if cmd == "pollers" && sub == "reset" => Mode::PollersReset {
+            id: id.clone(),
+            yes: positional.iter().any(|a| a == "--yes"),
+        },
         [cmd] if cmd == "admin" => {
             // --port <N> or --port=<N>. Default 9099 (away from 8080 /
             // 9090 / 9091 used by the main daemon's health / metrics /
@@ -2234,15 +2330,19 @@ fn run_ext_help() -> Result<()> {
 ///      right cloudflared binary for this OS/arch if it isn't already
 ///      on disk. First-run is chatty on stdout so the operator sees
 ///      what's being fetched.
-///   2. Start a loopback HTTP server on `127.0.0.1:<port>` that
-///      responds with a minimal "hello" page — placeholder until the
-///      real admin UI lands.
-///   3. `TunnelManager::start()` opens a new trycloudflare.com URL
-///      (ephemeral — a fresh one every invocation, no login required).
-///   4. Print the URL and wait for a shutdown signal.
+///   2. Mint a fresh admin password + a per-run session secret. The
+///      session secret signs cookies so restarting the daemon
+///      invalidates every live session (a re-login is required every
+///      launch, matching the rotating URL).
+///   3. Start a loopback HTTP server on `127.0.0.1:<port>` that serves
+///      the React bundle, a `/login` form, `POST /api/login`, and
+///      `POST /api/logout`. Everything behind `/api/` (and the SPA
+///      bundle itself) requires a valid session cookie; the bundle
+///      entry point redirects anonymous visitors to `/login`.
+///   4. `TunnelManager::start()` opens a new trycloudflare.com URL
+///      (ephemeral — a fresh one every invocation, no account).
+///   5. Print the URL and credentials; wait for a shutdown signal.
 async fn run_admin_web(port: u16) -> Result<()> {
-    use tokio::io::AsyncWriteExt;
-
     // Step 1: make sure cloudflared is installed.
     println!("[admin] checking cloudflared…");
     let bin = agent_tunnel::binary::ensure_cloudflared()
@@ -2250,13 +2350,13 @@ async fn run_admin_web(port: u16) -> Result<()> {
         .context("failed to install cloudflared")?;
     println!("[admin] cloudflared ready ({})", bin.display());
 
-    // Step 2: mint a fresh Basic-Auth password for this run. The tunnel
-    // URL is public; anyone with it must authenticate before reaching
-    // the admin page. Username is fixed ("admin"), password is 24
-    // URL-safe chars from an OS RNG. Printed once to stdout — copy it
-    // when you open the URL; there is no recovery.
+    // Step 2: mint a fresh admin password + a per-run HMAC secret.
     let password = generate_admin_password();
-    let auth_token = encode_basic_auth("admin", &password);
+    let session_secret: [u8; 32] = rand::random();
+    let admin_ctx = Arc::new(AdminSession {
+        password,
+        secret: session_secret,
+    });
 
     // Step 3: bind the loopback HTTP listener.
     let bind = format!("127.0.0.1:{port}");
@@ -2265,70 +2365,21 @@ async fn run_admin_web(port: u16) -> Result<()> {
         .with_context(|| format!("failed to bind admin web on {bind}"))?;
     println!("[admin] listening on http://{bind}");
 
-    // Serve every request: Basic Auth gate → placeholder HTML. When the
-    // React bundle lands, swap the body for served-from-disk or
-    // rust-embed'd static assets, keep the auth gate identical.
-    let auth_token_for_task = auth_token.clone();
+    let admin_ctx_for_task = Arc::clone(&admin_ctx);
     let http_task = tokio::spawn(async move {
         loop {
-            let (mut stream, _) = match listener.accept().await {
+            let (stream, _) = match listener.accept().await {
                 Ok(pair) => pair,
                 Err(e) => {
                     tracing::warn!(error = %e, "admin accept failed");
                     continue;
                 }
             };
-            let expected = auth_token_for_task.clone();
+            let ctx = Arc::clone(&admin_ctx_for_task);
             tokio::spawn(async move {
-                let request = read_http_head(&mut stream).await.unwrap_or_default();
-                let authorized = request
-                    .lines()
-                    .find_map(|line| line.strip_prefix("Authorization: Basic "))
-                    .map(|token| token.trim())
-                    .map(|token| token == expected)
-                    .unwrap_or(false);
-
-                if !authorized {
-                    let body = "401 Unauthorized";
-                    let response = format!(
-                        "HTTP/1.1 401 Unauthorized\r\n\
-                         WWW-Authenticate: Basic realm=\"nexo-rs admin\"\r\n\
-                         Content-Type: text/plain\r\nContent-Length: {}\r\n\
-                         Connection: close\r\n\r\n{}",
-                        body.len(),
-                        body
-                    );
-                    let _ = stream.write_all(response.as_bytes()).await;
-                    let _ = stream.shutdown().await;
-                    return;
+                if let Err(e) = handle_admin_request(stream, ctx).await {
+                    tracing::debug!(error = %e, "admin request handler failed");
                 }
-
-                // Authorised — serve the embedded bundle. Path is the
-                // second token of the request line (METHOD SP PATH SP HTTP/1.1).
-                let path = request
-                    .lines()
-                    .next()
-                    .and_then(|line| line.split_whitespace().nth(1))
-                    .unwrap_or("/")
-                    .to_string();
-
-                let (body, mime) = match admin_asset_for_path(&path) {
-                    Some(pair) => pair,
-                    None => (
-                        ADMIN_FALLBACK_HTML.as_bytes().to_vec(),
-                        "text/html; charset=utf-8",
-                    ),
-                };
-
-                let head = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\n\
-                     Cache-Control: no-store\r\nConnection: close\r\n\r\n",
-                    mime,
-                    body.len(),
-                );
-                let _ = stream.write_all(head.as_bytes()).await;
-                let _ = stream.write_all(&body).await;
-                let _ = stream.shutdown().await;
             });
         }
     });
@@ -2343,10 +2394,11 @@ async fn run_admin_web(port: u16) -> Result<()> {
     println!("    ┌────────────────────────────────────────────────────────────");
     println!("    │  admin URL : {}", tunnel.url);
     println!("    │  username  : admin");
-    println!("    │  password  : {password}");
+    println!("    │  password  : {}", admin_ctx.password);
     println!("    └────────────────────────────────────────────────────────────");
     println!();
-    println!("    (Ctrl+C to stop. Fresh URL + password on every launch —");
+    println!("    Open the URL, log in with the credentials above.");
+    println!("    (Ctrl+C to stop. Fresh URL + password every launch —");
     println!("     the password is never stored to disk.)");
     println!();
 
@@ -2361,9 +2413,583 @@ async fn run_admin_web(port: u16) -> Result<()> {
     Ok(())
 }
 
+/// Shared state for every admin HTTP request: the per-run admin
+/// password and the 32-byte HMAC secret used to sign session cookies.
+/// Both rotate on every `agent admin` launch — stopping the daemon
+/// invalidates every outstanding session.
+struct AdminSession {
+    password: String,
+    secret: [u8; 32],
+}
+
+impl AdminSession {
+    /// Mints a signed session cookie value. Payload is the ASCII
+    /// expiry timestamp (seconds since epoch); signature is the
+    /// lowercase-hex SHA-256 HMAC over that payload. Inline SHA-256
+    /// (below) avoids pulling a new crate.
+    fn issue_cookie(&self, ttl_seconds: u64) -> String {
+        let expires = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+            .saturating_add(ttl_seconds);
+        let payload = expires.to_string();
+        let sig = hmac_sha256_hex(&self.secret, payload.as_bytes());
+        format!("{payload}.{sig}")
+    }
+
+    /// Returns `true` iff the cookie was signed by this run's secret
+    /// and hasn't expired.
+    fn validate_cookie(&self, value: &str) -> bool {
+        let Some((payload, sig)) = value.split_once('.') else {
+            return false;
+        };
+        let expected = hmac_sha256_hex(&self.secret, payload.as_bytes());
+        if !constant_time_eq(sig.as_bytes(), expected.as_bytes()) {
+            return false;
+        }
+        let Ok(expires) = payload.parse::<u64>() else {
+            return false;
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(u64::MAX);
+        now < expires
+    }
+}
+
+const ADMIN_COOKIE_NAME: &str = "nexo_admin";
+/// 24 hours — re-login forced once a day, tunnel rotation invalidates
+/// every cookie alongside the daemon anyway.
+const ADMIN_COOKIE_TTL_SECS: u64 = 24 * 60 * 60;
+
+async fn handle_admin_request(
+    mut stream: TcpStream,
+    ctx: Arc<AdminSession>,
+) -> std::io::Result<()> {
+    use tokio::io::AsyncWriteExt;
+
+    let request = read_http_head(&mut stream).await.unwrap_or_default();
+    let first_line = request.lines().next().unwrap_or("");
+    let mut tokens = first_line.split_whitespace();
+    let method = tokens.next().unwrap_or("GET").to_ascii_uppercase();
+    let path = tokens.next().unwrap_or("/").to_string();
+
+    let authorised = request
+        .lines()
+        .find_map(|line| line.strip_prefix("Cookie: ").or_else(|| line.strip_prefix("cookie: ")))
+        .and_then(|cookies| {
+            cookies.split(';').find_map(|pair| {
+                let pair = pair.trim();
+                pair.strip_prefix(&format!("{ADMIN_COOKIE_NAME}="))
+            })
+        })
+        .map(|value| ctx.validate_cookie(value))
+        .unwrap_or(false);
+
+    // /api/login — accept credentials, issue cookie.
+    if method == "POST" && path == "/api/login" {
+        // Read the body — simple key=value form url-encoded bodies
+        // land in a single read; 4 KB cap is ample.
+        let body = read_http_body(&request, &mut stream).await.unwrap_or_default();
+        let mut username = String::new();
+        let mut password = String::new();
+        for pair in body.split('&') {
+            if let Some(v) = pair.strip_prefix("username=") {
+                username = url_decode(v);
+            } else if let Some(v) = pair.strip_prefix("password=") {
+                password = url_decode(v);
+            }
+        }
+        if username == "admin"
+            && constant_time_eq(password.as_bytes(), ctx.password.as_bytes())
+        {
+            let cookie = ctx.issue_cookie(ADMIN_COOKIE_TTL_SECS);
+            let body = r#"{"ok":true}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\n\
+                 Content-Type: application/json\r\nContent-Length: {}\r\n\
+                 Set-Cookie: {}={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}\r\n\
+                 Cache-Control: no-store\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                ADMIN_COOKIE_NAME,
+                cookie,
+                ADMIN_COOKIE_TTL_SECS,
+                body,
+            );
+            stream.write_all(response.as_bytes()).await?;
+        } else {
+            let body = r#"{"ok":false,"error":"invalid credentials"}"#;
+            let response = format!(
+                "HTTP/1.1 401 Unauthorized\r\n\
+                 Content-Type: application/json\r\nContent-Length: {}\r\n\
+                 Cache-Control: no-store\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).await?;
+        }
+        stream.shutdown().await?;
+        return Ok(());
+    }
+
+    // /api/logout — drop the cookie regardless of current state.
+    if method == "POST" && path == "/api/logout" {
+        let body = r#"{"ok":true}"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\n\
+             Content-Type: application/json\r\nContent-Length: {}\r\n\
+             Set-Cookie: {}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0\r\n\
+             Cache-Control: no-store\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            ADMIN_COOKIE_NAME,
+            body,
+        );
+        stream.write_all(response.as_bytes()).await?;
+        stream.shutdown().await?;
+        return Ok(());
+    }
+
+    // /api/debug/env — feature probe consumed by the SPA so it can
+    // show the Reset button only when the dev toggle is on. Gated
+    // behind NEXO_ADMIN_DEBUG=1 (or the debug_assertions cfg so
+    // `cargo run` without the flag still works). Always returns the
+    // same JSON shape regardless of auth so the SPA can probe
+    // pre-login too.
+    if method == "GET" && path == "/api/debug/env" {
+        let enabled = admin_debug_enabled();
+        let body = format!(
+            "{{\"debug\":{},\"build\":\"{}\"}}",
+            enabled,
+            if cfg!(debug_assertions) { "dev" } else { "release" }
+        );
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
+             Cache-Control: no-store\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream.write_all(response.as_bytes()).await?;
+        stream.shutdown().await?;
+        return Ok(());
+    }
+
+    // /api/debug/reset — nukes agents.d, data/**, workspaces, DBs.
+    // Only honoured when the debug toggle is on; otherwise 404.
+    // Requires a valid session cookie so a public tunnel URL alone
+    // can't trigger it.
+    if method == "POST" && path == "/api/debug/reset" {
+        if !authorised {
+            let body = r#"{"ok":false,"error":"unauthorised"}"#;
+            let response = format!(
+                "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).await?;
+            stream.shutdown().await?;
+            return Ok(());
+        }
+        if !admin_debug_enabled() {
+            let body = r#"{"ok":false,"error":"debug mode disabled — set NEXO_ADMIN_DEBUG=1"}"#;
+            let response = format!(
+                "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).await?;
+            stream.shutdown().await?;
+            return Ok(());
+        }
+        let report = debug_reset_now();
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+             Content-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n{}",
+            report.len(),
+            report
+        );
+        stream.write_all(response.as_bytes()).await?;
+        stream.shutdown().await?;
+        return Ok(());
+    }
+
+    // /login (GET) — always served unauthenticated.
+    if path == "/login" || path.starts_with("/login?") {
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\
+             Content-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n{}",
+            ADMIN_LOGIN_HTML.len(),
+            ADMIN_LOGIN_HTML
+        );
+        stream.write_all(response.as_bytes()).await?;
+        stream.shutdown().await?;
+        return Ok(());
+    }
+
+    // API callers (JSON) get 401; browsers get a 302 to /login.
+    if !authorised {
+        let wants_json = request.contains("Accept: application/json")
+            || request.contains("accept: application/json")
+            || path.starts_with("/api/");
+        let response = if wants_json {
+            let body = r#"{"ok":false,"error":"unauthorised"}"#;
+            format!(
+                "HTTP/1.1 401 Unauthorized\r\n\
+                 Content-Type: application/json\r\nContent-Length: {}\r\n\
+                 Cache-Control: no-store\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+        } else {
+            String::from(
+                "HTTP/1.1 302 Found\r\nLocation: /login\r\n\
+                 Cache-Control: no-store\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            )
+        };
+        stream.write_all(response.as_bytes()).await?;
+        stream.shutdown().await?;
+        return Ok(());
+    }
+
+    // Authorised — serve the SPA bundle (or the bundle-missing fallback).
+    let (body, mime) = match admin_asset_for_path(&path) {
+        Some(pair) => pair,
+        None => (
+            ADMIN_FALLBACK_HTML.as_bytes().to_vec(),
+            "text/html; charset=utf-8",
+        ),
+    };
+    let head = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\n\
+         Cache-Control: no-store\r\nConnection: close\r\n\r\n",
+        mime,
+        body.len(),
+    );
+    stream.write_all(head.as_bytes()).await?;
+    stream.write_all(&body).await?;
+    stream.shutdown().await?;
+    Ok(())
+}
+
+/// Login page — plain HTML + inline JS posting to `/api/login`.
+/// Ships as a standalone page so it works before the SPA bundle
+/// loads (and lets operators authenticate without shipping the React
+/// bundle at all, e.g. first-run diagnostics).
+const ADMIN_LOGIN_HTML: &str = r#"<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nexo-rs admin — login</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fafafa; --fg: #1a1a1a; --muted: #555;
+    --card: #fff; --border: #e5e5e5;
+    --accent: #0066cc; --accent-fg: #fff;
+    --error-bg: #fee; --error-fg: #a00;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0a0a0a; --fg: #f5f5f5; --muted: #aaa;
+      --card: #1a1a1a; --border: #333;
+      --error-bg: #3a0f0f; --error-fg: #ffa;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh;
+         display: flex; align-items: center; justify-content: center;
+         font: 16px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         background: var(--bg); color: var(--fg); }
+  .card { background: var(--card); border: 1px solid var(--border);
+          border-radius: 10px; padding: 2rem 2.25rem; width: min(92vw, 24rem);
+          box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06); }
+  h1 { margin: 0 0 .25rem; font-size: 1.25rem; }
+  p.sub { margin: 0 0 1.25rem; color: var(--muted); font-size: .9rem; }
+  label { display: block; font-size: .85rem; color: var(--muted);
+          margin: 1rem 0 .25rem; }
+  input { width: 100%; padding: .55rem .75rem; font: inherit;
+          border: 1px solid var(--border); border-radius: 6px;
+          background: transparent; color: var(--fg); }
+  input:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
+  button { width: 100%; margin-top: 1.25rem; padding: .6rem .75rem;
+           font: inherit; font-weight: 600; border: 0;
+           border-radius: 6px; background: var(--accent); color: var(--accent-fg);
+           cursor: pointer; }
+  button:hover { filter: brightness(1.08); }
+  button:disabled { opacity: .6; cursor: progress; }
+  .error { margin-top: 1rem; background: var(--error-bg); color: var(--error-fg);
+           padding: .55rem .75rem; border-radius: 6px; font-size: .9rem;
+           display: none; }
+  .error.show { display: block; }
+  .hint { margin-top: 1rem; font-size: .8rem; color: var(--muted); }
+</style>
+</head>
+<body>
+  <form class="card" id="login">
+    <h1>nexo-rs admin</h1>
+    <p class="sub">Sign in to continue.</p>
+    <label for="u">Username</label>
+    <input id="u" name="username" autocomplete="username" value="admin" required>
+    <label for="p">Password</label>
+    <input id="p" name="password" type="password" autocomplete="current-password" required autofocus>
+    <button type="submit" id="submit">Sign in</button>
+    <div class="error" id="err"></div>
+    <p class="hint">The password was printed once in the terminal that launched
+       <code>agent admin</code>. A fresh password is minted every launch.</p>
+  </form>
+  <script>
+    const form = document.getElementById('login');
+    const err = document.getElementById('err');
+    const btn = document.getElementById('submit');
+    form.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      err.classList.remove('show');
+      btn.disabled = true;
+      const body = new URLSearchParams({
+        username: form.username.value,
+        password: form.password.value,
+      }).toString();
+      try {
+        const r = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body,
+        });
+        if (r.ok) {
+          window.location.replace('/');
+          return;
+        }
+        let text = 'Invalid credentials.';
+        try {
+          const data = await r.json();
+          if (data.error) text = data.error;
+        } catch {}
+        err.textContent = text;
+        err.classList.add('show');
+      } catch (e) {
+        err.textContent = 'Network error: ' + e.message;
+        err.classList.add('show');
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
+"#;
+
+/// Grab the HTTP body for a POST. Request head is already in `head`
+/// (up through `\r\n\r\n`); anything already in `head` past that blank
+/// line is the start of the body. Remaining bytes are streamed from
+/// `stream` until we've read `Content-Length` worth.
+async fn read_http_body(head: &str, stream: &mut TcpStream) -> std::io::Result<String> {
+    use tokio::io::AsyncReadExt;
+    let content_length = head
+        .lines()
+        .find_map(|line| {
+            let lower = line.to_ascii_lowercase();
+            if let Some(v) = lower.strip_prefix("content-length:") {
+                v.trim().parse::<usize>().ok()
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0);
+    let already = head
+        .split_once("\r\n\r\n")
+        .map(|(_, rest)| rest.as_bytes())
+        .unwrap_or(&[]);
+    let mut body = already.to_vec();
+    while body.len() < content_length {
+        let mut buf = [0u8; 4096];
+        let n = stream.read(&mut buf).await?;
+        if n == 0 {
+            break;
+        }
+        body.extend_from_slice(&buf[..n]);
+        if body.len() > 65_536 {
+            break;
+        }
+    }
+    body.truncate(content_length);
+    Ok(String::from_utf8_lossy(&body).into_owned())
+}
+
+fn url_decode(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let bytes = input.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'+' => {
+                out.push(' ');
+                i += 1;
+            }
+            b'%' if i + 2 < bytes.len() => {
+                let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or("");
+                if let Ok(n) = u8::from_str_radix(hex, 16) {
+                    out.push(n as char);
+                    i += 3;
+                } else {
+                    out.push(bytes[i] as char);
+                    i += 1;
+                }
+            }
+            b => {
+                out.push(b as char);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// Inline HMAC-SHA256 that returns lowercase hex. Used to sign
+/// session cookies; 32-byte secret + arbitrary-length payload.
+fn hmac_sha256_hex(secret: &[u8; 32], payload: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    const BLOCK_SIZE: usize = 64;
+    let mut key = [0u8; BLOCK_SIZE];
+    key[..secret.len()].copy_from_slice(secret);
+    let mut ipad = [0u8; BLOCK_SIZE];
+    let mut opad = [0u8; BLOCK_SIZE];
+    for i in 0..BLOCK_SIZE {
+        ipad[i] = key[i] ^ 0x36;
+        opad[i] = key[i] ^ 0x5c;
+    }
+    let mut inner = Sha256::new();
+    inner.update(ipad);
+    inner.update(payload);
+    let inner_digest = inner.finalize();
+    let mut outer = Sha256::new();
+    outer.update(opad);
+    outer.update(inner_digest);
+    let digest = outer.finalize();
+    let mut out = String::with_capacity(64);
+    for b in digest.iter() {
+        use std::fmt::Write;
+        let _ = write!(&mut out, "{b:02x}");
+    }
+    out
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+/// Whether the admin UI exposes the Reset button + the
+/// `/api/debug/*` endpoints. True when `NEXO_ADMIN_DEBUG=1` is set
+/// or when the binary was compiled with `debug_assertions` (i.e. a
+/// plain `cargo build`, not `--release`).
+fn admin_debug_enabled() -> bool {
+    if cfg!(debug_assertions) {
+        return true;
+    }
+    matches!(
+        std::env::var("NEXO_ADMIN_DEBUG").ok().as_deref(),
+        Some("1") | Some("true") | Some("yes")
+    )
+}
+
+/// Wipe everything that holds agent identity or runtime state so the
+/// operator can iterate on the wizard without restarting from a
+/// fresh clone. Preserved on purpose:
+///   * `./secrets/*`            — API keys; recreating those is the
+///                                slowest step of a fresh bootstrap
+///   * `config/agents.d/*.example.yaml`
+///   * Top-level `config/*.yaml` — the operator's hand-edited stack
+/// Returns a JSON blob describing what was removed.
+fn debug_reset_now() -> String {
+    use std::path::Path;
+    let mut cleared: Vec<String> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+
+    let wipe_dir_contents = |dir: &Path,
+                             cleared: &mut Vec<String>,
+                             errors: &mut Vec<String>| {
+        if !dir.exists() {
+            return;
+        }
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(e) => {
+                errors.push(format!("{}: {e}", dir.display()));
+                return;
+            }
+        };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            let res = if p.is_dir() {
+                std::fs::remove_dir_all(&p)
+            } else {
+                std::fs::remove_file(&p)
+            };
+            match res {
+                Ok(_) => cleared.push(p.display().to_string()),
+                Err(e) => errors.push(format!("{}: {e}", p.display())),
+            }
+        }
+    };
+
+    // 1. data/** — broker DB, memory DB, taskflow DB, workspaces,
+    //    transcripts, media, disk queue, agent.lock.
+    wipe_dir_contents(Path::new("./data"), &mut cleared, &mut errors);
+
+    // 2. config/agents.d/*.yaml (but not *.example.yaml).
+    if let Ok(entries) = std::fs::read_dir("./config/agents.d") {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            let name = p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+            if name.ends_with(".yaml") && !name.ends_with(".example.yaml") {
+                match std::fs::remove_file(&p) {
+                    Ok(_) => cleared.push(p.display().to_string()),
+                    Err(e) => errors.push(format!("{}: {e}", p.display())),
+                }
+            }
+        }
+    }
+
+    // Serialise the report by hand — no serde_json pull just for one
+    // debug endpoint.
+    let mut out = String::from("{\"ok\":true,\"cleared\":[");
+    for (i, path) in cleared.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push('"');
+        out.push_str(&path.replace('\\', "\\\\").replace('"', "\\\""));
+        out.push('"');
+    }
+    out.push_str("],\"errors\":[");
+    for (i, err) in errors.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push('"');
+        out.push_str(&err.replace('\\', "\\\\").replace('"', "\\\""));
+        out.push('"');
+    }
+    out.push_str("]}");
+    out
+}
+
 /// 24 URL-safe random chars from an OS-grade RNG. The password is
 /// printed once at launch and never persisted — the operator copies
-/// it into the browser prompt. Losing the value means restarting
+/// it into the login form. Losing the value means restarting
 /// `agent admin` to mint a new one (which also re-spins the tunnel
 /// URL).
 fn generate_admin_password() -> String {
@@ -2379,44 +3005,10 @@ fn generate_admin_password() -> String {
         .collect()
 }
 
-/// Returns the base64-encoded credential value that a browser would
-/// send in `Authorization: Basic <...>`. Manual encoding avoids a new
-/// crate dep — the charset is fixed and the input is tiny.
-fn encode_basic_auth(user: &str, pass: &str) -> String {
-    base64_standard(format!("{user}:{pass}").as_bytes())
-}
-
-/// RFC 4648 §4 base64 (no URL-safe swaps, with padding). Small,
-/// dependency-free, correct for the inputs we feed it here.
-fn base64_standard(input: &[u8]) -> String {
-    const CHARS: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
-    for chunk in input.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
-        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
-        let triple = (b0 << 16) | (b1 << 8) | b2;
-        out.push(CHARS[((triple >> 18) & 0x3f) as usize] as char);
-        out.push(CHARS[((triple >> 12) & 0x3f) as usize] as char);
-        if chunk.len() > 1 {
-            out.push(CHARS[((triple >> 6) & 0x3f) as usize] as char);
-        } else {
-            out.push('=');
-        }
-        if chunk.len() > 2 {
-            out.push(CHARS[(triple & 0x3f) as usize] as char);
-        } else {
-            out.push('=');
-        }
-    }
-    out
-}
-
 /// Drain a raw HTTP request head (everything up to the first blank
-/// line). Discards the body — the placeholder admin page doesn't
-/// inspect it. Returns an empty string on EOF / read error so a
-/// malformed request still gets a 401 response.
+/// line). Caller may then slurp a body out of the same stream if
+/// needed. Returns an empty string on EOF / read error so a
+/// malformed request still gets a clean 401 response downstream.
 async fn read_http_head(stream: &mut TcpStream) -> std::io::Result<String> {
     use tokio::io::AsyncReadExt;
     let mut buf = [0u8; 4096];
@@ -2526,7 +3118,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
     use agent_core::agent::self_report::WhoAmITool;
     use agent_core::agent::tool_registry::ToolRegistry;
     use agent_core::agent::{
-        AgentContext, MemoryTool, MyStatsTool, ToolRegistryBridge, WhatDoIKnowTool,
+        AgentContext, MemoryTool, MyStatsTool, SessionLogsTool, ToolRegistryBridge, WhatDoIKnowTool,
     };
     use agent_core::session::SessionManager;
     use agent_mcp::{run_stdio_server_with_auth, McpServerInfo};
@@ -2657,6 +3249,9 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
                 MemoryTool::new_with_default_mode(mem, memory_default_recall_mode),
             );
         }
+    }
+    if !primary.transcripts_dir.trim().is_empty() {
+        registry.register(SessionLogsTool::tool_def(), SessionLogsTool::new());
     }
 
     let name = server_cfg
@@ -3025,6 +3620,7 @@ async fn run_admin_server(
     registry: Arc<agent_core::agent::tool_policy::ToolPolicyRegistry>,
     agents: Arc<agent_core::agent::AgentsDirectory>,
     credentials_for_admin: Option<Arc<agent_auth::CredentialsBundle>>,
+    pollers: Option<Arc<agent_poller::PollerRunner>>,
     admin_config_dir: PathBuf,
 ) {
     let listener = match TcpListener::bind("127.0.0.1:9091").await {
@@ -3046,9 +3642,12 @@ async fn run_admin_server(
         let registry = Arc::clone(&registry);
         let agents = Arc::clone(&agents);
         let creds = credentials_for_admin.clone();
+        let pollers = pollers.clone();
         let cfg_dir = admin_config_dir.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_admin_conn(stream, registry, agents, creds, cfg_dir).await {
+            if let Err(e) =
+                handle_admin_conn(stream, registry, agents, creds, pollers, cfg_dir).await
+            {
                 tracing::debug!(error = %e, "admin connection failed");
             }
         });
@@ -3060,6 +3659,7 @@ async fn handle_admin_conn(
     registry: Arc<agent_core::agent::tool_policy::ToolPolicyRegistry>,
     agents: Arc<agent_core::agent::AgentsDirectory>,
     credentials: Option<Arc<agent_auth::CredentialsBundle>>,
+    pollers: Option<Arc<agent_poller::PollerRunner>>,
     config_dir: PathBuf,
 ) -> anyhow::Result<()> {
     let (method, full_path) = read_http_method_path(&mut stream).await?;
@@ -3067,6 +3667,22 @@ async fn handle_admin_conn(
         Some(i) => (&full_path[..i], &full_path[i + 1..]),
         None => (full_path.as_str(), ""),
     };
+    // Phase 19 — `/admin/pollers/*` first; falls through to credentials,
+    // agents, then the tool-policy handler.
+    if path.starts_with("/admin/pollers") {
+        if let Some(runner) = pollers.as_ref() {
+            if let Some(resp) =
+                agent_poller::admin::dispatch(runner, &method, path, &config_dir).await
+            {
+                write_http_response(&mut stream, resp.0, resp.2, &resp.1).await?;
+                return Ok(());
+            }
+        } else {
+            let body = "{\"ok\":false,\"error\":\"poller subsystem disabled\"}";
+            write_http_response(&mut stream, 503, "application/json", body).await?;
+            return Ok(());
+        }
+    }
     // Route `/admin/credentials/*` first (Phase 17 hot-reload), then
     // `/admin/agents*`, then fall back to the tool-policy handler.
     let (status, body, content_type) = if path == "/admin/credentials/reload"
