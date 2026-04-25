@@ -13,8 +13,8 @@ use std::sync::Arc;
 
 use crate::PollerRunner;
 
+pub mod agent_turn;
 pub mod gmail;
-pub mod gmail_tools;
 pub mod google_calendar;
 pub mod rss;
 pub mod webhook_poll;
@@ -27,4 +27,5 @@ pub fn register_all(runner: &PollerRunner) {
     runner.register(Arc::new(rss::RssPoller::new()));
     runner.register(Arc::new(webhook_poll::WebhookPoller::new()));
     runner.register(Arc::new(google_calendar::GoogleCalendarPoller::new()));
+    runner.register(Arc::new(agent_turn::AgentTurnPoller::new()));
 }

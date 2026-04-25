@@ -84,6 +84,12 @@ pub struct PollerRunner {
     state: Arc<PollState>,
     broker: AnyBroker,
     credentials: Arc<CredentialsBundle>,
+    /// Phase 20 — optional LLM access for the `agent_turn` built-in.
+    /// Boot wires this from the same `LlmRegistry` + `LlmConfig` the
+    /// agent runtimes use; pollers without LLM-driven kinds leave
+    /// it `None` and pay no cost.
+    llm_registry: Option<Arc<agent_llm::LlmRegistry>>,
+    llm_config: Option<Arc<agent_config::LlmConfig>>,
     leaseholder: String,
     shutdown: CancellationToken,
 }
@@ -104,9 +110,24 @@ impl PollerRunner {
             state,
             broker,
             credentials,
+            llm_registry: None,
+            llm_config: None,
             leaseholder,
             shutdown: CancellationToken::new(),
         }
+    }
+
+    /// Phase 20 — wire the LLM registry + config so the `agent_turn`
+    /// built-in can build clients on demand. Optional: pollers that
+    /// only do data ingestion (gmail, rss, webhook) work without it.
+    pub fn with_llm(
+        mut self,
+        registry: Arc<agent_llm::LlmRegistry>,
+        config: Arc<agent_config::LlmConfig>,
+    ) -> Self {
+        self.llm_registry = Some(registry);
+        self.llm_config = Some(config);
+        self
     }
 
     /// Register a built-in or custom `Poller`. Idempotent — re-register
@@ -260,6 +281,8 @@ impl PollerRunner {
                 format!("poller:{}", job.id),
                 default_breaker(cfg.breaker_threshold),
             )),
+            llm_registry: self.llm_registry.clone(),
+            llm_config: self.llm_config.clone(),
         };
 
         let handle = tokio::spawn(run_job_loop(runner_ctx));
@@ -393,6 +416,8 @@ impl PollerRunner {
             config: yaml_to_json(&job.config),
             interval_hint: schedule.nominal_interval(),
             cancel: self.shutdown.child_token(),
+            llm_registry: self.llm_registry.clone(),
+            llm_config: self.llm_config.clone(),
         };
         let started = std::time::Instant::now();
         let result = kind.tick(&ctx).await;
@@ -436,6 +461,8 @@ struct TaskCtx {
     cancel: CancellationToken,
     cfg: PollersConfig,
     breaker: Arc<CircuitBreaker>,
+    llm_registry: Option<Arc<agent_llm::LlmRegistry>>,
+    llm_config: Option<Arc<agent_config::LlmConfig>>,
 }
 
 async fn run_job_loop(tctx: TaskCtx) {
@@ -546,6 +573,8 @@ async fn run_job_loop(tctx: TaskCtx) {
             config: tctx.ctx_cfg.clone(),
             interval_hint: tctx.schedule.nominal_interval(),
             cancel: tctx.cancel.clone(),
+            llm_registry: tctx.llm_registry.clone(),
+            llm_config: tctx.llm_config.clone(),
         };
         let started = std::time::Instant::now();
         let outcome = tctx.kind.tick(&pctx).await;

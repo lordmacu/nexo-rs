@@ -52,3 +52,29 @@ pollers:
         deliver:
           channel: whatsapp
           to: "573115728852@s.whatsapp.net"
+
+    # ──────────────────────────────────────────────────────────────
+    # Phase 20 — `agent_turn` runs an LLM turn on a schedule and
+    # dispatches the reply. Cron-style replacement for OpenClaw's
+    # isolated-agent cron use case without writing a Poller module.
+    # ──────────────────────────────────────────────────────────────
+    # - id: kate_daily_summary
+    #   kind: agent_turn
+    #   agent: kate
+    #   schedule:
+    #     cron: "0 0 8 * * *"
+    #     tz: America/Bogota
+    #   config:
+    #     llm:
+    #       provider: anthropic
+    #       model: claude-haiku-4-5
+    #     system_prompt: |
+    #       You are Kate, a personal assistant.
+    #     user_prompt: |
+    #       Summarise the day's unanswered emails. One bullet per
+    #       email; include sender + subject.
+    #     deliver:
+    #       channel: telegram
+    #       recipient: "-1001234567890"
+    #     language: en        # optional output-language directive
+    #     max_tokens: 1024    # optional cap
