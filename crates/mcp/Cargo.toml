@@ -1,7 +1,7 @@
 [package]
 name = "nexo-mcp"
 description   = "MCP (Model Context Protocol) client and server runtime for Nexo agents."
-version       = { workspace = true }
+version       = "0.1.1"
 edition       = { workspace = true }
 rust-version  = { workspace = true }
 license       = { workspace = true }

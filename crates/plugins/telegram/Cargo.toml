@@ -1,7 +1,7 @@
 [package]
 name = "nexo-plugin-telegram"
 description   = "Telegram bot channel plugin for Nexo agents."
-version       = { workspace = true }
+version       = "0.1.1"
 edition       = { workspace = true }
 rust-version  = { workspace = true }
 license       = { workspace = true }
@@ -30,6 +30,7 @@ nexo-core = { version = "0.1.1", path = "../../core" }
 nexo-config = { version = "0.1.1", path = "../../config" }
 nexo-llm = { version = "0.1.1", path = "../../llm" }
 nexo-auth = { version = "0.1.1", path = "../../auth" }
+nexo-pairing = { version = "0.1.1", path = "../../pairing", default-features = false }
 
 [dev-dependencies]
 wiremock     = "0.6"
