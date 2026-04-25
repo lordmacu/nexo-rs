@@ -935,6 +935,36 @@ async fn main() -> Result<()> {
                         bundle,
                     ));
                     agent_poller::builtins::register_all(&runner);
+
+                    // Phase 19 follow-up — register extension-provided
+                    // pollers. Walk every loaded stdio extension and
+                    // bridge each declared `kind` into the runner via
+                    // ExtensionPoller. Lets operators ship a poller in
+                    // any language without touching Rust.
+                    let mut ext_poller_count = 0usize;
+                    for (rt, cand) in &extension_runtimes {
+                        let kinds = &cand.manifest.capabilities.pollers;
+                        if !kinds.is_empty() {
+                            let n = agent_poller_ext::register_for_runtime(
+                                &runner,
+                                rt,
+                                kinds,
+                            );
+                            ext_poller_count += n;
+                            tracing::info!(
+                                ext = %cand.manifest.id(),
+                                kinds = ?kinds,
+                                "extension pollers registered"
+                            );
+                        }
+                    }
+                    if ext_poller_count > 0 {
+                        tracing::info!(
+                            count = ext_poller_count,
+                            "extension pollers ready"
+                        );
+                    }
+
                     if let Err(e) = runner.start().await {
                         tracing::error!(error = %format!("{e:#}"), "pollers: start failed");
                         None
@@ -1013,6 +1043,42 @@ async fn main() -> Result<()> {
         });
     }
     spawn_taskflow_resume_bridge(broker.clone(), wait_engine.clone(), watcher_shutdown.clone());
+
+    // Transcripts subsystem — optional FTS5 index + optional redactor.
+    // Built once and shared across every agent via runtime.with_*.
+    let transcripts_index: Option<Arc<agent_core::agent::TranscriptsIndex>> =
+        if cfg.transcripts.fts.enabled {
+            match agent_core::agent::TranscriptsIndex::open(std::path::Path::new(
+                &cfg.transcripts.fts.db_path,
+            ))
+            .await
+            {
+                Ok(i) => {
+                    tracing::info!(
+                        path = %cfg.transcripts.fts.db_path,
+                        "transcripts FTS index ready"
+                    );
+                    Some(Arc::new(i))
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        path = %cfg.transcripts.fts.db_path,
+                        "transcripts FTS index init failed; falling back to substring scan"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+    let transcripts_redactor: Arc<agent_core::agent::Redactor> = Arc::new(
+        agent_core::agent::Redactor::from_config(&cfg.transcripts.redaction)
+            .context("invalid transcripts.redaction config")?,
+    );
+    if transcripts_redactor.is_active() {
+        tracing::info!("transcripts redaction active");
+    }
 
     for agent_cfg in cfg.agents.agents {
         let agent_id = agent_cfg.id.clone();
@@ -1212,9 +1278,14 @@ async fn main() -> Result<()> {
         // Self-introspection over JSONL transcripts. Skip when the agent has
         // no transcripts_dir configured — the tool would only return errors.
         if !agent_cfg.transcripts_dir.trim().is_empty() {
-            tools.register(SessionLogsTool::tool_def(), SessionLogsTool::new());
+            let mut tool = SessionLogsTool::new();
+            if let Some(idx) = transcripts_index.as_ref() {
+                tool = tool.with_index(Arc::clone(idx));
+            }
+            tools.register(SessionLogsTool::tool_def(), tool);
             tracing::info!(
                 agent = %agent_id,
+                fts = transcripts_index.is_some(),
                 "registered session_logs tool for agent"
             );
         }
@@ -1579,6 +1650,10 @@ async fn main() -> Result<()> {
             runtime = runtime.with_memory(mem);
         }
         runtime = runtime.with_peers(Arc::clone(&peer_directory));
+        runtime = runtime.with_redactor(Arc::clone(&transcripts_redactor));
+        if let Some(idx) = transcripts_index.as_ref() {
+            runtime = runtime.with_transcripts_index(Arc::clone(idx));
+        }
         if let Some(ref bundle) = credentials {
             runtime = runtime.with_credentials(Arc::clone(&bundle.resolver));
             runtime = runtime.with_breakers(Arc::clone(&bundle.breakers));

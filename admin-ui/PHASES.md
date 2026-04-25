@@ -46,31 +46,37 @@ done.
 
 ---
 
-## Phase A1 — First-run wizard   ⬜
+## Phase A1 — First-run wizard   🔄
 
 The moment the operator logs in for the first time and no agents
-exist, route them into a guided wizard. Three steps; every field has
+exist, route them into a guided wizard. Four steps; every field has
 a sane default so "Next Next Next Finish" produces a working agent.
 
-- [ ] Wizard detection — `GET /api/bootstrap` returns
-  `{ needs_wizard: bool }` based on whether `agents.yaml` + the
-  drop-in directory resolve to zero live entries
-- [ ] **Step 1 — Identity** (the agent's face): name, emoji, vibe,
-  avatar URL. Populated with defaults (`Kate` + `🐙` + placeholder
-  vibe) so the screen is never blank
-- [ ] **Step 2 — Soul** (persona / long-form prompt): `SOUL.md`
+- [x] Wizard detection — `GET /api/bootstrap` returns
+  `{ needs_wizard: bool, agent_count }` based on whether
+  `agents.yaml` + the drop-in directory resolve to zero live
+  entries
+- [x] **Step 1 — Identity**: name, emoji, vibe. Defaults (`Kate` +
+  `🐙` + placeholder vibe) so the screen is never blank
+- [x] **Step 2 — Soul** (persona / long-form prompt): `SOUL.md`
   textarea pre-filled with a curated starter the operator can edit
-- [ ] **Step 3 — Brain** (LLM provider + model + API key): radio
-  group for MiniMax / Anthropic / OpenAI-compat / Gemini, with the
-  minimum fields each one needs. Keys land in `./secrets/*.txt`
-  gitignored
-- [ ] **Step 4 — Channel (optional)**: Telegram **or** WhatsApp
-  bootstrap — see Phase A2
-- [ ] Finish button writes `config/agents.d/<slug>.yaml` +
-  whichever plugin YAML was touched, then redirects into the
-  Dashboard with a welcome toast
+- [x] **Step 3 — Brain**: picker for MiniMax / Anthropic /
+  OpenAI-compat / Gemini with minimum fields; keys land under
+  `./secrets/<provider>_api_key.txt` at mode 0600
+- [x] **Step 4 — Channel**: Skip / Telegram (bot token) /
+  WhatsApp (pair-later prompt). Writes `config/plugins/telegram.yaml`
+  if absent; WhatsApp pairing still runs through `agent setup
+  whatsapp` on the host
+- [x] Finish button writes `config/agents.d/<slug>.yaml` +
+  `IDENTITY.md` + `SOUL.md` + telegram.yaml (if absent) in one
+  call to `POST /api/bootstrap/finish` and bounces into the
+  Dashboard
+- [ ] Avatar URL field + avatar preview
 - [ ] Wizard is idempotent — closing mid-flow saves a draft so the
   operator can resume; "Start over" button is always there
+- [ ] Live validation: probe Telegram token via `getMe` before
+  accepting it
+- [ ] "Use an existing WhatsApp session" shortcut (skip re-pairing)
 
 ---
 
@@ -302,4 +308,9 @@ IOUs — features that landed in the daemon but have no UI yet.
 - [ ] `taskflow.yaml` (`tick_interval`, `timer_max_horizon`,
   `db_path`) — needs a TaskFlow operations panel: live `Waiting`
   flow list, manual resume/cancel, knob editor
+- [ ] `transcripts.yaml` (`fts.enabled`, `fts.db_path`,
+  `redaction.enabled`, `redaction.use_builtins`,
+  `redaction.extra_patterns`) — needs a Transcripts panel:
+  redaction toggles, pattern editor with live regex validation,
+  index size + reindex trigger
 - [ ] (add lines as features land — see auto-memory rule)

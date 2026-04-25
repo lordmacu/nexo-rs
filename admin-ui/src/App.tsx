@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
+import { Wizard } from "./wizard/Wizard";
 
 type DebugEnv = { debug: boolean; build: string };
+type Bootstrap = { needs_wizard: boolean; agent_count: number };
 
 export default function App() {
   const [loggingOut, setLoggingOut] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [debugEnv, setDebugEnv] = useState<DebugEnv | null>(null);
+  const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
   const [resetBusy, setResetBusy] = useState(false);
   const [resetReport, setResetReport] = useState<string | null>(null);
 
@@ -15,12 +18,20 @@ export default function App() {
     return () => clearInterval(id);
   }, []);
 
+  const refreshBootstrap = useCallback(() => {
+    fetch("/api/bootstrap")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: Bootstrap | null) => setBootstrap(d))
+      .catch(() => setBootstrap(null));
+  }, []);
+
   useEffect(() => {
+    refreshBootstrap();
     fetch("/api/debug/env")
       .then((r) => (r.ok ? r.json() : null))
       .then((d: DebugEnv | null) => setDebugEnv(d))
       .catch(() => setDebugEnv(null));
-  }, []);
+  }, [refreshBootstrap]);
 
   const handleLogout = async () => {
     setLoggingOut(true);
@@ -48,8 +59,9 @@ export default function App() {
         setResetReport(
           `Cleared ${data.cleared.length} path(s)${
             data.errors.length ? `, ${data.errors.length} error(s)` : ""
-          }. Restart the daemon to repopulate defaults.`,
+          }. Reloading wizard state…`,
         );
+        refreshBootstrap();
       } else {
         setResetReport(`Reset failed: ${data.error ?? "unknown error"}`);
       }
@@ -60,9 +72,23 @@ export default function App() {
     } finally {
       setResetBusy(false);
     }
-  }, []);
+  }, [refreshBootstrap]);
 
   const debugOn = debugEnv?.debug === true;
+
+  // Loading gate — waits for /api/bootstrap so we don't flash the
+  // dashboard first and then redirect into the wizard.
+  if (bootstrap === null) {
+    return (
+      <div className="min-h-screen grid place-items-center bg-neutral-50 dark:bg-neutral-950 text-neutral-500">
+        <span className="text-sm font-mono">loading…</span>
+      </div>
+    );
+  }
+
+  if (bootstrap.needs_wizard) {
+    return <Wizard onFinish={refreshBootstrap} />;
+  }
 
   return (
     <div className="min-h-screen bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100 font-sans">
@@ -89,14 +115,16 @@ export default function App() {
 
       <main className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12 space-y-6 sm:space-y-8">
         <section>
-          <h2 className="text-2xl font-semibold mb-2">Hello, world.</h2>
+          <h2 className="text-2xl font-semibold mb-2">
+            {bootstrap.agent_count === 1
+              ? "You have 1 agent."
+              : `You have ${bootstrap.agent_count} agents.`}
+          </h2>
           <p className="text-neutral-600 dark:text-neutral-400">
-            If you are reading this, the Cloudflare quick tunnel reached the
-            embedded React bundle inside your local{" "}
-            <code className="text-sm font-mono bg-neutral-200 dark:bg-neutral-800 px-1 py-0.5 rounded">
-              agent
-            </code>{" "}
-            binary and the session cookie is valid.
+            Real admin routes (agent directory, sessions, DLQ, live config
+            reload) land in upcoming commits. See{" "}
+            <code className="font-mono text-xs">admin-ui/PHASES.md</code> for
+            the roadmap.
           </p>
         </section>
 
@@ -126,7 +154,7 @@ export default function App() {
               <code className="font-mono">*.example.yaml</code>), plugin
               sessions, workspaces, transcripts, and every runtime database.
               API keys under <code className="font-mono">./secrets</code> are
-              preserved.
+              preserved. Next load fires the wizard again.
             </p>
             <button
               type="button"
@@ -154,10 +182,6 @@ export default function App() {
             >
               lordmacu.github.io/nexo-rs
             </a>
-          </p>
-          <p className="mt-2">
-            Phase plan:{" "}
-            <code className="font-mono">admin-ui/PHASES.md</code>.
           </p>
         </section>
       </main>
