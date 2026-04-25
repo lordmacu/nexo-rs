@@ -81,8 +81,9 @@ Full detail with sub-phases and done criteria: `proyecto/PHASES.md`
 | 16 | Per-binding capability override | 16.1 schema, 16.2 EffectiveBindingPolicy, 16.3 boot validation, 16.4 AgentContext + registry cache, 16.5 runtime intake + rate limiter, 16.6 LLM/prompt/skills/outbound/delegation, 16.7 YAML example + e2e tests | 7/7 ✅ |
 | 17 | Per-agent credentials (WA/TG/Google) | 17.1 agent-auth scaffold, 17.2 boot gauntlet, 17.3 per-channel stores, 17.4 resolver, 17.5 telemetry, 17.6 config schemas, 17.7 `--check-config`, 17.8 runtime integration, 17.9 plugin tool migration, 17.10 google tool store lookup, 17.11 e2e + fingerprint stability | 11/11 ✅ |
 | 18 | Config hot-reload | 18.1 deps+schema, 18.2 RuntimeSnapshot+ArcSwap, 18.3 ReloadCommand channel, 18.4 file watcher, 18.5 coordinator, 18.6 intake migration, 18.7 telemetry, 18.8 CLI+boot wiring, 18.9 tests | 9/9 ✅ |
+| 20 | `agent_turn` poller | 20.1 PollContext.llm_*, 20.2 with_llm builder, 20.3 agent_turn builtin (cron-style scheduled LLM turn → channel), 20.4 tests + example YAML | 4/4 ✅ |
 
-**Progress: 140 / 140 sub-phases done (0 deferred). All phases complete.**
+**Progress: 144 / 144 implemented sub-phases (0 deferred). Phases 21–26 backlogged in `PHASES.md` as OpenClaw-parity work (link understanding, Slack/Discord plugins, realtime voice, image generation, web search, pairing).**
 
 ### Progress tracking rule
 
