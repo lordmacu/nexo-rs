@@ -66,11 +66,50 @@ pub enum DeciderConfig {
         max_tokens: u32,
         #[serde(default)]
         system_prompt_path: Option<PathBuf>,
+        /// Phase 67.7 — semantic memory of past decisions.
+        #[serde(default)]
+        memory: Option<DeciderMemoryConfig>,
     },
     AllowAll,
     DenyAll {
         reason: String,
     },
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct DeciderMemoryConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub path: Option<PathBuf>,
+    pub embedding_provider: EmbeddingProviderConfig,
+    #[serde(default = "default_recall_k")]
+    pub recall_k: usize,
+    #[serde(default)]
+    pub namespace: NamespaceConfig,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum NamespaceConfig {
+    #[default]
+    PerGoal,
+    Global,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum EmbeddingProviderConfig {
+    Http {
+        base_url: String,
+        model: String,
+        #[serde(default)]
+        api_key_env: Option<String>,
+    },
+}
+
+fn default_recall_k() -> usize {
+    5
 }
 
 #[derive(Clone, Debug, Deserialize)]

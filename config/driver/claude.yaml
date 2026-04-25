@@ -79,6 +79,19 @@ permission:
     model: ${MINIMAX_MODEL:-M2.5}
     max_tokens: 256
     system_prompt_path: ${NEXO_DRIVER_PROMPT:-}
+    # Phase 67.7 — semantic recall of past decisions via sqlite-vec.
+    # Enable to give the LLM decider working memory across turns and
+    # (with namespace=global) across goals.
+    memory:
+      enabled: false
+      path: ${NEXO_DRIVER_MEM_DB:-/var/lib/nexo-rs/driver.db}
+      embedding_provider:
+        kind: http
+        base_url: ${EMBEDDING_API_URL:-http://localhost:8001/v1}
+        model: text-embedding-3-small
+        api_key_env: EMBEDDING_API_KEY
+      recall_k: 5
+      namespace: per_goal
 
 # Phase 67.4 — workspace where each goal runs. Phase 67.6 added the
 # git-worktree mode: when `git.enabled=true`, each goal gets its own

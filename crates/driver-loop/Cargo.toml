@@ -22,6 +22,8 @@ nexo-driver-types      = { path = "../driver-types" }
 nexo-driver-claude     = { path = "../driver-claude" }
 nexo-driver-permission = { path = "../driver-permission" }
 nexo-llm               = { path = "../llm" }
+nexo-memory            = { path = "../memory" }
+sqlx                   = { workspace = true }
 anyhow                 = { workspace = true }
 async-nats             = { workspace = true, optional = true }
 async-trait            = { workspace = true }
