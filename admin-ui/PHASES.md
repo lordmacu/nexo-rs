@@ -1,0 +1,305 @@
+# Admin UI — phases
+
+Phase-by-phase plan for the `agent admin` web UI. Every feature ever
+built into the agent that needs human administration **must** land
+a line here before it ships — or a checkbox in an existing phase.
+See `proyecto/CLAUDE.md` / auto-memory "Admin needs everything
+administrable" for the rule.
+
+Legend: `⬜ pending  🔄 in progress  ✅ done  ⏸ deferred`
+
+---
+
+## Universal acceptance criteria
+
+Applies to every page in every phase below.
+
+- [ ] **Mobile-first.** Renders cleanly at 375 × 667; tap targets
+  ≥ 44 px. Tailwind responsive breakpoints scale up from there.
+- [ ] **No horizontal scroll** on the main container.
+- [ ] **Dark-mode aware** (Tailwind `dark:` classes respect
+  `prefers-color-scheme`).
+- [ ] **Keyboard operable** (tab order, visible focus ring, Esc
+  closes modals).
+- [ ] **Loading + empty + error states** for every data-fetching
+  screen.
+
+---
+
+## Phase A0 — Shell   🔄
+
+The minimum boot: tunnel + React bundle + login. Already partly
+done.
+
+- [x] `agent admin` subcommand boots cloudflared + loopback HTTP
+- [x] Random password per launch printed to stdout
+- [x] Signed session cookie (HMAC-SHA256, 24 h TTL, rotates every
+  daemon restart) — no Basic Auth popup
+- [x] `/login` HTML form with `POST /api/login` + `POST /api/logout`
+- [x] React 18 + Vite + TS + Tailwind scaffold in `admin-ui/`
+- [x] `rust-embed`-baked bundle, SPA-router-aware path resolution
+- [ ] **Bundle-missing fallback** auto-triggers the npm build if
+  `npm` is available, before falling back to the placeholder HTML
+- [ ] **Dark-mode toggle** with persisted preference
+- [ ] **Session keep-alive ping** from the SPA so idle tabs don't
+  expire silently
+
+---
+
+## Phase A1 — First-run wizard   ⬜
+
+The moment the operator logs in for the first time and no agents
+exist, route them into a guided wizard. Three steps; every field has
+a sane default so "Next Next Next Finish" produces a working agent.
+
+- [ ] Wizard detection — `GET /api/bootstrap` returns
+  `{ needs_wizard: bool }` based on whether `agents.yaml` + the
+  drop-in directory resolve to zero live entries
+- [ ] **Step 1 — Identity** (the agent's face): name, emoji, vibe,
+  avatar URL. Populated with defaults (`Kate` + `🐙` + placeholder
+  vibe) so the screen is never blank
+- [ ] **Step 2 — Soul** (persona / long-form prompt): `SOUL.md`
+  textarea pre-filled with a curated starter the operator can edit
+- [ ] **Step 3 — Brain** (LLM provider + model + API key): radio
+  group for MiniMax / Anthropic / OpenAI-compat / Gemini, with the
+  minimum fields each one needs. Keys land in `./secrets/*.txt`
+  gitignored
+- [ ] **Step 4 — Channel (optional)**: Telegram **or** WhatsApp
+  bootstrap — see Phase A2
+- [ ] Finish button writes `config/agents.d/<slug>.yaml` +
+  whichever plugin YAML was touched, then redirects into the
+  Dashboard with a welcome toast
+- [ ] Wizard is idempotent — closing mid-flow saves a draft so the
+  operator can resume; "Start over" button is always there
+
+---
+
+## Phase A2 — Channel configuration   ⬜
+
+Top-level "Channels" section — a card per channel instance with
+inline edit + pairing flow. Emphasis on getting the operator from
+"I want a Telegram bot" to "my agent is receiving messages" in one
+page.
+
+### Telegram
+
+- [ ] **New Telegram channel** → step-by-step:
+  1. Paste Bot API token (validated via a `getMe` probe before
+     save)
+  2. Pick instance label (default `<agent>_bot`)
+  3. Select `allow_agents` (multi-select, defaults to the inviting
+     agent)
+  4. Optionally paste chat-id allowlist
+  5. Toggle auto-transcribe for voice messages
+- [ ] Live status card: polling cadence, last update offset, last
+  error, bridge timeouts in the past hour
+- [ ] **Pairing test**: "Send /ping to @yourbot" → UI waits for the
+  webhook and flashes green
+- [ ] Edit form matches the shipped YAML 1:1; rewrites
+  `config/plugins/telegram.yaml` + the agent's
+  `credentials.telegram`
+
+### WhatsApp
+
+- [ ] **New WhatsApp channel** → step-by-step:
+  1. Pick instance label (default `<agent>_wa`)
+  2. Select `allow_agents`
+  3. Click "Show pairing QR" — server renders the Unicode QR as
+     SVG/PNG for the browser, not just the terminal
+  4. Tailored prompt for archive / mute rules (maps to
+     `behavior.ignore_chat_meta`)
+- [ ] Session status: paired ✅ / waiting for scan ⏳ /
+  credentials_expired ❌, last connected at
+- [ ] **Re-pair** button (equivalent to the CLI `setup wipe`)
+- [ ] Media dir picker with free-space probe
+
+### Browser (CDP)
+
+- [ ] Dropdown: spawn new Chrome vs. attach to `cdp_url`
+- [ ] Chrome flags editor (pre-filled with Termux-friendly
+  defaults when host is Termux)
+- [ ] Live stats: open pages, CDP commands/sec
+
+### Google (Gmail/Calendar/Drive)
+
+- [ ] Paste `client_id` + `client_secret`
+- [ ] Scope multi-select (default `gmail.modify`)
+- [ ] "Run device-code flow" → shows the verification URL + user
+  code in a card; polls until approval
+- [ ] `gmail-poller` job builder: regex extract fields, template
+  preview, forward target dropdown (recipient instance resolved
+  from existing channels)
+
+### Email (SMTP/IMAP)
+
+- [ ] Scaffold only; mirrors the config schema but greyed-out
+  while phase 17 of the backend is pending
+
+---
+
+## Phase A3 — Agent configuration   ⬜
+
+Editing everything about an agent after the wizard. `agents.yaml`
+and the matching `agents.d/*.yaml` are the source of truth; the UI
+is a structured editor with validation.
+
+- [ ] Agent directory list: id, emoji, model, channels, sessions
+  last 24 h. Click → detail page
+- [ ] **Identity tab**: structured form over IDENTITY.md
+- [ ] **Soul tab**: markdown editor for SOUL.md with live preview;
+  character count against the 12 KB cap
+- [ ] **Brain tab**: LLM provider + model swap, per-binding
+  overrides, retry / rate-limit editor
+- [ ] **Tools tab**: allowed-tools checklist with globs, live
+  preview of the registry that would reach the LLM
+- [ ] **Channels tab**: link existing channels to this agent via
+  `credentials:` block; inline creation shortcut points back to
+  Phase A2
+- [ ] **Memory tab**: short-term TTL / long-term DB path / vector
+  toggle; "Export memory" dump as SQLite + MEMORY.md
+- [ ] **Skills tab**: toggle shipped skills; inline docs per skill
+  linking back to `docs/src/skills/catalog.md`
+- [ ] **Delegation tab**: `allowed_delegates` + `accept_delegates_from`
+  pickers; ASCII diagram of who can talk to whom
+- [ ] **Dreaming tab**: enable/disable; weight sliders for the
+  five factors; dry-run button ("what would promote now?")
+- [ ] **Workspace tab**: file browser over the agent's workspace
+  dir; read-only by default, flip to edit on demand
+- [ ] **Danger zone**: pause agent (stop intake), drop session
+  cache, delete agent
+
+---
+
+## Phase A4 — Runtime dashboard   ⬜
+
+Live state — what's happening right now.
+
+- [ ] Agent cards with throughput + error rate + circuit breaker
+  state per provider
+- [ ] DLQ surface: inspect / replay / purge (mirrors
+  `agent dlq` subcommand) with bulk actions
+- [ ] TaskFlow explorer: live flow list, step timeline, manual
+  resume for `Manual` / `ExternalEvent` waits
+- [ ] Logs tail (SSE stream from the running process) with level
+  filter and structured-field search
+- [ ] Metrics: embed `/metrics` Prometheus output as Grafana-style
+  tiles (LLM latency p50/p95/p99, tool error rate, circuit
+  breaker history)
+
+---
+
+## Phase A5 — Config file editor   ⬜
+
+Power-user escape hatch for fields the structured UI doesn't
+expose yet.
+
+- [ ] Per-file YAML editor with schema-aware linting and preview
+- [ ] Diff against current on disk; confirm-to-save
+- [ ] One-click hot-reload (`POST /api/reload`) with per-agent ack
+  list
+
+---
+
+## Phase A6 — Extensions / skills / MCP   ⬜
+
+- [ ] Extension discovery mirror: installed / disabled / invalid
+- [ ] `agent ext install/uninstall/doctor --runtime` wrapped as UI
+  actions
+- [ ] MCP server manager: add external stdio / HTTP servers with
+  header editor
+- [ ] `agent mcp-server` on/off toggle with live link + copy
+  snippet for Claude Desktop JSON config
+
+---
+
+## Phase A7 — Memory inspector   ⬜
+
+- [ ] Per-agent memory browser (SQLite rows + workspace-git log)
+- [ ] Concept-tag cloud
+- [ ] Dreaming sweep history with per-run promote list
+- [ ] Manual checkpoint button (`forge_memory_checkpoint`)
+
+---
+
+## Phase A8 — Delegation & routing visualiser   ⬜
+
+- [ ] Live graph: agents as nodes, `agent.route.*` traffic as
+  edges; colour by correlation_id
+- [ ] Click an edge → open the transcript of that delegation
+- [ ] Drill-down to the system prompt version that was live when
+  the call fired
+
+---
+
+## Phase A9 — Audit & diagnostics   ⬜
+
+- [ ] `agent --check-config` runner with pretty diff output
+- [ ] Credentials gauntlet report (Phase 17 backend already
+  exists)
+- [ ] Startup timeline (what took how long on the last boot)
+- [ ] "Snapshot everything" button — zips config, workspaces, DB
+  rows (redacted), logs from the last hour for support hand-off
+
+---
+
+## Phase A10 — Debug / reset helpers   🔄
+
+Developer safety valve. Absolutely **not** exposed in production
+builds — gated behind a `#[cfg(debug_assertions)]` compile flag on
+the Rust side and hidden in the SPA when the backend reports
+`debug: false`.
+
+- [x] **Reset button** (wizard footer + Settings → Danger zone):
+  wipes agents / channel instances / credentials / plugin sessions
+  / SQLite databases / transcripts / workspace dirs / DLQ. Lands
+  as `POST /api/debug/reset` in Phase A0.5
+- [ ] Confirm dialog with the exact file list about to be deleted
+- [ ] `POST /api/debug/reset` endpoint (debug builds only):
+  - Removes `config/agents.d/*.yaml` (keeps `.example.yaml`)
+  - Truncates `./data/**` and `./secrets/**`
+  - Clears `./data/workspace/**` (the per-agent workspaces)
+  - Flushes `memory.db`, `taskflow.db`, `broker.db`
+  - Responds `{ ok: true, cleared: [paths] }` on success
+- [ ] Seed-data button — re-stage `config/agents.d/*.example.yaml`
+  as real `.yaml` so the operator can skip the wizard during
+  smoke tests
+- [ ] "Fake traffic" generator: publishes synthetic
+  `plugin.inbound.*` events so the dashboard has something to show
+  during demos
+- [ ] `GET /api/debug/env` dumps detected OS, arch, Termux flag,
+  cloudflared path, bundle build ts — only in debug builds
+
+---
+
+## Phase A11 — Telemetry & UX polish   ⬜
+
+- [ ] Keyboard shortcuts (`/` to focus search, `g d` for
+  Dashboard, etc.)
+- [ ] "Changed since you logged in" banner (new DLQ entries,
+  crashed sessions)
+- [ ] Page-level empty states pointing at Phase A1 wizard
+- [ ] Colour-blind palette audit
+- [ ] First-paint budget: Lighthouse score ≥ 95 on LAN
+
+---
+
+## Tech-debt registry (the "admin must follow" list)
+
+Every new backend feature that admits a knob must add a line here
+**in the same commit that ships the feature**. Blank boxes are
+IOUs — features that landed in the daemon but have no UI yet.
+
+- [ ] `credentials:` block (Phase 17) — agent-configuration tab
+  Phase A3 covers this
+- [ ] Config hot-reload (Phase 18) — Phase A5 one-click reload
+- [ ] Per-binding overrides — Phase A3 "Brain" tab needs the
+  override matrix
+- [ ] Poller framework (user's in-flight `crates/poller/`) — not
+  yet wired; needs a "Pollers" section alongside Phases A2/A3 once
+  the schema stabilises
+- [ ] `runtime.yaml` (reload watcher settings) — small section in
+  Phase A5
+- [ ] `taskflow.yaml` (`tick_interval`, `timer_max_horizon`,
+  `db_path`) — needs a TaskFlow operations panel: live `Waiting`
+  flow list, manual resume/cancel, knob editor
+- [ ] (add lines as features land — see auto-memory rule)
