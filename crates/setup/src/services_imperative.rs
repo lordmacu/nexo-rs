@@ -250,6 +250,14 @@ pub fn run_telegram(config_dir: &Path, secrets_dir: &Path) -> Result<Outcome> {
 }
 
 pub fn run_google(config_dir: &Path, secrets_dir: &Path) -> Result<Outcome> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("device-code runtime")?;
+    rt.block_on(run_google_inner(config_dir, secrets_dir))
+}
+
+async fn run_google_inner(config_dir: &Path, secrets_dir: &Path) -> Result<Outcome> {
     println!();
     println!("── Google OAuth — cuenta nueva o adicional ──────────────");
     let Some(agent_id) = pick_agent(config_dir)? else {
@@ -334,7 +342,66 @@ pub fn run_google(config_dir: &Path, secrets_dir: &Path) -> Result<Outcome> {
         agent_file.display()
     );
 
+    // Phase 17 — offer the device-code consent flow inline so headless
+    // setups (servers without a browser) can get a refresh_token
+    // without firing up `google_auth_start` as an LLM tool.
+    if crate::prompt::yes_no(
+        "¿Autorizar ahora vía device-code OAuth? (sin abrir navegador local)",
+        true,
+    )? {
+        if let Err(e) = run_google_device_code(
+            client_id.trim(),
+            client_secret.trim(),
+            &scopes,
+            &secrets_dir.join(&tok_name),
+        )
+        .await
+        {
+            println!("⚠  Device-code falló: {e}");
+            println!(
+                "   Puedes reintentar más tarde con la tool `google_auth_start` desde el agente."
+            );
+        }
+    } else {
+        println!("   Salta consent. token_path se crea al primer `google_auth_start` desde el agente.");
+    }
+
     Ok(Outcome::Handled)
+}
+
+/// Phase 17 — device-code OAuth runner. Posts to
+/// `oauth2.googleapis.com/device/code`, prints the verification URL
+/// + user code for the operator, polls until approval, then writes
+/// the token JSON at `token_path` with mode 0o600. Headless-friendly.
+async fn run_google_device_code(
+    client_id: &str,
+    client_secret: &str,
+    scopes: &[String],
+    token_path: &std::path::Path,
+) -> anyhow::Result<()> {
+    let cfg = agent_plugin_google::GoogleAuthConfig {
+        client_id: client_id.to_string(),
+        client_secret: client_secret.to_string(),
+        scopes: scopes.to_vec(),
+        token_file: token_path.to_string_lossy().into_owned(),
+        redirect_port: 0,
+    };
+    let client = agent_plugin_google::GoogleAuthClient::new(
+        cfg,
+        token_path.parent().unwrap_or(std::path::Path::new(".")),
+    );
+    let challenge = client.request_device_code().await?;
+    println!();
+    println!("╭─ Device-code OAuth ───────────────────────────────────────");
+    println!("│  Abrí en cualquier navegador:  {}", challenge.verification_url);
+    println!("│  Código a escribir:            {}", challenge.user_code);
+    println!("│  (válido por {}s)", challenge.expires_in);
+    println!("╰───────────────────────────────────────────────────────────");
+    println!();
+    println!("Esperando aprobación…");
+    let _tokens = client.poll_device_token(&challenge).await?;
+    println!("✔ Tokens persistidos en {}.", token_path.display());
+    Ok(())
 }
 
 pub fn dispatch(svc_id: &str, config_dir: &Path, secrets_dir: &Path) -> Result<Outcome> {
