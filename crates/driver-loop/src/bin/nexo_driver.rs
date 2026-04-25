@@ -17,8 +17,9 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use nexo_driver_claude::{MemoryBindingStore, SessionBindingStore, SqliteBindingStore};
 use nexo_driver_loop::{
-    AcceptanceEvaluator, BindingStoreKind, DeciderConfig, DefaultAcceptanceEvaluator, DriverConfig,
-    DriverOrchestrator, GitWorktreeMode, NoopEventSink, WorkspaceManager,
+    AcceptanceEvaluator, BindingStoreKind, DeciderConfig, DefaultAcceptanceEvaluator,
+    DefaultCompactPolicy, DriverConfig, DriverOrchestrator, GitWorktreeMode, NoopEventSink,
+    WorkspaceManager,
 };
 use nexo_driver_permission::{AllowAllDecider, DenyAllDecider, PermissionDecider};
 use nexo_driver_types::Goal;
@@ -312,6 +313,13 @@ async fn build_orchestrator(cfg: &DriverConfig, no_events: bool) -> Result<Drive
     }
     let acceptance: Arc<dyn AcceptanceEvaluator> = Arc::new(acceptance);
 
+    let compact_policy: Arc<dyn nexo_driver_loop::CompactPolicy> =
+        Arc::new(DefaultCompactPolicy {
+            enabled: cfg.compact_policy.enabled,
+            threshold: cfg.compact_policy.threshold,
+            min_turns_between_compacts: cfg.compact_policy.min_turns_between_compacts,
+        });
+
     let orch = DriverOrchestrator::builder()
         .claude_config(cfg.claude.clone())
         .binding_store(binding_store)
@@ -319,6 +327,8 @@ async fn build_orchestrator(cfg: &DriverConfig, no_events: bool) -> Result<Drive
         .decider(decider)
         .workspace_manager(workspace_manager)
         .event_sink(event_sink)
+        .compact_policy(compact_policy)
+        .compact_context_window(cfg.compact_policy.context_window)
         .bin_path(cfg.driver.bin_path.clone())
         .socket_path(cfg.permission.socket.clone())
         .build()

@@ -52,6 +52,13 @@ pub enum DriverEvent {
         decision: ReplayDecision,
         error_message: String,
     },
+    /// Phase 67.9 — orchestrator scheduled a `/compact` turn.
+    CompactRequested {
+        goal_id: GoalId,
+        turn_index: u32,
+        focus: String,
+        token_pressure: f64,
+    },
 }
 
 impl DriverEvent {
@@ -67,6 +74,7 @@ impl DriverEvent {
             DriverEvent::BudgetExhausted { .. } => "agent.driver.budget.exhausted",
             DriverEvent::Escalate { .. } => "agent.driver.escalate",
             DriverEvent::ReplayDecision { .. } => "agent.driver.replay",
+            DriverEvent::CompactRequested { .. } => "agent.driver.compact",
         }
     }
 }

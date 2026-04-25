@@ -42,7 +42,26 @@ pub(crate) async fn run_attempt(
         .clone()
         .unwrap_or_else(|| std::path::PathBuf::from("claude"));
     let prior = ctx.binding_store.get(goal_id).await?;
-    let mut cmd = ClaudeCommand::new(binary, params.goal.description.clone())
+    // Phase 67.9 — when the orchestrator scheduled a compact turn it
+    // pre-fills `extras["compact_turn"] = true`; substitute the
+    // prompt with a `/compact <focus>` slash command so Claude Code
+    // compacts its context.
+    let prompt = if params
+        .extras
+        .get("compact_turn")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        let focus = params
+            .extras
+            .get("compact_focus")
+            .and_then(|v| v.as_str())
+            .unwrap_or("continue working");
+        format!("/compact {focus}")
+    } else {
+        params.goal.description.clone()
+    };
+    let mut cmd = ClaudeCommand::new(binary, prompt)
         .apply_defaults(&ctx.claude_cfg.default_args)
         .cwd(ctx.workspace)
         .mcp_config(ctx.mcp_config_path);

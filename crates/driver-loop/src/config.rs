@@ -28,6 +28,43 @@ pub struct DriverConfig {
     /// Phase 67.8 — replay-policy + LlmDecider deny-shortcut tuning.
     #[serde(default)]
     pub replay_policy: ReplayPolicyConfig,
+    /// Phase 67.9 — opportunistic /compact injection.
+    #[serde(default)]
+    pub compact_policy: CompactPolicyConfig,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct CompactPolicyConfig {
+    #[serde(default = "default_compact_enabled")]
+    pub enabled: bool,
+    /// Model context window in tokens. `0` disables the policy.
+    #[serde(default)]
+    pub context_window: u64,
+    #[serde(default = "default_compact_threshold")]
+    pub threshold: f64,
+    #[serde(default = "default_compact_min_gap")]
+    pub min_turns_between_compacts: u32,
+}
+
+impl Default for CompactPolicyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_compact_enabled(),
+            context_window: 0,
+            threshold: default_compact_threshold(),
+            min_turns_between_compacts: default_compact_min_gap(),
+        }
+    }
+}
+
+fn default_compact_enabled() -> bool {
+    true
+}
+fn default_compact_threshold() -> f64 {
+    0.7
+}
+fn default_compact_min_gap() -> u32 {
+    5
 }
 
 #[derive(Clone, Debug, Deserialize)]

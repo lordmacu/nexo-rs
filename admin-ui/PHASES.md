@@ -366,7 +366,12 @@ IOUs — features that landed in the daemon but have no UI yet.
   Phase A3 covers this
 - [ ] Driver/goal monitor (Phase 67) — pending tile to surface
   active goals, decisions taken (allow/deny/observe), budget
-  consumption per axis, acceptance verdicts, escalation status.
+  consumption per axis, acceptance verdicts, escalation status,
+  replay-policy verdicts (Phase 67.8 `agent.driver.replay`), and
+  compact-policy triggers (Phase 67.9 `agent.driver.compact` —
+  show `focus`, `token_pressure`, last compact turn). Settings
+  panel must expose `compact_policy.{enabled,context_window,
+  threshold,min_turns_between_compacts}`.
   Backend types ship in `nexo-driver-types` (67.0); the dashboard
   follows once 67.4 wires the loop and emits `agent.harness.*`
   events

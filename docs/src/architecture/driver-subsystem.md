@@ -215,6 +215,21 @@ NATS subjects emitted (when `feature = "nats"` and
 - `agent.driver.acceptance`
 - `agent.driver.budget.exhausted`
 - `agent.driver.escalate`
+- `agent.driver.replay`             (Phase 67.8 — replay-policy verdict)
+- `agent.driver.compact`            (Phase 67.9 — compact-policy scheduled
+                                     a `/compact <focus>` turn)
+
+## Compact policy (Phase 67.9)
+
+Long agentic runs let Claude's context grow without bound. The
+orchestrator runs a `CompactPolicy` after every successful work turn:
+when running tokens cross `threshold * context_window`, the next
+iteration is rewritten as a `/compact <focus>` slash command turn so
+Claude Code shrinks its own context before the next work turn.
+Compact turns absorb token usage but do not bump the goal's turn
+counter, so they don't burn the budget. `min_turns_between_compacts`
+prevents back-to-back compacts. Set `context_window: 0` (or
+`enabled: false`) in `compact_policy:` to disable.
 
 ## Sub-phases
 
@@ -229,7 +244,7 @@ NATS subjects emitted (when `feature = "nats"` and
 | 67.6 | Git worktree sandboxing + per-turn checkpoint | ✅ |
 | 67.7 | Memoria semántica de decisiones | ✅ |
 | 67.8 | Replay-policy (resume tras crash mid-turn) | ✅ |
-| 67.9 | Compact opportunista | ⬜ |
+| 67.9 | Compact opportunista | ✅ |
 | 67.10 | Escalación a WhatsApp/Telegram | ⬜ |
 | 67.11 | Shadow mode (calibración) | ⬜ |
 | 67.12 | Multi-goal paralelo | ⬜ |
