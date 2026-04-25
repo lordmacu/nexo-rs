@@ -214,8 +214,23 @@ impl ToolHandler for PollersResetTool {
     }
 }
 
-/// Wire all six tools onto the registry. Called from `main.rs` per
-/// agent right after registering the heartbeat / google / etc tools.
+/// Adapter wrapping a `agent_poller::CustomToolHandler` into the
+/// `agent_core::ToolHandler` shape. Captures the runner so each
+/// LLM call gets a fresh handle.
+struct CustomToolAdapter {
+    runner: Arc<PollerRunner>,
+    inner: Arc<dyn agent_poller::CustomToolHandler>,
+}
+#[async_trait]
+impl ToolHandler for CustomToolAdapter {
+    async fn call(&self, _ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
+        self.inner.call(Arc::clone(&self.runner), args).await
+    }
+}
+
+/// Wire the six generic `pollers_*` tools plus every per-kind custom
+/// tool exposed by the registered `Poller` impls. Called from `main.rs`
+/// per agent.
 pub fn register_all(registry: &ToolRegistry, runner: Arc<PollerRunner>) {
     registry.register(PollersListTool::tool_def(), PollersListTool::new(runner.clone()));
     registry.register(PollersShowTool::tool_def(), PollersShowTool::new(runner.clone()));
@@ -225,5 +240,17 @@ pub fn register_all(registry: &ToolRegistry, runner: Arc<PollerRunner>) {
         PollersResumeTool::tool_def(),
         PollersResumeTool::new(runner.clone()),
     );
-    registry.register(PollersResetTool::tool_def(), PollersResetTool::new(runner));
+    registry.register(PollersResetTool::tool_def(), PollersResetTool::new(runner.clone()));
+
+    // Per-kind custom tools — each registered Poller impl can return
+    // a Vec<CustomToolSpec>. Empty by default.
+    for spec in runner.collect_custom_tools() {
+        registry.register(
+            spec.def,
+            CustomToolAdapter {
+                runner: Arc::clone(&runner),
+                inner: spec.handler,
+            },
+        );
+    }
 }

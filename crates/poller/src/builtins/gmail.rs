@@ -111,6 +111,48 @@ impl Poller for GmailPoller {
         Ok(())
     }
 
+    fn custom_tools(&self) -> Vec<crate::CustomToolSpec> {
+        use agent_llm::ToolDef;
+        use serde_json::json;
+        struct CountUnread;
+        #[async_trait::async_trait]
+        impl crate::CustomToolHandler for CountUnread {
+            async fn call(
+                &self,
+                runner: std::sync::Arc<crate::PollerRunner>,
+                args: serde_json::Value,
+            ) -> anyhow::Result<serde_json::Value> {
+                let id = args["id"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("gmail_count_unread requires `id`"))?;
+                // Trigger one tick out-of-band; report items_seen as a
+                // proxy for "currently unread matching the query".
+                let outcome = runner.run_once(id).await?;
+                Ok(json!({
+                    "ok": true,
+                    "matching": outcome.items_seen,
+                    "would_dispatch": outcome.items_dispatched,
+                }))
+            }
+        }
+        vec![crate::CustomToolSpec {
+            def: ToolDef {
+                name: "gmail_count_unread".into(),
+                description:
+                    "Run the gmail job's query once without persisting state — returns how many messages currently match. Useful as a sanity check before changing the template or pause/resume."
+                        .into(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string", "description": "Gmail poll job id" }
+                    },
+                    "required": ["id"]
+                }),
+            },
+            handler: std::sync::Arc::new(CountUnread),
+        }]
+    }
+
     async fn tick(&self, ctx: &PollContext) -> Result<TickOutcome, PollerError> {
         let cfg: GmailJobConfig = serde_json::from_value(ctx.config.clone()).map_err(|e| {
             PollerError::Config {

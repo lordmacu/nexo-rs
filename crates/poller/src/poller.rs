@@ -7,12 +7,14 @@ use std::time::Duration;
 use agent_auth::resolver::CredentialStores;
 use agent_auth::{AgentCredentialResolver, Channel};
 use agent_broker::AnyBroker;
+use agent_llm::ToolDef;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::PollerError;
+use crate::PollerRunner;
 
 /// Implemented by every poller module (gmail, rss, calendar, …).
 /// `Send + Sync + 'static` because the runner stores `Arc<dyn Poller>`
@@ -38,6 +40,41 @@ pub trait Poller: Send + Sync + 'static {
     /// optional next-interval hint. Errors flow into the runner's
     /// backoff / breaker / pause logic via [`PollerError::classify`].
     async fn tick(&self, ctx: &PollContext) -> Result<TickOutcome, PollerError>;
+
+    /// Optional: per-kind LLM tools to register alongside the six
+    /// generic `pollers_*` tools. Use this for kind-specific
+    /// affordances — e.g. `gmail_validate_query` to dry-run a Gmail
+    /// search, `rss_check_feed` to ping a feed URL without spawning
+    /// the job, `calendar_sync_token_age` to inspect a syncToken.
+    /// Default: empty.
+    ///
+    /// The tools wrap a closure that receives the same `PollerRunner`
+    /// the runtime uses, so they can list / inspect / mutate state
+    /// the same way the built-in `pollers_*` tools do.
+    fn custom_tools(&self) -> Vec<CustomToolSpec> {
+        Vec::new()
+    }
+}
+
+/// One per-kind tool. Returned by [`Poller::custom_tools`] and
+/// adapted into an `agent-core` `ToolHandler` by the
+/// `agent-poller-tools` crate at registration time.
+pub struct CustomToolSpec {
+    pub def: ToolDef,
+    pub handler: Arc<dyn CustomToolHandler>,
+}
+
+/// Local handler trait — kept inside `agent-poller` so the crate
+/// stays free of `agent-core` (and therefore free of the
+/// `plugin-google ↔ core` cycle). The adapter lives in
+/// `agent-poller-tools`.
+#[async_trait]
+pub trait CustomToolHandler: Send + Sync + 'static {
+    async fn call(
+        &self,
+        runner: Arc<PollerRunner>,
+        args: Value,
+    ) -> anyhow::Result<Value>;
 }
 
 /// What the runner hands a module on every tick.
