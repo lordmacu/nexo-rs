@@ -13,7 +13,7 @@ pub struct PollersConfigFile {
     pub pollers: PollersConfig,
 }
 
-#[derive(Debug, Deserialize, Default, Clone)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct PollersConfig {
     #[serde(default = "default_enabled")]
@@ -84,6 +84,23 @@ fn default_jitter() -> u64 { 5_000 }
 fn default_ttl_factor() -> f32 { 2.0 }
 fn default_failure_cooldown() -> u64 { 3_600 }
 fn default_breaker_threshold() -> u32 { 5 }
+
+impl Default for PollersConfig {
+    /// Sensible defaults — same as a YAML file with only `pollers: {}`.
+    /// Important: `enabled = true` so the runner accepts the config
+    /// and spawns the (zero) jobs cleanly. Tests rely on this.
+    fn default() -> Self {
+        Self {
+            enabled: default_enabled(),
+            state_db: default_state_db(),
+            default_jitter_ms: default_jitter(),
+            lease_ttl_factor: default_ttl_factor(),
+            failure_alert_cooldown_secs: default_failure_cooldown(),
+            breaker_threshold: default_breaker_threshold(),
+            jobs: Vec::new(),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
