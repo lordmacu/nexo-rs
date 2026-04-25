@@ -871,6 +871,7 @@ async fn main() -> Result<()> {
     let mut reload_senders: Vec<(
         String,
         tokio::sync::mpsc::Sender<agent_core::agent::runtime::ReloadCommand>,
+        std::sync::Arc<Vec<String>>,
     )> = Vec::with_capacity(cfg.agents.agents.len());
     // Dreaming-side cancellation + handles. Each enabled agent spawns a
     // sweep loop; shutdown cancels the token and joins them with a
@@ -1416,7 +1417,19 @@ async fn main() -> Result<()> {
             .with_context(|| format!("failed to start agent runtime for {agent_id}"))?;
         running_agents.fetch_add(1, Ordering::Relaxed);
         tracing::info!(agent = %agent_id, "agent runtime started");
-        reload_senders.push((agent_id.to_string(), runtime.reload_sender()));
+        // Snapshot the post-assembly tool surface so the reload
+        // coordinator can validate `allowed_tools` against it without
+        // re-reading the registry on every reload.
+        let known_tools: Vec<String> = tools
+            .to_tool_defs()
+            .iter()
+            .map(|d| d.name.clone())
+            .collect();
+        reload_senders.push((
+            agent_id.to_string(),
+            runtime.reload_sender(),
+            std::sync::Arc::new(known_tools),
+        ));
         runtimes.push(runtime);
 
         // Dreaming (Phase 10.6) — when enabled and long-term memory + workspace
@@ -1555,8 +1568,8 @@ async fn main() -> Result<()> {
         Arc::new(llm_registry),
         watcher_shutdown.clone(),
     ));
-    for (id, tx) in reload_senders.drain(..) {
-        reload_coord.register(id, tx);
+    for (id, tx, known) in reload_senders.drain(..) {
+        reload_coord.register(id, tx, known);
     }
     if let Err(e) = Arc::clone(&reload_coord)
         .start(broker.clone(), cfg.runtime.reload.clone())
