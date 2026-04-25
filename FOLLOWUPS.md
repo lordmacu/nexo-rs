@@ -1665,16 +1665,14 @@ Formalizada en `PHASES.md` como sub-fase 10.9. Resumen del trade-off para no olv
 ### ~~Setup migrar Google inline → google-auth.yaml~~ ✅ Resuelto 2026-04-24
 - `services_imperative::run_google` escribe `config/plugins/google-auth.yaml` vía `google_auth_upsert_account` con `agent_id` + paths a secrets 0o600, y enlaza `credentials.google` en el agente.
 
-### Legacy `agents.google_auth` hard-error (V2)
-- V1 deja warn-only. En V2 convertir a error y forzar migración a `google-auth.yaml`.
-- **Acción:** flag `strict_credentials: true` global; eventualmente default.
+### ~~Legacy `agents.google_auth` hard-error (V2)~~ ✅ Resuelto 2026-04-24
+- `StrictLevel::Strict` (`agent --check-config --strict`) emite `BuildError::LegacyInlineGoogleAuth` y rechaza el bundle. Lenient mantiene auto-migración con warn para configs existentes. Test cobertura: `crates/auth/tests/strict_legacy_google_auth.rs`.
 
 ### ~~`google_*` tools lazy-refresh sin file watcher~~ ✅ Resuelto 2026-04-24
 - `GoogleAuthClient` migró `config` a `ArcSwap`. `refresh_secrets_if_changed` se invoca en cada llamada de red (`exchange_code`, `request_device_code`, `poll_device_code`, `refresh_token`); compara mtime de `client_id_path`/`client_secret_path` y reescribe sólo cuando hubo rotación. Sin daemon restart.
 
-### Inline-credential migration path opaco
-- `client_id_path: inline:<literal>` resuelve pero el gauntlet reporta "inline:..." en mensajes. No es user-facing pero es feo en traza.
-- **Acción:** custom `Display` para `PathBuf` con prefijo inline → render `"<inline credential>"`.
+### ~~Inline-credential migration path opaco~~ ✅ Resuelto 2026-04-24
+- `error::display_path()` reemplaza paths con prefijo `inline:` por `<inline credential>` antes de imprimir. Ningún `BuildError`/`CredentialError` echo client_id/secret crudo. Test: `crates/auth/tests/inline_path_display.rs`.
 
 ---
 
