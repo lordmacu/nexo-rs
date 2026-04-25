@@ -326,6 +326,7 @@ impl AgentRuntime {
                 ctx = ctx.with_transcripts_index(Arc::clone(idx));
             }
             ctx = ctx.with_router(Arc::clone(&router));
+            ctx = ctx.with_context_optimization(snapshot.load().context_optimization);
             loop {
                 tokio::select! {
                     biased;
@@ -518,6 +519,7 @@ impl AgentRuntime {
                                 Arc::clone(&sessions),
                             );
                             ctx = ctx.with_effective(Arc::clone(&effective_for_session));
+                            ctx = ctx.with_context_optimization(snap.context_optimization);
                             if let Some(tools) = effective_tools_for_session.clone() {
                                 ctx = ctx.with_effective_tools(tools);
                             }
@@ -596,6 +598,7 @@ impl AgentRuntime {
                             event_id = %event.id,
                             "heartbeat tick received"
                         );
+                        ctx = ctx.with_context_optimization(snapshot_ref.load().context_optimization);
                         if let Err(e) = agent.behavior.on_heartbeat(&ctx).await {
                             tracing::error!(agent_id = %agent.id, error = %e, "on_heartbeat failed");
                         }
