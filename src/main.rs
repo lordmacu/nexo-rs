@@ -996,6 +996,40 @@ async fn main() -> Result<()> {
     let link_extractor = Arc::new(agent_core::link_understanding::LinkExtractor::new(
         &agent_core::link_understanding::LinkUnderstandingConfig::default(),
     ));
+
+    // Phase 25 — single shared web-search router. Builds at most one
+    // provider per backend from env credentials. `None` if no provider
+    // is configured (no env keys + DDG feature off); the `web_search`
+    // tool is then never registered.
+    let web_search_router: Option<Arc<agent_web_search::WebSearchRouter>> = {
+        let mut providers: Vec<Arc<dyn agent_web_search::WebSearchProvider>> = Vec::new();
+        if let Ok(k) = std::env::var("BRAVE_SEARCH_API_KEY") {
+            providers.push(Arc::new(
+                agent_web_search::providers::brave::BraveProvider::new(k, 8000),
+            ));
+        }
+        if let Ok(k) = std::env::var("TAVILY_API_KEY") {
+            providers.push(Arc::new(
+                agent_web_search::providers::tavily::TavilyProvider::new(k, 10000),
+            ));
+        }
+        // DuckDuckGo bundles by default (no key) so every install has
+        // at least one usable provider. Operators that ban scraping
+        // can rebuild agent-web-search without the `duckduckgo`
+        // feature.
+        providers.push(Arc::new(
+            agent_web_search::providers::duckduckgo::DuckDuckGoProvider::new(12000),
+        ));
+        Some(Arc::new(agent_web_search::WebSearchRouter::new(
+            providers, None,
+        )))
+    };
+    if let Some(router) = web_search_router.as_ref() {
+        tracing::info!(providers = ?router.provider_ids(), "web-search router initialised");
+    } else {
+        tracing::info!("web-search router disabled (no providers configured)");
+    }
+
     let mut runtimes: Vec<AgentRuntime> = Vec::with_capacity(cfg.agents.agents.len());
     // Phase 18 — collect each agent's reload channel so the coordinator
     // can dispatch `Apply(snapshot)` on hot-reload.
@@ -1330,6 +1364,30 @@ async fn main() -> Result<()> {
                 tracing::warn!(
                     agent = %agent_id,
                     "agent has heartbeat enabled but long-term memory is disabled; reminders unavailable"
+                );
+            }
+        }
+
+        // Phase 25 — `web_search` tool. Registered when the agent's
+        // top-level policy has `enabled: true` and a router exists.
+        // Per-binding overrides are enforced inside the tool itself
+        // (it reads `ctx.effective_policy().web_search` per call).
+        let agent_ws_enabled = agent_cfg
+            .web_search
+            .get("enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if agent_ws_enabled {
+            if let Some(ws_router) = web_search_router.as_ref() {
+                tools.register(
+                    agent_core::agent::WebSearchTool::tool_def(),
+                    agent_core::agent::WebSearchTool::new(Arc::clone(ws_router)),
+                );
+                tracing::info!(agent = %agent_id, "registered web_search tool");
+            } else {
+                tracing::warn!(
+                    agent = %agent_id,
+                    "agent has web_search.enabled but no provider is configured (set BRAVE_SEARCH_API_KEY / TAVILY_API_KEY or rely on DuckDuckGo)"
                 );
             }
         }
@@ -1819,6 +1877,9 @@ async fn main() -> Result<()> {
             runtime = runtime.with_breakers(Arc::clone(&bundle.breakers));
         }
         runtime = runtime.with_link_extractor(Arc::clone(&link_extractor));
+        if let Some(ref ws) = web_search_router {
+            runtime = runtime.with_web_search_router(Arc::clone(ws));
+        }
         runtime
             .start()
             .await
@@ -5385,6 +5446,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         outbound_allowlist: primary.outbound_allowlist.clone(),
         credentials: primary.credentials.clone(),
         link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
         language: primary.language.clone(),
         context_optimization: None,
     });

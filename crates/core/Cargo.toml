@@ -32,6 +32,7 @@ agent-memory  = { path = "../memory" }
 agent-extensions = { path = "../extensions" }
 agent-mcp       = { path = "../mcp" }
 agent-taskflow  = { path = "../taskflow" }
+agent-web-search = { path = "../web-search" }
 futures         = { workspace = true }
 arc-swap        = { workspace = true }
 lru             = { workspace = true }

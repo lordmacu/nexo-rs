@@ -102,6 +102,7 @@ fn agent_cfg() -> Arc<AgentConfig> {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     })

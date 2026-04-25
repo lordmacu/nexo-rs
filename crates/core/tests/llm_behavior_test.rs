@@ -185,6 +185,7 @@ fn make_context(broker: AnyBroker) -> AgentContext {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     });
@@ -269,6 +270,7 @@ async fn system_prompt_prepended_to_llm_request() {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     });
@@ -338,6 +340,7 @@ async fn output_language_directive_renders_when_configured() {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
         language: Some("es".into()),
         context_optimization: None,
     });
@@ -462,6 +465,7 @@ async fn workspace_bundle_prepended_to_system_message() -> anyhow::Result<()> {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     });
@@ -557,6 +561,7 @@ async fn skills_loaded_between_workspace_and_system_prompt() -> anyhow::Result<(
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     });
@@ -644,6 +649,7 @@ async fn workspace_memory_skipped_when_source_is_peer_agent() -> anyhow::Result<
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     });
@@ -719,6 +725,7 @@ async fn transcript_written_when_dir_configured() -> anyhow::Result<()> {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     });
@@ -876,6 +883,7 @@ async fn heartbeat_delivers_due_reminders_once() {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     });
@@ -957,6 +965,7 @@ async fn schedule_reminder_tool_uses_current_conversation_context() {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     });
@@ -1041,6 +1050,7 @@ async fn llm_can_call_delegate_tool_and_receive_result() {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     };
@@ -1081,6 +1091,7 @@ async fn llm_can_call_delegate_tool_and_receive_result() {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     });
@@ -1471,6 +1482,7 @@ async fn delegation_rejects_target_outside_allowed_delegates() {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     });
@@ -1568,6 +1580,7 @@ async fn peer_directory_renders_into_system_prompt() {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     });

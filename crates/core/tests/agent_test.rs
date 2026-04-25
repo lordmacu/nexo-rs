@@ -44,6 +44,7 @@ fn test_config(id: &str) -> AgentConfig {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     }

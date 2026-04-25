@@ -1,6 +1,7 @@
 # Summary
 
 [Introduction](./introduction.md)
+[Install for AI assistants](./install-for-ai.md)
 
 # Getting started
 
@@ -98,6 +99,7 @@
 - [Capability toggles](./ops/capabilities.md)
 - [Context optimization](./ops/context-optimization.md)
 - [Link understanding](./ops/link-understanding.md)
+- [Web search](./ops/web-search.md)
 
 # Recipes
 

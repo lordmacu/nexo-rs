@@ -66,6 +66,60 @@ pub struct EffectiveBindingPolicy {
     /// override over agent-level default). Disabled by default;
     /// operators opt in per agent or per channel.
     pub link_understanding: crate::link_understanding::LinkUnderstandingConfig,
+    /// Phase 25 — resolved web-search policy. Disabled by default.
+    /// `provider == "auto"` (or empty) lets the router pick by
+    /// available credentials.
+    pub web_search: WebSearchPolicy,
+}
+
+/// Per-agent / per-binding web-search policy. Mirrors the YAML shape
+/// described in `docs/src/ops/web-search.md`. Lives here (not in the
+/// `agent-web-search` crate) so the policy stays a pure-config view
+/// disconnected from HTTP / SQLite concerns.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WebSearchPolicy {
+    #[serde(default)]
+    pub enabled: bool,
+    /// `"auto"` (default) lets the router auto-detect by credential;
+    /// `"brave"` / `"tavily"` / `"duckduckgo"` / `"perplexity"` pin
+    /// the provider. Empty string is treated as `"auto"`.
+    #[serde(default = "default_provider")]
+    pub provider: String,
+    /// Default `count` arg when the LLM omits it. Clamped 1..=10 by
+    /// the router.
+    #[serde(default = "default_count")]
+    pub default_count: u8,
+    /// Cache TTL in seconds. `0` disables.
+    #[serde(default = "default_cache_ttl")]
+    pub cache_ttl_secs: u64,
+    /// Default value of the `expand` arg. When `true`, the router
+    /// fills `body` on the top hits via the Phase 21 LinkExtractor
+    /// (no-op when link understanding is off).
+    #[serde(default)]
+    pub expand_default: bool,
+}
+
+impl Default for WebSearchPolicy {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: default_provider(),
+            default_count: default_count(),
+            cache_ttl_secs: default_cache_ttl(),
+            expand_default: false,
+        }
+    }
+}
+
+fn default_provider() -> String {
+    "auto".into()
+}
+fn default_count() -> u8 {
+    5
+}
+fn default_cache_ttl() -> u64 {
+    600
 }
 
 impl EffectiveBindingPolicy {
@@ -85,6 +139,7 @@ impl EffectiveBindingPolicy {
             allowed_delegates: resolve_delegates(agent, binding),
             language: resolve_language(agent, binding),
             link_understanding: resolve_link_understanding(agent, binding),
+            web_search: resolve_web_search(agent, binding),
         }
     }
 
@@ -111,6 +166,7 @@ impl EffectiveBindingPolicy {
             sender_rate_limit: agent.sender_rate_limit.clone(),
             allowed_delegates: agent.allowed_delegates.clone(),
             link_understanding: parse_link_understanding(&agent.link_understanding),
+            web_search: parse_web_search(&agent.web_search),
         }
     }
 
@@ -279,6 +335,31 @@ fn resolve_link_understanding(
     parse_link_understanding(&agent.link_understanding)
 }
 
+fn parse_web_search(raw: &serde_json::Value) -> WebSearchPolicy {
+    if raw.is_null() {
+        return WebSearchPolicy::default();
+    }
+    match serde_json::from_value::<WebSearchPolicy>(raw.clone()) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "agent.web_search YAML did not parse — falling back to disabled defaults"
+            );
+            WebSearchPolicy::default()
+        }
+    }
+}
+
+fn resolve_web_search(agent: &AgentConfig, binding: Option<&InboundBinding>) -> WebSearchPolicy {
+    if let Some(b) = binding {
+        if !b.web_search.is_null() {
+            return parse_web_search(&b.web_search);
+        }
+    }
+    parse_web_search(&agent.web_search)
+}
+
 fn resolve_language(agent: &AgentConfig, binding: Option<&InboundBinding>) -> Option<String> {
     binding
         .and_then(|b| b.language.clone())
@@ -329,6 +410,7 @@ mod tests {
             google_auth: None,
             credentials: Default::default(),
             link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
             language: None,
             outbound_allowlist: OutboundAllowlistConfig {
                 whatsapp: vec!["573000000000".into()],

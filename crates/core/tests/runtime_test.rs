@@ -79,6 +79,7 @@ fn make_config(
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
             language: None,
         context_optimization: None,
     }
@@ -288,6 +289,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             google_auth: None,
             credentials: Default::default(),
             link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
             language: None,
             context_optimization: None,
         },
@@ -333,6 +335,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             google_auth: None,
             credentials: Default::default(),
             link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
             language: None,
             context_optimization: None,
         },

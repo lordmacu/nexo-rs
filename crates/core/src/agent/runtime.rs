@@ -86,6 +86,10 @@ pub struct AgentRuntime {
     /// Phase 21 — shared link extractor (HTTP client + LRU cache).
     /// `None` keeps link understanding off regardless of YAML.
     link_extractor: Option<Arc<crate::link_understanding::LinkExtractor>>,
+    /// Phase 25 — shared web-search router (one per process, every
+    /// runtime gets the same Arc). `None` disables the `web_search`
+    /// tool regardless of YAML.
+    web_search_router: Option<Arc<agent_web_search::WebSearchRouter>>,
     /// Legacy cache — still owned by the runtime for back-compat with
     /// any test construction path. Hot-reload reads the per-snapshot
     /// `tool_cache` instead; see [`RuntimeSnapshot::tool_cache`].
@@ -150,6 +154,7 @@ impl AgentRuntime {
             redactor: None,
             transcripts_index: None,
             link_extractor: None,
+            web_search_router: None,
             tool_cache: Arc::new(super::tool_registry_cache::ToolRegistryCache::new()),
             reload_tx,
             reload_rx: Arc::new(Mutex::new(Some(reload_rx))),
@@ -180,6 +185,15 @@ impl AgentRuntime {
         ext: Arc<crate::link_understanding::LinkExtractor>,
     ) -> Self {
         self.link_extractor = Some(ext);
+        self
+    }
+    /// Attach the shared web-search router. Every `AgentContext` built
+    /// by this runtime inherits it so the `web_search` tool can route.
+    pub fn with_web_search_router(
+        mut self,
+        router: Arc<agent_web_search::WebSearchRouter>,
+    ) -> Self {
+        self.web_search_router = Some(router);
         self
     }
     pub fn with_peers(mut self, peers: Arc<PeerDirectory>) -> Self {
@@ -262,6 +276,7 @@ impl AgentRuntime {
         let redactor = self.redactor.clone();
         let transcripts_index = self.transcripts_index.clone();
         let link_extractor = self.link_extractor.clone();
+        let web_search_router = self.web_search_router.clone();
         let router = Arc::clone(&self.router);
         let session_txs = Arc::clone(&self.session_txs);
         let debounce_ms = self.debounce_ms;
@@ -303,6 +318,9 @@ impl AgentRuntime {
             }
             if let Some(ref ext) = link_extractor {
                 ctx = ctx.with_link_extractor(Arc::clone(ext));
+            }
+            if let Some(ref ws) = web_search_router {
+                ctx = ctx.with_web_search_router(Arc::clone(ws));
             }
             if let Some(ref idx) = transcripts_index {
                 ctx = ctx.with_transcripts_index(Arc::clone(idx));
@@ -520,6 +538,9 @@ impl AgentRuntime {
                             }
                             if let Some(ref ext) = link_extractor {
                                 ctx = ctx.with_link_extractor(Arc::clone(ext));
+                            }
+                            if let Some(ref ws) = web_search_router {
+                                ctx = ctx.with_web_search_router(Arc::clone(ws));
                             }
                             let behavior = Arc::clone(&agent.behavior);
                             let cancel = shutdown.clone();

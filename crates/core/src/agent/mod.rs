@@ -38,6 +38,7 @@ pub mod session_logs_tool;
 pub mod skills;
 pub mod redaction;
 pub mod taskflow_tool;
+pub mod web_search_tool;
 pub mod transcripts_index;
 pub mod tool_filter;
 pub mod tool_policy;
@@ -97,6 +98,7 @@ pub use skills::{
     VersionFailReason,
 };
 pub use taskflow_tool::{TaskFlowTool, TaskFlowToolGuardrails};
+pub use web_search_tool::WebSearchTool;
 pub use tool_registry::{ToolHandler, ToolRegistry};
 pub use tool_registry_cache::ToolRegistryCache;
 pub use transcripts::{
