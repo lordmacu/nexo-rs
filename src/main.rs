@@ -2637,6 +2637,69 @@ async fn handle_admin_request(
         return Ok(());
     }
 
+    // /api/bootstrap — tells the SPA whether the first-run wizard
+    // should fire. Returns { needs_wizard, agent_count }. Safe pre-
+    // login (no sensitive data) so the bundle can decide to redirect
+    // to /wizard even before the session cookie exists.
+    if method == "GET" && path == "/api/bootstrap" {
+        let (needs_wizard, agent_count) = bootstrap_status();
+        let body = format!(
+            "{{\"needs_wizard\":{needs_wizard},\"agent_count\":{agent_count}}}"
+        );
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
+             Cache-Control: no-store\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream.write_all(response.as_bytes()).await?;
+        stream.shutdown().await?;
+        return Ok(());
+    }
+
+    // /api/bootstrap/finish — runs the wizard commit. Writes
+    // config/agents.d/<slug>.yaml + secrets files + optional channel
+    // config. Requires a valid session cookie so a public tunnel URL
+    // alone can't create an agent.
+    if method == "POST" && path == "/api/bootstrap/finish" {
+        if !authorised {
+            let body = r#"{"ok":false,"error":"unauthorised"}"#;
+            let response = format!(
+                "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).await?;
+            stream.shutdown().await?;
+            return Ok(());
+        }
+        let body_str = read_http_body(&request, &mut stream).await.unwrap_or_default();
+        let response_body = match commit_bootstrap(&body_str) {
+            Ok(report) => format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
+                 Cache-Control: no-store\r\nConnection: close\r\n\r\n{}",
+                report.len(),
+                report
+            ),
+            Err(err) => {
+                let body = format!(
+                    "{{\"ok\":false,\"error\":\"{}\"}}",
+                    err.replace('\\', "\\\\").replace('"', "\\\"")
+                );
+                format!(
+                    "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+            }
+        };
+        stream.write_all(response_body.as_bytes()).await?;
+        stream.shutdown().await?;
+        return Ok(());
+    }
+
     // /api/debug/env — feature probe consumed by the SPA so it can
     // show the Reset button only when the dev toggle is on. Gated
     // behind NEXO_ADMIN_DEBUG=1 (or the debug_assertions cfg so
@@ -2974,10 +3037,285 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     diff == 0
 }
 
-/// Whether the admin UI exposes the Reset button + the
-/// `/api/debug/*` endpoints. True when `NEXO_ADMIN_DEBUG=1` is set
-/// or when the binary was compiled with `debug_assertions` (i.e. a
-/// plain `cargo build`, not `--release`).
+/// Cheap check: if both `config/agents.yaml` has no active agent
+/// entries (ignoring comments) **and** `config/agents.d/*.yaml`
+/// (excluding `*.example.yaml`) is empty, the wizard should fire.
+/// We don't fully parse the YAML — a substring probe for any
+/// `- id:` list item is enough to avoid false positives from blank
+/// files. Returns `(needs_wizard, agent_count)`.
+fn bootstrap_status() -> (bool, usize) {
+    let mut agents = 0usize;
+
+    let base = std::fs::read_to_string("./config/agents.yaml").unwrap_or_default();
+    for line in base.lines() {
+        let t = line.trim_start();
+        if t.starts_with("- id:") || t.starts_with("- id :") {
+            agents += 1;
+        }
+    }
+
+    if let Ok(entries) = std::fs::read_dir("./config/agents.d") {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if !name.ends_with(".yaml") || name.ends_with(".example.yaml") {
+                continue;
+            }
+            let body = std::fs::read_to_string(&p).unwrap_or_default();
+            for line in body.lines() {
+                let t = line.trim_start();
+                if t.starts_with("- id:") || t.starts_with("- id :") {
+                    agents += 1;
+                }
+            }
+        }
+    }
+
+    (agents == 0, agents)
+}
+
+/// Parses the wizard's JSON body and writes the derived YAML + secrets
+/// to disk. Minimal hand-rolled JSON path — the shape is fixed.
+///
+/// Accepted body shape:
+/// ```json
+/// {
+///   "identity": { "name": "...", "emoji": "...", "vibe": "..." },
+///   "soul":     "markdown...",
+///   "brain":    { "provider": "minimax|anthropic|openai|gemini",
+///                 "model": "...", "api_key": "..." },
+///   "channel":  null
+///              | { "kind": "telegram", "token": "..." }
+///              | { "kind": "whatsapp" }
+/// }
+/// ```
+fn commit_bootstrap(body: &str) -> Result<String, String> {
+    let v: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| format!("invalid JSON: {e}"))?;
+
+    let identity = v.get("identity").cloned().unwrap_or_default();
+    let name = identity
+        .get("name")
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .trim();
+    if name.is_empty() {
+        return Err("identity.name is required".into());
+    }
+    let emoji = identity.get("emoji").and_then(|s| s.as_str()).unwrap_or("🤖");
+    let vibe = identity
+        .get("vibe")
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .trim();
+
+    let soul = v.get("soul").and_then(|s| s.as_str()).unwrap_or("").trim();
+
+    let brain = v.get("brain").cloned().unwrap_or_default();
+    let provider = brain
+        .get("provider")
+        .and_then(|s| s.as_str())
+        .unwrap_or("minimax");
+    let model = brain
+        .get("model")
+        .and_then(|s| s.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| match provider {
+            "anthropic" => "claude-haiku-4-5".to_string(),
+            "gemini" => "gemini-2.0-flash".to_string(),
+            "openai" => "gpt-4o-mini".to_string(),
+            _ => "MiniMax-M2.5".to_string(),
+        });
+    let api_key = brain
+        .get("api_key")
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .trim();
+
+    // Kebab-cased slug from the name.
+    let slug = {
+        let mut s = name
+            .to_lowercase()
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+            .collect::<String>()
+            .trim_matches('-')
+            .to_string();
+        while s.contains("--") {
+            s = s.replace("--", "-");
+        }
+        if s.is_empty() {
+            use rand::Rng;
+            let mut rng = rand::thread_rng();
+            s = format!("agent-{:x}", rng.gen::<u32>());
+        }
+        s
+    };
+
+    let channel = v
+        .get("channel")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let (channel_kind, telegram_instance, telegram_token) = match &channel {
+        serde_json::Value::Object(map) => {
+            let kind = map.get("kind").and_then(|k| k.as_str()).unwrap_or("");
+            match kind {
+                "telegram" => {
+                    let tok = map
+                        .get("token")
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    if tok.is_empty() {
+                        return Err("channel.token is required for telegram".into());
+                    }
+                    let instance = format!("{slug}_bot");
+                    (Some("telegram"), Some(instance), Some(tok))
+                }
+                "whatsapp" => (Some("whatsapp"), None, None),
+                "" => (None, None, None),
+                other => return Err(format!("unknown channel kind '{other}'")),
+            }
+        }
+        _ => (None, None, None),
+    };
+
+    let mut written: Vec<String> = Vec::new();
+
+    if !api_key.is_empty() {
+        std::fs::create_dir_all("./secrets")
+            .map_err(|e| format!("mkdir ./secrets: {e}"))?;
+        let path = format!("./secrets/{provider}_api_key.txt");
+        write_file_0600(&path, api_key).map_err(|e| format!("write {path}: {e}"))?;
+        written.push(path);
+    }
+
+    if let (Some(inst), Some(token)) = (telegram_instance.as_ref(), telegram_token.as_ref()) {
+        std::fs::create_dir_all("./secrets")
+            .map_err(|e| format!("mkdir ./secrets: {e}"))?;
+        let path = format!("./secrets/{inst}_telegram_token.txt");
+        write_file_0600(&path, token).map_err(|e| format!("write {path}: {e}"))?;
+        written.push(path);
+    }
+
+    // Compose agents.d/<slug>.yaml.
+    let mut yaml = String::new();
+    yaml.push_str(&format!(
+        "# Written by admin first-run wizard for agent '{slug}'.\n"
+    ));
+    yaml.push_str("# Edit freely — the wizard never rewrites this file once created.\n\n");
+    yaml.push_str("agents:\n");
+    yaml.push_str(&format!("  - id: {slug}\n"));
+    yaml.push_str(&format!("    description: \"{}\"\n", escape_yaml(name)));
+    yaml.push_str("    model:\n");
+    yaml.push_str(&format!("      provider: {provider}\n"));
+    yaml.push_str(&format!("      model: {model}\n"));
+    if let Some(kind) = channel_kind {
+        yaml.push_str(&format!("    plugins: [{kind}]\n"));
+        yaml.push_str("    inbound_bindings:\n");
+        if let Some(inst) = &telegram_instance {
+            yaml.push_str(&format!(
+                "      - plugin: {kind}\n        instance: {inst}\n"
+            ));
+        } else {
+            yaml.push_str(&format!("      - plugin: {kind}\n"));
+        }
+    }
+    yaml.push_str(&format!("    workspace: ./data/workspace/{slug}\n"));
+    yaml.push_str(&format!(
+        "    system_prompt: |\n      You are {name}. {}\n      Emoji: {emoji}.\n",
+        if vibe.is_empty() {
+            "Be concise and helpful.".to_string()
+        } else {
+            vibe.to_string()
+        }
+    ));
+
+    std::fs::create_dir_all("./config/agents.d")
+        .map_err(|e| format!("mkdir ./config/agents.d: {e}"))?;
+    let agent_path = format!("./config/agents.d/{slug}.yaml");
+    std::fs::write(&agent_path, &yaml)
+        .map_err(|e| format!("write {agent_path}: {e}"))?;
+    written.push(agent_path);
+
+    // Seed workspace.
+    let workspace = format!("./data/workspace/{slug}");
+    std::fs::create_dir_all(&workspace).map_err(|e| format!("mkdir {workspace}: {e}"))?;
+    let identity_md = format!(
+        "- **Name:** {name}\n- **Emoji:** {emoji}\n- **Vibe:** {}\n",
+        if vibe.is_empty() { "warm and sharp" } else { vibe }
+    );
+    let id_path = format!("{workspace}/IDENTITY.md");
+    std::fs::write(&id_path, identity_md).map_err(|e| format!("write {id_path}: {e}"))?;
+    written.push(id_path);
+
+    if !soul.is_empty() {
+        let soul_path = format!("{workspace}/SOUL.md");
+        std::fs::write(&soul_path, soul).map_err(|e| format!("write {soul_path}: {e}"))?;
+        written.push(soul_path);
+    }
+
+    // Seed telegram plugin YAML if absent.
+    if let (Some(inst), Some(_)) = (telegram_instance.as_ref(), telegram_token.as_ref()) {
+        let telegram_path = "./config/plugins/telegram.yaml";
+        if !std::path::Path::new(telegram_path).exists() {
+            let mut buf = String::new();
+            buf.push_str(&format!(
+                "# Added by admin wizard for agent '{slug}'.\n"
+            ));
+            buf.push_str("telegram:\n");
+            buf.push_str(&format!("  - instance: {inst}\n"));
+            buf.push_str(&format!(
+                "    token: ${{file:./secrets/{inst}_telegram_token.txt}}\n"
+            ));
+            buf.push_str(&format!("    allow_agents: [{slug}]\n"));
+            std::fs::create_dir_all("./config/plugins")
+                .map_err(|e| format!("mkdir ./config/plugins: {e}"))?;
+            std::fs::write(telegram_path, buf)
+                .map_err(|e| format!("write {telegram_path}: {e}"))?;
+            written.push(telegram_path.to_string());
+        }
+    }
+
+    let mut report = String::from("{\"ok\":true,\"agent_id\":\"");
+    report.push_str(&slug);
+    report.push_str("\",\"files_written\":[");
+    for (i, p) in written.iter().enumerate() {
+        if i > 0 {
+            report.push(',');
+        }
+        report.push('"');
+        report.push_str(&p.replace('\\', "\\\\").replace('"', "\\\""));
+        report.push('"');
+    }
+    report.push_str("]}");
+    Ok(report)
+}
+
+fn escape_yaml(input: &str) -> String {
+    input.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+#[cfg(unix)]
+fn write_file_0600(path: &str, contents: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    f.write_all(contents.as_bytes())
+}
+
+#[cfg(not(unix))]
+fn write_file_0600(path: &str, contents: &str) -> std::io::Result<()> {
+    std::fs::write(path, contents)
+}
+
 fn admin_debug_enabled() -> bool {
     if cfg!(debug_assertions) {
         return true;
@@ -3835,6 +4173,7 @@ async fn handle_metrics_conn(mut stream: TcpStream, health: RuntimeHealth) -> an
     let mut body = render_prometheus(nats_open);
     body.push_str(&agent_llm::telemetry::render_prometheus());
     body.push_str(&agent_mcp::telemetry::render_prometheus());
+    body.push_str(&agent_poller::telemetry::render_prometheus());
     write_http_response(&mut stream, 200, "text/plain; version=0.0.4", &body).await?;
     Ok(())
 }
