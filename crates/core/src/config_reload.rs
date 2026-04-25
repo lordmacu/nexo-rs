@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 use agent_broker::{AnyBroker, BrokerHandle};
 use agent_config::{AppConfig, TelegramPluginConfig};
 use agent_llm::LlmRegistry;
+use arc_swap::ArcSwapOption;
 use dashmap::DashMap;
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
@@ -44,6 +45,11 @@ pub struct ConfigReloadCoordinator {
     /// race the snapshot build. The second trigger queues behind the
     /// first.
     gate: Mutex<()>,
+    /// Broker handle attached at `start()`. `Some` once the daemon is
+    /// up; the file-watcher branch uses it to publish
+    /// `events.runtime.config.reloaded` after every successful swap so
+    /// extensions and dashboards can react without polling.
+    broker: ArcSwapOption<AnyBroker>,
     shutdown: CancellationToken,
 }
 
@@ -74,6 +80,7 @@ impl ConfigReloadCoordinator {
             llm_registry,
             version: Mutex::new(0),
             gate: Mutex::new(()),
+            broker: ArcSwapOption::from(None),
             shutdown,
         }
     }
@@ -200,6 +207,7 @@ impl ConfigReloadCoordinator {
         telemetry::observe_config_reload_latency_ms(elapsed_ms);
 
         if !applied.is_empty() {
+            telemetry::inc_config_reload_applied();
             tracing::info!(
                 version = new_version,
                 applied = ?applied,
@@ -207,6 +215,23 @@ impl ConfigReloadCoordinator {
                 elapsed_ms,
                 "config reload applied",
             );
+            // Phase 18 follow-up — broadcast the event so extensions
+            // and dashboards can react without polling. Non-fatal if
+            // the publish fails; the metrics + log already record the
+            // swap.
+            if let Some(broker) = self.broker.load_full() {
+                let payload = serde_json::json!({
+                    "version": new_version,
+                    "applied": &applied,
+                    "rejected": &rejected,
+                    "elapsed_ms": elapsed_ms,
+                });
+                let topic = "events.runtime.config.reloaded";
+                let evt = agent_broker::Event::new(topic, "config-reload", payload);
+                if let Err(e) = broker.publish(topic, evt).await {
+                    tracing::warn!(error = %e, "failed to publish events.runtime.config.reloaded");
+                }
+            }
         }
         if !rejected.is_empty() {
             tracing::warn!(
@@ -235,6 +260,11 @@ impl ConfigReloadCoordinator {
             tracing::info!("config hot-reload disabled via runtime.yaml");
             return Ok(());
         }
+
+        // Stash the broker so reload() can emit
+        // `events.runtime.config.reloaded` regardless of whether the
+        // trigger came from the file watcher or the CLI.
+        self.broker.store(Some(Arc::new(broker.clone())));
 
         // File watcher → debounced notifications.
         let watcher_rx = crate::config_watch::spawn_config_watcher(

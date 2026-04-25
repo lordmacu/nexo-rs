@@ -280,7 +280,10 @@ impl AgentRuntime {
                                 let version = new_snap.version;
                                 snapshot.store(new_snap);
                                 crate::telemetry::set_runtime_config_version(&agent.id, version);
-                                crate::telemetry::inc_config_reload_applied();
+                                // The aggregate counter is bumped
+                                // once per reload by the coordinator;
+                                // the per-agent gauge above is what
+                                // dashboards correlate with sessions.
                                 tracing::info!(
                                     agent_id = %agent.id,
                                     version,
