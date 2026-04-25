@@ -43,6 +43,7 @@ pub struct AgentCredentialsInput {
     pub asymmetric_allowed: HashMap<Channel, bool>,
 }
 
+#[derive(Clone)]
 pub struct CredentialStores {
     pub whatsapp: Arc<WhatsappCredentialStore>,
     pub telegram: Arc<TelegramCredentialStore>,
