@@ -1,0 +1,23 @@
+[plugin]
+id = "template-poller-python"
+version = "0.1.0"
+name = "Python Poller Template"
+description = "Standalone Python extension that implements one poller kind via the JSON-RPC poll_tick protocol."
+
+[capabilities]
+# Phase 19 follow-up — declare every poller kind this extension
+# implements. The agent runtime registers one ExtensionPoller per
+# entry and forwards `poll_tick { kind, ... }` calls here.
+pollers = ["template_poll"]
+
+[transport]
+kind = "stdio"
+command = "python3"
+args = ["main.py"]
+
+[meta]
+author = "operator"
+license = "MIT"
+
+[requires]
+bins = ["python3"]
