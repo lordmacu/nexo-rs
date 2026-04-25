@@ -6,7 +6,7 @@ use super::transcripts::{TranscriptEntry, TranscriptRole, TranscriptWriter};
 use super::types::InboundMessage;
 use super::workspace::{SessionScope, WorkspaceLoader};
 use crate::session::types::{Interaction, Role};
-use crate::telemetry::{inc_llm_requests_total, observe_llm_latency_ms};
+use crate::telemetry::{inc_llm_requests_total, observe_cache_usage, observe_llm_latency_ms};
 use agent_broker::{BrokerHandle, Event};
 use agent_llm::{
     collect_stream, Attachment, ChatMessage, ChatRequest, ChatRole, LlmClient, ResponseContent,
@@ -41,6 +41,16 @@ pub struct LlmAgentBehavior {
     /// full catalog. Held under `RwLock` so a future hot-reload API
     /// can swap the index without rebuilding the behavior struct.
     tool_filter: Arc<tokio::sync::RwLock<Option<super::tool_filter::ToolFilter>>>,
+    /// Hot path for workspace bundle reads. When `Some`, run_turn
+    /// fetches via the cache (in-memory + notify invalidation); when
+    /// `None`, falls back to a fresh `WorkspaceLoader` every turn
+    /// (legacy behavior, kept for tests and bootstrap paths).
+    workspace_cache: Option<Arc<super::workspace_cache::WorkspaceCache>>,
+    /// Phase A.2 — when true, system prompt is emitted as
+    /// `Vec<PromptBlock>` with `cache_control` breakpoints, and the
+    /// tool catalog is marked cacheable. When false, the legacy flat
+    /// `system_prompt: String` path runs (no provider-level caching).
+    prompt_cache_enabled: bool,
 }
 impl LlmAgentBehavior {
     pub fn new(llm: Arc<dyn LlmClient>, tools: Arc<ToolRegistry>) -> Self {
@@ -53,7 +63,28 @@ impl LlmAgentBehavior {
             schema_validator: None,
             tool_policy: super::tool_policy::ToolPolicy::disabled(),
             tool_filter: Arc::new(tokio::sync::RwLock::new(None)),
+            workspace_cache: None,
+            prompt_cache_enabled: false,
         }
+    }
+    /// Attach the shared workspace cache. When set, `run_turn` reads
+    /// the workspace bundle via `WorkspaceCache::get` (warm Arc, no
+    /// disk I/O on the hot path); when omitted, falls back to a fresh
+    /// `WorkspaceLoader` every turn (legacy / test path).
+    pub fn with_workspace_cache(
+        mut self,
+        cache: Arc<super::workspace_cache::WorkspaceCache>,
+    ) -> Self {
+        self.workspace_cache = Some(cache);
+        self
+    }
+    /// Phase A.2 — opt the agent into provider-level prompt caching.
+    /// Driven from `llm.context_optimization.prompt_cache.enabled` (or
+    /// the per-agent override added in Phase F). Defaults to false so
+    /// the legacy non-cached path stays the safe fallback.
+    pub fn with_prompt_cache(mut self, enabled: bool) -> Self {
+        self.prompt_cache_enabled = enabled;
+        self
     }
     /// Attach a tool-execution policy. Controls caching + parallel
     /// execution of tool calls. Defaults to a no-op policy.
@@ -304,19 +335,43 @@ impl LlmAgentBehavior {
         // order: workspace bundle (IDENTITY/SOUL/USER/AGENTS/recent notes/MEMORY),
         // then optional local skills, then inline `system_prompt`. All parts
         // are merged into one system ChatMessage to keep prompt caching stable.
-        let mut system_parts: Vec<String> = Vec::new();
+        // Phase A.2 — collect the system prompt into named sections so
+        // we can hand them to `prompt_assembly::build_blocks` with
+        // explicit `CachePolicy` per block. Empty sections fall out
+        // and never occupy a cache breakpoint.
+        let mut workspace_section: Option<String> = None;
+        let mut skills_section: Option<String> = None;
+        let mut binding_glue_parts: Vec<String> = Vec::new();
+        let mut channel_meta_parts: Vec<String> = Vec::new();
+
         let workspace_path = ctx.config.workspace.trim();
         if !workspace_path.is_empty() {
             let scope = session_scope_for(&msg);
-            match WorkspaceLoader::new(workspace_path)
-                .load_with_extras(scope, &ctx.config.extra_docs)
-                .await
-            {
-                Ok(bundle) => {
+            // Hot path: prefer the shared cache (Arc, no disk I/O).
+            // Legacy fallback: fresh loader every turn — kept so tests
+            // and bootstrap that don't wire a cache still work.
+            let bundle_result = if let Some(cache) = self.workspace_cache.as_ref() {
+                cache
+                    .get(
+                        std::path::Path::new(workspace_path),
+                        scope,
+                        &ctx.config.extra_docs,
+                    )
+                    .await
+                    .map(Some)
+            } else {
+                WorkspaceLoader::new(workspace_path)
+                    .load_with_extras(scope, &ctx.config.extra_docs)
+                    .await
+                    .map(|b| Some(std::sync::Arc::new(b)))
+            };
+            match bundle_result {
+                Ok(Some(bundle)) => {
                     if let Some(blocks) = bundle.render_system_blocks() {
-                        system_parts.push(blocks);
+                        workspace_section = Some(blocks);
                     }
                 }
+                Ok(None) => {}
                 Err(e) => tracing::warn!(
                     agent_id = %ctx.agent_id,
                     workspace = workspace_path,
@@ -343,7 +398,7 @@ impl LlmAgentBehavior {
                     .with_overrides(ctx.config.skill_overrides.clone());
                 let loaded = loader.load_many(&effective.skills).await;
                 if let Some(blocks) = render_skill_blocks(&loaded) {
-                    system_parts.push(blocks);
+                    skills_section = Some(blocks);
                 }
             }
         }
@@ -352,7 +407,7 @@ impl LlmAgentBehavior {
         // without the user having to hand-write `AGENTS.md`.
         if let Some(peers) = ctx.peers.as_ref() {
             if let Some(block) = peers.render_for(&ctx.agent_id, &effective.allowed_delegates) {
-                system_parts.push(block);
+                binding_glue_parts.push(block);
             }
         }
         // Per-binding system prompt: agent-level base with an optional
@@ -361,7 +416,7 @@ impl LlmAgentBehavior {
         // from_agent_defaults.
         let system_prompt = effective.system_prompt.trim();
         if !system_prompt.is_empty() {
-            system_parts.push(system_prompt.to_string());
+            binding_glue_parts.push(system_prompt.to_string());
         }
         // Per-binding output language directive. Workspace docs stay in
         // English (so recall, dreaming, and dev tooling read them
@@ -369,7 +424,7 @@ impl LlmAgentBehavior {
         // configured language instead. Resolved with binding > agent
         // > none precedence inside EffectiveBindingPolicy.
         if let Some(lang) = effective.language.as_deref() {
-            system_parts.push(format!(
+            binding_glue_parts.push(format!(
                 "# OUTPUT LANGUAGE\n\nRespond to the user in {lang}. \
                  Workspace docs (IDENTITY, SOUL, MEMORY, USER, AGENTS) and \
                  tool descriptions are in English — read them as-is, but \
@@ -380,18 +435,39 @@ impl LlmAgentBehavior {
         // doesn't have to ask ("¿cuál es tu teléfono?") when the
         // channel already carries it (WhatsApp JID, Telegram user id,
         // email address). The runtime injects this every turn so even
-        // mid-conversation it's always current.
+        // mid-conversation it's always current. Lives in its own
+        // (short-TTL) block because it varies per turn.
         if let Some(sender) = msg.sender_id.as_deref() {
             if !sender.is_empty() {
-                system_parts.push(format!(
+                channel_meta_parts.push(format!(
                     "# CONTEXTO DEL CANAL\n\nRemitente ({}): {}\n\nUsá este identificador como \"número del cliente\" cuando un prompt hable de capturar el teléfono.",
                     msg.source_plugin,
                     sender
                 ));
             }
         }
-        if !system_parts.is_empty() {
-            prefix_messages.push(ChatMessage::system(system_parts.join("\n\n")));
+        let prompt_inputs = super::prompt_assembly::PromptInputs {
+            workspace: workspace_section,
+            skills: skills_section,
+            binding_glue: if binding_glue_parts.is_empty() {
+                None
+            } else {
+                Some(binding_glue_parts.join("\n\n"))
+            },
+            channel_meta: if channel_meta_parts.is_empty() {
+                None
+            } else {
+                Some(channel_meta_parts.join("\n\n"))
+            },
+        };
+        let system_blocks = super::prompt_assembly::build_blocks(prompt_inputs);
+        // Legacy flat string for providers that don't honor
+        // `system_blocks` (and as a back-compat path when prompt_cache
+        // is disabled). Cheap to build — `flatten_blocks` walks the
+        // same Vec we just assembled.
+        let flat_system = agent_llm::flatten_blocks(&system_blocks);
+        if !flat_system.is_empty() {
+            prefix_messages.push(ChatMessage::system(flat_system));
         }
         if session.history.is_empty() {
             if let Some(ref memory) = ctx.memory {
@@ -492,6 +568,14 @@ impl LlmAgentBehavior {
         for iteration in 0..self.max_tool_iterations {
             let mut req = ChatRequest::new(&model, messages.clone());
             req.tools = filtered_tools.clone();
+            // Phase A.2 — wire the structured prompt + tool catalog
+            // caching opt-in. Provider clients that don't honor the
+            // fields fall back to flat `system_prompt`; the fields
+            // are otherwise inert.
+            if self.prompt_cache_enabled {
+                req.system_blocks = system_blocks.clone();
+                req.cache_tools = !filtered_tools.is_empty();
+            }
             tracing::debug!(
                 agent_id = %ctx.agent_id,
                 session_id = %msg.session_id,
@@ -513,6 +597,12 @@ impl LlmAgentBehavior {
                 model_label,
                 started_at.elapsed().as_millis() as u64,
             );
+            // Phase A.2 — emit cache hit/miss metrics whenever the
+            // provider returned `CacheUsage`. Off-by-default providers
+            // pass `None` here, so dashboards only see real activity.
+            if let Some(cu) = response.cache_usage.as_ref() {
+                observe_cache_usage(&ctx.agent_id, provider, model_label, cu);
+            }
             match response.content {
                 ResponseContent::Text(text) => {
                     reply_text = Some(text.clone());
@@ -637,7 +727,16 @@ impl LlmAgentBehavior {
                                 "result": result,
                                 "error": tool_err,
                             });
-                            let _ = hooks.fire("after_tool_call", ev).await;
+                            if let crate::agent::HookOutcome::Aborted { plugin_id, reason } =
+                                hooks.fire("after_tool_call", ev).await
+                            {
+                                tracing::warn!(
+                                    plugin = %plugin_id,
+                                    reason = ?reason,
+                                    hook = "after_tool_call",
+                                    "extension hook aborted the chain"
+                                );
+                            }
                         }
                         messages.push(ChatMessage::tool_result(&call.id, &call.name, result));
                     }
@@ -760,7 +859,16 @@ impl LlmAgentBehavior {
                 "text_in": msg.text,
                 "text_out": text_out,
             });
-            let _ = hooks.fire("after_message", ev).await;
+            if let crate::agent::HookOutcome::Aborted { plugin_id, reason } =
+                hooks.fire("after_message", ev).await
+            {
+                tracing::warn!(
+                    plugin = %plugin_id,
+                    reason = ?reason,
+                    hook = "after_message",
+                    "extension hook aborted the chain"
+                );
+            }
         }
         tracing::info!(
             agent_id = %ctx.agent_id,

@@ -67,6 +67,15 @@ static TOOL_LATENCY: LazyLock<DashMap<ToolKey, Histogram>> = LazyLock::new(DashM
 /// `"hit" | "miss" | "put" | "evict"`. Lets ops measure cache hit
 /// rate without instrumenting each handler by hand.
 static TOOL_CACHE_EVENTS: LazyLock<DashMap<ToolCallKey, AtomicU64>> = LazyLock::new(DashMap::new);
+
+/// Phase A.2 — provider-level prompt cache counters per (agent, provider).
+/// Field meaning matches `agent_llm::CacheUsage`. The model is part of
+/// the key so a binding-driven model swap shows up as a fresh hit-ratio
+/// curve in dashboards.
+static LLM_CACHE_READ: LazyLock<DashMap<LlmKey, AtomicU64>> = LazyLock::new(DashMap::new);
+static LLM_CACHE_CREATION: LazyLock<DashMap<LlmKey, AtomicU64>> = LazyLock::new(DashMap::new);
+static LLM_CACHE_INPUT: LazyLock<DashMap<LlmKey, AtomicU64>> = LazyLock::new(DashMap::new);
+static LLM_CACHE_TURNS: LazyLock<DashMap<LlmKey, AtomicU64>> = LazyLock::new(DashMap::new);
 /// Phase 11.2 follow-up — extension discovery counters by status.
 /// `status` is one of `"ok" | "disabled" | "invalid"`.
 static EXTENSIONS_DISCOVERED: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
@@ -88,6 +97,68 @@ pub fn inc_llm_requests_total(agent_id: &str, provider: &str, model: &str) {
         .entry(key)
         .or_insert_with(|| AtomicU64::new(0))
         .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Phase A.2 — accumulate prompt-cache token counters for the
+/// `(agent, provider, model)` key. `cache_read_input_tokens` and
+/// `cache_creation_input_tokens` add to running counters; `input_tokens`
+/// (uncached prompt) joins the same totals so a downstream dashboard
+/// can compute hit ratio = read / (read + creation + input).
+pub fn observe_cache_usage(
+    agent_id: &str,
+    provider: &str,
+    model: &str,
+    usage: &agent_llm::CacheUsage,
+) {
+    let key = LlmKey {
+        agent: agent_id.to_string(),
+        provider: provider.to_string(),
+        model: model.to_string(),
+    };
+    LLM_CACHE_READ
+        .entry(key.clone())
+        .or_insert_with(|| AtomicU64::new(0))
+        .fetch_add(usage.cache_read_input_tokens as u64, Ordering::Relaxed);
+    LLM_CACHE_CREATION
+        .entry(key.clone())
+        .or_insert_with(|| AtomicU64::new(0))
+        .fetch_add(usage.cache_creation_input_tokens as u64, Ordering::Relaxed);
+    LLM_CACHE_INPUT
+        .entry(key.clone())
+        .or_insert_with(|| AtomicU64::new(0))
+        .fetch_add(usage.input_tokens as u64, Ordering::Relaxed);
+    LLM_CACHE_TURNS
+        .entry(key)
+        .or_insert_with(|| AtomicU64::new(0))
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Snapshot of prompt-cache counters for a given key. Returns
+/// `(read, creation, input, turns)`. Used by tests and the admin
+/// surface to inspect rolling hit ratios.
+pub fn cache_usage_totals(agent_id: &str, provider: &str, model: &str) -> (u64, u64, u64, u64) {
+    let key = LlmKey {
+        agent: agent_id.to_string(),
+        provider: provider.to_string(),
+        model: model.to_string(),
+    };
+    let read = LLM_CACHE_READ
+        .get(&key)
+        .map(|v| v.value().load(Ordering::Relaxed))
+        .unwrap_or(0);
+    let creation = LLM_CACHE_CREATION
+        .get(&key)
+        .map(|v| v.value().load(Ordering::Relaxed))
+        .unwrap_or(0);
+    let input = LLM_CACHE_INPUT
+        .get(&key)
+        .map(|v| v.value().load(Ordering::Relaxed))
+        .unwrap_or(0);
+    let turns = LLM_CACHE_TURNS
+        .get(&key)
+        .map(|v| v.value().load(Ordering::Relaxed))
+        .unwrap_or(0);
+    (read, creation, input, turns)
 }
 
 pub fn observe_llm_latency_ms(agent_id: &str, provider: &str, model: &str, duration_ms: u64) {
