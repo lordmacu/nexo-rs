@@ -46,6 +46,7 @@ pub mod tool_registry_cache;
 pub mod transcripts;
 pub mod types;
 pub mod workspace;
+pub mod workspace_cache;
 pub mod workspace_git;
 pub use agent::Agent;
 pub use agents_directory::{AgentInfo, AgentsDirectory};

@@ -45,7 +45,7 @@ pub struct DailyNote {
     pub content: String,
 }
 /// What kind of session is being bootstrapped. Drives the MEMORY.md gate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SessionScope {
     /// Private DM with the primary user. `MEMORY.md` is loaded.
     Main,
