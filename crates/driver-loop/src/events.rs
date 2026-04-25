@@ -59,6 +59,16 @@ pub enum DriverEvent {
         focus: String,
         token_pressure: f64,
     },
+    /// Phase 67.C.1 — periodic mid-run progress beacon. Fires every
+    /// `progress_every_turns` after an `AttemptCompleted`, so chat
+    /// hooks (`on: progress`) and admin-ui can show 'still going'
+    /// without waiting for the goal to finish.
+    Progress {
+        goal_id: GoalId,
+        turn_index: u32,
+        usage: BudgetUsage,
+        last_text: Option<String>,
+    },
 }
 
 impl DriverEvent {
@@ -75,6 +85,7 @@ impl DriverEvent {
             DriverEvent::Escalate { .. } => "agent.driver.escalate",
             DriverEvent::ReplayDecision { .. } => "agent.driver.replay",
             DriverEvent::CompactRequested { .. } => "agent.driver.compact",
+            DriverEvent::Progress { .. } => "agent.driver.progress",
         }
     }
 }
@@ -155,6 +166,15 @@ mod tests {
                     usage: BudgetUsage::default(),
                 },
                 "agent.driver.budget.exhausted",
+            ),
+            (
+                DriverEvent::Progress {
+                    goal_id: g,
+                    turn_index: 5,
+                    usage: BudgetUsage::default(),
+                    last_text: None,
+                },
+                "agent.driver.progress",
             ),
         ];
         for (e, want) in cases {

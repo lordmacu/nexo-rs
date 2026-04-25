@@ -50,6 +50,10 @@ pub struct DriverOrchestrator {
     /// Phase 67.9 — opportunistic /compact policy.
     compact_policy: Arc<dyn CompactPolicy>,
     compact_context_window: u64,
+    /// Phase 67.C.1 — emit `DriverEvent::Progress` after every Nth
+    /// completed attempt so chat hooks can show 'still going'. `0`
+    /// disables periodic progress beacons.
+    progress_every_turns: u32,
     bin_path: PathBuf,
     socket_path: PathBuf,
     /// Owns the spawned socket server; cancelling kills it.
@@ -69,6 +73,7 @@ pub struct DriverOrchestratorBuilder {
     replay_policy: Option<Arc<dyn ReplayPolicy>>,
     compact_policy: Option<Arc<dyn CompactPolicy>>,
     compact_context_window: u64,
+    progress_every_turns: u32,
     bin_path: Option<PathBuf>,
     socket_path: Option<PathBuf>,
     cancel_root: Option<CancellationToken>,
@@ -123,6 +128,10 @@ impl DriverOrchestratorBuilder {
         self.compact_context_window = n;
         self
     }
+    pub fn progress_every_turns(mut self, n: u32) -> Self {
+        self.progress_every_turns = n;
+        self
+    }
 
     pub async fn build(self) -> Result<DriverOrchestrator, DriverError> {
         let claude_cfg = self
@@ -155,6 +164,7 @@ impl DriverOrchestratorBuilder {
             .compact_policy
             .unwrap_or_else(|| Arc::new(DefaultCompactPolicy::default()));
         let compact_context_window = self.compact_context_window;
+        let progress_every_turns = self.progress_every_turns;
         let cancel_root = self.cancel_root.unwrap_or_default();
 
         // Bind the socket server.
@@ -171,6 +181,7 @@ impl DriverOrchestratorBuilder {
             replay_policy,
             compact_policy,
             compact_context_window,
+            progress_every_turns,
             bin_path,
             socket_path,
             _socket_handle: socket_handle,
@@ -183,6 +194,19 @@ impl DriverOrchestratorBuilder {
 impl DriverOrchestrator {
     pub fn builder() -> DriverOrchestratorBuilder {
         DriverOrchestratorBuilder::default()
+    }
+
+    /// Phase 67.C.1 — fire-and-forget spawn. Returns the
+    /// [`tokio::task::JoinHandle`] so the caller (typically the
+    /// `program_phase` tool) can register the goal in the agent
+    /// registry without waiting for completion. The orchestrator is
+    /// reference-counted (`Arc<Self>`); long-running goals don't
+    /// pin a single owner.
+    pub fn spawn_goal(
+        self: Arc<Self>,
+        goal: Goal,
+    ) -> tokio::task::JoinHandle<Result<GoalOutcome, DriverError>> {
+        tokio::spawn(async move { self.run_goal(goal).await })
     }
 
     /// Drive a single goal to completion. Long-running.
@@ -316,6 +340,22 @@ impl DriverOrchestrator {
                     result: result.clone(),
                 })
                 .await;
+
+            // Phase 67.C.1 — periodic progress beacon. `0` disables.
+            if self.progress_every_turns > 0
+                && total_turns > 0
+                && total_turns.is_multiple_of(self.progress_every_turns)
+            {
+                let _ = self
+                    .event_sink
+                    .publish(DriverEvent::Progress {
+                        goal_id,
+                        turn_index: total_turns,
+                        usage: usage.clone(),
+                        last_text: result.final_text.clone(),
+                    })
+                    .await;
+            }
 
             // Phase 67.9 — opportunistic /compact: if pressure crosses
             // threshold, schedule next iteration as a compact turn.
