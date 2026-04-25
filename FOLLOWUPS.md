@@ -1653,9 +1653,8 @@ Formalizada en `PHASES.md` como sub-fase 10.9. Resumen del trade-off para no olv
 ### ~~Hot-reload de `credentials` sin restart~~ ✅ Resuelto 2026-04-24
 - `AgentCredentialResolver` migró sus campos a `ArcSwap`/`AtomicU64`. `wire::reload_resolver(config_dir, bundle, strict)` re-corre el gauntlet y hace `rebuild()` atómico. Endpoint `POST /admin/credentials/reload` en `127.0.0.1:9091` devuelve `ReloadOutcome` JSON. Failure mode preservado: si el rebuild falla, las bindings viejas siguen activas.
 
-### CLI `agent setup google --account <id> --agent <agent_id>`
-- Hoy el operador edita `google-auth.yaml` a mano + dispara consent externo. Sin wizard.
-- **Acción:** portar device-code OAuth flow; escribir `token_path` + añadir entrada a `google-auth.yaml`. Opcional hasta que haya >2 cuentas reales.
+### ~~CLI `agent setup google --account <id> --agent <agent_id>`~~ ✅ Resuelto 2026-04-25
+- `services_imperative::run_google` corre device-code OAuth inline tras escribir `google-auth.yaml`. Imprime `user_code` + `verification_url`, polea `oauth2.googleapis.com/token` hasta aprobación, persiste token en `token_path` con 0o600. Headless-friendly. `prompt::yes_no` permite saltarse el consent y diferirlo a la tool `google_auth_start` desde el agente.
 
 ### ~~Setup wizard multi-instance (WA/TG)~~ ✅ Resuelto 2026-04-24
 - `services_imperative::run_whatsapp` + `run_telegram` preguntan `instance`, `session_dir`/`token`, `allow_agents` y escriben en sequence-form a `plugins/{whatsapp,telegram}.yaml`.
