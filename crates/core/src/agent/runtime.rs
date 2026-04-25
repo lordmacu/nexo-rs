@@ -90,6 +90,14 @@ pub struct AgentRuntime {
     /// runtime gets the same Arc). `None` disables the `web_search`
     /// tool regardless of YAML.
     web_search_router: Option<Arc<nexo_web_search::WebSearchRouter>>,
+    /// Phase 26 — shared pairing gate. Consulted in the intake hot
+    /// path before sender_rate_limit; when the resolved
+    /// `EffectiveBindingPolicy::pairing.auto_challenge` is true and
+    /// the sender is not in `pairing_allow_from`, the message is
+    /// dropped and a code is logged for the operator to approve via
+    /// `nexo pair approve`. `None` disables the gate regardless of
+    /// YAML.
+    pairing_gate: Option<Arc<nexo_pairing::PairingGate>>,
     /// Legacy cache — still owned by the runtime for back-compat with
     /// any test construction path. Hot-reload reads the per-snapshot
     /// `tool_cache` instead; see [`RuntimeSnapshot::tool_cache`].
@@ -155,6 +163,7 @@ impl AgentRuntime {
             transcripts_index: None,
             link_extractor: None,
             web_search_router: None,
+            pairing_gate: None,
             tool_cache: Arc::new(super::tool_registry_cache::ToolRegistryCache::new()),
             reload_tx,
             reload_rx: Arc::new(Mutex::new(Some(reload_rx))),
@@ -194,6 +203,13 @@ impl AgentRuntime {
         router: Arc<nexo_web_search::WebSearchRouter>,
     ) -> Self {
         self.web_search_router = Some(router);
+        self
+    }
+    /// Attach the shared pairing gate. Consulted before the per-sender
+    /// rate limiter in the intake hot path so unknown senders never
+    /// reach the agent's behavior.
+    pub fn with_pairing_gate(mut self, gate: Arc<nexo_pairing::PairingGate>) -> Self {
+        self.pairing_gate = Some(gate);
         self
     }
     pub fn with_peers(mut self, peers: Arc<PeerDirectory>) -> Self {
@@ -277,6 +293,7 @@ impl AgentRuntime {
         let transcripts_index = self.transcripts_index.clone();
         let link_extractor = self.link_extractor.clone();
         let web_search_router = self.web_search_router.clone();
+        let pairing_gate = self.pairing_gate.clone();
         let router = Arc::clone(&self.router);
         let session_txs = Arc::clone(&self.session_txs);
         let debounce_ms = self.debounce_ms;
@@ -429,6 +446,67 @@ impl AgentRuntime {
                             .get("from")
                             .and_then(|v| v.as_str())
                             .map(|s| s.to_string());
+                        // Phase 26 — pairing gate. Runs before the
+                        // rate limiter so unknown senders cannot
+                        // exhaust their bucket. Only active when the
+                        // binding's effective `pairing.auto_challenge`
+                        // is true; otherwise the gate fast-paths to
+                        // Admit at zero overhead. The challenge code
+                        // is logged (operator approves via `nexo pair
+                        // approve`); a future pass will publish it
+                        // back through the channel adapter so the
+                        // sender sees it in their chat.
+                        if effective.pairing.auto_challenge {
+                            if let (Some(gate), Some(sender)) =
+                                (pairing_gate.as_ref(), sender_id.as_deref())
+                            {
+                                let channel = source_plugin.as_str();
+                                let account = source_instance.as_deref().unwrap_or("default");
+                                match gate
+                                    .should_admit(channel, account, sender, &effective.pairing)
+                                    .await
+                                {
+                                    Ok(nexo_pairing::Decision::Admit) => {}
+                                    Ok(nexo_pairing::Decision::Challenge { code }) => {
+                                        tracing::warn!(
+                                            agent_id = %agent.id,
+                                            channel,
+                                            account,
+                                            sender,
+                                            code = %code,
+                                            "pairing challenge issued — run `nexo pair approve {}` to admit",
+                                            code,
+                                        );
+                                        publish_pairing_challenge(
+                                            &broker,
+                                            channel,
+                                            source_instance.as_deref(),
+                                            sender,
+                                            &code,
+                                        )
+                                        .await;
+                                        continue;
+                                    }
+                                    Ok(nexo_pairing::Decision::Drop) => {
+                                        tracing::trace!(
+                                            agent_id = %agent.id,
+                                            channel,
+                                            account,
+                                            sender,
+                                            "pairing gate dropped (max-pending exhausted)",
+                                        );
+                                        continue;
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            agent_id = %agent.id,
+                                            error = %e,
+                                            "pairing gate storage error — admitting fail-open",
+                                        );
+                                    }
+                                }
+                            }
+                        }
                         // Per-sender rate limit — applied after the
                         // binding filter so we don't waste bucket
                         // tokens on events the agent would drop anyway.
@@ -1004,6 +1082,41 @@ fn match_binding_index(
 #[cfg(test)]
 fn binding_matches(bindings: &[InboundBinding], plugin: &str, instance: Option<&str>) -> bool {
     match_binding_index(bindings, plugin, instance).is_some()
+}
+
+/// Phase 26 (PR-1) — when the gate issues a Challenge, deliver the
+/// pairing code back to the sender via the channel's outbound topic.
+/// WhatsApp and Telegram share the same `{kind:"text", to, text}`
+/// payload shape; for unknown channels we no-op (the operator still
+/// sees the code in the warn log emitted just before).
+async fn publish_pairing_challenge(
+    broker: &AnyBroker,
+    channel: &str,
+    instance: Option<&str>,
+    sender: &str,
+    code: &str,
+) {
+    let topic_base = match channel {
+        "whatsapp" => "plugin.outbound.whatsapp",
+        "telegram" => "plugin.outbound.telegram",
+        _ => return,
+    };
+    let topic = match instance {
+        Some(inst) if !inst.is_empty() => format!("{topic_base}.{inst}"),
+        _ => topic_base.to_string(),
+    };
+    let text = format!(
+        "🔐 Pairing required.\nAsk the operator to run:\n  nexo pair approve {code}",
+    );
+    let payload = serde_json::json!({
+        "kind": "text",
+        "to": sender,
+        "text": text,
+    });
+    let evt = nexo_broker::Event::new(&topic, "core.pairing", payload);
+    if let Err(e) = broker.publish(&topic, evt).await {
+        tracing::warn!(error = %e, %topic, "pairing challenge outbound publish failed");
+    }
 }
 #[cfg(test)]
 mod tests {

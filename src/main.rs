@@ -1124,9 +1124,11 @@ async fn main() -> Result<()> {
         tracing::info!(store = %store_path.display(), secret = %secret_path.display(), "pairing initialised");
         (store, gate, issuer)
     };
-    // Touch them so unused-var checks pass while the plugin/CLI
-    // wiring lands in the next commit.
-    let _ = (Arc::clone(&pairing_store), Arc::clone(&pairing_gate), Arc::clone(&setup_code_issuer));
+    // `setup_code_issuer` is consumed only by the CLI subcommand (it
+    // opens its own copy of the secret from disk), so the daemon
+    // touches it just to verify the secret file exists at boot. The
+    // store + gate flow into every AgentRuntime below.
+    let _ = (Arc::clone(&pairing_store), Arc::clone(&setup_code_issuer));
 
     let mut runtimes: Vec<AgentRuntime> = Vec::with_capacity(cfg.agents.agents.len());
     // Phase 18 — collect each agent's reload channel so the coordinator
@@ -1978,6 +1980,7 @@ async fn main() -> Result<()> {
         if let Some(ref ws) = web_search_router {
             runtime = runtime.with_web_search_router(Arc::clone(ws));
         }
+        runtime = runtime.with_pairing_gate(Arc::clone(&pairing_gate));
         runtime
             .start()
             .await

@@ -136,17 +136,34 @@ W-5. **Cache `:memory:` SQLite quirk**
 
 ### Phase 26 — Pairing protocol
 
-PR-1. **Plugin gate hooks for WhatsApp + Telegram**
-- Missing: actual `gate.should_admit(...)` call in
-  `crates/plugins/whatsapp/src/inbound.rs` and
-  `crates/plugins/telegram/src/bot.rs` before the broker publish.
-- Why deferred: both plugins have parallel in-flight changes from
-  other agents this cycle; jamming the hook in alongside risks
-  conflict on rebases. The gate + store + CLI are landed and tested
-  in isolation, so once the parallel work settles, wiring the hook
-  is ~10 lines per plugin.
-- Target: next plugin-side cycle. Pattern is documented in the spec
-  (`PairingChannelAdapter` impl + gate call site).
+PR-1. ~~**Plugin gate hooks for WhatsApp + Telegram**~~  ✅ shipped (in agent-core intake)
+- The gate now runs in the runtime intake hot path
+  (`crates/core/src/agent/runtime.rs`) right before the per-sender
+  rate limiter. Plugins do not need bespoke wiring — the gate sees
+  every event regardless of source plugin, keyed by
+  `(source_plugin, source_instance, sender_id)`. Default
+  `auto_challenge=false` keeps existing setups silent.
+- Reply-back path deferred: when a sender is challenged the code is
+  only logged (operator approves via `nexo pair approve`). Sending
+  the code through the channel adapter so the sender sees it in
+  their chat is PR-1.1, separate work that needs a per-channel
+  outbound publish helper.
+
+PR-1.1. **Challenge reply through channel adapter**
+- Missing: when the gate issues `Decision::Challenge { code }`, the
+  sender sees nothing — they have to ask the operator out-of-band
+  for the code. Spec called for the reply to flow back through the
+  channel.
+- Why deferred: the runtime would need to publish a synthetic
+  outbound event with the right shape per channel
+  (`plugin.outbound.whatsapp` / `plugin.outbound.telegram`); each
+  plugin's outbound dispatcher currently expects an LLM-shaped
+  message, not a raw "send this text to this sender" call. Cleanest
+  fix is a `PairingChannelAdapter::send_reply` invocation from the
+  runtime, which means resolving an `Arc<dyn PairingChannelAdapter>`
+  per channel — needs a registry the bin populates at boot.
+- Target: when an operator complains they have no way to tell the
+  user how to get approved.
 
 PR-2. **Telemetry counters not wired**
 - Missing: `pairing_requests_pending{channel}` (gauge),
