@@ -232,13 +232,27 @@ Tracks **P-1**, **P-2**, **P-3** in `FOLLOWUPS.md`:
   webhooks) — likely its own crate / phase. Needs public TLS
   surface + inbound auth.
 
-#### 38.x — `nexo-llm` telemetry test serial guard   ⬜  (XS)
+#### 38.x — Test flakes & real concurrency races   ⬜
 
-`nexo_llm::telemetry::tests::render_empty_series_when_no_samples`
-flakes under `cargo test --workspace` due to global `LazyLock`
-state shared across parallel test binaries. Add `serial_test`
-guard. Bookkept under Phase 38 (chaos / property tests) since
-that's where flake-fix work lives.
+Two unrelated flakes that surface under CI parallelism. Bundled
+because Phase 38 (chaos / property tests) is where this kind of
+work lives.
+
+- **38.x.1** `nexo_llm::telemetry::tests::render_empty_series_when_no_samples`
+  flakes under `cargo test --workspace` due to global `LazyLock`
+  state shared across parallel test binaries. Fix: `serial_test`
+  guard, or scope the global behind a `cfg(test)`-only registry
+  reset.
+- **38.x.2** `nexo_core::agent::transcripts::tests::concurrent_first_appends_only_write_one_header`
+  is `#[ignore]`'d today — it surfaces a real race in
+  `TranscriptWriter::append_entry`: the writer that wins the
+  `create_new` open isn't guaranteed to flush the header before
+  other writers open in `append` mode. Real fix needs a per-session
+  in-process Mutex (`DashMap<(root, session_id),
+  Arc<tokio::Mutex<()>>>`) around the header-creation block. The
+  bug is dormant in production today because plugins serialise
+  inbound events per session at the broker, but it's a foot-gun for
+  any future caller that fans out concurrent appends.
 
 ---
 

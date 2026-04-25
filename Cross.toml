@@ -5,7 +5,11 @@
 # external crates.io dep we don't control; once it ships a `rustls`
 # feature, this whole file goes away.
 
+# Use a newer base image (jammy / 22.04) so libssl-dev:arm64 ships
+# openssl 3.x. The default cross image is xenial (16.04) which only
+# has 1.0.x and openssl-sys 0.9.114 refuses to link against that.
 [target.aarch64-unknown-linux-gnu]
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-gnu:main"
 pre-build = [
     "dpkg --add-architecture arm64",
     "apt-get update",
