@@ -341,6 +341,7 @@ name = "agent-plugin-gmail-poller"
 version = "0.1.0"
 dependencies = [
  "agent-broker",
+ "agent-config",
  "agent-plugin-google",
  "anyhow",
  "base64",
@@ -435,6 +436,7 @@ dependencies = [
  "agent-auth",
  "agent-broker",
  "agent-config",
+ "agent-llm",
  "agent-plugin-google",
  "agent-resilience",
  "anyhow",
