@@ -1,0 +1,7 @@
+node_modules
+# Only the build artefacts — the dir itself (+ .gitkeep) stays so
+# rust-embed's compile-time folder probe succeeds on fresh clones.
+dist/*
+!dist/.gitkeep
+.vite
+*.tsbuildinfo

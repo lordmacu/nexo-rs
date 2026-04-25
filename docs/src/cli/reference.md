@@ -240,8 +240,10 @@ What happens on launch:
    OS RNG. Printed once to stdout — copy it now; there is no
    recovery short of relaunching `agent admin`.
 3. **Start a loopback HTTP server.** Listens on
-   `127.0.0.1:<port>`; currently serves a placeholder "hello" page
-   behind HTTP Basic Auth (real React UI lands next).
+   `127.0.0.1:<port>` and serves the React bundle embedded at Rust
+   compile time (see `admin-ui/`) behind HTTP Basic Auth. A
+   bundle-missing fallback page is served if `admin-ui/dist/` was
+   empty when `cargo build` ran.
 4. **Open a quick tunnel.** `cloudflared tunnel --url http://127.0.0.1:<port>`
    returns an ephemeral `https://…trycloudflare.com` URL, which the
    command prints to stdout alongside the username (`admin`) and the

@@ -1,0 +1,4 @@
+This file exists so `rust-embed` in `src/main.rs` can point at
+`admin-ui/dist/` at compile time even on fresh clones that haven't
+run `npm run build` yet. The real bundle replaces everything else
+in this directory on build.

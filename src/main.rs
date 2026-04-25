@@ -2287,26 +2287,47 @@ async fn run_admin_web(port: u16) -> Result<()> {
                     .map(|token| token.trim())
                     .map(|token| token == expected)
                     .unwrap_or(false);
-                let response = if authorized {
-                    let body = ADMIN_HELLO_HTML;
-                    format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\
-                         Content-Length: {}\r\nConnection: close\r\n\r\n{}",
-                        body.len(),
-                        body
-                    )
-                } else {
+
+                if !authorized {
                     let body = "401 Unauthorized";
-                    format!(
+                    let response = format!(
                         "HTTP/1.1 401 Unauthorized\r\n\
                          WWW-Authenticate: Basic realm=\"nexo-rs admin\"\r\n\
                          Content-Type: text/plain\r\nContent-Length: {}\r\n\
                          Connection: close\r\n\r\n{}",
                         body.len(),
                         body
-                    )
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                    let _ = stream.shutdown().await;
+                    return;
+                }
+
+                // Authorised — serve the embedded bundle. Path is the
+                // second token of the request line (METHOD SP PATH SP HTTP/1.1).
+                let path = request
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .unwrap_or("/")
+                    .to_string();
+
+                let (body, mime) = match admin_asset_for_path(&path) {
+                    Some(pair) => pair,
+                    None => (
+                        ADMIN_FALLBACK_HTML.as_bytes().to_vec(),
+                        "text/html; charset=utf-8",
+                    ),
                 };
-                let _ = stream.write_all(response.as_bytes()).await;
+
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\n\
+                     Cache-Control: no-store\r\nConnection: close\r\n\r\n",
+                    mime,
+                    body.len(),
+                );
+                let _ = stream.write_all(head.as_bytes()).await;
+                let _ = stream.write_all(&body).await;
                 let _ = stream.shutdown().await;
             });
         }
@@ -2419,31 +2440,87 @@ async fn read_http_head(stream: &mut TcpStream) -> std::io::Result<String> {
 /// Placeholder admin page. Gets replaced once the real UI lands; the
 /// current content is deliberately terse so the tunnel-wiring
 /// acceptance test doesn't depend on UI copy.
-const ADMIN_HELLO_HTML: &str = r#"<!doctype html>
+/// React + Vite + Tailwind bundle baked in at Rust compile time. The
+/// `admin-ui/` workspace produces `admin-ui/dist/`; we embed every
+/// file under that tree. A fresh clone that hasn't run `npm run
+/// build` yet has a `.gitkeep`-only tree — we detect that at runtime
+/// and fall back to [`ADMIN_FALLBACK_HTML`] so the tunnel always
+/// reaches something useful.
+#[derive(rust_embed::RustEmbed)]
+#[folder = "admin-ui/dist/"]
+#[exclude = ".gitkeep"]
+struct AdminBundle;
+
+/// Shown when the operator hasn't built the React bundle yet — e.g.
+/// a fresh clone where `cd admin-ui && npm install && npm run build`
+/// hasn't run. Stays in sync with `admin-ui/README.md` on the build
+/// steps so copy-paste recovery is one hop away.
+const ADMIN_FALLBACK_HTML: &str = r#"<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>nexo-rs admin</title>
+  <title>nexo-rs admin (bundle missing)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     body { font: 16px/1.5 system-ui, -apple-system, sans-serif;
            max-width: 40rem; margin: 3rem auto; padding: 0 1rem;
            color: #222; background: #fafafa; }
-    code { background: #eee; padding: .1em .3em; border-radius: 3px; }
+    code, pre { background: #eee; padding: .1em .3em; border-radius: 3px; }
+    pre { padding: 1em; overflow-x: auto; }
     a { color: #0066cc; }
     h1 { margin-bottom: .3em; }
-    .badge { display: inline-block; background: #0066cc; color: #fff;
-             padding: .1em .5em; border-radius: 3px; font-size: .8em; }
   </style>
 </head>
 <body>
-  <h1>Hello from <code>nexo-rs</code> admin <span class="badge">dev</span></h1>
-  <p>If you can read this, the Cloudflare quick tunnel reached your local
-     agent. The real admin UI lands next.</p>
-  <p>Docs: <a href="https://lordmacu.github.io/nexo-rs/">lordmacu.github.io/nexo-rs</a></p>
+  <h1>nexo-rs admin</h1>
+  <p>The React bundle isn't embedded in this <code>agent</code> binary.
+     Build it and rebuild the binary:</p>
+  <pre>cd admin-ui
+npm install
+npm run build
+cargo build --release --bin agent
+./target/release/agent admin</pre>
+  <p>More: <a href="https://lordmacu.github.io/nexo-rs/cli/reference.html#admin">CLI reference — admin</a></p>
 </body>
 </html>
 "#;
+
+/// Resolve a request path to an embedded asset plus its MIME type.
+/// `/` and any unknown route both map to `index.html` so the SPA
+/// router handles unknown routes client-side (standard Vite / CRA
+/// pattern). Returns `None` only when the bundle is empty so the
+/// caller can fall back to the placeholder HTML.
+fn admin_asset_for_path(path: &str) -> Option<(Vec<u8>, &'static str)> {
+    let trimmed = path.trim_start_matches('/');
+    let candidate = if trimmed.is_empty() {
+        "index.html".to_string()
+    } else {
+        trimmed.to_string()
+    };
+    let hit = AdminBundle::get(&candidate).or_else(|| AdminBundle::get("index.html"))?;
+    let mime = admin_mime_for(&candidate);
+    Some((hit.data.into_owned(), mime))
+}
+
+fn admin_mime_for(path: &str) -> &'static str {
+    match path.rsplit('.').next().unwrap_or("") {
+        "html" | "htm" => "text/html; charset=utf-8",
+        "js" | "mjs" => "application/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "json" | "map" => "application/json",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "ico" => "image/x-icon",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        "ttf" => "font/ttf",
+        "txt" => "text/plain; charset=utf-8",
+        _ => "application/octet-stream",
+    }
+}
 
 async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
     use agent_core::agent::self_report::WhoAmITool;
