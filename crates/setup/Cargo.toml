@@ -13,9 +13,9 @@ readme        = "README.md"
 keywords      = { workspace = true }
 categories    = { workspace = true }
 [dependencies]
-nexo-config = { version = "0.1.1", path = "../config" }
+nexo-config = { version = "0.1.2", path = "../config" }
 nexo-core = { version = "0.1.1", path = "../core" }
-nexo-auth = { version = "0.1.1", path = "../auth" }
+nexo-auth = { version = "0.1.2", path = "../auth" }
 anyhow       = { workspace = true }
 serde        = { workspace = true }
 serde_json   = { workspace = true }
