@@ -107,7 +107,7 @@ cargo run --bin agent -- --config config/agents.yaml
 
 - **All code comments in English**
 - **All code (variables, functions, types, modules) in English**
-- Conversations with Cristian in Spanish — code artifacts always English
+- **All repository Markdown/docs in English** (except proper names/legal text)
 
 ## MANDATORY: Before every sub-phase
 
@@ -144,6 +144,27 @@ All feature work follows this pipeline:
 ### Phase trigger rule
 
 **Whenever any implementation phase starts** (coding begins), run `/forge ejecutar <topic>` automatically. This ensures OpenClaw reference is checked, `cargo build` gates are enforced, and features outside the plan are deferred.
+
+## MANDATORY: Keep admin-ui/PHASES.md in sync
+
+Every feature that exposes an operator-visible knob (config field,
+YAML block, CLI subcommand, new runtime surface, plugin toggle, skill
+registration, etc.) **must** land a line in
+[`admin-ui/PHASES.md`](admin-ui/PHASES.md) in the **same commit**
+that ships the feature.
+
+- Feature fits an existing phase (A0–A11)? Add a checkbox inside
+  that phase.
+- Feature is orthogonal to every phase? Add a bullet under the
+  "Tech-debt registry" section at the bottom of the file.
+- Pure-internal change with no operator surface? No entry needed —
+  mention that explicitly in the commit body.
+
+Rationale: the web admin is the single pane of glass operators will
+use. If the backend grows a knob and the admin doesn't track it, the
+admin silently decays into a marketing page. The tech-debt registry
+is the IOU list that forces the UI to keep pace — same reflex as
+the docs-sync rule below.
 
 ## MANDATORY: Keep docs/ in sync
 

@@ -60,6 +60,8 @@ dependencies = [
  "agent-plugin-google",
  "agent-plugin-telegram",
  "agent-plugin-whatsapp",
+ "agent-poller",
+ "agent-poller-tools",
  "agent-setup",
  "agent-taskflow",
  "agent-tunnel",
@@ -67,13 +69,16 @@ dependencies = [
  "async-nats",
  "async-trait",
  "base64",
+ "chrono",
  "futures",
  "humantime",
  "rand 0.8.6",
  "reqwest",
  "rust-embed",
+ "serde",
  "serde_json",
  "serde_yaml",
+ "sha2",
  "tokio",
  "tokio-util",
  "tracing",
@@ -430,15 +435,18 @@ dependencies = [
  "agent-auth",
  "agent-broker",
  "agent-config",
+ "agent-plugin-google",
  "agent-resilience",
  "anyhow",
  "arc-swap",
  "async-trait",
+ "base64",
  "chrono",
  "chrono-tz",
  "cron",
  "dashmap",
  "humantime",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",
@@ -449,6 +457,18 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+]
+
+[[package]]
+name = "agent-poller-tools"
+version = "0.1.0"
+dependencies = [
+ "agent-core",
+ "agent-llm",
+ "agent-poller",
+ "anyhow",
+ "async-trait",
+ "serde_json",
 ]
 
 [[package]]

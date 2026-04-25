@@ -9,7 +9,10 @@
 //! `client_secret_path` fields when `accounts` is absent.
 
 pub mod config;
+pub mod legacy_adapter;
 pub mod poll;
+
+pub use legacy_adapter::translate;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -19,6 +22,14 @@ use agent_plugin_google::{GoogleAuthClient, GoogleAuthConfig};
 use anyhow::{Context, Result};
 
 pub use config::{AccountConfig, GmailPollerConfig, JobConfig};
+
+/// Public re-export so [`legacy_adapter`] can reuse the same
+/// resolution logic (back-compat shorthand expansion).
+pub fn resolve_accounts_for_translate(
+    cfg: &GmailPollerConfig,
+) -> Result<Vec<AccountConfig>> {
+    resolve_accounts(cfg)
+}
 
 /// Resolve the account list from config, expanding the back-compat
 /// single-account shorthand when needed. Errors if neither form
