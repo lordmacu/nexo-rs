@@ -165,6 +165,57 @@ Phase 67.3 ships the bin in placeholder modes (`--allow-all` for dev,
 for `--socket <path>` so the bin asks the daemon's `LlmDecider`
 (MiniMax + memory) for each decision.
 
+## Goal lifecycle (Phase 67.4)
+
+```
+nexo-driver run goal.yaml
+        │
+        ▼
+DriverOrchestrator::run_goal
+        │
+        ├─ workspace_manager.ensure(&goal)        ─┐
+        │                                          │
+        ├─ write_mcp_config(workspace,             ├─ side-effects in
+        │     bin_path, socket_path)               │   <workspace>/
+        │                                          │
+        ├─ DriverSocketServer (already running) ──┘
+        │     spawned by builder, owned via JoinHandle
+        │
+        └─ for each turn:
+             ├─ budget.is_exhausted? → BudgetExhausted{axis}
+             ├─ AttemptStarted event
+             ├─ run_attempt(ctx, params)
+             │     spawn `claude --resume <id> ... --mcp-config ...`
+             │     event-loop on stream-json
+             │     binding_store.upsert(session_id)
+             │     acceptance.evaluate(criteria, workspace)
+             │     return AttemptResult { outcome }
+             ├─ AttemptCompleted event
+             └─ match outcome:
+                Done            → break, GoalCompleted{Done}
+                NeedsRetry{f}   → next turn with prior_failures
+                Continue{...}   → next turn (e.g. session-invalid retry)
+                Cancelled       → break
+                BudgetExhausted → break
+                Escalate{r}     → emit Escalate event, break
+```
+
+`AttemptOutcome::Continue` covers two cases the loop treats the same:
+the stream ended without `Result::Success` (Claude crashed early),
+and a `session not found` reply that triggered
+`binding_store.mark_invalid` so the next turn starts fresh.
+
+NATS subjects emitted (when `feature = "nats"` and
+`emit_nats_events: true`):
+
+- `agent.driver.goal.{started,completed}`
+- `agent.driver.attempt.{started,completed}`
+- `agent.driver.decision`           (Phase 67.7 will populate when
+                                     `LlmDecider` records its rationale)
+- `agent.driver.acceptance`
+- `agent.driver.budget.exhausted`
+- `agent.driver.escalate`
+
 ## Sub-phases
 
 | Phase | What | Status |
@@ -173,7 +224,7 @@ for `--socket <path>` so the bin asks the daemon's `LlmDecider`
 | 67.1 | `claude_cli` skill (spawn + stream-json + resume) | ✅ |
 | 67.2 | Session-binding store (SQLite) | ✅ |
 | 67.3 | MCP `permission_prompt` in-process | ✅ |
-| 67.4 | Driver agent loop + budget guards | ⬜ |
+| 67.4 | Driver agent loop + budget guards | ✅ |
 | 67.5 | Acceptance evaluator | ⬜ |
 | 67.6 | Git worktree sandboxing + per-turn checkpoint | ⬜ |
 | 67.7 | Memoria semántica de decisiones | ⬜ |

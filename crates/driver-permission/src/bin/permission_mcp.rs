@@ -1,14 +1,16 @@
-//! Phase 67.3 placeholder bin. Without `--socket <path>` (Phase 67.4)
-//! this defaults to `AllowAllDecider` and emits a loud warning. Use
-//! `--deny-all <reason>` to test the deny path.
+//! Phase 67.3/67.4 bin. Default: AllowAllDecider with a loud warning
+//! (DEV ONLY). With `--socket <path>` (Phase 67.4) it forwards every
+//! request to the daemon-side decider over a Unix socket.
 
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
 use nexo_driver_permission::{
     AllowAllDecider, DenyAllDecider, PermissionDecider, PermissionError, PermissionMcpServer,
-    PermissionRequest, PermissionResponse,
+    PermissionRequest, PermissionResponse, SocketDecider,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -27,12 +29,17 @@ async fn main() -> Result<()> {
                     .unwrap_or_else(|| "denied by --deny-all (no reason given)".into());
                 mode = Mode::DenyAll(reason);
             }
+            "--socket" => {
+                let path = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--socket requires <path>"))?;
+                mode = Mode::Socket(PathBuf::from(path));
+            }
             "-h" | "--help" => {
                 eprintln!(
-                    "nexo-driver-permission-mcp [--allow-all | --deny-all <reason>]\n\
+                    "nexo-driver-permission-mcp [--socket <path> | --allow-all | --deny-all <reason>]\n\
                      \n\
-                     Phase 67.3 placeholder. Phase 67.4 will swap these flags for\n\
-                     `--socket <path>` to wire the bin to the daemon's decider."
+                     Default: --allow-all (DEV ONLY). --socket forwards to the daemon's decider."
                 );
                 return Ok(());
             }
@@ -46,13 +53,21 @@ async fn main() -> Result<()> {
         Mode::AllowAll => {
             tracing::warn!(
                 "permission_mcp: AllowAllDecider active — DEV ONLY. \
-                 Phase 67.4 wires --socket to the daemon."
+                 Use --socket <path> for production."
             );
             BinDecider::AllowAll(AllowAllDecider)
         }
         Mode::DenyAll(reason) => {
             tracing::info!(target: "permission_mcp", "DenyAllDecider active: {reason}");
             BinDecider::DenyAll(DenyAllDecider { reason })
+        }
+        Mode::Socket(path) => {
+            tracing::info!(
+                target: "permission_mcp",
+                "SocketDecider active: socket={}",
+                path.display()
+            );
+            BinDecider::Socket(SocketDecider::new(path, Duration::from_secs(30)))
         }
     };
 
@@ -65,14 +80,16 @@ async fn main() -> Result<()> {
 enum Mode {
     AllowAll,
     DenyAll(String),
+    Socket(PathBuf),
 }
 
 /// Concrete enum so the bin can carry a single `Arc<BinDecider>`
-/// through the server. Phase 67.4 will replace this with a
-/// `SocketDecider` variant that talks to the daemon.
+/// through the MCP server. Lets the server stay monomorphised
+/// behind `Arc<D>` instead of `Arc<dyn>`.
 enum BinDecider {
     AllowAll(AllowAllDecider),
     DenyAll(DenyAllDecider),
+    Socket(SocketDecider),
 }
 
 #[async_trait]
@@ -84,6 +101,7 @@ impl PermissionDecider for BinDecider {
         match self {
             Self::AllowAll(d) => d.decide(request).await,
             Self::DenyAll(d) => d.decide(request).await,
+            Self::Socket(d) => d.decide(request).await,
         }
     }
 }

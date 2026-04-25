@@ -2257,6 +2257,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexo-driver-loop"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "async-nats",
+ "async-trait",
+ "chrono",
+ "dashmap",
+ "humantime-serde",
+ "nexo-driver-claude",
+ "nexo-driver-permission",
+ "nexo-driver-types",
+ "nexo-llm",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "nexo-driver-permission"
 version = "0.1.1"
 dependencies = [
@@ -2267,6 +2293,7 @@ dependencies = [
  "nexo-mcp",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tokio-util",
