@@ -83,6 +83,7 @@ async fn budget_turns_axis_fires() {
             max_wall_time: Duration::from_secs(30),
             max_tokens: 100_000,
             max_consecutive_denies: 3,
+            max_consecutive_errors: 5,
         },
         workspace: None,
         metadata: serde_json::Map::new(),

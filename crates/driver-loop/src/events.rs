@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::DriverError;
 use crate::orchestrator::GoalOutcome;
+use crate::replay::ReplayDecision;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -44,6 +45,13 @@ pub enum DriverEvent {
         goal_id: GoalId,
         reason: String,
     },
+    /// Phase 67.8 — replay-policy classified a mid-turn error.
+    ReplayDecision {
+        goal_id: GoalId,
+        turn_index: u32,
+        decision: ReplayDecision,
+        error_message: String,
+    },
 }
 
 impl DriverEvent {
@@ -58,6 +66,7 @@ impl DriverEvent {
             DriverEvent::Acceptance { .. } => "agent.driver.acceptance",
             DriverEvent::BudgetExhausted { .. } => "agent.driver.budget.exhausted",
             DriverEvent::Escalate { .. } => "agent.driver.escalate",
+            DriverEvent::ReplayDecision { .. } => "agent.driver.replay",
         }
     }
 }

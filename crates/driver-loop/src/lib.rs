@@ -12,6 +12,7 @@ pub mod mcp_config;
 pub mod memory;
 pub mod orchestrator;
 pub mod prompt;
+pub mod replay;
 pub mod socket;
 pub mod workspace;
 
@@ -21,8 +22,8 @@ pub use acceptance::{
 };
 pub use config::{
     AcceptanceConfig, BindingStoreConfig, BindingStoreKind, DeciderConfig, DeciderMemoryConfig,
-    DriverBinConfig, DriverConfig, EmbeddingProviderConfig, NamespaceConfig, PermissionConfig,
-    WorkspaceConfig, WorkspaceGitConfig,
+    DenyShortcutConfig, DriverBinConfig, DriverConfig, EmbeddingProviderConfig, NamespaceConfig,
+    PermissionConfig, ReplayPolicyConfig, WorkspaceConfig, WorkspaceGitConfig,
 };
 pub use error::DriverError;
 #[cfg(feature = "nats")]
@@ -34,5 +35,8 @@ pub use mcp_config::write_mcp_config;
 pub use memory::{DecisionMemory, Namespace, NoopDecisionMemory, SqliteVecDecisionMemory};
 pub use orchestrator::{DriverOrchestrator, DriverOrchestratorBuilder, GoalOutcome};
 pub use prompt::compose_turn_prompt;
+pub use replay::{
+    DefaultReplayPolicy, ReplayContext, ReplayDecision, ReplayOutcomeHint, ReplayPolicy,
+};
 pub use socket::{DriverSocketServer, SocketMessage};
 pub use workspace::{GitWorktreeMode, WorkspaceManager};

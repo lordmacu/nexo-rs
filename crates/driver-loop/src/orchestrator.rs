@@ -20,6 +20,9 @@ use crate::attempt::{run_attempt, AttemptContext};
 use crate::error::DriverError;
 use crate::events::{DriverEvent, DriverEventSink, NoopEventSink};
 use crate::mcp_config::write_mcp_config;
+use crate::replay::{
+    DefaultReplayPolicy, ReplayContext, ReplayDecision, ReplayOutcomeHint, ReplayPolicy,
+};
 use crate::socket::DriverSocketServer;
 use crate::workspace::WorkspaceManager;
 
@@ -41,6 +44,8 @@ pub struct DriverOrchestrator {
     acceptance: Arc<dyn AcceptanceEvaluator>,
     workspace_manager: Arc<WorkspaceManager>,
     event_sink: Arc<dyn DriverEventSink>,
+    /// Phase 67.8 — replay-policy classifies mid-turn errors.
+    replay_policy: Arc<dyn ReplayPolicy>,
     bin_path: PathBuf,
     socket_path: PathBuf,
     /// Owns the spawned socket server; cancelling kills it.
@@ -57,6 +62,7 @@ pub struct DriverOrchestratorBuilder {
     decider: Option<Arc<dyn PermissionDecider>>,
     workspace_manager: Option<Arc<WorkspaceManager>>,
     event_sink: Option<Arc<dyn DriverEventSink>>,
+    replay_policy: Option<Arc<dyn ReplayPolicy>>,
     bin_path: Option<PathBuf>,
     socket_path: Option<PathBuf>,
     cancel_root: Option<CancellationToken>,
@@ -99,6 +105,10 @@ impl DriverOrchestratorBuilder {
         self.cancel_root = Some(c);
         self
     }
+    pub fn replay_policy(mut self, p: Arc<dyn ReplayPolicy>) -> Self {
+        self.replay_policy = Some(p);
+        self
+    }
 
     pub async fn build(self) -> Result<DriverOrchestrator, DriverError> {
         let claude_cfg = self
@@ -124,6 +134,9 @@ impl DriverOrchestratorBuilder {
             .unwrap_or_else(|| Arc::new(NoopAcceptanceEvaluator));
         let event_sink: Arc<dyn DriverEventSink> =
             self.event_sink.unwrap_or_else(|| Arc::new(NoopEventSink));
+        let replay_policy: Arc<dyn ReplayPolicy> = self
+            .replay_policy
+            .unwrap_or_else(|| Arc::new(DefaultReplayPolicy::default()));
         let cancel_root = self.cancel_root.unwrap_or_default();
 
         // Bind the socket server.
@@ -137,6 +150,7 @@ impl DriverOrchestratorBuilder {
             acceptance,
             workspace_manager,
             event_sink,
+            replay_policy,
             bin_path,
             socket_path,
             _socket_handle: socket_handle,
@@ -242,7 +256,7 @@ impl DriverOrchestrator {
                             .insert("worktree.diff_stat".into(), serde_json::Value::String(diff));
                         result.harness_extras.insert(
                             "worktree.checkpoint_sha".into(),
-                            serde_json::Value::String(cp_sha),
+                            serde_json::Value::String(cp_sha.clone()),
                         );
                     }
                 }
@@ -272,18 +286,81 @@ impl DriverOrchestrator {
 
             match &result.outcome {
                 AttemptOutcome::Done => {
+                    usage.consecutive_errors = 0;
                     final_outcome = AttemptOutcome::Done;
                     break;
                 }
                 AttemptOutcome::NeedsRetry { failures } => {
+                    usage.consecutive_errors = 0;
                     prior_failures = failures.clone();
                     continue;
                 }
-                AttemptOutcome::Continue { .. } => {
-                    // session-invalid retry / mid-conversation pause /
-                    // stream-ended-without-result: retry next turn.
-                    prior_failures.clear();
-                    continue;
+                AttemptOutcome::Continue { reason } | AttemptOutcome::Escalate { reason } => {
+                    // Phase 67.8 — replay-policy classifies the
+                    // error and decides whether to retry the same
+                    // turn with a fresh session, advance to the
+                    // next turn, or escalate.
+                    let hint = match &result.outcome {
+                        AttemptOutcome::Continue { .. } => ReplayOutcomeHint::Continue,
+                        _ => ReplayOutcomeHint::Escalate,
+                    };
+                    let cp_for_replay =
+                        if cp_sha == crate::workspace::WorkspaceManager::NO_GIT_SENTINEL {
+                            None
+                        } else {
+                            Some(cp_sha.as_str())
+                        };
+                    let ctx = ReplayContext {
+                        goal_id,
+                        turn_index: total_turns,
+                        pre_turn_checkpoint: cp_for_replay,
+                        usage: &usage,
+                        error_message: reason,
+                        last_outcome_hint: hint,
+                    };
+                    let decision = self.replay_policy.classify(&ctx).await;
+                    let _ = self
+                        .event_sink
+                        .publish(DriverEvent::ReplayDecision {
+                            goal_id,
+                            turn_index: total_turns,
+                            decision: decision.clone(),
+                            error_message: reason.clone(),
+                        })
+                        .await;
+                    match decision {
+                        ReplayDecision::FreshSessionRetry { rollback_to } => {
+                            let _ = self.binding_store.mark_invalid(goal_id).await;
+                            if let Some(sha) = rollback_to {
+                                let _ = self.workspace_manager.rollback(&workspace, &sha).await;
+                            }
+                            usage.consecutive_errors = usage.consecutive_errors.saturating_add(1);
+                            // NO bump turn_index — same logical turn retries.
+                            // Undo the +1 bump that happened above.
+                            total_turns = total_turns.saturating_sub(1);
+                            usage.turns = total_turns;
+                            prior_failures.clear();
+                            continue;
+                        }
+                        ReplayDecision::NextTurn { rollback_to } => {
+                            if let Some(sha) = rollback_to {
+                                let _ = self.workspace_manager.rollback(&workspace, &sha).await;
+                            }
+                            prior_failures.clear();
+                            continue;
+                        }
+                        ReplayDecision::Escalate { reason } => {
+                            let _ = self
+                                .event_sink
+                                .publish(DriverEvent::Escalate {
+                                    goal_id,
+                                    reason: reason.clone(),
+                                })
+                                .await;
+                            final_outcome = AttemptOutcome::Escalate { reason };
+                            break;
+                        }
+                    }
                 }
                 AttemptOutcome::Cancelled => {
                     final_outcome = AttemptOutcome::Cancelled;
@@ -299,19 +376,6 @@ impl DriverOrchestrator {
                         })
                         .await;
                     final_outcome = AttemptOutcome::BudgetExhausted { axis: *axis };
-                    break;
-                }
-                AttemptOutcome::Escalate { reason } => {
-                    let _ = self
-                        .event_sink
-                        .publish(DriverEvent::Escalate {
-                            goal_id,
-                            reason: reason.clone(),
-                        })
-                        .await;
-                    final_outcome = AttemptOutcome::Escalate {
-                        reason: reason.clone(),
-                    };
                     break;
                 }
             }

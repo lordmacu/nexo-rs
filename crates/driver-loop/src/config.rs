@@ -25,6 +25,59 @@ pub struct DriverConfig {
     pub driver: DriverBinConfig,
     #[serde(default)]
     pub acceptance: AcceptanceConfig,
+    /// Phase 67.8 — replay-policy + LlmDecider deny-shortcut tuning.
+    #[serde(default)]
+    pub replay_policy: ReplayPolicyConfig,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct ReplayPolicyConfig {
+    #[serde(default = "default_max_fresh_session_retries")]
+    pub max_fresh_session_retries: u32,
+    #[serde(default)]
+    pub deny_shortcut: DenyShortcutConfig,
+}
+
+impl Default for ReplayPolicyConfig {
+    fn default() -> Self {
+        Self {
+            max_fresh_session_retries: default_max_fresh_session_retries(),
+            deny_shortcut: DenyShortcutConfig::default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct DenyShortcutConfig {
+    #[serde(default = "default_deny_shortcut_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_deny_shortcut_threshold")]
+    pub threshold: f32,
+    #[serde(default = "default_deny_shortcut_min_hits")]
+    pub min_hits: usize,
+}
+
+impl Default for DenyShortcutConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_deny_shortcut_enabled(),
+            threshold: default_deny_shortcut_threshold(),
+            min_hits: default_deny_shortcut_min_hits(),
+        }
+    }
+}
+
+fn default_max_fresh_session_retries() -> u32 {
+    1
+}
+fn default_deny_shortcut_enabled() -> bool {
+    true
+}
+fn default_deny_shortcut_threshold() -> f32 {
+    0.6
+}
+fn default_deny_shortcut_min_hits() -> usize {
+    3
 }
 
 #[derive(Clone, Debug, Deserialize)]

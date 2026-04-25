@@ -16,6 +16,7 @@ fn goal() -> Goal {
             max_wall_time: Duration::from_secs(30),
             max_tokens: 100,
             max_consecutive_denies: 1,
+            max_consecutive_errors: 5,
         },
         workspace: None,
         metadata: serde_json::Map::new(),

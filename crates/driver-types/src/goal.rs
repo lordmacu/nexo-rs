@@ -48,6 +48,16 @@ pub struct BudgetGuards {
     pub max_wall_time: Duration,
     pub max_tokens: u64,
     pub max_consecutive_denies: u32,
+    /// Phase 67.8 — cap on consecutive transient errors classified by
+    /// the replay policy as `FreshSessionRetry`. `0` disables the
+    /// axis (effectively infinite). `#[serde(default)]` so payloads
+    /// from 67.0–67.7 deserialise with the helper-default of 5.
+    #[serde(default = "default_max_consecutive_errors")]
+    pub max_consecutive_errors: u32,
+}
+
+fn default_max_consecutive_errors() -> u32 {
+    5
 }
 
 impl BudgetGuards {
@@ -61,6 +71,10 @@ impl BudgetGuards {
             Some(BudgetAxis::Tokens)
         } else if usage.consecutive_denies >= self.max_consecutive_denies {
             Some(BudgetAxis::ConsecutiveDenies)
+        } else if self.max_consecutive_errors > 0
+            && usage.consecutive_errors >= self.max_consecutive_errors
+        {
+            Some(BudgetAxis::ConsecutiveErrors)
         } else {
             None
         }
@@ -74,6 +88,12 @@ pub struct BudgetUsage {
     pub wall_time: Duration,
     pub tokens: u64,
     pub consecutive_denies: u32,
+    /// Phase 67.8 — count of consecutive `FreshSessionRetry` decisions
+    /// the replay policy made for this goal. Reset by any successful
+    /// turn (`Done` or `NeedsRetry`). `#[serde(default)]` for
+    /// backward-compat with 67.0–67.7 payloads.
+    #[serde(default)]
+    pub consecutive_errors: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -83,4 +103,6 @@ pub enum BudgetAxis {
     WallTime,
     Tokens,
     ConsecutiveDenies,
+    /// Phase 67.8.
+    ConsecutiveErrors,
 }

@@ -37,6 +37,7 @@ pub struct LlmDecider {
     system_prompt: String,
     memory: Arc<dyn DecisionMemory>,
     recall_k: usize,
+    deny_shortcut: crate::config::DenyShortcutConfig,
 }
 
 pub struct LlmDeciderBuilder {
@@ -46,6 +47,7 @@ pub struct LlmDeciderBuilder {
     system_prompt: Option<String>,
     memory: Arc<dyn DecisionMemory>,
     recall_k: usize,
+    deny_shortcut: crate::config::DenyShortcutConfig,
 }
 
 fn default_memory() -> Arc<dyn DecisionMemory> {
@@ -61,6 +63,7 @@ impl Default for LlmDeciderBuilder {
             system_prompt: None,
             memory: default_memory(),
             recall_k: 5,
+            deny_shortcut: crate::config::DenyShortcutConfig::default(),
         }
     }
 }
@@ -96,6 +99,10 @@ impl LlmDeciderBuilder {
         self.recall_k = k;
         self
     }
+    pub fn deny_shortcut(mut self, cfg: crate::config::DenyShortcutConfig) -> Self {
+        self.deny_shortcut = cfg;
+        self
+    }
     pub fn build(self) -> Result<LlmDecider, &'static str> {
         Ok(LlmDecider {
             llm: self.llm.ok_or("llm client is required")?,
@@ -106,7 +113,34 @@ impl LlmDeciderBuilder {
                 .unwrap_or_else(|| DEFAULT_SYSTEM_PROMPT.to_string()),
             memory: self.memory,
             recall_k: self.recall_k,
+            deny_shortcut: self.deny_shortcut,
         })
+    }
+}
+
+impl LlmDecider {
+    /// Phase 67.8 — fast-path Deny when recalled decisions show a
+    /// strong prior pattern of denials for similar requests.
+    fn try_shortcut(&self, recalled: &[Decision]) -> Option<String> {
+        if !self.deny_shortcut.enabled || recalled.is_empty() {
+            return None;
+        }
+        let denies = recalled
+            .iter()
+            .filter(|d| matches!(d.choice, nexo_driver_types::DecisionChoice::Deny { .. }))
+            .count();
+        if denies < self.deny_shortcut.min_hits {
+            return None;
+        }
+        let ratio = denies as f32 / recalled.len() as f32;
+        if ratio < self.deny_shortcut.threshold {
+            return None;
+        }
+        Some(format!(
+            "shortcut: {} of {} prior similar requests were denied",
+            denies,
+            recalled.len()
+        ))
     }
 }
 
@@ -183,6 +217,39 @@ impl PermissionDecider for LlmDecider {
         request: PermissionRequest,
     ) -> Result<PermissionResponse, PermissionError> {
         let recalled: Vec<Decision> = self.memory.recall(&request, self.recall_k).await;
+
+        // Phase 67.8 — short-circuit Deny when memory shows a
+        // consistent pattern of past denials for similar requests.
+        if let Some(message) = self.try_shortcut(&recalled) {
+            tracing::info!(
+                target: "llm-decider",
+                "deny shortcut: {message}; skipping LLM call"
+            );
+            let response = PermissionResponse {
+                tool_use_id: request.tool_use_id.clone(),
+                outcome: PermissionOutcome::Deny {
+                    message: message.clone(),
+                },
+                rationale: "shortcut from decision memory".into(),
+            };
+            // Reinforce memory so future similar requests keep
+            // matching the shortcut.
+            let decision = nexo_driver_types::Decision {
+                id: nexo_driver_types::DecisionId::new(),
+                goal_id: request.goal_id,
+                turn_index: 0,
+                tool: request.tool_name.clone(),
+                input: request.input.clone(),
+                choice: nexo_driver_types::DecisionChoice::Deny { message },
+                rationale: response.rationale.clone(),
+                decided_at: chrono::Utc::now(),
+            };
+            if let Err(e) = self.memory.record(&decision).await {
+                tracing::warn!(target: "llm-decider", "shortcut record failed: {e}");
+            }
+            return Ok(response);
+        }
+
         let user_prompt = build_user_prompt(&request, &recalled);
         let req = ChatRequest {
             system_prompt: Some(self.system_prompt.clone()),
