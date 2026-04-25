@@ -37,6 +37,7 @@ members = [
     "crates/driver-loop",
     "crates/project-tracker",
     "crates/agent-registry",
+    "crates/dispatch-tools",
 ]
 # Keep standalone extension templates out of the agent workspace so they don't
 # inherit our deps or lockfile. Users copy them verbatim and build separately.
