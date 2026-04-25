@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:watch": "vite build --watch",
     "preview": "vite preview --port 9099",
     "lint": "tsc --noEmit"
   },
