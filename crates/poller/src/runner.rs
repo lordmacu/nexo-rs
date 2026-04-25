@@ -121,6 +121,19 @@ impl PollerRunner {
         self.pollers.iter().map(|e| *e.key()).collect()
     }
 
+    /// Walk every registered Poller and collect its `custom_tools()`.
+    /// Adapter in `agent-poller-tools` consumes this and registers
+    /// each spec as a `ToolHandler` per agent.
+    pub fn collect_custom_tools(&self) -> Vec<crate::CustomToolSpec> {
+        let mut out = Vec::new();
+        for p in self.pollers.iter() {
+            for spec in p.value().custom_tools() {
+                out.push(spec);
+            }
+        }
+        out
+    }
+
     /// Snapshot every configured job + its current persisted state for
     /// the admin endpoint.
     pub async fn list_jobs(&self) -> Result<Vec<crate::admin::JobView>> {

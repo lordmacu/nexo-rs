@@ -24,6 +24,8 @@ pub mod telemetry;
 pub use runner::PollerRunner;
 
 pub use error::PollerError;
-pub use poller::{OutboundDelivery, PollContext, Poller, TickOutcome};
+pub use poller::{
+    CustomToolHandler, CustomToolSpec, OutboundDelivery, PollContext, Poller, TickOutcome,
+};
 pub use schedule::Schedule;
 pub use state::{JobStateSnapshot, PollState};

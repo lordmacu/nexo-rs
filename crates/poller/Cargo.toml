@@ -8,6 +8,7 @@ agent-broker     = { path = "../broker" }
 agent-config     = { path = "../config" }
 agent-auth       = { path = "../auth" }
 agent-resilience = { path = "../resilience" }
+agent-llm        = { path = "../llm" }
 
 tokio        = { workspace = true }
 async-trait  = { workspace = true }
