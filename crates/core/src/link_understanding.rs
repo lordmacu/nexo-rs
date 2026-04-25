@@ -156,6 +156,7 @@ impl LinkExtractor {
             return None;
         }
         if !host_allowed(url, &cfg.deny_hosts) {
+            crate::telemetry::inc_link_fetch("blocked");
             return None;
         }
 
@@ -167,6 +168,7 @@ impl LinkExtractor {
             let mut cache = self.cache.lock().ok()?;
             if let Some(entry) = cache.get(url) {
                 if entry.inserted_at.elapsed() < self.cache_ttl {
+                    crate::telemetry::inc_link_cache(true);
                     return Some(LinkSummary {
                         url: url.to_string(),
                         title: None,
@@ -174,10 +176,22 @@ impl LinkExtractor {
                     });
                 }
             }
+            crate::telemetry::inc_link_cache(false);
         }
 
-        let resp = self.http.get(url).send().await.ok()?;
+        let started = std::time::Instant::now();
+        let resp = match self.http.get(url).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                let result = if e.is_timeout() { "timeout" } else { "error" };
+                crate::telemetry::inc_link_fetch(result);
+                crate::telemetry::observe_link_fetch_ms(started.elapsed().as_millis() as u64);
+                return None;
+            }
+        };
         if !resp.status().is_success() {
+            crate::telemetry::inc_link_fetch("error");
+            crate::telemetry::observe_link_fetch_ms(started.elapsed().as_millis() as u64);
             return None;
         }
         let content_type = resp
@@ -192,12 +206,25 @@ impl LinkExtractor {
             && !content_type.contains("text/plain")
             && !content_type.is_empty()
         {
+            crate::telemetry::inc_link_fetch("non_html");
+            crate::telemetry::observe_link_fetch_ms(started.elapsed().as_millis() as u64);
             return None;
         }
 
-        let body = read_capped(resp, cfg.max_bytes).await.ok()?;
+        let body = match read_capped(resp, cfg.max_bytes).await {
+            Ok(b) => b,
+            Err(_) => {
+                crate::telemetry::inc_link_fetch("error");
+                crate::telemetry::observe_link_fetch_ms(started.elapsed().as_millis() as u64);
+                return None;
+            }
+        };
+        let truncated = body.len() >= cfg.max_bytes;
         let extracted = extract_main_text(&body, cfg.max_bytes);
         if extracted.is_empty() {
+            let result = if truncated { "too_big" } else { "non_html" };
+            crate::telemetry::inc_link_fetch(result);
+            crate::telemetry::observe_link_fetch_ms(started.elapsed().as_millis() as u64);
             return None;
         }
 
@@ -212,6 +239,8 @@ impl LinkExtractor {
                 );
             }
         }
+        crate::telemetry::inc_link_fetch("ok");
+        crate::telemetry::observe_link_fetch_ms(started.elapsed().as_millis() as u64);
         Some(LinkSummary {
             url: url.to_string(),
             title: extract_title(&body),
