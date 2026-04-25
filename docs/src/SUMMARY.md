@@ -26,6 +26,7 @@
 - [memory.yaml](./config/memory.md)
 - [Drop-in agents](./config/drop-in.md)
 - [Per-agent credentials](./config/credentials.md)
+- [Pollers (pollers.yaml)](./config/pollers.md)
 
 # LLM providers
 
@@ -71,6 +72,7 @@
 
 - [Model](./taskflow/model.md)
 - [FlowManager](./taskflow/manager.md)
+- [Wait / resume](./taskflow/wait.md)
 
 # Soul, identity & learning
 
@@ -99,6 +101,7 @@
 - [MCP server from Claude Desktop](./recipes/mcp-from-claude-desktop.md)
 - [NATS with TLS + auth](./recipes/nats-tls-auth.md)
 - [Rotating config without downtime](./recipes/hot-reload.md)
+- [Build a poller module](./recipes/build-a-poller.md)
 
 # Architecture Decision Records
 
