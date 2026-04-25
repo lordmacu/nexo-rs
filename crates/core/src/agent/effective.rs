@@ -25,8 +25,8 @@
 use std::sync::Arc;
 
 use nexo_config::{
-    AgentConfig, InboundBinding, ModelConfig, OutboundAllowlistConfig, SenderRateLimitConfig,
-    SenderRateLimitKeyword, SenderRateLimitOverride,
+    AgentConfig, DispatchPolicy, InboundBinding, ModelConfig, OutboundAllowlistConfig,
+    SenderRateLimitConfig, SenderRateLimitKeyword, SenderRateLimitOverride,
 };
 
 /// Concrete capability snapshot for one session attached to one binding.
@@ -74,6 +74,14 @@ pub struct EffectiveBindingPolicy {
     /// i.e. the inbound gate is a no-op. Per-binding config can flip
     /// this on for user-facing surfaces (whatsapp / telegram).
     pub pairing: nexo_pairing::PairingPolicy,
+    /// Phase 67.D.1 — resolved project-tracker dispatch policy.
+    /// `mode == None` (default) keeps `program_phase` and friends
+    /// unregistered for this binding; `read_only` exposes the
+    /// query tools; `full` exposes the dispatch surface. The
+    /// `DispatchGate` (67.D.2) consumes this together with the
+    /// pairing trust signal before admitting a `program_phase`
+    /// call.
+    pub dispatch_policy: DispatchPolicy,
 }
 
 /// Per-agent / per-binding web-search policy. Mirrors the YAML shape
@@ -145,6 +153,7 @@ impl EffectiveBindingPolicy {
             link_understanding: resolve_link_understanding(agent, binding),
             web_search: resolve_web_search(agent, binding),
             pairing: resolve_pairing(agent, binding),
+            dispatch_policy: resolve_dispatch_policy(agent, binding),
         }
     }
 
@@ -173,6 +182,7 @@ impl EffectiveBindingPolicy {
             link_understanding: parse_link_understanding(&agent.link_understanding),
             web_search: parse_web_search(&agent.web_search),
             pairing: parse_pairing(&agent.pairing_policy),
+            dispatch_policy: agent.dispatch_policy.clone(),
         }
     }
 
@@ -394,6 +404,15 @@ fn resolve_pairing(
     parse_pairing(&agent.pairing_policy)
 }
 
+fn resolve_dispatch_policy(
+    agent: &AgentConfig,
+    binding: Option<&InboundBinding>,
+) -> DispatchPolicy {
+    binding
+        .and_then(|b| b.dispatch_policy.clone())
+        .unwrap_or_else(|| agent.dispatch_policy.clone())
+}
+
 fn resolve_language(agent: &AgentConfig, binding: Option<&InboundBinding>) -> Option<String> {
     binding
         .and_then(|b| b.language.clone())
@@ -449,6 +468,7 @@ mod tests {
                 telegram: Vec::new(),
             },
             context_optimization: None,
+            dispatch_policy: Default::default(),
         }
     }
 
@@ -738,5 +758,61 @@ mod tests {
         let eff = EffectiveBindingPolicy::from_agent_defaults(&a);
         assert_eq!(eff.binding_index, None);
         assert_eq!(eff.allowed_tools, a.allowed_tools);
+    }
+
+    #[test]
+    fn dispatch_policy_default_is_none_mode() {
+        let a = sample_agent();
+        let eff = EffectiveBindingPolicy::from_agent_defaults(&a);
+        assert_eq!(
+            eff.dispatch_policy.mode,
+            nexo_config::DispatchCapability::None
+        );
+        assert_eq!(eff.dispatch_policy.max_concurrent_per_dispatcher, 0);
+    }
+
+    #[test]
+    fn dispatch_policy_per_binding_override_wins_over_agent() {
+        let mut a = sample_agent();
+        a.dispatch_policy = DispatchPolicy {
+            mode: nexo_config::DispatchCapability::None,
+            max_concurrent_per_dispatcher: 0,
+            allowed_phase_ids: Vec::new(),
+            forbidden_phase_ids: Vec::new(),
+        };
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "telegram".into(),
+            instance: Some("family".into()),
+            dispatch_policy: Some(DispatchPolicy {
+                mode: nexo_config::DispatchCapability::Full,
+                max_concurrent_per_dispatcher: 3,
+                allowed_phase_ids: vec!["67.*".into()],
+                forbidden_phase_ids: vec!["67.13".into()],
+            }),
+            ..Default::default()
+        });
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+        assert_eq!(eff.dispatch_policy.mode, nexo_config::DispatchCapability::Full);
+        assert_eq!(eff.dispatch_policy.max_concurrent_per_dispatcher, 3);
+        assert_eq!(eff.dispatch_policy.allowed_phase_ids, vec!["67.*"]);
+        assert_eq!(eff.dispatch_policy.forbidden_phase_ids, vec!["67.13"]);
+    }
+
+    #[test]
+    fn dispatch_policy_inherits_when_binding_omits_field() {
+        let mut a = sample_agent();
+        a.dispatch_policy = DispatchPolicy {
+            mode: nexo_config::DispatchCapability::ReadOnly,
+            max_concurrent_per_dispatcher: 1,
+            allowed_phase_ids: Vec::new(),
+            forbidden_phase_ids: Vec::new(),
+        };
+        a.inbound_bindings.push(legacy_binding());
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+        assert_eq!(
+            eff.dispatch_policy.mode,
+            nexo_config::DispatchCapability::ReadOnly
+        );
+        assert_eq!(eff.dispatch_policy.max_concurrent_per_dispatcher, 1);
     }
 }

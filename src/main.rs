@@ -5903,6 +5903,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         pairing_policy: serde_json::Value::Null,
         language: primary.language.clone(),
         context_optimization: None,
+            dispatch_policy: Default::default(),
     });
     let broker = AnyBroker::local();
     let sessions = Arc::new(SessionManager::new(std::time::Duration::from_secs(300), 20));

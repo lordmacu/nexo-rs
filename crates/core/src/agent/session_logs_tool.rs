@@ -454,6 +454,7 @@ mod tests {
             pairing_policy: serde_json::Value::Null,
             language: None,
             context_optimization: None,
+            dispatch_policy: Default::default(),
         });
         let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
         let sid = Uuid::new_v4();
@@ -654,6 +655,7 @@ mod tests {
             pairing_policy: serde_json::Value::Null,
             language: None,
             context_optimization: None,
+            dispatch_policy: Default::default(),
         });
         let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
         let ctx = AgentContext::new("kate", cfg, broker, sessions);

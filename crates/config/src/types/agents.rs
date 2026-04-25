@@ -197,6 +197,53 @@ pub struct AgentConfig {
     /// ```
     #[serde(default)]
     pub context_optimization: Option<crate::types::llm::AgentContextOptimizationOverride>,
+    /// Phase 67.D.1 — dispatch policy for project-tracker tools
+    /// (`program_phase`, `cancel_agent`, etc). Default keeps the
+    /// dispatch surface OFF for back-compat agents — the operator
+    /// must opt in by raising `mode` to `read_only` or `full`.
+    #[serde(default)]
+    pub dispatch_policy: DispatchPolicy,
+}
+
+/// Tri-state dispatch capability. The same enum is used for the
+/// agent-level default and per-binding override; the resolver folds
+/// them in `EffectiveBindingPolicy::dispatch_policy`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DispatchCapability {
+    /// Tracker dispatch tools are not registered for this binding.
+    /// Read-only project_status / list_agents / followup_detail
+    /// are unaffected (they live behind their own gate).
+    #[default]
+    None,
+    /// Read-only tools registered (`project_status`,
+    /// `project_phases_list`, `list_agents`, `agent_status`,
+    /// `agent_logs_tail`, `agent_hooks_list`, `git_log_for_phase`).
+    /// No write tools.
+    ReadOnly,
+    /// Full tracker surface — read + dispatch + chaining + control.
+    Full,
+}
+
+/// Per-agent / per-binding dispatch policy. Not all fields are
+/// honoured at every call site (see Phase 67.D.2 `DispatchGate` for
+/// the enforcement matrix); the YAML carries them all so an
+/// operator's intent survives across feature increments.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct DispatchPolicy {
+    pub mode: DispatchCapability,
+    /// Cap on the number of in-flight goals this agent / binding may
+    /// hold open at once. `0` = inherit the global cap from
+    /// `program_phase.max_concurrent_agents`.
+    pub max_concurrent_per_dispatcher: u32,
+    /// Optional whitelist of phase ids this agent may dispatch.
+    /// Trailing `*` glob supported (`67.*`). Empty / `["*"]` =
+    /// every phase id.
+    pub allowed_phase_ids: Vec<String>,
+    /// Hard deny list. Wins over `allowed_phase_ids` when both
+    /// match (e.g. `allowed = ["*"]`, `forbidden = ["0.*"]`).
+    pub forbidden_phase_ids: Vec<String>,
 }
 
 /// Per-agent allowlist of outbound recipients. Phone numbers are matched
@@ -314,6 +361,13 @@ pub struct InboundBinding {
     /// challenge reply and the message is dropped.
     #[serde(default)]
     pub pairing_policy: serde_json::Value,
+    /// Phase 67.D.1 — per-binding override of `agents.dispatch_policy`.
+    /// `None` (default) inherits the agent-level value; populated
+    /// replaces the whole struct so an operator can be precise per
+    /// channel ("agent 'asistente' is `none` everywhere except this
+    /// Telegram chat where it's `full`").
+    #[serde(default)]
+    pub dispatch_policy: Option<DispatchPolicy>,
 }
 
 /// Per-binding override for the sender rate limit.

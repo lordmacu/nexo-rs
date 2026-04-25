@@ -52,6 +52,7 @@ fn agent_with_inline_google(id: &str) -> AgentConfig {
         credentials: AgentCredentialsConfig::default(),
         language: None,
         context_optimization: None,
+            dispatch_policy: Default::default(),
     }
 }
 
