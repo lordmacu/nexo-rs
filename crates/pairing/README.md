@@ -29,7 +29,7 @@ nexo-pairing = { version = "0.1", default-features = false }
 
 ## Documentation for this crate
 
-- [Pairing protocol](https://lordmacu.github.io/nexo-rs/config/pairing.html)
+- [Pairing protocol](https://lordmacu.github.io/nexo-rs/ops/pairing.html)
 
 ## License
 
