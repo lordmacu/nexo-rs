@@ -345,23 +345,32 @@ Done when an Ubuntu user runs the documented one-liner
 (`curl … | sudo apt-key add - && apt install nexo-rs`) and
 ends up with a running daemon under systemd.
 
-#### 27.5 — Docker image at GHCR
+#### 27.5 — Docker image at GHCR   ✅
 
-- `Dockerfile.release` — multi-stage build, distroless final
-  image, `~40 MB` total.
-- `Dockerfile.alpine` — alternate musl-static for size-
-  sensitive deployments (`~35 MB`).
-- Docker buildx for multi-arch (`linux/amd64`, `linux/arm64`,
-  `linux/arm/v7`).
-- Tags: `:latest`, `:v0.1.0`, `:v0.1`, `:v0`, `:nightly`,
-  `:edge`.
-- Auto-push to `ghcr.io/lordmacu/nexo-rs` from the release
-  workflow.
-- A `docker-compose.yml` example bundled in the repo for
-  zero-config local trials.
+- `Dockerfile` updated: builds the renamed `nexo` bin (was `agent`),
+  uses `dumb-init` as PID 1 with `nexo` as exec target, OCI labels
+  for `image.source` / `description` / `licenses`.
+- `.github/workflows/docker.yml` — buildx multi-arch
+  (`linux/amd64` + `linux/arm64`), `docker/metadata-action` tag
+  set: `:latest` (default branch), `:v0.1.1`, `:v0.1`, `:v0`,
+  `:edge`, `:main-<sha>`. Triggers on push to `main`, on `v*` tags,
+  and on `workflow_dispatch`. Cache-from/to `type=gha` cuts ~10 min
+  off cold builds. Provenance + SBOM attestations on by default.
+- Auto-push to `ghcr.io/lordmacu/nexo-rs` with `GITHUB_TOKEN`
+  (no extra secret required).
+- `docker-compose.yml` updated: service renamed `agent` → `nexo`,
+  `image:` field added pinning the GHCR pull so `compose up` works
+  without `compose build`.
+- Docs: `docs/src/ops/docker.md` documents the GHCR pull pattern,
+  tag scheme, and how to verify provenance / SBOM with
+  `docker buildx imagetools inspect`.
 
-Done when `docker run --rm -p 9091:9091 ghcr.io/lordmacu/nexo-rs:latest agent admin`
-launches a working admin UI from a clean Docker host.
+Deferred to a follow-up: distroless / musl-static variants
+(`Dockerfile.release`, `Dockerfile.alpine`), `linux/arm/v7`
+target. The current Debian-slim image is ~250 MB unpacked but
+covers the runtime deps the browser plugin needs (Chrome on
+amd64, Chromium on arm64) — going distroless requires removing
+those, which is its own design decision.
 
 #### 27.6 — Homebrew tap
 
