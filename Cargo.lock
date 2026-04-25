@@ -44,538 +44,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agent"
-version = "0.1.0"
-dependencies = [
- "agent-auth",
- "agent-broker",
- "agent-config",
- "agent-core",
- "agent-extensions",
- "agent-llm",
- "agent-mcp",
- "agent-memory",
- "agent-plugin-browser",
- "agent-plugin-google",
- "agent-plugin-telegram",
- "agent-plugin-whatsapp",
- "agent-poller",
- "agent-poller-ext",
- "agent-poller-tools",
- "agent-setup",
- "agent-taskflow",
- "agent-tunnel",
- "agent-web-search",
- "anyhow",
- "async-nats",
- "async-trait",
- "base64 0.22.1",
- "chrono",
- "futures",
- "humantime",
- "rand 0.8.6",
- "reqwest",
- "rust-embed",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "agent-auth"
-version = "0.1.0"
-dependencies = [
- "agent-config",
- "agent-resilience",
- "anyhow",
- "arc-swap",
- "dashmap",
- "hex",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "agent-broker"
-version = "0.1.0"
-dependencies = [
- "agent-config",
- "agent-resilience",
- "anyhow",
- "async-nats",
- "async-trait",
- "bytes",
- "chrono",
- "dashmap",
- "futures",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "agent-config"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "humantime-serde",
- "serde",
- "serde_json",
- "serde_yaml",
- "tempfile",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "agent-core"
-version = "0.1.0"
-dependencies = [
- "agent-auth",
- "agent-broker",
- "agent-config",
- "agent-extensions",
- "agent-llm",
- "agent-mcp",
- "agent-memory",
- "agent-taskflow",
- "agent-web-search",
- "anyhow",
- "arc-swap",
- "async-nats",
- "async-trait",
- "base64 0.22.1",
- "chrono",
- "dashmap",
- "futures",
- "git2",
- "humantime",
- "jsonschema",
- "lru",
- "notify",
- "notify-debouncer-full",
- "regex",
- "reqwest",
- "semver",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "serde_yaml",
- "serial_test",
- "sha2",
- "sqlx",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "agent-extensions"
-version = "0.1.0"
-dependencies = [
- "agent-broker",
- "agent-config",
- "agent-mcp",
- "agent-resilience",
- "anyhow",
- "async-nats",
- "async-trait",
- "dashmap",
- "futures",
- "humantime-serde",
- "notify",
- "notify-debouncer-full",
- "regex",
- "reqwest",
- "semver",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tokio-util",
- "toml",
- "tracing",
- "tracing-subscriber",
- "url",
- "uuid",
- "walkdir",
- "wiremock",
-]
-
-[[package]]
-name = "agent-llm"
-version = "0.1.0"
-dependencies = [
- "agent-config",
- "agent-resilience",
- "anyhow",
- "async-trait",
- "base64 0.22.1",
- "blake3",
- "bytes",
- "chrono",
- "dashmap",
- "eventsource-stream",
- "futures",
- "hex",
- "lru",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 1.0.69",
- "tiktoken-rs",
- "tokio",
- "tokio-test",
- "tracing",
- "wiremock",
-]
-
-[[package]]
-name = "agent-mcp"
-version = "0.1.0"
-dependencies = [
- "agent-config",
- "agent-extensions",
- "agent-llm",
- "agent-resilience",
- "anyhow",
- "async-trait",
- "axum",
- "bytes",
- "chrono",
- "dashmap",
- "futures",
- "futures-util",
- "lru",
- "notify",
- "notify-debouncer-full",
- "reqwest",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tokio-util",
- "tower",
- "tracing",
- "tracing-subscriber",
- "url",
- "uuid",
-]
-
-[[package]]
-name = "agent-memory"
-version = "0.1.0"
-dependencies = [
- "agent-llm",
- "anyhow",
- "async-trait",
- "chrono",
- "libsqlite3-sys",
- "lru",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "sqlite-vec",
- "sqlx",
- "tempfile",
- "tokio",
- "tracing",
- "unicode-normalization",
- "unicode-script",
- "unicode-segmentation",
- "url",
- "uuid",
- "wiremock",
-]
-
-[[package]]
-name = "agent-plugin-browser"
-version = "0.1.0"
-dependencies = [
- "agent-broker",
- "agent-config",
- "agent-core",
- "agent-llm",
- "agent-resilience",
- "anyhow",
- "async-trait",
- "base64 0.22.1",
- "dashmap",
- "futures",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tokio-tungstenite 0.21.0",
- "tokio-util",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "agent-plugin-email"
-version = "0.1.0"
-
-[[package]]
-name = "agent-plugin-google"
-version = "0.1.0"
-dependencies = [
- "agent-core",
- "agent-llm",
- "anyhow",
- "arc-swap",
- "async-trait",
- "chrono",
- "rand 0.8.6",
- "reqwest",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "tempfile",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "agent-plugin-telegram"
-version = "0.1.0"
-dependencies = [
- "agent-auth",
- "agent-broker",
- "agent-config",
- "agent-core",
- "agent-llm",
- "anyhow",
- "async-trait",
- "chrono",
- "dashmap",
- "futures-util",
- "reqwest",
- "serde",
- "serde_json",
- "serial_test",
- "tempfile",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
- "wiremock",
-]
-
-[[package]]
-name = "agent-plugin-whatsapp"
-version = "0.1.0"
-dependencies = [
- "agent-auth",
- "agent-broker",
- "agent-config",
- "agent-core",
- "agent-llm",
- "anyhow",
- "async-trait",
- "base64 0.22.1",
- "chrono",
- "dashmap",
- "futures",
- "image",
- "qrcode",
- "reqwest",
- "serde",
- "serde_json",
- "serde_yaml",
- "thiserror 1.0.69",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
- "wa-agent",
-]
-
-[[package]]
-name = "agent-poller"
-version = "0.1.0"
-dependencies = [
- "agent-auth",
- "agent-broker",
- "agent-config",
- "agent-llm",
- "agent-plugin-google",
- "agent-resilience",
- "anyhow",
- "arc-swap",
- "async-trait",
- "base64 0.22.1",
- "chrono",
- "chrono-tz",
- "cron",
- "dashmap",
- "humantime",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "serde_yaml",
- "sqlx",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
-name = "agent-poller-ext"
-version = "0.1.0"
-dependencies = [
- "agent-auth",
- "agent-extensions",
- "agent-llm",
- "agent-poller",
- "anyhow",
- "async-trait",
- "base64 0.22.1",
- "serde",
- "serde_json",
- "tracing",
-]
-
-[[package]]
-name = "agent-poller-tools"
-version = "0.1.0"
-dependencies = [
- "agent-core",
- "agent-llm",
- "agent-poller",
- "anyhow",
- "async-trait",
- "serde_json",
-]
-
-[[package]]
-name = "agent-resilience"
-version = "0.1.0"
-dependencies = [
- "thiserror 1.0.69",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "agent-setup"
-version = "0.1.0"
-dependencies = [
- "agent-auth",
- "agent-config",
- "agent-core",
- "agent-plugin-google",
- "agent-plugin-whatsapp",
- "anyhow",
- "base64 0.22.1",
- "chrono",
- "console",
- "dialoguer",
- "indicatif",
- "rand 0.8.6",
- "reqwest",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "agent-taskflow"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "libsqlite3-sys",
- "serde",
- "serde_json",
- "sqlx",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "agent-tunnel"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes",
- "directories",
- "flate2",
- "futures",
- "indicatif",
- "regex",
- "reqwest",
- "tar",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "agent-web-search"
-version = "0.1.0"
-dependencies = [
- "agent-resilience",
- "async-trait",
- "chrono",
- "hex",
- "reqwest",
- "scraper",
- "serde",
- "serde_json",
- "sha2",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2672,6 +2140,563 @@ name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
+
+[[package]]
+name = "nexo"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-nats",
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "futures",
+ "humantime",
+ "nexo-auth",
+ "nexo-broker",
+ "nexo-config",
+ "nexo-core",
+ "nexo-extensions",
+ "nexo-llm",
+ "nexo-mcp",
+ "nexo-memory",
+ "nexo-plugin-browser",
+ "nexo-plugin-google",
+ "nexo-plugin-telegram",
+ "nexo-plugin-whatsapp",
+ "nexo-poller",
+ "nexo-poller-ext",
+ "nexo-poller-tools",
+ "nexo-setup",
+ "nexo-taskflow",
+ "nexo-tunnel",
+ "nexo-web-search",
+ "rand 0.8.6",
+ "reqwest",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "nexo-auth"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "dashmap",
+ "hex",
+ "nexo-config",
+ "nexo-resilience",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "nexo-broker"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-nats",
+ "async-trait",
+ "bytes",
+ "chrono",
+ "dashmap",
+ "futures",
+ "nexo-config",
+ "nexo-resilience",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "nexo-config"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "humantime-serde",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "nexo-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "async-nats",
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "dashmap",
+ "futures",
+ "git2",
+ "humantime",
+ "jsonschema",
+ "lru",
+ "nexo-auth",
+ "nexo-broker",
+ "nexo-config",
+ "nexo-extensions",
+ "nexo-llm",
+ "nexo-mcp",
+ "nexo-memory",
+ "nexo-taskflow",
+ "nexo-web-search",
+ "notify",
+ "notify-debouncer-full",
+ "regex",
+ "reqwest",
+ "semver",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "serde_yaml",
+ "serial_test",
+ "sha2",
+ "sqlx",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "nexo-extensions"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-nats",
+ "async-trait",
+ "dashmap",
+ "futures",
+ "humantime-serde",
+ "nexo-broker",
+ "nexo-config",
+ "nexo-mcp",
+ "nexo-resilience",
+ "notify",
+ "notify-debouncer-full",
+ "regex",
+ "reqwest",
+ "semver",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
+ "walkdir",
+ "wiremock",
+]
+
+[[package]]
+name = "nexo-llm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "blake3",
+ "bytes",
+ "chrono",
+ "dashmap",
+ "eventsource-stream",
+ "futures",
+ "hex",
+ "lru",
+ "nexo-config",
+ "nexo-resilience",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tiktoken-rs",
+ "tokio",
+ "tokio-test",
+ "tracing",
+ "wiremock",
+]
+
+[[package]]
+name = "nexo-mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "bytes",
+ "chrono",
+ "dashmap",
+ "futures",
+ "futures-util",
+ "lru",
+ "nexo-config",
+ "nexo-extensions",
+ "nexo-llm",
+ "nexo-resilience",
+ "notify",
+ "notify-debouncer-full",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "nexo-memory"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "libsqlite3-sys",
+ "lru",
+ "nexo-llm",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sqlite-vec",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "unicode-normalization",
+ "unicode-script",
+ "unicode-segmentation",
+ "url",
+ "uuid",
+ "wiremock",
+]
+
+[[package]]
+name = "nexo-pairing"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "dashmap",
+ "hex",
+ "hmac",
+ "image",
+ "qrcode",
+ "rand 0.8.6",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "subtle",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "nexo-plugin-browser"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "dashmap",
+ "futures",
+ "nexo-broker",
+ "nexo-config",
+ "nexo-core",
+ "nexo-llm",
+ "nexo-resilience",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-tungstenite 0.21.0",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "nexo-plugin-email"
+version = "0.1.0"
+
+[[package]]
+name = "nexo-plugin-google"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "async-trait",
+ "chrono",
+ "nexo-core",
+ "nexo-llm",
+ "rand 0.8.6",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "nexo-plugin-telegram"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "dashmap",
+ "futures-util",
+ "nexo-auth",
+ "nexo-broker",
+ "nexo-config",
+ "nexo-core",
+ "nexo-llm",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+ "wiremock",
+]
+
+[[package]]
+name = "nexo-plugin-whatsapp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "dashmap",
+ "futures",
+ "image",
+ "nexo-auth",
+ "nexo-broker",
+ "nexo-config",
+ "nexo-core",
+ "nexo-llm",
+ "qrcode",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+ "wa-agent",
+]
+
+[[package]]
+name = "nexo-poller"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "chrono-tz",
+ "cron",
+ "dashmap",
+ "humantime",
+ "nexo-auth",
+ "nexo-broker",
+ "nexo-config",
+ "nexo-llm",
+ "nexo-plugin-google",
+ "nexo-resilience",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sqlx",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "nexo-poller-ext"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "nexo-auth",
+ "nexo-extensions",
+ "nexo-llm",
+ "nexo-poller",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "nexo-poller-tools"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "nexo-core",
+ "nexo-llm",
+ "nexo-poller",
+ "serde_json",
+]
+
+[[package]]
+name = "nexo-resilience"
+version = "0.1.0"
+dependencies = [
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "nexo-setup"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "chrono",
+ "console",
+ "dialoguer",
+ "indicatif",
+ "nexo-auth",
+ "nexo-config",
+ "nexo-core",
+ "nexo-plugin-google",
+ "nexo-plugin-whatsapp",
+ "rand 0.8.6",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "nexo-taskflow"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "libsqlite3-sys",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "nexo-tunnel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "directories",
+ "flate2",
+ "futures",
+ "indicatif",
+ "regex",
+ "reqwest",
+ "tar",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "nexo-web-search"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "hex",
+ "nexo-resilience",
+ "reqwest",
+ "scraper",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "nkeys"

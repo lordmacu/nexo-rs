@@ -21,6 +21,7 @@ members = [
     "crates/poller-tools",
     "crates/poller-ext",
     "crates/web-search",
+    "crates/pairing",
 ]
 # Keep standalone extension templates out of the agent workspace so they don't
 # inherit our deps or lockfile. Users copy them verbatim and build separately.
@@ -29,14 +30,36 @@ exclude = [
 ]
 resolver = "2"
 
+[workspace.package]
+version      = "0.1.0"
+edition      = "2021"
+rust-version = "1.80"
+license      = "MIT OR Apache-2.0"
+authors      = ["Cristian Garcia <informacion@cristiangarcia.co>"]
+repository   = "https://github.com/lordmacu/nexo-rs"
+homepage     = "https://lordmacu.github.io/nexo-rs/"
+documentation = "https://lordmacu.github.io/nexo-rs/"
+readme       = "README.md"
+keywords     = ["agent", "llm", "ai", "nats", "framework"]
+categories   = ["asynchronous", "api-bindings"]
+
 [package]
-name = "agent"
-version = "0.1.0"
-edition = "2021"
-license = "MIT OR Apache-2.0"
+name        = "nexo"
+description = "Nexo — multi-agent Rust framework: NATS event bus, pluggable LLM providers, channels (WhatsApp, Telegram, Email, Browser), memory, MCP, skills, and TaskFlow."
+version      = { workspace = true }
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+homepage     = { workspace = true }
+documentation = { workspace = true }
+readme       = { workspace = true }
+keywords     = { workspace = true }
+categories   = { workspace = true }
 
 [[bin]]
-name = "agent"
+name = "nexo"
 path = "src/main.rs"
 
 [[bin]]
@@ -97,25 +120,25 @@ uuid                = { workspace = true }
 rand                = "0.8"
 rust-embed          = { version = "8", features = ["include-exclude"] }
 sha2                = { workspace = true }
-agent-plugin-browser = { path = "crates/plugins/browser" }
-agent-plugin-whatsapp = { path = "crates/plugins/whatsapp" }
-agent-plugin-telegram = { path = "crates/plugins/telegram" }
-agent-plugin-google   = { path = "crates/plugins/google" }
-agent-setup          = { path = "crates/setup" }
-agent-tunnel         = { path = "crates/tunnel" }
-agent-auth          = { path = "crates/auth" }
-agent-poller        = { path = "crates/poller" }
-agent-poller-tools  = { path = "crates/poller-tools" }
-agent-poller-ext    = { path = "crates/poller-ext" }
-agent-config        = { path = "crates/config" }
-agent-broker        = { path = "crates/broker" }
-agent-core          = { path = "crates/core" }
-agent-extensions    = { path = "crates/extensions" }
-agent-llm           = { path = "crates/llm" }
-agent-mcp           = { path = "crates/mcp" }
-agent-memory        = { path = "crates/memory" }
-agent-taskflow      = { path = "crates/taskflow" }
-agent-web-search    = { path = "crates/web-search" }
+nexo-plugin-browser = { path = "crates/plugins/browser" }
+nexo-plugin-whatsapp = { path = "crates/plugins/whatsapp" }
+nexo-plugin-telegram = { path = "crates/plugins/telegram" }
+nexo-plugin-google   = { path = "crates/plugins/google" }
+nexo-setup          = { path = "crates/setup" }
+nexo-tunnel         = { path = "crates/tunnel" }
+nexo-auth          = { path = "crates/auth" }
+nexo-poller        = { path = "crates/poller" }
+nexo-poller-tools  = { path = "crates/poller-tools" }
+nexo-poller-ext    = { path = "crates/poller-ext" }
+nexo-config        = { path = "crates/config" }
+nexo-broker        = { path = "crates/broker" }
+nexo-core          = { path = "crates/core" }
+nexo-extensions    = { path = "crates/extensions" }
+nexo-llm           = { path = "crates/llm" }
+nexo-mcp           = { path = "crates/mcp" }
+nexo-memory        = { path = "crates/memory" }
+nexo-taskflow      = { path = "crates/taskflow" }
+nexo-web-search    = { path = "crates/web-search" }
 tokio-util          = { workspace = true }
 tracing             = { workspace = true }
 tracing-subscriber  = { workspace = true }

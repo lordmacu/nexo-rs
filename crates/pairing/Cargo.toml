@@ -1,0 +1,32 @@
+[package]
+name = "nexo-pairing"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["qr-png"]
+qr-png = ["dep:image"]
+
+[dependencies]
+anyhow         = { workspace = true }
+async-trait    = { workspace = true }
+chrono         = { workspace = true }
+dashmap        = { workspace = true }
+hex            = { workspace = true }
+serde          = { workspace = true }
+serde_json     = { workspace = true }
+sha2           = { workspace = true }
+sqlx           = { workspace = true }
+thiserror      = { workspace = true }
+tokio          = { workspace = true }
+tracing        = { workspace = true }
+hmac           = "0.12"
+subtle         = "2"
+rand           = "0.8"
+qrcode         = "0.14"
+image          = { version = "0.25", default-features = false, features = ["png"], optional = true }
+base64         = { workspace = true }
+
+[dev-dependencies]
+tempfile       = "3"
+serde_json     = { workspace = true }
