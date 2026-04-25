@@ -83,6 +83,55 @@ sequenceDiagram
 The wizard wraps this as a one-shot step, but runtime tools expose
 the same primitives for re-auth.
 
+### Device-code flow (headless setup)
+
+`agent setup google` offers a second consent path that does not
+require a local browser — useful for servers, CI, and SSH-only
+environments. The wizard:
+
+1. POSTs to `oauth2.googleapis.com/device/code` with the account's
+   `client_id` and scopes.
+2. Prints a 6-character `user_code` + a `verification_url` to the
+   terminal.
+3. Polls `oauth2.googleapis.com/token` (default every 5 s) until
+   the operator approves on **any** device.
+4. Persists the resulting refresh_token at `token_path` with
+   mode `0o600`.
+
+```
+╭─ Device-code OAuth ───────────────────────────────────────
+│  Abrí en cualquier navegador:  https://www.google.com/device
+│  Código a escribir:            HBQM-WLNF
+│  (válido por 1800s)
+╰───────────────────────────────────────────────────────────
+
+Esperando aprobación…
+✔ Tokens persistidos en ./secrets/ana_google_token.json.
+```
+
+The Google Cloud Console OAuth client must be type **"TVs and
+Limited Input devices"** for this flow — Desktop/Web clients reject
+device-code with `client_type_disabled`.
+
+### Lazy-refresh of `client_id` / `client_secret`
+
+`GoogleAuthClient.config` is `ArcSwap<GoogleAuthConfig>`. Every
+network call (`exchange_code`, `request_device_code`,
+`poll_device_token`, `refresh_token`) first invokes
+`refresh_secrets_if_changed`, which compares mtime on
+`client_id_path` and `client_secret_path` and re-reads them when
+they advance. Rotating the secret files (e.g. quarterly key
+rotation in Google Cloud Console) takes effect on the **next**
+tool call without a daemon restart.
+
+Steady-state cost: one `fs::metadata` call per outbound request.
+Audit trail (target `credentials.audit`):
+
+```
+INFO event="google_secrets_refreshed" \
+  google_*: re-read client_id/client_secret after on-disk rotation
+```
+
 ### Tools exposed
 
 | Tool | Purpose |

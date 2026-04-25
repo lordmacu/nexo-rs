@@ -52,32 +52,64 @@ Gemini). Writes the API key to `./secrets/<provider>_api_key.txt` and
 ensures `config/llm.yaml` references it via `${file:...}` or the
 corresponding env var.
 
-### WhatsApp pairing
+### WhatsApp pairing (multi-instance)
 
-Per-agent. Asks which agent you are pairing, creates the session dir
-under `<agent workspace>/whatsapp/default`, launches the pairing loop,
-and renders the QR as Unicode blocks on the terminal. Scan with
-**WhatsApp → Settings → Linked Devices**. On success, the active
-WhatsApp session pointer in `config/plugins/whatsapp.yaml` is updated
-to that directory.
+Per-agent. Asks which agent you are pairing and which instance label
+to use (`personal`, `work`, …). Each instance gets its own session
+dir under `./data/workspace/<agent>/whatsapp/<instance>` and an
+`allow_agents` list (defense-in-depth ACL). The wizard:
 
-If `whatsapp.session_dir` is already set in the YAML (e.g. pointing at
-a shared volume), the wizard honors it instead of deriving a per-agent
-path.
+1. Normalises `config/plugins/whatsapp.yaml` to sequence form (legacy
+   single-mapping entries are auto-converted on first edit).
+2. Upserts the entry by instance label.
+3. Writes `credentials.whatsapp: <instance>` on the chosen agent's
+   YAML — `agents.yaml` if the agent lives there, otherwise the
+   matching `agents.d/*.yaml`.
+4. Launches the pairing loop and renders the QR as Unicode blocks.
+   Scan with **WhatsApp → Settings → Linked Devices**.
+5. Runs the credential gauntlet so any drift surfaces immediately.
 
-### Telegram bot
+Re-run the wizard once per number you want to pair; instance labels
+are append-friendly.
 
-Asks for the bot token from @BotFather, writes it to
-`./secrets/telegram_token.txt`, patches `config/plugins/telegram.yaml`.
-Optionally walks you through joining your own chat for quick testing.
+### Telegram bot (multi-instance)
+
+Same shape as WhatsApp. Asks for instance label (default
+`<agent>_bot`) and bot token from @BotFather. Token lands at
+`./secrets/<instance>_telegram_token.txt` with mode `0o600`; the
+YAML references it via `${file:...}` so secrets never live in
+`telegram.yaml` directly. Adds `credentials.telegram: <instance>`
+on the agent.
 
 ### Google OAuth
 
-Runs the PKCE flow in your browser. The wizard binds to a local
-callback port, opens the consent URL, and stores the refresh token at
-`./secrets/google_oauth.json`. Scopes include Gmail, Calendar, Drive
-and Sheets — you can narrow them by editing the scopes list before
-re-running.
+The wizard writes one entry per agent in
+`config/plugins/google-auth.yaml`:
+
+```yaml
+google_auth:
+  accounts:
+    - id: ana@google
+      agent_id: ana
+      client_id_path:     ./secrets/ana_google_client_id.txt
+      client_secret_path: ./secrets/ana_google_client_secret.txt
+      token_path:         ./secrets/ana_google_token.json
+      scopes: [https://www.googleapis.com/auth/gmail.modify]
+```
+
+Two consent flows are offered after the YAML is written:
+
+- **Device-code** (default — works headless / over SSH): the wizard
+  prints `verification_url` + a 6-character `user_code`. Open the URL
+  on **any** device, type the code, approve. The wizard polls
+  `oauth2.googleapis.com/token` until approval and persists the
+  refresh_token at `token_path` (mode `0o600`).
+- **Skip and consent later** via the `google_auth_start` LLM tool —
+  uses the loopback PKCE flow, requires a local browser.
+
+Scopes are comma-separated at the prompt; defaults to
+`gmail.modify`. Re-running with a different `id` adds a second
+account; re-running with the same `id` overwrites in place.
 
 ### Memory DB location
 

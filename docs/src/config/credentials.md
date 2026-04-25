@@ -174,6 +174,70 @@ Nine Prometheus series land at `/metrics`:
 - `agents.<id>.google_auth` still registers `google_*` tools for that
   agent; `google-auth.yaml` is preferred going forward.
 
+## Hot-reload (no daemon restart)
+
+Edit `agents.d/*.yaml`, `plugins/whatsapp.yaml`, `plugins/telegram.yaml`,
+or `plugins/google-auth.yaml`, then trigger a reload via the loopback
+admin endpoint:
+
+```bash
+curl -fsSX POST http://127.0.0.1:9091/admin/credentials/reload | jq
+```
+
+```json
+{
+  "accounts_wa": 2,
+  "accounts_tg": 2,
+  "accounts_google": 1,
+  "warnings": [],
+  "version": 4
+}
+```
+
+The resolver runs the gauntlet against the fresh files, then atomically
+swaps bindings in place. Plugin tools holding `Arc<…>` references see
+the new state on their next call. **Failure mode**: gauntlet errors
+return HTTP 400 with the error list; the previous bindings stay
+active so a typo in YAML does not knock out the runtime.
+
+`CredentialHandle`s already issued to in-flight tool calls keep
+working — handles are by-value clones; the resolver only mediates
+lookup of *future* calls.
+
+### What the reload does NOT cover
+
+- Adding a brand-new WhatsApp / Telegram instance still requires a
+  restart for the *plugin* (each instance owns its own session_dir
+  + websocket). The resolver picks up the new account but the plugin
+  side stays as-was until next boot.
+- Removing an account leaks its breaker entry in `BreakerRegistry`
+  until restart. No correctness impact.
+
+### Google client_id / client_secret rotation
+
+Rewriting the secret files (`./secrets/<agent>_google_client_id.txt`,
+`..._client_secret.txt`) is picked up automatically on the next
+`google_*` tool call — `GoogleAuthClient` checks file mtime before
+each network hop and re-reads when it advanced. No reload call
+required for that case. Audit log line:
+
+```
+INFO credentials.audit event="google_secrets_refreshed" \
+  google_*: re-read client_id/client_secret after on-disk rotation
+```
+
+## Strict mode
+
+`agent --check-config --strict` promotes warnings to errors. Two
+checks behave differently under strict:
+
+| Condition | Lenient | Strict |
+|-----------|---------|--------|
+| Inline `agents.<id>.google_auth` block (legacy) | warn + auto-migrate | `BuildError::LegacyInlineGoogleAuth`, fail boot |
+| Asymmetric inbound ≠ outbound (no `<ch>_asymmetric: true`) | warn | error |
+
+Run `--strict` in CI to gate PRs that touch credential YAML.
+
 ## Migrating
 
 1. Add `instance:` + `allow_agents:` to each entry in

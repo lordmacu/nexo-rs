@@ -37,7 +37,7 @@ Exposed metrics:
 | `channel_account_usage_total` | counter | `agent`, `channel`, `direction={inbound,outbound}`, `instance` | Every credential use |
 | `channel_acl_denied_total` | counter | `agent`, `channel`, `instance` | Outbound calls rejected by `allow_agents` |
 | `credentials_resolve_errors_total` | counter | `channel`, `reason` | Resolver failures (`unbound`, `not_found`, `not_permitted`) |
-| `credentials_breaker_state` | gauge | `channel`, `instance` | `0=closed`, `1=half-open`, `2=open` (reserved — per-instance breaker is a follow-up) |
+| `credentials_breaker_state` | gauge | `channel`, `instance` | `0=closed`, `1=half-open`, `2=open`. Per-(channel, instance) circuit breaker — a 429 from one number cannot trip the breaker for a sibling account. |
 | `credentials_boot_validation_errors_total` | counter | `kind` | Gauntlet errors by kind at boot |
 | `credentials_insecure_paths_total` | gauge | — | Credential files with lax permissions at boot |
 | `credentials_google_token_refresh_total` | counter | `account_fp`, `outcome={ok,err}` | Google OAuth refresh attempts (fp = sha256[..8], not raw email) |
