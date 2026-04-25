@@ -54,3 +54,22 @@ binding_store:
   path: ${NEXO_DRIVER_DB:-/var/lib/nexo-rs/driver.db}
   idle_ttl: 24h
   max_age: 30d
+
+# Phase 67.3 — gating Claude tool calls via the MCP `permission_prompt`
+# server. The driver loop (Phase 67.4) spawns
+# `nexo-driver-permission-mcp` per goal and points Claude Code at it
+# with `--permission-prompt-tool mcp__nexo-driver__permission_prompt`.
+#
+# `socket`: Unix-domain socket the bin uses to ask the daemon for a
+# decision. Phase 67.4 wires the daemon side; 67.3 ships only the bin
+# in `--allow-all` / `--deny-all` placeholder mode.
+#
+# `decision_timeout`: how long the bin waits for a decider response
+# before failing closed (returning a deny to Claude).
+#
+# `session_cache_max`: hard cap on the in-process AllowSession cache
+# so a runaway turn cannot blow up RSS.
+permission:
+  socket: ${NEXO_DRIVER_DECISION_SOCKET:-/run/nexo-rs/driver.sock}
+  decision_timeout: 30s
+  session_cache_max: 1024
