@@ -18,11 +18,11 @@
 
 use std::sync::Arc;
 
+use anyhow::{anyhow, Context};
+use async_trait::async_trait;
 use nexo_auth::handle::GOOGLE;
 use nexo_llm::ToolDef;
 use nexo_plugin_google::{GoogleAuthClient, GoogleAuthConfig, SecretSources};
-use anyhow::{anyhow, Context};
-use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use super::GmailInner;
@@ -102,12 +102,16 @@ fn spec(
 
 // ── handlers ─────────────────────────────────────────────────────────
 
-struct CountUnread { inner: Arc<GmailInner> }
+struct CountUnread {
+    inner: Arc<GmailInner>,
+}
 #[async_trait]
 impl CustomToolHandler for CountUnread {
     async fn call(&self, runner: Arc<PollerRunner>, args: Value) -> anyhow::Result<Value> {
         let _ = &self.inner; // silence unused-field warning when args ignore inner
-        let id = args["id"].as_str().ok_or_else(|| anyhow!("gmail_count_unread requires `id`"))?;
+        let id = args["id"]
+            .as_str()
+            .ok_or_else(|| anyhow!("gmail_count_unread requires `id`"))?;
         let outcome = runner.run_once(id).await?;
         Ok(json!({
             "ok": true,
@@ -117,18 +121,23 @@ impl CustomToolHandler for CountUnread {
     }
 }
 
-struct Search { inner: Arc<GmailInner> }
+struct Search {
+    inner: Arc<GmailInner>,
+}
 #[async_trait]
 impl CustomToolHandler for Search {
     async fn call(&self, runner: Arc<PollerRunner>, args: Value) -> anyhow::Result<Value> {
         let agent = require_agent_id(&args)?;
-        let query = args["query"].as_str().ok_or_else(|| anyhow!("gmail_search requires `query`"))?;
+        let query = args["query"]
+            .as_str()
+            .ok_or_else(|| anyhow!("gmail_search requires `query`"))?;
         let max = args["max_results"].as_u64().unwrap_or(10).min(50);
 
         let client = client_for_agent(&self.inner, &runner, agent).await?;
         let url = format!(
             "https://gmail.googleapis.com/gmail/v1/users/me/messages?q={}&maxResults={}",
-            urlencode(query), max
+            urlencode(query),
+            max
         );
         let listing: Value = client.authorized_call("GET", &url, None).await?;
         let ids: Vec<String> = listing
@@ -159,20 +168,27 @@ impl CustomToolHandler for Search {
     }
 }
 
-struct MessageGet { inner: Arc<GmailInner> }
+struct MessageGet {
+    inner: Arc<GmailInner>,
+}
 #[async_trait]
 impl CustomToolHandler for MessageGet {
     async fn call(&self, runner: Arc<PollerRunner>, args: Value) -> anyhow::Result<Value> {
         let agent = require_agent_id(&args)?;
-        let id = args["id"].as_str().ok_or_else(|| anyhow!("gmail_message_get requires `id`"))?;
+        let id = args["id"]
+            .as_str()
+            .ok_or_else(|| anyhow!("gmail_message_get requires `id`"))?;
         let client = client_for_agent(&self.inner, &runner, agent).await?;
-        let url = format!(
-            "https://gmail.googleapis.com/gmail/v1/users/me/messages/{id}?format=full"
-        );
+        let url =
+            format!("https://gmail.googleapis.com/gmail/v1/users/me/messages/{id}?format=full");
         let msg: Value = client.authorized_call("GET", &url, None).await?;
         let subject = header(&msg, "Subject").unwrap_or_default();
         let from = header(&msg, "From").unwrap_or_default();
-        let snippet = msg.get("snippet").and_then(Value::as_str).unwrap_or("").to_string();
+        let snippet = msg
+            .get("snippet")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
         let mut body = extract_body(&msg);
         const BODY_CAP: usize = 4096;
         if body.len() > BODY_CAP {
@@ -203,9 +219,7 @@ impl CustomToolHandler for ModifyLabel {
             .as_str()
             .ok_or_else(|| anyhow!("gmail_{} requires `id`", self.op))?;
         let client = client_for_agent(&self.inner, &runner, agent).await?;
-        let url = format!(
-            "https://gmail.googleapis.com/gmail/v1/users/me/messages/{id}/modify"
-        );
+        let url = format!("https://gmail.googleapis.com/gmail/v1/users/me/messages/{id}/modify");
         let body = json!({ "addLabelIds": self.add, "removeLabelIds": self.remove });
         client
             .authorized_call("POST", &url, Some(body))
@@ -215,7 +229,9 @@ impl CustomToolHandler for ModifyLabel {
     }
 }
 
-struct LabelsList { inner: Arc<GmailInner> }
+struct LabelsList {
+    inner: Arc<GmailInner>,
+}
 #[async_trait]
 impl CustomToolHandler for LabelsList {
     async fn call(&self, runner: Arc<PollerRunner>, args: Value) -> anyhow::Result<Value> {
@@ -325,22 +341,34 @@ fn header(msg: &Value, name: &str) -> Option<String> {
 }
 
 fn extract_body(msg: &Value) -> String {
-    let Some(payload) = msg.get("payload") else { return String::new() };
-    if let Some(t) = find_body(payload, "text/plain") { return t; }
-    if let Some(html) = find_body(payload, "text/html") { return strip_html(&html); }
+    let Some(payload) = msg.get("payload") else {
+        return String::new();
+    };
+    if let Some(t) = find_body(payload, "text/plain") {
+        return t;
+    }
+    if let Some(html) = find_body(payload, "text/html") {
+        return strip_html(&html);
+    }
     String::new()
 }
 
 fn find_body(part: &Value, want: &str) -> Option<String> {
     let mime = part.get("mimeType").and_then(Value::as_str).unwrap_or("");
     if mime == want {
-        if let Some(data) = part.get("body").and_then(|b| b.get("data")).and_then(Value::as_str) {
+        if let Some(data) = part
+            .get("body")
+            .and_then(|b| b.get("data"))
+            .and_then(Value::as_str)
+        {
             return decode_b64url(data);
         }
     }
     if let Some(parts) = part.get("parts").and_then(Value::as_array) {
         for p in parts {
-            if let Some(t) = find_body(p, want) { return Some(t); }
+            if let Some(t) = find_body(p, want) {
+                return Some(t);
+            }
         }
     }
     None
@@ -386,7 +414,9 @@ mod tests {
 
     #[test]
     fn build_tools_returns_six() {
-        let inner = Arc::new(GmailInner { clients: dashmap::DashMap::new() });
+        let inner = Arc::new(GmailInner {
+            clients: dashmap::DashMap::new(),
+        });
         let tools = build_tools(inner);
         let names: Vec<_> = tools.iter().map(|t| t.def.name.as_str()).collect();
         assert_eq!(names.len(), 6);

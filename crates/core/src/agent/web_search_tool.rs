@@ -7,9 +7,9 @@
 
 use super::context::AgentContext;
 use super::tool_registry::ToolHandler;
+use async_trait::async_trait;
 use nexo_llm::ToolDef;
 use nexo_web_search::{WebSearchArgs, WebSearchRouter};
-use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::sync::Arc;
 

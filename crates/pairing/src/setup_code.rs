@@ -46,11 +46,9 @@ impl SetupCodeIssuer {
         let mut secret = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut secret);
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| PairingError::Io(e.to_string()))?;
+            std::fs::create_dir_all(parent).map_err(|e| PairingError::Io(e.to_string()))?;
         }
-        std::fs::write(path, secret)
-            .map_err(|e| PairingError::Io(e.to_string()))?;
+        std::fs::write(path, secret).map_err(|e| PairingError::Io(e.to_string()))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -58,8 +56,7 @@ impl SetupCodeIssuer {
                 .map_err(|e| PairingError::Io(e.to_string()))?
                 .permissions();
             perms.set_mode(0o600);
-            std::fs::set_permissions(path, perms)
-                .map_err(|e| PairingError::Io(e.to_string()))?;
+            std::fs::set_permissions(path, perms).map_err(|e| PairingError::Io(e.to_string()))?;
         }
         Ok(Self { secret })
     }
@@ -74,8 +71,9 @@ impl SetupCodeIssuer {
         if url.trim().is_empty() {
             return Err(PairingError::Invalid("setup-code url is empty"));
         }
-        let expires_at = Utc::now() + chrono::Duration::from_std(ttl)
-            .map_err(|_| PairingError::Invalid("setup-code ttl out of range"))?;
+        let expires_at = Utc::now()
+            + chrono::Duration::from_std(ttl)
+                .map_err(|_| PairingError::Invalid("setup-code ttl out of range"))?;
         let mut nonce_bytes = [0u8; 16];
         rand::thread_rng().fill_bytes(&mut nonce_bytes);
         let claims = TokenClaims {
@@ -84,8 +82,8 @@ impl SetupCodeIssuer {
             nonce: hex::encode(nonce_bytes),
             device_label: device_label.map(str::to_string),
         };
-        let claims_json = serde_json::to_vec(&claims)
-            .map_err(|e| PairingError::Storage(e.to_string()))?;
+        let claims_json =
+            serde_json::to_vec(&claims).map_err(|e| PairingError::Storage(e.to_string()))?;
         let mut mac = HmacSha256::new_from_slice(&self.secret)
             .map_err(|e| PairingError::Invalid(Box::leak(e.to_string().into_boxed_str())))?;
         mac.update(&claims_json);
@@ -135,8 +133,7 @@ impl SetupCodeIssuer {
 /// Encoded form: `b64url(JSON({url, bootstrap_token, expires_at}))`.
 /// QR-friendly: short, URL-safe, no padding.
 pub fn encode_setup_code(payload: &SetupCode) -> Result<String, PairingError> {
-    let json = serde_json::to_vec(payload)
-        .map_err(|e| PairingError::Storage(e.to_string()))?;
+    let json = serde_json::to_vec(payload).map_err(|e| PairingError::Storage(e.to_string()))?;
     Ok(URL_SAFE_NO_PAD.encode(json))
 }
 
@@ -145,8 +142,7 @@ pub fn decode_setup_code(code: &str) -> Result<SetupCode, PairingError> {
     let bytes = URL_SAFE_NO_PAD
         .decode(code)
         .map_err(|_| PairingError::Invalid("setup-code b64"))?;
-    serde_json::from_slice(&bytes)
-        .map_err(|_| PairingError::Invalid("setup-code json"))
+    serde_json::from_slice(&bytes).map_err(|_| PairingError::Invalid("setup-code json"))
 }
 
 /// Convenience: returns the `expires_at` as a UTC timestamp.

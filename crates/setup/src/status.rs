@@ -137,9 +137,7 @@ fn audit_anthropic(svc: &ServiceDef, secrets_dir: &Path) -> ServiceStatus {
     let api = secrets_dir.join("anthropic_api_key.txt");
     let setup = secrets_dir.join("anthropic_setup_token.txt");
     let bundle = secrets_dir.join("anthropic_oauth.json");
-    let any = plan_configured_or(&api)
-        || plan_configured_or(&setup)
-        || plan_configured_or(&bundle);
+    let any = plan_configured_or(&api) || plan_configured_or(&setup) || plan_configured_or(&bundle);
     let source =
         "secrets/anthropic_{api_key.txt, setup_token.txt, oauth.json}; env:ANTHROPIC_API_KEY"
             .to_string();

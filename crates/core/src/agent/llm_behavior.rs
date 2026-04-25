@@ -10,12 +10,12 @@ use crate::telemetry::{
     inc_llm_requests_total, observe_cache_usage, observe_llm_latency_ms,
     observe_prompt_tokens_drift, observe_prompt_tokens_estimated,
 };
+use async_trait::async_trait;
+use chrono::Utc;
 use nexo_broker::{BrokerHandle, Event};
 use nexo_llm::{
     collect_stream, Attachment, ChatMessage, ChatRequest, ChatRole, LlmClient, ResponseContent,
 };
-use async_trait::async_trait;
-use chrono::Utc;
 use std::sync::Arc;
 /// Decide whether a session is a private DM (main) or a shared surface.
 /// `MEMORY.md` loads only for `Main` — shared scopes strip it at load time.
@@ -97,7 +97,7 @@ impl Default for CompactionRuntime {
         Self {
             enabled: false,
             compact_at_tokens: 75_000,
-            tail_keep_chars: 80_000, // ≈20K tokens
+            tail_keep_chars: 80_000,       // ≈20K tokens
             tool_result_max_chars: 60_000, // ≈15K tokens; per-turn pre-send only
             lock_ttl_seconds: 300,
             summarizer_model: String::new(),
@@ -144,10 +144,7 @@ impl LlmAgentBehavior {
     /// `nexo_llm::token_counter::build()` based on
     /// `llm.context_optimization.token_counter.backend`. When omitted,
     /// pre-flight sizing is skipped (zero metrics, zero overhead).
-    pub fn with_token_counter(
-        mut self,
-        counter: Arc<dyn nexo_llm::TokenCounter>,
-    ) -> Self {
+    pub fn with_token_counter(mut self, counter: Arc<dyn nexo_llm::TokenCounter>) -> Self {
         self.token_counter = Some(counter);
         self
     }
@@ -478,8 +475,8 @@ impl LlmAgentBehavior {
                     "skills configured but skills_dir is empty; skipping skill injection"
                 );
             } else {
-                let loader = SkillLoader::new(skills_dir)
-                    .with_overrides(ctx.config.skill_overrides.clone());
+                let loader =
+                    SkillLoader::new(skills_dir).with_overrides(ctx.config.skill_overrides.clone());
                 let loaded = loader.load_many(&effective.skills).await;
                 if let Some(blocks) = render_skill_blocks(&loaded) {
                     skills_section = Some(blocks);
@@ -616,11 +613,12 @@ impl LlmAgentBehavior {
             .context_optimization
             .map(|co| co.compaction)
             .unwrap_or(true);
-        if self.compaction_runtime.enabled
-            && live_compaction
-            && self.compactor.is_some()
-            && self.compaction_store.is_some()
-        {
+        if let (true, true, Some(compactor), Some(compaction_store)) = (
+            self.compaction_runtime.enabled,
+            live_compaction,
+            self.compactor.as_ref(),
+            self.compaction_store.as_ref(),
+        ) {
             let est = if let Some(counter) = self.token_counter.as_ref() {
                 let blocks_n = counter.count_blocks(&system_blocks).await.unwrap_or(0);
                 let hist_msgs: Vec<ChatMessage> = session
@@ -641,10 +639,11 @@ impl LlmAgentBehavior {
                 0
             };
             if est >= self.compaction_runtime.compact_at_tokens {
-                if let Some(boundary) =
-                    super::compaction::find_safe_boundary(&session.history, self.compaction_runtime.tail_keep_chars)
-                {
-                    let store = self.compaction_store.as_ref().unwrap();
+                if let Some(boundary) = super::compaction::find_safe_boundary(
+                    &session.history,
+                    self.compaction_runtime.tail_keep_chars,
+                ) {
+                    let store = compaction_store;
                     let acquired = store
                         .try_acquire_lock(
                             session.id,
@@ -665,10 +664,7 @@ impl LlmAgentBehavior {
                             tail_keep_tokens: (self.compaction_runtime.tail_keep_chars / 4) as u32,
                             model: model.clone(),
                         };
-                        let result = self
-                            .compactor
-                            .as_ref()
-                            .unwrap()
+                        let result = compactor
                             .compact(&session.history, boundary, &budget)
                             .await;
                         let elapsed_ms = started.elapsed().as_millis() as u64;
@@ -842,11 +838,7 @@ impl LlmAgentBehavior {
                     self.compaction_runtime.tool_result_max_chars,
                 );
                 if truncated > 0 {
-                    crate::telemetry::observe_compaction(
-                        &ctx.agent_id,
-                        "tool_result_truncated",
-                        0,
-                    );
+                    crate::telemetry::observe_compaction(&ctx.agent_id, "tool_result_truncated", 0);
                 }
             }
             let mut req = ChatRequest::new(&model, messages_for_send);

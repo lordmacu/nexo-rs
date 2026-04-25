@@ -221,9 +221,7 @@ pub fn render(out: &mut String) {
         }
     }
 
-    out.push_str(
-        "# HELP nexo_web_search_latency_ms Per-provider call latency in milliseconds.\n",
-    );
+    out.push_str("# HELP nexo_web_search_latency_ms Per-provider call latency in milliseconds.\n");
     out.push_str("# TYPE nexo_web_search_latency_ms histogram\n");
     if LATENCY.is_empty() {
         for upper in LATENCY_BUCKET_LIMITS_MS.iter() {

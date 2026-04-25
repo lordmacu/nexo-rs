@@ -67,11 +67,7 @@ impl CredentialStore for WhatsappCredentialStore {
             })
     }
 
-    fn issue(
-        &self,
-        account_id: &str,
-        agent_id: &str,
-    ) -> Result<CredentialHandle, CredentialError> {
+    fn issue(&self, account_id: &str, agent_id: &str) -> Result<CredentialHandle, CredentialError> {
         let account = self
             .accounts
             .get(account_id)
@@ -79,9 +75,7 @@ impl CredentialStore for WhatsappCredentialStore {
                 channel: WHATSAPP,
                 account: account_id.to_string(),
             })?;
-        if !account.allow_agents.is_empty()
-            && !account.allow_agents.iter().any(|a| a == agent_id)
-        {
+        if !account.allow_agents.is_empty() && !account.allow_agents.iter().any(|a| a == agent_id) {
             let handle = CredentialHandle::new(WHATSAPP, account_id, agent_id);
             return Err(CredentialError::NotPermitted {
                 channel: WHATSAPP,
@@ -157,11 +151,7 @@ mod tests {
 
     #[test]
     fn list_is_sorted_and_stable() {
-        let store = WhatsappCredentialStore::new(vec![
-            mk("b", &[]),
-            mk("a", &[]),
-            mk("c", &[]),
-        ]);
+        let store = WhatsappCredentialStore::new(vec![mk("b", &[]), mk("a", &[]), mk("c", &[])]);
         assert_eq!(store.list(), vec!["a", "b", "c"]);
     }
 }

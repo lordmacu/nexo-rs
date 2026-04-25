@@ -63,9 +63,7 @@ impl BinVersionSpec {
     fn command(&self) -> &str {
         match self {
             BinVersionSpec::Constraint(_) => "--version",
-            BinVersionSpec::Detailed { command, .. } => {
-                command.as_deref().unwrap_or("--version")
-            }
+            BinVersionSpec::Detailed { command, .. } => command.as_deref().unwrap_or("--version"),
         }
     }
     fn regex(&self) -> &str {
@@ -255,9 +253,8 @@ impl SkillLoader {
             .collect();
         let missing_versions = probe_version_requirements(&metadata.requires.bin_versions).await;
 
-        let any_missing = !missing_env.is_empty()
-            || !missing_bins.is_empty()
-            || !missing_versions.is_empty();
+        let any_missing =
+            !missing_env.is_empty() || !missing_bins.is_empty() || !missing_versions.is_empty();
 
         match mode {
             SkillDepsMode::Disable => unreachable!("handled above"),
@@ -384,7 +381,9 @@ fn render_missing_banner(
                 format!("requires {} (found {found})", v.required)
             }
             (_, VersionFailReason::BinNotFound) => format!("requires {} (bin missing)", v.required),
-            (_, VersionFailReason::ProbeFailed) => format!("requires {} (probe failed)", v.required),
+            (_, VersionFailReason::ProbeFailed) => {
+                format!("requires {} (probe failed)", v.required)
+            }
             (_, VersionFailReason::ParseFailed) => {
                 format!("requires {} (version output unparseable)", v.required)
             }
@@ -502,9 +501,7 @@ async fn run_probe(
     {
         let cache = version_cache().lock().await;
         if let Some(cached) = cache.get(path) {
-            return cached
-                .clone()
-                .ok_or(VersionFailReason::ProbeFailed);
+            return cached.clone().ok_or(VersionFailReason::ProbeFailed);
         }
     }
     let result = invoke_and_parse(path, command, regex_pattern).await;
@@ -762,9 +759,7 @@ mod tests {
         tokio::fs::create_dir_all(tmp.join("github")).await?;
         let var = "AGENT_CORE_SKILLS_TEST_TOKEN_XYZ";
         std::env::remove_var(var);
-        let body = format!(
-            "---\nrequires:\n  env: [\"{var}\"]\n  mode: warn\n---\n\nbody"
-        );
+        let body = format!("---\nrequires:\n  env: [\"{var}\"]\n  mode: warn\n---\n\nbody");
         tokio::fs::write(tmp.join("github").join("SKILL.md"), body).await?;
         let loader = SkillLoader::new(&tmp);
         let loaded = loader.load_many(&["github".to_string()]).await;
@@ -819,17 +814,14 @@ mod tests {
     #[tokio::test]
     async fn warn_mode_loads_with_banner_when_bin_missing() {
         let tmp = tmpdir();
-        let body = "---\nrequires:\n  bins: [definitely-not-a-real-bin-xyz]\n  mode: warn\n---\n\nBody.";
+        let body =
+            "---\nrequires:\n  bins: [definitely-not-a-real-bin-xyz]\n  mode: warn\n---\n\nBody.";
         write_skill(&tmp, "weather", body).await;
         let loader = SkillLoader::new(&tmp);
-        let (loaded, status) = loader
-            .load_many_with_status(&["weather".to_string()])
-            .await;
+        let (loaded, status) = loader.load_many_with_status(&["weather".to_string()]).await;
         assert_eq!(loaded.len(), 1);
         assert!(loaded[0].content.contains("MISSING DEPS"));
-        assert!(loaded[0]
-            .content
-            .contains("definitely-not-a-real-bin-xyz"));
+        assert!(loaded[0].content.contains("definitely-not-a-real-bin-xyz"));
         assert_eq!(status[0].action, SkillLoadAction::LoadedWithBanner);
         tokio::fs::remove_dir_all(tmp).await.ok();
     }
@@ -917,9 +909,8 @@ mod tests {
         std::env::set_var("PATH", with_path_prefix(&path_dir));
 
         let tmp = tmpdir();
-        let body = format!(
-            "---\nrequires:\n  bin_versions:\n    {bin_name}: \">=4.0\"\n---\n\nBody.",
-        );
+        let body =
+            format!("---\nrequires:\n  bin_versions:\n    {bin_name}: \">=4.0\"\n---\n\nBody.",);
         write_skill(&tmp, "v", &body).await;
         let loader = SkillLoader::new(&tmp);
         let (loaded, status) = loader.load_many_with_status(&["v".to_string()]).await;
@@ -936,13 +927,16 @@ mod tests {
         std::env::set_var("PATH", with_path_prefix(&path_dir));
 
         let tmp = tmpdir();
-        let body = format!(
-            "---\nrequires:\n  bin_versions:\n    {bin_name}: \">=4.0\"\n---\n\nBody.",
-        );
+        let body =
+            format!("---\nrequires:\n  bin_versions:\n    {bin_name}: \">=4.0\"\n---\n\nBody.",);
         write_skill(&tmp, "old", &body).await;
         let loader = SkillLoader::new(&tmp);
         let (loaded, status) = loader.load_many_with_status(&["old".to_string()]).await;
-        assert!(loaded.is_empty(), "strict should skip; status: {:?}", status);
+        assert!(
+            loaded.is_empty(),
+            "strict should skip; status: {:?}",
+            status
+        );
         assert_eq!(status[0].action, SkillLoadAction::SkippedStrict);
         assert_eq!(status[0].missing_versions.len(), 1);
         assert_eq!(
@@ -1008,10 +1002,7 @@ mod tests {
             resolve_mode(SkillDepsMode::Warn, Some(SkillDepsMode::Strict)),
             SkillDepsMode::Strict
         );
-        assert_eq!(
-            resolve_mode(SkillDepsMode::Warn, None),
-            SkillDepsMode::Warn
-        );
+        assert_eq!(resolve_mode(SkillDepsMode::Warn, None), SkillDepsMode::Warn);
         assert_eq!(
             resolve_mode(SkillDepsMode::default(), None),
             SkillDepsMode::Strict

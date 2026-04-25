@@ -35,11 +35,7 @@ fn tg(instance: &str, agent: &str) -> TelegramAccount {
     }
 }
 
-fn input(
-    agent_id: &str,
-    wa_account: &str,
-    tg_account: &str,
-) -> AgentCredentialsInput {
+fn input(agent_id: &str, wa_account: &str, tg_account: &str) -> AgentCredentialsInput {
     let mut outbound = HashMap::new();
     outbound.insert(WHATSAPP, wa_account.to_string());
     outbound.insert(TELEGRAM, tg_account.to_string());
@@ -139,10 +135,9 @@ fn fingerprint_never_contains_account_id() {
     let inputs = vec![input("ana", "+573001234567", "nonexistent")];
     // Telegram input references a missing instance — expected error.
     let err = AgentCredentialResolver::build(&inputs, &s, StrictLevel::Lenient).unwrap_err();
-    assert!(
-        err.iter()
-            .any(|e| matches!(e, BuildError::MissingInstance { .. }))
-    );
+    assert!(err
+        .iter()
+        .any(|e| matches!(e, BuildError::MissingInstance { .. })));
 
     // Build a second time with just WA to get a real handle.
     let inputs2 = vec![AgentCredentialsInput {

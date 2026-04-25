@@ -44,10 +44,7 @@ pub fn run(config_dir: &Path) -> Result<Summary> {
                     nexo_auth::handle::GOOGLE,
                 ] {
                     if let Ok(handle) = bundle.resolver.resolve(&agent.id, channel) {
-                        per.push((
-                            channel.to_string(),
-                            handle.account_id_raw().to_string(),
-                        ));
+                        per.push((channel.to_string(), handle.account_id_raw().to_string()));
                     }
                 }
                 bindings.push((agent.id.clone(), per));
@@ -86,8 +83,7 @@ pub fn print(summary: &Summary) {
             if per.is_empty() {
                 println!("    • {agent}: (sin credenciales — usará topics legacy)");
             } else {
-                let rendered: Vec<String> =
-                    per.iter().map(|(c, a)| format!("{c}={a}")).collect();
+                let rendered: Vec<String> = per.iter().map(|(c, a)| format!("{c}={a}")).collect();
                 println!("    • {agent}: {}", rendered.join(", "));
             }
         }
@@ -106,9 +102,7 @@ pub fn print(summary: &Summary) {
             println!("    ✗  {e}");
         }
         println!();
-        println!(
-            "  Corrige los items anteriores antes de arrancar el daemon."
-        );
+        println!("  Corrige los items anteriores antes de arrancar el daemon.");
         println!("  Re-corre con:  agent --config ./config --check-config");
     } else if summary.warnings.is_empty() {
         println!();

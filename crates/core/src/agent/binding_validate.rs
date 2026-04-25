@@ -84,9 +84,7 @@ pub enum BindingValidationError {
         agent_provider: String,
     },
 
-    #[error(
-        "agent '{agent}': unknown LLM provider '{provider}' (known: {known})"
-    )]
+    #[error("agent '{agent}': unknown LLM provider '{provider}' (known: {known})")]
     UnknownProvider {
         agent: String,
         provider: String,
@@ -342,7 +340,11 @@ fn validate_agent_into(
                 agent: agent.id.clone(),
                 index: idx,
                 instance: inst.to_string(),
-                known: if known.is_empty() { "<none>".into() } else { known },
+                known: if known.is_empty() {
+                    "<none>".into()
+                } else {
+                    known
+                },
             });
         }
     }
@@ -529,7 +531,10 @@ mod tests {
         });
         let tg = vec![tg_instance("ana_tg")];
         let err = validate_agent(&a, &tg, &KnownTools::default()).unwrap_err();
-        assert!(matches!(err, BindingValidationError::DuplicateBinding { .. }));
+        assert!(matches!(
+            err,
+            BindingValidationError::DuplicateBinding { .. }
+        ));
     }
 
     #[test]
@@ -604,8 +609,7 @@ mod tests {
             allowed_tools: Some(vec!["anything".into()]),
             ..Default::default()
         });
-        validate_agent(&a, &[], &KnownTools::default())
-            .expect("empty catalogue = check disabled");
+        validate_agent(&a, &[], &KnownTools::default()).expect("empty catalogue = check disabled");
     }
 
     #[test]
@@ -659,7 +663,10 @@ mod tests {
             ..Default::default()
         });
         let err = validate_agent(&a, &[], &KnownTools::default()).unwrap_err();
-        assert!(matches!(err, BindingValidationError::ProviderMismatch { .. }));
+        assert!(matches!(
+            err,
+            BindingValidationError::ProviderMismatch { .. }
+        ));
     }
 
     #[test]
@@ -732,7 +739,10 @@ mod tests {
         let msg = format!("{err:#}");
         assert!(msg.contains("duplicate binding"));
         assert!(msg.contains("provider"));
-        assert!(msg.contains("issue"), "message should count issues, got: {msg}");
+        assert!(
+            msg.contains("issue"),
+            "message should count issues, got: {msg}"
+        );
     }
 
     #[test]
@@ -741,8 +751,8 @@ mod tests {
         let mut a = agent("ana", "./skills");
         a.model.provider = "anthopic".into();
         let known = KnownProviders::new(["anthropic", "minimax", "openai"]);
-        let err = validate_agents_with_providers(&[a], &[], &KnownTools::default(), &known)
-            .unwrap_err();
+        let err =
+            validate_agents_with_providers(&[a], &[], &KnownTools::default(), &known).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("anthopic"));
         assert!(msg.contains("anthropic"));
@@ -772,12 +782,8 @@ mod tests {
         // Both typo provider AND mismatch will fire; aggregate returns
         // both so operator fixes them together.
         let known = KnownProviders::new(["anthropic", "minimax"]);
-        let errors = collect_binding_errors_with_providers(
-            &[a],
-            &[],
-            &KnownTools::default(),
-            &known,
-        );
+        let errors =
+            collect_binding_errors_with_providers(&[a], &[], &KnownTools::default(), &known);
         assert!(errors
             .iter()
             .any(|e| matches!(e, BindingValidationError::UnknownProvider { .. })));

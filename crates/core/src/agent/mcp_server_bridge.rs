@@ -3,12 +3,12 @@
 //! Cursor) can call the agent's registered tools.
 use super::context::AgentContext;
 use super::tool_registry::ToolRegistry;
+use async_trait::async_trait;
 use nexo_mcp::{
     McpAnnotations, McpContent, McpError, McpPrompt, McpPromptArgument, McpPromptMessage,
     McpPromptResult, McpResource, McpResourceContent, McpServerHandler, McpServerInfo, McpTool,
     McpToolResult,
 };
-use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -322,12 +322,12 @@ mod tests {
     use super::super::tool_registry::ToolHandler;
     use super::*;
     use crate::session::SessionManager;
+    use async_trait::async_trait;
     use nexo_broker::AnyBroker;
     use nexo_config::types::agents::{
         AgentConfig, AgentRuntimeConfig, HeartbeatConfig, ModelConfig,
     };
     use nexo_llm::ToolDef;
-    use async_trait::async_trait;
     use tempfile::tempdir;
     struct FixedHandler {
         result: Result<Value, String>,

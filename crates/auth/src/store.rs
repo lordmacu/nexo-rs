@@ -20,11 +20,7 @@ pub trait CredentialStore: Send + Sync + 'static {
     /// Create a handle after checking that `agent_id` is permitted on
     /// the account's `allow_agents` list (empty list = accept all).
     /// Called by the resolver at boot — never from hot paths.
-    fn issue(
-        &self,
-        account_id: &str,
-        agent_id: &str,
-    ) -> Result<CredentialHandle, CredentialError>;
+    fn issue(&self, account_id: &str, agent_id: &str) -> Result<CredentialHandle, CredentialError>;
 
     /// Enumerate every account id known to this store. Used by the
     /// gauntlet to diagnose missing `credentials.<channel>` bindings.

@@ -6,9 +6,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use anyhow::{Context, Result};
 use nexo_broker::AnyBroker;
 use nexo_config::WhatsappPluginConfig;
-use anyhow::{Context, Result};
 
 use crate::pairing::SharedPairingState;
 

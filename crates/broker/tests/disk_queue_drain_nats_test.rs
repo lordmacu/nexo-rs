@@ -9,8 +9,8 @@
 
 use std::time::Duration;
 
-use nexo_broker::{DiskQueue, Event};
 use futures::StreamExt;
+use nexo_broker::{DiskQueue, Event};
 use uuid::Uuid;
 
 fn event(topic: &str, label: &str) -> Event {

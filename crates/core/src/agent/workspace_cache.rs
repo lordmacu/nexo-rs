@@ -68,7 +68,9 @@ impl WorkspaceCacheMetrics {
             c.value().fetch_add(1, Ordering::Relaxed);
             return;
         }
-        let entry = map.entry(key.to_string()).or_insert_with(|| AtomicU64::new(0));
+        let entry = map
+            .entry(key.to_string())
+            .or_insert_with(|| AtomicU64::new(0));
         entry.value().fetch_add(1, Ordering::Relaxed);
     }
     pub fn snapshot(&self) -> HashMap<String, (u64, u64, u64)> {
@@ -101,8 +103,9 @@ impl WorkspaceCache {
     /// watched recursively; any `*.md` change invalidates every entry
     /// keyed under that root.
     ///
-    /// `debounce_ms`: coalesces bursts (saves from editors that write
-    /// + rename + chmod). 500ms is a reasonable default.
+    /// `debounce_ms`: coalesces bursts (saves from editors that write +
+    /// rename + chmod). 500ms is a reasonable default.
+    ///
     /// `max_age_seconds`: force a refresh after this many seconds even
     /// without a watch event. 0 = disabled.
     pub fn new(

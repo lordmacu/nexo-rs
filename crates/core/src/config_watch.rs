@@ -28,8 +28,7 @@ use tokio_util::sync::CancellationToken;
 
 /// Built-in watch targets — the coordinator always adds these even if
 /// `runtime.yaml` leaves `extra_watch_paths` empty.
-pub const DEFAULT_WATCH_PATHS: &[&str] =
-    &["agents.yaml", "agents.d", "llm.yaml", "runtime.yaml"];
+pub const DEFAULT_WATCH_PATHS: &[&str] = &["agents.yaml", "agents.d", "llm.yaml", "runtime.yaml"];
 
 /// Spawn a background task that watches the config directory and
 /// sends a `()` notification every time the debouncer settles. The

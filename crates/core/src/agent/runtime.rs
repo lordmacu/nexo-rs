@@ -2,19 +2,19 @@ use super::agent::Agent;
 use super::behavior::AgentBehavior;
 use super::context::AgentContext;
 use super::effective::EffectiveBindingPolicy;
-use crate::runtime_snapshot::RuntimeSnapshot;
-use arc_swap::ArcSwap;
 use super::peer_directory::PeerDirectory;
 use super::routing::{route_topic, AgentMessage, AgentPayload, AgentRouter};
 use super::sender_rate_limit::SenderRateLimiter;
 use super::types::{InboundMedia, InboundMessage, RunTrigger};
 use crate::heartbeat::{heartbeat_interval, heartbeat_topic, publish_heartbeat};
+use crate::runtime_snapshot::RuntimeSnapshot;
 use crate::session::SessionManager;
 use crate::telemetry::inc_messages_processed_total;
+use arc_swap::ArcSwap;
+use dashmap::DashMap;
 use nexo_broker::{AnyBroker, BrokerHandle};
 use nexo_config::types::agents::InboundBinding;
 use nexo_memory::LongTermMemory;
-use dashmap::DashMap;
 use serde_json::Value;
 use std::mem;
 use std::sync::Arc;
@@ -145,8 +145,10 @@ impl AgentRuntime {
             );
         } else {
             for idx in 0..agent.config.inbound_bindings.len() {
-                effective_policies
-                    .insert(Some(idx), EffectiveBindingPolicy::resolved(&agent.config, idx));
+                effective_policies.insert(
+                    Some(idx),
+                    EffectiveBindingPolicy::resolved(&agent.config, idx),
+                );
             }
         }
         let initial_snapshot = RuntimeSnapshot::bare(Arc::clone(&agent.config), 0);
@@ -207,10 +209,7 @@ impl AgentRuntime {
     }
     /// Attach the shared web-search router. Every `AgentContext` built
     /// by this runtime inherits it so the `web_search` tool can route.
-    pub fn with_web_search_router(
-        mut self,
-        router: Arc<nexo_web_search::WebSearchRouter>,
-    ) -> Self {
+    pub fn with_web_search_router(mut self, router: Arc<nexo_web_search::WebSearchRouter>) -> Self {
         self.web_search_router = Some(router);
         self
     }
@@ -226,10 +225,7 @@ impl AgentRuntime {
     /// when the gate is active, and used to normalise sender ids before
     /// store lookup. `None` (default) preserves legacy zero-adapter
     /// behaviour.
-    pub fn with_pairing_adapters(
-        mut self,
-        registry: nexo_pairing::PairingAdapterRegistry,
-    ) -> Self {
+    pub fn with_pairing_adapters(mut self, registry: nexo_pairing::PairingAdapterRegistry) -> Self {
         self.pairing_adapters = registry;
         self
     }
@@ -1138,10 +1134,9 @@ async fn deliver_pairing_challenge(
             .unwrap_or_else(|| sender.to_string());
         let text = adapter.format_challenge_text(code);
         match adapter.send_reply(account, &to, &text).await {
-            Ok(()) => crate::telemetry::inc_pairing_inbound_challenged(
-                channel,
-                "delivered_via_adapter",
-            ),
+            Ok(()) => {
+                crate::telemetry::inc_pairing_inbound_challenged(channel, "delivered_via_adapter")
+            }
             Err(e) => {
                 tracing::warn!(error = %e, %channel, "pairing adapter send_reply failed");
                 crate::telemetry::inc_pairing_inbound_challenged(channel, "publish_failed");
@@ -1157,10 +1152,7 @@ async fn deliver_pairing_challenge(
         "whatsapp" => "plugin.outbound.whatsapp",
         "telegram" => "plugin.outbound.telegram",
         _ => {
-            crate::telemetry::inc_pairing_inbound_challenged(
-                channel,
-                "no_adapter_no_broker_topic",
-            );
+            crate::telemetry::inc_pairing_inbound_challenged(channel, "no_adapter_no_broker_topic");
             return;
         }
     };
@@ -1168,9 +1160,8 @@ async fn deliver_pairing_challenge(
         Some(inst) if !inst.is_empty() => format!("{topic_base}.{inst}"),
         _ => topic_base.to_string(),
     };
-    let text = format!(
-        "🔐 Pairing required.\nAsk the operator to run:\n  nexo pair approve {code}",
-    );
+    let text =
+        format!("🔐 Pairing required.\nAsk the operator to run:\n  nexo pair approve {code}",);
     let payload = serde_json::json!({
         "kind": "text",
         "to": sender,

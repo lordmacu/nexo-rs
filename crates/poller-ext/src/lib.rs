@@ -37,17 +37,16 @@
 //! - `-32001` for `Transient` (network blip, 5xx)
 //! - `-32002` for `Permanent` (token revoked, scope changed)
 //! - `-32602` for `Config` (validation failure)
+//!
 //! Any other code is treated as `Transient`.
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use nexo_extensions::StdioRuntime;
-use nexo_poller::{
-    OutboundDelivery, PollContext, Poller, PollerError, TickOutcome,
-};
 use async_trait::async_trait;
 use base64::Engine;
+use nexo_extensions::StdioRuntime;
+use nexo_poller::{OutboundDelivery, PollContext, Poller, PollerError, TickOutcome};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -185,18 +184,13 @@ impl Poller for ExtensionPoller {
             ))
         })?;
 
-        let next_cursor = parsed
-            .next_cursor
-            .as_deref()
-            .and_then(|s| {
-                base64::engine::general_purpose::URL_SAFE_NO_PAD
-                    .decode(s.trim_end_matches('='))
-                    .ok()
-            });
+        let next_cursor = parsed.next_cursor.as_deref().and_then(|s| {
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(s.trim_end_matches('='))
+                .ok()
+        });
 
-        let next_interval_hint = parsed
-            .next_interval_secs
-            .map(Duration::from_secs);
+        let next_interval_hint = parsed.next_interval_secs.map(Duration::from_secs);
 
         let deliver = parsed
             .deliver
@@ -284,8 +278,7 @@ pub async fn register_for_runtime(
             }
         };
 
-        let poller = ExtensionPoller::new(leaked, Arc::clone(runtime))
-            .with_tools_cache(tools);
+        let poller = ExtensionPoller::new(leaked, Arc::clone(runtime)).with_tools_cache(tools);
         runner.register(Arc::new(poller));
         count += 1;
     }

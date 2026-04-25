@@ -174,7 +174,11 @@ pub fn evaluate_one(toggle: CapabilityToggle) -> ToggleStatus {
                 })
                 .unwrap_or(false);
             (
-                if enabled { State::Enabled } else { State::Disabled },
+                if enabled {
+                    State::Enabled
+                } else {
+                    State::Disabled
+                },
                 None,
             )
         }
@@ -216,7 +220,11 @@ pub fn render_tty(statuses: &[ToggleStatus]) -> String {
                 ToggleKind::Allowlist => format!(
                     "enabled ({} {})",
                     s.items_count.unwrap_or(0),
-                    if s.items_count == Some(1) { "entry" } else { "entries" }
+                    if s.items_count == Some(1) {
+                        "entry"
+                    } else {
+                        "entries"
+                    }
                 ),
                 ToggleKind::Boolean => "enabled".to_string(),
             },
@@ -231,7 +239,10 @@ pub fn render_tty(statuses: &[ToggleStatus]) -> String {
         ]);
     }
     let widths: [usize; 5] = std::array::from_fn(|col| {
-        rows.iter().map(|r| r[col].chars().count()).max().unwrap_or(0)
+        rows.iter()
+            .map(|r| r[col].chars().count())
+            .max()
+            .unwrap_or(0)
     });
     let mut out = String::new();
     out.push_str("Capability toggles\n");
@@ -317,7 +328,10 @@ mod tests {
     #[test]
     fn inventory_has_expected_entries() {
         let inv = inventory();
-        assert!(inv.len() >= 7, "inventory should not shrink unintentionally");
+        assert!(
+            inv.len() >= 7,
+            "inventory should not shrink unintentionally"
+        );
         let env_vars: Vec<&str> = inv.iter().map(|t| t.env_var).collect();
         assert!(env_vars.contains(&"OP_ALLOW_REVEAL"));
         assert!(env_vars.contains(&"OP_INJECT_COMMAND_ALLOWLIST"));

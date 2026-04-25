@@ -71,7 +71,10 @@ async fn brave_provider_parses_canned_response() {
     assert_eq!(hits[0].url, "https://example.com/a");
     assert_eq!(hits[0].title, "First");
     assert_eq!(hits[0].site_name.as_deref(), Some("example.com"));
-    assert_eq!(hits[0].published_at.as_deref(), Some("2026-04-20T00:00:00Z"));
+    assert_eq!(
+        hits[0].published_at.as_deref(),
+        Some("2026-04-20T00:00:00Z")
+    );
     assert!(hits[1].published_at.is_none());
 }
 

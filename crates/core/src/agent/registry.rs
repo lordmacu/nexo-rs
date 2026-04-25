@@ -1,6 +1,6 @@
 use super::plugin::Plugin;
-use nexo_broker::AnyBroker;
 use dashmap::DashMap;
+use nexo_broker::AnyBroker;
 use std::sync::Arc;
 #[derive(Default, Clone)]
 pub struct PluginRegistry {

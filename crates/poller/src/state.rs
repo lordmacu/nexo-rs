@@ -160,6 +160,7 @@ impl PollState {
         Ok(out)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn save_tick_ok(
         &self,
         job_id: &str,
@@ -200,6 +201,7 @@ impl PollState {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn save_tick_err(
         &self,
         job_id: &str,
@@ -338,9 +340,17 @@ mod tests {
     async fn cursor_roundtrip() {
         let s = PollState::open_in_memory().await.unwrap();
         let cursor = b"history-id-12345".to_vec();
-        s.save_tick_ok("job-a", Some(&cursor), 3, 3, 100, now_ms() + 60_000, now_ms())
-            .await
-            .unwrap();
+        s.save_tick_ok(
+            "job-a",
+            Some(&cursor),
+            3,
+            3,
+            100,
+            now_ms() + 60_000,
+            now_ms(),
+        )
+        .await
+        .unwrap();
         let snap = s.load("job-a").await.unwrap().unwrap();
         assert_eq!(snap.cursor.as_deref(), Some(cursor.as_slice()));
         assert_eq!(snap.items_seen_total, 3);
@@ -397,7 +407,10 @@ mod tests {
         assert!(!s.acquire_lease("j", "B", now + 6_000, now).await.unwrap());
         // After expiry, takeover succeeds.
         let later = until + 1;
-        assert!(s.acquire_lease("j", "B", later + 5_000, later).await.unwrap());
+        assert!(s
+            .acquire_lease("j", "B", later + 5_000, later)
+            .await
+            .unwrap());
         let (holder, _) = s.lease_holder("j").await.unwrap().unwrap();
         assert_eq!(holder, "B");
     }

@@ -3,9 +3,9 @@
 //! description); calls are routed to the owning `StdioRuntime`.
 use super::context::AgentContext;
 use super::tool_registry::ToolHandler;
+use async_trait::async_trait;
 use nexo_extensions::{StdioRuntime, ToolDescriptor};
 use nexo_llm::ToolDef;
-use async_trait::async_trait;
 use serde_json::Value;
 use std::sync::Arc;
 /// Prefix prepended to every extension-provided tool name so they cannot

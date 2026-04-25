@@ -106,10 +106,7 @@ impl AgentContext {
             context_optimization: None,
         }
     }
-    pub fn with_web_search_router(
-        mut self,
-        router: Arc<nexo_web_search::WebSearchRouter>,
-    ) -> Self {
+    pub fn with_web_search_router(mut self, router: Arc<nexo_web_search::WebSearchRouter>) -> Self {
         self.web_search_router = Some(router);
         self
     }

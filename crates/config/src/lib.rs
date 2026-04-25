@@ -65,10 +65,8 @@ impl AppConfig {
         let mcp_server =
             load_optional::<McpServerConfigFile>(dir, "mcp_server.yaml")?.map(|f| f.mcp_server);
         let runtime = load_optional::<RuntimeConfig>(dir, "runtime.yaml")?.unwrap_or_default();
-        let pollers =
-            load_optional::<PollersConfigFile>(dir, "pollers.yaml")?.map(|f| f.pollers);
-        let taskflow =
-            load_optional::<TaskflowConfig>(dir, "taskflow.yaml")?.unwrap_or_default();
+        let pollers = load_optional::<PollersConfigFile>(dir, "pollers.yaml")?.map(|f| f.pollers);
+        let taskflow = load_optional::<TaskflowConfig>(dir, "taskflow.yaml")?.unwrap_or_default();
         let transcripts =
             load_optional::<TranscriptsConfig>(dir, "transcripts.yaml")?.unwrap_or_default();
         Ok(AppConfig {

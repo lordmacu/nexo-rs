@@ -9,11 +9,11 @@
 //! match or the call is rejected before any broker publish. That
 //! keeps a prompt-injected agent from spraying arbitrary numbers.
 
+use async_trait::async_trait;
 use nexo_broker::{BrokerHandle, Event};
 use nexo_core::agent::context::AgentContext;
 use nexo_core::agent::tool_registry::{ToolHandler, ToolRegistry};
 use nexo_llm::ToolDef;
-use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -81,10 +81,7 @@ fn warn_once_unrestricted(agent_id: &str) {
     }
 }
 
-async fn publish_outbound(
-    ctx: &AgentContext,
-    payload: Value,
-) -> anyhow::Result<()> {
+async fn publish_outbound(ctx: &AgentContext, payload: Value) -> anyhow::Result<()> {
     // Phase 17 — resolve the target WhatsApp instance from the agent's
     // credential binding. Falls back to the legacy single-topic
     // `plugin.outbound.whatsapp` when no resolver is attached (early
@@ -167,12 +164,11 @@ impl WhatsappSendMessageTool {
     pub fn tool_def() -> ToolDef {
         ToolDef {
             name: "whatsapp_send_message".to_string(),
-            description:
-                "Send a WhatsApp text message to an arbitrary recipient \
+            description: "Send a WhatsApp text message to an arbitrary recipient \
                  (not necessarily the current conversation). Use when you \
                  need to notify a third party — e.g. a sales lead, an \
                  escalation channel. Honor the agent's outbound allowlist."
-                    .to_string(),
+                .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -208,15 +204,9 @@ impl ToolHandler for WhatsappSendMessageTool {
             anyhow::bail!("`to` must contain digits");
         }
         if allowlist_denied(ctx, &digits) {
-            anyhow::bail!(
-                "recipient {digits} is not in this agent's whatsapp outbound allowlist"
-            );
+            anyhow::bail!("recipient {digits} is not in this agent's whatsapp outbound allowlist");
         }
-        publish_outbound(
-            ctx,
-            json!({ "kind": "text", "to": jid, "text": text }),
-        )
-        .await?;
+        publish_outbound(ctx, json!({ "kind": "text", "to": jid, "text": text })).await?;
         Ok(json!({ "ok": true, "to": digits }))
     }
 }
@@ -231,10 +221,9 @@ impl WhatsappSendReplyTool {
     pub fn tool_def() -> ToolDef {
         ToolDef {
             name: "whatsapp_send_reply".to_string(),
-            description:
-                "Send a WhatsApp text that quotes a prior message from the \
+            description: "Send a WhatsApp text that quotes a prior message from the \
                  same chat. Use for threaded replies where context matters."
-                    .to_string(),
+                .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -251,9 +240,15 @@ impl WhatsappSendReplyTool {
 #[async_trait]
 impl ToolHandler for WhatsappSendReplyTool {
     async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
-        let to = args["to"].as_str().ok_or_else(|| anyhow::anyhow!("`to` required"))?;
-        let msg_id = args["msg_id"].as_str().ok_or_else(|| anyhow::anyhow!("`msg_id` required"))?;
-        let text = args["text"].as_str().ok_or_else(|| anyhow::anyhow!("`text` required"))?;
+        let to = args["to"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("`to` required"))?;
+        let msg_id = args["msg_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("`msg_id` required"))?;
+        let text = args["text"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("`text` required"))?;
         let (digits, jid) = normalize_to(to);
         if allowlist_denied(ctx, &digits) {
             anyhow::bail!("recipient {digits} not in whatsapp allowlist");
@@ -277,10 +272,9 @@ impl WhatsappSendReactionTool {
     pub fn tool_def() -> ToolDef {
         ToolDef {
             name: "whatsapp_send_reaction".to_string(),
-            description:
-                "React to a WhatsApp message with a single emoji. Empty \
+            description: "React to a WhatsApp message with a single emoji. Empty \
                  emoji removes the reaction."
-                    .to_string(),
+                .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -297,8 +291,12 @@ impl WhatsappSendReactionTool {
 #[async_trait]
 impl ToolHandler for WhatsappSendReactionTool {
     async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
-        let to = args["to"].as_str().ok_or_else(|| anyhow::anyhow!("`to` required"))?;
-        let msg_id = args["msg_id"].as_str().ok_or_else(|| anyhow::anyhow!("`msg_id` required"))?;
+        let to = args["to"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("`to` required"))?;
+        let msg_id = args["msg_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("`msg_id` required"))?;
         let emoji = args["emoji"].as_str().unwrap_or("");
         let (digits, jid) = normalize_to(to);
         if allowlist_denied(ctx, &digits) {
@@ -323,11 +321,10 @@ impl WhatsappSendMediaTool {
     pub fn tool_def() -> ToolDef {
         ToolDef {
             name: "whatsapp_send_media".to_string(),
-            description:
-                "Send an image, video, document, or audio file to a \
+            description: "Send an image, video, document, or audio file to a \
                  WhatsApp chat. The media is referenced by URL (the plugin \
                  downloads and re-uploads through WA)."
-                    .to_string(),
+                .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -345,8 +342,12 @@ impl WhatsappSendMediaTool {
 #[async_trait]
 impl ToolHandler for WhatsappSendMediaTool {
     async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
-        let to = args["to"].as_str().ok_or_else(|| anyhow::anyhow!("`to` required"))?;
-        let url = args["url"].as_str().ok_or_else(|| anyhow::anyhow!("`url` required"))?;
+        let to = args["to"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("`to` required"))?;
+        let url = args["url"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("`url` required"))?;
         let caption = args["caption"].as_str().unwrap_or("").to_string();
         let file_name = args["file_name"].as_str().map(|s| s.to_string());
         let (digits, jid) = normalize_to(to);
@@ -376,6 +377,9 @@ impl ToolHandler for WhatsappSendMediaTool {
 pub fn register_whatsapp_tools(tools: &Arc<ToolRegistry>) {
     tools.register(WhatsappSendMessageTool::tool_def(), WhatsappSendMessageTool);
     tools.register(WhatsappSendReplyTool::tool_def(), WhatsappSendReplyTool);
-    tools.register(WhatsappSendReactionTool::tool_def(), WhatsappSendReactionTool);
+    tools.register(
+        WhatsappSendReactionTool::tool_def(),
+        WhatsappSendReactionTool,
+    );
     tools.register(WhatsappSendMediaTool::tool_def(), WhatsappSendMediaTool);
 }

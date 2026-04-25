@@ -249,10 +249,10 @@ impl LlmCompactor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nexo_llm::{ChatResponse, FinishReason, LlmError, TokenUsage};
     use async_trait::async_trait;
     use chrono::Utc;
     use futures::stream::BoxStream;
+    use nexo_llm::{ChatResponse, FinishReason, LlmError, TokenUsage};
 
     fn turn(role: Role, content: &str) -> Interaction {
         Interaction {
@@ -281,7 +281,11 @@ mod tests {
         let h: Vec<_> = (0..4)
             .map(|i| {
                 turn(
-                    if i % 2 == 0 { Role::User } else { Role::Assistant },
+                    if i % 2 == 0 {
+                        Role::User
+                    } else {
+                        Role::Assistant
+                    },
                     &body,
                 )
             })
@@ -320,7 +324,11 @@ mod tests {
         assert_eq!(n, 1, "only the oversized tool_result should be truncated");
         assert_eq!(msgs[1].content, "small ok");
         assert!(msgs[2].content.contains("[truncated"));
-        assert!(msgs[2].content.len() <= 300, "got {}", msgs[2].content.len());
+        assert!(
+            msgs[2].content.len() <= 300,
+            "got {}",
+            msgs[2].content.len()
+        );
     }
 
     #[test]
@@ -429,10 +437,7 @@ mod tests {
             tail_keep_tokens: 0,
             model: "stub-1".into(),
         };
-        let err = compactor
-            .compact(&history, 0, &budget)
-            .await
-            .unwrap_err();
+        let err = compactor.compact(&history, 0, &budget).await.unwrap_err();
         assert!(matches!(err, CompactionError::NoBoundary));
     }
 
@@ -454,10 +459,7 @@ mod tests {
             tail_keep_tokens: 0,
             model: "stub-1".into(),
         };
-        let err = compactor
-            .compact(&history, 2, &budget)
-            .await
-            .unwrap_err();
+        let err = compactor.compact(&history, 2, &budget).await.unwrap_err();
         assert!(matches!(err, CompactionError::LlmFailed(_)));
     }
 
@@ -474,10 +476,7 @@ mod tests {
             tail_keep_tokens: 0,
             model: "stub-1".into(),
         };
-        let err = compactor
-            .compact(&history, 2, &budget)
-            .await
-            .unwrap_err();
+        let err = compactor.compact(&history, 2, &budget).await.unwrap_err();
         assert!(matches!(err, CompactionError::LlmFailed(_)));
     }
 

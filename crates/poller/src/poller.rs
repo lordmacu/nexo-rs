@@ -4,12 +4,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use nexo_auth::resolver::CredentialStores;
 use nexo_auth::{AgentCredentialResolver, Channel};
 use nexo_broker::AnyBroker;
 use nexo_llm::ToolDef;
-use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
@@ -70,11 +70,7 @@ pub struct CustomToolSpec {
 /// `nexo-poller-tools`.
 #[async_trait]
 pub trait CustomToolHandler: Send + Sync + 'static {
-    async fn call(
-        &self,
-        runner: Arc<PollerRunner>,
-        args: Value,
-    ) -> anyhow::Result<Value>;
+    async fn call(&self, runner: Arc<PollerRunner>, args: Value) -> anyhow::Result<Value>;
 }
 
 /// What the runner hands a module on every tick.

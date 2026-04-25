@@ -58,7 +58,11 @@ pub async fn dispatch(
 
 async fn list(runner: &Arc<PollerRunner>) -> (u16, String, &'static str) {
     match runner.list_jobs().await {
-        Ok(jobs) => (200, serde_json::to_string_pretty(&jobs).unwrap_or_default(), JSON),
+        Ok(jobs) => (
+            200,
+            serde_json::to_string_pretty(&jobs).unwrap_or_default(),
+            JSON,
+        ),
         Err(e) => (500, json!({"error": e.to_string()}).to_string(), JSON),
     }
 }
@@ -66,7 +70,11 @@ async fn list(runner: &Arc<PollerRunner>) -> (u16, String, &'static str) {
 async fn get_one(runner: &Arc<PollerRunner>, id: &str) -> (u16, String, &'static str) {
     match runner.list_jobs().await {
         Ok(jobs) => match jobs.into_iter().find(|j| j.id == id) {
-            Some(j) => (200, serde_json::to_string_pretty(&j).unwrap_or_default(), JSON),
+            Some(j) => (
+                200,
+                serde_json::to_string_pretty(&j).unwrap_or_default(),
+                JSON,
+            ),
             None => (
                 404,
                 json!({"error": format!("job '{id}' not found")}).to_string(),
@@ -84,11 +92,7 @@ async fn action_endpoint(
     action: &str,
 ) -> (u16, String, &'static str) {
     if method != "POST" {
-        return (
-            405,
-            json!({"error": "POST required"}).to_string(),
-            JSON,
-        );
+        return (405, json!({"error": "POST required"}).to_string(), JSON);
     }
     match action {
         "run" => match runner.run_once(id).await {
@@ -190,17 +194,19 @@ mod tests {
     use super::*;
     use crate::poller::{PollContext, Poller, TickOutcome};
     use crate::{PollState, PollerError, PollerRunner};
+    use async_trait::async_trait;
     use nexo_auth::resolver::CredentialStores;
     use nexo_auth::{AgentCredentialResolver, BreakerRegistry, CredentialsBundle};
     use nexo_broker::AnyBroker;
     use nexo_config::types::pollers::{PollerJob, PollersConfig};
-    use async_trait::async_trait;
 
     struct Mock;
 
     #[async_trait]
     impl Poller for Mock {
-        fn kind(&self) -> &'static str { "mock" }
+        fn kind(&self) -> &'static str {
+            "mock"
+        }
         async fn tick(&self, _ctx: &PollContext) -> Result<TickOutcome, PollerError> {
             Ok(TickOutcome::default())
         }
@@ -234,8 +240,12 @@ mod tests {
             ..PollersConfig::default()
         };
         let state = Arc::new(PollState::open_in_memory().await.unwrap());
-        let runner =
-            Arc::new(PollerRunner::new(cfg, state, AnyBroker::local(), empty_creds()));
+        let runner = Arc::new(PollerRunner::new(
+            cfg,
+            state,
+            AnyBroker::local(),
+            empty_creds(),
+        ));
         runner.register(Arc::new(Mock));
         runner
     }
@@ -320,13 +330,7 @@ mod tests {
     #[tokio::test]
     async fn unrelated_path_returns_none() {
         let runner = build_runner(vec![]).await;
-        let r = dispatch(
-            &runner,
-            "GET",
-            "/admin/agents",
-            std::path::Path::new("."),
-        )
-        .await;
+        let r = dispatch(&runner, "GET", "/admin/agents", std::path::Path::new(".")).await;
         assert!(r.is_none());
     }
 }

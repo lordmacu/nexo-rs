@@ -7,8 +7,8 @@
 
 use std::sync::Arc;
 
-use nexo_resilience::{CircuitBreaker, CircuitBreakerConfig};
 use dashmap::DashMap;
+use nexo_resilience::{CircuitBreaker, CircuitBreakerConfig};
 
 use crate::handle::{Channel, CredentialHandle};
 

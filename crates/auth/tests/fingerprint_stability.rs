@@ -43,5 +43,7 @@ fn all_hex_lowercase() {
     let fp = Fingerprint::of("ana");
     let hex = fp.to_hex();
     assert_eq!(hex.len(), 16);
-    assert!(hex.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)));
+    assert!(hex
+        .chars()
+        .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)));
 }

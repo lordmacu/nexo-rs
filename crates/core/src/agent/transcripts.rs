@@ -385,10 +385,7 @@ mod tests {
             handles.push(tokio::spawn(async move {
                 let writer = TranscriptWriter::new(r, "kate");
                 writer
-                    .append_entry(
-                        session_id,
-                        user_entry(&format!("msg-{i}"), "wa"),
-                    )
+                    .append_entry(session_id, user_entry(&format!("msg-{i}"), "wa"))
                     .await
             }));
         }

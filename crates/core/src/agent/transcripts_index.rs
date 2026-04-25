@@ -270,8 +270,8 @@ fn escape_fts_phrase(q: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::transcripts::{TranscriptEntry, TranscriptRole, TranscriptWriter};
+    use super::*;
     use chrono::Utc;
     use tempfile::tempdir;
 

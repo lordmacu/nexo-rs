@@ -434,10 +434,7 @@ mod tests {
             extra_docs: Vec::new(),
             inbound_bindings: Vec::new(),
             allowed_tools: vec!["whatsapp_send_message".into()],
-            sender_rate_limit: Some(SenderRateLimitConfig {
-                rps: 1.0,
-                burst: 5,
-            }),
+            sender_rate_limit: Some(SenderRateLimitConfig { rps: 1.0, burst: 5 }),
             allowed_delegates: vec!["peer_a".into()],
             accept_delegates_from: Vec::new(),
             description: String::new(),
@@ -473,7 +470,10 @@ mod tests {
         assert_eq!(eff.model.provider, a.model.provider);
         assert_eq!(eff.system_prompt, a.system_prompt);
         assert_eq!(eff.sender_rate_limit.as_ref().unwrap().rps, 1.0);
-        assert_eq!(eff.outbound_allowlist.whatsapp, a.outbound_allowlist.whatsapp);
+        assert_eq!(
+            eff.outbound_allowlist.whatsapp,
+            a.outbound_allowlist.whatsapp
+        );
     }
 
     #[test]
@@ -497,7 +497,10 @@ mod tests {
             ..Default::default()
         });
         let eff = EffectiveBindingPolicy::resolve(&a, 0);
-        assert_eq!(eff.skills, vec!["browser".to_string(), "github".to_string()]);
+        assert_eq!(
+            eff.skills,
+            vec!["browser".to_string(), "github".to_string()]
+        );
     }
 
     #[test]

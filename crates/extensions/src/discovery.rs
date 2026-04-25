@@ -837,7 +837,11 @@ command = "/bin/true"
         let tmp = TempDir::new().unwrap();
         let real = tmp.path().join("real");
         fs::create_dir_all(real.join("broken")).unwrap();
-        fs::write(real.join("broken").join(MANIFEST_FILENAME), "not = valid [toml").unwrap();
+        fs::write(
+            real.join("broken").join(MANIFEST_FILENAME),
+            "not = valid [toml",
+        )
+        .unwrap();
 
         let search = tmp.path().join("search");
         symlink(&real, &search).unwrap();

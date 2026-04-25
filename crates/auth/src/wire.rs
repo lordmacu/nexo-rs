@@ -10,10 +10,10 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
+use anyhow::{Context, Result};
 use nexo_config::types::agents::AgentConfig;
 use nexo_config::types::credentials::{GoogleAccountConfig, GoogleAuthConfig, GoogleAuthFile};
 use nexo_config::types::plugins::{TelegramPluginConfig, WhatsappPluginConfig};
-use anyhow::{Context, Result};
 
 use crate::error::BuildError;
 use crate::gauntlet::{
@@ -163,7 +163,9 @@ pub fn build_credentials(
     // move to google-auth.yaml.
     let mut legacy_warnings: Vec<String> = Vec::new();
     for agent in agents {
-        let Some(g) = &agent.google_auth else { continue };
+        let Some(g) = &agent.google_auth else {
+            continue;
+        };
         if goog_accounts.iter().any(|a| a.agent_id == agent.id) {
             continue; // already declared explicitly in google-auth.yaml
         }
@@ -194,14 +196,8 @@ pub fn build_credentials(
         goog_accounts.push(GoogleAccount {
             id: agent.id.clone(),
             agent_id: agent.id.clone(),
-            client_id_path: std::path::PathBuf::from(format!(
-                "inline:{}",
-                g.client_id
-            )),
-            client_secret_path: std::path::PathBuf::from(format!(
-                "inline:{}",
-                g.client_secret
-            )),
+            client_id_path: std::path::PathBuf::from(format!("inline:{}", g.client_id)),
+            client_secret_path: std::path::PathBuf::from(format!("inline:{}", g.client_secret)),
             token_path: std::path::PathBuf::from(&g.token_file),
             scopes: g.scopes.clone(),
         });
@@ -234,8 +230,7 @@ pub fn build_credentials(
     crate::telemetry::set_accounts_total(GOOGLE, goog_accounts.len() as u64);
 
     // ── 3. Build resolver inputs from agent configs ──
-    let inputs: Vec<AgentCredentialsInput> =
-        agents.iter().map(agent_to_input).collect();
+    let inputs: Vec<AgentCredentialsInput> = agents.iter().map(agent_to_input).collect();
 
     // ── 4. If any path / store-level error was collected, stop now ──
     if !errors.is_empty() {

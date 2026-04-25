@@ -4,10 +4,10 @@
 
 use std::sync::Arc;
 
+use dashmap::DashMap;
 use nexo_broker::Event;
 use nexo_plugin_whatsapp::dispatch::{self, TOPIC_OUTBOUND};
 use nexo_plugin_whatsapp::session_id::session_id_for_jid;
-use dashmap::DashMap;
 use tokio::sync::oneshot;
 
 fn make_event(session_id: Option<uuid::Uuid>, payload: serde_json::Value) -> Event {

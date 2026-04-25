@@ -102,7 +102,13 @@ pub enum InboundEvent {
 impl InboundEvent {
     pub fn to_payload(&self) -> serde_json::Value {
         let v = serde_json::to_value(self).unwrap_or(serde_json::Value::Null);
-        if let Self::Message { from, text, media, forward, .. } = self
+        if let Self::Message {
+            from,
+            text,
+            media,
+            forward,
+            ..
+        } = self
         {
             let mut obj = match v {
                 serde_json::Value::Object(m) => m,

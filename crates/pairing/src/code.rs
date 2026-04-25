@@ -43,7 +43,11 @@ mod tests {
         // 0/O/1/I dropped; L stays — empirically distinguishable in
         // the fixed-width fonts the operator sees.
         for c in [b'0', b'O', b'1', b'I'] {
-            assert!(!ALPHABET.contains(&c), "ambiguous char {} in alphabet", c as char);
+            assert!(
+                !ALPHABET.contains(&c),
+                "ambiguous char {} in alphabet",
+                c as char
+            );
         }
     }
 

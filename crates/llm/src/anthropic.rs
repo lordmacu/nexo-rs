@@ -21,13 +21,13 @@ use crate::anthropic_auth::{
     DEFAULT_REFRESH_ENDPOINT,
 };
 use crate::client::LlmClient;
+use crate::prompt_block::{CachePolicy, PromptBlock};
 use crate::rate_limiter::RateLimiter;
 use crate::registry::LlmProviderFactory;
 use crate::retry::{parse_retry_after_ms, with_retry, LlmError};
 use crate::stream::{
     ensure_event_stream, parse_anthropic_sse, record_usage_tap, stream_metrics_tap, StreamChunk,
 };
-use crate::prompt_block::{CachePolicy, PromptBlock};
 use crate::types::{
     Attachment, AttachmentData, CacheUsage, ChatRequest, ChatResponse, ChatRole, FinishReason,
     ResponseContent, TokenUsage, ToolCall, ToolChoice,
@@ -947,7 +947,6 @@ mod tests {
             system_blocks: Vec::new(),
             cache_tools: false,
         }
-    
     }
 
     #[test]
@@ -1062,7 +1061,7 @@ mod tests {
             system_prompt: None,
             stop_sequences: Vec::new(),
             tool_choice: ToolChoice::Auto,
-        
+
             system_blocks: Vec::new(),
             cache_tools: false,
         };
@@ -1097,7 +1096,7 @@ mod tests {
             system_prompt: None,
             stop_sequences: Vec::new(),
             tool_choice: ToolChoice::Auto,
-        
+
             system_blocks: Vec::new(),
             cache_tools: false,
         };
@@ -1175,7 +1174,7 @@ mod tests {
             system_prompt: None,
             stop_sequences: Vec::new(),
             tool_choice: ToolChoice::Auto,
-        
+
             system_blocks: Vec::new(),
             cache_tools: false,
         };
@@ -1216,7 +1215,7 @@ mod tests {
             system_prompt: Some("ok".into()),
             stop_sequences: Vec::new(),
             tool_choice: ToolChoice::Auto,
-        
+
             system_blocks: Vec::new(),
             cache_tools: false,
         };
@@ -1331,7 +1330,10 @@ mod tests {
             })
             .collect();
         let rendered = render_system_blocks(&blocks, true);
-        let with_marker = rendered.iter().filter(|b| b.get("cache_control").is_some()).count();
+        let with_marker = rendered
+            .iter()
+            .filter(|b| b.get("cache_control").is_some())
+            .count();
         assert!(with_marker <= 4, "got {with_marker}");
     }
 
@@ -1362,12 +1364,7 @@ mod tests {
 
     #[test]
     fn merge_beta_headers_dedupes() {
-        let m = merge_beta_headers(
-            Some("prompt-caching-2024-07-31,foo"),
-            true,
-            false,
-        )
-        .unwrap();
+        let m = merge_beta_headers(Some("prompt-caching-2024-07-31,foo"), true, false).unwrap();
         assert_eq!(m.matches("prompt-caching-2024-07-31").count(), 1);
         assert!(m.contains("foo"));
     }

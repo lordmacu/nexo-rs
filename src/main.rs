@@ -158,12 +158,26 @@ enum Mode {
     },
     /// Phase 19 — generic poller subsystem. CLI hits the loopback admin
     /// endpoint at `127.0.0.1:9091` (daemon must be running).
-    PollersList { json: bool },
-    PollersShow { id: String, json: bool },
-    PollersRun { id: String },
-    PollersPause { id: String },
-    PollersResume { id: String },
-    PollersReset { id: String, yes: bool },
+    PollersList {
+        json: bool,
+    },
+    PollersShow {
+        id: String,
+        json: bool,
+    },
+    PollersRun {
+        id: String,
+    },
+    PollersPause {
+        id: String,
+    },
+    PollersResume {
+        id: String,
+    },
+    PollersReset {
+        id: String,
+        yes: bool,
+    },
     PollersReload,
     /// Run the web admin UI exposed through a fresh Cloudflare quick
     /// tunnel. Ensures `cloudflared` is installed (downloads it per
@@ -456,8 +470,8 @@ async fn main() -> Result<()> {
     // across WhatsApp / Telegram / Google in one pass. Lenient level
     // on boot so legacy deployments keep working; CI should run
     // `agent --check-config --strict` to gate PRs.
-    let google_auth = nexo_auth::load_google_auth(&config_dir)
-        .context("failed to load google-auth.yaml")?;
+    let google_auth =
+        nexo_auth::load_google_auth(&config_dir).context("failed to load google-auth.yaml")?;
     let credentials = match nexo_auth::build_credentials(
         &cfg.agents.agents,
         &cfg.plugins.whatsapp,
@@ -964,88 +978,79 @@ async fn main() -> Result<()> {
     //   4) start runner (spawns one tokio task per job)
     // Failure at any step logs + skips: the daemon keeps running for
     // the rest of the agents.
-    let pollers_runner: Option<Arc<nexo_poller::PollerRunner>> = match (
-        cfg.pollers.clone(),
-        credentials.as_ref().map(Arc::clone),
-    ) {
-        (Some(pcfg), Some(bundle)) if pcfg.enabled => {
-            let state_db = std::path::PathBuf::from(&pcfg.state_db);
-            match nexo_poller::PollState::open(&state_db).await {
-                Ok(state) => {
-                    // Phase 20 — feed the LLM registry + config into
-                    // the runner so the `agent_turn` built-in can build
-                    // clients on demand. Other built-ins (gmail, rss,
-                    // webhook) ignore the field — wiring it
-                    // unconditionally keeps the boot path uniform.
-                    let runner = Arc::new(
-                        nexo_poller::PollerRunner::new(
-                            pcfg,
-                            Arc::new(state),
-                            broker.clone(),
-                            bundle,
-                        )
-                        .with_llm(
-                            Arc::new(LlmRegistry::with_builtins()),
-                            Arc::new(cfg.llm.clone()),
-                        ),
-                    );
-                    nexo_poller::builtins::register_all(&runner);
-
-                    // Phase 19 follow-up — register extension-provided
-                    // pollers. Walk every loaded stdio extension and
-                    // bridge each declared `kind` into the runner via
-                    // ExtensionPoller. Lets operators ship a poller in
-                    // any language without touching Rust.
-                    let mut ext_poller_count = 0usize;
-                    for (rt, cand) in &extension_runtimes {
-                        let kinds = &cand.manifest.capabilities.pollers;
-                        if !kinds.is_empty() {
-                            let n = nexo_poller_ext::register_for_runtime(
-                                &runner,
-                                rt,
-                                kinds,
+    let pollers_runner: Option<Arc<nexo_poller::PollerRunner>> =
+        match (cfg.pollers.clone(), credentials.as_ref().map(Arc::clone)) {
+            (Some(pcfg), Some(bundle)) if pcfg.enabled => {
+                let state_db = std::path::PathBuf::from(&pcfg.state_db);
+                match nexo_poller::PollState::open(&state_db).await {
+                    Ok(state) => {
+                        // Phase 20 — feed the LLM registry + config into
+                        // the runner so the `agent_turn` built-in can build
+                        // clients on demand. Other built-ins (gmail, rss,
+                        // webhook) ignore the field — wiring it
+                        // unconditionally keeps the boot path uniform.
+                        let runner = Arc::new(
+                            nexo_poller::PollerRunner::new(
+                                pcfg,
+                                Arc::new(state),
+                                broker.clone(),
+                                bundle,
                             )
-                            .await;
-                            ext_poller_count += n;
-                            tracing::info!(
-                                ext = %cand.manifest.id(),
-                                kinds = ?kinds,
-                                "extension pollers registered"
-                            );
+                            .with_llm(
+                                Arc::new(LlmRegistry::with_builtins()),
+                                Arc::new(cfg.llm.clone()),
+                            ),
+                        );
+                        nexo_poller::builtins::register_all(&runner);
+
+                        // Phase 19 follow-up — register extension-provided
+                        // pollers. Walk every loaded stdio extension and
+                        // bridge each declared `kind` into the runner via
+                        // ExtensionPoller. Lets operators ship a poller in
+                        // any language without touching Rust.
+                        let mut ext_poller_count = 0usize;
+                        for (rt, cand) in &extension_runtimes {
+                            let kinds = &cand.manifest.capabilities.pollers;
+                            if !kinds.is_empty() {
+                                let n =
+                                    nexo_poller_ext::register_for_runtime(&runner, rt, kinds).await;
+                                ext_poller_count += n;
+                                tracing::info!(
+                                    ext = %cand.manifest.id(),
+                                    kinds = ?kinds,
+                                    "extension pollers registered"
+                                );
+                            }
+                        }
+                        if ext_poller_count > 0 {
+                            tracing::info!(count = ext_poller_count, "extension pollers ready");
+                        }
+
+                        if let Err(e) = runner.start().await {
+                            tracing::error!(error = %format!("{e:#}"), "pollers: start failed");
+                            None
+                        } else {
+                            Some(runner)
                         }
                     }
-                    if ext_poller_count > 0 {
-                        tracing::info!(
-                            count = ext_poller_count,
-                            "extension pollers ready"
+                    Err(e) => {
+                        tracing::error!(
+                            path = %state_db.display(),
+                            error = %format!("{e:#}"),
+                            "pollers: failed to open state DB"
                         );
-                    }
-
-                    if let Err(e) = runner.start().await {
-                        tracing::error!(error = %format!("{e:#}"), "pollers: start failed");
                         None
-                    } else {
-                        Some(runner)
                     }
-                }
-                Err(e) => {
-                    tracing::error!(
-                        path = %state_db.display(),
-                        error = %format!("{e:#}"),
-                        "pollers: failed to open state DB"
-                    );
-                    None
                 }
             }
-        }
-        (Some(pcfg), None) if pcfg.enabled => {
-            tracing::warn!(
+            (Some(pcfg), None) if pcfg.enabled => {
+                tracing::warn!(
                 "pollers: skipped — credential gauntlet failed earlier so no resolver is available"
             );
-            None
-        }
-        _ => None,
-    };
+                None
+            }
+            _ => None,
+        };
 
     let _admin_handle = tokio::spawn(run_admin_server(
         Arc::clone(&tool_policy_registry),
@@ -1118,7 +1123,12 @@ async fn main() -> Result<()> {
         );
         let gate = Arc::new(nexo_pairing::PairingGate::new(Arc::clone(&store)));
         let secret_path = std::env::var_os("HOME")
-            .map(|h| std::path::PathBuf::from(h).join(".nexo").join("secret").join("pairing.key"))
+            .map(|h| {
+                std::path::PathBuf::from(h)
+                    .join(".nexo")
+                    .join("secret")
+                    .join("pairing.key")
+            })
             .unwrap_or_else(|| std::path::PathBuf::from("./pairing.key"));
         let issuer = Arc::new(nexo_pairing::SetupCodeIssuer::open_or_create(&secret_path)?);
         tracing::info!(store = %store_path.display(), secret = %secret_path.display(), "pairing initialised");
@@ -1149,8 +1159,8 @@ async fn main() -> Result<()> {
     // bridge wakes flows whose `external_event` waits arrive over NATS.
     let flow_manager = Arc::new(open_flow_manager_from_cfg(&cfg.taskflow).await?);
     let wait_engine = nexo_taskflow::WaitEngine::new((*flow_manager).clone());
-    let tick_interval = humantime::parse_duration(&cfg.taskflow.tick_interval)
-        .with_context(|| {
+    let tick_interval =
+        humantime::parse_duration(&cfg.taskflow.tick_interval).with_context(|| {
             format!(
                 "invalid taskflow.tick_interval `{}`",
                 cfg.taskflow.tick_interval
@@ -1174,7 +1184,11 @@ async fn main() -> Result<()> {
             we.run(tick_interval, tok).await;
         });
     }
-    spawn_taskflow_resume_bridge(broker.clone(), wait_engine.clone(), watcher_shutdown.clone());
+    spawn_taskflow_resume_bridge(
+        broker.clone(),
+        wait_engine.clone(),
+        watcher_shutdown.clone(),
+    );
 
     // Transcripts subsystem — optional FTS5 index + optional redactor.
     // Built once and shared across every agent via runtime.with_*.
@@ -1835,12 +1849,9 @@ async fn main() -> Result<()> {
             let defs = tools.to_tool_defs();
             let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
             let catalog = nexo_core::agent::KnownTools::new(names);
-            nexo_core::agent::validate_agent(
-                &agent_cfg,
-                &cfg.plugins.telegram,
-                &catalog,
-            )
-            .map_err(|e| anyhow::anyhow!("agent `{}` binding validation failed: {}", agent_id, e))?;
+            nexo_core::agent::validate_agent(&agent_cfg, &cfg.plugins.telegram, &catalog).map_err(
+                |e| anyhow::anyhow!("agent `{}` binding validation failed: {}", agent_id, e),
+            )?;
         }
 
         let mut behavior = LlmAgentBehavior::new(llm, Arc::clone(&tools))
@@ -1944,9 +1955,7 @@ async fn main() -> Result<()> {
                 let summarizer = llm_registry
                     .build(&cfg.llm, &agent_cfg.model)
                     .with_context(|| {
-                        format!(
-                            "compaction wiring: failed to build summarizer LLM for {agent_id}"
-                        )
+                        format!("compaction wiring: failed to build summarizer LLM for {agent_id}")
                     })?;
                 behavior = behavior.with_compaction(summarizer, Arc::clone(store), runtime);
                 tracing::info!(
@@ -2494,7 +2503,10 @@ fn acquire_single_instance_lock() -> Result<SingleInstanceLock> {
     std::fs::write(&lock_path, pid.to_string())
         .with_context(|| format!("write lockfile {}", lock_path.display()))?;
     tracing::info!(path = %lock_path.display(), pid, "acquired single-instance lock");
-    Ok(SingleInstanceLock { path: lock_path, pid })
+    Ok(SingleInstanceLock {
+        path: lock_path,
+        pid,
+    })
 }
 
 fn pid_alive(pid: u32) -> bool {
@@ -2593,7 +2605,12 @@ fn pair_paths(config_dir: &std::path::Path) -> (PathBuf, PathBuf) {
         .join("data")
         .join("pairing.db");
     let secret = std::env::var_os("HOME")
-        .map(|h| PathBuf::from(h).join(".nexo").join("secret").join("pairing.key"))
+        .map(|h| {
+            PathBuf::from(h)
+                .join(".nexo")
+                .join("secret")
+                .join("pairing.key")
+        })
         .unwrap_or_else(|| PathBuf::from("./pairing.key"));
     (store, secret)
 }
@@ -2646,8 +2663,8 @@ async fn run_pair_start(
         lan_url: None,
         ws_cleartext_allow_extra: vec![],
     };
-    let resolved = nexo_pairing::url_resolver::resolve(&inputs)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let resolved =
+        nexo_pairing::url_resolver::resolve(&inputs).map_err(|e| anyhow::anyhow!("{e}"))?;
     let code = issuer.issue(
         &resolved.url,
         "companion-v1",
@@ -2697,7 +2714,10 @@ async fn run_pair_list(
     } else if pending.is_empty() {
         println!("No pending pairing requests.");
     } else {
-        println!("{:<10}  {:<14}  {:<16}  {:<26}  {}", "CODE", "CHANNEL", "ACCOUNT", "CREATED", "SENDER");
+        println!(
+            "{:<10}  {:<14}  {:<16}  {:<26}  {}",
+            "CODE", "CHANNEL", "ACCOUNT", "CREATED", "SENDER"
+        );
         for p in &pending {
             println!(
                 "{:<10}  {:<14}  {:<16}  {:<26}  {}",
@@ -2708,11 +2728,7 @@ async fn run_pair_list(
     Ok(())
 }
 
-async fn run_pair_approve(
-    config_dir: &std::path::Path,
-    code: &str,
-    json: bool,
-) -> Result<()> {
+async fn run_pair_approve(config_dir: &std::path::Path, code: &str, json: bool) -> Result<()> {
     let store = open_pair_store(config_dir).await?;
     let approved = store.approve(code).await?;
     if json {
@@ -2747,9 +2763,7 @@ async fn run_pair_seed(
     senders: &[String],
 ) -> Result<()> {
     if senders.is_empty() {
-        return Err(anyhow::anyhow!(
-            "pair seed requires at least one sender id"
-        ));
+        return Err(anyhow::anyhow!("pair seed requires at least one sender id"));
     }
     let store = open_pair_store(config_dir).await?;
     let n = store.seed(channel, account_id, senders).await?;
@@ -2767,7 +2781,13 @@ async fn run_pair_seed(
 /// values like `--public-url wss://x` don't shift the arg index.
 fn route_pair_subcommand(positional: &[String], has_json_flag: bool) -> Option<Mode> {
     // Skip entries that are flag-name-or-value pairs.
-    let known_kv = ["--for-device", "--public-url", "--qr-png", "--ttl-secs", "--channel"];
+    let known_kv = [
+        "--for-device",
+        "--public-url",
+        "--qr-png",
+        "--ttl-secs",
+        "--channel",
+    ];
     let mut structural: Vec<&str> = Vec::new();
     let mut i = 0;
     while i < positional.len() {
@@ -2982,11 +3002,9 @@ fn parse_args() -> CliArgs {
         [cmd] if cmd == "setup" => Mode::SetupInteractive,
         [cmd, sub] if cmd == "setup" && sub == "list" => Mode::SetupList,
         [cmd, sub] if cmd == "setup" && sub == "doctor" => Mode::SetupDoctor,
-        [cmd, sub] if cmd == "doctor" && sub == "capabilities" => {
-            Mode::DoctorCapabilities {
-                json: has_json_flag,
-            }
-        }
+        [cmd, sub] if cmd == "doctor" && sub == "capabilities" => Mode::DoctorCapabilities {
+            json: has_json_flag,
+        },
         [cmd, sub] if cmd == "setup" && sub == "telegram-link" => Mode::SetupTelegramLink,
         // (pair handled by route_pair_subcommand earlier)
         [cmd, service] if cmd == "setup" => Mode::SetupOne {
@@ -2995,7 +3013,9 @@ fn parse_args() -> CliArgs {
         [cmd] if cmd == "reload" => Mode::Reload {
             json: has_json_flag,
         },
-        [cmd] if cmd == "pollers" => Mode::PollersList { json: has_json_flag },
+        [cmd] if cmd == "pollers" => Mode::PollersList {
+            json: has_json_flag,
+        },
         [cmd, sub] if cmd == "pollers" && sub == "list" => Mode::PollersList {
             json: has_json_flag,
         },
@@ -3005,12 +3025,12 @@ fn parse_args() -> CliArgs {
             json: has_json_flag,
         },
         [cmd, sub, id] if cmd == "pollers" && sub == "run" => Mode::PollersRun { id: id.clone() },
-        [cmd, sub, id] if cmd == "pollers" && sub == "pause" => Mode::PollersPause {
-            id: id.clone(),
-        },
-        [cmd, sub, id] if cmd == "pollers" && sub == "resume" => Mode::PollersResume {
-            id: id.clone(),
-        },
+        [cmd, sub, id] if cmd == "pollers" && sub == "pause" => {
+            Mode::PollersPause { id: id.clone() }
+        }
+        [cmd, sub, id] if cmd == "pollers" && sub == "resume" => {
+            Mode::PollersResume { id: id.clone() }
+        }
         [cmd, sub, id] if cmd == "pollers" && sub == "reset" => Mode::PollersReset {
             id: id.clone(),
             yes: positional.iter().any(|a| a == "--yes"),
@@ -3083,10 +3103,16 @@ fn print_usage() {
     );
     println!("  agent --check-config                   Validate config and exit (no runtime)");
     println!("  agent reload                           Trigger a hot-reload on the running daemon");
-    println!("  agent setup [<service>]                Interactive setup wizard (defaults to menu)");
-    println!("  agent setup list                       Print every credential service the wizard knows");
+    println!(
+        "  agent setup [<service>]                Interactive setup wizard (defaults to menu)"
+    );
+    println!(
+        "  agent setup list                       Print every credential service the wizard knows"
+    );
     println!("  agent setup doctor                     Audit configured secrets and report what's missing");
-    println!("  agent setup telegram-link              Pair an existing Telegram instance to an agent");
+    println!(
+        "  agent setup telegram-link              Pair an existing Telegram instance to an agent"
+    );
     println!("  agent admin [--port <n>]               Launch the loopback admin web UI");
     println!("  agent mcp-server                       Run as an MCP stdio server (expose tools)");
     println!("  agent pollers list [--json]            List configured poller jobs");
@@ -3095,7 +3121,9 @@ fn print_usage() {
     println!("  agent pollers pause <id>               Pause a poller job (no ticks until resume)");
     println!("  agent pollers resume <id>              Resume a paused poller job");
     println!("  agent pollers reset <id>               Clear a job's seen-id dedup cache");
-    println!("  agent pollers reload                   Re-read config/pollers.yaml without restart");
+    println!(
+        "  agent pollers reload                   Re-read config/pollers.yaml without restart"
+    );
 }
 
 enum ExtCmd {
@@ -3314,7 +3342,10 @@ async fn handle_admin_request(
 
     let authorised = request
         .lines()
-        .find_map(|line| line.strip_prefix("Cookie: ").or_else(|| line.strip_prefix("cookie: ")))
+        .find_map(|line| {
+            line.strip_prefix("Cookie: ")
+                .or_else(|| line.strip_prefix("cookie: "))
+        })
         .and_then(|cookies| {
             cookies.split(';').find_map(|pair| {
                 let pair = pair.trim();
@@ -3328,7 +3359,9 @@ async fn handle_admin_request(
     if method == "POST" && path == "/api/login" {
         // Read the body — simple key=value form url-encoded bodies
         // land in a single read; 4 KB cap is ample.
-        let body = read_http_body(&request, &mut stream).await.unwrap_or_default();
+        let body = read_http_body(&request, &mut stream)
+            .await
+            .unwrap_or_default();
         let mut username = String::new();
         let mut password = String::new();
         for pair in body.split('&') {
@@ -3338,9 +3371,7 @@ async fn handle_admin_request(
                 password = url_decode(v);
             }
         }
-        if username == "admin"
-            && constant_time_eq(password.as_bytes(), ctx.password.as_bytes())
-        {
+        if username == "admin" && constant_time_eq(password.as_bytes(), ctx.password.as_bytes()) {
             let cookie = ctx.issue_cookie(ADMIN_COOKIE_TTL_SECS);
             let body = r#"{"ok":true}"#;
             let response = format!(
@@ -3393,9 +3424,7 @@ async fn handle_admin_request(
     // to /wizard even before the session cookie exists.
     if method == "GET" && path == "/api/bootstrap" {
         let (needs_wizard, agent_count) = bootstrap_status();
-        let body = format!(
-            "{{\"needs_wizard\":{needs_wizard},\"agent_count\":{agent_count}}}"
-        );
+        let body = format!("{{\"needs_wizard\":{needs_wizard},\"agent_count\":{agent_count}}}");
         let response = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
              Cache-Control: no-store\r\nConnection: close\r\n\r\n{}",
@@ -3424,7 +3453,9 @@ async fn handle_admin_request(
             stream.shutdown().await?;
             return Ok(());
         }
-        let body_str = read_http_body(&request, &mut stream).await.unwrap_or_default();
+        let body_str = read_http_body(&request, &mut stream)
+            .await
+            .unwrap_or_default();
         let response_body = match commit_bootstrap(&body_str) {
             Ok(report) => format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
@@ -3501,7 +3532,9 @@ async fn handle_admin_request(
             write_401_json(&mut stream).await?;
             return Ok(());
         }
-        let body_str = read_http_body(&request, &mut stream).await.unwrap_or_default();
+        let body_str = read_http_body(&request, &mut stream)
+            .await
+            .unwrap_or_default();
         let response_body = match add_telegram_channel(&body_str) {
             Ok(report) => format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
@@ -3539,7 +3572,9 @@ async fn handle_admin_request(
             .trim_start_matches("/api/channels/telegram/")
             .trim_matches('/')
             .to_string();
-        let body_str = read_http_body(&request, &mut stream).await.unwrap_or_default();
+        let body_str = read_http_body(&request, &mut stream)
+            .await
+            .unwrap_or_default();
         let response_body = match edit_telegram_channel(&instance, &body_str) {
             Ok(report) => format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
@@ -3618,7 +3653,9 @@ async fn handle_admin_request(
             .trim_end_matches("/credentials")
             .trim_matches('/')
             .to_string();
-        let body_str = read_http_body(&request, &mut stream).await.unwrap_or_default();
+        let body_str = read_http_body(&request, &mut stream)
+            .await
+            .unwrap_or_default();
         let response_body = match pin_agent_credentials(&id, &body_str) {
             Ok(report) => format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
@@ -3673,7 +3710,9 @@ async fn handle_admin_request(
             write_401_json(&mut stream).await?;
             return Ok(());
         }
-        let body_str = read_http_body(&request, &mut stream).await.unwrap_or_default();
+        let body_str = read_http_body(&request, &mut stream)
+            .await
+            .unwrap_or_default();
         let response_body = match add_mcp_server(&body_str) {
             Ok(report) => format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
@@ -3710,7 +3749,9 @@ async fn handle_admin_request(
             .trim_start_matches("/api/mcp/servers/")
             .trim_matches('/')
             .to_string();
-        let body_str = read_http_body(&request, &mut stream).await.unwrap_or_default();
+        let body_str = read_http_body(&request, &mut stream)
+            .await
+            .unwrap_or_default();
         let response_body = match edit_mcp_server(&name, &body_str) {
             Ok(report) => format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
@@ -3782,7 +3823,11 @@ async fn handle_admin_request(
         let body = format!(
             "{{\"debug\":{},\"build\":\"{}\"}}",
             enabled,
-            if cfg!(debug_assertions) { "dev" } else { "release" }
+            if cfg!(debug_assertions) {
+                "dev"
+            } else {
+                "release"
+            }
         );
         let response = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
@@ -4173,7 +4218,10 @@ fn commit_bootstrap(body: &str) -> Result<String, String> {
     if name.is_empty() {
         return Err("identity.name is required".into());
     }
-    let emoji = identity.get("emoji").and_then(|s| s.as_str()).unwrap_or("🤖");
+    let emoji = identity
+        .get("emoji")
+        .and_then(|s| s.as_str())
+        .unwrap_or("🤖");
     let vibe = identity
         .get("vibe")
         .and_then(|s| s.as_str())
@@ -4224,10 +4272,7 @@ fn commit_bootstrap(body: &str) -> Result<String, String> {
         s
     };
 
-    let channel = v
-        .get("channel")
-        .cloned()
-        .unwrap_or(serde_json::Value::Null);
+    let channel = v.get("channel").cloned().unwrap_or(serde_json::Value::Null);
     let (channel_kind, telegram_instance, telegram_token) = match &channel {
         serde_json::Value::Object(map) => {
             let kind = map.get("kind").and_then(|k| k.as_str()).unwrap_or("");
@@ -4256,16 +4301,14 @@ fn commit_bootstrap(body: &str) -> Result<String, String> {
     let mut written: Vec<String> = Vec::new();
 
     if !api_key.is_empty() {
-        std::fs::create_dir_all("./secrets")
-            .map_err(|e| format!("mkdir ./secrets: {e}"))?;
+        std::fs::create_dir_all("./secrets").map_err(|e| format!("mkdir ./secrets: {e}"))?;
         let path = format!("./secrets/{provider}_api_key.txt");
         write_file_0600(&path, api_key).map_err(|e| format!("write {path}: {e}"))?;
         written.push(path);
     }
 
     if let (Some(inst), Some(token)) = (telegram_instance.as_ref(), telegram_token.as_ref()) {
-        std::fs::create_dir_all("./secrets")
-            .map_err(|e| format!("mkdir ./secrets: {e}"))?;
+        std::fs::create_dir_all("./secrets").map_err(|e| format!("mkdir ./secrets: {e}"))?;
         let path = format!("./secrets/{inst}_telegram_token.txt");
         write_file_0600(&path, token).map_err(|e| format!("write {path}: {e}"))?;
         written.push(path);
@@ -4307,8 +4350,7 @@ fn commit_bootstrap(body: &str) -> Result<String, String> {
     std::fs::create_dir_all("./config/agents.d")
         .map_err(|e| format!("mkdir ./config/agents.d: {e}"))?;
     let agent_path = format!("./config/agents.d/{slug}.yaml");
-    std::fs::write(&agent_path, &yaml)
-        .map_err(|e| format!("write {agent_path}: {e}"))?;
+    std::fs::write(&agent_path, &yaml).map_err(|e| format!("write {agent_path}: {e}"))?;
     written.push(agent_path);
 
     // Seed workspace.
@@ -4321,7 +4363,11 @@ fn commit_bootstrap(body: &str) -> Result<String, String> {
         .trim();
     let mut identity_md = format!(
         "- **Name:** {name}\n- **Emoji:** {emoji}\n- **Vibe:** {}\n",
-        if vibe.is_empty() { "warm and sharp" } else { vibe }
+        if vibe.is_empty() {
+            "warm and sharp"
+        } else {
+            vibe
+        }
     );
     if !avatar.is_empty() {
         identity_md.push_str(&format!("- **Avatar:** {avatar}\n"));
@@ -4341,9 +4387,7 @@ fn commit_bootstrap(body: &str) -> Result<String, String> {
         let telegram_path = "./config/plugins/telegram.yaml";
         if !std::path::Path::new(telegram_path).exists() {
             let mut buf = String::new();
-            buf.push_str(&format!(
-                "# Added by admin wizard for agent '{slug}'.\n"
-            ));
+            buf.push_str(&format!("# Added by admin wizard for agent '{slug}'.\n"));
             buf.push_str("telegram:\n");
             buf.push_str(&format!("  - instance: {inst}\n"));
             buf.push_str(&format!(
@@ -4653,7 +4697,9 @@ fn yaml_lock(path: &str) -> std::sync::Arc<std::sync::Mutex<()>> {
 /// at mode 0600.
 fn add_telegram_channel(body: &str) -> Result<String, String> {
     let _yaml_guard = yaml_lock("./config/plugins/telegram.yaml");
-    let _yaml_guard = _yaml_guard.lock().map_err(|_| "yaml lock poisoned".to_string())?;
+    let _yaml_guard = _yaml_guard
+        .lock()
+        .map_err(|_| "yaml lock poisoned".to_string())?;
     let v: serde_json::Value =
         serde_json::from_str(body).map_err(|e| format!("invalid JSON: {e}"))?;
     let instance = v
@@ -4708,7 +4754,10 @@ fn add_telegram_channel(body: &str) -> Result<String, String> {
     let mut existing: Vec<serde_yaml::Value> = Vec::new();
     if let Ok(buf) = std::fs::read_to_string(path) {
         if let Ok(parsed) = serde_yaml::from_str::<serde_yaml::Value>(&buf) {
-            let entry = parsed.get("telegram").cloned().unwrap_or(serde_yaml::Value::Null);
+            let entry = parsed
+                .get("telegram")
+                .cloned()
+                .unwrap_or(serde_yaml::Value::Null);
             match entry {
                 serde_yaml::Value::Sequence(seq) => existing = seq,
                 serde_yaml::Value::Mapping(m) => {
@@ -4728,8 +4777,7 @@ fn add_telegram_channel(body: &str) -> Result<String, String> {
     // doesn't leave the YAML pointing at a missing file.
     std::fs::create_dir_all("./secrets").map_err(|e| format!("mkdir ./secrets: {e}"))?;
     let secret_path = format!("./secrets/{instance}_telegram_token.txt");
-    write_file_0600(&secret_path, &token)
-        .map_err(|e| format!("write {secret_path}: {e}"))?;
+    write_file_0600(&secret_path, &token).map_err(|e| format!("write {secret_path}: {e}"))?;
 
     // Compose the new entry.
     let mut new_entry = serde_yaml::Mapping::new();
@@ -4759,8 +4807,8 @@ fn add_telegram_channel(body: &str) -> Result<String, String> {
         serde_yaml::Value::String("telegram".into()),
         serde_yaml::Value::Sequence(existing),
     );
-    let out =
-        serde_yaml::to_string(&serde_yaml::Value::Mapping(root)).map_err(|e| format!("serialise: {e}"))?;
+    let out = serde_yaml::to_string(&serde_yaml::Value::Mapping(root))
+        .map_err(|e| format!("serialise: {e}"))?;
     std::fs::create_dir_all("./config/plugins")
         .map_err(|e| format!("mkdir ./config/plugins: {e}"))?;
     std::fs::write(path, out).map_err(|e| format!("write {path}: {e}"))?;
@@ -4778,7 +4826,9 @@ fn add_telegram_channel(body: &str) -> Result<String, String> {
 /// at the same secret path so consumers don't need to be restarted.
 fn edit_telegram_channel(instance: &str, body: &str) -> Result<String, String> {
     let _yaml_guard = yaml_lock("./config/plugins/telegram.yaml");
-    let _yaml_guard = _yaml_guard.lock().map_err(|_| "yaml lock poisoned".to_string())?;
+    let _yaml_guard = _yaml_guard
+        .lock()
+        .map_err(|_| "yaml lock poisoned".to_string())?;
     let instance = instance.trim();
     if instance.is_empty() {
         return Err("instance is required".into());
@@ -4789,13 +4839,12 @@ fn edit_telegram_channel(instance: &str, body: &str) -> Result<String, String> {
         .get("token")
         .and_then(|s| s.as_str())
         .map(|s| s.trim().to_string());
-    let allow_agents: Option<Vec<String>> = v.get("allow_agents").and_then(|a| a.as_array()).map(
-        |arr| {
+    let allow_agents: Option<Vec<String>> =
+        v.get("allow_agents").and_then(|a| a.as_array()).map(|arr| {
             arr.iter()
                 .filter_map(|x| x.as_str().map(|s| s.to_string()))
                 .collect()
-        },
-    );
+        });
     // `allowlist_chat_ids: [int, int, ...]` — empty array clears
     // the allowlist, missing key leaves it untouched.
     let allowlist_chat_ids: Option<Vec<i64>> = v
@@ -4805,27 +4854,27 @@ fn edit_telegram_channel(instance: &str, body: &str) -> Result<String, String> {
     // `auto_transcribe` — merges into the existing sub-mapping.
     // Shape: { enabled?, command?, language? }. Missing key leaves
     // the sub-mapping untouched.
-    let auto_transcribe = v
-        .get("auto_transcribe")
-        .cloned();
+    let auto_transcribe = v.get("auto_transcribe").cloned();
 
     let path = "./config/plugins/telegram.yaml";
-    let buf = std::fs::read_to_string(path)
-        .map_err(|e| format!("read {path}: {e}"))?;
+    let buf = std::fs::read_to_string(path).map_err(|e| format!("read {path}: {e}"))?;
     let mut parsed: serde_yaml::Value =
         serde_yaml::from_str(&buf).map_err(|e| format!("parse {path}: {e}"))?;
     let telegram_entry = parsed
         .get_mut("telegram")
         .ok_or_else(|| format!("{path} has no 'telegram:' key"))?;
-    let mut seq: Vec<serde_yaml::Value> = match std::mem::replace(telegram_entry, serde_yaml::Value::Null) {
-        serde_yaml::Value::Sequence(s) => s,
-        serde_yaml::Value::Mapping(m) => vec![serde_yaml::Value::Mapping(m)],
-        _ => return Err("unexpected telegram: shape".into()),
-    };
+    let mut seq: Vec<serde_yaml::Value> =
+        match std::mem::replace(telegram_entry, serde_yaml::Value::Null) {
+            serde_yaml::Value::Sequence(s) => s,
+            serde_yaml::Value::Mapping(m) => vec![serde_yaml::Value::Mapping(m)],
+            _ => return Err("unexpected telegram: shape".into()),
+        };
 
     let mut modified = false;
     for entry in seq.iter_mut() {
-        let Some(m) = entry.as_mapping_mut() else { continue };
+        let Some(m) = entry.as_mapping_mut() else {
+            continue;
+        };
         let matches_instance = m
             .get(&serde_yaml::Value::String("instance".into()))
             .and_then(|v| v.as_str())
@@ -4950,7 +4999,9 @@ fn delete_channel(plugin: &str, instance: &str) -> Result<String, String> {
     // Compute path early so the guard scope is right.
     let yaml_path = format!("./config/plugins/{plugin}.yaml");
     let _yaml_guard = yaml_lock(&yaml_path);
-    let _yaml_guard = _yaml_guard.lock().map_err(|_| "yaml lock poisoned".to_string())?;
+    let _yaml_guard = _yaml_guard
+        .lock()
+        .map_err(|_| "yaml lock poisoned".to_string())?;
     let plugin = plugin.trim();
     let instance = instance.trim();
     if plugin.is_empty() || instance.is_empty() {
@@ -4963,8 +5014,7 @@ fn delete_channel(plugin: &str, instance: &str) -> Result<String, String> {
         return Err("plugin name must be [a-zA-Z0-9_-]+".into());
     }
     let path = format!("./config/plugins/{plugin}.yaml");
-    let buf = std::fs::read_to_string(&path)
-        .map_err(|e| format!("read {path}: {e}"))?;
+    let buf = std::fs::read_to_string(&path).map_err(|e| format!("read {path}: {e}"))?;
     let mut parsed: serde_yaml::Value =
         serde_yaml::from_str(&buf).map_err(|e| format!("parse {path}: {e}"))?;
     let entry = parsed
@@ -4978,9 +5028,7 @@ fn delete_channel(plugin: &str, instance: &str) -> Result<String, String> {
     let before = seq.len();
     let kept: Vec<serde_yaml::Value> = seq
         .into_iter()
-        .filter(|e| {
-            e.get("instance").and_then(|v| v.as_str()) != Some(instance)
-        })
+        .filter(|e| e.get("instance").and_then(|v| v.as_str()) != Some(instance))
         .collect();
     if kept.len() == before {
         return Err(format!("{plugin} instance '{instance}' not found"));
@@ -5219,11 +5267,7 @@ fn list_mcp_servers_json() -> String {
                         out.push(',');
                     }
                     i += 1;
-                    out.push_str(&format!(
-                        "\"{}\":\"{}\"",
-                        json_escape(k),
-                        json_escape(v)
-                    ));
+                    out.push_str(&format!("\"{}\":\"{}\"", json_escape(k), json_escape(v)));
                 }
             }
             out.push('}');
@@ -5245,11 +5289,7 @@ fn list_mcp_servers_json() -> String {
                         out.push(',');
                     }
                     i += 1;
-                    out.push_str(&format!(
-                        "\"{}\":\"{}\"",
-                        json_escape(k),
-                        json_escape(v)
-                    ));
+                    out.push_str(&format!("\"{}\":\"{}\"", json_escape(k), json_escape(v)));
                 }
             }
             out.push('}');
@@ -5260,9 +5300,7 @@ fn list_mcp_servers_json() -> String {
             .unwrap_or("")
             .to_string();
         out.push_str(&format!(",\"log_level\":\"{}\"", json_escape(&log_level)));
-        let ctx = val
-            .get("context_passthrough")
-            .and_then(|x| x.as_bool());
+        let ctx = val.get("context_passthrough").and_then(|x| x.as_bool());
         match ctx {
             Some(b) => out.push_str(&format!(",\"context_passthrough\":{b}")),
             None => out.push_str(",\"context_passthrough\":null"),
@@ -5418,9 +5456,9 @@ fn pin_agent_credentials(id: &str, body: &str) -> Result<String, String> {
             Some(s) => s,
             None => continue,
         };
-        let target_idx = agents.iter().position(|a| {
-            a.get("id").and_then(|v| v.as_str()) == Some(id)
-        });
+        let target_idx = agents
+            .iter()
+            .position(|a| a.get("id").and_then(|v| v.as_str()) == Some(id));
         let Some(idx) = target_idx else { continue };
         let agent_map = agents[idx]
             .as_mapping_mut()
@@ -5438,10 +5476,7 @@ fn pin_agent_credentials(id: &str, body: &str) -> Result<String, String> {
                 if val.trim().is_empty() {
                     creds.remove(&key);
                 } else {
-                    creds.insert(
-                        key,
-                        serde_yaml::Value::String(val.trim().to_string()),
-                    );
+                    creds.insert(key, serde_yaml::Value::String(val.trim().to_string()));
                 }
             }
         }
@@ -5450,8 +5485,7 @@ fn pin_agent_credentials(id: &str, body: &str) -> Result<String, String> {
             agent_map.insert(creds_key, serde_yaml::Value::Mapping(creds));
         }
 
-        let out =
-            serde_yaml::to_string(&parsed).map_err(|e| format!("serialise: {e}"))?;
+        let out = serde_yaml::to_string(&parsed).map_err(|e| format!("serialise: {e}"))?;
         std::fs::write(&path, out).map_err(|e| format!("write {path}: {e}"))?;
 
         return Ok(format!(
@@ -5461,7 +5495,9 @@ fn pin_agent_credentials(id: &str, body: &str) -> Result<String, String> {
         ));
     }
 
-    Err(format!("agent '{id}' not found in agents.yaml or agents.d/"))
+    Err(format!(
+        "agent '{id}' not found in agents.yaml or agents.d/"
+    ))
 }
 
 fn json_escape(s: &str) -> String {
@@ -5525,9 +5561,7 @@ fn debug_reset_now() -> String {
     let mut cleared: Vec<String> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
 
-    let wipe_dir_contents = |dir: &Path,
-                             cleared: &mut Vec<String>,
-                             errors: &mut Vec<String>| {
+    let wipe_dir_contents = |dir: &Path, cleared: &mut Vec<String>, errors: &mut Vec<String>| {
         if !dir.exists() {
             return;
         }
@@ -5560,10 +5594,7 @@ fn debug_reset_now() -> String {
     if let Ok(entries) = std::fs::read_dir("./config/agents.d") {
         for entry in entries.flatten() {
             let p = entry.path();
-            let name = p
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if name.ends_with(".yaml") && !name.ends_with(".example.yaml") {
                 match std::fs::remove_file(&p) {
                     Ok(_) => cleared.push(p.display().to_string()),
@@ -5615,8 +5646,7 @@ fn generate_admin_password() -> String {
         }
     }
     use rand::Rng;
-    const CHARS: &[u8] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     let mut rng = rand::thread_rng();
     (0..24)
         .map(|_| {
@@ -5634,7 +5664,14 @@ fn password_fingerprint(pw: &str) -> String {
         return "[hidden]".to_string();
     }
     let head: String = pw.chars().take(4).collect();
-    let tail: String = pw.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
+    let tail: String = pw
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
     format!("{head}…{tail}")
 }
 
@@ -5757,19 +5794,22 @@ fn admin_ui_disk_dir() -> Option<std::path::PathBuf> {
     Some(p)
 }
 
-fn read_admin_file_from_disk(
-    dir: &std::path::Path,
-    rel: &str,
-) -> Option<(Vec<u8>, &'static str)> {
+fn read_admin_file_from_disk(dir: &std::path::Path, rel: &str) -> Option<(Vec<u8>, &'static str)> {
     // Reject absolute / parent-traversal paths up front so a request
     // for `/../../etc/passwd` can't escape the dist tree. Decode
     // first so a `%2e%2e` escape can't sneak past the segment check
     // and become a literal `..` once the OS resolves the path.
     let decoded = url_decode(rel);
-    if decoded.split('/').any(|seg| seg == ".." || seg.starts_with('/')) {
+    if decoded
+        .split('/')
+        .any(|seg| seg == ".." || seg.starts_with('/'))
+    {
         return None;
     }
-    if rel.split('/').any(|seg| seg == ".." || seg.starts_with('/')) {
+    if rel
+        .split('/')
+        .any(|seg| seg == ".." || seg.starts_with('/'))
+    {
         return None;
     }
     let full = dir.join(rel);
@@ -5842,7 +5882,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         workspace: primary.workspace.clone(),
         skills: primary.skills.clone(),
         skills_dir: primary.skills_dir.clone(),
-            skill_overrides: Default::default(),
+        skill_overrides: Default::default(),
         transcripts_dir: primary.transcripts_dir.clone(),
         dreaming: primary.dreaming.clone(),
         workspace_git: Default::default(),
@@ -5859,8 +5899,8 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         outbound_allowlist: primary.outbound_allowlist.clone(),
         credentials: primary.credentials.clone(),
         link_understanding: serde_json::Value::Null,
-            web_search: serde_json::Value::Null,
-            pairing_policy: serde_json::Value::Null,
+        web_search: serde_json::Value::Null,
+        pairing_policy: serde_json::Value::Null,
         language: primary.language.clone(),
         context_optimization: None,
     });
@@ -6210,11 +6250,13 @@ async fn run_reload(config_dir: &std::path::Path, json: bool) -> Result<()> {
             .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"));
         println!("{body}");
     } else {
-        println!("reload v{}: applied={} rejected={} elapsed={}ms",
-                 outcome.version,
-                 outcome.applied.len(),
-                 outcome.rejected.len(),
-                 outcome.elapsed_ms);
+        println!(
+            "reload v{}: applied={} rejected={} elapsed={}ms",
+            outcome.version,
+            outcome.applied.len(),
+            outcome.rejected.len(),
+            outcome.elapsed_ms
+        );
         for id in &outcome.applied {
             println!("  ✓ {id}");
         }
@@ -6376,9 +6418,7 @@ async fn handle_admin_conn(
     }
     // Route `/admin/credentials/*` first (Phase 17 hot-reload), then
     // `/admin/agents*`, then fall back to the tool-policy handler.
-    let (status, body, content_type) = if path == "/admin/credentials/reload"
-        && method == "POST"
-    {
+    let (status, body, content_type) = if path == "/admin/credentials/reload" && method == "POST" {
         match credentials.as_deref() {
             Some(bundle) => match nexo_auth::wire::reload_resolver(
                 &config_dir,
@@ -6387,8 +6427,7 @@ async fn handle_admin_conn(
             ) {
                 Ok(outcome) => (
                     200,
-                    serde_json::to_string_pretty(&outcome)
-                        .unwrap_or_else(|_| "{}".into()),
+                    serde_json::to_string_pretty(&outcome).unwrap_or_else(|_| "{}".into()),
                     "application/json",
                 ),
                 Err(errs) => {
@@ -6679,10 +6718,17 @@ async fn handle_taskflow_resume_event(
     let body: TaskflowResumePayload = serde_json::from_value(event.payload)
         .with_context(|| "malformed taskflow.resume payload")?;
     match engine
-        .try_resume_external(body.flow_id, &body.topic, &body.correlation_id, body.payload)
+        .try_resume_external(
+            body.flow_id,
+            &body.topic,
+            &body.correlation_id,
+            body.payload,
+        )
         .await?
     {
-        Some(f) => tracing::info!(flow_id = %f.id, topic = %body.topic, "taskflow resumed via NATS"),
+        Some(f) => {
+            tracing::info!(flow_id = %f.id, topic = %body.topic, "taskflow resumed via NATS")
+        }
         None => tracing::debug!(
             flow_id = %body.flow_id,
             topic = %body.topic,

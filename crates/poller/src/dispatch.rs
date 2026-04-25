@@ -25,13 +25,12 @@ pub async fn publish(
     agent_id: &str,
     delivery: &OutboundDelivery,
 ) -> Result<(), PollerError> {
-    let handle =
-        resolver
-            .resolve(agent_id, delivery.channel)
-            .map_err(|_| PollerError::CredentialsMissing {
-                agent: agent_id.to_string(),
-                channel: delivery.channel,
-            })?;
+    let handle = resolver.resolve(agent_id, delivery.channel).map_err(|_| {
+        PollerError::CredentialsMissing {
+            agent: agent_id.to_string(),
+            channel: delivery.channel,
+        }
+    })?;
 
     let topic = topic_for(delivery.channel, handle.account_id_raw());
 
@@ -39,7 +38,8 @@ pub async fn publish(
     // accept the message without a special branch.
     let mut payload = delivery.payload.clone();
     if let Some(map) = payload.as_object_mut() {
-        map.entry("to".to_string()).or_insert(json!(delivery.recipient));
+        map.entry("to".to_string())
+            .or_insert(json!(delivery.recipient));
     } else {
         // payload is e.g. a bare string — wrap it.
         payload = json!({ "text": payload, "to": delivery.recipient });
@@ -74,8 +74,7 @@ mod tests {
         let h = CredentialHandle::new(WHATSAPP, "personal", "ana");
         let mut inner: HashMap<&'static str, CredentialHandle> = HashMap::new();
         inner.insert(WHATSAPP, h);
-        let mut outer: HashMap<Arc<str>, HashMap<&'static str, CredentialHandle>> =
-            HashMap::new();
+        let mut outer: HashMap<Arc<str>, HashMap<&'static str, CredentialHandle>> = HashMap::new();
         outer.insert(Arc::from("ana"), inner);
         AgentCredentialResolver::from_raw(outer)
     }
@@ -83,7 +82,10 @@ mod tests {
     #[tokio::test]
     async fn publish_routes_to_per_instance_topic() {
         let broker = AnyBroker::local();
-        let mut sub = broker.subscribe("plugin.outbound.whatsapp.personal").await.unwrap();
+        let mut sub = broker
+            .subscribe("plugin.outbound.whatsapp.personal")
+            .await
+            .unwrap();
         let resolver = build_resolver_for_ana_personal();
         let delivery = OutboundDelivery {
             channel: WHATSAPP,
@@ -109,14 +111,19 @@ mod tests {
             recipient: "x".into(),
             payload: json!({}),
         };
-        let err = publish(&broker, &resolver, "ana", &delivery).await.unwrap_err();
+        let err = publish(&broker, &resolver, "ana", &delivery)
+            .await
+            .unwrap_err();
         assert!(matches!(err, PollerError::CredentialsMissing { .. }));
     }
 
     #[tokio::test]
     async fn publish_wraps_string_payload() {
         let broker = AnyBroker::local();
-        let mut sub = broker.subscribe("plugin.outbound.whatsapp.personal").await.unwrap();
+        let mut sub = broker
+            .subscribe("plugin.outbound.whatsapp.personal")
+            .await
+            .unwrap();
         let resolver = build_resolver_for_ana_personal();
         let delivery = OutboundDelivery {
             channel: WHATSAPP,

@@ -50,12 +50,10 @@ impl PairingStore {
         .execute(&pool)
         .await
         .map_err(|e| PairingError::Storage(e.to_string()))?;
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_pairing_pending_code ON pairing_pending(code)",
-        )
-        .execute(&pool)
-        .await
-        .map_err(|e| PairingError::Storage(e.to_string()))?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_pairing_pending_code ON pairing_pending(code)")
+            .execute(&pool)
+            .await
+            .map_err(|e| PairingError::Storage(e.to_string()))?;
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS pairing_allow_from (\
                 channel       TEXT NOT NULL,\
@@ -105,7 +103,10 @@ impl PairingStore {
         .await
         .map_err(|e| PairingError::Storage(e.to_string()))?;
         if let Some(code) = existing {
-            return Ok(UpsertOutcome { code, created: false });
+            return Ok(UpsertOutcome {
+                code,
+                created: false,
+            });
         }
 
         // Enforce per-(channel, account) cap before inserting.
@@ -126,17 +127,16 @@ impl PairingStore {
 
         // Generate a code that does not collide with any *active* code
         // anywhere in the table.
-        let active_codes: Vec<String> =
-            sqlx::query_scalar("SELECT code FROM pairing_pending")
-                .fetch_all(&self.pool)
-                .await
-                .map_err(|e| PairingError::Storage(e.to_string()))?;
+        let active_codes: Vec<String> = sqlx::query_scalar("SELECT code FROM pairing_pending")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| PairingError::Storage(e.to_string()))?;
         let set: HashSet<String> = active_codes.into_iter().collect();
         let code = code::generate_unique(&set).map_err(PairingError::Invalid)?;
 
         let now = Utc::now().timestamp();
-        let meta_json = serde_json::to_string(&meta)
-            .map_err(|e| PairingError::Storage(e.to_string()))?;
+        let meta_json =
+            serde_json::to_string(&meta).map_err(|e| PairingError::Storage(e.to_string()))?;
         sqlx::query(
             "INSERT INTO pairing_pending(channel, account_id, sender_id, code, created_at, meta_json) VALUES(?, ?, ?, ?, ?, ?)",
         )
@@ -149,7 +149,10 @@ impl PairingStore {
         .execute(&self.pool)
         .await
         .map_err(|e| PairingError::Storage(e.to_string()))?;
-        Ok(UpsertOutcome { code, created: true })
+        Ok(UpsertOutcome {
+            code,
+            created: true,
+        })
     }
 
     pub async fn list_pending(
@@ -175,8 +178,8 @@ impl PairingStore {
         for (channel, account_id, sender_id, code, created_at, meta_json) in rows {
             let meta: serde_json::Value =
                 serde_json::from_str(&meta_json).unwrap_or(serde_json::Value::Null);
-            let created_at = DateTime::<Utc>::from_timestamp(created_at, 0)
-                .unwrap_or_else(Utc::now);
+            let created_at =
+                DateTime::<Utc>::from_timestamp(created_at, 0).unwrap_or_else(Utc::now);
             out.push(PendingRequest {
                 channel,
                 account_id,

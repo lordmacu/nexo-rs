@@ -1,5 +1,5 @@
-use nexo_broker::{AnyBroker, BrokerHandle, Event};
 use dashmap::DashMap;
+use nexo_broker::{AnyBroker, BrokerHandle, Event};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;

@@ -20,12 +20,12 @@ mod tools;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use nexo_auth::handle::GOOGLE;
-use nexo_plugin_google::{GoogleAuthClient, GoogleAuthConfig, SecretSources};
 use anyhow::Context;
 use async_trait::async_trait;
 use base64::Engine;
 use dashmap::DashMap;
+use nexo_auth::handle::GOOGLE;
+use nexo_plugin_google::{GoogleAuthClient, GoogleAuthConfig, SecretSources};
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -79,9 +79,15 @@ pub struct DeliverCfg {
     pub to: String,
 }
 
-fn default_max_per_tick() -> usize { 20 }
-fn default_dispatch_delay() -> u64 { 1000 }
-fn default_mark_read() -> bool { true }
+fn default_max_per_tick() -> usize {
+    20
+}
+fn default_dispatch_delay() -> u64 {
+    1000
+}
+fn default_mark_read() -> bool {
+    true
+}
 
 pub struct GmailPoller {
     /// Cached `GoogleAuthClient`s keyed by Google account id. Multiple
@@ -108,12 +114,16 @@ impl GmailPoller {
 }
 
 impl Default for GmailPoller {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[async_trait]
 impl Poller for GmailPoller {
-    fn kind(&self) -> &'static str { "gmail" }
+    fn kind(&self) -> &'static str {
+        "gmail"
+    }
 
     fn description(&self) -> &'static str {
         "Polls Gmail with a search query, extracts fields via regex, dispatches to a channel."
@@ -133,12 +143,11 @@ impl Poller for GmailPoller {
     }
 
     async fn tick(&self, ctx: &PollContext) -> Result<TickOutcome, PollerError> {
-        let cfg: GmailJobConfig = serde_json::from_value(ctx.config.clone()).map_err(|e| {
-            PollerError::Config {
+        let cfg: GmailJobConfig =
+            serde_json::from_value(ctx.config.clone()).map_err(|e| PollerError::Config {
                 job: ctx.job_id.clone(),
                 reason: e.to_string(),
-            }
-        })?;
+            })?;
 
         let google = ctx
             .credentials
@@ -223,13 +232,7 @@ impl Poller for GmailPoller {
                 continue;
             }
             match self
-                .process_one(
-                    id,
-                    &cfg,
-                    &compiled_extract,
-                    target_channel,
-                    &client,
-                )
+                .process_one(id, &cfg, &compiled_extract, target_channel, &client)
                 .await
             {
                 Ok(Some(d)) => {
@@ -272,8 +275,7 @@ impl Poller for GmailPoller {
                 seen_set.remove(&id);
             }
         }
-        let next_cursor =
-            serde_json::to_vec(&seen_set.into_iter().collect::<Vec<_>>()).ok();
+        let next_cursor = serde_json::to_vec(&seen_set.into_iter().collect::<Vec<_>>()).ok();
 
         let dispatched = deliveries.len() as u32;
         Ok(TickOutcome {
@@ -304,12 +306,14 @@ impl GmailPoller {
             job: ctx.job_id.clone(),
             reason: "PollContext.stores is None — wire CredentialsBundle into PollerRunner".into(),
         })?;
-        let account = stores.google.account(&account_id).ok_or_else(|| {
-            PollerError::CredentialsMissing {
-                agent: ctx.agent_id.clone(),
-                channel: GOOGLE,
-            }
-        })?;
+        let account =
+            stores
+                .google
+                .account(&account_id)
+                .ok_or_else(|| PollerError::CredentialsMissing {
+                    agent: ctx.agent_id.clone(),
+                    channel: GOOGLE,
+                })?;
 
         let client_id = read_trim(&account.client_id_path).map_err(PollerError::Transient)?;
         let client_secret =
@@ -340,7 +344,9 @@ impl GmailPoller {
             .await
             .map_err(|e| PollerError::Permanent(e.context("google: load_from_disk")))?;
 
-        self.inner.clients.insert(account_id.clone(), client.clone());
+        self.inner
+            .clients
+            .insert(account_id.clone(), client.clone());
         Ok(client)
     }
 
@@ -352,9 +358,8 @@ impl GmailPoller {
         target_channel: nexo_auth::Channel,
         client: &Arc<GoogleAuthClient>,
     ) -> Result<Option<OutboundDelivery>, anyhow::Error> {
-        let url = format!(
-            "https://gmail.googleapis.com/gmail/v1/users/me/messages/{id}?format=full"
-        );
+        let url =
+            format!("https://gmail.googleapis.com/gmail/v1/users/me/messages/{id}?format=full");
         let msg: Value = client
             .authorized_call("GET", &url, None)
             .await
@@ -431,9 +436,7 @@ fn classify_google_err(err: anyhow::Error, ctx: &str) -> PollerError {
 }
 
 async fn mark_read(client: &Arc<GoogleAuthClient>, id: &str) -> anyhow::Result<()> {
-    let url = format!(
-        "https://gmail.googleapis.com/gmail/v1/users/me/messages/{id}/modify"
-    );
+    let url = format!("https://gmail.googleapis.com/gmail/v1/users/me/messages/{id}/modify");
     let body = json!({ "removeLabelIds": ["UNREAD"] });
     client
         .authorized_call("POST", &url, Some(body))

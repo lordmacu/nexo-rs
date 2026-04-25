@@ -62,12 +62,30 @@ pub async fn show(id: &str, json: bool) -> Result<()> {
     if json {
         println!("{}", serde_json::to_string_pretty(&body)?);
     } else {
-        println!("id:                   {}", body["id"].as_str().unwrap_or(""));
-        println!("kind:                 {}", body["kind"].as_str().unwrap_or(""));
-        println!("agent:                {}", body["agent"].as_str().unwrap_or(""));
-        println!("paused:               {}", body["paused"].as_bool().unwrap_or(false));
-        println!("last_status:          {}", body["last_status"].as_str().unwrap_or("-"));
-        println!("consecutive_errors:   {}", body["consecutive_errors"].as_i64().unwrap_or(0));
+        println!(
+            "id:                   {}",
+            body["id"].as_str().unwrap_or("")
+        );
+        println!(
+            "kind:                 {}",
+            body["kind"].as_str().unwrap_or("")
+        );
+        println!(
+            "agent:                {}",
+            body["agent"].as_str().unwrap_or("")
+        );
+        println!(
+            "paused:               {}",
+            body["paused"].as_bool().unwrap_or(false)
+        );
+        println!(
+            "last_status:          {}",
+            body["last_status"].as_str().unwrap_or("-")
+        );
+        println!(
+            "consecutive_errors:   {}",
+            body["consecutive_errors"].as_i64().unwrap_or(0)
+        );
         println!(
             "items_seen_total:     {}",
             body["items_seen_total"].as_i64().unwrap_or(0)

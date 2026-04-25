@@ -28,9 +28,7 @@ pub use rate_limiter::RateLimiter;
 pub use registry::{LlmProviderFactory, LlmRegistry, MiniMaxFactory, OpenAiFactory};
 pub use retry::{parse_retry_after_ms, with_retry, LlmError};
 pub use stream::{collect_stream, default_stream_from_chat, StreamChunk};
-pub use token_counter::{
-    AnthropicTokenCounter, TiktokenCounter, TokenCounter,
-};
+pub use token_counter::{AnthropicTokenCounter, TiktokenCounter, TokenCounter};
 pub use types::{
     Attachment, AttachmentData, CacheUsage, ChatMessage, ChatRequest, ChatResponse, ChatRole,
     FinishReason, ResponseContent, TokenUsage, ToolCall, ToolChoice, ToolDef,

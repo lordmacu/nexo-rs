@@ -66,10 +66,7 @@ impl GoogleCredentialStore {
     /// should hold it across the full HTTP roundtrip that rotates the
     /// refresh_token on the disk. `None` when the handle points at an
     /// unknown account (treat as NotFound).
-    pub fn refresh_lock(
-        &self,
-        handle: &CredentialHandle,
-    ) -> Option<Arc<tokio::sync::Mutex<()>>> {
+    pub fn refresh_lock(&self, handle: &CredentialHandle) -> Option<Arc<tokio::sync::Mutex<()>>> {
         let fp = handle.fingerprint();
         let entry = self
             .refresh_locks
@@ -106,11 +103,7 @@ impl CredentialStore for GoogleCredentialStore {
             })
     }
 
-    fn issue(
-        &self,
-        account_id: &str,
-        agent_id: &str,
-    ) -> Result<CredentialHandle, CredentialError> {
+    fn issue(&self, account_id: &str, agent_id: &str) -> Result<CredentialHandle, CredentialError> {
         let account = self
             .accounts
             .get(account_id)
@@ -154,8 +147,7 @@ impl CredentialStore for GoogleCredentialStore {
             // Paths prefixed with `inline:` are synthetic markers for
             // legacy `agents[].google_auth` inline credentials migrated
             // in-memory. Skip the exists-check for those.
-            let is_inline =
-                |p: &std::path::Path| p.to_string_lossy().starts_with("inline:");
+            let is_inline = |p: &std::path::Path| p.to_string_lossy().starts_with("inline:");
             if !is_inline(&a.client_id_path) && !a.client_id_path.exists() {
                 report.errors.push(crate::error::BuildError::Credential {
                     channel: GOOGLE,
@@ -207,10 +199,8 @@ mod tests {
 
     #[test]
     fn account_for_agent_lookup() {
-        let store = GoogleCredentialStore::new(vec![
-            mk("ana@x.com", "ana"),
-            mk("kate@x.com", "kate"),
-        ]);
+        let store =
+            GoogleCredentialStore::new(vec![mk("ana@x.com", "ana"), mk("kate@x.com", "kate")]);
         assert_eq!(store.account_for_agent("ana").unwrap().id, "ana@x.com");
         assert_eq!(store.account_for_agent("kate").unwrap().id, "kate@x.com");
         assert!(store.account_for_agent("nobody").is_none());
@@ -233,10 +223,7 @@ mod tests {
 
     #[tokio::test]
     async fn refresh_lock_distinct_for_different_accounts() {
-        let store = GoogleCredentialStore::new(vec![
-            mk("a@x.com", "ana"),
-            mk("k@x.com", "kate"),
-        ]);
+        let store = GoogleCredentialStore::new(vec![mk("a@x.com", "ana"), mk("k@x.com", "kate")]);
         let ha = store.issue("a@x.com", "ana").unwrap();
         let hk = store.issue("k@x.com", "kate").unwrap();
         let la = store.refresh_lock(&ha).unwrap();

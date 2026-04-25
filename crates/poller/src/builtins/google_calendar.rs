@@ -8,11 +8,11 @@
 
 use std::sync::Arc;
 
-use nexo_auth::handle::GOOGLE;
-use nexo_plugin_google::GoogleAuthClient;
 use async_trait::async_trait;
 use chrono::Utc;
 use dashmap::DashMap;
+use nexo_auth::handle::GOOGLE;
+use nexo_plugin_google::GoogleAuthClient;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -35,8 +35,12 @@ pub struct CalendarJobConfig {
     pub deliver: super::gmail::DeliverCfg,
 }
 
-fn default_calendar_id() -> String { "primary".into() }
-fn default_skip_cancelled() -> bool { true }
+fn default_calendar_id() -> String {
+    "primary".into()
+}
+fn default_skip_cancelled() -> bool {
+    true
+}
 fn default_template() -> String {
     "📅 {summary} — {start}\n{html_link}".to_string()
 }
@@ -57,12 +61,16 @@ impl GoogleCalendarPoller {
 }
 
 impl Default for GoogleCalendarPoller {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[async_trait]
 impl Poller for GoogleCalendarPoller {
-    fn kind(&self) -> &'static str { "google_calendar" }
+    fn kind(&self) -> &'static str {
+        "google_calendar"
+    }
 
     fn description(&self) -> &'static str {
         "Polls Google Calendar v3 events with syncToken; dispatches new + updated events."
@@ -114,7 +122,7 @@ impl Poller for GoogleCalendarPoller {
         let resp: Value = client
             .authorized_call("GET", &url, None)
             .await
-            .map_err(|e| classify_calendar_err(e))?;
+            .map_err(classify_calendar_err)?;
 
         // 410 GONE → syncToken expired. Surfaced from authorized_call as
         // an anyhow with the body; classify it as Permanent so the
@@ -152,7 +160,10 @@ impl Poller for GoogleCalendarPoller {
                 {
                     continue;
                 }
-                let summary = ev.get("summary").and_then(Value::as_str).unwrap_or("(no title)");
+                let summary = ev
+                    .get("summary")
+                    .and_then(Value::as_str)
+                    .unwrap_or("(no title)");
                 let start = ev
                     .get("start")
                     .and_then(|s| s.get("dateTime").or_else(|| s.get("date")))
@@ -208,12 +219,13 @@ async fn build_client(
         job: ctx.job_id.clone(),
         reason: "PollContext.stores is None".into(),
     })?;
-    let account = stores.google.account(&id).ok_or_else(|| {
-        PollerError::CredentialsMissing {
+    let account = stores
+        .google
+        .account(&id)
+        .ok_or_else(|| PollerError::CredentialsMissing {
             agent: ctx.agent_id.clone(),
             channel: GOOGLE,
-        }
-    })?;
+        })?;
     let cid = std::fs::read_to_string(&account.client_id_path)
         .map(|s| s.trim().to_string())
         .map_err(|e| PollerError::Transient(anyhow::Error::from(e)))?;

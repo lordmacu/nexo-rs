@@ -16,12 +16,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use nexo_config::types::extensions::ExtensionsDoctorConfig;
 use nexo_config::ExtensionsConfig;
 use nexo_extensions::cli::{
     run_doctor_runtime, BrokerClientForDoctor, CliContext, CliError, DoctorOptions,
 };
-use async_trait::async_trait;
 use tempfile::TempDir;
 
 /// Build the `echo_ext` example on demand so `cargo test` alone is

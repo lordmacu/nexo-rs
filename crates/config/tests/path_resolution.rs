@@ -73,11 +73,7 @@ fn load_canonicalises_skills_and_workspace_paths() {
     let cfg = AppConfig::load(tmp.path()).expect("config load");
     let ana = &cfg.agents.agents[0];
 
-    let expected_skills = tmp
-        .path()
-        .join("skills")
-        .to_string_lossy()
-        .into_owned();
+    let expected_skills = tmp.path().join("skills").to_string_lossy().into_owned();
     let expected_workspace = tmp
         .path()
         .join("data/workspace/ana")
@@ -117,7 +113,11 @@ agents:
 "#,
     )
     .unwrap();
-    fs::write(tmp.path().join("broker.yaml"), "broker:\n  type: \"nats\"\n  url: \"nats://localhost:4222\"\n").unwrap();
+    fs::write(
+        tmp.path().join("broker.yaml"),
+        "broker:\n  type: \"nats\"\n  url: \"nats://localhost:4222\"\n",
+    )
+    .unwrap();
     fs::write(
         tmp.path().join("llm.yaml"),
         r#"

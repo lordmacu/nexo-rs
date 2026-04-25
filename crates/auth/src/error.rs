@@ -20,10 +20,7 @@ pub fn display_path(p: &Path) -> String {
 #[derive(Debug, Error)]
 pub enum CredentialError {
     #[error("account '{account}' not found in {channel} store")]
-    NotFound {
-        channel: Channel,
-        account: String,
-    },
+    NotFound { channel: Channel, account: String },
 
     #[error("agent '{agent}' not permitted on {channel}:{fp}")]
     NotPermitted {

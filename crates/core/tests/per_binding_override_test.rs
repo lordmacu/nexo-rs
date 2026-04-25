@@ -8,6 +8,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use async_trait::async_trait;
 use nexo_broker::{types::Event, AnyBroker, BrokerHandle};
 use nexo_config::types::agents::{
     AgentConfig, AgentRuntimeConfig, HeartbeatConfig, InboundBinding, ModelConfig,
@@ -18,7 +19,6 @@ use nexo_core::agent::{
     Agent, AgentBehavior, AgentContext, AgentRuntime, EffectiveBindingPolicy, InboundMessage,
 };
 use nexo_core::session::SessionManager;
-use async_trait::async_trait;
 use serde_json::json;
 use tokio::time::sleep;
 use uuid::Uuid;
@@ -86,7 +86,7 @@ fn two_binding_agent() -> AgentConfig {
         workspace: String::new(),
         skills: vec!["weather".into()],
         skills_dir: "./skills".into(),
-            skill_overrides: Default::default(),
+        skill_overrides: Default::default(),
         transcripts_dir: String::new(),
         dreaming: Default::default(),
         workspace_git: Default::default(),
@@ -94,10 +94,7 @@ fn two_binding_agent() -> AgentConfig {
         tool_args_validation: None,
         extra_docs: Vec::new(),
         allowed_tools: vec!["weather".into()],
-        sender_rate_limit: Some(SenderRateLimitConfig {
-            rps: 2.0,
-            burst: 5,
-        }),
+        sender_rate_limit: Some(SenderRateLimitConfig { rps: 2.0, burst: 5 }),
         allowed_delegates: vec!["peer_a".into()],
         accept_delegates_from: Vec::new(),
         description: String::new(),
@@ -108,9 +105,9 @@ fn two_binding_agent() -> AgentConfig {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
-            web_search: serde_json::Value::Null,
-            pairing_policy: serde_json::Value::Null,
-            language: None,
+        web_search: serde_json::Value::Null,
+        pairing_policy: serde_json::Value::Null,
+        language: None,
         inbound_bindings: vec![
             // Sales WhatsApp — narrow.
             InboundBinding {
@@ -150,8 +147,8 @@ fn two_binding_agent() -> AgentConfig {
                 allowed_delegates: Some(vec!["*".into()]),
                 language: None,
                 link_understanding: serde_json::Value::Null,
-            web_search: serde_json::Value::Null,
-            pairing_policy: serde_json::Value::Null,
+                web_search: serde_json::Value::Null,
+                pairing_policy: serde_json::Value::Null,
             },
         ],
         context_optimization: None,
@@ -164,7 +161,9 @@ async fn publish_on(broker: &AnyBroker, topic: &str, session_id: Uuid, text: &st
     broker.publish(topic, ev).await.unwrap();
 }
 
-async fn spawn_runtime(cfg: AgentConfig) -> (AgentRuntime, Arc<Mutex<Vec<CapturedEffective>>>, AnyBroker) {
+async fn spawn_runtime(
+    cfg: AgentConfig,
+) -> (AgentRuntime, Arc<Mutex<Vec<CapturedEffective>>>, AnyBroker) {
     let broker = AnyBroker::local();
     let captures = Arc::new(Mutex::new(Vec::new()));
     let behavior = RecorderBehavior {
@@ -182,7 +181,13 @@ async fn whatsapp_binding_receives_narrow_policy_telegram_binding_receives_full_
     let (runtime, captures, broker) = spawn_runtime(two_binding_agent()).await;
 
     // Fire a WhatsApp message.
-    publish_on(&broker, "plugin.inbound.whatsapp", Uuid::new_v4(), "hola WA").await;
+    publish_on(
+        &broker,
+        "plugin.inbound.whatsapp",
+        Uuid::new_v4(),
+        "hola WA",
+    )
+    .await;
     sleep(Duration::from_millis(50)).await;
     // Fire a Telegram message targeting the ana_tg bot.
     publish_on(
@@ -197,13 +202,23 @@ async fn whatsapp_binding_receives_narrow_policy_telegram_binding_receives_full_
     runtime.stop().await;
 
     let snap = captures.lock().unwrap();
-    assert_eq!(snap.len(), 2, "both bindings should have delivered one event each");
+    assert_eq!(
+        snap.len(),
+        2,
+        "both bindings should have delivered one event each"
+    );
 
-    let wa = snap.iter().find(|c| c.text == "hola WA").expect("WA capture");
+    let wa = snap
+        .iter()
+        .find(|c| c.text == "hola WA")
+        .expect("WA capture");
     assert_eq!(wa.binding_index, Some(0), "WA binding is declared first");
     assert_eq!(wa.allowed_tools, vec!["whatsapp_send_message".to_string()]);
     assert_eq!(wa.outbound_whatsapp, vec!["573115728852".to_string()]);
-    assert!(wa.outbound_telegram.is_empty(), "WA binding clears TG outbound");
+    assert!(
+        wa.outbound_telegram.is_empty(),
+        "WA binding clears TG outbound"
+    );
     assert!(wa.skills.is_empty(), "WA binding loads no skills");
     assert_eq!(wa.model, "claude-haiku-4-5", "WA uses agent-level model");
     assert!(
@@ -216,7 +231,10 @@ async fn whatsapp_binding_receives_narrow_policy_telegram_binding_receives_full_
     assert_eq!(wa.sender_rate_limit_rps, Some(0.5), "WA uses binding RPS");
     assert!(wa.allowed_delegates.is_empty(), "WA bans delegation");
 
-    let tg = snap.iter().find(|c| c.text == "hola TG").expect("TG capture");
+    let tg = snap
+        .iter()
+        .find(|c| c.text == "hola TG")
+        .expect("TG capture");
     assert_eq!(tg.binding_index, Some(1), "TG binding is declared second");
     assert_eq!(tg.allowed_tools, vec!["*".to_string()]);
     assert_eq!(tg.outbound_telegram, vec![1_194_292_426]);
@@ -248,7 +266,13 @@ async fn unmatched_binding_drops_event_without_spawning_session() {
         "stray TG",
     )
     .await;
-    publish_on(&broker, "plugin.inbound.whatsapp", Uuid::new_v4(), "hola WA").await;
+    publish_on(
+        &broker,
+        "plugin.inbound.whatsapp",
+        Uuid::new_v4(),
+        "hola WA",
+    )
+    .await;
     sleep(Duration::from_millis(50)).await;
 
     runtime.stop().await;
@@ -280,7 +304,7 @@ async fn legacy_agent_without_bindings_synthesises_agent_level_policy() {
         workspace: String::new(),
         skills: vec!["weather".into()],
         skills_dir: "./skills".into(),
-            skill_overrides: Default::default(),
+        skill_overrides: Default::default(),
         transcripts_dir: String::new(),
         dreaming: Default::default(),
         workspace_git: Default::default(),
@@ -300,14 +324,20 @@ async fn legacy_agent_without_bindings_synthesises_agent_level_policy() {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
-            web_search: serde_json::Value::Null,
-            pairing_policy: serde_json::Value::Null,
-            language: None,
+        web_search: serde_json::Value::Null,
+        pairing_policy: serde_json::Value::Null,
+        language: None,
         context_optimization: None,
     };
     let (runtime, captures, broker) = spawn_runtime(cfg).await;
 
-    publish_on(&broker, "plugin.inbound.whatsapp", Uuid::new_v4(), "legacy hi").await;
+    publish_on(
+        &broker,
+        "plugin.inbound.whatsapp",
+        Uuid::new_v4(),
+        "legacy hi",
+    )
+    .await;
     sleep(Duration::from_millis(50)).await;
     runtime.stop().await;
 

@@ -70,10 +70,7 @@ impl Schedule {
 
     /// Compute the next firing instant strictly after `after`. Returns
     /// `None` for one-shot `At` schedules whose target is in the past.
-    pub fn next_run_at(
-        &self,
-        after: DateTime<Utc>,
-    ) -> Result<Option<DateTime<Utc>>, PollerError> {
+    pub fn next_run_at(&self, after: DateTime<Utc>) -> Result<Option<DateTime<Utc>>, PollerError> {
         match self {
             Schedule::Every(e) => {
                 let secs = e.every_secs.max(1);
@@ -109,9 +106,7 @@ impl Schedule {
         // the `cron-tz` feature on, this branch swaps to chrono-tz.
         // Surfaced in FOLLOWUPS until DST-correct evaluation lands.
         if cfg.tz.is_some() {
-            tracing::trace!(
-                "schedule.cron.tz set but `cron-tz` feature off — evaluating in UTC"
-            );
+            tracing::trace!("schedule.cron.tz set but `cron-tz` feature off — evaluating in UTC");
         }
         Ok(schedule.after(&after).next())
     }
@@ -125,7 +120,10 @@ pub fn apply_jitter(base: DateTime<Utc>, jitter_ms: u64, seed: u64) -> DateTime<
     }
     // Deterministic LCG so tests don't need a real RNG. Real boots
     // pass `rand::random()` as seed.
-    let offset_ms = seed.wrapping_mul(2862933555777941757).wrapping_add(3037000493) % jitter_ms;
+    let offset_ms = seed
+        .wrapping_mul(2862933555777941757)
+        .wrapping_add(3037000493)
+        % jitter_ms;
     base + chrono::Duration::milliseconds(offset_ms as i64)
 }
 
@@ -211,7 +209,7 @@ mod tests {
         for seed in 0u64..100 {
             let j = apply_jitter(base, 5000, seed);
             let delta_ms = (j - base).num_milliseconds();
-            assert!(delta_ms >= 0 && delta_ms < 5000, "seed {seed} → {delta_ms}");
+            assert!((0..5000).contains(&delta_ms), "seed {seed} → {delta_ms}");
         }
     }
 

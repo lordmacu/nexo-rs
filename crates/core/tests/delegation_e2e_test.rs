@@ -12,8 +12,8 @@
 
 use std::time::Duration;
 
-use nexo_core::agent::{AgentMessage, AgentPayload};
 use futures::StreamExt;
+use nexo_core::agent::{AgentMessage, AgentPayload};
 use serde_json::json;
 use uuid::Uuid;
 

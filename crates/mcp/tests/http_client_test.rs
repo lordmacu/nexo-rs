@@ -7,13 +7,13 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use nexo_mcp::{HttpMcpClient, HttpMcpOptions, HttpTransportMode, McpError};
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::{HeaderValue, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use nexo_mcp::{HttpMcpClient, HttpMcpOptions, HttpTransportMode, McpError};
 use reqwest::header::HeaderMap;
 use tokio::net::TcpListener;
 use url::Url;

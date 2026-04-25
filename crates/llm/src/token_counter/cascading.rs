@@ -95,11 +95,7 @@ impl TokenCounter for CascadingTokenCounter {
         }
     }
 
-    async fn count_messages(
-        &self,
-        model: &str,
-        messages: &[ChatMessage],
-    ) -> Result<u32, LlmError> {
+    async fn count_messages(&self, model: &str, messages: &[ChatMessage]) -> Result<u32, LlmError> {
         let primary = Arc::clone(&self.primary);
         let model_owned = model.to_string();
         let msgs: Vec<ChatMessage> = messages.to_vec();
@@ -206,7 +202,10 @@ mod tests {
         let blocks = vec![PromptBlock::plain("x", "Hello, world!")];
         let n = casc.count_blocks(&blocks).await.unwrap();
         assert_eq!(n, 4); // tiktoken known phrase
-        assert!(!casc.is_exact(), "ever_fell_back should flip is_exact to false");
+        assert!(
+            !casc.is_exact(),
+            "ever_fell_back should flip is_exact to false"
+        );
         assert_eq!(casc.backend(), "cascading_degraded");
     }
 

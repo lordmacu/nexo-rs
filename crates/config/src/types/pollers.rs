@@ -78,12 +78,24 @@ pub struct DeliveryTarget {
     pub to: String,
 }
 
-fn default_enabled() -> bool { true }
-fn default_state_db() -> String { "./data/poller.db".to_string() }
-fn default_jitter() -> u64 { 5_000 }
-fn default_ttl_factor() -> f32 { 2.0 }
-fn default_failure_cooldown() -> u64 { 3_600 }
-fn default_breaker_threshold() -> u32 { 5 }
+fn default_enabled() -> bool {
+    true
+}
+fn default_state_db() -> String {
+    "./data/poller.db".to_string()
+}
+fn default_jitter() -> u64 {
+    5_000
+}
+fn default_ttl_factor() -> f32 {
+    2.0
+}
+fn default_failure_cooldown() -> u64 {
+    3_600
+}
+fn default_breaker_threshold() -> u32 {
+    5
+}
 
 impl Default for PollersConfig {
     /// Sensible defaults — same as a YAML file with only `pollers: {}`.

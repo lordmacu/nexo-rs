@@ -196,8 +196,7 @@ pub struct AgentConfig {
     ///       prompt_cache: false  # disable for testing
     /// ```
     #[serde(default)]
-    pub context_optimization:
-        Option<crate::types::llm::AgentContextOptimizationOverride>,
+    pub context_optimization: Option<crate::types::llm::AgentContextOptimizationOverride>,
 }
 
 /// Per-agent allowlist of outbound recipients. Phone numbers are matched

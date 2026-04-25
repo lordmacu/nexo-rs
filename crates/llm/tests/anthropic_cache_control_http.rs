@@ -221,7 +221,10 @@ async fn anthropic_no_cache_blocks_yields_string_system_and_no_beta() {
     let mut req = ChatRequest::new("claude-sonnet-4-5", vec![ChatMessage::user("hi")]);
     req.system_prompt = Some("be brief".into());
     let resp = client.chat(req).await.expect("chat call");
-    assert!(resp.cache_usage.is_none(), "no cache fields → no CacheUsage");
+    assert!(
+        resp.cache_usage.is_none(),
+        "no cache fields → no CacheUsage"
+    );
 
     let recorded = server.received_requests().await.unwrap();
     let r = &recorded[0];

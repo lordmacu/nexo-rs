@@ -9,6 +9,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use async_trait::async_trait;
 use nexo_broker::{types::Event, AnyBroker, BrokerHandle};
 use nexo_config::types::agents::{
     AgentConfig, AgentRuntimeConfig, HeartbeatConfig, InboundBinding, ModelConfig,
@@ -18,7 +19,6 @@ use nexo_core::agent::runtime::ReloadCommand;
 use nexo_core::agent::{Agent, AgentBehavior, AgentContext, AgentRuntime, InboundMessage};
 use nexo_core::session::SessionManager;
 use nexo_core::RuntimeSnapshot;
-use async_trait::async_trait;
 use serde_json::json;
 use tokio::time::sleep;
 use uuid::Uuid;
@@ -78,7 +78,7 @@ fn base_agent() -> AgentConfig {
         workspace: String::new(),
         skills: Vec::new(),
         skills_dir: "./skills".into(),
-            skill_overrides: Default::default(),
+        skill_overrides: Default::default(),
         transcripts_dir: String::new(),
         dreaming: Default::default(),
         workspace_git: Default::default(),
@@ -94,9 +94,9 @@ fn base_agent() -> AgentConfig {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
-            web_search: serde_json::Value::Null,
-            pairing_policy: serde_json::Value::Null,
-            language: None,
+        web_search: serde_json::Value::Null,
+        pairing_policy: serde_json::Value::Null,
+        language: None,
         inbound_bindings: vec![InboundBinding {
             plugin: "whatsapp".into(),
             allowed_tools: Some(vec!["old_tool".into()]),
@@ -136,7 +136,10 @@ async fn reload_apply_command_is_picked_up_by_next_message() {
     let mut new_cfg = base_agent();
     new_cfg.inbound_bindings[0].allowed_tools = Some(vec!["new_tool".into()]);
     let new_snap = Arc::new(RuntimeSnapshot::bare(Arc::new(new_cfg), 42));
-    reload_tx.send(ReloadCommand::Apply(new_snap)).await.unwrap();
+    reload_tx
+        .send(ReloadCommand::Apply(new_snap))
+        .await
+        .unwrap();
 
     // Give the runtime a beat to process the reload command, then send
     // the next message — it must see the new policy.

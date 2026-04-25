@@ -155,7 +155,8 @@ pub fn get_agent_workspace(file: &Path, agent_id: &str) -> Result<Option<String>
         return Ok(None);
     }
     let text = fs::read_to_string(file).with_context(|| format!("read {}", file.display()))?;
-    let v: Value = serde_yaml::from_str(&text).with_context(|| format!("parse {}", file.display()))?;
+    let v: Value =
+        serde_yaml::from_str(&text).with_context(|| format!("parse {}", file.display()))?;
     let seq = v
         .get("agents")
         .and_then(Value::as_sequence)
@@ -179,7 +180,8 @@ pub fn get_agent_list(file: &Path, agent_id: &str, list_key: &str) -> Result<Vec
         return Ok(Vec::new());
     }
     let text = fs::read_to_string(file).with_context(|| format!("read {}", file.display()))?;
-    let v: Value = serde_yaml::from_str(&text).with_context(|| format!("parse {}", file.display()))?;
+    let v: Value =
+        serde_yaml::from_str(&text).with_context(|| format!("parse {}", file.display()))?;
     let seq = v
         .get("agents")
         .and_then(Value::as_sequence)
@@ -212,7 +214,8 @@ pub fn list_agent_ids(file: &Path) -> Result<Vec<String>> {
     if text.trim().is_empty() {
         return Ok(Vec::new());
     }
-    let v: Value = serde_yaml::from_str(&text).with_context(|| format!("parse {}", file.display()))?;
+    let v: Value =
+        serde_yaml::from_str(&text).with_context(|| format!("parse {}", file.display()))?;
     let seq = v
         .get("agents")
         .and_then(Value::as_sequence)
@@ -220,22 +223,13 @@ pub fn list_agent_ids(file: &Path) -> Result<Vec<String>> {
         .unwrap_or_default();
     Ok(seq
         .into_iter()
-        .filter_map(|item| {
-            item.get("id")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        })
+        .filter_map(|item| item.get("id").and_then(Value::as_str).map(str::to_string))
         .collect())
 }
 
 /// Remove `item` from `agents[<agent_id>].<list_key>`. Returns `true`
 /// when the file was modified, `false` if the item wasn't there.
-pub fn remove_list_entry(
-    file: &Path,
-    agent_id: &str,
-    list_key: &str,
-    item: &str,
-) -> Result<bool> {
+pub fn remove_list_entry(file: &Path, agent_id: &str, list_key: &str, item: &str) -> Result<bool> {
     let _guard = YAML_UPSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let text = fs::read_to_string(file).with_context(|| format!("read {}", file.display()))?;
     let mut root: Value =
@@ -297,12 +291,7 @@ pub fn add_plugin_to_agent(file: &Path, agent_id: &str, plugin_id: &str) -> Resu
 /// Shared helper: append `item` to `agents[<id>].<list_key>`. Returns
 /// `true` when the file was modified, `false` if the item already
 /// existed.
-fn add_list_entry(
-    file: &Path,
-    agent_id: &str,
-    list_key: &str,
-    item: &str,
-) -> Result<bool> {
+fn add_list_entry(file: &Path, agent_id: &str, list_key: &str, item: &str) -> Result<bool> {
     let _guard = YAML_UPSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let text = fs::read_to_string(file).with_context(|| format!("read {}", file.display()))?;
     let mut root: Value =
@@ -657,7 +646,11 @@ pub fn find_agent_file(config_dir: &Path, agent_id: &str) -> Result<Option<std::
         if path.extension().and_then(|e| e.to_str()) != Some("yaml") {
             continue;
         }
-        if list_agent_ids(&path).unwrap_or_default().iter().any(|id| id == agent_id) {
+        if list_agent_ids(&path)
+            .unwrap_or_default()
+            .iter()
+            .any(|id| id == agent_id)
+        {
             return Ok(Some(path));
         }
     }
@@ -754,7 +747,10 @@ pub fn whatsapp_upsert_instance(
     };
 
     let mut entry = Mapping::new();
-    entry.insert(Value::String("instance".into()), Value::String(instance.into()));
+    entry.insert(
+        Value::String("instance".into()),
+        Value::String(instance.into()),
+    );
     entry.insert(Value::String("enabled".into()), Value::Bool(true));
     entry.insert(
         Value::String("session_dir".into()),
@@ -835,7 +831,10 @@ pub fn telegram_upsert_instance(
     };
 
     let mut entry = Mapping::new();
-    entry.insert(Value::String("instance".into()), Value::String(instance.into()));
+    entry.insert(
+        Value::String("instance".into()),
+        Value::String(instance.into()),
+    );
     entry.insert(
         Value::String("token".into()),
         Value::String(token_placeholder.into()),
@@ -981,4 +980,3 @@ pub fn google_auth_upsert_account(
         .map_err(|e| anyhow::anyhow!("persist yaml {}: {e}", file.display()))?;
     Ok(())
 }
-

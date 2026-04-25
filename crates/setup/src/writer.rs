@@ -309,9 +309,8 @@ fn persist_google_auth(
     let mut patched_agent = false;
     if let Some(id) = agent_id.as_deref() {
         let agent_secrets = secrets_dir.join(id);
-        std::fs::create_dir_all(&agent_secrets).with_context(|| {
-            format!("mkdir {}", agent_secrets.display())
-        })?;
+        std::fs::create_dir_all(&agent_secrets)
+            .with_context(|| format!("mkdir {}", agent_secrets.display()))?;
         write_secret(&agent_secrets, "google_client_id.txt", &client_id)?;
         write_secret(&agent_secrets, "google_client_secret.txt", &client_secret)?;
 
@@ -476,7 +475,9 @@ fn run_google_consent_callback_url(
             println!();
             println!("2. Login con tu cuenta de Google → click Allow.");
             println!();
-            println!("3. El browser te va a redirigir a `http://127.0.0.1:{redirect_port}/callback?…`");
+            println!(
+                "3. El browser te va a redirigir a `http://127.0.0.1:{redirect_port}/callback?…`"
+            );
             println!("   Va a aparecer error 'esta página no funciona' — ignoralo.");
             println!("   Lo único que importa: la URL completa en la barra de direcciones.");
             println!();
@@ -695,8 +696,7 @@ fn wipe_channel_session(canal_id: &str, agent_id: &str, config_dir: &Path) -> Re
         _ => return Ok(()),
     };
     if target.exists() {
-        std::fs::remove_dir_all(&target)
-            .with_context(|| format!("rm -rf {}", target.display()))?;
+        std::fs::remove_dir_all(&target).with_context(|| format!("rm -rf {}", target.display()))?;
         println!("✔ Sesión borrada: {}", target.display());
     } else {
         println!("ℹ  Nada que borrar en {} (ya vacío).", target.display());
@@ -717,9 +717,7 @@ fn wipe_channel_session(canal_id: &str, agent_id: &str, config_dir: &Path) -> Re
 /// running on the host touches the same dir the container agent would.
 fn agent_whatsapp_session_dir(config_dir: &Path, agent_id: &str) -> PathBuf {
     let wa_yaml = config_dir.join("plugins").join("whatsapp.yaml");
-    if let Ok(Some(existing)) =
-        crate::yaml_patch::get_string(&wa_yaml, "whatsapp.session_dir")
-    {
+    if let Ok(Some(existing)) = crate::yaml_patch::get_string(&wa_yaml, "whatsapp.session_dir") {
         let trimmed = existing.trim();
         if !trimmed.is_empty() {
             return resolve_docker_path(trimmed);
@@ -817,11 +815,7 @@ fn run_telegram_link_sync(secrets_dir: &Path, config_dir: &Path) -> Result<()> {
 
 /// Persist credentials for the Anthropic provider. Branches by
 /// `auth_mode` and patches `llm.yaml::providers.anthropic.auth.*`.
-fn persist_anthropic(
-    values: &ServiceValues,
-    secrets_dir: &Path,
-    config_dir: &Path,
-) -> Result<()> {
+fn persist_anthropic(values: &ServiceValues, secrets_dir: &Path, config_dir: &Path) -> Result<()> {
     let mode = values
         .get("auth_mode")
         .map(str::trim)
@@ -872,14 +866,19 @@ fn persist_anthropic(
             yaml_patch::upsert(
                 &yaml_path,
                 "providers.anthropic.auth.setup_token_file",
-                &format!("{}", secrets_dir.join("anthropic_setup_token.txt").display()),
+                &format!(
+                    "{}",
+                    secrets_dir.join("anthropic_setup_token.txt").display()
+                ),
                 yaml_patch::ValueKind::String,
             )?;
             println!("✔ Anthropic setup-token guardado en secrets/anthropic_setup_token.txt");
         }
         "cli_import" => {
             let home = std::env::var("HOME").unwrap_or_default();
-            let candidate = PathBuf::from(&home).join(".claude").join(".credentials.json");
+            let candidate = PathBuf::from(&home)
+                .join(".claude")
+                .join(".credentials.json");
             if !candidate.is_file() {
                 anyhow::bail!(
                     "no se encontró `{}`. Corré `claude login` primero (o elegí otro modo).",
@@ -901,10 +900,7 @@ fn persist_anthropic(
                 .get("refreshToken")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            let expires_ms = creds
-                .get("expiresAt")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0);
+            let expires_ms = creds.get("expiresAt").and_then(|v| v.as_i64()).unwrap_or(0);
             let expires_at = if expires_ms > 10_000_000_000 {
                 expires_ms / 1000
             } else {
@@ -943,9 +939,7 @@ fn persist_anthropic(
                 "✔ Credenciales Claude CLI importadas ({}).",
                 account_email.unwrap_or("cuenta desconocida")
             );
-            println!(
-                "  → secrets/anthropic_oauth.json (se auto-refresca en runtime)."
-            );
+            println!("  → secrets/anthropic_oauth.json (se auto-refresca en runtime).");
         }
         "oauth_login" => {
             // Interactive PKCE browser flow (Claude.ai subscription).
@@ -977,7 +971,10 @@ fn persist_anthropic(
             )?;
             println!(
                 "✔ OAuth completado ({}).",
-                token.account_email.as_deref().unwrap_or("cuenta desconocida")
+                token
+                    .account_email
+                    .as_deref()
+                    .unwrap_or("cuenta desconocida")
             );
             println!("  → secrets/anthropic_oauth.json (auto-refresh activo).");
         }
@@ -988,12 +985,20 @@ fn persist_anthropic(
                 );
             }
             // Validate shape before writing.
-            let parsed: serde_json::Value = serde_json::from_str(&secret_raw)
-                .context("secret_value no es JSON válido")?;
-            if parsed.get("access_token").and_then(|v| v.as_str()).is_none() {
+            let parsed: serde_json::Value =
+                serde_json::from_str(&secret_raw).context("secret_value no es JSON válido")?;
+            if parsed
+                .get("access_token")
+                .and_then(|v| v.as_str())
+                .is_none()
+            {
                 anyhow::bail!("bundle JSON missing access_token");
             }
-            if parsed.get("refresh_token").and_then(|v| v.as_str()).is_none() {
+            if parsed
+                .get("refresh_token")
+                .and_then(|v| v.as_str())
+                .is_none()
+            {
                 anyhow::bail!("bundle JSON missing refresh_token");
             }
             if parsed.get("expires_at").and_then(|v| v.as_i64()).is_none() {

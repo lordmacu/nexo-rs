@@ -379,9 +379,15 @@ auth:
     fn context_optimization_defaults_match_spec() {
         let cfg = ContextOptimizationConfig::default();
         assert!(cfg.prompt_cache.enabled, "prompt_cache safe by default");
-        assert!(!cfg.compaction.enabled, "compaction off by default (rollout)");
+        assert!(
+            !cfg.compaction.enabled,
+            "compaction off by default (rollout)"
+        );
         assert!(cfg.token_counter.enabled, "token_counter safe by default");
-        assert!(cfg.workspace_cache.enabled, "workspace_cache safe by default");
+        assert!(
+            cfg.workspace_cache.enabled,
+            "workspace_cache safe by default"
+        );
         assert_eq!(cfg.compaction.compact_at_pct, 0.75);
         assert_eq!(cfg.compaction.tail_keep_tokens, 20_000);
         assert_eq!(cfg.compaction.tool_result_max_pct, 0.30);
@@ -414,7 +420,10 @@ context_optimization:
         assert_eq!(cfg.context_optimization.compaction.compact_at_pct, 0.6);
         assert_eq!(cfg.context_optimization.compaction.tail_keep_tokens, 15_000);
         // Non-overridden fields take defaults.
-        assert_eq!(cfg.context_optimization.compaction.tool_result_max_pct, 0.30);
+        assert_eq!(
+            cfg.context_optimization.compaction.tool_result_max_pct,
+            0.30
+        );
         assert!(cfg.context_optimization.token_counter.enabled);
     }
 

@@ -1,5 +1,5 @@
-use nexo_broker::AnyBroker;
 use async_trait::async_trait;
+use nexo_broker::AnyBroker;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 #[derive(Debug, Clone, Serialize, Deserialize)]

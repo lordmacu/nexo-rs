@@ -232,7 +232,6 @@ mod tests {
             system_blocks: Vec::new(),
             cache_tools: false,
         }
-    
     }
 
     #[test]
@@ -556,28 +555,24 @@ fn parse_openai_response(raw: OpenAiResponse) -> anyhow::Result<ChatResponse> {
     // dashboards don't accumulate denominator-only entries on every
     // turn. Same field shape works for DeepSeek (OpenAI-compat) and
     // most OpenAI-compatible gateways.
-    let cache_usage = raw
-        .usage
-        .prompt_tokens_details
-        .as_ref()
-        .and_then(|d| {
-            if d.cached_tokens == 0 {
-                None
-            } else {
-                Some(crate::types::CacheUsage {
-                    cache_read_input_tokens: d.cached_tokens,
-                    // OpenAI's caching is automatic (no per-write
-                    // accounting); leave creation at zero.
-                    cache_creation_input_tokens: 0,
-                    // `prompt_tokens` here is total (cached + uncached),
-                    // so the uncached portion is the difference. Saturating
-                    // sub keeps the field non-negative if a future API
-                    // change inverts the semantics.
-                    input_tokens: raw.usage.prompt_tokens.saturating_sub(d.cached_tokens),
-                    output_tokens: raw.usage.completion_tokens,
-                })
-            }
-        });
+    let cache_usage = raw.usage.prompt_tokens_details.as_ref().and_then(|d| {
+        if d.cached_tokens == 0 {
+            None
+        } else {
+            Some(crate::types::CacheUsage {
+                cache_read_input_tokens: d.cached_tokens,
+                // OpenAI's caching is automatic (no per-write
+                // accounting); leave creation at zero.
+                cache_creation_input_tokens: 0,
+                // `prompt_tokens` here is total (cached + uncached),
+                // so the uncached portion is the difference. Saturating
+                // sub keeps the field non-negative if a future API
+                // change inverts the semantics.
+                input_tokens: raw.usage.prompt_tokens.saturating_sub(d.cached_tokens),
+                output_tokens: raw.usage.completion_tokens,
+            })
+        }
+    });
 
     if !choice.message.tool_calls.is_empty() {
         let calls = choice

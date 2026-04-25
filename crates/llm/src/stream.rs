@@ -249,7 +249,7 @@ where
         content,
         usage,
         finish_reason,
-    
+
         cache_usage: None,
     })
 }
@@ -423,7 +423,7 @@ mod tests {
                     completion_tokens: 2,
                 },
                 finish_reason: FinishReason::Stop,
-            
+
                 cache_usage: None,
             },
         };
@@ -452,7 +452,7 @@ mod tests {
                 }]),
                 usage: TokenUsage::default(),
                 finish_reason: FinishReason::ToolUse,
-            
+
                 cache_usage: None,
             },
         };

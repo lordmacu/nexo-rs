@@ -4,13 +4,11 @@ use std::sync::{
 };
 use std::time::Duration;
 
+use async_trait::async_trait;
 use nexo_broker::AnyBroker;
 use nexo_config::types::agents::{AgentConfig, AgentRuntimeConfig, HeartbeatConfig, ModelConfig};
-use nexo_core::agent::{
-    Agent, AgentBehavior, AgentContext, InboundMessage, NoOpAgent, RunTrigger,
-};
+use nexo_core::agent::{Agent, AgentBehavior, AgentContext, InboundMessage, NoOpAgent, RunTrigger};
 use nexo_core::session::SessionManager;
-use async_trait::async_trait;
 use uuid::Uuid;
 
 fn test_config(id: &str) -> AgentConfig {
@@ -27,7 +25,7 @@ fn test_config(id: &str) -> AgentConfig {
         workspace: String::new(),
         skills: vec![],
         skills_dir: "./skills".into(),
-            skill_overrides: Default::default(),
+        skill_overrides: Default::default(),
         transcripts_dir: String::new(),
         dreaming: Default::default(),
         workspace_git: Default::default(),
@@ -44,9 +42,9 @@ fn test_config(id: &str) -> AgentConfig {
         google_auth: None,
         credentials: Default::default(),
         link_understanding: serde_json::Value::Null,
-            web_search: serde_json::Value::Null,
-            pairing_policy: serde_json::Value::Null,
-            language: None,
+        web_search: serde_json::Value::Null,
+        pairing_policy: serde_json::Value::Null,
+        language: None,
         context_optimization: None,
     }
 }

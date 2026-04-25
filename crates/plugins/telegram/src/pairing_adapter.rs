@@ -77,9 +77,7 @@ impl PairingChannelAdapter for TelegramPairingAdapter {
         let escaped_code = escape_markdown_v2(code);
         let line1 = escape_markdown_v2("🔐 Pairing required.");
         let line2 = escape_markdown_v2("Ask the operator to run:");
-        format!(
-            "{line1}\n{line2}\n`nexo pair approve {escaped_code}`",
-        )
+        format!("{line1}\n{line2}\n`nexo pair approve {escaped_code}`",)
     }
 
     async fn send_reply(&self, account: &str, to: &str, text: &str) -> anyhow::Result<()> {
@@ -109,14 +107,23 @@ mod tests {
     #[test]
     fn at_username_is_lowercased() {
         let a = adapter();
-        assert_eq!(a.normalize_sender("@User_Name").as_deref(), Some("@user_name"));
+        assert_eq!(
+            a.normalize_sender("@User_Name").as_deref(),
+            Some("@user_name")
+        );
     }
 
     #[test]
     fn numeric_chat_id_passes_through() {
         let a = adapter();
-        assert_eq!(a.normalize_sender("123456789").as_deref(), Some("123456789"));
-        assert_eq!(a.normalize_sender("-1001234567890").as_deref(), Some("-1001234567890"));
+        assert_eq!(
+            a.normalize_sender("123456789").as_deref(),
+            Some("123456789")
+        );
+        assert_eq!(
+            a.normalize_sender("-1001234567890").as_deref(),
+            Some("-1001234567890")
+        );
     }
 
     #[test]
@@ -141,12 +148,18 @@ mod tests {
         let a = adapter();
         let s = a.format_challenge_text("ABCD-1234");
         assert!(s.contains("\\."), "literal text periods escaped: {s}");
-        assert!(s.contains("`nexo pair approve ABCD\\-1234`"), "code wrapped + escaped: {s}");
+        assert!(
+            s.contains("`nexo pair approve ABCD\\-1234`"),
+            "code wrapped + escaped: {s}"
+        );
     }
 
     #[test]
     fn outbound_topic_handles_empty_and_named_account() {
-        assert_eq!(TelegramPairingAdapter::outbound_topic(""), "plugin.outbound.telegram");
+        assert_eq!(
+            TelegramPairingAdapter::outbound_topic(""),
+            "plugin.outbound.telegram"
+        );
         assert_eq!(
             TelegramPairingAdapter::outbound_topic("sales"),
             "plugin.outbound.telegram.sales",

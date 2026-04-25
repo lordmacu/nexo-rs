@@ -161,10 +161,14 @@ impl Poller for AgentTurnPoller {
                 reason: e.to_string(),
             })?;
 
-        let registry = ctx.llm_registry.as_ref().ok_or_else(|| PollerError::Config {
-            job: ctx.job_id.clone(),
-            reason: "agent_turn requires the runner to be wired with with_llm(...) at boot".into(),
-        })?;
+        let registry = ctx
+            .llm_registry
+            .as_ref()
+            .ok_or_else(|| PollerError::Config {
+                job: ctx.job_id.clone(),
+                reason: "agent_turn requires the runner to be wired with with_llm(...) at boot"
+                    .into(),
+            })?;
         let llm_config = ctx.llm_config.as_ref().ok_or_else(|| PollerError::Config {
             job: ctx.job_id.clone(),
             reason: "agent_turn requires LlmConfig — wire with_llm(registry, config)".into(),

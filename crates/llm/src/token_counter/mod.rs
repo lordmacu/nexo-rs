@@ -41,11 +41,7 @@ pub trait TokenCounter: Send + Sync {
     /// Count tokens for a model-specific message list. The `model` arg
     /// matters for backends whose tokenizer varies per model (Anthropic
     /// `count_tokens` requires it; tiktoken ignores it).
-    async fn count_messages(
-        &self,
-        model: &str,
-        messages: &[ChatMessage],
-    ) -> Result<u32, LlmError>;
+    async fn count_messages(&self, model: &str, messages: &[ChatMessage]) -> Result<u32, LlmError>;
 
     /// True when this counter matches provider billing exactly. Callers
     /// that emit telemetry should label the metric with this flag so a
@@ -142,7 +138,13 @@ mod tests {
 
     #[test]
     fn build_explicit_anthropic_works_for_other_providers() {
-        let c = build("anthropic_api", "openai", "https://api.anthropic.com", "k", 16);
+        let c = build(
+            "anthropic_api",
+            "openai",
+            "https://api.anthropic.com",
+            "k",
+            16,
+        );
         assert_eq!(c.backend(), "cascading");
     }
 }

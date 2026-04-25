@@ -126,9 +126,7 @@ pub fn check_prefix_overlap(claims: &[PathClaim]) -> Vec<BuildError> {
 /// `/run/secrets/` are skipped (orchestrator owns perms). Returns
 /// [`CredentialError::InsecurePermissions`] wrapped in
 /// [`BuildError::Credential`] for each offender.
-pub fn check_permissions(
-    paths: &[(Channel, String, PathBuf)],
-) -> Vec<BuildError> {
+pub fn check_permissions(paths: &[(Channel, String, PathBuf)]) -> Vec<BuildError> {
     if std::env::var(SKIP_PERM_ENV).ok().as_deref() == Some("1") {
         return Vec::new();
     }
@@ -151,9 +149,7 @@ pub fn check_permissions(
                     out.push(BuildError::Credential {
                         channel,
                         instance: instance.clone(),
-                        source: crate::error::CredentialError::FileMissing {
-                            path: path.clone(),
-                        },
+                        source: crate::error::CredentialError::FileMissing { path: path.clone() },
                     });
                     continue;
                 }
@@ -308,11 +304,8 @@ mod tests {
     fn canonicalize_creates_missing_dirs() {
         let dir = TempDir::new().unwrap();
         let missing = dir.path().join("not_yet");
-        let (ok, errs) = canonicalize_session_dirs(&[claim(
-            crate::handle::WHATSAPP,
-            "x",
-            &missing,
-        )]);
+        let (ok, errs) =
+            canonicalize_session_dirs(&[claim(crate::handle::WHATSAPP, "x", &missing)]);
         assert!(errs.is_empty(), "got: {errs:#?}");
         assert_eq!(ok.len(), 1);
         assert!(ok[0].path.exists());

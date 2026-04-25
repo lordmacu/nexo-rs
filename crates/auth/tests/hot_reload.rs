@@ -45,12 +45,8 @@ fn rebuild_swaps_bindings_in_place() {
     };
 
     let resolver = Arc::new(
-        AgentCredentialResolver::build(
-            &[input("ana", "personal")],
-            &stores,
-            StrictLevel::Strict,
-        )
-        .unwrap(),
+        AgentCredentialResolver::build(&[input("ana", "personal")], &stores, StrictLevel::Strict)
+            .unwrap(),
     );
     assert_eq!(resolver.version(), 1);
     assert_eq!(
@@ -87,12 +83,9 @@ fn rebuild_failure_leaves_old_state_intact() {
         telegram: Arc::new(TelegramCredentialStore::empty()),
         google: Arc::new(nexo_auth::google::GoogleCredentialStore::empty()),
     };
-    let resolver = AgentCredentialResolver::build(
-        &[input("ana", "personal")],
-        &stores,
-        StrictLevel::Strict,
-    )
-    .unwrap();
+    let resolver =
+        AgentCredentialResolver::build(&[input("ana", "personal")], &stores, StrictLevel::Strict)
+            .unwrap();
     let before_version = resolver.version();
 
     // Attempt to bind kate to a non-existent instance — must error
@@ -118,12 +111,9 @@ fn handles_issued_before_reload_keep_working() {
         telegram: Arc::new(TelegramCredentialStore::empty()),
         google: Arc::new(nexo_auth::google::GoogleCredentialStore::empty()),
     };
-    let resolver = AgentCredentialResolver::build(
-        &[input("ana", "personal")],
-        &stores,
-        StrictLevel::Strict,
-    )
-    .unwrap();
+    let resolver =
+        AgentCredentialResolver::build(&[input("ana", "personal")], &stores, StrictLevel::Strict)
+            .unwrap();
     let in_flight: CredentialHandle = resolver.resolve("ana", WHATSAPP).unwrap();
 
     // Reload with the same bindings — the in-flight handle must
@@ -132,5 +122,8 @@ fn handles_issued_before_reload_keep_working() {
         .rebuild(&[input("ana", "personal")], &stores, StrictLevel::Strict)
         .unwrap();
     assert_eq!(in_flight.account_id_raw(), "personal");
-    assert_eq!(in_flight.fingerprint(), resolver.resolve("ana", WHATSAPP).unwrap().fingerprint());
+    assert_eq!(
+        in_flight.fingerprint(),
+        resolver.resolve("ana", WHATSAPP).unwrap().fingerprint()
+    );
 }

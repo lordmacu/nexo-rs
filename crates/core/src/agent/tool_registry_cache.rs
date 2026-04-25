@@ -79,8 +79,8 @@ impl ToolRegistryCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nexo_llm::ToolDef;
     use async_trait::async_trait;
+    use nexo_llm::ToolDef;
     use serde_json::{json, Value};
 
     use crate::agent::{AgentContext, ToolHandler};

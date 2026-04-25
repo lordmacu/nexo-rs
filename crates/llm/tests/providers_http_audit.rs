@@ -77,7 +77,8 @@ async fn anthropic_chat_retries_on_429_and_succeeds() {
         .mount(&server)
         .await;
 
-    let client = AnthropicClient::new(&cfg_for(server.uri()), "claude-sonnet-4", tight_retry()).unwrap();
+    let client =
+        AnthropicClient::new(&cfg_for(server.uri()), "claude-sonnet-4", tight_retry()).unwrap();
     let resp = client.chat(user_req("claude-sonnet-4")).await.unwrap();
     match resp.content {
         ResponseContent::Text(t) => assert_eq!(t, "pong"),
@@ -110,13 +111,13 @@ event: message_stop\ndata: {}\n\n";
             // `set_body_string` forces Content-Type to `text/plain`
             // regardless of insert_header order. Use `set_body_raw`
             // so the SSE content-type sticks for the validator.
-            ResponseTemplate::new(200)
-                .set_body_raw(sse.as_bytes().to_vec(), "text/event-stream"),
+            ResponseTemplate::new(200).set_body_raw(sse.as_bytes().to_vec(), "text/event-stream"),
         )
         .mount(&server)
         .await;
 
-    let client = AnthropicClient::new(&cfg_for(server.uri()), "claude-sonnet-4", tight_retry()).unwrap();
+    let client =
+        AnthropicClient::new(&cfg_for(server.uri()), "claude-sonnet-4", tight_retry()).unwrap();
     let stream = client.stream(user_req("claude-sonnet-4")).await.unwrap();
     let resp = collect_stream(stream).await.unwrap();
     match resp.content {
@@ -137,7 +138,8 @@ async fn anthropic_chat_parse_error_includes_body() {
         )
         .mount(&server)
         .await;
-    let client = AnthropicClient::new(&cfg_for(server.uri()), "claude-sonnet-4", tight_retry()).unwrap();
+    let client =
+        AnthropicClient::new(&cfg_for(server.uri()), "claude-sonnet-4", tight_retry()).unwrap();
     let err = client.chat(user_req("claude-sonnet-4")).await.unwrap_err();
     let s = format!("{err:?}");
     assert!(
@@ -215,8 +217,7 @@ async fn gemini_stream_retries_on_500() {
             // `set_body_string` forces Content-Type to `text/plain`
             // regardless of insert_header order. Use `set_body_raw`
             // so the SSE content-type sticks for the validator.
-            ResponseTemplate::new(200)
-                .set_body_raw(sse.as_bytes().to_vec(), "text/event-stream"),
+            ResponseTemplate::new(200).set_body_raw(sse.as_bytes().to_vec(), "text/event-stream"),
         )
         .mount(&server)
         .await;
