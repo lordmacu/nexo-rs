@@ -1762,3 +1762,26 @@ only items left are structural choices, not bugs.
   tied to its first binding for the life of `session_id`. Platform
   ids don't collide today, so this is a paper cut — documented for
   future auditors.
+
+## Cross-test telemetry races (agent-llm + agent-mcp)
+
+`agent-llm::telemetry::tests` + `stream::tests::metrics_tap_records_*`
+serialize via a shared `TEST_LOCK`, but every test that calls
+`default_stream_from_chat` (and its provider equivalents) populates
+the global `STREAM_TTFT` / `STREAM_CHUNKS` maps **without** acquiring
+the lock — parallel runs leak data into the "empty branch" assertion
+of `render_empty_series_when_no_samples`. Same pattern in
+`agent-mcp::telemetry::tests` (6 tests fail in parallel; all green
+with `--test-threads=1`).
+
+Two robust fixes — pick one when budget allows:
+
+1. Refactor `render_prometheus` to accept the maps as parameters;
+   the production wrapper passes the global `LazyLock` statics, tests
+   pass fresh empty maps. Clean, no global state in tests.
+2. Audit every test that touches the stream / sampling telemetry
+   path (`default_stream_from_chat`, `chat_stream`, `record_*`,
+   `inc_*`) and add `let _g = TEST_LOCK.lock()...`. More work, no
+   API change.
+
+CI should run with `--test-threads=1` until one of those lands.
