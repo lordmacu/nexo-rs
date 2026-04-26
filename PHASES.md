@@ -1406,7 +1406,52 @@ cloud VM and need a recipe.
 Done when an operator picks a cloud, follows the recipe, and is
 in a healthy state with HTTPS within an hour.
 
-### Phase 41 — Telemetry opt-in + roadmap signal
+### Phase 41 — Telemetry opt-in + roadmap signal   🔄
+
+Privacy spec + operator doc shipped (binding contract for what
+ever gets sent). CLI subcommand + emitter + server + dashboard
+deferred — those land when the runtime side is ready to honour
+the spec.
+
+Shipped (41.1):
+- `docs/src/ops/telemetry.md` — full operator-facing spec.
+  Locks down: every field of the JSON document (schema v1),
+  every excluded category (no message content, no identifiers,
+  no API keys, no IPs, no hostname, no time-of-day), the
+  receiving server's data-handling guarantees (IP dropped at
+  LB, 90-day retention, no cross-`instance_id` correlation),
+  inspection paths (`nexo telemetry preview`, `mitmproxy`,
+  `iptables REJECT`), GDPR / HIPAA framing, schema changelog
+  table for future bumps, what's deliberately out of scope
+  (per-agent metrics — that's Prometheus; crash reports — those
+  stay on-host).
+- `docs/src/SUMMARY.md` registers the new page under Operations
+  (between Pairing and the empty slot for Backups).
+
+The doc is a contract: anything Phase 41.2+ ships has to match
+this spec or bump `schema_version`. That keeps the implementation
+honest before code lands.
+
+Deferred:
+- **41.2** `nexo telemetry status|enable|disable|preview` CLI
+  subcommands. Touches `src/main.rs`.
+- **41.3** Heartbeat emitter task (7d ± 1h jitter, respects
+  `HTTPS_PROXY`, single retry per tick). Lives in
+  `crates/core/src/telemetry/heartbeat.rs`.
+- **41.4** First-launch journal banner (one-time print on a
+  fresh install, suppressed thereafter via `~/.nexo/seen-banner`).
+- **41.5** Hot-reload integration so toggling at runtime takes
+  effect on the next tick without daemon restart.
+- **41.6** Receiving server (`nexo-telemetry-server` repo —
+  doesn't exist yet). Reproducible build, signed.
+- **41.7** Public dashboard at
+  `https://lordmacu.github.io/nexo-rs/usage/`.
+
+Done when (revised): `nexo telemetry preview` prints a real
+JSON document that matches the spec, the operator can flip
+on/off without restart, the server returns 204 to a real
+heartbeat, and the public dashboard shows aggregate adoption.
+Spec done; runtime / server / dashboard land in 41.2+.
 
 Honest version of "we don't know what people use".
 
