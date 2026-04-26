@@ -374,7 +374,42 @@ IOUs — features that landed in the daemon but have no UI yet.
   threshold,min_turns_between_compacts}`.
   Backend types ship in `nexo-driver-types` (67.0); the dashboard
   follows once 67.4 wires the loop and emits `agent.harness.*`
-  events
+  events.
+- [ ] Project-tracker tile (Phase 67.A) — render `PHASES.md` /
+  `FOLLOWUPS.md` parsed state with status glyphs, current /
+  next phase, last shipped, open follow-ups. Source of truth is
+  the `nexo-project-tracker` crate; the tile subscribes to the
+  watcher invalidation events.
+- [ ] Multi-agent registry tile (Phase 67.B) — live list of every
+  in-flight goal with status / turn N/M / wall / origin /
+  dispatcher. Subscribe to `agent.registry.snapshot.*` for live
+  refresh. Per-row drill-in shows snapshot detail + log buffer
+  tail (`agent_logs_tail`).
+- [ ] Dispatch surface (Phase 67.E + 67.G) — UI wrapping
+  `program_phase`, `program_phase_chain`,
+  `program_phase_parallel`, `dispatch_followup`. Form validates
+  against the resolved `DispatchPolicy` (Phase 67.D.1) before
+  submitting; preview lists exactly which sub-phases will be
+  spawned and what hooks will be attached.
+- [ ] Completion-hook designer (Phase 67.F) — attach
+  `notify_origin` / `notify_channel` / `dispatch_phase` /
+  `nats_publish` / `shell` hooks per goal. Shell hook entry is
+  visually gated until the operator has flipped
+  `PROGRAM_PHASE_ALLOW_SHELL_HOOKS` (Phase 67.A.5 capability).
+- [ ] Capability matrix (Phase 67.D.1 / 67.H.3) — agent × binding
+  grid showing `dispatch_capability` (none / read_only / full),
+  `max_concurrent_per_dispatcher`, allowed / forbidden
+  `phase_ids`. Hot-reload-aware: editing any cell republishes the
+  YAML and triggers the runtime to rebuild the
+  `ToolRegistryCache` (Phase 67.H.3) so the new surface lands
+  without restart.
+- [ ] Admin tools strip (Phase 67.G.4) — operator-only
+  `set_concurrency_cap`, `flush_agent_queue`, `evict_completed`
+  buttons gated by an `is_admin` flag at the session level.
+- [ ] Subjects audit feed (Phase 67.H.2) — paged subscription to
+  `agent.dispatch.{spawned,denied}`, `agent.tool.hook.
+  {dispatched,failed}` so operators see every admission +
+  refusal + hook outcome without grepping logs.
 - [ ] Config hot-reload (Phase 18) — Phase A5 one-click reload
 - [ ] Per-binding overrides — Phase A3 "Brain" tab needs the
   override matrix
