@@ -178,7 +178,19 @@ fn merge_agents_drop_in(dir: &Path, base: &mut AgentsConfig) -> Result<()> {
         let resolved = env::resolve_placeholders(&raw, label)?;
         let extra: AgentsConfig = serde_yaml::from_str(&resolved)
             .with_context(|| format!("invalid config in {}", path.display()))?;
-        base.agents.extend(extra.agents);
+        // Drop-in override: an `agents.d/*.yaml` entry with the same
+        // `id` as an existing agent REPLACES it. Earlier behavior just
+        // appended, leaving two definitions in the loaded config —
+        // when the override happened to omit `inbound_bindings`, the
+        // truncated copy fell into the runtime's "no bindings →
+        // legacy wildcard" branch and silently swallowed every plugin
+        // event (e.g. one bot's messages routed to every agent).
+        for new_agent in extra.agents {
+            match base.agents.iter().position(|a| a.id == new_agent.id) {
+                Some(idx) => base.agents[idx] = new_agent,
+                None => base.agents.push(new_agent),
+            }
+        }
     }
     Ok(())
 }

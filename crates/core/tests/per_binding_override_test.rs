@@ -149,10 +149,11 @@ fn two_binding_agent() -> AgentConfig {
                 link_understanding: serde_json::Value::Null,
                 web_search: serde_json::Value::Null,
                 pairing_policy: serde_json::Value::Null,
+                dispatch_policy: Default::default(),
             },
         ],
         context_optimization: None,
-            dispatch_policy: Default::default(),
+        dispatch_policy: Default::default(),
     }
 }
 
@@ -284,11 +285,14 @@ async fn unmatched_binding_drops_event_without_spawning_session() {
 }
 
 #[tokio::test]
-async fn legacy_agent_without_bindings_synthesises_agent_level_policy() {
-    // Build an agent with no bindings. The runtime must fall back to
-    // EffectiveBindingPolicy::from_agent_defaults (binding_index =
-    // usize::MAX) so tools and tool consumers still see a populated
-    // policy — byte-for-byte identical to agent-level config.
+async fn agent_without_bindings_drops_inbound_events() {
+    // Strict binding rule: an agent with no `inbound_bindings`
+    // declares no plugin subscription, so plugin events are dropped
+    // outright (instead of falling into the previous "legacy
+    // wildcard" bucket that swallowed every event). Heartbeat and
+    // agent-to-agent paths still see the synthesised agent-level
+    // policy because those topics don't go through the binding
+    // filter.
     let cfg = AgentConfig {
         id: "legacy".into(),
         model: ModelConfig {
@@ -344,16 +348,10 @@ async fn legacy_agent_without_bindings_synthesises_agent_level_policy() {
     runtime.stop().await;
 
     let snap = captures.lock().unwrap();
-    assert_eq!(snap.len(), 1);
-    let c = &snap[0];
-    assert_eq!(
-        c.binding_index, None,
-        "legacy path keys the bindingless slot with None"
+    assert!(
+        snap.is_empty(),
+        "agent with no bindings must drop plugin events (no legacy wildcard)"
     );
-    assert_eq!(c.allowed_tools, vec!["weather".to_string()]);
-    assert_eq!(c.system_prompt, "Legacy Ana.");
-    assert_eq!(c.outbound_whatsapp, vec!["573000000000".to_string()]);
-    assert_eq!(c.allowed_delegates, vec!["peer_a".to_string()]);
 }
 
 #[tokio::test]

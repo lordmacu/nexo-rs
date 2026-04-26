@@ -666,7 +666,7 @@ fn run_channel_pairing(
         "telegram" => {
             println!();
             println!("── Pairing Telegram ────────────────────────────────");
-            run_telegram_link_sync(secrets_dir, config_dir)?;
+            run_telegram_link_sync(agent_id, secrets_dir, config_dir)?;
         }
         "whatsapp" => {
             // Inline pairing: wa-agent Client renders the QR, we block
@@ -798,16 +798,26 @@ fn run_whatsapp_pairing_sync(agent_id: &str, config_dir: &Path) -> Result<()> {
 
 /// Bridge to the existing async `telegram_link::run`. Reuses the
 /// thread+runtime trick we use for google consent because `persist`
-/// is a sync entry point.
-fn run_telegram_link_sync(secrets_dir: &Path, config_dir: &Path) -> Result<()> {
+/// is a sync entry point. `agent_id` scopes the allowlist write to
+/// the right telegram instance.
+fn run_telegram_link_sync(
+    agent_id: &str,
+    secrets_dir: &Path,
+    config_dir: &Path,
+) -> Result<()> {
     let secrets_dir = secrets_dir.to_path_buf();
     let config_dir = config_dir.to_path_buf();
+    let agent_id = agent_id.to_string();
     std::thread::spawn(move || -> Result<()> {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .context("build tokio runtime for telegram link")?;
-        rt.block_on(crate::telegram_link::run(&secrets_dir, &config_dir))
+        rt.block_on(crate::telegram_link::run(
+            &secrets_dir,
+            &config_dir,
+            Some(agent_id.as_str()),
+        ))
     })
     .join()
     .map_err(|_| anyhow::anyhow!("telegram link thread panicked"))?

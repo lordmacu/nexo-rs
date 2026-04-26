@@ -90,7 +90,9 @@ enum Mode {
     },
     SetupList,
     SetupDoctor,
-    SetupTelegramLink,
+    SetupTelegramLink {
+        agent: Option<String>,
+    },
     /// Phase 26 — pairing CLI subcommands. Each one opens the
     /// pairing.db + secret file inline (no daemon connection needed)
     /// so the operator can manage senders before / after the daemon
@@ -369,7 +371,9 @@ async fn main() -> Result<()> {
             }
             return Ok(());
         }
-        Mode::SetupTelegramLink => return nexo_setup::run_telegram_link(&args.config_dir),
+        Mode::SetupTelegramLink { agent } => {
+            return nexo_setup::run_telegram_link(&args.config_dir, agent.as_deref())
+        }
         Mode::PairHelp => {
             return run_pair_help();
         }
@@ -3419,7 +3423,14 @@ fn parse_args() -> CliArgs {
         [cmd, sub] if cmd == "doctor" && sub == "capabilities" => Mode::DoctorCapabilities {
             json: has_json_flag,
         },
-        [cmd, sub] if cmd == "setup" && sub == "telegram-link" => Mode::SetupTelegramLink,
+        [cmd, sub] if cmd == "setup" && sub == "telegram-link" => {
+            Mode::SetupTelegramLink { agent: None }
+        }
+        [cmd, sub, agent] if cmd == "setup" && sub == "telegram-link" => {
+            Mode::SetupTelegramLink {
+                agent: Some(agent.clone()),
+            }
+        }
         // (pair handled by route_pair_subcommand earlier)
         [cmd, service] if cmd == "setup" => Mode::SetupOne {
             service: service.clone(),
@@ -3525,7 +3536,7 @@ fn print_usage() {
     );
     println!("  agent setup doctor                     Audit configured secrets and report what's missing");
     println!(
-        "  agent setup telegram-link              Pair an existing Telegram instance to an agent"
+        "  agent setup telegram-link [<agent>]    Pair an existing Telegram instance to an agent"
     );
     println!("  agent admin [--port <n>]               Launch the loopback admin web UI");
     println!("  agent mcp-server                       Run as an MCP stdio server (expose tools)");
@@ -4712,6 +4723,39 @@ fn commit_bootstrap(body: &str) -> Result<String, String> {
         _ => (None, None, None),
     };
 
+    // Collision guard: refuse to overwrite an agent the operator
+    // already configured. Earlier the wizard happily wrote a
+    // truncated `agents.d/<id>.yaml` next to a full definition in
+    // `agents.yaml`; with the strict drop-in override semantics
+    // that silently nuked the existing bindings.
+    let agent_path = format!("./config/agents.d/{slug}.yaml");
+    if std::path::Path::new(&agent_path).exists() {
+        return Err(format!(
+            "agent `{slug}` already exists at {agent_path} — borralo o usá `agent setup` para editarlo"
+        ));
+    }
+    let agents_yaml = std::path::Path::new("./config/agents.yaml");
+    if agents_yaml.exists() {
+        let raw = std::fs::read_to_string(agents_yaml)
+            .map_err(|e| format!("read agents.yaml: {e}"))?;
+        if let Ok(parsed) = serde_yaml::from_str::<serde_yaml::Value>(&raw) {
+            let collides = parsed
+                .get("agents")
+                .and_then(|v| v.as_sequence())
+                .map(|seq| {
+                    seq.iter().any(|item| {
+                        item.get("id").and_then(|v| v.as_str()) == Some(slug.as_str())
+                    })
+                })
+                .unwrap_or(false);
+            if collides {
+                return Err(format!(
+                    "agent `{slug}` ya está en config/agents.yaml — escogé otro id o editá el existente"
+                ));
+            }
+        }
+    }
+
     let mut written: Vec<String> = Vec::new();
 
     if !api_key.is_empty() {
@@ -4763,9 +4807,8 @@ fn commit_bootstrap(body: &str) -> Result<String, String> {
 
     std::fs::create_dir_all("./config/agents.d")
         .map_err(|e| format!("mkdir ./config/agents.d: {e}"))?;
-    let agent_path = format!("./config/agents.d/{slug}.yaml");
     std::fs::write(&agent_path, &yaml).map_err(|e| format!("write {agent_path}: {e}"))?;
-    written.push(agent_path);
+    written.push(agent_path.clone());
 
     // Seed workspace.
     let workspace = format!("./data/workspace/{slug}");

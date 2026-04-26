@@ -453,6 +453,70 @@ PT-8. **Multi-agent end-to-end test not shipped**
 
 ## Resolved (recent highlights)
 
+- 2026-04-26 — Admin first-run wizard at `/api/bootstrap/finish` now
+  refuses to create `agents.d/<slug>.yaml` when an agent with that id
+  already exists (either at the same path or in `config/agents.yaml`).
+  Combined with the strict drop-in override rule below, this closes
+  the loophole that produced a truncated `kate.yaml` next to a
+  full definition and silently nuked the agent's bindings.
+- 2026-04-26 — Runtime no longer treats "agent without
+  `inbound_bindings`" as a wildcard. The empty-bindings branch in
+  `crates/core/src/agent/runtime.rs` was removed; events go through
+  `match_binding_index` unconditionally. The "legacy wildcard"
+  fallback was the actual mechanism that let a single bot's
+  messages reach every agent that subscribed to `plugin.inbound.>`.
+  Tests updated in `crates/core/tests/runtime_test.rs` and
+  `per_binding_override_test.rs` to lock in the strict rule.
+- 2026-04-26 — `agents.d/<id>.yaml` drop-in overrides now REPLACE the
+  base entry by `id` instead of appending a duplicate. Earlier the
+  loader did `base.agents.extend(extra.agents)`, leaving two
+  definitions for the same agent in the loaded config — when the
+  override happened to omit `inbound_bindings`, the truncated copy
+  fell into the runtime's "no bindings → legacy wildcard" branch and
+  silently caught every plugin event. Fixed in
+  `crates/config/src/lib.rs::merge_agents_drop_in`.
+
+
+
+- 2026-04-26 — Telegram inbound fan-out now respects bot/agent
+  isolation. `match_binding_index` in
+  `crates/core/src/agent/runtime.rs` was tightened so a binding with
+  `instance: None` only catches no-instance topics; per-bot setups
+  must scope bindings with explicit `instance:`. Previously a
+  no-instance binding swallowed every instance, fanning a single
+  bot's messages out to every agent that listed the channel. Tests
+  in `crates/core/tests/runtime_test.rs` and the inline unit suite
+  updated to lock in the strict semantics.
+- 2026-04-26 — Setup wizard now writes the per-instance allowlist on
+  the right path everywhere. `telegram_link::run` accepts an
+  `agent_id`, and `yaml_patch::telegram_append_chat_id` mutates the
+  exact `telegram[<i>].allowlist.chat_ids` entry whose `allow_agents`
+  matches. The CLI grew `agent setup telegram-link [<agent>]`. The
+  legacy bug — `upsert("telegram.allowlist.chat_ids", …)` treating
+  `telegram` as a map — is gone. `services_imperative::run_telegram`
+  and `services/channels_dashboard::run_telegram_flow` already
+  routed through `telegram_upsert_instance` and now also call the
+  new `yaml_patch::upsert_agent_inbound_binding` helper so the
+  agent's `inbound_bindings` carry the matching `instance:` (required
+  under the tightened topic-match rule above).
+- 2026-04-26 — Setup wizard seeds `pairing_allow_from` for every
+  chat_id captured during onboarding (`telegram_link.rs` +
+  `services/channels_dashboard.rs`). Operators that disable the YAML
+  allowlist and rely solely on pairing no longer face a redundant
+  challenge for an identity the wizard already approved. New
+  `nexo-pairing` dependency added to `nexo-setup`; failures are
+  logged but don't abort the wizard since the YAML allowlist still
+  admits the chat.
+- 2026-04-26 — Telegram plugin long-poll observes the shutdown
+  cancellation token. `spawn_poller` in
+  `crates/plugins/telegram/src/plugin.rs` now races the
+  `bot.get_updates(...)` future against `shutdown.cancelled()` so
+  Ctrl+C exits in <100 ms instead of waiting the full ~25 s
+  long-poll. `offset` is only persisted on a successful round-trip,
+  so cancelled updates are simply redelivered on next start.
+
+
+
 - Streaming telemetry and streaming runtime wiring completed.
 - Per-agent credentials hot-reload completed.
 - Browser CDP reliability hardening completed.

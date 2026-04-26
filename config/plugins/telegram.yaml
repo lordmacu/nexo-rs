@@ -1,8 +1,15 @@
 telegram:
-- token: ${file:./secrets/telegram_bot_token.txt}
+- instance: kate_bot
+  token: ${file:./secrets/telegram_bot_token.txt}
   polling:
     enabled: true
     interval_ms: 1000
-  allowlist:
-    chat_ids:
-    - 1194292426
+  allow_agents:
+  - kate
+- instance: cody_nexo_bot
+  token: ${file:./secrets/cody_nexo_bot_telegram_token.txt}
+  polling:
+    enabled: true
+    interval_ms: 1000
+  allow_agents:
+  - cody

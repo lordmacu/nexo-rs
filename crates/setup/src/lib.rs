@@ -20,6 +20,7 @@
 //!
 //! See `src/services/` for the exhaustive service catalog.
 
+pub mod agent_wizard;
 pub mod capabilities;
 pub mod credentials_check;
 pub mod prompt;
@@ -172,128 +173,52 @@ fn labeled_with_status(svc: &ServiceDef, report: &status::StatusReport) -> Strin
     format!("{dot} {}", svc.label)
 }
 
-/// Post-first-run menu. Groups follow-up actions by intent rather than
-/// by category. "Avanzado" falls through to the legacy multi-select
-/// for power users.
+/// Post-first-run menu. Reorganized for clarity: agent-first (the
+/// thing the operator actually owns), services as a side branch, and
+/// diagnostics isolated. Every label is plain Spanish — no jargon
+/// like "rotar credencial" or "vincular canal adicional" in the top
+/// level. The legacy service-centric paths still live underneath
+/// "Configurar un servicio" → category submenu.
 fn run_hub_menu(
     services: &[ServiceDef],
     secrets_dir: &Path,
     config_dir: &Path,
     _report: &status::StatusReport,
 ) -> Result<()> {
-    let actions = [
-        "Ver estado (qué está configurado)",
-        "Vincular canal adicional (whatsapp / telegram / …)",
-        "Agregar skills",
-        "LLM (agregar / cambiar / re-autenticar proveedor)",
-        "Rotar credencial (plugin / skill — no LLMs)",
-        "Avanzado ⚙  (memory, broker, runtime, per-service)",
-        "Salir",
-    ];
     loop {
-        println!();
+        print_hub_summary(services, secrets_dir, config_dir);
+        let actions = [
+            "Configurar un agente",
+            "Crear un agente nuevo",
+            "Conectar un servicio (LLM, canal, skill)",
+            "Diagnóstico — ver qué falta",
+            "Opciones avanzadas",
+            "Salir",
+        ];
         let idx = prompt::pick_from_list("¿Qué querés hacer?", &actions)?;
         match idx {
             0 => {
-                let report = status::audit(services, secrets_dir, config_dir);
-                status::print_report(&report);
+                if let Err(e) =
+                    agent_wizard::run_agent_wizard(services, secrets_dir, config_dir)
+                {
+                    eprintln!("⚠  configurar agente: {e:#}");
+                }
             }
             1 => {
-                // Linear flow: canal → agente → reauth/link.
-                // Reemplaza el viejo `link` service para que la
-                // experiencia sea idéntica a la del wizard step 3.
-                if let Err(e) = services::channels_dashboard::run_link_flow(
-                    config_dir,
-                    secrets_dir,
-                ) {
-                    eprintln!("⚠  vincular canal: {e:#}");
+                if let Err(e) = agent_wizard::run_create_agent(config_dir) {
+                    eprintln!("⚠  crear agente: {e:#}");
                 }
             }
-            2 => {
-                let report = status::audit(services, secrets_dir, config_dir);
-                let skill_services: Vec<&ServiceDef> = services
-                    .iter()
-                    .filter(|s| s.category == registry::Category::Skill)
-                    .collect();
-                let labels: Vec<String> = skill_services
-                    .iter()
-                    .map(|s| labeled_with_status(s, &report))
-                    .collect();
-                let defaults = vec![false; labels.len()];
-                let idxs = prompt::multi_select_strings(
-                    "Skills (space = toggle, enter = confirmar, ESC = volver)",
-                    &labels,
-                    &defaults,
-                )?;
-                for i in idxs {
-                    let svc = skill_services[i];
-                    if let Err(e) = run_service(svc, secrets_dir, config_dir) {
-                        eprintln!("⚠  {}: {e:#}", svc.label);
-                    }
-                }
-            }
+            2 => run_services_submenu(services, secrets_dir, config_dir)?,
             3 => {
-                // Dedicated LLM path: pick provider → run its service
-                // (covers add / swap / re-auth uniformly). Each entry
-                // gets a colored status dot — green = fully configured,
-                // yellow = partial, red = none.
                 let report = status::audit(services, secrets_dir, config_dir);
-                let llm_services: Vec<&ServiceDef> = services
-                    .iter()
-                    .filter(|s| s.category == registry::Category::Llm)
-                    .collect();
-                let mut labels: Vec<String> = vec!["← Volver al menú".to_string()];
-                labels.extend(llm_services.iter().map(|s| labeled_with_status(s, &report)));
-                let pick = prompt::pick_from_strings("¿Qué proveedor de LLM?", &labels)?;
-                if pick == 0 {
-                    continue;
-                }
-                run_service(llm_services[pick - 1], secrets_dir, config_dir)?;
-            }
-            4 => {
-                // Non-LLM credential rotation: plugin + skill services.
-                let report = status::audit(services, secrets_dir, config_dir);
-                let rotatable: Vec<&ServiceDef> = services
-                    .iter()
-                    .filter(|s| {
-                        matches!(
-                            s.category,
-                            registry::Category::Plugin | registry::Category::Skill
-                        )
-                    })
-                    .collect();
-                let mut labels: Vec<String> = vec!["← Volver al menú".to_string()];
-                labels.extend(rotatable.iter().map(|s| labeled_with_status(s, &report)));
-                let pick = prompt::pick_from_strings("¿Qué servicio rotar?", &labels)?;
-                if pick == 0 {
-                    continue;
-                }
-                run_service(rotatable[pick - 1], secrets_dir, config_dir)?;
-            }
-            5 => {
-                // Legacy advanced path — reuse the old multi-category
-                // picker scoped to the technical bits.
-                let advanced_services: Vec<ServiceDef> = services
-                    .iter()
-                    .filter(|s| {
-                        matches!(
-                            s.category,
-                            registry::Category::Memory
-                                | registry::Category::Infra
-                                | registry::Category::Runtime
-                        )
-                    })
-                    .cloned()
-                    .collect();
-                let picked = prompt::select_services(&advanced_services, secrets_dir, config_dir)?;
-                for svc in picked {
-                    if let Err(e) = run_service(svc, secrets_dir, config_dir) {
-                        eprintln!("⚠  {}: {e:#}", svc.label);
-                    }
+                status::print_report(&report);
+                if let Ok(summary) = credentials_check::run(config_dir) {
+                    credentials_check::print(&summary);
                 }
             }
+            4 => run_advanced_submenu(services, secrets_dir, config_dir)?,
             _ => {
-                // Phase 17 — final gauntlet before leaving the hub.
                 if let Ok(summary) = credentials_check::run(config_dir) {
                     credentials_check::print(&summary);
                 }
@@ -301,6 +226,208 @@ fn run_hub_menu(
             }
         }
     }
+}
+
+/// One-screen summary: which agents exist + how many are healthy +
+/// how many services are wired. Printed at the top of every hub
+/// iteration so the operator always sees the current state before
+/// answering the menu.
+fn print_hub_summary(services: &[ServiceDef], secrets_dir: &Path, config_dir: &Path) {
+    use console::style;
+    let agents_yaml = config_dir.join("agents.yaml");
+    let agent_ids = yaml_patch::list_agent_ids(&agents_yaml).unwrap_or_default();
+    let report = status::audit(services, secrets_dir, config_dir);
+
+    let llm_total = services
+        .iter()
+        .filter(|s| s.category == registry::Category::Llm)
+        .count();
+    let llm_ok = report
+        .services
+        .iter()
+        .filter(|s| {
+            s.is_fully_configured()
+                && services
+                    .iter()
+                    .find(|sv| sv.id == s.service_id)
+                    .map(|sv| sv.category == registry::Category::Llm)
+                    .unwrap_or(false)
+        })
+        .count();
+    let plugin_total = services
+        .iter()
+        .filter(|s| s.category == registry::Category::Plugin)
+        .count();
+    let plugin_ok = report
+        .services
+        .iter()
+        .filter(|s| {
+            s.is_fully_configured()
+                && services
+                    .iter()
+                    .find(|sv| sv.id == s.service_id)
+                    .map(|sv| sv.category == registry::Category::Plugin)
+                    .unwrap_or(false)
+        })
+        .count();
+    let skill_total = services
+        .iter()
+        .filter(|s| s.category == registry::Category::Skill)
+        .count();
+    let skill_ok = report
+        .services
+        .iter()
+        .filter(|s| {
+            s.is_fully_configured()
+                && services
+                    .iter()
+                    .find(|sv| sv.id == s.service_id)
+                    .map(|sv| sv.category == registry::Category::Skill)
+                    .unwrap_or(false)
+        })
+        .count();
+
+    println!();
+    println!("─────────────────────────────────────────────");
+    if agent_ids.is_empty() {
+        println!("  Agentes:    {}", style("(ninguno)").dim());
+    } else {
+        println!(
+            "  Agentes:    {} ({})",
+            agent_ids.len(),
+            agent_ids.join(", ")
+        );
+    }
+    println!(
+        "  Servicios:  {} LLM · {} canales · {} skills",
+        style(format!("{llm_ok}/{llm_total}")).bold(),
+        style(format!("{plugin_ok}/{plugin_total}")).bold(),
+        style(format!("{skill_ok}/{skill_total}")).bold(),
+    );
+    println!("─────────────────────────────────────────────");
+}
+
+/// "Conectar un servicio" submenu — collapses the old hub options
+/// 2 (canal), 3 (skill), 5 (LLM), 6 (rotar) into a single category
+/// picker. Each branch keeps its existing flow.
+fn run_services_submenu(
+    services: &[ServiceDef],
+    secrets_dir: &Path,
+    config_dir: &Path,
+) -> Result<()> {
+    loop {
+        let actions = [
+            "Cerebro (LLM — minimax / anthropic / openai / …)",
+            "Canal de mensajería (whatsapp / telegram / email)",
+            "Habilidad / skill (clima, búsquedas, ssh, docker, …)",
+            "← volver",
+        ];
+        let pick = prompt::pick_from_list("¿Qué tipo de servicio?", &actions)?;
+        match pick {
+            0 => pick_and_run_in_category(services, registry::Category::Llm, secrets_dir, config_dir)?,
+            1 => {
+                // Channel link flow already shows auth + bind in one
+                // wizard — keep using it instead of re-rolling here.
+                if let Err(e) = services::channels_dashboard::run_link_flow(config_dir, secrets_dir)
+                {
+                    eprintln!("⚠  canal: {e:#}");
+                }
+            }
+            2 => pick_and_run_in_category(
+                services,
+                registry::Category::Skill,
+                secrets_dir,
+                config_dir,
+            )?,
+            _ => return Ok(()),
+        }
+    }
+}
+
+/// "Opciones avanzadas" — old hub-7 (memory/broker/runtime) plus the
+/// rotate-credential path for power users who want to swap a key
+/// without re-auth-ing the whole flow.
+fn run_advanced_submenu(
+    services: &[ServiceDef],
+    secrets_dir: &Path,
+    config_dir: &Path,
+) -> Result<()> {
+    loop {
+        let actions = [
+            "Memoria / embeddings",
+            "Broker NATS",
+            "Runtime (timeouts, queues)",
+            "Cambiar credencial existente (rotar key)",
+            "← volver",
+        ];
+        let pick = prompt::pick_from_list("Avanzado", &actions)?;
+        match pick {
+            0 => pick_and_run_in_category(
+                services,
+                registry::Category::Memory,
+                secrets_dir,
+                config_dir,
+            )?,
+            1 => pick_and_run_in_category(
+                services,
+                registry::Category::Infra,
+                secrets_dir,
+                config_dir,
+            )?,
+            2 => pick_and_run_in_category(
+                services,
+                registry::Category::Runtime,
+                secrets_dir,
+                config_dir,
+            )?,
+            3 => {
+                let report = status::audit(services, secrets_dir, config_dir);
+                let rotatable: Vec<&ServiceDef> = services
+                    .iter()
+                    .filter(|s| {
+                        matches!(
+                            s.category,
+                            registry::Category::Plugin
+                                | registry::Category::Skill
+                                | registry::Category::Llm
+                        )
+                    })
+                    .collect();
+                let mut labels: Vec<String> = vec!["← volver".to_string()];
+                labels.extend(rotatable.iter().map(|s| labeled_with_status(s, &report)));
+                let pick = prompt::pick_from_strings("¿Qué credencial rotar?", &labels)?;
+                if pick == 0 {
+                    continue;
+                }
+                run_service(rotatable[pick - 1], secrets_dir, config_dir)?;
+            }
+            _ => return Ok(()),
+        }
+    }
+}
+
+/// Pick one service inside a single category and run its form. Shared
+/// helper for the LLM / skill / memory / infra / runtime entries.
+fn pick_and_run_in_category(
+    services: &[ServiceDef],
+    cat: registry::Category,
+    secrets_dir: &Path,
+    config_dir: &Path,
+) -> Result<()> {
+    let report = status::audit(services, secrets_dir, config_dir);
+    let in_cat: Vec<&ServiceDef> = services.iter().filter(|s| s.category == cat).collect();
+    if in_cat.is_empty() {
+        println!("(no hay servicios en esta categoría)");
+        return Ok(());
+    }
+    let mut labels: Vec<String> = vec!["← volver".to_string()];
+    labels.extend(in_cat.iter().map(|s| labeled_with_status(s, &report)));
+    let pick = prompt::pick_from_strings("¿Cuál?", &labels)?;
+    if pick == 0 {
+        return Ok(());
+    }
+    run_service(in_cat[pick - 1], secrets_dir, config_dir)?;
+    Ok(())
 }
 
 /// Run the wizard for a single service id (non-menu path).
@@ -347,8 +474,8 @@ pub fn run_list(config_dir: &Path) -> Result<()> {
 
 /// Run the Telegram link flow: validate the persisted bot token, long-
 /// poll for the user's first message, append their chat_id to the
-/// allowlist.
-pub fn run_telegram_link(config_dir: &Path) -> Result<()> {
+/// per-instance allowlist scoped to `agent_id` (when provided).
+pub fn run_telegram_link(config_dir: &Path, agent_id: Option<&str>) -> Result<()> {
     let secrets_dir = config_dir
         .parent()
         .unwrap_or(Path::new("."))
@@ -360,13 +487,13 @@ pub fn run_telegram_link(config_dir: &Path) -> Result<()> {
     // to the existing scheduler while the blocking call runs.
     match tokio::runtime::Handle::try_current() {
         Ok(handle) => tokio::task::block_in_place(|| {
-            handle.block_on(telegram_link::run(&secrets_dir, config_dir))
+            handle.block_on(telegram_link::run(&secrets_dir, config_dir, agent_id))
         }),
         Err(_) => {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()?;
-            rt.block_on(telegram_link::run(&secrets_dir, config_dir))
+            rt.block_on(telegram_link::run(&secrets_dir, config_dir, agent_id))
         }
     }
 }
@@ -447,7 +574,11 @@ fn run_service(svc: &ServiceDef, secrets_dir: &Path, config_dir: &Path) -> Resul
             "¿Vincular tu chat_id ahora? Te pediré escribirle un mensaje al bot.",
             true,
         )? {
-            if let Err(e) = run_telegram_link(config_dir) {
+            // Legacy global-service flow: no agent context. The link
+            // helper falls back to the lone instance; multi-bot setups
+            // must use `setup → Configurar agente` (channels_dashboard)
+            // which routes through the per-agent flow.
+            if let Err(e) = run_telegram_link(config_dir, None) {
                 eprintln!("⚠  telegram-link falló: {e}");
                 eprintln!("   Puedes reintentar con: agent setup telegram-link");
             }
@@ -458,4 +589,31 @@ fn run_service(svc: &ServiceDef, secrets_dir: &Path, config_dir: &Path) -> Resul
 
 fn should_offer_telegram_link() -> bool {
     std::io::IsTerminal::is_terminal(&std::io::stdin())
+}
+
+/// Best-effort hot-reload trigger. Spawns `nexo --config <dir> reload`
+/// and ignores the result so the wizard stays usable when the daemon
+/// isn't running, the binary isn't on `PATH`, or the IPC fails. The
+/// agent-wizard handlers call this after every successful mutation so
+/// a running daemon picks up the YAML edit without a manual restart.
+pub(crate) fn try_hot_reload(config_dir: &Path) {
+    use std::process::{Command, Stdio};
+    let _ = Command::new("nexo")
+        .arg("--config")
+        .arg(config_dir)
+        .arg("reload")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+}
+
+/// Public shim for `run_service` so sibling modules (`agent_wizard`)
+/// can fall back to the declarative form when an LLM provider or
+/// skill needs credentials before it's safe to attach.
+pub(crate) fn run_service_pub(
+    svc: &ServiceDef,
+    secrets_dir: &Path,
+    config_dir: &Path,
+) -> Result<()> {
+    run_service(svc, secrets_dir, config_dir)
 }
