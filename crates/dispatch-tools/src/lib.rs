@@ -15,8 +15,8 @@ pub mod program_phase;
 pub mod tool_names;
 
 pub use hooks::{
-    CompletionHook, DefaultHookDispatcher, HookAction, HookDispatcher, HookError, HookPayload,
-    HookTransition, HookTrigger, NatsHookPublisher, NoopNatsHookPublisher,
+    CompletionHook, DefaultHookDispatcher, DispatchPhaseChainer, HookAction, HookDispatcher,
+    HookError, HookPayload, HookTransition, HookTrigger, NatsHookPublisher, NoopNatsHookPublisher,
 };
 
 pub use dispatch_followup::{

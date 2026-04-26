@@ -12,12 +12,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use nexo_driver_types::GoalId;
 use nexo_pairing::PairingAdapterRegistry;
 use thiserror::Error;
 
 use super::types::{CompletionHook, HookAction, HookPayload};
 
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[derive(Debug, Error, Clone, PartialEq)]
 pub enum HookError {
     #[error("origin channel missing — NotifyOrigin requires goal.origin to be set")]
     MissingOrigin,
@@ -31,8 +32,38 @@ pub enum HookError {
     Timeout(Duration),
     #[error("shell hook disabled by config")]
     ShellDisabled,
-    #[error("dispatch_phase chaining is wired in 67.F.2")]
+    #[error("dispatch_phase chaining is not wired (no chainer provided)")]
     ChainingNotWired,
+    #[error("chain depth {0} exceeds max {1}")]
+    ChainDepthExceeded(u32, u32),
+    #[error("chain trigger guard {0:?} did not match transition {1:?}")]
+    ChainGuardSkipped(super::types::HookTrigger, super::types::HookTransition),
+    #[error("chain dispatch failed: {0}")]
+    ChainDispatch(String),
+}
+
+/// Phase 67.F.2 — pluggable chainer the dispatcher consults when a
+/// `DispatchPhase` action fires. Decouples the hook layer from the
+/// concrete `program_phase_dispatch` plumbing so tests can supply a
+/// capturing implementation and runtime callers wrap up the
+/// orchestrator + registry + tracker context behind one trait.
+#[async_trait]
+pub trait DispatchPhaseChainer: Send + Sync + 'static {
+    /// Spawn a child goal for `phase_id` inheriting the parent's
+    /// origin and accumulating chain bookkeeping. Returns the new
+    /// `GoalId` on success.
+    async fn chain(
+        &self,
+        parent: &HookPayload,
+        phase_id: &str,
+    ) -> Result<GoalId, String>;
+
+    /// Cap on chain depth. Default 5 — keeps fan-out bounded under
+    /// a runaway hook bug. Implementations override when an
+    /// operator widens the cap via config.
+    fn max_chain_depth(&self) -> u32 {
+        5
+    }
 }
 
 #[async_trait]
@@ -66,6 +97,11 @@ pub struct DefaultHookDispatcher {
     pub timeout: Duration,
     /// 67.F.4 — gate for the `shell` action. Default false.
     pub allow_shell: bool,
+    /// 67.F.2 — handler for `DispatchPhase` action. None disables
+    /// chaining (returns `ChainingNotWired`). Production wiring
+    /// will populate this with a chainer that calls the runtime
+    /// `program_phase_dispatch`.
+    pub chainer: Option<Arc<dyn DispatchPhaseChainer>>,
 }
 
 impl DefaultHookDispatcher {
@@ -75,6 +111,7 @@ impl DefaultHookDispatcher {
             nats,
             timeout: Duration::from_secs(30),
             allow_shell: false,
+            chainer: None,
         }
     }
 
@@ -87,13 +124,25 @@ impl DefaultHookDispatcher {
         self.allow_shell = v;
         self
     }
+
+    pub fn with_chainer(mut self, c: Arc<dyn DispatchPhaseChainer>) -> Self {
+        self.chainer = Some(c);
+        self
+    }
 }
 
 #[async_trait]
 impl HookDispatcher for DefaultHookDispatcher {
     async fn dispatch(&self, hook: &CompletionHook, payload: &HookPayload) -> Result<(), HookError> {
         let timeout = self.timeout;
-        let fut = run_action(&hook.action, payload, &self.pairing, &self.nats, self.allow_shell);
+        let fut = run_action(
+            &hook.action,
+            payload,
+            &self.pairing,
+            &self.nats,
+            self.allow_shell,
+            self.chainer.as_ref(),
+        );
         match tokio::time::timeout(timeout, fut).await {
             Ok(r) => r,
             Err(_) => Err(HookError::Timeout(timeout)),
@@ -107,6 +156,7 @@ async fn run_action(
     pairing: &PairingAdapterRegistry,
     nats: &Arc<dyn NatsHookPublisher>,
     allow_shell: bool,
+    chainer: Option<&Arc<dyn DispatchPhaseChainer>>,
 ) -> Result<(), HookError> {
     match action {
         HookAction::NotifyOrigin => {
@@ -144,7 +194,21 @@ async fn run_action(
                 .await
                 .map_err(HookError::NatsPublish)
         }
-        HookAction::DispatchPhase { .. } => Err(HookError::ChainingNotWired),
+        HookAction::DispatchPhase { phase_id, only_if } => {
+            let Some(c) = chainer else {
+                return Err(HookError::ChainingNotWired);
+            };
+            if !only_if.matches(payload.transition) {
+                return Err(HookError::ChainGuardSkipped(
+                    only_if.clone(),
+                    payload.transition,
+                ));
+            }
+            c.chain(payload, phase_id)
+                .await
+                .map(|_| ())
+                .map_err(HookError::ChainDispatch)
+        }
         HookAction::Shell { .. } if !allow_shell => Err(HookError::ShellDisabled),
         HookAction::Shell { .. } => {
             // 67.F.4 lands the actual exec; the gate already

@@ -30,7 +30,7 @@ impl HookTransition {
 }
 
 /// When a hook should fire.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "on", rename_all = "snake_case")]
 pub enum HookTrigger {
     Done,

@@ -11,6 +11,7 @@ pub mod dispatcher;
 pub mod types;
 
 pub use dispatcher::{
-    DefaultHookDispatcher, HookDispatcher, HookError, NatsHookPublisher, NoopNatsHookPublisher,
+    DefaultHookDispatcher, DispatchPhaseChainer, HookDispatcher, HookError, NatsHookPublisher,
+    NoopNatsHookPublisher,
 };
 pub use types::{CompletionHook, HookAction, HookPayload, HookTransition, HookTrigger};
