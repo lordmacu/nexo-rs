@@ -277,15 +277,27 @@ PR-3. ~~**`tunnel.url` integration in URL resolver**~~  🔄 partial 2026-04-26
   sees a torn URL. Round-trip unit test covers happy path +
   whitespace trim + idempotent clear.
 
-PR-4. **Companion-tui not shipped**
-- Missing: `apps/companion-tui/` reference companion that scans QR
-  / accepts paste and opens the WS using the bootstrap token. Spec
-  marks this as out of scope for the foundational phase.
-- Why deferred: the protocol + CLI are sufficient for any third
-  party to build a companion. A reference implementation is UX
-  polish, not a blocker.
-- Target: Phase 26.x or as a separate `companion-*` crate when
-  demand arises.
+PR-4. ~~**Companion-tui not shipped**~~  🔄 partial 2026-04-26
+- ~~Reference scaffold shipped~~ as `crates/companion-tui` with
+  binary `nexo-companion`. Decodes the base64url setup-code
+  payload `nexo pair start` emits, validates the embedded
+  bootstrap-token expiry, and prints the URL + redacted token
+  + next-step instructions in pretty or `--json` form.
+- Reads the code from `--code <BASE64URL>` arg or stdin (so
+  QR-scan tools can pipe their output without quoting).
+- 4 unit tests cover the redactor (short → placeholder, long
+  → head + tail with `…` middle), and the next-step text
+  builder (expired vs active branches).
+- **Still deferred**: the actual WebSocket handshake against
+  `payload.url`, presenting the bootstrap token in the first
+  frame, receiving + persisting a session token. The scaffold
+  exercises the wire format end-to-end so the protocol
+  contract is enforced; the WS layer is its own follow-up
+  (PR-4.x).
+- Why ship the scaffold first: third parties asked how to
+  integrate; pointing them at this binary as a reference is
+  cheaper than maintaining a side-doc that drifts out of
+  sync with the actual `setup_code` schema.
 
 PR-5. **`pair_approve` as scope-gated agent tool**
 - Missing: a built-in tool that lets agents approve pending

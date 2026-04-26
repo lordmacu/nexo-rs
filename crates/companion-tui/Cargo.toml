@@ -1,0 +1,24 @@
+[package]
+name          = "nexo-companion-tui"
+description   = "Reference companion CLI for the Nexo pairing protocol — decodes setup-codes and prints the connect plan."
+version       = "0.1.1"
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+homepage      = { workspace = true }
+documentation = { workspace = true }
+readme        = "README.md"
+keywords      = { workspace = true }
+categories    = { workspace = true }
+
+[dependencies]
+anyhow        = { workspace = true }
+chrono        = { workspace = true }
+serde_json    = { workspace = true }
+nexo-pairing  = { version = "0.1.2", path = "../pairing", default-features = false }
+
+[[bin]]
+name = "nexo-companion"
+path = "src/main.rs"
