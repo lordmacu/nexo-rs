@@ -176,6 +176,8 @@ async fn two_program_phase_calls_queue_two_goals_and_emit_two_spawned_events() {
         telemetry: telemetry_dyn,
         allow_self_modify: true,
         daemon_source_root: dir.path().to_path_buf(),
+        audit_before_done: false,
+        chainer: None,
     });
 
     let cfg = empty_config(true);
@@ -242,6 +244,8 @@ async fn capability_none_emits_dispatch_denied_telemetry_no_registry_entry() {
         telemetry: telemetry_dyn,
         allow_self_modify: true,
         daemon_source_root: dir.path().to_path_buf(),
+        audit_before_done: false,
+        chainer: None,
     });
 
     // Capability=None on this agent's policy.

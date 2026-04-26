@@ -184,6 +184,7 @@ fn action_kind_str(a: &HookAction) -> &'static str {
         HookAction::NotifyOrigin => "notify_origin",
         HookAction::NotifyChannel { .. } => "notify_channel",
         HookAction::DispatchPhase { .. } => "dispatch_phase",
+        HookAction::DispatchAudit { .. } => "dispatch_audit",
         HookAction::NatsPublish { .. } => "nats_publish",
         HookAction::Shell { .. } => "shell",
     }

@@ -84,6 +84,15 @@ pub enum HookAction {
         /// after a successful goal. `any` runs unconditionally.
         only_if: HookTrigger,
     },
+    /// Spawn an audit goal that scans the parent goal's diff for
+    /// bugs / incomplete follow-ups / missing tests, then reports
+    /// findings via notify_origin (without fixing). Operator
+    /// decides which findings to dispatch as fix-goals. Auto-
+    /// attached by `program_phase` when
+    /// `DispatchToolContext.audit_before_done` is true.
+    DispatchAudit {
+        only_if: HookTrigger,
+    },
     /// Publish the hook payload as JSON on a NATS subject.
     NatsPublish { subject: String },
     /// Run an arbitrary shell command. Gated by config

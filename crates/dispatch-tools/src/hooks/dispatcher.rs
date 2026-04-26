@@ -72,6 +72,15 @@ pub trait DispatchPhaseChainer: Send + Sync + 'static {
         phase_id: &str,
     ) -> Result<GoalId, String>;
 
+    /// Spawn a synthetic audit goal that scans the parent goal's
+    /// diff for bugs / followups / missing tests and reports
+    /// without fixing. Default impl errors so operators that
+    /// haven't wired an auditor get a clear "not configured"
+    /// instead of silent skip.
+    async fn audit(&self, _parent: &HookPayload) -> Result<GoalId, String> {
+        Err("audit chainer not configured".into())
+    }
+
     /// Cap on chain depth. Default 5 — keeps fan-out bounded under
     /// a runaway hook bug. Implementations override when an
     /// operator widens the cap via config.
@@ -268,6 +277,21 @@ async fn run_action(
                 ));
             }
             c.chain(payload, phase_id)
+                .await
+                .map(|_| ())
+                .map_err(HookError::ChainDispatch)
+        }
+        HookAction::DispatchAudit { only_if } => {
+            let Some(c) = chainer else {
+                return Err(HookError::ChainingNotWired);
+            };
+            if !only_if.matches(payload.transition) {
+                return Err(HookError::ChainGuardSkipped(
+                    only_if.clone(),
+                    payload.transition,
+                ));
+            }
+            c.audit(payload)
                 .await
                 .map(|_| ())
                 .map_err(HookError::ChainDispatch)
