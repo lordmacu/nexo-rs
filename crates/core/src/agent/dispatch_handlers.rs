@@ -379,6 +379,12 @@ pub struct AuditChainer {
     pub hooks: Arc<nexo_dispatch_tools::HookRegistry>,
     pub log_buffer: Arc<nexo_agent_registry::LogBuffer>,
     pub default_caps: nexo_dispatch_tools::policy_gate::CapSnapshot,
+    /// B22 — driver workspace root. The audit goal targets the
+    /// PARENT's worktree (`<workspace_root>/<parent_id>`) so
+    /// Claude inside the audit sees the parent's commits.
+    pub workspace_root: std::path::PathBuf,
+    /// B24 — separate cap for audit goals. None = unlimited.
+    pub audit_cap: Option<u32>,
 }
 
 #[async_trait]
@@ -403,8 +409,47 @@ impl nexo_dispatch_tools::DispatchPhaseChainer for AuditChainer {
         use nexo_agent_registry::{AgentHandle, AgentRunStatus, AgentSnapshot};
         use nexo_driver_types::{AcceptanceCriterion, BudgetGuards, Goal};
 
+        // B24 — gate by audit_cap. Count running audit:* rows; if
+        // we're at the cap, refuse the dispatch with a clear
+        // reason rather than queueing forever.
+        if let Some(cap) = self.audit_cap {
+            let rows = self
+                .registry
+                .list()
+                .await
+                .map_err(|e| format!("registry: {e}"))?;
+            let running = rows
+                .iter()
+                .filter(|r| {
+                    matches!(r.status, AgentRunStatus::Running)
+                        && r.phase_id.starts_with("audit:")
+                })
+                .count() as u32;
+            if running >= cap {
+                return Err(format!(
+                    "audit cap reached ({running}/{cap}) — parent goal {} done without audit",
+                    parent.goal_id.0.simple()
+                ));
+            }
+        }
+
+        // B22 — parent's diff_stat lives in the registry's
+        // snapshot; lift it into the prompt so Claude in the
+        // audit goal has concrete context even when a different
+        // worktree path doesn't replay the changes.
+        let parent_diff = self
+            .registry
+            .handle(parent.goal_id)
+            .and_then(|h| h.snapshot.last_diff_stat)
+            .unwrap_or_else(|| "(diff stat unavailable)".into());
+
         let prompt = format!(
             "Audit the changes made by goal {parent_id} (phase {phase}).\n\n\
+             ## Parent diff stat\n\
+             {parent_diff}\n\n\
+             ## Instructions\n\
+             You are running INSIDE the parent goal's worktree, so `git diff`\n\
+             / `git log` show its commits directly.\n\n\
              Look for:\n\
              - bugs introduced by the diff\n\
              - incomplete follow-ups in FOLLOWUPS.md the diff touches\n\
@@ -413,9 +458,27 @@ impl nexo_dispatch_tools::DispatchPhaseChainer for AuditChainer {
              Do NOT fix anything. Produce a numbered list with severity\n\
              (high / medium / low) and a one-line description per finding.\n\
              If nothing is found, output exactly: 'audit_clean'.",
-            parent_id = parent.goal_id.0,
+            parent_id = parent.goal_id.0.simple(),
             phase = parent.phase_id,
+            parent_diff = parent_diff,
         );
+
+        // B22 — point at the parent's worktree so Claude sees the
+        // commits. WorkspaceManager creates them deterministically
+        // under <workspace_root>/<goal_id>; the goal's worktree
+        // path is reachable by simple join.
+        let parent_worktree = self
+            .workspace_root
+            .join(parent.goal_id.0.to_string());
+        let parent_worktree = if parent_worktree.exists() {
+            Some(parent_worktree.display().to_string())
+        } else {
+            // Worktree was cleaned up (cleanup_on_done=true) —
+            // best-effort fallback to fresh checkout, audit will
+            // mostly see no changes but at least the prompt holds
+            // the diff stat.
+            None
+        };
 
         let goal = Goal {
             id: GoalId::new(),
@@ -432,7 +495,7 @@ impl nexo_dispatch_tools::DispatchPhaseChainer for AuditChainer {
                 max_consecutive_denies: 3,
                 max_consecutive_errors: 5,
             },
-            workspace: None,
+            workspace: parent_worktree,
             metadata: serde_json::Map::new(),
         };
         let goal_id = goal.id;
@@ -450,8 +513,12 @@ impl nexo_dispatch_tools::DispatchPhaseChainer for AuditChainer {
                 ..AgentSnapshot::default()
             },
         };
+        // B24 — admit with enqueue=false so audits don't queue
+        // behind main dispatch; if the audit_cap check above
+        // passed, the registry's global cap shouldn't refuse
+        // either, but we fail-fast here just in case.
         self.registry
-            .admit(handle, true)
+            .admit(handle, false)
             .await
             .map_err(|e| format!("audit admit: {e}"))?;
         self.registry

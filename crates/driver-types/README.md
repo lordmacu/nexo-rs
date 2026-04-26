@@ -1,86 +1,63 @@
 # nexo-driver-types
 
-> Foundational types + `AgentHarness` trait for the Phase 67 driver subsystem. **Leaf crate** with no `nexo-core` dependency — so the contract travels through NATS, gets re-imported by extensions, and is consumed by the admin-ui without pulling in the full daemon.
+The contract layer of the **programmer agent** subsystem. Pure
+data — no runtime, no async, no IO. Every other driver crate
+imports types from here so the surface a tool sees is the same
+shape the orchestrator persists, and the wire between them is
+JSON-stable.
 
-This crate is part of **[Nexo](https://github.com/lordmacu/nexo-rs)** — a multi-agent Rust framework with a NATS event bus, pluggable LLM providers (MiniMax, Anthropic, OpenAI-compat, Gemini, DeepSeek), per-agent credentials, MCP support, and channel plugins for WhatsApp, Telegram, Email, and Browser (CDP).
+## Why it exists
 
-- **Main repo:** <https://github.com/lordmacu/nexo-rs>
-- **Runtime engine:** [`nexo-core`](https://github.com/lordmacu/nexo-rs/tree/main/crates/core)
-- **Public docs:** <https://lordmacu.github.io/nexo-rs/>
+The programmer agent is a stack:
 
-## Status
-
-**Internal crate — not published to crates.io.** Marked
-`publish = false, release = false` in `release-plz.toml`.
-
-## What this crate does
-
-The driver subsystem runs another process (the `claude` CLI in
-its first impl, but the trait is generic) under a verifiable
-goal. Goals carry budget guards, acceptance criteria, and a
-running record of allow / deny decisions. This crate defines
-the contract every harness, decider, and orchestrator agree on.
-
-### Trait surface
-
-```rust
-#[async_trait]
-pub trait AgentHarness: Send + Sync {
-    fn id(&self) -> AgentHarnessId;
-    fn label(&self) -> &str;
-    fn supports(&self, goal_kind: GoalKind) -> bool;
-    async fn run_attempt(&self, goal: &Goal, ctx: AttemptContext)
-        -> Result<AttemptOutcome, HarnessError>;
-    async fn compact(&self, session_id: &str) -> Result<()>;
-    async fn reset(&self, session_id: &str) -> Result<()>;
-    async fn dispose(&self, session_id: &str) -> Result<()>;
-}
+```
+nexo-driver-types       ← you are here (leaf, no deps)
+   ↑
+nexo-driver-claude      ← Claude subprocess + session bindings
+   ↑
+nexo-driver-permission  ← MCP `permission_prompt` tool
+   ↑
+nexo-driver-loop        ← run_goal orchestrator + replay/compact
+   ↑
+nexo-dispatch-tools     ← agent-loop tools (program_phase, hooks)
 ```
 
-### Types
+If a type travels across that stack — through SQLite, NATS, or
+across an `Arc<dyn Trait>` boundary — it lives here. Keeping it
+all in a leaf crate means a config change can never accidentally
+pull a runtime dep into a code path that has no business booting
+one.
 
-| Type | Purpose |
-|---|---|
-| `Goal { id, phase_id, intent, budget, acceptance, … }` | What we're trying to achieve |
-| `BudgetGuards { max_turns, max_tokens, max_wallclock }` | Caps so a runaway goal stops |
-| `BudgetUsage` | Running counter the harness updates per turn |
-| `AcceptanceCriterion` | Objective verification spec (cargo build, custom command, regex) |
-| `AcceptanceVerdict` | Pass / Fail with diagnostics |
-| `Decision { tool_call, choice, rationale }` | Record of every permission_prompt decision |
-| `DecisionChoice` | `Allow | Deny | RequestEscalation` |
-| `AttemptOutcome` | `Done | NeedsRetry | Continue | BudgetExhausted | Cancelled | Escalate` |
-| `CancellationToken` | Opaque cancellation handle threaded through every async fn |
+## What's in here
 
-### Wire format
+| Module | Type | Purpose |
+|---|---|---|
+| `goal` | `Goal { id, description, acceptance, budget, workspace, metadata }` | What the harness is trying to ship. `metadata` carries `origin_channel` + `dispatcher` JSON for the chat origin (B1). |
+| `goal` | `GoalId` | Newtype around `Uuid`. |
+| `goal` | `BudgetGuards` | Five-axis cap: turns / wall_time / tokens / consecutive_denies / consecutive_errors. |
+| `goal` | `BudgetUsage`, `BudgetAxis` | Observed totals + which axis killed the run. |
+| `attempt` | `AttemptParams { goal, turn_index, usage, cancel, extras }` | Per-turn input. `extras` is a `serde_json::Map` so the orchestrator can stamp ad-hoc fields (compact_turn, operator_messages, prior_failures) without bumping the contract. |
+| `attempt` | `AttemptResult { goal_id, turn_index, outcome, usage_after, acceptance, final_text, harness_extras }` | Per-turn output. |
+| `attempt` | `AttemptOutcome { Done, NeedsRetry, Continue, BudgetExhausted, Cancelled, Escalate }` | Why the turn ended. |
+| `attempt` | `CompactParams`, `CompactResult` | Inputs/outputs for the compact policy (Phase 67.9). |
+| `acceptance` | `AcceptanceCriterion { Shell, FileMatch, Custom }` | The cargo build / regex / custom verifier the goal must pass. `AcceptanceCriterion::shell("cmd")` is the shorthand. |
+| `acceptance` | `AcceptanceVerdict { met, failures, evaluated_at, elapsed_ms }`, `AcceptanceFailure` | Result of running the criteria. |
+| `decision` | `Decision { goal_id, recorded_at, request, outcome, rationale }` | One MCP-permission verdict, persisted for replay-policy + LLM decider grounding. |
+| `cancel` | `CancellationToken` | Opaque wrapper. `child_token()` lets the orchestrator give each goal its own cancel knob (Phase 67.G.2). |
 
-Every type derives `serde::{Serialize, Deserialize}` so the
-contract serialises cleanly across NATS / IPC / admin-ui
-boundaries.
+## What is NOT here
 
-## What does NOT live here
+- `AgentHarness` trait — runtime-shaped, lives in `nexo-driver-loop`.
+- `SessionBinding` schema — persistence-shaped, in `nexo-driver-claude`.
+- Any tokio task / channel / mutex.
 
-- Concrete harness implementations (`nexo-driver-claude`).
-- Decider IPC (`nexo-driver-permission`).
-- Orchestrator loop (`nexo-driver-loop`).
-- Acceptance evaluator runtime (lives in `driver-loop`).
+## Stability
 
-## Why a separate crate
+Treat this as a public API: every new optional field is
+`#[serde(default)]`, never breaks the wire. The `metadata` /
+`extras` maps exist precisely so feature work stays out.
 
-`AgentHarness` is the smallest stable contract the rest of the
-driver subsystem depends on. Keeping it in a leaf crate means
-extensions, admin-ui, and any third-party harness can implement
-the trait without dragging in `nexo-core` or `tokio` features
-they don't need.
+## See also
 
-## Documentation
-
-- [Driver subsystem](https://lordmacu.github.io/nexo-rs/architecture/driver-subsystem.html)
-
-## License
-
-Licensed under either of:
-
-- Apache License, Version 2.0 ([LICENSE-APACHE](https://github.com/lordmacu/nexo-rs/blob/main/LICENSE-APACHE))
-- MIT license ([LICENSE-MIT](https://github.com/lordmacu/nexo-rs/blob/main/LICENSE-MIT))
-
-at your option.
+- `architecture/project-tracker.md` (mdBook) — programmer agent overview.
+- `architecture/driver-subsystem.md` — Phase 67.0–67.9 driver loop walkthrough.

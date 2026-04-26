@@ -1,54 +1,108 @@
 # nexo-project-tracker
 
-> Parses `proyecto/PHASES.md` + `proyecto/FOLLOWUPS.md` into a queryable phase / follow-up index for Phase 67 driver goals.
+The project-state layer of the programmer agent. Parses the
+operator's roadmap (`PHASES.md` + `FOLLOWUPS.md`) so Cody can
+answer "qué fase va", "qué followups quedan", "show me the body
+of 67.10" — and so `program_phase` knows which sub-phase to
+dispatch.
 
-This crate is part of **[Nexo](https://github.com/lordmacu/nexo-rs)** — a multi-agent Rust framework with a NATS event bus, pluggable LLM providers (MiniMax, Anthropic, OpenAI-compat, Gemini, DeepSeek), per-agent credentials, MCP support, and channel plugins for WhatsApp, Telegram, Email, and Browser (CDP).
+This crate is read-only over the markdown files. It never edits
+them; that's the operator's job (via `/forge ejecutar`).
 
-- **Main repo:** <https://github.com/lordmacu/nexo-rs>
-- **Runtime engine:** [`nexo-core`](https://github.com/lordmacu/nexo-rs/tree/main/crates/core)
-- **Public docs:** <https://lordmacu.github.io/nexo-rs/>
+## Where it sits
 
-## Status
+```
+nexo-project-tracker     ← THIS crate (no driver deps)
+        ↑
+nexo-dispatch-tools      ← reads tracker to drive dispatch
+        ↑
+nexo-core                ← exposes the tracker as a tool
+```
 
-**Internal crate — not published to crates.io.** Marked
-`publish = false, release = false` in `release-plz.toml`. Lives
-inside the workspace as the source-of-truth parser the Phase 67
-driver subsystem consults to look up phase metadata when an agent
-calls `program_phase(phase_id=...)`.
+## Public surface
 
-## What this crate does
+### Parser
 
-- **PhaseParser** — reads `proyecto/PHASES.md`, walks the markdown
-  AST, and produces a tree of `Phase { id, title, status, sub_phases }`.
-  Handles the project's checkbox conventions (`✅ / 🔄 / ⬜`) and
-  nested `### Phase N` / `#### N.x` headings.
-- **FollowupsParser** — reads `proyecto/FOLLOWUPS.md` and produces
-  one `Followup { id, title, status, body }` per top-level entry
-  (P-1, H-1, L-2, …). Recognises the `~~strikethrough~~ ✅ shipped`
-  pattern + the `🔄 partial` annotation.
-- **Tracker** — caches both files behind a notify-watcher so a
-  restart isn't required when the operator edits PHASES.md /
-  FOLLOWUPS.md mid-session. Cache-invalidation is mtime-based.
-- **Tool format** — single canonical JSON shape the LLM-facing
-  tools consume so prompts stay stable when the markdown evolves.
-- **Git integration** — when the project is tracked under git,
-  the tracker can return the commit history for a given phase to
-  show what landed in each.
+| Type | Purpose |
+|---|---|
+| `Phase { id, title, sub_phases }` | One top-level `## Phase NN — Title` block. |
+| `SubPhase { id, title, status, body, acceptance }` | One `#### NN.M — Title` heading + the prose between it and the next heading. `status` from trailing emoji (`✅` / `🔄` / `⬜`); `acceptance` parsed out of the body via the recognisable `Acceptance:` markers. |
+| `PhaseStatus { Done, InProgress, Pending }` | Matched on emoji. Missing emoji → `Pending`. |
+| `FollowUp { code, title, section, status, body }` | One item from FOLLOWUPS.md (`PR-3.`, `H-1.`, etc.). `status` = `Resolved` if title is wrapped in `~~strike~~` or contains `✅`, else `Open`. |
+| `parse_phases_file(&Path) / parse_phases_str(&str)` | Top-level parser entry. Honours fenced code blocks (\`\`\` / ~~~) so an embedded `#### ...` inside a code block is not parsed as a heading. |
+| `parse_followups_file / parse_followups_str` | Same shape for FOLLOWUPS.md. |
 
-## Why it's separate from `nexo-core`
+### Acceptance-block recognition (B21)
 
-The phase index is consumed only by the Phase 67 driver subsystem
-(`program_phase`, `chain`, `dispatch_followup` tools — see
-`nexo-dispatch-tools`). Splitting it out keeps `nexo-core`'s
-dependency tree small for operators who don't run the driver
-subsystem; also makes the parser unit-testable in isolation
-without spinning up an agent.
+The parser pulls `acceptance: Vec<String>` out of any of these
+shapes inside a sub-phase body:
 
-## License
+```text
+**Acceptance:**
+- cargo build --workspace
+- cargo test -p calc parser
 
-Licensed under either of:
+### Acceptance
+- cargo build
+- ./scripts/smoke.sh
 
-- Apache License, Version 2.0 ([LICENSE-APACHE](https://github.com/lordmacu/nexo-rs/blob/main/LICENSE-APACHE))
-- MIT license ([LICENSE-MIT](https://github.com/lordmacu/nexo-rs/blob/main/LICENSE-MIT))
+Acceptance: `cargo test -p calc`.
+```
 
-at your option.
+Multiple Acceptance blocks in one body concatenate. Each bullet
+becomes a shell command the dispatch tools turn into an
+`AcceptanceCriterion::shell`. The order: caller override →
+parsed bullets → workspace defaults (`cargo build --workspace`
++ `cargo test --workspace`).
+
+### Tracker (cached + watched)
+
+| Type | Purpose |
+|---|---|
+| `ProjectTracker` trait | Async accessors: `phases() / followups() / current_phase() / next_phase() / last_shipped(n) / phase_detail(&str)`. |
+| `FsProjectTracker` | Reads `<root>/PHASES.md` (required) and `<root>/FOLLOWUPS.md` (optional) at startup, caches behind a `parking_lot::RwLock` with a 60 s TTL fallback, and starts a `notify` watcher on the parent directory so file edits invalidate the slot. `with_ttl(d) / with_watch()` are the builders. |
+| `MutableTracker` | Hot-swappable wrapper over `Box<dyn ProjectTracker>` behind an `ArcSwap`. `switch_to(path)` opens a fresh tracker and replaces the inner Arc; reads stay lock-free. Used by Cody's `set_active_workspace` / `init_project` tools so the operator can switch projects mid-conversation without restarting the daemon. |
+
+### Read tools (`tools.rs`)
+
+`ProjectTracking` bundles a tracker + optional `GitLogReader` +
+in-process telemetry counters and exposes:
+
+- `project_status({ kind: current_phase | next_phase |
+  phase_detail | followups_open | last_shipped })` — markdown
+  output ≤ 4 KiB.
+- `project_phases_list({ filter? })` — flat table.
+- `followup_detail({ code })` — full body.
+- `git_log_for_phase({ phase_id })` — top-N commits matching
+  `Phase <id>` in the message; runs through a
+  `nexo_resilience::CircuitBreaker` so a stuck git can't take
+  down the chat.
+
+### Format helpers
+
+`render_subphase_line / render_subphase_detail / render_phases_table /
+render_followups_open / render_followup_detail` plus
+`cap_to(s, n)` for byte-bounded output. `DEFAULT_BYTE_CAP =
+3500` leaves headroom under Telegram / WhatsApp's 4 KiB limit.
+
+### Config
+
+`ProjectTrackerConfig { tracker, program_phase, agent_registry }`
+deserialises `config/project-tracker/project_tracker.yaml`. The
+program_phase + agent_registry blocks are consumed by
+`nexo-dispatch-tools` and the boot helper in `src/main.rs`.
+
+## What's NOT here
+
+- Editing PHASES.md / FOLLOWUPS.md. The operator's `/forge
+  ejecutar` flow owns commits to those files; the tracker
+  picks the new state up via the file watcher.
+- Persistence of parsed state. Everything is regenerated from
+  the markdown on demand; `notify` invalidations + TTL keep the
+  cache honest.
+
+## See also
+
+- `architecture/project-tracker.md` — programmer agent overview.
+- `proyecto/PHASES.md` — the canonical fixture this parser was
+  built against.

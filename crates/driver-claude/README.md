@@ -1,72 +1,68 @@
 # nexo-driver-claude
 
-> Phase 67.1 — spawn the `claude` CLI under `nexo-rs`, consume its `stream-json` output as typed events, and keep session ids around across turns so `--resume <id>` works. The substrate the self-driving agent loop (Phase 67.4) sits on top of.
+Subprocess + persistence layer of the programmer agent. Owns:
 
-This crate is part of **[Nexo](https://github.com/lordmacu/nexo-rs)** — a multi-agent Rust framework with a NATS event bus, pluggable LLM providers (MiniMax, Anthropic, OpenAI-compat, Gemini, DeepSeek), per-agent credentials, MCP support, and channel plugins for WhatsApp, Telegram, Email, and Browser (CDP).
+1. Spawning the `claude` CLI in headless mode and consuming its
+   `stream-json` output as typed events.
+2. The `SessionBinding` SQLite store that maps `goal_id →
+   claude session_id` so the next turn can `--resume <id>`.
 
-- **Main repo:** <https://github.com/lordmacu/nexo-rs>
-- **Runtime engine:** [`nexo-core`](https://github.com/lordmacu/nexo-rs/tree/main/crates/core)
-- **Public docs:** <https://lordmacu.github.io/nexo-rs/>
+If the orchestrator (`nexo-driver-loop`) is the brain, this
+crate is the hand that holds the subprocess.
 
-## Status
+## What's in here
 
-**Internal crate — not published to crates.io.** Marked
-`publish = false, release = false` in `release-plz.toml`. Lives
-inside the workspace as the Claude-specific harness layer of the
-Phase 67 driver subsystem.
+### Subprocess plumbing
 
-## Layering
+| Type | Purpose |
+|---|---|
+| `ClaudeCommand` | Builder for the spawn argv. `.cwd(workspace).mcp_config(path).resume(session_id).apply_defaults(&cfg.default_args)`. |
+| `ClaudeConfig`, `ClaudeDefaultArgs`, `OutputFormat` | YAML-deserialised config: binary path (or `which("claude")` lookup), allowed tools, model override, `permission_prompt_tool`, turn timeout, forced kill grace period. |
+| `ChildHandle` | Owns the `tokio::process::Child` + a SIGTERM-then-SIGKILL shutdown helper. |
+| `EventStream` | Async iterator over `ClaudeEvent` parsed from stdout JSON-lines. Errors carry the line number for debug. |
+| `ClaudeEvent` (+ `InitEvent`, `AssistantEvent`, `UserEvent`, `ResultEvent`) | Discriminated typed events: `init`, `assistant`, `user`, `result.success`, `result.error_max_turns`, `result.error_during_execution`. The orchestrator uses these to decide turn outcome. |
+| `TurnHandle` | Bundle: spawn the command, return a stream + a shutdown handle. The orchestrator's `run_attempt` consumes one TurnHandle per turn. |
+| `spawn_turn(cmd, cancel, turn_timeout, forced_kill_after)` | Top-level helper used by the orchestrator. Honours the per-goal cancel token + per-turn wall-clock cap. |
 
-This crate is a *leaf* on top of `nexo-driver-types`:
+### Session binding (SQLite)
+
+| Type | Purpose |
+|---|---|
+| `SessionBinding { goal_id, session_id, model, workspace, created_at, updated_at, last_active_at, origin_channel, dispatcher }` | The row. `origin_channel` + `dispatcher` (Phase 67.B.1, schema v2) are populated by `attempt.rs` from `Goal.metadata` so the chat that triggered a goal survives daemon restart. |
+| `SessionBindingStore` trait | `get / upsert / clear / mark_invalid / touch / purge_older_than / list_active`. |
+| `MemoryBindingStore` | DashMap-backed for tests / dev. Loses state on restart. |
+| `SqliteBindingStore` | File-backed, WAL on disk, migrates v1 → v2 idempotently via `pragma table_info`. `with_idle_ttl(d) / with_max_age(d)` hide stale bindings from `get`. |
+| `OriginChannel { plugin, instance, sender_id, correlation_id }` | The chat / channel that triggered the goal. Lifted into `notify_origin` payloads so completion summaries route back. |
+| `DispatcherIdentity { agent_id, sender_id, parent_goal_id, chain_depth }` | The agent that issued the dispatch. `chain_depth` bounds `dispatch_phase` hook fan-out. |
+
+### Errors
+
+`ClaudeError { Spawn, Io, Stream, Cancelled, Timeout, ExitNonZero, Sqlx, Binding, Json }` — every failure mode the orchestrator's replay-policy needs to classify.
+
+## Where it sits
 
 ```
-nexo-driver-types  ── trait + Goal/Decision wire types (67.0)
-        ▲
-        │
-nexo-driver-claude ── ClaudeCommand / ClaudeEvent / TurnHandle (67.1)
+                    ┌──────────────────────┐
+                    │  driver-loop         │
+                    │  (run_goal loop)     │
+                    └─────────┬────────────┘
+                              │
+                  ┌───────────┴───────────┐
+                  │                       │
+       ┌──────────▼──────────┐   ┌────────▼─────────┐
+       │  driver-claude      │   │ driver-permission│
+       │  • ClaudeCommand    │   │  • MCP tool      │
+       │  • spawn_turn       │   │  • PermissionDecider │
+       │  • SessionBinding   │   └──────────────────┘
+       └─────────────────────┘
 ```
 
-It does NOT depend on `nexo-core`. Higher fases (67.4 driver loop,
-67.5 acceptance evaluator, 67.10 escalation) compose this crate
-together with `nexo-core`.
+driver-loop calls `spawn_turn(cmd, cancel, ...)` per turn, drains the
+event stream, persists the resulting `SessionBinding` (with origin /
+dispatcher lifted from `goal.metadata`), and feeds `AttemptResult`
+back to the orchestrator's replay-policy + agent-registry.
 
-## Quick example
+## See also
 
-```rust,no_run
-use std::time::Duration;
-use nexo_driver_claude::{ClaudeCommand, spawn_turn};
-use nexo_driver_types::CancellationToken;
-
-# async fn doc() -> anyhow::Result<()> {
-let cmd = ClaudeCommand::discover("Implement Phase 26.z")?
-    .resume("01HZX...")
-    .allowed_tools(["Read", "Grep", "Glob", "LS"])
-    .permission_prompt_tool("mcp__nexo-driver__permission_prompt")
-    .cwd("/tmp/claude-runs/26-z");
-
-let cancel = CancellationToken::new();
-let mut turn = spawn_turn(cmd, &cancel, Duration::from_secs(600), Duration::from_secs(1)).await?;
-
-while let Some(event) = turn.next_event().await? {
-    // dispatch on event…
-    let _ = event;
-}
-let _exit = turn.shutdown().await?;
-# Ok(())
-# }
-```
-
-## Cross-platform notes
-
-`tokio::process` works on Windows, macOS, and Linux. The full
-end-to-end test suite (`tests/spawn_turn_test.rs`) is `#[cfg(unix)]`
-because it shells out to a `bash` mock script.
-
-## Sub-phases that build on this
-
-| Phase | What |
-|-------|------|
-| 67.2 | SQLite-backed `SessionBindingStore` |
-| 67.3 | MCP `permission_prompt` tool wired into the spawn args |
-| 67.4 | Driver agent loop that owns the `TurnHandle` |
-| 67.5 | Acceptance evaluator that fires after `Result::Success` |
+- `architecture/project-tracker.md` — programmer agent overview.
+- `architecture/driver-subsystem.md` — Phase 67.1 spawn details.

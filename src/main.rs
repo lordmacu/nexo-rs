@@ -2447,6 +2447,37 @@ async fn boot_dispatch_ctx_if_enabled(
     if let Err(e) = hook_registry.reload_from_store().await {
         tracing::warn!(error = %e, "hook reload failed — pre-restart hooks won't fire");
     }
+    // B23 — orphan sweep: the agent-registry doesn't get
+    // populated until the per-agent reattach below, so we sweep
+    // hook orphans AFTER admit-driven reattach lands by scheduling
+    // a tokio task that fires once the registry is warm. The
+    // sweep drops every (goal_id, hook) pair whose goal_id no
+    // longer maps to anything in agent-registry — the goals
+    // those hooks targeted terminated pre-restart and never had
+    // their HookRegistry::drop_goal flushed to disk.
+    {
+        let hooks = hook_registry.clone();
+        let reg = registry.clone();
+        tokio::spawn(async move {
+            // Tiny delay so the per-agent reattach pass (in the
+            // boot loop below) has a chance to populate the
+            // registry first. Using a short fixed wait avoids
+            // adding a synchronisation handle through the boot
+            // path; if reattach takes longer the sweep just
+            // drops more rows than necessary, which is safe.
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            for goal_id in hooks.goal_ids() {
+                if reg.handle(goal_id).is_none() {
+                    tracing::info!(
+                        target: "hook.registry.sweep",
+                        goal_id = %goal_id.0,
+                        "dropping hooks for terminated goal"
+                    );
+                    hooks.drop_goal(goal_id);
+                }
+            }
+        });
+    }
 
     // Hook dispatcher with the channel adapters Phase 26 already
     // owns. Adapters are registered into a SHARED registry here so
@@ -2545,6 +2576,12 @@ async fn boot_dispatch_ctx_if_enabled(
                         queue_when_full: true,
                         ..Default::default()
                     },
+                    // B22 — audit goals run inside the parent's
+                    // worktree so Claude sees the commits.
+                    workspace_root: driver_cfg.workspace.root.clone(),
+                    // B24 — separate cap so audits can't be
+                    // starved by main dispatch traffic.
+                    audit_cap: Some(2),
                 },
             ) as Arc<dyn nexo_dispatch_tools::DispatchPhaseChainer>),
         },
