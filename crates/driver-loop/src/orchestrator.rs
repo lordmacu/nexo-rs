@@ -290,7 +290,7 @@ impl DriverOrchestrator {
         let mut entry = self
             .pending_interrupts
             .entry(goal_id)
-            .or_insert_with(std::collections::VecDeque::new);
+            .or_default();
         entry.value_mut().push_back(message.into());
         entry.value().len()
     }
@@ -555,7 +555,7 @@ impl DriverOrchestrator {
             // Phase 67.C.1 — periodic progress beacon. `0` disables.
             if self.progress_every_turns > 0
                 && total_turns > 0
-                && total_turns.is_multiple_of(self.progress_every_turns)
+                && total_turns % self.progress_every_turns == 0
             {
                 let _ = self
                     .event_sink

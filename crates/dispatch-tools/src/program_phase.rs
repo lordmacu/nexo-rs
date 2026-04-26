@@ -286,7 +286,7 @@ pub async fn program_phase_dispatch(
             registry.set_max_turns(goal_id, goal.budget.max_turns);
             // Fire-and-forget. Caller does not await the join handle —
             // the registry + driver events are how we observe the run.
-            let _ = orchestrator.clone().spawn_goal(goal);
+            std::mem::drop(orchestrator.clone().spawn_goal(goal));
             Ok(ProgramPhaseOutput::Dispatched {
                 goal_id,
                 phase_id: input.phase_id,

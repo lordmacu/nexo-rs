@@ -61,7 +61,7 @@ fn bench_wildcard_storm(c: &mut Criterion) {
         .map(|i| match i % 5 {
             0 => format!("agent.id-{i}.inbox"),
             1 => format!("agent.id-{i}.>"),
-            2 => format!("plugin.outbound.*"),
+            2 => "plugin.outbound.*".to_string(),
             3 => format!("session.*.id-{i}"),
             _ => format!("a.b.c.id-{i}.d"),
         })

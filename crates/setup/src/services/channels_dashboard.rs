@@ -215,25 +215,25 @@ fn list_agents_with_plugin(config_dir: &Path, plugin: &str) -> Result<Vec<String
 /// whatsapp ni email en esta iteración).
 ///
 /// Pasos cuando el operador elige Telegram:
-///   1. Pick agent (kate / cody / …).
-///   2. ¿Telegram + ese agente ya está autenticado + linkeado?
-///        - Sí → "¿Re-autenticar?":
-///                · no → exit.
-///                · sí → continuar al paso 3 sobreescribiendo.
-///        - No → continuar al paso 3 directo.
-///   3. Datos del bot:
-///        a. Nombre del bot (instance label).
-///        b. Bot token (@BotFather).
-///   4. ¿Tipo del bot?
-///        a. Libre — cualquier usuario puede escribir.
-///        b. Asignado — solo el chat_id que se vincule en el paso 5.
-///   5. Si ASIGNADO: el bot escucha hasta que el operador le escribe;
-///      captura su chat_id y lo agrega a la allowlist. Si LIBRE: skip.
-///   6. Exit. Un canal por invocación, sin loop, sin re-prompt.
+/// 1. Pick agent (kate / cody / …).
+/// 2. ¿Telegram + ese agente ya está autenticado + linkeado?
+///    - Sí → "¿Re-autenticar?":
+///      · no → exit.
+///      · sí → continuar al paso 3 sobreescribiendo.
+///    - No → continuar al paso 3 directo.
+/// 3. Datos del bot:
+///    a. Nombre del bot (instance label).
+///    b. Bot token (@BotFather).
+/// 4. ¿Tipo del bot?
+///    a. Libre — cualquier usuario puede escribir.
+///    b. Asignado — solo el chat_id que se vincule en el paso 5.
+/// 5. Si ASIGNADO: el bot escucha hasta que el operador le escribe;
+///    captura su chat_id y lo agrega a la allowlist. Si LIBRE: skip.
+/// 6. Exit. Un canal por invocación, sin loop, sin re-prompt.
 pub fn run_link_flow(config_dir: &Path, secrets_dir: &Path) -> Result<()> {
     // 1. Pick channel.
     let kinds = ["telegram", "whatsapp", "email"];
-    let labels: Vec<&str> = kinds.iter().copied().collect();
+    let labels: Vec<&str> = kinds.to_vec();
     let ch_idx = prompt::pick_from_list("¿Qué canal querés configurar?", &labels)?;
     let channel = kinds[ch_idx];
 
@@ -588,7 +588,7 @@ fn run_telegram_flow(config_dir: &Path, secrets_dir: &Path) -> Result<()> {
         &telegram_yaml,
         &instance,
         &placeholder,
-        &[agent.clone()],
+        std::slice::from_ref(&agent),
         &chat_ids,
     )?;
 
@@ -798,7 +798,7 @@ fn run_remove_binding(config_dir: &Path, entry: &ChannelEntry) -> Result<()> {
 
 fn run_add_new_channel(config_dir: &Path, secrets_dir: &Path) -> Result<()> {
     let kinds = ["telegram", "whatsapp", "email"];
-    let labels: Vec<&str> = kinds.iter().copied().collect();
+    let labels: Vec<&str> = kinds.to_vec();
     let idx = prompt::pick_from_list("¿Qué canal agregar?", &labels)?;
     services_imperative::dispatch(kinds[idx], config_dir, secrets_dir).map(|_| ())
 }

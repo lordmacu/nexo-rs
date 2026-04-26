@@ -68,7 +68,7 @@ impl AgentRegistryStore for MemoryAgentRegistryStore {
 
     async fn list(&self) -> Result<Vec<AgentHandle>, AgentRegistryStoreError> {
         let mut out: Vec<AgentHandle> = self.inner.iter().map(|e| e.value().clone()).collect();
-        out.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+        out.sort_by_key(|b| std::cmp::Reverse(b.started_at));
         Ok(out)
     }
 
@@ -82,7 +82,7 @@ impl AgentRegistryStore for MemoryAgentRegistryStore {
             .filter(|e| e.value().status == status)
             .map(|e| e.value().clone())
             .collect();
-        out.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+        out.sort_by_key(|b| std::cmp::Reverse(b.started_at));
         Ok(out)
     }
 

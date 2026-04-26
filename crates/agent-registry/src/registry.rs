@@ -200,12 +200,13 @@ impl AgentRegistry {
     /// once the dispatch infrastructure is ready to spawn it. Returns
     /// `false` if the goal was not queued (already running, or unknown).
     pub async fn promote_queued(&self, goal_id: GoalId) -> Result<bool, RegistryError> {
-        let mut q = self.queue.lock();
-        if !q.iter().any(|g| *g == goal_id) {
-            return Ok(false);
+        {
+            let mut q = self.queue.lock();
+            if !q.iter().any(|g| *g == goal_id) {
+                return Ok(false);
+            }
+            q.retain(|g| *g != goal_id);
         }
-        q.retain(|g| *g != goal_id);
-        drop(q);
         self.set_status(goal_id, AgentRunStatus::Running).await?;
         Ok(true)
     }
@@ -322,7 +323,7 @@ impl AgentRegistry {
                 out.push(AgentSummary::from_handle(&h));
             }
         }
-        out.sort_by(|a, b| b.wall.cmp(&a.wall));
+        out.sort_by_key(|b| std::cmp::Reverse(b.wall));
         Ok(out)
     }
 

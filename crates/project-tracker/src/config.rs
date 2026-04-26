@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct ProjectTrackerConfig {
     #[serde(default)]
     pub tracker: TrackerConfig,
@@ -24,16 +24,6 @@ pub struct ProjectTrackerConfig {
     pub program_phase: ProgramPhaseConfig,
     #[serde(default)]
     pub agent_registry: AgentRegistryConfig,
-}
-
-impl Default for ProjectTrackerConfig {
-    fn default() -> Self {
-        Self {
-            tracker: TrackerConfig::default(),
-            program_phase: ProgramPhaseConfig::default(),
-            agent_registry: AgentRegistryConfig::default(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Deserialize)]

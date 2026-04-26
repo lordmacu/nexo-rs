@@ -362,7 +362,7 @@ pub fn render_summary(p: &HookPayload) -> String {
         out.push_str(&format!("\n_diff:_ {}", diff));
     }
     if !p.summary.trim().is_empty() {
-        out.push_str("\n");
+        out.push('\n');
         out.push_str(&p.summary);
     }
     out
