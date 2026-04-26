@@ -762,5 +762,76 @@ pub fn defs() -> Vec<ServiceDef> {
                 validator: Some(validate_nonempty),
             }],
         },
+        // FOLLOWUPS W-3 — Phase 25 in-process `web_search` router.
+        // Distinct from the `brave-search` ServiceDef above, which
+        // configures the *MCP-based* brave skill. The runtime
+        // `web_search` tool (in `crates/web-search/`) reads its
+        // provider keys from these env vars / secret files; without
+        // them the tool returns "no provider available". Both keys
+        // are optional individually — the router falls back across
+        // whichever providers are configured. Setting at least one
+        // is required for the tool to work.
+        ServiceDef {
+            id: "web-search",
+            label: "Web search router (Phase 25)",
+            category: Category::Skill,
+            description: Some(
+                "API keys for the in-process `web_search` router (distinct from the \
+                 MCP-based brave-search skill above). Supports Brave + Tavily; with \
+                 either configured the agent can issue web searches. With both \
+                 configured the router picks by priority + caches each call.",
+            ),
+            fields: vec![
+                FieldDef {
+                    key: "brave_api_key",
+                    label: "Brave Search API key (web_search router)",
+                    help: Some(
+                        "Same key shape as the `brave-search` skill above (public API \
+                         at https://brave.com/search/api/). If already configured there \
+                         you can copy the value here — they live in separate files so \
+                         operators can enable each engine independently.",
+                    ),
+                    kind: FieldKind::Secret,
+                    required: false,
+                    default: None,
+                    target: FieldTarget::Secret {
+                        file: "web_search_brave_api_key.txt",
+                        env_var: "BRAVE_SEARCH_API_KEY",
+                    },
+                    validator: None,
+                },
+                FieldDef {
+                    key: "tavily_api_key",
+                    label: "Tavily API key",
+                    help: Some(
+                        "Tavily AI search (https://tavily.com/). Usually returns more \
+                         curated answers for factual questions than Brave; Brave wins \
+                         on freshness and direct-link results. Configuring both lets \
+                         you pick per-call.",
+                    ),
+                    kind: FieldKind::Secret,
+                    required: false,
+                    default: None,
+                    target: FieldTarget::Secret {
+                        file: "web_search_tavily_api_key.txt",
+                        env_var: "TAVILY_API_KEY",
+                    },
+                    validator: None,
+                },
+                FieldDef {
+                    key: "default_provider",
+                    label: "Default provider",
+                    help: Some(
+                        "`brave` or `tavily`. Which engine the router picks when the \
+                         agent does not explicitly request one. Default: brave.",
+                    ),
+                    kind: FieldKind::Text,
+                    required: false,
+                    default: Some("brave"),
+                    target: FieldTarget::EnvOnly("WEB_SEARCH_DEFAULT_PROVIDER"),
+                    validator: None,
+                },
+            ],
+        },
     ]
 }

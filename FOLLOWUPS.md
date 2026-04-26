@@ -140,12 +140,29 @@ W-2. **`web_fetch` built-in tool not shipped**
   same loop today via the LinkExtractor reuse.
 - Target: when a recipe surfaces the gap.
 
-W-3. **Setup wizard entry not shipped**
-- Missing: `agent setup web-search` to write API keys to credentials
-  store. Currently operators set `BRAVE_SEARCH_API_KEY` /
-  `TAVILY_API_KEY` in env directly.
-- Why deferred: env vars work and the wizard is a pure UX win.
-- Target: alongside admin-ui Phase A3 web-search panel.
+W-3. ~~**Setup wizard entry not shipped**~~  ✅ shipped 2026-04-26
+- New `web-search` ServiceDef in
+  `crates/setup/src/services/skills.rs::defs()`. Distinct from
+  the existing `brave-search` entry (which configures the
+  MCP-based skill); this one writes the keys the in-process
+  Phase 25 router consumes.
+- Three fields:
+    * `brave_api_key` (secret → `web_search_brave_api_key.txt`,
+      env `BRAVE_SEARCH_API_KEY`).
+    * `tavily_api_key` (secret →
+      `web_search_tavily_api_key.txt`, env `TAVILY_API_KEY`).
+    * `default_provider` (env-only `WEB_SEARCH_DEFAULT_PROVIDER`,
+      default `brave`).
+  Both keys are optional individually — the router falls back
+  across whichever provider is configured.
+- Operator runs `nexo setup` and picks "Web search router (Phase
+  25)" from the Skills category, same flow as every other
+  service.
+- Description text + help strings written in English (per the
+  workspace language rules). Existing entries above still have
+  Spanish strings — those predate the rule.
+- admin-ui Phase A3 web-search panel will surface the same
+  fields when it lands.
 
 W-4. **Decision: `nexo-resilience::CircuitBreaker` directly, not via `BreakerRegistry`**
 - The `nexo-auth` registry is keyed on `Channel { Whatsapp,
