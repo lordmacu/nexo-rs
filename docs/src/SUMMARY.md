@@ -109,6 +109,7 @@
 - [Telemetry (opt-in)](./ops/telemetry.md)
 - [Benchmarks](./ops/benchmarks.md)
 - [Backup + restore](./ops/backup.md)
+- [Privacy toolkit (GDPR)](./ops/privacy.md)
 
 # Recipes
 
