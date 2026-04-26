@@ -1473,10 +1473,25 @@ already in the pipeline (`docker pull ghcr.io/...:latest` +
 "plug into the release workflow once 27.2 lands so users don't
 have to build the .deb locally."
 
-Deferred:
-- `docs/src/recipes/deploy-aws.md` — EC2 t4g.small + EBS +
-  Route53 + ACM + ALB + IAM role for SES. Bigger scope; needs
-  Terraform module to be useful.
+Shipped (40.3):
+- `docs/src/recipes/deploy-aws.md` — EC2 t4g.small (ARM
+  Graviton) recipe. Terraform main.tf for VPC + subnet +
+  IGW + security group + IAM role (SES + S3 backups only,
+  no console / no read of unrelated AWS resources) +
+  instance profile + Debian 12 arm64 AMI lookup + EC2
+  instance + Route53 record. Post-provision hardening (UFW,
+  fail2ban, unattended-upgrades, no-root-ssh). Nexo install
+  via signed .deb (cross-link 27.3 / 27.4). NATS install
+  + bind to loopback. nginx + certbot for Let's Encrypt
+  TLS (cheaper than ALB+ACM for single-VM deploys; ALB+ACM
+  variant noted). SES outbound config using instance-profile
+  credentials (no keys in YAML). EBS daily snapshots via
+  DLM, cost breakdown line-by-line, AZ-failure / sandbox
+  / EIP escape hatches, troubleshooting (instance profile,
+  cert prop, broker readiness).
+- `docs/src/SUMMARY.md` registers the recipe.
+
+Deferred (downstream of 40.3):
 - `docs/src/recipes/deploy-gcp.md` — Compute Engine + Cloud SQL
   + IAP. Same shape.
 - `docs/src/recipes/deploy-render.md`,
