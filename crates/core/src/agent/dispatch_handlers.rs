@@ -74,10 +74,16 @@ impl DispatchToolContext {
     }
 
     fn origin_for(&self, ctx: &AgentContext) -> Option<OriginChannel> {
-        // Effective binding carries the (plugin, instance) tuple in
-        // future patches — for now derive from the agent id.
-        let _ = ctx;
-        None
+        // B3 — runtime intake stamps `inbound_origin` into the
+        // context after binding resolution; we lift it into an
+        // OriginChannel so notify_origin knows where to send the
+        // completion summary.
+        ctx.inbound_origin.as_ref().map(|(plugin, instance, sender)| OriginChannel {
+            plugin: plugin.clone(),
+            instance: instance.clone(),
+            sender_id: sender.clone(),
+            correlation_id: None,
+        })
     }
 
     fn dispatch_policy(&self, ctx: &AgentContext) -> nexo_config::DispatchPolicy {
@@ -110,10 +116,11 @@ impl ToolHandler for ProgramPhaseHandler {
             dispatch.registry.clone(),
             &policy,
             dispatch.require_trusted,
-            true, // sender_trusted: chat senders pre-validated by pairing gate
+            ctx.sender_trusted,
             dispatch.dispatcher_for(ctx),
             dispatch.origin_for(ctx),
             dispatch.caps_snapshot(),
+            Some(dispatch.hooks.clone()),
         )
         .await
         .map_err(|e| anyhow::anyhow!("program_phase: {e}"))?;
@@ -235,7 +242,7 @@ impl ToolHandler for UpdateBudgetHandler {
     async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
         let dispatch = dispatch_ctx(ctx)?;
         let input: UpdateBudgetInput = serde_json::from_value(args)?;
-        let out = update_budget(input, dispatch.registry.clone())
+        let out = update_budget(input, dispatch.registry.clone(), dispatch.orchestrator.clone())
             .await
             .map_err(|e| anyhow::anyhow!("update_budget: {e}"))?;
         Ok(serde_json::to_value(out)?)

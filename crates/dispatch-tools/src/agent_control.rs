@@ -146,6 +146,7 @@ pub enum UpdateBudgetOutput {
 pub async fn update_budget(
     input: UpdateBudgetInput,
     registry: Arc<AgentRegistry>,
+    orchestrator: Arc<DriverOrchestrator>,
 ) -> Result<UpdateBudgetOutput, AgentControlError> {
     let Some(handle) = registry.handle(input.goal_id) else {
         return Ok(UpdateBudgetOutput::NotFound {
@@ -170,6 +171,18 @@ pub async fn update_budget(
             ),
         });
     }
+    // B2 — push the new cap to the orchestrator first so we don't
+    // touch the snapshot when the goal isn't actually running.
+    // set_goal_max_turns returns None when the goal isn't tracked
+    // in the orchestrator's cancel_tokens map. Goals that admitted
+    // as Queued (registry only, no spawn yet) fall in that bucket;
+    // operator should wait until they're Running.
+    if orchestrator.set_goal_max_turns(input.goal_id, new_max).is_none() {
+        return Ok(UpdateBudgetOutput::Rejected {
+            goal_id: input.goal_id,
+            reason: "goal not running in this orchestrator".into(),
+        });
+    }
     registry.set_max_turns(input.goal_id, new_max);
     Ok(UpdateBudgetOutput::Updated {
         goal_id: input.goal_id,
@@ -180,9 +193,54 @@ pub async fn update_budget(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+    use std::time::Duration;
+
     use nexo_agent_registry::{AgentHandle, AgentSnapshot, MemoryAgentRegistryStore};
+    use nexo_driver_claude::{ClaudeConfig, ClaudeDefaultArgs, MemoryBindingStore, OutputFormat};
+    use nexo_driver_loop::{NoopEventSink, WorkspaceManager};
+    use nexo_driver_permission::{AllowAllDecider, PermissionDecider};
     use nexo_driver_types::BudgetUsage;
     use uuid::Uuid;
+
+    async fn build_orch() -> Arc<DriverOrchestrator> {
+        let dir = std::env::temp_dir().join(format!(
+            "nexo-update-budget-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg = ClaudeConfig {
+            binary: Some(PathBuf::from("bash")),
+            default_args: ClaudeDefaultArgs {
+                output_format: OutputFormat::StreamJson,
+                permission_prompt_tool: None,
+                allowed_tools: vec![],
+                disallowed_tools: vec![],
+                model: None,
+            },
+            mcp_config: None,
+            forced_kill_after: Duration::from_secs(1),
+            turn_timeout: Duration::from_secs(10),
+        };
+        Arc::new(
+            DriverOrchestrator::builder()
+                .claude_config(cfg)
+                .binding_store(Arc::new(MemoryBindingStore::new())
+                    as Arc<dyn nexo_driver_claude::SessionBindingStore>)
+                .decider(Arc::new(AllowAllDecider) as Arc<dyn PermissionDecider>)
+                .workspace_manager(Arc::new(WorkspaceManager::new(&dir)))
+                .event_sink(Arc::new(NoopEventSink))
+                .bin_path(PathBuf::from("/usr/local/bin/nexo-driver-permission-mcp"))
+                .socket_path(dir.join("orch.sock"))
+                .build()
+                .await
+                .unwrap(),
+        )
+    }
 
     async fn registry_with(turn_index: u32, max_turns: u32) -> (Arc<AgentRegistry>, GoalId) {
         let reg = Arc::new(AgentRegistry::new(
@@ -214,7 +272,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_budget_grows_above_current() {
+    async fn update_budget_rejects_when_goal_not_in_orchestrator() {
+        // B2 contract: snapshot-only updates are rejected. The
+        // operator update must reach the live loop or it would
+        // silently lie. registry_with admits to the registry but
+        // never spawns into the orchestrator, so set_goal_max_turns
+        // returns None and the function rejects.
         let (reg, id) = registry_with(5, 20).await;
         let out = update_budget(
             UpdateBudgetInput {
@@ -222,14 +285,14 @@ mod tests {
                 max_turns: Some(40),
             },
             reg.clone(),
+            build_orch().await,
         )
         .await
         .unwrap();
-        assert!(matches!(
-            out,
-            UpdateBudgetOutput::Updated { max_turns: 40, .. }
-        ));
-        assert_eq!(reg.snapshot(id).unwrap().max_turns, 40);
+        assert!(matches!(out, UpdateBudgetOutput::Rejected { .. }));
+        // Snapshot stays at the original 20 because we rejected
+        // before touching it.
+        assert_eq!(reg.snapshot(id).unwrap().max_turns, 20);
     }
 
     #[tokio::test]
@@ -241,6 +304,7 @@ mod tests {
                 max_turns: Some(10),
             },
             reg,
+            build_orch().await,
         )
         .await
         .unwrap();
@@ -256,6 +320,7 @@ mod tests {
                 max_turns: Some(15),
             },
             reg,
+            build_orch().await,
         )
         .await
         .unwrap();
@@ -274,6 +339,7 @@ mod tests {
                 max_turns: Some(10),
             },
             reg,
+            build_orch().await,
         )
         .await
         .unwrap();

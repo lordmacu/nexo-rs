@@ -108,6 +108,7 @@ async fn capability_none_returns_forbidden() {
             phase_id: "99.1".into(),
             acceptance_override: None,
             budget_override: None,
+                hooks: Vec::new(),
         },
         &tracker,
         orch.clone(),
@@ -121,6 +122,7 @@ async fn capability_none_returns_forbidden() {
             queue_when_full: true,
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -153,6 +155,7 @@ async fn unknown_phase_returns_not_found() {
             phase_id: "9999.999".into(),
             acceptance_override: None,
             budget_override: None,
+                hooks: Vec::new(),
         },
         &tracker,
         orch.clone(),
@@ -166,6 +169,7 @@ async fn unknown_phase_returns_not_found() {
             queue_when_full: true,
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -196,6 +200,7 @@ async fn untrusted_sender_returns_forbidden_when_required() {
             phase_id: "99.1".into(),
             acceptance_override: None,
             budget_override: None,
+                hooks: Vec::new(),
         },
         &tracker,
         orch,
@@ -209,6 +214,7 @@ async fn untrusted_sender_returns_forbidden_when_required() {
             queue_when_full: true,
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -240,6 +246,7 @@ async fn cap_reached_with_queue_returns_queued_outcome() {
             phase_id: "99.1".into(),
             acceptance_override: None,
             budget_override: None,
+                hooks: Vec::new(),
         },
         &tracker,
         orch,
@@ -254,6 +261,7 @@ async fn cap_reached_with_queue_returns_queued_outcome() {
             global_max: 0,
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();

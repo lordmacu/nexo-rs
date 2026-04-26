@@ -48,6 +48,13 @@ pub struct ProgramPhaseInput {
     /// default.
     #[serde(default)]
     pub budget_override: Option<BudgetOverride>,
+    /// B4 — hooks attached at dispatch time. Common usage from a
+    /// chat tool call is `[{ id: "h1", on: "done", action: {
+    /// kind: "notify_origin" } }]`. The handler stores them in the
+    /// HookRegistry under the new goal id; the completion router
+    /// fires them on goal transitions.
+    #[serde(default)]
+    pub hooks: Vec<crate::hooks::types::CompletionHook>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -152,6 +159,7 @@ pub async fn program_phase_dispatch(
     dispatcher: DispatcherIdentity,
     origin: Option<OriginChannel>,
     caps: CapSnapshot,
+    hook_registry: Option<Arc<crate::hooks::HookRegistry>>,
 ) -> Result<ProgramPhaseOutput, ProgramPhaseError> {
     // Tracker: fetch the sub-phase. Missing PHASES.md → NotTracked.
     let sub = match tracker.phase_detail(&input.phase_id).await {
@@ -205,13 +213,29 @@ pub async fn program_phase_dispatch(
         .unwrap_or_else(default_acceptance);
     let budget = apply_budget_override(default_budget(), input.budget_override.clone());
 
+    // B1 — stamp origin + dispatcher into goal.metadata so
+    // attempt.rs can lift them into the SessionBinding when the
+    // first turn lands. Persists across daemon restart so reattach
+    // can find the chat that triggered the goal.
+    let mut metadata = serde_json::Map::new();
+    if let Some(o) = &origin {
+        metadata.insert(
+            "origin_channel".into(),
+            serde_json::to_value(o).unwrap_or(serde_json::Value::Null),
+        );
+    }
+    metadata.insert(
+        "dispatcher".into(),
+        serde_json::to_value(&dispatcher).unwrap_or(serde_json::Value::Null),
+    );
+
     let goal = Goal {
         id: GoalId::new(),
         description,
         acceptance,
         budget,
         workspace: None,
-        metadata: serde_json::Map::new(),
+        metadata,
     };
     let goal_id = goal.id;
 
@@ -238,6 +262,14 @@ pub async fn program_phase_dispatch(
         .await
         .map_err(|e| ProgramPhaseError::Registry(e.to_string()))?;
 
+    // B4 — attach hooks before spawn so the completion router
+    // sees them when the goal terminates. Done for both Admitted
+    // (will spawn) and Queued (will spawn after promote).
+    if let Some(hr) = &hook_registry {
+        for hook in input.hooks.clone() {
+            hr.add(goal_id, hook);
+        }
+    }
     match outcome {
         AdmitOutcome::Admitted => {
             registry.set_max_turns(goal_id, goal.budget.max_turns);

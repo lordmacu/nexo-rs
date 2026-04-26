@@ -81,6 +81,7 @@ pub async fn program_phase_parallel(
                 phase_id: phase,
                 acceptance_override: None,
                 budget_override: None,
+                hooks: Vec::new(),
             },
             tracker,
             orchestrator.clone(),
@@ -91,6 +92,7 @@ pub async fn program_phase_parallel(
             dispatcher.clone(),
             origin.clone(),
             caps,
+            None,
         )
         .await?;
         if matches!(
@@ -167,6 +169,7 @@ pub async fn program_phase_chain(
             phase_id: head,
             acceptance_override: None,
             budget_override: None,
+                hooks: Vec::new(),
         },
         tracker,
         orchestrator.clone(),
@@ -177,6 +180,7 @@ pub async fn program_phase_chain(
         dispatcher.clone(),
         origin.clone(),
         caps,
+        None,
     )
     .await?;
 
