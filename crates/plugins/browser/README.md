@@ -1,18 +1,58 @@
 # nexo-plugin-browser
 
-> Chrome DevTools Protocol (CDP) browser channel plugin for Nexo agents.
+> Browser automation plugin for Nexo — Chrome DevTools Protocol (CDP) client + element-ref system for agents that need to read or interact with live web pages.
 
 This crate is part of **[Nexo](https://github.com/lordmacu/nexo-rs)** — a multi-agent Rust framework with a NATS event bus, pluggable LLM providers (MiniMax, Anthropic, OpenAI-compat, Gemini, DeepSeek), per-agent credentials, MCP support, and channel plugins for WhatsApp, Telegram, Email, and Browser (CDP).
 
-- **Main project:** <https://github.com/lordmacu/nexo-rs>
-- **Documentation:** <https://lordmacu.github.io/nexo-rs/>
+- **Main repo:** <https://github.com/lordmacu/nexo-rs>
+- **Runtime engine:** [`nexo-core`](https://github.com/lordmacu/nexo-rs/tree/main/crates/core)
+- **Public docs:** <https://lordmacu.github.io/nexo-rs/>
 
 ## What this crate does
 
-- Launches Chrome / Chromium (including **Termux Chromium** on Android) and drives it via CDP — no Selenium / WebDriver.
-- **Element refs**: stable handles across navigation so the LLM can re-target elements without re-finding them.
-- Command queue + event loop so the agent can interleave actions and observations.
-- **Session persistence**: cookies, localStorage, profile dir survive restarts.
+- **CDP client** over the local Chrome / Chromium WebSocket
+  endpoint. The plugin launches a managed Chrome subprocess
+  (configurable bin path for Termux / Docker) and connects to
+  its `--remote-debugging-port`.
+- **Per-session BrowserContext** — each agent session can hold
+  its own browsing context (cookies, localStorage) so two
+  agents on the same daemon don't share credentials by accident.
+- **Element ref system** — elements are referenced by stable
+  IDs the runtime hands back to the agent (instead of brittle
+  CSS selectors that the LLM has to memorise across turns).
+- **Built-in commands** — `navigate`, `screenshot`, `query`
+  (CSS / XPath), `click`, `type`, `evaluate` (run JS), `wait`,
+  `extract_text`, `network_idle`. All reachable via the
+  agent's tool registry.
+- **Event loop** — surfaces page-loaded / DOM-mutation /
+  console-message events to the agent so it can react to
+  long-running interactions instead of polling.
+- **Termux support** — when `args` includes the
+  `--no-sandbox --disable-dev-shm-usage` flags, the plugin
+  uses chromium-on-Termux happy-path defaults. Phase 4
+  hardening kept this working across the rename.
+
+## Configuration
+
+```yaml
+plugins:
+  browser:
+    chrome_bin: /usr/bin/google-chrome   # or chromium for arm64
+    headless: true                       # false for debug
+    args:
+      - --no-sandbox
+      - --disable-dev-shm-usage
+    user_data_dir: /var/lib/nexo/browser
+```
+
+## Wire format
+
+Outbound (agent → browser):
+
+```json
+{ "kind": "browser.navigate", "session_id": "...", "url": "https://..." }
+{ "kind": "browser.screenshot", "session_id": "...", "selector": "#main" }
+```
 
 ## Install
 
@@ -23,8 +63,7 @@ nexo-plugin-browser = "0.1"
 
 ## Documentation for this crate
 
-- [Browser plugin](https://lordmacu.github.io/nexo-rs/plugins/browser.html)
-- [Termux install](https://lordmacu.github.io/nexo-rs/getting-started/install-termux.html)
+- [Browser plugin guide](https://lordmacu.github.io/nexo-rs/plugins/browser.html)
 
 ## License
 
