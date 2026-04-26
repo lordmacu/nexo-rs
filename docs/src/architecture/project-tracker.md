@@ -157,6 +157,93 @@ nexo-driver-tools agents cancel <goal_id> [--reason "…"]
 `origin.plugin = "console"` so `notify_origin` is a no-op (the
 operator sees stdout, not a chat reply).
 
+## Boot wiring (B8)
+
+The integrator's `main.rs` ties everything together. Minimal
+shape:
+
+```rust,ignore
+use std::sync::Arc;
+use nexo_agent_registry::{AgentRegistry, MemoryAgentRegistryStore, LogBuffer};
+use nexo_core::agent::{
+    dispatch_handlers::{register_dispatch_tools_into, DispatchToolContext},
+    tool_registry::ToolRegistry,
+};
+use nexo_dispatch_tools::{
+    event_forwarder::EventForwarder,
+    hooks::{DefaultHookDispatcher, HookRegistry, NoopNatsHookPublisher},
+    policy_gate::CapSnapshot,
+    NoopTelemetry,
+};
+use nexo_pairing::PairingAdapterRegistry;
+use nexo_project_tracker::FsProjectTracker;
+
+// 1. Project tracker.
+let tracker: Arc<dyn nexo_project_tracker::ProjectTracker> =
+    Arc::new(FsProjectTracker::open(std::env::current_dir().unwrap())?);
+
+// 2. Agent registry + log buffer.
+let registry = Arc::new(AgentRegistry::new(
+    Arc::new(MemoryAgentRegistryStore::default()),
+    4,
+));
+let log_buffer = Arc::new(LogBuffer::new(200));
+let hook_registry = Arc::new(HookRegistry::new());
+
+// 3. Hook dispatcher with the channel adapters that Phase 26
+//    registered (whatsapp / telegram).
+let pairing = PairingAdapterRegistry::new();
+// pairing.register(WhatsappPairingAdapter::new(...));
+// pairing.register(TelegramPairingAdapter::new(...));
+let hook_dispatcher = Arc::new(DefaultHookDispatcher::new(
+    pairing,
+    Arc::new(NoopNatsHookPublisher),
+));
+
+// 4. Orchestrator with EventForwarder so registry / log_buffer /
+//    hooks see every driver event.
+let inner_sink: Arc<dyn nexo_driver_loop::DriverEventSink> =
+    Arc::new(nexo_driver_loop::NoopEventSink);
+let event_sink: Arc<dyn nexo_driver_loop::DriverEventSink> =
+    Arc::new(EventForwarder::new(
+        registry.clone(),
+        log_buffer.clone(),
+        hook_registry.clone(),
+        hook_dispatcher.clone(),
+        inner_sink,
+    ));
+// (orchestrator builder consumes event_sink)
+
+// 5. Bundle for AgentContext.dispatch.
+let dispatch_ctx = Arc::new(DispatchToolContext {
+    tracker,
+    orchestrator: orch.clone(),
+    registry,
+    hooks: hook_registry,
+    log_buffer,
+    default_caps: CapSnapshot {
+        queue_when_full: true,
+        ..Default::default()
+    },
+    require_trusted: true,
+    telemetry: Arc::new(NoopTelemetry),
+});
+
+// 6. Register the handlers into the base ToolRegistry. The
+//    per-binding cache prunes write tools when capability=None
+//    or read_only.
+let base = ToolRegistry::new();
+register_dispatch_tools_into(&base);
+
+// 7. Per-session AgentContext.with_dispatch(dispatch_ctx)
+//    + .with_sender_trusted(true) + .with_inbound_origin(plugin,
+//    instance, sender).
+```
+
+Without step 6 the handlers exist but aren't reachable by the
+LLM. Without step 4 the registry / log_buffer / hooks stay
+inert. Without step 5 the handlers return MissingDispatchCtx.
+
 ## See also
 
 - `proyecto/PHASES.md` — Phase 67.A–H sub-phase status of record.
