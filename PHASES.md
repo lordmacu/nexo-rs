@@ -1199,10 +1199,29 @@ Shipped (35.1):
 - `crates/resilience/Cargo.toml` adds `criterion = "0.5"` as
   dev-dep + `[[bench]] name = "circuit_breaker"` registration.
 
+Shipped (35.2):
+- `crates/broker/benches/topic_matches.rs` — covers the hottest
+  function in `LocalBroker::publish` (every published event
+  scans `topic_matches` against every active subscription
+  pattern). Three groups: exact-match, wildcard-match (`*` and
+  `>`), and a "wildcard storm" that evaluates 50 patterns
+  against one subject, approximating a 15-agent deployment.
+- `crates/broker/benches/local_publish.rs` — end-to-end
+  publish path: lock-free `DashMap` scan, `try_send` per
+  matching subscriber, slow-consumer drop-counter increments.
+  Four groups: zero-subscriber publish (worst-case miss),
+  one-subscriber exact, 10-subscriber wildcard fan-out,
+  50-subscriber realistic mix. Uses `Throughput::Elements` so
+  criterion reports msgs/sec.
+- `crates/broker/Cargo.toml` adds `criterion = "0.5"`
+  + two `[[bench]]` registrations.
+
 Deferred:
-- **35.2** Hot-path benches for the rest of the workspace:
-  broker publish/subscribe, LLM stream parser, TaskFlow tick,
-  transcripts FTS search, redaction pipeline.
+- **35.3 (was 35.2.b)** LLM stream parser benches —
+  `parse_openai_sse` / `parse_anthropic_sse` / `parse_gemini_sse`
+  with realistic SSE chunk fixtures.
+- **35.4** TaskFlow tick latency, transcripts FTS search,
+  redaction pipeline.
 - **35.3** End-to-end load-test rig that spawns N inbound
   messages over the local broker and measures tail latency at
   varying agent counts.
