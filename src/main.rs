@@ -99,7 +99,11 @@ enum Mode {
         device_label: Option<String>,
         public_url: Option<String>,
         qr_png_path: Option<PathBuf>,
-        ttl_secs: u64,
+        /// TTL override from `--ttl-secs`. `None` means "use YAML
+        /// `pairing.setup_code.default_ttl_secs` if set, else
+        /// fall back to the hardcoded 600s default". Resolved
+        /// inside `run_pair_start` once the YAML is loaded.
+        ttl_secs: Option<u64>,
         json: bool,
     },
     PairList {
@@ -2695,7 +2699,7 @@ async fn run_pair_start(
     device_label: Option<&str>,
     public_url: Option<&str>,
     qr_png_path: Option<&std::path::Path>,
-    ttl_secs: u64,
+    ttl_secs: Option<u64>,
     json: bool,
 ) -> Result<()> {
     let (_, secret_path) = pair_paths(config_dir);
@@ -2728,6 +2732,18 @@ async fn run_pair_start(
         .ok()
         .filter(|s| !s.trim().is_empty());
 
+    // FOLLOWUPS PR-6 — TTL resolution priority:
+    //   1. `--ttl-secs` CLI flag (operator override at invoke time).
+    //   2. `pairing.yaml::pairing.setup_code.default_ttl_secs`.
+    //   3. hardcoded 600 seconds (10 min) fallback.
+    let resolved_ttl_secs = ttl_secs
+        .or_else(|| {
+            yaml_overrides
+                .as_ref()
+                .and_then(|p| p.setup_code.default_ttl_secs)
+        })
+        .unwrap_or(600);
+
     let inputs = nexo_pairing::url_resolver::UrlInputs {
         public_url: public_url.map(str::to_string).or(yaml_public_url),
         tunnel_url: tunnel_env,
@@ -2740,7 +2756,7 @@ async fn run_pair_start(
     let code = issuer.issue(
         &resolved.url,
         "companion-v1",
-        std::time::Duration::from_secs(ttl_secs),
+        std::time::Duration::from_secs(resolved_ttl_secs),
         device_label,
     )?;
     let payload = nexo_pairing::setup_code::encode_setup_code(&code)?;
@@ -2892,8 +2908,7 @@ fn route_pair_subcommand(positional: &[String], has_json_flag: bool) -> Option<M
             public_url: parse_kv_flag(positional, "--public-url"),
             qr_png_path: parse_kv_flag(positional, "--qr-png").map(PathBuf::from),
             ttl_secs: parse_kv_flag(positional, "--ttl-secs")
-                .and_then(|s| s.parse::<u64>().ok())
-                .unwrap_or(600),
+                .and_then(|s| s.parse::<u64>().ok()),
             json: has_json_flag,
         },
         Some("list") => Mode::PairList {
