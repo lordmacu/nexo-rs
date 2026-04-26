@@ -37,11 +37,20 @@ tracing             = { workspace = true }
 tracing-subscriber  = { workspace = true }
 uuid                = { workspace = true }
 
+[features]
+default = ["nats"]
+nats    = ["dep:async-nats"]
+
+[dependencies.async-nats]
+workspace = true
+optional  = true
+
 [[bin]]
 name = "nexo-driver-tools"
 path = "src/bin/nexo_driver_tools.rs"
 
 [dev-dependencies]
+anyhow      = { workspace = true }
 async-trait = { workspace = true }
 tempfile    = "3"
 tokio       = { workspace = true, features = ["macros", "rt-multi-thread"] }

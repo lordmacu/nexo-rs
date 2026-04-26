@@ -83,6 +83,52 @@ pub trait DispatchTelemetry: Send + Sync + 'static {
 #[derive(Default, Clone, Copy)]
 pub struct NoopTelemetry;
 
+/// PT-7 — NATS-backed implementation. Holds an `async_nats::Client`
+/// and publishes each event to its canonical subject as JSON.
+/// Failures are logged via `tracing` but never bubble up — telemetry
+/// must never crash the dispatch hot path.
+#[cfg(feature = "nats")]
+pub struct NatsDispatchTelemetry {
+    client: async_nats::Client,
+}
+
+#[cfg(feature = "nats")]
+impl NatsDispatchTelemetry {
+    pub fn new(client: async_nats::Client) -> Self {
+        Self { client }
+    }
+
+    async fn publish_json<T: Serialize>(&self, subject: &str, payload: &T) {
+        let body = match serde_json::to_vec(payload) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(target: "dispatch.telemetry", "serialize failed: {e}");
+                return;
+            }
+        };
+        if let Err(e) = self.client.publish(subject.to_string(), body.into()).await {
+            tracing::warn!(target: "dispatch.telemetry", "publish {subject} failed: {e}");
+        }
+    }
+}
+
+#[cfg(feature = "nats")]
+#[async_trait]
+impl DispatchTelemetry for NatsDispatchTelemetry {
+    async fn dispatch_spawned(&self, payload: DispatchSpawnedPayload) {
+        self.publish_json(subject::DISPATCH_SPAWNED, &payload).await;
+    }
+    async fn dispatch_denied(&self, payload: DispatchDeniedPayload) {
+        self.publish_json(subject::DISPATCH_DENIED, &payload).await;
+    }
+    async fn hook_dispatched(&self, payload: HookDispatchedPayload) {
+        self.publish_json(subject::HOOK_DISPATCHED, &payload).await;
+    }
+    async fn hook_failed(&self, payload: HookFailedPayload) {
+        self.publish_json(subject::HOOK_FAILED, &payload).await;
+    }
+}
+
 #[async_trait]
 impl DispatchTelemetry for NoopTelemetry {
     async fn dispatch_spawned(&self, _: DispatchSpawnedPayload) {}

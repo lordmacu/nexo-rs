@@ -44,6 +44,10 @@ pub enum HookError {
     ChainGuardSkipped(super::types::HookTrigger, super::types::HookTransition),
     #[error("chain dispatch failed: {0}")]
     ChainDispatch(String),
+    #[error("hook already dispatched (idempotency hit)")]
+    AlreadyDispatched,
+    #[error("idempotency store: {0}")]
+    Idempotency(String),
 }
 
 /// Phase 67.F.2 — pluggable chainer the dispatcher consults when a
@@ -106,6 +110,13 @@ pub struct DefaultHookDispatcher {
     /// will populate this with a chainer that calls the runtime
     /// `program_phase_dispatch`.
     pub chainer: Option<Arc<dyn DispatchPhaseChainer>>,
+    /// PT-4 — when set, the dispatcher claims a slot in the
+    /// idempotency store BEFORE running the action. A duplicate
+    /// firing (NATS replay, daemon restart between decide and
+    /// commit) finds the slot taken and returns
+    /// `AlreadyDispatched` instead of running the side effect a
+    /// second time.
+    pub idempotency: Option<Arc<crate::hooks::idempotency::HookIdempotencyStore>>,
 }
 
 impl DefaultHookDispatcher {
@@ -116,7 +127,16 @@ impl DefaultHookDispatcher {
             timeout: Duration::from_secs(30),
             allow_shell: false,
             chainer: None,
+            idempotency: None,
         }
+    }
+
+    pub fn with_idempotency(
+        mut self,
+        store: Arc<crate::hooks::idempotency::HookIdempotencyStore>,
+    ) -> Self {
+        self.idempotency = Some(store);
+        self
     }
 
     pub fn with_timeout(mut self, t: Duration) -> Self {
@@ -138,6 +158,18 @@ impl DefaultHookDispatcher {
 #[async_trait]
 impl HookDispatcher for DefaultHookDispatcher {
     async fn dispatch(&self, hook: &CompletionHook, payload: &HookPayload) -> Result<(), HookError> {
+        // PT-4 — claim the idempotency slot atomically before
+        // running the action. Duplicate firings find the slot
+        // taken and skip without re-publishing.
+        if let Some(store) = &self.idempotency {
+            let claimed = store
+                .try_claim(payload.goal_id, payload.transition, &hook.action, &hook.id)
+                .await
+                .map_err(|e| HookError::Idempotency(e.to_string()))?;
+            if !claimed {
+                return Err(HookError::AlreadyDispatched);
+            }
+        }
         let timeout = self.timeout;
         let fut = run_action(
             &hook.action,

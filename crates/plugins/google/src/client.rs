@@ -152,6 +152,14 @@ pub struct GoogleAuthClient {
     /// client_id / client_secret. Mtime stored alongside so we only
     /// re-read when the file actually changes.
     secret_sources: tokio::sync::Mutex<Option<(SecretSources, std::time::SystemTime)>>,
+    /// CircuitBreaker wrapping every outbound HTTP call to Google
+    /// (OAuth token + refresh + device + revoke + general API). One
+    /// breaker per client instance so different agents holding
+    /// distinct `GoogleAuthClient`s don't cascade-trip each other.
+    /// Trips after `failure_threshold` consecutive failures
+    /// (`CircuitBreakerConfig::default()`); reopens after
+    /// `success_threshold` consecutive successes. FOLLOWUPS H-1.
+    circuit: Arc<nexo_resilience::CircuitBreaker>,
 }
 
 impl GoogleAuthClient {
@@ -181,6 +189,10 @@ impl GoogleAuthClient {
             })
             .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
         let stored = sources.map(|s| (s, initial_mtime));
+        let circuit = Arc::new(nexo_resilience::CircuitBreaker::new(
+            "plugins.google",
+            nexo_resilience::CircuitBreakerConfig::default(),
+        ));
         Arc::new(Self {
             config: arc_swap::ArcSwap::from_pointee(config),
             token_path,
@@ -191,6 +203,7 @@ impl GoogleAuthClient {
                 .build()
                 .expect("reqwest client"),
             secret_sources: tokio::sync::Mutex::new(stored),
+            circuit,
         })
     }
 
