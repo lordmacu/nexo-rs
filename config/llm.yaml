@@ -2,7 +2,7 @@ providers:
   minimax:
     api_key: ${MINIMAX_API_KEY:-}
     group_id: ${MINIMAX_GROUP_ID:-}
-    base_url: https://api.minimax.io
+    base_url: https://api.minimax.io/v1
     rate_limit:
       requests_per_second: 2.0
       quota_alert_threshold: 100000

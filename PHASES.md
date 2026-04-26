@@ -2652,6 +2652,27 @@ helpers cada caller reescribe ~80 LOC de plomería.
 
 ---
 
+### Phase 69 — Setup wizard agent-centric submenu   ✅
+
+Per-agent submenu inside `nexo setup` that lets the operator pick one
+agent and mutate its model, language, channels, and skills from a
+single dashboard, without weaving through the service-centric flows.
+Reuses every existing channel / LLM / skill flow underneath, so
+behaviour stays in lockstep with the rest of the wizard.
+
+- 69.1 — yaml_patch agent-aware helpers (`read_agent_field`,
+  `upsert_agent_field`, `remove_agent_field`,
+  `append_agent_list_item` (idempotent), `remove_agent_list_item`).
+- 69.2 — `agent_wizard.rs` dashboard (`AgentDashboard`,
+  `compute_dashboard`, `print_dashboard`) + handlers for Modelo /
+  Idioma / Canales / Skills.
+- 69.3 — Hub menu wiring under `Configurar agente …`, best-effort
+  `try_hot_reload` after every successful mutation, integration tests
+  re-parse the mutated YAML through `AgentsConfig`, docs page +
+  SUMMARY entry, admin-ui PHASES tech-debt line.
+
+---
+
 ## Deliberately NOT roadmapped
 
 These OpenClaw features were considered and deferred — listing them

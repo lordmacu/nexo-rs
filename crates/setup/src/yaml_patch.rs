@@ -609,6 +609,271 @@ fn set_path(root: &mut Value, parts: &[&str], value: Value) -> Result<()> {
     set_path(next, &parts[1..], value)
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Agent-centric wizard helpers (read/upsert/remove/list ops scoped to
+// a single agent inside `agents.yaml` or `agents.d/*.yaml`). Used by
+// the per-agent setup submenu so it can mutate `model`, `language`,
+// `plugins`, `inbound_bindings`, `skills` and similar without going
+// through the declarative ServiceDef pipeline (which can't model
+// per-agent paths).
+// ─────────────────────────────────────────────────────────────────────
+
+/// Locate the agent inside the YAML at `path` and return the value at
+/// `dotted` relative to that agent. Returns `Ok(None)` when either the
+/// agent or any path segment is missing.
+pub fn read_agent_field(
+    path: &Path,
+    agent_id: &str,
+    dotted: &str,
+) -> Result<Option<Value>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    if text.trim().is_empty() {
+        return Ok(None);
+    }
+    let root: Value =
+        serde_yaml::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
+    let agents = match root.get("agents").and_then(Value::as_sequence) {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+    let agent = match agents
+        .iter()
+        .find(|it| it.get("id").and_then(Value::as_str) == Some(agent_id))
+    {
+        Some(a) => a,
+        None => return Ok(None),
+    };
+    let mut cur: &Value = agent;
+    for segment in dotted.split('.') {
+        match cur.get(segment) {
+            Some(next) => cur = next,
+            None => return Ok(None),
+        }
+    }
+    Ok(Some(cur.clone()))
+}
+
+/// Upsert `value` at the dotted path inside the matching agent's
+/// mapping. Creates intermediate maps as needed; bails when the agent
+/// is absent.
+pub fn upsert_agent_field(
+    path: &Path,
+    agent_id: &str,
+    dotted: &str,
+    value: Value,
+) -> Result<()> {
+    let _guard = YAML_UPSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let mut root: Value =
+        serde_yaml::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
+
+    {
+        let agents = root
+            .get_mut("agents")
+            .and_then(Value::as_sequence_mut)
+            .ok_or_else(|| anyhow::anyhow!("`agents:` sequence missing in {}", path.display()))?;
+        let target = agents
+            .iter_mut()
+            .find(|it| it.get("id").and_then(Value::as_str) == Some(agent_id))
+            .ok_or_else(|| anyhow::anyhow!("agent `{agent_id}` not found in {}", path.display()))?;
+        let parts: Vec<&str> = dotted.split('.').collect();
+        if parts.is_empty() {
+            anyhow::bail!("empty dotted path");
+        }
+        set_path(target, &parts, value)?;
+    }
+
+    write_atomic(path, &root)
+}
+
+/// Remove the dotted path inside the matching agent. No-op when the
+/// path is already absent. Bails when the agent itself doesn't exist.
+pub fn remove_agent_field(
+    path: &Path,
+    agent_id: &str,
+    dotted: &str,
+) -> Result<()> {
+    let _guard = YAML_UPSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let mut root: Value =
+        serde_yaml::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
+
+    {
+        let agents = root
+            .get_mut("agents")
+            .and_then(Value::as_sequence_mut)
+            .ok_or_else(|| anyhow::anyhow!("`agents:` sequence missing in {}", path.display()))?;
+        let target = agents
+            .iter_mut()
+            .find(|it| it.get("id").and_then(Value::as_str) == Some(agent_id))
+            .ok_or_else(|| anyhow::anyhow!("agent `{agent_id}` not found in {}", path.display()))?;
+        let parts: Vec<&str> = dotted.split('.').collect();
+        if parts.is_empty() {
+            anyhow::bail!("empty dotted path");
+        }
+        remove_path(target, &parts);
+    }
+
+    write_atomic(path, &root)
+}
+
+/// Append `item` to the sequence at `dotted` inside the matching
+/// agent. Creates the sequence if absent. Idempotent: a no-op when an
+/// equal item is already present.
+pub fn append_agent_list_item(
+    path: &Path,
+    agent_id: &str,
+    dotted: &str,
+    item: Value,
+) -> Result<()> {
+    let _guard = YAML_UPSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let mut root: Value =
+        serde_yaml::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
+
+    {
+        let agents = root
+            .get_mut("agents")
+            .and_then(Value::as_sequence_mut)
+            .ok_or_else(|| anyhow::anyhow!("`agents:` sequence missing in {}", path.display()))?;
+        let target = agents
+            .iter_mut()
+            .find(|it| it.get("id").and_then(Value::as_str) == Some(agent_id))
+            .ok_or_else(|| anyhow::anyhow!("agent `{agent_id}` not found in {}", path.display()))?;
+        let parts: Vec<&str> = dotted.split('.').collect();
+        if parts.is_empty() {
+            anyhow::bail!("empty dotted path");
+        }
+        let seq_value = ensure_sequence_at(target, &parts)?;
+        let seq = seq_value
+            .as_sequence_mut()
+            .ok_or_else(|| anyhow::anyhow!("`{dotted}` is not a sequence"))?;
+        if !seq.iter().any(|v| v == &item) {
+            seq.push(item);
+        }
+    }
+
+    write_atomic(path, &root)
+}
+
+/// Remove every item from the sequence at `dotted` matching
+/// `predicate`. No-op when the path or sequence is absent.
+pub fn remove_agent_list_item(
+    path: &Path,
+    agent_id: &str,
+    dotted: &str,
+    predicate: &dyn Fn(&Value) -> bool,
+) -> Result<()> {
+    let _guard = YAML_UPSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let mut root: Value =
+        serde_yaml::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
+
+    {
+        let agents = root
+            .get_mut("agents")
+            .and_then(Value::as_sequence_mut)
+            .ok_or_else(|| anyhow::anyhow!("`agents:` sequence missing in {}", path.display()))?;
+        let target = agents
+            .iter_mut()
+            .find(|it| it.get("id").and_then(Value::as_str) == Some(agent_id))
+            .ok_or_else(|| anyhow::anyhow!("agent `{agent_id}` not found in {}", path.display()))?;
+        let parts: Vec<&str> = dotted.split('.').collect();
+        if parts.is_empty() {
+            anyhow::bail!("empty dotted path");
+        }
+        // Walk to the parent of the leaf; missing intermediates → no-op.
+        let mut cur: &mut Value = target;
+        for part in &parts {
+            let next = match cur.as_mapping_mut() {
+                Some(m) => m.get_mut(Value::String((*part).to_string())),
+                None => None,
+            };
+            cur = match next {
+                Some(v) => v,
+                None => return write_atomic(path, &root),
+            };
+        }
+        if let Some(seq) = cur.as_sequence_mut() {
+            seq.retain(|v| !predicate(v));
+        }
+    }
+
+    write_atomic(path, &root)
+}
+
+/// Walk into `root` along `parts`, materialising mappings as needed,
+/// and return a `&mut Value` guaranteed to be a sequence at the leaf.
+fn ensure_sequence_at<'a>(root: &'a mut Value, parts: &[&str]) -> Result<&'a mut Value> {
+    let mut cur: &mut Value = root;
+    for (idx, part) in parts.iter().enumerate() {
+        let map = cur
+            .as_mapping_mut()
+            .ok_or_else(|| anyhow::anyhow!("`{part}` parent is not a mapping"))?;
+        let key = Value::String((*part).to_string());
+        if !map.contains_key(&key) {
+            // Last segment defaults to a sequence; intermediates to maps.
+            let placeholder = if idx == parts.len() - 1 {
+                Value::Sequence(Vec::new())
+            } else {
+                Value::Mapping(Mapping::new())
+            };
+            map.insert(key.clone(), placeholder);
+        }
+        cur = map
+            .get_mut(&key)
+            .ok_or_else(|| anyhow::anyhow!("failed to descend into `{part}`"))?;
+        if idx == parts.len() - 1 && !matches!(cur, Value::Sequence(_)) {
+            *cur = Value::Sequence(Vec::new());
+        }
+    }
+    Ok(cur)
+}
+
+/// Walk along `parts` and delete the leaf key from its parent
+/// mapping. No-op when any segment is absent.
+fn remove_path(root: &mut Value, parts: &[&str]) {
+    if parts.is_empty() {
+        return;
+    }
+    let (last, head) = parts.split_last().expect("non-empty");
+    let mut cur: &mut Value = root;
+    for part in head {
+        let next = match cur.as_mapping_mut() {
+            Some(m) => m.get_mut(Value::String((*part).to_string())),
+            None => None,
+        };
+        cur = match next {
+            Some(v) => v,
+            None => return,
+        };
+    }
+    if let Some(map) = cur.as_mapping_mut() {
+        map.remove(Value::String((*last).to_string()));
+    }
+}
+
+/// Atomic-write helper shared by the agent-aware mutators.
+fn write_atomic(path: &Path, root: &Value) -> Result<()> {
+    let parent = path.parent().unwrap_or(Path::new("."));
+    fs::create_dir_all(parent).ok();
+    let tmp = tempfile::NamedTempFile::new_in(parent)
+        .with_context(|| format!("tempfile in {}", parent.display()))?;
+    {
+        let mut f = tmp.reopen()?;
+        let text = serde_yaml::to_string(root)?;
+        f.write_all(text.as_bytes())?;
+        f.flush()?;
+        f.sync_all().ok();
+    }
+    tmp.persist(path)
+        .map_err(|e| anyhow::anyhow!("persist yaml {}: {e}", path.display()))?;
+    Ok(())
+}
+
 // Historical test module — additional helpers are intentionally
 // defined below. Moving this to the end of the file would churn diffs
 // across every future helper added to the Phase 17 section.
@@ -666,6 +931,109 @@ mod tests {
         let v: Value = serde_yaml::from_str(&fs::read_to_string(&file).unwrap()).unwrap();
         assert!(v["allow"].as_sequence().unwrap().is_empty());
     }
+
+    fn write_sample_agents(path: &Path) {
+        fs::write(
+            path,
+            r#"agents:
+- id: kate
+  model:
+    provider: anthropic
+    model: claude-haiku-4-5
+  plugins:
+  - telegram
+  skills:
+  - weather
+- id: ana
+  model:
+    provider: openai
+    model: gpt-4o
+  plugins: []
+"#,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn read_agent_field_returns_existing_string() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("agents.yaml");
+        write_sample_agents(&file);
+        let v = read_agent_field(&file, "kate", "model.provider").unwrap();
+        assert_eq!(v.unwrap().as_str(), Some("anthropic"));
+    }
+
+    #[test]
+    fn read_agent_field_missing_path_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("agents.yaml");
+        write_sample_agents(&file);
+        assert!(read_agent_field(&file, "kate", "language").unwrap().is_none());
+        assert!(read_agent_field(&file, "ghost", "model.provider").unwrap().is_none());
+    }
+
+    #[test]
+    fn upsert_agent_field_creates_intermediate_maps() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("agents.yaml");
+        write_sample_agents(&file);
+        upsert_agent_field(&file, "ana", "language", Value::String("es".into())).unwrap();
+        let v = read_agent_field(&file, "ana", "language").unwrap().unwrap();
+        assert_eq!(v.as_str(), Some("es"));
+    }
+
+    #[test]
+    fn remove_agent_field_drops_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("agents.yaml");
+        write_sample_agents(&file);
+        upsert_agent_field(&file, "kate", "language", Value::String("es".into())).unwrap();
+        remove_agent_field(&file, "kate", "language").unwrap();
+        assert!(read_agent_field(&file, "kate", "language").unwrap().is_none());
+    }
+
+    #[test]
+    fn append_agent_list_item_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("agents.yaml");
+        write_sample_agents(&file);
+        append_agent_list_item(
+            &file,
+            "kate",
+            "plugins",
+            Value::String("whatsapp".into()),
+        )
+        .unwrap();
+        // Second call is a no-op.
+        append_agent_list_item(
+            &file,
+            "kate",
+            "plugins",
+            Value::String("whatsapp".into()),
+        )
+        .unwrap();
+        let v = read_agent_field(&file, "kate", "plugins").unwrap().unwrap();
+        let seq = v.as_sequence().unwrap();
+        let count = seq
+            .iter()
+            .filter(|v| v.as_str() == Some("whatsapp"))
+            .count();
+        assert_eq!(count, 1);
+        assert_eq!(seq.len(), 2);
+    }
+
+    #[test]
+    fn remove_agent_list_item_by_predicate() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("agents.yaml");
+        write_sample_agents(&file);
+        remove_agent_list_item(&file, "kate", "plugins", &|v| {
+            v.as_str() == Some("telegram")
+        })
+        .unwrap();
+        let v = read_agent_field(&file, "kate", "plugins").unwrap().unwrap();
+        assert!(v.as_sequence().unwrap().is_empty());
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -680,12 +1048,17 @@ mod tests {
 /// `<config>/agents.yaml` first, then every `<config>/agents.d/*.yaml`.
 /// Returns `None` when the id is unknown.
 pub fn find_agent_file(config_dir: &Path, agent_id: &str) -> Result<Option<std::path::PathBuf>> {
+    // Use `agent_ids_in_one_file` here, NOT `list_agent_ids` — the
+    // latter merges agents.yaml + agents.d/, so it would lie about
+    // which physical file actually owns the id.
     let main = config_dir.join("agents.yaml");
-    if main.exists() {
-        let ids = list_agent_ids(&main).unwrap_or_default();
-        if ids.iter().any(|id| id == agent_id) {
-            return Ok(Some(main));
-        }
+    if main.exists()
+        && agent_ids_in_one_file(&main)
+            .unwrap_or_default()
+            .iter()
+            .any(|id| id == agent_id)
+    {
+        return Ok(Some(main));
     }
     let drop_dir = config_dir.join("agents.d");
     if !drop_dir.exists() {
@@ -693,10 +1066,11 @@ pub fn find_agent_file(config_dir: &Path, agent_id: &str) -> Result<Option<std::
     }
     for entry in fs::read_dir(&drop_dir)? {
         let path = entry?.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("yaml") {
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if !name.ends_with(".yaml") || name.ends_with(".example.yaml") {
             continue;
         }
-        if list_agent_ids(&path)
+        if agent_ids_in_one_file(&path)
             .unwrap_or_default()
             .iter()
             .any(|id| id == agent_id)
@@ -745,6 +1119,96 @@ pub fn patch_agent_credentials(
         Value::String(channel.to_string()),
         Value::String(instance.to_string()),
     );
+
+    let parent = file.parent().unwrap_or(Path::new("."));
+    let tmp = tempfile::NamedTempFile::new_in(parent)?;
+    {
+        let mut f = tmp.reopen()?;
+        f.write_all(serde_yaml::to_string(&root)?.as_bytes())?;
+        f.flush()?;
+        f.sync_all().ok();
+    }
+    tmp.persist(file)
+        .map_err(|e| anyhow::anyhow!("persist yaml {}: {e}", file.display()))?;
+    Ok(())
+}
+
+/// Ensure the agent's `inbound_bindings` includes a binding for
+/// `(plugin, instance)`. Idempotent: if a binding already exists for
+/// the pair (or for `(plugin, None)`) it is updated to point at
+/// `instance`; otherwise a new entry is appended. Required so the
+/// runtime's tightened topic-match rule (binding without `instance`
+/// only catches no-instance topics) actually delivers per-bot events
+/// to the right agent.
+pub fn upsert_agent_inbound_binding(
+    file: &Path,
+    agent_id: &str,
+    plugin: &str,
+    instance: &str,
+) -> Result<()> {
+    let _guard = YAML_UPSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let text = fs::read_to_string(file).with_context(|| format!("read {}", file.display()))?;
+    let mut root: Value =
+        serde_yaml::from_str(&text).with_context(|| format!("parse {}", file.display()))?;
+    let agents = root
+        .get_mut("agents")
+        .and_then(Value::as_sequence_mut)
+        .ok_or_else(|| anyhow::anyhow!("`agents:` sequence missing in {}", file.display()))?;
+    let target = agents
+        .iter_mut()
+        .find(|it| it.get("id").and_then(Value::as_str) == Some(agent_id))
+        .ok_or_else(|| anyhow::anyhow!("agent `{agent_id}` not found in {}", file.display()))?;
+    let map = target
+        .as_mapping_mut()
+        .ok_or_else(|| anyhow::anyhow!("agent `{agent_id}` is not a mapping"))?;
+    let bindings_key = Value::String("inbound_bindings".into());
+    let bindings = map
+        .entry(bindings_key)
+        .or_insert_with(|| Value::Sequence(Vec::new()));
+    let seq = bindings
+        .as_sequence_mut()
+        .ok_or_else(|| anyhow::anyhow!("`inbound_bindings` is not a list"))?;
+
+    // Pass 1: bindings already targeting the right (plugin, instance)
+    // are a no-op. Pass 2: a binding for the same plugin without an
+    // instance gets the instance attached (operator promoted single
+    // bot to multi-bot — preserve their other overrides).
+    let mut updated = false;
+    for entry in seq.iter_mut() {
+        let Some(m) = entry.as_mapping_mut() else {
+            continue;
+        };
+        if m.get(Value::String("plugin".into())).and_then(Value::as_str) != Some(plugin) {
+            continue;
+        }
+        match m
+            .get(Value::String("instance".into()))
+            .and_then(Value::as_str)
+        {
+            Some(existing) if existing == instance => return Ok(()),
+            None => {
+                m.insert(
+                    Value::String("instance".into()),
+                    Value::String(instance.to_string()),
+                );
+                updated = true;
+                break;
+            }
+            _ => continue,
+        }
+    }
+    if !updated {
+        let mut entry = Mapping::new();
+        entry.insert(
+            Value::String("plugin".into()),
+            Value::String(plugin.to_string()),
+        );
+        entry.insert(
+            Value::String("instance".into()),
+            Value::String(instance.to_string()),
+        );
+        seq.push(Value::Mapping(entry));
+    }
 
     let parent = file.parent().unwrap_or(Path::new("."));
     let tmp = tempfile::NamedTempFile::new_in(parent)?;
@@ -931,6 +1395,140 @@ pub fn telegram_upsert_instance(
     tmp.persist(file)
         .map_err(|e| anyhow::anyhow!("persist yaml {}: {e}", file.display()))?;
     Ok(())
+}
+
+/// Append a `chat_id` to the `allowlist.chat_ids` of the telegram
+/// instance bound to `agent_id` (i.e. the entry whose `allow_agents`
+/// contains it). Falls back to the only instance present when no
+/// `agent_id` is given and the file has a single entry. Returns the
+/// instance label that was patched, or an error explaining which
+/// disambiguation step the caller has to take.
+pub fn telegram_append_chat_id(
+    file: &Path,
+    agent_id: Option<&str>,
+    chat_id: i64,
+) -> Result<String> {
+    let _guard = YAML_UPSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    if !file.exists() {
+        anyhow::bail!(
+            "telegram.yaml not found at {} — corre `agent setup telegram` primero",
+            file.display()
+        );
+    }
+    let text = fs::read_to_string(file).with_context(|| format!("read {}", file.display()))?;
+    let mut root: Value = if text.trim().is_empty() {
+        Value::Mapping(Mapping::new())
+    } else {
+        serde_yaml::from_str(&text).with_context(|| format!("parse {}", file.display()))?
+    };
+
+    let map = root
+        .as_mapping_mut()
+        .ok_or_else(|| anyhow::anyhow!("telegram.yaml root is not a mapping"))?;
+    let seq = map
+        .get_mut(Value::String("telegram".into()))
+        .ok_or_else(|| anyhow::anyhow!("missing `telegram:` key in {}", file.display()))?
+        .as_sequence_mut()
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "`telegram` must be a list of instances in {} — fix manually",
+                file.display()
+            )
+        })?;
+
+    if seq.is_empty() {
+        anyhow::bail!("no telegram instances configured in {}", file.display());
+    }
+
+    let idx = match agent_id {
+        Some(agent) => {
+            let matches: Vec<usize> = seq
+                .iter()
+                .enumerate()
+                .filter_map(|(i, v)| {
+                    let allow = v.get("allow_agents")?.as_sequence()?;
+                    if allow.iter().any(|a| a.as_str() == Some(agent)) {
+                        Some(i)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            match matches.len() {
+                0 => anyhow::bail!(
+                    "no telegram instance lists `{agent}` in `allow_agents` — \
+                     edita {} y añade el agente a la instancia correcta",
+                    file.display()
+                ),
+                1 => matches[0],
+                _ => anyhow::bail!(
+                    "multiple telegram instances list `{agent}` in `allow_agents` — \
+                     ambiguous, edita {} manualmente",
+                    file.display()
+                ),
+            }
+        }
+        None => {
+            if seq.len() == 1 {
+                0
+            } else {
+                anyhow::bail!(
+                    "multiple telegram instances exist in {}; pasa el agente \
+                     (`agent setup telegram-link --agent <id>`) para escoger",
+                    file.display()
+                );
+            }
+        }
+    };
+
+    let entry = seq[idx]
+        .as_mapping_mut()
+        .ok_or_else(|| anyhow::anyhow!("telegram instance at index {idx} is not a mapping"))?;
+
+    let label = entry
+        .get(Value::String("instance".into()))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| "default".to_string());
+
+    let allowlist_key = Value::String("allowlist".into());
+    if !entry.contains_key(&allowlist_key) {
+        entry.insert(allowlist_key.clone(), Value::Mapping(Mapping::new()));
+    }
+    let allowlist = entry
+        .get_mut(&allowlist_key)
+        .and_then(Value::as_mapping_mut)
+        .ok_or_else(|| anyhow::anyhow!("`allowlist` in instance `{label}` is not a mapping"))?;
+
+    let chat_ids_key = Value::String("chat_ids".into());
+    if !allowlist.contains_key(&chat_ids_key) {
+        allowlist.insert(chat_ids_key.clone(), Value::Sequence(Vec::new()));
+    }
+    let chat_ids = allowlist
+        .get_mut(&chat_ids_key)
+        .and_then(Value::as_sequence_mut)
+        .ok_or_else(|| anyhow::anyhow!("`chat_ids` in instance `{label}` is not a list"))?;
+
+    let already_present = chat_ids
+        .iter()
+        .any(|v| v.as_i64() == Some(chat_id));
+    if !already_present {
+        chat_ids.push(Value::Number(chat_id.into()));
+    }
+
+    let parent = file.parent().unwrap_or(Path::new("."));
+    fs::create_dir_all(parent).ok();
+    let tmp = tempfile::NamedTempFile::new_in(parent)
+        .with_context(|| format!("tempfile in {}", parent.display()))?;
+    {
+        let mut f = tmp.reopen()?;
+        f.write_all(serde_yaml::to_string(&root)?.as_bytes())?;
+        f.flush()?;
+        f.sync_all().ok();
+    }
+    tmp.persist(file)
+        .map_err(|e| anyhow::anyhow!("persist yaml {}: {e}", file.display()))?;
+    Ok(label)
 }
 
 /// Upsert an account in `config/plugins/google-auth.yaml`.

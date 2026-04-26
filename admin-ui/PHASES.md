@@ -498,4 +498,5 @@ IOUs — features that landed in the daemon but have no UI yet.
   `cache_ttl_secs`, `deny_hosts`) with per-binding override.
   Phase A3 "Brain" tab needs a toggle + caps editor + denylist
   textarea, plus per-binding override row in the override matrix.
+- [ ] **Per-agent setup dashboard** — model attach/detach, language pick, channel bind/unbind, skill toggle in one screen per agent (CLI shipped in `nexo setup` → `Configurar agente`; admin UI needs the same single-pane editor under each agent's detail view).
 - [ ] (add lines as features land — see auto-memory rule)
