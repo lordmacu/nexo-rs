@@ -54,7 +54,7 @@ RUN apt-get update \
         xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
-ARG TARGETARCH=amd64
+ARG TARGETARCH
 RUN wget -qO /usr/local/bin/cloudflared \
         "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${TARGETARCH}" \
     && chmod +x /usr/local/bin/cloudflared \
