@@ -9,7 +9,13 @@
 //!   (67.E.x onwards) — the rest of the multi-agent surface.
 
 pub mod policy_gate;
+pub mod program_phase;
 pub mod tool_names;
+
+pub use program_phase::{
+    program_phase_dispatch, BudgetOverride, ProgramPhaseError, ProgramPhaseInput,
+    ProgramPhaseOutput,
+};
 
 pub use policy_gate::{DispatchDenied, DispatchGate, DispatchRequest};
 pub use tool_names::{
