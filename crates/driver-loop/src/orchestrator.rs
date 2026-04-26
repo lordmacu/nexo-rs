@@ -72,6 +72,12 @@ pub struct DriverOrchestrator {
     /// `update_budget` actually changes the cap (not just the
     /// snapshot). Currently only `max_turns` is grow-only mutable.
     budget_overrides: Arc<DashMap<GoalId, BudgetGuards>>,
+    /// Operator-side messages queued for injection into the next
+    /// turn's prompt. The agent-side `interrupt_agent` tool fills
+    /// this; the loop drains it at the top of every iteration so
+    /// Claude sees the operator's note in its next turn input.
+    /// FIFO so multiple rapid interrupts arrive in order.
+    pending_interrupts: Arc<DashMap<GoalId, std::collections::VecDeque<String>>>,
     bin_path: PathBuf,
     socket_path: PathBuf,
     /// Owns the spawned socket server; cancelling kills it.
@@ -203,6 +209,7 @@ impl DriverOrchestratorBuilder {
             pause_signals: Arc::new(DashMap::new()),
             cancel_tokens: Arc::new(DashMap::new()),
             budget_overrides: Arc::new(DashMap::new()),
+            pending_interrupts: Arc::new(DashMap::new()),
             bin_path,
             socket_path,
             _socket_handle: socket_handle,
@@ -270,6 +277,32 @@ impl DriverOrchestrator {
             entry.value_mut().max_turns = new_max;
         }
         Some(entry.value().max_turns)
+    }
+
+    /// Operator-interrupt — push a free-form message that the
+    /// next turn's prompt will see prepended as a "[OPERATOR
+    /// INTERRUPT]" block. Use this when you want to redirect
+    /// Claude mid-run without cancelling the goal. Multiple
+    /// queued interrupts are concatenated in FIFO order.
+    /// Returns the queue depth after the push.
+    pub fn interrupt_goal(&self, goal_id: GoalId, message: impl Into<String>) -> usize {
+        let mut entry = self
+            .pending_interrupts
+            .entry(goal_id)
+            .or_insert_with(std::collections::VecDeque::new);
+        entry.value_mut().push_back(message.into());
+        entry.value().len()
+    }
+
+    /// Drain queued operator interrupts. The run loop calls this
+    /// at the top of every iteration so the next `AttemptParams`
+    /// extras carry an `operator_messages` array Claude sees in
+    /// its prompt.
+    pub(crate) fn drain_interrupts(&self, goal_id: GoalId) -> Vec<String> {
+        self.pending_interrupts
+            .get_mut(&goal_id)
+            .map(|mut e| e.value_mut().drain(..).collect::<Vec<_>>())
+            .unwrap_or_default()
     }
 
     /// B11 — pre-register the per-goal cancel + pause tokens for a
@@ -427,9 +460,27 @@ impl DriverOrchestrator {
                 .await;
 
             let cancel = goal_cancel.clone();
-            let extras = next_extras
+            let mut extras = next_extras
                 .take()
                 .unwrap_or_else(|| build_attempt_extras(&prior_failures, &goal.budget, total_turns));
+            // Operator-interrupt drain — the agent-side
+            // `interrupt_agent` tool queues messages here; we
+            // surface them to the turn under
+            // `operator_messages` so attempt.rs can prepend them
+            // to the Claude prompt as an `[OPERATOR INTERRUPT]`
+            // block.
+            let pending = self.drain_interrupts(goal_id);
+            if !pending.is_empty() {
+                extras.insert(
+                    "operator_messages".into(),
+                    serde_json::Value::Array(
+                        pending
+                            .into_iter()
+                            .map(serde_json::Value::String)
+                            .collect(),
+                    ),
+                );
+            }
             let params = AttemptParams {
                 goal: goal.clone(),
                 turn_index: total_turns,

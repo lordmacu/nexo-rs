@@ -47,6 +47,7 @@ nexo-dispatch-tools = { version = "0.1.1", path = "../dispatch-tools" }
 nexo-agent-registry = { version = "0.1.1", path = "../agent-registry" }
 nexo-driver-claude  = { version = "0.1.1", path = "../driver-claude" }
 nexo-driver-loop    = { version = "0.1.1", path = "../driver-loop" }
+nexo-driver-types   = { version = "0.1.1", path = "../driver-types" }
 nexo-project-tracker = { version = "0.1.1", path = "../project-tracker" }
 futures         = { workspace = true }
 arc-swap        = { workspace = true }

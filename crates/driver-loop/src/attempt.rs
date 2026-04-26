@@ -59,7 +59,25 @@ pub(crate) async fn run_attempt(
             .unwrap_or("continue working");
         format!("/compact {focus}")
     } else {
-        params.goal.description.clone()
+        // Operator-interrupt — prepend any queued messages from
+        // the agent side as a clearly-marked block so Claude
+        // sees them as a high-priority directive on top of the
+        // goal description.
+        let mut p = String::new();
+        if let Some(serde_json::Value::Array(msgs)) = params.extras.get("operator_messages") {
+            if !msgs.is_empty() {
+                p.push_str("[OPERATOR INTERRUPT]\n");
+                for m in msgs {
+                    if let Some(s) = m.as_str() {
+                        p.push_str(s);
+                        p.push('\n');
+                    }
+                }
+                p.push_str("[END OPERATOR INTERRUPT]\n\n");
+            }
+        }
+        p.push_str(&params.goal.description);
+        p
     };
     let mut cmd = ClaudeCommand::new(binary, prompt)
         .apply_defaults(&ctx.claude_cfg.default_args)
