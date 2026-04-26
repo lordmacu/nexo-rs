@@ -18,3 +18,8 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
+criterion = { version = "0.5", features = ["async_tokio"] }
+
+[[bench]]
+name = "circuit_breaker"
+harness = false

@@ -1179,7 +1179,48 @@ Each of these is bounded but bigger than a one-line fix.
 Roll them up into a single hardening sprint when the next
 audit is run.
 
-### Phase 35 — Performance + benchmarks
+### Phase 35 — Performance + benchmarks   🔄
+
+Bench scaffolding shipped on `nexo-resilience`. Other hot-path
+crates + load-test rig + memory profiling deferred.
+
+Shipped (35.1):
+- `crates/resilience/benches/circuit_breaker.rs` — criterion 0.5
+  benchmark suite covering the breaker hot paths:
+  - `allow` against a closed breaker (closed-state allow is the
+    most common call by orders of magnitude)
+  - `allow` against an open breaker (validates the early-exit
+    path stays cheap)
+  - `on_success` and `on_failure` transitions
+  - 8-task concurrent `allow` hammering for contention sniffing
+  Run with `cargo bench -p nexo-resilience`; output lands in
+  `target/criterion/`. Future regressions in any of those four
+  paths surface immediately.
+- `crates/resilience/Cargo.toml` adds `criterion = "0.5"` as
+  dev-dep + `[[bench]] name = "circuit_breaker"` registration.
+
+Deferred:
+- **35.2** Hot-path benches for the rest of the workspace:
+  broker publish/subscribe, LLM stream parser, TaskFlow tick,
+  transcripts FTS search, redaction pipeline.
+- **35.3** End-to-end load-test rig that spawns N inbound
+  messages over the local broker and measures tail latency at
+  varying agent counts.
+- **35.4** Memory profiling via `dhat` snapshots at idle vs
+  load, documented RSS at 1 / 10 / 100 sessions.
+- **35.5** Comparison table vs OpenClaw on equivalent workloads
+  (same prompt, same provider) for the "we're not just claiming
+  faster" piece.
+- **35.6** CI gate that fails a PR on >10% regression in any
+  benched path, using `criterion-compare-action`.
+- **35.7** PGO (`-Cprofile-use`) for release binary — gated on
+  having a measured baseline first (35.1-35.5).
+
+Done when (revised): `cargo bench -p nexo-resilience` produces
+deterministic numbers in CI AND a comparable suite covers the
+workspace's other hot paths AND the README claim "Rust faster"
+points at a real number table. Scaffolding done; substance
+follows when 35.2-35.5 land.
 
 Today the README claims "Rust faster" without numbers. To either
 back it up or find regressions:
