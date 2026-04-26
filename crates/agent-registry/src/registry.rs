@@ -65,6 +65,12 @@ struct HandleMeta {
 pub struct AgentRegistry {
     inner: DashMap<GoalId, RegistryEntry>,
     queue: Mutex<VecDeque<GoalId>>,
+    /// Phase 67-PT-5: serialises the read-then-write decision in
+    /// `admit` so two concurrent dispatchers cannot each observe
+    /// `count_running < cap` and both end up Admitted (overshoot
+    /// of N = number of in-flight admits). Reads are still
+    /// lock-free; only the admission path takes this lock.
+    admit_lock: tokio::sync::Mutex<()>,
     /// Wrapped in `RwLock` so the admin tool `set_concurrency_cap`
     /// can mutate it without rebuilding the registry. Reads are
     /// hot-path (`admit`, `count_running`) so `RwLock` over `Mutex`
@@ -78,6 +84,7 @@ impl AgentRegistry {
         Self {
             inner: DashMap::new(),
             queue: Mutex::new(VecDeque::new()),
+            admit_lock: tokio::sync::Mutex::new(()),
             cap: parking_lot::RwLock::new(cap),
             store,
         }
@@ -145,6 +152,9 @@ impl AgentRegistry {
         handle: AgentHandle,
         enqueue: bool,
     ) -> Result<AdmitOutcome, RegistryError> {
+        // PT-5: serialise the read-then-write so concurrent
+        // dispatches cannot both observe count < cap.
+        let _guard = self.admit_lock.lock().await;
         let goal_id = handle.goal_id;
         let running = self.count_running();
 

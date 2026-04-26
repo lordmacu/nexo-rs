@@ -1,6 +1,7 @@
 //! Thin client for the Telegram Bot HTTP API.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::StreamExt;
@@ -77,6 +78,11 @@ impl MediaSource {
 /// stay empty of secrets in Debug formatters. `Debug` is manually
 /// implemented to redact it — accidental `{:?}` logs still leak the
 /// URL shape but never the token.
+///
+/// `circuit` wraps every outbound HTTP call to the Telegram API.
+/// One breaker per `BotClient` instance — when a deployment runs
+/// multiple bots (multi-tenant), each gets its own breaker so a
+/// single bad token doesn't cascade across tenants. FOLLOWUPS H-1.
 #[derive(Clone)]
 pub struct BotClient {
     http: Client,
@@ -85,6 +91,11 @@ pub struct BotClient {
     host_root: String,
     /// The token itself. Never included in `Debug` or error messages.
     token: String,
+    /// CircuitBreaker shared across every API call this client makes.
+    /// Trips after `failure_threshold` consecutive failures (defaults
+    /// to 3 per `CircuitBreakerConfig::default()`); reopens after
+    /// `success_threshold` consecutive successes.
+    circuit: Arc<nexo_resilience::CircuitBreaker>,
 }
 
 impl std::fmt::Debug for BotClient {
@@ -92,6 +103,7 @@ impl std::fmt::Debug for BotClient {
         f.debug_struct("BotClient")
             .field("host_root", &self.host_root)
             .field("token", &"<redacted>")
+            .field("circuit", &self.circuit.name())
             .finish()
     }
 }
@@ -113,10 +125,18 @@ impl BotClient {
             .timeout(Duration::from_secs(90))
             .build()
             .expect("reqwest client build");
+        // Breaker name carries the redacted host (never the token) so
+        // `nexo_resilience` log lines stay safe to scrape.
+        let breaker_name = format!("telegram.{}", redact_host(&host_root));
+        let circuit = Arc::new(nexo_resilience::CircuitBreaker::new(
+            breaker_name,
+            nexo_resilience::CircuitBreakerConfig::default(),
+        ));
         Self {
             http,
             host_root,
             token: token.to_string(),
+            circuit,
         }
     }
 
@@ -499,12 +519,17 @@ impl BotClient {
                     form = form.text(k.to_string(), v.to_string());
                 }
                 let url = format!("{}/{endpoint}", self.api_base());
-                let resp = self.http.post(url).multipart(form).send().await?;
-                let status = resp.status();
-                let text = resp.text().await?;
-                if !status.is_success() {
-                    anyhow::bail!("{endpoint} HTTP {status}: {text}");
-                }
+                let text = self
+                    .run_breakered(|| async {
+                        let resp = self.http.post(url).multipart(form).send().await?;
+                        let status = resp.status();
+                        let text = resp.text().await?;
+                        if !status.is_success() {
+                            anyhow::bail!("{endpoint} HTTP {status}: {text}");
+                        }
+                        Ok::<String, anyhow::Error>(text)
+                    })
+                    .await?;
                 let parsed: ApiEnvelope<SendMessageResponse> = serde_json::from_str(&text)
                     .map_err(|e| anyhow::anyhow!("parse {endpoint}: {e}: {text}"))?;
                 parsed.unwrap(endpoint)
@@ -523,22 +548,26 @@ impl BotClient {
             tokio::fs::create_dir_all(parent).await.ok();
         }
         let url = format!("{}/{file_path}", self.file_base());
-        let resp = self.http.get(url).send().await?;
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            anyhow::bail!("download HTTP {status}: {body}");
-        }
-        let mut file = tokio::fs::File::create(dest).await?;
-        let mut stream = resp.bytes_stream();
-        let mut total: u64 = 0;
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
-            file.write_all(&chunk).await?;
-            total += chunk.len() as u64;
-        }
-        file.flush().await?;
-        Ok(total)
+        let dest = dest.to_path_buf();
+        self.run_breakered(|| async move {
+            let resp = self.http.get(url).send().await?;
+            let status = resp.status();
+            if !status.is_success() {
+                let body = resp.text().await.unwrap_or_default();
+                anyhow::bail!("download HTTP {status}: {body}");
+            }
+            let mut file = tokio::fs::File::create(&dest).await?;
+            let mut stream = resp.bytes_stream();
+            let mut total: u64 = 0;
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk?;
+                file.write_all(&chunk).await?;
+                total += chunk.len() as u64;
+            }
+            file.flush().await?;
+            Ok::<u64, anyhow::Error>(total)
+        })
+        .await
     }
 
     async fn call_json<T: for<'de> Deserialize<'de>>(
@@ -547,16 +576,54 @@ impl BotClient {
         body: &serde_json::Value,
     ) -> anyhow::Result<T> {
         let url = format!("{}/{endpoint}", self.api_base());
-        let resp = self.http.post(url).json(body).send().await?;
-        let status = resp.status();
-        let text = resp.text().await?;
-        if !status.is_success() {
-            anyhow::bail!("{endpoint} HTTP {status}: {text}");
-        }
+        let text = self
+            .run_breakered(|| async {
+                let resp = self.http.post(url).json(body).send().await?;
+                let status = resp.status();
+                let text = resp.text().await?;
+                if !status.is_success() {
+                    anyhow::bail!("{endpoint} HTTP {status}: {text}");
+                }
+                Ok::<String, anyhow::Error>(text)
+            })
+            .await?;
         let parsed: ApiEnvelope<T> = serde_json::from_str(&text)
             .map_err(|e| anyhow::anyhow!("parse {endpoint}: {e}: {text}"))?;
         parsed.unwrap(endpoint)
     }
+
+    /// Wrap an HTTP-issuing async closure with the per-client
+    /// CircuitBreaker. `Open` short-circuits with a clear "breaker
+    /// open" error; transport / 4xx / 5xx errors flow through
+    /// unchanged but trip the failure counter so a sustained burst
+    /// opens the breaker and stops hammering Telegram.
+    /// FOLLOWUPS H-1.
+    async fn run_breakered<F, Fut, T>(&self, op: F) -> anyhow::Result<T>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = anyhow::Result<T>>,
+    {
+        match self.circuit.call(op).await {
+            Ok(v) => Ok(v),
+            Err(nexo_resilience::CircuitError::Open(name)) => {
+                anyhow::bail!("telegram circuit breaker open ({name})")
+            }
+            Err(nexo_resilience::CircuitError::Inner(e)) => Err(e),
+        }
+    }
+}
+
+/// Strip path from a hostname so a breaker name like
+/// `telegram.https://api.telegram.org` collapses to
+/// `telegram.api.telegram.org`. Never includes the bot token.
+fn redact_host(host_root: &str) -> String {
+    host_root
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .split('/')
+        .next()
+        .unwrap_or(host_root)
+        .to_string()
 }
 
 /// Length in UTF-16 code units (what Telegram actually measures against

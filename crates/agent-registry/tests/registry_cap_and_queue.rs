@@ -83,6 +83,33 @@ async fn release_with_non_terminal_status_errors() {
 }
 
 #[tokio::test]
+async fn concurrent_admits_do_not_overshoot_cap() {
+    // PT-5 — 10 concurrent admits with cap=3 must produce exactly
+    // 3 Admitted and 7 Queued. Without the admit_lock the sum of
+    // running could exceed the cap by N.
+    let store = Arc::new(MemoryAgentRegistryStore::default());
+    let reg = Arc::new(AgentRegistry::new(store, 3));
+    let mut tasks = Vec::new();
+    for i in 0..10 {
+        let r = reg.clone();
+        let h = handle(&format!("99.{i}"));
+        tasks.push(tokio::spawn(async move { r.admit(h, true).await.unwrap() }));
+    }
+    let mut admitted = 0;
+    let mut queued = 0;
+    for t in tasks {
+        match t.await.unwrap() {
+            AdmitOutcome::Admitted => admitted += 1,
+            AdmitOutcome::Queued { .. } => queued += 1,
+            AdmitOutcome::Rejected => panic!("rejected with enqueue=true"),
+        }
+    }
+    assert_eq!(admitted, 3, "exactly cap goals must run");
+    assert_eq!(queued, 7);
+    assert_eq!(reg.count_running(), 3);
+}
+
+#[tokio::test]
 async fn list_includes_running_and_terminal() {
     let store = Arc::new(MemoryAgentRegistryStore::default());
     let reg = AgentRegistry::new(store.clone(), 5);

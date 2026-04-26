@@ -86,6 +86,71 @@ async fn claim_persists_across_pool_reopen() {
 }
 
 #[tokio::test]
+async fn dispatcher_skips_second_firing_when_idempotency_wired() {
+    use std::sync::{Arc, Mutex};
+
+    use async_trait::async_trait;
+    use nexo_dispatch_tools::hooks::dispatcher::{NatsHookPublisher, NoopNatsHookPublisher};
+    use nexo_dispatch_tools::{
+        CompletionHook, DefaultHookDispatcher, HookAction, HookDispatcher, HookError, HookPayload,
+        HookTrigger,
+    };
+    use nexo_driver_claude::OriginChannel;
+    use nexo_pairing::{PairingAdapterRegistry, PairingChannelAdapter};
+
+    #[derive(Default)]
+    struct Counting {
+        sent: Mutex<u32>,
+    }
+    #[async_trait]
+    impl PairingChannelAdapter for Counting {
+        fn channel_id(&self) -> &'static str {
+            "telegram"
+        }
+        fn normalize_sender(&self, raw: &str) -> Option<String> {
+            Some(raw.to_string())
+        }
+        async fn send_reply(&self, _a: &str, _t: &str, _x: &str) -> anyhow::Result<()> {
+            *self.sent.lock().unwrap() += 1;
+            Ok(())
+        }
+    }
+
+    let pairing = PairingAdapterRegistry::new();
+    let cap = Arc::new(Counting::default());
+    pairing.register(cap.clone() as Arc<dyn PairingChannelAdapter>);
+
+    let store = Arc::new(HookIdempotencyStore::open_memory().await.unwrap());
+    let nats: Arc<dyn NatsHookPublisher> = Arc::new(NoopNatsHookPublisher);
+    let dispatcher = DefaultHookDispatcher::new(pairing, nats).with_idempotency(store);
+
+    let hook = CompletionHook {
+        id: "h1".into(),
+        on: HookTrigger::Done,
+        action: HookAction::NotifyOrigin,
+    };
+    let payload = HookPayload {
+        goal_id: GoalId(Uuid::new_v4()),
+        phase_id: "67.10".into(),
+        transition: HookTransition::Done,
+        summary: "ok".into(),
+        elapsed: "1m".into(),
+        diff_stat: None,
+        origin: Some(OriginChannel {
+            plugin: "telegram".into(),
+            instance: "x".into(),
+            sender_id: "@y".into(),
+            correlation_id: None,
+        }),
+    };
+
+    dispatcher.dispatch(&hook, &payload).await.unwrap();
+    let err = dispatcher.dispatch(&hook, &payload).await.unwrap_err();
+    assert_eq!(err, HookError::AlreadyDispatched);
+    assert_eq!(*cap.sent.lock().unwrap(), 1, "side effect ran exactly once");
+}
+
+#[tokio::test]
 async fn forget_goal_drops_every_slot() {
     let store = HookIdempotencyStore::open_memory().await.unwrap();
     let g = GoalId(Uuid::new_v4());

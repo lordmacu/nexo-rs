@@ -2427,6 +2427,7 @@ name = "nexo-dispatch-tools"
 version = "0.1.1"
 dependencies = [
  "anyhow",
+ "async-nats",
  "async-trait",
  "chrono",
  "dashmap",
@@ -2758,6 +2759,7 @@ dependencies = [
  "nexo-core",
  "nexo-llm",
  "nexo-pairing",
+ "nexo-resilience",
  "reqwest",
  "serde",
  "serde_json",
