@@ -1,0 +1,88 @@
+name: bench
+
+# Runs the criterion benchmark suites on every PR + scheduled weekly
+# main run. Output is uploaded as an artifact and (when the PR diffs
+# against main) compared to detect regressions > THRESHOLD.
+#
+# Today this job is *informational* — it does not fail the PR on a
+# regression. Once we have ~10 runs of baseline data per crate the
+# threshold gets enforced (Phase 35.6 done-criterion).
+#
+# Triggers:
+#   - pull_request that touches `crates/**` or `Cargo.lock`
+#   - workflow_dispatch (manual)
+#   - schedule weekly so we have continuous-integration baselines
+#     even when nobody opens a PR
+
+on:
+  pull_request:
+    paths:
+      - 'crates/**'
+      - 'Cargo.lock'
+      - 'Cargo.toml'
+      - '.github/workflows/bench.yml'
+  workflow_dispatch:
+  schedule:
+    # Sunday 04:00 UTC — quiet runner pool, fresh weekly baseline.
+    - cron: '0 4 * * 0'
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  bench:
+    name: bench (${{ matrix.crate }})
+    runs-on: ubuntu-latest
+    strategy:
+      # Don't cancel sibling crates if one regresses; we want all
+      # numbers in the artifact.
+      fail-fast: false
+      matrix:
+        crate:
+          - nexo-resilience
+          - nexo-broker
+          - nexo-llm
+          - nexo-taskflow
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: bench-${{ matrix.crate }}
+          # Bench artifacts go in target/criterion/; cache them so a
+          # weekly schedule run picks up the previous run's baseline
+          # instead of starting cold.
+          cache-targets: true
+
+      - name: Build benches
+        run: cargo bench -p ${{ matrix.crate }} --no-run
+
+      - name: Run benches
+        # `--save-baseline pr-${{ github.event.pull_request.number }}` saves
+        # under target/criterion/<group>/<bench>/pr-<n>/. PR runs
+        # produce a per-PR baseline; main runs produce `main`.
+        run: |
+          set -euo pipefail
+          BASELINE="${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'main' }}"
+          cargo bench -p ${{ matrix.crate }} -- --save-baseline "$BASELINE"
+
+      - name: Upload criterion output
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-${{ matrix.crate }}-${{ github.run_id }}
+          path: target/criterion/
+          retention-days: 30
+
+      # Future: compare PR baseline vs `main` baseline and post a
+      # comment on the PR with deltas. Wires up under 35.6 when a few
+      # baselines have been recorded so we know what `noise` looks
+      # like for each crate.
