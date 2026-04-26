@@ -1842,7 +1842,55 @@ Done when an inbound WhatsApp photo reaches the LLM and the
 agent's reply is grounded in the image content on at least
 two of (Anthropic, OpenAI, local Ollama).
 
-### Phase 50 — Privacy toolkit (GDPR-ish)
+### Phase 50 — Privacy toolkit (GDPR-ish)   🔄
+
+Shell-bridge + operator runbook shipped. Runtime subcommands +
+PII detection + sqlcipher encryption at rest deferred.
+
+Shipped (50.1):
+- `scripts/nexo-forget-user.sh` — cascading delete bridge.
+  Walks every SQLite DB under `NEXO_HOME` and drops rows matching
+  the target id across the canonical user-keyed columns
+  (`user_id`, `sender_id`, `account_id`, `contact_id`, `peer_id`).
+  Filters JSONL transcripts in place. Refuses to run if the
+  daemon is alive (SQLite WAL doesn't survive parallel writes).
+  Dry-run by default; `--apply` is the explicit go. `--keep-audit`
+  preserves the `admin_audit` row for operator audit chains
+  (the row is anonymised — user-id field hashed). Emits
+  `forget-user-<id>-<timestamp>.json` manifest with exact
+  deletion counts as the GDPR audit trail.
+- `docs/src/ops/privacy.md` (NEW) — operator runbook covering
+  right-to-be-forgotten via the script, manual data-export
+  pipeline (sqlite3 + jq + age-encrypt), recommended retention
+  policy table per surface (transcripts 90d, taskflow finished
+  30d, taskflow failed 365d, admin audit 365d, disk-queue 7d),
+  cron template `/etc/cron.daily/nexo-retention` for retention
+  enforcement, status table for the deferred runtime
+  subcommands.
+- `docs/src/SUMMARY.md` registers the new page.
+
+Deferred:
+- `nexo forget --user <id>` runtime subcommand with cascading
+  delete + manifest emission. Touches `src/main.rs`.
+- `nexo export-user --id <id>` runtime subcommand with built-in
+  age-encryption.
+- Inbound PII detection (regex pre-screen + optional Phase 68
+  local-LLM second pass) emitting `data/pii-flags.jsonl` for
+  operator review.
+- Separate admin-action audit log under `data/admin-audit.jsonl`
+  recording every YAML edit, agent CRUD, capability toggle
+  with operator id + before/after diff. (Distinct from the
+  per-deletion manifest the forget script emits.)
+- `sqlcipher` build of `libsqlite3-sys` for application-level
+  encryption at rest.
+- `dm-crypt` / LUKS recipe for filesystem-level encryption.
+
+The shell script + runbook are the operator bridge — they work
+today, GDPR-compliant audit trails included. When 50.2+
+subcommands ship, the runbook rewrites to point at them and the
+script retires.
+
+#### 50.0 — Original prose (deferred items, kept for context)
 
 - `agent forget --user <id>` cascading delete across
   transcripts, memory, taskflow rows, attachments, audit log.
