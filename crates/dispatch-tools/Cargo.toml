@@ -14,6 +14,8 @@ categories    = { workspace = true }
 
 [dependencies]
 async-trait        = { workspace = true }
+dashmap            = { workspace = true }
+parking_lot        = "0.12"
 sqlx               = { workspace = true }
 nexo-config        = { version = "0.1.1", path = "../config" }
 nexo-driver-types  = { version = "0.1.1", path = "../driver-types" }
@@ -24,6 +26,7 @@ nexo-project-tracker = { version = "0.1.1", path = "../project-tracker" }
 nexo-pairing        = { version = "0.1.2", path = "../pairing" }
 tokio               = { workspace = true, features = ["time", "process", "io-util"] }
 chrono              = { workspace = true }
+humantime           = { workspace = true }
 humantime-serde     = { workspace = true }
 uuid                = { workspace = true }
 serde              = { workspace = true }

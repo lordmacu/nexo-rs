@@ -9,6 +9,7 @@
 //!   (67.E.x onwards) — the rest of the multi-agent surface.
 
 pub mod agent_control;
+pub mod agent_query;
 pub mod chain;
 pub mod dispatch_followup;
 pub mod hooks;
@@ -20,6 +21,11 @@ pub use agent_control::{
     cancel_agent, pause_agent, resume_agent, update_budget, AgentControlError, CancelAgentInput,
     CancelAgentOutput, PauseAgentInput, PauseAgentOutput, UpdateBudgetInput, UpdateBudgetOutput,
 };
+pub use agent_query::{
+    agent_hooks_list, agent_logs_tail, agent_status, list_agents, AgentHooksListInput,
+    AgentLogsTailInput, AgentStatusInput, ListAgentsInput,
+};
+pub use hooks::HookRegistry;
 pub use chain::{
     program_phase_chain, program_phase_parallel, ProgramPhaseChainInput, ProgramPhaseChainOutput,
     ProgramPhaseParallelInput, ProgramPhaseParallelOutput,
