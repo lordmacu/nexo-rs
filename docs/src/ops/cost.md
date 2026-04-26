@@ -166,8 +166,8 @@ promtool query instant http://127.0.0.1:9090 \
 ```
 
 The full metric inventory lives in
-[Grafana dashboards → metric coverage](../ops/grafana/README.md#metric-coverage)
-(but in repo as `ops/grafana/README.md`).
+[Grafana dashboards → metric coverage](https://github.com/lordmacu/nexo-rs/blob/main/ops/grafana/README.md#metric-coverage)
+(in repo as `ops/grafana/README.md`).
 
 ## Status
 
