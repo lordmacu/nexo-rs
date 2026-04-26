@@ -44,7 +44,7 @@ use nexo_dispatch_tools::{
 use nexo_driver_claude::{ClaudeConfig, ClaudeDefaultArgs, MemoryBindingStore, OutputFormat};
 use nexo_driver_loop::{DriverOrchestrator, NoopEventSink, WorkspaceManager};
 use nexo_driver_permission::{AllowAllDecider, PermissionDecider};
-use nexo_project_tracker::FsProjectTracker;
+use nexo_project_tracker::{FsProjectTracker, MutableTracker};
 use serde_json::json;
 
 // ── Capturing telemetry ──────────────────────────────────────
@@ -153,8 +153,7 @@ async fn two_program_phase_calls_queue_two_goals_and_emit_two_spawned_events() {
     )
     .unwrap();
 
-    let tracker: Arc<dyn nexo_project_tracker::ProjectTracker> =
-        Arc::new(FsProjectTracker::open(dir.path()).unwrap());
+    let tracker: Arc<MutableTracker> = Arc::new(MutableTracker::open_fs(dir.path()).unwrap());
     let registry = Arc::new(AgentRegistry::new(
         Arc::new(MemoryAgentRegistryStore::default()),
         0, // forces queue → no real subprocess
@@ -218,8 +217,7 @@ async fn capability_none_emits_dispatch_denied_telemetry_no_registry_entry() {
     )
     .unwrap();
 
-    let tracker: Arc<dyn nexo_project_tracker::ProjectTracker> =
-        Arc::new(FsProjectTracker::open(dir.path()).unwrap());
+    let tracker: Arc<MutableTracker> = Arc::new(MutableTracker::open_fs(dir.path()).unwrap());
     let registry = Arc::new(AgentRegistry::new(
         Arc::new(MemoryAgentRegistryStore::default()),
         4,

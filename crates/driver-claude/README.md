@@ -1,11 +1,19 @@
 # nexo-driver-claude
 
-Spawn the `claude` CLI under `nexo-rs`, consume its `stream-json`
-output as typed events, and keep session ids around across turns so
-`--resume <id>` works.
+> Phase 67.1 — spawn the `claude` CLI under `nexo-rs`, consume its `stream-json` output as typed events, and keep session ids around across turns so `--resume <id>` works. The substrate the self-driving agent loop (Phase 67.4) sits on top of.
 
-This is Phase 67.1 of the agent framework — the substrate the
-self-driving agent loop (Phase 67.4) sits on top of.
+This crate is part of **[Nexo](https://github.com/lordmacu/nexo-rs)** — a multi-agent Rust framework with a NATS event bus, pluggable LLM providers (MiniMax, Anthropic, OpenAI-compat, Gemini, DeepSeek), per-agent credentials, MCP support, and channel plugins for WhatsApp, Telegram, Email, and Browser (CDP).
+
+- **Main repo:** <https://github.com/lordmacu/nexo-rs>
+- **Runtime engine:** [`nexo-core`](https://github.com/lordmacu/nexo-rs/tree/main/crates/core)
+- **Public docs:** <https://lordmacu.github.io/nexo-rs/>
+
+## Status
+
+**Internal crate — not published to crates.io.** Marked
+`publish = false, release = false` in `release-plz.toml`. Lives
+inside the workspace as the Claude-specific harness layer of the
+Phase 67 driver subsystem.
 
 ## Layering
 
