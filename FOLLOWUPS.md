@@ -75,17 +75,30 @@ L-1. ~~**Telemetry counters for link fetches**~~  ✅ shipped
   when an HTTP request actually went out (cache hits and host-blocked
   URLs skip it to keep latency stats honest).
 
-L-2. **`readability`-style extraction**
-- Missing: the current extractor strips `<script>`/`<style>` and
-  collapses whitespace, but it doesn't pick the main article block
-  on noisy pages (sidebars, nav, footer all leak through). A real
-  readability heuristic (or the `scraper` crate + DOM walk) would
-  produce cleaner summaries.
-- Why deferred: comment in `link_understanding.rs:17-20` flags this
-  as a known compromise; naïve extraction is enough to validate the
-  block-rendering pipeline end-to-end.
-- Target: when an operator complains about noisy `# LINK CONTEXT`
-  blocks polluting the prompt.
+L-2. ~~**`readability`-style extraction**~~  ✅ shipped 2026-04-26
+- `extract_main_text` now drops the universal boilerplate tag set:
+  on top of the original `<script>` / `<style>` / `<noscript>` /
+  `<head>`, it also nukes `<nav>`, `<header>`, `<footer>`,
+  `<aside>`, `<form>`, `<button>`, `<menu>`, `<iframe>`, `<svg>`,
+  `<dialog>`, `<template>`. That alone covers the majority of
+  noisy-page article extraction wins.
+- New `strip_blocks_by_class_keyword` pass handles sites that
+  render boilerplate inside `<div>`s instead of semantic tags:
+  drops any element whose `class` / `id` / `role` attribute
+  contains `sidebar`, `comment`, `advert`, `share`, `social`,
+  `cookie`, `popup`, `newsletter`, `related-article`,
+  `related-posts`, `navigation`, `breadcrumb`, `promo`,
+  `subscribe`. Tag-agnostic — same logic catches
+  `<div class="sidebar">` and `<aside class="sidebar">`.
+- 5 new tests cover semantic-boilerplate strip, class-marked
+  sidebars, role="navigation" attribute matching, negative
+  control (innocent class names like `content` /
+  `article-body` / `byline` survive), and form/button clutter
+  removal. Runs alongside the existing 13 tests in
+  `link_understanding::tests`.
+- No new crate dependency; pure-Rust implementation. Real DOM-walk
+  readability via the `scraper` crate is the next-step upgrade
+  if a specific site shape still leaks.
 
 ### Phase 25 — Web search
 
@@ -222,6 +235,97 @@ PR-6. **`nexo-tunnel` URL accessor + `nexo-config::pairing.yaml` loader**
   adds a config surface with no current customer ask.
 - Target: when an operator needs to override the path (for
   containerised deployments mounting `/var/lib/nexo/pairing/...`).
+
+### Phase 67.A–H — Project tracker + multi-agent dispatch
+
+PT-1. **`ToolHandler` adapter for dispatch tools not yet
+registered**
+- Missing: each `program_phase_dispatch`, `dispatch_followup`,
+  `cancel_agent`, etc. is a plain async function. The runtime
+  needs a `nexo_core::ToolHandler` adapter that builds the
+  context (resolved DispatchPolicy, sender_trusted, dispatcher
+  identity) per-binding and forwards to the function.
+- Why deferred: the adapter touches the runtime intake hot
+  path (`crates/core/src/agent/runtime.rs`) and the per-binding
+  cache; landing it in 67.E.1 would have stretched the step.
+  Functions are decoupled and tested directly; the adapter
+  step is a wiring exercise behind the binding refactor.
+- Target: 67.H.x adapter step alongside the binary refactor that
+  folds `nexo-driver-tools` into `nexo-driver`.
+
+PT-2. **Runtime intake migration to `get_or_build_with_dispatch`**
+- Missing: existing call sites use the old
+  `get_or_build(allowed_tools)` API; the new dispatch-aware
+  variant is callable but unused.
+- Why deferred: switching call sites needs the dispatcher /
+  is_admin context plumbed through binding resolution. PT-1
+  unblocks this — both land together.
+- Target: same as PT-1.
+
+PT-3. **`DispatchTelemetry` not wired into `program_phase` /
+hook dispatcher / registry**
+- Missing: the trait + payloads + canonical subjects ship in
+  Phase 67.H.2 but every call site uses `NoopTelemetry` today.
+  No `agent.dispatch.*` / `agent.tool.hook.*` /
+  `agent.registry.snapshot.*` traffic is emitted yet.
+- Why deferred: emission needs an instance threaded through
+  the call sites, which in turn depends on PT-1's adapter
+  layer. Pure plumbing — no decision left.
+- Target: alongside PT-1 / PT-2.
+
+PT-4. **`HookIdempotencyStore` not consumed by
+`DefaultHookDispatcher`**
+- Missing: the SQLite store ships in Phase 67.F.3 but the hook
+  dispatcher does not yet wrap firings in
+  `try_claim` → side effect → ok. Without it, an at-least-once
+  NATS replay or a daemon restart between "decide hook fires"
+  and "side effect committed" can fire a hook twice.
+- Why deferred: the wrap needs the dispatcher to take a store
+  reference and decide pre- vs post-side-effect claim per
+  action kind. Out of scope for the F.3 step (which only
+  shipped the persistence primitive).
+- Target: hardening pass post-PT-1.
+
+PT-5. **Single-flight cap-counting race in `AgentRegistry::admit`**
+- Missing: `admit` reads `count_running()` then writes; under
+  concurrent dispatch the cap can be overshot by N where N =
+  number of in-flight admits.
+- Why deferred: low-impact in practice (cap is a soft hint and
+  the orchestrator's per-goal worktree contention surfaces the
+  real ceiling); a Mutex over the cap counter would serialise
+  every admit.
+- Target: when contention shows up in the multi-agent e2e
+  benchmark.
+
+PT-6. **`nexo-driver` and `nexo-driver-tools` are separate bins**
+- Missing: a single binary that exposes both `run` (Claude
+  subprocess driver) and `status / dispatch / agents`
+  (project-tracker CLI). Folding them needs to break the
+  current crate-graph cycle (driver-loop ↔ dispatch-tools).
+- Why deferred: cycle-breaking is a refactor (move the bin to
+  a new top-level crate that depends on both, or push the
+  dispatch surface into a feature flag of driver-loop).
+  Separate bins ship today.
+- Target: binary refactor pass.
+
+PT-7. **No NATS-backed `DispatchTelemetry` impl**
+- Missing: production `DispatchTelemetry` should publish to the
+  daemon's `async-nats` client. Currently only `NoopTelemetry`.
+- Why deferred: the impl is a thin adapter but lives next to
+  `NatsEventSink` in `nexo-driver-loop`, which adds a
+  reverse-dep on dispatch-tools. Same cycle-breaking refactor
+  as PT-6.
+- Target: alongside PT-6.
+
+PT-8. **Multi-agent end-to-end test not shipped**
+- Missing: a single integration test that wires
+  orchestrator + registry + dispatch-tools + a mock
+  pairing-adapter, dispatches two goals concurrently, and
+  asserts a `notify_origin` summary lands on the mock adapter
+  for each.
+- Why deferred: the test needs the adapter wiring (PT-1) so
+  the chat origin propagates into the hook payload.
+- Target: alongside PT-1 / PT-3 / PT-4.
 
 ## Resolved (recent highlights)
 

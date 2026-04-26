@@ -355,11 +355,40 @@ async fn read_capped(resp: reqwest::Response, cap: usize) -> Result<String, reqw
 /// works for ~80% of articles, fails gracefully on the rest. A
 /// future revision can replace this with a real readability pass.
 pub fn extract_main_text(html: &str, max_bytes: usize) -> String {
-    // Drop everything inside <script>, <style>, <noscript>, <head>.
-    let cleaned = strip_block(html, "script");
-    let cleaned = strip_block(&cleaned, "style");
-    let cleaned = strip_block(&cleaned, "noscript");
-    let cleaned = strip_block(&cleaned, "head");
+    // Drop content-irrelevant tags. The set covers the universal
+    // boilerplate (`<script>`, `<style>`, `<noscript>`, `<head>`)
+    // plus the structural-but-not-article tags that sites emit
+    // around the main content (`<nav>`, `<header>`, `<footer>`,
+    // `<aside>`, `<form>`, `<button>`, `<menu>`, `<iframe>`,
+    // `<svg>`, `<dialog>`, `<template>`). Dropping them shrinks the
+    // prompt budget and stops the agent from anchoring on cookie
+    // banners / share-buttons / nav menus.
+    //
+    // Phase 21 L-2 — moves the extractor from "naive HTML stripper"
+    // to "readability-shaped boilerplate dropper" without pulling
+    // in the `scraper` crate. Real DOM-walk readability is the
+    // next-step upgrade if this still leaves noise on a specific
+    // site shape.
+    let mut cleaned = String::from(html);
+    for tag in [
+        "script", "style", "noscript", "head",
+        "nav", "header", "footer", "aside",
+        "form", "button", "menu",
+        "iframe", "svg",
+        "dialog", "template",
+    ] {
+        cleaned = strip_block(&cleaned, tag);
+    }
+    // Class-based dropper: nuke `<div class="sidebar | comments |
+    // advert | ad | share | social | cookie | popup | newsletter |
+    // related-articles">` etc. Catches sites that put boilerplate
+    // in `<div>`s instead of semantic tags.
+    let cleaned = strip_blocks_by_class_keyword(&cleaned, &[
+        "sidebar", "side-bar", "comment", "advert", "advertisement",
+        "share", "social", "cookie", "popup", "newsletter",
+        "related-article", "related-posts",
+        "navigation", "breadcrumb", "promo", "subscribe",
+    ]);
 
     // Replace common block-level tags with newlines so paragraph
     // breaks survive the tag strip.
@@ -453,6 +482,124 @@ fn extract_title(html: &str) -> Option<String> {
     } else {
         Some(trimmed.chars().take(160).collect())
     }
+}
+
+/// Drops every `<TAG class="…X…">…</TAG>` whose `class`, `id`,
+/// or `role` attribute contains any of the supplied keywords
+/// (case-insensitive). Walks until end-of-document; nested
+/// elements with non-matching classes that sit inside a stripped
+/// block are dropped along with the parent.
+///
+/// Tag-agnostic by design — sites use both `<div class="sidebar">`
+/// and `<aside class="sidebar">`. The earlier tag-name strip
+/// handles semantic tags; this catches the `<div>`s that should
+/// have been semantic but aren't.
+///
+/// Phase 21 L-2.
+fn strip_blocks_by_class_keyword(html: &str, keywords: &[&str]) -> String {
+    let lower = html.to_ascii_lowercase();
+    let mut out = String::with_capacity(html.len());
+    let mut cursor = 0usize;
+
+    while cursor < html.len() {
+        // Find the next opening tag with a `class` / `id` / `role`
+        // attribute matching one of our keywords.
+        let Some(open_rel) = lower[cursor..].find('<') else {
+            out.push_str(&html[cursor..]);
+            break;
+        };
+        let open_abs = cursor + open_rel;
+        let Some(end_rel) = lower[open_abs..].find('>') else {
+            out.push_str(&html[cursor..]);
+            break;
+        };
+        let tag_end = open_abs + end_rel + 1;
+        let tag_chunk = &lower[open_abs..tag_end];
+
+        // Skip if this is a closing tag — we deal with those when
+        // we eat a stripped block.
+        if tag_chunk.starts_with("</") {
+            out.push_str(&html[cursor..tag_end]);
+            cursor = tag_end;
+            continue;
+        }
+
+        // Detect tag name (the substring between `<` and the first
+        // whitespace or `>`).
+        let after_lt = &tag_chunk[1..];
+        let name_end = after_lt
+            .find(|c: char| c.is_whitespace() || c == '>' || c == '/')
+            .unwrap_or(after_lt.len());
+        let tag_name = &after_lt[..name_end];
+        if tag_name.is_empty() {
+            out.push_str(&html[cursor..tag_end]);
+            cursor = tag_end;
+            continue;
+        }
+
+        // Test the keyword set against `class`, `id`, `role`.
+        let mut matched = false;
+        for attr in ["class", "id", "role"] {
+            // Look for `attr="…"` or `attr='…'` inside the tag chunk.
+            if let Some(attr_pos) = tag_chunk.find(&format!(" {attr}=")) {
+                let after = &tag_chunk[attr_pos + attr.len() + 2..];
+                let quote = after.chars().next().unwrap_or('"');
+                if quote != '"' && quote != '\'' {
+                    continue;
+                }
+                let value_start = 1usize;
+                let value_end = after[value_start..]
+                    .find(quote)
+                    .map(|p| value_start + p)
+                    .unwrap_or(after.len());
+                let value = &after[value_start..value_end];
+                for kw in keywords {
+                    if value.contains(kw) {
+                        matched = true;
+                        break;
+                    }
+                }
+                if matched {
+                    break;
+                }
+            }
+        }
+
+        if !matched {
+            out.push_str(&html[cursor..tag_end]);
+            cursor = tag_end;
+            continue;
+        }
+
+        // Eat content up to the matching close tag for `tag_name`.
+        // Handle nesting: count opens minus closes of the same tag.
+        out.push_str(&html[cursor..open_abs]);
+        let close_pat = format!("</{tag_name}");
+        let open_pat_nested = format!("<{tag_name}");
+        let mut depth: i32 = 1;
+        let mut scan = tag_end;
+        while scan < html.len() && depth > 0 {
+            // Find next < of either same-tag-open or same-tag-close.
+            let next_close = lower[scan..].find(&close_pat).map(|p| scan + p);
+            let next_open = lower[scan..].find(&open_pat_nested).map(|p| scan + p);
+            match (next_open, next_close) {
+                (Some(o), Some(c)) if o < c => {
+                    let open_end = lower[o..].find('>').map(|p| o + p + 1).unwrap_or(html.len());
+                    depth += 1;
+                    scan = open_end;
+                }
+                (_, Some(c)) => {
+                    let close_end = lower[c..].find('>').map(|p| c + p + 1).unwrap_or(html.len());
+                    depth -= 1;
+                    scan = close_end;
+                }
+                _ => break,
+            }
+        }
+        cursor = scan;
+    }
+
+    out
 }
 
 fn strip_block(html: &str, tag: &str) -> String {
@@ -593,6 +740,81 @@ mod tests {
         assert!(out.contains("World"));
         assert!(!out.contains("alert"));
         assert!(!out.contains(".x{}"));
+    }
+
+    // Phase 21 L-2 — readability-shaped boilerplate dropper.
+
+    #[test]
+    fn extract_drops_semantic_boilerplate_tags() {
+        let html = r#"<html><body>
+            <header>SiteName · Login · Cart</header>
+            <nav>Home | Blog | Contact</nav>
+            <main><article>
+                <h1>The Article</h1>
+                <p>Real content lives here.</p>
+            </article></main>
+            <aside>Related links sidebar noise</aside>
+            <footer>Copyright 2026 · privacy · cookies</footer>
+        </body></html>"#;
+        let out = extract_main_text(html, 4096);
+        assert!(out.contains("The Article"));
+        assert!(out.contains("Real content lives here"));
+        assert!(!out.contains("SiteName"), "stripped <header>");
+        assert!(!out.contains("Home | Blog"), "stripped <nav>");
+        assert!(!out.contains("Related links sidebar"), "stripped <aside>");
+        assert!(!out.contains("Copyright"), "stripped <footer>");
+    }
+
+    #[test]
+    fn extract_drops_class_marked_sidebars() {
+        let html = r#"<html><body>
+            <article><p>Article body.</p></article>
+            <div class="sidebar widget">Newsletter signup form</div>
+            <div class="related-articles">More to read</div>
+            <div id="comments-section">User comments here</div>
+        </body></html>"#;
+        let out = extract_main_text(html, 4096);
+        assert!(out.contains("Article body"));
+        assert!(!out.contains("Newsletter signup"));
+        assert!(!out.contains("More to read"));
+        assert!(!out.contains("User comments here"));
+    }
+
+    #[test]
+    fn extract_drops_role_navigation_blocks() {
+        let html = r#"<html><body>
+            <div role="navigation"><a href=/>Home</a></div>
+            <p>Main paragraph.</p>
+        </body></html>"#;
+        let out = extract_main_text(html, 4096);
+        assert!(out.contains("Main paragraph"));
+        assert!(!out.contains("Home"));
+    }
+
+    #[test]
+    fn extract_keeps_class_when_no_keyword_match() {
+        // Make sure the class-based stripper doesn't over-eagerly
+        // drop `<div>`s with innocent class names.
+        let html = r#"<html><body>
+            <div class="content article-body">The actual article.</div>
+            <div class="byline">By Author</div>
+        </body></html>"#;
+        let out = extract_main_text(html, 4096);
+        assert!(out.contains("The actual article"));
+        assert!(out.contains("By Author"));
+    }
+
+    #[test]
+    fn extract_drops_button_and_form_clutter() {
+        let html = r#"<html><body>
+            <form><input/><button>Subscribe</button></form>
+            <p>Article opener.</p>
+            <button>Share</button>
+        </body></html>"#;
+        let out = extract_main_text(html, 4096);
+        assert!(out.contains("Article opener"));
+        assert!(!out.contains("Subscribe"));
+        assert!(!out.contains("Share"));
     }
 
     #[test]
