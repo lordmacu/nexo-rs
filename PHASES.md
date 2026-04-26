@@ -1241,10 +1241,37 @@ Shipped (35.4):
 - `crates/taskflow/Cargo.toml` adds `criterion = "0.5"` as
   dev-dep + `[[bench]] name = "tick"` registration.
 
+Shipped (35.6):
+- `.github/workflows/bench.yml` (NEW) — matrix over
+  `nexo-resilience` / `nexo-broker` / `nexo-llm` /
+  `nexo-taskflow`. Triggers: PRs touching `crates/**` /
+  `Cargo.lock` / `Cargo.toml`, weekly Sunday 04:00 UTC main
+  run, manual workflow_dispatch. Each run saves a per-PR or
+  `main` baseline via `--save-baseline`. Cargo cache shared
+  per-crate so weekly runs build on the previous baseline
+  instead of starting cold. Artifacts retained 30 days.
+- `docs/src/ops/benchmarks.md` (NEW) — operator + contributor
+  reference. Quick-run cheatsheet, full coverage matrix
+  cross-referencing crate / bench / hot-path / target latency,
+  pattern for adding a new bench, CI integration semantics
+  (when each baseline saves where), known limitations of GH
+  Actions runners (~5-10% noise on the shared tier), criterion
+  output reading guide.
+- `docs/src/SUMMARY.md` registers the new page under
+  Operations.
+
+Today the CI job is **informational** — a regression doesn't
+fail the PR. Once ~10 `main` baselines accrue per crate, the
+workflow gates on `>10% regression` per group (35.6
+done-criterion).
+
 Deferred:
 - **35.5** Transcripts FTS search bench, redaction pipeline
   bench. Memory profiling via `dhat` snapshots at idle vs
   load.
+- **35.6 final** PR-comment bot that posts criterion deltas
+  inline (needs the per-crate noise-floor measurement first).
+- **35.7** PGO release builds.
 - **35.3** End-to-end load-test rig that spawns N inbound
   messages over the local broker and measures tail latency at
   varying agent counts.

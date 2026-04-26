@@ -107,6 +107,7 @@
 - [Web search](./ops/web-search.md)
 - [Pairing](./ops/pairing.md)
 - [Telemetry (opt-in)](./ops/telemetry.md)
+- [Benchmarks](./ops/benchmarks.md)
 
 # Recipes
 
