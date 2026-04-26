@@ -207,10 +207,20 @@ pub async fn program_phase_dispatch(
         Some(body) if !body.trim().is_empty() => format!("{}\n\n{}", sub.title, body),
         _ => sub.title.clone(),
     };
-    let acceptance = input
-        .acceptance_override
-        .clone()
-        .unwrap_or_else(default_acceptance);
+    // Acceptance precedence:
+    //   1. caller-supplied `acceptance_override`
+    //   2. acceptance bullets parsed out of the sub-phase body
+    //   3. workspace defaults (cargo build + cargo test)
+    let acceptance = if let Some(ov) = input.acceptance_override.clone() {
+        ov
+    } else if let Some(parsed) = sub.acceptance.clone() {
+        parsed
+            .into_iter()
+            .map(AcceptanceCriterion::shell)
+            .collect()
+    } else {
+        default_acceptance()
+    };
     let budget = apply_budget_override(default_budget(), input.budget_override.clone());
 
     // B1 — stamp origin + dispatcher into goal.metadata so

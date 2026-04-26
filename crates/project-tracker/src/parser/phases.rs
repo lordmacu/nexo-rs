@@ -129,6 +129,7 @@ pub fn parse_str(raw: &str) -> Result<Vec<Phase>, String> {
                     title: title.trim().to_string(),
                     status,
                     body: None,
+            acceptance: None,
                 },
                 Vec::new(),
             ));
@@ -179,6 +180,7 @@ fn flush_sub(
         return;
     };
     let body_text = body.join("\n").trim().to_string();
+    sub.acceptance = parse_acceptance_block(&body_text);
     sub.body = if body_text.is_empty() {
         None
     } else {
@@ -186,6 +188,104 @@ fn flush_sub(
     };
     if let Some(phase) = current_phase.as_mut() {
         phase.sub_phases.push(sub);
+    }
+}
+
+/// Recognises three shapes of acceptance section in a sub-phase
+/// body and returns each bullet as a shell command:
+///
+/// ```text
+/// **Acceptance:**
+/// - cargo build --workspace
+/// - cargo test -p calc parser
+/// ```
+///
+/// or
+///
+/// ```text
+/// ### Acceptance
+/// - cargo build
+/// - cargo test
+/// ```
+///
+/// or
+///
+/// ```text
+/// Acceptance:
+/// - cargo build
+/// ```
+///
+/// Lines without a leading `-` / `*` after the marker stop the
+/// block. Returns `None` when no marker was found OR no bullets
+/// followed it.
+pub(crate) fn parse_acceptance_block(body: &str) -> Option<Vec<String>> {
+    let mut lines = body.lines().peekable();
+    let mut found_marker = false;
+    while let Some(line) = lines.next() {
+        let trimmed = line.trim();
+        let lower = trimmed.to_ascii_lowercase();
+        if lower == "**acceptance:**"
+            || lower == "### acceptance"
+            || lower == "## acceptance"
+            || lower == "acceptance:"
+            || lower.starts_with("**acceptance:**")
+            || lower.starts_with("### acceptance")
+        {
+            found_marker = true;
+            break;
+        }
+    }
+    if !found_marker {
+        // Inline shorthand: `Acceptance: <one-line cmd>`.
+        for line in body.lines() {
+            let trimmed = line.trim();
+            if let Some(rest) = trimmed
+                .strip_prefix("Acceptance:")
+                .or_else(|| trimmed.strip_prefix("acceptance:"))
+            {
+                let cmd = rest.trim().trim_matches('`').to_string();
+                if !cmd.is_empty() {
+                    return Some(vec![cmd]);
+                }
+            }
+        }
+        return None;
+    }
+    let mut out: Vec<String> = Vec::new();
+    for line in lines {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            // Blank line ends the bullet list only when we've
+            // already collected at least one item — leading blank
+            // (between the marker and the bullets) is fine.
+            if !out.is_empty() {
+                break;
+            }
+            continue;
+        }
+        let cmd = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "))
+            .or_else(|| trimmed.strip_prefix("+ "));
+        match cmd {
+            Some(c) => {
+                let cleaned = c.trim().trim_matches('`').to_string();
+                if !cleaned.is_empty() {
+                    out.push(cleaned);
+                }
+            }
+            None => {
+                // Non-bullet line ends the block.
+                if !out.is_empty() {
+                    break;
+                }
+            }
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
     }
 }
 
@@ -273,5 +373,92 @@ Body line two.
 ";
         let phases = parse_str(md).unwrap();
         assert_eq!(phases[0].sub_phases[0].status, PhaseStatus::Pending);
+    }
+
+    #[test]
+    fn acceptance_block_with_bold_marker() {
+        let md = "\
+## Phase 1 — X
+
+#### 1.1 — Foo   ⬜
+
+Body lorem ipsum.
+
+**Acceptance:**
+- cargo build --workspace
+- cargo test -p calc parser
+";
+        let phases = parse_str(md).unwrap();
+        let acc = phases[0].sub_phases[0].acceptance.as_ref().unwrap();
+        assert_eq!(acc.len(), 2);
+        assert_eq!(acc[0], "cargo build --workspace");
+        assert_eq!(acc[1], "cargo test -p calc parser");
+    }
+
+    #[test]
+    fn acceptance_block_with_heading_marker() {
+        let md = "\
+## Phase 1 — X
+
+#### 1.1 — Foo   ⬜
+
+Body.
+
+### Acceptance
+
+- cargo build
+- ./scripts/smoke.sh
+";
+        let phases = parse_str(md).unwrap();
+        let acc = phases[0].sub_phases[0].acceptance.as_ref().unwrap();
+        assert_eq!(acc, &vec!["cargo build", "./scripts/smoke.sh"]);
+    }
+
+    #[test]
+    fn acceptance_inline_one_liner() {
+        let md = "\
+## Phase 1 — X
+
+#### 1.1 — Foo   ⬜
+
+Body.
+
+Acceptance: `cargo test -p calc`.
+";
+        let phases = parse_str(md).unwrap();
+        let acc = phases[0].sub_phases[0].acceptance.as_ref().unwrap();
+        assert_eq!(acc.len(), 1);
+        assert!(acc[0].starts_with("cargo test -p calc"));
+    }
+
+    #[test]
+    fn no_acceptance_block_returns_none() {
+        let md = "\
+## Phase 1 — X
+
+#### 1.1 — Foo   ⬜
+
+Body without an acceptance section.
+";
+        let phases = parse_str(md).unwrap();
+        assert!(phases[0].sub_phases[0].acceptance.is_none());
+    }
+
+    #[test]
+    fn acceptance_strips_trailing_period_from_inline() {
+        // The inline shorthand keeps the trailing period today —
+        // operators write `Acceptance: cargo test.` and we'd get
+        // `cargo test.` which is still a runnable shell command.
+        // Document the behaviour so the parser stays predictable.
+        let md = "\
+## Phase 1 — X
+
+#### 1.1 — Foo   ⬜
+
+Acceptance: cargo test.
+";
+        let phases = parse_str(md).unwrap();
+        let acc = phases[0].sub_phases[0].acceptance.as_ref().unwrap();
+        assert!(acc[0].starts_with("cargo test"));
     }
 }

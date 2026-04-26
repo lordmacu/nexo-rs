@@ -35,7 +35,10 @@ Tokens: `Number(f64)`, `Plus`, `Minus`, `Star`, `Slash`,
 `LParen`, `RParen`. No floats with exponent yet, no scientific
 notation. Errors carry the column offset.
 
-Acceptance: `cargo test -p calc tokeniser`.
+**Acceptance:**
+- cargo build -p calc
+- cargo test -p calc tokeniser
+- ! grep -q TODO src/tokeniser.rs
 
 #### 2.2 — Recursive descent parser              ⬜
 
