@@ -9,6 +9,7 @@
 
 pub mod dispatcher;
 pub mod idempotency;
+pub mod registry;
 pub mod types;
 
 pub use dispatcher::{
@@ -16,4 +17,5 @@ pub use dispatcher::{
     NoopNatsHookPublisher,
 };
 pub use idempotency::{HookIdempotencyStore, IdempotencyError};
+pub use registry::HookRegistry;
 pub use types::{CompletionHook, HookAction, HookPayload, HookTransition, HookTrigger};
