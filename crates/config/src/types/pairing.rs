@@ -6,7 +6,7 @@
 //!   - default TTL:     60 seconds
 //!   - public_url:      `--public-url` CLI flag only
 //!   - cleartext allow: built-in list (loopback / RFC1918 /
-//!                      link-local / `.local` / `10.0.2.2`)
+//!     link-local / `.local` / `10.0.2.2`)
 //!
 //! The file is **optional**. When absent the daemon keeps the
 //! legacy defaults; when present each field overrides selectively
