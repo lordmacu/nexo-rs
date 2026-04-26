@@ -1,19 +1,26 @@
-//! Phase 67.H.1 — operator-facing CLI mirroring the chat tool
-//! surface. Lets the operator dispatch / inspect goals from a
-//! shell without having to send a chat message.
+//! Phase 67.H.1 + PT-6 — unified operator-facing CLI.
+//!
+//! Original `nexo-driver` bin (run / list-active / list-worktrees
+//! / rollback) lived in `crates/driver-loop/src/bin/nexo_driver.rs`.
+//! Phase 67.H.1 added the dispatch-side commands here. PT-6 folds
+//! the surfaces by re-exposing the legacy subcommands from this
+//! binary too, so a single `nexo-driver-tools` covers both
+//! Claude-subprocess driving and project-tracker dispatch.
+//!
+//! The legacy `nexo-driver` binary keeps building for back-compat;
+//! operators can `alias nexo-driver=nexo-driver-tools` and migrate
+//! at their own pace.
 //!
 //! Usage:
+//!   nexo-driver-tools run <goal-yaml> [--config <claude.yaml>] [--no-events]
+//!   nexo-driver-tools list-active     [--config <claude.yaml>]
+//!   nexo-driver-tools list-worktrees  [--config <claude.yaml>]
+//!   nexo-driver-tools rollback <goal-id> --to <sha> [--config <claude.yaml>]
 //!   nexo-driver-tools status [--phase <id> | --followups]
 //!   nexo-driver-tools dispatch <phase_id>
 //!   nexo-driver-tools agents list [--filter running|queued|...]
 //!   nexo-driver-tools agents show <goal_id>
 //!   nexo-driver-tools agents cancel <goal_id> [--reason "..."]
-//!
-//! Lives in `dispatch-tools` (not the existing `nexo-driver` bin)
-//! because adding the dispatch-tools dep to `driver-loop` would
-//! create a cycle (`driver-loop → dispatch-tools → driver-loop`).
-//! 67.H.x can fold the surfaces into one binary once the workspace
-//! tops the registry.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -51,11 +58,21 @@ async fn run() -> Result<ExitCode> {
     let mut args = std::env::args().skip(1);
     let cmd = args
         .next()
-        .ok_or_else(|| anyhow!("missing subcommand (status | dispatch | agents)"))?;
+        .ok_or_else(|| anyhow!("missing subcommand — see --help"))?;
     match cmd.as_str() {
+        // Phase 67.H.1 dispatch surface.
         "status" => cmd_status(args).await,
         "dispatch" => cmd_dispatch(args).await,
         "agents" => cmd_agents(args).await,
+        // PT-6 legacy surface — re-spawn the nexo-driver process
+        // for these subcommands so the legacy bin stays the
+        // single source of truth for run/list-active/rollback
+        // semantics. Avoids duplicating the orchestrator boot
+        // path (workspace manager + binding store + decider +
+        // socket cancel) here just to relay flags through.
+        "run" | "list-active" | "list-worktrees" | "rollback" => {
+            relay_to_legacy(&cmd, args).await
+        }
         "-h" | "--help" => {
             print_help();
             Ok(ExitCode::SUCCESS)
@@ -64,13 +81,38 @@ async fn run() -> Result<ExitCode> {
     }
 }
 
+async fn relay_to_legacy(
+    cmd: &str,
+    args: impl Iterator<Item = String>,
+) -> Result<ExitCode> {
+    let bin = std::env::var("NEXO_DRIVER_BIN").unwrap_or_else(|_| "nexo-driver".to_string());
+    let status = std::process::Command::new(bin)
+        .arg(cmd)
+        .args(args)
+        .status()
+        .map_err(|e| anyhow!("failed to spawn nexo-driver: {e} — set NEXO_DRIVER_BIN if it lives elsewhere"))?;
+    Ok(match status.code() {
+        Some(0) => ExitCode::SUCCESS,
+        Some(c) => ExitCode::from(c.min(255) as u8),
+        None => ExitCode::from(2),
+    })
+}
+
 fn print_help() {
     eprintln!(
-        "nexo-driver-tools status [--phase <id> | --followups]\n\
-         nexo-driver-tools dispatch <phase_id>\n\
-         nexo-driver-tools agents list [--filter <status>]\n\
-         nexo-driver-tools agents show <goal_id>\n\
-         nexo-driver-tools agents cancel <goal_id> [--reason <text>]"
+        "nexo-driver-tools — unified driver + dispatch CLI\n\n\
+         Dispatch surface (built-in):\n  \
+           status [--phase <id> | --followups]\n  \
+           dispatch <phase_id>\n  \
+           agents list [--filter <status>]\n  \
+           agents show <goal_id>\n  \
+           agents cancel <goal_id> [--reason <text>]\n\n\
+         Legacy driver surface (relays to nexo-driver):\n  \
+           run <goal-yaml> [--config <claude.yaml>] [--no-events]\n  \
+           list-active [--config <claude.yaml>]\n  \
+           list-worktrees [--config <claude.yaml>]\n  \
+           rollback <goal-id> --to <sha> [--config <claude.yaml>]\n\n\
+         Set NEXO_DRIVER_BIN if the legacy binary lives off-PATH."
     );
 }
 
