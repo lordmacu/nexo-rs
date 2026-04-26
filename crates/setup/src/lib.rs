@@ -106,12 +106,13 @@ fn run_guided_first_run(
     let svc = llm_services[idx];
     run_service(svc, secrets_dir, config_dir)?;
 
-    // Step 3 — Channel. `link` handles the inline pairing.
+    // Step 3 — Canales. Dashboard interactivo: detecta cada
+    // (channel, instance) configurado, muestra estado de auth +
+    // a qué agente está bound, y deja al operador re-autenticar /
+    // reasignar / remover sin tener que editar YAML a mano.
     println!();
-    println!("▎Paso 3/4 — Canal");
-    if let Some(link_svc) = services.iter().find(|s| s.id == "link") {
-        run_service(link_svc, secrets_dir, config_dir)?;
-    }
+    println!("▎Paso 3/4 — Canales");
+    services::channels_dashboard::run_dashboard(config_dir, secrets_dir)?;
 
     // Step 4 — Skills (optional, pre-selects common ones).
     println!();
