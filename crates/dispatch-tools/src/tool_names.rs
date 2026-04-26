@@ -19,6 +19,7 @@ pub const READ_TOOL_NAMES: &[&str] = &[
     "list_agents",
     "agent_status",
     "agent_logs_tail",
+    "agent_turns_tail",
     "agent_hooks_list",
 ];
 

@@ -2671,6 +2671,44 @@ behaviour stays in lockstep with the rest of the wizard.
   re-parse the mutated YAML through `AgentsConfig`, docs page +
   SUMMARY entry, admin-ui PHASES tech-debt line.
 
+### Phase 72 — Turn-level audit log   ✅
+
+The `LogBuffer` only ever held the last 200 in-memory log lines per
+goal — fine for live debugging, useless for "what did this 40-turn
+goal actually do over its run?" once the daemon restarted. Phase 72
+adds a durable per-turn record on top of `agents.db` and a tool to
+read it back from chat.
+
+- 72.1 ✅ — New `TurnLogStore` trait + `SqliteTurnLogStore` in
+  `nexo-agent-registry`. Schema:
+  `goal_turns(goal_id, turn_index, recorded_at, outcome, decision,
+  summary, diff_stat, error, raw_json)` PRIMARY KEY
+  `(goal_id, turn_index)` so replays / retries are idempotent.
+  Indexes on `recorded_at` and `outcome`. Tail hard-cap at 1000.
+- 72.2 ✅ — `EventForwarder.with_turn_log(store)` builder. On every
+  `AttemptResult` the forwarder builds a `TurnRecord` (decision
+  preview from the last `Decision`, error rendered for
+  `NeedsRetry` / `Escalate` / `BudgetExhausted`, full
+  `AttemptResult` JSON in `raw_json`) and appends best-effort.
+  Append failures log a warn but never block the driver loop.
+- 72.3 ✅ — New read tool `agent_turns_tail goal_id=<uuid> [n=N]`
+  registered in `READ_TOOL_NAMES` and wired in
+  `dispatch_handlers.rs`. Returns a markdown table
+  `| turn | outcome | decision | summary | error |` with
+  "showing X of Y turn(s)" header. `n` defaults to 20, capped at
+  1000. When the turn log isn't enabled, the tool reports
+  "set `agent_registry.store` in project_tracker.yaml" instead of
+  silently returning empty.
+- 72.4 ✅ — Tests:
+  4 in `turn_log::tests` (round-trip, idempotent upsert, drop_for_goal
+  isolation, n cap),
+  2 new in `event_forwarder::tests`
+  (`attempt_completed_appends_to_turn_log_when_attached`,
+  `build_turn_record_marks_needs_retry_with_failure_summary`),
+  3 new in `agent_query::tests` (rendering, empty case,
+  `cell` sanitisation).
+- 72.5 ✅ — PHASES.md / CLAUDE.md / admin-ui / docs synced this commit.
+
 ### Phase 71 — Agent registry persistence + shutdown drain   ✅
 
 Phase 70.4 made gate denials legible; Phase 71 makes the dispatcher

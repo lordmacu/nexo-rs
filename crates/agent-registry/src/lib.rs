@@ -13,6 +13,7 @@ pub mod log_buffer;
 pub mod reattach;
 pub mod registry;
 pub mod store;
+pub mod turn_log;
 pub mod types;
 
 pub use log_buffer::{LogBuffer, LogLine};
@@ -21,4 +22,5 @@ pub use registry::{AdmitOutcome, AgentRegistry};
 pub use store::{
     AgentRegistryStore, AgentRegistryStoreError, MemoryAgentRegistryStore, SqliteAgentRegistryStore,
 };
+pub use turn_log::{SqliteTurnLogStore, TurnLogStore, TurnRecord};
 pub use types::{AgentHandle, AgentRunStatus, AgentSnapshot, AgentSummary, RegistryError};
