@@ -36,6 +36,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # nexo-project-tracker::git tests grep `git log` for
+          # "Phase 67.9" — needs full history, not the depth=1
+          # shallow clone actions/checkout defaults to.
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --locked
