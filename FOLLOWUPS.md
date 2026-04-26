@@ -64,13 +64,18 @@ H-1. ~~**CircuitBreaker missing on Telegram + Google plugins**~~  🔄 partial 2
   owns its own `circuit` field; `authorized_call` (the HOT path
   used by every google_* tool) wraps via `run_breakered` with
   the same map.
-- **Still deferred**: the 5 OAuth-specific exit points in the
-  Google client (`exchange_code`, `request_device_code`,
-  `poll_device_token`, `refresh_if_needed`, `revoke`). These
-  fire rarely (token refresh ~ every 50 min, device flow only
-  during initial pairing), so the breaker value is lower and
-  they have their own retry semantics. Wrap them in a follow-up
-  if a real outage shows the gap.
+- ~~All 5 Google OAuth exit points wired (2026-04-26)~~ —
+  `exchange_code`, `request_device_code`, `poll_device_token`,
+  `refresh_if_needed`, and `revoke` all flow through the same
+  `run_breakered` helper. Each call site rolls the entire
+  request → status check → JSON parse block inside the closure
+  so a transport failure, malformed body, or 4xx/5xx all count
+  the same toward the breaker's failure threshold. The polling
+  loop in `poll_device_token` wraps each iteration separately
+  so a sustained burst of `authorization_pending` (which is
+  expected and not a failure) doesn't trip the breaker.
+  `revoke` keeps its best-effort semantics — local state is
+  wiped regardless of upstream success.
 - Scoping decision locked in: **one breaker per client
   instance** (per BotClient, per GoogleAuthClient). Multi-tenant
   setups holding multiple instances get isolated breakers, so a

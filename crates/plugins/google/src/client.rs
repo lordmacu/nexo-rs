@@ -440,25 +440,30 @@ impl GoogleAuthClient {
             ("redirect_uri", redirect_uri.as_str()),
             ("grant_type", "authorization_code"),
         ];
-        let resp = self
-            .http
-            .post("https://oauth2.googleapis.com/token")
-            .form(&form)
-            .send()
-            .await
-            .context("POST oauth2.googleapis.com/token failed")?;
-        let status = resp.status();
-        let body: Value = resp.json().await.context("malformed token response")?;
-        if !status.is_success() {
-            return Err(anyhow!(
-                "token exchange HTTP {}: {}",
-                status,
-                body["error_description"]
-                    .as_str()
-                    .or_else(|| body["error"].as_str())
-                    .unwrap_or("(no error body)")
-            ));
-        }
+        let body = self
+            .run_breakered(|| async {
+                let resp = self
+                    .http
+                    .post("https://oauth2.googleapis.com/token")
+                    .form(&form)
+                    .send()
+                    .await
+                    .context("POST oauth2.googleapis.com/token failed")?;
+                let status = resp.status();
+                let body: Value = resp.json().await.context("malformed token response")?;
+                if !status.is_success() {
+                    return Err(anyhow!(
+                        "token exchange HTTP {}: {}",
+                        status,
+                        body["error_description"]
+                            .as_str()
+                            .or_else(|| body["error"].as_str())
+                            .unwrap_or("(no error body)")
+                    ));
+                }
+                Ok(body)
+            })
+            .await?;
         let scope_cfg = self.config.load_full();
         let tokens = tokens_from_response(&body, &canonicalize_scopes(&scope_cfg.scopes))?;
         *self.tokens.write().await = Some(tokens.clone());
@@ -481,28 +486,33 @@ impl GoogleAuthClient {
             ("client_id", cfg.client_id.as_str()),
             ("scope", scopes_joined.as_str()),
         ];
-        let resp = self
-            .http
-            .post("https://oauth2.googleapis.com/device/code")
-            .form(&form)
-            .send()
-            .await
-            .context("POST oauth2.googleapis.com/device/code failed")?;
-        let status = resp.status();
-        let body: Value = resp
-            .json()
-            .await
-            .context("malformed device/code response")?;
-        if !status.is_success() {
-            return Err(anyhow!(
-                "device/code HTTP {}: {}",
-                status,
-                body["error_description"]
-                    .as_str()
-                    .or_else(|| body["error"].as_str())
-                    .unwrap_or("(no error body)")
-            ));
-        }
+        let body = self
+            .run_breakered(|| async {
+                let resp = self
+                    .http
+                    .post("https://oauth2.googleapis.com/device/code")
+                    .form(&form)
+                    .send()
+                    .await
+                    .context("POST oauth2.googleapis.com/device/code failed")?;
+                let status = resp.status();
+                let body: Value = resp
+                    .json()
+                    .await
+                    .context("malformed device/code response")?;
+                if !status.is_success() {
+                    return Err(anyhow!(
+                        "device/code HTTP {}: {}",
+                        status,
+                        body["error_description"]
+                            .as_str()
+                            .or_else(|| body["error"].as_str())
+                            .unwrap_or("(no error body)")
+                    ));
+                }
+                Ok(body)
+            })
+            .await?;
         Ok(DeviceChallenge {
             device_code: body["device_code"]
                 .as_str()
@@ -543,15 +553,21 @@ impl GoogleAuthClient {
                 ("device_code", challenge.device_code.as_str()),
                 ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
             ];
-            let resp = self
-                .http
-                .post("https://oauth2.googleapis.com/token")
-                .form(&form)
-                .send()
-                .await
-                .context("POST oauth2.googleapis.com/token (device) failed")?;
-            let status = resp.status();
-            let body: Value = resp.json().await.context("malformed token response")?;
+            let (status, body) = self
+                .run_breakered(|| async {
+                    let resp = self
+                        .http
+                        .post("https://oauth2.googleapis.com/token")
+                        .form(&form)
+                        .send()
+                        .await
+                        .context("POST oauth2.googleapis.com/token (device) failed")?;
+                    let status = resp.status();
+                    let body: Value =
+                        resp.json().await.context("malformed token response")?;
+                    Ok::<(reqwest::StatusCode, Value), anyhow::Error>((status, body))
+                })
+                .await?;
             if status.is_success() {
                 let scope_cfg = self.config.load_full();
                 let tokens = tokens_from_response(&body, &canonicalize_scopes(&scope_cfg.scopes))?;
@@ -612,30 +628,37 @@ impl GoogleAuthClient {
             ("refresh_token", refresh.as_str()),
             ("grant_type", "refresh_token"),
         ];
-        let resp = self
-            .http
-            .post("https://oauth2.googleapis.com/token")
-            .form(&form)
-            .send()
-            .await
-            .context("POST oauth2.googleapis.com/token (refresh) failed")?;
-        let status = resp.status();
-        let body: Value = resp.json().await.context("malformed refresh response")?;
-        if !status.is_success() {
-            // A 400 "invalid_grant" here usually means the user revoked
-            // access from their account page, OR the 7-day testing
-            // window elapsed on an unpublished OAuth app. Surface the
-            // canonical error so the caller can tell the human to
-            // re-authorise via `google_auth_start`.
-            return Err(anyhow!(
-                "refresh HTTP {}: {} — re-auth required",
-                status,
-                body["error_description"]
-                    .as_str()
-                    .or_else(|| body["error"].as_str())
-                    .unwrap_or("(no error body)")
-            ));
-        }
+        let body = self
+            .run_breakered(|| async {
+                let resp = self
+                    .http
+                    .post("https://oauth2.googleapis.com/token")
+                    .form(&form)
+                    .send()
+                    .await
+                    .context("POST oauth2.googleapis.com/token (refresh) failed")?;
+                let status = resp.status();
+                let body: Value =
+                    resp.json().await.context("malformed refresh response")?;
+                if !status.is_success() {
+                    // A 400 "invalid_grant" here usually means the user
+                    // revoked access from their account page, OR the
+                    // 7-day testing window elapsed on an unpublished
+                    // OAuth app. Surface the canonical error so the
+                    // caller can tell the human to re-authorise via
+                    // `google_auth_start`.
+                    return Err(anyhow!(
+                        "refresh HTTP {}: {} — re-auth required",
+                        status,
+                        body["error_description"]
+                            .as_str()
+                            .or_else(|| body["error"].as_str())
+                            .unwrap_or("(no error body)")
+                    ));
+                }
+                Ok(body)
+            })
+            .await?;
         // Google keeps the same refresh unless it rotates (uncommon);
         // merge into the existing stored copy so we don't lose it.
         let scope_cfg = self.config.load_full();
@@ -746,11 +769,21 @@ impl GoogleAuthClient {
             guard.as_ref().and_then(|t| t.refresh_token.clone())
         };
         if let Some(r) = refresh {
+            // Best-effort revoke: we still wipe local state below
+            // even if the upstream call fails. Wrap in the breaker
+            // so a Google-wide outage doesn't keep us spinning here
+            // when the user just wants to log out cleanly.
             let _ = self
-                .http
-                .post("https://oauth2.googleapis.com/revoke")
-                .form(&[("token", &r)])
-                .send()
+                .run_breakered(|| async {
+                    let resp = self
+                        .http
+                        .post("https://oauth2.googleapis.com/revoke")
+                        .form(&[("token", &r)])
+                        .send()
+                        .await
+                        .context("POST oauth2.googleapis.com/revoke failed")?;
+                    Ok::<reqwest::StatusCode, anyhow::Error>(resp.status())
+                })
                 .await;
         }
         *self.tokens.write().await = None;
