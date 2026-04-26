@@ -1312,7 +1312,51 @@ back it up or find regressions:
 Done when `docs/src/bench/` carries reproducible numbers + the
 README has a "performance" section that isn't aspirational.
 
-### Phase 36 — Backup, restore, migrations
+### Phase 36 — Backup, restore, migrations   🔄
+
+Shell bridge + operator doc shipped. Runtime subcommands +
+versioned migrations + encrypted output deferred to follow-ups.
+
+Shipped (36.1):
+- `scripts/nexo-backup.sh` — hot backup script. Uses
+  `sqlite3 .backup` (online-backup mechanism, captures a
+  consistent point-in-time image even with concurrent writers,
+  no daemon stop required). rsync's non-DB state (transcripts
+  JSONL, agent workspace-git dir, operator drops). `secret/`
+  excluded by default; `--include-secrets` opts in (operators
+  encrypt the archive themselves with `age`/`gpg`/encrypted
+  bucket). sha256 manifest per file inside the archive +
+  sidecar `<archive>.sha256` for transit-corruption detection.
+  zstd-19 compression. Prints copy-paste restore instructions
+  on every successful run.
+- `docs/src/ops/backup.md` (NEW) — quickest-path command,
+  restore steps (with the "stop daemon during rsync" warning),
+  cron schedule template (`/etc/cron.daily/nexo-backup`),
+  table of what survives the backup vs what regenerates on
+  next boot (queue/, journalctl), migration status note
+  pinning operators to a specific version per deployment until
+  the proper subcommand ships.
+- `docs/src/SUMMARY.md` registers the new page under
+  Operations.
+
+Deferred:
+- `nexo backup --out <dir>` runtime subcommand. Touches
+  `src/main.rs`.
+- `nexo restore --from <archive>` runtime subcommand with
+  consistency checks (refuses if daemon running, verifies
+  manifest hashes, warns on schema drift).
+- `nexo migrate up|down|status` versioned migrations replacing
+  the current `ALTER TABLE … .ok()` patterns in the runtime.
+- Encrypted archive output (built-in `age` integration).
+- CI test that backup → restore round-trips on a fixture
+  deployment.
+
+The shell script + this doc are the operator bridge — they
+work today, tested by anyone with `sqlite3` + `zstd` on PATH.
+When 36.2+ subcommands ship, the doc rewrites to point at them
+and the script retires.
+
+#### 36.0 — Original prose (deferred items, kept for context)
 
 The agent owns persistent state across multiple SQLite DBs
 (`memory.db`, `taskflow.db`, `transcripts.db`, `data/`). No

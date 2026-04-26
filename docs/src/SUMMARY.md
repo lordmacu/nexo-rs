@@ -108,6 +108,7 @@
 - [Pairing](./ops/pairing.md)
 - [Telemetry (opt-in)](./ops/telemetry.md)
 - [Benchmarks](./ops/benchmarks.md)
+- [Backup + restore](./ops/backup.md)
 
 # Recipes
 
