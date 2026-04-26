@@ -1290,7 +1290,59 @@ let third parties build against it:
 Done when `npm install @nexo-rs/admin-client` works and the spec
 is the single source of truth for both server and clients.
 
-### Phase 40 — Deployment recipes
+### Phase 40 — Deployment recipes   🔄
+
+Two recipes shipped (Hetzner + Fly.io); rest deferred until
+Phase 27 release pipeline ships signed .deb / Docker / Helm
+artifacts the recipes can consume end-to-end.
+
+Shipped:
+- `docs/src/recipes/deploy-hetzner.md` — concrete CX22 (€3.79/mo)
+  walkthrough. Provision VM, harden (UFW, fail2ban, unattended-
+  upgrades, no-root-ssh), install Nexo via signed .deb, install
+  + bind NATS to loopback, Cloudflare Tunnel for HTTPS without
+  opening ports, daily SQLite snapshot to S3-compatible storage
+  via rclone, update path. Estimated cost spelled out.
+- `docs/src/recipes/deploy-fly.md` — Fly.io single-region.
+  `fly.toml` template using the GHCR image with persistent
+  volume + Fly secrets injected as env vars resolved by the
+  config loader's `${VAR}` placeholders. Pre-baked-config
+  variant (custom Dockerfile.fly) vs first-boot wizard variant
+  documented. Auto-deploy GitHub Action snippet. Snapshot-based
+  backups via `fly volumes snapshots`. Free-tier vs
+  performance-1x sizing guidance for the browser plugin.
+- `docs/src/SUMMARY.md` registers both recipes under Recipes.
+
+Both recipes are end-to-end runnable today against the artifacts
+already in the pipeline (`docker pull ghcr.io/...:latest` +
+`packaging/debian/build.sh` output) — the deferred half is just
+"plug into the release workflow once 27.2 lands so users don't
+have to build the .deb locally."
+
+Deferred:
+- `docs/src/recipes/deploy-aws.md` — EC2 t4g.small + EBS +
+  Route53 + ACM + ALB + IAM role for SES. Bigger scope; needs
+  Terraform module to be useful.
+- `docs/src/recipes/deploy-gcp.md` — Compute Engine + Cloud SQL
+  + IAP. Same shape.
+- `docs/src/recipes/deploy-render.md`,
+  `docs/src/recipes/deploy-railway.md` — covered indirectly by
+  the Fly recipe (same shape: persistent volume + env secrets).
+- `deploy/terraform/<cloud>/` modules — operator workflow not
+  steady state yet; ship modules once a real production deploy
+  validates the manual recipe.
+- `deploy/k8s/` Helm chart — depends on Phase 32 (multi-host)
+  for genuine value. Single-replica Helm against the GHCR
+  image is trivial; the interesting parts (StatefulSet for
+  the broker, peer-discovery, anti-affinity) need 32 first.
+
+Done when (revised): an operator picks a cloud, follows the
+recipe end-to-end against the published release artifacts (signed
+.deb / Docker image / SBOM), and ends up with a daemon running
+under whatever process supervisor that cloud uses. Hetzner +
+Fly recipes done; AWS / GCP / Terraform / k8s deferred.
+
+#### 40.1 — Original prose (deferred items, kept for context)
 
 Today docs cover Termux + bare Linux. Most operators land on a
 cloud VM and need a recipe.
