@@ -8,6 +8,7 @@
 //! - `chain` / `agent_control` / `agent_query` / `admin` / `hooks`
 //!   (67.E.x onwards) — the rest of the multi-agent surface.
 
+pub mod admin;
 pub mod agent_control;
 pub mod agent_query;
 pub mod chain;
@@ -17,6 +18,10 @@ pub mod policy_gate;
 pub mod program_phase;
 pub mod tool_names;
 
+pub use admin::{
+    evict_completed, flush_agent_queue, set_concurrency_cap, AdminError, EvictCompletedInput,
+    EvictCompletedOutput, FlushAgentQueueOutput, SetConcurrencyCapInput, SetConcurrencyCapOutput,
+};
 pub use agent_control::{
     cancel_agent, pause_agent, resume_agent, update_budget, AgentControlError, CancelAgentInput,
     CancelAgentOutput, PauseAgentInput, PauseAgentOutput, UpdateBudgetInput, UpdateBudgetOutput,

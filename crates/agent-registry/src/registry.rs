@@ -65,7 +65,11 @@ struct HandleMeta {
 pub struct AgentRegistry {
     inner: DashMap<GoalId, RegistryEntry>,
     queue: Mutex<VecDeque<GoalId>>,
-    cap: u32,
+    /// Wrapped in `RwLock` so the admin tool `set_concurrency_cap`
+    /// can mutate it without rebuilding the registry. Reads are
+    /// hot-path (`admit`, `count_running`) so `RwLock` over `Mutex`
+    /// keeps cap reads parallel.
+    cap: parking_lot::RwLock<u32>,
     store: Arc<dyn AgentRegistryStore>,
 }
 
@@ -74,9 +78,64 @@ impl AgentRegistry {
         Self {
             inner: DashMap::new(),
             queue: Mutex::new(VecDeque::new()),
-            cap,
+            cap: parking_lot::RwLock::new(cap),
             store,
         }
+    }
+
+    pub fn cap(&self) -> u32 {
+        *self.cap.read()
+    }
+
+    /// Phase 67.G.4 — operator override for the global cap.
+    /// Returns the new value. Lowering the cap below the live
+    /// running count does not pre-empt; existing goals keep going,
+    /// new admissions land in the queue until count drops back
+    /// under cap.
+    pub fn set_cap(&self, new_cap: u32) -> u32 {
+        *self.cap.write() = new_cap;
+        new_cap
+    }
+
+    /// Drop every queued goal (those still parked, not yet promoted).
+    /// Returns the count drained. Running goals untouched.
+    pub async fn flush_queue(&self) -> Result<u64, RegistryError> {
+        let drained: Vec<GoalId> = {
+            let mut q = self.queue.lock();
+            q.drain(..).collect()
+        };
+        let n = drained.len() as u64;
+        for g in drained {
+            // Mark as Cancelled so list_agents shows the operator's
+            // intent rather than the goal sitting silently in
+            // memory.
+            self.set_status(g, AgentRunStatus::Cancelled).await?;
+        }
+        Ok(n)
+    }
+
+    /// Evict terminal handles older than `cutoff` from the
+    /// in-memory map AND from the persistent store.
+    pub async fn evict_terminal_older_than(
+        &self,
+        cutoff: chrono::DateTime<Utc>,
+    ) -> Result<u64, RegistryError> {
+        let victims: Vec<GoalId> = self
+            .inner
+            .iter()
+            .filter(|e| {
+                let m = e.value().handle_meta.lock();
+                m.status.is_terminal()
+                    && m.finished_at.map(|t| t < cutoff).unwrap_or(false)
+            })
+            .map(|e| *e.key())
+            .collect();
+        for g in &victims {
+            self.inner.remove(g);
+        }
+        let n_mem = victims.len() as u64;
+        let n_store = self.store.evict_terminal_older_than(cutoff).await?;
+        Ok(n_mem.max(n_store))
     }
 
     /// Try to admit a fresh goal. If the cap is reached, either
@@ -89,7 +148,7 @@ impl AgentRegistry {
         let goal_id = handle.goal_id;
         let running = self.count_running();
 
-        let outcome = if running >= self.cap {
+        let outcome = if running >= *self.cap.read() {
             if !enqueue {
                 return Ok(AdmitOutcome::Rejected);
             }
