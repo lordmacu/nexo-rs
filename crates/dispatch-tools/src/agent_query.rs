@@ -203,6 +203,7 @@ pub async fn agent_hooks_list(input: AgentHooksListInput, hooks: Arc<HookRegistr
             crate::hooks::types::HookAction::NotifyChannel {
                 plugin, instance, recipient,
             } => format!("notify_channel({plugin}:{instance}@{recipient})"),
+            crate::hooks::types::HookAction::DispatchAudit { .. } => "dispatch_audit(parent diff)".into(),
             crate::hooks::types::HookAction::DispatchPhase { phase_id, only_if } => {
                 let on = match only_if {
                     crate::hooks::types::HookTrigger::Done => "done",

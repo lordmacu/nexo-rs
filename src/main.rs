@@ -2482,10 +2482,10 @@ async fn boot_dispatch_ctx_if_enabled(
     Some(Arc::new(
         nexo_core::agent::dispatch_handlers::DispatchToolContext {
             tracker,
-            orchestrator,
-            registry,
-            hooks: hook_registry,
-            log_buffer,
+            orchestrator: orchestrator.clone(),
+            registry: registry.clone(),
+            hooks: hook_registry.clone(),
+            log_buffer: log_buffer.clone(),
             default_caps: nexo_dispatch_tools::policy_gate::CapSnapshot {
                 queue_when_full: true,
                 ..Default::default()
@@ -2504,6 +2504,25 @@ async fn boot_dispatch_ctx_if_enabled(
                 .map(|v| !matches!(v.as_str(), "1" | "true" | "yes"))
                 .unwrap_or(true),
             daemon_source_root: std::env::current_dir().unwrap_or_default(),
+            // Audit-before-done — defaults true. Operators that
+            // want raw dispatch (no audit ping) flip
+            // `NEXO_NO_AUDIT_BEFORE_DONE=1`.
+            audit_before_done: std::env::var("NEXO_NO_AUDIT_BEFORE_DONE")
+                .ok()
+                .map(|v| !matches!(v.as_str(), "1" | "true" | "yes"))
+                .unwrap_or(true),
+            chainer: Some(Arc::new(
+                nexo_core::agent::dispatch_handlers::AuditChainer {
+                    orchestrator: orchestrator.clone(),
+                    registry: registry.clone(),
+                    hooks: hook_registry.clone(),
+                    log_buffer: log_buffer.clone(),
+                    default_caps: nexo_dispatch_tools::policy_gate::CapSnapshot {
+                        queue_when_full: true,
+                        ..Default::default()
+                    },
+                },
+            ) as Arc<dyn nexo_dispatch_tools::DispatchPhaseChainer>),
         },
     ))
 }

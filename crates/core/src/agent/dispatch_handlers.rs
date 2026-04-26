@@ -73,6 +73,18 @@ pub struct DispatchToolContext {
     /// the active tracker root to decide whether a dispatch is a
     /// self-modify attempt. Snapshot at boot.
     pub daemon_source_root: std::path::PathBuf,
+    /// When `true`, every successful goal admit auto-attaches a
+    /// `DispatchAudit` hook so a fresh audit goal runs after the
+    /// parent's acceptance passes. The audit reports findings
+    /// (bugs, incomplete followups, missing tests) without
+    /// fixing them — the operator decides which to dispatch as
+    /// fix-goals. Default `true` for the canonical Cody flow;
+    /// set to `false` for noisy throwaway runs.
+    pub audit_before_done: bool,
+    /// Chainer used by hook dispatcher to spawn DispatchPhase /
+    /// DispatchAudit goals. `None` keeps hook chaining disabled
+    /// (useful for read-only configurations).
+    pub chainer: Option<Arc<dyn nexo_dispatch_tools::DispatchPhaseChainer>>,
 }
 
 impl DispatchToolContext {
@@ -172,6 +184,19 @@ impl ToolHandler for ProgramPhaseHandler {
         // PT-3 — telemetry on dispatch outcome.
         match &out {
             ProgramPhaseOutput::Dispatched { goal_id, phase_id } => {
+                // Auto-attach audit hook on admit.
+                if dispatch.audit_before_done {
+                    dispatch.hooks.add(
+                        *goal_id,
+                        nexo_dispatch_tools::CompletionHook {
+                            id: format!("auto-audit-{goal_id:?}"),
+                            on: nexo_dispatch_tools::HookTrigger::Done,
+                            action: nexo_dispatch_tools::HookAction::DispatchAudit {
+                                only_if: nexo_dispatch_tools::HookTrigger::Done,
+                            },
+                        },
+                    );
+                }
                 dispatch
                     .telemetry
                     .dispatch_spawned(DispatchSpawnedPayload {
@@ -337,6 +362,115 @@ impl ToolHandler for AgentHooksListHandler {
         let input: AgentHooksListInput = serde_json::from_value(args)?;
         let out = agent_hooks_list(input, dispatch.hooks.clone()).await;
         Ok(json!({ "markdown": out }))
+    }
+}
+
+// ─── Audit chainer ─────────────────────────────────────────
+
+/// Simple chainer that synthesises an audit goal on demand. The
+/// audit prompt is hardcoded — short, decisive, no fixing. The
+/// orchestrator runs it like any other goal; its acceptance is
+/// just `true` so the audit's verdict goes via notify_origin
+/// rather than via cargo build.
+pub struct AuditChainer {
+    pub orchestrator: Arc<DriverOrchestrator>,
+    pub registry: Arc<nexo_agent_registry::AgentRegistry>,
+    pub hooks: Arc<nexo_dispatch_tools::HookRegistry>,
+    pub log_buffer: Arc<nexo_agent_registry::LogBuffer>,
+    pub default_caps: nexo_dispatch_tools::policy_gate::CapSnapshot,
+}
+
+#[async_trait]
+impl nexo_dispatch_tools::DispatchPhaseChainer for AuditChainer {
+    async fn chain(
+        &self,
+        _parent: &nexo_dispatch_tools::HookPayload,
+        _phase_id: &str,
+    ) -> Result<GoalId, String> {
+        // Plain chain (DispatchPhase) needs the tracker handle —
+        // that lives in DispatchToolContext, which we don't have
+        // here. The runtime wiring will pick a richer chainer
+        // when chaining via DispatchPhase is needed; this impl
+        // covers the audit-only flow.
+        Err("AuditChainer only supports audit(); use a richer chainer for DispatchPhase".into())
+    }
+
+    async fn audit(
+        &self,
+        parent: &nexo_dispatch_tools::HookPayload,
+    ) -> Result<GoalId, String> {
+        use nexo_agent_registry::{AgentHandle, AgentRunStatus, AgentSnapshot};
+        use nexo_driver_types::{AcceptanceCriterion, BudgetGuards, Goal};
+
+        let prompt = format!(
+            "Audit the changes made by goal {parent_id} (phase {phase}).\n\n\
+             Look for:\n\
+             - bugs introduced by the diff\n\
+             - incomplete follow-ups in FOLLOWUPS.md the diff touches\n\
+             - missing tests for new code paths\n\
+             - stale doc lines (mdBook / inline rustdoc) the diff invalidates\n\n\
+             Do NOT fix anything. Produce a numbered list with severity\n\
+             (high / medium / low) and a one-line description per finding.\n\
+             If nothing is found, output exactly: 'audit_clean'.",
+            parent_id = parent.goal_id.0,
+            phase = parent.phase_id,
+        );
+
+        let goal = Goal {
+            id: GoalId::new(),
+            description: prompt,
+            // Audit succeeds when Claude produces output and exits
+            // cleanly. We don't run cargo here — the audit's
+            // value is the report itself, surfaced via
+            // notify_origin.
+            acceptance: vec![AcceptanceCriterion::shell("true")],
+            budget: BudgetGuards {
+                max_turns: 8,
+                max_wall_time: std::time::Duration::from_secs(60 * 30),
+                max_tokens: 500_000,
+                max_consecutive_denies: 3,
+                max_consecutive_errors: 5,
+            },
+            workspace: None,
+            metadata: serde_json::Map::new(),
+        };
+        let goal_id = goal.id;
+
+        let handle = AgentHandle {
+            goal_id,
+            phase_id: format!("audit:{}", parent.phase_id),
+            status: AgentRunStatus::Running,
+            origin: parent.origin.clone(),
+            dispatcher: None,
+            started_at: chrono::Utc::now(),
+            finished_at: None,
+            snapshot: AgentSnapshot {
+                max_turns: goal.budget.max_turns,
+                ..AgentSnapshot::default()
+            },
+        };
+        self.registry
+            .admit(handle, true)
+            .await
+            .map_err(|e| format!("audit admit: {e}"))?;
+        self.registry
+            .set_max_turns(goal_id, goal.budget.max_turns);
+
+        // Audit goals get a notify_origin hook so findings reach
+        // the operator.
+        self.hooks.add(
+            goal_id,
+            nexo_dispatch_tools::CompletionHook {
+                id: format!("audit-notify-{goal_id:?}"),
+                on: nexo_dispatch_tools::HookTrigger::Done,
+                action: nexo_dispatch_tools::HookAction::NotifyOrigin,
+            },
+        );
+        let _ = self.log_buffer.tail(goal_id, 1);
+        let _ = self.default_caps.queue_when_full;
+
+        let _ = self.orchestrator.clone().spawn_goal(goal);
+        Ok(goal_id)
     }
 }
 
