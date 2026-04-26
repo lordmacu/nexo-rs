@@ -205,7 +205,7 @@ include only the fields a given schema carries).
 
 - **Per-agent / per-binding metrics** — that's the Prometheus
   `/metrics` endpoint, scraped locally by your own Prometheus
-  (see [Grafana dashboards](../ops/grafana/README.md)). The
+  (see [Grafana dashboards](https://github.com/lordmacu/nexo-rs/blob/main/ops/grafana/README.md)). The
   telemetry heartbeat is **deployment-shape** only.
 - **Crash reports** — Nexo emits anyhow backtraces to the local
   journal but never sends them off-host.

@@ -44,7 +44,7 @@ use nexo_dispatch_tools::{
 use nexo_driver_claude::{ClaudeConfig, ClaudeDefaultArgs, MemoryBindingStore, OutputFormat};
 use nexo_driver_loop::{DriverOrchestrator, NoopEventSink, WorkspaceManager};
 use nexo_driver_permission::{AllowAllDecider, PermissionDecider};
-use nexo_project_tracker::{FsProjectTracker, MutableTracker};
+use nexo_project_tracker::MutableTracker;
 use serde_json::json;
 
 // ── Capturing telemetry ──────────────────────────────────────

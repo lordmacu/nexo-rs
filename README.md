@@ -1,27 +1,41 @@
-# nexo-rs
+# nexo-rs — Rust multi-agent LLM framework (OpenClaw alternative)
+
+> **The Rust alternative to [OpenClaw](https://github.com/openclaw/openclaw).**
+> Multi-agent LLM gateway for WhatsApp, Telegram, Gmail and the browser —
+> single static binary, NATS-backed, fault-tolerant, MCP-native.
 
 [![docs](https://img.shields.io/badge/📘%20docs-lordmacu.github.io%2Fnexo--rs-blue?style=for-the-badge)](https://lordmacu.github.io/nexo-rs/)
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-green?style=for-the-badge)](#license)
+[![rust](https://img.shields.io/badge/built%20with-Rust-orange?style=for-the-badge&logo=rust)](https://www.rust-lang.org/)
+[![openclaw alternative](https://img.shields.io/badge/OpenClaw-alternative-purple?style=for-the-badge)](#inspired-by-openclaw-supercharged-by-rust)
 
 **📘 Full documentation: <https://lordmacu.github.io/nexo-rs/>**
 
 [Quick start](https://lordmacu.github.io/nexo-rs/getting-started/quickstart.html) ·
 [Architecture](https://lordmacu.github.io/nexo-rs/architecture/overview.html) ·
 [Recipes](https://lordmacu.github.io/nexo-rs/recipes/index.html) ·
+[vs OpenClaw](https://lordmacu.github.io/nexo-rs/architecture/vs-openclaw.html) ·
 [Contributing](./docs/src/contributing.md) ·
 [Security](./SECURITY.md) ·
-[Code of Conduct](./CODE_OF_CONDUCT.md) ·
 [License](#license)
 
-A Rust framework for building **multi-agent** LLM systems that live on
-real messaging channels — WhatsApp, Telegram, email — instead of a chat
-webapp. Event-driven by NATS, per-agent tool sandboxes, drop-in
-configuration for private vs. public agents.
+**nexo-rs** is a **Rust multi-agent LLM framework** — an
+**OpenClaw alternative in Rust** — for building **WhatsApp bots**,
+**Telegram bots**, **Gmail pollers** and **browser agents** behind a
+single binary. Event-driven by **NATS**, with per-agent tool
+sandboxes, **MCP** client + server, **Claude / Anthropic / MiniMax /
+OpenAI-compatible** providers, durable workflows (TaskFlow), and
+drop-in configuration for private vs. public agents.
 
 One process, many agents, many channels. Kate handles your personal
 Telegram; Ana works the WhatsApp sales line; a cron-style poller sweeps
 Gmail for leads — all sharing one broker, one tool registry, one
 memory layer.
+
+**Keywords:** OpenClaw alternative · Rust agent framework · multi-agent
+LLM · WhatsApp LLM bot · Telegram AI agent · Gmail agent · MCP server
+Rust · NATS agent gateway · Claude Code subscription · Anthropic OAuth
+PKCE · agent framework Termux · self-hosted AI agents.
 
 ---
 
@@ -38,13 +52,48 @@ through a single UI. Real deployments aren't that shape:
 
 nexo-rs is opinionated toward that shape.
 
-## How it compares to OpenClaw
+## Inspired by OpenClaw, supercharged by Rust
 
-[OpenClaw](https://github.com/openclaw/openclaw) is the closest
-reference point — a TypeScript / Node single-process multi-channel
-agent gateway. nexo-rs took inspiration from the OpenClaw plugin
-SDK and channel architecture, then re-implemented the parts that
-matter on a different substrate:
+nexo-rs stands on the shoulders of [OpenClaw](https://github.com/openclaw/openclaw):
+its plugin SDK, its multi-channel gateway shape, and its
+"agents-on-real-messengers" thesis are the seed of this project.
+OpenClaw proved the model works. nexo-rs takes that blueprint and
+rebuilds it on a substrate Node simply cannot match — Rust, tokio,
+NATS — so the runtime can do things the original never could:
+
+- **Single static binary, ~34 MB.** No `pnpm install`, no `node_modules`,
+  no runtime VM. Drop the binary on a Termux phone, a Raspberry Pi,
+  a Proxmox container — it runs.
+- **Memory-safe by construction.** Rust's ownership model refuses
+  whole bug classes at compile time: use-after-free, data races,
+  null deref. The agent loop is `unsafe`-free.
+- **True parallelism.** tokio + per-agent runtimes + share-nothing
+  per session. No JS event loop bottleneck — Kate, Ana, the gmail
+  poller, the browser CDP session and 30 LLM turns run on real
+  threads at once.
+- **Fault-tolerant by default.** Every external call sits behind a
+  circuit breaker. NATS down? In-process mpsc + on-disk queue + DLQ
+  takes over and drains on reconnect. No dropped messages, no
+  duplicates.
+- **Hot reload without dropping in-flight turns.** `agent reload`
+  swaps a `RuntimeSnapshot` via `ArcSwap`; turns mid-flight finish
+  on the old config, new turns pick up the new one.
+- **Per-agent capability sandbox.** `allowed_tools`,
+  `outbound_allowlist`, `skill_overrides`, `accept_delegates_from`
+  and per-binding overrides — the LLM literally never sees tools
+  it isn't entitled to.
+- **Durable workflows (TaskFlow).** `wait` / `finish` / `fail` LLM
+  tools with `Timer` / `ExternalEvent` / `Manual` resume — flows
+  survive restarts.
+- **Both sides of MCP.** Client (stdio + HTTP) **and** agent-as-server
+  (`agent mcp-server`).
+- **Claude subscription auth.** OAuth PKCE on top of API keys —
+  reuse your Claude Code subscription quota.
+- **Observability built in.** Prometheus on `:9090`, health on
+  `:8080`, admin console on `127.0.0.1:9091`, JSONL transcripts
+  with FTS5 + opt-in regex redactor.
+
+### Side-by-side
 
 | Dimension | OpenClaw | nexo-rs |
 |-----------|----------|---------|
@@ -260,6 +309,78 @@ cargo run --bin agent -- --help   # subcommands (dlq, ext, flow, setup)
 The project uses a `/forge` convention:
 `brainstorm → spec → plan → ejecutar`. Per-sub-phase done-criteria
 live in [`proyecto/PHASES.md`](proyecto/PHASES.md).
+
+## FAQ
+
+### Is nexo-rs an OpenClaw alternative?
+
+Yes. nexo-rs is a **Rust alternative to OpenClaw**. It keeps the
+parts of OpenClaw that matter — the multi-channel agent gateway,
+the plugin SDK, the "agents on real messengers" thesis — and
+rebuilds them on Rust + tokio + NATS for memory safety, true
+parallelism, single-binary deployment, and built-in fault tolerance
+(circuit breaker, disk queue, DLQ, hot reload).
+
+### How does nexo-rs compare to OpenClaw?
+
+Same shape, different substrate. Full table: [side-by-side](#side-by-side).
+Highlights: 34 MB single binary vs. Node + `pnpm install`,
+multi-process via NATS vs. single Node process, per-agent
+capability sandbox vs. global plugin allowlist, both sides of MCP
+vs. client-only, durable TaskFlow workflows, Claude subscription
+OAuth, Termux-friendly.
+
+### Can I run nexo-rs on a Raspberry Pi or Termux phone?
+
+Yes. nexo-rs ships as a **single static Rust binary** (~34 MB,
+13 MB gzipped). No Node, no Docker, no system packages required.
+ARM Termux without root works.
+
+### Which LLM providers does nexo-rs support?
+
+**Anthropic Claude** (API key **and** OAuth PKCE — reuse your
+Claude Code subscription quota), **MiniMax M2.5**,
+**OpenAI-compatible** endpoints (Ollama, Groq, vLLM, …), and
+**Gemini** via the native `google_*` tool family.
+
+### Does nexo-rs speak MCP (Model Context Protocol)?
+
+Both sides. **MCP client** over stdio and HTTP, **and** the agent
+itself can run as an **MCP server** (`agent mcp-server`) so other
+LLM hosts (Claude Desktop, Claude Code, etc.) can call your agents
+as tools.
+
+### Which messaging channels are supported?
+
+**WhatsApp** (Signal Protocol via `whatsapp-rs`, QR pairing),
+**Telegram** (full bot API: messages, replies, reactions, edits,
+location, media), **Gmail** (poller + outbound), and **browser
+control** via Chrome DevTools Protocol.
+
+### Is nexo-rs production-ready?
+
+113 / 113 sub-phases shipped across 15 phases (core runtime,
+NATS broker with disk queue + DLQ + circuit breaker, LLM stack,
+memory, WhatsApp, Telegram, heartbeat, agent-to-agent, metrics,
+hot reload, MCP, TaskFlow, Claude OAuth). Used in production for
+real WhatsApp/Telegram sales bots and personal-assistant agents.
+
+## Looking for an OpenClaw alternative?
+
+If you landed here searching for **"OpenClaw Rust"**,
+**"OpenClaw alternative"**, **"WhatsApp LLM agent Rust"**,
+**"Telegram bot framework Rust"**, **"multi-agent NATS"**,
+**"MCP server Rust"** or **"Claude subscription OAuth agent
+framework"** — nexo-rs is for you. Read [Inspired by OpenClaw,
+supercharged by Rust](#inspired-by-openclaw-supercharged-by-rust)
+or jump straight to the [Quick start](#quick-start).
+
+> **Suggested GitHub topics** (for repo discovery): `rust`,
+> `agent-framework`, `multi-agent`, `llm`, `openclaw`,
+> `openclaw-alternative`, `whatsapp-bot`, `telegram-bot`,
+> `gmail-bot`, `mcp`, `mcp-server`, `nats`, `anthropic`, `claude`,
+> `claude-code`, `minimax`, `tokio`, `chrome-devtools-protocol`,
+> `taskflow`, `termux`, `self-hosted`.
 
 ## License
 
