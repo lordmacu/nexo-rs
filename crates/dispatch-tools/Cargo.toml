@@ -14,6 +14,7 @@ categories    = { workspace = true }
 
 [dependencies]
 async-trait        = { workspace = true }
+sqlx               = { workspace = true }
 nexo-config        = { version = "0.1.1", path = "../config" }
 nexo-driver-types  = { version = "0.1.1", path = "../driver-types" }
 nexo-driver-claude = { version = "0.1.1", path = "../driver-claude" }
