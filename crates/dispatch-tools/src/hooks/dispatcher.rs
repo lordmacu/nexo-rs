@@ -185,10 +185,28 @@ impl HookDispatcher for DefaultHookDispatcher {
             self.allow_shell,
             self.chainer.as_ref(),
         );
-        match tokio::time::timeout(timeout, fut).await {
+        let result = match tokio::time::timeout(timeout, fut).await {
             Ok(r) => r,
             Err(_) => Err(HookError::Timeout(timeout)),
+        };
+        // B10 — release the idempotency claim on failure so a
+        // retry can run the action again. Successful firings keep
+        // the slot taken so duplicate replays are skipped.
+        if result.is_err() {
+            if let Some(store) = &self.idempotency {
+                if let Err(e) = store
+                    .release_claim(payload.goal_id, payload.transition, &hook.action, &hook.id)
+                    .await
+                {
+                    tracing::warn!(
+                        target: "hook.dispatch",
+                        "release_claim after failed hook {} failed: {e}",
+                        hook.id
+                    );
+                }
+            }
         }
+        result
     }
 }
 

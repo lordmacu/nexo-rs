@@ -34,6 +34,7 @@ async fn cap_2_third_admit_queues() {
     let b = handle("67.11");
     let c = handle("67.12");
     let id_a = a.goal_id;
+    let id_b = b.goal_id;
     let id_c = c.goal_id;
 
     assert_eq!(reg.admit(a, true).await.unwrap(), AdmitOutcome::Admitted);
@@ -45,7 +46,7 @@ async fn cap_2_third_admit_queues() {
 
     assert_eq!(reg.count_running(), 2);
 
-    // Release the first, the queue should hand back C.
+    // Release the first, the queue should hand back C (popped).
     let next = reg
         .release(id_a, AgentRunStatus::Done)
         .await
@@ -53,9 +54,16 @@ async fn cap_2_third_admit_queues() {
         .unwrap();
     assert_eq!(next, id_c);
 
-    // Promote C — now there are 2 running again (B + C).
-    assert!(reg.promote_queued(id_c).await.unwrap());
-    assert_eq!(reg.count_running(), 2);
+    // B12 — release pops; a second release after another goal
+    // ends MUST NOT return the same id again (queue is empty
+    // now since C was popped above and there were only 3
+    // entries originally).
+    let next2 = reg.release(id_b, AgentRunStatus::Done).await.unwrap();
+    assert!(next2.is_none(), "queue should be empty after pop");
+
+    // promote_queued requires the id to still be in the queue.
+    // Since release popped it, promote_queued returns false.
+    assert!(!reg.promote_queued(id_c).await.unwrap());
 }
 
 #[tokio::test]

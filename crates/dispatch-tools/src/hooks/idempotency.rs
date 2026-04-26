@@ -141,6 +141,33 @@ impl HookIdempotencyStore {
         Ok(row.is_some())
     }
 
+    /// B10 — release a claim made by `try_claim` when the action
+    /// itself failed. Without this, a transient adapter / network
+    /// failure leaves the slot taken forever and any retry fails
+    /// with `AlreadyDispatched`. Idempotent: deleting a row that
+    /// was never inserted is a no-op.
+    pub async fn release_claim(
+        &self,
+        goal_id: GoalId,
+        transition: HookTransition,
+        action: &HookAction,
+        action_id: &str,
+    ) -> Result<(), IdempotencyError> {
+        let kind = action_kind_str(action);
+        sqlx::query(
+            "DELETE FROM hook_dispatched \
+             WHERE goal_id = ?1 AND transition = ?2 \
+               AND action_kind = ?3 AND action_id = ?4",
+        )
+        .bind(goal_id.0.to_string())
+        .bind(transition.as_str())
+        .bind(kind)
+        .bind(action_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     /// Drop every row tied to a goal — used by `evict_completed` /
     /// goal removal so the table doesn't grow unbounded.
     pub async fn forget_goal(&self, goal_id: GoalId) -> Result<u64, IdempotencyError> {

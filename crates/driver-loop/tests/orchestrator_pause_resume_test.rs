@@ -67,6 +67,23 @@ async fn pause_resume_unknown_goal_returns_false() {
 /// in the multi-agent dispatch e2e (67.H.x) once the registry is
 /// wired into spawn_goal.
 #[tokio::test]
+async fn b11_pre_register_goal_makes_cancel_pause_callable_before_run() {
+    let orch = build_orch().await;
+    let g = GoalId(Uuid::new_v4());
+    // Before pre_register: cancel/pause silently no-op.
+    assert!(!orch.pause_goal(g));
+    assert!(!orch.cancel_goal(g));
+    // Pre-register tokens (reattach path).
+    orch.pre_register_goal(g);
+    // Now signals route to a real watch / token.
+    assert!(orch.pause_goal(g));
+    assert!(orch.cancel_goal(g));
+    assert!(orch.is_paused(g));
+    assert!(orch.is_cancelled(g));
+    let _ = orch.shutdown().await;
+}
+
+#[tokio::test]
 async fn pause_resume_idempotent_when_not_tracked() {
     let orch = build_orch().await;
     let g = GoalId(Uuid::new_v4());

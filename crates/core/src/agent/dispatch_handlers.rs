@@ -163,7 +163,29 @@ impl ToolHandler for ProgramPhaseHandler {
                     })
                     .await;
             }
-            _ => {}
+            // B13 — NotFound / NotTracked also emit so dashboards
+            // see "operator asked for a phase that doesn't exist"
+            // / "no PHASES.md in workspace" without grepping logs.
+            ProgramPhaseOutput::NotFound { phase_id } => {
+                dispatch
+                    .telemetry
+                    .dispatch_denied(DispatchDeniedPayload {
+                        phase_id: phase_id.clone(),
+                        reason: "phase_id not in PHASES.md".into(),
+                        dispatcher_agent_id: ctx.agent_id.clone(),
+                    })
+                    .await;
+            }
+            ProgramPhaseOutput::NotTracked => {
+                dispatch
+                    .telemetry
+                    .dispatch_denied(DispatchDeniedPayload {
+                        phase_id: String::new(),
+                        reason: "project not tracked: PHASES.md missing".into(),
+                        dispatcher_agent_id: ctx.agent_id.clone(),
+                    })
+                    .await;
+            }
         }
         Ok(serde_json::to_value(out)?)
     }
