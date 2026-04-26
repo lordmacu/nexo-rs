@@ -4,8 +4,9 @@
 
 This crate is part of **[Nexo](https://github.com/lordmacu/nexo-rs)** — a multi-agent Rust framework with a NATS event bus, pluggable LLM providers (MiniMax, Anthropic, OpenAI-compat, Gemini, DeepSeek), per-agent credentials, MCP support, and channel plugins for WhatsApp, Telegram, Email, and Browser (CDP).
 
-- **Main project:** <https://github.com/lordmacu/nexo-rs>
-- **Documentation:** <https://lordmacu.github.io/nexo-rs/>
+- **Main repo:** <https://github.com/lordmacu/nexo-rs>
+- **Runtime engine:** [`nexo-core`](https://github.com/lordmacu/nexo-rs/tree/main/crates/core)
+- **Public docs:** <https://lordmacu.github.io/nexo-rs/>
 
 ## Status
 
