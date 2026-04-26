@@ -2398,6 +2398,7 @@ dependencies = [
  "nexo-dispatch-tools",
  "nexo-driver-claude",
  "nexo-driver-loop",
+ "nexo-driver-permission",
  "nexo-extensions",
  "nexo-llm",
  "nexo-mcp",

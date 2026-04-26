@@ -69,3 +69,5 @@ async-nats    = { workspace = true }
 futures       = { workspace = true }
 tempfile      = "3"
 serial_test   = "3"
+nexo-driver-permission = { version = "0.1.1", path = "../driver-permission" }
+nexo-driver-claude     = { version = "0.1.1", path = "../driver-claude" }
