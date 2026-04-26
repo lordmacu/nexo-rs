@@ -53,6 +53,12 @@ pub struct DispatchToolContext {
     pub registry: Arc<AgentRegistry>,
     pub hooks: Arc<HookRegistry>,
     pub log_buffer: Arc<LogBuffer>,
+    /// Phase 71.3 — exposed so the shutdown drain in `src/main.rs`
+    /// can fire `notify_origin` / `notify_channel` on every Running
+    /// goal before the channel plugins go down. Same `Arc` the
+    /// `EventForwarder` was wired with at boot. `None` in tests
+    /// that don't exercise hook firing.
+    pub hook_dispatcher: Option<Arc<dyn nexo_dispatch_tools::HookDispatcher>>,
     /// Default cap snapshot the gate consumes. The runtime can
     /// refresh `global_running` per call from the live registry;
     /// the rest stays config-driven.
@@ -579,6 +585,187 @@ impl ToolHandler for InterruptAgentHandler {
     }
 }
 
+// ─── Tracker read handlers ─────────────────────────────────
+
+/// `project_phases_list` — return phases parsed from PHASES.md,
+/// optionally filtered by status. Phase 67.E.x backlog item; the
+/// canonical name lives in `dispatch-tools::tool_names::READ_TOOL_NAMES`
+/// but the handler / register call had not been wired, so every
+/// invocation came back as "unknown tool". This is the minimal
+/// implementation needed to unblock chat-side queries like "qué
+/// fases nos faltan" without forcing the LLM to fall back to file
+/// reads (which it does not have access to).
+pub struct ProjectPhasesListHandler;
+
+#[async_trait]
+impl ToolHandler for ProjectPhasesListHandler {
+    async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
+        let dispatch = dispatch_ctx(ctx)?;
+        let filter = args
+            .get("filter")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_lowercase());
+        let prefix = args
+            .get("phase_prefix")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let phases = dispatch
+            .tracker
+            .phases()
+            .await
+            .map_err(|e| anyhow::anyhow!("tracker phases() failed: {e}"))?;
+        let mut rows: Vec<serde_json::Value> = Vec::new();
+        let want = filter.as_deref();
+        for phase in &phases {
+            for sub in &phase.sub_phases {
+                let status_label = match sub.status {
+                    nexo_project_tracker::PhaseStatus::Done => "done",
+                    nexo_project_tracker::PhaseStatus::InProgress => "in_progress",
+                    nexo_project_tracker::PhaseStatus::Pending => "pending",
+                };
+                if let Some(w) = want {
+                    if !w.is_empty() && w != "all" && w != status_label {
+                        continue;
+                    }
+                }
+                if let Some(pfx) = prefix.as_deref() {
+                    if !sub.id.starts_with(pfx) {
+                        continue;
+                    }
+                }
+                rows.push(serde_json::json!({
+                    "phase": phase.id,
+                    "phase_title": phase.title,
+                    "id": sub.id,
+                    "title": sub.title,
+                    "status": status_label,
+                }));
+            }
+        }
+        Ok(serde_json::json!({
+            "filter": filter.unwrap_or_else(|| "all".into()),
+            "count": rows.len(),
+            "phases": rows,
+        }))
+    }
+}
+
+/// `project_status` — high-level snapshot of the active workspace's
+/// roadmap: counts by status + a couple of representative entries.
+/// `kind` lets the LLM ask for a narrower slice (`current_phase`,
+/// `followups`).
+pub struct ProjectStatusHandler;
+
+#[async_trait]
+impl ToolHandler for ProjectStatusHandler {
+    async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
+        let dispatch = dispatch_ctx(ctx)?;
+        let kind = args
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("summary")
+            .to_lowercase();
+        let phases = dispatch
+            .tracker
+            .phases()
+            .await
+            .map_err(|e| anyhow::anyhow!("tracker phases() failed: {e}"))?;
+        let mut done = 0usize;
+        let mut in_progress: Vec<&nexo_project_tracker::SubPhase> = Vec::new();
+        let mut pending: Vec<&nexo_project_tracker::SubPhase> = Vec::new();
+        for phase in &phases {
+            for sub in &phase.sub_phases {
+                match sub.status {
+                    nexo_project_tracker::PhaseStatus::Done => done += 1,
+                    nexo_project_tracker::PhaseStatus::InProgress => in_progress.push(sub),
+                    nexo_project_tracker::PhaseStatus::Pending => pending.push(sub),
+                }
+            }
+        }
+        let total = done + in_progress.len() + pending.len();
+        match kind.as_str() {
+            "current_phase" => {
+                let current = in_progress.first().or(pending.first());
+                Ok(serde_json::json!({
+                    "current_phase": current.map(|s| serde_json::json!({
+                        "id": s.id,
+                        "title": s.title,
+                        "status": match s.status {
+                            nexo_project_tracker::PhaseStatus::InProgress => "in_progress",
+                            _ => "pending",
+                        },
+                    })),
+                }))
+            }
+            "followups" => {
+                let followups = dispatch
+                    .tracker
+                    .followups()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("tracker followups() failed: {e}"))?;
+                let open: Vec<_> = followups
+                    .iter()
+                    .filter(|f| matches!(f.status, nexo_project_tracker::FollowUpStatus::Open))
+                    .map(|f| {
+                        serde_json::json!({
+                            "code": f.code,
+                            "title": f.title,
+                            "section": f.section,
+                        })
+                    })
+                    .collect();
+                Ok(serde_json::json!({
+                    "open_count": open.len(),
+                    "items": open,
+                }))
+            }
+            _ => Ok(serde_json::json!({
+                "total_subphases": total,
+                "done": done,
+                "in_progress_count": in_progress.len(),
+                "pending_count": pending.len(),
+                "in_progress_ids": in_progress.iter().map(|s| &s.id).collect::<Vec<_>>(),
+                "next_pending_ids": pending.iter().take(5).map(|s| &s.id).collect::<Vec<_>>(),
+            })),
+        }
+    }
+}
+
+/// `followup_detail` — fetch the full body of one follow-up by code.
+pub struct FollowupDetailHandler;
+
+#[async_trait]
+impl ToolHandler for FollowupDetailHandler {
+    async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
+        let dispatch = dispatch_ctx(ctx)?;
+        let code = args
+            .get("code")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("`code` is required"))?
+            .to_string();
+        let followups = dispatch
+            .tracker
+            .followups()
+            .await
+            .map_err(|e| anyhow::anyhow!("tracker followups() failed: {e}"))?;
+        match followups.into_iter().find(|f| f.code == code) {
+            Some(f) => Ok(serde_json::json!({
+                "code": f.code,
+                "title": f.title,
+                "section": f.section,
+                "status": match f.status {
+                    nexo_project_tracker::FollowUpStatus::Open => "open",
+                    nexo_project_tracker::FollowUpStatus::Resolved => "resolved",
+                },
+                "body": f.body,
+            })),
+            None => Ok(serde_json::json!({
+                "error": format!("no follow-up with code `{code}`"),
+            })),
+        }
+    }
+}
+
 // ─── Cody-flow handlers (preflight + workspace ops) ─────────
 
 pub struct PreflightHandler;
@@ -813,6 +1000,54 @@ fn obj_schema(req: &[&str], props: Value) -> Value {
 /// what the binding-level filter uses to drop tools the binding's
 /// `DispatchPolicy` does not allow.
 pub fn register_dispatch_tools_into(registry: &ToolRegistry) {
+    // Tracker reads — Phase 67.E backlog had named these in
+    // `dispatch-tools::tool_names::READ_TOOL_NAMES` without
+    // landing the handlers, so every chat call to
+    // `project_phases_list` / `project_status` /
+    // `followup_detail` came back as "unknown tool". Wire them
+    // first so they're available even when WRITE tools get
+    // stripped by per-binding capability filtering.
+    registry.register(
+        def(
+            "project_phases_list",
+            "List sub-phases parsed from PHASES.md in the active workspace. Optional `filter`: 'pending' / 'in_progress' / 'done' / 'all' (default 'all'). Optional `phase_prefix` to narrow by id prefix (e.g. '67.').",
+            obj_schema(
+                &[],
+                json!({
+                    "filter": { "type": ["string", "null"] },
+                    "phase_prefix": { "type": ["string", "null"] }
+                }),
+            ),
+        ),
+        ProjectPhasesListHandler,
+    );
+    registry.register(
+        def(
+            "project_status",
+            "Snapshot of the active workspace's roadmap. `kind` selects the view: 'summary' (counts + next pending ids), 'current_phase' (next phase to work on), or 'followups' (open follow-ups).",
+            obj_schema(
+                &[],
+                json!({
+                    "kind": { "type": ["string", "null"] }
+                }),
+            ),
+        ),
+        ProjectStatusHandler,
+    );
+    registry.register(
+        def(
+            "followup_detail",
+            "Return the full body of one follow-up by `code` (e.g. '67.E.x' or any short code defined in FOLLOWUPS.md).",
+            obj_schema(
+                &["code"],
+                json!({
+                    "code": { "type": "string" }
+                }),
+            ),
+        ),
+        FollowupDetailHandler,
+    );
+
     registry.register(
         def(
             "program_phase",

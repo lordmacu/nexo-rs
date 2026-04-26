@@ -17,8 +17,11 @@ pub mod event_forwarder;
 pub mod hooks;
 pub mod policy_gate;
 pub mod program_phase;
+pub mod shutdown_drain;
 pub mod subjects;
 pub mod tool_names;
+
+pub use shutdown_drain::{drain_running_goals, DrainReport};
 
 pub use admin::{
     evict_completed, flush_agent_queue, set_concurrency_cap, AdminError, EvictCompletedInput,

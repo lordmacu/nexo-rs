@@ -2283,6 +2283,38 @@ async fn main() -> Result<()> {
     shutdown_signal().await;
     tracing::info!("shutdown signal received — stopping");
 
+    // Phase 71.3 — drain in-flight goals BEFORE bringing channel
+    // plugins down. Walk the registry that lives inside the
+    // dispatch context, fire `notify_origin` / `notify_channel`
+    // hooks with a clean "[shutdown]" summary, and flip Running
+    // rows to `LostOnRestart` so a future reattach sweep does not
+    // re-fire them. We cannot wait for the Claude Code subprocess
+    // to land its last commit — 5–10 s is not enough — so the
+    // contract here is "tell the operator the goal was abandoned
+    // cleanly". SIGKILL still bypasses this; the boot-time sweep
+    // (Phase 71.2) is the safety net for that case.
+    if let Some(dc) = dispatch_ctx.as_ref() {
+        if let Some(hd) = dc.hook_dispatcher.as_ref() {
+            let report = nexo_dispatch_tools::drain_running_goals(
+                &dc.registry,
+                &dc.hooks,
+                Arc::clone(hd),
+                None,
+            )
+            .await;
+            if report.running_seen > 0 {
+                tracing::info!(
+                    running_seen = report.running_seen,
+                    hooks_fired = report.hooks_fired,
+                    hook_dispatch_errors = report.hook_dispatch_errors,
+                    hook_dispatch_timeouts = report.hook_dispatch_timeouts,
+                    set_status_errors = report.set_status_errors,
+                    "shutdown drain swept in-flight goals before plugin teardown",
+                );
+            }
+        }
+    }
+
     // Stop the mcp config watcher (no-op if it was disabled).
     watcher_shutdown.cancel();
 
@@ -2567,11 +2599,82 @@ async fn boot_dispatch_ctx_if_enabled(
     };
 
     // Registry + log buffer + hook registry shared by every agent.
+    //
+    // Phase 71.1 — honour `agent_registry.store` from
+    // project_tracker.yaml. Empty / unresolved → memory store (dev
+    // mode, state lost on restart). Path open failures fall back to
+    // memory with a warn so a corrupt sqlite file never bricks the
+    // boot path. Env placeholders (e.g. `${NEXO_AGENT_REGISTRY_DB:-…}`)
+    // come through as raw `${…}` because project-tracker's loader
+    // doesn't run the env resolver — we resolve here before opening.
+    let registry_store_path: Option<PathBuf> = pt_cfg.as_ref().and_then(|c| {
+        let raw = c.agent_registry.store.to_string_lossy();
+        if raw.is_empty() {
+            return None;
+        }
+        let resolved = match nexo_config::env::resolve_placeholders(
+            &format!("v: {raw}"),
+            "project_tracker.yaml",
+        ) {
+            Ok(s) => s.trim_start_matches("v: ").trim().to_string(),
+            Err(e) => {
+                tracing::warn!(error = %e, raw = %raw, "agent_registry.store env resolve failed; using memory");
+                return None;
+            }
+        };
+        if resolved.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(resolved))
+        }
+    });
+    let registry_max_concurrent = pt_cfg
+        .as_ref()
+        .map(|c| c.program_phase.max_concurrent_agents)
+        .unwrap_or(4);
+    let (registry_store, registry_store_was_sqlite): (
+        Arc<dyn nexo_agent_registry::AgentRegistryStore>,
+        bool,
+    ) = match registry_store_path.as_ref() {
+        Some(path) => {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            match nexo_agent_registry::SqliteAgentRegistryStore::open(
+                path.to_str().unwrap_or(""),
+            )
+            .await
+            {
+                Ok(s) => {
+                    tracing::info!(path = %path.display(), "agent registry: sqlite-backed (survives restart)");
+                    (Arc::new(s), true)
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, path = %path.display(), "agent registry sqlite open failed — falling back to memory; goals will be lost on restart");
+                    (
+                        Arc::new(nexo_agent_registry::MemoryAgentRegistryStore::default()),
+                        false,
+                    )
+                }
+            }
+        }
+        None => {
+            tracing::info!("agent registry: memory-only (no agent_registry.store path; goals lost on restart)");
+            (
+                Arc::new(nexo_agent_registry::MemoryAgentRegistryStore::default()),
+                false,
+            )
+        }
+    };
     let registry = Arc::new(nexo_agent_registry::AgentRegistry::new(
-        Arc::new(nexo_agent_registry::MemoryAgentRegistryStore::default()),
-        4,
+        Arc::clone(&registry_store),
+        registry_max_concurrent,
     ));
-    let log_buffer = Arc::new(nexo_agent_registry::LogBuffer::new(200));
+    let log_buffer_lines = pt_cfg
+        .as_ref()
+        .map(|c| c.agent_registry.log_buffer_lines)
+        .unwrap_or(200);
+    let log_buffer = Arc::new(nexo_agent_registry::LogBuffer::new(log_buffer_lines));
     // B17 — hook registry mirrors writes to SQLite so attached
     // hooks (auto-audit, notify_origin, dispatch_phase chains)
     // survive daemon restart. Path defaults under the workspace
@@ -2645,6 +2748,100 @@ async fn boot_dispatch_ctx_if_enabled(
             Arc::new(nexo_dispatch_tools::NoopNatsHookPublisher),
         ));
 
+    // Phase 71.2 — reattach sweep. When the registry is sqlite-backed
+    // and `reattach_on_boot: true`, walk every Running row from the
+    // last run, mark it `LostOnRestart`, and fire any
+    // `notify_origin` / `notify_channel` hooks the operator had
+    // attached so the original chat sees a clean closure
+    // ("daemon restart — goal abandoned"). Without this, every
+    // SIGKILL leaves the operator waiting forever.
+    //
+    // Resume-as-Running is intentionally OFF: respawning a Claude
+    // Code subprocess against a worktree the daemon no longer owns
+    // is Phase 67.C.1 territory, and unsafe to do silently. Marking
+    // lost + notifying is the conservative, correct default.
+    let reattach_on_boot = pt_cfg
+        .as_ref()
+        .map(|c| c.agent_registry.reattach_on_boot)
+        .unwrap_or(true);
+    if registry_store_was_sqlite && reattach_on_boot {
+        let outcomes = nexo_agent_registry::reattach(
+            &registry,
+            Arc::clone(&registry_store),
+            nexo_agent_registry::ReattachOptions {
+                resume_running: false,
+                ..Default::default()
+            },
+        )
+        .await;
+        match outcomes {
+            Ok(outcomes) => {
+                let mut lost = 0usize;
+                let mut requeued = 0usize;
+                let mut recorded = 0usize;
+                let mut skipped = 0usize;
+                for outcome in &outcomes {
+                    match outcome {
+                        nexo_agent_registry::ReattachOutcome::MarkedLost(handle) => {
+                            lost += 1;
+                            let hooks = hook_registry.list(handle.goal_id);
+                            if hooks.is_empty() {
+                                continue;
+                            }
+                            let payload = nexo_dispatch_tools::HookPayload {
+                                goal_id: handle.goal_id,
+                                phase_id: handle.phase_id.clone(),
+                                transition: nexo_dispatch_tools::HookTransition::Failed,
+                                summary: format!(
+                                    "[abandoned] daemon restart — goal `{:?}` was running when the daemon stopped and could not be resumed automatically. Re-dispatch with `program_phase phase_id={}` if you still need it.",
+                                    handle.goal_id, handle.phase_id,
+                                ),
+                                elapsed: humantime::format_duration(handle.elapsed())
+                                    .to_string(),
+                                diff_stat: handle.snapshot.last_diff_stat.clone(),
+                                origin: handle.origin.clone(),
+                            };
+                            for hook in hooks {
+                                if !hook
+                                    .on
+                                    .matches(nexo_dispatch_tools::HookTransition::Failed)
+                                {
+                                    continue;
+                                }
+                                if let Err(e) =
+                                    hook_dispatcher.dispatch(&hook, &payload).await
+                                {
+                                    tracing::warn!(
+                                        goal_id = ?handle.goal_id,
+                                        hook_id = %hook.id,
+                                        error = %e,
+                                        "reattach: notify hook dispatch failed",
+                                    );
+                                }
+                            }
+                        }
+                        nexo_agent_registry::ReattachOutcome::Requeued(_) => requeued += 1,
+                        nexo_agent_registry::ReattachOutcome::Recorded(_) => recorded += 1,
+                        nexo_agent_registry::ReattachOutcome::Skipped { .. } => skipped += 1,
+                        nexo_agent_registry::ReattachOutcome::Resume(_) => {
+                            // resume_running=false, this branch is unreachable
+                        }
+                    }
+                }
+                tracing::info!(
+                    lost,
+                    requeued,
+                    recorded,
+                    skipped,
+                    "agent registry reattach swept previous run",
+                );
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "agent registry reattach failed — previous-run goals may be invisible");
+            }
+        }
+    }
+
     // Inner sink: NoopEventSink today. EventForwarder wraps it so
     // the registry / log_buffer / hooks see every driver event.
     let inner_sink: Arc<dyn nexo_driver_loop::DriverEventSink> =
@@ -2690,6 +2887,7 @@ async fn boot_dispatch_ctx_if_enabled(
             orchestrator: orchestrator.clone(),
             registry: registry.clone(),
             hooks: hook_registry.clone(),
+            hook_dispatcher: Some(hook_dispatcher.clone()),
             log_buffer: log_buffer.clone(),
             default_caps: nexo_dispatch_tools::policy_gate::CapSnapshot {
                 queue_when_full: true,

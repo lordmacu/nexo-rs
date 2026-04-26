@@ -2671,6 +2671,47 @@ behaviour stays in lockstep with the rest of the wizard.
   re-parse the mutated YAML through `AgentsConfig`, docs page +
   SUMMARY entry, admin-ui PHASES tech-debt line.
 
+### Phase 71 — Agent registry persistence + shutdown drain   ✅
+
+Phase 70.4 made gate denials legible; Phase 71 makes the dispatcher
+itself crash-resilient. Before this phase the agent registry was
+hardcoded to `MemoryAgentRegistryStore` regardless of YAML, every
+restart wiped in-flight goals, and SIGTERM gave operators no closure
+on goals their chat had asked for.
+
+- 71.1 ✅ — `src/main.rs` honours `agent_registry.store` from
+  `project_tracker.yaml`. Resolves env placeholders
+  (`${NEXO_AGENT_REGISTRY_DB:-…}`), opens
+  `SqliteAgentRegistryStore` with parent-dir creation, falls back to
+  memory + warn on open failure. Logs which mode is active so the
+  operator can see "agent registry: sqlite-backed" at boot.
+- 71.2 ✅ — Boot-time reattach sweep. When the registry is
+  sqlite-backed and `reattach_on_boot: true`, every Running row from
+  the previous run is flipped to `LostOnRestart`, and any
+  `notify_origin` / `notify_channel` hook the operator had attached
+  fires once with `[abandoned]` summary so the originating chat sees
+  the closure. Resume-as-Running is intentionally OFF (Phase 67.C.1
+  territory; respawning a Claude Code subprocess silently is unsafe).
+- 71.3 ✅ — `nexo_dispatch_tools::drain_running_goals` helper +
+  shutdown wiring. `DispatchToolContext` exposes `hook_dispatcher:
+  Option<Arc<dyn HookDispatcher>>`; on SIGTERM the bin walks the
+  registry, fires `Cancelled` hooks with `[shutdown]` summary, marks
+  rows `LostOnRestart`, all bounded by a 2 s per-hook timeout so a
+  stuck publish cannot hold shutdown hostage. Plugin teardown happens
+  AFTER the drain so notify_origin actually gets out of the channel.
+- 71.4 ✅ — Three unit tests in `shutdown_drain::tests` cover the
+  fired-hook path, the non-Running skip path, and the no-matching-hook
+  path (where the row still flips to LostOnRestart). Reattach-side
+  paths are covered by the existing
+  `running_with_resume_off_marks_lost` test in
+  `crates/agent-registry/tests/`. Full daemon SIGTERM e2e is left as
+  a manual smoke (start daemon, dispatch goal, kill -SIGTERM, watch
+  log + chat for `[shutdown]` notify_origin) — automating that
+  requires a fixture harness that spins a complete bin under test
+  and is deferred under 71.4.x.
+- 71.5 ✅ — PHASES.md / CLAUDE.md / admin-ui PHASES / docs/ synced
+  in this same commit.
+
 ### Phase 70 — Pairing/Dispatch DX cleanup   ✅
 
 Operator-facing polish surfaced after Phase 26/67 landed. The intake
