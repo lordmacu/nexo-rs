@@ -51,6 +51,45 @@ driver has admitted. Each entry holds an `ArcSwap<AgentSnapshot>`
 `agent_logs_tail` tool — bounded so a chatty goal cannot OOM the
 process.
 
+### Persistence wiring (Phase 71)
+
+The bin reads `agent_registry.store` from
+`config/project-tracker/project_tracker.yaml` and opens
+`SqliteAgentRegistryStore` when the resolved path is non-empty.
+Env placeholders (`${NEXO_AGENT_REGISTRY_DB:-./data/agents.db}`)
+are expanded before the open. Path open failures fall back to
+`MemoryAgentRegistryStore` with a warn so a corrupt sqlite file
+never bricks boot.
+
+When the registry is sqlite-backed and `reattach_on_boot: true`,
+the bin runs the reattach sweep with `resume_running=false`. Every
+prior-run `Running` row flips to `LostOnRestart`, and any
+`notify_origin` / `notify_channel` hook attached to that goal fires
+once with an `[abandoned]` summary so the originating chat learns
+the goal could not be resumed. Subprocess respawn is intentionally
+not attempted — restoring a Claude Code worktree the daemon no
+longer owns is unsafe to do silently and lives under Phase 67.C.1.
+
+### Shutdown drain (Phase 71.3)
+
+On SIGTERM the bin runs `nexo_dispatch_tools::drain_running_goals`
+**before** plugin teardown so `notify_origin` reaches WhatsApp /
+Telegram while their adapters are still alive. Each Running goal's
+`Cancelled` hooks fire with a `[shutdown]` summary; per-hook
+dispatch is bounded by a 2 s timeout so a stuck publish cannot
+hold shutdown hostage. The row then flips to `LostOnRestart` so
+the next boot's reattach sweep does not re-fire the same
+notification.
+
+```
+[shutdown] daemon stopping — goal `<id>` was running and has
+been marked abandoned. Re-dispatch with `program_phase
+phase_id=<phase>` if you still need it.
+```
+
+SIGKILL still bypasses this — the boot-time reattach sweep is the
+safety net for that case.
+
 ## Async dispatch (Phase 67.C + 67.E)
 
 `DriverOrchestrator::spawn_goal(self: Arc<Self>, goal)` returns a
