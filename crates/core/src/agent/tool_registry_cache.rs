@@ -65,6 +65,35 @@ impl ToolRegistryCache {
         }
     }
 
+    /// Phase 67.H.3 — per-binding registry filtered by both the
+    /// agent's `allowed_tools` AND the resolved `DispatchPolicy`.
+    /// First call builds it; subsequent calls return the cached
+    /// Arc. Hot-reload safety: every reload constructs a fresh
+    /// `RuntimeSnapshot` carrying a fresh `ToolRegistryCache`, so a
+    /// new dispatch_policy / is_admin combination produces a fresh
+    /// filtered registry without an explicit invalidation step.
+    pub fn get_or_build_with_dispatch(
+        &self,
+        agent_id: &str,
+        binding_index: Option<usize>,
+        base: &ToolRegistry,
+        allowed_tools: &[String],
+        dispatch_policy: &nexo_config::DispatchPolicy,
+        is_admin: bool,
+    ) -> Arc<ToolRegistry> {
+        let key = (agent_id.to_string(), binding_index);
+        match self.entries.entry(key) {
+            Entry::Occupied(e) => Arc::clone(e.get()),
+            Entry::Vacant(slot) => {
+                let filtered = base.filtered_clone(allowed_tools);
+                filtered.apply_dispatch_capability(dispatch_policy, is_admin);
+                let arc = Arc::new(filtered);
+                slot.insert(Arc::clone(&arc));
+                arc
+            }
+        }
+    }
+
     /// Number of cached filtered registries. Exposed for tests and
     /// diagnostics.
     pub fn len(&self) -> usize {
@@ -184,5 +213,81 @@ mod tests {
         let _narrow = base.filtered_clone(&["whatsapp_send_message".to_string()]);
         // Base keeps every tool — the filter only touched the clone.
         assert_eq!(base.to_tool_defs().len(), 4);
+    }
+
+    /// Phase 67.H.3 — dispatch_policy=None drops the dispatch tool
+    /// names from the filtered registry while leaving non-dispatch
+    /// tools (memory_*) intact.
+    #[test]
+    fn dispatch_capability_none_filters_dispatch_tools_but_keeps_others() {
+        let base = base_registry();
+        // Add a couple of dispatch tools so the filter has work.
+        for n in nexo_dispatch_tools::READ_TOOL_NAMES {
+            base.register(tool_def(n), NoopTool);
+        }
+        for n in nexo_dispatch_tools::WRITE_TOOL_NAMES {
+            base.register(tool_def(n), NoopTool);
+        }
+        let cache = ToolRegistryCache::new();
+        let policy = nexo_config::DispatchPolicy {
+            mode: nexo_config::DispatchCapability::None,
+            ..Default::default()
+        };
+        let filtered = cache.get_or_build_with_dispatch(
+            "ana",
+            Some(0),
+            &base,
+            &["*".to_string()],
+            &policy,
+            false,
+        );
+        // memory_write survives (non-dispatch tool), program_phase
+        // does not (capability=None drops every dispatch tool).
+        assert!(filtered.contains("memory_write"));
+        assert!(!filtered.contains("program_phase"));
+        assert!(!filtered.contains("project_status"));
+    }
+
+    /// Hot-reload contract: a fresh ToolRegistryCache reflects the
+    /// new policy because RuntimeSnapshot constructs a new cache on
+    /// reload. Same agent + binding + base, two different policies →
+    /// two different filtered surfaces.
+    #[test]
+    fn fresh_cache_yields_policy_specific_surface() {
+        let base = base_registry();
+        for n in nexo_dispatch_tools::READ_TOOL_NAMES {
+            base.register(tool_def(n), NoopTool);
+        }
+        let none_policy = nexo_config::DispatchPolicy {
+            mode: nexo_config::DispatchCapability::None,
+            ..Default::default()
+        };
+        let read_only_policy = nexo_config::DispatchPolicy {
+            mode: nexo_config::DispatchCapability::ReadOnly,
+            ..Default::default()
+        };
+
+        let cache_v1 = ToolRegistryCache::new();
+        let r1 = cache_v1.get_or_build_with_dispatch(
+            "ana",
+            Some(0),
+            &base,
+            &["*".to_string()],
+            &none_policy,
+            false,
+        );
+        assert!(!r1.contains("project_status"));
+
+        // Simulated reload: brand-new cache with the relaxed policy.
+        let cache_v2 = ToolRegistryCache::new();
+        let r2 = cache_v2.get_or_build_with_dispatch(
+            "ana",
+            Some(0),
+            &base,
+            &["*".to_string()],
+            &read_only_policy,
+            false,
+        );
+        assert!(r2.contains("project_status"));
     }
 }
