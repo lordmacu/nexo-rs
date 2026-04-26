@@ -106,6 +106,7 @@
 - [Context optimization](./ops/context-optimization.md)
 - [Link understanding](./ops/link-understanding.md)
 - [Web search](./ops/web-search.md)
+- [Web fetch](./ops/web-fetch.md)
 - [Pairing](./ops/pairing.md)
 - [Telemetry (opt-in)](./ops/telemetry.md)
 - [Benchmarks](./ops/benchmarks.md)
