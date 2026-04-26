@@ -1,7 +1,7 @@
 [package]
 name = "nexo-poller-ext"
 description   = "Extension integration for the Nexo poller runtime."
-version       = "0.1.1"
+version       = "0.1.2"
 edition       = { workspace = true }
 rust-version  = { workspace = true }
 license       = { workspace = true }
@@ -18,10 +18,10 @@ categories    = { workspace = true }
 # in any language (Python, Bash, Go, …) without touching Rust.
 
 [dependencies]
-nexo-poller = { version = "0.1.1", path = "../poller" }
-nexo-extensions = { version = "0.1.1", path = "../extensions" }
-nexo-auth = { version = "0.1.1", path = "../auth" }
-nexo-llm = { version = "0.1.1", path = "../llm" }
+nexo-poller = { version = "0.1.2", path = "../poller" }
+nexo-extensions = { version = "0.1.2", path = "../extensions" }
+nexo-auth = { version = "0.1.2", path = "../auth" }
+nexo-llm = { version = "0.1.2", path = "../llm" }
 base64           = { workspace = true }
 async-trait      = { workspace = true }
 serde            = { workspace = true }
