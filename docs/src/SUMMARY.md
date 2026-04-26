@@ -117,6 +117,8 @@
 - [NATS with TLS + auth](./recipes/nats-tls-auth.md)
 - [Rotating config without downtime](./recipes/hot-reload.md)
 - [Build a poller module](./recipes/build-a-poller.md)
+- [Deploy on Hetzner Cloud](./recipes/deploy-hetzner.md)
+- [Deploy on Fly.io](./recipes/deploy-fly.md)
 
 # Architecture Decision Records
 
