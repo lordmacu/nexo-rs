@@ -35,6 +35,14 @@ pub struct SubPhase {
     /// Optional body — paragraph(s) below the heading until the next
     /// heading. May be empty.
     pub body: Option<String>,
+    /// Optional structured acceptance commands parsed out of the
+    /// body. The parser recognises a section labelled `Acceptance:`
+    /// (heading or `**bold**` paragraph) and extracts each
+    /// subsequent bullet as a shell command. When `Some(_)`, the
+    /// dispatch tools use these instead of the default
+    /// `cargo build --workspace && cargo test --workspace`.
+    #[serde(default)]
+    pub acceptance: Option<Vec<String>>,
 }
 
 /// One top-level phase grouping (`## Phase 67`) with its sub-phases.

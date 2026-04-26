@@ -132,6 +132,7 @@ mod tests {
                 title: "T".into(),
                 status: PhaseStatus::Done,
                 body: None,
+            acceptance: None,
             }],
         };
         let out = render_phases_table(std::slice::from_ref(&p), None);
