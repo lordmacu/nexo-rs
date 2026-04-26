@@ -209,14 +209,26 @@ PR-2. **Telemetry counters not wired** ✅ Closed 2026-04-25 (Phase 26.y).
   `nexo_core::telemetry::render_prometheus` stitches them in next to
   the web-search block. Consumer: admin-ui Phase A4.
 
-PR-3. **`tunnel.url` integration in URL resolver**
-- Missing: `nexo pair start` currently honours only `--public-url`
-  on the CLI. The spec'd priority chain includes `tunnel.url` as
-  the second-highest source.
-- Why deferred: the `nexo-tunnel` crate doesn't yet expose a
-  read-only public-URL accessor. Adding one is a small refactor
-  but slides into tunnel maintenance, not pairing.
-- Target: when the tunnel crate ships an accessor.
+PR-3. ~~**`tunnel.url` integration in URL resolver**~~  🔄 partial 2026-04-26
+- ~~`run_pair_start` URL resolver chain wired~~ — priority is
+  now (1) `--public-url` CLI flag, (2) `pairing.yaml`
+  `public_url`, (3) `NEXO_TUNNEL_URL` env var, (4) loopback
+  fail-closed. The `nexo-tunnel` daemon writes its assigned
+  `https://*.trycloudflare.com` URL into `NEXO_TUNNEL_URL` at
+  startup, which a separately-launched `nexo pair start` picks
+  up without IPC plumbing.
+- ~~`ws_cleartext_allow` from `pairing.yaml` plumbed into the
+  resolver `extras` list~~, so an operator setting that list in
+  YAML actually changes the cleartext-host allowlist. Resolves
+  the second deferred item from PR-6.
+- ~~`pair_paths` consults `pairing.yaml` overrides~~ for both
+  store path and secret path so CLI subcommands honour the
+  same config the daemon does. Falls back to legacy defaults
+  unchanged when the YAML is absent.
+- **Still deferred**: replacing `NEXO_TUNNEL_URL` env hand-off
+  with a real in-process accessor (`nexo-tunnel` crate exposing
+  the active URL via a shared snapshot). Env-var bridge keeps
+  the CLI subcommand decoupled from the daemon process for now.
 
 PR-4. **Companion-tui not shipped**
 - Missing: `apps/companion-tui/` reference companion that scans QR
