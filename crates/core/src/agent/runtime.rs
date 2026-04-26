@@ -608,12 +608,21 @@ impl AgentRuntime {
                         // stays with its in-flight sessions). `None`
                         // base registry (tests) → llm_behavior falls
                         // back to its own tool set.
+                        // PT-2 — use the dispatch-aware variant so the
+                        // per-binding registry also drops dispatch
+                        // tools the resolved DispatchPolicy does not
+                        // allow. is_admin defaults to false until the
+                        // operator-bit is plumbed through binding
+                        // resolution; admin tools stay available
+                        // through the legacy bin until then.
                         let effective_tools_for_session = tool_base.as_ref().map(|base| {
-                            snap.tool_cache.get_or_build(
+                            snap.tool_cache.get_or_build_with_dispatch(
                                 &agent.id,
                                 effective_for_session.binding_index,
                                 base,
                                 &effective_for_session.allowed_tools,
+                                &effective_for_session.dispatch_policy,
+                                false,
                             )
                         });
                         let entry = session_txs.entry(session_id).or_insert_with(|| {
