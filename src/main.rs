@@ -1104,6 +1104,12 @@ async fn main() -> Result<()> {
     // sits beside `memory.db` so backups follow the same operator
     // convention; the secret file lands in `~/.nexo/secret/pairing.key`
     // with 0600 perms (auto-generated on first boot).
+    //
+    // FOLLOWUPS PR-6 — `cfg.pairing` (`config/pairing.yaml`) overrides
+    // either path selectively when present. Containerised deploys
+    // typically only need `pairing.storage.path` to point at a
+    // mounted volume; everything else falls back to the legacy
+    // defaults.
     let (pairing_store, pairing_gate, setup_code_issuer) = {
         let memory_dir: std::path::PathBuf = cfg
             .memory
@@ -1117,21 +1123,38 @@ async fn main() -> Result<()> {
                     .unwrap_or_else(|| std::path::PathBuf::from("."))
             })
             .unwrap_or_else(|| std::path::PathBuf::from("."));
-        let store_path = memory_dir.join("pairing.db");
+        let store_path: std::path::PathBuf = cfg
+            .pairing
+            .as_ref()
+            .and_then(|p| p.storage.path.clone())
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| memory_dir.join("pairing.db"));
         let store = Arc::new(
             nexo_pairing::PairingStore::open(store_path.to_str().unwrap_or("pairing.db")).await?,
         );
         let gate = Arc::new(nexo_pairing::PairingGate::new(Arc::clone(&store)));
-        let secret_path = std::env::var_os("HOME")
-            .map(|h| {
-                std::path::PathBuf::from(h)
-                    .join(".nexo")
-                    .join("secret")
-                    .join("pairing.key")
-            })
-            .unwrap_or_else(|| std::path::PathBuf::from("./pairing.key"));
+        let secret_path: std::path::PathBuf = cfg
+            .pairing
+            .as_ref()
+            .and_then(|p| p.setup_code.secret_path.clone())
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                std::env::var_os("HOME")
+                    .map(|h| {
+                        std::path::PathBuf::from(h)
+                            .join(".nexo")
+                            .join("secret")
+                            .join("pairing.key")
+                    })
+                    .unwrap_or_else(|| std::path::PathBuf::from("./pairing.key"))
+            });
         let issuer = Arc::new(nexo_pairing::SetupCodeIssuer::open_or_create(&secret_path)?);
-        tracing::info!(store = %store_path.display(), secret = %secret_path.display(), "pairing initialised");
+        tracing::info!(
+            store = %store_path.display(),
+            secret = %secret_path.display(),
+            from_yaml = cfg.pairing.is_some(),
+            "pairing initialised",
+        );
         (store, gate, issuer)
     };
     // `setup_code_issuer` is consumed only by the CLI subcommand (it
