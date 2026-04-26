@@ -2229,6 +2229,7 @@ dependencies = [
  "nexo-auth",
  "nexo-broker",
  "nexo-config",
+ "nexo-dispatch-tools",
  "nexo-extensions",
  "nexo-llm",
  "nexo-mcp",

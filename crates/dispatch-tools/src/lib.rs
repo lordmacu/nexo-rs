@@ -9,5 +9,10 @@
 //!   (67.E.x onwards) — the rest of the multi-agent surface.
 
 pub mod policy_gate;
+pub mod tool_names;
 
 pub use policy_gate::{DispatchDenied, DispatchGate, DispatchRequest};
+pub use tool_names::{
+    allowed_tool_names, should_register, ToolGroup, ADMIN_TOOL_NAMES, READ_TOOL_NAMES,
+    WRITE_TOOL_NAMES,
+};

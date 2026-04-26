@@ -103,6 +103,41 @@ impl ToolRegistry {
         clone.retain_matching(allowed_tools);
         clone
     }
+    /// Phase 67.D.3 — drop every dispatch-related tool whose
+    /// `DispatchKind` is not allowed by the binding's resolved
+    /// `DispatchPolicy`. Returns the number of tools removed. Read
+    /// tools survive when `mode >= ReadOnly`; write tools only when
+    /// `mode == Full`; admin tools only when `is_admin`.
+    ///
+    /// Run AFTER all tools (built-ins, plugins, MCP, extensions) are
+    /// registered. Idempotent — re-running removes nothing the
+    /// second time.
+    pub fn apply_dispatch_capability(
+        &self,
+        policy: &nexo_config::DispatchPolicy,
+        is_admin: bool,
+    ) -> usize {
+        use nexo_dispatch_tools::tool_names::{
+            should_register, ToolGroup, ADMIN_TOOL_NAMES, READ_TOOL_NAMES, WRITE_TOOL_NAMES,
+        };
+        let mut removed = 0usize;
+        let drop_set: Vec<&'static str> = [
+            (ToolGroup::Read, READ_TOOL_NAMES),
+            (ToolGroup::Write, WRITE_TOOL_NAMES),
+            (ToolGroup::Admin, ADMIN_TOOL_NAMES),
+        ]
+        .into_iter()
+        .filter(|(group, _)| !should_register(policy, *group, is_admin))
+        .flat_map(|(_, names)| names.iter().copied())
+        .collect();
+        for name in drop_set {
+            if self.handlers.remove(name).is_some() {
+                removed += 1;
+            }
+        }
+        removed
+    }
+
     /// Phase 12.8 — remove every tool whose name starts with `prefix`.
     /// Used to drop a server's previous tool set before re-registering
     /// after a `notifications/tools/list_changed`. Returns the number of
@@ -207,6 +242,68 @@ mod tests {
         assert_eq!(reg.retain_matching(&[]), 0);
         assert_eq!(reg.to_tool_defs().len(), 2);
     }
+    #[test]
+    fn apply_dispatch_capability_none_drops_every_dispatch_tool() {
+        let reg = ToolRegistry::new();
+        for n in nexo_dispatch_tools::READ_TOOL_NAMES {
+            reg.register(mk_def(n), Noop);
+        }
+        for n in nexo_dispatch_tools::WRITE_TOOL_NAMES {
+            reg.register(mk_def(n), Noop);
+        }
+        for n in nexo_dispatch_tools::ADMIN_TOOL_NAMES {
+            reg.register(mk_def(n), Noop);
+        }
+        // An unrelated tool must survive — only dispatch tools get pruned.
+        reg.register(mk_def("memory_recall"), Noop);
+
+        let policy = nexo_config::DispatchPolicy {
+            mode: nexo_config::DispatchCapability::None,
+            ..Default::default()
+        };
+        let removed = reg.apply_dispatch_capability(&policy, true);
+        assert!(removed > 0);
+        assert!(reg.contains("memory_recall"));
+        assert!(!reg.contains("project_status"));
+        assert!(!reg.contains("program_phase"));
+        assert!(!reg.contains("set_concurrency_cap"));
+    }
+
+    #[test]
+    fn apply_dispatch_capability_read_only_keeps_reads_drops_writes() {
+        let reg = ToolRegistry::new();
+        for n in nexo_dispatch_tools::READ_TOOL_NAMES {
+            reg.register(mk_def(n), Noop);
+        }
+        for n in nexo_dispatch_tools::WRITE_TOOL_NAMES {
+            reg.register(mk_def(n), Noop);
+        }
+        let policy = nexo_config::DispatchPolicy {
+            mode: nexo_config::DispatchCapability::ReadOnly,
+            ..Default::default()
+        };
+        reg.apply_dispatch_capability(&policy, false);
+        assert!(reg.contains("project_status"));
+        assert!(!reg.contains("program_phase"));
+    }
+
+    #[test]
+    fn apply_dispatch_capability_full_admin_keeps_admin_tools() {
+        let reg = ToolRegistry::new();
+        for n in nexo_dispatch_tools::ADMIN_TOOL_NAMES {
+            reg.register(mk_def(n), Noop);
+        }
+        let policy = nexo_config::DispatchPolicy {
+            mode: nexo_config::DispatchCapability::Full,
+            ..Default::default()
+        };
+        reg.apply_dispatch_capability(&policy, true);
+        assert!(reg.contains("set_concurrency_cap"));
+        // Same policy, non-admin caller — admin tools removed.
+        reg.apply_dispatch_capability(&policy, false);
+        assert!(!reg.contains("set_concurrency_cap"));
+    }
+
     #[test]
     fn contains_reflects_state() {
         let reg = ToolRegistry::new();
