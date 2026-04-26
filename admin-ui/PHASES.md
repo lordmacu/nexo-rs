@@ -499,4 +499,7 @@ IOUs — features that landed in the daemon but have no UI yet.
   Phase A3 "Brain" tab needs a toggle + caps editor + denylist
   textarea, plus per-binding override row in the override matrix.
 - [ ] **Per-agent setup dashboard** — model attach/detach, language pick, channel bind/unbind, skill toggle in one screen per agent (CLI shipped in `nexo setup` → `Configurar agente`; admin UI needs the same single-pane editor under each agent's detail view).
+- [ ] **Pairing allowlist explorer (Phase 70.3)** — surface `PairingStore::list_allow` rows in the Pairing tab so operators can confirm seeded senders without dropping to `nexo pair list --all`. Columns: channel, account, sender, approved_via, approved_at, revoked_at. Filter by channel + toggle for "include revoked".
+- [ ] **Pairing audit banner (Phase 70.6)** — when any binding has `pairing.auto_challenge: true` and zero rows in the allowlist for its `(channel, account)`, show a top-of-page banner with the `nexo pair seed` template — same audit `agent setup doctor` runs on the CLI.
+- [ ] **Reload-flushes-gates badge (Phase 70.7)** — after a hot-reload, the dashboard event log should annotate the entry with the post-reload hooks that fired (e.g. `PairingGate.flush_cache`), so the operator sees why a freshly-seeded sender is now admitted without a restart.
 - [ ] (add lines as features land — see auto-memory rule)

@@ -447,6 +447,11 @@ fn has_any_override(b: &nexo_config::InboundBinding) -> bool {
         || b.model.is_some()
         || b.system_prompt_extra.is_some()
         || b.allowed_delegates.is_some()
+        || b.language.is_some()
+        || !b.link_understanding.is_null()
+        || !b.web_search.is_null()
+        || !b.pairing_policy.is_null()
+        || b.dispatch_policy.is_some()
         || !matches!(
             b.sender_rate_limit,
             nexo_config::SenderRateLimitOverride::Keyword(

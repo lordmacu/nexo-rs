@@ -72,21 +72,25 @@ pub struct DispatchRequest<'a> {
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum DispatchDenied {
-    #[error("dispatch_capability=none for this binding")]
+    #[error("[dispatch] dispatch_capability=none for this binding")]
     CapabilityNone,
-    #[error("dispatch_capability=read_only — write tool blocked")]
+    #[error("[dispatch] dispatch_capability=read_only — write tool blocked")]
     CapabilityReadOnly,
-    #[error("sender is not pairing.trusted")]
+    #[error(
+        "[dispatch] sender is not pairing.trusted (binding flag, not the intake \
+         pairing store; flip `program_phase.require_trusted` or set the binding's \
+         `pairing.trusted=true`)"
+    )]
     SenderNotTrusted,
-    #[error("phase {0} is on forbidden_phase_ids")]
+    #[error("[dispatch] phase {0} is on forbidden_phase_ids")]
     PhaseForbidden(String),
-    #[error("phase {0} is not in allowed_phase_ids")]
+    #[error("[dispatch] phase {0} is not in allowed_phase_ids")]
     PhaseNotAllowed(String),
-    #[error("dispatcher cap reached: {current}/{max}")]
+    #[error("[dispatch] dispatcher cap reached: {current}/{max}")]
     DispatcherCapReached { current: u32, max: u32 },
-    #[error("sender cap reached: {current}/{max}")]
+    #[error("[dispatch] sender cap reached: {current}/{max}")]
     SenderCapReached { current: u32, max: u32 },
-    #[error("global cap reached: {current}/{max}")]
+    #[error("[dispatch] global cap reached: {current}/{max}")]
     GlobalCapReached { current: u32, max: u32 },
 }
 

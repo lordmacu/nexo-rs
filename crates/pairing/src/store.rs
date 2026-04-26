@@ -14,7 +14,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
 
 use crate::code;
-use crate::types::{ApprovedRequest, PairingError, PendingRequest, UpsertOutcome};
+use crate::types::{AllowedSender, ApprovedRequest, PairingError, PendingRequest, UpsertOutcome};
 
 const PENDING_TTL: Duration = Duration::from_secs(60 * 60);
 const MAX_PENDING_PER_ACCOUNT: usize = 3;
@@ -188,6 +188,62 @@ impl PairingStore {
                 code,
                 created_at,
                 meta,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Dump every row from `pairing_allow_from`. `include_revoked=false`
+    /// hides soft-deleted rows; `true` returns them too with
+    /// `revoked_at` populated. `channel` filters when `Some(_)`. The
+    /// `nexo pair list --all` operator surface relies on this to make
+    /// seeded senders visible (the legacy `list_pending` only shows
+    /// in-flight challenges, which left operators unable to confirm a
+    /// `pair seed` actually landed).
+    pub async fn list_allow(
+        &self,
+        channel: Option<&str>,
+        include_revoked: bool,
+    ) -> Result<Vec<AllowedSender>, PairingError> {
+        let mut sql = String::from(
+            "SELECT channel, account_id, sender_id, approved_at, approved_via, revoked_at \
+             FROM pairing_allow_from",
+        );
+        let mut clauses: Vec<&str> = Vec::new();
+        if !include_revoked {
+            clauses.push("revoked_at IS NULL");
+        }
+        if channel.is_some() {
+            clauses.push("channel = ?");
+        }
+        if !clauses.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&clauses.join(" AND "));
+        }
+        sql.push_str(" ORDER BY channel, account_id, sender_id");
+        let rows: Vec<(String, String, String, i64, String, Option<i64>)> = if let Some(c) = channel
+        {
+            sqlx::query_as(&sql)
+                .bind(c)
+                .fetch_all(&self.pool)
+                .await
+        } else {
+            sqlx::query_as(&sql).fetch_all(&self.pool).await
+        }
+        .map_err(|e| PairingError::Storage(e.to_string()))?;
+        let mut out = Vec::with_capacity(rows.len());
+        for (channel, account_id, sender_id, approved_at, approved_via, revoked_at) in rows {
+            let approved_at =
+                DateTime::<Utc>::from_timestamp(approved_at, 0).unwrap_or_else(Utc::now);
+            let revoked_at =
+                revoked_at.and_then(|t| DateTime::<Utc>::from_timestamp(t, 0));
+            out.push(AllowedSender {
+                channel,
+                account_id,
+                sender_id,
+                approved_at,
+                approved_via,
+                revoked_at,
             });
         }
         Ok(out)
