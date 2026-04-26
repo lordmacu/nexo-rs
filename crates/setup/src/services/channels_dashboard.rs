@@ -204,6 +204,72 @@ fn list_agents_with_plugin(config_dir: &Path, plugin: &str) -> Result<Vec<String
     Ok(hits)
 }
 
+/// Linear flow: pick channel → pick agent → detect link state → if
+/// linked ask "re-authenticate?", if not run the link flow + add to
+/// the agent's `plugins:` array. Loops until "Continuar".
+///
+/// Used by the first-run wizard step 3 and the hub menu's
+/// "Vincular canal adicional" option so both paths share the same
+/// UX.
+pub fn run_link_flow(config_dir: &Path, secrets_dir: &Path) -> Result<()> {
+    loop {
+        let kinds = ["telegram", "whatsapp", "email"];
+        let mut channel_menu: Vec<String> =
+            kinds.iter().map(|k| (*k).to_string()).collect();
+        channel_menu.push("Continuar al siguiente paso".into());
+        let ch_idx = prompt::pick_from_strings("¿Qué canal?", &channel_menu)?;
+        if ch_idx == channel_menu.len() - 1 {
+            return Ok(());
+        }
+        let channel = kinds[ch_idx];
+
+        // Pick agent BEFORE auth — "está vinculado?" is per-(channel, agent).
+        let agents_yaml = config_dir.join("agents.yaml");
+        let agent_ids = yaml_patch::list_agent_ids(&agents_yaml).unwrap_or_default();
+        if agent_ids.is_empty() {
+            anyhow::bail!(
+                "No hay agentes definidos. Editá `agents.yaml` o `agents.d/*.yaml` y re-correlo."
+            );
+        }
+        let agent = prompt::pick_agent(&agent_ids)?;
+
+        // Detect link state for THIS (channel, agent) pair.
+        let entries = detect_channels(config_dir, secrets_dir)?;
+        let already_linked = entries.iter().any(|e| {
+            e.channel == channel
+                && matches!(e.auth, AuthState::Authenticated)
+                && e.bound_agents.iter().any(|a| a == &agent)
+        });
+
+        if already_linked {
+            println!();
+            println!("✓ {} ya está autenticado y vinculado a `{}`.", channel, agent);
+            if prompt::yes_no("¿Re-autenticar?", false)? {
+                services_imperative::dispatch(channel, config_dir, secrets_dir).map(|_| ())?;
+                println!("✔ {} re-autenticado.", channel);
+            } else {
+                println!("Sin cambios.");
+            }
+        } else {
+            println!();
+            println!("ℹ {} aún no está vinculado a `{}`. Vinculando…", channel, agent);
+            // Auth (idempotent — keys ya válidas no piden re-prompt).
+            services_imperative::dispatch(channel, config_dir, secrets_dir).map(|_| ())?;
+            // Append a `plugins:` el agente.
+            if let Some(file) = locate_agent_file(config_dir, &agent) {
+                yaml_patch::add_plugin_to_agent(&file, &agent, channel).ok();
+                println!("✔ {} agregado a plugins de `{}` en {}", channel, agent, file.display());
+            } else {
+                println!("⚠  No encontré el archivo YAML de `{}`. Agregalo manualmente.", agent);
+            }
+        }
+    }
+}
+
+/// Legacy dashboard mode (per-row action menu). Kept for a future
+/// `nexo setup channels` subcommand; the wizard + hub menu both use
+/// `run_link_flow` now.
+#[allow(dead_code)]
 pub fn run_dashboard(config_dir: &Path, secrets_dir: &Path) -> Result<()> {
     loop {
         let entries = detect_channels(config_dir, secrets_dir)?;

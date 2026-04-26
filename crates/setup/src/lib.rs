@@ -106,13 +106,12 @@ fn run_guided_first_run(
     let svc = llm_services[idx];
     run_service(svc, secrets_dir, config_dir)?;
 
-    // Step 3 — Canales. Dashboard interactivo: detecta cada
-    // (channel, instance) configurado, muestra estado de auth +
-    // a qué agente está bound, y deja al operador re-autenticar /
-    // reasignar / remover sin tener que editar YAML a mano.
+    // Step 3 — Canales. Flujo linear: canal → agente → si ya está
+    // vinculado pregunta re-auth; si no está vinculado corre auth +
+    // agrega el plugin al agente. El loop deja agregar varios.
     println!();
     println!("▎Paso 3/4 — Canales");
-    services::channels_dashboard::run_dashboard(config_dir, secrets_dir)?;
+    services::channels_dashboard::run_link_flow(config_dir, secrets_dir)?;
 
     // Step 4 — Skills (optional, pre-selects common ones).
     println!();
@@ -200,10 +199,14 @@ fn run_hub_menu(
                 status::print_report(&report);
             }
             1 => {
-                if let Some(link) = services.iter().find(|s| s.id == "link") {
-                    if let Err(e) = run_service(link, secrets_dir, config_dir) {
-                        eprintln!("⚠  {}: {e:#}", link.label);
-                    }
+                // Linear flow: canal → agente → reauth/link.
+                // Reemplaza el viejo `link` service para que la
+                // experiencia sea idéntica a la del wizard step 3.
+                if let Err(e) = services::channels_dashboard::run_link_flow(
+                    config_dir,
+                    secrets_dir,
+                ) {
+                    eprintln!("⚠  vincular canal: {e:#}");
                 }
             }
             2 => {
