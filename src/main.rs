@@ -1374,6 +1374,18 @@ async fn main() -> Result<()> {
 
         let tools = Arc::new(ToolRegistry::new());
         tools.register(DelegationTool::tool_def(), DelegationTool);
+        // Phase 67 — register the project-tracker / dispatch tool
+        // surface (program_phase, list_agents, agent_status, …).
+        // The handlers return a friendly error when
+        // `AgentContext.dispatch` is not set, so registering them
+        // without an orchestrator just means the LLM sees the
+        // tool defs and dispatch attempts surface a clean error
+        // instead of pretending success. Operators that wire up
+        // a DispatchToolContext at boot get the full surface.
+        // Per-binding `dispatch_capability` in EffectiveBindingPolicy
+        // (Phase 67.D.1) prunes write tools at session-time so
+        // none of them are visible to bindings that opted out.
+        nexo_core::agent::dispatch_handlers::register_dispatch_tools_into(&tools);
         if agent_cfg.plugins.iter().any(|p| p == "memory") {
             if let Some(mem) = memory.clone() {
                 tools.register(

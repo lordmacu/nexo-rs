@@ -157,6 +157,35 @@ nexo-driver-tools agents cancel <goal_id> [--reason "…"]
 `origin.plugin = "console"` so `notify_origin` is a no-op (the
 operator sees stdout, not a chat reply).
 
+## Built-in registration (`nexo` daemon)
+
+The default `nexo` agent binary registers every dispatch
+**tool definition** at boot via
+`nexo_core::agent::dispatch_handlers::register_dispatch_tools_into`.
+The LLM sees `program_phase`, `list_agents`, `agent_status`,
+etc. in its toolset; per-binding `dispatch_capability`
+(`config/agents.yaml`) prunes the write tools for bindings that
+opted out.
+
+What's NOT bundled by default is the runtime
+`DispatchToolContext` — the orchestrator + registry + tracker
+references the handlers consult. Without it, a tool call
+returns a clean `dispatch tools require AgentContext.dispatch
+to be set at boot` error instead of pretending success. Two
+integration paths from there:
+
+- **In-process orchestrator** — boot a `DriverOrchestrator`
+  alongside the agents, share one `AgentRegistry`. See the next
+  section for the wiring sample.
+- **NATS-based dispatch** — agent bin publishes a message to
+  `agent.driver.dispatch.request` that a separate
+  `nexo-driver` daemon consumes. This is the topology to use
+  when the Claude subprocess needs hardware (GPU box) the agent
+  daemon doesn't have. The dispatch tool surface only changes
+  in the registry it consults; operators can swap the in-
+  process `AgentRegistry` for one that mirrors a NATS-backed
+  registry without touching the handlers.
+
 ## Boot wiring (B8)
 
 The integrator's `main.rs` ties everything together. Minimal

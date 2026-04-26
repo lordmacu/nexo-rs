@@ -30,7 +30,9 @@ semver_check = true
 # Publish settings shared by every crate.
 publish_allow_dirty = false      # CI tree must be clean — no uncommitted WIP
 publish_no_verify   = false      # full verify (compile) before upload
-publish_timeout     = "30m"      # generous: cold cache builds can be slow
+publish_timeout     = "10m"      # per-crate timeout
+release_always      = false      # only release crates that the release-PR bumped
+                                 # — avoids retrying old publishes on every push.
 
 # The workspace bin (`nexo-rs`) is the last node in the topo order; release-plz
 # already infers this from the dep graph, but we mark it explicitly so a crate
@@ -39,6 +41,55 @@ publish_timeout     = "30m"      # generous: cold cache builds can be slow
 name = "nexo-rs"
 publish = true
 release = true
+
+# Crates that are not part of the public release surface (Phase 67
+# driver subsystem internals + the dispatch tooling that backs the
+# CLI). Set `publish = false` so release-plz never tries to push
+# them to crates.io and never tries to create their git release tag.
+# Operators on the published track only need the runtime + plugins;
+# the driver layer ships separately when its security review closes.
+[[package]]
+name = "nexo-driver-types"
+publish = false
+release = false
+
+[[package]]
+name = "nexo-driver-permission"
+publish = false
+release = false
+
+[[package]]
+name = "nexo-driver-claude"
+publish = false
+release = false
+
+[[package]]
+name = "nexo-driver-loop"
+publish = false
+release = false
+
+[[package]]
+name = "nexo-project-tracker"
+publish = false
+release = false
+
+[[package]]
+name = "nexo-agent-registry"
+publish = false
+release = false
+
+[[package]]
+name = "nexo-dispatch-tools"
+publish = false
+release = false
+
+# Companion-tui is also private for now — the WS handshake hasn't
+# landed yet so the surface area isn't stable enough to publish.
+# Will flip to publish=true once PR-4.x ships.
+[[package]]
+name = "nexo-companion-tui"
+publish = false
+release = false
 
 # To skip a crate, add:
 #   [[package]]
