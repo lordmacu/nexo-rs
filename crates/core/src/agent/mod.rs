@@ -48,6 +48,7 @@ pub mod tool_registry_cache;
 pub mod transcripts;
 pub mod transcripts_index;
 pub mod types;
+pub mod web_fetch_tool;
 pub mod web_search_tool;
 pub mod workspace;
 pub mod workspace_cache;
@@ -106,6 +107,7 @@ pub use transcripts::{
 };
 pub use transcripts_index::{IndexedHit, TranscriptsIndex};
 pub use types::{InboundMessage, RunTrigger};
+pub use web_fetch_tool::WebFetchTool;
 pub use web_search_tool::WebSearchTool;
 pub use workspace::{
     AgentIdentity, DailyNote, LoadLimits, SessionScope, WorkspaceBundle, WorkspaceLoader,
