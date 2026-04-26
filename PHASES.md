@@ -636,28 +636,53 @@ blocks on 27.1.
 on Termux, `nix run github:lordmacu/nexo-rs` — and the
 artifact carries a signed SBOM verifiable end-to-end.
 
-### Phase 28 — Production observability
+### Phase 28 — Production observability   🔄
 
-Metrics exist (Prometheus); the operator-facing pipeline does not.
+Grafana dashboards bundled (active now). OTel propagation,
+`/api/costs` admin endpoint, scrape-config tweaks deferred.
 
-- Bundled Grafana dashboards under `ops/grafana/` covering:
-  agents up, LLM latency p50/p95/p99, broker lag, DLQ depth,
-  TaskFlow status counts, capability toggles armed.
-- OpenTelemetry traces with W3C context propagation across NATS
-  hops (`event.tracing` field carries traceparent).
-- OTLP exporter wired behind `runtime.observability.otel.endpoint`
-  so traces ship to Jaeger / Tempo / Honeycomb without a code
-  change.
-- `agent metrics --serve` standalone subcommand (already exposed
-  on the admin port; phase fixes scrape config + service
-  discovery hints).
-- Cost tracking: per-agent / per-binding / per-session token
-  aggregation table (rolling 24h + 30d) exposed via
-  `agent costs` CLI and a `/api/costs` admin endpoint.
+Shipped (28.1):
+- `ops/grafana/nexo-overview.json` — single-screen executive
+  view: tool throughput, LLM TTFT p50/p95/p99, web-search
+  breaker opens, tool cache hit ratio.
+- `ops/grafana/nexo-llm.json` — TTFT quantiles by provider,
+  chunk emission breakdown, link-understanding fetch latency +
+  outcomes + cache.
+- `ops/grafana/nexo-tools.json` — tool latency p95/p99 by tool,
+  calls × outcome stack, MCP sampling activity, web-search
+  calls + latency by provider.
+- `ops/grafana/README.md` — import via UI / API / Grafana
+  provisioning, Prometheus scrape config snippet, full metric
+  coverage table cross-referencing source crate + originating
+  phase, dashboard editing round-trip protocol (strip `id`,
+  bump `version` before commit).
 
-Done when an operator deploys, points Grafana at our
-data-source, and sees the dashboards populate without writing a
-single PromQL query.
+Each panel uses a `${DS_PROMETHEUS}` datasource variable so the
+operator binds to whichever Prometheus the deployment uses.
+Refresh defaults to 30s. Tags `nexo` + dashboard role so a
+folder filter shows them together.
+
+Deferred:
+- **OpenTelemetry traces** — W3C context propagation across NATS
+  hops (`event.tracing` field carries traceparent), OTLP
+  exporter behind `runtime.observability.otel.endpoint` so
+  traces ship to Jaeger / Tempo / Honeycomb without a code
+  change. Larger surface — own sub-phase 28.2.
+- **Cost dashboard** — per-agent / per-binding / per-session
+  token aggregation table (rolling 24h + 30d) exposed via
+  `nexo costs` CLI and a `/api/costs` admin endpoint. Series
+  not yet emitted; lands when the cost-accumulator (Phase 45)
+  ships.
+- **TaskFlow status panel** — flow counts by state. Needs the
+  `nexo_taskflow_status` gauge to be added first.
+- **DLQ depth panel + alert** — `nexo_broker_dlq_depth` gauge
+  not yet emitted.
+
+Done when (revised): an operator drops the bundled dashboards
+into Grafana, sees them populate from the live `/metrics`
+endpoint without writing a single PromQL query, AND traces
+flow end-to-end via OTel. Dashboards done now; OTel + cost
+dashboard land in 28.2 + 28.3.
 
 ### Phase 29 — Admin UI completion (A3 → A11)
 

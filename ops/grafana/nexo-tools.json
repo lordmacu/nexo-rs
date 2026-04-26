@@ -1,0 +1,138 @@
+{
+  "annotations": { "list": [] },
+  "description": "Tool execution and MCP sampling dashboard. Use this to find slow tools, broken MCP servers, and runaway loops.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Tool latency p50/p95/p99 by tool. Outliers signal a misbehaving extension or a slow upstream API.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1, "showPoints": "never" },
+          "unit": "ms"
+        }
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum by (tool, le) (rate(nexo_tool_latency_ms_bucket[5m])))", "legendFormat": "p95 {{tool}}", "refId": "A" },
+        { "expr": "histogram_quantile(0.99, sum by (tool, le) (rate(nexo_tool_latency_ms_bucket[5m])))", "legendFormat": "p99 {{tool}}", "refId": "B" }
+      ],
+      "title": "Tool latency p95/p99",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Tool calls per second, broken down by tool + outcome. Watch the `error` series — sustained > `ok` rate means an agent stuck in a retry loop.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 5, "lineWidth": 1, "showPoints": "never", "stacking": { "group": "A", "mode": "normal" } },
+          "unit": "ops"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 2,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        { "expr": "sum by (tool, result) (rate(nexo_tool_calls_total[5m]))", "legendFormat": "{{tool}} / {{result}}", "refId": "A" }
+      ],
+      "title": "Tool calls /s by tool × result",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "MCP sampling: requests per second + p95 latency. MCP servers running locally as stdio subprocesses surface here; spikes can indicate a stuck child process.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1, "showPoints": "never" }
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 3,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        { "expr": "sum(rate(nexo_mcp_sampling_requests_total[5m]))", "legendFormat": "sampling /s", "refId": "A" },
+        { "expr": "histogram_quantile(0.95, sum by (le) (rate(nexo_mcp_sampling_duration_ms_bucket[5m])))", "legendFormat": "p95 latency (ms)", "refId": "B" }
+      ],
+      "title": "MCP sampling activity",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Web-search call rate, broken down by provider + outcome. `error` + `unavailable` series should be near-zero when upstream is healthy.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1, "showPoints": "never" },
+          "unit": "ops"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "id": 4,
+      "targets": [
+        { "expr": "sum by (provider, result) (rate(nexo_web_search_calls_total[5m]))", "legendFormat": "{{provider}} / {{result}}", "refId": "A" }
+      ],
+      "title": "Web-search calls /s",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Web-search latency p95 by provider. Spikes correlate with upstream provider issues; persistent high latency on one provider = candidate to demote in `web_search.providers` order.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1, "showPoints": "never" },
+          "unit": "ms"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "id": 5,
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum by (provider, le) (rate(nexo_web_search_latency_ms_bucket[5m])))", "legendFormat": "p95 {{provider}}", "refId": "A" }
+      ],
+      "title": "Web-search p95 latency",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "tags": ["nexo", "tools"],
+  "templating": {
+    "list": [
+      {
+        "hide": 0,
+        "includeAll": false,
+        "label": "Datasource",
+        "multi": false,
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Nexo — Tools & MCP",
+  "uid": "nexo-tools",
+  "version": 1
+}

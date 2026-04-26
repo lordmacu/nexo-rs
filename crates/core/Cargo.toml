@@ -43,6 +43,7 @@ nexo-mcp = { version = "0.1.1", path = "../mcp" }
 nexo-taskflow = { version = "0.1.1", path = "../taskflow" }
 nexo-web-search = { version = "0.1.1", path = "../web-search" }
 nexo-pairing    = { version = "0.1.2", path = "../pairing" }
+nexo-dispatch-tools = { version = "0.1.1", path = "../dispatch-tools" }
 futures         = { workspace = true }
 arc-swap        = { workspace = true }
 lru             = { workspace = true }

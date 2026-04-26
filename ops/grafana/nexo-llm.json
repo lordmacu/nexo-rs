@@ -1,0 +1,160 @@
+{
+  "annotations": { "list": [] },
+  "description": "LLM-specific dashboard: streaming TTFT, chunk emission rate by provider+kind, link understanding fetch latency. Use this to triage 'why is the agent slow' before opening the upstream provider's status page.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Time-to-first-token, p50/p95/p99 per provider. The histogram_quantile() math assumes a 5m window; tweak to taste.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "stacking": { "group": "A", "mode": "none" }
+          },
+          "unit": "s"
+        }
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["mean", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum by (provider, le) (rate(nexo_llm_stream_ttft_seconds_bucket[5m])))", "legendFormat": "p50 {{provider}}", "refId": "A" },
+        { "expr": "histogram_quantile(0.95, sum by (provider, le) (rate(nexo_llm_stream_ttft_seconds_bucket[5m])))", "legendFormat": "p95 {{provider}}", "refId": "B" },
+        { "expr": "histogram_quantile(0.99, sum by (provider, le) (rate(nexo_llm_stream_ttft_seconds_bucket[5m])))", "legendFormat": "p99 {{provider}}", "refId": "C" }
+      ],
+      "title": "Streaming TTFT — quantiles by provider",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Chunks emitted per second, by provider + kind. Sudden drop = upstream stopped streaming; surge = a model started over-emitting tool-call chunks.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 5, "lineWidth": 1, "showPoints": "never", "stacking": { "group": "A", "mode": "normal" } },
+          "unit": "ops"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 2,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        { "expr": "sum by (provider, kind) (rate(nexo_llm_stream_chunks_total[5m]))", "legendFormat": "{{provider}} / {{kind}}", "refId": "A" }
+      ],
+      "title": "Chunks /s by provider × kind",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Link-understanding fetch latency. The agent fetches user-shared URLs through this path before injecting them into the prompt.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1, "showPoints": "never" },
+          "unit": "ms"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 3,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum by (le) (rate(nexo_link_understanding_fetch_duration_ms_bucket[5m])))", "legendFormat": "p50", "refId": "A" },
+        { "expr": "histogram_quantile(0.95, sum by (le) (rate(nexo_link_understanding_fetch_duration_ms_bucket[5m])))", "legendFormat": "p95", "refId": "B" },
+        { "expr": "histogram_quantile(0.99, sum by (le) (rate(nexo_link_understanding_fetch_duration_ms_bucket[5m])))", "legendFormat": "p99", "refId": "C" }
+      ],
+      "title": "Link understanding fetch latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Link-understanding fetch outcome breakdown. `ok` should dominate; persistent `blocked` / `non_html` / `too_big` indicate a chatty user or a content-type denylist that's too aggressive.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "bars", "fillOpacity": 80, "lineWidth": 1 },
+          "unit": "ops"
+        }
+      },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 16 },
+      "id": 4,
+      "targets": [
+        { "expr": "sum by (result) (rate(nexo_link_understanding_fetch_total[5m]))", "legendFormat": "{{result}}", "refId": "A" }
+      ],
+      "title": "Link fetch outcomes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Link-understanding cache hit ratio. Closer to 1 = users sharing the same URLs (good); 0 = every URL is unique (expected for news bots).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.3 },
+              { "color": "green", "value": 0.6 }
+            ]
+          },
+          "max": 1, "min": 0,
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 16 },
+      "id": 5,
+      "options": {
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showThresholdMarkers": true
+      },
+      "targets": [
+        { "expr": "sum(rate(nexo_link_understanding_cache_total{hit=\"true\"}[5m])) / clamp_min(sum(rate(nexo_link_understanding_cache_total[5m])), 1)", "legendFormat": "cache hit ratio", "refId": "A" }
+      ],
+      "title": "Link cache hit ratio",
+      "type": "gauge"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "tags": ["nexo", "llm"],
+  "templating": {
+    "list": [
+      {
+        "hide": 0,
+        "includeAll": false,
+        "label": "Datasource",
+        "multi": false,
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Nexo — LLM",
+  "uid": "nexo-llm",
+  "version": 1
+}
