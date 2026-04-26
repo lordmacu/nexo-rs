@@ -9,9 +9,15 @@
 //!   (67.E.x onwards) — the rest of the multi-agent surface.
 
 pub mod dispatch_followup;
+pub mod hooks;
 pub mod policy_gate;
 pub mod program_phase;
 pub mod tool_names;
+
+pub use hooks::{
+    CompletionHook, DefaultHookDispatcher, HookAction, HookDispatcher, HookError, HookPayload,
+    HookTransition, HookTrigger, NatsHookPublisher, NoopNatsHookPublisher,
+};
 
 pub use dispatch_followup::{
     dispatch_followup_call, followup_phase_id, DispatchFollowupInput, DispatchFollowupOutput,

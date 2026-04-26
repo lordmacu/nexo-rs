@@ -20,6 +20,8 @@ nexo-driver-claude = { version = "0.1.1", path = "../driver-claude" }
 nexo-agent-registry = { version = "0.1.1", path = "../agent-registry" }
 nexo-driver-loop    = { version = "0.1.1", path = "../driver-loop" }
 nexo-project-tracker = { version = "0.1.1", path = "../project-tracker" }
+nexo-pairing        = { version = "0.1.2", path = "../pairing" }
+tokio               = { workspace = true, features = ["time"] }
 chrono              = { workspace = true }
 humantime-serde     = { workspace = true }
 uuid                = { workspace = true }
@@ -32,3 +34,5 @@ tracing            = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tempfile = "3"
 nexo-driver-permission = { version = "0.1.1", path = "../driver-permission" }
+async-trait = { workspace = true }
+anyhow      = { workspace = true }
