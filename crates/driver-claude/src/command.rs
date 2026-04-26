@@ -190,6 +190,21 @@ impl ClaudeCommand {
         args.push(self.prompt.clone());
         args.push("--output-format".into());
         args.push(self.output_format.as_cli().into());
+        // Phase 73 — Claude CLI requires `--verbose` whenever
+        // `--print` is combined with `--output-format=stream-json`.
+        // Without it the CLI prints
+        // "Error: When using --print, --output-format=stream-json
+        // requires --verbose" to stderr and exits with status 0
+        // stdout-empty, which the driver loop then mis-classifies
+        // as a `Continue` turn — the entire 40-turn budget burns
+        // on phantom checkpoints. Always pass `--verbose` for
+        // stream-json so the harness gets the JSON it expects.
+        if matches!(
+            self.output_format,
+            crate::config::OutputFormat::StreamJson
+        ) {
+            args.push("--verbose".into());
+        }
         if let Some(id) = &self.resume {
             args.push("--resume".into());
             args.push(id.clone());

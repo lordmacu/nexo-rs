@@ -7,13 +7,18 @@ fn base(prompt: &str) -> ClaudeCommand {
 #[test]
 fn default_only() {
     let args = base("hi").debug_args();
+    // Phase 73 — `--verbose` is mandatory whenever
+    // `--print` + `--output-format=stream-json` combine; without
+    // it the Claude CLI bails with "stream-json requires
+    // --verbose" and the driver loop spins on phantom turns.
     assert_eq!(
         args,
         vec![
             "-p".to_string(),
             "hi".into(),
             "--output-format".into(),
-            "stream-json".into()
+            "stream-json".into(),
+            "--verbose".into(),
         ]
     );
 }
