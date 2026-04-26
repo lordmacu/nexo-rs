@@ -1760,7 +1760,51 @@ operator-friendly aggregator script on top.
 Done when an operator triaging an incident has one command per
 question and a deterministic place to look for breadcrumbs.
 
-### Phase 45 — Cost & quota controls
+### Phase 45 — Cost & quota controls   🔄
+
+Heuristic cost estimator script + runbook shipped. Tokens metric,
+config caps, runtime enforcement, `nexo costs` subcommand all
+deferred.
+
+Shipped (45.1):
+- `scripts/nexo-cost-report.sh` — Prometheus-driven heuristic
+  estimator. Pulls `nexo_llm_stream_chunks_total` by provider,
+  multiplies by configurable tokens-per-chunk × built-in price
+  table, prints per-provider rolling totals + total dollar
+  estimate. `--json` for machine consumption, `--prices` for
+  enterprise rate overrides, `NEXO_TOKENS_PER_CHUNK` env for
+  per-deployment calibration. Snapshots to
+  `/var/cache/nexo-cost/last.tsv` so successive runs can show
+  delta vs the previous snapshot.
+- Default price table covers Anthropic / OpenAI / MiniMax /
+  Gemini / DeepSeek / Ollama at public-list prices as of
+  2026-04. Override via `--prices file.tsv`.
+- `docs/src/ops/cost.md` (NEW) — operator runbook. How to
+  calibrate tokens-per-chunk from a real conversation, daily
+  budget alert via cron template
+  `/etc/cron.daily/nexo-cost-alert`, raw-metrics inspection
+  recipes for operators who want finer slices than the
+  script provides, future-state preview of `cost_cap_usd`
+  config when 45.x ships.
+- `docs/src/SUMMARY.md` registers the new page.
+
+Deferred:
+- `nexo_llm_tokens_total{provider,model,direction}` Prometheus
+  series. Replaces the chunks×heuristic estimator with direct
+  token counts. Touches `crates/llm/`.
+- `agents.<id>.cost_cap_usd { monthly, daily, action, warn_topic }`
+  schema + runtime enforcement. `action` ∈
+  `refuse_new_turns | warn_only | throttle` (throttle = swap
+  to cheaper model variant for the period). Touches
+  `crates/config/` + `crates/core/`.
+- Per-binding token rate limit on top of the existing
+  `sender_rate_limit`. Touches `crates/core/agent/`.
+- Pre-flight token-count predictor that the agent can
+  reference in its system prompt
+  ("you have 80% of budget remaining today").
+- `nexo costs` CLI rolling 24h / 7d / 30d aggregator.
+- `/api/costs` admin endpoint surfacing the same data for the
+  admin-ui A8 tile.
 
 LLM token usage is logged. The operator can't act on it.
 
