@@ -30,6 +30,7 @@ use nexo_dispatch_tools::{
 };
 use nexo_driver_claude::{DispatcherIdentity, OriginChannel};
 use nexo_driver_loop::DriverOrchestrator;
+use nexo_driver_types::GoalId;
 use nexo_llm::ToolDef;
 use nexo_project_tracker::MutableTracker;
 #[allow(unused_imports)]
@@ -336,6 +337,32 @@ impl ToolHandler for AgentHooksListHandler {
         let input: AgentHooksListInput = serde_json::from_value(args)?;
         let out = agent_hooks_list(input, dispatch.hooks.clone()).await;
         Ok(json!({ "markdown": out }))
+    }
+}
+
+// ─── Operator interrupt ─────────────────────────────────────
+
+#[derive(serde::Deserialize)]
+struct InterruptAgentInput {
+    pub goal_id: GoalId,
+    pub message: String,
+}
+
+pub struct InterruptAgentHandler;
+
+#[async_trait]
+impl ToolHandler for InterruptAgentHandler {
+    async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
+        let dispatch = dispatch_ctx(ctx)?;
+        let input: InterruptAgentInput = serde_json::from_value(args)?;
+        let depth = dispatch
+            .orchestrator
+            .interrupt_goal(input.goal_id, input.message);
+        Ok(json!({
+            "goal_id": input.goal_id,
+            "queued": true,
+            "queue_depth": depth,
+        }))
     }
 }
 
@@ -674,6 +701,20 @@ pub fn register_dispatch_tools_into(registry: &ToolRegistry) {
             obj_schema(&["goal_id"], json!({ "goal_id": { "type": "string" } })),
         ),
         AgentHooksListHandler,
+    );
+    registry.register(
+        def(
+            "interrupt_agent",
+            "Inject an operator note into a running goal's NEXT turn. The note appears as an [OPERATOR INTERRUPT] block on top of the prompt so Claude treats it as a high-priority directive. Use this when you want to redirect Claude mid-run without cancelling. Multiple queued notes concatenate FIFO.",
+            obj_schema(
+                &["goal_id", "message"],
+                json!({
+                    "goal_id": { "type": "string" },
+                    "message": { "type": "string" }
+                }),
+            ),
+        ),
+        InterruptAgentHandler,
     );
     // Cody-flow tools.
     registry.register(
