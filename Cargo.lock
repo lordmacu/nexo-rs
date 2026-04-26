@@ -2882,6 +2882,7 @@ dependencies = [
 name = "nexo-project-tracker"
 version = "0.1.1"
 dependencies = [
+ "arc-swap",
  "async-trait",
  "humantime-serde",
  "nexo-resilience",

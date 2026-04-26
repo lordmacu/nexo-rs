@@ -10,7 +10,9 @@ The actual WebSocket handshake is deferred to a follow-up;
 this scaffold proves the wire format works end-to-end across a
 non-`nexo-pairing` consumer.
 
-- **Main project:** <https://github.com/lordmacu/nexo-rs>
+- **Main repo:** <https://github.com/lordmacu/nexo-rs>
+- **Runtime engine:** [`nexo-core`](https://github.com/lordmacu/nexo-rs/tree/main/crates/core)
+- **Public docs:** <https://lordmacu.github.io/nexo-rs/>
 - **Pairing docs:** <https://lordmacu.github.io/nexo-rs/ops/pairing.html>
 
 ## What this crate does

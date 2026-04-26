@@ -2354,8 +2354,8 @@ async fn boot_dispatch_ctx_if_enabled(
     let tracker_root: PathBuf = std::env::var("NEXO_PROJECT_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
-    let tracker: Arc<dyn nexo_project_tracker::ProjectTracker> =
-        match nexo_project_tracker::FsProjectTracker::open(&tracker_root) {
+    let tracker: Arc<nexo_project_tracker::MutableTracker> =
+        match nexo_project_tracker::MutableTracker::open_fs(&tracker_root) {
             Ok(t) => Arc::new(t),
             Err(e) => {
                 tracing::warn!(error = %e, "tracker open failed — dispatch tools stay in error mode");

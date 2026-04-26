@@ -31,6 +31,8 @@ use nexo_dispatch_tools::{
 use nexo_driver_claude::{DispatcherIdentity, OriginChannel};
 use nexo_driver_loop::DriverOrchestrator;
 use nexo_llm::ToolDef;
+use nexo_project_tracker::MutableTracker;
+#[allow(unused_imports)]
 use nexo_project_tracker::tracker::ProjectTracker;
 use serde_json::{json, Value};
 
@@ -41,7 +43,11 @@ use super::tool_registry::{ToolHandler, ToolRegistry};
 /// on every invocation. Constructed once at boot, shared via
 /// `Arc` through `AgentContext::dispatch`.
 pub struct DispatchToolContext {
-    pub tracker: Arc<dyn ProjectTracker>,
+    /// Hot-swappable tracker. The runtime can install a fresh
+    /// `FsProjectTracker` mid-conversation when Cody calls
+    /// `set_active_workspace` or `init_project`. Day-to-day reads
+    /// stay lock-free thanks to `MutableTracker`'s `ArcSwap`.
+    pub tracker: Arc<MutableTracker>,
     pub orchestrator: Arc<DriverOrchestrator>,
     pub registry: Arc<AgentRegistry>,
     pub hooks: Arc<HookRegistry>,
@@ -295,6 +301,202 @@ impl ToolHandler for AgentHooksListHandler {
     }
 }
 
+// ─── Cody-flow handlers (preflight + workspace ops) ─────────
+
+pub struct PreflightHandler;
+
+#[async_trait]
+impl ToolHandler for PreflightHandler {
+    async fn call(&self, ctx: &AgentContext, _args: Value) -> anyhow::Result<Value> {
+        let llm_provider = &ctx.config.model.provider;
+        let llm_model = &ctx.config.model.model;
+        let dispatch_ready = ctx.dispatch.is_some();
+        let dispatch_capability = format!("{:?}", ctx.effective_policy().dispatch_policy.mode);
+        let workspace = ctx
+            .dispatch
+            .as_ref()
+            .map(|d| d.tracker.root().display().to_string())
+            .unwrap_or_else(|| "<unset>".into());
+        let tracker_ok = if let Some(d) = ctx.dispatch.as_ref() {
+            matches!(d.tracker.phases().await, Ok(_))
+        } else {
+            false
+        };
+        let report = serde_json::json!({
+            "llm_provider": llm_provider,
+            "llm_model": llm_model,
+            "llm_ready": llm_provider == "anthropic" || llm_provider == "minimax",
+            "dispatch_ready": dispatch_ready,
+            "dispatch_capability": dispatch_capability,
+            "tracker_workspace": workspace,
+            "tracker_readable": tracker_ok,
+            "sender_trusted": ctx.sender_trusted,
+        });
+        Ok(report)
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct SetActiveWorkspaceInput {
+    path: String,
+}
+
+pub struct SetActiveWorkspaceHandler;
+
+#[async_trait]
+impl ToolHandler for SetActiveWorkspaceHandler {
+    async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
+        let dispatch = dispatch_ctx(ctx)?;
+        let input: SetActiveWorkspaceInput = serde_json::from_value(args)?;
+        let path = std::path::PathBuf::from(input.path);
+        match dispatch.tracker.switch_to(&path) {
+            Ok(prev) => Ok(serde_json::json!({
+                "status": "switched",
+                "previous": prev.display().to_string(),
+                "current": path.display().to_string(),
+            })),
+            Err(e) => Ok(serde_json::json!({
+                "status": "error",
+                "error": e.to_string(),
+                "current": dispatch.tracker.root().display().to_string(),
+            })),
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct InitProjectInput {
+    /// Folder name relative to the cwd (or absolute).
+    name: String,
+    /// One-line description for the README + first phase body.
+    description: String,
+    /// Optional caller-supplied list of phases. When `None`, a
+    /// minimal scaffolding template is used and the LLM is
+    /// expected to fill in real phases via `/forge spec` later.
+    #[serde(default)]
+    phases: Option<Vec<InitPhaseInput>>,
+}
+
+#[derive(Clone, serde::Deserialize)]
+struct InitPhaseInput {
+    /// `1.1`, `2.3`, etc. Must match `<digits>.<digits>` shape.
+    id: String,
+    title: String,
+    /// Optional body shown in `project_status --phase`.
+    #[serde(default)]
+    body: Option<String>,
+}
+
+pub struct InitProjectHandler;
+
+#[async_trait]
+impl ToolHandler for InitProjectHandler {
+    async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
+        let dispatch = dispatch_ctx(ctx)?;
+        let input: InitProjectInput = serde_json::from_value(args)?;
+        let target_root: std::path::PathBuf = if std::path::Path::new(&input.name).is_absolute() {
+            std::path::PathBuf::from(&input.name)
+        } else {
+            std::env::current_dir().unwrap_or_default().join(&input.name)
+        };
+        if let Err(e) = std::fs::create_dir_all(&target_root) {
+            return Ok(serde_json::json!({
+                "status": "error",
+                "error": format!("create_dir_all: {e}"),
+            }));
+        }
+
+        let phases_md = render_phases_md(&input);
+        let followups_md = render_followups_md(&input);
+        if let Err(e) = std::fs::write(target_root.join("PHASES.md"), phases_md) {
+            return Ok(serde_json::json!({
+                "status": "error",
+                "error": format!("write PHASES.md: {e}"),
+            }));
+        }
+        if let Err(e) = std::fs::write(target_root.join("FOLLOWUPS.md"), followups_md) {
+            return Ok(serde_json::json!({
+                "status": "error",
+                "error": format!("write FOLLOWUPS.md: {e}"),
+            }));
+        }
+
+        // Switch the active tracker to the new project so the next
+        // `program_phase` lands inside it.
+        if let Err(e) = dispatch.tracker.switch_to(&target_root) {
+            return Ok(serde_json::json!({
+                "status": "scaffolded_but_not_active",
+                "path": target_root.display().to_string(),
+                "switch_error": e.to_string(),
+            }));
+        }
+
+        Ok(serde_json::json!({
+            "status": "ready",
+            "path": target_root.display().to_string(),
+            "files_created": ["PHASES.md", "FOLLOWUPS.md"],
+            "active_workspace": target_root.display().to_string(),
+        }))
+    }
+}
+
+fn render_phases_md(input: &InitProjectInput) -> String {
+    let mut out = format!(
+        "# {name} — Implementation phases\n\n{description}\n\n## Status\n\nFresh project. Sub-phases below are pending until\n`/forge ejecutar` ships them.\n\n",
+        name = input.name,
+        description = input.description,
+    );
+    let phases = input.phases.clone().unwrap_or_else(default_phases_template);
+    let mut last_phase = "";
+    for p in &phases {
+        let phase_num = p.id.split('.').next().unwrap_or("1");
+        if phase_num != last_phase {
+            out.push_str(&format!("## Phase {phase_num} — Phase {phase_num}\n\n"));
+            last_phase = phase_num;
+        }
+        out.push_str(&format!("#### {} — {}   ⬜\n", p.id, p.title));
+        if let Some(body) = &p.body {
+            out.push('\n');
+            out.push_str(body);
+            out.push_str("\n\n");
+        }
+    }
+    out
+}
+
+fn render_followups_md(input: &InitProjectInput) -> String {
+    format!(
+        "# Follow-ups\n\nActive backlog for {name}.\n\n## Open items\n\n_(empty — populated as deferred work surfaces during /forge ejecutar)_\n\n## Resolved (recent highlights)\n",
+        name = input.name,
+    )
+}
+
+fn default_phases_template() -> Vec<InitPhaseInput> {
+    vec![
+        InitPhaseInput {
+            id: "1.1".into(),
+            title: "Project scaffold".into(),
+            body: Some(
+                "Initialise the build system, README, LICENSE. Acceptance: build runs end-to-end."
+                    .into(),
+            ),
+        },
+        InitPhaseInput {
+            id: "1.2".into(),
+            title: "Smoke test".into(),
+            body: Some("First test passes. Wires CI / cargo test.".into()),
+        },
+        InitPhaseInput {
+            id: "2.1".into(),
+            title: "Core feature".into(),
+            body: Some(
+                "Replace this with the actual first feature. /forge spec generates the body."
+                    .into(),
+            ),
+        },
+    ]
+}
+
 // ─── Registration helper ──────────────────────────────────────
 
 fn def(name: &str, description: &str, schema: Value) -> ToolDef {
@@ -420,6 +622,52 @@ pub fn register_dispatch_tools_into(registry: &ToolRegistry) {
             obj_schema(&["goal_id"], json!({ "goal_id": { "type": "string" } })),
         ),
         AgentHooksListHandler,
+    );
+    // Cody-flow tools.
+    registry.register(
+        def(
+            "preflight",
+            "Health check: reports whether the LLM provider, dispatch capability, and project tracker are wired so Cody can program. Use it FIRST when the operator asks for any dispatch flow — refuse to dispatch if `dispatch_ready=false` or `tracker_readable=false`.",
+            obj_schema(&[], json!({})),
+        ),
+        PreflightHandler,
+    );
+    registry.register(
+        def(
+            "set_active_workspace",
+            "Point the tracker at an existing folder that already has PHASES.md / FOLLOWUPS.md. Use when the operator says 'work in /path/X'.",
+            obj_schema(
+                &["path"],
+                json!({ "path": { "type": "string" } }),
+            ),
+        ),
+        SetActiveWorkspaceHandler,
+    );
+    registry.register(
+        def(
+            "init_project",
+            "Create a new project folder, scaffold PHASES.md + FOLLOWUPS.md from the description, and switch the active tracker to it. Use when the operator says 'create folder X and help me build Y'. The optional `phases` array lets Cody plan the work upfront; without it a minimal three-phase scaffold lands so /forge spec can fill the bodies.",
+            obj_schema(
+                &["name", "description"],
+                json!({
+                    "name": { "type": "string" },
+                    "description": { "type": "string" },
+                    "phases": {
+                        "type": ["array", "null"],
+                        "items": {
+                            "type": "object",
+                            "required": ["id", "title"],
+                            "properties": {
+                                "id": { "type": "string" },
+                                "title": { "type": "string" },
+                                "body": { "type": ["string", "null"] }
+                            }
+                        }
+                    }
+                }),
+            ),
+        ),
+        InitProjectHandler,
     );
 }
 

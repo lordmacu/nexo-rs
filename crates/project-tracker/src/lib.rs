@@ -10,10 +10,13 @@
 pub mod config;
 pub mod format;
 pub mod git;
+pub mod mutable;
 pub mod parser;
 pub mod tools;
 pub mod tracker;
 pub mod types;
+
+pub use mutable::MutableTracker;
 
 pub use config::{
     AgentRegistryConfig, GitLogConfig, ProgramPhaseConfig, ProjectTrackerConfig, TrackerConfig,
