@@ -1712,19 +1712,48 @@ second-most-visited page on the docs site.
 maintainer dogfood + writeup, adopter toolkit, two external
 case studies, and a "used by" surface that fits-on-screen.
 
-### Phase 44 — Auxiliary observability surfaces
+### Phase 44 — Auxiliary observability surfaces   🔄
 
-Smaller observability gaps the main phases don't cover.
+Operator health-summary script + readiness/liveness doc shipped.
+Per-session event log + `nexo inspect` + aggregated
+`nexo doctor health` subcommand deferred.
 
-- Structured event log per session under `data/events/<session>.jsonl`
-  for forensics, separate from transcripts.
-- `agent inspect <session_id>` — pretty-print every state
-  transition for one session: tool calls, hook fires, broker
-  publishes, memory writes, redaction hits.
-- `agent doctor health` — single command that runs every doctor
-  (`setup`, `ext`, `capabilities`) and emits one health summary
-  for monitoring scrapers.
-- Standard k8s `/healthz` and `/readyz` endpoints documented.
+Shipped (44.1):
+- `scripts/nexo-health.sh` — single-shot JSON health summary.
+  Probes `/health` (liveness), `/ready` (readiness),
+  `/metrics` (Prometheus surface), pulls a few quick counters
+  for the summary panel (tool_calls_total, llm_stream_chunks,
+  web_search_breaker_open). Pretty human output by default,
+  `--json` for monitoring scrapers, `--strict` to count an
+  open breaker as unhealthy. Exit 0 on healthy, 1 on any
+  probe failure (or breaker-open under `--strict`).
+- `docs/src/ops/health.md` (NEW) — three-layer health-probe
+  reference:
+    * `/health` for Kubernetes liveness (cheap atomic flag).
+    * `/ready` for load-balancer routing (verifies broker +
+      agents loaded + snapshot warmed). 503 with JSON body
+      listing failing subsystem.
+    * `nexo-health.sh` for operator + monitoring (JSON
+      summary with counter snapshots).
+  Cron health-mailer template, UptimeRobot integration
+  config, comparison table of when to use each surface.
+- `docs/src/SUMMARY.md` registers the new page.
+
+Deferred:
+- `nexo inspect <session_id>` — pretty-print every state
+  transition for one session (tool calls, hook fires, broker
+  publishes, memory writes, redaction hits). Touches
+  `src/main.rs` + `crates/core/`.
+- Per-session structured event log under
+  `data/events/<session>.jsonl` separate from transcripts.
+  Needs an event-bus listener tap; touches `crates/core/`.
+- `nexo doctor health` aggregating subcommand that runs
+  every doctor (`setup`, `ext`, `capabilities`) and emits
+  one summary. The shell script bridges this today.
+
+The `/health` + `/ready` endpoints themselves are pre-existing
+(Phase 9 polish). This sub-phase documents them and adds the
+operator-friendly aggregator script on top.
 - Crash dumps captured to `data/crashes/` with stack + recent
   log buffer.
 
