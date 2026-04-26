@@ -200,6 +200,29 @@ impl RuntimeSnapshot {
         self.tool_cache
             .get_or_build(agent_id, binding_index, base, allowed_tools)
     }
+
+    /// PT-2 — dispatch-aware variant. Same lazy cache, but the
+    /// filtered registry also has `apply_dispatch_capability`
+    /// applied so dispatch tools the binding's `DispatchPolicy`
+    /// disallows are not registered.
+    pub fn tools_for_with_dispatch(
+        &self,
+        agent_id: &str,
+        binding_index: Option<usize>,
+        base: &ToolRegistry,
+        allowed_tools: &[String],
+        dispatch_policy: &nexo_config::DispatchPolicy,
+        is_admin: bool,
+    ) -> Arc<ToolRegistry> {
+        self.tool_cache.get_or_build_with_dispatch(
+            agent_id,
+            binding_index,
+            base,
+            allowed_tools,
+            dispatch_policy,
+            is_admin,
+        )
+    }
 }
 
 #[cfg(test)]
