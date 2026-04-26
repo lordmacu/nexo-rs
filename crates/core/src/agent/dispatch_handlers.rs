@@ -24,8 +24,9 @@ use nexo_dispatch_tools::policy_gate::CapSnapshot;
 use nexo_dispatch_tools::{
     agent_hooks_list, agent_logs_tail, agent_status, cancel_agent, list_agents, pause_agent,
     program_phase_dispatch, resume_agent, update_budget, AgentHooksListInput,
-    AgentLogsTailInput, AgentStatusInput, CancelAgentInput, HookRegistry, ListAgentsInput,
-    PauseAgentInput, ProgramPhaseInput, UpdateBudgetInput,
+    AgentLogsTailInput, AgentStatusInput, CancelAgentInput, DispatchDeniedPayload,
+    DispatchSpawnedPayload, HookRegistry, ListAgentsInput, PauseAgentInput, ProgramPhaseInput,
+    ProgramPhaseOutput, UpdateBudgetInput,
 };
 use nexo_driver_claude::{DispatcherIdentity, OriginChannel};
 use nexo_driver_loop::DriverOrchestrator;
@@ -50,6 +51,10 @@ pub struct DispatchToolContext {
     /// the rest stays config-driven.
     pub default_caps: CapSnapshot,
     pub require_trusted: bool,
+    /// PT-3 — telemetry sink consulted on every dispatch /
+    /// hook outcome. Defaults to `NoopTelemetry`; production
+    /// boot wires `NatsDispatchTelemetry` (PT-7).
+    pub telemetry: Arc<dyn nexo_dispatch_tools::DispatchTelemetry>,
 }
 
 impl DispatchToolContext {
@@ -112,6 +117,47 @@ impl ToolHandler for ProgramPhaseHandler {
         )
         .await
         .map_err(|e| anyhow::anyhow!("program_phase: {e}"))?;
+        // PT-3 — telemetry on dispatch outcome.
+        match &out {
+            ProgramPhaseOutput::Dispatched { goal_id, phase_id } => {
+                dispatch
+                    .telemetry
+                    .dispatch_spawned(DispatchSpawnedPayload {
+                        goal_id: *goal_id,
+                        phase_id: phase_id.clone(),
+                        queued_position: None,
+                        dispatcher_agent_id: ctx.agent_id.clone(),
+                    })
+                    .await;
+            }
+            ProgramPhaseOutput::Queued {
+                goal_id,
+                phase_id,
+                position,
+            } => {
+                dispatch
+                    .telemetry
+                    .dispatch_spawned(DispatchSpawnedPayload {
+                        goal_id: *goal_id,
+                        phase_id: phase_id.clone(),
+                        queued_position: Some(*position),
+                        dispatcher_agent_id: ctx.agent_id.clone(),
+                    })
+                    .await;
+            }
+            ProgramPhaseOutput::Forbidden { phase_id, reason }
+            | ProgramPhaseOutput::Rejected { phase_id, reason } => {
+                dispatch
+                    .telemetry
+                    .dispatch_denied(DispatchDeniedPayload {
+                        phase_id: phase_id.clone(),
+                        reason: reason.clone(),
+                        dispatcher_agent_id: ctx.agent_id.clone(),
+                    })
+                    .await;
+            }
+            _ => {}
+        }
         Ok(serde_json::to_value(out)?)
     }
 }

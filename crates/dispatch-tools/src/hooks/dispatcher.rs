@@ -18,6 +18,12 @@ use thiserror::Error;
 
 use super::types::{CompletionHook, HookAction, HookPayload};
 
+/// Plugin ids whose origin does NOT want a chat-style notify.
+/// Extended as new non-chat origins (`cron`, `webhook`) land. PT-9
+/// upgrades this to a trait method on a future `OriginAdapter` so
+/// each plugin declares its own preference.
+pub const NON_CHAT_ORIGIN_PLUGINS: &[&str] = &["console", "cron", "webhook", "heartbeat"];
+
 #[derive(Debug, Error, Clone, PartialEq)]
 pub enum HookError {
     #[error("origin channel missing — NotifyOrigin requires goal.origin to be set")]
@@ -199,11 +205,14 @@ async fn run_action(
             let Some(origin) = payload.origin.clone() else {
                 return Err(HookError::MissingOrigin);
             };
-            // Console origin → stdout / log path; not a chat. The
-            // CLI runner picks these up via NATS subscription, so
-            // the hook surface here is a no-op when plugin =
-            // "console".
-            if origin.plugin == "console" {
+            // Non-chat origins (CLI dispatch, scheduled cron jobs,
+            // inbound webhooks) consume completion signals through
+            // NATS / stdout, not via a chat reply. We list them
+            // explicitly so the lookup never silently shadows a
+            // legitimate channel id; new non-chat plugins extend
+            // NON_CHAT_ORIGIN_PLUGINS until PT-9 (trait-based
+            // wants_notify) lands.
+            if NON_CHAT_ORIGIN_PLUGINS.contains(&origin.plugin.as_str()) {
                 return Ok(());
             }
             let adapter = pairing
