@@ -1,7 +1,7 @@
 [package]
 name = "nexo-core"
 description   = "Agent runtime: event bus, sessions, plugin trait, heartbeat, A2A delegation."
-version       = "0.1.1"
+version       = "0.2.0"
 edition       = { workspace = true }
 rust-version  = { workspace = true }
 license       = { workspace = true }
@@ -30,19 +30,19 @@ dashmap     = { workspace = true }
 humantime   = { workspace = true }
 anyhow      = { workspace = true }
 thiserror   = { workspace = true }
-nexo-config = { version = "0.1.1", path = "../config" }
-nexo-broker = { version = "0.1.1", path = "../broker" }
-nexo-auth = { version = "0.1.1", path = "../auth" }
+nexo-config = { version = "0.2.0", path = "../config" }
+nexo-broker = { version = "0.1.2", path = "../broker" }
+nexo-auth = { version = "0.1.2", path = "../auth" }
 tracing       = { workspace = true }
 async-trait   = { workspace = true }
 tokio-util    = { workspace = true }
-nexo-llm = { version = "0.1.1", path = "../llm" }
-nexo-memory = { version = "0.1.2", path = "../memory" }
-nexo-extensions = { version = "0.1.1", path = "../extensions" }
-nexo-mcp = { version = "0.1.1", path = "../mcp" }
-nexo-taskflow = { version = "0.1.1", path = "../taskflow" }
-nexo-web-search = { version = "0.1.1", path = "../web-search" }
-nexo-pairing    = { version = "0.1.2", path = "../pairing" }
+nexo-llm = { version = "0.1.2", path = "../llm" }
+nexo-memory = { version = "0.1.3", path = "../memory" }
+nexo-extensions = { version = "0.1.2", path = "../extensions" }
+nexo-mcp = { version = "0.1.2", path = "../mcp" }
+nexo-taskflow = { version = "0.1.2", path = "../taskflow" }
+nexo-web-search = { version = "0.1.2", path = "../web-search" }
+nexo-pairing    = { version = "0.1.3", path = "../pairing" }
 nexo-dispatch-tools = { version = "0.1.1", path = "../dispatch-tools" }
 nexo-agent-registry = { version = "0.1.1", path = "../agent-registry" }
 nexo-driver-claude  = { version = "0.1.1", path = "../driver-claude" }
@@ -65,7 +65,7 @@ sqlx            = { workspace = true }
 semver          = { workspace = true }
 
 [dev-dependencies]
-nexo-llm = { version = "0.1.1", path = "../llm", features = ["stub"] }
+nexo-llm = { version = "0.1.2", path = "../llm", features = ["stub"] }
 async-nats    = { workspace = true }
 futures       = { workspace = true }
 tempfile      = "3"
