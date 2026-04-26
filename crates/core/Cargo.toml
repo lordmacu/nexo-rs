@@ -44,6 +44,10 @@ nexo-taskflow = { version = "0.1.1", path = "../taskflow" }
 nexo-web-search = { version = "0.1.1", path = "../web-search" }
 nexo-pairing    = { version = "0.1.2", path = "../pairing" }
 nexo-dispatch-tools = { version = "0.1.1", path = "../dispatch-tools" }
+nexo-agent-registry = { version = "0.1.1", path = "../agent-registry" }
+nexo-driver-claude  = { version = "0.1.1", path = "../driver-claude" }
+nexo-driver-loop    = { version = "0.1.1", path = "../driver-loop" }
+nexo-project-tracker = { version = "0.1.1", path = "../project-tracker" }
 futures         = { workspace = true }
 arc-swap        = { workspace = true }
 lru             = { workspace = true }
