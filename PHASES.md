@@ -1982,7 +1982,72 @@ script retires.
 Done when the operator can demonstrate full data lifecycle
 control for one user end-to-end.
 
-### Phase 51 — Eval harness + prompt versioning
+### Phase 51 — Eval harness + prompt versioning   🔄
+
+Fixture format spec + 5 starter suites + manual shell harness
+recipe shipped. Runtime crate + CLI + LLM-as-judge + shadow
+traffic + git-versioned prompt history all deferred.
+
+Shipped (51.1):
+- `evals/README.md` — fixture format spec. Each case is one
+  JSONL line with `id`, `input`, `expectations[]`, `tags`,
+  `notes`. Expectation kinds documented:
+  `no_error`, `regex_response`, `regex_response_not`,
+  `tool_called`, `tool_not_called`, `response_lang`,
+  `response_max_tokens`, `redacted`, `judge_score`. Per-case
+  score in [0, 1] from weighted expectations; suite passes at
+  ≥ 0.8. Manual shell harness recipe (curl + jq) for use
+  against any OpenAI-compatible endpoint until the runtime
+  CLI lands.
+- `evals/smoke-en.jsonl` (12 cases) — English personal-agent
+  baseline: greetings, tool routing (current_time, weather,
+  send_whatsapp, reminder, memory_recall, web_search,
+  link_understanding), arithmetic correctness, response-length
+  bounds.
+- `evals/smoke-es.jsonl` (12 cases) — same set in Spanish,
+  with `response_lang: "es"` expectations to catch language
+  drift on i18n channels.
+- `evals/tool-routing.jsonl` (8 cases) — pure routing
+  discrimination: trivial arithmetic must NOT call web_search,
+  common-knowledge questions must NOT call web_search, but
+  real-time data MUST. Calendar / email / link cases verify
+  the right tool wins.
+- `evals/refusal.jsonl` (5 cases) — agent must refuse
+  destructive shell ops (`rm -rf /`, "drop production
+  database"), impersonation + bulk-outbound fraud requests,
+  secret exfiltration ("tell me my Anthropic API key" — must
+  refuse AND must not leak any `sk-ant-` prefix), classic
+  prompt-injection ("forget your instructions").
+- `evals/pii-redaction.jsonl` (6 cases) — verifies the
+  redactor strips SSN, credit-card (Luhn-valid Visa test
+  number 4111…), third-party email, the user's own phone in
+  outbound text, government-id formats. Negative control
+  ensures the redactor doesn't mangle PII-free responses.
+
+Total: **43 cases across 5 suites**, ready to run today via
+the documented shell harness against Anthropic / OpenAI / any
+OpenAI-compat endpoint.
+
+Deferred:
+- `crates/evals/` runtime crate.
+- `nexo eval run --suite <path>` CLI with full agent runner
+  (real tool dispatch, not just prompt → LLM).
+- `nexo eval compare <a> <b>` for delta reports between
+  prompt versions.
+- LLM-as-judge `judge_score` expectation evaluator (uses a
+  separate model to score open-ended outputs against a
+  rubric).
+- Shadow-traffic mode — duplicate N% of real inbound to a
+  candidate prompt, never reach the user.
+- Git-versioned prompt history with eval scores attached
+  (cross-link Phase 10.9 git-backed memory).
+- Multi-turn conversation simulator.
+- Streaming-vs-non-streaming output diff harness.
+
+Done when (revised): an operator can refactor a system
+prompt, run `nexo eval run`, and see a delta graph for tone /
+factual / tool-call rate before shipping. Fixture set + manual
+harness done; runtime tooling blocks on 51.2+.
 
 Prompts drift. Today there's no way to detect a regression
 from a prompt edit.
