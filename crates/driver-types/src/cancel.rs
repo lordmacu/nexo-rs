@@ -28,6 +28,17 @@ impl CancellationToken {
     pub async fn cancelled(&self) {
         self.inner.cancelled().await
     }
+
+    /// Phase 67.G.2 — derive a child token tied to this one. The
+    /// child can be cancelled independently; cancelling the parent
+    /// also cancels the child. Lets the orchestrator give each
+    /// in-flight goal its own cancel knob without losing the
+    /// global-shutdown contract.
+    pub fn child_token(&self) -> Self {
+        Self {
+            inner: self.inner.child_token(),
+        }
+    }
 }
 
 #[cfg(test)]

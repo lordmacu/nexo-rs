@@ -62,6 +62,11 @@ pub struct DriverOrchestrator {
     /// turn is *not* killed — pause only takes effect at the
     /// natural boundary between turns.
     pause_signals: Arc<DashMap<GoalId, watch::Sender<bool>>>,
+    /// Phase 67.G.2 — per-goal CancellationToken so `cancel_agent`
+    /// can stop one goal without taking down the whole orchestrator
+    /// via `cancel_root`. The token is a child of `cancel_root`
+    /// so a global shutdown still cancels every running goal.
+    cancel_tokens: Arc<DashMap<GoalId, CancellationToken>>,
     bin_path: PathBuf,
     socket_path: PathBuf,
     /// Owns the spawned socket server; cancelling kills it.
@@ -191,6 +196,7 @@ impl DriverOrchestratorBuilder {
             compact_context_window,
             progress_every_turns,
             pause_signals: Arc::new(DashMap::new()),
+            cancel_tokens: Arc::new(DashMap::new()),
             bin_path,
             socket_path,
             _socket_handle: socket_handle,
@@ -233,6 +239,27 @@ impl DriverOrchestrator {
             .unwrap_or(false)
     }
 
+    /// Phase 67.G.2 — cancel a single in-flight goal. Idempotent.
+    /// Returns `true` when a goal was found and signalled. The
+    /// underlying `run_goal` loop will exit at the next safe point
+    /// (between turns, or when the active turn's
+    /// `CancellationToken` propagates into the Claude subprocess).
+    pub fn cancel_goal(&self, goal_id: GoalId) -> bool {
+        if let Some(tok) = self.cancel_tokens.get(&goal_id) {
+            tok.cancel();
+            return true;
+        }
+        false
+    }
+
+    /// True iff the per-goal token has been cancelled.
+    pub fn is_cancelled(&self, goal_id: GoalId) -> bool {
+        self.cancel_tokens
+            .get(&goal_id)
+            .map(|t| t.is_cancelled())
+            .unwrap_or(false)
+    }
+
     /// Phase 67.C.1 — fire-and-forget spawn. Returns the
     /// [`tokio::task::JoinHandle`] so the caller (typically the
     /// `program_phase` tool) can register the goal in the agent
@@ -254,6 +281,9 @@ impl DriverOrchestrator {
         // Phase 67.C.2 — register pause signal for this goal.
         let (pause_tx, mut pause_rx) = watch::channel(false);
         self.pause_signals.insert(goal_id, pause_tx);
+        // Phase 67.G.2 — per-goal cancel token (child of cancel_root).
+        let goal_cancel = self.cancel_root.child_token();
+        self.cancel_tokens.insert(goal_id, goal_cancel.clone());
 
         let _ = self
             .event_sink
@@ -281,12 +311,12 @@ impl DriverOrchestrator {
             // to the next turn. We hold here in a cancellation-aware
             // wait; cancel still wins over a stuck pause.
             while *pause_rx.borrow() {
-                if self.cancel_root.is_cancelled() {
+                if goal_cancel.is_cancelled() {
                     break;
                 }
                 tokio::select! {
                     _ = pause_rx.changed() => {}
-                    _ = self.cancel_root.cancelled() => break,
+                    _ = goal_cancel.cancelled() => break,
                 }
             }
 
@@ -302,7 +332,7 @@ impl DriverOrchestrator {
                 final_outcome = AttemptOutcome::BudgetExhausted { axis };
                 break;
             }
-            if self.cancel_root.is_cancelled() {
+            if goal_cancel.is_cancelled() {
                 final_outcome = AttemptOutcome::Cancelled;
                 break;
             }
@@ -316,7 +346,7 @@ impl DriverOrchestrator {
                 })
                 .await;
 
-            let cancel = self.cancel_root.clone();
+            let cancel = goal_cancel.clone();
             let extras = next_extras
                 .take()
                 .unwrap_or_else(|| build_attempt_extras(&prior_failures, &goal.budget, total_turns));
@@ -348,7 +378,7 @@ impl DriverOrchestrator {
                 workspace: &workspace,
                 mcp_config_path: &mcp_config_path,
                 bin_path: &self.bin_path,
-                cancel: self.cancel_root.clone(),
+                cancel: goal_cancel.clone(),
             };
             let mut result = run_attempt(ctx, params).await?;
 
@@ -566,6 +596,8 @@ impl DriverOrchestrator {
             .await;
         // Phase 67.C.2 — clean up pause signal once the loop exits.
         self.pause_signals.remove(&goal_id);
+        // Phase 67.G.2 — drop the per-goal cancel token.
+        self.cancel_tokens.remove(&goal_id);
         Ok(outcome)
     }
 
