@@ -10,6 +10,7 @@
 
 pub mod admin;
 pub mod agent_control;
+pub mod subjects;
 pub mod agent_query;
 pub mod chain;
 pub mod dispatch_followup;
@@ -18,6 +19,10 @@ pub mod policy_gate;
 pub mod program_phase;
 pub mod tool_names;
 
+pub use subjects::{
+    registry_snapshot_subject, DispatchDeniedPayload, DispatchSpawnedPayload, DispatchTelemetry,
+    HookDispatchedPayload, HookFailedPayload, NoopTelemetry,
+};
 pub use admin::{
     evict_completed, flush_agent_queue, set_concurrency_cap, AdminError, EvictCompletedInput,
     EvictCompletedOutput, FlushAgentQueueOutput, SetConcurrencyCapInput, SetConcurrencyCapOutput,
