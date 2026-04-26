@@ -1174,6 +1174,18 @@ async fn main() -> Result<()> {
     // store + gate flow into every AgentRuntime below.
     let _ = (Arc::clone(&pairing_store), Arc::clone(&setup_code_issuer));
 
+    // Phase 67 — opt-in in-process driver subsystem. When the
+    // operator sets `NEXO_DRIVER_INTEGRATED=1` and a
+    // `config/driver/claude.yaml` is reachable, we boot a shared
+    // DispatchToolContext (orchestrator + agent-registry +
+    // tracker + hook registry + log buffer) and feed it into
+    // every AgentRuntime so the program_phase / list_agents /
+    // … tool family is fully wired end-to-end. Without the env
+    // var the dispatch tools stay in friendly-error mode (handlers
+    // return a clean "AgentContext.dispatch is not set" error).
+    let dispatch_ctx: Option<Arc<nexo_core::agent::dispatch_handlers::DispatchToolContext>> =
+        boot_dispatch_ctx_if_enabled(&broker).await;
+
     let mut runtimes: Vec<AgentRuntime> = Vec::with_capacity(cfg.agents.agents.len());
     // Phase 18 — collect each agent's reload channel so the coordinator
     // can dispatch `Apply(snapshot)` on hot-reload.
@@ -2060,6 +2072,9 @@ async fn main() -> Result<()> {
             nexo_plugin_telegram::TelegramPairingAdapter::new(broker.clone()),
         ));
         runtime = runtime.with_pairing_adapters(pairing_registry);
+        if let Some(ref dc) = dispatch_ctx {
+            runtime = runtime.with_dispatch_ctx(Arc::clone(dc));
+        }
         runtime
             .start()
             .await
@@ -2297,6 +2312,170 @@ async fn main() -> Result<()> {
     health_handle.abort();
 
     Ok(())
+}
+
+/// Phase 67 — boot the shared DispatchToolContext when the
+/// operator opts in via `NEXO_DRIVER_INTEGRATED=1`. Returns
+/// `None` (handlers stay in friendly-error mode) when the env
+/// var is unset OR when any of the required pieces fail to
+/// initialise — we never crash the agent boot just because the
+/// dispatch surface couldn't be wired.
+async fn boot_dispatch_ctx_if_enabled(
+    _broker: &nexo_broker::AnyBroker,
+) -> Option<Arc<nexo_core::agent::dispatch_handlers::DispatchToolContext>> {
+    let enabled = std::env::var("NEXO_DRIVER_INTEGRATED")
+        .ok()
+        .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false);
+    if !enabled {
+        return None;
+    }
+
+    let claude_yaml = std::env::var("NEXO_DRIVER_CONFIG")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("config/driver/claude.yaml"));
+    if !claude_yaml.exists() {
+        tracing::warn!(
+            path = %claude_yaml.display(),
+            "NEXO_DRIVER_INTEGRATED=1 but driver config not found — dispatch tools stay in error mode"
+        );
+        return None;
+    }
+
+    let driver_cfg = match nexo_driver_loop::DriverConfig::from_yaml_file(&claude_yaml) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to parse driver config — dispatch tools stay in error mode");
+            return None;
+        }
+    };
+
+    // Tracker rooted at workspace root (cwd or NEXO_PROJECT_ROOT).
+    let tracker_root: PathBuf = std::env::var("NEXO_PROJECT_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
+    let tracker: Arc<dyn nexo_project_tracker::ProjectTracker> =
+        match nexo_project_tracker::FsProjectTracker::open(&tracker_root) {
+            Ok(t) => Arc::new(t),
+            Err(e) => {
+                tracing::warn!(error = %e, "tracker open failed — dispatch tools stay in error mode");
+                return None;
+            }
+        };
+
+    // Permission decider — Phase 67.4 wired the LLM decider in the
+    // standalone bin; here we keep the simpler AllowAll path so the
+    // chat-side surface works without an extra LLM call. Operators
+    // who want strict permission go via the standalone nexo-driver.
+    let decider: Arc<dyn nexo_driver_permission::PermissionDecider> =
+        Arc::new(nexo_driver_permission::AllowAllDecider);
+
+    let workspace_manager = Arc::new(nexo_driver_loop::WorkspaceManager::new(
+        &driver_cfg.workspace.root,
+    ));
+
+    let binding_store: Arc<dyn nexo_driver_claude::SessionBindingStore> = match driver_cfg
+        .binding_store
+        .kind
+    {
+        nexo_driver_loop::BindingStoreKind::Memory => {
+            Arc::new(nexo_driver_claude::MemoryBindingStore::new())
+        }
+        nexo_driver_loop::BindingStoreKind::Sqlite => {
+            let path = driver_cfg
+                .binding_store
+                .path
+                .as_ref()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| ":memory:".into());
+            match nexo_driver_claude::SqliteBindingStore::open(&path).await {
+                Ok(s) => Arc::new(s),
+                Err(e) => {
+                    tracing::warn!(error = %e, "binding store open failed — dispatch tools stay in error mode");
+                    return None;
+                }
+            }
+        }
+    };
+
+    // Registry + log buffer + hook registry shared by every agent.
+    let registry = Arc::new(nexo_agent_registry::AgentRegistry::new(
+        Arc::new(nexo_agent_registry::MemoryAgentRegistryStore::default()),
+        4,
+    ));
+    let log_buffer = Arc::new(nexo_agent_registry::LogBuffer::new(200));
+    let hook_registry = Arc::new(nexo_dispatch_tools::HookRegistry::new());
+
+    // Hook dispatcher with the channel adapters Phase 26 already
+    // owns. Adapters are registered into a SHARED registry here so
+    // notify_origin reaches WhatsApp / Telegram out of the box.
+    let pairing_registry = nexo_pairing::PairingAdapterRegistry::new();
+    pairing_registry.register(Arc::new(
+        nexo_plugin_whatsapp::WhatsappPairingAdapter::new(_broker.clone()),
+    ));
+    pairing_registry.register(Arc::new(
+        nexo_plugin_telegram::TelegramPairingAdapter::new(_broker.clone()),
+    ));
+    let hook_dispatcher: Arc<dyn nexo_dispatch_tools::HookDispatcher> =
+        Arc::new(nexo_dispatch_tools::DefaultHookDispatcher::new(
+            pairing_registry,
+            Arc::new(nexo_dispatch_tools::NoopNatsHookPublisher),
+        ));
+
+    // Inner sink: NoopEventSink today. EventForwarder wraps it so
+    // the registry / log_buffer / hooks see every driver event.
+    let inner_sink: Arc<dyn nexo_driver_loop::DriverEventSink> =
+        Arc::new(nexo_driver_loop::NoopEventSink);
+    let event_sink: Arc<dyn nexo_driver_loop::DriverEventSink> =
+        Arc::new(nexo_dispatch_tools::EventForwarder::new(
+            registry.clone(),
+            log_buffer.clone(),
+            hook_registry.clone(),
+            hook_dispatcher.clone(),
+            inner_sink,
+        ));
+
+    let acceptance: Arc<dyn nexo_driver_loop::AcceptanceEvaluator> =
+        Arc::new(nexo_driver_loop::DefaultAcceptanceEvaluator::new());
+    let orchestrator = match nexo_driver_loop::DriverOrchestrator::builder()
+        .claude_config(driver_cfg.claude.clone())
+        .binding_store(binding_store)
+        .acceptance(acceptance)
+        .decider(decider)
+        .workspace_manager(workspace_manager)
+        .event_sink(event_sink)
+        .bin_path(driver_cfg.driver.bin_path.clone())
+        .socket_path(driver_cfg.permission.socket.clone())
+        .build()
+        .await
+    {
+        Ok(o) => Arc::new(o),
+        Err(e) => {
+            tracing::warn!(error = %e, "orchestrator build failed — dispatch tools stay in error mode");
+            return None;
+        }
+    };
+
+    tracing::info!(
+        workspace = %tracker_root.display(),
+        "dispatch tools wired end-to-end (NEXO_DRIVER_INTEGRATED=1)"
+    );
+
+    Some(Arc::new(
+        nexo_core::agent::dispatch_handlers::DispatchToolContext {
+            tracker,
+            orchestrator,
+            registry,
+            hooks: hook_registry,
+            log_buffer,
+            default_caps: nexo_dispatch_tools::policy_gate::CapSnapshot {
+                queue_when_full: true,
+                ..Default::default()
+            },
+            require_trusted: true,
+            telemetry: Arc::new(nexo_dispatch_tools::NoopTelemetry),
+        },
+    ))
 }
 
 fn build_mcp_sampling_provider(

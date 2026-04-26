@@ -163,6 +163,12 @@ nexo-memory = { version = "0.1.2", path = "crates/memory" }
 nexo-taskflow = { version = "0.1.1", path = "crates/taskflow" }
 nexo-web-search = { version = "0.1.1", path = "crates/web-search" }
 nexo-pairing = { version = "0.1.2", path = "crates/pairing" }
+nexo-agent-registry    = { version = "0.1.1", path = "crates/agent-registry" }
+nexo-dispatch-tools    = { version = "0.1.1", path = "crates/dispatch-tools" }
+nexo-driver-claude     = { version = "0.1.1", path = "crates/driver-claude" }
+nexo-driver-loop       = { version = "0.1.1", path = "crates/driver-loop" }
+nexo-driver-permission = { version = "0.1.1", path = "crates/driver-permission" }
+nexo-project-tracker   = { version = "0.1.1", path = "crates/project-tracker" }
 tokio-util          = { workspace = true }
 tracing             = { workspace = true }
 tracing-subscriber  = { workspace = true }
