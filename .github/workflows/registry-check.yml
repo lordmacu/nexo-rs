@@ -1,0 +1,132 @@
+name: registry-check
+
+# Runs `scripts/check-registry.sh` on every PR + push to main +
+# weekly cron. Diffs the workspace's local crate versions against
+# the live crates.io registry and prints a table:
+#
+#   nexo-X    0.1.1   up-to-date
+#   nexo-Y    0.1.0   NEEDS PUBLISH
+#   nexo-Z    —       NEW
+#
+# Today this job is **informational** — it doesn't fail the PR.
+# Once release-plz auto-bumps land + an enforcement window passes,
+# the workflow flips to gating "NEEDS PUBLISH" rows on push to main.
+# That's tracked in PHASES.md alongside Phase 27.2 release.yml.
+#
+# Triggers:
+#   - pull_request that touches `crates/**/Cargo.toml`, root
+#     `Cargo.toml`, or `Cargo.lock` (anything that could change
+#     a published version).
+#   - push to `main` so the daily artifact list always has a fresh
+#     snapshot.
+#   - schedule weekly Sunday 06:00 UTC so a stale workspace
+#     surfaces even when no PRs touch deps.
+#   - workflow_dispatch (manual rebuild on demand).
+
+on:
+  pull_request:
+    paths:
+      - 'crates/**/Cargo.toml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/check-registry.sh'
+      - '.github/workflows/registry-check.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'crates/**/Cargo.toml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * 0'   # Sunday 06:00 UTC
+
+permissions:
+  contents: read
+  pull-requests: write    # so we can comment on the PR
+
+concurrency:
+  group: registry-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: registry version drift
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run check-registry.sh
+        id: check
+        run: |
+          set -euo pipefail
+          chmod +x scripts/check-registry.sh
+          # Capture the table output for both the run log and the
+          # PR comment below.
+          OUT=$(scripts/check-registry.sh)
+          echo "$OUT"
+          {
+            echo "report<<EOF"
+            echo "$OUT"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          # Detect any "NEEDS PUBLISH" or "NEW" rows and surface them
+          # as the job summary. Doesn't fail the build — informational
+          # only until the enforcement window opens.
+          if grep -qE "NEEDS PUBLISH|NEW" <<< "$OUT"; then
+            echo "::warning::At least one crate is out of sync with crates.io (NEW or NEEDS PUBLISH)."
+            {
+              echo "## ⚠️ Crates out of sync with crates.io"
+              echo
+              echo '```'
+              echo "$OUT"
+              echo '```'
+              echo
+              echo "_Informational only — does not block this PR._"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "## ✅ All crates up to date with crates.io"
+              echo
+              echo '```'
+              echo "$OUT"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Comment on PR with table
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          REPORT: ${{ steps.check.outputs.report }}
+        with:
+          script: |
+            const report = process.env.REPORT;
+            const marker = '<!-- nexo-registry-check -->';
+            const body = `${marker}\n## Registry version drift\n\n\`\`\`\n${report}\n\`\`\`\n\n_Informational only — this comment does not block merge._`;
+
+            // Update an existing marker comment when present so we
+            // don't pile one comment per push.
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }

@@ -152,43 +152,50 @@ impl AgentRegistry {
         handle: AgentHandle,
         enqueue: bool,
     ) -> Result<AdmitOutcome, RegistryError> {
-        // PT-5: serialise the read-then-write so concurrent
-        // dispatches cannot both observe count < cap.
-        let _guard = self.admit_lock.lock().await;
+        // PT-5 + B16 — serialise the cap decision + queue mutation
+        // + in-memory entry insert under admit_lock, then drop the
+        // lock BEFORE the persistent store upsert. The store call
+        // can block on disk IO; holding admit_lock across it would
+        // gate every concurrent admit on the slowest one.
         let goal_id = handle.goal_id;
-        let running = self.count_running();
+        let h_for_store: AgentHandle;
+        let outcome = {
+            let _guard = self.admit_lock.lock().await;
+            let running = self.count_running();
+            let outcome = if running >= *self.cap.read() {
+                if !enqueue {
+                    return Ok(AdmitOutcome::Rejected);
+                }
+                let mut q = self.queue.lock();
+                q.push_back(goal_id);
+                let position = q.len();
+                AdmitOutcome::Queued { position }
+            } else {
+                AdmitOutcome::Admitted
+            };
 
-        let outcome = if running >= *self.cap.read() {
-            if !enqueue {
-                return Ok(AdmitOutcome::Rejected);
-            }
-            let mut q = self.queue.lock();
-            q.push_back(goal_id);
-            let position = q.len();
-            AdmitOutcome::Queued { position }
-        } else {
-            AdmitOutcome::Admitted
-        };
-
-        let mut h = handle;
-        h.status = match outcome {
-            AdmitOutcome::Admitted => AgentRunStatus::Running,
-            AdmitOutcome::Queued { .. } => AgentRunStatus::Queued,
-            AdmitOutcome::Rejected => unreachable!(),
-        };
-        let entry = RegistryEntry {
-            handle_meta: Arc::new(Mutex::new(HandleMeta {
-                phase_id: h.phase_id.clone(),
-                status: h.status,
-                origin: h.origin.clone(),
-                dispatcher: h.dispatcher.clone(),
-                started_at: h.started_at,
-                finished_at: h.finished_at,
-            })),
-            snapshot: Arc::new(ArcSwap::from_pointee(h.snapshot.clone())),
-        };
-        self.inner.insert(goal_id, entry);
-        self.store.upsert(&h).await?;
+            let mut h = handle;
+            h.status = match outcome {
+                AdmitOutcome::Admitted => AgentRunStatus::Running,
+                AdmitOutcome::Queued { .. } => AgentRunStatus::Queued,
+                AdmitOutcome::Rejected => unreachable!(),
+            };
+            let entry = RegistryEntry {
+                handle_meta: Arc::new(Mutex::new(HandleMeta {
+                    phase_id: h.phase_id.clone(),
+                    status: h.status,
+                    origin: h.origin.clone(),
+                    dispatcher: h.dispatcher.clone(),
+                    started_at: h.started_at,
+                    finished_at: h.finished_at,
+                })),
+                snapshot: Arc::new(ArcSwap::from_pointee(h.snapshot.clone())),
+            };
+            self.inner.insert(goal_id, entry);
+            h_for_store = h;
+            outcome
+        }; // admit_lock dropped here.
+        self.store.upsert(&h_for_store).await?;
         Ok(outcome)
     }
 
@@ -227,10 +234,16 @@ impl AgentRegistry {
             return Err(RegistryError::NotFound(goal_id));
         }
         self.persist(goal_id).await?;
-        // Peek the next queued goal — caller drives promotion via
-        // `promote_queued` so the queue and status flip stay in
-        // sync with the orchestrator's spawn cadence.
-        let next = self.queue.lock().front().copied();
+        // B12 — atomic pop-and-mark-Running of the next queued
+        // goal. Two callers racing release would otherwise both
+        // see the same head and both try to promote it; this
+        // moves the head out of the queue under the queue lock
+        // before returning, so each release returns the slot to
+        // exactly one caller. Caller is still expected to call
+        // promote_queued(id) so the registry's status flips —
+        // we leave that step explicit so the caller can short-
+        // circuit if the orchestrator setup fails.
+        let next = self.queue.lock().pop_front();
         Ok(next)
     }
 

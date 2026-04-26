@@ -221,7 +221,11 @@ impl DriverOrchestrator {
     /// next turn. Idempotent. No-op when the goal isn't running.
     pub fn pause_goal(&self, goal_id: GoalId) -> bool {
         if let Some(tx) = self.pause_signals.get(&goal_id) {
-            let _ = tx.send(true);
+            // B11 — `send` returns Err when no receivers exist
+            // (e.g. between pre_register_goal and run_goal start).
+            // `send_replace` updates the value unconditionally so
+            // the loop sees `true` whenever it does subscribe.
+            tx.send_replace(true);
             return true;
         }
         false
@@ -230,7 +234,7 @@ impl DriverOrchestrator {
     /// Phase 67.C.2 — release a paused goal's loop. Idempotent.
     pub fn resume_goal(&self, goal_id: GoalId) -> bool {
         if let Some(tx) = self.pause_signals.get(&goal_id) {
-            let _ = tx.send(false);
+            tx.send_replace(false);
             return true;
         }
         false
@@ -266,6 +270,25 @@ impl DriverOrchestrator {
             entry.value_mut().max_turns = new_max;
         }
         Some(entry.value().max_turns)
+    }
+
+    /// B11 — pre-register the per-goal cancel + pause tokens for a
+    /// goal that's being reattached after daemon restart but whose
+    /// `run_goal` hasn't started yet. Lets `cancel_agent` /
+    /// `pause_agent` target the goal in the gap between reattach
+    /// and the actual respawn. The tokens are removed when the
+    /// real `run_goal` exits, same as for fresh dispatches.
+    /// Idempotent — re-registering returns the existing tokens.
+    pub fn pre_register_goal(&self, goal_id: GoalId) {
+        self.pause_signals
+            .entry(goal_id)
+            .or_insert_with(|| {
+                let (tx, _rx) = watch::channel(false);
+                tx
+            });
+        self.cancel_tokens
+            .entry(goal_id)
+            .or_insert_with(|| self.cancel_root.child_token());
     }
 
     /// Phase 67.G.2 — cancel a single in-flight goal. Idempotent.
@@ -307,12 +330,30 @@ impl DriverOrchestrator {
         let started = Instant::now();
         let goal_id = goal.id;
 
-        // Phase 67.C.2 — register pause signal for this goal.
-        let (pause_tx, mut pause_rx) = watch::channel(false);
-        self.pause_signals.insert(goal_id, pause_tx);
-        // Phase 67.G.2 — per-goal cancel token (child of cancel_root).
-        let goal_cancel = self.cancel_root.child_token();
-        self.cancel_tokens.insert(goal_id, goal_cancel.clone());
+        // Phase 67.C.2 + B11 — register pause signal. If
+        // pre_register_goal already populated the entry (reattach
+        // path), reuse the existing sender so any in-flight
+        // pause request is honoured by the new loop.
+        let mut pause_rx = match self.pause_signals.get(&goal_id) {
+            Some(existing) => existing.value().subscribe(),
+            None => {
+                let (tx, rx) = watch::channel(false);
+                self.pause_signals.insert(goal_id, tx);
+                rx
+            }
+        };
+        // Phase 67.G.2 + B11 — same reuse rule for the cancel
+        // token: a pre-registered token has already been handed
+        // out to anyone holding `cancel_goal`; clobbering it here
+        // would silently drop the cancellation signal.
+        let goal_cancel = match self.cancel_tokens.get(&goal_id) {
+            Some(t) => t.value().clone(),
+            None => {
+                let t = self.cancel_root.child_token();
+                self.cancel_tokens.insert(goal_id, t.clone());
+                t
+            }
+        };
 
         let _ = self
             .event_sink

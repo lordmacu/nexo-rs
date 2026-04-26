@@ -151,6 +151,81 @@ async fn dispatcher_skips_second_firing_when_idempotency_wired() {
 }
 
 #[tokio::test]
+async fn b10_failed_action_releases_claim_so_retry_can_run_again() {
+    use std::sync::{Arc, Mutex};
+
+    use async_trait::async_trait;
+    use nexo_dispatch_tools::hooks::dispatcher::{NatsHookPublisher, NoopNatsHookPublisher};
+    use nexo_dispatch_tools::{
+        CompletionHook, DefaultHookDispatcher, HookAction, HookDispatcher, HookError, HookPayload,
+        HookTrigger,
+    };
+    use nexo_driver_claude::OriginChannel;
+    use nexo_pairing::{PairingAdapterRegistry, PairingChannelAdapter};
+
+    // Adapter that fails the first call and succeeds the second.
+    struct FlakyAdapter {
+        attempts: Mutex<u32>,
+    }
+    #[async_trait]
+    impl PairingChannelAdapter for FlakyAdapter {
+        fn channel_id(&self) -> &'static str {
+            "telegram"
+        }
+        fn normalize_sender(&self, raw: &str) -> Option<String> {
+            Some(raw.to_string())
+        }
+        async fn send_reply(&self, _a: &str, _t: &str, _x: &str) -> anyhow::Result<()> {
+            let mut n = self.attempts.lock().unwrap();
+            *n += 1;
+            if *n == 1 {
+                anyhow::bail!("simulated transient failure")
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    let pairing = PairingAdapterRegistry::new();
+    let flaky = Arc::new(FlakyAdapter {
+        attempts: Mutex::new(0),
+    });
+    pairing.register(flaky.clone() as Arc<dyn PairingChannelAdapter>);
+
+    let store = Arc::new(HookIdempotencyStore::open_memory().await.unwrap());
+    let nats: Arc<dyn NatsHookPublisher> = Arc::new(NoopNatsHookPublisher);
+    let dispatcher = DefaultHookDispatcher::new(pairing, nats).with_idempotency(store);
+
+    let hook = CompletionHook {
+        id: "h1".into(),
+        on: HookTrigger::Done,
+        action: HookAction::NotifyOrigin,
+    };
+    let payload = HookPayload {
+        goal_id: GoalId(Uuid::new_v4()),
+        phase_id: "67.10".into(),
+        transition: HookTransition::Done,
+        summary: "ok".into(),
+        elapsed: "1m".into(),
+        diff_stat: None,
+        origin: Some(OriginChannel {
+            plugin: "telegram".into(),
+            instance: "x".into(),
+            sender_id: "@y".into(),
+            correlation_id: None,
+        }),
+    };
+
+    // First firing: action fails. The claim should be released
+    // so a retry can fire again.
+    let err = dispatcher.dispatch(&hook, &payload).await.unwrap_err();
+    assert!(matches!(err, HookError::Adapter(_)));
+    // Second firing: action succeeds (flaky becomes happy).
+    dispatcher.dispatch(&hook, &payload).await.unwrap();
+    assert_eq!(*flaky.attempts.lock().unwrap(), 2);
+}
+
+#[tokio::test]
 async fn forget_goal_drops_every_slot() {
     let store = HookIdempotencyStore::open_memory().await.unwrap();
     let g = GoalId(Uuid::new_v4());
