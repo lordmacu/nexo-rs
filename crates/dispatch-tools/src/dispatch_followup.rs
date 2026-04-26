@@ -59,6 +59,7 @@ pub fn followup_phase_id(code: &str) -> String {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub async fn dispatch_followup_call(
     input: DispatchFollowupInput,
     tracker: &dyn ProjectTracker,
@@ -70,6 +71,7 @@ pub async fn dispatch_followup_call(
     dispatcher: DispatcherIdentity,
     origin: Option<OriginChannel>,
     caps: CapSnapshot,
+    hook_registry: Option<Arc<crate::hooks::HookRegistry>>,
 ) -> Result<DispatchFollowupOutput, ProgramPhaseError> {
     let items = match tracker.followups().await {
         Ok(v) => v,
@@ -154,6 +156,24 @@ pub async fn dispatch_followup_call(
     match outcome {
         AdmitOutcome::Admitted => {
             registry.set_max_turns(goal_id, goal.budget.max_turns);
+            // B18 — same auto-audit policy as program_phase_dispatch.
+            // Operator wiring sets DispatchToolContext.audit_before_done;
+            // we surface the flag here via the optional hook_registry —
+            // when callers passed one, attach an audit hook so
+            // dispatch_followup goals get the same audit-before-done
+            // pass program_phase goals get.
+            if let Some(hr) = &hook_registry {
+                hr.add_unique(
+                    goal_id,
+                    crate::hooks::types::CompletionHook {
+                        id: format!("auto-audit-{}", goal_id.0.simple()),
+                        on: crate::hooks::types::HookTrigger::Done,
+                        action: crate::hooks::types::HookAction::DispatchAudit {
+                            only_if: crate::hooks::types::HookTrigger::Done,
+                        },
+                    },
+                );
+            }
             let _ = orchestrator.clone().spawn_goal(goal);
             Ok(DispatchFollowupOutput::Dispatched {
                 goal_id,

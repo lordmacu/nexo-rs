@@ -44,7 +44,8 @@ pub use chain::{
 
 pub use hooks::{
     CompletionHook, DefaultHookDispatcher, DispatchPhaseChainer, HookAction, HookDispatcher,
-    HookError, HookPayload, HookTransition, HookTrigger, NatsHookPublisher, NoopNatsHookPublisher,
+    HookError, HookPayload, HookRegistryStore, HookStoreError, HookTransition, HookTrigger,
+    NatsHookPublisher, NoopNatsHookPublisher, SqliteHookRegistryStore,
 };
 
 pub use event_forwarder::EventForwarder;

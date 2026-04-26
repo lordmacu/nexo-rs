@@ -2422,7 +2422,31 @@ async fn boot_dispatch_ctx_if_enabled(
         4,
     ));
     let log_buffer = Arc::new(nexo_agent_registry::LogBuffer::new(200));
-    let hook_registry = Arc::new(nexo_dispatch_tools::HookRegistry::new());
+    // B17 — hook registry mirrors writes to SQLite so attached
+    // hooks (auto-audit, notify_origin, dispatch_phase chains)
+    // survive daemon restart. Path defaults under the workspace
+    // root; falls back to ':memory:' if open fails.
+    let hook_db_path: PathBuf = std::env::var("NEXO_HOOK_REGISTRY_DB")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir().join("nexo-hooks.db"));
+    let hook_store = match nexo_dispatch_tools::SqliteHookRegistryStore::open(
+        hook_db_path.to_str().unwrap_or(":memory:"),
+    )
+    .await
+    {
+        Ok(s) => Some(Arc::new(s) as Arc<dyn nexo_dispatch_tools::HookRegistryStore>),
+        Err(e) => {
+            tracing::warn!(error = %e, "hook store open failed — hooks stay in memory only");
+            None
+        }
+    };
+    let hook_registry = Arc::new(match hook_store.clone() {
+        Some(s) => nexo_dispatch_tools::HookRegistry::with_store(s),
+        None => nexo_dispatch_tools::HookRegistry::new(),
+    });
+    if let Err(e) = hook_registry.reload_from_store().await {
+        tracing::warn!(error = %e, "hook reload failed — pre-restart hooks won't fire");
+    }
 
     // Hook dispatcher with the channel adapters Phase 26 already
     // owns. Adapters are registered into a SHARED registry here so
