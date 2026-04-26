@@ -1229,9 +1229,22 @@ Shipped (35.3):
 - `crates/llm/Cargo.toml` adds `criterion = "0.5"` as dev-dep
   + `[[bench]] name = "sse_parsers"` registration.
 
+Shipped (35.4):
+- `crates/taskflow/benches/tick.rs` — `WaitEngine::tick`
+  bench at 10 / 100 / 1 000 active waiting flows, all with
+  future-timer waits (no due flows so the path measured is
+  purely "scan the store, decide nothing matures yet"). Uses
+  in-memory SQLite for hermetic, sub-100ms setup per case.
+  Throughput reported in flows/sec scanned. Sub-millisecond is
+  the target at single-host scale; this bench traps regressions
+  on the SQL query plan or the in-memory cursor logic.
+- `crates/taskflow/Cargo.toml` adds `criterion = "0.5"` as
+  dev-dep + `[[bench]] name = "tick"` registration.
+
 Deferred:
-- **35.4** TaskFlow tick latency, transcripts FTS search,
-  redaction pipeline.
+- **35.5** Transcripts FTS search bench, redaction pipeline
+  bench. Memory profiling via `dhat` snapshots at idle vs
+  load.
 - **35.3** End-to-end load-test rig that spawns N inbound
   messages over the local broker and measures tail latency at
   varying agent counts.
