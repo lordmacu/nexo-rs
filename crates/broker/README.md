@@ -1,19 +1,65 @@
 # nexo-broker
 
-> Async NATS broker abstraction with local fallback and disk queue for Nexo.
+> Event-bus abstraction for Nexo — `BrokerHandle` trait with NATS impl + zero-config local fallback (in-process `tokio::mpsc` + disk queue) so a daemon boots and works even before NATS is reachable.
 
 This crate is part of **[Nexo](https://github.com/lordmacu/nexo-rs)** — a multi-agent Rust framework with a NATS event bus, pluggable LLM providers (MiniMax, Anthropic, OpenAI-compat, Gemini, DeepSeek), per-agent credentials, MCP support, and channel plugins for WhatsApp, Telegram, Email, and Browser (CDP).
 
-- **Main project:** <https://github.com/lordmacu/nexo-rs>
-- **Documentation:** <https://lordmacu.github.io/nexo-rs/>
+- **Main repo:** <https://github.com/lordmacu/nexo-rs>
+- **Runtime engine:** [`nexo-core`](https://github.com/lordmacu/nexo-rs/tree/main/crates/core)
+- **Public docs:** <https://lordmacu.github.io/nexo-rs/>
 
 ## What this crate does
 
-- Wraps `async-nats = 0.35` behind a `Broker` trait — agents publish and subscribe without coupling to NATS specifics.
-- Automatic **local fallback**: when NATS is offline, traffic flows through a `tokio::mpsc` bus + on-disk queue, then drains to NATS on reconnect.
-- **Circuit breaker** on every publish/subscribe so a flapping broker doesn't take down the agent.
-- **Dead-letter queue** for messages that exceed retry budget.
-- **Backpressure** via bounded channels so a slow subscriber can't OOM the producer.
+- **`BrokerHandle` trait** — uniform `publish(topic, event)`,
+  `subscribe(pattern) -> Subscription`, `request(topic, msg,
+  timeout) -> Message` over both transports.
+- **`NatsBroker`** — `async-nats = "0.35"` client wrapping
+  NATS Core (no JetStream required for the basic event bus;
+  Phase 32 multi-host work adds JetStream layered).
+- **`LocalBroker`** — in-process `DashMap<pattern,
+  tokio::mpsc::Sender>` fallback with topic-pattern matching
+  (`agent.*.inbox`, `plugin.outbound.>`). Drops messages with
+  a slow-consumer counter when a subscriber is backlogged
+  (NATS-equivalent semantics).
+- **`AnyBroker` enum** — `Local | Nats` discriminator the
+  runtime holds; the rest of the codebase calls
+  `BrokerHandle` methods polymorphically.
+- **Disk queue fallback** — when configured for NATS but the
+  remote is unreachable, outbound publishes spool to a SQLite
+  disk queue and replay on reconnect (Phase 2.3).
+- **Dead-letter queue (DLQ)** — `nexo dlq list / replay /
+  drop` CLI surface; messages that fail max-retries land
+  here for operator triage.
+- **CircuitBreaker** — Phase 2.5 wraps NATS publishes;
+  back-pressure on the publisher when the cluster is
+  unhealthy.
+
+## Public API
+
+```rust
+#[async_trait]
+pub trait BrokerHandle: Send + Sync {
+    async fn publish(&self, topic: &str, event: Event) -> Result<(), BrokerError>;
+    async fn subscribe(&self, pattern: &str) -> Result<Subscription, BrokerError>;
+    async fn request(&self, topic: &str, msg: Message, timeout: Duration) -> Result<Message, BrokerError>;
+}
+
+pub enum AnyBroker {
+    Local(LocalBroker),
+    Nats(Arc<NatsBroker>),
+}
+```
+
+## Topic naming convention
+
+| Topic shape | Producer | Consumer |
+|---|---|---|
+| `agent.route.<agent_id>` | Agent-to-agent delegation | Target runtime |
+| `agent.inbound.<agent_id>` | Channel plugins | Agent runtime |
+| `plugin.inbound.<channel>[.<instance>]` | Channel plugins | Agent runtime |
+| `plugin.outbound.<channel>[.<instance>]` | Agent runtime / send-tools | Channel plugin |
+| `taskflow.resume` | TaskFlow callers | WaitEngine |
+| `pair.codes.<code>` | Pairing handshake | Pairing gate |
 
 ## Install
 
@@ -27,8 +73,7 @@ nexo-broker = "0.1"
 - [Event bus (NATS)](https://lordmacu.github.io/nexo-rs/architecture/event-bus.html)
 - [Fault tolerance](https://lordmacu.github.io/nexo-rs/architecture/fault-tolerance.html)
 - [DLQ](https://lordmacu.github.io/nexo-rs/ops/dlq.html)
-- [Recipe — NATS with TLS + auth](https://lordmacu.github.io/nexo-rs/recipes/nats-tls-auth.html)
-- [broker.yaml](https://lordmacu.github.io/nexo-rs/config/broker.html)
+- [NATS with TLS + auth recipe](https://lordmacu.github.io/nexo-rs/recipes/nats-tls-auth.html)
 
 ## License
 
