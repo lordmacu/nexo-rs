@@ -17,5 +17,5 @@ pub use dispatcher::{
     NoopNatsHookPublisher,
 };
 pub use idempotency::{HookIdempotencyStore, IdempotencyError};
-pub use registry::HookRegistry;
+pub use registry::{HookRegistry, HookRegistryStore, HookStoreError, SqliteHookRegistryStore};
 pub use types::{CompletionHook, HookAction, HookPayload, HookTransition, HookTrigger};

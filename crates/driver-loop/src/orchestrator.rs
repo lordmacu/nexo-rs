@@ -732,6 +732,10 @@ impl DriverOrchestrator {
         // B2 — drop budget override entry so a new spawn of the
         // same id starts fresh.
         self.budget_overrides.remove(&goal_id);
+        // S3 — also clear any queued operator interrupts that
+        // never made it into a turn (e.g. queued late while the
+        // goal was already wrapping up). Without this they leak.
+        self.pending_interrupts.remove(&goal_id);
         Ok(outcome)
     }
 

@@ -219,74 +219,84 @@ fn flush_sub(
 /// block. Returns `None` when no marker was found OR no bullets
 /// followed it.
 pub(crate) fn parse_acceptance_block(body: &str) -> Option<Vec<String>> {
-    let mut lines = body.lines().peekable();
-    let mut found_marker = false;
-    while let Some(line) = lines.next() {
-        let trimmed = line.trim();
-        let lower = trimmed.to_ascii_lowercase();
-        if lower == "**acceptance:**"
-            || lower == "### acceptance"
-            || lower == "## acceptance"
-            || lower == "acceptance:"
-            || lower.starts_with("**acceptance:**")
-            || lower.starts_with("### acceptance")
-        {
-            found_marker = true;
-            break;
-        }
-    }
-    if !found_marker {
-        // Inline shorthand: `Acceptance: <one-line cmd>`.
-        for line in body.lines() {
-            let trimmed = line.trim();
-            if let Some(rest) = trimmed
-                .strip_prefix("Acceptance:")
-                .or_else(|| trimmed.strip_prefix("acceptance:"))
-            {
-                let cmd = rest.trim().trim_matches('`').to_string();
-                if !cmd.is_empty() {
-                    return Some(vec![cmd]);
-                }
-            }
-        }
-        return None;
-    }
+    // B21 — concatenate every Acceptance block in the body.
+    // A sub-phase can ship multiple `Acceptance:` sections
+    // (happy-path + edge-case) and all bullets count toward the
+    // goal's verdict.
     let mut out: Vec<String> = Vec::new();
-    for line in lines {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            // Blank line ends the bullet list only when we've
-            // already collected at least one item — leading blank
-            // (between the marker and the bullets) is fine.
-            if !out.is_empty() {
+    let mut iter = body.lines().peekable();
+    loop {
+        let mut found_marker = false;
+        while let Some(line) = iter.next() {
+            let trimmed = line.trim();
+            let lower = trimmed.to_ascii_lowercase();
+            if lower == "**acceptance:**"
+                || lower == "### acceptance"
+                || lower == "## acceptance"
+                || lower == "acceptance:"
+                || lower.starts_with("**acceptance:**")
+                || lower.starts_with("### acceptance")
+            {
+                found_marker = true;
                 break;
             }
-            continue;
         }
-        let cmd = trimmed
-            .strip_prefix("- ")
-            .or_else(|| trimmed.strip_prefix("* "))
-            .or_else(|| trimmed.strip_prefix("+ "));
-        match cmd {
-            Some(c) => {
-                let cleaned = c.trim().trim_matches('`').to_string();
-                if !cleaned.is_empty() {
-                    out.push(cleaned);
-                }
-            }
-            None => {
-                // Non-bullet line ends the block.
-                if !out.is_empty() {
+        if !found_marker {
+            break;
+        }
+        // Drain bullets that follow the marker.
+        let mut block_collected_any = false;
+        while let Some(line) = iter.peek() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                iter.next();
+                if block_collected_any {
                     break;
                 }
+                continue;
+            }
+            let cmd = trimmed
+                .strip_prefix("- ")
+                .or_else(|| trimmed.strip_prefix("* "))
+                .or_else(|| trimmed.strip_prefix("+ "));
+            match cmd {
+                Some(c) => {
+                    let cleaned = c.trim().trim_matches('`').to_string();
+                    if !cleaned.is_empty() {
+                        out.push(cleaned);
+                        block_collected_any = true;
+                    }
+                    iter.next();
+                }
+                None => {
+                    // Non-bullet ends the current block; outer
+                    // loop continues hunting for more Acceptance
+                    // markers so additional sections still land.
+                    if block_collected_any {
+                        break;
+                    }
+                    iter.next();
+                }
             }
         }
     }
-    if out.is_empty() {
-        None
-    } else {
-        Some(out)
+    if !out.is_empty() {
+        return Some(out);
     }
+    // Inline shorthand fallback: `Acceptance: <one-line cmd>`.
+    for line in body.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed
+            .strip_prefix("Acceptance:")
+            .or_else(|| trimmed.strip_prefix("acceptance:"))
+        {
+            let cmd = rest.trim().trim_matches('`').to_string();
+            if !cmd.is_empty() {
+                return Some(vec![cmd]);
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]

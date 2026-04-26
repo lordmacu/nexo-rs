@@ -119,6 +119,7 @@ async fn unknown_code_returns_not_found() {
             queue_when_full: true,
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -157,6 +158,7 @@ async fn resolved_code_returns_already_resolved() {
             queue_when_full: true,
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -199,6 +201,7 @@ async fn capability_none_blocks_followup_dispatch() {
             queue_when_full: true,
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -239,6 +242,7 @@ async fn forbidden_phase_namespace_blocks_followups() {
             queue_when_full: true,
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();

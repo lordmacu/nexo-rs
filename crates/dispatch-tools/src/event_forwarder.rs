@@ -120,6 +120,31 @@ impl DriverEventSink for EventForwarder {
                     "agent.driver.goal.completed",
                     format!("goal terminal: {:?}", outcome.outcome),
                 );
+                // B20 — audit findings (carried in final_text) are
+                // logged unconditionally so console-originated
+                // dispatches don't lose them when notify_origin
+                // no-ops on the 'console' plugin.
+                if let Some(text) = &outcome.final_text {
+                    let phase = self
+                        .registry
+                        .handle(outcome.goal_id)
+                        .map(|h| h.phase_id)
+                        .unwrap_or_default();
+                    if phase.starts_with("audit:") {
+                        let preview: String = text.chars().take(2000).collect();
+                        self.log_buffer.push(
+                            outcome.goal_id,
+                            "agent.driver.audit.report",
+                            preview.clone(),
+                        );
+                        tracing::info!(
+                            target: "audit",
+                            goal_id = %outcome.goal_id.0,
+                            phase = %phase,
+                            "audit report:\n{preview}"
+                        );
+                    }
+                }
                 // B5 — fire completion hooks.
                 let transition = match &outcome.outcome {
                     AttemptOutcome::Done => HookTransition::Done,
@@ -193,10 +218,6 @@ impl EventForwarder {
                 );
             }
         }
-        // Touch last_event_at indirectly is unnecessary — the
-        // hook fire path is informational only. Keep handle in
-        // scope for the diff_stat / phase_id reads above.
-        let _ = handle;
     }
 }
 

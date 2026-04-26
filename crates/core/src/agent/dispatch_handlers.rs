@@ -186,10 +186,11 @@ impl ToolHandler for ProgramPhaseHandler {
             ProgramPhaseOutput::Dispatched { goal_id, phase_id } => {
                 // Auto-attach audit hook on admit.
                 if dispatch.audit_before_done {
-                    dispatch.hooks.add(
+                    // B19 + S1 — idempotent attach + clean uuid id.
+                    dispatch.hooks.add_unique(
                         *goal_id,
                         nexo_dispatch_tools::CompletionHook {
-                            id: format!("auto-audit-{goal_id:?}"),
+                            id: format!("auto-audit-{}", goal_id.0.simple()),
                             on: nexo_dispatch_tools::HookTrigger::Done,
                             action: nexo_dispatch_tools::HookAction::DispatchAudit {
                                 only_if: nexo_dispatch_tools::HookTrigger::Done,
@@ -457,11 +458,11 @@ impl nexo_dispatch_tools::DispatchPhaseChainer for AuditChainer {
             .set_max_turns(goal_id, goal.budget.max_turns);
 
         // Audit goals get a notify_origin hook so findings reach
-        // the operator.
-        self.hooks.add(
+        // the operator. B19 + S1.
+        self.hooks.add_unique(
             goal_id,
             nexo_dispatch_tools::CompletionHook {
-                id: format!("audit-notify-{goal_id:?}"),
+                id: format!("audit-notify-{}", goal_id.0.simple()),
                 on: nexo_dispatch_tools::HookTrigger::Done,
                 action: nexo_dispatch_tools::HookAction::NotifyOrigin,
             },
