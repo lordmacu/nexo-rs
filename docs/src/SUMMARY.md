@@ -23,6 +23,7 @@
 - [Transcripts (FTS + redaction)](./architecture/transcripts.md)
 - [vs OpenClaw](./architecture/vs-openclaw.md)
 - [Driver subsystem (Phase 67)](./architecture/driver-subsystem.md)
+- [Project tracker + dispatch (Phase 67.A–H)](./architecture/project-tracker.md)
 
 # Configuration
 
@@ -125,6 +126,7 @@
 - [Build a poller module](./recipes/build-a-poller.md)
 - [Deploy on Hetzner Cloud](./recipes/deploy-hetzner.md)
 - [Deploy on Fly.io](./recipes/deploy-fly.md)
+- [Deploy on AWS (EC2)](./recipes/deploy-aws.md)
 
 # Architecture Decision Records
 
