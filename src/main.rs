@@ -2620,22 +2620,51 @@ fn parse_log_format() -> LogFormat {
 // plain table by default, or JSON when `--json` is set.
 
 fn pair_paths(config_dir: &std::path::Path) -> (PathBuf, PathBuf) {
-    // Store file lives next to memory.db when possible; otherwise
-    // alongside the config dir as a stable fallback.
-    let store = config_dir
-        .parent()
-        .unwrap_or(std::path::Path::new("."))
-        .join("data")
-        .join("pairing.db");
-    let secret = std::env::var_os("HOME")
-        .map(|h| {
-            PathBuf::from(h)
-                .join(".nexo")
-                .join("secret")
-                .join("pairing.key")
-        })
-        .unwrap_or_else(|| PathBuf::from("./pairing.key"));
+    // FOLLOWUPS PR-6 — `config/pairing.yaml` overrides take priority
+    // when present. Falls back to the legacy "next to memory.db" /
+    // `~/.nexo/secret/pairing.key` defaults so existing operators
+    // see no behaviour change.
+    let yaml_overrides = load_pairing_yaml_overrides(config_dir);
+
+    let store = yaml_overrides
+        .as_ref()
+        .and_then(|p| p.storage.path.clone())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            config_dir
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .join("data")
+                .join("pairing.db")
+        });
+    let secret = yaml_overrides
+        .as_ref()
+        .and_then(|p| p.setup_code.secret_path.clone())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            std::env::var_os("HOME")
+                .map(|h| {
+                    PathBuf::from(h)
+                        .join(".nexo")
+                        .join("secret")
+                        .join("pairing.key")
+                })
+                .unwrap_or_else(|| PathBuf::from("./pairing.key"))
+        });
     (store, secret)
+}
+
+/// Best-effort sync read of `config/pairing.yaml` for CLI commands
+/// that don't go through the full async config loader. Returns
+/// `None` when the file is absent or unreadable; the caller's
+/// existing fallback chain handles that.
+fn load_pairing_yaml_overrides(
+    config_dir: &std::path::Path,
+) -> Option<nexo_config::types::pairing::PairingInner> {
+    let path = config_dir.join("pairing.yaml");
+    let body = std::fs::read_to_string(&path).ok()?;
+    let parsed: nexo_config::types::pairing::PairingConfig = serde_yaml::from_str(&body).ok()?;
+    Some(parsed.pairing)
 }
 
 async fn open_pair_store(config_dir: &std::path::Path) -> Result<Arc<nexo_pairing::PairingStore>> {
@@ -2675,16 +2704,36 @@ async fn run_pair_start(
     }
     let issuer = nexo_pairing::SetupCodeIssuer::open_or_create(&secret_path)?;
 
-    // URL resolution: only `--public-url` is honoured at the CLI layer
-    // for now. tunnel/gateway integration lands when their own crates
-    // expose a public accessor; until then operators pass `--public-url`
-    // explicitly. Loopback-only fails closed.
+    // URL resolution priority (highest first):
+    //   1. `--public-url` CLI flag (operator override at invoke time)
+    //   2. `pairing.yaml::pairing.public_url` (deployment-pinned)
+    //   3. `NEXO_TUNNEL_URL` env (tunnel-side bridge until the
+    //       `nexo-tunnel` crate exposes an in-process accessor — PR-3).
+    //       The `nexo-tunnel` daemon writes its assigned
+    //       `https://*.trycloudflare.com` URL here at startup so a
+    //       separately-launched `nexo pair start` picks it up.
+    //   4. loopback-only → fails closed with a clear error.
+    //
+    // `ws_cleartext_allow` from the YAML extends the resolver's
+    // built-in allow list (loopback / RFC1918 / link-local /
+    // `.local` / `10.0.2.2`). PR-6 wired the YAML loader; PR-3
+    // wires the runtime priority chain.
+    let yaml_overrides = load_pairing_yaml_overrides(config_dir);
+    let yaml_public_url = yaml_overrides.as_ref().and_then(|p| p.public_url.clone());
+    let yaml_cleartext = yaml_overrides
+        .as_ref()
+        .map(|p| p.ws_cleartext_allow.clone())
+        .unwrap_or_default();
+    let tunnel_env = std::env::var("NEXO_TUNNEL_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty());
+
     let inputs = nexo_pairing::url_resolver::UrlInputs {
-        public_url: public_url.map(str::to_string),
-        tunnel_url: None,
+        public_url: public_url.map(str::to_string).or(yaml_public_url),
+        tunnel_url: tunnel_env,
         gateway_remote_url: None,
         lan_url: None,
-        ws_cleartext_allow_extra: vec![],
+        ws_cleartext_allow_extra: yaml_cleartext,
     };
     let resolved =
         nexo_pairing::url_resolver::resolve(&inputs).map_err(|e| anyhow::anyhow!("{e}"))?;

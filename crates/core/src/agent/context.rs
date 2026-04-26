@@ -77,6 +77,12 @@ pub struct AgentContext {
     /// in that case `llm_behavior` falls back to the boot-time
     /// `prompt_cache_enabled` / `compaction_runtime.enabled` flags.
     pub context_optimization: Option<nexo_config::types::llm::ResolvedContextOptimization>,
+    /// PT-1 — bundle of services consumed by the dispatch tool
+    /// handlers (program_phase, list_agents, etc.). Populated at
+    /// boot when the project tracker is enabled. `None` keeps the
+    /// dispatch tools off — handlers return a friendly error so
+    /// the LLM doesn't pretend they worked.
+    pub dispatch: Option<Arc<super::dispatch_handlers::DispatchToolContext>>,
 }
 impl AgentContext {
     pub fn new(
@@ -104,7 +110,16 @@ impl AgentContext {
             link_extractor: None,
             web_search_router: None,
             context_optimization: None,
+            dispatch: None,
         }
+    }
+
+    pub fn with_dispatch(
+        mut self,
+        d: Arc<super::dispatch_handlers::DispatchToolContext>,
+    ) -> Self {
+        self.dispatch = Some(d);
+        self
     }
     pub fn with_web_search_router(mut self, router: Arc<nexo_web_search::WebSearchRouter>) -> Self {
         self.web_search_router = Some(router);

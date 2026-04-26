@@ -9,6 +9,7 @@ pub mod binding_validate;
 pub mod compaction;
 pub mod context;
 pub mod delegation_tool;
+pub mod dispatch_handlers;
 pub mod dreaming;
 pub mod effective;
 pub mod extension_hook;
