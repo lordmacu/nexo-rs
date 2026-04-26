@@ -39,6 +39,78 @@ pub use binary::ensure_cloudflared;
 /// treating the spawn as a failure.
 pub const DEFAULT_URL_TIMEOUT: Duration = Duration::from_secs(30);
 
+// ── Sidecar URL file ──────────────────────────────────────────────────────────
+//
+// FOLLOWUPS PR-3 — in-process URL accessor across daemon ↔ CLI
+// boundaries.
+//
+// `nexo pair start` is a separate process from the daemon, so a
+// real in-process accessor needs IPC. The cheapest IPC that
+// works under systemd, Docker, and ad-hoc shells is a sidecar
+// file: the daemon writes the active URL on tunnel-up, removes
+// it on shutdown, and the CLI reads it directly. No daemon
+// connection, no broker round-trip, no shared library state.
+//
+// The file lives at `$NEXO_HOME/state/tunnel.url` (or
+// `~/.nexo/state/tunnel.url` when `NEXO_HOME` is unset). One
+// canonical location so deployments don't have to coordinate
+// path conventions.
+
+/// Canonical sidecar path. Honours `$NEXO_HOME` when set, falls
+/// back to `~/.nexo/`. Directory is created on first write.
+pub fn url_state_path() -> std::path::PathBuf {
+    let home = std::env::var_os("NEXO_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join(".nexo")
+        });
+    home.join("state").join("tunnel.url")
+}
+
+/// Write the active tunnel URL to the sidecar file. Used by the
+/// daemon after `TunnelManager::start()` succeeds. Atomic — write
+/// to `<path>.tmp` + rename so a CLI reading mid-write never sees
+/// a torn URL.
+pub fn write_url_file(url: &str) -> std::io::Result<()> {
+    let path = url_state_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let tmp = path.with_extension("url.tmp");
+    std::fs::write(&tmp, url.trim().as_bytes())?;
+    std::fs::rename(&tmp, &path)?;
+    Ok(())
+}
+
+/// Read the active tunnel URL from the sidecar file. Returns
+/// `None` when the file is absent / empty / unreadable. Used by
+/// `nexo pair start` and other CLI subcommands that need the URL
+/// without a daemon connection.
+pub fn read_url_file() -> Option<String> {
+    let path = url_state_path();
+    let body = std::fs::read_to_string(&path).ok()?;
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+/// Remove the sidecar file. Called on graceful daemon shutdown
+/// so a stale URL doesn't outlive the tunnel that owns it.
+pub fn clear_url_file() -> std::io::Result<()> {
+    let path = url_state_path();
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
 /// Public handle to a live tunnel. Drop or [`shutdown`] kills the
 /// `cloudflared` subprocess.
 pub struct TunnelHandle {
@@ -233,5 +305,43 @@ mod tests {
         assert!(!path_is_safe(Path::new("../evil")));
         assert!(!path_is_safe(Path::new("foo/../../etc/passwd")));
         assert!(!path_is_safe(Path::new("/etc/passwd")));
+    }
+
+    // FOLLOWUPS PR-3 — sidecar URL accessor round-trip. Use a
+    // throwaway NEXO_HOME so the test never touches the operator's
+    // real `~/.nexo/state/tunnel.url`.
+    #[test]
+    fn sidecar_round_trip() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // Pin NEXO_HOME for the duration of this test.
+        let prev = std::env::var_os("NEXO_HOME");
+        std::env::set_var("NEXO_HOME", dir.path());
+
+        // Sidecar starts empty.
+        assert_eq!(read_url_file(), None);
+
+        write_url_file("https://abc-123.trycloudflare.com").expect("write");
+        assert_eq!(
+            read_url_file().as_deref(),
+            Some("https://abc-123.trycloudflare.com")
+        );
+
+        // Whitespace gets trimmed on read.
+        write_url_file("\n  https://x.trycloudflare.com  \n").expect("write");
+        assert_eq!(
+            read_url_file().as_deref(),
+            Some("https://x.trycloudflare.com")
+        );
+
+        clear_url_file().expect("clear");
+        assert_eq!(read_url_file(), None);
+
+        // Idempotent clear.
+        clear_url_file().expect("clear-twice");
+
+        match prev {
+            Some(v) => std::env::set_var("NEXO_HOME", v),
+            None => std::env::remove_var("NEXO_HOME"),
+        }
     }
 }

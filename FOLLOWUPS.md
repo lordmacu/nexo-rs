@@ -266,10 +266,16 @@ PR-3. ~~**`tunnel.url` integration in URL resolver**~~  🔄 partial 2026-04-26
   store path and secret path so CLI subcommands honour the
   same config the daemon does. Falls back to legacy defaults
   unchanged when the YAML is absent.
-- **Still deferred**: replacing `NEXO_TUNNEL_URL` env hand-off
-  with a real in-process accessor (`nexo-tunnel` crate exposing
-  the active URL via a shared snapshot). Env-var bridge keeps
-  the CLI subcommand decoupled from the daemon process for now.
+- ~~In-process URL accessor across daemon ↔ CLI~~  ✅ shipped
+  2026-04-26 via a sidecar file at
+  `$NEXO_HOME/state/tunnel.url`. `nexo-tunnel` exposes
+  `url_state_path()`, `write_url_file()`, `read_url_file()`,
+  `clear_url_file()`. The daemon writes the URL on
+  `TunnelManager::start()` success; `nexo pair start` reads it
+  with priority above the env-var fallback. Atomic writes
+  (`<path>.tmp` + rename) so a CLI reading mid-write never
+  sees a torn URL. Round-trip unit test covers happy path +
+  whitespace trim + idempotent clear.
 
 PR-4. **Companion-tui not shipped**
 - Missing: `apps/companion-tui/` reference companion that scans QR
