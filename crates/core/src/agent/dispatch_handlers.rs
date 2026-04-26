@@ -61,6 +61,17 @@ pub struct DispatchToolContext {
     /// hook outcome. Defaults to `NoopTelemetry`; production
     /// boot wires `NatsDispatchTelemetry` (PT-7).
     pub telemetry: Arc<dyn nexo_dispatch_tools::DispatchTelemetry>,
+    /// Self-modify gate. When `false`, dispatch tools that would
+    /// target the daemon's own source workspace (i.e. the daemon
+    /// is running under the same git root the goal is about to
+    /// modify) are refused with a clean error. Default `false` to
+    /// fail-safe in production; dev sets
+    /// `NEXO_ALLOW_SELF_MODIFY=1` to flip it on.
+    pub allow_self_modify: bool,
+    /// Path the daemon process is running from. Compared against
+    /// the active tracker root to decide whether a dispatch is a
+    /// self-modify attempt. Snapshot at boot.
+    pub daemon_source_root: std::path::PathBuf,
 }
 
 impl DispatchToolContext {
@@ -95,6 +106,21 @@ impl DispatchToolContext {
     fn dispatch_policy(&self, ctx: &AgentContext) -> nexo_config::DispatchPolicy {
         ctx.effective_policy().dispatch_policy.clone()
     }
+
+    /// True when the active tracker root resolves to the same
+    /// path the daemon was launched from. Used by
+    /// ProgramPhaseHandler to refuse self-modify attempts when
+    /// `allow_self_modify=false`.
+    pub fn is_self_modify_target(&self) -> bool {
+        let active = self.tracker.root();
+        let daemon = &self.daemon_source_root;
+        // Canonicalise both sides so '/proj' and '/proj/.' compare
+        // equal. Failing canonicalise (path missing on disk) falls
+        // back to direct equality so we err on the side of warning.
+        let a = std::fs::canonicalize(&active).unwrap_or(active);
+        let b = std::fs::canonicalize(daemon).unwrap_or_else(|_| daemon.clone());
+        a == b
+    }
 }
 
 fn missing_dispatch_ctx() -> anyhow::Error {
@@ -115,6 +141,18 @@ impl ToolHandler for ProgramPhaseHandler {
         let dispatch = dispatch_ctx(ctx)?;
         let input: ProgramPhaseInput = serde_json::from_value(args)?;
         let policy = dispatch.dispatch_policy(ctx);
+        // Self-modify gate. Refuses when the operator is asking
+        // Cody to dispatch a goal against the same source the
+        // daemon runs from, AND the env hasn't opted in to
+        // self-modification. Production deploys leave this off.
+        if dispatch.is_self_modify_target() && !dispatch.allow_self_modify {
+            return Ok(serde_json::to_value(
+                nexo_dispatch_tools::ProgramPhaseOutput::Forbidden {
+                    phase_id: input.phase_id.clone(),
+                    reason: "self-modify is disabled (set NEXO_ALLOW_SELF_MODIFY=1 in dev to enable, or switch to a different workspace via init_project / set_active_workspace)".into(),
+                },
+            )?);
+        }
         let out = program_phase_dispatch(
             input,
             dispatch.tracker.as_ref(),
@@ -322,6 +360,17 @@ impl ToolHandler for PreflightHandler {
         } else {
             false
         };
+        let (is_self_modify, allow_self_modify, daemon_source) =
+            ctx.dispatch.as_ref().map_or(
+                (false, false, String::from("<unset>")),
+                |d| {
+                    (
+                        d.is_self_modify_target(),
+                        d.allow_self_modify,
+                        d.daemon_source_root.display().to_string(),
+                    )
+                },
+            );
         let report = serde_json::json!({
             "llm_provider": llm_provider,
             "llm_model": llm_model,
@@ -331,6 +380,9 @@ impl ToolHandler for PreflightHandler {
             "tracker_workspace": workspace,
             "tracker_readable": tracker_ok,
             "sender_trusted": ctx.sender_trusted,
+            "daemon_source_root": daemon_source,
+            "is_self_modify_target": is_self_modify,
+            "allow_self_modify": allow_self_modify,
         });
         Ok(report)
     }
