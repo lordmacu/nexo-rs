@@ -96,6 +96,14 @@ pub enum ProgramPhaseError {
 /// generous enough to ship a sub-phase. 67.E.1 does not yet read
 /// `program_phase.yaml`; that wiring lands when the tool is
 /// registered into the runtime by the binary (67.H.1).
+pub fn apply_default_budget(ov: Option<BudgetOverride>) -> BudgetGuards {
+    apply_budget_override(default_budget(), ov)
+}
+
+pub fn apply_default_acceptance() -> Vec<AcceptanceCriterion> {
+    default_acceptance()
+}
+
 fn default_budget() -> BudgetGuards {
     BudgetGuards {
         max_turns: 40,

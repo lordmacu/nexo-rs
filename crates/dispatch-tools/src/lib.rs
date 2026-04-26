@@ -8,10 +8,14 @@
 //! - `chain` / `agent_control` / `agent_query` / `admin` / `hooks`
 //!   (67.E.x onwards) — the rest of the multi-agent surface.
 
+pub mod dispatch_followup;
 pub mod policy_gate;
 pub mod program_phase;
 pub mod tool_names;
 
+pub use dispatch_followup::{
+    dispatch_followup_call, followup_phase_id, DispatchFollowupInput, DispatchFollowupOutput,
+};
 pub use program_phase::{
     program_phase_dispatch, BudgetOverride, ProgramPhaseError, ProgramPhaseInput,
     ProgramPhaseOutput,
