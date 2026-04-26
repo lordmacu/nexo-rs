@@ -106,6 +106,7 @@
 - [Link understanding](./ops/link-understanding.md)
 - [Web search](./ops/web-search.md)
 - [Pairing](./ops/pairing.md)
+- [Telemetry (opt-in)](./ops/telemetry.md)
 
 # Recipes
 
