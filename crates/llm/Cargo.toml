@@ -46,3 +46,8 @@ tempfile     = "3"
 [dev-dependencies]
 tokio-test = "0.4"
 wiremock   = "0.6"
+criterion  = { version = "0.5", features = ["async_tokio"] }
+
+[[bench]]
+name = "sse_parsers"
+harness = false

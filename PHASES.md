@@ -1216,10 +1216,20 @@ Shipped (35.2):
 - `crates/broker/Cargo.toml` adds `criterion = "0.5"`
   + two `[[bench]]` registrations.
 
+Shipped (35.3):
+- `crates/llm/benches/sse_parsers.rs` — covers the three
+  streaming SSE parsers (`parse_openai_sse`,
+  `parse_anthropic_sse`, `parse_gemini_sse`) with realistic
+  fixtures: 50 text-delta chunks each (typical short answer).
+  OpenAI fixture also covers OpenAI-compat providers (minimax,
+  deepseek, mistral.rs, ollama, vllm, llama.cpp, LM Studio).
+  Anthropic fixture exercises the explicit `event:` framing.
+  Gemini fixture covers the JSON-per-data-line shape. All three
+  use `Throughput::Elements(N)` so criterion reports chunks/sec.
+- `crates/llm/Cargo.toml` adds `criterion = "0.5"` as dev-dep
+  + `[[bench]] name = "sse_parsers"` registration.
+
 Deferred:
-- **35.3 (was 35.2.b)** LLM stream parser benches —
-  `parse_openai_sse` / `parse_anthropic_sse` / `parse_gemini_sse`
-  with realistic SSE chunk fixtures.
 - **35.4** TaskFlow tick latency, transcripts FTS search,
   redaction pipeline.
 - **35.3** End-to-end load-test rig that spawns N inbound
