@@ -287,10 +287,7 @@ impl DriverOrchestrator {
     /// queued interrupts are concatenated in FIFO order.
     /// Returns the queue depth after the push.
     pub fn interrupt_goal(&self, goal_id: GoalId, message: impl Into<String>) -> usize {
-        let mut entry = self
-            .pending_interrupts
-            .entry(goal_id)
-            .or_default();
+        let mut entry = self.pending_interrupts.entry(goal_id).or_default();
         entry.value_mut().push_back(message.into());
         entry.value().len()
     }
