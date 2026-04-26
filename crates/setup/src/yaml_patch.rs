@@ -206,7 +206,51 @@ pub fn get_agent_list(file: &Path, agent_id: &str, list_key: &str) -> Result<Vec
 /// Return every `id` under top-level `agents:` sequence in `file`.
 /// Missing file / empty list → empty vec. Never errors unless the file
 /// is malformed YAML.
+/// Enumerate every agent id reachable to the runtime: the canonical
+/// `agents.yaml` plus every `agents.d/*.yaml` drop-in (excluding
+/// `*.example.yaml`). Mirrors the loader logic in `nexo-config`'s
+/// `merge_agents_drop_in` so the wizard sees the same set the
+/// daemon will load at boot.
 pub fn list_agent_ids(file: &Path) -> Result<Vec<String>> {
+    let mut out: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    let mut push_from = |path: &Path| -> Result<()> {
+        for id in agent_ids_in_one_file(path)? {
+            if seen.insert(id.clone()) {
+                out.push(id);
+            }
+        }
+        Ok(())
+    };
+
+    // 1. The canonical `agents.yaml`.
+    push_from(file)?;
+
+    // 2. The `agents.d/*.yaml` drop-in directory next to it.
+    if let Some(parent) = file.parent() {
+        let drop_in = parent.join("agents.d");
+        if drop_in.is_dir() {
+            let mut entries: Vec<_> = fs::read_dir(&drop_in)
+                .with_context(|| format!("read_dir {}", drop_in.display()))?
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| {
+                    let n = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    n.ends_with(".yaml") && !n.ends_with(".example.yaml")
+                })
+                .collect();
+            entries.sort();
+            for p in entries {
+                push_from(&p)?;
+            }
+        }
+    }
+
+    Ok(out)
+}
+
+fn agent_ids_in_one_file(file: &Path) -> Result<Vec<String>> {
     if !file.exists() {
         return Ok(Vec::new());
     }
