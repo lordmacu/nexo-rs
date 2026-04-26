@@ -111,6 +111,7 @@
 - [Backup + restore](./ops/backup.md)
 - [Privacy toolkit (GDPR)](./ops/privacy.md)
 - [Health checks](./ops/health.md)
+- [Cost & quota](./ops/cost.md)
 
 # Recipes
 
