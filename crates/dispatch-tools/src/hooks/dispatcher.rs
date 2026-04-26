@@ -32,6 +32,10 @@ pub enum HookError {
     Timeout(Duration),
     #[error("shell hook disabled by config")]
     ShellDisabled,
+    #[error("shell hook exited {code:?}: {stderr}")]
+    ShellExitNonZero { code: Option<i32>, stderr: String },
+    #[error("shell hook io error: {0}")]
+    ShellIo(String),
     #[error("dispatch_phase chaining is not wired (no chainer provided)")]
     ChainingNotWired,
     #[error("chain depth {0} exceeds max {1}")]
@@ -210,10 +214,37 @@ async fn run_action(
                 .map_err(HookError::ChainDispatch)
         }
         HookAction::Shell { .. } if !allow_shell => Err(HookError::ShellDisabled),
-        HookAction::Shell { .. } => {
-            // 67.F.4 lands the actual exec; the gate already
-            // protects callers from stumbling into it accidentally.
-            Err(HookError::ShellDisabled)
+        HookAction::Shell { cmd, timeout } => {
+            // Render summary into the env so the script can use
+            // it without the dispatcher having to template the
+            // command string. JSON payload available too for
+            // structured access.
+            let payload_json = serde_json::to_string(payload)
+                .map_err(|e| HookError::ShellIo(e.to_string()))?;
+            let mut child = tokio::process::Command::new("sh");
+            child
+                .arg("-c")
+                .arg(cmd)
+                .env("NEXO_HOOK_GOAL_ID", payload.goal_id.0.to_string())
+                .env("NEXO_HOOK_PHASE_ID", &payload.phase_id)
+                .env("NEXO_HOOK_TRANSITION", payload.transition.as_str())
+                .env("NEXO_HOOK_PAYLOAD_JSON", payload_json)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            let fut = child.output();
+            let out = match tokio::time::timeout(*timeout, fut).await {
+                Ok(Ok(o)) => o,
+                Ok(Err(e)) => return Err(HookError::ShellIo(e.to_string())),
+                Err(_) => return Err(HookError::Timeout(*timeout)),
+            };
+            if out.status.success() {
+                Ok(())
+            } else {
+                Err(HookError::ShellExitNonZero {
+                    code: out.status.code(),
+                    stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+                })
+            }
         }
     }
 }
