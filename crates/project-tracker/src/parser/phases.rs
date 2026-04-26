@@ -224,7 +224,7 @@ pub(crate) fn parse_acceptance_block(body: &str) -> Option<Vec<String>> {
     let mut iter = body.lines().peekable();
     loop {
         let mut found_marker = false;
-        while let Some(line) = iter.next() {
+        for line in iter.by_ref() {
             let trimmed = line.trim();
             let lower = trimmed.to_ascii_lowercase();
             if lower == "**acceptance:**"

@@ -11,11 +11,11 @@
 //! the selection + persistence so we don't grow a parallel codebase.
 //!
 //! Persistence rules:
-//!   * `model.provider` + `model.model` → `agents[<id>].model`
-//!   * `language`                       → `agents[<id>].language`
-//!   * channel bind                    → `agents[<id>].plugins[]` +
-//!                                        `agents[<id>].inbound_bindings[]`
-//!   * skill toggle                     → `agents[<id>].skills[]`
+//! * `model.provider` + `model.model` → `agents[<id>].model`
+//! * `language`                       → `agents[<id>].language`
+//! * channel bind                     → `agents[<id>].plugins[]` +
+//!   `agents[<id>].inbound_bindings[]`
+//! * skill toggle                     → `agents[<id>].skills[]`
 //!
 //! Every successful mutation triggers a best-effort `nexo … reload`
 //! so a running daemon picks up the change without a restart.
@@ -43,7 +43,7 @@ pub const MODEL_CATALOG: &[(&str, &[&str])] = &[
     ),
     (
         "anthropic",
-        &["claude-haiku-4-5", "claude-sonnet-4-5", "claude-opus-4-5"],
+        &["claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-7"],
     ),
     (
         "openai",
@@ -97,10 +97,11 @@ pub struct AgentDashboard {
 /// `agents.d/<id>.yaml`, and rewrites the top-level `id:` field.
 /// Skips files that already exist to avoid clobbering an in-flight
 /// agent. The new file gets a minimal post-processing pass:
-///   * `id:` rewritten to the chosen value
-///   * `workspace:` rebased on `./data/workspace/<id>` if present
-///   * `transcripts_dir:` rebased on `./data/transcripts/<id>` if
-///     present
+/// * `id:` rewritten to the chosen value
+/// * `workspace:` rebased on `./data/workspace/<id>` if present
+/// * `transcripts_dir:` rebased on `./data/transcripts/<id>` if
+///   present
+///
 /// Everything else is copied verbatim — operator runs the regular
 /// agent wizard afterwards to finish wiring.
 pub fn run_create_agent(config_dir: &Path) -> Result<()> {
@@ -476,7 +477,7 @@ fn handle_model(
     let current_model = yaml_patch::read_agent_field(&agent_file, agent_id, "model.model")?
         .and_then(|v| v.as_str().map(str::to_string));
 
-    if current_provider.is_some() && current_model.is_some() {
+    if let (Some(prev_provider), Some(_)) = (current_provider.as_ref(), current_model.as_ref()) {
         let actions = [
             "Cambiar modelo (mismo provider)",
             "Cambiar provider",
@@ -486,7 +487,7 @@ fn handle_model(
         let pick = prompt::pick_from_list("Modelo actual ya configurado", &actions)?;
         match pick {
             0 => {
-                let provider = current_provider.unwrap();
+                let provider = prev_provider.clone();
                 let model = pick_model_for_provider(&provider)?;
                 if model.is_empty() {
                     return Ok(());
@@ -578,7 +579,7 @@ fn pick_model_for_provider(provider: &str) -> Result<String> {
             .interact_text()?;
         return Ok(raw.trim().to_string());
     }
-    let mut labels: Vec<&str> = suggestions.iter().copied().collect();
+    let mut labels: Vec<&str> = suggestions.to_vec();
     labels.push("← volver");
     let idx = prompt::pick_from_list("Modelo", &labels)?;
     if idx == suggestions.len() {

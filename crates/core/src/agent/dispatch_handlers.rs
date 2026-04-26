@@ -548,7 +548,7 @@ impl nexo_dispatch_tools::DispatchPhaseChainer for AuditChainer {
         let _ = self.log_buffer.tail(goal_id, 1);
         let _ = self.default_caps.queue_when_full;
 
-        let _ = self.orchestrator.clone().spawn_goal(goal);
+        std::mem::drop(self.orchestrator.clone().spawn_goal(goal));
         Ok(goal_id)
     }
 }
@@ -596,7 +596,7 @@ impl ToolHandler for PreflightHandler {
             .map(|d| d.tracker.root().display().to_string())
             .unwrap_or_else(|| "<unset>".into());
         let tracker_ok = if let Some(d) = ctx.dispatch.as_ref() {
-            matches!(d.tracker.phases().await, Ok(_))
+            d.tracker.phases().await.is_ok()
         } else {
             false
         };

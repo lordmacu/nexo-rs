@@ -80,7 +80,6 @@ pub fn followup_phase_id(code: &str) -> String {
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 pub async fn dispatch_followup_call(
     input: DispatchFollowupInput,
     tracker: &dyn ProjectTracker,
@@ -198,7 +197,7 @@ pub async fn dispatch_followup_call(
                     },
                 );
             }
-            let _ = orchestrator.clone().spawn_goal(goal);
+            std::mem::drop(orchestrator.clone().spawn_goal(goal));
             Ok(DispatchFollowupOutput::Dispatched {
                 goal_id,
                 code: input.code,
