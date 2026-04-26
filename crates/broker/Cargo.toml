@@ -30,3 +30,14 @@ futures      = { workspace = true }
 tokio-util   = { workspace = true }
 nexo-config = { version = "0.1.1", path = "../config" }
 nexo-resilience = { version = "0.1.1", path = "../resilience" }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["async_tokio"] }
+
+[[bench]]
+name = "topic_matches"
+harness = false
+
+[[bench]]
+name = "local_publish"
+harness = false
