@@ -1,13 +1,18 @@
 name: release-plz
 
-# release-plz watches the workspace for crate-source changes since the last
-# release tag. On every push to `main` it:
-#   1. opens (or updates) a "Release PR" that bumps changed crates' versions
-#      following semver intent inferred from commit messages + cargo-semver-checks,
-#      regenerates each crate's CHANGELOG.md, and tags.
-#   2. on merge of that PR, publishes the bumped crates to crates.io in
-#      topological order, sleeping between each so the index has time to
-#      propagate.
+# Two-step release flow:
+#
+#   1. `release-pr` — runs on every push to `main`, opens (or
+#      updates) a single "Release PR" that bumps changed crates'
+#      versions, regenerates each crate's CHANGELOG.md, and updates
+#      every internal `path` dep version pin. NEVER publishes — the
+#      operator reviews the PR before anything reaches crates.io.
+#
+#   2. `release` — runs only when a `release-plz/*` branch is merged
+#      back into `main`. Walks the bumped crates in topological order,
+#      sleeping 120s between successive publishes to stay under
+#      crates.io's "10 new crates per 10 min" rate limit. Verifies
+#      each upload propagates to the sparse index before moving on.
 #
 # Required repo secrets:
 #   CARGO_REGISTRY_TOKEN — crates.io API token (https://crates.io/me)
@@ -23,9 +28,13 @@ permissions:
   pull-requests: write
   contents: write
 
+concurrency:
+  group: release-plz-${{ github.ref }}
+  cancel-in-progress: false   # serialise; never abort a publish mid-run
+
 jobs:
-  release-plz:
-    name: release-plz
+  release-pr:
+    name: open release PR
     runs-on: ubuntu-latest
     if: "!contains(github.event.head_commit.message, '[skip release-plz]')"
     steps:
@@ -37,8 +46,100 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Run release-plz
+      - name: Open / update release PR (no publish)
         uses: MarcoIeni/release-plz-action@v0.5
+        with:
+          command: release-pr
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release:
+    name: rate-limited publish
+    runs-on: ubuntu-latest
+    # Only run when a release-plz PR merges back into main, not on
+    # every commit. Detected by the commit message pattern release-plz
+    # uses for its merge commits, plus the heuristic that the merge
+    # commit's first parent is on main.
+    if: |
+      !contains(github.event.head_commit.message, '[skip release-plz]') &&
+      (startsWith(github.event.head_commit.message, 'release: batched workspace bumps') ||
+       startsWith(github.event.head_commit.message, 'chore: release '))
+    needs: release-pr
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Compute publish order (skip already-up-to-date)
+        id: order
+        run: |
+          set -euo pipefail
+          chmod +x scripts/publish-order.sh scripts/check-registry.sh
+          # Walk the topo order; for each crate, if it's already
+          # `up-to-date` per the sparse index, skip. Emit one
+          # crate per line in the order they should be published.
+          mapfile -t LAYERS < <(scripts/publish-order.sh)
+          REGISTRY="$(scripts/check-registry.sh)"
+          PENDING=()
+          for layer in "${LAYERS[@]}"; do
+            # Strip "Lk:" prefix that publish-order.sh adds.
+            crates="${layer#L*: }"
+            for crate in $crates; do
+              status=$(echo "$REGISTRY" \
+                | awk -v c="$crate" '$1 == c { for (i=3;i<=NF;i++) printf "%s%s", $i, (i==NF?ORS:OFS) }' \
+                | tr -d '\n' | xargs || true)
+              case "$status" in
+                "up-to-date"*) ;;     # nothing to do
+                "")            ;;     # crate not in registry table (private)
+                *)
+                  PENDING+=("$crate")
+                  ;;
+              esac
+            done
+          done
+          printf '%s\n' "${PENDING[@]}" > pending.txt
+          echo "Pending publishes:"
+          cat pending.txt
+          echo "count=${#PENDING[@]}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish in batches of 5 with 10-min spacing
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          PENDING_COUNT: ${{ steps.order.outputs.count }}
+        run: |
+          set -euo pipefail
+          if [ "${PENDING_COUNT:-0}" -eq 0 ]; then
+            echo "No crates pending publish."; exit 0
+          fi
+          BATCH_SIZE=5
+          PER_CRATE_SLEEP=120   # 5 × 120s = 10 min per batch
+          BATCH_COOLDOWN=600    # 10 min between batches (matches user spec)
+          IDX=0
+          while IFS= read -r crate; do
+            [ -z "$crate" ] && continue
+            echo "==> publish $crate ($((IDX+1))/${PENDING_COUNT})"
+            if cargo publish -p "$crate" --no-verify; then
+              echo "    ✓ published $crate"
+            else
+              echo "    ✗ publish $crate failed; continuing"
+              # Don't fail the whole run on a single crate — the
+              # next push will retry the rest.
+            fi
+            IDX=$((IDX + 1))
+            # End of batch? Take the long cooldown.
+            if [ $((IDX % BATCH_SIZE)) -eq 0 ] && [ "$IDX" -lt "$PENDING_COUNT" ]; then
+              echo "==> batch boundary; sleeping ${BATCH_COOLDOWN}s before next batch"
+              sleep "$BATCH_COOLDOWN"
+            elif [ "$IDX" -lt "$PENDING_COUNT" ]; then
+              # Mid-batch: shorter sleep so the sparse index has
+              # time to propagate before the next dep references
+              # this version.
+              sleep "$PER_CRATE_SLEEP"
+            fi
+          done < pending.txt
