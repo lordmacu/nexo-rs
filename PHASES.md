@@ -2671,6 +2671,47 @@ behaviour stays in lockstep with the rest of the wizard.
   re-parse the mutated YAML through `AgentsConfig`, docs page +
   SUMMARY entry, admin-ui PHASES tech-debt line.
 
+### Phase 70 — Pairing/Dispatch DX cleanup   ✅
+
+Operator-facing polish surfaced after Phase 26/67 landed. The intake
+`PairingGate` and the dispatch-side `DispatchGate` share the word
+"trusted" but live in different stores; first-run setups silently
+swallowed every message because the allowlist was empty; and Cody
+was free to invent "tool blocked" replies without ever calling the
+tool. This phase closes the loop on each.
+
+- 70.1 ✅ — Cody system prompt: hard rule forbidding hallucinated
+  failures. Must call the tool and quote the literal error before
+  reporting "blocked / denied / unavailable". Lives in
+  `config/agents.d/cody.yaml`.
+- 70.2 ✅ — `binding_validate.rs::has_any_override` now recognises
+  `dispatch_policy`, `pairing_policy`, `language`, `link_understanding`,
+  and `web_search` as overrides, silencing the "binding defines no
+  overrides" warn when a binding only narrows dispatch capability.
+- 70.3 ✅ — `nexo pair list --all [--include-revoked]` plus
+  `PairingStore::list_allow` so seeded senders are visible.
+  Operator can confirm `pair seed` actually persisted; doctor + admin-ui
+  consume the same view.
+- 70.4 ✅ — `[intake]` / `[dispatch]` prefixes on every
+  `DispatchDenied` variant + the runtime pairing log lines so the
+  origin of a "trusted" denial is unambiguous. `SenderNotTrusted`
+  message also points the operator at `program_phase.require_trusted`
+  vs the binding-level `pairing.trusted` flag.
+- 70.5 ✅ — `nexo pair start` loopback fallback. When the gateway
+  is loopback-only, the CLI scans `config/plugins/{telegram,whatsapp}.yaml`
+  and prints one ready-to-run `nexo pair seed` per known
+  `(channel, account_id)` instead of dumping a bare URL-resolver error.
+- 70.6 ✅ — `nexo setup doctor` runs `pairing_check::audit`. Walks
+  every binding with `pairing.auto_challenge: true` and reports
+  `(channel, account_id)` tuples with no allowlisted senders, suggesting
+  the matching `pair seed` command. `run_doctor` is now `async`.
+- 70.7 ✅ — `ConfigReloadCoordinator::register_post_hook`. Boot
+  registers `PairingGate::flush_cache` as a post-reload hook so
+  `nexo reload` (and the file watcher) drop the 30 s decision cache
+  and pick up freshly-seeded senders without a daemon restart.
+- 70.8 ✅ — PHASES.md / CLAUDE.md / admin-ui / docs sync (this
+  phase's progress entry).
+
 ---
 
 ## Deliberately NOT roadmapped

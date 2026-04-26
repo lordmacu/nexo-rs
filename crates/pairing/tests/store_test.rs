@@ -94,6 +94,47 @@ async fn list_pending_filters_by_channel() {
 }
 
 #[tokio::test]
+async fn list_allow_returns_seeded_rows_and_filters_revoked() {
+    let s = PairingStore::open_memory().await.unwrap();
+    s.seed("wa", "p", &["+57".into(), "+58".into()])
+        .await
+        .unwrap();
+    s.seed("tg", "alt", &["@user".into()]).await.unwrap();
+    let all = s.list_allow(None, false).await.unwrap();
+    assert_eq!(all.len(), 3);
+    let wa_only = s.list_allow(Some("wa"), false).await.unwrap();
+    assert_eq!(wa_only.len(), 2);
+    // Soft-delete one: default listing hides it, include_revoked surfaces it.
+    s.revoke("wa", "+57").await.unwrap();
+    let active = s.list_allow(None, false).await.unwrap();
+    assert_eq!(active.len(), 2);
+    let with_revoked = s.list_allow(None, true).await.unwrap();
+    assert_eq!(with_revoked.len(), 3);
+    let revoked_row = with_revoked
+        .iter()
+        .find(|r| r.sender_id == "+57")
+        .expect("revoked row present");
+    assert!(revoked_row.revoked_at.is_some());
+}
+
+#[tokio::test]
+async fn list_allow_via_field_distinguishes_seed_from_approve() {
+    let s = PairingStore::open_memory().await.unwrap();
+    s.seed("wa", "p", &["+57".into()]).await.unwrap();
+    let upsert = s
+        .upsert_pending("wa", "p", "+58", serde_json::json!({}))
+        .await
+        .unwrap();
+    s.approve(&upsert.code).await.unwrap();
+    let mut rows = s.list_allow(Some("wa"), false).await.unwrap();
+    rows.sort_by(|a, b| a.sender_id.cmp(&b.sender_id));
+    assert_eq!(rows[0].sender_id, "+57");
+    assert_eq!(rows[0].approved_via, "seed");
+    assert_eq!(rows[1].sender_id, "+58");
+    assert_eq!(rows[1].approved_via, "cli");
+}
+
+#[tokio::test]
 async fn full_decision_admit_after_approve() {
     // Smoke: combine store + the decision states the gate uses.
     let s = PairingStore::open_memory().await.unwrap();

@@ -23,6 +23,7 @@
 pub mod agent_wizard;
 pub mod capabilities;
 pub mod credentials_check;
+pub mod pairing_check;
 pub mod prompt;
 pub mod registry;
 pub mod services;
@@ -502,8 +503,10 @@ pub fn run_telegram_link(config_dir: &Path, agent_id: Option<&str>) -> Result<()
 }
 
 /// Non-interactive audit — exits with non-zero when any required field
-/// is missing OR the credential gauntlet reports errors.
-pub fn run_doctor(config_dir: &Path) -> Result<()> {
+/// is missing OR the credential gauntlet reports errors. Async since
+/// Phase 70.6 added a sqlx-backed pairing-store check; callers from
+/// the binary's `#[tokio::main]` await it directly.
+pub async fn run_doctor(config_dir: &Path) -> Result<()> {
     let secrets_dir = config_dir
         .parent()
         .unwrap_or(Path::new("."))
@@ -520,6 +523,14 @@ pub fn run_doctor(config_dir: &Path) -> Result<()> {
     if let Some(ref s) = cred_summary {
         credentials_check::print(s);
     }
+
+    // Phase 70.6 — pairing-store audit. Flags bindings that have
+    // `pairing.auto_challenge: true` but an empty allowlist, so the
+    // operator notices before the gate silently drops their first
+    // message. Non-fatal: doctor already returns the missing-fields
+    // status; this is informational.
+    let pairing_findings = pairing_check::audit(config_dir).await;
+    pairing_check::print(&pairing_findings);
 
     let cred_errors = cred_summary.as_ref().map(|s| s.errors.len()).unwrap_or(0);
     if missing.is_empty() && cred_errors == 0 {

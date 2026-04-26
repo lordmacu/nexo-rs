@@ -41,6 +41,15 @@ pub struct AgentReloadHandle {
     pub known_tools: Arc<Vec<String>>,
 }
 
+/// Hook the reload coordinator runs after every successful swap.
+/// Used to invalidate process-wide caches that hold a stale view of
+/// data the reload may have changed (e.g. `PairingGate`'s in-memory
+/// allowlist cache, which would otherwise keep blocking a sender the
+/// operator just `nexo pair seed`-ed). Hooks are best-effort; they
+/// run sequentially under the same gate as the reload itself, so
+/// keep them cheap (one mutex / one dashmap clear).
+pub type PostReloadHook = Box<dyn Fn() + Send + Sync>;
+
 /// Reload coordinator. One instance per process; `start` spawns the
 /// file watcher and the broker `control.reload` subscriber.
 pub struct ConfigReloadCoordinator {
@@ -57,6 +66,10 @@ pub struct ConfigReloadCoordinator {
     /// `events.runtime.config.reloaded` after every successful swap so
     /// extensions and dashboards can react without polling.
     broker: ArcSwapOption<AnyBroker>,
+    /// Cache-flush hooks fired after every successful reload. Locked
+    /// by the same gate as the reload to keep the contract simple
+    /// (no observer can run mid-swap).
+    post_hooks: Mutex<Vec<PostReloadHook>>,
     shutdown: CancellationToken,
 }
 
@@ -88,8 +101,17 @@ impl ConfigReloadCoordinator {
             version: Mutex::new(0),
             gate: Mutex::new(()),
             broker: ArcSwapOption::from(None),
+            post_hooks: Mutex::new(Vec::new()),
             shutdown,
         }
+    }
+
+    /// Register a closure that fires after every successful reload.
+    /// Callers should add their cache-invalidation entry point here
+    /// at boot. Hooks run inside the reload gate so they observe the
+    /// new config but cannot themselves overlap a future reload.
+    pub async fn register_post_hook(&self, hook: PostReloadHook) {
+        self.post_hooks.lock().await.push(hook);
     }
 
     /// Register a live agent runtime's reload channel. Called once per
@@ -250,6 +272,16 @@ impl ConfigReloadCoordinator {
                 elapsed_ms,
                 "config reload applied",
             );
+            // Run cache-invalidation hooks (e.g. PairingGate flush)
+            // before publishing the reload event, so consumers see
+            // the new state cleanly. We hold the lock briefly — the
+            // gate above already prevents overlapping reloads, the
+            // post-hooks lock just guards the registration list.
+            let hooks = self.post_hooks.lock().await;
+            for hook in hooks.iter() {
+                hook();
+            }
+            drop(hooks);
             // Phase 18 follow-up — broadcast the event so extensions
             // and dashboards can react without polling. Non-fatal if
             // the publish fails; the metrics + log already record the
@@ -377,5 +409,48 @@ mod tests {
             CancellationToken::new(),
         );
         assert_eq!(coord.version().await, 0);
+    }
+
+    #[tokio::test]
+    async fn post_hooks_register_and_can_be_invoked_in_order() {
+        // Phase 70.7 — verify the hook list grows and runs in
+        // registration order. The reload() success path that fires
+        // them needs a full AppConfig on disk; that's covered by the
+        // boot smoke tests. Here we just check the storage / FIFO.
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let coord = ConfigReloadCoordinator::new(
+            PathBuf::from("."),
+            Arc::new(LlmRegistry::with_builtins()),
+            CancellationToken::new(),
+        );
+        let order = Arc::new(AtomicUsize::new(0));
+        let a_witness = Arc::new(AtomicUsize::new(0));
+        let b_witness = Arc::new(AtomicUsize::new(0));
+        {
+            let order = Arc::clone(&order);
+            let w = Arc::clone(&a_witness);
+            coord
+                .register_post_hook(Box::new(move || {
+                    w.store(order.fetch_add(1, Ordering::SeqCst) + 1, Ordering::SeqCst);
+                }))
+                .await;
+        }
+        {
+            let order = Arc::clone(&order);
+            let w = Arc::clone(&b_witness);
+            coord
+                .register_post_hook(Box::new(move || {
+                    w.store(order.fetch_add(1, Ordering::SeqCst) + 1, Ordering::SeqCst);
+                }))
+                .await;
+        }
+        let hooks = coord.post_hooks.lock().await;
+        assert_eq!(hooks.len(), 2);
+        for hook in hooks.iter() {
+            hook();
+        }
+        drop(hooks);
+        assert_eq!(a_witness.load(Ordering::SeqCst), 1);
+        assert_eq!(b_witness.load(Ordering::SeqCst), 2);
     }
 }

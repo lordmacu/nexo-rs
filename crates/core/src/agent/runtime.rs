@@ -525,8 +525,11 @@ impl AgentRuntime {
                                             account,
                                             sender,
                                             code = %code,
-                                            "pairing challenge issued — run `nexo pair approve {}` to admit",
+                                            "[intake] pairing challenge issued — run `nexo pair approve {}` to admit, or `nexo pair seed {} {} {}` to skip the challenge",
                                             code,
+                                            channel,
+                                            account,
+                                            sender,
                                         );
                                         deliver_pairing_challenge(
                                             &broker,
@@ -546,7 +549,7 @@ impl AgentRuntime {
                                             channel,
                                             account,
                                             sender,
-                                            "pairing gate dropped (max-pending exhausted)",
+                                            "[intake] pairing gate dropped (max-pending exhausted)",
                                         );
                                         continue;
                                     }
@@ -554,7 +557,7 @@ impl AgentRuntime {
                                         tracing::warn!(
                                             agent_id = %agent.id,
                                             error = %e,
-                                            "pairing gate storage error — admitting fail-open",
+                                            "[intake] pairing gate storage error — admitting fail-open",
                                         );
                                     }
                                 }

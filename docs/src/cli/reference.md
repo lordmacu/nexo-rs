@@ -86,7 +86,7 @@ bot token, Google OAuth, etc.
 agent setup                    # full interactive wizard
 agent setup list               # list installable service ids
 agent setup <service>          # configure one service (e.g. minimax, whatsapp)
-agent setup doctor             # validate every credential / token
+agent setup doctor             # validate every credential / token (also runs the Phase 70.6 pairing-store audit)
 agent setup telegram-link      # print Telegram bot link-to-chat URL
 ```
 

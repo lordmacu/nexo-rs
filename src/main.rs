@@ -111,6 +111,14 @@ enum Mode {
     PairList {
         channel: Option<String>,
         json: bool,
+        /// `--all` switches the listing from "pending challenges only"
+        /// to a unified view that also shows every active row in
+        /// `pairing_allow_from`. Operators rely on this to confirm a
+        /// `pair seed` call actually persisted.
+        show_allow: bool,
+        /// `--include-revoked` (only meaningful with `--all`) keeps
+        /// soft-deleted allow rows in the output for audit.
+        include_revoked: bool,
     },
     PairApprove {
         code: String,
@@ -360,7 +368,7 @@ async fn main() -> Result<()> {
         Mode::SetupInteractive => return nexo_setup::run_interactive(&args.config_dir),
         Mode::SetupOne { service } => return nexo_setup::run_one(&args.config_dir, &service),
         Mode::SetupList => return nexo_setup::run_list(&args.config_dir),
-        Mode::SetupDoctor => return nexo_setup::run_doctor(&args.config_dir),
+        Mode::SetupDoctor => return nexo_setup::run_doctor(&args.config_dir).await,
         Mode::DoctorCapabilities { json } => {
             let statuses = nexo_setup::capabilities::evaluate_all();
             if json {
@@ -394,8 +402,20 @@ async fn main() -> Result<()> {
             )
             .await;
         }
-        Mode::PairList { channel, json } => {
-            return run_pair_list(&args.config_dir, channel.as_deref(), json).await;
+        Mode::PairList {
+            channel,
+            json,
+            show_allow,
+            include_revoked,
+        } => {
+            return run_pair_list(
+                &args.config_dir,
+                channel.as_deref(),
+                json,
+                show_allow,
+                include_revoked,
+            )
+            .await;
         }
         Mode::PairApprove { code, json } => {
             return run_pair_approve(&args.config_dir, &code, json).await;
@@ -2241,6 +2261,17 @@ async fn main() -> Result<()> {
     for (id, tx, known) in reload_senders.drain(..) {
         reload_coord.register(id, tx, known);
     }
+    // Phase 70.7 — flush in-process gate caches after every reload so
+    // operator changes (e.g. `nexo pair seed`) take effect without a
+    // daemon restart. PairingGate keeps a 30s decision cache; without
+    // this hook a freshly-allowlisted sender stays "challenge" until
+    // the TTL bleeds out.
+    {
+        let gate = Arc::clone(&pairing_gate);
+        reload_coord
+            .register_post_hook(Box::new(move || gate.flush_cache()))
+            .await;
+    }
     if let Err(e) = Arc::clone(&reload_coord)
         .start(broker.clone(), cfg.runtime.reload.clone())
         .await
@@ -2348,8 +2379,40 @@ async fn boot_dispatch_ctx_if_enabled(
         agent_full || binding_full
     });
     if !any_full {
+        tracing::info!(
+            "dispatch boot: no agent declares dispatch_capability=full — driver stays unwired"
+        );
         return None;
     }
+    tracing::info!("dispatch boot: starting (an agent declared dispatch_capability=full)");
+
+    // Project tracker / dispatch policy config — until the YAML
+    // is wired this stayed hardcoded with `require_trusted=true`,
+    // which forced every operator to seed pairing.trusted=true
+    // before the dispatcher accepted a single goal. Now we honour
+    // `program_phase.require_trusted` from
+    // `config/project-tracker/project_tracker.yaml` so dev setups
+    // can flip it off without rebuilding.
+    let pt_yaml_path = std::path::Path::new("config/project-tracker/project_tracker.yaml");
+    let pt_cfg = if pt_yaml_path.exists() {
+        match nexo_project_tracker::ProjectTrackerConfig::from_yaml_file(pt_yaml_path) {
+            Ok(c) => Some(c),
+            Err(e) => {
+                tracing::warn!(error = %e, "project_tracker.yaml parse failed — using built-in defaults");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let require_trusted = pt_cfg
+        .as_ref()
+        .map(|c| c.program_phase.require_trusted)
+        .unwrap_or(true);
+    tracing::info!(
+        require_trusted,
+        "dispatch boot: program_phase gate"
+    );
 
     // Driver config — fall back to a shipped default path.
     // Production deploys override with NEXO_DRIVER_CONFIG.
@@ -2363,24 +2426,50 @@ async fn boot_dispatch_ctx_if_enabled(
         );
         return None;
     }
+    tracing::info!(path = %claude_yaml.display(), "dispatch boot: driver config found");
 
     let driver_cfg = match nexo_driver_loop::DriverConfig::from_yaml_file(&claude_yaml) {
-        Ok(c) => c,
+        Ok(c) => {
+            tracing::info!("dispatch boot: driver config parsed");
+            c
+        }
         Err(e) => {
             tracing::warn!(error = %e, "failed to parse driver config — dispatch tools stay in error mode");
             return None;
         }
     };
 
-    // Tracker rooted at workspace root (cwd or NEXO_PROJECT_ROOT).
+    // Tracker rooted at workspace root. Resolution order:
+    //   1. `NEXO_PROJECT_ROOT` env var — operator override.
+    //   2. Walk up from the daemon's cwd looking for the first
+    //      ancestor that contains `PHASES.md`. Lets the operator
+    //      run `./target/debug/nexo` from any subdirectory without
+    //      having to export an env var or hardcode a path in the
+    //      YAML (which would break portable deployments).
+    //   3. Fall back to cwd verbatim.
     let tracker_root: PathBuf = std::env::var("NEXO_PROJECT_ROOT")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
+        .ok()
+        .or_else(|| {
+            let cwd = std::env::current_dir().ok()?;
+            let mut probe: &std::path::Path = cwd.as_path();
+            loop {
+                if probe.join("PHASES.md").is_file() {
+                    return Some(probe.to_path_buf());
+                }
+                probe = probe.parent()?;
+            }
+        })
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    tracing::info!(root = %tracker_root.display(), "dispatch boot: opening tracker");
     let tracker: Arc<nexo_project_tracker::MutableTracker> =
         match nexo_project_tracker::MutableTracker::open_fs(&tracker_root) {
-            Ok(t) => Arc::new(t),
+            Ok(t) => {
+                tracing::info!("dispatch boot: tracker opened");
+                Arc::new(t)
+            }
             Err(e) => {
-                tracing::warn!(error = %e, "tracker open failed — dispatch tools stay in error mode");
+                tracing::warn!(error = %e, root = %tracker_root.display(), "tracker open failed — dispatch tools stay in error mode");
                 return None;
             }
         };
@@ -2392,9 +2481,54 @@ async fn boot_dispatch_ctx_if_enabled(
     let decider: Arc<dyn nexo_driver_permission::PermissionDecider> =
         Arc::new(nexo_driver_permission::AllowAllDecider);
 
-    let workspace_manager = Arc::new(nexo_driver_loop::WorkspaceManager::new(
-        &driver_cfg.workspace.root,
-    ));
+    // Driver workspace manager. When `workspace.git.enabled=true`,
+    // each dispatched goal runs inside a fresh git worktree on a
+    // branch `nexo-driver/<goal_id>` rooted at the source repo, so
+    // the operator's working tree is never modified in place. The
+    // source repo auto-detects from cwd (walk up looking for `.git`)
+    // when YAML leaves `source_repo` empty, mirroring the tracker
+    // root resolution and avoiding hardcoded paths.
+    let workspace_manager = {
+        let mgr = nexo_driver_loop::WorkspaceManager::new(&driver_cfg.workspace.root);
+        if driver_cfg.workspace.git.enabled {
+            let source_repo = driver_cfg
+                .workspace
+                .git
+                .source_repo
+                .clone()
+                .filter(|p| !p.as_os_str().is_empty())
+                .or_else(|| {
+                    let cwd = std::env::current_dir().ok()?;
+                    let mut probe: &std::path::Path = cwd.as_path();
+                    loop {
+                        if probe.join(".git").exists() {
+                            return Some(probe.to_path_buf());
+                        }
+                        probe = probe.parent()?;
+                    }
+                });
+            match source_repo {
+                Some(repo) => {
+                    tracing::info!(
+                        repo = %repo.display(),
+                        "dispatch boot: driver git-worktree mode enabled"
+                    );
+                    Arc::new(mgr.with_git(nexo_driver_loop::GitWorktreeMode::SourceRepo {
+                        path: repo,
+                        base_ref: driver_cfg.workspace.git.base_ref.clone(),
+                    }))
+                }
+                None => {
+                    tracing::warn!(
+                        "workspace.git.enabled=true but source_repo unset and cwd has no .git — falling back to non-git mode"
+                    );
+                    Arc::new(mgr)
+                }
+            }
+        } else {
+            Arc::new(mgr)
+        }
+    };
 
     let binding_store: Arc<dyn nexo_driver_claude::SessionBindingStore> = match driver_cfg
         .binding_store
@@ -2410,10 +2544,22 @@ async fn boot_dispatch_ctx_if_enabled(
                 .as_ref()
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_else(|| ":memory:".into());
+            // Best-effort: pre-create the parent dir so the SQLite
+            // open doesn't fail with code 14 just because nobody
+            // mkdir-d the data directory yet.
+            if let Some(parent) = std::path::Path::new(&path).parent() {
+                if !parent.as_os_str().is_empty() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+            }
+            tracing::info!(path = %path, "dispatch boot: opening sqlite binding store");
             match nexo_driver_claude::SqliteBindingStore::open(&path).await {
-                Ok(s) => Arc::new(s),
+                Ok(s) => {
+                    tracing::info!(path = %path, "dispatch boot: binding store opened");
+                    Arc::new(s)
+                }
                 Err(e) => {
-                    tracing::warn!(error = %e, "binding store open failed — dispatch tools stay in error mode");
+                    tracing::warn!(error = %e, path = %path, "binding store open failed — dispatch tools stay in error mode");
                     return None;
                 }
             }
@@ -2549,7 +2695,7 @@ async fn boot_dispatch_ctx_if_enabled(
                 queue_when_full: true,
                 ..Default::default()
             },
-            require_trusted: true,
+            require_trusted,
             telemetry: Arc::new(nexo_dispatch_tools::NoopTelemetry),
             // Self-modify gate. Default `true` because the
             // canonical dev usecase IS Cody helping finish the
@@ -3009,7 +3155,7 @@ fn run_pair_help() -> Result<()> {
         "nexo pair — manage inbound sender allowlists + companion bootstrap codes\n\n\
          Usage:\n\
          \x20 nexo pair start [--for-device <name>] [--public-url <url>] [--qr-png <path>] [--ttl-secs <n>] [--json]\n\
-         \x20 nexo pair list  [--channel <id>] [--json]\n\
+         \x20 nexo pair list  [--channel <id>] [--all] [--include-revoked] [--json]\n\
          \x20 nexo pair approve <CODE> [--json]\n\
          \x20 nexo pair revoke <channel>:<sender_id>\n\
          \x20 nexo pair seed <channel> <account_id> <sender_id> [<sender_id>...]\n"
@@ -3081,8 +3227,23 @@ async fn run_pair_start(
         lan_url: None,
         ws_cleartext_allow_extra: yaml_cleartext,
     };
-    let resolved =
-        nexo_pairing::url_resolver::resolve(&inputs).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let resolved = match nexo_pairing::url_resolver::resolve(&inputs) {
+        Ok(r) => r,
+        Err(nexo_pairing::url_resolver::ResolveError::LoopbackOnly) => {
+            // Common dev-loop dead-end: gateway only on loopback, no
+            // tunnel. Walk the configured plugins and print a ready-
+            // to-paste `nexo pair seed` for each known (channel,
+            // account_id). The operator either pivots to the seed
+            // path (no QR needed for local testing) or sets
+            // `pairing.public_url` / starts the tunnel and retries.
+            print_loopback_seed_hint(config_dir);
+            return Err(anyhow::anyhow!(
+                "{}",
+                nexo_pairing::url_resolver::ResolveError::LoopbackOnly
+            ));
+        }
+        Err(e) => return Err(anyhow::anyhow!("{e}")),
+    };
     let code = issuer.issue(
         &resolved.url,
         "companion-v1",
@@ -3120,16 +3281,82 @@ async fn run_pair_start(
     Ok(())
 }
 
+/// Walk `config/plugins/{telegram,whatsapp}.yaml` and print one
+/// ready-to-run `nexo pair seed <channel> <account> <SENDER_ID>`
+/// hint per known (channel, account). Used as the loopback-only
+/// fallback for `nexo pair start` so the operator gets a working
+/// next step instead of a bare error.
+///
+/// Best-effort: any read/parse failure is swallowed and only a
+/// generic hint is printed. The CLI still bubbles the original
+/// LoopbackOnly error after this banner.
+fn print_loopback_seed_hint(config_dir: &std::path::Path) {
+    eprintln!();
+    eprintln!("Pairing-start needs a non-loopback gateway URL.");
+    eprintln!("For local testing you usually don't need the QR flow at all —");
+    eprintln!("seed the operator's chat into the allowlist directly:");
+    eprintln!();
+    let plugins_dir = config_dir.join("plugins");
+    let mut suggested = false;
+    if let Ok(text) = std::fs::read_to_string(plugins_dir.join("telegram.yaml")) {
+        if let Ok(file) = serde_yaml::from_str::<nexo_config::TelegramPluginConfigFile>(&text) {
+            for tg in file.telegram.into_vec() {
+                let account = tg.instance.as_deref().unwrap_or("default");
+                eprintln!(
+                    "  nexo pair seed telegram {account} <YOUR_TELEGRAM_USER_ID>"
+                );
+                suggested = true;
+            }
+        }
+    }
+    if let Ok(text) = std::fs::read_to_string(plugins_dir.join("whatsapp.yaml")) {
+        if let Ok(file) = serde_yaml::from_str::<nexo_config::WhatsappPluginConfigFile>(&text) {
+            for wa in file.whatsapp.into_vec() {
+                let account = wa.instance.as_deref().unwrap_or("default");
+                eprintln!(
+                    "  nexo pair seed whatsapp {account} <YOUR_WHATSAPP_NUMBER>"
+                );
+                suggested = true;
+            }
+        }
+    }
+    if !suggested {
+        eprintln!("  nexo pair seed <channel> <account> <SENDER_ID>");
+    }
+    eprintln!();
+    eprintln!("Or, to keep using the QR flow, set one of:");
+    eprintln!("  - `pairing.public_url` in config/pairing.yaml");
+    eprintln!("  - `--public-url <wss://…>` flag");
+    eprintln!("  - run `nexo` with the tunnel enabled (writes tunnel.url)");
+    eprintln!();
+}
+
 async fn run_pair_list(
     config_dir: &std::path::Path,
     channel: Option<&str>,
     json: bool,
+    show_allow: bool,
+    include_revoked: bool,
 ) -> Result<()> {
     let store = open_pair_store(config_dir).await?;
     let pending = store.list_pending(channel).await?;
+    let allow = if show_allow {
+        store.list_allow(channel, include_revoked).await?
+    } else {
+        Vec::new()
+    };
     if json {
-        println!("{}", serde_json::to_string_pretty(&pending).unwrap());
-    } else if pending.is_empty() {
+        // Single object so `--json` consumers always get the same
+        // shape regardless of `--all`. `allow` is empty when the flag
+        // is off, which mirrors the bare `list` semantics.
+        let payload = serde_json::json!({
+            "pending": pending,
+            "allow": allow,
+        });
+        println!("{}", serde_json::to_string_pretty(&payload).unwrap());
+        return Ok(());
+    }
+    if pending.is_empty() {
         println!("No pending pairing requests.");
     } else {
         println!(
@@ -3141,6 +3368,27 @@ async fn run_pair_list(
                 "{:<10}  {:<14}  {:<16}  {:<26}  {}",
                 p.code, p.channel, p.account_id, p.created_at, p.sender_id
             );
+        }
+    }
+    if show_allow {
+        println!();
+        if allow.is_empty() {
+            println!("No allowlisted senders.");
+        } else {
+            println!(
+                "{:<14}  {:<16}  {:<24}  {:<10}  {:<26}  {}",
+                "CHANNEL", "ACCOUNT", "SENDER", "VIA", "APPROVED", "REVOKED"
+            );
+            for a in &allow {
+                let rev = a
+                    .revoked_at
+                    .map(|t| t.to_string())
+                    .unwrap_or_else(|| "-".into());
+                println!(
+                    "{:<14}  {:<16}  {:<24}  {:<10}  {:<26}  {}",
+                    a.channel, a.account_id, a.sender_id, a.approved_via, a.approved_at, rev
+                );
+            }
         }
     }
     Ok(())
@@ -3243,6 +3491,8 @@ fn route_pair_subcommand(positional: &[String], has_json_flag: bool) -> Option<M
         Some("list") => Mode::PairList {
             channel: parse_kv_flag(positional, "--channel"),
             json: has_json_flag,
+            show_allow: positional.iter().any(|a| a == "--all"),
+            include_revoked: positional.iter().any(|a| a == "--include-revoked"),
         },
         Some("approve") => match iter.next() {
             Some(code) => Mode::PairApprove {

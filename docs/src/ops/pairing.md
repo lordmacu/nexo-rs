@@ -53,18 +53,53 @@ Approved whatsapp:personal:+57311... (added to allow_from)
 
 The next message from `+57311...` admits through the gate.
 
+`pair list` only shows pending challenges by default. Use
+`--all` to also dump every active row in `pairing_allow_from`
+(approved + seeded), and `--include-revoked` to keep soft-deleted
+entries in the listing for audit:
+
+```
+$ nexo pair list --all
+No pending pairing requests.
+
+CHANNEL         ACCOUNT           SENDER                    VIA         APPROVED                    REVOKED
+telegram        cody_nexo_bot     1194292426                seed        2026-04-26 17:52:10 UTC     -
+whatsapp        personal          +57311...                 cli         2026-04-25 13:21:00 UTC     -
+
+$ nexo pair list --all --include-revoked --json | jq '.allow[0]'
+{
+  "channel": "whatsapp",
+  "account_id": "personal",
+  "sender_id": "+57311...",
+  "approved_via": "cli",
+  "approved_at": "2026-04-25T13:21:00Z"
+}
+```
+
+`--json` always returns `{ "pending": [...], "allow": [...] }` so
+consumers get a stable shape regardless of `--all`.
+
 ### Cache + revoke
 
 The gate caches decisions for 30 s to keep SQLite off the hot path.
-Revokes are eventually consistent within that window:
+Revokes (and freshly-seeded admits) are eventually consistent within
+that window:
 
 ```
 $ nexo pair revoke whatsapp:+57311...
 Revoked whatsapp:+57311...
 ```
 
-For an immediate effect, restart the daemon (or call the gate's
-`flush_cache()` from a future admin endpoint).
+For an immediate effect, trigger a hot-reload — the coordinator
+runs `PairingGate::flush_cache` as a post-reload hook (Phase 70.7),
+so `nexo reload` (or any file-watched config edit) drops the cache
+and the next inbound message re-queries the store:
+
+```
+$ nexo reload
+```
+
+A daemon restart still works as a hammer when reload is disabled.
 
 ### Migrating an existing bot
 
@@ -107,7 +142,25 @@ Priority chain (first non-empty wins):
 3. `gateway.remote.url`
 4. LAN bind address (when `gateway.bind=lan`)
 5. **fail-closed**: the daemon refuses to issue a code on a
-   loopback-only gateway
+   loopback-only gateway. As of Phase 70.5 the CLI also prints a
+   ready-to-run `nexo pair seed <channel> <account> <SENDER>` for
+   every plugin instance configured under `config/plugins/`, so a
+   dev-machine operator can skip the QR flow entirely:
+
+   ```
+   $ nexo pair start --ttl-secs 300
+   Pairing-start needs a non-loopback gateway URL.
+   For local testing you usually don't need the QR flow at all —
+   seed the operator's chat into the allowlist directly:
+
+     nexo pair seed telegram cody_nexo_bot <YOUR_TELEGRAM_USER_ID>
+     nexo pair seed whatsapp default <YOUR_WHATSAPP_NUMBER>
+
+   Or, to keep using the QR flow, set one of:
+     - `pairing.public_url` in config/pairing.yaml
+     - `--public-url <wss://…>` flag
+     - run `nexo` with the tunnel enabled (writes tunnel.url)
+   ```
 
 ### ws/wss security policy
 
@@ -211,7 +264,7 @@ fallback delivery rates per channel.
 ```
 nexo pair start [--for-device <name>] [--public-url <url>]
                  [--qr-png <path>] [--ttl-secs <n>] [--json]
-nexo pair list  [--channel <id>] [--json]
+nexo pair list  [--channel <id>] [--all] [--include-revoked] [--json]
 nexo pair approve <CODE> [--json]
 nexo pair revoke <channel>:<sender_id>
 nexo pair seed <channel> <account_id> <sender_id> [<sender_id>...]

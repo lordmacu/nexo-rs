@@ -22,6 +22,19 @@ pub struct ApprovedRequest {
     pub approved_at: DateTime<Utc>,
 }
 
+/// One row from `pairing_allow_from`. `revoked_at` is `None` for
+/// active entries; populated rows are kept for audit (soft-delete).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AllowedSender {
+    pub channel: String,
+    pub account_id: String,
+    pub sender_id: String,
+    pub approved_at: DateTime<Utc>,
+    pub approved_via: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revoked_at: Option<DateTime<Utc>>,
+}
+
 #[derive(Debug, Clone)]
 pub struct UpsertOutcome {
     pub code: String,
