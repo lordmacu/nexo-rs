@@ -204,66 +204,106 @@ fn list_agents_with_plugin(config_dir: &Path, plugin: &str) -> Result<Vec<String
     Ok(hits)
 }
 
-/// Linear flow: pick channel → pick agent → detect link state → if
-/// linked ask "re-authenticate?", if not run the link flow + add to
-/// the agent's `plugins:` array. Loops until "Continuar".
+/// Single-shot link flow:
+///
+///   1. Pick channel (telegram / whatsapp / email).
+///   2. Pick agent (kate / cody / …).
+///   3. Detect: ¿el agente ya tiene este canal en `plugins:` AND
+///      hay credenciales válidas en disco?
+///        - Sí  → preguntar "¿Re-autenticar?":
+///                  • no  → terminar (no hay nada que hacer).
+///                  • sí  → correr auth otra vez. Para Telegram,
+///                    correr el `telegram_link` (que captura el
+///                    chat_id del operador desde un mensaje real).
+///        - No  → correr auth + agregar canal a `plugins:` del
+///                agente. Para Telegram, correr `telegram_link`
+///                inmediato así queda chat_id capturado.
+///   4. Salir. Sin loop — un canal por invocación.
 ///
 /// Used by the first-run wizard step 3 and the hub menu's
-/// "Vincular canal adicional" option so both paths share the same
-/// UX.
+/// "Vincular canal adicional" option.
 pub fn run_link_flow(config_dir: &Path, secrets_dir: &Path) -> Result<()> {
-    loop {
-        let kinds = ["telegram", "whatsapp", "email"];
-        let mut channel_menu: Vec<String> =
-            kinds.iter().map(|k| (*k).to_string()).collect();
-        channel_menu.push("Continuar al siguiente paso".into());
-        let ch_idx = prompt::pick_from_strings("¿Qué canal?", &channel_menu)?;
-        if ch_idx == channel_menu.len() - 1 {
+    // 1. Pick channel.
+    let kinds = ["telegram", "whatsapp", "email"];
+    let labels: Vec<&str> = kinds.iter().copied().collect();
+    let ch_idx = prompt::pick_from_list("¿Qué canal querés configurar?", &labels)?;
+    let channel = kinds[ch_idx];
+
+    // 2. Pick agent.
+    let agents_yaml = config_dir.join("agents.yaml");
+    let agent_ids = yaml_patch::list_agent_ids(&agents_yaml).unwrap_or_default();
+    if agent_ids.is_empty() {
+        anyhow::bail!(
+            "No hay agentes definidos. Editá `agents.yaml` o `agents.d/*.yaml` y re-correlo."
+        );
+    }
+    let agent = prompt::pick_agent(&agent_ids)?;
+
+    // 3. Detect link state for this (channel, agent) pair.
+    let entries = detect_channels(config_dir, secrets_dir)?;
+    let agent_has_plugin = entries
+        .iter()
+        .any(|e| e.channel == channel && e.bound_agents.iter().any(|a| a == &agent));
+    let auth_ok = entries
+        .iter()
+        .any(|e| e.channel == channel && matches!(e.auth, AuthState::Authenticated));
+    let already_linked = agent_has_plugin && auth_ok;
+
+    if already_linked {
+        println!();
+        println!("✓ {} ya está autenticado y vinculado a `{}`.", channel, agent);
+        if !prompt::yes_no("¿Re-autenticar?", false)? {
+            // "Es libre" → fin, no hay nada que hacer.
+            println!("Sin cambios. Configuración terminada.");
             return Ok(());
         }
-        let channel = kinds[ch_idx];
-
-        // Pick agent BEFORE auth — "está vinculado?" is per-(channel, agent).
-        let agents_yaml = config_dir.join("agents.yaml");
-        let agent_ids = yaml_patch::list_agent_ids(&agents_yaml).unwrap_or_default();
-        if agent_ids.is_empty() {
-            anyhow::bail!(
-                "No hay agentes definidos. Editá `agents.yaml` o `agents.d/*.yaml` y re-correlo."
-            );
-        }
-        let agent = prompt::pick_agent(&agent_ids)?;
-
-        // Detect link state for THIS (channel, agent) pair.
-        let entries = detect_channels(config_dir, secrets_dir)?;
-        let already_linked = entries.iter().any(|e| {
-            e.channel == channel
-                && matches!(e.auth, AuthState::Authenticated)
-                && e.bound_agents.iter().any(|a| a == &agent)
-        });
-
-        if already_linked {
-            println!();
-            println!("✓ {} ya está autenticado y vinculado a `{}`.", channel, agent);
-            if prompt::yes_no("¿Re-autenticar?", false)? {
-                services_imperative::dispatch(channel, config_dir, secrets_dir).map(|_| ())?;
-                println!("✔ {} re-autenticado.", channel);
-            } else {
-                println!("Sin cambios.");
-            }
-        } else {
-            println!();
-            println!("ℹ {} aún no está vinculado a `{}`. Vinculando…", channel, agent);
-            // Auth (idempotent — keys ya válidas no piden re-prompt).
-            services_imperative::dispatch(channel, config_dir, secrets_dir).map(|_| ())?;
-            // Append a `plugins:` el agente.
+        // Re-auth path.
+        services_imperative::dispatch(channel, config_dir, secrets_dir).map(|_| ())?;
+        println!("✔ {} re-autenticado.", channel);
+    } else {
+        println!();
+        println!("ℹ {} aún no está vinculado a `{}`. Vinculando…", channel, agent);
+        // Auth (idempotent — si las keys ya son válidas el dispatcher
+        // no re-prompt).
+        services_imperative::dispatch(channel, config_dir, secrets_dir).map(|_| ())?;
+        // Agregar el canal al agent's `plugins:`.
+        if !agent_has_plugin {
             if let Some(file) = locate_agent_file(config_dir, &agent) {
                 yaml_patch::add_plugin_to_agent(&file, &agent, channel).ok();
-                println!("✔ {} agregado a plugins de `{}` en {}", channel, agent, file.display());
+                println!(
+                    "✔ {} agregado a plugins de `{}` en {}",
+                    channel,
+                    agent,
+                    file.display()
+                );
             } else {
-                println!("⚠  No encontré el archivo YAML de `{}`. Agregalo manualmente.", agent);
+                println!(
+                    "⚠  No encontré el archivo YAML de `{}`. Agregalo manualmente.",
+                    agent
+                );
             }
         }
     }
+
+    // 4. Telegram-only chat-id capture: el bot escucha hasta que el
+    //    operador le manda un mensaje, registra el chat_id en la
+    //    allowlist + asocia con el agente. Lo corremos siempre que
+    //    haya pasado por aquí (post-auth o post-reauth) — es
+    //    idempotente: si el chat_id ya estaba, simplemente sale.
+    if channel == "telegram" {
+        println!();
+        println!(
+            "▎Telegram — escribile al bot ahora para capturar tu chat_id…"
+        );
+        if let Err(e) = crate::run_telegram_link(config_dir) {
+            eprintln!("⚠  telegram-link falló: {e}");
+            eprintln!("   Reintento manual: nexo setup telegram-link");
+        }
+    }
+
+    println!();
+    println!("✔ Configuración del canal terminada.");
+    Ok(())
 }
 
 /// Legacy dashboard mode (per-row action menu). Kept for a future
