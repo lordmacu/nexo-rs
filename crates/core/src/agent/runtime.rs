@@ -106,6 +106,13 @@ pub struct AgentRuntime {
     /// path: senders pass through verbatim and challenges are published
     /// raw on `plugin.outbound.{channel}`.
     pairing_adapters: nexo_pairing::PairingAdapterRegistry,
+    /// Phase 67 — shared DispatchToolContext for the tracker /
+    /// dispatch tool family. `None` keeps the dispatch tools
+    /// in their friendly-error mode (handlers return
+    /// "AgentContext.dispatch is not set"). Wire one in at boot
+    /// when the in-process orchestrator + agent-registry are
+    /// available.
+    dispatch_ctx: Option<Arc<super::dispatch_handlers::DispatchToolContext>>,
     /// Legacy cache — still owned by the runtime for back-compat with
     /// any test construction path. Hot-reload reads the per-snapshot
     /// `tool_cache` instead; see [`RuntimeSnapshot::tool_cache`].
@@ -175,6 +182,7 @@ impl AgentRuntime {
             web_search_router: None,
             pairing_gate: None,
             pairing_adapters: nexo_pairing::PairingAdapterRegistry::new(),
+            dispatch_ctx: None,
             tool_cache: Arc::new(super::tool_registry_cache::ToolRegistryCache::new()),
             reload_tx,
             reload_rx: Arc::new(Mutex::new(Some(reload_rx))),
@@ -227,6 +235,16 @@ impl AgentRuntime {
     /// behaviour.
     pub fn with_pairing_adapters(mut self, registry: nexo_pairing::PairingAdapterRegistry) -> Self {
         self.pairing_adapters = registry;
+        self
+    }
+    /// Phase 67 — install the DispatchToolContext shared by every
+    /// AgentContext this runtime builds. Without this the dispatch
+    /// tool handlers return a friendly error.
+    pub fn with_dispatch_ctx(
+        mut self,
+        ctx: Arc<super::dispatch_handlers::DispatchToolContext>,
+    ) -> Self {
+        self.dispatch_ctx = Some(ctx);
         self
     }
     pub fn with_peers(mut self, peers: Arc<PeerDirectory>) -> Self {
@@ -312,6 +330,7 @@ impl AgentRuntime {
         let web_search_router = self.web_search_router.clone();
         let pairing_gate = self.pairing_gate.clone();
         let pairing_adapters = self.pairing_adapters.clone();
+        let dispatch_ctx = self.dispatch_ctx.clone();
         let router = Arc::clone(&self.router);
         let session_txs = Arc::clone(&self.session_txs);
         let debounce_ms = self.debounce_ms;
@@ -359,6 +378,9 @@ impl AgentRuntime {
             }
             if let Some(ref idx) = transcripts_index {
                 ctx = ctx.with_transcripts_index(Arc::clone(idx));
+            }
+            if let Some(ref dc) = dispatch_ctx {
+                ctx = ctx.with_dispatch(Arc::clone(dc));
             }
             ctx = ctx.with_router(Arc::clone(&router));
             ctx = ctx.with_context_optimization(snapshot.load().context_optimization);
@@ -659,6 +681,12 @@ impl AgentRuntime {
                             }
                             if let Some(ref ws) = web_search_router {
                                 ctx = ctx.with_web_search_router(Arc::clone(ws));
+                            }
+                            // Phase 67 — share the DispatchToolContext
+                            // so program_phase / list_agents / etc.
+                            // see the runtime services on every session.
+                            if let Some(ref dc) = dispatch_ctx {
+                                ctx = ctx.with_dispatch(Arc::clone(dc));
                             }
                             let behavior = Arc::clone(&agent.behavior);
                             let cancel = shutdown.clone();
