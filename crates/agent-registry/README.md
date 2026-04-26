@@ -1,54 +1,97 @@
 # nexo-agent-registry
 
-> In-memory + SQLite-backed registry tracking every in-flight Phase 67 driver goal.
+The state-tracking layer of the programmer agent. Owns
+`AgentRegistry`, the in-memory + SQLite map of every goal the
+driver has admitted, so the chat tools can answer "what's
+running" / "what did agent X just do" / "show me the audit
+findings" across daemon restarts.
 
-This crate is part of **[Nexo](https://github.com/lordmacu/nexo-rs)** — a multi-agent Rust framework with a NATS event bus, pluggable LLM providers (MiniMax, Anthropic, OpenAI-compat, Gemini, DeepSeek), per-agent credentials, MCP support, and channel plugins for WhatsApp, Telegram, Email, and Browser (CDP).
+## Where it sits
 
-- **Main repo:** <https://github.com/lordmacu/nexo-rs>
-- **Runtime engine:** [`nexo-core`](https://github.com/lordmacu/nexo-rs/tree/main/crates/core)
-- **Public docs:** <https://lordmacu.github.io/nexo-rs/>
+```
+nexo-driver-types       ← contract
+nexo-driver-claude      ← OriginChannel, DispatcherIdentity
+        ↓
+nexo-agent-registry     ← THIS crate
+        ↑
+nexo-dispatch-tools     ← consumes the registry to render
+                           list_agents / agent_status / etc.
+```
 
-## Status
+The registry doesn't spawn anything itself. The orchestrator
+admits goals here at dispatch time; the EventForwarder (in
+`nexo-dispatch-tools`) pumps `AttemptResult` events into
+`apply_attempt` so the snapshot stays live.
 
-**Internal crate — not published to crates.io.** Lives inside the
-workspace as part of the Phase 67 driver subsystem. Marked
-`publish = false, release = false` in `release-plz.toml`. Surface
-will stabilise + the crate will be published once Phase 67.x
-closes.
+## Public surface
 
-## What this crate does
+### `AgentRegistry::new(store, cap)`
 
-- **AgentHandle** — `(goal_id, phase_id, status, origin,
-  dispatcher, started_at, finished_at, snapshot)` for every
-  in-flight or recently-finished driver goal.
-- **AgentRunStatus** — state machine: `Running | Queued | Paused
-  | Done | Failed | Cancelled | LostOnRestart`. Knows which
-  states are terminal.
-- **AgentSnapshot** — live per-goal stats (turn N/M, last
-  acceptance result, last decision summary, last diff_stat,
-  last_event_at). Refreshed by the event subscriber that the
-  driver loop wires.
-- **SqliteAgentRegistryStore** — durable backing so the daemon
-  can answer "what is agent X doing?" across restarts. Idempotent
-  upserts, list-by-status, status transitions.
-- **Cap + FIFO queue** — bounded admission so a runaway dispatcher
-  can't queue 1000 simultaneous goals.
+`store: Arc<dyn AgentRegistryStore>` is either
+`MemoryAgentRegistryStore` (dev) or `SqliteAgentRegistryStore`
+(production). `cap` is the global concurrent-running limit;
+beyond it, admit returns `Queued`.
 
-## Why it's separate from `nexo-core`
+### Lifecycle
 
-The runtime intake hot path doesn't need to know about driver-
-specific concepts (goal IDs, dispatch policies, phase IDs). The
-registry is consumed only by the dispatch tools (`nexo-dispatch-
-tools`), the driver loop (`nexo-driver-loop`), and the admin
-query / control / completion-hook tools. Splitting it out keeps
-`nexo-core`'s dependency tree small for operators who don't run
-the driver subsystem.
+| Method | Behaviour |
+|---|---|
+| `admit(handle, enqueue) -> AdmitOutcome` | PT-5 + B16 — atomic cap check + queue mutation under `admit_lock` (tokio mutex), then persistent upsert outside the lock so disk IO doesn't gate every admit. |
+| `release(goal_id, terminal) -> Option<GoalId>` | B12 — atomic pop of the next queued goal. Caller is expected to call `promote_queued(id)` to flip status. |
+| `promote_queued(id)` | Pops + sets status `Running` + persists. |
+| `set_status(id, status)`, `set_max_turns(id, n)`, `set_acceptance(id, verdict)` | In-place edits, persisted. |
+| `apply_attempt(&AttemptResult)` | B6 — refreshes `snapshot.turn_index / usage / last_acceptance / last_decision_summary / last_diff_stat / last_progress_text`. Idempotent against out-of-order replay. |
+| `cap() / set_cap(new)` | Operator-tunable global cap (Phase 67.G.4 admin tool). |
+| `flush_queue()` | Drains queued goals, marks each Cancelled. |
+| `evict_terminal_older_than(cutoff)` | Drops in-memory + persistent terminal rows. |
 
-## License
+### Read accessors
 
-Licensed under either of:
+| Method | Behaviour |
+|---|---|
+| `snapshot(goal_id)` | Lock-free clone of the live `AgentSnapshot` (uses `ArcSwap`). |
+| `handle(goal_id)` | Full `AgentHandle` for `agent_status` / hook payload construction. |
+| `list()` | Merges live in-memory entries with persisted terminal-only rows so a single chat reply covers active + recent history. |
+| `count_running()` | Cheap O(N) sweep used by `admit`. |
 
-- Apache License, Version 2.0 ([LICENSE-APACHE](https://github.com/lordmacu/nexo-rs/blob/main/LICENSE-APACHE))
-- MIT license ([LICENSE-MIT](https://github.com/lordmacu/nexo-rs/blob/main/LICENSE-MIT))
+## Snapshot shape (`AgentSnapshot`)
 
-at your option.
+`turn_index / max_turns / usage / last_acceptance /
+last_decision_summary / last_event_at / last_diff_stat /
+last_progress_text`. Held behind `Arc<ArcSwap<AgentSnapshot>>`
+per entry so the hot path (`list_agents`, `agent_status`)
+never blocks on writers.
+
+## Reattach (Phase 67.B.4)
+
+`reattach(registry, store, ReattachOptions { resume_running,
+keep_terminal_for })` walks the SQLite store at boot and seeds
+the in-memory map:
+
+- `Running` rows with `resume_running=true` → `Resume(handle)`.
+  Caller respawns or `pre_register_goal`s the orchestrator
+  tokens before next intake.
+- `Running` rows with `resume_running=false` → flipped to
+  `LostOnRestart`.
+- `Queued` rows → re-admitted as `Queued` (still in queue).
+- `Paused` rows → kept paused.
+- Terminal rows → kept if `finished_at` within
+  `keep_terminal_for`, evicted from store otherwise.
+
+## `LogBuffer`
+
+Per-goal ring buffer of `(subject, summary, ts)` lines. Capped
+to `capacity` at construction. The EventForwarder pushes a
+line per driver event so `agent_logs_tail` doesn't re-stream
+NATS. `tail(goal_id, n)` returns oldest-to-newest.
+
+## Errors
+
+`RegistryError { NotFound, CapReached, InvalidTransition,
+Store(AgentRegistryStoreError) }`. Most paths bubble to the
+caller (the dispatch tool) which renders the friendly message.
+
+## See also
+
+- `architecture/project-tracker.md` — programmer agent overview.
+- `architecture/driver-subsystem.md` — Phase 67.B detail.

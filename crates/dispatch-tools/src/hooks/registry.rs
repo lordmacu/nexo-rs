@@ -225,6 +225,13 @@ impl HookRegistry {
         Some(pos)
     }
 
+    /// All goal_ids that have at least one hook attached. Used
+    /// by the boot-time orphan sweep so reload doesn't leak
+    /// rows for goals that terminated pre-restart.
+    pub fn goal_ids(&self) -> Vec<GoalId> {
+        self.inner.iter().map(|e| *e.key()).collect()
+    }
+
     /// Diagnostic accessor — number of hooks attached to `goal_id`.
     pub fn count(&self, goal_id: GoalId) -> usize {
         self.inner
