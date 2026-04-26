@@ -330,6 +330,18 @@ PT-7. **No NATS-backed `DispatchTelemetry` impl**
   as PT-6.
 - Target: alongside PT-6.
 
+PT-9. **Non-chat origin discriminator hardcoded as 'console'**
+- Missing: `notify_origin` short-circuits when
+  `origin.plugin == "console"` so CLI dispatch never publishes a
+  chat reply. Future non-chat origins (`cron`, `webhook`,
+  `heartbeat`) will need the same opt-out.
+- Why deferred: only `console` exists today. Cleanest fix is a
+  trait-based `OriginAdapter::wants_notify()` so each plugin
+  declares its own behaviour, but it isn't worth the surface
+  change before a second non-chat plugin lands.
+- Target: when a second non-chat origin (cron / webhook / etc.)
+  appears.
+
 PT-8. **Multi-agent end-to-end test not shipped**
 - Missing: a single integration test that wires
   orchestrator + registry + dispatch-tools + a mock
