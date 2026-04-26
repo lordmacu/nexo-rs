@@ -1,6 +1,7 @@
 //! Exhaustive service catalog. New services land here.
 
 pub mod anthropic_oauth;
+pub mod channels_dashboard;
 mod infra;
 mod llm;
 mod memory;

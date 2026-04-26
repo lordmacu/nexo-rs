@@ -332,6 +332,12 @@ pub fn add_plugin_to_agent(file: &Path, agent_id: &str, plugin_id: &str) -> Resu
     add_list_entry(file, agent_id, "plugins", plugin_id)
 }
 
+/// Drop `plugin_id` from `agents[<id>].plugins`. Returns `true` when
+/// the file was modified, `false` if the plugin wasn't listed.
+pub fn remove_plugin_from_agent(file: &Path, agent_id: &str, plugin_id: &str) -> Result<bool> {
+    remove_list_entry(file, agent_id, "plugins", plugin_id)
+}
+
 /// Shared helper: append `item` to `agents[<id>].<list_key>`. Returns
 /// `true` when the file was modified, `false` if the item already
 /// existed.
