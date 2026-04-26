@@ -90,6 +90,50 @@ phase_id=<phase>` if you still need it.
 SIGKILL still bypasses this — the boot-time reattach sweep is the
 safety net for that case.
 
+### Turn-level audit log (Phase 72)
+
+Live state (`AgentSnapshot`) only carries the latest decision /
+diff / acceptance per goal. Once a turn rolls forward the previous
+turn's data is gone. To answer "what did the agent actually do
+across its 40 turns?" the runtime now writes a durable row per
+turn into a `goal_turns` table on the same `agents.db`:
+
+```
+goal_turns(
+    goal_id      TEXT,
+    turn_index   INTEGER,
+    recorded_at  INTEGER,
+    outcome      TEXT,        -- done | continue | needs_retry | …
+    decision     TEXT,        -- last Decision rendered as
+                              --   "<tool> (allow|deny:msg|observe:note) — rationale"
+    summary      TEXT,        -- mirror of AgentSnapshot.last_progress_text
+    diff_stat    TEXT,
+    error        TEXT,        -- pre-rendered for needs_retry / escalate / budget
+    raw_json     TEXT,        -- full AttemptResult payload
+    PRIMARY KEY (goal_id, turn_index)
+);
+```
+
+`EventForwarder` writes a row on every `AttemptResult` event,
+upsert-on-conflict so a replay can't dup history. The new chat tool
+`agent_turns_tail goal_id=<uuid> [n=20]` returns a markdown table
+of the last N rows (default 20, capped at 1000):
+
+```
+showing 20 of 40 turn(s) for `…`
+
+| turn | outcome | decision | summary | error |
+|---|---|---|---|---|
+| 21 | continue | Edit (allow) — patch crate slack | wired Plugin trait | - |
+| 22 | needs_retry | Bash (allow) — cargo build | … | E0432 in slack/src/lib.rs |
+…
+```
+
+Best-effort writes: an append failure logs a warn but never blocks
+the driver loop. When the registry isn't sqlite-backed (memory
+fallback), the tool reports "set `agent_registry.store` in
+`project_tracker.yaml`" rather than silently returning empty.
+
 ## Async dispatch (Phase 67.C + 67.E)
 
 `DriverOrchestrator::spawn_goal(self: Arc<Self>, goal)` returns a

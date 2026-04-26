@@ -59,6 +59,11 @@ pub struct DispatchToolContext {
     /// `EventForwarder` was wired with at boot. `None` in tests
     /// that don't exercise hook firing.
     pub hook_dispatcher: Option<Arc<dyn nexo_dispatch_tools::HookDispatcher>>,
+    /// Phase 72 — durable per-turn audit log. `None` keeps the
+    /// legacy in-memory-only behaviour; production boot wires
+    /// `SqliteTurnLogStore` so `agent_turns_tail` can replay every
+    /// turn after a restart.
+    pub turn_log: Option<Arc<dyn nexo_agent_registry::TurnLogStore>>,
     /// Default cap snapshot the gate consumes. The runtime can
     /// refresh `global_running` per call from the live registry;
     /// the rest stays config-driven.
@@ -374,6 +379,23 @@ impl ToolHandler for AgentLogsTailHandler {
         let dispatch = dispatch_ctx(ctx)?;
         let input: AgentLogsTailInput = serde_json::from_value(args)?;
         let out = agent_logs_tail(input, dispatch.log_buffer.clone()).await;
+        Ok(json!({ "markdown": out }))
+    }
+}
+
+pub struct AgentTurnsTailHandler;
+
+#[async_trait]
+impl ToolHandler for AgentTurnsTailHandler {
+    async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
+        let dispatch = dispatch_ctx(ctx)?;
+        let input: nexo_dispatch_tools::AgentTurnsTailInput = serde_json::from_value(args)?;
+        let Some(store) = dispatch.turn_log.clone() else {
+            return Ok(json!({
+                "markdown": "turn log not enabled — set `agent_registry.store` in project_tracker.yaml so the daemon opens a sqlite-backed log."
+            }));
+        };
+        let out = nexo_dispatch_tools::agent_turns_tail(input, store).await;
         Ok(json!({ "markdown": out }))
     }
 }
@@ -1142,6 +1164,20 @@ pub fn register_dispatch_tools_into(registry: &ToolRegistry) {
             ),
         ),
         AgentLogsTailHandler,
+    );
+    registry.register(
+        def(
+            "agent_turns_tail",
+            "Phase 72 — durable per-turn audit log. Last N rows from the goal_turns table for the goal: outcome, last decision, summary, error per turn. Survives daemon restart. Default n=20, capped at 1000.",
+            obj_schema(
+                &["goal_id"],
+                json!({
+                    "goal_id": { "type": "string" },
+                    "n": { "type": ["integer", "null"] }
+                }),
+            ),
+        ),
+        AgentTurnsTailHandler,
     );
     registry.register(
         def(

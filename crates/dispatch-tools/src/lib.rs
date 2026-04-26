@@ -32,8 +32,9 @@ pub use agent_control::{
     CancelAgentOutput, PauseAgentInput, PauseAgentOutput, UpdateBudgetInput, UpdateBudgetOutput,
 };
 pub use agent_query::{
-    agent_hooks_list, agent_logs_tail, agent_status, list_agents, AgentHooksListInput,
-    AgentLogsTailInput, AgentStatusInput, ListAgentsInput,
+    agent_hooks_list, agent_logs_tail, agent_status, agent_turns_tail, list_agents,
+    AgentHooksListInput, AgentLogsTailInput, AgentStatusInput, AgentTurnsTailInput,
+    ListAgentsInput,
 };
 pub use chain::{
     program_phase_chain, program_phase_parallel, ProgramPhaseChainInput, ProgramPhaseChainOutput,

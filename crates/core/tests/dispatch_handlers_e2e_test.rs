@@ -168,6 +168,7 @@ async fn two_program_phase_calls_queue_two_goals_and_emit_two_spawned_events() {
         registry: registry.clone(),
         hooks: Arc::new(HookRegistry::new()),
         hook_dispatcher: None,
+        turn_log: None,
         log_buffer: Arc::new(LogBuffer::new(64)),
         default_caps: CapSnapshot {
             queue_when_full: true,
@@ -237,6 +238,7 @@ async fn capability_none_emits_dispatch_denied_telemetry_no_registry_entry() {
         registry: registry.clone(),
         hooks: Arc::new(HookRegistry::new()),
         hook_dispatcher: None,
+        turn_log: None,
         log_buffer: Arc::new(LogBuffer::new(16)),
         default_caps: CapSnapshot {
             queue_when_full: true,

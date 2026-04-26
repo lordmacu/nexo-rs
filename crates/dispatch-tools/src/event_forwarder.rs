@@ -22,9 +22,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use nexo_agent_registry::{AgentRegistry, LogBuffer};
+use nexo_agent_registry::{AgentRegistry, LogBuffer, TurnLogStore, TurnRecord};
 use nexo_driver_loop::{DriverError, DriverEvent, DriverEventSink};
-use nexo_driver_types::AttemptOutcome;
+use nexo_driver_types::{AttemptOutcome, AttemptResult};
 
 use crate::hooks::dispatcher::HookDispatcher;
 use crate::hooks::registry::HookRegistry;
@@ -35,6 +35,13 @@ pub struct EventForwarder {
     pub log_buffer: Arc<LogBuffer>,
     pub hook_registry: Arc<HookRegistry>,
     pub hook_dispatcher: Arc<dyn HookDispatcher>,
+    /// Phase 72.2 — durable per-turn audit log. `None` keeps the
+    /// legacy in-memory-only behaviour (LogBuffer + AgentSnapshot
+    /// only); production boot wires `SqliteTurnLogStore` so a
+    /// post-mortem can replay every turn after a restart. Best-
+    /// effort: append failures log a warn but never block the
+    /// driver loop.
+    pub turn_log: Option<Arc<dyn TurnLogStore>>,
     pub inner: Arc<dyn DriverEventSink>,
 }
 
@@ -51,8 +58,17 @@ impl EventForwarder {
             log_buffer,
             hook_registry,
             hook_dispatcher,
+            turn_log: None,
             inner,
         }
+    }
+
+    /// Attach the durable turn log (Phase 72.2). Builder-style so
+    /// the existing `EventForwarder::new` call sites stay
+    /// untouched — only the bin opts in.
+    pub fn with_turn_log(mut self, store: Arc<dyn TurnLogStore>) -> Self {
+        self.turn_log = Some(store);
+        self
     }
 }
 
@@ -79,6 +95,28 @@ impl DriverEventSink for EventForwarder {
                     "agent.driver.attempt.completed",
                     format!("turn {} → {}", result.turn_index, outcome_label),
                 );
+                // Phase 72.2 — durable turn record. Looked-up
+                // summary mirrors what `agent_status` shows so the
+                // audit log stays in sync with the live snapshot.
+                if let Some(log) = &self.turn_log {
+                    let summary = self
+                        .registry
+                        .handle(result.goal_id)
+                        .and_then(|h| h.snapshot.last_progress_text.clone());
+                    let diff_stat = self
+                        .registry
+                        .handle(result.goal_id)
+                        .and_then(|h| h.snapshot.last_diff_stat.clone());
+                    let record = build_turn_record(result, outcome_label, summary, diff_stat);
+                    if let Err(e) = log.append(&record).await {
+                        tracing::warn!(
+                            target: "event_forwarder",
+                            goal_id = ?result.goal_id,
+                            turn_index = result.turn_index,
+                            "turn_log.append failed: {e}",
+                        );
+                    }
+                }
             }
             DriverEvent::AttemptStarted {
                 goal_id,
@@ -224,6 +262,65 @@ impl EventForwarder {
     }
 }
 
+/// Phase 72.2 — render an `AttemptResult` into a row for the
+/// durable turn log. `summary` / `diff_stat` come from the live
+/// `AgentSnapshot` so the row matches what `agent_status` would
+/// report for the same turn.
+fn build_turn_record(
+    result: &AttemptResult,
+    outcome_label_str: &str,
+    summary: Option<String>,
+    diff_stat: Option<String>,
+) -> TurnRecord {
+    const PREVIEW_BYTES: usize = 512;
+    let decision = result.decisions_recorded.last().map(|d| {
+        let note: String = match &d.choice {
+            nexo_driver_types::DecisionChoice::Allow => "allow".into(),
+            nexo_driver_types::DecisionChoice::Deny { message } => format!("deny: {message}"),
+            nexo_driver_types::DecisionChoice::Observe { note } => format!("observe: {note}"),
+        };
+        truncate_chars(
+            &format!("{} ({}) — {}", d.tool, note, d.rationale),
+            PREVIEW_BYTES,
+        )
+    });
+    let error = match &result.outcome {
+        AttemptOutcome::NeedsRetry { failures } => Some(truncate_chars(
+            &failures
+                .iter()
+                .map(|f| format!("{f:?}"))
+                .collect::<Vec<_>>()
+                .join("; "),
+            PREVIEW_BYTES,
+        )),
+        AttemptOutcome::Escalate { reason } => Some(truncate_chars(reason, PREVIEW_BYTES)),
+        AttemptOutcome::BudgetExhausted { axis } => Some(format!("budget exhausted: {axis:?}")),
+        _ => None,
+    };
+    let raw_json =
+        serde_json::to_string(result).unwrap_or_else(|e| format!("{{\"serialize_error\":\"{e}\"}}"));
+    TurnRecord {
+        goal_id: result.goal_id,
+        turn_index: result.turn_index,
+        recorded_at: Utc::now(),
+        outcome: outcome_label_str.into(),
+        decision,
+        summary,
+        diff_stat,
+        error,
+        raw_json,
+    }
+}
+
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max).collect();
+    out.push('…');
+    out
+}
+
 fn outcome_label(o: &AttemptOutcome) -> &'static str {
     match o {
         AttemptOutcome::Done => "done",
@@ -318,6 +415,87 @@ mod tests {
         assert_eq!(reg.snapshot(id).unwrap().turn_index, 7);
         let tail = buf.tail(id, 10);
         assert!(tail.iter().any(|l| l.summary.contains("turn 7")));
+    }
+
+    #[tokio::test]
+    async fn attempt_completed_appends_to_turn_log_when_attached() {
+        let reg = Arc::new(AgentRegistry::new(
+            Arc::new(MemoryAgentRegistryStore::default()),
+            4,
+        ));
+        let id = GoalId(Uuid::new_v4());
+        reg.admit(handle(id), true).await.unwrap();
+        let buf = Arc::new(LogBuffer::new(16));
+        let hooks = Arc::new(HookRegistry::new());
+        let disp: Arc<dyn HookDispatcher> = Arc::new(CountingDispatcher::default());
+        let inner: Arc<dyn DriverEventSink> = Arc::new(NoopEventSink);
+        let store: Arc<dyn nexo_agent_registry::TurnLogStore> = Arc::new(
+            nexo_agent_registry::SqliteTurnLogStore::open_memory()
+                .await
+                .unwrap(),
+        );
+        let fwd = EventForwarder::new(reg.clone(), buf, hooks, disp, inner)
+            .with_turn_log(Arc::clone(&store));
+
+        for turn in 1..=3u32 {
+            let ev = DriverEvent::AttemptCompleted {
+                result: AttemptResult {
+                    goal_id: id,
+                    turn_index: turn,
+                    outcome: if turn == 3 {
+                        AttemptOutcome::Done
+                    } else {
+                        AttemptOutcome::Continue {
+                            reason: format!("step {turn}"),
+                        }
+                    },
+                    decisions_recorded: vec![],
+                    usage_after: BudgetUsage {
+                        turns: turn,
+                        ..Default::default()
+                    },
+                    acceptance: None,
+                    final_text: None,
+                    harness_extras: Default::default(),
+                },
+            };
+            fwd.publish(ev).await.unwrap();
+        }
+
+        let rows = store.tail(id, 0).await.unwrap();
+        assert_eq!(rows.len(), 3, "all three turns persisted");
+        assert_eq!(rows[0].turn_index, 1);
+        assert_eq!(rows[0].outcome, "continue");
+        assert_eq!(rows[2].turn_index, 3);
+        assert_eq!(rows[2].outcome, "done");
+    }
+
+    #[tokio::test]
+    async fn build_turn_record_marks_needs_retry_with_failure_summary() {
+        use nexo_driver_types::AcceptanceFailure;
+        let id = GoalId(Uuid::new_v4());
+        let result = AttemptResult {
+            goal_id: id,
+            turn_index: 4,
+            outcome: AttemptOutcome::NeedsRetry {
+                failures: vec![AcceptanceFailure {
+                    criterion_index: 0,
+                    criterion_label: "cargo build".into(),
+                    message: "E0432".into(),
+                    evidence: None,
+                }],
+            },
+            decisions_recorded: vec![],
+            usage_after: BudgetUsage::default(),
+            acceptance: None,
+            final_text: None,
+            harness_extras: Default::default(),
+        };
+        let record = build_turn_record(&result, "needs_retry", None, None);
+        assert_eq!(record.outcome, "needs_retry");
+        let err = record.error.expect("error pre-rendered for the table");
+        assert!(err.contains("cargo build"), "got: {err}");
+        assert!(err.contains("E0432"));
     }
 
     #[tokio::test]

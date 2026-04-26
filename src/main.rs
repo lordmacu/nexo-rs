@@ -2670,6 +2670,31 @@ async fn boot_dispatch_ctx_if_enabled(
         Arc::clone(&registry_store),
         registry_max_concurrent,
     ));
+    // Phase 72.2 — open the durable turn log on the same sqlite
+    // file as the registry. Same fallback discipline: open failure
+    // logs a warn and the rest of the runtime keeps booting (the
+    // tool just reports "turn log not enabled" until the operator
+    // fixes the path).
+    let turn_log_store: Option<Arc<dyn nexo_agent_registry::TurnLogStore>> =
+        match registry_store_path.as_ref() {
+            Some(path) => {
+                match nexo_agent_registry::SqliteTurnLogStore::open(
+                    path.to_str().unwrap_or(""),
+                )
+                .await
+                {
+                    Ok(s) => {
+                        tracing::info!(path = %path.display(), "turn log: sqlite-backed (every AttemptResult persisted)");
+                        Some(Arc::new(s))
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, path = %path.display(), "turn log sqlite open failed — agent_turns_tail will report disabled");
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
     let log_buffer_lines = pt_cfg
         .as_ref()
         .map(|c| c.agent_registry.log_buffer_lines)
@@ -2846,14 +2871,19 @@ async fn boot_dispatch_ctx_if_enabled(
     // the registry / log_buffer / hooks see every driver event.
     let inner_sink: Arc<dyn nexo_driver_loop::DriverEventSink> =
         Arc::new(nexo_driver_loop::NoopEventSink);
-    let event_sink: Arc<dyn nexo_driver_loop::DriverEventSink> =
-        Arc::new(nexo_dispatch_tools::EventForwarder::new(
+    let event_sink: Arc<dyn nexo_driver_loop::DriverEventSink> = {
+        let mut fwd = nexo_dispatch_tools::EventForwarder::new(
             registry.clone(),
             log_buffer.clone(),
             hook_registry.clone(),
             hook_dispatcher.clone(),
             inner_sink,
-        ));
+        );
+        if let Some(store) = turn_log_store.as_ref() {
+            fwd = fwd.with_turn_log(Arc::clone(store));
+        }
+        Arc::new(fwd)
+    };
 
     let acceptance: Arc<dyn nexo_driver_loop::AcceptanceEvaluator> =
         Arc::new(nexo_driver_loop::DefaultAcceptanceEvaluator::new());
@@ -2888,6 +2918,7 @@ async fn boot_dispatch_ctx_if_enabled(
             registry: registry.clone(),
             hooks: hook_registry.clone(),
             hook_dispatcher: Some(hook_dispatcher.clone()),
+            turn_log: turn_log_store.clone(),
             log_buffer: log_buffer.clone(),
             default_caps: nexo_dispatch_tools::policy_gate::CapSnapshot {
                 queue_when_full: true,

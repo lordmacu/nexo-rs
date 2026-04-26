@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use nexo_agent_registry::{AgentRegistry, AgentRunStatus, LogBuffer};
+use nexo_agent_registry::{AgentRegistry, AgentRunStatus, LogBuffer, TurnLogStore};
 use nexo_driver_types::GoalId;
 use serde::Deserialize;
 
@@ -89,7 +89,7 @@ pub async fn list_agents(input: ListAgentsInput, registry: Arc<AgentRegistry>) -
             "| {} {} | `{}` | {} | {} | {} | {} |\n",
             glyph(r.status),
             r.status.as_str(),
-            short_id(r.goal_id),
+            r.goal_id.0,
             r.phase_id,
             r.turn,
             humantime::format_duration(r.wall),
@@ -110,7 +110,7 @@ pub struct AgentStatusInput {
 
 pub async fn agent_status(input: AgentStatusInput, registry: Arc<AgentRegistry>) -> String {
     let Some(h) = registry.handle(input.goal_id) else {
-        return format!("goal `{}` not in registry", short_id(input.goal_id));
+        return format!("goal `{}` not in registry", input.goal_id.0);
     };
     let mut out = format!(
         "{glyph} **{phase}** — {status} (turn {turn}/{maxt})\n",
@@ -179,6 +179,83 @@ pub async fn agent_logs_tail(input: AgentLogsTailInput, log_buf: Arc<LogBuffer>)
 }
 
 #[derive(Clone, Debug, Deserialize)]
+pub struct AgentTurnsTailInput {
+    pub goal_id: GoalId,
+    #[serde(default = "default_turns")]
+    pub n: usize,
+}
+
+fn default_turns() -> usize {
+    20
+}
+
+/// Phase 72.3 — read the durable turn log. Markdown table with one
+/// row per recorded turn, oldest first so the operator can scroll
+/// the table top-to-bottom and follow the run. The header reports
+/// `<shown> of <total>` so a 200-turn goal isn't silently
+/// truncated.
+pub async fn agent_turns_tail(
+    input: AgentTurnsTailInput,
+    store: Arc<dyn TurnLogStore>,
+) -> String {
+    let n = input.n.clamp(1, 1000);
+    let total = match store.count(input.goal_id).await {
+        Ok(c) => c,
+        Err(e) => return format!("turn log error: {e}"),
+    };
+    let rows = match store.tail(input.goal_id, n).await {
+        Ok(r) => r,
+        Err(e) => return format!("turn log error: {e}"),
+    };
+    if rows.is_empty() {
+        return format!(
+            "no recorded turns for `{}` (the goal may have started before \
+             Phase 72 wired the turn log, or it was evicted)",
+            input.goal_id.0,
+        );
+    }
+    let mut out = format!(
+        "showing {} of {total} turn(s) for `{}`\n\n\
+         | turn | outcome | decision | summary | error |\n\
+         |---|---|---|---|---|\n",
+        rows.len(),
+        input.goal_id.0,
+    );
+    for r in &rows {
+        out.push_str(&format!(
+            "| {} | {} | {} | {} | {} |\n",
+            r.turn_index,
+            r.outcome,
+            cell(r.decision.as_deref(), 80),
+            cell(r.summary.as_deref(), 80),
+            cell(r.error.as_deref(), 80),
+        ));
+    }
+    cap(out)
+}
+
+/// Markdown-table-safe cell: collapse newlines, escape pipes,
+/// truncate to `max` chars. Empty / `None` → `-`.
+fn cell(s: Option<&str>, max: usize) -> String {
+    let raw = s.unwrap_or("").trim();
+    if raw.is_empty() {
+        return "-".into();
+    }
+    let mut cleaned: String = raw
+        .chars()
+        .map(|c| match c {
+            '\n' | '\r' => ' ',
+            '|' => '/',
+            _ => c,
+        })
+        .collect();
+    if cleaned.chars().count() > max {
+        cleaned = cleaned.chars().take(max).collect::<String>() + "…";
+    }
+    cleaned
+}
+
+#[derive(Clone, Debug, Deserialize)]
 pub struct AgentHooksListInput {
     pub goal_id: GoalId,
 }
@@ -230,7 +307,77 @@ pub async fn agent_hooks_list(input: AgentHooksListInput, hooks: Arc<HookRegistr
     cap(out)
 }
 
-fn short_id(g: GoalId) -> String {
-    let s = g.0.to_string();
-    s.chars().take(8).collect()
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use nexo_agent_registry::{SqliteTurnLogStore, TurnLogStore, TurnRecord};
+    use uuid::Uuid;
+
+    fn record(goal: GoalId, turn: u32, outcome: &str) -> TurnRecord {
+        TurnRecord {
+            goal_id: goal,
+            turn_index: turn,
+            recorded_at: Utc::now(),
+            outcome: outcome.into(),
+            decision: Some(format!("Edit (allow) — touch crate {turn}")),
+            summary: Some(format!("turn {turn} summary")),
+            diff_stat: None,
+            error: if outcome == "needs_retry" {
+                Some("E0432".into())
+            } else {
+                None
+            },
+            raw_json: "{}".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn agent_turns_tail_renders_table_with_count_header() {
+        let store: Arc<dyn TurnLogStore> =
+            Arc::new(SqliteTurnLogStore::open_memory().await.unwrap());
+        let goal = GoalId(Uuid::new_v4());
+        for i in 1..=5u32 {
+            store.append(&record(goal, i, "continue")).await.unwrap();
+        }
+        let out = agent_turns_tail(
+            AgentTurnsTailInput { goal_id: goal, n: 3 },
+            Arc::clone(&store),
+        )
+        .await;
+        assert!(out.contains("showing 3 of 5"));
+        assert!(out.contains(&goal.0.to_string()));
+        assert!(out.contains("Edit"));
+        assert!(out.contains("turn 5 summary"));
+        // Older turns (1, 2) excluded by the n=3 cap.
+        assert!(!out.contains("turn 1 summary"));
+    }
+
+    #[tokio::test]
+    async fn agent_turns_tail_empty_goal_returns_helpful_message() {
+        let store: Arc<dyn TurnLogStore> =
+            Arc::new(SqliteTurnLogStore::open_memory().await.unwrap());
+        let goal = GoalId(Uuid::new_v4());
+        let out = agent_turns_tail(
+            AgentTurnsTailInput { goal_id: goal, n: 10 },
+            store,
+        )
+        .await;
+        assert!(out.starts_with("no recorded turns"));
+        assert!(out.contains(&goal.0.to_string()));
+    }
+
+    #[test]
+    fn cell_truncates_and_sanitises() {
+        assert_eq!(cell(None, 10), "-");
+        assert_eq!(cell(Some(""), 10), "-");
+        let c = cell(Some("with | pipe\nand newline"), 80);
+        assert!(!c.contains('|'), "pipes must be escaped: {c}");
+        assert!(!c.contains('\n'));
+        let too_long = "x".repeat(200);
+        let trimmed = cell(Some(&too_long), 50);
+        assert!(trimmed.chars().count() <= 51); // 50 + ellipsis
+        assert!(trimmed.ends_with('…'));
+    }
 }
+
