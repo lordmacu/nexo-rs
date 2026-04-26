@@ -849,6 +849,13 @@ async fn main() -> Result<()> {
                         // Big, hard-to-miss banner on stderr so
                         // operators see the URL even in noisy logs.
                         let url = handle.url.clone();
+                        // FOLLOWUPS PR-3 — publish URL to the sidecar
+                        // file so a separately-launched
+                        // `nexo pair start` can pick it up without
+                        // an env-var hand-off or a daemon RPC.
+                        if let Err(e) = nexo_tunnel::write_url_file(&url) {
+                            tracing::warn!(error = %e, "failed to write tunnel URL sidecar");
+                        }
                         let pair_url = format!("{url}/whatsapp/pair");
                         eprintln!();
                         eprintln!("╭───────────────────────────────────────────────────────────╮");
@@ -2740,9 +2747,16 @@ async fn run_pair_start(
         .as_ref()
         .map(|p| p.ws_cleartext_allow.clone())
         .unwrap_or_default();
-    let tunnel_env = std::env::var("NEXO_TUNNEL_URL")
+    // FOLLOWUPS PR-3 — tunnel URL discovery priority:
+    //   1. `NEXO_TUNNEL_URL` env (back-compat, explicit overrides win).
+    //   2. `$NEXO_HOME/state/tunnel.url` sidecar file written by
+    //      the daemon when `TunnelManager::start()` succeeded.
+    //      This is the in-process accessor — no daemon connection,
+    //      no env-var coordination across shells.
+    let tunnel_url = std::env::var("NEXO_TUNNEL_URL")
         .ok()
-        .filter(|s| !s.trim().is_empty());
+        .filter(|s| !s.trim().is_empty())
+        .or_else(nexo_tunnel::read_url_file);
 
     // FOLLOWUPS PR-6 — TTL resolution priority:
     //   1. `--ttl-secs` CLI flag (operator override at invoke time).
@@ -2758,7 +2772,7 @@ async fn run_pair_start(
 
     let inputs = nexo_pairing::url_resolver::UrlInputs {
         public_url: public_url.map(str::to_string).or(yaml_public_url),
-        tunnel_url: tunnel_env,
+        tunnel_url,
         gateway_remote_url: None,
         lan_url: None,
         ws_cleartext_allow_extra: yaml_cleartext,
