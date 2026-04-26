@@ -83,6 +83,16 @@ pub struct AgentContext {
     /// dispatch tools off — handlers return a friendly error so
     /// the LLM doesn't pretend they worked.
     pub dispatch: Option<Arc<super::dispatch_handlers::DispatchToolContext>>,
+    /// B3 — sender's pairing-trust bit, set by intake after the
+    /// pairing gate runs (Phase 26). Defaults to `false` so any
+    /// path that forgets to thread it through fails closed under
+    /// `require_trusted=true`. Read-only tools bypass this gate.
+    pub sender_trusted: bool,
+    /// B3 — `(plugin, instance, sender_id)` of the inbound event
+    /// that produced this turn, when the runtime matched a binding.
+    /// Lets the dispatch handler synthesise an `OriginChannel` for
+    /// `program_phase` so `notify_origin` lands back in the chat.
+    pub inbound_origin: Option<(String, String, String)>,
 }
 impl AgentContext {
     pub fn new(
@@ -111,7 +121,24 @@ impl AgentContext {
             web_search_router: None,
             context_optimization: None,
             dispatch: None,
+            sender_trusted: false,
+            inbound_origin: None,
         }
+    }
+
+    pub fn with_sender_trusted(mut self, v: bool) -> Self {
+        self.sender_trusted = v;
+        self
+    }
+
+    pub fn with_inbound_origin(
+        mut self,
+        plugin: impl Into<String>,
+        instance: impl Into<String>,
+        sender_id: impl Into<String>,
+    ) -> Self {
+        self.inbound_origin = Some((plugin.into(), instance.into(), sender_id.into()));
+        self
     }
 
     pub fn with_dispatch(

@@ -67,6 +67,11 @@ pub struct DriverOrchestrator {
     /// via `cancel_root`. The token is a child of `cancel_root`
     /// so a global shutdown still cancels every running goal.
     cancel_tokens: Arc<DashMap<GoalId, CancellationToken>>,
+    /// B2 — operator overrides for in-flight goal budgets. The
+    /// loop consults this map at the top of every iteration so
+    /// `update_budget` actually changes the cap (not just the
+    /// snapshot). Currently only `max_turns` is grow-only mutable.
+    budget_overrides: Arc<DashMap<GoalId, BudgetGuards>>,
     bin_path: PathBuf,
     socket_path: PathBuf,
     /// Owns the spawned socket server; cancelling kills it.
@@ -197,6 +202,7 @@ impl DriverOrchestratorBuilder {
             progress_every_turns,
             pause_signals: Arc::new(DashMap::new()),
             cancel_tokens: Arc::new(DashMap::new()),
+            budget_overrides: Arc::new(DashMap::new()),
             bin_path,
             socket_path,
             _socket_handle: socket_handle,
@@ -237,6 +243,29 @@ impl DriverOrchestrator {
             .get(&goal_id)
             .map(|tx| *tx.borrow())
             .unwrap_or(false)
+    }
+
+    /// B2 — install or grow the budget override for a running
+    /// goal. `max_turns` only goes up (caller is expected to
+    /// guard against shrink-below-used). Returns the effective
+    /// `max_turns` after merge with the prior override (if any).
+    pub fn set_goal_max_turns(&self, goal_id: GoalId, new_max: u32) -> Option<u32> {
+        if !self.cancel_tokens.contains_key(&goal_id) {
+            return None;
+        }
+        let mut entry = self.budget_overrides.entry(goal_id).or_insert_with(|| {
+            BudgetGuards {
+                max_turns: new_max,
+                max_wall_time: Duration::from_secs(60 * 60 * 24 * 365),
+                max_tokens: u64::MAX,
+                max_consecutive_denies: u32::MAX,
+                max_consecutive_errors: u32::MAX,
+            }
+        });
+        if new_max > entry.value().max_turns {
+            entry.value_mut().max_turns = new_max;
+        }
+        Some(entry.value().max_turns)
     }
 
     /// Phase 67.G.2 — cancel a single in-flight goal. Idempotent.
@@ -320,7 +349,17 @@ impl DriverOrchestrator {
                 }
             }
 
-            if let Some(axis) = goal.budget.is_exhausted(&usage) {
+            // B2 — operator override (set_goal_max_turns) lifts the
+            // turn cap for in-flight goals. Other axes still come
+            // from the original goal.budget.
+            let effective_budget = match self.budget_overrides.get(&goal_id) {
+                Some(o) => BudgetGuards {
+                    max_turns: o.value().max_turns.max(goal.budget.max_turns),
+                    ..goal.budget.clone()
+                },
+                None => goal.budget.clone(),
+            };
+            if let Some(axis) = effective_budget.is_exhausted(&usage) {
                 let _ = self
                     .event_sink
                     .publish(DriverEvent::BudgetExhausted {
@@ -598,6 +637,9 @@ impl DriverOrchestrator {
         self.pause_signals.remove(&goal_id);
         // Phase 67.G.2 — drop the per-goal cancel token.
         self.cancel_tokens.remove(&goal_id);
+        // B2 — drop budget override entry so a new spawn of the
+        // same id starts fresh.
+        self.budget_overrides.remove(&goal_id);
         Ok(outcome)
     }
 

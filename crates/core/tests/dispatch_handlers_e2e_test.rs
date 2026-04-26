@@ -187,7 +187,8 @@ async fn two_program_phase_calls_queue_two_goals_and_emit_two_spawned_events() {
             64,
         )),
     )
-    .with_dispatch(dispatch_ctx);
+    .with_dispatch(dispatch_ctx)
+    .with_sender_trusted(true);
 
     let h = ProgramPhaseHandler;
     let r1 = h.call(&ctx, json!({ "phase_id": "99.1" })).await.unwrap();

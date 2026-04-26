@@ -237,6 +237,7 @@ async fn cmd_dispatch(mut args: impl Iterator<Item = String>) -> Result<ExitCode
             phase_id: phase_id.clone(),
             acceptance_override: None,
             budget_override: None,
+                hooks: Vec::new(),
         },
         &tracker,
         orch,
@@ -255,6 +256,7 @@ async fn cmd_dispatch(mut args: impl Iterator<Item = String>) -> Result<ExitCode
             queue_when_full: true,
             ..Default::default()
         },
+        None,
     )
     .await
     .map_err(|e| anyhow!("dispatch failed: {e}"))?;

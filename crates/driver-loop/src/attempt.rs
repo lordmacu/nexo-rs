@@ -175,14 +175,36 @@ pub(crate) async fn run_attempt(
     let _ = turn.shutdown().await;
 
     // Persist binding (whatever session id Claude reported last).
+    // B1 — lift origin_channel + dispatcher out of goal.metadata so
+    // the binding carries the chat that triggered the goal across
+    // reattach, and the completion router knows where to send the
+    // notify_origin summary.
     if let Some(sid) = &last_session_id {
         let workspace_pb: std::path::PathBuf = ctx.workspace.to_path_buf();
-        let binding = SessionBinding::new(
+        let mut binding = SessionBinding::new(
             goal_id,
             sid.clone(),
             ctx.claude_cfg.default_args.model.clone(),
             Some(workspace_pb),
         );
+        if let Some(o) = params.goal.metadata.get("origin_channel") {
+            if !o.is_null() {
+                if let Ok(parsed) =
+                    serde_json::from_value::<nexo_driver_claude::OriginChannel>(o.clone())
+                {
+                    binding = binding.with_origin(parsed);
+                }
+            }
+        }
+        if let Some(d) = params.goal.metadata.get("dispatcher") {
+            if !d.is_null() {
+                if let Ok(parsed) =
+                    serde_json::from_value::<nexo_driver_claude::DispatcherIdentity>(d.clone())
+                {
+                    binding = binding.with_dispatcher(parsed);
+                }
+            }
+        }
         ctx.binding_store.upsert(binding).await?;
     }
 

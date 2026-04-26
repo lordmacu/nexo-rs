@@ -14,6 +14,7 @@ pub mod subjects;
 pub mod agent_query;
 pub mod chain;
 pub mod dispatch_followup;
+pub mod event_forwarder;
 pub mod hooks;
 pub mod policy_gate;
 pub mod program_phase;
@@ -46,6 +47,7 @@ pub use hooks::{
     HookError, HookPayload, HookTransition, HookTrigger, NatsHookPublisher, NoopNatsHookPublisher,
 };
 
+pub use event_forwarder::EventForwarder;
 pub use dispatch_followup::{
     dispatch_followup_call, followup_phase_id, DispatchFollowupInput, DispatchFollowupOutput,
 };
