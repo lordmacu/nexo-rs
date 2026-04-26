@@ -20,12 +20,12 @@ dashmap             = { workspace = true }
 humantime           = { workspace = true }
 humantime-serde     = { workspace = true }
 nexo-agent-registry = { version = "0.1.1", path = "../agent-registry" }
-nexo-config         = { version = "0.1.1", path = "../config" }
+nexo-config         = { version = "0.2.0", path = "../config" }
 nexo-driver-claude  = { version = "0.1.1", path = "../driver-claude" }
 nexo-driver-loop    = { version = "0.1.1", path = "../driver-loop" }
 nexo-driver-permission = { version = "0.1.1", path = "../driver-permission" }
 nexo-driver-types   = { version = "0.1.1", path = "../driver-types" }
-nexo-pairing        = { version = "0.1.2", path = "../pairing" }
+nexo-pairing        = { version = "0.1.3", path = "../pairing" }
 nexo-project-tracker = { version = "0.1.1", path = "../project-tracker" }
 parking_lot         = "0.12"
 serde               = { workspace = true }
