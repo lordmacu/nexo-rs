@@ -1533,6 +1533,18 @@ async fn main() -> Result<()> {
             }
         }
 
+        // FOLLOWUPS W-2 — `web_fetch` tool. Sibling of `web_search`,
+        // shares the runtime's LinkExtractor + cache + telemetry.
+        // Registered for every agent unconditionally since the
+        // runtime always boots with an extractor; the tool itself
+        // returns a clear error when called against a binding whose
+        // `link_understanding.enabled` is false.
+        tools.register(
+            nexo_core::agent::WebFetchTool::tool_def(),
+            nexo_core::agent::WebFetchTool::new(),
+        );
+        tracing::info!(agent = %agent_id, "registered web_fetch tool");
+
         // Phase 10.8 — self-report tools. `who_am_i` + `what_do_i_know` are
         // pure workspace reads; `my_stats` additionally needs long-term memory.
         let workspace_path: Option<PathBuf> = if agent_cfg.workspace.trim().is_empty() {

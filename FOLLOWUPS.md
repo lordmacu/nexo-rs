@@ -129,16 +129,35 @@ W-1. ~~**Telemetry counters not wired**~~  ✅ shipped
   dashboards can alert without false positives during a self-healing
   cooldown.
 
-W-2. **`web_fetch` built-in tool not shipped**
-- Missing: spec'd a `web_fetch` companion tool that replaces the
-  `fetch-url` extension. We deliberately scoped to `web_search` only
-  in this round.
-- Why deferred: Phase 21 `link_understanding` already auto-expands
-  URLs the user shares. A generic `web_fetch` matters mostly for
-  agentic workflows that compose `web_search → web_fetch → summarise`,
-  and the `expand: true` flag on `web_search` covers most of that
-  same loop today via the LinkExtractor reuse.
-- Target: when a recipe surfaces the gap.
+W-2. ~~**`web_fetch` built-in tool not shipped**~~  ✅ shipped 2026-04-26
+- New `crates/core/src/agent/web_fetch_tool.rs::WebFetchTool`.
+  Single-call shape: `web_fetch(urls: [str], max_bytes?: int)`
+  → `{ results: [{url, title, body, ok, reason?}] }`.
+- Reuses the runtime's existing `LinkExtractor` (Phase 21),
+  so the cache, deny-host list, max-bytes cap, timeout, and
+  telemetry counters all carry over with zero duplication.
+  `nexo_link_understanding_fetch_total{result}` and
+  `nexo_link_understanding_cache_total{hit}` cover `web_fetch`
+  calls automatically.
+- Per-call cap of 5 URLs to keep the prompt budget bounded;
+  trims with a warn log and continues. `max_bytes` arg can
+  shrink but never grow past the deployment-wide
+  `link_understanding.max_bytes`.
+- Failures (host blocked / timeout / non-HTML / oversized /
+  transport error) return per-URL
+  `{ok: false, reason: "..."}` rows instead of bailing the
+  whole call, so a single bad URL doesn't drop the rest.
+- Registered unconditionally for every agent in `src/main.rs`
+  (runtime always boots a `LinkExtractor`); the per-binding
+  `link_understanding.enabled` policy still gates whether the
+  underlying fetch happens.
+- 2 unit tests (`tool_def_shape`, `rejects_empty_urls_array`)
+  in the module.
+- Distinct from `web_search.expand=true` because the agent
+  often knows the URL up front (skill output, RSS poll,
+  calendar attachment) and would otherwise have to either
+  hallucinate a search query or shell out to a `fetch-url`
+  extension.
 
 W-3. ~~**Setup wizard entry not shipped**~~  ✅ shipped 2026-04-26
 - New `web-search` ServiceDef in
