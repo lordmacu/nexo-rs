@@ -8,10 +8,12 @@
 //! 67.F.4: opt-in `shell` action.
 
 pub mod dispatcher;
+pub mod idempotency;
 pub mod types;
 
 pub use dispatcher::{
     DefaultHookDispatcher, DispatchPhaseChainer, HookDispatcher, HookError, NatsHookPublisher,
     NoopNatsHookPublisher,
 };
+pub use idempotency::{HookIdempotencyStore, IdempotencyError};
 pub use types::{CompletionHook, HookAction, HookPayload, HookTransition, HookTrigger};
