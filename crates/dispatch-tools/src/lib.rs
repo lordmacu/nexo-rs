@@ -8,11 +8,17 @@
 //! - `chain` / `agent_control` / `agent_query` / `admin` / `hooks`
 //!   (67.E.x onwards) — the rest of the multi-agent surface.
 
+pub mod chain;
 pub mod dispatch_followup;
 pub mod hooks;
 pub mod policy_gate;
 pub mod program_phase;
 pub mod tool_names;
+
+pub use chain::{
+    program_phase_chain, program_phase_parallel, ProgramPhaseChainInput, ProgramPhaseChainOutput,
+    ProgramPhaseParallelInput, ProgramPhaseParallelOutput,
+};
 
 pub use hooks::{
     CompletionHook, DefaultHookDispatcher, DispatchPhaseChainer, HookAction, HookDispatcher,
