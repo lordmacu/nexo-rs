@@ -238,16 +238,42 @@ PR-5. **`pair_approve` as scope-gated agent tool**
   trust model emerges.
 - Target: separate brainstorm.
 
-PR-6. **`nexo-tunnel` URL accessor + `nexo-config::pairing.yaml` loader**
-- Missing: spec'd a `config/pairing.yaml` with `storage.path`,
-  `setup_code.secret_path`, `default_ttl_secs`, `public_url`,
-  `ws_cleartext_allow`. Daemon currently hardcodes the paths
-  (`<memory_dir>/pairing.db`, `~/.nexo/secret/pairing.key`) and
-  reads `--public-url` only from the CLI flag.
-- Why deferred: env vars / CLI flags cover the boot path; YAML
-  adds a config surface with no current customer ask.
-- Target: when an operator needs to override the path (for
-  containerised deployments mounting `/var/lib/nexo/pairing/...`).
+PR-6. ~~**`nexo-config::pairing.yaml` loader**~~  🔄 partial 2026-04-26
+- ~~`config/pairing.yaml` schema + loader shipped.~~
+  `crates/config/src/types/pairing.rs` defines
+  `PairingConfig { pairing: PairingInner }` with optional
+  fields: `storage.path`, `setup_code.secret_path`,
+  `setup_code.default_ttl_secs`, `public_url`,
+  `ws_cleartext_allow[]`. `deny_unknown_fields` everywhere so
+  typos fail loud at boot.
+- ~~Loader wired into `AppConfig`~~ —
+  `cfg.pairing: Option<PairingInner>` populated by
+  `load_optional("pairing.yaml")` (file is optional; absent
+  keeps every legacy default).
+- ~~Boot integration in `src/main.rs`~~ — the `pairing` block
+  consults `cfg.pairing` first for both store path and
+  secret path, falling back to the previous hardcoded
+  `<memory_dir>/pairing.db` / `~/.nexo/secret/pairing.key`
+  defaults when the YAML is absent or doesn't override that
+  field. New `from_yaml=true|false` log field reflects which
+  path provided the values.
+- 4 unit tests cover empty YAML → defaults, full YAML round
+  trip, unknown-field rejection at root + nested levels.
+- **Still deferred**: `nexo-tunnel` URL accessor exposing the
+  active tunnel URL (separate side of PR-6, originally bundled).
+  The `pairing.yaml` `public_url` field is wired but the
+  `tunnel.url` priority chain (PR-3) still hardcodes the CLI
+  fallback. Splitting into PR-6.a (config loader, done) and
+  PR-3 (tunnel accessor, separate) keeps the work
+  cleanly scoped.
+- **Still deferred**: `default_ttl_secs` is parsed but the
+  setup-code issuer doesn't yet honour the override (it uses
+  the built-in 60s constant). One-line follow-up once the
+  issuer surface accepts a TTL parameter.
+- **Still deferred**: `ws_cleartext_allow` is parsed but not
+  yet plumbed into `pair start`'s URL resolver — the resolver
+  takes its `extras` list from a different code path. One-step
+  rewire when 26.x reaches the URL resolver again.
 
 ### Phase 67.A–H — Project tracker + multi-agent dispatch
 

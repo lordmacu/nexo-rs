@@ -33,6 +33,12 @@ pub struct AppConfig {
     /// Transcripts subsystem (FTS index + redaction). Always populated;
     /// absent file → defaults (FTS on, redaction off).
     pub transcripts: TranscriptsConfig,
+    /// FOLLOWUPS PR-6 — optional pairing config overrides
+    /// (`config/pairing.yaml`). `None` keeps the legacy hardcoded
+    /// paths (`<memory_dir>/pairing.db`,
+    /// `~/.nexo/secret/pairing.key`); each field overrides
+    /// selectively when the file is present.
+    pub pairing: Option<PairingInner>,
 }
 
 /// Minimal config bundle for the `agent mcp-server` subcommand.
@@ -69,6 +75,8 @@ impl AppConfig {
         let taskflow = load_optional::<TaskflowConfig>(dir, "taskflow.yaml")?.unwrap_or_default();
         let transcripts =
             load_optional::<TranscriptsConfig>(dir, "transcripts.yaml")?.unwrap_or_default();
+        let pairing =
+            load_optional::<PairingConfig>(dir, "pairing.yaml")?.map(|f| f.pairing);
         Ok(AppConfig {
             agents,
             broker,
@@ -82,6 +90,7 @@ impl AppConfig {
             pollers,
             taskflow,
             transcripts,
+            pairing,
         })
     }
 
