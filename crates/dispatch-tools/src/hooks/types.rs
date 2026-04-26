@@ -40,7 +40,9 @@ pub enum HookTrigger {
     /// disables the trigger (useful when an operator wants to keep
     /// the hook entry on the goal but suppress firing without
     /// removing it).
-    Progress { every_turns: u32 },
+    Progress {
+        every_turns: u32,
+    },
 }
 
 impl HookTrigger {
@@ -90,9 +92,7 @@ pub enum HookAction {
     /// decides which findings to dispatch as fix-goals. Auto-
     /// attached by `program_phase` when
     /// `DispatchToolContext.audit_before_done` is true.
-    DispatchAudit {
-        only_if: HookTrigger,
-    },
+    DispatchAudit { only_if: HookTrigger },
     /// Publish the hook payload as JSON on a NATS subject.
     NatsPublish { subject: String },
     /// Run an arbitrary shell command. Gated by config

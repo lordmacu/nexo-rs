@@ -11,9 +11,7 @@ use std::time::Duration;
 use nexo_agent_registry::{AgentRegistry, MemoryAgentRegistryStore};
 use nexo_config::{DispatchCapability, DispatchPolicy};
 use nexo_dispatch_tools::policy_gate::CapSnapshot;
-use nexo_dispatch_tools::{
-    dispatch_followup_call, DispatchFollowupInput, DispatchFollowupOutput,
-};
+use nexo_dispatch_tools::{dispatch_followup_call, DispatchFollowupInput, DispatchFollowupOutput};
 use nexo_driver_claude::{
     ClaudeConfig, ClaudeDefaultArgs, DispatcherIdentity, MemoryBindingStore, OutputFormat,
 };

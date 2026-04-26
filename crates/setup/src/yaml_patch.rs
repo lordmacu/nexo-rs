@@ -621,11 +621,7 @@ fn set_path(root: &mut Value, parts: &[&str], value: Value) -> Result<()> {
 /// Locate the agent inside the YAML at `path` and return the value at
 /// `dotted` relative to that agent. Returns `Ok(None)` when either the
 /// agent or any path segment is missing.
-pub fn read_agent_field(
-    path: &Path,
-    agent_id: &str,
-    dotted: &str,
-) -> Result<Option<Value>> {
+pub fn read_agent_field(path: &Path, agent_id: &str, dotted: &str) -> Result<Option<Value>> {
     if !path.exists() {
         return Ok(None);
     }
@@ -659,12 +655,7 @@ pub fn read_agent_field(
 /// Upsert `value` at the dotted path inside the matching agent's
 /// mapping. Creates intermediate maps as needed; bails when the agent
 /// is absent.
-pub fn upsert_agent_field(
-    path: &Path,
-    agent_id: &str,
-    dotted: &str,
-    value: Value,
-) -> Result<()> {
+pub fn upsert_agent_field(path: &Path, agent_id: &str, dotted: &str, value: Value) -> Result<()> {
     let _guard = YAML_UPSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     let mut root: Value =
@@ -691,11 +682,7 @@ pub fn upsert_agent_field(
 
 /// Remove the dotted path inside the matching agent. No-op when the
 /// path is already absent. Bails when the agent itself doesn't exist.
-pub fn remove_agent_field(
-    path: &Path,
-    agent_id: &str,
-    dotted: &str,
-) -> Result<()> {
+pub fn remove_agent_field(path: &Path, agent_id: &str, dotted: &str) -> Result<()> {
     let _guard = YAML_UPSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     let mut root: Value =
@@ -968,8 +955,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("agents.yaml");
         write_sample_agents(&file);
-        assert!(read_agent_field(&file, "kate", "language").unwrap().is_none());
-        assert!(read_agent_field(&file, "ghost", "model.provider").unwrap().is_none());
+        assert!(read_agent_field(&file, "kate", "language")
+            .unwrap()
+            .is_none());
+        assert!(read_agent_field(&file, "ghost", "model.provider")
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -989,7 +980,9 @@ mod tests {
         write_sample_agents(&file);
         upsert_agent_field(&file, "kate", "language", Value::String("es".into())).unwrap();
         remove_agent_field(&file, "kate", "language").unwrap();
-        assert!(read_agent_field(&file, "kate", "language").unwrap().is_none());
+        assert!(read_agent_field(&file, "kate", "language")
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -997,21 +990,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("agents.yaml");
         write_sample_agents(&file);
-        append_agent_list_item(
-            &file,
-            "kate",
-            "plugins",
-            Value::String("whatsapp".into()),
-        )
-        .unwrap();
+        append_agent_list_item(&file, "kate", "plugins", Value::String("whatsapp".into())).unwrap();
         // Second call is a no-op.
-        append_agent_list_item(
-            &file,
-            "kate",
-            "plugins",
-            Value::String("whatsapp".into()),
-        )
-        .unwrap();
+        append_agent_list_item(&file, "kate", "plugins", Value::String("whatsapp".into())).unwrap();
         let v = read_agent_field(&file, "kate", "plugins").unwrap().unwrap();
         let seq = v.as_sequence().unwrap();
         let count = seq
@@ -1178,7 +1159,10 @@ pub fn upsert_agent_inbound_binding(
         let Some(m) = entry.as_mapping_mut() else {
             continue;
         };
-        if m.get(Value::String("plugin".into())).and_then(Value::as_str) != Some(plugin) {
+        if m.get(Value::String("plugin".into()))
+            .and_then(Value::as_str)
+            != Some(plugin)
+        {
             continue;
         }
         match m
@@ -1509,9 +1493,7 @@ pub fn telegram_append_chat_id(
         .and_then(Value::as_sequence_mut)
         .ok_or_else(|| anyhow::anyhow!("`chat_ids` in instance `{label}` is not a list"))?;
 
-    let already_present = chat_ids
-        .iter()
-        .any(|v| v.as_i64() == Some(chat_id));
+    let already_present = chat_ids.iter().any(|v| v.as_i64() == Some(chat_id));
     if !already_present {
         chat_ids.push(Value::Number(chat_id.into()));
     }

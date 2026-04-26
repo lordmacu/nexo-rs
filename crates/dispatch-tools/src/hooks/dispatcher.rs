@@ -66,11 +66,7 @@ pub trait DispatchPhaseChainer: Send + Sync + 'static {
     /// Spawn a child goal for `phase_id` inheriting the parent's
     /// origin and accumulating chain bookkeeping. Returns the new
     /// `GoalId` on success.
-    async fn chain(
-        &self,
-        parent: &HookPayload,
-        phase_id: &str,
-    ) -> Result<GoalId, String>;
+    async fn chain(&self, parent: &HookPayload, phase_id: &str) -> Result<GoalId, String>;
 
     /// Spawn a synthetic audit goal that scans the parent goal's
     /// diff for bugs / followups / missing tests and reports
@@ -91,7 +87,8 @@ pub trait DispatchPhaseChainer: Send + Sync + 'static {
 
 #[async_trait]
 pub trait HookDispatcher: Send + Sync + 'static {
-    async fn dispatch(&self, hook: &CompletionHook, payload: &HookPayload) -> Result<(), HookError>;
+    async fn dispatch(&self, hook: &CompletionHook, payload: &HookPayload)
+        -> Result<(), HookError>;
 }
 
 /// Trait abstraction over NATS publish so tests can substitute a
@@ -172,7 +169,11 @@ impl DefaultHookDispatcher {
 
 #[async_trait]
 impl HookDispatcher for DefaultHookDispatcher {
-    async fn dispatch(&self, hook: &CompletionHook, payload: &HookPayload) -> Result<(), HookError> {
+    async fn dispatch(
+        &self,
+        hook: &CompletionHook,
+        payload: &HookPayload,
+    ) -> Result<(), HookError> {
         // PT-4 — claim the idempotency slot atomically before
         // running the action. Duplicate firings find the slot
         // taken and skip without re-publishing.
@@ -246,11 +247,19 @@ async fn run_action(
                 .get(&origin.plugin)
                 .ok_or_else(|| HookError::UnknownChannel(origin.plugin.clone()))?;
             adapter
-                .send_reply(&origin.instance, &origin.sender_id, &render_summary(payload))
+                .send_reply(
+                    &origin.instance,
+                    &origin.sender_id,
+                    &render_summary(payload),
+                )
                 .await
                 .map_err(|e| HookError::Adapter(e.to_string()))
         }
-        HookAction::NotifyChannel { plugin, instance, recipient } => {
+        HookAction::NotifyChannel {
+            plugin,
+            instance,
+            recipient,
+        } => {
             let adapter = pairing
                 .get(plugin)
                 .ok_or_else(|| HookError::UnknownChannel(plugin.clone()))?;
@@ -260,8 +269,8 @@ async fn run_action(
                 .map_err(|e| HookError::Adapter(e.to_string()))
         }
         HookAction::NatsPublish { subject } => {
-            let body = serde_json::to_vec(payload)
-                .map_err(|e| HookError::NatsPublish(e.to_string()))?;
+            let body =
+                serde_json::to_vec(payload).map_err(|e| HookError::NatsPublish(e.to_string()))?;
             nats.publish(subject, &body)
                 .await
                 .map_err(HookError::NatsPublish)
@@ -302,8 +311,8 @@ async fn run_action(
             // it without the dispatcher having to template the
             // command string. JSON payload available too for
             // structured access.
-            let payload_json = serde_json::to_string(payload)
-                .map_err(|e| HookError::ShellIo(e.to_string()))?;
+            let payload_json =
+                serde_json::to_string(payload).map_err(|e| HookError::ShellIo(e.to_string()))?;
             let mut child = tokio::process::Command::new("sh");
             child
                 .arg("-c")

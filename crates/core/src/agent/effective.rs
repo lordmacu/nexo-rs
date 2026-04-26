@@ -792,7 +792,10 @@ mod tests {
             ..Default::default()
         });
         let eff = EffectiveBindingPolicy::resolve(&a, 0);
-        assert_eq!(eff.dispatch_policy.mode, nexo_config::DispatchCapability::Full);
+        assert_eq!(
+            eff.dispatch_policy.mode,
+            nexo_config::DispatchCapability::Full
+        );
         assert_eq!(eff.dispatch_policy.max_concurrent_per_dispatcher, 3);
         assert_eq!(eff.dispatch_policy.allowed_phase_ids, vec!["67.*"]);
         assert_eq!(eff.dispatch_policy.forbidden_phase_ids, vec!["67.13"]);

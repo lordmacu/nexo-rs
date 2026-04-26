@@ -48,9 +48,7 @@ fn bench_publish_no_subs(c: &mut Criterion) {
 fn bench_publish_one_sub(c: &mut Criterion) {
     let runtime = make_runtime();
     let broker = LocalBroker::new();
-    let _sub = runtime.block_on(async {
-        broker.subscribe("agent.kate.inbox").await.unwrap()
-    });
+    let _sub = runtime.block_on(async { broker.subscribe("agent.kate.inbox").await.unwrap() });
     let event = make_event("agent.kate.inbox");
 
     let mut group = c.benchmark_group("publish");
@@ -72,11 +70,7 @@ fn bench_publish_fanout_10(c: &mut Criterion) {
     let runtime = make_runtime();
     let broker = LocalBroker::new();
     let _subs: Vec<_> = (0..10)
-        .map(|_| {
-            runtime.block_on(async {
-                broker.subscribe("agent.>").await.unwrap()
-            })
-        })
+        .map(|_| runtime.block_on(async { broker.subscribe("agent.>").await.unwrap() }))
         .collect();
     let event = make_event("agent.kate.inbox");
 
@@ -111,9 +105,7 @@ fn bench_publish_mixed_50(c: &mut Criterion) {
     let _subs: Vec<_> = (0..50)
         .map(|i| {
             let pattern = patterns[i % patterns.len()];
-            runtime.block_on(async {
-                broker.subscribe(pattern).await.unwrap()
-            })
+            runtime.block_on(async { broker.subscribe(pattern).await.unwrap() })
         })
         .collect();
     let event = make_event("agent.kate.inbox");

@@ -103,13 +103,8 @@ fn append_then_remove_inbound_binding_mapping() {
         Value::String("plugin".into()),
         Value::String("telegram".into()),
     );
-    yaml_patch::append_agent_list_item(
-        &file,
-        "kate",
-        "inbound_bindings",
-        Value::Mapping(binding),
-    )
-    .unwrap();
+    yaml_patch::append_agent_list_item(&file, "kate", "inbound_bindings", Value::Mapping(binding))
+        .unwrap();
     // Same payload again → idempotent.
     let mut dup = serde_yaml::Mapping::new();
     dup.insert(

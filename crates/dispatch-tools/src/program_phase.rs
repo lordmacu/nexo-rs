@@ -24,7 +24,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
-use nexo_agent_registry::{AdmitOutcome, AgentHandle, AgentRegistry, AgentRunStatus, AgentSnapshot};
+use nexo_agent_registry::{
+    AdmitOutcome, AgentHandle, AgentRegistry, AgentRunStatus, AgentSnapshot,
+};
 use nexo_config::DispatchPolicy;
 use nexo_driver_claude::{DispatcherIdentity, OriginChannel};
 use nexo_driver_loop::DriverOrchestrator;
@@ -32,7 +34,9 @@ use nexo_driver_types::{AcceptanceCriterion, BudgetGuards, Goal, GoalId};
 use nexo_project_tracker::tracker::ProjectTracker;
 use serde::{Deserialize, Serialize};
 
-use crate::policy_gate::{CapSnapshot, DispatchDenied, DispatchGate, DispatchKind, DispatchRequest};
+use crate::policy_gate::{
+    CapSnapshot, DispatchDenied, DispatchGate, DispatchKind, DispatchRequest,
+};
 
 /// Tool input.
 #[derive(Clone, Debug, Deserialize)]
@@ -214,10 +218,7 @@ pub async fn program_phase_dispatch(
     let acceptance = if let Some(ov) = input.acceptance_override.clone() {
         ov
     } else if let Some(parsed) = sub.acceptance.clone() {
-        parsed
-            .into_iter()
-            .map(AcceptanceCriterion::shell)
-            .collect()
+        parsed.into_iter().map(AcceptanceCriterion::shell).collect()
     } else {
         default_acceptance()
     };

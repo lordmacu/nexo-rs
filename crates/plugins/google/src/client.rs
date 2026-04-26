@@ -563,8 +563,7 @@ impl GoogleAuthClient {
                         .await
                         .context("POST oauth2.googleapis.com/token (device) failed")?;
                     let status = resp.status();
-                    let body: Value =
-                        resp.json().await.context("malformed token response")?;
+                    let body: Value = resp.json().await.context("malformed token response")?;
                     Ok::<(reqwest::StatusCode, Value), anyhow::Error>((status, body))
                 })
                 .await?;
@@ -638,8 +637,7 @@ impl GoogleAuthClient {
                     .await
                     .context("POST oauth2.googleapis.com/token (refresh) failed")?;
                 let status = resp.status();
-                let body: Value =
-                    resp.json().await.context("malformed refresh response")?;
+                let body: Value = resp.json().await.context("malformed refresh response")?;
                 if !status.is_success() {
                     // A 400 "invalid_grant" here usually means the user
                     // revoked access from their account page, OR the

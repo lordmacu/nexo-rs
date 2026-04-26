@@ -104,7 +104,7 @@ fn base_agent() -> AgentConfig {
             ..Default::default()
         }],
         context_optimization: None,
-            dispatch_policy: Default::default(),
+        dispatch_policy: Default::default(),
     }
 }
 

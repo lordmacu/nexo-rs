@@ -96,7 +96,9 @@ mod tests {
             tokens: 140_000,
             ..Default::default()
         };
-        let r = p.classify(&ctx(&usage, 200_000, 6, None, "Implementa Phase 26.z")).await;
+        let r = p
+            .classify(&ctx(&usage, 200_000, 6, None, "Implementa Phase 26.z"))
+            .await;
         match r {
             Some(focus) => {
                 assert!(focus.starts_with("continue goal: "));
@@ -113,7 +115,10 @@ mod tests {
             tokens: 50_000,
             ..Default::default()
         };
-        assert!(p.classify(&ctx(&usage, 200_000, 6, None, "x")).await.is_none());
+        assert!(p
+            .classify(&ctx(&usage, 200_000, 6, None, "x"))
+            .await
+            .is_none());
     }
 
     #[tokio::test]
@@ -126,7 +131,10 @@ mod tests {
             tokens: 999_999,
             ..Default::default()
         };
-        assert!(p.classify(&ctx(&usage, 200_000, 9, None, "x")).await.is_none());
+        assert!(p
+            .classify(&ctx(&usage, 200_000, 9, None, "x"))
+            .await
+            .is_none());
     }
 
     #[tokio::test]

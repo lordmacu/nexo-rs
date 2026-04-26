@@ -130,17 +130,9 @@ pub struct UpdateBudgetInput {
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum UpdateBudgetOutput {
-    Updated {
-        goal_id: GoalId,
-        max_turns: u32,
-    },
-    Rejected {
-        goal_id: GoalId,
-        reason: String,
-    },
-    NotFound {
-        goal_id: GoalId,
-    },
+    Updated { goal_id: GoalId, max_turns: u32 },
+    Rejected { goal_id: GoalId, reason: String },
+    NotFound { goal_id: GoalId },
 }
 
 pub async fn update_budget(
@@ -177,7 +169,10 @@ pub async fn update_budget(
     // in the orchestrator's cancel_tokens map. Goals that admitted
     // as Queued (registry only, no spawn yet) fall in that bucket;
     // operator should wait until they're Running.
-    if orchestrator.set_goal_max_turns(input.goal_id, new_max).is_none() {
+    if orchestrator
+        .set_goal_max_turns(input.goal_id, new_max)
+        .is_none()
+    {
         return Ok(UpdateBudgetOutput::Rejected {
             goal_id: input.goal_id,
             reason: "goal not running in this orchestrator".into(),

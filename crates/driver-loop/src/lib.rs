@@ -21,13 +21,13 @@ pub use acceptance::{
     AcceptanceEvaluator, CustomVerifier, CustomVerifierRegistry, DefaultAcceptanceEvaluator,
     GitClean, NoPathsTouched, NoopAcceptanceEvaluator, ShellResult, ShellRunner,
 };
+pub use compact::{CompactContext, CompactPolicy, DefaultCompactPolicy};
 pub use config::{
     AcceptanceConfig, BindingStoreConfig, BindingStoreKind, CompactPolicyConfig, DeciderConfig,
     DeciderMemoryConfig, DenyShortcutConfig, DriverBinConfig, DriverConfig,
     EmbeddingProviderConfig, NamespaceConfig, PermissionConfig, ReplayPolicyConfig,
     WorkspaceConfig, WorkspaceGitConfig,
 };
-pub use compact::{CompactContext, CompactPolicy, DefaultCompactPolicy};
 pub use error::DriverError;
 #[cfg(feature = "nats")]
 pub use events::NatsEventSink;

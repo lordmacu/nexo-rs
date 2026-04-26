@@ -102,16 +102,14 @@ impl DriverEventSink for EventForwarder {
                     format!("progress @ turn {turn_index}"),
                 );
                 // Fire Progress hooks.
-                self.fire_hooks_for(*goal_id, HookTransition::Progress).await;
+                self.fire_hooks_for(*goal_id, HookTransition::Progress)
+                    .await;
             }
             DriverEvent::Acceptance { goal_id, verdict } => {
                 self.log_buffer.push(
                     *goal_id,
                     "agent.driver.acceptance",
-                    format!(
-                        "acceptance: {}",
-                        if verdict.met { "met" } else { "failed" }
-                    ),
+                    format!("acceptance: {}", if verdict.met { "met" } else { "failed" }),
                 );
             }
             DriverEvent::GoalCompleted { outcome } => {
@@ -185,7 +183,10 @@ impl EventForwarder {
         // Build a payload from the live registry handle so the
         // hook gets origin + phase id without us threading them.
         let handle = self.registry.handle(goal_id);
-        let phase_id = handle.as_ref().map(|h| h.phase_id.clone()).unwrap_or_default();
+        let phase_id = handle
+            .as_ref()
+            .map(|h| h.phase_id.clone())
+            .unwrap_or_default();
         let origin = handle.as_ref().and_then(|h| h.origin.clone());
         let elapsed = handle
             .as_ref()
@@ -195,7 +196,9 @@ impl EventForwarder {
             .as_ref()
             .and_then(|h| h.snapshot.last_progress_text.clone())
             .unwrap_or_default();
-        let diff_stat = handle.as_ref().and_then(|h| h.snapshot.last_diff_stat.clone());
+        let diff_stat = handle
+            .as_ref()
+            .and_then(|h| h.snapshot.last_diff_stat.clone());
         let payload = HookPayload {
             goal_id,
             phase_id,

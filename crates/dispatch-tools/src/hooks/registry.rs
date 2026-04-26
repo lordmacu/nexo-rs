@@ -92,7 +92,8 @@ impl SqliteHookRegistryStore {
 #[async_trait]
 impl HookRegistryStore for SqliteHookRegistryStore {
     async fn upsert(&self, goal_id: GoalId, hook: &CompletionHook) -> Result<(), HookStoreError> {
-        let payload = serde_json::to_string(hook).map_err(|e| HookStoreError::Json(e.to_string()))?;
+        let payload =
+            serde_json::to_string(hook).map_err(|e| HookStoreError::Json(e.to_string()))?;
         sqlx::query(
             "INSERT INTO hook_registry (goal_id, hook_id, payload) \
              VALUES (?1, ?2, ?3) \
@@ -121,17 +122,16 @@ impl HookRegistryStore for SqliteHookRegistryStore {
         Ok(())
     }
     async fn load_all(&self) -> Result<Vec<(GoalId, CompletionHook)>, HookStoreError> {
-        let rows = sqlx::query_as::<_, (String, String)>(
-            "SELECT goal_id, payload FROM hook_registry",
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        let rows =
+            sqlx::query_as::<_, (String, String)>("SELECT goal_id, payload FROM hook_registry")
+                .fetch_all(&self.pool)
+                .await?;
         let mut out = Vec::with_capacity(rows.len());
         for (gid, payload) in rows {
             let goal = uuid::Uuid::parse_str(&gid)
                 .map_err(|e| HookStoreError::Json(format!("uuid: {e}")))?;
-            let hook: CompletionHook = serde_json::from_str(&payload)
-                .map_err(|e| HookStoreError::Json(e.to_string()))?;
+            let hook: CompletionHook =
+                serde_json::from_str(&payload).map_err(|e| HookStoreError::Json(e.to_string()))?;
             out.push((GoalId(goal), hook));
         }
         Ok(out)

@@ -201,7 +201,9 @@ mod tests {
         // set_status(Done) afterwards to flip status without
         // overwriting finished_at (set_status only fills when None).
         reg.admit(recent, true).await.unwrap();
-        reg.set_status(recent_id, AgentRunStatus::Done).await.unwrap();
+        reg.set_status(recent_id, AgentRunStatus::Done)
+            .await
+            .unwrap();
         reg.admit(old, true).await.unwrap();
         reg.set_status(old_id, AgentRunStatus::Done).await.unwrap();
 
@@ -225,15 +227,9 @@ mod tests {
             Arc::new(MemoryAgentRegistryStore::default()),
             4,
         ));
-        let err = evict_completed(
-            EvictCompletedInput {
-                older_than_secs: 1,
-            },
-            reg,
-            false,
-        )
-        .await
-        .unwrap_err();
+        let err = evict_completed(EvictCompletedInput { older_than_secs: 1 }, reg, false)
+            .await
+            .unwrap_err();
         assert!(matches!(err, AdminError::Forbidden));
     }
 }

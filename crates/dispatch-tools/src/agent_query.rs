@@ -71,7 +71,8 @@ pub async fn list_agents(input: ListAgentsInput, registry: Arc<AgentRegistry>) -
             _ => None,
         });
 
-    let mut out = String::from("| status | id | phase | turn | wall | origin |\n|---|---|---|---|---|---|\n");
+    let mut out =
+        String::from("| status | id | phase | turn | wall | origin |\n|---|---|---|---|---|---|\n");
     let mut shown = 0usize;
     for r in rows {
         if let Some(f) = filter_status {
@@ -168,11 +169,10 @@ pub async fn agent_logs_tail(input: AgentLogsTailInput, log_buf: Arc<LogBuffer>)
     }
     let mut out = String::new();
     for l in lines {
-        let ts = l
-            .at
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+        let ts =
+            l.at.duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
         out.push_str(&format!("[{ts}] {} — {}\n", l.subject, l.summary));
     }
     cap(out)
@@ -201,9 +201,13 @@ pub async fn agent_hooks_list(input: AgentHooksListInput, hooks: Arc<HookRegistr
         let action = match &h.action {
             crate::hooks::types::HookAction::NotifyOrigin => "notify_origin".into(),
             crate::hooks::types::HookAction::NotifyChannel {
-                plugin, instance, recipient,
+                plugin,
+                instance,
+                recipient,
             } => format!("notify_channel({plugin}:{instance}@{recipient})"),
-            crate::hooks::types::HookAction::DispatchAudit { .. } => "dispatch_audit(parent diff)".into(),
+            crate::hooks::types::HookAction::DispatchAudit { .. } => {
+                "dispatch_audit(parent diff)".into()
+            }
             crate::hooks::types::HookAction::DispatchPhase { phase_id, only_if } => {
                 let on = match only_if {
                     crate::hooks::types::HookTrigger::Done => "done",

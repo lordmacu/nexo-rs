@@ -8,9 +8,7 @@ use chrono::Utc;
 use nexo_agent_registry::{
     AgentHandle, AgentRegistry, AgentRunStatus, AgentSnapshot, MemoryAgentRegistryStore,
 };
-use nexo_driver_types::{
-    AttemptOutcome, AttemptResult, BudgetUsage, GoalId,
-};
+use nexo_driver_types::{AttemptOutcome, AttemptResult, BudgetUsage, GoalId};
 use uuid::Uuid;
 
 fn fresh_handle(phase: &str) -> AgentHandle {

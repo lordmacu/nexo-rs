@@ -148,7 +148,10 @@ pub enum RegistryError {
     #[error("registry full: {0} active goals, max {1}")]
     CapReached(u32, u32),
     #[error("invalid status transition: {from:?} → {to:?}")]
-    InvalidTransition { from: AgentRunStatus, to: AgentRunStatus },
+    InvalidTransition {
+        from: AgentRunStatus,
+        to: AgentRunStatus,
+    },
     #[error(transparent)]
     Store(#[from] crate::store::AgentRegistryStoreError),
 }

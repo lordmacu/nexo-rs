@@ -183,10 +183,7 @@ mod tests {
         }
     }
 
-    fn write_request<'a>(
-        p: &'a DispatchPolicy,
-        phase: &'a str,
-    ) -> DispatchRequest<'a> {
+    fn write_request<'a>(p: &'a DispatchPolicy, phase: &'a str) -> DispatchRequest<'a> {
         DispatchRequest {
             kind: DispatchKind::Write,
             phase_id: phase,
@@ -201,19 +198,28 @@ mod tests {
     fn capability_none_blocks_everything() {
         let p = policy(DispatchCapability::None);
         let req = write_request(&p, "67.10");
-        assert_eq!(DispatchGate::check(&req).unwrap_err(), DispatchDenied::CapabilityNone);
+        assert_eq!(
+            DispatchGate::check(&req).unwrap_err(),
+            DispatchDenied::CapabilityNone
+        );
 
         // Even reads are blocked when capability=None.
         let mut req_r = write_request(&p, "67.10");
         req_r.kind = DispatchKind::Read;
-        assert_eq!(DispatchGate::check(&req_r).unwrap_err(), DispatchDenied::CapabilityNone);
+        assert_eq!(
+            DispatchGate::check(&req_r).unwrap_err(),
+            DispatchDenied::CapabilityNone
+        );
     }
 
     #[test]
     fn read_only_allows_reads_blocks_writes() {
         let p = policy(DispatchCapability::ReadOnly);
         let mut req = write_request(&p, "67.10");
-        assert_eq!(DispatchGate::check(&req).unwrap_err(), DispatchDenied::CapabilityReadOnly);
+        assert_eq!(
+            DispatchGate::check(&req).unwrap_err(),
+            DispatchDenied::CapabilityReadOnly
+        );
         req.kind = DispatchKind::Read;
         DispatchGate::check(&req).unwrap();
     }
@@ -223,7 +229,10 @@ mod tests {
         let p = policy(DispatchCapability::Full);
         let mut req = write_request(&p, "67.10");
         req.sender_trusted = false;
-        assert_eq!(DispatchGate::check(&req).unwrap_err(), DispatchDenied::SenderNotTrusted);
+        assert_eq!(
+            DispatchGate::check(&req).unwrap_err(),
+            DispatchDenied::SenderNotTrusted
+        );
 
         // Reads bypass the trust gate so list_agents stays open.
         req.kind = DispatchKind::Read;

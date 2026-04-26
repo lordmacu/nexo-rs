@@ -10,7 +10,6 @@
 
 pub mod admin;
 pub mod agent_control;
-pub mod subjects;
 pub mod agent_query;
 pub mod chain;
 pub mod dispatch_followup;
@@ -18,12 +17,9 @@ pub mod event_forwarder;
 pub mod hooks;
 pub mod policy_gate;
 pub mod program_phase;
+pub mod subjects;
 pub mod tool_names;
 
-pub use subjects::{
-    registry_snapshot_subject, DispatchDeniedPayload, DispatchSpawnedPayload, DispatchTelemetry,
-    HookDispatchedPayload, HookFailedPayload, NoopTelemetry,
-};
 pub use admin::{
     evict_completed, flush_agent_queue, set_concurrency_cap, AdminError, EvictCompletedInput,
     EvictCompletedOutput, FlushAgentQueueOutput, SetConcurrencyCapInput, SetConcurrencyCapOutput,
@@ -36,10 +32,14 @@ pub use agent_query::{
     agent_hooks_list, agent_logs_tail, agent_status, list_agents, AgentHooksListInput,
     AgentLogsTailInput, AgentStatusInput, ListAgentsInput,
 };
-pub use hooks::HookRegistry;
 pub use chain::{
     program_phase_chain, program_phase_parallel, ProgramPhaseChainInput, ProgramPhaseChainOutput,
     ProgramPhaseParallelInput, ProgramPhaseParallelOutput,
+};
+pub use hooks::HookRegistry;
+pub use subjects::{
+    registry_snapshot_subject, DispatchDeniedPayload, DispatchSpawnedPayload, DispatchTelemetry,
+    HookDispatchedPayload, HookFailedPayload, NoopTelemetry,
 };
 
 pub use hooks::{
@@ -48,10 +48,10 @@ pub use hooks::{
     NatsHookPublisher, NoopNatsHookPublisher, SqliteHookRegistryStore,
 };
 
-pub use event_forwarder::EventForwarder;
 pub use dispatch_followup::{
     dispatch_followup_call, followup_phase_id, DispatchFollowupInput, DispatchFollowupOutput,
 };
+pub use event_forwarder::EventForwarder;
 pub use program_phase::{
     program_phase_dispatch, BudgetOverride, ProgramPhaseError, ProgramPhaseInput,
     ProgramPhaseOutput,

@@ -75,8 +75,7 @@ impl AppConfig {
         let taskflow = load_optional::<TaskflowConfig>(dir, "taskflow.yaml")?.unwrap_or_default();
         let transcripts =
             load_optional::<TranscriptsConfig>(dir, "transcripts.yaml")?.unwrap_or_default();
-        let pairing =
-            load_optional::<PairingConfig>(dir, "pairing.yaml")?.map(|f| f.pairing);
+        let pairing = load_optional::<PairingConfig>(dir, "pairing.yaml")?.map(|f| f.pairing);
         Ok(AppConfig {
             agents,
             broker,

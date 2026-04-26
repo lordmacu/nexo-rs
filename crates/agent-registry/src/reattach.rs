@@ -46,7 +46,10 @@ pub enum ReattachOutcome {
     /// Paused or terminal — kept in memory but no caller action.
     Recorded(AgentHandle),
     /// Old terminal row skipped (older than `keep_terminal_for`).
-    Skipped { goal_id: nexo_driver_types::GoalId, status: AgentRunStatus },
+    Skipped {
+        goal_id: nexo_driver_types::GoalId,
+        status: AgentRunStatus,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -76,8 +79,9 @@ pub async fn reattach(
     store: Arc<dyn AgentRegistryStore>,
     opts: ReattachOptions,
 ) -> Result<Vec<ReattachOutcome>, RegistryError> {
-    let cutoff: DateTime<Utc> = Utc::now() - chrono::Duration::from_std(opts.keep_terminal_for)
-        .unwrap_or_else(|_| chrono::Duration::days(7));
+    let cutoff: DateTime<Utc> = Utc::now()
+        - chrono::Duration::from_std(opts.keep_terminal_for)
+            .unwrap_or_else(|_| chrono::Duration::days(7));
 
     let rows = store.list().await?;
     let mut out = Vec::with_capacity(rows.len());
@@ -119,7 +123,9 @@ pub async fn reattach(
                 // admit() flips status to Running when there is
                 // capacity; force it back to Queued so the
                 // restored queue intent matches what was on disk.
-                registry.set_status(h.goal_id, AgentRunStatus::Queued).await?;
+                registry
+                    .set_status(h.goal_id, AgentRunStatus::Queued)
+                    .await?;
                 out.push(ReattachOutcome::Requeued(h));
             }
             AgentRunStatus::Paused => {
@@ -133,10 +139,7 @@ pub async fn reattach(
             | AgentRunStatus::Failed
             | AgentRunStatus::Cancelled
             | AgentRunStatus::LostOnRestart => {
-                let too_old = handle
-                    .finished_at
-                    .map(|t| t < cutoff)
-                    .unwrap_or(false);
+                let too_old = handle.finished_at.map(|t| t < cutoff).unwrap_or(false);
                 if too_old {
                     store.remove(handle.goal_id).await?;
                     out.push(ReattachOutcome::Skipped {

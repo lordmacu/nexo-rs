@@ -51,7 +51,9 @@ fn anthropic_fixture() -> Vec<Bytes> {
         let json = format!(
             r#"{{"type":"content_block_delta","index":0,"delta":{{"type":"text_delta","text":"tok{i} "}}}}"#
         );
-        out.push(Bytes::from(format!("event: content_block_delta\ndata: {json}\n\n")));
+        out.push(Bytes::from(format!(
+            "event: content_block_delta\ndata: {json}\n\n"
+        )));
     }
     out.push(Bytes::from_static(
         b"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
@@ -87,9 +89,7 @@ fn bench_openai(c: &mut Criterion) {
         b.iter(|| {
             runtime.block_on(async {
                 let owned: Vec<Bytes> = fixture.clone();
-                let s = stream::iter(
-                    owned.into_iter().map(Ok::<_, std::io::Error>),
-                );
+                let s = stream::iter(owned.into_iter().map(Ok::<_, std::io::Error>));
                 let mut out = parse_openai_sse(s);
                 let mut count = 0usize;
                 while let Some(chunk) = out.next().await {
@@ -114,9 +114,7 @@ fn bench_anthropic(c: &mut Criterion) {
         b.iter(|| {
             runtime.block_on(async {
                 let owned: Vec<Bytes> = fixture.clone();
-                let s = stream::iter(
-                    owned.into_iter().map(Ok::<_, std::io::Error>),
-                );
+                let s = stream::iter(owned.into_iter().map(Ok::<_, std::io::Error>));
                 let mut out = parse_anthropic_sse(s);
                 let mut count = 0usize;
                 while let Some(chunk) = out.next().await {
@@ -141,9 +139,7 @@ fn bench_gemini(c: &mut Criterion) {
         b.iter(|| {
             runtime.block_on(async {
                 let owned: Vec<Bytes> = fixture.clone();
-                let s = stream::iter(
-                    owned.into_iter().map(Ok::<_, std::io::Error>),
-                );
+                let s = stream::iter(owned.into_iter().map(Ok::<_, std::io::Error>));
                 let mut out = parse_gemini_sse(s);
                 let mut count = 0usize;
                 while let Some(chunk) = out.next().await {

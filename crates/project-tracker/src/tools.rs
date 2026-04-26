@@ -50,7 +50,9 @@ impl From<TrackerError> for ToolError {
 pub enum StatusQuery {
     CurrentPhase,
     NextPhase,
-    PhaseDetail { phase_id: String },
+    PhaseDetail {
+        phase_id: String,
+    },
     FollowupsOpen,
     LastShipped {
         #[serde(default = "default_last_n")]
@@ -125,7 +127,9 @@ impl ProjectTracking {
     pub async fn project_status(&self, q: StatusQuery) -> Result<String, ToolError> {
         let res = self.project_status_inner(q).await;
         if res.is_ok() {
-            self.counters.project_status_ok.fetch_add(1, Ordering::Relaxed);
+            self.counters
+                .project_status_ok
+                .fetch_add(1, Ordering::Relaxed);
         } else {
             self.counters
                 .project_status_err
@@ -144,10 +148,12 @@ impl ProjectTracking {
                 Some(s) => Ok(render_subphase_line(&s)),
                 None => Ok("no pending phase".into()),
             },
-            StatusQuery::PhaseDetail { phase_id } => match self.tracker.phase_detail(&phase_id).await? {
-                Some(s) => Ok(render_subphase_detail(&s)),
-                None => Err(ToolError::PhaseNotFound(phase_id)),
-            },
+            StatusQuery::PhaseDetail { phase_id } => {
+                match self.tracker.phase_detail(&phase_id).await? {
+                    Some(s) => Ok(render_subphase_detail(&s)),
+                    None => Err(ToolError::PhaseNotFound(phase_id)),
+                }
+            }
             StatusQuery::FollowupsOpen => {
                 let items = self.tracker.followups().await?;
                 Ok(render_followups_open(&items))
@@ -216,27 +222,42 @@ impl ProjectTracking {
         let res = g.for_phase(&self.repo_root, &input.phase_id).await;
         match res {
             Ok(rows) if rows.is_empty() => {
-                self.counters.git_log_for_phase_ok.fetch_add(1, Ordering::Relaxed);
+                self.counters
+                    .git_log_for_phase_ok
+                    .fetch_add(1, Ordering::Relaxed);
                 Ok(format!("no commits found for Phase {}", input.phase_id))
             }
             Ok(rows) => {
-                self.counters.git_log_for_phase_ok.fetch_add(1, Ordering::Relaxed);
+                self.counters
+                    .git_log_for_phase_ok
+                    .fetch_add(1, Ordering::Relaxed);
                 let mut out = String::new();
                 for r in rows {
-                    out.push_str(&format!("- `{}` {} — {}\n", r.sha, &r.date[..10.min(r.date.len())], r.subject));
+                    out.push_str(&format!(
+                        "- `{}` {} — {}\n",
+                        r.sha,
+                        &r.date[..10.min(r.date.len())],
+                        r.subject
+                    ));
                 }
                 Ok(crate::format::cap_to(out, DEFAULT_BYTE_CAP))
             }
             Err(GitError::CircuitOpen(_)) => {
-                self.counters.git_log_for_phase_err.fetch_add(1, Ordering::Relaxed);
+                self.counters
+                    .git_log_for_phase_err
+                    .fetch_add(1, Ordering::Relaxed);
                 Ok("git lookup temporarily disabled (circuit open)".into())
             }
             Err(GitError::Timeout(_)) => {
-                self.counters.git_log_for_phase_err.fetch_add(1, Ordering::Relaxed);
+                self.counters
+                    .git_log_for_phase_err
+                    .fetch_add(1, Ordering::Relaxed);
                 Ok("git lookup timed out".into())
             }
             Err(e) => {
-                self.counters.git_log_for_phase_err.fetch_add(1, Ordering::Relaxed);
+                self.counters
+                    .git_log_for_phase_err
+                    .fetch_add(1, Ordering::Relaxed);
                 Err(ToolError::Git(e.to_string()))
             }
         }
@@ -276,7 +297,9 @@ mod tests {
     async fn phase_detail_known_id_renders() {
         let t = tracking_for_workspace();
         let out = t
-            .project_status(StatusQuery::PhaseDetail { phase_id: "67.9".into() })
+            .project_status(StatusQuery::PhaseDetail {
+                phase_id: "67.9".into(),
+            })
             .await
             .unwrap();
         assert!(out.contains("67.9"));
@@ -286,7 +309,9 @@ mod tests {
     async fn phase_detail_unknown_id_errors() {
         let t = tracking_for_workspace();
         let err = t
-            .project_status(StatusQuery::PhaseDetail { phase_id: "9999.999".into() })
+            .project_status(StatusQuery::PhaseDetail {
+                phase_id: "9999.999".into(),
+            })
             .await
             .unwrap_err();
         assert!(matches!(err, ToolError::PhaseNotFound(_)));
@@ -307,7 +332,9 @@ mod tests {
     async fn followup_detail_known_code() {
         let t = tracking_for_workspace();
         let out = t
-            .followup_detail(FollowupDetailInput { code: "PR-3".into() })
+            .followup_detail(FollowupDetailInput {
+                code: "PR-3".into(),
+            })
             .await
             .unwrap();
         assert!(out.contains("PR-3"));
@@ -317,7 +344,9 @@ mod tests {
     async fn followup_detail_unknown_code_errors() {
         let t = tracking_for_workspace();
         let err = t
-            .followup_detail(FollowupDetailInput { code: "ZZZ-999".into() })
+            .followup_detail(FollowupDetailInput {
+                code: "ZZZ-999".into(),
+            })
             .await
             .unwrap_err();
         assert!(matches!(err, ToolError::FollowupNotFound(_)));

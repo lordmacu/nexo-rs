@@ -2487,12 +2487,12 @@ async fn boot_dispatch_ctx_if_enabled(
     // owns. Adapters are registered into a SHARED registry here so
     // notify_origin reaches WhatsApp / Telegram out of the box.
     let pairing_registry = nexo_pairing::PairingAdapterRegistry::new();
-    pairing_registry.register(Arc::new(
-        nexo_plugin_whatsapp::WhatsappPairingAdapter::new(_broker.clone()),
-    ));
-    pairing_registry.register(Arc::new(
-        nexo_plugin_telegram::TelegramPairingAdapter::new(_broker.clone()),
-    ));
+    pairing_registry.register(Arc::new(nexo_plugin_whatsapp::WhatsappPairingAdapter::new(
+        _broker.clone(),
+    )));
+    pairing_registry.register(Arc::new(nexo_plugin_telegram::TelegramPairingAdapter::new(
+        _broker.clone(),
+    )));
     let hook_dispatcher: Arc<dyn nexo_dispatch_tools::HookDispatcher> =
         Arc::new(nexo_dispatch_tools::DefaultHookDispatcher::new(
             pairing_registry,
@@ -2570,24 +2570,23 @@ async fn boot_dispatch_ctx_if_enabled(
                 .ok()
                 .map(|v| !matches!(v.as_str(), "1" | "true" | "yes"))
                 .unwrap_or(true),
-            chainer: Some(Arc::new(
-                nexo_core::agent::dispatch_handlers::AuditChainer {
-                    orchestrator: orchestrator.clone(),
-                    registry: registry.clone(),
-                    hooks: hook_registry.clone(),
-                    log_buffer: log_buffer.clone(),
-                    default_caps: nexo_dispatch_tools::policy_gate::CapSnapshot {
-                        queue_when_full: true,
-                        ..Default::default()
-                    },
-                    // B22 — audit goals run inside the parent's
-                    // worktree so Claude sees the commits.
-                    workspace_root: driver_cfg.workspace.root.clone(),
-                    // B24 — separate cap so audits can't be
-                    // starved by main dispatch traffic.
-                    audit_cap: Some(2),
+            chainer: Some(Arc::new(nexo_core::agent::dispatch_handlers::AuditChainer {
+                orchestrator: orchestrator.clone(),
+                registry: registry.clone(),
+                hooks: hook_registry.clone(),
+                log_buffer: log_buffer.clone(),
+                default_caps: nexo_dispatch_tools::policy_gate::CapSnapshot {
+                    queue_when_full: true,
+                    ..Default::default()
                 },
-            ) as Arc<dyn nexo_dispatch_tools::DispatchPhaseChainer>),
+                // B22 — audit goals run inside the parent's
+                // worktree so Claude sees the commits.
+                workspace_root: driver_cfg.workspace.root.clone(),
+                // B24 — separate cap so audits can't be
+                // starved by main dispatch traffic.
+                audit_cap: Some(2),
+            })
+                as Arc<dyn nexo_dispatch_tools::DispatchPhaseChainer>),
         },
     ))
 }
@@ -3238,8 +3237,7 @@ fn route_pair_subcommand(positional: &[String], has_json_flag: bool) -> Option<M
             device_label: parse_kv_flag(positional, "--for-device"),
             public_url: parse_kv_flag(positional, "--public-url"),
             qr_png_path: parse_kv_flag(positional, "--qr-png").map(PathBuf::from),
-            ttl_secs: parse_kv_flag(positional, "--ttl-secs")
-                .and_then(|s| s.parse::<u64>().ok()),
+            ttl_secs: parse_kv_flag(positional, "--ttl-secs").and_then(|s| s.parse::<u64>().ok()),
             json: has_json_flag,
         },
         Some("list") => Mode::PairList {
@@ -3426,11 +3424,9 @@ fn parse_args() -> CliArgs {
         [cmd, sub] if cmd == "setup" && sub == "telegram-link" => {
             Mode::SetupTelegramLink { agent: None }
         }
-        [cmd, sub, agent] if cmd == "setup" && sub == "telegram-link" => {
-            Mode::SetupTelegramLink {
-                agent: Some(agent.clone()),
-            }
-        }
+        [cmd, sub, agent] if cmd == "setup" && sub == "telegram-link" => Mode::SetupTelegramLink {
+            agent: Some(agent.clone()),
+        },
         // (pair handled by route_pair_subcommand earlier)
         [cmd, service] if cmd == "setup" => Mode::SetupOne {
             service: service.clone(),
@@ -4736,16 +4732,15 @@ fn commit_bootstrap(body: &str) -> Result<String, String> {
     }
     let agents_yaml = std::path::Path::new("./config/agents.yaml");
     if agents_yaml.exists() {
-        let raw = std::fs::read_to_string(agents_yaml)
-            .map_err(|e| format!("read agents.yaml: {e}"))?;
+        let raw =
+            std::fs::read_to_string(agents_yaml).map_err(|e| format!("read agents.yaml: {e}"))?;
         if let Ok(parsed) = serde_yaml::from_str::<serde_yaml::Value>(&raw) {
             let collides = parsed
                 .get("agents")
                 .and_then(|v| v.as_sequence())
                 .map(|seq| {
-                    seq.iter().any(|item| {
-                        item.get("id").and_then(|v| v.as_str()) == Some(slug.as_str())
-                    })
+                    seq.iter()
+                        .any(|item| item.get("id").and_then(|v| v.as_str()) == Some(slug.as_str()))
                 })
                 .unwrap_or(false);
             if collides {
@@ -6360,7 +6355,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         pairing_policy: serde_json::Value::Null,
         language: primary.language.clone(),
         context_optimization: None,
-            dispatch_policy: Default::default(),
+        dispatch_policy: Default::default(),
     });
     let broker = AnyBroker::local();
     let sessions = Arc::new(SessionManager::new(std::time::Duration::from_secs(300), 20));

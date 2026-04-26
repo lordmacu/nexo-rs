@@ -23,18 +23,18 @@ use nexo_agent_registry::{AgentRegistry, LogBuffer};
 use nexo_dispatch_tools::policy_gate::CapSnapshot;
 use nexo_dispatch_tools::{
     agent_hooks_list, agent_logs_tail, agent_status, cancel_agent, list_agents, pause_agent,
-    program_phase_dispatch, resume_agent, update_budget, AgentHooksListInput,
-    AgentLogsTailInput, AgentStatusInput, CancelAgentInput, DispatchDeniedPayload,
-    DispatchSpawnedPayload, HookRegistry, ListAgentsInput, PauseAgentInput, ProgramPhaseInput,
-    ProgramPhaseOutput, UpdateBudgetInput,
+    program_phase_dispatch, resume_agent, update_budget, AgentHooksListInput, AgentLogsTailInput,
+    AgentStatusInput, CancelAgentInput, DispatchDeniedPayload, DispatchSpawnedPayload,
+    HookRegistry, ListAgentsInput, PauseAgentInput, ProgramPhaseInput, ProgramPhaseOutput,
+    UpdateBudgetInput,
 };
 use nexo_driver_claude::{DispatcherIdentity, OriginChannel};
 use nexo_driver_loop::DriverOrchestrator;
 use nexo_driver_types::GoalId;
 use nexo_llm::ToolDef;
-use nexo_project_tracker::MutableTracker;
 #[allow(unused_imports)]
 use nexo_project_tracker::tracker::ProjectTracker;
+use nexo_project_tracker::MutableTracker;
 use serde_json::{json, Value};
 
 use super::context::AgentContext;
@@ -108,12 +108,14 @@ impl DispatchToolContext {
         // context after binding resolution; we lift it into an
         // OriginChannel so notify_origin knows where to send the
         // completion summary.
-        ctx.inbound_origin.as_ref().map(|(plugin, instance, sender)| OriginChannel {
-            plugin: plugin.clone(),
-            instance: instance.clone(),
-            sender_id: sender.clone(),
-            correlation_id: None,
-        })
+        ctx.inbound_origin
+            .as_ref()
+            .map(|(plugin, instance, sender)| OriginChannel {
+                plugin: plugin.clone(),
+                instance: instance.clone(),
+                sender_id: sender.clone(),
+                correlation_id: None,
+            })
     }
 
     fn dispatch_policy(&self, ctx: &AgentContext) -> nexo_config::DispatchPolicy {
@@ -293,9 +295,13 @@ impl ToolHandler for CancelAgentHandler {
     async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
         let dispatch = dispatch_ctx(ctx)?;
         let input: CancelAgentInput = serde_json::from_value(args)?;
-        let out = cancel_agent(input, dispatch.orchestrator.clone(), dispatch.registry.clone())
-            .await
-            .map_err(|e| anyhow::anyhow!("cancel_agent: {e}"))?;
+        let out = cancel_agent(
+            input,
+            dispatch.orchestrator.clone(),
+            dispatch.registry.clone(),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("cancel_agent: {e}"))?;
         Ok(serde_json::to_value(out)?)
     }
 }
@@ -307,9 +313,13 @@ impl ToolHandler for PauseAgentHandler {
     async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
         let dispatch = dispatch_ctx(ctx)?;
         let input: PauseAgentInput = serde_json::from_value(args)?;
-        let out = pause_agent(input, dispatch.orchestrator.clone(), dispatch.registry.clone())
-            .await
-            .map_err(|e| anyhow::anyhow!("pause_agent: {e}"))?;
+        let out = pause_agent(
+            input,
+            dispatch.orchestrator.clone(),
+            dispatch.registry.clone(),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("pause_agent: {e}"))?;
         Ok(serde_json::to_value(out)?)
     }
 }
@@ -321,9 +331,13 @@ impl ToolHandler for ResumeAgentHandler {
     async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
         let dispatch = dispatch_ctx(ctx)?;
         let input: PauseAgentInput = serde_json::from_value(args)?;
-        let out = resume_agent(input, dispatch.orchestrator.clone(), dispatch.registry.clone())
-            .await
-            .map_err(|e| anyhow::anyhow!("resume_agent: {e}"))?;
+        let out = resume_agent(
+            input,
+            dispatch.orchestrator.clone(),
+            dispatch.registry.clone(),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("resume_agent: {e}"))?;
         Ok(serde_json::to_value(out)?)
     }
 }
@@ -335,9 +349,13 @@ impl ToolHandler for UpdateBudgetHandler {
     async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
         let dispatch = dispatch_ctx(ctx)?;
         let input: UpdateBudgetInput = serde_json::from_value(args)?;
-        let out = update_budget(input, dispatch.registry.clone(), dispatch.orchestrator.clone())
-            .await
-            .map_err(|e| anyhow::anyhow!("update_budget: {e}"))?;
+        let out = update_budget(
+            input,
+            dispatch.registry.clone(),
+            dispatch.orchestrator.clone(),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("update_budget: {e}"))?;
         Ok(serde_json::to_value(out)?)
     }
 }
@@ -402,10 +420,7 @@ impl nexo_dispatch_tools::DispatchPhaseChainer for AuditChainer {
         Err("AuditChainer only supports audit(); use a richer chainer for DispatchPhase".into())
     }
 
-    async fn audit(
-        &self,
-        parent: &nexo_dispatch_tools::HookPayload,
-    ) -> Result<GoalId, String> {
+    async fn audit(&self, parent: &nexo_dispatch_tools::HookPayload) -> Result<GoalId, String> {
         use nexo_agent_registry::{AgentHandle, AgentRunStatus, AgentSnapshot};
         use nexo_driver_types::{AcceptanceCriterion, BudgetGuards, Goal};
 
@@ -421,8 +436,7 @@ impl nexo_dispatch_tools::DispatchPhaseChainer for AuditChainer {
             let running = rows
                 .iter()
                 .filter(|r| {
-                    matches!(r.status, AgentRunStatus::Running)
-                        && r.phase_id.starts_with("audit:")
+                    matches!(r.status, AgentRunStatus::Running) && r.phase_id.starts_with("audit:")
                 })
                 .count() as u32;
             if running >= cap {
@@ -467,9 +481,7 @@ impl nexo_dispatch_tools::DispatchPhaseChainer for AuditChainer {
         // commits. WorkspaceManager creates them deterministically
         // under <workspace_root>/<goal_id>; the goal's worktree
         // path is reachable by simple join.
-        let parent_worktree = self
-            .workspace_root
-            .join(parent.goal_id.0.to_string());
+        let parent_worktree = self.workspace_root.join(parent.goal_id.0.to_string());
         let parent_worktree = if parent_worktree.exists() {
             Some(parent_worktree.display().to_string())
         } else {
@@ -521,8 +533,7 @@ impl nexo_dispatch_tools::DispatchPhaseChainer for AuditChainer {
             .admit(handle, false)
             .await
             .map_err(|e| format!("audit admit: {e}"))?;
-        self.registry
-            .set_max_turns(goal_id, goal.budget.max_turns);
+        self.registry.set_max_turns(goal_id, goal.budget.max_turns);
 
         // Audit goals get a notify_origin hook so findings reach
         // the operator. B19 + S1.
@@ -590,16 +601,15 @@ impl ToolHandler for PreflightHandler {
             false
         };
         let (is_self_modify, allow_self_modify, daemon_source) =
-            ctx.dispatch.as_ref().map_or(
-                (false, false, String::from("<unset>")),
-                |d| {
+            ctx.dispatch
+                .as_ref()
+                .map_or((false, false, String::from("<unset>")), |d| {
                     (
                         d.is_self_modify_target(),
                         d.allow_self_modify,
                         d.daemon_source_root.display().to_string(),
                     )
-                },
-            );
+                });
         let report = serde_json::json!({
             "llm_provider": llm_provider,
             "llm_model": llm_model,
@@ -678,7 +688,9 @@ impl ToolHandler for InitProjectHandler {
         let target_root: std::path::PathBuf = if std::path::Path::new(&input.name).is_absolute() {
             std::path::PathBuf::from(&input.name)
         } else {
-            std::env::current_dir().unwrap_or_default().join(&input.name)
+            std::env::current_dir()
+                .unwrap_or_default()
+                .join(&input.name)
         };
         if let Err(e) = std::fs::create_dir_all(&target_root) {
             return Ok(serde_json::json!({
@@ -1026,7 +1038,10 @@ mod tests {
             Arc::new(SessionManager::new(std::time::Duration::from_secs(60), 64)),
         );
         let h = ProgramPhaseHandler;
-        let err = h.call(&ctx, json!({ "phase_id": "67.10" })).await.unwrap_err();
+        let err = h
+            .call(&ctx, json!({ "phase_id": "67.10" }))
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("AgentContext.dispatch"));
     }
 

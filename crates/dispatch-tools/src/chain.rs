@@ -27,7 +27,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::hooks::types::{CompletionHook, HookAction, HookTrigger};
 use crate::policy_gate::CapSnapshot;
-use crate::program_phase::{program_phase_dispatch, ProgramPhaseError, ProgramPhaseInput, ProgramPhaseOutput};
+use crate::program_phase::{
+    program_phase_dispatch, ProgramPhaseError, ProgramPhaseInput, ProgramPhaseOutput,
+};
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct ProgramPhaseParallelInput {
@@ -157,7 +159,9 @@ pub async fn program_phase_chain(
 ) -> Result<ProgramPhaseChainOutput, ProgramPhaseError> {
     if input.phases.is_empty() {
         return Ok(ProgramPhaseChainOutput {
-            first: ProgramPhaseOutput::NotFound { phase_id: "".into() },
+            first: ProgramPhaseOutput::NotFound {
+                phase_id: "".into(),
+            },
             chain_hooks: Vec::new(),
             stop_on_fail: input.stop_on_fail,
         });
@@ -169,7 +173,7 @@ pub async fn program_phase_chain(
             phase_id: head,
             acceptance_override: None,
             budget_override: None,
-                hooks: Vec::new(),
+            hooks: Vec::new(),
         },
         tracker,
         orchestrator.clone(),

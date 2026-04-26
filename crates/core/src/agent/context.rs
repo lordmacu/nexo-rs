@@ -141,10 +141,7 @@ impl AgentContext {
         self
     }
 
-    pub fn with_dispatch(
-        mut self,
-        d: Arc<super::dispatch_handlers::DispatchToolContext>,
-    ) -> Self {
+    pub fn with_dispatch(mut self, d: Arc<super::dispatch_handlers::DispatchToolContext>) -> Self {
         self.dispatch = Some(d);
         self
     }

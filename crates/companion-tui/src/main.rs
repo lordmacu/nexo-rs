@@ -37,8 +37,8 @@ fn main() -> Result<()> {
     let json = args.iter().any(|a| a == "--json");
 
     let code = pick_code(&args)?;
-    let payload = decode_setup_code(&code)
-        .map_err(|e| anyhow!("invalid setup-code payload: {e}"))?;
+    let payload =
+        decode_setup_code(&code).map_err(|e| anyhow!("invalid setup-code payload: {e}"))?;
 
     let token_expiry = token_expires_at(&payload.bootstrap_token);
     let now = Utc::now();
@@ -61,7 +61,10 @@ fn main() -> Result<()> {
         println!("Decoded setup-code payload:");
         println!();
         println!("  URL                : {}", payload.url);
-        println!("  Bootstrap token    : {}", redacted(&payload.bootstrap_token));
+        println!(
+            "  Bootstrap token    : {}",
+            redacted(&payload.bootstrap_token)
+        );
         println!("  Payload expires at : {}", payload.expires_at);
         if let Some(exp) = token_expiry {
             println!("  Token expires at   : {}", exp);
@@ -116,7 +119,14 @@ fn redacted(token: &str) -> String {
         return "<short>".to_string();
     }
     let head: String = token.chars().take(8).collect();
-    let tail: String = token.chars().rev().take(4).collect::<String>().chars().rev().collect();
+    let tail: String = token
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
     format!("{head}…{tail}")
 }
 

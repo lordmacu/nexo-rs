@@ -12,7 +12,9 @@
 use std::sync::Arc;
 
 use chrono::Utc;
-use nexo_agent_registry::{AdmitOutcome, AgentHandle, AgentRegistry, AgentRunStatus, AgentSnapshot};
+use nexo_agent_registry::{
+    AdmitOutcome, AgentHandle, AgentRegistry, AgentRunStatus, AgentSnapshot,
+};
 use nexo_config::DispatchPolicy;
 use nexo_driver_claude::{DispatcherIdentity, OriginChannel};
 use nexo_driver_loop::DriverOrchestrator;
@@ -21,7 +23,9 @@ use nexo_project_tracker::tracker::ProjectTracker;
 use nexo_project_tracker::types::FollowUpStatus;
 use serde::{Deserialize, Serialize};
 
-use crate::policy_gate::{CapSnapshot, DispatchDenied, DispatchGate, DispatchKind, DispatchRequest};
+use crate::policy_gate::{
+    CapSnapshot, DispatchDenied, DispatchGate, DispatchKind, DispatchRequest,
+};
 use crate::program_phase::{
     apply_default_acceptance, apply_default_budget, BudgetOverride, ProgramPhaseError,
 };
@@ -39,13 +43,30 @@ pub struct DispatchFollowupInput {
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum DispatchFollowupOutput {
-    Dispatched { goal_id: GoalId, code: String },
-    Queued { goal_id: GoalId, code: String, position: usize },
-    Rejected { code: String, reason: String },
-    NotFound { code: String },
+    Dispatched {
+        goal_id: GoalId,
+        code: String,
+    },
+    Queued {
+        goal_id: GoalId,
+        code: String,
+        position: usize,
+    },
+    Rejected {
+        code: String,
+        reason: String,
+    },
+    NotFound {
+        code: String,
+    },
     /// The follow-up exists but is already resolved.
-    AlreadyResolved { code: String },
-    Forbidden { code: String, reason: String },
+    AlreadyResolved {
+        code: String,
+    },
+    Forbidden {
+        code: String,
+        reason: String,
+    },
     NotTracked,
 }
 
@@ -115,7 +136,10 @@ pub async fn dispatch_followup_call(
         });
     }
 
-    let description = format!("[follow-up {}] {} — {}\n\n{}", item.code, item.section, item.title, item.body);
+    let description = format!(
+        "[follow-up {}] {} — {}\n\n{}",
+        item.code, item.section, item.title, item.body
+    );
     let acceptance = input
         .acceptance_override
         .clone()

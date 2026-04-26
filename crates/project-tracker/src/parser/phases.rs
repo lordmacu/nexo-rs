@@ -129,7 +129,7 @@ pub fn parse_str(raw: &str) -> Result<Vec<Phase>, String> {
                     title: title.trim().to_string(),
                     status,
                     body: None,
-            acceptance: None,
+                    acceptance: None,
                 },
                 Vec::new(),
             ));
@@ -172,10 +172,7 @@ fn split_status(rest: &str) -> (String, PhaseStatus) {
     (title.trim_end().to_string(), status)
 }
 
-fn flush_sub(
-    current_phase: &mut Option<Phase>,
-    current_sub: &mut Option<(SubPhase, Vec<String>)>,
-) {
+fn flush_sub(current_phase: &mut Option<Phase>, current_sub: &mut Option<(SubPhase, Vec<String>)>) {
     let Some((mut sub, body)) = current_sub.take() else {
         return;
     };

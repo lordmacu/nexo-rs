@@ -83,7 +83,7 @@ fn make_config(
         pairing_policy: serde_json::Value::Null,
         language: None,
         context_optimization: None,
-            dispatch_policy: Default::default(),
+        dispatch_policy: Default::default(),
     }
 }
 

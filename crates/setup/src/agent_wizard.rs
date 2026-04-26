@@ -39,19 +39,11 @@ use crate::yaml_patch;
 pub const MODEL_CATALOG: &[(&str, &[&str])] = &[
     (
         "minimax",
-        &[
-            "MiniMax-M2.5",
-            "MiniMax-M2",
-            "MiniMax-Text-01",
-        ],
+        &["MiniMax-M2.5", "MiniMax-M2", "MiniMax-Text-01"],
     ),
     (
         "anthropic",
-        &[
-            "claude-haiku-4-5",
-            "claude-sonnet-4-5",
-            "claude-opus-4-5",
-        ],
+        &["claude-haiku-4-5", "claude-sonnet-4-5", "claude-opus-4-5"],
     ),
     (
         "openai",
@@ -63,10 +55,7 @@ pub const MODEL_CATALOG: &[(&str, &[&str])] = &[
             "o1-mini",
         ],
     ),
-    (
-        "deepseek",
-        &["deepseek-chat", "deepseek-reasoner"],
-    ),
+    ("deepseek", &["deepseek-chat", "deepseek-reasoner"]),
     ("openai_custom", &[]),
 ];
 
@@ -115,8 +104,7 @@ pub struct AgentDashboard {
 /// Everything else is copied verbatim — operator runs the regular
 /// agent wizard afterwards to finish wiring.
 pub fn run_create_agent(config_dir: &Path) -> Result<()> {
-    let existing = yaml_patch::list_agent_ids(&config_dir.join("agents.yaml"))
-        .unwrap_or_default();
+    let existing = yaml_patch::list_agent_ids(&config_dir.join("agents.yaml")).unwrap_or_default();
     if existing.is_empty() {
         anyhow::bail!("no existing agents to clone — editá agents.yaml a mano");
     }
@@ -166,7 +154,9 @@ pub fn run_create_agent(config_dir: &Path) -> Result<()> {
         .iter()
         .find(|it| it.get("id").and_then(serde_yaml::Value::as_str) == Some(template.as_str()))
         .cloned()
-        .ok_or_else(|| anyhow::anyhow!("template entry not found in {}", template_file.display()))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!("template entry not found in {}", template_file.display())
+        })?;
 
     let mut new_item = template_item;
     if let Some(map) = new_item.as_mapping_mut() {
@@ -196,8 +186,7 @@ pub fn run_create_agent(config_dir: &Path) -> Result<()> {
     let yaml_text = serde_yaml::to_string(&serde_yaml::Value::Mapping(new_root))?;
 
     let drop_dir = config_dir.join("agents.d");
-    std::fs::create_dir_all(&drop_dir)
-        .with_context(|| format!("mkdir {}", drop_dir.display()))?;
+    std::fs::create_dir_all(&drop_dir).with_context(|| format!("mkdir {}", drop_dir.display()))?;
     let new_file = drop_dir.join(format!("{new_id}.yaml"));
     if new_file.exists() {
         anyhow::bail!("{} ya existe", new_file.display());
@@ -345,10 +334,7 @@ pub fn compute_dashboard(
         channels.push(ChannelStatus {
             plugin: entry.channel.clone(),
             instance,
-            auth_ok: matches!(
-                entry.auth,
-                channels_dashboard::AuthState::Authenticated
-            ),
+            auth_ok: matches!(entry.auth, channels_dashboard::AuthState::Authenticated),
             bound,
         });
     }
@@ -384,9 +370,10 @@ pub fn compute_dashboard(
         })
         .unwrap_or(false);
     let coding_enabled = tools_wildcard && any_full_dispatch;
-    let heartbeat_enabled = yaml_patch::read_agent_field(&agent_file, agent_id, "heartbeat.enabled")?
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+    let heartbeat_enabled =
+        yaml_patch::read_agent_field(&agent_file, agent_id, "heartbeat.enabled")?
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
     Ok(AgentDashboard {
         id: agent_id.to_string(),
@@ -407,10 +394,7 @@ pub fn print_dashboard(d: &AgentDashboard) {
     println!("Agente: {}", style(&d.id).cyan().bold());
     match &d.model {
         ModelStatus::None => {
-            println!(
-                "  Modelo:   {}",
-                style("(no configurado)").red()
-            );
+            println!("  Modelo:   {}", style("(no configurado)").red());
         }
         ModelStatus::Attached {
             provider,
@@ -453,7 +437,11 @@ pub fn print_dashboard(d: &AgentDashboard) {
             } else {
                 style("(unbound)").dim().to_string()
             };
-            let prefix = if i == 0 { "  Canales:  " } else { "            " };
+            let prefix = if i == 0 {
+                "  Canales:  "
+            } else {
+                "            "
+            };
             println!("{prefix}{auth_icon} {label}  {bind_tag}");
         }
     }
@@ -483,9 +471,8 @@ fn handle_model(
 ) -> Result<()> {
     let agent_file = yaml_patch::find_agent_file(config_dir, agent_id)?
         .ok_or_else(|| anyhow::anyhow!("agent `{agent_id}` not found"))?;
-    let current_provider =
-        yaml_patch::read_agent_field(&agent_file, agent_id, "model.provider")?
-            .and_then(|v| v.as_str().map(str::to_string));
+    let current_provider = yaml_patch::read_agent_field(&agent_file, agent_id, "model.provider")?
+        .and_then(|v| v.as_str().map(str::to_string));
     let current_model = yaml_patch::read_agent_field(&agent_file, agent_id, "model.model")?
         .and_then(|v| v.as_str().map(str::to_string));
 
@@ -549,9 +536,7 @@ fn handle_model(
         println!("(faltan credenciales para `{provider_id}` — corriendo formulario)");
         crate::run_service_pub(svc, secrets_dir, config_dir)?;
         if !provider_creds_ok(&provider_id, services, secrets_dir, config_dir) {
-            anyhow::bail!(
-                "credenciales de `{provider_id}` siguen incompletas — abortando attach"
-            );
+            anyhow::bail!("credenciales de `{provider_id}` siguen incompletas — abortando attach");
         }
     }
 
@@ -722,12 +707,9 @@ fn handle_channels(agent_id: &str, secrets_dir: &Path, config_dir: &Path) -> Res
             crate::try_hot_reload(config_dir);
         }
         2 => {
-            yaml_patch::remove_agent_list_item(
-                &agent_file,
-                agent_id,
-                "plugins",
-                &|v: &Value| v.as_str() == Some(&entry.channel),
-            )?;
+            yaml_patch::remove_agent_list_item(&agent_file, agent_id, "plugins", &|v: &Value| {
+                v.as_str() == Some(&entry.channel)
+            })?;
             yaml_patch::remove_agent_list_item(
                 &agent_file,
                 agent_id,
@@ -772,8 +754,7 @@ fn handle_skills(
         .iter()
         .copied()
         .filter(|svc| {
-            current.iter().any(|c| c == svc.id)
-                || skill_creds_ok(svc, secrets_dir, config_dir)
+            current.iter().any(|c| c == svc.id) || skill_creds_ok(svc, secrets_dir, config_dir)
         })
         .collect();
     let hidden_count = skill_services.len() - usable.len();
@@ -829,7 +810,10 @@ fn handle_skills(
             continue; // already attached, no need to re-auth
         }
         if !skill_creds_ok(svc, secrets_dir, config_dir) {
-            println!("(faltan credenciales para `{}` — corriendo formulario)", svc.id);
+            println!(
+                "(faltan credenciales para `{}` — corriendo formulario)",
+                svc.id
+            );
             if let Err(e) = crate::run_service_pub(svc, secrets_dir, config_dir) {
                 eprintln!("⚠  {}: {e:#}", svc.label);
             }
@@ -837,13 +821,7 @@ fn handle_skills(
     }
 
     // Replace the skills list wholesale.
-    let value = Value::Sequence(
-        chosen_ids
-            .iter()
-            .cloned()
-            .map(Value::String)
-            .collect(),
-    );
+    let value = Value::Sequence(chosen_ids.iter().cloned().map(Value::String).collect());
     yaml_patch::upsert_agent_field(&agent_file, agent_id, "skills", value)?;
     println!("✔ {} skills attached.", chosen_ids.len());
     crate::try_hot_reload(config_dir);
@@ -961,11 +939,7 @@ fn toggle_heartbeat(agent_file: &Path, agent_id: &str, config_dir: &Path) -> Res
 /// into every entry (creating the sub-map if missing). No-op when the
 /// list is absent or empty — coding stays effectively-off until the
 /// operator binds at least one channel.
-fn set_dispatch_mode_on_bindings(
-    agent_file: &Path,
-    agent_id: &str,
-    mode: &str,
-) -> Result<()> {
+fn set_dispatch_mode_on_bindings(agent_file: &Path, agent_id: &str, mode: &str) -> Result<()> {
     let bindings = match yaml_patch::read_agent_field(agent_file, agent_id, "inbound_bindings")? {
         Some(v) => v,
         None => return Ok(()),
@@ -1043,7 +1017,9 @@ fn skill_creds_ok(svc: &ServiceDef, secrets_dir: &Path, config_dir: &Path) -> bo
     // Skills with no Secret fields are always considered "ok" — they
     // don't need an auth dance to attach.
     let has_secret = svc.fields.iter().any(|f| {
-        matches!(f.kind, FieldKind::Secret) && f.required && matches!(f.target, FieldTarget::Secret { .. })
+        matches!(f.kind, FieldKind::Secret)
+            && f.required
+            && matches!(f.target, FieldTarget::Secret { .. })
     });
     if !has_secret {
         return true;

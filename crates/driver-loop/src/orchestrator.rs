@@ -264,15 +264,16 @@ impl DriverOrchestrator {
         if !self.cancel_tokens.contains_key(&goal_id) {
             return None;
         }
-        let mut entry = self.budget_overrides.entry(goal_id).or_insert_with(|| {
-            BudgetGuards {
+        let mut entry = self
+            .budget_overrides
+            .entry(goal_id)
+            .or_insert_with(|| BudgetGuards {
                 max_turns: new_max,
                 max_wall_time: Duration::from_secs(60 * 60 * 24 * 365),
                 max_tokens: u64::MAX,
                 max_consecutive_denies: u32::MAX,
                 max_consecutive_errors: u32::MAX,
-            }
-        });
+            });
         if new_max > entry.value().max_turns {
             entry.value_mut().max_turns = new_max;
         }
@@ -313,12 +314,10 @@ impl DriverOrchestrator {
     /// real `run_goal` exits, same as for fresh dispatches.
     /// Idempotent — re-registering returns the existing tokens.
     pub fn pre_register_goal(&self, goal_id: GoalId) {
-        self.pause_signals
-            .entry(goal_id)
-            .or_insert_with(|| {
-                let (tx, _rx) = watch::channel(false);
-                tx
-            });
+        self.pause_signals.entry(goal_id).or_insert_with(|| {
+            let (tx, _rx) = watch::channel(false);
+            tx
+        });
         self.cancel_tokens
             .entry(goal_id)
             .or_insert_with(|| self.cancel_root.child_token());
@@ -460,9 +459,9 @@ impl DriverOrchestrator {
                 .await;
 
             let cancel = goal_cancel.clone();
-            let mut extras = next_extras
-                .take()
-                .unwrap_or_else(|| build_attempt_extras(&prior_failures, &goal.budget, total_turns));
+            let mut extras = next_extras.take().unwrap_or_else(|| {
+                build_attempt_extras(&prior_failures, &goal.budget, total_turns)
+            });
             // Operator-interrupt drain — the agent-side
             // `interrupt_agent` tool queues messages here; we
             // surface them to the turn under
@@ -474,10 +473,7 @@ impl DriverOrchestrator {
                 extras.insert(
                     "operator_messages".into(),
                     serde_json::Value::Array(
-                        pending
-                            .into_iter()
-                            .map(serde_json::Value::String)
-                            .collect(),
+                        pending.into_iter().map(serde_json::Value::String).collect(),
                     ),
                 );
             }

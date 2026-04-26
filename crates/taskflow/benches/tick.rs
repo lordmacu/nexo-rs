@@ -11,9 +11,7 @@
 use std::sync::Arc;
 
 use chrono::{Duration, Utc};
-use criterion::{
-    criterion_group, criterion_main, BenchmarkId, Criterion, Throughput,
-};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use nexo_taskflow::engine::{WaitCondition, WaitEngine};
 use nexo_taskflow::manager::{CreateManagedInput, FlowManager};
 use nexo_taskflow::store::SqliteFlowStore;
@@ -44,10 +42,7 @@ async fn make_engine(num_waiting: usize) -> WaitEngine {
             })
             .await
             .expect("create_managed");
-        manager
-            .start_running(flow.id)
-            .await
-            .expect("start_running");
+        manager.start_running(flow.id).await.expect("start_running");
         let wait = WaitCondition::Timer { at: future };
         manager
             .set_waiting(flow.id, wait.into_value())
@@ -68,18 +63,14 @@ fn bench_tick_no_due(c: &mut Criterion) {
     for n in [10usize, 100, 1_000].iter() {
         let engine = runtime.block_on(make_engine(*n));
         group.throughput(Throughput::Elements(*n as u64));
-        group.bench_with_input(
-            BenchmarkId::from_parameter(n),
-            n,
-            |b, &_n| {
-                b.iter(|| {
-                    runtime.block_on(async {
-                        let report = engine.tick().await;
-                        std::hint::black_box(report);
-                    });
+        group.bench_with_input(BenchmarkId::from_parameter(n), n, |b, &_n| {
+            b.iter(|| {
+                runtime.block_on(async {
+                    let report = engine.tick().await;
+                    std::hint::black_box(report);
                 });
-            },
-        );
+            });
+        });
     }
     group.finish();
 }

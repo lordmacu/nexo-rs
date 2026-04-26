@@ -90,11 +90,7 @@ struct TgFrom {
 /// chat_id lands inside the telegram instance whose `allow_agents`
 /// lists that agent (multi-bot deployments). When `None`, the writer
 /// only succeeds if exactly one instance exists in the YAML.
-pub async fn run(
-    secrets_dir: &Path,
-    config_dir: &Path,
-    agent_id: Option<&str>,
-) -> Result<()> {
+pub async fn run(secrets_dir: &Path, config_dir: &Path, agent_id: Option<&str>) -> Result<()> {
     let token_path = secrets_dir.join("telegram_bot_token.txt");
     if !token_path.exists() {
         bail!("bot token missing — corre primero `agent setup telegram` para pegar el token");
