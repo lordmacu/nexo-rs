@@ -13,30 +13,35 @@ keywords      = { workspace = true }
 categories    = { workspace = true }
 
 [dependencies]
-async-trait        = { workspace = true }
-dashmap            = { workspace = true }
-parking_lot        = "0.12"
-sqlx               = { workspace = true }
-nexo-config        = { version = "0.1.1", path = "../config" }
-nexo-driver-types  = { version = "0.1.1", path = "../driver-types" }
-nexo-driver-claude = { version = "0.1.1", path = "../driver-claude" }
-nexo-agent-registry = { version = "0.1.1", path = "../agent-registry" }
-nexo-driver-loop    = { version = "0.1.1", path = "../driver-loop" }
-nexo-project-tracker = { version = "0.1.1", path = "../project-tracker" }
-nexo-pairing        = { version = "0.1.2", path = "../pairing" }
-tokio               = { workspace = true, features = ["time", "process", "io-util"] }
+anyhow              = { workspace = true }
+async-trait         = { workspace = true }
 chrono              = { workspace = true }
+dashmap             = { workspace = true }
 humantime           = { workspace = true }
 humantime-serde     = { workspace = true }
+nexo-agent-registry = { version = "0.1.1", path = "../agent-registry" }
+nexo-config         = { version = "0.1.1", path = "../config" }
+nexo-driver-claude  = { version = "0.1.1", path = "../driver-claude" }
+nexo-driver-loop    = { version = "0.1.1", path = "../driver-loop" }
+nexo-driver-permission = { version = "0.1.1", path = "../driver-permission" }
+nexo-driver-types   = { version = "0.1.1", path = "../driver-types" }
+nexo-pairing        = { version = "0.1.2", path = "../pairing" }
+nexo-project-tracker = { version = "0.1.1", path = "../project-tracker" }
+parking_lot         = "0.12"
+serde               = { workspace = true }
+serde_json          = { workspace = true }
+sqlx                = { workspace = true }
+thiserror           = { workspace = true }
+tokio               = { workspace = true, features = ["time", "process", "io-util", "macros", "rt-multi-thread"] }
+tracing             = { workspace = true }
+tracing-subscriber  = { workspace = true }
 uuid                = { workspace = true }
-serde              = { workspace = true }
-serde_json         = { workspace = true }
-thiserror          = { workspace = true }
-tracing            = { workspace = true }
+
+[[bin]]
+name = "nexo-driver-tools"
+path = "src/bin/nexo_driver_tools.rs"
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-tempfile = "3"
-nexo-driver-permission = { version = "0.1.1", path = "../driver-permission" }
 async-trait = { workspace = true }
-anyhow      = { workspace = true }
+tempfile    = "3"
+tokio       = { workspace = true, features = ["macros", "rt-multi-thread"] }
