@@ -430,14 +430,21 @@ impl AgentRuntime {
                             .to_string();
                         let (source_plugin, source_instance) =
                             parse_inbound_topic(&event.topic);
-                        // Binding filter — empty list = legacy wildcard
-                        // (accept all, matches pre-binding behavior).
-                        // Populated list = strict allowlist; we also
-                        // capture the matched binding index so the
-                        // session task can pick up its per-binding
-                        // capability overrides (tools, outbound allowlist,
-                        // skills, model, prompt, rate limit, delegates).
-                        // Load once per event so an in-flight reload
+                        // Binding filter — strict allowlist. An agent
+                        // with no `inbound_bindings` no longer falls
+                        // into a "legacy wildcard" bucket; every
+                        // operator must declare what their agent
+                        // listens to. Earlier behavior (empty list →
+                        // accept everything) silently swallowed every
+                        // plugin event when a wizard-generated
+                        // override happened to omit the bindings, so
+                        // a single bot's messages reached every agent
+                        // sharing the channel. The match also returns
+                        // the binding index so the session task can
+                        // pick up its per-binding capability overrides
+                        // (tools, outbound allowlist, skills, model,
+                        // prompt, rate limit, delegates). Load once
+                        // per event so an in-flight reload
                         // (ReloadCommand::Apply racing against the
                         // event) can't give us a partial view: we
                         // either see the old snapshot fully or the
@@ -448,38 +455,33 @@ impl AgentRuntime {
                         // drains reload first.
                         let snap = snapshot_ref.load_full();
                         let bindings = &snap.nexo_config.inbound_bindings;
-                        let effective = if bindings.is_empty() {
-                            snap.policy_for(None)
-                                .or_else(|| effective_policies.get(&None).map(|e| Arc::clone(e.value())))
-                                .expect("legacy effective policy is seeded at runtime::new")
-                        } else {
-                            match match_binding_index(
-                                bindings,
-                                &source_plugin,
-                                source_instance.as_deref(),
-                            ) {
-                                Some(idx) => {
-                                    tracing::trace!(
-                                        agent_id = %agent.id,
-                                        plugin = %source_plugin,
-                                        instance = source_instance.as_deref().unwrap_or("-"),
-                                        binding_index = idx,
-                                        snapshot_version = snap.version,
-                                        "inbound matched binding",
-                                    );
-                                    snap.policy_for(Some(idx))
-                                        .or_else(|| effective_policies.get(&Some(idx)).map(|e| Arc::clone(e.value())))
-                                        .expect("per-binding effective policy is seeded at runtime::new")
-                                }
-                                None => {
-                                    tracing::trace!(
-                                        agent_id = %agent.id,
-                                        plugin = %source_plugin,
-                                        instance = source_instance.as_deref().unwrap_or("-"),
-                                        "inbound dropped by binding filter",
-                                    );
-                                    continue;
-                                }
+                        let effective = match match_binding_index(
+                            bindings,
+                            &source_plugin,
+                            source_instance.as_deref(),
+                        ) {
+                            Some(idx) => {
+                                tracing::trace!(
+                                    agent_id = %agent.id,
+                                    plugin = %source_plugin,
+                                    instance = source_instance.as_deref().unwrap_or("-"),
+                                    binding_index = idx,
+                                    snapshot_version = snap.version,
+                                    "inbound matched binding",
+                                );
+                                snap.policy_for(Some(idx))
+                                    .or_else(|| effective_policies.get(&Some(idx)).map(|e| Arc::clone(e.value())))
+                                    .expect("per-binding effective policy is seeded at runtime::new")
+                            }
+                            None => {
+                                tracing::trace!(
+                                    agent_id = %agent.id,
+                                    plugin = %source_plugin,
+                                    instance = source_instance.as_deref().unwrap_or("-"),
+                                    bindings_len = bindings.len(),
+                                    "inbound dropped by binding filter",
+                                );
+                                continue;
                             }
                         };
                         let sender_id = event.payload
@@ -1114,16 +1116,26 @@ fn parse_inbound_topic(topic: &str) -> (String, Option<String>) {
         _ => (rest.to_string(), None),
     }
 }
-/// Find the first binding index that matches `(plugin, instance)`. A
-/// binding with `instance=None` matches any instance of its plugin —
-/// including events with no instance at all. Used by the runtime
-/// inbound-subscriber loop to both accept/reject events and select
-/// which binding's overrides govern the session.
+/// Find the first binding index that matches `(plugin, instance)`.
+/// Bindings and topics must agree on the `instance` axis: a binding
+/// with `instance: None` only catches no-instance events, and an
+/// `instance: Some(x)` binding only catches events with that exact
+/// instance suffix. Used by the runtime inbound-subscriber loop to
+/// both accept/reject events and select which binding's overrides
+/// govern the session.
 ///
 /// Returns `None` when no binding matches. Note: when an agent has no
 /// bindings at all the caller interprets that as the legacy wildcard
 /// ("accept every inbound"); this helper only speaks to the populated
 /// case.
+///
+/// Earlier versions allowed `instance: None` bindings to match any
+/// instance of their plugin. That made multi-bot setups silently
+/// fan-out a single bot's messages to every agent that listed the
+/// channel — `allow_agents` is enforced on outbound credentials, not
+/// on inbound dispatch. Tightening the match closes that gap; the
+/// migration story is "give every multi-bot binding an explicit
+/// `instance` (matching the plugin's `instance:` field)".
 fn match_binding_index(
     bindings: &[InboundBinding],
     plugin: &str,
@@ -1133,10 +1145,10 @@ fn match_binding_index(
         if b.plugin != plugin {
             return false;
         }
-        match (&b.instance, instance) {
-            (None, _) => true,
+        match (b.instance.as_deref(), instance) {
+            (None, None) => true,
             (Some(want), Some(got)) => want == got,
-            (Some(_), None) => false,
+            _ => false,
         }
     })
 }
@@ -1244,13 +1256,13 @@ mod tests {
     }
     #[test]
     fn match_binding_index_returns_first_winner_for_overlapping_rules() {
-        // Two bindings overlap: the wildcard `(telegram, None)` matches
-        // every telegram event, but there's also a specific
-        // `(telegram, Some("sales"))` at a higher index. The runtime
-        // must return the FIRST match in declaration order — callers
-        // that want the specific binding to win should list it before
-        // the wildcard. Locking down the rule here so a future refactor
-        // can't silently reorder.
+        // Bindings only match topics that share their instance axis —
+        // a no-instance binding catches no-instance topics, a
+        // `Some("sales")` binding catches the `.sales` suffix. Earlier
+        // versions let `instance: None` swallow every instance, which
+        // silently fanned a single bot's messages out to every agent
+        // (fixed: see "Telegram inbound fan-out ignores allow_agents"
+        // follow-up).
         let bindings = vec![
             InboundBinding {
                 plugin: "telegram".into(),
@@ -1263,27 +1275,17 @@ mod tests {
                 ..Default::default()
             },
         ];
+        // Specific topic only the specific binding catches; the
+        // no-instance binding does NOT swallow it.
         assert_eq!(
             match_binding_index(&bindings, "telegram", Some("sales")),
-            Some(0),
-            "first-match semantics: wildcard at index 0 wins over specific at index 1"
+            Some(1),
+            "specific instance binding (idx 1) wins; no-instance binding ignores `.sales`"
         );
-        // Reversed order: specific wins.
-        let bindings = vec![
-            InboundBinding {
-                plugin: "telegram".into(),
-                instance: Some("sales".into()),
-                ..Default::default()
-            },
-            InboundBinding {
-                plugin: "telegram".into(),
-                instance: None,
-                ..Default::default()
-            },
-        ];
         assert_eq!(
-            match_binding_index(&bindings, "telegram", Some("sales")),
-            Some(0)
+            match_binding_index(&bindings, "telegram", None),
+            Some(0),
+            "no-instance topic only the no-instance binding catches"
         );
         // No match → None.
         assert_eq!(match_binding_index(&bindings, "whatsapp", None), None);
@@ -1291,14 +1293,20 @@ mod tests {
 
     #[test]
     fn binding_matches_covers_plugin_wide_and_exact_instance() {
-        let all_telegram = vec![InboundBinding {
+        let no_instance_only = vec![InboundBinding {
             plugin: "telegram".into(),
             instance: None,
             ..Default::default()
         }];
-        assert!(binding_matches(&all_telegram, "telegram", None));
-        assert!(binding_matches(&all_telegram, "telegram", Some("anyone")));
-        assert!(!binding_matches(&all_telegram, "whatsapp", None));
+        assert!(binding_matches(&no_instance_only, "telegram", None));
+        // Tightened semantics: a no-instance binding does NOT match
+        // an instance-tagged topic anymore.
+        assert!(!binding_matches(
+            &no_instance_only,
+            "telegram",
+            Some("anyone")
+        ));
+        assert!(!binding_matches(&no_instance_only, "whatsapp", None));
         let only_sales = vec![InboundBinding {
             plugin: "telegram".into(),
             instance: Some("sales".into()),
@@ -1323,7 +1331,10 @@ mod tests {
             },
         ];
         assert!(binding_matches(&mixed, "telegram", Some("sales")));
-        assert!(binding_matches(&mixed, "whatsapp", Some("whatever")));
+        // Whatsapp binding has `instance: None` → only catches
+        // no-instance topics under the new strict rule.
+        assert!(binding_matches(&mixed, "whatsapp", None));
+        assert!(!binding_matches(&mixed, "whatsapp", Some("whatever")));
         assert!(!binding_matches(&mixed, "telegram", Some("boss")));
     }
     #[test]

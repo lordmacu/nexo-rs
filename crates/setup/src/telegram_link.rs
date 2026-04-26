@@ -27,7 +27,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use serde::Deserialize;
 
 use crate::writer;
-use crate::yaml_patch::{self, ValueKind};
+use crate::yaml_patch;
 
 const LINK_TIMEOUT: Duration = Duration::from_secs(120);
 const LONG_POLL_SECS: u64 = 25;
@@ -85,7 +85,16 @@ struct TgFrom {
 /// Entry point. Reads the bot token from `secrets/` (or prompts for
 /// one if missing), validates it, and waits for the first user
 /// message to capture their chat_id.
-pub async fn run(secrets_dir: &Path, config_dir: &Path) -> Result<()> {
+///
+/// `agent_id` scopes the resulting allowlist write: when present, the
+/// chat_id lands inside the telegram instance whose `allow_agents`
+/// lists that agent (multi-bot deployments). When `None`, the writer
+/// only succeeds if exactly one instance exists in the YAML.
+pub async fn run(
+    secrets_dir: &Path,
+    config_dir: &Path,
+    agent_id: Option<&str>,
+) -> Result<()> {
     let token_path = secrets_dir.join("telegram_bot_token.txt");
     if !token_path.exists() {
         bail!("bot token missing — corre primero `agent setup telegram` para pegar el token");
@@ -165,12 +174,21 @@ pub async fn run(secrets_dir: &Path, config_dir: &Path) -> Result<()> {
                         if let Some(text) = &msg.text {
                             println!("     Texto       : {text}");
                         }
-                        append_chat_id_to_allowlist(config_dir, chat_id)?;
+                        let instance_label =
+                            append_chat_id_to_allowlist(config_dir, agent_id, chat_id)?;
                         println!();
                         println!(
-                            "  ✔ Agregado a telegram.allowlist.chat_ids en {}",
+                            "  ✔ Agregado a telegram[{instance_label}].allowlist.chat_ids en {}",
                             config_dir.join("plugins/telegram.yaml").display()
                         );
+                        // Seed the pairing allowlist too. Operators that
+                        // disable the YAML allowlist and rely solely on
+                        // pairing should not face a redundant challenge
+                        // for an identity the wizard already approved.
+                        // Best-effort: if the DB is missing or locked
+                        // (daemon running) we just warn — the YAML
+                        // allowlist still admits the chat.
+                        seed_pairing_allowlist(config_dir, &instance_label, chat_id).await;
                         println!();
                         println!(
                             "  Ya puedes iniciar el agente; el bot solo responderá a ese chat."
@@ -216,46 +234,61 @@ async fn get_updates(
     Ok(raw.result.unwrap_or_default())
 }
 
-/// Append a chat_id to the YAML allowlist, preserving existing entries
-/// and avoiding duplicates.
-fn append_chat_id_to_allowlist(config_dir: &Path, chat_id: i64) -> Result<()> {
-    let yaml_path = config_dir.join("plugins/telegram.yaml");
-    let mut current: Vec<i64> = read_current_allowlist(&yaml_path);
-    if !current.contains(&chat_id) {
-        current.push(chat_id);
+/// Resolve `<config_dir>/../data/pairing.db` and seed the operator's
+/// chat_id into `pairing_allow_from` for the given telegram instance
+/// (= `account_id`). Lets operators turn off the YAML allowlist and
+/// rely only on pairing without re-approving an identity the wizard
+/// already captured. Best-effort; logs and continues on any error.
+async fn seed_pairing_allowlist(config_dir: &Path, instance_label: &str, chat_id: i64) {
+    let db_path = config_dir
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("data")
+        .join("pairing.db");
+    let db_str = match db_path.to_str() {
+        Some(s) => s.to_string(),
+        None => {
+            tracing::warn!(path = %db_path.display(), "pairing.db path is not utf-8 — skipping seed");
+            return;
+        }
+    };
+    if let Some(parent) = db_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
     }
-    let joined = current
-        .iter()
-        .map(|n| n.to_string())
-        .collect::<Vec<_>>()
-        .join(",");
-    yaml_patch::upsert(
-        &yaml_path,
-        "telegram.allowlist.chat_ids",
-        &joined,
-        ValueKind::IntList,
-    )?;
-    // The wizard's `write_secret` helper enforces 0700 on the parent;
-    // YAML file itself keeps default perms (read-only config).
-    let _ = writer::ensure_secrets_dir; // silence unused warning when calling-side optimises away
-    Ok(())
+    let store = match nexo_pairing::PairingStore::open(&db_str).await {
+        Ok(s) => s,
+        Err(e) => {
+            println!("  ⚠ pairing.db no abierto ({e}); allowlist YAML cubre — pairing pediría challenge si la quitas.");
+            return;
+        }
+    };
+    let sender = chat_id.to_string();
+    match store.seed("telegram", instance_label, &[sender]).await {
+        Ok(_) => {
+            println!(
+                "  ✔ pairing_allow_from[{instance_label}/{chat_id}] sembrado en {}",
+                db_path.display()
+            );
+        }
+        Err(e) => {
+            println!("  ⚠ pairing seed falló ({e}); allowlist YAML sigue activa.");
+        }
+    }
 }
 
-fn read_current_allowlist(path: &Path) -> Vec<i64> {
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return Vec::new();
-    };
-    let Ok(v) = serde_yaml::from_str::<serde_yaml::Value>(&text) else {
-        return Vec::new();
-    };
-    v.get("telegram")
-        .and_then(|t| t.get("allowlist"))
-        .and_then(|a| a.get("chat_ids"))
-        .and_then(|x| x.as_sequence())
-        .map(|seq| {
-            seq.iter()
-                .filter_map(|item| item.as_i64())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default()
+/// Append a chat_id to the per-instance allowlist of the bot bound to
+/// `agent_id` (or the lone instance when `agent_id` is `None`). Lives
+/// inside `telegram[<i>].allowlist.chat_ids`, never on a global key —
+/// every bot/agent pair keeps its own allowlist.
+fn append_chat_id_to_allowlist(
+    config_dir: &Path,
+    agent_id: Option<&str>,
+    chat_id: i64,
+) -> Result<String> {
+    let yaml_path = config_dir.join("plugins/telegram.yaml");
+    // Belt-and-braces: makes sure the parent secrets dir is laid out
+    // before we touch anything else in this flow. Same guarantee the
+    // wizard's `write_secret` helper provides for token files.
+    let _ = writer::ensure_secrets_dir;
+    yaml_patch::telegram_append_chat_id(&yaml_path, agent_id, chat_id)
 }

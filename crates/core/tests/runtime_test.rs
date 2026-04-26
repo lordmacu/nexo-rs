@@ -94,7 +94,15 @@ fn make_runtime(
     heartbeats: Arc<AtomicUsize>,
     broker: AnyBroker,
 ) -> AgentRuntime {
-    let config = make_config(debounce_ms, queue_cap, false, "5m");
+    let mut config = make_config(debounce_ms, queue_cap, false, "5m");
+    // Strict binding rule: agents without `inbound_bindings` drop
+    // every plugin event. Test fixtures publish to
+    // `plugin.inbound.test`, so seed a matching binding here.
+    config.inbound_bindings.push(InboundBinding {
+        plugin: "test".into(),
+        instance: None,
+        ..Default::default()
+    });
     let behavior = CaptureBehavior {
         received,
         heartbeats,
@@ -430,7 +438,11 @@ async fn two_agents_receive_only_their_bound_plugin_instances() {
         broker.clone(),
     );
 
-    // Legacy: no bindings → accepts every inbound (back-compat).
+    // No-bindings agent: under the strict rule it now drops every
+    // inbound event. Earlier this slot was a "legacy wildcard" that
+    // swallowed every plugin event regardless of instance — the
+    // exact path that fanned a single bot's traffic out to every
+    // agent listing the channel.
     let legacy_received = Arc::new(Mutex::new(Vec::new()));
     let rt_legacy = make_runtime_with_bindings(
         "legacy",
@@ -477,12 +489,10 @@ async fn two_agents_receive_only_their_bound_plugin_instances() {
         vec!["to-sales".to_string()],
         "ventas should only see its own bot"
     );
-    // Legacy wildcard sees every inbound regardless of instance.
-    assert_eq!(legacy.len(), 4, "legacy wildcard should receive all 4");
-    assert!(legacy.contains(&"to-boss".to_string()));
-    assert!(legacy.contains(&"to-sales".to_string()));
-    assert!(legacy.contains(&"to-whatsapp-unbound".to_string()));
-    assert!(legacy.contains(&"to-other-bot".to_string()));
+    assert!(
+        legacy.is_empty(),
+        "agent without bindings must drop every inbound event"
+    );
 
     rt_boss.stop().await;
     rt_ventas.stop().await;
@@ -490,11 +500,13 @@ async fn two_agents_receive_only_their_bound_plugin_instances() {
 }
 
 #[tokio::test]
-async fn plugin_wide_binding_accepts_any_instance() {
+async fn no_instance_binding_only_catches_no_instance_topic() {
     let broker = AnyBroker::local();
     let received = Arc::new(Mutex::new(Vec::new()));
-    // Plugin-wide binding: `telegram` with no instance → matches every
-    // telegram bot (legacy single-bot topic AND any instance suffix).
+    // A binding with `instance: None` catches only no-instance topics
+    // (e.g. legacy single-bot deployments). It does NOT swallow
+    // instance-tagged topics anymore — that lax behavior fanned a
+    // single bot's messages out to every agent listing the channel.
     let rt = make_runtime_with_bindings(
         "any_telegram",
         vec![InboundBinding {
@@ -533,11 +545,11 @@ async fn plugin_wide_binding_accepts_any_instance() {
     let got = received.lock().unwrap().clone();
     assert_eq!(
         got.len(),
-        2,
-        "plugin-wide binding accepts both telegram topics but not whatsapp"
+        1,
+        "no-instance binding catches only the legacy topic, never `.sales`"
     );
     assert!(got.contains(&"no-instance".to_string()));
-    assert!(got.contains(&"from-sales".to_string()));
+    assert!(!got.contains(&"from-sales".to_string()));
     assert!(!got.contains(&"from-whatsapp".to_string()));
 
     rt.stop().await;
@@ -559,6 +571,11 @@ async fn sender_rate_limit_drops_excess_messages_from_same_sender() {
     let mut config = make_config(0, 32, false, "5m");
     config.id = "throttled".into();
     config.sender_rate_limit = Some(SenderRateLimitConfig { rps: 0.0, burst: 2 });
+    config.inbound_bindings.push(InboundBinding {
+        plugin: "telegram".into(),
+        instance: None,
+        ..Default::default()
+    });
     let behavior = CaptureBehavior {
         received: Arc::clone(&received),
         heartbeats: Arc::new(AtomicUsize::new(0)),

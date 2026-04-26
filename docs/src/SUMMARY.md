@@ -11,6 +11,7 @@
 - [Nix flake](./getting-started/install-nix.md)
 - [Quick start](./getting-started/quickstart.md)
 - [Setup wizard](./getting-started/setup-wizard.md)
+- [Agent-centric wizard](./getting-started/agent-wizard.md)
 - [Verifying releases](./getting-started/verify.md)
 - [Reproducible builds + SBOM](./getting-started/reproducibility.md)
 

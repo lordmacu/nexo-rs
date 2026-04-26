@@ -10,6 +10,9 @@ agents:
   - email
   inbound_bindings:
   - plugin: telegram
+    instance: kate_bot
+  pairing_policy:
+    auto_challenge: true
   heartbeat:
     enabled: true
     interval: 5m

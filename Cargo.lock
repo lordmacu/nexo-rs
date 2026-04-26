@@ -2972,6 +2972,7 @@ dependencies = [
  "nexo-auth",
  "nexo-config",
  "nexo-core",
+ "nexo-pairing",
  "nexo-plugin-google",
  "nexo-plugin-whatsapp",
  "rand 0.8.6",

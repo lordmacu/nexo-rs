@@ -35,3 +35,4 @@ rand         = "0.8"
 indicatif    = "0.17"
 nexo-plugin-whatsapp = { version = "0.1.1", path = "../plugins/whatsapp" }
 nexo-plugin-google = { version = "0.1.1", path = "../plugins/google" }
+nexo-pairing = { version = "0.1.2", path = "../pairing" }

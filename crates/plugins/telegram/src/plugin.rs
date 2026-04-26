@@ -493,8 +493,16 @@ fn spawn_poller(
             if shutdown.is_cancelled() {
                 return;
             }
-            let updates = match bot
-                .get_updates(
+            // Race the long-poll against shutdown so Ctrl+C doesn't
+            // wait the full Telegram timeout (~25 s) before the task
+            // can exit. Telegram drops the connection on our side and
+            // any in-flight updates are simply not acked — they will
+            // be redelivered on the next start because we only persist
+            // `offset` after a successful round-trip.
+            let updates = tokio::select! {
+                biased;
+                _ = shutdown.cancelled() => return,
+                res = bot.get_updates(
                     offset,
                     poll_secs,
                     &[
@@ -504,9 +512,9 @@ fn spawn_poller(
                         "callback_query",
                         "my_chat_member",
                     ],
-                )
-                .await
-            {
+                ) => res,
+            };
+            let updates = match updates {
                 Ok(u) => {
                     backoff = Duration::from_secs(1);
                     u

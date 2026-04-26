@@ -41,7 +41,14 @@ pub enum Outcome {
     NotHandled,
 }
 
+/// Pick the agent for a channel-bound service. Honours an
+/// already-chosen agent passed via the thread-local override (set by
+/// `dispatch_with_agent`) so callers higher up the stack can avoid
+/// the redundant re-prompt the user noticed.
 fn pick_agent(config_dir: &Path) -> Result<Option<String>> {
+    if let Some(prefilled) = AGENT_OVERRIDE.with(|cell| cell.borrow().clone()) {
+        return Ok(Some(prefilled));
+    }
     let agents_yaml = config_dir.join("agents.yaml");
     let mut ids = yaml_patch::list_agent_ids(&agents_yaml).unwrap_or_default();
     let drop_dir = config_dir.join("agents.d");
@@ -218,6 +225,7 @@ pub fn run_telegram(config_dir: &Path, secrets_dir: &Path) -> Result<Outcome> {
         anyhow::anyhow!("no pude encontrar el archivo YAML del agente `{agent_id}`")
     })?;
     yaml_patch::patch_agent_credentials(&agent_file, &agent_id, "telegram", &instance)?;
+    yaml_patch::upsert_agent_inbound_binding(&agent_file, &agent_id, "telegram", &instance)?;
     println!(
         "✔ {}: credentials.telegram = `{instance}`.",
         agent_file.display()
@@ -384,6 +392,34 @@ pub fn dispatch(svc_id: &str, config_dir: &Path, secrets_dir: &Path) -> Result<O
         "google" => run_google(config_dir, secrets_dir),
         _ => Ok(Outcome::NotHandled),
     }
+}
+
+thread_local! {
+    /// Pre-filled agent id for the inner `pick_agent` helper. Set by
+    /// `dispatch_with_agent` so callers higher up the stack
+    /// (channels_dashboard's link flow) don't get re-prompted for the
+    /// agent they already picked.
+    static AGENT_OVERRIDE: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Variant of [`dispatch`] that accepts an already-picked agent id
+/// so the inner per-channel handler skips its own
+/// `pick_agent` prompt. Restores the previous override on exit so
+/// nested calls in the same thread stay correct.
+pub fn dispatch_with_agent(
+    svc_id: &str,
+    agent_id: &str,
+    config_dir: &Path,
+    secrets_dir: &Path,
+) -> Result<Outcome> {
+    let previous =
+        AGENT_OVERRIDE.with(|cell| cell.replace(Some(agent_id.to_string())));
+    let result = dispatch(svc_id, config_dir, secrets_dir);
+    AGENT_OVERRIDE.with(|cell| {
+        *cell.borrow_mut() = previous;
+    });
+    result
 }
 
 // Helper used by PathBuf return sites.
