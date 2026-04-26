@@ -2474,6 +2474,18 @@ async fn boot_dispatch_ctx_if_enabled(
             },
             require_trusted: true,
             telemetry: Arc::new(nexo_dispatch_tools::NoopTelemetry),
+            // Self-modify gate. Default `true` because the
+            // canonical dev usecase IS Cody helping finish the
+            // nexo-rs roadmap itself; per-goal worktree
+            // isolation (Phase 67.6) keeps the live source safe
+            // from in-flight changes. Production deploys
+            // (separate nexo-driver host, frozen binary) opt
+            // out with `NEXO_DISALLOW_SELF_MODIFY=1`.
+            allow_self_modify: std::env::var("NEXO_DISALLOW_SELF_MODIFY")
+                .ok()
+                .map(|v| !matches!(v.as_str(), "1" | "true" | "yes"))
+                .unwrap_or(true),
+            daemon_source_root: std::env::current_dir().unwrap_or_default(),
         },
     ))
 }
