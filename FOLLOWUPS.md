@@ -295,10 +295,12 @@ PR-6. ~~**`nexo-config::pairing.yaml` loader**~~  🔄 partial 2026-04-26
   fallback. Splitting into PR-6.a (config loader, done) and
   PR-3 (tunnel accessor, separate) keeps the work
   cleanly scoped.
-- **Still deferred**: `default_ttl_secs` is parsed but the
-  setup-code issuer doesn't yet honour the override (it uses
-  the built-in 60s constant). One-line follow-up once the
-  issuer surface accepts a TTL parameter.
+- ~~`default_ttl_secs` honoured by `nexo pair start`~~  ✅
+  (commit landed alongside W-3). Resolution priority is now
+  (1) `--ttl-secs` CLI flag, (2) YAML `default_ttl_secs`,
+  (3) 600s hardcoded fallback. The CLI parser switched to
+  `Option<u64>` so absent flag is genuinely "no override"
+  rather than the previous baked-in 600 default.
 - **Still deferred**: `ws_cleartext_allow` is parsed but not
   yet plumbed into `pair start`'s URL resolver — the resolver
   takes its `extras` list from a different code path. One-step
