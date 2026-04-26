@@ -340,9 +340,8 @@ fn detect_current_telegram(
         .get("agents")
         .and_then(serde_yaml::Value::as_sequence)
         .and_then(|seq| {
-            seq.iter().find(|a| {
-                a.get("id").and_then(serde_yaml::Value::as_str) == Some(agent)
-            })
+            seq.iter()
+                .find(|a| a.get("id").and_then(serde_yaml::Value::as_str) == Some(agent))
         })
         .and_then(|a| a.get("credentials"))
         .and_then(|c| c.get("telegram"))
@@ -398,7 +397,8 @@ where
                 .context("create tokio runtime")?;
             Ok::<F::Output, anyhow::Error>(rt.block_on(fut))
         });
-        h.join().map_err(|_| anyhow::anyhow!("runtime thread panicked"))?
+        h.join()
+            .map_err(|_| anyhow::anyhow!("runtime thread panicked"))?
     })
 }
 
@@ -410,7 +410,10 @@ async fn validate_token(token: &str) -> Result<BotInfo> {
     let resp = http.get(&url).send().await.context("getMe request")?;
     let env: TgEnvelope<BotInfo> = resp.json().await.context("getMe response parse")?;
     if !env.ok {
-        bail!("Telegram rechazó el token: {}", env.description.unwrap_or_default());
+        bail!(
+            "Telegram rechazó el token: {}",
+            env.description.unwrap_or_default()
+        );
     }
     let info = env
         .result
@@ -493,7 +496,11 @@ fn run_telegram_flow(config_dir: &Path, secrets_dir: &Path) -> Result<()> {
             cur.instance,
             if cur.has_token { "presente" } else { "FALTA" }
         );
-        let opts = ["Mantener (no tocar nada)", "Reemplazar el bot", "Desvincular"];
+        let opts = [
+            "Mantener (no tocar nada)",
+            "Reemplazar el bot",
+            "Desvincular",
+        ];
         let idx = prompt::pick_from_list("¿Qué hacer?", &opts)?;
         match idx {
             0 => {
@@ -564,10 +571,7 @@ fn run_telegram_flow(config_dir: &Path, secrets_dir: &Path) -> Result<()> {
             .clone()
             .or_else(|| msg.chat.first_name.clone())
             .unwrap_or_else(|| "?".into());
-        println!(
-            "✔ chat_id {} capturado ({who} · {chat_name})",
-            msg.chat.id
-        );
+        println!("✔ chat_id {} capturado ({who} · {chat_name})", msg.chat.id);
         if let Some(t) = &msg.text {
             println!("  texto: {t}");
         }
@@ -639,15 +643,11 @@ fn seed_pairing_allowlist_for_dashboard(config_dir: &Path, instance: &str, chat_
             .map_err(anyhow::Error::from)
     });
     match outcome {
-        Ok(Ok(rows)) => println!(
-            "  ✔ pairing_allow_from sembrado ({rows} fila(s) para `{instance}`)."
-        ),
-        Ok(Err(e)) => println!(
-            "  ⚠ pairing seed falló ({e}); allowlist YAML cubre."
-        ),
-        Err(e) => println!(
-            "  ⚠ pairing seed runtime falló ({e}); allowlist YAML cubre."
-        ),
+        Ok(Ok(rows)) => {
+            println!("  ✔ pairing_allow_from sembrado ({rows} fila(s) para `{instance}`).")
+        }
+        Ok(Err(e)) => println!("  ⚠ pairing seed falló ({e}); allowlist YAML cubre."),
+        Err(e) => println!("  ⚠ pairing seed runtime falló ({e}); allowlist YAML cubre."),
     }
 }
 
@@ -701,8 +701,15 @@ fn render_labels(entries: &[ChannelEntry]) -> Vec<String> {
 
 fn run_action_menu(config_dir: &Path, secrets_dir: &Path, entry: &ChannelEntry) -> Result<()> {
     println!();
-    println!("── {} / {} ─────────────────", entry.channel, entry.instance);
-    println!("Estado     : {} ({})", entry.auth.icon(), entry.auth.label());
+    println!(
+        "── {} / {} ─────────────────",
+        entry.channel, entry.instance
+    );
+    println!(
+        "Estado     : {} ({})",
+        entry.auth.icon(),
+        entry.auth.label()
+    );
     let bind_label = if entry.bound_agents.is_empty() {
         "—".to_string()
     } else {
@@ -818,9 +825,10 @@ fn locate_agent_file(config_dir: &Path, agent_id: &str) -> Option<std::path::Pat
         let Some(seq) = doc.get("agents").and_then(serde_yaml::Value::as_sequence) else {
             continue;
         };
-        if seq.iter().any(|a| {
-            a.get("id").and_then(serde_yaml::Value::as_str) == Some(agent_id)
-        }) {
+        if seq
+            .iter()
+            .any(|a| a.get("id").and_then(serde_yaml::Value::as_str) == Some(agent_id))
+        {
             return Some(path);
         }
     }

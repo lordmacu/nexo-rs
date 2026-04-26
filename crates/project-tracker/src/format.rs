@@ -38,12 +38,7 @@ pub fn render_subphase_line(s: &SubPhase) -> String {
 }
 
 pub fn render_subphase_detail(s: &SubPhase) -> String {
-    let mut out = format!(
-        "{} **{}** — {}\n",
-        status_glyph(s.status),
-        s.id,
-        s.title
-    );
+    let mut out = format!("{} **{}** — {}\n", status_glyph(s.status), s.id, s.title);
     if let Some(body) = &s.body {
         out.push('\n');
         out.push_str(body);
@@ -132,7 +127,7 @@ mod tests {
                 title: "T".into(),
                 status: PhaseStatus::Done,
                 body: None,
-            acceptance: None,
+                acceptance: None,
             }],
         };
         let out = render_phases_table(std::slice::from_ref(&p), None);

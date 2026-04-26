@@ -15,9 +15,7 @@ use std::time::Duration;
 use nexo_agent_registry::{AgentRegistry, MemoryAgentRegistryStore};
 use nexo_config::{DispatchCapability, DispatchPolicy};
 use nexo_dispatch_tools::policy_gate::CapSnapshot;
-use nexo_dispatch_tools::{
-    program_phase_dispatch, ProgramPhaseInput, ProgramPhaseOutput,
-};
+use nexo_dispatch_tools::{program_phase_dispatch, ProgramPhaseInput, ProgramPhaseOutput};
 use nexo_driver_claude::{
     ClaudeConfig, ClaudeDefaultArgs, DispatcherIdentity, MemoryBindingStore, OutputFormat,
 };
@@ -94,11 +92,7 @@ async fn capability_none_returns_forbidden() {
         Arc::new(MemoryAgentRegistryStore::default()),
         4,
     ));
-    let orch = build_orch(
-        dir.path().join("d.sock"),
-        dir.path().join("ws"),
-    )
-    .await;
+    let orch = build_orch(dir.path().join("d.sock"), dir.path().join("ws")).await;
 
     let mut policy = full_policy();
     policy.mode = DispatchCapability::None;
@@ -108,7 +102,7 @@ async fn capability_none_returns_forbidden() {
             phase_id: "99.1".into(),
             acceptance_override: None,
             budget_override: None,
-                hooks: Vec::new(),
+            hooks: Vec::new(),
         },
         &tracker,
         orch.clone(),
@@ -144,18 +138,14 @@ async fn unknown_phase_returns_not_found() {
         Arc::new(MemoryAgentRegistryStore::default()),
         4,
     ));
-    let orch = build_orch(
-        dir.path().join("d2.sock"),
-        dir.path().join("ws2"),
-    )
-    .await;
+    let orch = build_orch(dir.path().join("d2.sock"), dir.path().join("ws2")).await;
 
     let out = program_phase_dispatch(
         ProgramPhaseInput {
             phase_id: "9999.999".into(),
             acceptance_override: None,
             budget_override: None,
-                hooks: Vec::new(),
+            hooks: Vec::new(),
         },
         &tracker,
         orch.clone(),
@@ -189,18 +179,14 @@ async fn untrusted_sender_returns_forbidden_when_required() {
         Arc::new(MemoryAgentRegistryStore::default()),
         4,
     ));
-    let orch = build_orch(
-        dir.path().join("d3.sock"),
-        dir.path().join("ws3"),
-    )
-    .await;
+    let orch = build_orch(dir.path().join("d3.sock"), dir.path().join("ws3")).await;
 
     let out = program_phase_dispatch(
         ProgramPhaseInput {
             phase_id: "99.1".into(),
             acceptance_override: None,
             budget_override: None,
-                hooks: Vec::new(),
+            hooks: Vec::new(),
         },
         &tracker,
         orch,
@@ -235,18 +221,14 @@ async fn cap_reached_with_queue_returns_queued_outcome() {
         Arc::new(MemoryAgentRegistryStore::default()),
         0,
     ));
-    let orch = build_orch(
-        dir.path().join("d4.sock"),
-        dir.path().join("ws4"),
-    )
-    .await;
+    let orch = build_orch(dir.path().join("d4.sock"), dir.path().join("ws4")).await;
 
     let out = program_phase_dispatch(
         ProgramPhaseInput {
             phase_id: "99.1".into(),
             acceptance_override: None,
             budget_override: None,
-                hooks: Vec::new(),
+            hooks: Vec::new(),
         },
         &tracker,
         orch,

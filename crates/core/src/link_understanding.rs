@@ -371,11 +371,8 @@ pub fn extract_main_text(html: &str, max_bytes: usize) -> String {
     // site shape.
     let mut cleaned = String::from(html);
     for tag in [
-        "script", "style", "noscript", "head",
-        "nav", "header", "footer", "aside",
-        "form", "button", "menu",
-        "iframe", "svg",
-        "dialog", "template",
+        "script", "style", "noscript", "head", "nav", "header", "footer", "aside", "form",
+        "button", "menu", "iframe", "svg", "dialog", "template",
     ] {
         cleaned = strip_block(&cleaned, tag);
     }
@@ -383,12 +380,27 @@ pub fn extract_main_text(html: &str, max_bytes: usize) -> String {
     // advert | ad | share | social | cookie | popup | newsletter |
     // related-articles">` etc. Catches sites that put boilerplate
     // in `<div>`s instead of semantic tags.
-    let cleaned = strip_blocks_by_class_keyword(&cleaned, &[
-        "sidebar", "side-bar", "comment", "advert", "advertisement",
-        "share", "social", "cookie", "popup", "newsletter",
-        "related-article", "related-posts",
-        "navigation", "breadcrumb", "promo", "subscribe",
-    ]);
+    let cleaned = strip_blocks_by_class_keyword(
+        &cleaned,
+        &[
+            "sidebar",
+            "side-bar",
+            "comment",
+            "advert",
+            "advertisement",
+            "share",
+            "social",
+            "cookie",
+            "popup",
+            "newsletter",
+            "related-article",
+            "related-posts",
+            "navigation",
+            "breadcrumb",
+            "promo",
+            "subscribe",
+        ],
+    );
 
     // Replace common block-level tags with newlines so paragraph
     // breaks survive the tag strip.
@@ -584,12 +596,18 @@ fn strip_blocks_by_class_keyword(html: &str, keywords: &[&str]) -> String {
             let next_open = lower[scan..].find(&open_pat_nested).map(|p| scan + p);
             match (next_open, next_close) {
                 (Some(o), Some(c)) if o < c => {
-                    let open_end = lower[o..].find('>').map(|p| o + p + 1).unwrap_or(html.len());
+                    let open_end = lower[o..]
+                        .find('>')
+                        .map(|p| o + p + 1)
+                        .unwrap_or(html.len());
                     depth += 1;
                     scan = open_end;
                 }
                 (_, Some(c)) => {
-                    let close_end = lower[c..].find('>').map(|p| c + p + 1).unwrap_or(html.len());
+                    let close_end = lower[c..]
+                        .find('>')
+                        .map(|p| c + p + 1)
+                        .unwrap_or(html.len());
                     depth -= 1;
                     scan = close_end;
                 }

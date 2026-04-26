@@ -112,7 +112,10 @@ async fn parallel_dispatches_each_phase_until_local_cap() {
     // First two queued, third Rejected by local-cap.
     assert!(matches!(out.results[0], ProgramPhaseOutput::Queued { .. }));
     assert!(matches!(out.results[1], ProgramPhaseOutput::Queued { .. }));
-    assert!(matches!(out.results[2], ProgramPhaseOutput::Rejected { .. }));
+    assert!(matches!(
+        out.results[2],
+        ProgramPhaseOutput::Rejected { .. }
+    ));
 }
 
 #[tokio::test]

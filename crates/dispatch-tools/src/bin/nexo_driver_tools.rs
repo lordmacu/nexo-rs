@@ -34,9 +34,7 @@ use nexo_dispatch_tools::{
     agent_status, cancel_agent, list_agents, program_phase_dispatch, AgentStatusInput,
     CancelAgentInput, ListAgentsInput, ProgramPhaseInput, ProgramPhaseOutput,
 };
-use nexo_driver_claude::{
-    ClaudeConfig, ClaudeDefaultArgs, DispatcherIdentity, MemoryBindingStore,
-};
+use nexo_driver_claude::{ClaudeConfig, ClaudeDefaultArgs, DispatcherIdentity, MemoryBindingStore};
 use nexo_driver_loop::{DriverOrchestrator, NoopEventSink, WorkspaceManager};
 use nexo_driver_permission::{AllowAllDecider, PermissionDecider};
 use nexo_driver_types::GoalId;
@@ -70,9 +68,7 @@ async fn run() -> Result<ExitCode> {
         // semantics. Avoids duplicating the orchestrator boot
         // path (workspace manager + binding store + decider +
         // socket cancel) here just to relay flags through.
-        "run" | "list-active" | "list-worktrees" | "rollback" => {
-            relay_to_legacy(&cmd, args).await
-        }
+        "run" | "list-active" | "list-worktrees" | "rollback" => relay_to_legacy(&cmd, args).await,
         "-h" | "--help" => {
             print_help();
             Ok(ExitCode::SUCCESS)
@@ -81,16 +77,15 @@ async fn run() -> Result<ExitCode> {
     }
 }
 
-async fn relay_to_legacy(
-    cmd: &str,
-    args: impl Iterator<Item = String>,
-) -> Result<ExitCode> {
+async fn relay_to_legacy(cmd: &str, args: impl Iterator<Item = String>) -> Result<ExitCode> {
     let bin = std::env::var("NEXO_DRIVER_BIN").unwrap_or_else(|_| "nexo-driver".to_string());
     let status = std::process::Command::new(bin)
         .arg(cmd)
         .args(args)
         .status()
-        .map_err(|e| anyhow!("failed to spawn nexo-driver: {e} — set NEXO_DRIVER_BIN if it lives elsewhere"))?;
+        .map_err(|e| {
+            anyhow!("failed to spawn nexo-driver: {e} — set NEXO_DRIVER_BIN if it lives elsewhere")
+        })?;
     Ok(match status.code() {
         Some(0) => ExitCode::SUCCESS,
         Some(c) => ExitCode::from(c.min(255) as u8),
@@ -237,7 +232,7 @@ async fn cmd_dispatch(mut args: impl Iterator<Item = String>) -> Result<ExitCode
             phase_id: phase_id.clone(),
             acceptance_override: None,
             budget_override: None,
-                hooks: Vec::new(),
+            hooks: Vec::new(),
         },
         &tracker,
         orch,

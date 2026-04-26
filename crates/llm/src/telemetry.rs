@@ -93,10 +93,7 @@ pub fn render_prometheus() -> String {
 /// pass their own isolated `DashMap`s and never touch the global
 /// static. Production callers go through `render_prometheus()` which
 /// reads the global. Phase 38.x.1 fix.
-fn render_into(
-    ttft: &DashMap<String, Histogram>,
-    chunks: &DashMap<ChunkKey, AtomicU64>,
-) -> String {
+fn render_into(ttft: &DashMap<String, Histogram>, chunks: &DashMap<ChunkKey, AtomicU64>) -> String {
     let mut out = String::new();
 
     out.push_str(

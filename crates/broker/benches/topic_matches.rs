@@ -13,10 +13,10 @@ fn bench_exact_match(c: &mut Criterion) {
     let mut group = c.benchmark_group("topic_matches/exact");
     group.throughput(Throughput::Elements(1));
     let cases = [
-        ("agent.kate.inbox", "agent.kate.inbox"),                // hit
-        ("agent.kate.inbox", "agent.bob.inbox"),                  // miss
+        ("agent.kate.inbox", "agent.kate.inbox"), // hit
+        ("agent.kate.inbox", "agent.bob.inbox"),  // miss
         ("plugin.outbound.whatsapp", "plugin.outbound.telegram"), // miss prefix
-        ("a.b.c.d.e.f.g.h", "a.b.c.d.e.f.g.h"),                  // long hit
+        ("a.b.c.d.e.f.g.h", "a.b.c.d.e.f.g.h"),   // long hit
     ];
     for (i, (pattern, subject)) in cases.iter().enumerate() {
         group.bench_with_input(
@@ -34,12 +34,12 @@ fn bench_wildcard_match(c: &mut Criterion) {
     let mut group = c.benchmark_group("topic_matches/wildcard");
     group.throughput(Throughput::Elements(1));
     let cases = [
-        ("agent.*.inbox", "agent.kate.inbox"),       // single-wildcard hit
-        ("agent.*.inbox", "agent.kate.outbox"),      // single-wildcard miss
-        ("agent.>", "agent.kate.inbox.priority"),    // multi-wildcard hit
-        ("plugin.outbound.>", "plugin.inbound.x"),   // multi-wildcard miss
-        ("a.*.c.*.e", "a.b.c.d.e"),                  // double wildcard hit
-        ("a.*.c.*.e.f", "a.b.c.d.e"),                // double wildcard miss (length)
+        ("agent.*.inbox", "agent.kate.inbox"),    // single-wildcard hit
+        ("agent.*.inbox", "agent.kate.outbox"),   // single-wildcard miss
+        ("agent.>", "agent.kate.inbox.priority"), // multi-wildcard hit
+        ("plugin.outbound.>", "plugin.inbound.x"), // multi-wildcard miss
+        ("a.*.c.*.e", "a.b.c.d.e"),               // double wildcard hit
+        ("a.*.c.*.e.f", "a.b.c.d.e"),             // double wildcard miss (length)
     ];
     for (i, (pattern, subject)) in cases.iter().enumerate() {
         group.bench_with_input(

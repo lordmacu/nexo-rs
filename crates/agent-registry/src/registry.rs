@@ -26,9 +26,7 @@ use nexo_driver_types::{AcceptanceVerdict, AttemptResult, GoalId};
 use parking_lot::Mutex;
 
 use crate::store::AgentRegistryStore;
-use crate::types::{
-    AgentHandle, AgentRunStatus, AgentSnapshot, AgentSummary, RegistryError,
-};
+use crate::types::{AgentHandle, AgentRunStatus, AgentSnapshot, AgentSummary, RegistryError};
 
 /// Outcome of an `admit()` call.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -132,8 +130,7 @@ impl AgentRegistry {
             .iter()
             .filter(|e| {
                 let m = e.value().handle_meta.lock();
-                m.status.is_terminal()
-                    && m.finished_at.map(|t| t < cutoff).unwrap_or(false)
+                m.status.is_terminal() && m.finished_at.map(|t| t < cutoff).unwrap_or(false)
             })
             .map(|e| *e.key())
             .collect();
@@ -272,7 +269,9 @@ impl AgentRegistry {
 
     /// Live snapshot. Cheap — readers never wait.
     pub fn snapshot(&self, goal_id: GoalId) -> Option<AgentSnapshot> {
-        self.inner.get(&goal_id).map(|e| (**e.snapshot.load()).clone())
+        self.inner
+            .get(&goal_id)
+            .map(|e| (**e.snapshot.load()).clone())
     }
 
     /// Compose a full `AgentHandle` for `agent_status`.
@@ -375,10 +374,9 @@ impl AgentRegistry {
     pub fn set_max_turns(&self, goal_id: GoalId, max_turns: u32) {
         if let Some(entry) = self.inner.get(&goal_id) {
             let cur = (**entry.snapshot.load()).clone();
-            entry.snapshot.store(Arc::new(AgentSnapshot {
-                max_turns,
-                ..cur
-            }));
+            entry
+                .snapshot
+                .store(Arc::new(AgentSnapshot { max_turns, ..cur }));
         }
     }
 

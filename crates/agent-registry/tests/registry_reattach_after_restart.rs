@@ -15,7 +15,11 @@ use nexo_agent_registry::{
 use nexo_driver_types::GoalId;
 use uuid::Uuid;
 
-fn handle(phase: &str, status: AgentRunStatus, finished_at: Option<chrono::DateTime<Utc>>) -> AgentHandle {
+fn handle(
+    phase: &str,
+    status: AgentRunStatus,
+    finished_at: Option<chrono::DateTime<Utc>>,
+) -> AgentHandle {
     AgentHandle {
         goal_id: GoalId(Uuid::new_v4()),
         phase_id: phase.into(),
@@ -46,15 +50,23 @@ async fn running_with_resume_on_returns_resume_outcome() {
     let path = tmp_db_path();
     let path_str = path.to_string_lossy().into_owned();
     let store = Arc::new(SqliteAgentRegistryStore::open(&path_str).await.unwrap());
-    store.upsert(&handle("67.10", AgentRunStatus::Running, None)).await.unwrap();
-    store.upsert(&handle("67.11", AgentRunStatus::Queued, None)).await.unwrap();
+    store
+        .upsert(&handle("67.10", AgentRunStatus::Running, None))
+        .await
+        .unwrap();
+    store
+        .upsert(&handle("67.11", AgentRunStatus::Queued, None))
+        .await
+        .unwrap();
 
     // Drop everything; new daemon boot.
     drop(store);
     let store = Arc::new(SqliteAgentRegistryStore::open(&path_str).await.unwrap());
     let reg = AgentRegistry::new(store.clone(), 4);
 
-    let outcomes = reattach(&reg, store.clone(), ReattachOptions::default()).await.unwrap();
+    let outcomes = reattach(&reg, store.clone(), ReattachOptions::default())
+        .await
+        .unwrap();
     let resume_count = outcomes
         .iter()
         .filter(|o| matches!(o, ReattachOutcome::Resume(_)))
@@ -78,7 +90,10 @@ async fn running_with_resume_on_returns_resume_outcome() {
 #[tokio::test]
 async fn running_with_resume_off_marks_lost() {
     let store = Arc::new(SqliteAgentRegistryStore::open_memory().await.unwrap());
-    store.upsert(&handle("67.10", AgentRunStatus::Running, None)).await.unwrap();
+    store
+        .upsert(&handle("67.10", AgentRunStatus::Running, None))
+        .await
+        .unwrap();
     let reg = AgentRegistry::new(store.clone(), 4);
 
     let opts = ReattachOptions {

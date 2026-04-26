@@ -800,11 +800,7 @@ fn run_whatsapp_pairing_sync(agent_id: &str, config_dir: &Path) -> Result<()> {
 /// thread+runtime trick we use for google consent because `persist`
 /// is a sync entry point. `agent_id` scopes the allowlist write to
 /// the right telegram instance.
-fn run_telegram_link_sync(
-    agent_id: &str,
-    secrets_dir: &Path,
-    config_dir: &Path,
-) -> Result<()> {
+fn run_telegram_link_sync(agent_id: &str, secrets_dir: &Path, config_dir: &Path) -> Result<()> {
     let secrets_dir = secrets_dir.to_path_buf();
     let config_dir = config_dir.to_path_buf();
     let agent_id = agent_id.to_string();

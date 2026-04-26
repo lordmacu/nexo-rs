@@ -62,7 +62,10 @@ struct CapturingNats {
 #[async_trait]
 impl NatsHookPublisher for CapturingNats {
     async fn publish(&self, subject: &str, payload: &[u8]) -> Result<(), String> {
-        self.sent.lock().unwrap().push((subject.into(), payload.to_vec()));
+        self.sent
+            .lock()
+            .unwrap()
+            .push((subject.into(), payload.to_vec()));
         Ok(())
     }
 }

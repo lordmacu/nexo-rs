@@ -41,8 +41,8 @@ pub fn parse_str(raw: &str) -> Result<Vec<FollowUp>, String> {
     // Section heading: `## Foo` or `### Foo` (must NOT be `## Open
     // items` style top-level "rules" sections — we still capture
     // them, the caller can filter by section name if needed).
-    let section_re = Regex::new(r#"^(?P<hash>#{2,3})\s+(?P<title>.+?)\s*$"#)
-        .map_err(|e| e.to_string())?;
+    let section_re =
+        Regex::new(r#"^(?P<hash>#{2,3})\s+(?P<title>.+?)\s*$"#).map_err(|e| e.to_string())?;
     // Item heading: `<CODE>. <title>` where code is uppercase letters
     // + digits, possibly with `-` and `.` separators.
     let item_re = Regex::new(
@@ -152,10 +152,7 @@ fn parse_item_title(rest: &str) -> (String, FollowUpStatus) {
     (t, status)
 }
 
-fn flush_item(
-    current: &mut Option<(FollowUp, Vec<String>)>,
-    out: &mut Vec<FollowUp>,
-) {
+fn flush_item(current: &mut Option<(FollowUp, Vec<String>)>, out: &mut Vec<FollowUp>) {
     let Some((mut item, body)) = current.take() else {
         return;
     };

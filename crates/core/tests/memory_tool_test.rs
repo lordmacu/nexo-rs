@@ -56,7 +56,7 @@ async fn memory_recall_records_events_for_every_hit() -> anyhow::Result<()> {
         pairing_policy: serde_json::Value::Null,
         language: None,
         context_optimization: None,
-            dispatch_policy: Default::default(),
+        dispatch_policy: Default::default(),
     });
     let broker = AnyBroker::local();
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));

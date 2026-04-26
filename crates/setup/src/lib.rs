@@ -198,9 +198,7 @@ fn run_hub_menu(
         let idx = prompt::pick_from_list("¿Qué querés hacer?", &actions)?;
         match idx {
             0 => {
-                if let Err(e) =
-                    agent_wizard::run_agent_wizard(services, secrets_dir, config_dir)
-                {
+                if let Err(e) = agent_wizard::run_agent_wizard(services, secrets_dir, config_dir) {
                     eprintln!("⚠  configurar agente: {e:#}");
                 }
             }
@@ -324,7 +322,12 @@ fn run_services_submenu(
         ];
         let pick = prompt::pick_from_list("¿Qué tipo de servicio?", &actions)?;
         match pick {
-            0 => pick_and_run_in_category(services, registry::Category::Llm, secrets_dir, config_dir)?,
+            0 => pick_and_run_in_category(
+                services,
+                registry::Category::Llm,
+                secrets_dir,
+                config_dir,
+            )?,
             1 => {
                 // Channel link flow already shows auth + bind in one
                 // wizard — keep using it instead of re-rolling here.

@@ -313,12 +313,11 @@ async fn build_orchestrator(cfg: &DriverConfig, no_events: bool) -> Result<Drive
     }
     let acceptance: Arc<dyn AcceptanceEvaluator> = Arc::new(acceptance);
 
-    let compact_policy: Arc<dyn nexo_driver_loop::CompactPolicy> =
-        Arc::new(DefaultCompactPolicy {
-            enabled: cfg.compact_policy.enabled,
-            threshold: cfg.compact_policy.threshold,
-            min_turns_between_compacts: cfg.compact_policy.min_turns_between_compacts,
-        });
+    let compact_policy: Arc<dyn nexo_driver_loop::CompactPolicy> = Arc::new(DefaultCompactPolicy {
+        enabled: cfg.compact_policy.enabled,
+        threshold: cfg.compact_policy.threshold,
+        min_turns_between_compacts: cfg.compact_policy.min_turns_between_compacts,
+    });
 
     let orch = DriverOrchestrator::builder()
         .claude_config(cfg.claude.clone())

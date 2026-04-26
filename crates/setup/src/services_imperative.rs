@@ -413,8 +413,7 @@ pub fn dispatch_with_agent(
     config_dir: &Path,
     secrets_dir: &Path,
 ) -> Result<Outcome> {
-    let previous =
-        AGENT_OVERRIDE.with(|cell| cell.replace(Some(agent_id.to_string())));
+    let previous = AGENT_OVERRIDE.with(|cell| cell.replace(Some(agent_id.to_string())));
     let result = dispatch(svc_id, config_dir, secrets_dir);
     AGENT_OVERRIDE.with(|cell| {
         *cell.borrow_mut() = previous;

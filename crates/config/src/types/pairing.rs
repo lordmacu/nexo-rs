@@ -127,10 +127,7 @@ pairing:
             parsed.pairing.setup_code.secret_path.as_deref(),
             Some("/var/lib/nexo/pairing/pairing.key"),
         );
-        assert_eq!(
-            parsed.pairing.setup_code.default_ttl_secs,
-            Some(600),
-        );
+        assert_eq!(parsed.pairing.setup_code.default_ttl_secs, Some(600),);
         assert_eq!(
             parsed.pairing.public_url.as_deref(),
             Some("wss://nexo.example.com/pair"),

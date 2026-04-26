@@ -106,7 +106,10 @@ async fn cancel_known_goal_flips_status_to_cancelled() {
     .await
     .unwrap();
     assert!(out.cancelled);
-    assert_eq!(registry.handle(id).unwrap().status, AgentRunStatus::Cancelled);
+    assert_eq!(
+        registry.handle(id).unwrap().status,
+        AgentRunStatus::Cancelled
+    );
 }
 
 #[tokio::test]

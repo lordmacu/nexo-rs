@@ -21,6 +21,4 @@ pub use registry::{AdmitOutcome, AgentRegistry};
 pub use store::{
     AgentRegistryStore, AgentRegistryStoreError, MemoryAgentRegistryStore, SqliteAgentRegistryStore,
 };
-pub use types::{
-    AgentHandle, AgentRunStatus, AgentSnapshot, AgentSummary, RegistryError,
-};
+pub use types::{AgentHandle, AgentRunStatus, AgentSnapshot, AgentSummary, RegistryError};
