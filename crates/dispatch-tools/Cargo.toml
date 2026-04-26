@@ -22,7 +22,7 @@ nexo-agent-registry = { version = "0.1.1", path = "../agent-registry" }
 nexo-driver-loop    = { version = "0.1.1", path = "../driver-loop" }
 nexo-project-tracker = { version = "0.1.1", path = "../project-tracker" }
 nexo-pairing        = { version = "0.1.2", path = "../pairing" }
-tokio               = { workspace = true, features = ["time"] }
+tokio               = { workspace = true, features = ["time", "process", "io-util"] }
 chrono              = { workspace = true }
 humantime-serde     = { workspace = true }
 uuid                = { workspace = true }
