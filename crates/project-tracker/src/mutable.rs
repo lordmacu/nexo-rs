@@ -5,7 +5,7 @@
 //! Internally holds an `ArcSwap<Arc<dyn ProjectTracker>>` so reads
 //! never block writers; switching is one Arc swap.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
@@ -93,6 +93,7 @@ impl ProjectTracker for MutableTracker {
 mod tests {
     use super::*;
     use crate::types::PhaseStatus;
+    use std::path::Path;
 
     fn write_phases(dir: &Path, body: &str) {
         std::fs::write(dir.join("PHASES.md"), body).unwrap();
