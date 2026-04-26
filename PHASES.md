@@ -2424,6 +2424,37 @@ Sin runtime — solo el contrato sobre el que 67.1+ se montan.
 #### 67.12 — Multi-goal paralelo                                 ⬜
 #### 67.13 — Cost dashboard + admin-ui A4 tile                   ⬜
 
+#### 67.A.1 — `nexo-project-tracker` scaffold + PHASES.md parser ✅
+#### 67.A.2 — FOLLOWUPS parser + `FsProjectTracker` + watcher    ✅
+#### 67.A.3 — `git_log_for_phase` + CircuitBreaker               ✅
+#### 67.A.4 — Read tools (`project_status`, `project_phases_list`, `followup_detail`, `git_log_for_phase`) ✅
+#### 67.A.5 — `project_tracker.yaml` + capabilities entry        ✅
+#### 67.B.1 — `SessionBinding` `origin_channel` + `dispatcher` (schema v2) ✅
+#### 67.B.2 — `nexo-agent-registry` scaffold + types + SQLite store ✅
+#### 67.B.3 — Cap, FIFO queue, `ArcSwap` snapshot                ✅
+#### 67.B.4 — Reattach + per-goal log buffer                     ✅
+#### 67.C.1 — Non-blocking `spawn_goal` + `DriverEvent::Progress` ✅
+#### 67.C.2 — Pause / resume signal channel                       ✅
+#### 67.D.1 — `DispatchPolicy` on agent + per-binding override   ✅
+#### 67.D.2 — `DispatchGate` (capability + trust + caps + phase filters) ✅
+#### 67.D.3 — `ToolRegistry::apply_dispatch_capability`           ✅
+#### 67.E.1 — Tool `program_phase` dispatch                       ✅
+#### 67.E.2 — Tool `dispatch_followup`                            ✅
+#### 67.F.1 — Hooks core (`notify_origin`/`channel`/`nats_publish`) ✅
+#### 67.F.2 — Hook `dispatch_phase` + chain inheritance           ✅
+#### 67.F.3 — SQLite hook idempotency                             ✅
+#### 67.F.4 — Shell hook exec gated by `allow_shell_hooks`        ✅
+#### 67.G.1 — `program_phase_chain` + `program_phase_parallel`   ✅
+#### 67.G.2 — `cancel_agent` / `pause_agent` / `resume_agent` / `update_budget` ✅
+#### 67.G.3 — Query tools (`list_agents`, `agent_status`, `agent_logs_tail`, `agent_hooks_list`) ✅
+#### 67.G.4 — Admin tools (`set_concurrency_cap`, `flush_agent_queue`, `evict_completed`) ✅
+#### 67.H.1 — `nexo-driver-tools` CLI subcommands espejo         ✅
+#### 67.H.2 — NATS subject inventory + `DispatchTelemetry` trait ✅
+#### 67.H.3 — `ToolRegistryCache::get_or_build_with_dispatch` (hot-reload) ✅
+#### 67.H.4 — admin-ui tracker / registry / dispatch / hooks tiles ✅
+#### 67.H.5 — `architecture/project-tracker.md` mdBook page      ✅
+#### 67.H.6 — PHASES + CLAUDE counter + FOLLOWUPS + workspace gate + push ✅
+
 ---
 
 ### Phase 68 — Local LLM tier (llama.cpp)
