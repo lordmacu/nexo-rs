@@ -1174,17 +1174,19 @@ async fn main() -> Result<()> {
     // store + gate flow into every AgentRuntime below.
     let _ = (Arc::clone(&pairing_store), Arc::clone(&setup_code_issuer));
 
-    // Phase 67 — opt-in in-process driver subsystem. When the
-    // operator sets `NEXO_DRIVER_INTEGRATED=1` and a
-    // `config/driver/claude.yaml` is reachable, we boot a shared
-    // DispatchToolContext (orchestrator + agent-registry +
-    // tracker + hook registry + log buffer) and feed it into
-    // every AgentRuntime so the program_phase / list_agents /
-    // … tool family is fully wired end-to-end. Without the env
-    // var the dispatch tools stay in friendly-error mode (handlers
-    // return a clean "AgentContext.dispatch is not set" error).
+    // Phase 67 — auto-boot the in-process driver subsystem when
+    // ANY configured agent has `dispatch_policy.mode: full`
+    // (agent-level OR per-binding) AND a driver config file is
+    // reachable. The operator never has to flip an env var —
+    // configuring Cody with full dispatch IS the opt-in. The
+    // shared DispatchToolContext (orchestrator + agent-registry
+    // + tracker + hook registry + log buffer) is then fed into
+    // every AgentRuntime so program_phase / list_agents / etc.
+    // are fully wired end-to-end. Agents without dispatch_full
+    // see the tool defs in their registry but the handlers
+    // return a clean "AgentContext.dispatch is not set" error.
     let dispatch_ctx: Option<Arc<nexo_core::agent::dispatch_handlers::DispatchToolContext>> =
-        boot_dispatch_ctx_if_enabled(&broker).await;
+        boot_dispatch_ctx_if_enabled(&broker, &cfg.agents.agents).await;
 
     let mut runtimes: Vec<AgentRuntime> = Vec::with_capacity(cfg.agents.agents.len());
     // Phase 18 — collect each agent's reload channel so the coordinator
@@ -2322,22 +2324,38 @@ async fn main() -> Result<()> {
 /// dispatch surface couldn't be wired.
 async fn boot_dispatch_ctx_if_enabled(
     _broker: &nexo_broker::AnyBroker,
+    agents: &[nexo_config::AgentConfig],
 ) -> Option<Arc<nexo_core::agent::dispatch_handlers::DispatchToolContext>> {
-    let enabled = std::env::var("NEXO_DRIVER_INTEGRATED")
-        .ok()
-        .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
-        .unwrap_or(false);
-    if !enabled {
+    // Auto-detect: any agent (or any of its bindings) with
+    // dispatch_capability=Full triggers the in-process driver.
+    // Operator opts in by configuring Cody (or whoever) with
+    // `dispatch_policy.mode: full`; no env var required.
+    let any_full = agents.iter().any(|a| {
+        let agent_full = matches!(
+            a.dispatch_policy.mode,
+            nexo_config::DispatchCapability::Full
+        );
+        let binding_full = a.inbound_bindings.iter().any(|b| {
+            b.dispatch_policy
+                .as_ref()
+                .map(|p| matches!(p.mode, nexo_config::DispatchCapability::Full))
+                .unwrap_or(false)
+        });
+        agent_full || binding_full
+    });
+    if !any_full {
         return None;
     }
 
+    // Driver config — fall back to a shipped default path.
+    // Production deploys override with NEXO_DRIVER_CONFIG.
     let claude_yaml = std::env::var("NEXO_DRIVER_CONFIG")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("config/driver/claude.yaml"));
     if !claude_yaml.exists() {
         tracing::warn!(
             path = %claude_yaml.display(),
-            "NEXO_DRIVER_INTEGRATED=1 but driver config not found — dispatch tools stay in error mode"
+            "an agent has dispatch_capability=full but driver config is missing — dispatch tools stay in error mode"
         );
         return None;
     }
