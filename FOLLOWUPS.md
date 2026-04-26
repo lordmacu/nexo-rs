@@ -50,18 +50,31 @@ P-3. **Push-based watchers (Gmail Push, generic inbound webhooks)**
 
 ### Hardening
 
-H-1. **CircuitBreaker missing on Telegram + Google plugins**
-- Missing: `nexo_resilience::CircuitBreaker` wrap around the
-  Telegram bot HTTP calls (`crates/plugins/telegram/src/bot.rs`)
-  and the Google OAuth + API calls
-  (`crates/plugins/google/src/client.rs`). LLM clients, MCP HTTP
-  client, and the browser CDP all use a breaker; these two are the
-  outliers.
-- Why deferred: needs a scoping decision (one breaker per
-  channel-instance? one per agent? shared per plugin?). Wrapping
-  every call site is ~100 lines per plugin and the pattern needs
-  agreement before locking it in.
-- Target: dedicated hardening session.
+H-1. ~~**CircuitBreaker missing on Telegram + Google plugins**~~  🔄 partial 2026-04-26
+- ~~Telegram side fully wired~~ — `BotClient` now owns
+  `circuit: Arc<CircuitBreaker>` (one breaker per `BotClient`
+  instance, breaker name `telegram.<redacted-host>` so logs
+  never carry the bot token). All three HTTP exit points
+  (`call_json` JSON POST, multipart `sendDocument`, `download_file`
+  GET) flow through a single `run_breakered` helper that maps
+  `CircuitError::Open` → `bail!("circuit breaker open")` and
+  passes inner errors through. 13 existing telegram tests still
+  pass.
+- ~~Google general-API side wired~~ — `GoogleAuthClient` now
+  owns its own `circuit` field; `authorized_call` (the HOT path
+  used by every google_* tool) wraps via `run_breakered` with
+  the same map.
+- **Still deferred**: the 5 OAuth-specific exit points in the
+  Google client (`exchange_code`, `request_device_code`,
+  `poll_device_token`, `refresh_if_needed`, `revoke`). These
+  fire rarely (token refresh ~ every 50 min, device flow only
+  during initial pairing), so the breaker value is lower and
+  they have their own retry semantics. Wrap them in a follow-up
+  if a real outage shows the gap.
+- Scoping decision locked in: **one breaker per client
+  instance** (per BotClient, per GoogleAuthClient). Multi-tenant
+  setups holding multiple instances get isolated breakers, so a
+  single bad token doesn't cascade across tenants.
 
 ### Phase 21 — Link understanding
 

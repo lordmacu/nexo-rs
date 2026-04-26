@@ -675,20 +675,47 @@ impl GoogleAuthClient {
         if let Some(b) = body {
             req = req.json(&b);
         }
-        let resp = req.send().await.with_context(|| format!("{m} {url}"))?;
-        let status = resp.status();
-        let body_val: Value = match resp.json().await {
-            Ok(v) => v,
-            Err(_) => Value::Null,
-        };
-        if !status.is_success() {
-            return Err(anyhow!(
-                "{m} {url} → HTTP {}: {}",
-                status,
-                serde_json::to_string(&body_val).unwrap_or_default()
-            ));
+        let m_clone = m.clone();
+        let url_owned = url.to_string();
+        self.run_breakered(move || async move {
+            let resp = req
+                .send()
+                .await
+                .with_context(|| format!("{m_clone} {url_owned}"))?;
+            let status = resp.status();
+            let body_val: Value = match resp.json().await {
+                Ok(v) => v,
+                Err(_) => Value::Null,
+            };
+            if !status.is_success() {
+                return Err(anyhow!(
+                    "{m_clone} {url_owned} → HTTP {}: {}",
+                    status,
+                    serde_json::to_string(&body_val).unwrap_or_default()
+                ));
+            }
+            Ok(body_val)
+        })
+        .await
+    }
+
+    /// Wrap an HTTP-issuing async closure with the per-client
+    /// CircuitBreaker. `Open` short-circuits with a clear "breaker
+    /// open" error; transport / 4xx / 5xx errors flow through
+    /// unchanged but trip the failure counter so a sustained burst
+    /// opens the breaker. FOLLOWUPS H-1.
+    async fn run_breakered<F, Fut, T>(&self, op: F) -> anyhow::Result<T>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = anyhow::Result<T>>,
+    {
+        match self.circuit.call(op).await {
+            Ok(v) => Ok(v),
+            Err(nexo_resilience::CircuitError::Open(name)) => {
+                Err(anyhow!("google circuit breaker open ({name})"))
+            }
+            Err(nexo_resilience::CircuitError::Inner(e)) => Err(e),
         }
-        Ok(body_val)
     }
 
     pub async fn snapshot(&self) -> Value {
