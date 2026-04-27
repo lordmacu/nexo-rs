@@ -66,16 +66,10 @@ async fn outbound_enqueue_through_dispatcher_returns_message_id() {
     let google = Arc::new(nexo_auth::google::GoogleCredentialStore::empty());
     let health: nexo_plugin_email::inbound::HealthMap = Arc::new(dashmap::DashMap::new());
 
-    let dispatcher = OutboundDispatcher::start(
-        &plugin_cfg,
-        creds,
-        google,
-        broker,
-        tmp.path(),
-        health,
-    )
-    .await
-    .unwrap();
+    let dispatcher =
+        OutboundDispatcher::start(&plugin_cfg, creds, google, broker, tmp.path(), health)
+            .await
+            .unwrap();
 
     let cmd = OutboundCommand {
         to: vec!["alice@x".into()],
@@ -94,11 +88,7 @@ async fn outbound_enqueue_through_dispatcher_returns_message_id() {
         "message_id should embed the From domain: {msg_id}"
     );
 
-    let queue_path = tmp
-        .path()
-        .join("email")
-        .join("outbound")
-        .join("ops.jsonl");
+    let queue_path = tmp.path().join("email").join("outbound").join("ops.jsonl");
     let body = std::fs::read_to_string(&queue_path).unwrap();
     assert_eq!(body.lines().filter(|l| !l.is_empty()).count(), 1);
     assert!(body.contains(&msg_id));
@@ -116,16 +106,10 @@ async fn enqueue_unknown_instance_errors() {
     let creds = Arc::new(nexo_auth::email::EmailCredentialStore::empty());
     let google = Arc::new(nexo_auth::google::GoogleCredentialStore::empty());
     let health: nexo_plugin_email::inbound::HealthMap = Arc::new(dashmap::DashMap::new());
-    let dispatcher = OutboundDispatcher::start(
-        &plugin_cfg,
-        creds,
-        google,
-        broker,
-        tmp.path(),
-        health,
-    )
-    .await
-    .unwrap();
+    let dispatcher =
+        OutboundDispatcher::start(&plugin_cfg, creds, google, broker, tmp.path(), health)
+            .await
+            .unwrap();
 
     let cmd = OutboundCommand {
         to: vec!["alice@x".into()],
@@ -183,8 +167,20 @@ yes\r\n";
     };
     enrich_reply_threading(&parsed.meta, &mut cmd);
     assert_eq!(cmd.in_reply_to.as_deref(), Some("reply@example.com"));
-    assert!(cmd.references.iter().any(|r| r.contains("root@example.com")), "got {:?}", cmd.references);
-    assert!(cmd.references.iter().any(|r| r.contains("reply@example.com")), "got {:?}", cmd.references);
+    assert!(
+        cmd.references
+            .iter()
+            .any(|r| r.contains("root@example.com")),
+        "got {:?}",
+        cmd.references
+    );
+    assert!(
+        cmd.references
+            .iter()
+            .any(|r| r.contains("reply@example.com")),
+        "got {:?}",
+        cmd.references
+    );
 }
 
 #[tokio::test]
@@ -215,7 +211,11 @@ async fn bounce_event_persists_and_increments_count() {
     assert_eq!(status.status_code.as_deref(), Some("5.1.1"));
 
     bounce_store.record(&event).await.unwrap();
-    let status = bounce_store.get("ops", "ghost@x.com").await.unwrap().unwrap();
+    let status = bounce_store
+        .get("ops", "ghost@x.com")
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(status.count, 2);
 }
 

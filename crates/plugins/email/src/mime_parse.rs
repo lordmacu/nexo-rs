@@ -17,9 +17,7 @@ use sha2::{Digest, Sha256};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
-use crate::events::{
-    AddressEntry, AttachmentDisposition, EmailAttachment, EmailMeta,
-};
+use crate::events::{AddressEntry, AttachmentDisposition, EmailAttachment, EmailMeta};
 
 /// Headers we lift into `EmailMeta.headers_extra`. Whitelist keeps
 /// the broker payload bounded — 48.8 (loop prevention) and tools key
@@ -446,13 +444,18 @@ hi\r\n";
     #[tokio::test]
     async fn extracts_whitelisted_headers_only() {
         let dir = tempfile::tempdir().unwrap();
-        let p = parse_eml(WITH_LIST_HEADERS, &cfg(dir.path())).await.unwrap();
+        let p = parse_eml(WITH_LIST_HEADERS, &cfg(dir.path()))
+            .await
+            .unwrap();
         assert_eq!(
             p.meta.headers_extra.get("list-id").map(|s| s.as_str()),
             Some("<weekly.list.example>")
         );
         assert_eq!(
-            p.meta.headers_extra.get("auto-submitted").map(|s| s.as_str()),
+            p.meta
+                .headers_extra
+                .get("auto-submitted")
+                .map(|s| s.as_str()),
             Some("auto-generated")
         );
         // From / To are NOT mirrored into headers_extra (they have

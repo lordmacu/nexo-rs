@@ -120,7 +120,9 @@ pub async fn render_prometheus(health: Option<&HealthMap>) -> String {
     let mut out = String::new();
 
     // Counters first — they have stable cardinality.
-    out.push_str("# HELP email_imap_messages_fetched_total Total IMAP messages fetched per instance.\n");
+    out.push_str(
+        "# HELP email_imap_messages_fetched_total Total IMAP messages fetched per instance.\n",
+    );
     out.push_str("# TYPE email_imap_messages_fetched_total counter\n");
     {
         let mut rows: Vec<_> = MESSAGES_FETCHED
@@ -139,7 +141,9 @@ pub async fn render_prometheus(health: Option<&HealthMap>) -> String {
         }
     }
 
-    out.push_str("# HELP email_loop_skipped_total Inbound messages suppressed by the loop guard.\n");
+    out.push_str(
+        "# HELP email_loop_skipped_total Inbound messages suppressed by the loop guard.\n",
+    );
     out.push_str("# TYPE email_loop_skipped_total counter\n");
     {
         let mut rows: Vec<_> = LOOP_SKIPPED
@@ -200,7 +204,9 @@ pub async fn render_prometheus(health: Option<&HealthMap>) -> String {
     render_instance_counter(&mut out, &PARSE_ERRORS, "email_parse_errors_total");
 
     // Gauges — sampled at scrape time from health_map.
-    out.push_str("# HELP email_imap_state IMAP worker state (0=connecting, 1=idle, 2=polling, 3=down).\n");
+    out.push_str(
+        "# HELP email_imap_state IMAP worker state (0=connecting, 1=idle, 2=polling, 3=down).\n",
+    );
     out.push_str("# TYPE email_imap_state gauge\n");
     out.push_str("# HELP email_outbound_queue_depth Pending outbound jobs per instance.\n");
     out.push_str("# TYPE email_outbound_queue_depth gauge\n");
@@ -299,7 +305,10 @@ mod tests {
             "email_outbound_queue_depth",
             "email_outbound_dlq_depth",
         ] {
-            assert!(body.contains(&format!("# TYPE {name}")), "missing TYPE for {name}");
+            assert!(
+                body.contains(&format!("# TYPE {name}")),
+                "missing TYPE for {name}"
+            );
         }
     }
 
@@ -313,9 +322,7 @@ mod tests {
         let body = render_prometheus(None).await;
         assert!(body.contains("email_imap_messages_fetched_total{instance=\"ops\"}"));
         assert!(body.contains("email_loop_skipped_total{reason=\"auto_submitted\"}"));
-        assert!(body.contains(
-            "email_bounces_total{classification=\"permanent\",instance=\"ops\"}"
-        ));
+        assert!(body.contains("email_bounces_total{classification=\"permanent\",instance=\"ops\"}"));
         assert!(body.contains("email_outbound_sent_total{instance=\"ops\"}"));
         assert!(body.contains("email_outbound_failed_total{instance=\"ops\"}"));
     }

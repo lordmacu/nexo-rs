@@ -156,11 +156,7 @@ impl BounceStore {
     ///
     /// Returns the number of rows deleted. Idempotent — calling on
     /// an empty table or a table that's already trimmed is a no-op.
-    pub async fn prune(
-        &self,
-        retention_secs: i64,
-        kept_instances: &[String],
-    ) -> Result<u64> {
+    pub async fn prune(&self, retention_secs: i64, kept_instances: &[String]) -> Result<u64> {
         let mut deleted = 0u64;
 
         if retention_secs > 0 {
@@ -182,9 +178,7 @@ impl BounceStore {
                 .take(kept_instances.len())
                 .collect::<Vec<_>>()
                 .join(", ");
-            let sql = format!(
-                "DELETE FROM email_bounces WHERE instance NOT IN ({placeholders})"
-            );
+            let sql = format!("DELETE FROM email_bounces WHERE instance NOT IN ({placeholders})");
             let mut q = sqlx::query(&sql);
             for inst in kept_instances {
                 q = q.bind(inst);
@@ -211,22 +205,26 @@ impl BounceStore {
         // Aggregate row first — gives us the list of distinct
         // instances + classification counts in one query.
         let agg_rows: Vec<(String, String, i64)> = match instance_filter {
-            Some(inst) => sqlx::query_as(
-                "SELECT instance, classification, COUNT(*)
+            Some(inst) => {
+                sqlx::query_as(
+                    "SELECT instance, classification, COUNT(*)
                  FROM email_bounces
                  WHERE instance = ?
                  GROUP BY instance, classification",
-            )
-            .bind(inst)
-            .fetch_all(&self.pool)
-            .await?,
-            None => sqlx::query_as(
-                "SELECT instance, classification, COUNT(*)
+                )
+                .bind(inst)
+                .fetch_all(&self.pool)
+                .await?
+            }
+            None => {
+                sqlx::query_as(
+                    "SELECT instance, classification, COUNT(*)
                  FROM email_bounces
                  GROUP BY instance, classification",
-            )
-            .fetch_all(&self.pool)
-            .await?,
+                )
+                .fetch_all(&self.pool)
+                .await?
+            }
         };
 
         // Fold per-instance.
@@ -286,13 +284,20 @@ impl BounceStore {
         Ok(by_instance.into_values().collect())
     }
 
-    pub async fn get(
-        &self,
-        instance: &str,
-        recipient: &str,
-    ) -> Result<Option<RecipientStatus>> {
+    pub async fn get(&self, instance: &str, recipient: &str) -> Result<Option<RecipientStatus>> {
         let recipient_norm = recipient.trim().to_ascii_lowercase();
-        let row = sqlx::query_as::<_, (String, String, String, Option<String>, Option<String>, i64, i64)>(
+        let row = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                String,
+                Option<String>,
+                Option<String>,
+                i64,
+                i64,
+            ),
+        >(
             "SELECT instance, recipient, classification, status_code, action, last_seen, count
              FROM email_bounces WHERE instance = ? AND recipient = ?",
         )
@@ -448,9 +453,13 @@ mod tests {
             .execute(&s.pool)
             .await
             .unwrap();
-        s.record(&ev("ops", Some("recent@x"), BounceClassification::Permanent))
-            .await
-            .unwrap();
+        s.record(&ev(
+            "ops",
+            Some("recent@x"),
+            BounceClassification::Permanent,
+        ))
+        .await
+        .unwrap();
         let n = s.prune(90 * 86_400, &[]).await.unwrap();
         assert_eq!(n, 1);
         assert!(s.get("ops", "old@x").await.unwrap().is_none());

@@ -10,9 +10,7 @@ use nexo_llm::ToolDef;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::events::{
-    EmailMeta, OutboundAttachmentRef, OutboundCommand,
-};
+use crate::events::{EmailMeta, OutboundAttachmentRef, OutboundCommand};
 use crate::imap_conn::ImapConnection;
 use crate::mime_parse::{parse_eml, ParseConfig};
 use crate::threading::enrich_reply_threading;

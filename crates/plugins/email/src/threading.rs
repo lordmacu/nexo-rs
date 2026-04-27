@@ -86,11 +86,7 @@ pub fn session_id_for_thread(thread_root_id: &str) -> Uuid {
 /// RFC 5322 §3.6.4 truncation: keep `[refs[0], refs[len-(max-1)..len]]`.
 /// Optionally append `own_msg_id` (typically the parent we're
 /// replying to) when not already present. Result is bounded by `max`.
-pub fn truncate_references(
-    refs: &[String],
-    own_msg_id: Option<&str>,
-    max: usize,
-) -> Vec<String> {
+pub fn truncate_references(refs: &[String], own_msg_id: Option<&str>, max: usize) -> Vec<String> {
     let mut out: Vec<String> = if refs.len() <= max {
         refs.to_vec()
     } else {
@@ -143,8 +139,7 @@ pub fn enrich_reply_threading(parent: &EmailMeta, cmd: &mut OutboundCommand) {
 /// True when an inbound message's `From` matches the account it
 /// arrived on. Used by 48.8 to drop self-bounces / loops.
 pub fn is_self_thread(meta: &EmailMeta, account_address: &str) -> bool {
-    !meta.from.address.is_empty()
-        && meta.from.address.eq_ignore_ascii_case(account_address)
+    !meta.from.address.is_empty() && meta.from.address.eq_ignore_ascii_case(account_address)
 }
 
 #[cfg(test)]
@@ -189,10 +184,7 @@ mod tests {
 
     #[test]
     fn canonicalize_handles_no_brackets() {
-        assert_eq!(
-            canonicalize_message_id("abc@x").as_deref(),
-            Some("abc@x")
-        );
+        assert_eq!(canonicalize_message_id("abc@x").as_deref(), Some("abc@x"));
     }
 
     #[test]
@@ -251,11 +243,7 @@ mod tests {
 
     #[test]
     fn root_falls_through_when_first_ref_is_injection() {
-        let m = meta_with(
-            Some("<self@x>"),
-            None,
-            &["<bad@x\r\nfoo>", "<good@x>"],
-        );
+        let m = meta_with(Some("<self@x>"), None, &["<bad@x\r\nfoo>", "<good@x>"]);
         // First ref fails canonicalisation; walk should NOT silently
         // promote `<good@x>` (we treat the whole `references` array
         // as poisoned-in-position and fall through to in_reply_to /
@@ -354,11 +342,7 @@ mod tests {
 
     #[test]
     fn enrich_sets_in_reply_to_and_appends_parent_to_refs() {
-        let parent = meta_with(
-            Some("<parent@x>"),
-            Some("<gp@x>"),
-            &["<root@x>", "<gp@x>"],
-        );
+        let parent = meta_with(Some("<parent@x>"), Some("<gp@x>"), &["<root@x>", "<gp@x>"]);
         let mut c = cmd();
         enrich_reply_threading(&parent, &mut c);
         assert_eq!(c.in_reply_to.as_deref(), Some("<parent@x>"));

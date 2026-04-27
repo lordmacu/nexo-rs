@@ -137,9 +137,8 @@ pub fn format_label_list(labels: &[String]) -> String {
         .iter()
         .map(|l| {
             let needs_quote = l.is_empty()
-                || l.chars().any(|c| {
-                    c.is_whitespace() || c == '(' || c == ')' || c == '"' || c == '\\'
-                });
+                || l.chars()
+                    .any(|c| c.is_whitespace() || c == '(' || c == ')' || c == '"' || c == '\\');
             if needs_quote {
                 let escaped = l.replace('\\', "\\\\").replace('"', "\\\"");
                 format!("\"{escaped}\"")
@@ -196,25 +195,16 @@ mod tests {
 
     #[test]
     fn format_label_list_simple() {
-        assert_eq!(
-            format_label_list(&["Important".into()]),
-            "(Important)"
-        );
+        assert_eq!(format_label_list(&["Important".into()]), "(Important)");
     }
 
     #[test]
     fn format_label_list_quotes_when_whitespace() {
-        assert_eq!(
-            format_label_list(&["My Label".into()]),
-            r#"("My Label")"#
-        );
+        assert_eq!(format_label_list(&["My Label".into()]), r#"("My Label")"#);
     }
 
     #[test]
     fn format_label_list_escapes_quote_and_backslash() {
-        assert_eq!(
-            format_label_list(&[r#"a"b\c"#.into()]),
-            r#"("a\"b\\c")"#
-        );
+        assert_eq!(format_label_list(&[r#"a"b\c"#.into()]), r#"("a\"b\\c")"#);
     }
 }

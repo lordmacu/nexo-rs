@@ -120,7 +120,10 @@ mod tests {
         let mut m = meta_from("alice@x");
         m.headers_extra
             .insert("auto-submitted".into(), "auto-replied".into());
-        assert_eq!(should_skip(&m, "ops@x", &cfg_all()), Some(SkipReason::AutoSubmitted));
+        assert_eq!(
+            should_skip(&m, "ops@x", &cfg_all()),
+            Some(SkipReason::AutoSubmitted)
+        );
     }
 
     #[test]
@@ -135,7 +138,10 @@ mod tests {
         let mut m = meta_from("bot@list.x");
         m.headers_extra
             .insert("list-id".into(), "<weekly.list.x>".into());
-        assert_eq!(should_skip(&m, "ops@x", &cfg_all()), Some(SkipReason::ListMail));
+        assert_eq!(
+            should_skip(&m, "ops@x", &cfg_all()),
+            Some(SkipReason::ListMail)
+        );
     }
 
     #[test]
@@ -143,27 +149,39 @@ mod tests {
         let mut m = meta_from("bot@list.x");
         m.headers_extra
             .insert("list-unsubscribe".into(), "<https://list.x/u>".into());
-        assert_eq!(should_skip(&m, "ops@x", &cfg_all()), Some(SkipReason::ListMail));
+        assert_eq!(
+            should_skip(&m, "ops@x", &cfg_all()),
+            Some(SkipReason::ListMail)
+        );
     }
 
     #[test]
     fn precedence_bulk_skips() {
         let mut m = meta_from("bot@x");
         m.headers_extra.insert("precedence".into(), "bulk".into());
-        assert_eq!(should_skip(&m, "ops@x", &cfg_all()), Some(SkipReason::PrecedenceBulk));
+        assert_eq!(
+            should_skip(&m, "ops@x", &cfg_all()),
+            Some(SkipReason::PrecedenceBulk)
+        );
     }
 
     #[test]
     fn precedence_junk_skips_case_insensitive() {
         let mut m = meta_from("bot@x");
         m.headers_extra.insert("precedence".into(), "JUNK".into());
-        assert_eq!(should_skip(&m, "ops@x", &cfg_all()), Some(SkipReason::PrecedenceBulk));
+        assert_eq!(
+            should_skip(&m, "ops@x", &cfg_all()),
+            Some(SkipReason::PrecedenceBulk)
+        );
     }
 
     #[test]
     fn self_from_skips() {
         let m = meta_from("ops@x");
-        assert_eq!(should_skip(&m, "ops@x", &cfg_all()), Some(SkipReason::SelfFrom));
+        assert_eq!(
+            should_skip(&m, "ops@x", &cfg_all()),
+            Some(SkipReason::SelfFrom)
+        );
     }
 
     #[test]
@@ -187,6 +205,9 @@ mod tests {
         m.headers_extra
             .insert("auto-submitted".into(), "auto-replied".into());
         m.headers_extra.insert("list-id".into(), "<l@x>".into());
-        assert_eq!(should_skip(&m, "ops@x", &cfg_all()), Some(SkipReason::AutoSubmitted));
+        assert_eq!(
+            should_skip(&m, "ops@x", &cfg_all()),
+            Some(SkipReason::AutoSubmitted)
+        );
     }
 }

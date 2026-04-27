@@ -20,11 +20,7 @@ use crate::inbound::HealthMap;
 pub trait DispatcherHandle: Send + Sync {
     /// Build a Message-ID, render MIME, persist the job, return the
     /// id so the caller can correlate the eventual ack.
-    async fn enqueue_for_instance(
-        &self,
-        instance: &str,
-        cmd: OutboundCommand,
-    ) -> Result<String>;
+    async fn enqueue_for_instance(&self, instance: &str, cmd: OutboundCommand) -> Result<String>;
 
     /// Sorted list of declared instance ids. Tools call this to
     /// validate `instance` arguments before touching IMAP / SMTP.
@@ -60,9 +56,6 @@ impl EmailToolContext {
         &self,
         instance: &str,
     ) -> Option<&nexo_config::types::plugins::EmailAccountConfig> {
-        self.config
-            .accounts
-            .iter()
-            .find(|a| a.instance == instance)
+        self.config.accounts.iter().find(|a| a.instance == instance)
     }
 }

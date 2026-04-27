@@ -85,13 +85,8 @@ impl EmailBouncesSummaryTool {
                 }));
             }
         };
-        let top_n = args
-            .top_n
-            .unwrap_or(DEFAULT_TOP_N)
-            .min(MAX_TOP_N);
-        let summaries = store
-            .summary(args.instance.as_deref(), top_n)
-            .await?;
+        let top_n = args.top_n.unwrap_or(DEFAULT_TOP_N).min(MAX_TOP_N);
+        let summaries = store.summary(args.instance.as_deref(), top_n).await?;
 
         let payload: Vec<Value> = summaries
             .iter()
@@ -176,11 +171,7 @@ mod tests {
             .record(&ev("ops", "alice@x", BounceClassification::Permanent))
             .await
             .unwrap();
-        let (ctx, _) = stub_ctx_with_bounce(
-            vec!["ops".into()],
-            false,
-            Some(Arc::new(store)),
-        );
+        let (ctx, _) = stub_ctx_with_bounce(vec!["ops".into()], false, Some(Arc::new(store)));
         ctx
     }
 
@@ -214,11 +205,8 @@ mod tests {
             .record(&ev("b", "x@y", BounceClassification::Permanent))
             .await
             .unwrap();
-        let (ctx, _) = stub_ctx_with_bounce(
-            vec!["a".into(), "b".into()],
-            false,
-            Some(Arc::new(store)),
-        );
+        let (ctx, _) =
+            stub_ctx_with_bounce(vec!["a".into(), "b".into()], false, Some(Arc::new(store)));
         let tool = EmailBouncesSummaryTool::new(ctx);
         let out = tool.run(json!({ "instance": "a" })).await;
         let instances = out["instances"].as_array().unwrap();

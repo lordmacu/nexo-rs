@@ -47,7 +47,10 @@ impl CursorStore {
     pub async fn open_path(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).with_context(|| {
-                format!("cannot create email cursor parent dir: {}", parent.display())
+                format!(
+                    "cannot create email cursor parent dir: {}",
+                    parent.display()
+                )
             })?;
         }
         Self::open(&format!("sqlite://{}", path.display())).await

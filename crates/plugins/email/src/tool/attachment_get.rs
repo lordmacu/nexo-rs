@@ -80,11 +80,9 @@ impl EmailAttachmentGetTool {
     }
 
     async fn run_inner(&self, args: GetArgs) -> Result<Value> {
-        let store = self
-            .ctx
-            .attachment_store
-            .as_ref()
-            .ok_or_else(|| anyhow!("attachment store unavailable — set email.attachments_db in config"))?;
+        let store = self.ctx.attachment_store.as_ref().ok_or_else(|| {
+            anyhow!("attachment store unavailable — set email.attachments_db in config")
+        })?;
         // Defence-in-depth: reject anything that doesn't match the
         // hex shape of a sha256 hash even before we hit the store.
         if !is_hex_sha256(&args.sha256) {
@@ -140,9 +138,7 @@ pub fn register(registry: &ToolRegistry, ctx: Arc<EmailToolContext>) {
 }
 
 fn is_hex_sha256(s: &str) -> bool {
-    !s.is_empty()
-        && s.len() <= 128
-        && s.chars().all(|c| c.is_ascii_hexdigit())
+    !s.is_empty() && s.len() <= 128 && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 #[cfg(test)]
@@ -187,9 +183,7 @@ mod tests {
         store.migrate().await.unwrap();
         let ctx = ctx_with_attachments(store, dir.path().to_path_buf());
         let tool = EmailAttachmentGetTool::new(ctx);
-        let r = tool
-            .run(json!({ "sha256": "deadbeef".repeat(8) }))
-            .await;
+        let r = tool.run(json!({ "sha256": "deadbeef".repeat(8) })).await;
         assert_eq!(r["ok"], false);
         assert!(r["error"].as_str().unwrap().contains("not present"));
     }
@@ -204,9 +198,7 @@ mod tests {
         std::fs::write(dir.path().join(&sha), b"hello world").unwrap();
         let ctx = ctx_with_attachments(store, dir.path().to_path_buf());
         let tool = EmailAttachmentGetTool::new(ctx);
-        let r = tool
-            .run(json!({ "sha256": sha, "encoding": "text" }))
-            .await;
+        let r = tool.run(json!({ "sha256": sha, "encoding": "text" })).await;
         assert_eq!(r["ok"], true);
         assert_eq!(r["body"]["text"], "hello world");
         assert_eq!(r["size_bytes"], 11);
@@ -219,9 +211,7 @@ mod tests {
         store.migrate().await.unwrap();
         let ctx = ctx_with_attachments(store, dir.path().to_path_buf());
         let tool = EmailAttachmentGetTool::new(ctx);
-        let r = tool
-            .run(json!({ "sha256": "../etc/passwd" }))
-            .await;
+        let r = tool.run(json!({ "sha256": "../etc/passwd" })).await;
         assert_eq!(r["ok"], false);
         assert!(r["error"].as_str().unwrap().contains("hex"));
     }
@@ -230,9 +220,7 @@ mod tests {
     async fn missing_attachment_store_yields_clean_error() {
         let (ctx, _) = stub_ctx(vec!["ops".into()], false);
         let tool = EmailAttachmentGetTool::new(ctx);
-        let r = tool
-            .run(json!({ "sha256": "a".repeat(64) }))
-            .await;
+        let r = tool.run(json!({ "sha256": "a".repeat(64) })).await;
         assert_eq!(r["ok"], false);
         assert!(r["error"].as_str().unwrap().contains("attachment store"));
     }

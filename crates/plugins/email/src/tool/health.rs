@@ -68,12 +68,15 @@ impl EmailHealthTool {
         // Walk the DashMap snapshotting each entry. We sort the
         // payload by instance id so output is deterministic for
         // dashboards / diffs.
-        let mut entries: Vec<(String, Arc<tokio::sync::RwLock<crate::health::AccountHealth>>)> =
-            self.ctx
-                .health
-                .iter()
-                .map(|kv| (kv.key().clone(), kv.value().clone()))
-                .collect();
+        let mut entries: Vec<(
+            String,
+            Arc<tokio::sync::RwLock<crate::health::AccountHealth>>,
+        )> = self
+            .ctx
+            .health
+            .iter()
+            .map(|kv| (kv.key().clone(), kv.value().clone()))
+            .collect();
         entries.sort_by(|a, b| a.0.cmp(&b.0));
 
         let mut out: Vec<Value> = Vec::with_capacity(entries.len());
@@ -138,13 +141,8 @@ mod tests {
     use dashmap::DashMap;
     use tokio::sync::RwLock;
 
-    fn ctx_with_health_entries(
-        entries: Vec<(&str, AccountHealth)>,
-    ) -> Arc<EmailToolContext> {
-        let (ctx, _) = stub_ctx(
-            entries.iter().map(|(i, _)| (*i).into()).collect(),
-            false,
-        );
+    fn ctx_with_health_entries(entries: Vec<(&str, AccountHealth)>) -> Arc<EmailToolContext> {
+        let (ctx, _) = stub_ctx(entries.iter().map(|(i, _)| (*i).into()).collect(), false);
         let map = DashMap::new();
         for (i, h) in entries {
             map.insert(i.into(), Arc::new(RwLock::new(h)));
@@ -164,8 +162,22 @@ mod tests {
     #[tokio::test]
     async fn returns_one_entry_per_instance() {
         let ctx = ctx_with_health_entries(vec![
-            ("a", AccountHealth { state: WorkerState::Idle, last_connect_ok_ts: 100, ..Default::default() }),
-            ("b", AccountHealth { state: WorkerState::Down, last_error: Some("nope".into()), ..Default::default() }),
+            (
+                "a",
+                AccountHealth {
+                    state: WorkerState::Idle,
+                    last_connect_ok_ts: 100,
+                    ..Default::default()
+                },
+            ),
+            (
+                "b",
+                AccountHealth {
+                    state: WorkerState::Down,
+                    last_error: Some("nope".into()),
+                    ..Default::default()
+                },
+            ),
         ]);
         let tool = EmailHealthTool::new(ctx);
         let r = tool.run(json!({})).await;

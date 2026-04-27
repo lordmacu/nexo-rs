@@ -167,12 +167,9 @@ impl ImapConnection {
         // `STARTTLS`, then upgrade the TCP socket to TLS in-place.
         // ImplicitTls path: TLS handshake before any IMAP wire bytes.
         let stream = match endpoint.tls {
-            TlsMode::ImplicitTls => tls
-                .connect(server_name, tcp)
-                .await
-                .with_context(|| {
-                    format!("email/imap: TLS handshake to {} failed", endpoint.host)
-                })?,
+            TlsMode::ImplicitTls => tls.connect(server_name, tcp).await.with_context(|| {
+                format!("email/imap: TLS handshake to {} failed", endpoint.host)
+            })?,
             TlsMode::Starttls => {
                 let mut plain_client = async_imap::Client::new(tcp.compat());
                 // Consume the unsolicited `* OK ...` greeting. Without
@@ -218,8 +215,7 @@ impl ImapConnection {
                 .login(username, password.expose_secret())
                 .await
                 .map_err(|(e, _client)| anyhow!("email/imap: LOGIN failed: {e}"))?,
-            EmailAuth::OAuth2Static { username, .. }
-            | EmailAuth::OAuth2Google { username, .. } => {
+            EmailAuth::OAuth2Static { username, .. } | EmailAuth::OAuth2Google { username, .. } => {
                 let token = account
                     .resolve_access_token(&google)
                     .await
@@ -232,7 +228,9 @@ impl ImapConnection {
                 client
                     .authenticate("XOAUTH2", auth)
                     .await
-                    .map_err(|(e, _client)| anyhow!("email/imap: AUTHENTICATE XOAUTH2 failed: {e}"))?
+                    .map_err(|(e, _client)| {
+                        anyhow!("email/imap: AUTHENTICATE XOAUTH2 failed: {e}")
+                    })?
             }
         };
 
@@ -305,9 +303,8 @@ impl ImapConnection {
         // returning the borrow on `self.session`.
         drop(stream);
 
-        let raw_bytes = raw_bytes.ok_or_else(|| {
-            anyhow!("email/imap: UID FETCH {uid} returned no BODY[] section")
-        })?;
+        let raw_bytes = raw_bytes
+            .ok_or_else(|| anyhow!("email/imap: UID FETCH {uid} returned no BODY[] section"))?;
         Ok(FetchedMessage {
             uid,
             internal_date,
@@ -324,10 +321,7 @@ impl ImapConnection {
         cancel: CancellationToken,
     ) -> Result<(Self, IdleOutcome)> {
         let mut handle = self.session.idle();
-        handle
-            .init()
-            .await
-            .context("email/imap: IDLE init")?;
+        handle.init().await.context("email/imap: IDLE init")?;
         let (fut, stop) = handle.wait_with_timeout(timeout);
         let outcome = tokio::select! {
             res = fut => match res {
@@ -341,19 +335,13 @@ impl ImapConnection {
                 IdleOutcome::Cancelled
             }
         };
-        let session = handle
-            .done()
-            .await
-            .context("email/imap: IDLE DONE")?;
+        let session = handle.done().await.context("email/imap: IDLE DONE")?;
         self.session = session;
         Ok((self, outcome))
     }
 
     pub async fn logout(mut self) -> Result<()> {
-        self.session
-            .logout()
-            .await
-            .context("email/imap: LOGOUT")?;
+        self.session.logout().await.context("email/imap: LOGOUT")?;
         Ok(())
     }
 
@@ -414,7 +402,11 @@ impl ImapConnection {
     /// numbers. The async-imap stream isn't `Unpin`, so we pin it
     /// in place before iterating.
     pub async fn expunge(&mut self) -> Result<()> {
-        let stream = self.session.expunge().await.context("email/imap: EXPUNGE")?;
+        let stream = self
+            .session
+            .expunge()
+            .await
+            .context("email/imap: EXPUNGE")?;
         futures::pin_mut!(stream);
         while let Some(item) = futures::StreamExt::next(&mut stream).await {
             let _ = item;
@@ -562,7 +554,11 @@ pub(crate) fn parse_search_headers(s: &str) -> ParsedSearchHeaders {
     ParsedSearchHeaders {
         from: buf_from,
         subject: buf_subject,
-        message_id: if buf_msgid.is_empty() { None } else { Some(buf_msgid) },
+        message_id: if buf_msgid.is_empty() {
+            None
+        } else {
+            Some(buf_msgid)
+        },
         in_reply_to: if buf_in_reply_to.is_empty() {
             None
         } else {
@@ -674,8 +670,8 @@ mod tests {
         // enum. async-imap's Capabilities doesn't have a public ctor,
         // so we exercise the parser indirectly.
         let _ = Capability::Imap4rev1; // smoke: enum compiles
-        // Instead, validate the case-insensitive substring match the
-        // helper relies on, with a fake input.
+                                       // Instead, validate the case-insensitive substring match the
+                                       // helper relies on, with a fake input.
         let mut cc = CachedCapabilities::default();
         for tok in ["IDLE", "UIDPLUS", "MOVE", "QUOTA"] {
             let s = tok.to_string();

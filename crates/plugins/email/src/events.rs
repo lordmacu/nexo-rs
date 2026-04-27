@@ -279,7 +279,10 @@ mod tests {
         let back: OutboundAttachmentRef = serde_json::from_str(json).unwrap();
         assert!(back.mime_type.is_none());
         assert!(back.content_id.is_none());
-        assert!(matches!(back.disposition, AttachmentDisposition::Attachment));
+        assert!(matches!(
+            back.disposition,
+            AttachmentDisposition::Attachment
+        ));
     }
 
     #[test]

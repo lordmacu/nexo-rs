@@ -126,8 +126,7 @@ impl EmailThreadTool {
                         fallback_internal_date: chrono::Utc::now().timestamp(),
                     };
                     let parsed = parse_eml(&seed.raw_bytes, &parse_cfg).await?;
-                    let thread_root =
-                        resolve_thread_root(&parsed.meta, seed_uid, &acct_address);
+                    let thread_root = resolve_thread_root(&parsed.meta, seed_uid, &acct_address);
 
                     // The thread_root we got back is wrapped in `<...>`;
                     // strip them for the IMAP HEADER atom (the IMAP

@@ -119,9 +119,7 @@ pub async fn build_mime(ctx: BuildContext<'_>, cmd: &OutboundCommand) -> Result<
         }
     }
 
-    let raw = builder
-        .write_to_vec()
-        .context("email/mime: write_to_vec")?;
+    let raw = builder.write_to_vec().context("email/mime: write_to_vec")?;
     Ok(raw)
 }
 
@@ -214,7 +212,9 @@ mod tests {
 
     #[tokio::test]
     async fn no_attachments_matches_48_4_wire() {
-        let bytes = build_mime(ctx(), &cmd_no_attach("Hi", "hello")).await.unwrap();
+        let bytes = build_mime(ctx(), &cmd_no_attach("Hi", "hello"))
+            .await
+            .unwrap();
         let s = std::str::from_utf8(&bytes).unwrap();
         assert!(s.contains("Content-Type: text/plain; charset=utf-8\r\n"));
         assert!(s.contains("Message-ID: <abc@x>\r\n"));
@@ -291,7 +291,10 @@ mod tests {
         let bytes = build_mime(ctx(), &cmd).await.unwrap();
         let s = std::str::from_utf8(&bytes).unwrap();
         assert!(s.contains("multipart/mixed"), "expected multipart in:\n{s}");
-        assert!(s.contains("application/pdf"), "expected mime_guess pdf:\n{s}");
+        assert!(
+            s.contains("application/pdf"),
+            "expected mime_guess pdf:\n{s}"
+        );
         assert!(s.contains("filename"));
         assert!(s.contains("report.pdf"));
         // Body part still present.

@@ -51,9 +51,18 @@ pub struct EmailAccountForm {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AuthForm {
-    Password { username: String, password: String },
-    Oauth2Static { username: String, access_token: String },
-    Oauth2Google { username: String, google_account_id: String },
+    Password {
+        username: String,
+        password: String,
+    },
+    Oauth2Static {
+        username: String,
+        access_token: String,
+    },
+    Oauth2Google {
+        username: String,
+        google_account_id: String,
+    },
 }
 
 /// Pick a default instance id from the address localpart, falling
@@ -145,14 +154,9 @@ pub fn serialise_secret_toml(form: &EmailAccountForm) -> String {
 /// Atomic write of `<secrets_dir>/email/<instance>.toml` at mode
 /// `0o600` (Unix). Uses a temp sibling + rename so a partial write
 /// never lands. On Windows the `chmod` step is a no-op.
-pub fn write_secret_toml(
-    secrets_dir: &Path,
-    instance: &str,
-    body: &str,
-) -> Result<PathBuf> {
+pub fn write_secret_toml(secrets_dir: &Path, instance: &str, body: &str) -> Result<PathBuf> {
     let dir = secrets_dir.join("email");
-    std::fs::create_dir_all(&dir)
-        .with_context(|| format!("create {}", dir.display()))?;
+    std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
     let final_path = dir.join(format!("{instance}.toml"));
     let tmp_path = dir.join(format!("{instance}.toml.tmp.{}", std::process::id()));
     std::fs::write(&tmp_path, body).with_context(|| format!("write {}", tmp_path.display()))?;
@@ -173,18 +177,15 @@ pub fn write_secret_toml(
 /// other accounts preserved. v1 uses serde_yaml's regen-from-tree
 /// approach which loses comments — acceptable until 48-x adds a
 /// comment-preserving editor.
-pub fn upsert_email_account_yaml(
-    config_dir: &Path,
-    form: &EmailAccountForm,
-) -> Result<PathBuf> {
+pub fn upsert_email_account_yaml(config_dir: &Path, form: &EmailAccountForm) -> Result<PathBuf> {
     use serde_yaml::Value;
     let path = config_dir.join("plugins").join("email.yaml");
     std::fs::create_dir_all(path.parent().unwrap())
         .with_context(|| format!("create plugins dir {}", path.display()))?;
 
     let mut root: Value = if path.exists() {
-        let raw = std::fs::read_to_string(&path)
-            .with_context(|| format!("read {}", path.display()))?;
+        let raw =
+            std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
         serde_yaml::from_str(&raw)
             .with_context(|| format!("parse {} (existing YAML invalid)", path.display()))?
     } else {
@@ -226,7 +227,10 @@ pub fn upsert_email_account_yaml(
         }
     }
     let mut imap = serde_yaml::Mapping::new();
-    imap.insert(Value::String("host".into()), Value::String(form.imap_host.clone()));
+    imap.insert(
+        Value::String("host".into()),
+        Value::String(form.imap_host.clone()),
+    );
     imap.insert(
         Value::String("port".into()),
         Value::Number(serde_yaml::Number::from(form.imap_port)),
@@ -236,7 +240,10 @@ pub fn upsert_email_account_yaml(
         Value::String(tls_label(&form.imap_tls).into()),
     );
     let mut smtp = serde_yaml::Mapping::new();
-    smtp.insert(Value::String("host".into()), Value::String(form.smtp_host.clone()));
+    smtp.insert(
+        Value::String("host".into()),
+        Value::String(form.smtp_host.clone()),
+    );
     smtp.insert(
         Value::String("port".into()),
         Value::Number(serde_yaml::Number::from(form.smtp_port)),
@@ -246,8 +253,14 @@ pub fn upsert_email_account_yaml(
         Value::String(tls_label(&form.smtp_tls).into()),
     );
     let mut acct = serde_yaml::Mapping::new();
-    acct.insert(Value::String("instance".into()), Value::String(form.instance.clone()));
-    acct.insert(Value::String("address".into()), Value::String(form.address.clone()));
+    acct.insert(
+        Value::String("instance".into()),
+        Value::String(form.instance.clone()),
+    );
+    acct.insert(
+        Value::String("address".into()),
+        Value::String(form.address.clone()),
+    );
     acct.insert(
         Value::String("provider".into()),
         Value::String(provider_label(&form.provider).into()),
@@ -273,8 +286,7 @@ pub fn upsert_email_account_yaml(
         accounts_seq.push(new_account);
     }
 
-    let serialised =
-        serde_yaml::to_string(&root).context("serialise email.yaml after upsert")?;
+    let serialised = serde_yaml::to_string(&root).context("serialise email.yaml after upsert")?;
     std::fs::write(&path, serialised).with_context(|| format!("write {}", path.display()))?;
     Ok(path)
 }
@@ -299,8 +311,7 @@ pub fn list_accounts(config_dir: &Path, secrets_dir: &Path) -> Result<Vec<Accoun
     if !path.exists() {
         return Ok(vec![]);
     }
-    let raw = std::fs::read_to_string(&path)
-        .with_context(|| format!("read {}", path.display()))?;
+    let raw = std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
     let root: serde_yaml::Value = serde_yaml::from_str(&raw)
         .with_context(|| format!("parse {} (existing YAML invalid)", path.display()))?;
     let accounts = root
@@ -355,11 +366,7 @@ pub fn list_accounts(config_dir: &Path, secrets_dir: &Path) -> Result<Vec<Accoun
 /// its secret TOML. Returns `Ok(())` even if the secret was already
 /// missing — the operation is idempotent so a half-applied previous
 /// run can be cleaned up safely.
-pub fn delete_account(
-    config_dir: &Path,
-    secrets_dir: &Path,
-    instance: &str,
-) -> Result<()> {
+pub fn delete_account(config_dir: &Path, secrets_dir: &Path, instance: &str) -> Result<()> {
     use serde_yaml::Value;
     let path = config_dir.join("plugins").join("email.yaml");
     if !path.exists() {
@@ -368,17 +375,21 @@ pub fn delete_account(
             path.display()
         ));
     }
-    let raw = std::fs::read_to_string(&path)
-        .with_context(|| format!("read {}", path.display()))?;
-    let mut root: Value = serde_yaml::from_str(&raw)
-        .with_context(|| format!("parse {}", path.display()))?;
+    let raw = std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    let mut root: Value =
+        serde_yaml::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
     let accounts_seq = root
         .as_mapping_mut()
         .and_then(|m| m.get_mut(Value::String("email".into())))
         .and_then(|v| v.as_mapping_mut())
         .and_then(|m| m.get_mut(Value::String("accounts".into())))
         .and_then(|v| v.as_sequence_mut())
-        .ok_or_else(|| anyhow!("`email.accounts` missing or malformed in {}", path.display()))?;
+        .ok_or_else(|| {
+            anyhow!(
+                "`email.accounts` missing or malformed in {}",
+                path.display()
+            )
+        })?;
     let before = accounts_seq.len();
     accounts_seq.retain(|slot| {
         slot.as_mapping()
@@ -387,7 +398,10 @@ pub fn delete_account(
             != Some(instance)
     });
     if accounts_seq.len() == before {
-        return Err(anyhow!("no account with instance '{instance}' in {}", path.display()));
+        return Err(anyhow!(
+            "no account with instance '{instance}' in {}",
+            path.display()
+        ));
     }
     let body = serde_yaml::to_string(&root).context("serialise email.yaml after delete")?;
     std::fs::write(&path, body).with_context(|| format!("write {}", path.display()))?;
@@ -419,9 +433,7 @@ pub fn render_review(form: &EmailAccountForm) -> String {
         AuthForm::Oauth2Google {
             username,
             google_account_id,
-        } => format!(
-            "oauth2_google (user={username}, google_account_id={google_account_id})"
-        ),
+        } => format!("oauth2_google (user={username}, google_account_id={google_account_id})"),
     };
     format!(
         "  instance : {}\n  address  : {}\n  provider : {:?}\n  imap     : {}:{} ({})\n  smtp     : {}:{} ({})\n  auth     : {}",
@@ -571,7 +583,12 @@ pub async fn probe_connectivity(form: &EmailAccountForm) -> ProbeReport {
         if report.dns_error {
             None
         } else {
-            Some(decide_warns(&report).iter().map(|s| (*s).to_string()).collect())
+            Some(
+                decide_warns(&report)
+                    .iter()
+                    .map(|s| (*s).to_string())
+                    .collect(),
+            )
         }
     };
 
@@ -717,7 +734,9 @@ fn run_add_or_edit_account(
             .default(false)
             .interact()?
         {
-            return Err(anyhow!("aborted by operator (password rejected for managed provider)"));
+            return Err(anyhow!(
+                "aborted by operator (password rejected for managed provider)"
+            ));
         }
     }
     let auth = match auth_idx {
@@ -824,8 +843,7 @@ fn run_add_or_edit_account(
     }
 
     let yaml_path = upsert_email_account_yaml(config_dir, &form)?;
-    let toml_path =
-        write_secret_toml(secrets_dir, &form.instance, &serialise_secret_toml(&form))?;
+    let toml_path = write_secret_toml(secrets_dir, &form.instance, &serialise_secret_toml(&form))?;
     println!("\n✔ wrote {}", yaml_path.display());
     println!("✔ wrote {} (mode 0o600)", toml_path.display());
     println!(
@@ -882,7 +900,11 @@ fn action_list(config_dir: &Path, secrets_dir: &Path) -> Result<()> {
     }
     println!("{} cuentas configuradas:", accounts.len());
     for a in &accounts {
-        let secret_marker = if a.has_secret_toml { "✔" } else { "✘ falta secret" };
+        let secret_marker = if a.has_secret_toml {
+            "✔"
+        } else {
+            "✘ falta secret"
+        };
         println!(
             "  • {:<16} {:<32} provider={} imap={} smtp={} {}",
             a.instance, a.address, a.provider, a.imap_host, a.smtp_host, secret_marker,
@@ -898,7 +920,9 @@ fn action_add(config_dir: &Path, secrets_dir: &Path) -> Result<()> {
 fn action_edit(config_dir: &Path, secrets_dir: &Path) -> Result<()> {
     let accounts = list_accounts(config_dir, secrets_dir)?;
     if accounts.is_empty() {
-        return Err(anyhow!("no hay cuentas configuradas — usá 'Agregar cuenta'"));
+        return Err(anyhow!(
+            "no hay cuentas configuradas — usá 'Agregar cuenta'"
+        ));
     }
     let labels: Vec<String> = accounts
         .iter()
@@ -1043,10 +1067,7 @@ fn action_probe(_config_dir: &Path, _secrets_dir: &Path) -> Result<()> {
 /// type the id they intend to add later. Adds a "(other — type
 /// manually)" sentinel as the last item so the operator can override
 /// even when accounts exist.
-fn pick_or_prompt_google_account_id(
-    config_dir: &Path,
-    theme: &ColorfulTheme,
-) -> Result<String> {
+fn pick_or_prompt_google_account_id(config_dir: &Path, theme: &ColorfulTheme) -> Result<String> {
     let ids = list_google_account_ids(config_dir);
     if ids.is_empty() {
         let s: String = Input::with_theme(theme)
@@ -1118,7 +1139,6 @@ fn is_valid_address(addr: &str) -> bool {
     }
     !local.is_empty()
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1274,8 +1294,7 @@ mod tests {
         upsert_email_account_yaml(cfg.path(), &form("support", "support@x.com")).unwrap();
         write_secret_toml(sec.path(), "ops", "[auth]\nkind=\"password\"\n").unwrap();
         delete_account(cfg.path(), sec.path(), "ops").unwrap();
-        let body =
-            std::fs::read_to_string(cfg.path().join("plugins").join("email.yaml")).unwrap();
+        let body = std::fs::read_to_string(cfg.path().join("plugins").join("email.yaml")).unwrap();
         assert!(!body.contains("ops@x.com"));
         assert!(body.contains("support@x.com"));
         assert!(!sec.path().join("email").join("ops.toml").exists());
@@ -1288,8 +1307,7 @@ mod tests {
         upsert_email_account_yaml(cfg.path(), &form("ops", "ops@x.com")).unwrap();
         // No write_secret_toml → secret never landed on disk.
         delete_account(cfg.path(), sec.path(), "ops").unwrap();
-        let body =
-            std::fs::read_to_string(cfg.path().join("plugins").join("email.yaml")).unwrap();
+        let body = std::fs::read_to_string(cfg.path().join("plugins").join("email.yaml")).unwrap();
         assert!(!body.contains("ops@x.com"));
     }
 
@@ -1355,11 +1373,11 @@ mod tests {
             plain_tls_legs(&TlsMode::ImplicitTls, &TlsMode::Plain),
             "SMTP"
         );
-        assert_eq!(plain_tls_legs(&TlsMode::Plain, &TlsMode::Plain), "IMAP + SMTP");
         assert_eq!(
-            plain_tls_legs(&TlsMode::Starttls, &TlsMode::Starttls),
-            ""
+            plain_tls_legs(&TlsMode::Plain, &TlsMode::Plain),
+            "IMAP + SMTP"
         );
+        assert_eq!(plain_tls_legs(&TlsMode::Starttls, &TlsMode::Starttls), "");
     }
 
     #[test]

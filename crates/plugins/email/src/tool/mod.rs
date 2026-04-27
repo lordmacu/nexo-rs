@@ -117,9 +117,9 @@ pub fn filter_from_allowed_patterns(allowed_tools: &[String]) -> Option<Vec<Stri
     if allowed_tools.is_empty() {
         return None;
     }
-    let any_wildcard = allowed_tools.iter().any(|p| {
-        p == "*" || p == "email_*" || p == "email*"
-    });
+    let any_wildcard = allowed_tools
+        .iter()
+        .any(|p| p == "*" || p == "email_*" || p == "email*");
     if any_wildcard {
         return None;
     }
@@ -173,11 +173,8 @@ mod tests {
 
     #[test]
     fn no_email_pattern_yields_empty_filter() {
-        let v = filter_from_allowed_patterns(&[
-            "whatsapp_send".into(),
-            "telegram_send".into(),
-        ])
-        .unwrap();
+        let v = filter_from_allowed_patterns(&["whatsapp_send".into(), "telegram_send".into()])
+            .unwrap();
         assert!(v.is_empty());
     }
 

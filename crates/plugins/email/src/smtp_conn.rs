@@ -46,14 +46,13 @@ impl SmtpClient {
         let mut builder = match endpoint.tls {
             TlsMode::ImplicitTls => AsyncSmtpTransport::<Tokio1Executor>::relay(&endpoint.host)
                 .with_context(|| format!("email/smtp: relay({}) builder", endpoint.host))?,
-            TlsMode::Starttls => {
-                AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&endpoint.host).with_context(
-                    || format!("email/smtp: starttls_relay({}) builder", endpoint.host),
-                )?
-            }
-            TlsMode::Plain => AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(
+            TlsMode::Starttls => AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(
                 &endpoint.host,
-            ),
+            )
+            .with_context(|| format!("email/smtp: starttls_relay({}) builder", endpoint.host))?,
+            TlsMode::Plain => {
+                AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&endpoint.host)
+            }
         }
         .port(endpoint.port);
 
@@ -121,8 +120,7 @@ fn build_lettre_envelope(env: &SmtpEnvelope) -> Result<lettre::address::Envelope
             .with_context(|| format!("email/smtp: invalid recipient: {r}"))?;
         tos.push(addr);
     }
-    lettre::address::Envelope::new(Some(from), tos)
-        .context("email/smtp: build envelope")
+    lettre::address::Envelope::new(Some(from), tos).context("email/smtp: build envelope")
 }
 
 /// Map a lettre SMTP error into our coarse outcome enum. Anything

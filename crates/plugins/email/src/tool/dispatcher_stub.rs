@@ -25,11 +25,7 @@ pub struct StubDispatcher {
 
 #[async_trait]
 impl DispatcherHandle for StubDispatcher {
-    async fn enqueue_for_instance(
-        &self,
-        instance: &str,
-        cmd: OutboundCommand,
-    ) -> Result<String> {
+    async fn enqueue_for_instance(&self, instance: &str, cmd: OutboundCommand) -> Result<String> {
         if self.force_err {
             anyhow::bail!("dispatcher rejected for test");
         }

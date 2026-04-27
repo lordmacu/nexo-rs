@@ -65,12 +65,8 @@ pub struct BounceEvent {
     pub classification: BounceClassification,
 }
 
-const MAILER_DAEMON_LOCALPARTS: &[&str] = &[
-    "mailer-daemon",
-    "mail-daemon",
-    "mail.daemon",
-    "postmaster",
-];
+const MAILER_DAEMON_LOCALPARTS: &[&str] =
+    &["mailer-daemon", "mail-daemon", "mail.daemon", "postmaster"];
 
 /// Try to read `raw_bytes` as a delivery report. Returns `None`
 /// when the message is regular conversational mail. Caller (the
@@ -133,15 +129,17 @@ pub fn parse_bounce(
             // all count. Empty domain on either side fails.
             !a.is_empty()
                 && !f.is_empty()
-                && (f == a
-                    || f.ends_with(&format!(".{a}"))
-                    || a.ends_with(&format!(".{f}")))
+                && (f == a || f.ends_with(&format!(".{a}")) || a.ends_with(&format!(".{f}")))
         }
         _ => false,
     };
     let heuristic = from_local
         .as_deref()
-        .map(|l| MAILER_DAEMON_LOCALPARTS.iter().any(|m| l.eq_ignore_ascii_case(m)))
+        .map(|l| {
+            MAILER_DAEMON_LOCALPARTS
+                .iter()
+                .any(|m| l.eq_ignore_ascii_case(m))
+        })
         .unwrap_or(false)
         && domain_aligned;
 

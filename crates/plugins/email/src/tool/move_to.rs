@@ -131,9 +131,7 @@ mod tests {
     async fn missing_folder_errors() {
         let (ctx, _) = stub_ctx(vec!["ops".into()], false);
         let tool = EmailMoveToTool::new(ctx);
-        let r = tool
-            .run(json!({ "instance": "ops", "uids": [1] }))
-            .await;
+        let r = tool.run(json!({ "instance": "ops", "uids": [1] })).await;
         assert_eq!(r["ok"], json!(false));
     }
 }

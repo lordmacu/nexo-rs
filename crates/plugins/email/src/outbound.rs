@@ -126,11 +126,7 @@ impl DispatcherCore {
 
 #[async_trait::async_trait]
 impl crate::tool::DispatcherHandle for DispatcherCore {
-    async fn enqueue_for_instance(
-        &self,
-        instance: &str,
-        cmd: OutboundCommand,
-    ) -> Result<String> {
+    async fn enqueue_for_instance(&self, instance: &str, cmd: OutboundCommand) -> Result<String> {
         DispatcherCore::enqueue_for_instance(self, instance, cmd).await
     }
 
@@ -294,11 +290,7 @@ impl OutboundDispatcher {
 
 #[async_trait::async_trait]
 impl crate::tool::DispatcherHandle for OutboundDispatcher {
-    async fn enqueue_for_instance(
-        &self,
-        instance: &str,
-        cmd: OutboundCommand,
-    ) -> Result<String> {
+    async fn enqueue_for_instance(&self, instance: &str, cmd: OutboundCommand) -> Result<String> {
         OutboundDispatcher::enqueue_for_instance(self, instance, cmd).await
     }
 
@@ -488,13 +480,16 @@ impl OutboundWorker {
                 )
             })?
             .clone();
-        let client =
-            SmtpClient::build(&self.account_cfg.smtp, &creds, self.google.clone()).await?;
+        let client = SmtpClient::build(&self.account_cfg.smtp, &creds, self.google.clone()).await?;
         let outcome = client.send_raw(&job.envelope, &job.raw_mime).await?;
         Ok(outcome)
     }
 
-    async fn handle_outcome(&self, job: OutboundJob, outcome: Result<SmtpSendOutcome>) -> Result<()> {
+    async fn handle_outcome(
+        &self,
+        job: OutboundJob,
+        outcome: Result<SmtpSendOutcome>,
+    ) -> Result<()> {
         let (status, reason): (AckStatus, Option<String>) = match outcome {
             Ok(SmtpSendOutcome::Sent) => {
                 self.breaker.on_success();
@@ -534,8 +529,7 @@ impl OutboundWorker {
                     let mut updated = job.clone();
                     updated.attempts = next_attempts;
                     let backoff_ms = transient_backoff_ms(next_attempts);
-                    updated.next_attempt_at =
-                        Utc::now().timestamp() + (backoff_ms / 1000) as i64;
+                    updated.next_attempt_at = Utc::now().timestamp() + (backoff_ms / 1000) as i64;
                     updated.last_error = Some(format!("smtp {code}: {message}"));
                     self.queue.update(&updated).await?;
                     (
@@ -558,8 +552,7 @@ impl OutboundWorker {
                     let mut updated = job.clone();
                     updated.attempts = next_attempts;
                     let backoff_ms = transient_backoff_ms(next_attempts);
-                    updated.next_attempt_at =
-                        Utc::now().timestamp() + (backoff_ms / 1000) as i64;
+                    updated.next_attempt_at = Utc::now().timestamp() + (backoff_ms / 1000) as i64;
                     updated.last_error = Some(format!("network: {e:#}"));
                     self.queue.update(&updated).await?;
                     (AckStatus::Retrying, Some(format!("network: {e:#}")))
@@ -610,9 +603,7 @@ fn transient_backoff_ms(attempts: u32) -> u64 {
 
 /// Drive a `Subscription` if present. Returns `None` if the
 /// subscription is gone (caller should switch to drain-only mode).
-async fn next_subscription(
-    sub: Option<&mut nexo_broker::Subscription>,
-) -> Option<Event> {
+async fn next_subscription(sub: Option<&mut nexo_broker::Subscription>) -> Option<Event> {
     match sub {
         Some(s) => s.next().await,
         None => {

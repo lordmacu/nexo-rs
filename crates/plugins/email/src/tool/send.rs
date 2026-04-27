@@ -139,9 +139,7 @@ impl EmailSendTool {
         if parsed.strict_bounce_check {
             let permanent: Vec<&Value> = recipient_warnings
                 .iter()
-                .filter(|w| {
-                    w.get("classification").and_then(|v| v.as_str()) == Some("permanent")
-                })
+                .filter(|w| w.get("classification").and_then(|v| v.as_str()) == Some("permanent"))
                 .collect();
             if !permanent.is_empty() {
                 return json!({
@@ -280,7 +278,10 @@ mod tests {
         }
     }
 
-    fn build_ctx(declared: Vec<String>, force_err: bool) -> (Arc<EmailToolContext>, Arc<StubDispatcher>) {
+    fn build_ctx(
+        declared: Vec<String>,
+        force_err: bool,
+    ) -> (Arc<EmailToolContext>, Arc<StubDispatcher>) {
         let yaml = format!(
             "email:\n  accounts:\n{}\n",
             declared
@@ -343,16 +344,17 @@ mod tests {
             }))
             .await;
         assert_eq!(r["ok"], json!(false));
-        assert!(r["error"].as_str().unwrap().contains("unknown email instance"));
+        assert!(r["error"]
+            .as_str()
+            .unwrap()
+            .contains("unknown email instance"));
     }
 
     #[tokio::test]
     async fn missing_required_field_returns_error_envelope() {
         let (ctx, _) = build_ctx(vec!["ops".into()], false);
         let tool = EmailSendTool::new(ctx);
-        let r = tool
-            .run(json!({ "instance": "ops", "to": ["a@x"] }))
-            .await;
+        let r = tool.run(json!({ "instance": "ops", "to": ["a@x"] })).await;
         assert_eq!(r["ok"], json!(false));
         assert!(r["error"].as_str().unwrap().contains("invalid arguments"));
     }
@@ -435,10 +437,7 @@ mod tests {
             }))
             .await;
         assert_eq!(r["ok"], false);
-        assert!(r["error"]
-            .as_str()
-            .unwrap()
-            .contains("strict_bounce_check"));
+        assert!(r["error"].as_str().unwrap().contains("strict_bounce_check"));
         let warns = r["recipient_warnings"].as_array().unwrap();
         assert_eq!(warns.len(), 1);
         assert_eq!(warns[0]["recipient"], "dead@x");
