@@ -129,6 +129,21 @@ impl EmailReplyTool {
         let parent_meta = parsed.meta;
 
         let (to, cc) = derive_reply_recipients(&parent_meta, args.reply_all, &acct_cfg.address);
+        // Audit follow-up — refuse to send a reply with an empty
+        // `To:` list (RFC 5322 requires at least one recipient).
+        // The most common cause is a parent message with no
+        // resolvable `From:` (e.g. `Undisclosed Recipients:;` or
+        // a malformed header that mail-parser couldn't decode).
+        // Bubble a clean error rather than enqueue a malformed
+        // outbound that the SMTP server will reject downstream.
+        if to.is_empty() {
+            anyhow::bail!(
+                "cannot derive reply recipients: parent UID {} has no usable `From:` header (got '{}'). \
+                 Inspect the parent via `email_search` and use `email_send` with explicit `to:` if you need to respond.",
+                args.parent_uid,
+                parent_meta.from.address
+            );
+        }
         let mut cmd = OutboundCommand {
             to: to.clone(),
             cc: cc.clone(),
