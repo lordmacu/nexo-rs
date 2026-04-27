@@ -44,6 +44,38 @@ impl DispatcherHandle for StubDispatcher {
     }
 }
 
+pub fn stub_ctx_with_bounce(
+    declared: Vec<String>,
+    force_err: bool,
+    bounce_store: Option<Arc<crate::bounce_store::BounceStore>>,
+) -> (Arc<EmailToolContext>, Arc<StubDispatcher>) {
+    let yaml = format!(
+        "email:\n  accounts:\n{}\n",
+        declared
+            .iter()
+            .map(|i| format!(
+                "    - instance: {i}\n      address: {i}@example.com\n      imap: {{ host: imap.x, port: 993 }}\n      smtp: {{ host: smtp.x, port: 587 }}\n"
+            ))
+            .collect::<String>()
+    );
+    let f: EmailPluginConfigFile = serde_yaml::from_str(&yaml).unwrap();
+    let dispatcher = Arc::new(StubDispatcher {
+        instance_ids_list: declared.clone(),
+        captured: Mutex::new(vec![]),
+        next_id: Mutex::new(0),
+        force_err,
+    });
+    let ctx = Arc::new(EmailToolContext {
+        creds: Arc::new(EmailCredentialStore::empty()),
+        google: Arc::new(GoogleCredentialStore::empty()),
+        config: Arc::new(f.email),
+        dispatcher: dispatcher.clone(),
+        health: HealthMap::new(DashMap::new().into()),
+        bounce_store,
+    });
+    (ctx, dispatcher)
+}
+
 pub fn stub_ctx(
     declared: Vec<String>,
     force_err: bool,

@@ -22,6 +22,19 @@ use sqlx::SqlitePool;
 
 use crate::dsn::{BounceClassification, BounceEvent};
 
+/// Tuple shape pulled from `summary`'s top-recipient subquery. Aliased
+/// so the `query_as` row type is readable and clippy stops flagging
+/// the inline 7-tuple as a complex type.
+type TopRecipientRow = (
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    i64,
+    i64,
+);
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecipientStatus {
     pub instance: String,
@@ -31,6 +44,19 @@ pub struct RecipientStatus {
     pub action: Option<String>,
     pub last_seen: i64,
     pub count: i64,
+}
+
+/// Aggregate counts for one `instance` plus a top-N tail of the
+/// chattiest recipients on that instance. Tools serialise this
+/// directly into JSON so admin agents can reason over it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstanceSummary {
+    pub instance: String,
+    pub permanent: i64,
+    pub transient: i64,
+    pub unknown: i64,
+    pub total_rows: i64,
+    pub top_recipients: Vec<RecipientStatus>,
 }
 
 #[derive(Clone)]
@@ -168,6 +194,96 @@ impl BounceStore {
         }
 
         Ok(deleted)
+    }
+
+    /// Aggregate report per instance — total rows, counts by
+    /// classification, and the `top_n` chattiest recipients ordered
+    /// by repeat-bounce count desc, then last_seen desc as a tie
+    /// break. Pass `instance_filter = Some("ops")` to scope to one
+    /// instance, `None` to walk every instance present in the
+    /// table. `top_n = 0` returns the aggregate without per-row
+    /// detail.
+    pub async fn summary(
+        &self,
+        instance_filter: Option<&str>,
+        top_n: usize,
+    ) -> Result<Vec<InstanceSummary>> {
+        // Aggregate row first — gives us the list of distinct
+        // instances + classification counts in one query.
+        let agg_rows: Vec<(String, String, i64)> = match instance_filter {
+            Some(inst) => sqlx::query_as(
+                "SELECT instance, classification, COUNT(*)
+                 FROM email_bounces
+                 WHERE instance = ?
+                 GROUP BY instance, classification",
+            )
+            .bind(inst)
+            .fetch_all(&self.pool)
+            .await?,
+            None => sqlx::query_as(
+                "SELECT instance, classification, COUNT(*)
+                 FROM email_bounces
+                 GROUP BY instance, classification",
+            )
+            .fetch_all(&self.pool)
+            .await?,
+        };
+
+        // Fold per-instance.
+        let mut by_instance: std::collections::BTreeMap<String, InstanceSummary> =
+            std::collections::BTreeMap::new();
+        for (inst, class_label, n) in agg_rows {
+            let entry = by_instance
+                .entry(inst.clone())
+                .or_insert_with(|| InstanceSummary {
+                    instance: inst.clone(),
+                    permanent: 0,
+                    transient: 0,
+                    unknown: 0,
+                    total_rows: 0,
+                    top_recipients: Vec::new(),
+                });
+            match class_label.as_str() {
+                "permanent" => entry.permanent = n,
+                "transient" => entry.transient = n,
+                "unknown" => entry.unknown = n,
+                _ => {}
+            }
+            entry.total_rows = entry.total_rows.saturating_add(n);
+        }
+
+        // Per-instance top recipients. Skipped when top_n == 0 so
+        // the aggregate-only path stays cheap.
+        if top_n > 0 {
+            let limit = top_n as i64;
+            for entry in by_instance.values_mut() {
+                let rows: Vec<TopRecipientRow> = sqlx::query_as(
+                    "SELECT instance, recipient, classification, status_code, action, last_seen, count
+                     FROM email_bounces
+                     WHERE instance = ?
+                     ORDER BY count DESC, last_seen DESC
+                     LIMIT ?",
+                )
+                .bind(&entry.instance)
+                .bind(limit)
+                .fetch_all(&self.pool)
+                .await?;
+                entry.top_recipients = rows
+                    .into_iter()
+                    .map(|(i, r, c, s, a, ts, n)| RecipientStatus {
+                        instance: i,
+                        recipient: r,
+                        classification: classification_from_label(&c),
+                        status_code: s,
+                        action: a,
+                        last_seen: ts,
+                        count: n,
+                    })
+                    .collect();
+            }
+        }
+
+        Ok(by_instance.into_values().collect())
     }
 
     pub async fn get(

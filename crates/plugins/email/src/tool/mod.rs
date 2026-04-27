@@ -1,13 +1,16 @@
 //! Email-channel tool handlers (Phase 48.7).
 
 pub mod archive;
+pub mod bounces_summary;
 pub mod context;
+pub mod get;
 pub mod imap_op;
 pub mod label;
 pub mod move_to;
 pub mod reply;
 pub mod search;
 pub mod send;
+pub mod thread;
 pub mod uid_set;
 
 #[cfg(test)]
@@ -28,6 +31,9 @@ pub const EMAIL_TOOL_NAMES: &[&str] = &[
     "email_move_to",
     "email_label",
     "email_search",
+    "email_get",
+    "email_thread",
+    "email_bounces_summary",
 ];
 
 /// Register every email-channel tool against the supplied registry.
@@ -73,7 +79,16 @@ pub fn register_email_tools_filtered(
         label::register(registry, ctx.clone());
     }
     if want("email_search") {
-        search::register(registry, ctx);
+        search::register(registry, ctx.clone());
+    }
+    if want("email_get") {
+        get::register(registry, ctx.clone());
+    }
+    if want("email_thread") {
+        thread::register(registry, ctx.clone());
+    }
+    if want("email_bounces_summary") {
+        bounces_summary::register(registry, ctx);
     }
 }
 
@@ -149,5 +164,15 @@ mod tests {
         ])
         .unwrap();
         assert!(v.is_empty());
+    }
+
+    #[test]
+    fn email_tool_names_includes_new_phase_48_tools() {
+        for n in ["email_get", "email_thread", "email_bounces_summary"] {
+            assert!(
+                EMAIL_TOOL_NAMES.contains(&n),
+                "expected EMAIL_TOOL_NAMES to contain {n}"
+            );
+        }
     }
 }
