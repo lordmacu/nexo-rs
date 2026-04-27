@@ -7,9 +7,10 @@ exposes six tools (`email_send`, `email_reply`, `email_archive`,
 `email_move_to`, `email_label`, `email_search`) so an agent can read
 and act on a mailbox.
 
-> **Status (Phase 48 closed).** IMAP `ImplicitTls` (port 993) is the
-> only mode in v1; STARTTLS, multi-selector DKIM probe, persistent
-> bounce history, and the interactive setup wizard are tracked in
+> **Status (Phase 48 + follow-ups #1, #2, #6 shipped).** IMAP
+> `ImplicitTls` (993) and `Starttls` (143 / 587) are both supported;
+> `Plain` still rejects at connect. Persistent bounce history and
+> the interactive setup wizard are tracked in
 > `proyecto/FOLLOWUPS.md` for follow-up phases.
 
 ## Configuration
@@ -280,8 +281,6 @@ are deliberately out of scope for v1.
 
 | Deferred                              | Tracked in                                            |
 | ------------------------------------- | ----------------------------------------------------- |
-| IMAP STARTTLS (only `ImplicitTls` 993) | `proyecto/FOLLOWUPS.md`                              |
-| Multi-selector DKIM probe             | `proyecto/FOLLOWUPS.md`                              |
 | Persistent bounce history             | `proyecto/FOLLOWUPS.md`                              |
 | Interactive setup wizard              | `proyecto/FOLLOWUPS.md`                              |
 | greenmail e2e test harness            | `proyecto/FOLLOWUPS.md`                              |

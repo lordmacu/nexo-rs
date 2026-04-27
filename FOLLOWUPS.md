@@ -704,9 +704,14 @@ Open:
     doesn't store anything; an `email_bounces` SQLite table keyed
     on `(recipient, instance)` would let `email_send` warn the
     agent before reattempting a permanently-bounced recipient.
-  - **IMAP STARTTLS.** v1 ships `ImplicitTls` (port 993) only.
-    `Starttls` and `Plain` reject at `ImapConnection::connect`
-    with operator-actionable errors.
+  - **IMAP STARTTLS.** ✅ Shipped 2026-04-27.
+    `ImapConnection::connect` now accepts `TlsMode::Starttls`:
+    plain TCP dial, consume `* OK` greeting, run `STARTTLS`,
+    upgrade the underlying `TcpStream` in place via the
+    `tokio_util::compat` shim's `into_inner`, then resume the
+    normal LOGIN / CAPABILITY flow on the TLS-wrapped session.
+    `Plain` (no encryption) still rejects at connect — that's
+    the security default we keep.
   - **Multi-selector DKIM probe.** ✅ Shipped 2026-04-27.
     `spf_dkim::DKIM_SELECTORS = ["default", "google", "selector1",
     "selector2", "mail"]` — first match wins. `AlignmentReport`
