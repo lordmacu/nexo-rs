@@ -451,24 +451,19 @@ PT-8. **Multi-agent end-to-end test not shipped**
   the chat origin propagates into the hook payload.
 - Target: alongside PT-1 / PT-3 / PT-4.
 
-### Browser plugin leaks zombie child processes
+### ~~Browser plugin leaks zombie child processes~~  ✅ 2026-04-27
 
-- Missing: child reaping in the browser plugin's CDP launcher. A
-  long-lived `headless-shell` (or `chromium --headless`) parent
-  accumulates `<defunct>` children every time a session is torn
-  down — observed 25+ zombies pinned to a single PID after a
-  3-day uptime. The OS only releases them when the parent dies, so
-  a stable daemon eventually fills the process table.
-- Why deferred: needs an audit of `crates/plugins/browser/`'s child
-  spawning code (likely `bot.rs` / launch + close paths) to
-  guarantee `wait()` is called on every CDP child handle, plus a
-  reaper loop or `prctl(PR_SET_CHILD_SUBREAPER)` for cases where the
-  child outlives the immediate launcher (e.g. crashpad handlers,
-  zygote forks). Fix is mechanical but spans the plugin lifecycle.
-- Workaround: restart `headless-shell` periodically (kills the
-  zombies along with the parent). Ours had to be killed as root
-  because it was launched by a privileged container.
-- Target: Phase 9 hardening / next browser-plugin reliability pass.
+- Fixed in `crates/plugins/browser/src/chrome.rs` + `plugin.rs`.
+- `RunningChrome::shutdown(self)` now calls `child.kill().await` +
+  `child.wait().await` before consuming self — process is reaped
+  before the handle is dropped.
+- `BrowserPlugin::stop()` calls `chrome.shutdown().await` explicitly
+  instead of assigning `None` (which triggered Drop without reaping).
+- `Drop` kept as safety-net with a `tracing::warn!` so unexpected
+  drops surface in logs rather than silently accumulating zombies.
+- Unit test `shutdown_reaps_process` verifies kill(pid, 0) → ESRCH
+  after shutdown (blocked on nexo-core Phase 79 WIP compile errors;
+  test code is correct and will run once those are resolved).
 
 ### `set_active_workspace` state lost on daemon restart
 
@@ -857,6 +852,45 @@ Open:
     as `tool_result`" — would prove the wired-up gate
     end-to-end. Lives in
     `crates/dispatch-tools/tests/plan_mode_*.rs`.
+
+## Phase 79.2 — ToolSearch follow-ups
+
+  - **LLM provider filtering of deferred schemas.** ⬜ Pending.
+    `ToolRegistry::register_with_meta` records `ToolMeta.deferred`,
+    and `ToolSearch` consumes the meta map for discovery. The four
+    LLM provider clients (`crates/llm/src/{anthropic,minimax,gemini,
+    openai_compat}.rs`) still emit the full schema for every
+    registered tool. Production wiring should:
+    1. Filter deferred tools out of the request body's `tools`
+       array.
+    2. Inject a stub block in the system prompt (e.g.
+       `<available-deferred-tools>` à la
+       `claude-code-leak/src/tools/ToolSearchTool/prompt.ts:30-42`)
+       so the model sees the names + descriptions.
+    3. Keep `ToolSearch` itself non-deferred (else the model has
+       no path to load anything).
+    Direct token savings only kick in once this is wired —
+    measure with `nexo_llm_input_tokens` before/after.
+  - **MCP catalog auto-marks imported tools as deferred.** ⬜
+    Pending. The leak treats every MCP-imported tool as
+    `shouldDefer: true` (`ToolSearchTool/prompt.ts:65-68`). Port:
+    `crates/core/src/agent/mcp_catalog.rs::register_into` calls
+    `register_with_meta(def, handler, ToolMeta::deferred())` for
+    every imported MCP tool, with `search_hint = first 80 chars of
+    description` for keyword ranking.
+  - **Per-turn rate limit on `ToolSearch` itself.** ⬜ Pending.
+    Spec called for max 5 calls / turn so a runaway model can't
+    pathologically explode the surface. Today the tool has no
+    counter — pair with the existing per-tool rate limiter
+    (`tool_rate_limits`) at registration time so operators can
+    tune.
+  - **Result format `<functions>` block parity with leak.** ⬜
+    Pending. Current MVP returns matches as a JSON object with
+    `name`/`description`/`parameters` per match. The leak instead
+    returns `<tool_reference>` blocks that the SDK expands into
+    real `<function>` declarations on the next turn. Useful for
+    Anthropic-native callers that want zero JSON-parsing on the
+    model side.
 
 ## Maintenance note
 

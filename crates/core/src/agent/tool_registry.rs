@@ -4,6 +4,48 @@ use dashmap::DashMap;
 use nexo_llm::ToolDef;
 use serde_json::Value;
 use std::sync::Arc;
+
+/// Phase 79.2 — per-tool metadata kept in a side-channel map so we
+/// don't churn `ToolDef` (48 literal sites across the workspace).
+/// Default values keep existing tools behaving identically.
+///
+/// Reference (PRIMARY): `claude-code-leak/src/tools/ToolSearchTool/`
+/// + `prompt.ts:62-108` (`isDeferredTool` semantics: MCP tools
+/// auto-deferred, others opt-in via `shouldDefer: true`).
+#[derive(Debug, Clone, Default)]
+pub struct ToolMeta {
+    /// When `true`, the tool's full JSONSchema may be omitted from
+    /// the LLM request body and surfaced as a stub instead. The
+    /// model fetches the schema via `ToolSearch(select:<name>)` on
+    /// demand. MVP caveat: provider shims do not yet honour the
+    /// flag — only `ToolSearch` discovery consumes it for now.
+    pub deferred: bool,
+    /// Short capability phrase used by `ToolSearch` keyword
+    /// ranking. `None` falls back to the tool's description (lower
+    /// weight in scoring).
+    pub search_hint: Option<String>,
+}
+
+impl ToolMeta {
+    pub fn deferred() -> Self {
+        Self {
+            deferred: true,
+            search_hint: None,
+        }
+    }
+
+    pub fn deferred_with_hint(hint: impl Into<String>) -> Self {
+        Self {
+            deferred: true,
+            search_hint: Some(hint.into()),
+        }
+    }
+
+    pub fn with_search_hint(mut self, hint: impl Into<String>) -> Self {
+        self.search_hint = Some(hint.into());
+        self
+    }
+}
 #[async_trait]
 pub trait ToolHandler: Send + Sync {
     async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value>;
@@ -14,6 +56,13 @@ pub type HandlerEntry = (ToolDef, Arc<dyn ToolHandler>);
 #[derive(Default, Clone)]
 pub struct ToolRegistry {
     handlers: Arc<DashMap<String, HandlerEntry>>,
+    /// Phase 79.2 — per-tool metadata side-channel keyed by tool
+    /// name. Empty for tools registered via the legacy `register`
+    /// path; populated by `register_with_meta`. Reads via
+    /// [`ToolRegistry::meta`] return `None` when no meta is recorded
+    /// (effectively the same as `ToolMeta::default()`), keeping the
+    /// addition byte-compatible for every existing call site.
+    meta: Arc<DashMap<String, ToolMeta>>,
 }
 impl ToolRegistry {
     pub fn new() -> Self {
@@ -32,6 +81,47 @@ impl ToolRegistry {
             );
         }
         self.handlers.insert(name, (def, Arc::new(handler)));
+    }
+
+    /// Phase 79.2 — register a tool together with its metadata
+    /// (deferred flag, search hint). Useful for callers that mark
+    /// MCP tools as deferred at import time, or built-ins that want
+    /// to surface a curated `searchHint` for `ToolSearch` ranking.
+    pub fn register_with_meta(
+        &self,
+        def: ToolDef,
+        handler: impl ToolHandler + 'static,
+        meta: ToolMeta,
+    ) {
+        let name = def.name.clone();
+        self.register(def, handler);
+        self.meta.insert(name, meta);
+    }
+
+    /// Phase 79.2 — set or replace the meta for an already-registered
+    /// tool. No-op when the name is unknown — callers that want to
+    /// see the failure should check `contains` first.
+    pub fn set_meta(&self, tool_name: &str, meta: ToolMeta) {
+        if self.handlers.contains_key(tool_name) {
+            self.meta.insert(tool_name.to_string(), meta);
+        }
+    }
+
+    /// Phase 79.2 — read the meta for `tool_name`. `None` for tools
+    /// registered without meta (the default-meta semantic — not
+    /// deferred, no search hint).
+    pub fn meta(&self, tool_name: &str) -> Option<ToolMeta> {
+        self.meta.get(tool_name).map(|e| e.value().clone())
+    }
+
+    /// Phase 79.2 — list every (name, meta) pair where
+    /// `meta.deferred == true`. Empty when no tool is deferred.
+    pub fn deferred_tools(&self) -> Vec<(String, ToolMeta)> {
+        self.meta
+            .iter()
+            .filter(|e| e.value().deferred)
+            .map(|e| (e.key().clone(), e.value().clone()))
+            .collect()
     }
     /// Insert only if `def.name` is not already registered. Returns `true`
     /// when the handler was inserted, `false` when the slot was taken and
@@ -104,6 +194,7 @@ impl ToolRegistry {
         let n = victims.len();
         for k in victims {
             self.handlers.remove(&k);
+            self.meta.remove(&k);
         }
         n
     }
@@ -117,10 +208,16 @@ impl ToolRegistry {
     pub fn filtered_clone(&self, allowed_tools: &[String]) -> ToolRegistry {
         let clone = ToolRegistry {
             handlers: Arc::new(DashMap::new()),
+            meta: Arc::new(DashMap::new()),
         };
         for entry in self.handlers.iter() {
             clone
                 .handlers
+                .insert(entry.key().clone(), entry.value().clone());
+        }
+        for entry in self.meta.iter() {
+            clone
+                .meta
                 .insert(entry.key().clone(), entry.value().clone());
         }
         clone.retain_matching(allowed_tools);
