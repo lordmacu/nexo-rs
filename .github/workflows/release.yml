@@ -1,45 +1,88 @@
 name: release
 
+# Phase 27.2 — tag-driven release pipeline.
+#
+# Triggers on `nexo-rs-v<semver>` tags pushed by release-plz (or by an
+# operator via `workflow_dispatch`). Builds:
+#   - 2 musl static tarballs (x86_64 + aarch64) via cargo-dist + cargo-zigbuild
+#   - 1 Termux .deb (aarch64-linux-android, bionic) via packaging/termux/build.sh
+# Uploads them + sha256 sidecars to the GH release that release-plz
+# already created. Smoke-tests `nexo --version` on the host x86_64 musl
+# tarball before declaring success.
+#
+# Apple + Windows targets DROPPED from scope (Phase 27.2 spec). Re-enable:
+# add the targets back to dist-workspace.toml + restore matrix entries
+# here + revive packaging/homebrew/.
+#
+# Downstream `workflow_run` triggers — `sign-artifacts.yml` (Phase 27.3)
+# and `sbom.yml` (Phase 27.9) — depend on `name: release` exactly.
+# Don't rename without updating their `workflows: [release]` filter.
+
 on:
   push:
-    tags: ["v*"]
+    tags: ["nexo-rs-v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to build binaries for"
+        description: "Existing nexo-rs-v* tag to (re)build binaries for"
         required: true
 
 permissions:
   contents: write
 
+# Serialize re-runs of the same tag (operator clicking "Re-run" in
+# the GH UI) but never abort a publish mid-flight.
+concurrency:
+  group: release-${{ github.ref_name || github.event.inputs.tag }}
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "10"
+  CARGO_NET_TIMEOUT: "60"
 
 jobs:
-  build:
+  validate-tag:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.value }}
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      - id: tag
+        env:
+          RAW_TAG: ${{ github.ref_name || github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$RAW_TAG" =~ ^nexo-rs-v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+            echo "::error::tag '$RAW_TAG' does not match nexo-rs-v<semver>"
+            exit 1
+          fi
+          version="${RAW_TAG#nexo-rs-v}"
+          echo "value=$RAW_TAG"   >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.value }}
+      - name: Verify GH release exists (release-plz must have run first)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.value }}
+        run: gh release view "$TAG" --repo ${{ github.repository }} >/dev/null
+
+  build-musl:
+    needs: validate-tag
     name: build (${{ matrix.target }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            cross: false
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            cross: true
-          - target: x86_64-apple-darwin
-            os: macos-13
-            cross: false
-          - target: aarch64-apple-darwin
-            os: macos-14
-            cross: false
-
+        target:
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-musl
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ needs.validate-tag.outputs.tag }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -47,67 +90,136 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: release-${{ matrix.target }}
+          key: release-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}
 
-      - name: Install cross
-        if: matrix.cross
-        run: cargo install cross --locked --version ^0.2
+      - name: Install zig (pinned)
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: "0.13.0"
 
-      - name: Cargo fetch (seed deps before --frozen build)
-        run: cargo fetch --target ${{ matrix.target }}
-
-      - name: Build agent binary
-        shell: bash
-        run: |
-          # --frozen: use Cargo.lock as-is; don't try to update it.
-          # We seeded deps above via `cargo fetch`, so this works offline.
-          if [[ "${{ matrix.cross }}" == "true" ]]; then
-            cross build --release --bin agent --frozen --target ${{ matrix.target }}
-          else
-            cargo build --release --bin agent --frozen --target ${{ matrix.target }}
-          fi
-
-      - name: Package archive
-        id: package
-        shell: bash
+      - name: Install cargo-zigbuild + cargo-dist
         run: |
           set -euo pipefail
-          ref="${{ github.event.inputs.tag || github.ref_name }}"
-          name="nexo-rs-${ref}-${{ matrix.target }}"
-          mkdir -p "dist/$name"
-          cp "target/${{ matrix.target }}/release/agent" "dist/$name/agent"
-          cp README.md LICENSE-MIT LICENSE-APACHE NOTICE CHANGELOG.md "dist/$name/"
-          cd dist
-          tar -czf "$name.tar.gz" "$name"
-          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
-          echo "archive=dist/$name.tar.gz"         >> "$GITHUB_OUTPUT"
-          echo "checksum=dist/$name.tar.gz.sha256" >> "$GITHUB_OUTPUT"
+          cargo install cargo-zigbuild --locked --version 0.22.3
+          cargo install cargo-dist     --locked --version 0.31.0
+
+      - name: Set build channel for provenance
+        run: echo "NEXO_BUILD_CHANNEL=tarball-${{ matrix.target }}" >> "$GITHUB_ENV"
+
+      - name: dist build
+        run: |
+          dist build \
+            --artifacts=local \
+            --tag ${{ needs.validate-tag.outputs.tag }} \
+            --target ${{ matrix.target }}
 
       - uses: actions/upload-artifact@v4
         with:
-          name: nexo-rs-${{ matrix.target }}
+          name: dist-${{ matrix.target }}
+          path: target/distrib/nexo-rs-${{ matrix.target }}.*
+          if-no-files-found: error
+
+  build-termux:
+    needs: validate-tag
+    name: build (aarch64-linux-android, termux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate-tag.outputs.tag }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-termux-${{ hashFiles('Cargo.lock') }}
+
+      - name: Install zig (pinned)
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: "0.13.0"
+
+      - name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild --locked --version 0.22.3
+
+      - name: Set build channel for provenance
+        run: echo "NEXO_BUILD_CHANNEL=termux-aarch64" >> "$GITHUB_ENV"
+
+      - name: Build Termux .deb (cross-compile via cargo-zigbuild)
+        run: bash packaging/termux/build.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-termux
           path: |
-            ${{ steps.package.outputs.archive }}
-            ${{ steps.package.outputs.checksum }}
+            dist/nexo-rs_*_aarch64.deb
+            dist/nexo-rs_*_aarch64.deb.sha256
+          if-no-files-found: error
 
   publish:
-    name: attach to release
-    needs: build
+    needs: [validate-tag, build-musl, build-termux]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: dist-*
           merge-multiple: true
 
-      - name: Attach assets to GitHub release
+      - name: Inspect downloaded artifacts
+        run: ls -la artifacts/
+
+      - name: Upload assets to GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
+          TAG: ${{ needs.validate-tag.outputs.tag }}
         run: |
           set -euo pipefail
-          tag="${{ github.event.inputs.tag || github.ref_name }}"
-          # Upload each archive + checksum. `--clobber` lets re-runs
-          # replace stale artifacts from a previous run of the same tag.
-          gh release upload "$tag" artifacts/*.tar.gz artifacts/*.sha256 \
-            --repo ${{ github.repository }} --clobber
+          gh release upload "$TAG" artifacts/* \
+            --repo ${{ github.repository }} \
+            --clobber
+
+  smoke-test:
+    needs: [validate-tag, publish]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download host musl tarball from release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.validate-tag.outputs.tag }}
+        run: |
+          gh release download "$TAG" \
+            --repo ${{ github.repository }} \
+            --pattern 'nexo-rs-x86_64-unknown-linux-musl.tar.xz'
+
+      - name: Extract + verify --version + provenance stamps
+        env:
+          EXPECTED_VERSION: ${{ needs.validate-tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir extracted
+          tar -xf nexo-rs-x86_64-unknown-linux-musl.tar.xz -C extracted
+          bin="$(find extracted -name nexo -type f -perm -u+x | head -n1)"
+          if [[ -z "$bin" ]]; then
+            echo "::error::no executable nexo bin inside the tarball"
+            exit 1
+          fi
+          short="$("$bin" --version)"
+          if [[ "$short" != "nexo $EXPECTED_VERSION" ]]; then
+            echo "::error::short version mismatch: got '$short', want 'nexo $EXPECTED_VERSION'"
+            exit 1
+          fi
+          verbose="$("$bin" version)"
+          echo "=== nexo version (verbose) ==="
+          echo "$verbose"
+          if ! grep -q "channel:.*tarball-x86_64-unknown-linux-musl" <<<"$verbose"; then
+            echo "::error::build channel stamp missing or wrong"
+            exit 1
+          fi
+          if ! grep -q "target:.*x86_64-unknown-linux-musl" <<<"$verbose"; then
+            echo "::error::target triple stamp missing or wrong"
+            exit 1
+          fi
+          echo "smoke OK: $short"

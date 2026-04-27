@@ -366,18 +366,68 @@ developer Linux box. The host-target tarball is built and
 validated end-to-end; the rest of the matrix is a Phase 27.2
 deliverable.
 
-#### 27.2 — GitHub Actions release workflow
+#### 27.2 — GitHub Actions release workflow   ✅
 
-- `.github/workflows/release.yml` triggers on `v*` tags.
-- Matrix strategy spawns one runner per target.
-- Caches: `cargo` registry, `target/`, `sccache` if available.
-- Artifacts uploaded to the GH release page.
-- Release notes auto-built from `CHANGELOG.md` between tags.
-- Concurrency guard so two tag pushes don't double-publish.
+Scope reduced to **Linux + Termux only**. Apple
+(`x86_64`/`aarch64-apple-darwin`) and Windows
+(`x86_64-pc-windows-msvc`) targets dropped; Phase 27.6 (Homebrew)
+parked. Re-enable: add the targets back to `dist-workspace.toml`,
+restore matrix entries in `release.yml`, revive `packaging/homebrew/`.
 
-Done when pushing `git tag v0.1.0 && git push --tags` produces
-a GH release with all 5 platform tarballs + sha256 sums within
-20 min.
+Shipped:
+- `.github/workflows/release.yml` rewritten end-to-end. Triggers
+  on `push.tags: ["nexo-rs-v*"]` (matches release-plz's
+  `git_tag_name`) and on `workflow_dispatch` with a `tag` input.
+  `name: release` preserved so the `workflow_run` chain in
+  `sign-artifacts.yml` (Phase 27.3) and `sbom.yml` (Phase 27.9)
+  keeps firing without changes.
+- 5 jobs: `validate-tag` (regex
+  `^nexo-rs-v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$` + verifies
+  the GH release exists), `build-musl` matrix x2 (x86_64 +
+  aarch64, ubuntu-latest), `build-termux` (aarch64-linux-android,
+  ubuntu-latest), `publish` (downloads artifacts +
+  `gh release upload --clobber`), `smoke-test` (extracts host
+  musl tarball + verifies short `--version` + provenance stamps).
+- Toolchain pins: zig `0.13.0` via
+  `goto-bus-stop/setup-zig@v2`, cargo-zigbuild `0.22.3`,
+  cargo-dist `0.31.0`. Cache via `Swatinem/rust-cache@v2` keyed
+  on `release-${target}-${hash(Cargo.lock)}`.
+- `NEXO_BUILD_CHANNEL` injection per runner:
+  `tarball-x86_64-unknown-linux-musl`,
+  `tarball-aarch64-unknown-linux-musl`, `termux-aarch64`. Closes
+  the Phase 27.1 deferral on build-channel provenance.
+- Concurrency: `group: release-${{ github.ref_name }}`,
+  `cancel-in-progress: false`. Re-runs of the same tag serialize;
+  uploads never aborted mid-flight.
+- `fail-fast: false` on the musl matrix.
+- Permissions: `contents: write` only.
+- `dist-workspace.toml` `targets` reduced to 2 musl entries;
+  `installers = ["shell"]` (no PowerShell — no Windows target).
+- `scripts/release-check.sh`: `EXPECTED_TARBALLS` reduced to 2
+  musl; new Termux `.deb` glob check (`nexo-rs_*_aarch64.deb`)
+  validates sha256 sidecar.
+- `Makefile`: `HOST_TARGET ?= x86_64-unknown-linux-musl` (no more
+  gnu host-fallback).
+- `packaging/termux/build.sh`: emits `<deb>.sha256` sidecar at
+  the end so `gh release upload` ships it.
+- `packaging/README.md` rewritten — toolchain matrix, pinned
+  versions of zig + cargo-zigbuild, drop mac/windows sections.
+- `docs/src/contributing/release.md`: "automatic vs manual" table
+  reflects Phase 27.2 ownership boundaries.
+
+Deferred (in `FOLLOWUPS.md`):
+- Termux runtime smoke (need Android emulator or device; ubuntu
+  runner can't run bionic libc).
+- Smoke-test auto-rollback (deletes assets on failure).
+- `dist generate` vs hand-rolled `release.yml` drift watch.
+- Apple + Windows targets revival.
+
+Done when (revised): tag `nexo-rs-v<version>` push produces a GH
+release with the 2 musl tarballs + Termux `.deb` + sha256 sidecars
+in <15 min, downstream `sign-artifacts.yml` + `sbom.yml` triggered
+automatically. Live validation requires the next release-plz PR
+merge to produce the next `nexo-rs-v<version>` tag; the workflow
+dispatch input is the manual fallback.
 
 #### 27.3 — Cosign / sigstore signing   🔄
 
