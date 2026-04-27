@@ -125,6 +125,7 @@ mod tests {
             started_at: Utc::now(),
             finished_at: finished,
             snapshot: AgentSnapshot::default(),
+        plan_mode: None,
         }
     }
 

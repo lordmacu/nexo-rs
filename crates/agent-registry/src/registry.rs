@@ -289,6 +289,7 @@ impl AgentRegistry {
             started_at: meta.started_at,
             finished_at: meta.finished_at,
             snapshot: snap,
+            plan_mode: None,
         })
     }
 
@@ -311,6 +312,7 @@ impl AgentRegistry {
                     started_at: meta.started_at,
                     finished_at: meta.finished_at,
                     snapshot: snap,
+                    plan_mode: None,
                 };
                 AgentSummary::from_handle(&h)
             })

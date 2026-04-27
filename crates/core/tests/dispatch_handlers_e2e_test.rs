@@ -111,6 +111,7 @@ fn empty_config(dispatch_full: bool) -> Arc<AgentConfig> {
             mode,
             ..Default::default()
         },
+        plan_mode: Default::default(),
     })
 }
 

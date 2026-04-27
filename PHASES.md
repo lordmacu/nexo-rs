@@ -3538,24 +3538,72 @@ pass through the new abstraction).
   `HttpTransport` both implement; server core depends on the trait
   only. Done: every Phase 73+74 conformance test still passes
   through stdio; HTTP shares 100 % of the protocol path.
-- 76.3 ⬜ — Pluggable authentication. Trait `McpAuthenticator`
-  with `StaticToken`, `BearerJwt` (jwks fetch + cache), `MutualTls`,
-  and `None` (dev-only, refuses to bind non-loopback). Result is a
+- 76.3 ✅ — Pluggable authentication. Trait `McpAuthenticator`
+  with `StaticToken`, `BearerJwt` (JWKS fetch + cache + stale-OK
+  fallback), `MutualTls::FromHeader`, and `None` (refuses to
+  bind non-loopback at boot). Result is a
   `Principal { tenant_id, subject, scopes }` injected into every
-  `ToolContext`. Stdio principal derives from process (`local`).
-  Done: missing/invalid token → 401; valid token → tool sees
-  `principal.tenant_id`.
-- 76.4 ⬜ — Multi-tenant isolation. `ToolContext.tenant_id`
-  mandatory, `TenantScoped<T>` helper, `tenant_scoped_path` for
-  filesystem/SQLite namespacing. Cross-tenant leak is a unit-test
-  fixture (tenant-A reads tenant-B → must fail). Done: 2-tenant
-  fixture asserts no resource bleed.
-- 76.5 ⬜ — Per-principal rate-limiting. Token bucket keyed on
-  `(tenant_id, tool_name)`, configurable globally + per-tool, sane
-  defaults (100 rps burst 200). Excess returns JSON-RPC error
-  `-32099` with `Retry-After`. Counter
-  `mcp_server_rate_limit_hits_total{tenant,tool}`. Done: 1 000 rps
-  load test produces clean 429s, no panic, no leaked permits.
+  `DispatchContext`. Stdio principal is `Principal::stdio_local()`.
+  Boot validation: empty/`none` algorithms refused, HS+asym mix
+  refused (algorithm-confusion CVE class), mTLS-from-header
+  requires loopback bind. Anti-enumeration: all 401 bodies are
+  byte-identical; only `JwksUnreachable` maps to 503.
+  Constant-time token comparison via `subtle::ct_eq`. Token
+  zeroized on drop via `Zeroizing<String>`. YAML schema lands
+  in `nexo-config::types::mcp_server::AuthConfigYaml` with
+  back-compat promotion of legacy `auth_token_env`. 20 adversarial
+  HTTP tests (`http_auth_test.rs`) + 32 auth-module unit tests.
+- 76.4 ✅ — Multi-tenant isolation. `Principal.tenant: TenantId`
+  mandatory; flows from auth boundary into `DispatchContext::tenant()`.
+  `TenantId::parse` enforces NUL-byte reject, NFKC canonical form,
+  percent-decode-and-recheck, `[a-z0-9_-]{1,64}` charset, no
+  leading/trailing `_`/`-` (port of
+  `claude-code-leak/src/memdir/teamMemPaths.ts:22-64
+  sanitizePathKey`). `TenantScoped<T>` trip-wire +
+  `CrossTenantError`. `tenant_scoped_path` lexical join with
+  absolute/dot-dot fallback. `tenant_scoped_canonicalize` two-pass
+  containment (lexical resolve + `realpath` on deepest existing
+  ancestor with symlink-loop / dangling / sibling-tenant detection
+  — port of
+  `claude-code-leak/src/memdir/teamMemPaths.ts:228-256
+  validateTeamMemWritePath`); `cfg(unix)` only, Windows port
+  deferred. `tenant_db_path` = `<root>/tenants/<tenant>/state.sqlite3`
+  (one DB per tenant). YAML schema: `static_token.tenant`,
+  `mutual_tls.from_header.cn_to_tenant` (boot-validates each value).
+  JWT `tenant_claim` mandatory + parsed through strict validator;
+  bad shape → 401 `TenantClaimMissing`. Dotted mTLS CN without
+  `cn_to_tenant` → 401 (no silent rewrite — pattern from
+  `claude-code-leak/src/services/teamMemorySync/index.ts:163-166`,
+  identity claims never silently rewritten). Cross-tenant fixture
+  (`multitenant_isolation_test.rs`) boots two HTTP servers with two
+  tenants, asserts no marker bleed. 43 new tests across 4 files
+  (21 unit `tenant.rs` + 8 symlink containment + 11 HTTP-auth
+  tenant flow + 3 cross-tenant integration).
+- 76.5 ✅ — Per-principal rate-limiting. Token bucket keyed on
+  `(TenantId, ToolName)`, lazy-refill on `check()`, defaults
+  100 rps burst 200. Excess returns JSON-RPC `-32099` with
+  `data.retry_after_ms` (HTTP stays 200 — the per-IP layer keeps
+  emitting HTTP 429 separately; asymmetry intentional and
+  documented). `Retry-After` parsing pattern ported from
+  `claude-code-leak/src/services/api/withRetry.ts:803-812
+  getRetryAfterMs`; the leak is client-side only — wire shape
+  is the only direct port. Hard-cap eviction (50 000 buckets,
+  drop ~1% LRU on overflow) + background sweeper (60 s
+  interval, prunes `last_seen > stale_ttl_secs`). Pattern
+  ported from OpenClaw
+  `research/src/gateway/control-plane-rate-limit.ts:6-7,101-110`.
+  Early-warning `tracing::warn!` at `warn_threshold` utilization
+  (default 0.8); concept ported from
+  `claude-code-leak/src/services/claudeAiLimits.ts:53-70
+  EARLY_WARNING_CONFIGS` (simplified to single fixed threshold).
+  Stdio principals bypass entirely (single-tenant by
+  construction); `tools/list`, `initialize`, `shutdown` bypass
+  too. `DispatchOutcome::Error` extended with optional
+  `data: Option<Value>` to carry structured `retry_after_ms`.
+  31 new tests (4 token-bucket + 5 config validation + 9 limiter
+  unit + 7 dispatcher integration + 1 HTTP concurrent load
+  + 5 YAML schema). Sweeper holds `Weak<Self>` so it dies on
+  Drop without keeping the limiter alive.
 - 76.6 ⬜ — Backpressure + concurrency caps. Per-tenant semaphore
   (max-in-flight), bounded queue, per-call timeout (default 30 s,
   override per-tool), tokio `CancellationToken` propagated to
@@ -3709,6 +3757,1714 @@ Done criteria:
   system block leak into static `x-api-key` requests.
 
 Reference: `research/src/agents/anthropic-transport-stream.ts:558-641`.
+
+### Phase 77 — Claude Code parity sweep (claude-code-leak)   ⬜
+
+After auditing the leaked `claude-code-leak/src/` tree
+(2026-03-31, ~1,900 files), several patterns from Anthropic's
+production Claude Code CLI are missing from nexo-rs and would
+materially improve robustness, memory hygiene, safety, and
+operator UX. Phase 77 ports the high-value subset — compact
+multi-tier, memdir hygiene, bash semantic guards, post-turn
+memory extraction, prompt-cache-break detection, plus four
+skills (`loop`, `stuck`, `simplify`, `verify`), an
+`AskUserQuestion` mid-turn elicitation tool, a versioned
+schema migrations system, and the coordinator/worker mode
+split. Voice/STT, Ink UI, IDE bridge, and GrowthBook
+analytics are explicitly out of scope (different tech stack
+or proprietary).
+
+Goal: long-running conversations stop hitting the context
+ceiling (microcompact + autocompact + cache-break detection),
+shared memories stop leaking secrets (memdir scanner), bash
+destructive ops stop slipping past capability gates
+(semantic guard), and skill authors get four production-grade
+patterns ready to copy.
+
+References:
+- `claude-code-leak/src/services/compact/` (3.5 K LOC, 11 files)
+- `claude-code-leak/src/memdir/` (8 files, 1.6 K LOC)
+- `claude-code-leak/src/services/extractMemories/`
+- `claude-code-leak/src/tools/BashTool/{bashSecurity,bashPermissions,sedValidation,pathValidation,shouldUseSandbox,destructiveCommandWarning}.ts`
+- `claude-code-leak/src/tools/AskUserQuestionTool/`
+- `claude-code-leak/src/skills/bundled/{loop,stuck,simplify,verify}.ts`
+- `claude-code-leak/src/coordinator/coordinatorMode.ts`
+- `claude-code-leak/src/migrations/`
+- `claude-code-leak/src/services/api/promptCacheBreakDetection.ts`
+
+#### 77.1 — microCompact (inline tool-result compression)   ⬜
+
+In `crates/driver-loop/` (or `crates/core/agent/`) add a per-turn
+hook that, when a single tool result exceeds a configurable
+byte threshold (default 16 KiB), summarises it via a cheap LLM
+call (Haiku / local tier-0) and replaces the body in-place
+while keeping the tool_use_id/tool_result_id pair intact for
+the model's tool-loop bookkeeping. Reference:
+`services/compact/microCompact.ts` (530 LOC).
+
+Done when:
+- Threshold + summariser provider configurable per binding
+  (`compact.micro.threshold_bytes`, `compact.micro.provider`).
+- Original tool result archived to the turn-log audit trail
+  (Phase 72) so post-mortem replay still has the full body.
+- Unit test: 1 MiB grep result is compressed to ≤ 2 KiB and
+  the next turn still references the same `tool_use_id`.
+
+#### 77.2 — autoCompact (token + time triggered)   ⬜
+
+Loop-level autocompact that fires when the running token
+estimate crosses `compact.auto.token_pct` (default 80 % of the
+model context window) OR the conversation has been alive for
+`compact.auto.max_age_minutes` (default 120). Compresses the
+oldest non-pinned turns into a single summary block. Reference:
+`services/compact/autoCompact.ts` (351 LOC) +
+`timeBasedMCConfig.ts`.
+
+Done when:
+- Trigger emits a `compact.auto.fired` event on the EventBus
+  with `{ goal_id, before_tokens, after_tokens, age_minutes }`.
+- Pinned turns (system prompt, latest tool_result needed for
+  the next call) are never compacted.
+- Integration test: 50-turn synthetic goal stays under the
+  token cap across the run.
+
+#### 77.3 — sessionMemoryCompact + postCompactCleanup   ⬜
+
+After 77.1+77.2 fire, persist the compacted summary into the
+session's long-term memory entry (Phase 5.3) and clean
+references to the now-archived tool_use ids from the prompt
+cache. Reference: `services/compact/sessionMemoryCompact.ts`
+(630 LOC), `postCompactCleanup.ts`.
+
+Done when:
+- A resumed session can read the compacted summary from
+  `crates/memory` long-term store and re-prime the model
+  without re-running the elided turns.
+- `agent_turns_tail` tool (Phase 72) flags compacted turns
+  with a `compacted=true` column.
+
+#### 77.4 — promptCacheBreakDetection   ⬜
+
+In `crates/llm/src/anthropic.rs`, after every API response
+parse `usage.cache_read_input_tokens` and
+`usage.cache_creation_input_tokens` against the previous turn.
+When the read drops by > 50 % unexpectedly, log
+`anthropic.cache_break` with the suspected breaker (system
+prompt mutation, beta header drift, model swap) so an operator
+can root-cause cache misses without staring at raw usage rows.
+Reference: `services/api/promptCacheBreakDetection.ts`.
+
+Done when:
+- Detection runs only on Anthropic provider (no-op elsewhere).
+- Unit tests: synthetic cache-hit run vs. cache-break run
+  produce the expected log lines.
+- Docs: `docs/src/llm/anthropic.md` documents the diagnostic.
+
+#### 77.5 — extractMemories (post-turn LLM extraction)   ⬜
+
+After every successful agent turn, fire a low-priority LLM
+call (Haiku / local) that scans the user/assistant pair for
+durable facts (preferences, names, constraints) and writes
+them to `crates/memory` long-term. Reference:
+`services/extractMemories/extractMemories.ts` (615 LOC) +
+`prompts.ts`. Complements Phase 10.6 dreaming (which is
+batch / async) with an inline path.
+
+Done when:
+- Configurable per binding (`memory.extract.enabled`,
+  `memory.extract.provider`, `memory.extract.cooldown_secs`).
+- Extracted memories carry a `source: "extract:turn"` tag so
+  Phase 10.9 git-backed memory can audit them.
+- Integration test: a 10-turn synthetic conversation that
+  mentions a deadline produces exactly one project-type
+  memory.
+
+#### 77.6 — memdir findRelevantMemories + memoryAge decay   ⬜
+
+Port the relevance scorer + age-weighted decay from
+`memdir/findRelevantMemories.ts` (141) and `memoryAge.ts`
+(53) into `crates/memory/src/long_term.rs` so memories
+selected for in-context injection are scored on
+(semantic similarity × recency × access count), not just
+cosine. Decay: half-life configurable per memory type
+(user: ∞, project: 90 d, feedback: 365 d, reference: ∞).
+
+Done when:
+- Selector returns top-k with deterministic ordering for the
+  same query+state.
+- Unit tests: a 6-month-old project memory ranks below a
+  fresh one of the same cosine similarity.
+
+#### 77.7 — memdir secretScanner + teamMemSecretGuard   ⬜
+
+Before any memory entry is committed (Phase 10.9 git-backed
+write path or `crates/memory/src/long_term.rs::insert`),
+scan the body for high-entropy strings, AWS / GCP / Stripe /
+GitHub / Anthropic key shapes, and JWTs. Block on hit, emit
+`memory.secret.blocked` event. Reference:
+`services/teamMemorySync/secretScanner.ts` +
+`teamMemSecretGuard.ts`.
+
+Done when:
+- Detection regex set ported + unit-tested with
+  Anthropic / OpenAI / GitHub / AWS / Stripe / Google /
+  generic-32-byte fixtures.
+- Block path returns `MemoryError::SecretSuspected` with the
+  matched detector name (no fragment of the secret in the
+  error string).
+- Docs note the limitation (regex only — not a sandboxed
+  scanner).
+
+#### 77.8 — bashSecurity destructive-command warning   ⬜
+
+In `crates/dispatch-tools/` (or driver-permission), before
+shelling out, run a semantic classifier over the command
+string that flags `rm -rf`, `dd of=`, `mkfs`, `chmod -R`,
+`shred`, `git push --force` to protected branches, etc.
+Warn (Phase 67.D capability gate already blocks; this adds
+a structured warning surfaced to the operator). Reference:
+`tools/BashTool/destructiveCommandWarning.ts` +
+`commandSemantics.ts`.
+
+Done when:
+- Classifier emits `bash.destructive_intent` with a tag set
+  per detected pattern.
+- Unit tests cover 20+ canonical destructive patterns +
+  20+ false-positive look-alikes.
+
+#### 77.9 — bashSecurity sed-in-place + path validation   ⬜
+
+Port `sedEditParser.ts` + `sedValidation.ts` +
+`pathValidation.ts` (≈ 400 LOC combined) so `sed -i`
+edits, absolute path arguments, and writes to system
+locations (`/etc`, `/usr`, `/var`, `/root`) are flagged
+or blocked per binding policy.
+
+Done when:
+- New config knob `bash.sed_in_place: deny|warn|allow`
+  (default `warn`), `bash.system_path_writes: deny|warn|allow`.
+- Existing tests for read-only validation still pass.
+
+#### 77.10 — bashSecurity shouldUseSandbox heuristic   ⬜
+
+Heuristic decides whether to wrap the command in a sandbox
+(bubblewrap / firejail on Linux when present, no-op
+otherwise). Reads-only commands skip; commands that touch
+the FS get sandboxed unless the binding opts out.
+Reference: `tools/BashTool/shouldUseSandbox.ts`.
+
+Done when:
+- `bash.sandbox: auto|always|never` config knob.
+- Auto path probes once for `bwrap` / `firejail` at boot,
+  caches result.
+- Falls through cleanly when neither is installed.
+
+#### 77.11 — claudeAiLimits + rateLimitMessages UX   ⬜
+
+Port the structured rate-limit / quota messaging from
+`services/claudeAiLimits.ts` + `rateLimitMessages.ts` into
+`crates/llm/src/anthropic.rs` so 429 + 529 + quota-exceeded
+responses render a humane diagnostic in `setup doctor`
+(retry-after countdown, monthly cap context, "Pro vs Max"
+hint when known).
+
+Done when:
+- Anthropic error classification (Phase 15.6) gains a
+  `LlmError::QuotaExceeded { retry_after, plan_hint }`
+  variant.
+- `setup doctor` and the agent registry's `notify_origin`
+  both surface the friendly message instead of generic
+  "no quota".
+
+#### 77.12 — Skill `loop` (auto-iteration)   ⬜
+
+Bundle a new skill at `skills/loop/` that takes
+`{prompt, max_iters, until_predicate}` and runs the prompt
+N times or until a predicate (regex / tool exit / LLM
+judge) is satisfied. Reference:
+`claude-code-leak/src/skills/bundled/loop.ts`.
+
+Done when:
+- Skill manifest + `phase()` impl + unit tests.
+- Registered in Phase 13 skill index + admin-ui PHASES.md.
+
+#### 77.13 — Skill `stuck` (auto-debug)   ⬜
+
+Bundle a new skill at `skills/stuck/` that, given a recent
+failure context (build error, test failure), runs a
+diagnostic loop: re-run with verbose flags, grep error
+strings, propose a fix candidate. Reference:
+`claude-code-leak/src/skills/bundled/stuck.ts`.
+
+Done when:
+- Skill works against `cargo build` and `cargo test`
+  failures end-to-end in the Phase 67 self-driving loop.
+
+#### 77.14 — Skill `simplify`   ⬜
+
+Bundle a code-simplification skill at `skills/simplify/`
+that takes a file or hunk and proposes a smaller / clearer
+version (renames, dead-code, redundant guards). Reference:
+`claude-code-leak/src/skills/bundled/simplify.ts`.
+
+#### 77.15 — Skill `verify`   ⬜
+
+Bundle a verification skill at `skills/verify/` that takes
+an acceptance criterion in plain English and runs the
+matching commands (test, lint, type-check) plus an LLM
+judge over the output. Pairs with Phase 75 acceptance
+autodetect. Reference:
+`claude-code-leak/src/skills/bundled/{verify,verifyContent}.ts`.
+
+#### 77.16 — AskUserQuestion mid-turn elicitation tool   ⬜
+
+New tool in `crates/dispatch-tools/` that pauses the agent
+loop, posts a question to the originating channel
+(WhatsApp / Telegram / email / pairing companion-tui), and
+resumes when the answer arrives. Hooks into Phase 14
+TaskFlow wait/resume. Reference:
+`claude-code-leak/src/tools/AskUserQuestionTool/`.
+
+Done when:
+- Tool survives daemon restart (state in
+  `agent-registry`'s SQLite store).
+- WA + TG adapters route the answer back to the right
+  goal_id without manual correlation.
+- Timeout knob (`ask.timeout_secs`, default 3600) escalates
+  to `notify_origin` `[abandoned]` on expiry.
+
+#### 77.17 — Versioned schema migrations system   ⬜
+
+`crates/config/` grows a `migrations/` module modelled on
+`claude-code-leak/src/migrations/` (11 idempotent migration
+fns). Boot reads the YAML's `schema_version`, applies any
+pending migrations to a working copy, and writes back if the
+operator opted in (`config.migrations.auto_apply: true`)
+or prints the diff for manual review otherwise.
+
+Done when:
+- Migration fns are pure (`fn(YamlValue) -> YamlValue`),
+  unit-tested with before/after fixtures.
+- `nexo setup migrate` CLI subcommand applies them with
+  `--dry-run` and `--apply` flavors.
+- Phase 18 hot-reload re-validates the post-migration
+  snapshot before swapping.
+
+#### 77.18 — coordinator / worker mode pattern   ⬜
+
+In `crates/core/agent/` (or driver-loop), add a binding-level
+role switch: `role: coordinator | worker`. Coordinators get
+the full tool surface; workers see a curated subset
+(no `team_create`, no `send_message` outside their parent,
+no `sleep`). Mode mismatch on session resume flips back
+gracefully. Reference:
+`claude-code-leak/src/coordinator/coordinatorMode.ts`.
+
+Done when:
+- `role` declared in YAML, validated at boot.
+- Worker tool subset configurable per role, defaulted to
+  `[bash, file_read, file_edit, agent_turns_tail]`.
+- E2E test: a coordinator goal spawns 3 workers, each
+  proves it cannot call disallowed tools.
+
+#### 77.19 — docs + admin-ui sync   ⬜
+
+- `docs/src/` gains pages for compact tiers, memdir scanner,
+  bash safety knobs, the four new skills, the migrations
+  CLI, and proactive mode (77.20).
+- `admin-ui/PHASES.md` adds checkboxes for every operator-
+  visible knob landed in 77.1–77.20.
+- `crates/setup/src/capabilities.rs::INVENTORY` registers
+  any new dangerous toggles introduced (e.g.
+  `bash.sandbox=never`, `proactive.enabled=true`).
+
+#### 77.20 — proactive mode + adaptive Sleep tool   ⬜
+
+Port Claude Code's `--proactive` / KAIROS feature into nexo-rs
+so a binding can run autonomously: the agent receives periodic
+`<tick>` injections from the driver-loop, decides whether to
+do useful work or call a new `Sleep { duration_ms, reason }`
+tool that pauses the goal and schedules a wake-up. Unlike
+Phase 7 Heartbeat (cron-style Rust callback) and Phase 20
+`agent_turn` poller (cron-style scheduled LLM turn → channel),
+proactive mode is **agent-driven self-pacing**: the model owns
+its own cadence and explicitly reasons about cache cost vs.
+work backlog. References:
+- `claude-code-leak/src/main.tsx:2197-2204` (system-prompt
+  injection) and `:3832-3833`, `:4612-4618` (CLI flag wiring).
+- `claude-code-leak/src/tools/SleepTool/prompt.ts` (the Sleep
+  tool description, including the 5-minute prompt-cache TTL
+  trade-off the model must weigh).
+- The leaked `src/proactive/` module body itself was
+  dead-code-stripped from the npm artifact via
+  `feature('PROACTIVE')` — only its public surface
+  (`isProactiveActive`, `activateProactive('command')`) is
+  referenced from `main.tsx`.
+
+Built on top of: Phase 7 Heartbeat (interval primitive),
+Phase 20 `agent_turn` poller (scheduled LLM turn machinery),
+Phase 67 driver-loop (turn replay + acceptance hooks).
+Mutually exclusive with the 77.18 coordinator role on the
+same binding (a coordinator already owns its own scheduling).
+
+Done when:
+
+- New per-binding YAML block (validated through Phase 16
+  `EffectiveBindingPolicy`):
+  ```yaml
+  proactive:
+    enabled: true
+    tick_interval_secs: 600        # base period between ticks
+    jitter_pct: 25                 # ±25 % uniform jitter
+    max_idle_secs: 86400           # hard cap before forced wake
+    initial_greeting: true         # mirror Claude Code's "briefly greet the user"
+    cache_aware_schedule: true     # bias durations toward cache window
+  ```
+- Driver-loop emits a `<tick>` user-role message into the
+  goal's session at every interval (jittered). System prompt
+  prepends the canonical proactive snippet
+  (`"You are in proactive mode. Take initiative — explore,
+  act, and make progress without waiting for instructions.
+  You will receive periodic <tick> prompts…"`) when
+  `proactive.enabled: true`. Snippet is gated identically to
+  Phase 15.9's Claude-Code spoof — only injected when the
+  binding actually opts in.
+- New tool registered in `crates/dispatch-tools/`:
+  ```rust
+  Sleep { duration_ms: u64, reason: String }
+  ```
+  - Returns immediately with `tool_result` so the loop closes
+    the turn cleanly; the goal is then parked in a new
+    `GoalState::Sleeping { wake_at, reason }` on the agent
+    registry (Phase 71 persistence keeps it across
+    daemon restart).
+  - On wake, driver-loop resumes the goal with a `<tick>`
+    injection carrying the elapsed-since-sleep delta and the
+    stored `reason` so the model has continuity context.
+  - Bounds: `[60_000, 86_400_000]` ms (1 min – 24 h);
+    requests outside the range are clamped with a warn.
+- Cache-aware scheduler (when `cache_aware_schedule: true`):
+  - For `duration_ms ∈ [60_000, 270_000]` → keep as-is
+    (within the Anthropic 5-minute cache TTL).
+  - For `duration_ms ∈ (270_000, 1_200_000)` → snap to one
+    of `{270_000, 1_200_000}` (whichever is closer), with
+    a `tracing::info!(target = "proactive", "cache-aware
+    snap from … to …", reason)` log so the operator can
+    audit decisions.
+  - For `duration_ms > 1_200_000` → keep as-is (already
+    amortising the cache miss).
+  - The reasoning policy is purely advisory at the runtime
+    layer — the model's prompt also documents the trade-off
+    so reasoning happens at decision time too.
+- Interrupt path: an inbound user message on the goal's
+  origin channel (or any direct dispatch) cancels the pending
+  wake-up timer, marks the sleep `interrupted`, and resumes
+  the loop with a real user message instead of `<tick>`.
+- Mode-mismatch guard on session resume: if the persisted
+  goal was created with `proactive: true` and the current
+  binding has `proactive.enabled: false`, the loop logs
+  `proactive.deactivated_on_resume` and finishes the goal
+  cleanly (no tick injection).
+- Telemetry: counters `proactive.tick.fired`,
+  `proactive.sleep.entered`, `proactive.sleep.interrupted`,
+  `proactive.cache_aware.snapped` exposed via Phase 9.2
+  metrics.
+- Tests:
+  - Unit: cache-aware snap covers the four windows
+    (under-cache, mid-zone snap-down, mid-zone snap-up,
+    over-cache).
+  - Unit: `Sleep` clamps out-of-range durations and the
+    warning is emitted exactly once.
+  - Integration (`crates/driver-loop/tests/proactive_tick_test.rs`):
+    a synthetic binding with `tick_interval_secs: 1` runs
+    for 5 ticks; the model's mock alternates "do nothing"
+    (calls `Sleep`) and "do work" (writes to the
+    `project-tracker`); asserts `goal_state` flips
+    `Sleeping` ↔ `Running` correctly.
+  - E2E: a coordinator goal that flips to proactive on
+    resume returns `BindingPolicyError::ConflictingRoles`
+    instead of double-scheduling.
+- Capability inventory: register
+  `proactive.enabled` as an operator-visible toggle in
+  `crates/setup/src/capabilities.rs::INVENTORY` (it isn't
+  destructive but it does change cost characteristics —
+  every wake-up is a billed turn).
+- Docs: `docs/src/agents/proactive-mode.md` (new page,
+  registered in `SUMMARY.md`) covers the YAML schema, the
+  Sleep tool's description, the cache-aware schedule, and
+  the interaction with Phase 20's `agent_turn` poller (the
+  two are complementary — `agent_turn` for cron-driven
+  external triggers, `proactive` for self-paced autonomy).
+- Admin-ui: `admin-ui/PHASES.md` gains a "Proactive mode"
+  bullet under the runtime knobs section.
+
+Out of scope for 77.20:
+- "Always-on background swarm" (multiple proactive goals
+  cooperating) — that belongs to a future Phase 79 if we
+  need it; 77.20 lands the single-goal primitive only.
+- Voice / TTS announcements on tick — out of scope per
+  Phase 77 charter (no Voice/STT).
+
+##### 77.20 — Why this matters (charter)
+
+The gap proactive mode closes today: Phase 7 Heartbeat is a
+blind Rust callback (no reasoning, no tool use), Phase 20
+`agent_turn` is a rigid cron with the same prompt every
+firing, and Phase 67 self-driving only starts when a human
+issues an explicit goal. None of them give the agent
+*self-paced autonomy* — the ability to live between user
+messages and decide for itself when to act and when to
+rest. 77.20 is the missing primitive: an agent that owns
+its own cadence, reasons about cost vs. work backlog, and
+sleeps consciously instead of being polled.
+
+##### 77.20 — Concrete use cases (do not lose during planning)
+
+These are the workloads 77.20 unlocks across the existing
+nexo-rs plugin surface. Each one explains *why* a cron /
+heartbeat / poller is insufficient and what proactive
+mode adds.
+
+1. **Always-on personal assistant on WhatsApp / Telegram.**
+   Tick every 30 min: scan inbox + calendar + reminder
+   store. If nothing urgent → `Sleep(3600s,
+   "no urgent items")`. If something surfaces → push to
+   the origin channel without waiting to be asked.
+   Bridges the Phase 7 reminder primitive and the reactive
+   message path — neither alone covers "noticed something
+   on its own".
+
+2. **Email triage autonomous loop (Phase 48 plugin).**
+   Wake every 15 min, read inbox, classify (auto-reply
+   draft via pairing, archive bounce, mark spam, defer).
+   Adapts cadence: many incoming → short waits;
+   user on vacation → long waits. Replaces a fixed poller
+   with one whose period is decided by observed volume.
+
+3. **Self-driving dev agent between commands (Phase 67).**
+   While the operator is idle: check CI status, read new
+   PR comments, run `cargo audit`, surface regressions.
+   Phase 67 today only runs goal-driven; 77.20 lets it
+   *also* fill the gaps between explicit `nexo run`
+   invocations.
+
+4. **Infra operator (Phase 13.22 docker, 13.23 proxmox).**
+   Tick every 5 min, pull metrics, alert when CPU > 90 %
+   sustained, Sleep otherwise. Replaces dumb-threshold
+   alertmanager for cases where the LLM should reason
+   about *context* (is the spike a deploy? a regression?
+   a known maintenance window?) before paging anyone.
+
+5. **Smarter heartbeat for messaging plugins (Phases 6 + 7).**
+   Today `on_heartbeat()` fires Rust code blindly. With
+   77.20: "this contact has been silent for 3 days —
+   should I send a soft follow-up?" becomes a per-tick
+   LLM judgment instead of a hard rule.
+
+6. **Continuous learning loop (Phase 10 Soul).**
+   Tick → `dreaming` (10.6) without a fixed cron. Model
+   decides: "47 new transcripts since last dream, run
+   extraction now" vs. "only 2, Sleep longer". Cadence
+   matches signal volume instead of clock time.
+
+7. **Companion-tui background work (Phase 26).**
+   Pairing companion in proactive mode: operator opens
+   the TUI, leaves the session running, agent works in
+   the background and surfaces tick-by-tick progress
+   notes. The TUI becomes a live observation pane, not
+   a request/response shell.
+
+##### 77.20 — Why this beats fixed cron / polling
+
+| Fixed cron / poller | Proactive mode |
+|---------------------|----------------|
+| Same cadence every firing | Cadence adapts to backlog |
+| Every fire = billed LLM call | `Sleep` skips wake-ups when idle |
+| Cache TTL ignored | Snap to ≤ 270 s or ≥ 1200 s windows |
+| No "nothing to do" exit | Model decides + logs reason |
+| Interrupts ignored | Inbound user msg cancels sleep, resumes with real context |
+
+##### 77.20 — Cost guardrails (mandatory at boot)
+
+Proactive mode's failure mode is runaway billing — a
+mis-configured binding tickeing every 60 s costs real
+money. 77.20 must ship with the following rails enabled
+by default:
+
+- `tick_interval_secs` minimum 60, default 600. Lower
+  values require an explicit operator opt-in via
+  `proactive.allow_short_intervals: true` registered in
+  `crates/setup/src/capabilities.rs::INVENTORY` so
+  `nexo setup doctor capabilities` flags it.
+- `max_idle_secs` hard cap (default 86400) — prevents a
+  runaway loop where the model keeps choosing 24 h sleeps
+  forever and the goal effectively dies silent.
+- Per-binding daily turn budget: a new
+  `proactive.daily_turn_budget` (default 200) is checked
+  by the rate limiter before injecting a `<tick>`. Budget
+  exhausted → tick suppressed + `proactive.budget.exhausted`
+  event + `notify_origin` `[budget paused]`.
+- Phase 9.2 metrics counter `proactive.tick.fired` plus
+  a Phase 72 turn-log column `tick: true` so operators
+  can audit cost contribution post-hoc.
+- Phase 18 hot-reload re-evaluates the proactive block:
+  flipping `enabled: false` cancels the next pending
+  wake-up cleanly; flipping `tick_interval_secs` reschedules
+  the next firing only (no retroactive churn).
+
+##### 77.20 — Sequencing within Phase 77
+
+77.20 should land *after* 77.4 (`promptCacheBreakDetection`)
+because the cache-aware scheduler depends on knowing when
+the Anthropic prompt cache has actually broken, otherwise
+the snap-to-270 s heuristic is operating blind. Suggested
+order inside Phase 77 once 77.1–77.4 are done: 77.20 next,
+then 77.5–77.7 (memory/extract/secret-scanner), then the
+bash-safety trio (77.8–77.10), then skills + UX
+(77.11–77.16), then schema migrations + coordinator
+(77.17–77.18), then docs sync (77.19).
+
+##### 77.20 — Effort estimate
+
+~2-3 engineer days. Most machinery already exists:
+Phase 20 owns scheduled LLM turns, Phase 71 owns goal
+persistence across restarts, Phase 67 owns the driver-loop
+turn replay. The new bits are: the `Sleep` tool itself,
+the `GoalState::Sleeping` variant + registry migration,
+the cache-aware scheduler with its four-window logic,
+the conditional system-prompt injection (gated identically
+to Phase 15.9's Claude-Code spoof), and the cost-guardrail
+plumbing (budget + capability inventory entry).
+
+### Phase 79 — Tool surface parity sweep (claude-code-leak tools)   ⬜
+
+After cataloguing the 40 tools in
+`/home/familia/claude-code-leak/src/tools/`, 13 of them have
+no equivalent in nexo-rs and would materially expand what the
+agent can do without leaving its turn. Phase 79 ports the
+13 missing tools (plus the docs sync). Phase 77 covers the
+*infrastructure* parity sweep (compact, memdir, bash safety,
+proactive mode, etc.); Phase 79 is the *tool surface* sweep —
+they are siblings, not nested.
+
+The 27 tools we already have (`Agent`, `Bash`, `FileRead/Write/Edit`,
+`Glob`, `Grep`, `MCP`, `Skill`, `SendMessage` ≈ delegate, `WebSearch`,
+`Enter/ExitWorktree`, `TaskCreate/Update/Get/List/Stop/Output`,
+plus the in-flight 77.16 `AskUserQuestion` and 77.20 `Sleep`) stay as
+they are. Phase 79 only adds what's missing.
+
+PowerShellTool (Windows-only) and WebFetchTool (Phase 21
+covers user-shared URLs) are explicitly out of scope.
+
+References: `claude-code-leak/src/tools/{EnterPlanMode,ToolSearch,SyntheticOutput,TodoWrite,LSP,TeamCreate,TeamDelete,ScheduleCron,RemoteTrigger,Brief,Config,McpAuth,ListMcpResources,ReadMcpResource,REPL,NotebookEdit}Tool/`.
+
+#### 79.1 — EnterPlanMode + ExitPlanMode tools   ✅
+
+Two paired tools that flip the agent into a read-only "plan"
+mode mid-turn. While in plan mode, every mutating tool
+returns a structured `PlanModeRefusal` so the model is
+forced to articulate a plan before execution. `ExitPlanMode`
+takes a `final_plan: String` argument — the plan is logged
+to the Phase 72 turn log and surfaced to the operator
+(or the pairing channel) for confirmation before mutating
+tools re-arm.
+
+**Reference (PRIMARY)**: `claude-code-leak/src/tools/EnterPlanModeTool/EnterPlanModeTool.ts`
++ `claude-code-leak/src/tools/ExitPlanModeTool/ExitPlanModeV2Tool.ts`
++ `claude-code-leak/src/utils/permissions/permissionSetup.ts:1458-1489`
+(`prepareContextForPlanMode`)
++ `claude-code-leak/src/bootstrap/state.ts:157,1333-1338,1354-1359`
+(plan-mode state primitives + exit attachment trigger).
+**Reference (secondary)**: OpenClaw `research/` — no plan-mode
+equivalent (grep confirmed, only `delivery-plan.ts` cron files
+matched); design lifts entirely from the leak.
+
+**PlanModeRefusal** (structured shape — NOT a string per
+brainstorm decision **d**):
+```rust
+struct PlanModeRefusal {
+    tool_name: String,
+    tool_kind: ToolKind,             // Bash | FileEdit | Outbound | Delegate | Schedule | Config
+    hint: &'static str,               // "Call ExitPlanMode { final_plan } when the plan is ready."
+    entered_at: i64,                  // unix seconds
+    entered_reason: PlanModeReason,
+}
+
+enum PlanModeReason {
+    ModelRequested,
+    OperatorRequested,
+    AutoDestructive { tripped_check: String },
+}
+```
+Refusal lands as a `tool_result` with `is_error: true` so the
+provider's classification (Anthropic, MiniMax, OpenAI-compat,
+Gemini) stays consistent.
+
+**Mutating tools blocked while in plan mode** (canonical list
+in `crates/core/src/plan_mode.rs::MUTATING_TOOLS`; boot-time
+assert verifies every registered tool is classified —
+addition without classification fails compile/boot per
+brainstorm decision **b**):
+- `Bash` when `commandSemantics.is_mutating == true`
+  (Phase 77.8/77.9 already classifies this; default to
+  blocking if the classifier returns `Unknown`).
+- `FileWrite`, `FileEdit`, `NotebookEdit` (79.13).
+- `program_phase`, `delegate_to`, `dispatch_followup`.
+- 79.7 `ScheduleCron`, 79.8 `RemoteTrigger`, 79.10
+  `Config { op: apply }`.
+- Every plugin outbound (`whatsapp.send`, `telegram.send`,
+  `email.send`, `browser.click/type/navigate`).
+
+**Read-only tools allowed**: `FileRead`, `Glob`, `Grep`,
+`Bash` reads (`commandSemantics.is_mutating == false`),
+`WebSearch`, `Lsp` (79.5), `ListMcpResources` (79.11),
+`ReadMcpResource` (79.11), `ToolSearch` (79.2),
+`AskUserQuestion` (77.16), `Sleep` (77.20).
+
+**Sub-agent semantics** (lift from leak —
+`EnterPlanModeTool.ts:78-80` + `SendMessageTool.ts:449` +
+`AgentTool/agentToolUtils.ts:90`; refined with OpenClaw
+`research/src/acp/session-interaction-mode.ts:4-15`,
+brainstorm decisions **g**+**h**):
+- `EnterPlanMode` rejects with `PermissionDenied` unless
+  `AgentContext.is_interactive() && parent_goal_id.is_none()`.
+  `is_interactive()` returns `false` for: sub-agent goals,
+  cron-spawned goals (Phase 7 heartbeat / 79.7
+  ScheduleCron), poller-spawned goals (Phase 19/20). Only
+  pairing/chat-rooted goals qualify — they have a live
+  channel that can deliver approval.
+- `delegate_to`, `TeamCreate` (79.6) spawn child goals with
+  `plan_mode = Off` regardless of parent state. Child does
+  read-only research for the parent's plan.
+
+**Plan-mode hint per turn** (lift from leak's plan_mode
+attachment, `bootstrap/state.ts:1354-1359`, brainstorm
+decision **e**):
+- Frozen suffix appended to the system prompt while
+  `plan_mode == On`, cache-friendly:
+  ```
+  [plan-mode] Active. Read-only exploration. Mutating tools refuse with PlanModeRefusal. Call ExitPlanMode { final_plan } when ready.
+  ```
+- Same injection channel as 77.20 proactive prompt + 79.9
+  Brief; flips on/off in `crates/llm/src/prompt_assembly.rs`
+  based on `AgentContext.plan_mode`.
+
+**Notify_origin format** (frozen — brainstorm decision **k**):
+```
+[plan-mode] entered at <RFC3339> — reason: <model|operator|auto-destructive:<check>>
+[plan-mode] exited — plan: <first 200 chars>… (full plan in turn log #<turn_idx>)
+[plan-mode] acceptance: pass|fail (<test summary>)
+[plan-mode] refused tool=<name> kind=<kind>
+```
+
+**Tool shapes**:
+```rust
+EnterPlanMode { reason: Option<String> }
+  → { entered_at: i64, mode_was: PriorMode }
+
+ExitPlanMode { final_plan: String }   // ≤ 8 KiB; oversize → PlanTooLarge error
+  → { unlocked_at: i64, plan_chars: usize, awaiting_acceptance: bool }
+```
+
+**Code touchpoints**:
+- New module `crates/core/src/plan_mode.rs`: `PlanModeState`
+  enum (`Off | On { entered_at, reason, prior_mode }`),
+  `MUTATING_TOOLS` const list, `gate_tool_call(state,
+  tool_name) -> Option<PlanModeRefusal>` helper, boot-time
+  registry-vs-list assert.
+- `crates/dispatch-tools/src/dispatcher.rs`: pre-tool hook
+  consults `PlanModeState` and short-circuits with the
+  canonical refusal (centralised gate per brainstorm
+  decision **b**).
+- `crates/dispatch-tools/src/builtins/plan_mode.rs` (new):
+  the `EnterPlanMode` + `ExitPlanMode` tool entry points.
+- `nexo-agent-registry`: new column `plan_mode TEXT` (JSON
+  `PlanModeState`) on `goals` table.
+- `crates/config/src/types/binding.rs`: `plan_mode:
+  PlanModePolicy { enabled, auto_enter_on_destructive,
+  default_for_role }`.
+- `crates/llm/src/prompt_assembly.rs`: append the per-turn
+  hint when `plan_mode.is_on()`.
+- `crates/core/src/agent/context.rs`: `AgentContext.plan_mode:
+  Arc<RwLock<PlanModeState>>` (mirror cache; SQLite is
+  canonical).
+- Wait/resume on operator approval reuses the **TaskFlow
+  wait/resume primitive (Phase 14.4)** until 79.10's
+  `approval_correlator.rs` ships (brainstorm decision **c**).
+
+**Defaults per role** (brainstorm decision **f**, replaces
+the original blanket `enabled: true`):
+```yaml
+# Per-binding plan_mode block
+plan_mode:
+  enabled: true                       # tool registered + reachable
+  auto_enter_on_destructive: false    # opt-in; pairs with 77.8
+  # The "actively gating" default — if unset, computed:
+  #   role: coordinator  → default: on
+  #   role: worker        → default: off (workers never enter their own plan)
+  #   role: proactive     → default: off (Sleep + tick disrupted by gating)
+  #   role: <unset>       → default: off
+  default_active: ~
+```
+
+**Auto-enter-on-destructive UX** (brainstorm decision **j**):
+- When `auto_enter_on_destructive: true` and the next call
+  is classified destructive by 77.8, the dispatcher
+  PRE-empts the call: returns a single `tool_result` whose
+  body is the canonical refusal **with the auto-enter
+  reason embedded** (`entered_reason:
+  AutoDestructive { tripped_check }`). Plan-mode flips to
+  `On` in the same step. Model gets one explanatory
+  refusal, not a surprise on the second attempt.
+- Soft dep on 77.8: when 77.8 not shipped, this knob
+  silently no-ops and emits a `tracing::warn!` once at
+  boot.
+
+**Acceptance hook — fire-and-forget** (brainstorm decision
+**i**, corrects original "synchronous gate"):
+- `ExitPlanMode` unlocks plan-mode immediately on operator
+  approval (operator already validated intent).
+- Phase 75 acceptance autodetect runs in **background**:
+  - On pass → `notify_origin` posts `[plan-mode]
+    acceptance: pass (<summary>)`.
+  - On fail → `notify_origin` posts `[plan-mode]
+    acceptance: fail (<summary>)` + emits an opt-in
+    operator command hint:
+    `[plan-mode] revert plan_id=<…>` re-enters plan mode.
+- Acceptance is **signal**, not gate. Blocking the unlock
+  on a slow test suite would degrade pairing UX.
+
+**Pairing-friendly approval path** (brainstorm decision
+**c** — diff vs leak which kills plan-mode under
+`KAIROS_CHANNELS`):
+- `ExitPlanMode` publishes to `notify_origin`:
+  `[plan-mode] approve plan_id=<ulid>  | reject reason=…`
+- Operator replies on the same channel with:
+  - `[plan-mode] approve plan_id=<ulid>` — unlocks +
+    schedules background acceptance.
+  - `[plan-mode] reject plan_id=<ulid> reason=<…>` — keeps
+    plan-mode on, plan stays in turn log, model receives
+    the rejection reason as a `user` turn whose body is
+    the canonical reject-followup prompt (lift from
+    OpenClaw `research/src/agents/bash-tools.exec-approval-followup.ts:27-40`):
+    ```
+    Plan rejected by operator. Reason: <reason>.
+    Do not call ExitPlanMode again with the same plan.
+    Adjust the plan based on the rejection reason and present a revised plan.
+    ```
+- Goal awaits via TaskFlow wait/resume (Phase 14.4 ✅);
+  default timeout 24 h (`plan_mode.approval_timeout_secs`
+  knob); on timeout → `[plan-mode] approval expired` +
+  goal moves to `LostOnApproval` registry state.
+- Once 79.10 ships, swap the wait/resume call site to use
+  the shared `approval_correlator.rs` primitive (same
+  module reused by ConfigTool).
+
+**Plan size limit** (brainstorm decision **a**):
+- `final_plan` capped at 8 KiB (`PLAN_MODE_MAX_PLAN_BYTES =
+  8192`). Oversize → `PlanTooLarge { actual, max }` tool
+  error; model retries with a shorter plan.
+- If the cap proves too tight in real use, follow-up phase
+  introduces `ExitPlanMode { final_plan_path: PathBuf }`
+  variant pointing at a file written via FileWrite during
+  plan mode (matches the leak's disk-backed approach).
+  Tracked as a 79.1 follow-up, not in this sub-phase.
+
+Done when:
+- Per-binding YAML knob `plan_mode: { enabled,
+  auto_enter_on_destructive, default_active,
+  approval_timeout_secs }` (defaults per role table above).
+- Centralised gate in dispatcher with boot-time registry
+  check — adding a tool without classifying it as
+  mutating/read-only fails boot with a clear error.
+- `EnterPlanMode { reason }` and `ExitPlanMode { final_plan
+  }` tools registered + visible in deferred-schema mode
+  (79.2-aware: not deferred, core surface).
+- Sub-agent guard: `EnterPlanMode` from a sub-agent context
+  returns `PermissionDenied`.
+- Sub-agent propagation: child goals always
+  `plan_mode = Off`.
+- Per-turn system-prompt hint injected while active.
+- Plan-mode state persisted in `agent-registry.goals.plan_mode`
+  so daemon restart preserves it (Phase 71 reattach honours
+  it).
+- Pairing approval path: `[plan-mode] approve|reject`
+  pattern works on at least one channel (test against the
+  pairing companion-tui adapter); 24 h timeout enforced.
+- Background acceptance integration: `ExitPlanMode` schedules
+  Phase 75 acceptance fire-and-forget; pass/fail surfaces
+  via `notify_origin`.
+- Auto-enter PRE-empts destructive Bash with embedded reason
+  in a single tool_result (no second-call surprise).
+- All four `notify_origin` formats produce the canonical
+  strings.
+- Tests:
+  - `tests/plan_mode_block_destructive.rs`: goal calls
+    `Bash("rm -rf …")` while in plan mode → receives
+    `PlanModeRefusal { tool_kind: Bash, … }`.
+  - `tests/plan_mode_exit_unlocks.rs`: `ExitPlanMode` with
+    `final_plan` + operator approval message → unlocks;
+    next mutating call succeeds.
+  - `tests/plan_mode_persists_across_restart.rs`: enter
+    plan mode, simulate restart, verify mode survives + the
+    per-turn hint resumes.
+  - `tests/plan_mode_subagent_guard.rs`: spawning a
+    sub-agent inside a plan-mode parent → child has
+    `plan_mode = Off`; sub-agent calling `EnterPlanMode`
+    → `PermissionDenied`.
+  - `tests/plan_mode_auto_enter.rs`: with
+    `auto_enter_on_destructive: true`, a destructive Bash
+    triggers a single refusal carrying
+    `AutoDestructive { tripped_check }`, plan-mode is on
+    in the next state read.
+  - `tests/plan_mode_acceptance_async.rs`: ExitPlanMode
+    unlocks immediately; acceptance result arrives
+    asynchronously and posts the canonical notify line
+    (use a stub acceptance hook).
+  - `tests/plan_mode_oversize_plan.rs`: 9 KiB `final_plan`
+    → `PlanTooLarge` error.
+  - `tests/plan_mode_approval_timeout.rs`: approval message
+    delayed past `approval_timeout_secs` → goal resolves
+    `LostOnApproval` + canonical timeout notify.
+  - Phase 72 turn-log row asserts the plan body, the
+    refusal events, and the unlocking event are all
+    present, in order.
+
+#### 79.2 — ToolSearchTool (deferred schemas)   ⬜
+
+Today every registered tool ships its full JSONSchema in the
+system prompt — when the surface is wide (40+ tools after
+Phase 13 + 77 + 79), that prompt grows into kilobytes of
+token cost on every turn. `ToolSearchTool` lets us advertise
+each tool with just `{name, one_line_description}` in the
+prompt; the model loads the full schema on-demand via
+`ToolSearch(query: "select:Foo,Bar")` or by keyword
+(`"notebook jupyter"`).
+
+Reference: `claude-code-leak/src/tools/ToolSearchTool/` +
+`src/services/api/buildSystemPrompt.ts` (deferred-schema
+injection) + `src/QueryEngine.ts:1840-1920` (tool catalog
+build + search).
+
+**Code touchpoints**:
+- `crates/core/src/tool_registry.rs`: `ToolRegistration`
+  gains `deferred: bool`.
+- `crates/llm/src/anthropic.rs`, `crates/llm/src/minimax.rs`,
+  `crates/llm/src/gemini.rs`, `crates/llm/src/openai_compat.rs`:
+  `build_tools_payload()` filters deferred tools to a stub
+  shape (see below).
+- `crates/dispatch-tools/src/builtins/tool_search.rs` (new):
+  the `ToolSearch` tool itself + per-turn counter on
+  `AgentContext`.
+- `crates/extension-protocol/src/manifest.rs`: extensions
+  may declare `deferred: true` per exported tool.
+
+**Stub shape in system prompt** (per deferred tool):
+```json
+{
+  "name": "FooTool",
+  "description": "<one-line summary, ≤120 chars>",
+  "deferred": true,
+  "fetch_via": "ToolSearch(select:FooTool)"
+}
+```
+
+**Query grammar** (mirror the leak's three forms):
+- `select:Foo,Bar` — exact-match by name (returns full
+  schemas).
+- `notebook jupyter` — keyword search over `(name,
+  description)` tokenised; ranked by simple BM25-ish
+  score; returns top `max_results` (default 5).
+- `+slack send` — `+token` is required, remaining tokens
+  rank.
+
+Done when:
+- `ToolRegistration.deferred` flag plumbed through every
+  LLM body builder.
+- Deferred tools appear in the system prompt as the stub
+  shape above; full JSONSchema body never leaves the
+  registry until requested.
+- `ToolSearch { query: String, max_results: Option<usize> }`
+  returns a single `tool_result` whose body is a
+  `<functions>` block matching exactly the leak's encoding
+  so the very next assistant turn can call the tool with no
+  extra ceremony.
+- Per-turn rate limit `tool_search.max_calls_per_turn` =
+  5 (configurable per binding). 6th call returns
+  `rate_limited` error; counter resets at turn boundary.
+- Token-budget integration test: a synthetic MCP server
+  with 80 tools loaded as deferred → system prompt tools
+  block < 4 KiB; calling `ToolSearch(select:my_tool)`
+  returns the schema; next turn invokes successfully.
+- Existing core tools default `deferred: false` (zero
+  behaviour change for the small surface).
+- MCP-imported tools default `deferred: true` (Phase 12
+  registry sets the flag on import).
+- Phase 76.7 (server-side notifications + streaming)
+  consumes this design when emitting `tools/list_changed`
+  — only stubs are pushed, schemas fetched on demand.
+
+#### 79.3 — SyntheticOutputTool   ⬜
+
+A tool that takes a JSONSchema and forces the model to
+return a typed object matching it — the model "calls" the
+tool with the structured object as the only argument; the
+runtime echoes that object back as the goal's terminal
+output. Cleanly closes goals whose contract is "produce
+this struct", with no parsing of free prose.
+
+Reference: `claude-code-leak/src/tools/SyntheticOutputTool/`.
+
+**Validation library**: `jsonschema = "0.18"` (already a
+transitive dep via `nexo-mcp`; pin in `crates/dispatch-tools`).
+Draft 2020-12 support, error path includes JSONPath of the
+offending field.
+
+**Code touchpoints**:
+- `crates/dispatch-tools/src/builtins/synthetic_output.rs`
+  (new).
+- `crates/poller-runtime/src/goal_spec.rs`: `GoalSpec` gains
+  optional `terminal_schema: Option<Value>`. When set, the
+  poller injects a system suffix forcing termination via
+  `SyntheticOutput` with that schema.
+- `nexo-agent-registry`: `goals.terminal_value` BLOB column
+  storing the validated structured output for read-back.
+
+**Tool shape**:
+```rust
+SyntheticOutput {
+    schema: Value,         // optional if poller-side schema
+    value: Value,
+}
+```
+
+When `terminal_schema` is poller-set the model omits
+`schema` (runtime compares against the poller's). When
+free-form the model supplies both.
+
+Done when:
+- `jsonschema` validates `value` against `schema` before
+  terminating; failure returns a `tool_result` error with
+  the offending JSONPath + expected type so the model
+  retries deterministically.
+- Goal terminates with `terminal_value` set; downstream
+  consumers (Phase 19/20 pollers, Phase 51 eval harness,
+  Phase 67 driver-loop hooks) read the structured value
+  directly — no prose parsing.
+- Phase 19/20 pollers can require their goals to terminate
+  via `SyntheticOutput` with the poller's expected schema.
+- Phase 51 eval harness scores acceptance against the
+  schema (per-field ok/err counts).
+- Tests:
+  - valid object passes;
+  - invalid scalar (`expected number, got string`) returns
+    a clear path-qualified error;
+  - nested arrays + enums + `oneOf` unions supported;
+  - poller-driven `terminal_schema` rejects a value that
+    does not match.
+
+#### 79.4 — TodoWriteTool (intra-turn scratch list)   ⬜
+
+Distinct from Phase 14 TaskFlow: `TodoWrite` is an
+in-memory, per-goal todo list that the model owns and edits
+turn by turn. TaskFlow is persistent and cross-session;
+TodoWrite is scratch. The leak shows the model uses it to
+coordinate sub-steps inside a long driver-loop turn without
+spawning sub-goals (which are heavier — separate registry
+row, separate budget).
+
+Reference: `claude-code-leak/src/tools/TodoWriteTool/`.
+
+**Persistence model**: in-memory on the goal's
+`AgentContext.todo_list: Arc<RwLock<Vec<TodoItem>>>`, NOT a
+new SQLite table. Phase 72 turn log captures snapshots; on
+restart the latest snapshot is rehydrated from the turn log
+so the model resumes with its last list intact (no separate
+recovery path).
+
+**Diff vs Phase 14 TaskFlow**:
+
+| Trait | TodoWrite (79.4) | TaskFlow (Phase 14) |
+|-------|------------------|---------------------|
+| Lifetime | Per goal, in-memory | Persistent, cross-session |
+| Owner | Model | Operator + model + flows |
+| Schema | flat list | DAG with deps + waits |
+| Use | Sub-step coordination inside a long turn | Multi-day work programs |
+
+**Code touchpoints**:
+- `crates/core/src/agent/context.rs`: `todo_list` field.
+- `crates/dispatch-tools/src/builtins/todo_write.rs` (new).
+- `nexo-turn-log`: serialise `TodoItem[]` into existing
+  `goal_turns.metadata_json`.
+- `crates/plugins/pairing/src/tui_adapter.rs`: render
+  `[~] in_progress` items with the existing spinner glyph.
+
+Done when:
+- `TodoWrite { items: Vec<{ id, content, status:
+  pending|in_progress|completed }> }` replaces the goal's
+  current todo list (full-replace semantics, idempotent).
+- Phase 72 turn log writes the snapshot per turn (existing
+  `metadata_json` column, key `todo_snapshot`).
+- Driver-loop renders the latest todo list as a markdown
+  status update on `notify_origin` when a `pairing`
+  binding subscribes (debounced — only emit when the
+  diff vs last snapshot is non-empty).
+- Hard cap: max 50 items per goal. 51st item rejected
+  with `tool_result` error suggesting consolidation.
+- Hard cap: `content` ≤ 200 chars per item.
+- Restart hydration: on goal resume, read the latest
+  `todo_snapshot` from the turn log and prime
+  `AgentContext.todo_list`.
+- Tests:
+  - ordering preserved across turns;
+  - `in_progress` rendered with a working spinner glyph
+    in the pairing-tui adapter (Phase 26);
+  - 51st item rejected;
+  - restart hydration round-trips.
+
+#### 79.5 — LSPTool   ⬜
+
+Run a Language Server Protocol query in-process: `go_to_def`,
+`hover`, `references`, `workspace_symbol`, `diagnostics`.
+Massive multiplier for Phase 67 self-driving dev — instead
+of grepping symbol names the model can ask the LSP for
+the exact definition.
+
+Reference: `claude-code-leak/src/tools/LSPTool/` +
+`claude-code-leak/src/services/lsp/`.
+
+**Crate choice**: `async-lsp = "0.2"` (actively maintained,
+tokio-native, transport-agnostic). NOT `tower-lsp-client`
+(that's the *server* side; the client equivalent under
+`tower-lsp` was renamed and is not published as a stable
+crate as of 2026-01). Confirm with a `cargo search` before
+spec.
+
+**Code touchpoints**:
+- `crates/lsp/Cargo.toml` (new): `async-lsp`, `lsp-types`,
+  `tokio-process`.
+- `crates/lsp/src/launcher.rs`: per-language `which`-probe
+  + spawn + handshake (`initialize` → wait for `initialized`
+  notification).
+- `crates/lsp/src/session.rs`: one session per `(workspace
+  root, language)`; idle reaper task.
+- `crates/dispatch-tools/src/builtins/lsp.rs`: tool front.
+- `crates/config/src/types/lsp.rs`: `LspPolicy { enabled:
+  bool, languages: Vec<LspLanguage>, idle_teardown_secs:
+  u64 }`.
+
+**Server matrix** (binary name, language, default install
+hint surfaced when missing):
+
+| Language | Binary | Hint on missing |
+|----------|--------|-----------------|
+| rust | `rust-analyzer` | `rustup component add rust-analyzer` |
+| python | `pylsp` | `pip install python-lsp-server` |
+| typescript / javascript | `typescript-language-server` | `npm i -g typescript-language-server` |
+| go | `gopls` | `go install golang.org/x/tools/gopls@latest` |
+
+Done when:
+- `crates/lsp` (new crate) wraps `async-lsp` with the
+  per-language launcher above. Auto-probes binaries at boot
+  and disables servers whose binary is missing
+  (`tracing::warn!` once per missing).
+- One LSP session per `(workspace_root, language)` tuple,
+  lazy start on first call, idle teardown after
+  `idle_teardown_secs` (default 600).
+- Tool variants:
+  - `Lsp { kind: "go_to_def", file, line, character }`
+  - `Lsp { kind: "hover", file, line, character }`
+  - `Lsp { kind: "references", file, line, character }`
+  - `Lsp { kind: "workspace_symbol", query }`
+  - `Lsp { kind: "diagnostics", file }`
+- Diagnostics output normalised so all servers emit the
+  same `{severity, range, message, source}` shape.
+- Per-call timeout 30 s — LSP hangs degrade to clear
+  `tool_result` error rather than block the turn.
+- Phase 67 driver-loop opt-in flag (`lsp.enabled` per
+  binding); off by default (some workspaces don't have
+  LSP servers).
+- E2E test: a Phase 67 goal "rename `Foo` to `Bar` across
+  the crate" uses `references` then `FileEdit` per match
+  and produces a clean diff.
+- Unit test: missing binary → tool returns clear error
+  with the install hint above.
+
+#### 79.6 — TeamCreateTool / TeamDeleteTool   ⬜
+
+Spawn a *team* of N parallel agents, each with a different
+role, sharing a scratchpad dir for cross-agent message
+passing. Distinct from `AgentTool` / our existing `delegate_to`
+which is 1-to-1: a team is N-in-parallel coordinated. Direct
+input for research fan-out, large refactors, multi-source
+verification.
+
+Reference: `claude-code-leak/src/tools/TeamCreateTool/` +
+`TeamDeleteTool/` + `coordinator/coordinatorMode.ts`
+(Phase 77.18).
+
+**Hard dependencies** (cannot start before):
+- Phase 67 multi-agent registry (✅ shipped).
+- Phase 77.18 coordinator/worker mode pattern (⬜ pending) —
+  `role: coordinator` gate is the access control for
+  `TeamCreate`.
+
+If 77.18 not yet shipped, 79.6 stays paused.
+
+**Code touchpoints**:
+- `nexo-agent-registry`: `goals.spawn_strategy` JSONB gains
+  `TeamFanout` variant; new `team_id UUID` column on
+  child goals.
+- `crates/dispatch-tools/src/builtins/team_create.rs` +
+  `team_delete.rs` (new).
+- `crates/core/src/team_scratchpad.rs` (new): inotify watch
+  + capped append-only file per worker
+  (`worker-<n>.md`, max 256 KiB each).
+- `crates/dispatch-tools/src/cancel.rs::cancel_agent`:
+  extend to accept `cancel_team(team_id)`.
+
+**Tool shape**:
+```rust
+TeamCreate {
+    team_id: Option<Uuid>, // server-assigned if None
+    workers: Vec<{
+        role: String,
+        prompt: String,
+        tool_subset: Option<Vec<String>>,
+        budget_tokens: Option<u64>,
+    }>,
+    shared_goal: String,
+}
+TeamDelete { team_id: Uuid, reason: String }
+```
+
+Done when:
+- Hooks into Phase 67 multi-agent registry — a team is a
+  parent goal whose `spawn_strategy: TeamFanout { workers
+  }`.
+- Shared scratchpad dir (`.nexo/team-<team_id>/scratch/`)
+  with inotify so workers see each other's notes
+  near-realtime. Each worker has an exclusive append-only
+  file; cross-worker reads through `FileRead` (no shared
+  writes — avoids contention).
+- Phase 77.18 coordinator role is the natural parent of
+  a team — `TeamCreate` returns `permission_denied` unless
+  caller's binding `role == coordinator`.
+- Per-worker budget cap (`budget_tokens`); when exhausted,
+  worker terminates and team-level summary is published.
+- `TeamDelete` cancels every worker cleanly via the
+  extended `cancel_team` path; emits one `notify_origin`
+  per worker.
+- Tests:
+  - 3-worker team that researches the same question from
+    different sources converges (mocked LLM);
+  - team_id propagates through the registry;
+  - SIGTERM drains all team members in parallel (Phase 71
+    drain helper extended);
+  - non-coordinator caller gets `permission_denied`.
+
+#### 79.7 — ScheduleCronTool   ⬜
+
+Agent-time scheduling: from inside a turn, the model can
+register a cron entry that fires a future goal. Complements
+Phase 7 Heartbeat (config-time) and Phase 20 `agent_turn`
+poller (config-time) by allowing *runtime-driven* schedule
+mutations like "remind me to check the build in 6 h".
+
+Reference: `claude-code-leak/src/tools/ScheduleCronTool/` +
+`utils/cronScheduler.ts` + `utils/cronJitterConfig.ts`.
+
+**Diff vs Phase 7 Heartbeat vs Phase 20 agent_turn**:
+
+| Mechanism | Trigger source | Mutable at runtime | Persists | Use |
+|-----------|----------------|--------------------|----------|-----|
+| Phase 7 Heartbeat | YAML `heartbeat.interval_secs` | No (hot-reload only) | Config | Periodic background ticks per agent |
+| Phase 20 `agent_turn` poller | YAML cron spec | No (hot-reload only) | Config | Scheduled LLM turn → channel publish |
+| **79.7 ScheduleCron** | LLM tool call mid-turn | Yes (model-driven) | SQLite table | Self-scheduled reminders, follow-ups, "check X in 6 h" |
+
+ScheduleCron is the *only* one where the model itself
+mutates the schedule.
+
+**Code touchpoints**:
+- `crates/scheduler/src/cron_store.rs` (new) —
+  `nexo_cron` SQLite table:
+  ```sql
+  CREATE TABLE nexo_cron (
+    id TEXT PRIMARY KEY,
+    binding_id TEXT NOT NULL,
+    goal_id TEXT,
+    spec TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    channel TEXT,
+    next_fire_at INTEGER NOT NULL,
+    last_fired_at INTEGER,
+    paused INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+  );
+  ```
+- `crates/scheduler/src/runtime.rs`: tokio task that polls
+  `next_fire_at` every 5 s, fires due entries through
+  `agent_turn` poller machinery (Phase 20).
+- `crates/dispatch-tools/src/builtins/schedule_cron.rs`
+  (new).
+- `src/main.rs`: `nexo cron {list,drop,pause,resume}`
+  subcommand.
+
+Done when:
+- `ScheduleCron { spec: cron|every:<duration>|at:<rfc3339>,
+  prompt: String, channel: Option<String> }`. Spec parsing
+  reuses `cron = "0.12"` for cron expressions; `every:` and
+  `at:` parsed manually.
+- Persisted in `nexo_cron` table — survives daemon restart;
+  next-fire time recomputed at boot.
+- Bounds: max 50 active entries per binding
+  (`cron.user_max_entries` raises this, hard ceiling 500);
+  minimum interval 60 s; rejected with clear `tool_result`
+  error if violated.
+- Jitter: ±10 % of the interval applied to `next_fire_at`
+  to avoid thundering-herd when many goals schedule at the
+  same `every:1h`.
+- Capability gate: `cron.enabled` per binding (default
+  `true` only when binding role is `coordinator` or
+  `proactive`; default `false` otherwise — explicit
+  operator opt-in).
+- `nexo cron list / drop / pause / resume` CLI subcommand
+  for operator inspection (mirrors the LLM-side state).
+- Tests: persistence across restart, jittered firing,
+  cancel via `nexo cron drop <id>` removes the entry +
+  fires `cron.cancelled` event; cap rejection at the
+  51st entry; minimum-interval rejection at 30 s.
+
+#### 79.8 — RemoteTriggerTool   ⬜
+
+LLM-time webhook / NATS publish: from inside a turn, the
+model triggers a configured remote endpoint. Surface for
+"agent → outside world" integrations that aren't covered
+by an existing plugin (CRM webhooks, Zapier-style fan-out,
+internal NATS subjects on `agent.outbound.*`).
+
+Reference: `claude-code-leak/src/tools/RemoteTriggerTool/`.
+
+**Code touchpoints**:
+- `crates/config/src/types/remote_triggers.rs` (new):
+  `RemoteTriggerEntry { name, kind: Webhook | Nats, … }`.
+- `crates/dispatch-tools/src/builtins/remote_trigger.rs`
+  (new) — uses `reqwest` for webhook, `nexo-broker` for NATS.
+- `crates/dispatch-tools/src/circuit_breaker.rs`: per-trigger
+  breaker keyed by `name`.
+
+**HMAC header** (matches leak's pattern): outbound webhook
+sends:
+- `X-Nexo-Signature: sha256=<hex(hmac_sha256(secret, body))>`
+- `X-Nexo-Timestamp: <unix>`
+- `X-Nexo-Trigger-Name: <name>`
+
+Done when:
+- `RemoteTrigger { name: String, payload: Value }` where
+  `name` resolves through a per-binding YAML allowlist:
+  ```yaml
+  remote_triggers:
+    - name: "ops-pager"
+      kind: "webhook"
+      url: "https://hooks.example.com/…"
+      secret_env: "OPS_PAGER_SECRET"
+      timeout_ms: 5000
+    - name: "internal-nats"
+      kind: "nats"
+      subject: "agent.outbound.ops"
+  ```
+- Names not in the allowlist refuse with a clear error
+  (no model-controlled URLs).
+- Webhook signing via HMAC-SHA256 of the body using the
+  resolved secret env var — Phase 17 per-agent credentials
+  resolves the secret.
+- Reuses the Phase 2.5 circuit breaker per trigger name;
+  Phase 9.2 metrics expose
+  `remote_trigger.{name}.{ok,err,latency_ms}`.
+- Per-trigger rate limit (default 10 calls / minute,
+  configurable via `rate_limit_per_minute`).
+- Body size cap 256 KiB; oversized payload → tool error
+  with size in message.
+- Tests:
+  - missing allowlist entry returns clear tool error;
+  - successful webhook signs body + asserts on the three
+    headers above (mock server);
+  - NATS path reaches the expected subject (broker test
+    harness);
+  - rate limit kicks in on the 11th call within 60 s.
+
+#### 79.9 — BriefTool (terse-mode toggle)   ⬜
+
+Mid-turn toggle for terse output: model commits to short
+fragments only until untoggled or the session ends. Pairs
+with the Phase 26 pairing companion-tui where small screens
+benefit from compact responses.
+
+Reference: `claude-code-leak/src/tools/BriefTool/`.
+
+**Code touchpoints**:
+- `crates/dispatch-tools/src/builtins/brief.rs` (new).
+- `crates/core/src/agent/context.rs`: `brief_state:
+  BriefState` enum (`Off | Turn | Session`).
+- `crates/llm/src/prompt_assembly.rs`: append the canonical
+  brief suffix when `brief_state != Off`.
+- `nexo-agent-registry`: `goals.brief_state TEXT`.
+
+**Canonical brief suffix** (frozen string — same across all
+LLM providers so cache stays warm):
+```
+Reply terse. Fragments OK. Drop articles. Code blocks unchanged. Errors quoted exact.
+```
+
+Done when:
+- `Brief { enabled: bool, scope: turn|session }`.
+- Adds the canonical brief suffix to the system prompt
+  while enabled — same channel as the proactive prompt
+  injection in Phase 77.20.
+- `scope: turn` resets to `Off` at the next turn boundary;
+  `scope: session` persists until explicitly disabled or
+  goal terminates.
+- Persisted on `agent-registry.goals.brief_state` per goal
+  so daemon restart preserves it.
+- Tests:
+  - enabling shrinks the average reply length on a fixture
+    conversation by ≥ 30 % (mocked LLM with token-count
+    assertions);
+  - `enabled: false` restores normal output;
+  - `scope: turn` auto-clears next turn;
+  - restart hydration round-trips.
+
+#### 79.10 — ConfigTool (gated self-config)   ⬜
+
+Agent reads / proposes edits to its own YAML config from
+inside a turn. Powerful (the conversational `nexo setup`
+flow opens up — operator says "use Claude Opus for this
+binding" in chat and the agent adjusts). Dangerous (a
+model that can rewrite its own config can also revoke its
+own guardrails).
+
+Reference: `claude-code-leak/src/tools/ConfigTool/` +
+`src/services/config/configWriter.ts` +
+`src/migrations/` (versioning pattern).
+
+**Hardcoded denylist** (cannot be touched even when
+`config.self_edit: true`):
+- Every key matching glob `*_token`, `*_secret`,
+  `*_password`, `*_key` (case-insensitive on the suffix).
+- `pairing.*` (every sub-key).
+- `dispatch_policy.*`.
+- `capabilities.*`.
+- `mcp.servers.*.auth.*` and any `mcp.servers.*.command`
+  (running arbitrary binaries via config self-edit is
+  game-over).
+- `binding.*.role` (cannot self-promote to coordinator).
+- `binding.*.plan_mode.*` (cannot disable own plan-mode
+  guard rails).
+- `remote_triggers[*].url`, `remote_triggers[*].secret_env`.
+- `cron.user_max_entries` (operator-only).
+- `agent_registry.store.*` (changing the store under a
+  running goal is unsafe).
+
+The denylist is one source of truth in
+`crates/setup/src/capabilities.rs::CONFIG_SELF_EDIT_DENYLIST`
+with a unit test asserting every glob compiles + matches
+its intent.
+
+**Code touchpoints**:
+- `crates/setup/src/yaml_patch.rs`: extend with
+  `apply_patch_with_denylist` that returns
+  `Err(ForbiddenKey { matched_glob })` on hits.
+- `crates/dispatch-tools/src/builtins/config_tool.rs` (new).
+- `.nexo/config-proposals/<patch_id>.yaml` staging dir.
+- `crates/core/src/agent/approval_correlator.rs` (new):
+  matches operator approval messages to staged proposals
+  via `patch_id` — same channel as the operator who
+  triggered the goal (Phase 26 pairing).
+
+**Approval message shape** (operator channel):
+```
+[config-approve patch_id=01J… ] Apply
+[config-approve patch_id=01J… ] Reject reason=…
+```
+
+Done when:
+- Three operations: `Config { op: read, key }`,
+  `Config { op: propose, patch: YamlPatch, justification:
+  String }`, `Config { op: apply, patch_id }`.
+- `read` honours the same env-var resolution + secret
+  redaction as `nexo setup show`.
+- `propose` writes the candidate diff to a staging file
+  (`.nexo/config-proposals/<patch_id>.yaml`) and notifies
+  the operator on `notify_origin` for approval; **never**
+  applies live; expires after 24 h.
+- `apply` requires a fresh operator-channel approval
+  message correlated to `patch_id` — the model alone
+  cannot promote a proposal. Approval message must come
+  from the same `(channel, account_id)` tuple that owns
+  the binding (Phase 17).
+- Capability gate: `config.self_edit: bool` per binding
+  (default `false`). Denylist enforcement at both
+  `propose` (early reject) and `apply` (defence in depth).
+- Phase 18 hot-reload re-validates the post-apply snapshot.
+- Rollback: if validation fails post-apply, the previous
+  snapshot is restored automatically and the operator is
+  notified with the validation error.
+- Audit: every `propose`/`apply`/`reject` writes a row to
+  Phase 72 turn log + a dedicated `config_changes` SQLite
+  table (binding_id, patch_id, op, actor, timestamp).
+- Tests:
+  - forbidden-key proposal returns clear `ForbiddenKey`
+    error citing the matched glob;
+  - valid proposal needs operator approval;
+  - reload picks up the change;
+  - rollback path triggers when the new snapshot fails
+    validation;
+  - 24 h expiry trims stale proposals;
+  - cross-binding approval forgery rejected (binding A
+    cannot approve binding B's proposal).
+- Security review gate: this sub-phase ships behind a
+  `--feature config-self-edit` Cargo flag until reviewed.
+  `crates/setup` exports zero entry points until the
+  feature is on.
+
+#### 79.11 — McpAuth + ListMcpResources + ReadMcpResource   ⬜
+
+Three tools that expose the MCP resource surface to the
+LLM. Today (Phase 12.5) MCP resources are accessible via
+`crates/mcp` programmatically but not as LLM-callable
+tools — the model can't navigate them.
+
+Reference: `claude-code-leak/src/tools/McpAuthTool/` +
+`ListMcpResourcesTool/` + `ReadMcpResourceTool/` +
+`src/services/mcp/oauthPort.ts` (auth refresh flow).
+
+**Code touchpoints**:
+- `crates/dispatch-tools/src/builtins/mcp_resources.rs`
+  (new): three tool entry points sharing a helper.
+- `crates/mcp/src/client/resources.rs` (new): `list` /
+  `read` wire calls.
+- `crates/mcp/src/client/oauth.rs`: extend with
+  `refresh_now()` returning the refreshed token's
+  `expires_at`.
+- `crates/config/src/types/mcp.rs`:
+  `mcp.resource_max_bytes` (default 262144),
+  `mcp.list_max_resources` (default 200).
+
+**Tool shapes**:
+```rust
+ListMcpResources { server: Option<String> }
+  → { resources: Vec<{ server, uri, mime, size_hint? }>, truncated: bool }
+
+ReadMcpResource { server: String, uri: String }
+  → { mime: String, body: ReadBody }   // ReadBody = Text(String) | Binary(Base64String)
+
+McpAuth { server: String, op: "refresh" | "status" }
+  → { state: "authenticated" | "expired" | "unauthorised", expires_at?: Rfc3339 }
+```
+
+Done when:
+- `ListMcpResources { server: Option<String> }` lists every
+  resource on every connected server (or just one). Cap at
+  `mcp.list_max_resources`; truncation flagged with
+  `truncated: true`.
+- `ReadMcpResource { server, uri }` returns the resource
+  body capped at `mcp.resource_max_bytes` (default 256
+  KiB). Binary resources base64-encoded; text returned raw.
+- `McpAuth { server, op: refresh|status }` triggers an
+  OAuth refresh or reports auth state — useful for MCP
+  servers behind expiring tokens.
+- All three honour Phase 76 multi-tenant isolation +
+  Phase 76.3 pluggable auth (per-principal allowlist on
+  which servers are visible).
+- Tests:
+  - server with 5 resources surfaces correctly;
+  - too-large resource returns a clear "exceeded cap"
+    error with a hint to use a more specific URI;
+  - server filter excludes resources from other servers;
+  - `McpAuth` refresh on an unconfigured server returns a
+    clear error;
+  - Phase 76 isolation: caller A cannot read caller B's
+    server resources.
+
+#### 79.12 — REPLTool (stateful sandbox)   ⬜
+
+Python / Node REPL whose interpreter survives across turns
+inside the same goal. Variables, imports, definitions
+persist. Strong sandbox required because the model can
+import any module.
+
+Reference: `claude-code-leak/src/tools/REPLTool/` +
+`src/services/sandbox/` (sandbox detection helpers).
+
+**Sandbox matrix per OS** (refuse-to-start behaviour
+depends on operator opt-in):
+
+| OS | Default sandbox | Fallback | If neither present |
+|----|----------------|----------|--------------------|
+| Linux | `bwrap` (bubblewrap) | `firejail` | refuse with hint |
+| macOS | `sandbox-exec` (built-in) | — | refuse with hint |
+| Termux / Android | none viable | — | refuse |
+
+Operator may opt out per binding via
+`repl.allow_unsandboxed: true` (default `false`, requires
+`config.self_edit`-equivalent friction — capability gate
+hardcoded ⇒ only via direct YAML edit + restart, not
+self-config).
+
+**Code touchpoints**:
+- `crates/dispatch-tools/src/builtins/repl.rs` (new).
+- `crates/sandbox/src/lib.rs` (new): probes + spawn
+  helpers; reuses 77.10 `shouldUseSandbox` detection when
+  77.10 has shipped, otherwise stand-alone probe.
+- `crates/dispatch-tools/src/repl_session.rs`: REPL
+  session manager keyed `(goal_id, language)`.
+
+**REPL implementation**:
+- `python3 -i -u` with line-buffered stdio, IPC framing
+  via `\x1e` record separator + magic-string sentinels
+  (no PTY — stdio is enough for stateful REPL).
+- `node --interactive` similar.
+
+**Tool shape**:
+```rust
+Repl {
+    language: "python" | "node",
+    code: String,
+    timeout_ms: Option<u64>,  // default 10000, cap 60000
+}
+  → {
+      stdout: String,
+      stderr: String,
+      value: Option<Value>,    // last expression value, JSON-encoded if scalar/dict
+      duration_ms: u64,
+      truncated: bool,         // true if stdout/stderr hit 64 KiB cap
+    }
+```
+
+Done when:
+- One sandboxed subprocess per `(goal_id, language)` tuple.
+- Sandbox per OS matrix above. Strict default: no network,
+  RW limited to `/tmp/repl-<goal_id>/` (or
+  `${TMPDIR}/repl-<goal_id>/` on macOS), RO `/usr` +
+  `/etc/ssl` (Linux), `/usr` + `/etc` + `/Library` (macOS).
+- Languages: `python3` first (largest demand), `node`
+  second. No shell language.
+- `Repl { language, code, timeout_ms }` returns the shape
+  above. Errors carry the canonical traceback truncated
+  to 2 KiB.
+- Idle teardown after 10 min. Hard cap: 1 REPL per goal,
+  per language → max 2 subprocesses per goal.
+- Output caps: stdout/stderr each 64 KiB per call;
+  truncation flagged with `truncated: true`.
+- Capability gate: `repl.enabled: bool` per binding
+  (default `false`). On platforms with no sandbox the
+  tool refuses with a hint to install `bwrap`/`firejail`
+  or set `repl.allow_unsandboxed: true`.
+- Tests:
+  - variable carry-over across turns;
+  - sandbox blocks network attempt with a clear error
+    (Linux only — gated by `cfg(target_os = "linux")`);
+  - teardown after idle;
+  - timeout returns clear error + kills child;
+  - 65 KiB stdout truncates and flags;
+  - non-Linux platform without `sandbox-exec` refuses to
+    start.
+
+#### 79.13 — NotebookEditTool   ⬜
+
+Cell-level edits on Jupyter `.ipynb` files preserving
+outputs and metadata. Niche but cheap — the read path is
+already covered by `FileRead` (which the leak's
+`FileReadTool` extends to handle notebooks).
+
+Reference: `claude-code-leak/src/tools/NotebookEditTool/`.
+
+**Implementation choice**: pure-Rust JSON parse via
+`serde_json` against the public `nbformat 4.5` schema —
+no `jupyter` binary required. The notebook is a
+well-defined JSON document; round-trip via
+`serde_json::Value` preserves unknown fields automatically
+(forward-compat with newer nbformat).
+
+**Code touchpoints**:
+- `crates/dispatch-tools/src/builtins/notebook_edit.rs`
+  (new).
+- `crates/notebook/src/lib.rs` (new, small): `Notebook`,
+  `Cell`, `CellId`, `apply_edit`. Pure data ops, no IO.
+
+**Tool shape**:
+```rust
+NotebookEdit {
+    file: PathBuf,
+    cell_id: String,
+    op: "replace" | "insert_after" | "delete",
+    content: Option<String>,         // required for replace/insert_after
+    cell_type: Option<"code" | "markdown" | "raw">,  // for insert_after
+}
+  → { file, cell_id_after_edit?, total_cells }
+```
+
+Done when:
+- Pure-Rust round-trip: read `.ipynb` → mutate cells →
+  write back with stable formatting (`serde_json` with
+  pretty + 1-space indent matching Jupyter's default).
+- Outputs of edited cells cleared (so the diff stays sane);
+  outputs of untouched cells preserved.
+- `cell_id` lookup falls back to positional index
+  (`"0"`, `"1"`, …) when no UUID `cell_id` is present
+  (older notebooks).
+- Round-trip preserves unknown JSON fields (nbformat
+  forward-compat).
+- Tests:
+  - edit a cell, output diff is bounded
+    (only the targeted cell + its outputs change);
+  - insert_after preserves cell ordering;
+  - delete reduces `total_cells` by 1;
+  - unknown top-level keys round-trip unchanged;
+  - missing `cell_id` returns a clear error listing
+    available IDs.
+
+#### 79.14 — docs + admin-ui sync   ⬜
+
+- `docs/src/agents/` gains pages for plan mode, tool
+  search, synthetic output, todo write, LSP tool, team
+  fanout, scheduled cron, remote triggers, brief mode,
+  config self-edit (with the security caveats), MCP
+  resource navigation, REPL, notebook editing.
+- `admin-ui/PHASES.md` adds checkboxes for every operator-
+  visible knob landed in 79.1–79.13.
+- `crates/setup/src/capabilities.rs::INVENTORY` registers
+  the new dangerous toggles: `repl.enabled`,
+  `repl.allow_unsandboxed`, `config.self_edit`,
+  `cron.user_max_entries` overrides,
+  `plan_mode.auto_enter_on_destructive`,
+  `lsp.enabled`, every `remote_triggers[*].name`
+  (informational entry per allowlisted target).
+
+##### Sequencing within Phase 79
+
+Suggested order: 79.1 (plan mode — small, immediate UX
+win) → 79.4 (todo write — small, drives 79.6/79.7 better)
+→ 79.2 (tool search — unlocks wide-surface MCP) →
+79.3 (synthetic output — wires Phase 51 eval) →
+79.7 (cron — combines with 77.20 proactive) →
+79.8 (remote trigger) → 79.9 (brief) → 79.11 (MCP
+resources — Phase 12.5 follow-up) → 79.5 (LSP — bigger
+crate, deserves room) → 79.6 (team fanout — depends on
+77.18 coordinator) → 79.13 (notebook) → 79.12 (REPL —
+sandbox is the biggest engineering chunk) → 79.10
+(config self-edit — needs security review and goes last
+on purpose) → 79.14 (docs sync).
+
+##### Effort estimate
+
+Aggregate ~3 engineer weeks. The expensive items are 79.5
+LSP (3-4 days, new crate), 79.12 REPL (3 days, sandbox
+infra), 79.6 Team (2-3 days, registry plumbing), and
+79.10 Config (2 days + security review). Everything else
+is ≤ 1 day each because the underlying machinery
+(registry, dispatcher, audit log, hot-reload) already
+exists.
 
 ## How to add a new phase
 

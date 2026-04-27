@@ -27,6 +27,7 @@
 - [vs OpenClaw](./architecture/vs-openclaw.md)
 - [Driver subsystem (Phase 67)](./architecture/driver-subsystem.md)
 - [Project tracker + dispatch (Phase 67.A–H)](./architecture/project-tracker.md)
+- [Plan mode (Phase 79.1)](./architecture/plan-mode.md)
 
 # Configuration
 
@@ -75,6 +76,7 @@
 - [Introduction](./mcp/introduction.md)
 - [Client (stdio / HTTP)](./mcp/client.md)
 - [Agent as MCP server](./mcp/server.md)
+- [HTTP+SSE transport](./extensions/mcp-server.md)
 
 # Skills
 

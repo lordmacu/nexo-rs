@@ -35,6 +35,7 @@ fn handle_with(
             max_turns,
             ..AgentSnapshot::default()
         },
+        plan_mode: None,
     }
 }
 

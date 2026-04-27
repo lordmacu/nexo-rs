@@ -24,6 +24,7 @@ fn handle(phase: &str, status: AgentRunStatus) -> AgentHandle {
         started_at: Utc::now(),
         finished_at: None,
         snapshot: AgentSnapshot::default(),
+    plan_mode: None,
     }
 }
 

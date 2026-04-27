@@ -260,6 +260,7 @@ mod tests {
                 },
                 ..AgentSnapshot::default()
             },
+            plan_mode: None,
         };
         reg.admit(h, true).await.unwrap();
         reg.set_max_turns(id, max_turns);

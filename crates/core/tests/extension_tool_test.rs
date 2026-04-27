@@ -108,6 +108,7 @@ fn agent_cfg() -> Arc<AgentConfig> {
         language: None,
         context_optimization: None,
         dispatch_policy: Default::default(),
+        plan_mode: Default::default(),
     })
 }
 
