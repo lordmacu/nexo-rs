@@ -9,9 +9,10 @@ URL:            https://lordmacu.github.io/nexo-rs/
 Source0:        %{name}-%{version}.tar.gz
 Source1:        nexo-rs.service
 
+# Phase 27.4 — the bundled `nexo` binary is musl-static, so sqlite-libs
+# and openssl-libs are linked in and NOT runtime deps. Optional
+# channel-plugin runtimes stay under `Recommends:`.
 BuildRequires:  systemd-rpm-macros
-Requires:       sqlite-libs
-Requires:       openssl-libs
 Requires:       ca-certificates
 Requires(pre):  shadow-utils
 Requires(post): systemd
@@ -22,7 +23,9 @@ Recommends:     nats-server
 Recommends:     git
 Recommends:     ffmpeg
 Recommends:     tesseract
-Suggests:       cloudflared
+Recommends:     cloudflared
+Recommends:     yt-dlp
+Recommends:     python3
 Suggests:       chromium
 
 %description

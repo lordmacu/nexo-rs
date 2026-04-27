@@ -7,6 +7,8 @@
 
 - [Installation](./getting-started/installation.md)
 - [Native install (no Docker)](./getting-started/install-native.md)
+- [Debian / Ubuntu (.deb)](./getting-started/install-deb.md)
+- [Fedora / RHEL / Rocky (.rpm)](./getting-started/install-rpm.md)
 - [Termux (Android)](./getting-started/install-termux.md)
 - [Nix flake](./getting-started/install-nix.md)
 - [Quick start](./getting-started/quickstart.md)

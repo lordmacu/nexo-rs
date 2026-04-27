@@ -38,7 +38,7 @@ case "$ARCH" in
     aarch64) RUST_TARGET="aarch64-unknown-linux-gnu";;
 esac
 
-VERSION=$(awk '/^\[package\]/{p=1;next} /^\[/{p=0} p && /^version/{gsub(/.*"|".*/, ""); print; exit}' "$REPO_ROOT/Cargo.toml")
+VERSION=$(grep -m1 '^version' "$REPO_ROOT/Cargo.toml" | cut -d'"' -f2)
 
 # ---------------------------------------------------------------------
 # 1. Acquire the binary
@@ -81,7 +81,7 @@ cp "$REPO_ROOT/LICENSE-MIT"           "$SRC_DIR/"
 RPM_TOP="$BUILD_DIR/rpmbuild"
 mkdir -p "$RPM_TOP"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
 cp "$BUILD_DIR/$SRC_NAME.tar.gz"      "$RPM_TOP/SOURCES/"
-cp "$SCRIPT_DIR/nexo-rs.service"      "$RPM_TOP/SOURCES/"
+cp "$REPO_ROOT/packaging/debian/nexo-rs.service" "$RPM_TOP/SOURCES/"
 
 # Inject the workspace version into the spec at build time so the
 # checked-in spec can stay at a placeholder version that drifts

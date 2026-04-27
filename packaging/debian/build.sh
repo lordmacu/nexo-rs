@@ -40,7 +40,7 @@ case "$ARCH" in
     *)     echo "unsupported arch: $ARCH (use amd64 or arm64)" >&2; exit 2;;
 esac
 
-VERSION=$(awk '/^\[package\]/{p=1;next} /^\[/{p=0} p && /^version/{gsub(/.*"|".*/, ""); print; exit}' "$REPO_ROOT/Cargo.toml")
+VERSION=$(grep -m1 '^version' "$REPO_ROOT/Cargo.toml" | cut -d'"' -f2)
 DESCRIPTION=$(awk '/^\[package\]/{p=1;next} /^\[/{p=0} p && /^description/{sub(/^description *= */, ""); gsub(/^"|"$/, ""); print; exit}' "$REPO_ROOT/Cargo.toml")
 MAINTAINER="Cristian Garcia <informacion@cristiangarcia.co>"
 HOMEPAGE="https://lordmacu.github.io/nexo-rs/"
@@ -90,6 +90,10 @@ INSTALLED_SIZE=$(du -sk "$PKG_DIR" | cut -f1)
 # ---------------------------------------------------------------------
 # 3. control + maintainer scripts
 # ---------------------------------------------------------------------
+# Phase 27.4 — the bundled `nexo` binary is musl-static, so libsqlite3
+# and libssl are linked in and NOT runtime deps. `adduser` runs in the
+# preinst script before `Depends:` is resolved, so it lives in
+# `Pre-Depends:`. Optional channel-plugin runtimes stay in `Recommends:`.
 cat > "$PKG_DIR/DEBIAN/control" <<EOF
 Package: nexo-rs
 Version: $VERSION
@@ -98,9 +102,10 @@ Priority: optional
 Architecture: $ARCH
 Maintainer: $MAINTAINER
 Installed-Size: $INSTALLED_SIZE
-Depends: libsqlite3-0, libssl3, ca-certificates, adduser
-Recommends: nats-server, git, ffmpeg, tesseract-ocr
-Suggests: cloudflared, chromium
+Pre-Depends: adduser
+Depends: ca-certificates
+Recommends: nats-server, git, ffmpeg, tesseract-ocr, cloudflared, yt-dlp, python3
+Suggests: chromium
 Homepage: $HOMEPAGE
 Description: $DESCRIPTION
  Nexo is a multi-agent Rust framework with a NATS event bus,

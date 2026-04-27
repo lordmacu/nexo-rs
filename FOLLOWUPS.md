@@ -542,6 +542,40 @@ Open:
   bin's changelog plus an index. Watch for bullet-style drift —
   acceptable but not desirable.
 
+### Phase 27.4 — Debian + RPM packages deferrals
+
+- **Phase 27.4.b — signed apt/yum repos in GH Pages.** GPG key
+  generation + management (encrypt private with `age`, store in
+  GH secret, `crazy-max/ghaction-import-gpg@v6` to import in
+  runner), repo metadata via `apt-ftparchive` + `createrepo_c`,
+  GH Pages publish job (mirror release assets into `apt/` +
+  `yum/` paths), `nexo-rs.repo` + `apt sources.list` snippets in
+  docs, optional `curl ... | install.sh` bootstrap that auto-detects
+  distro. Cosign keyless (Phase 27.3) covers per-asset integrity
+  but does NOT satisfy apt/yum trust chains — GPG is a separate
+  signing system. New sub-phase entry in `PHASES.md`.
+- **`NEXO_BUILD_CHANNEL` drift in `.deb` / `.rpm` packages.** The
+  binary inside the deb/rpm is the same musl-static one cargo-dist
+  built for the tarball, so `nexo --version --verbose` reports
+  `channel: tarball-x86_64-unknown-linux-musl` even when the user
+  installed via `apt install ./*.deb` or `dnf install ./*.rpm`.
+  Fixing requires a dedicated rebuild per package channel — costs
+  ~3 min CI per channel. Accepted today; revisit if support tickets
+  surface confusion about install provenance.
+- **arm64 install-test via qemu.** Today the install-test matrix
+  is x86_64-only. arm64 needs `docker/setup-qemu-action@v3` +
+  `--platform linux/arm64` overhead (~3 min per image). Backlog
+  until either CI cycle budget tightens or arm64-specific issues
+  show up in the wild.
+- **Snap / Flatpak.** Out of scope. Reconsider only if community
+  asks. Both formats add their own packaging dance + sandbox
+  semantics that don't match the system-service shape the deb/rpm
+  ship today.
+- **systemd boot smoke in CI.** Containers without systemd-as-pid-1
+  fail `systemctl enable`. The install-test matrix only validates
+  `nexo --version` + `nexo --help`. Real systemd start lives
+  manually or in a future VM-based CI lane.
+
 ## Resolved (recent highlights)
 
 - 2026-04-26 — `skills_dir: ./skills` in every agent YAML now points
