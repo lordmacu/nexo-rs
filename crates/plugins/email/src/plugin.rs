@@ -267,12 +267,14 @@ impl EmailPlugin {
         // clean error the operator sees once, instead of a hot
         // retry loop they have to find in the log stream.
         use nexo_auth::store::CredentialStore;
-        if self.creds.get(&nexo_auth::handle::CredentialHandle::new(
-            nexo_auth::handle::EMAIL,
-            &account_cfg.instance,
-            "<reload-validate>",
-        ))
-        .is_err()
+        if self
+            .creds
+            .get(&nexo_auth::handle::CredentialHandle::new(
+                nexo_auth::handle::EMAIL,
+                &account_cfg.instance,
+                "<reload-validate>",
+            ))
+            .is_err()
         {
             anyhow::bail!(
                 "cannot spawn email instance '{}': no credential in EmailCredentialStore \
@@ -368,11 +370,7 @@ impl EmailPlugin {
     /// Snapshot of every account's worker health. `None` until `start`
     /// has been called.
     pub async fn health_map(&self) -> Option<HealthMap> {
-        self.inbound
-            .lock()
-            .await
-            .as_ref()
-            .map(|m| m.health_map())
+        self.inbound.lock().await.as_ref().map(|m| m.health_map())
     }
 
     async fn cursor_store(&self) -> anyhow::Result<Arc<CursorStore>> {
@@ -424,8 +422,7 @@ impl Plugin for EmailPlugin {
         // opted into unbounded storage on both axes. The cancel
         // token lives in `gc_cancel` so `stop()` shuts the task
         // down cleanly.
-        let attachment_gc_enabled =
-            self.cfg.attachment_retention_days > 0 && attachments.is_some();
+        let attachment_gc_enabled = self.cfg.attachment_retention_days > 0 && attachments.is_some();
         let bounce_gc_enabled = self.cfg.bounce_retention_days > 0 && bounce.is_some();
         if attachment_gc_enabled || bounce_gc_enabled {
             let cancel = tokio_util::sync::CancellationToken::new();
@@ -452,8 +449,7 @@ impl Plugin for EmailPlugin {
             // we consume it before entering the loop so a
             // pre-cancelled task doesn't do one stray sweep.
             tokio::spawn(async move {
-                let mut interval =
-                    tokio::time::interval(std::time::Duration::from_secs(86_400));
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(86_400));
                 interval.tick().await; // consume the immediate-fire tick
                 loop {
                     tokio::select! {

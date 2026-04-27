@@ -140,10 +140,7 @@ impl EmailSearchTool {
             .folder
             .clone()
             .unwrap_or_else(|| acct_cfg.folders.inbox.clone());
-        let limit = args
-            .limit
-            .unwrap_or(DEFAULT_LIMIT)
-            .clamp(1, MAX_LIMIT);
+        let limit = args.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
         let atoms = build_search_atoms(&args.query)?;
         let creds = self.ctx.creds.clone();
         let google = self.ctx.google.clone();
@@ -198,10 +195,7 @@ pub fn register(registry: &ToolRegistry, ctx: Arc<EmailToolContext>) {
 /// minimal `EmailMeta` shaped like the inbound parser's so the
 /// existing `resolve_thread_root` helper applies — same UUIDv5
 /// session id as the inbound bridge produces.
-pub(crate) fn row_with_threading(
-    r: &SearchRow,
-    account_address: &str,
-) -> Value {
+pub(crate) fn row_with_threading(r: &SearchRow, account_address: &str) -> Value {
     let meta = EmailMeta {
         message_id: r.message_id.clone(),
         in_reply_to: r.in_reply_to.clone(),
@@ -228,7 +222,6 @@ pub(crate) fn row_with_threading(
     }
     value
 }
-
 
 /// Translate the JSON DSL into an IMAP SEARCH atom string. Falls
 /// back to `ALL` when no fields are set so the server doesn't
@@ -394,11 +387,7 @@ mod tests {
 
     #[test]
     fn row_with_threading_uses_first_reference_as_root() {
-        let r = row(
-            42,
-            Some("<reply@x>"),
-            &["<root@x>", "<middle@x>"],
-        );
+        let r = row(42, Some("<reply@x>"), &["<root@x>", "<middle@x>"]);
         let v = row_with_threading(&r, "ops@example.com");
         assert_eq!(v["thread_root"], "<root@x>");
         // session_id should be a UUIDv5 string.

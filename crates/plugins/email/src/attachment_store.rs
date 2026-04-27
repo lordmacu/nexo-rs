@@ -103,12 +103,11 @@ impl AttachmentStore {
             return Ok(0);
         }
         let cutoff = chrono::Utc::now().timestamp() - retention_seconds;
-        let stale: Vec<(String,)> = sqlx::query_as(
-            "SELECT sha256 FROM email_attachments WHERE last_seen < ?",
-        )
-        .bind(cutoff)
-        .fetch_all(&self.pool)
-        .await?;
+        let stale: Vec<(String,)> =
+            sqlx::query_as("SELECT sha256 FROM email_attachments WHERE last_seen < ?")
+                .bind(cutoff)
+                .fetch_all(&self.pool)
+                .await?;
         let mut removed = 0usize;
         for (sha256,) in &stale {
             let path = attachments_dir.join(sha256);
@@ -147,12 +146,11 @@ impl AttachmentStore {
     }
 
     pub async fn last_seen(&self, sha256: &str) -> Result<Option<i64>> {
-        let row: Option<(i64,)> = sqlx::query_as(
-            "SELECT last_seen FROM email_attachments WHERE sha256 = ?",
-        )
-        .bind(sha256)
-        .fetch_optional(&self.pool)
-        .await?;
+        let row: Option<(i64,)> =
+            sqlx::query_as("SELECT last_seen FROM email_attachments WHERE sha256 = ?")
+                .bind(sha256)
+                .fetch_optional(&self.pool)
+                .await?;
         Ok(row.map(|(t,)| t))
     }
 }
@@ -230,7 +228,9 @@ mod tests {
         s.record("abc").await.unwrap();
         // Backdate by 200 days.
         let now = chrono::Utc::now().timestamp();
-        backdate_for_test(&s, "abc", now - 200 * 86_400).await.unwrap();
+        backdate_for_test(&s, "abc", now - 200 * 86_400)
+            .await
+            .unwrap();
         let removed = s.gc(dir.path(), 90 * 86_400).await.unwrap();
         assert_eq!(removed, 1);
         assert_eq!(s.count().await.unwrap(), 0);
@@ -259,7 +259,9 @@ mod tests {
         let s = fresh().await;
         s.record("abc").await.unwrap();
         let now = chrono::Utc::now().timestamp();
-        backdate_for_test(&s, "abc", now - 200 * 86_400).await.unwrap();
+        backdate_for_test(&s, "abc", now - 200 * 86_400)
+            .await
+            .unwrap();
         let removed = s.gc(dir.path(), 90 * 86_400).await.unwrap();
         // File was never written — `removed` counts only the
         // successful unlinks, but the row is gone regardless.

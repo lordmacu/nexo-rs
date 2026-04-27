@@ -73,9 +73,7 @@ pub async fn check_alignment(
     // sandbox without /etc/resolv.conf still works.
     let resolver = match TokioAsyncResolver::tokio_from_system_conf() {
         Ok(r) => r,
-        Err(_) => {
-            TokioAsyncResolver::tokio(ResolverConfig::cloudflare(), ResolverOpts::default())
-        }
+        Err(_) => TokioAsyncResolver::tokio(ResolverConfig::cloudflare(), ResolverOpts::default()),
     };
 
     let spf = lookup_txt(&resolver, domain, timeout).await;
@@ -87,12 +85,10 @@ pub async fn check_alignment(
                 if let Some(host) = sending_host {
                     let includes = parse_spf_includes(spf_rec);
                     let host_l = host.to_ascii_lowercase();
-                    let matched = includes
-                        .iter()
-                        .any(|i| {
-                            let il = i.to_ascii_lowercase();
-                            host_l == il || host_l.ends_with(&format!(".{il}"))
-                        });
+                    let matched = includes.iter().any(|i| {
+                        let il = i.to_ascii_lowercase();
+                        host_l == il || host_l.ends_with(&format!(".{il}"))
+                    });
                     report.spf_includes_host = Some(matched);
                 }
             }

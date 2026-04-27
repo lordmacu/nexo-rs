@@ -31,12 +31,11 @@ impl EmailInstancesListTool {
     pub fn tool_def() -> ToolDef {
         ToolDef {
             name: "email_instances_list".into(),
-            description:
-                "List every email instance declared in `email.yaml` (instance, address, \
+            description: "List every email instance declared in `email.yaml` (instance, address, \
                  provider, IMAP host, SMTP host) plus a per-row `is_live` flag indicating \
                  whether the dispatcher currently owns it. Use this to enumerate accounts \
                  before calling instance-scoped tools."
-                    .into(),
+                .into(),
             parameters: json!({
                 "type": "object",
                 "properties": {},
@@ -106,7 +105,10 @@ mod tests {
         assert_eq!(r["ok"], true);
         let rows = r["instances"].as_array().unwrap();
         assert_eq!(rows.len(), 2);
-        let names: Vec<&str> = rows.iter().map(|r| r["instance"].as_str().unwrap()).collect();
+        let names: Vec<&str> = rows
+            .iter()
+            .map(|r| r["instance"].as_str().unwrap())
+            .collect();
         assert!(names.contains(&"ops"));
         assert!(names.contains(&"support"));
         // Both should be marked live since the stub dispatcher

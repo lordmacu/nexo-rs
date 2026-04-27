@@ -42,10 +42,7 @@ impl AccountDiff {
 /// Equality is structural (every field on `EmailAccountConfig`):
 /// even a port change moves the account into `changed` rather
 /// than leaving the worker pointing at stale endpoints.
-pub fn compute_account_diff(
-    old: &EmailPluginConfig,
-    new: &EmailPluginConfig,
-) -> AccountDiff {
+pub fn compute_account_diff(old: &EmailPluginConfig, new: &EmailPluginConfig) -> AccountDiff {
     let mut diff = AccountDiff::default();
     for new_acct in &new.accounts {
         match old
@@ -61,11 +58,7 @@ pub fn compute_account_diff(
         }
     }
     for old_acct in &old.accounts {
-        if !new
-            .accounts
-            .iter()
-            .any(|a| a.instance == old_acct.instance)
-        {
+        if !new.accounts.iter().any(|a| a.instance == old_acct.instance) {
             diff.removed.push(old_acct.instance.clone());
         }
     }

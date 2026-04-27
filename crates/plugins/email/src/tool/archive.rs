@@ -133,7 +133,10 @@ mod tests {
         let tool = EmailArchiveTool::new(ctx);
         let r = tool.run(json!({ "instance": "ghost", "uids": [1] })).await;
         assert_eq!(r["ok"], json!(false));
-        assert!(r["error"].as_str().unwrap().contains("unknown email instance"));
+        assert!(r["error"]
+            .as_str()
+            .unwrap()
+            .contains("unknown email instance"));
     }
 
     #[tokio::test]

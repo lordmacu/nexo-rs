@@ -84,9 +84,9 @@ impl OutboundQueue {
         // ENOENT on the first run.
         for p in [&queue_path, &dlq_path] {
             if !p.exists() {
-                File::create(p).await.with_context(|| {
-                    format!("email/outbound: cannot create {}", p.display())
-                })?;
+                File::create(p)
+                    .await
+                    .with_context(|| format!("email/outbound: cannot create {}", p.display()))?;
             }
         }
         Ok(Self {
@@ -233,9 +233,9 @@ impl OutboundQueue {
         }
         let live: Vec<OutboundJob> = latest.into_values().filter(|j| !j.done).collect();
         let tmp = self.queue_path.with_extension("jsonl.compact");
-        let mut f = File::create(&tmp).await.with_context(|| {
-            format!("email/outbound: cannot create {}", tmp.display())
-        })?;
+        let mut f = File::create(&tmp)
+            .await
+            .with_context(|| format!("email/outbound: cannot create {}", tmp.display()))?;
         for j in &live {
             let mut s = serde_json::to_string(j)?;
             s.push('\n');
@@ -395,13 +395,9 @@ mod tests {
         let (dir, q) = fresh().await;
         q.enqueue(&job("<a@x>")).await.unwrap();
         q.move_to_dlq(&job("<a@x>")).await.unwrap();
-        let queue_body =
-            std::fs::read_to_string(dir.path().join("ops.jsonl")).unwrap();
+        let queue_body = std::fs::read_to_string(dir.path().join("ops.jsonl")).unwrap();
         // Two rows in the queue file: original enqueue, then tombstone.
-        let lines: Vec<&str> = queue_body
-            .lines()
-            .filter(|l| !l.is_empty())
-            .collect();
+        let lines: Vec<&str> = queue_body.lines().filter(|l| !l.is_empty()).collect();
         assert_eq!(lines.len(), 2);
         assert!(!lines[0].contains("\"done\":true"));
         assert!(lines[1].contains("\"done\":true"));

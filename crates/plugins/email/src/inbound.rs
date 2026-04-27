@@ -24,7 +24,7 @@ use tracing::{debug, info, warn};
 use crate::cursor::{CursorStore, UidCursor};
 use crate::events::InboundEvent;
 use crate::health::{AccountHealth, WorkerState};
-use crate::imap_conn::{ImapConnection, IdleOutcome};
+use crate::imap_conn::{IdleOutcome, ImapConnection};
 use crate::plugin::inbound_topic_for;
 
 const SOURCE: &str = "plugin.email";
@@ -248,15 +248,16 @@ impl AccountWorker {
         let creds = self
             .creds
             .account(&self.account_cfg.instance)
-            .ok_or_else(|| anyhow!("no credentials for instance '{}'", self.account_cfg.instance))?
+            .ok_or_else(|| {
+                anyhow!(
+                    "no credentials for instance '{}'",
+                    self.account_cfg.instance
+                )
+            })?
             .clone();
 
-        let mut conn = ImapConnection::connect(
-            &self.account_cfg.imap,
-            &creds,
-            self.google.clone(),
-        )
-        .await?;
+        let mut conn =
+            ImapConnection::connect(&self.account_cfg.imap, &creds, self.google.clone()).await?;
         breaker.on_success();
         self.note_connect_ok().await;
 
@@ -353,57 +354,55 @@ impl AccountWorker {
                 attachments_dir: self.attachments_dir.clone(),
                 fallback_internal_date: msg.internal_date,
             };
-            let (meta, attachments, thread_root_id) = match crate::mime_parse::parse_eml(
-                &msg.raw_bytes,
-                &parse_cfg,
-            )
-            .await
-            {
-                Ok(p) => {
-                    // Phase 48.6 — derive a stable thread root so
-                    // downstream tools can group by hilo without
-                    // re-parsing meta.
-                    let root = crate::threading::resolve_thread_root(
-                        &p.meta,
-                        msg.uid,
-                        &self.account_cfg.address,
-                    );
-                    // Phase 48 follow-up #10 — bump ref-count for
-                    // every attachment so the GC sweep knows the
-                    // file is still live. Best-effort: storage
-                    // failures don't block delivery.
-                    if let Some(store) = &self.attachment_store {
-                        for att in &p.attachments {
-                            if let Err(e) = store.record(&att.sha256).await {
-                                warn!(
-                                    target: "plugin.email",
-                                    sha256 = %att.sha256,
-                                    error = %e,
-                                    "attachment_store record failed (continuing)"
-                                );
+            let (meta, attachments, thread_root_id) =
+                match crate::mime_parse::parse_eml(&msg.raw_bytes, &parse_cfg).await {
+                    Ok(p) => {
+                        // Phase 48.6 — derive a stable thread root so
+                        // downstream tools can group by hilo without
+                        // re-parsing meta.
+                        let root = crate::threading::resolve_thread_root(
+                            &p.meta,
+                            msg.uid,
+                            &self.account_cfg.address,
+                        );
+                        // Phase 48 follow-up #10 — bump ref-count for
+                        // every attachment so the GC sweep knows the
+                        // file is still live. Best-effort: storage
+                        // failures don't block delivery.
+                        if let Some(store) = &self.attachment_store {
+                            for att in &p.attachments {
+                                if let Err(e) = store.record(&att.sha256).await {
+                                    warn!(
+                                        target: "plugin.email",
+                                        sha256 = %att.sha256,
+                                        error = %e,
+                                        "attachment_store record failed (continuing)"
+                                    );
+                                }
                             }
                         }
+                        (Some(p.meta), p.attachments, Some(root))
                     }
-                    (Some(p.meta), p.attachments, Some(root))
-                }
-                Err(e) => {
-                    crate::metrics::inc_parse_error(&self.account_cfg.instance);
-                    warn!(
-                        target: "plugin.email",
-                        instance = %self.account_cfg.instance,
-                        uid = msg.uid,
-                        error = %e,
-                        "email.parse.malformed — publishing raw-only"
-                    );
-                    (None, Vec::new(), None)
-                }
-            };
+                    Err(e) => {
+                        crate::metrics::inc_parse_error(&self.account_cfg.instance);
+                        warn!(
+                            target: "plugin.email",
+                            instance = %self.account_cfg.instance,
+                            uid = msg.uid,
+                            error = %e,
+                            "email.parse.malformed — publishing raw-only"
+                        );
+                        (None, Vec::new(), None)
+                    }
+                };
             // Phase 48.8 — DSN check first. A delivery report should
             // emit a `BounceEvent` (operational signal) and NOT
             // surface as conversational `InboundEvent`.
             let mut suppressed = false;
             if let Some(meta_ref) = meta.as_ref() {
-                if let Some(parsed) = crate::dsn::parse_bounce(meta_ref, &msg.raw_bytes, &self.account_cfg.address) {
+                if let Some(parsed) =
+                    crate::dsn::parse_bounce(meta_ref, &msg.raw_bytes, &self.account_cfg.address)
+                {
                     let bounce = crate::dsn::BounceEvent {
                         account_id: self.account_cfg.address.clone(),
                         instance: self.account_cfg.instance.clone(),
@@ -427,10 +426,7 @@ impl AccountWorker {
                             );
                         }
                     }
-                    let topic = format!(
-                        "email.bounce.{}",
-                        self.account_cfg.instance
-                    );
+                    let topic = format!("email.bounce.{}", self.account_cfg.instance);
                     if let Ok(payload) = serde_json::to_value(&bounce) {
                         if let Err(e) = self
                             .broker
@@ -453,10 +449,7 @@ impl AccountWorker {
                         "email.loop_skip"
                     );
                     crate::metrics::inc_loop_skipped("dsn_inbound");
-                    crate::metrics::inc_bounce(
-                        &self.account_cfg.instance,
-                        bounce.classification,
-                    );
+                    crate::metrics::inc_bounce(&self.account_cfg.instance, bounce.classification);
                     suppressed = true;
                 } else if let Some(reason) = crate::loop_prevent::should_skip(
                     meta_ref,
@@ -510,9 +503,7 @@ impl AccountWorker {
                     uid_validity: existing.uid_validity,
                     ..cursor
                 };
-                self.cursor
-                    .set(&self.account_cfg.instance, &merged)
-                    .await?;
+                self.cursor.set(&self.account_cfg.instance, &merged).await?;
             }
         }
         Ok(highest)
