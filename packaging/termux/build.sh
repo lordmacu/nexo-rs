@@ -25,7 +25,7 @@ trap 'rm -rf "$BUILD_DIR"' EXIT
 
 # Read the version + maintainer once from the workspace bin's Cargo.toml
 # so `build.sh` doesn't drift from the source of truth.
-VERSION=$(awk '/^\[package\]/{p=1;next} /^\[/{p=0} p && /^version/{gsub(/.*"|".*/, ""); print; exit}' "$REPO_ROOT/Cargo.toml")
+VERSION=$(grep -m1 '^version' "$REPO_ROOT/Cargo.toml" | cut -d'"' -f2)
 DESCRIPTION=$(awk '/^\[package\]/{p=1;next} /^\[/{p=0} p && /^description/{sub(/^description *= */, ""); gsub(/^"|"$/, ""); print; exit}' "$REPO_ROOT/Cargo.toml")
 MAINTAINER="Cristian Garcia <informacion@cristiangarcia.co>"
 HOMEPAGE="https://lordmacu.github.io/nexo-rs/"

@@ -2160,8 +2160,9 @@ Sub-phases:
   sends, then inbound, with the existing 5s budget. 40 unit tests
   green; clippy clean. Real-server e2e (greenmail) deferred to
   48.10 along with `Starttls` IMAP support.)
-- 48.5 — MIME parse/build + Attachment envelope   🔄
-  (48.5.a foundational slice + 48.5.b inbound parser shipped.
+- 48.5 — MIME parse/build + Attachment envelope   ✅
+  (48.5.a foundational slice + 48.5.b inbound parser + 48.5.c
+  multipart builder + outbound wiring.
   `mime_parse.rs` wraps `mail-parser 0.9` to lift `BODY.PEEK[]`
   bytes into `EmailMeta` + `Vec<EmailAttachment>`. Body text
   picks the `text/plain` part; HTML-only messages get
@@ -2185,9 +2186,24 @@ Sub-phases:
   publishes the event raw-only so a single corrupt MIME never
   wedges the worker. 10 new parser tests cover plain / HTML-only /
   multipart-with-attachment / sha256 dedupe / truncation / list
-  headers / missing Date / malformed / display-name. 56 unit tests
-  total. Outbound multipart builder, `enqueue_command` attachment
-  read, and `mime_text.rs` → `mime_build.rs` rename remain.)
+  headers / missing Date / malformed / display-name.
+  Outbound `mime_build.rs` replaces `mime_text.rs`: the
+  no-attachment branch keeps the 48.4 hand-rolled wire format
+  byte-for-byte (so existing expectations don't shift); the
+  with-attachment branch hands off to `mail-builder 0.4`'s
+  `text_body` + `attachment`/`inline` API which wraps the
+  message in `multipart/mixed` automatically.
+  `mime_guess::from_path` infers a part's content-type when the
+  caller leaves `mime_type` `None`; explicit overrides win.
+  `Bcc` stays out of headers in both branches.
+  `outbound.rs::enqueue_command` now reads each
+  `OutboundAttachmentRef.data_path` at enqueue time so a missing
+  file fails fast with a `build_mime` Err rather than silently
+  parking a doomed job. 8 new builder tests (no-attach wire
+  matches 48.4, message-id format, In-Reply-To + References
+  passthrough, RFC 2047 subject, multipart/mixed emission with
+  mime_guess, missing-file Err, explicit-mime override).
+  58 / 58 plugin unit tests; clippy clean.)
 - 48.6 — Threading via `Message-ID` / `In-Reply-To` / `References`   ⬜
 - 48.7 — Tools: `email_send` / `_reply` / `_archive` / `_label` / `_move_to` / `_search`   ⬜
 - 48.8 — Loop-prevention + DSN/bounce parsing   ⬜

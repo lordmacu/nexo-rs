@@ -73,12 +73,16 @@ Full setup notes (cargo-dist, cargo-zigbuild, zig, rustup targets):
 | Tag commit + `crates.io` publish                    | `release-plz` (on PR merge)                 |
 | Build 2 musl tarballs (x86_64 + aarch64)            | `release.yml` (Phase 27.2 ✅) — cargo-dist  |
 | Build Termux `.deb` (aarch64-linux-android)         | `release.yml` (Phase 27.2 ✅) — `packaging/termux/build.sh` |
-| Upload tarballs + Termux deb + sha256 sidecars      | `release.yml` (Phase 27.2 ✅)               |
+| Build Debian `.deb` (amd64 + arm64)                 | `release.yml` (Phase 27.4 ✅) — `packaging/debian/build.sh` |
+| Build RPM (x86_64 + aarch64)                        | `release.yml` (Phase 27.4 ✅) — `packaging/rpm/build.sh` |
+| Install-test `.deb` on Debian 12 / Ubuntu 22.04 / 24.04 | `release.yml` (Phase 27.4 ✅) — docker matrix |
+| Install-test `.rpm` on Fedora 40 / Rocky 9          | `release.yml` (Phase 27.4 ✅) — docker matrix |
+| Upload all tarballs + debs + rpms + sha256 sidecars | `release.yml` (Phase 27.2 ✅)               |
 | Smoke-test `nexo --version` + provenance stamps     | `release.yml` (Phase 27.2 ✅)               |
-| Sign tarballs + Termux deb (cosign keyless)         | `sign-artifacts.yml` (Phase 27.3 ✅)        |
+| Sign every asset (cosign keyless)                   | `sign-artifacts.yml` (Phase 27.3 ✅)        |
 | Generate CycloneDX + SPDX SBOMs                     | `sbom.yml` (Phase 27.9 🔄)                  |
-| Apt repo publish + signed `Release` file            | Phase 27.4 deferred                         |
-| Yum / dnf repo publish                              | Phase 27.4 deferred                         |
+| Apt repo publish + signed `Release` file            | Phase 27.4.b deferred                       |
+| Yum / dnf repo publish + `RPM-GPG-KEY-nexo`         | Phase 27.4.b deferred                       |
 | Termux pkg index                                    | Phase 27.8 deferred                         |
 | Homebrew bottle auto-PR                             | Phase 27.6 **PARKED** (Apple targets dropped) |
 | `nexo self-update`                                  | Phase 27.10 deferred                        |

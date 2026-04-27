@@ -158,8 +158,109 @@ jobs:
             dist/nexo-rs_*_aarch64.deb.sha256
           if-no-files-found: error
 
+  build-debian:
+    needs: [validate-tag, build-musl]
+    name: build (.deb ${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            target: x86_64-unknown-linux-musl
+          - arch: arm64
+            target: aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate-tag.outputs.tag }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-${{ matrix.target }}
+          path: musl-input
+      - name: Extract nexo bin from musl tarball
+        run: |
+          set -euo pipefail
+          cd musl-input
+          ls -la
+          tar -xJf nexo-rs-${{ matrix.target }}.tar.xz
+          extracted="$(find . -maxdepth 2 -type f -name nexo -perm -u+x | head -n1)"
+          if [[ -z "$extracted" ]]; then
+            echo "::error::no nexo bin extracted from musl tarball"
+            exit 1
+          fi
+          echo "BIN=$PWD/${extracted#./}" >> "$GITHUB_ENV"
+      - name: Build .deb
+        run: bash packaging/debian/build.sh --binary "$BIN" --arch ${{ matrix.arch }}
+      - name: sha256 sidecar
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          for f in nexo-rs_*_${{ matrix.arch }}.deb; do
+            sha256sum "$f" > "${f}.sha256"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-deb-${{ matrix.arch }}
+          path: |
+            dist/nexo-rs_*_${{ matrix.arch }}.deb
+            dist/nexo-rs_*_${{ matrix.arch }}.deb.sha256
+          if-no-files-found: error
+
+  build-rpm:
+    needs: [validate-tag, build-musl]
+    name: build (.rpm ${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86_64-unknown-linux-musl
+          - arch: aarch64
+            target: aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate-tag.outputs.tag }}
+      - name: Install rpmbuild
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-${{ matrix.target }}
+          path: musl-input
+      - name: Extract nexo bin from musl tarball
+        run: |
+          set -euo pipefail
+          cd musl-input
+          tar -xJf nexo-rs-${{ matrix.target }}.tar.xz
+          extracted="$(find . -maxdepth 2 -type f -name nexo -perm -u+x | head -n1)"
+          if [[ -z "$extracted" ]]; then
+            echo "::error::no nexo bin extracted from musl tarball"
+            exit 1
+          fi
+          echo "BIN=$PWD/${extracted#./}" >> "$GITHUB_ENV"
+      - name: Build .rpm
+        run: bash packaging/rpm/build.sh --binary "$BIN" --arch ${{ matrix.arch }}
+      - name: sha256 sidecar
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          for f in nexo-rs-*-${{ matrix.arch }}.rpm; do
+            sha256sum "$f" > "${f}.sha256"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-rpm-${{ matrix.arch }}
+          path: |
+            dist/nexo-rs-*-${{ matrix.arch }}.rpm
+            dist/nexo-rs-*-${{ matrix.arch }}.rpm.sha256
+          if-no-files-found: error
+
   publish:
-    needs: [validate-tag, build-musl, build-termux]
+    needs: [validate-tag, build-musl, build-termux, build-debian, build-rpm]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -223,3 +324,98 @@ jobs:
             exit 1
           fi
           echo "smoke OK: $short"
+
+  install-test-deb:
+    needs: [validate-tag, publish]
+    name: install-test (.deb on ${{ matrix.image }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["debian:12", "ubuntu:24.04", "ubuntu:22.04"]
+    container:
+      image: ${{ matrix.image }}
+      options: --user root
+    steps:
+      - name: Install prerequisites + gh CLI
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+          apt-get update
+          apt-get install -y wget curl ca-certificates adduser gnupg
+          install -dm 0755 /etc/apt/keyrings
+          wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+            | tee /etc/apt/keyrings/githubcli-archive-keyring.gpg >/dev/null
+          chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+            | tee /etc/apt/sources.list.d/github-cli.list
+          apt-get update
+          apt-get install -y gh
+      - name: Download .deb from release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.validate-tag.outputs.tag }}
+        run: |
+          gh release download "$TAG" \
+            --repo ${{ github.repository }} \
+            --pattern 'nexo-rs_*_amd64.deb'
+      - name: Install + smoke
+        env:
+          DEBIAN_FRONTEND: noninteractive
+          EXPECTED_VERSION: ${{ needs.validate-tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          apt-get install -y ./nexo-rs_*_amd64.deb
+          out="$(nexo --version)"
+          if [[ "$out" != "nexo $EXPECTED_VERSION" ]]; then
+            echo "::error::version mismatch on ${{ matrix.image }}: got '$out'"
+            exit 1
+          fi
+          nexo --help >/dev/null
+          echo "install-test ${{ matrix.image }} OK: $out"
+
+  install-test-rpm:
+    needs: [validate-tag, publish]
+    name: install-test (.rpm on ${{ matrix.image }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["fedora:40", "rockylinux:9"]
+    container:
+      image: ${{ matrix.image }}
+      options: --user root
+    steps:
+      - name: Install prerequisites + gh CLI
+        run: |
+          set -euo pipefail
+          if command -v dnf >/dev/null; then PM=dnf; else PM=yum; fi
+          $PM install -y wget ca-certificates
+          $PM install -y 'dnf-command(config-manager)' || true
+          $PM config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo || \
+            ($PM install -y dnf-plugins-core && \
+             $PM config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo)
+          $PM install -y gh
+      - name: Download .rpm from release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.validate-tag.outputs.tag }}
+        run: |
+          gh release download "$TAG" \
+            --repo ${{ github.repository }} \
+            --pattern 'nexo-rs-*-x86_64.rpm'
+      - name: Install + smoke
+        env:
+          EXPECTED_VERSION: ${{ needs.validate-tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          if command -v dnf >/dev/null; then PM=dnf; else PM=yum; fi
+          $PM install -y ./nexo-rs-*-x86_64.rpm
+          out="$(nexo --version)"
+          if [[ "$out" != "nexo $EXPECTED_VERSION" ]]; then
+            echo "::error::version mismatch on ${{ matrix.image }}: got '$out'"
+            exit 1
+          fi
+          nexo --help >/dev/null
+          echo "install-test ${{ matrix.image }} OK: $out"

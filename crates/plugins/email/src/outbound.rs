@@ -33,7 +33,7 @@ use tracing::{debug, info, warn};
 use crate::events::{AckStatus, OutboundAck, OutboundCommand};
 use crate::health::AccountHealth;
 use crate::inbound::HealthMap;
-use crate::mime_text::{build_text_mime, generate_message_id};
+use crate::mime_build::{build_mime, generate_message_id, BuildContext};
 use crate::outbound_queue::{OutboundJob, OutboundQueue, SmtpEnvelope};
 use crate::plugin::outbound_topic_for;
 use crate::smtp_conn::{SmtpClient, SmtpSendOutcome};
@@ -195,7 +195,20 @@ impl OutboundWorker {
     pub async fn enqueue_command(&self, cmd: OutboundCommand) -> Result<String> {
         let from = self.account_cfg.address.clone();
         let message_id = generate_message_id(&from);
-        let raw = build_text_mime(&message_id, &from, &cmd, Utc::now());
+        // Phase 48.5 — `build_mime` reads attachment files at this
+        // point. Missing files surface here (not at drain time) so
+        // the dispatcher can fail fast and ack `Failed` instead of
+        // leaving a doomed job on the queue.
+        let raw = build_mime(
+            BuildContext {
+                message_id: &message_id,
+                from: &from,
+                now: Utc::now(),
+            },
+            &cmd,
+        )
+        .await
+        .with_context(|| format!("build outbound MIME for {message_id}"))?;
         let now = Utc::now().timestamp();
         let job = OutboundJob {
             message_id: message_id.clone(),
