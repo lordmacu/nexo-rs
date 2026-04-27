@@ -293,6 +293,8 @@ pub const MUTATING_TOOLS: &[&str] = &[
     "ScheduleCron",
     "cron_create",
     "cron_delete",
+    "cron_pause",
+    "cron_resume",
     "RemoteTrigger",
     // Config self-edit (79.10) — only `apply` op is mutating; the gate
     // resolves the op at call time. `Config` as a name is listed here
