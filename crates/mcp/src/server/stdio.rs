@@ -7,7 +7,7 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader
 use tokio_util::sync::CancellationToken;
 
 use crate::errors::McpError;
-use crate::protocol::PROTOCOL_VERSION;
+use crate::protocol::{is_supported_protocol_version, PROTOCOL_VERSION};
 
 use super::McpServerHandler;
 
@@ -182,9 +182,36 @@ async fn dispatch<H: McpServerHandler>(
                 .and_then(|c| c.get("version"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("<unknown>");
-            tracing::info!(client_name, client_version, "mcp client connected");
+            // Phase 73 — echo the client's requested protocol
+            // version when it is recognised. Claude Code 2.1+ sends
+            // `2025-11-25`; replying with our hardcoded
+            // `2024-11-05` made Claude treat the server as
+            // protocol-mismatched and silently drop every tool the
+            // server announced via `tools/list` (the exposed
+            // tools/list response was correct, but the permission
+            // registry treated the server as if it had zero
+            // tools — the operator saw "Available MCP tools:
+            // none" while the init log line still claimed
+            // `status: connected`). MCP's negotiation rule is
+            // "server returns the version it supports, ideally
+            // matching the client". When the client speaks a
+            // version newer than ours, we still echo ours; when
+            // it speaks a known version, we echo its choice so
+            // the client moves forward without downgrading.
+            let client_protocol_version = params.get("protocolVersion").and_then(|v| v.as_str());
+            let agreed_version = match client_protocol_version {
+                Some(v) if is_supported_protocol_version(v) => v,
+                _ => PROTOCOL_VERSION,
+            };
+            tracing::info!(
+                client_name,
+                client_version,
+                client_protocol_version = client_protocol_version.unwrap_or("<missing>"),
+                agreed_protocol_version = agreed_version,
+                "mcp client connected",
+            );
             DispatchOutcome::Reply(serde_json::json!({
-                "protocolVersion": PROTOCOL_VERSION,
+                "protocolVersion": agreed_version,
                 "capabilities": handler.capabilities(),
                 "serverInfo": handler.server_info(),
             }))
@@ -204,10 +231,18 @@ async fn dispatch<H: McpServerHandler>(
         "tools/list" => match handler.list_tools().await {
             Ok(tools) => {
                 tracing::debug!(count = tools.len(), "mcp tools/list");
-                DispatchOutcome::Reply(serde_json::json!({
-                    "tools": tools,
-                    "nextCursor": Value::Null,
-                }))
+                // Phase 73 — omit `nextCursor` when there is no
+                // next page. MCP spec treats the field as
+                // pagination-only; some clients (Claude Code 2.1)
+                // refuse to register tools when the response
+                // includes `nextCursor: null` because their
+                // schema validator wants either a string token
+                // or absence-of-key. Returning an empty cursor as
+                // null caused the operator-visible
+                // "Available MCP tools: none" while the
+                // `mcp_servers.status` line still claimed
+                // `connected`.
+                DispatchOutcome::Reply(serde_json::json!({ "tools": tools }))
             }
             Err(e) => {
                 tracing::warn!(error = %e, "mcp tools/list failed");
@@ -414,6 +449,7 @@ mod tests {
                         text: format!("called {name}"),
                     }],
                     is_error: false,
+                    structured_content: None,
                 })
             }
         }
@@ -460,6 +496,7 @@ mod tests {
             name: name.into(),
             description: Some("x".into()),
             input_schema: serde_json::json!({"type":"object"}),
+            output_schema: None,
         }
     }
 

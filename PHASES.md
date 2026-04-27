@@ -291,21 +291,80 @@ Today operators do `git clone + cargo build`. To compete with a
 shipped product, every supported install path lands as a
 shippable artifact on tag push.
 
-#### 27.1 — `cargo dist` baseline
+#### 27.1 — `cargo dist` baseline   ✅
 
-- Add `dist-workspace.toml` describing supported targets:
-  `linux-x86_64-musl`, `linux-aarch64-musl`, `macos-x86_64`,
-  `macos-aarch64`, `windows-x86_64`.
-- `cargo dist init` integrated; `dist build` produces tarballs
-  locally as a smoke gate.
-- `Cargo.toml` package metadata (license, repo, description)
-  audited so crates.io / package indexes get clean info.
-- `CHANGELOG.md` enforced via `release-please` or `git-cliff` —
-  every PR adds a `## Unreleased` line, release flips to
-  versioned section.
+Shipped:
+- `dist-workspace.toml` declares 6 targets (host-fallback
+  `x86_64-unknown-linux-gnu` + the 5-entry shippable matrix:
+  `x86_64`/`aarch64-unknown-linux-musl`, `x86_64`/`aarch64-apple-darwin`,
+  `x86_64-pc-windows-msvc`). `precise-builds = true`,
+  `installers = ["shell", "powershell"]`, `tag-namespace = "nexo-rs"`
+  (matches `release-plz`'s `git_tag_name`), `allow-dirty = ["ci"]`,
+  `install-path = "CARGO_HOME"`, `install-updater = false`.
+- `[package.metadata.dist] dist = false` opt-out on every
+  bin-bearing crate that should NOT ship in release tarballs:
+  `nexo-driver-permission`, `nexo-driver-loop`, `nexo-dispatch-tools`,
+  `nexo-companion-tui`, `nexo-mcp` (its `mock_mcp_server` is a test
+  fixture). Root crate gains `[package.metadata.dist] dist = true`
+  so only `nexo` ships.
+- Dev / smoke programs (`browser-test`, `integration-browser-check`,
+  `llm_smoke`) moved from `[[bin]]` to `[[example]]` under
+  `examples/`. cargo-dist auto-skips examples, and they remain
+  runnable via `cargo run --example <name>`. Makefile +
+  `scripts/integration_nats_recovery.sh` updated to the
+  `--example` form.
+- `build.rs` emits four compile-time stamps consumed by
+  `nexo version` (or `nexo --version --verbose`):
+  `NEXO_BUILD_GIT_SHA`, `NEXO_BUILD_TARGET_TRIPLE`,
+  `NEXO_BUILD_CHANNEL` (overridable via env;
+  defaults to `source`), `NEXO_BUILD_TIMESTAMP` (UTC ISO8601).
+  `chrono` added to `[build-dependencies]` (`default-features = false,
+  features = ["clock"]`).
+- New `Mode::Version { verbose }` in `src/main.rs`. Short form
+  (`nexo --version` / `-V`) prints `nexo 0.1.1`. Verbose form
+  (`nexo version` subcommand or `nexo --version --verbose`) prints
+  the package version plus the four stamps. Inline unit test
+  `tests::build_stamps_are_populated` asserts the env stamps are
+  non-empty and `NEXO_BUILD_TIMESTAMP` is ISO8601 UTC.
+- `scripts/release-check.sh` smoke gate validates whatever
+  tarballs landed in `target/distrib/`: sha256 against `*.sha256`
+  sidecars (when emitted), required contents (`nexo` /
+  `nexo.exe`, `LICENSE-MIT`, `LICENSE-APACHE`, `README.md`), and a
+  host-native extract + `nexo --version` regex match. Targets the
+  local toolchain can't build emit `[release-check] WARN` instead
+  of failing.
+- `Makefile` gains `dist-build` (= `dist build --artifacts=local
+  --tag nexo-rs-v$(NEXO_VERSION) --target $(HOST_TARGET)`) and
+  `dist-check` (= `dist-build` + `release-check.sh`).
+  `HOST_TARGET` defaults to `rustc -vV`'s host triple so a stock
+  developer Linux box runs the full pipeline on the gnu fallback;
+  CI passes the musl/darwin/msvc targets explicitly.
+- `packaging/README.md` (NEW) documents the toolchain story
+  (`cargo-dist`, `cargo-zigbuild`, `zig` via `pipx ziglang`,
+  rustup target list) plus the relationship to `release-plz`.
+- `docs/src/contributing/release.md` (NEW) — the public-facing
+  page on the cargo-dist ↔ release-plz handshake, `nexo version`
+  semantics, how to add a new bin or new target. Registered in
+  `docs/src/SUMMARY.md`.
+- `CHANGELOG.md` root crate gets the Phase 27.1 entry under
+  `## [Unreleased] / ### Added`. release-plz keeps owning
+  per-crate `CHANGELOG.md` regeneration.
 
-Done when `cargo dist build --tag v0.1.0` produces the full
-matrix of binaries on a developer laptop without errors.
+Deferred (now in `FOLLOWUPS.md`):
+- Local musl validation requires `zig` + `cargo-zigbuild`
+  versions that interop. zig 0.16.0 (current upstream pipx) is
+  incompatible with cargo-zigbuild 0.22.x — full musl validation
+  is CI-only until upstream catches up.
+- macOS / Windows local validation needs the respective SDKs;
+  Phase 27.2 CI is the right place to gate.
+- `NEXO_BUILD_CHANNEL` injection from the release workflow
+  (`apt-musl`, `brew-arm64`, etc.) lands when 27.2 wires the
+  GH Actions matrix.
+
+Done when (revised): `make dist-check` exit 0 on a stock
+developer Linux box. The host-target tarball is built and
+validated end-to-end; the rest of the matrix is a Phase 27.2
+deliverable.
 
 #### 27.2 — GitHub Actions release workflow
 
@@ -2670,6 +2729,106 @@ behaviour stays in lockstep with the rest of the wizard.
   `try_hot_reload` after every successful mutation, integration tests
   re-parse the mutated YAML through `AgentsConfig`, docs page +
   SUMMARY entry, admin-ui PHASES tech-debt line.
+
+### Phase 75 — Acceptance autodetect by project type   ✅
+
+`program_phase`'s default acceptance was hardcoded to
+`cargo build --workspace` + `cargo test --workspace`, which:
+
+- Wedged every Python / Node / shell goal into a permanent
+  `needs_retry` loop because cargo cannot succeed without a
+  `Cargo.toml`. The standalone Phase 73 fixture proved the wire
+  was clean; the goals still produced no work because acceptance
+  always failed.
+- Spent 30–60 s per turn rebuilding 200 crates for goals against
+  the nexo-rs workspace, even when the diff was a one-line tweak.
+
+Default now branches inside the worktree at acceptance-eval time:
+`Cargo.toml` → cargo build + test, `pyproject.toml` /
+`setup.py` → `python3 -m pytest -q`, `package.json` →
+`npm test --silent`, `CMakeLists.txt` → `cmake build`,
+otherwise `true` (auto-pass). Operators that need stricter
+checks override per-goal via `acceptance_override` or per-phase
+via the markdown `acceptance:` bullets in PHASES.md.
+
+- 75.1 ✅ — `default_acceptance()` returns one shell criterion
+  that test-files its way to the right command.
+- 75.2 ✅ — 7 unit tests cover Cargo / pyproject / setup.py /
+  package.json / CMakeLists.txt / empty-dir fallback / Cargo
+  precedence over Python in mixed repos. Each case stubs the
+  underlying tool via PATH override to keep the suite hermetic.
+- 75.3 ✅ — PHASES.md / CLAUDE.md / admin-ui / docs sync this commit.
+
+### Phase 74 — Claude Code 2.1 MCP conformance   ✅
+
+Phase 73 surfaced eight independent wire-format bugs between our
+permission MCP server and Claude Code 2.1. Phase 74 locks them
+down with a fixture and adds the schema declarations the new
+client expects so the next Claude bump fails loudly instead of
+silently dropping every tool from the permission registry.
+
+- 74.1 ✅ — `crates/driver-permission/tests/claude_2_1_conformance.rs`.
+  Drives the bin through Claude's exact byte sequence
+  (`initialize` with `protocolVersion: 2025-11-25` and
+  `capabilities: {roots, elicitation}` → `notifications/initialized`
+  → `tools/list` → `tools/call permission_prompt`). 6 tests pin
+  every Phase 73 fix: protocol-version echo, fallback for
+  unknown versions, `nextCursor` omission, `updatedInput` is a
+  required record, `behavior:"deny"` carries `message`, unknown
+  tools surface as protocol errors.
+- 74.2 ✅ — `McpTool.output_schema: Option<Value>` (MCP
+  2025-11-25 SEP-986). `permission_prompt` declares the
+  `oneOf[allow, deny]` union so Claude validates against our
+  typed shape instead of inferring from responses and drifting.
+  Field is `skip_serializing_if = "Option::is_none"` so
+  pre-2025-11-25 clients still see the legacy wire.
+- 74.3 ✅ — `McpToolResult.structured_content: Option<Value>`.
+  `permission_prompt` populates it alongside the legacy text
+  content; Claude 2.1 validates the typed object directly,
+  killing the "re-parse text as JSON" round-trip that surfaced
+  the original `updatedInput` flap. Same skip-if-none discipline
+  for compat.
+
+### Phase 73 — Claude Code 2.1 MCP wire fixes   ✅
+
+Cody dispatched goals would burn a full 40-turn budget without
+writing a single file. Operator-visible symptom was an empty
+worktree plus `notify_origin` never landing. Eight independent
+wire-format bugs between the daemon, the permission MCP server,
+and the spawned Claude CLI; each one alone made Cody's pipeline
+look correct from the outside.
+
+- 73.1 ✅ — `ClaudeCommand` now passes `--verbose` whenever
+  `--output-format=stream-json` so Claude does not exit with an
+  empty stdout that the driver loop mis-classifies as `Continue`.
+- 73.2 ✅ — `ClaudeCommand` always passes `--strict-mcp-config`,
+  preventing Claude from merging `--mcp-config` with the user's
+  `~/.claude.json` and silently dropping our `nexo-driver`
+  server.
+- 73.3 ✅ — `write_mcp_config` canonicalises both `bin_path` and
+  `socket_path` to absolute form before writing
+  `<worktree>/.nexo-mcp.json`, since Claude reads the config with
+  `cwd = worktree` and would otherwise resolve `./data/...`
+  against a directory that does not exist.
+- 73.4 ✅ — MCP server initialise handler echoes the client's
+  protocol version when it is one of `2024-11-05 / 2025-03-26 /
+  2025-06-18 / 2025-11-25`. Replying with the hardcoded
+  `2024-11-05` to a 2.1 client made Claude register the server
+  but skip its tools.
+- 73.5 ✅ — `tools/list` no longer emits `nextCursor: null`;
+  Claude 2.1's Zod validator refused the response shape.
+- 73.6 ✅ — `serverInfo.name` = `"nexo-driver-permission"`
+  matches the JSON config-key in `.nexo-mcp.json` so Claude's
+  tool-namespacing prefix (`mcp__<serverInfo.name>__<tool>`)
+  resolves the way `--permission-prompt-tool` looks them up.
+- 73.7 ✅ — `permission_prompt_tool` config in
+  `config/driver/claude.yaml` updated to
+  `mcp__nexo-driver-permission__permission_prompt`.
+- 73.8 ✅ — Permission `behavior:"allow"` response now includes
+  `updatedInput` as a record (echo of the caller's original
+  input when the decider has no override). Without this Claude
+  rejected every tool call with `Hook malformed. Returns neither
+  valid update nor deny.` and the goal lost the turn silently.
 
 ### Phase 72 — Turn-level audit log   ✅
 

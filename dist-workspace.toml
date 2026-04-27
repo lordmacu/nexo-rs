@@ -1,0 +1,76 @@
+# Phase 27.1 — cargo-dist baseline.
+#
+# Produces release tarballs of the `nexo` bin for the targets below
+# whenever `dist build --tag nexo-rs-v<version>` runs locally, and
+# (post Phase 27.2) whenever the GH release workflow fires on a tag
+# push. Keeps release-plz as the source of truth for version bumps +
+# crates.io publish + per-crate CHANGELOG; cargo-dist only owns the
+# binary side.
+#
+# Regenerate via `dist init --yes` after a `cargo-dist-version` bump,
+# then re-run `make dist-check` before committing.
+
+[workspace]
+members = ["cargo:."]
+
+[dist]
+# Pin matches the locally-installed `dist` binary version. Bump
+# together with `dist init --yes`.
+cargo-dist-version = "0.31.0"
+
+# Phase 27.2 will switch this to "github" once the release workflow
+# lands. Leaving as "github" today is a no-op locally — only matters
+# when `dist generate` writes the workflow file.
+ci = "github"
+
+# `curl | sh` (Linux/macOS) and PowerShell (Windows) installers.
+# Homebrew + npm + msi installers explicitly NOT enabled — Phase 27.6
+# already maintains a hand-written formula and the others don't fit
+# the Rust binary distribution model.
+installers = ["shell", "powershell"]
+
+# Target matrix. The first entry (`x86_64-unknown-linux-gnu`) is
+# kept so `make dist-check` runs end-to-end on a stock developer
+# Linux box without zig / cargo-zigbuild / Apple-SDK / MSVC. Phase
+# 27.2 CI runners use the full musl/darwin/msvc matrix below; locally
+# whichever toolchains are missing simply produce no tarball and the
+# `release-check.sh` smoke gate emits a WARN line instead of failing.
+#
+# musl static (linux/x86_64, linux/aarch64) is the shippable Linux
+# distribution form — glibc gnu is here only as a local fallback and
+# should NOT be advertised on the install page.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "aarch64-unknown-linux-musl",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-musl",
+    "x86_64-pc-windows-msvc",
+]
+
+# Each crate that opted in via `[package.metadata.dist] dist = true`
+# gets its own build job per target — keeps the matrix small (only
+# the root crate ships a bin in release tarballs; every other
+# bin-bearing crate carries `dist = false`).
+precise-builds = true
+
+# Linux musl rebuilds via zigbuild; both targets honour this.
+linux-build-tool = "cargo-zigbuild"
+
+# Files included verbatim in every tarball (next to the bin).
+include = ["LICENSE-MIT", "LICENSE-APACHE", "README.md"]
+
+# Tag scheme matches release-plz's `git_tag_name = "{{ package }}-v{{ version }}"`.
+tag-namespace = "nexo-rs"
+
+# Local `make dist-check` is allowed to run with a dirty worktree;
+# CI must not.
+allow-dirty = ["ci"]
+
+# Shell installer drops the bin in `$CARGO_HOME/bin`. Operators
+# without cargo can override with `--install-dir=...`.
+install-path = "CARGO_HOME"
+
+# `axoupdater` (`nexo self-update`) is Phase 27.10 deferred — leave
+# off until that wiring lands.
+install-updater = false

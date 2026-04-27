@@ -56,3 +56,26 @@ relevance:
     - "my_stats"
     - "schedule_reminder"
     - "google_*"
+    # Phase 67 dispatch surface — orchestration tools must stay
+    # reachable for any chat turn an agent like Cody handles, so
+    # the TF-cosine filter doesn't hide them when the operator's
+    # message happens to score low against the tool definitions.
+    - "preflight"
+    - "project_*"
+    - "program_phase*"
+    - "set_active_workspace"
+    - "init_project"
+    - "list_agents"
+    - "agent_status"
+    - "agent_logs_tail"
+    - "agent_hooks_*"
+    - "dispatch_followup"
+    - "cancel_agent"
+    - "pause_agent"
+    - "resume_agent"
+    - "interrupt_agent"
+    - "update_budget"
+    - "add_hook"
+    - "remove_hook"
+    - "followup_*"
+    - "git_log_for_phase"

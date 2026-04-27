@@ -199,10 +199,7 @@ impl ClaudeCommand {
         // as a `Continue` turn — the entire 40-turn budget burns
         // on phantom checkpoints. Always pass `--verbose` for
         // stream-json so the harness gets the JSON it expects.
-        if matches!(
-            self.output_format,
-            crate::config::OutputFormat::StreamJson
-        ) {
+        if matches!(self.output_format, crate::config::OutputFormat::StreamJson) {
             args.push("--verbose".into());
         }
         if let Some(id) = &self.resume {
@@ -232,6 +229,18 @@ impl ClaudeCommand {
         if let Some(p) = &self.mcp_config_path {
             args.push("--mcp-config".into());
             args.push(p.display().to_string());
+            // Phase 73 — without `--strict-mcp-config`, Claude CLI
+            // 2.1+ merges `--mcp-config` with the user's
+            // `~/.claude.json` and silently drops servers whose
+            // name collides or whose stdio child fails to start
+            // mid-merge. The driver's `.nexo-mcp.json` ships
+            // exactly one server (`nexo-driver`) so the strict
+            // form is what we want — Claude must spawn it or
+            // bail loudly. Without strict, we got "MCP tool
+            // mcp__nexo-driver__permission_prompt not found"
+            // every turn while the user-level Gmail / Drive /
+            // Atlassian servers were the only ones loaded.
+            args.push("--strict-mcp-config".into());
         }
         if let Some(m) = &self.model {
             args.push("--model".into());

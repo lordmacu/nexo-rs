@@ -69,6 +69,10 @@ impl std::fmt::Debug for MutableTracker {
 
 #[async_trait]
 impl ProjectTracker for MutableTracker {
+    fn root(&self) -> Option<PathBuf> {
+        Some(self.root.read().clone())
+    }
+
     async fn phases(&self) -> Result<Vec<Phase>, TrackerError> {
         self.load().phases().await
     }

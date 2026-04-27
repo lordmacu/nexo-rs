@@ -14,7 +14,7 @@ agents:
   pairing_policy:
     auto_challenge: true
   heartbeat:
-    enabled: true
+    enabled: false
     interval: 5m
   config:
     debounce_ms: 2000
@@ -32,7 +32,7 @@ agents:
       el servicio no está habilitado en su config.
     - No digas "déjame verificar" sin ejecutar la tool en el mismo turno.
       Si prometes una acción, hazla con la tool, no con palabras.
-  workspace: ./data/workspace/kate
+  workspace: ../data/workspace/kate
   skills:
   - weather
   - openai-whisper
@@ -42,8 +42,8 @@ agents:
   - github
   - browser
   - google-auth
-  skills_dir: ./skills
-  transcripts_dir: ./data/transcripts/kate
+  skills_dir: ../skills
+  transcripts_dir: ../data/transcripts/kate
   dreaming:
     enabled: true
     interval_secs: 3600

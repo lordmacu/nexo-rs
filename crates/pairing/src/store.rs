@@ -221,22 +221,18 @@ impl PairingStore {
             sql.push_str(&clauses.join(" AND "));
         }
         sql.push_str(" ORDER BY channel, account_id, sender_id");
-        let rows: Vec<(String, String, String, i64, String, Option<i64>)> = if let Some(c) = channel
-        {
-            sqlx::query_as(&sql)
-                .bind(c)
-                .fetch_all(&self.pool)
-                .await
-        } else {
-            sqlx::query_as(&sql).fetch_all(&self.pool).await
-        }
-        .map_err(|e| PairingError::Storage(e.to_string()))?;
+        let rows: Vec<(String, String, String, i64, String, Option<i64>)> =
+            if let Some(c) = channel {
+                sqlx::query_as(&sql).bind(c).fetch_all(&self.pool).await
+            } else {
+                sqlx::query_as(&sql).fetch_all(&self.pool).await
+            }
+            .map_err(|e| PairingError::Storage(e.to_string()))?;
         let mut out = Vec::with_capacity(rows.len());
         for (channel, account_id, sender_id, approved_at, approved_via, revoked_at) in rows {
             let approved_at =
                 DateTime::<Utc>::from_timestamp(approved_at, 0).unwrap_or_else(Utc::now);
-            let revoked_at =
-                revoked_at.and_then(|t| DateTime::<Utc>::from_timestamp(t, 0));
+            let revoked_at = revoked_at.and_then(|t| DateTime::<Utc>::from_timestamp(t, 0));
             out.push(AllowedSender {
                 channel,
                 account_id,

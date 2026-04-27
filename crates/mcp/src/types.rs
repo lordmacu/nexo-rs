@@ -52,6 +52,22 @@ pub struct McpTool {
     pub description: Option<String>,
     #[serde(default, rename = "inputSchema")]
     pub input_schema: serde_json::Value,
+    /// Phase 74.2 — MCP 2025-11-25 SEP-986. Optional JSON Schema
+    /// describing the **success** payload of `tools/call`. When
+    /// present, the tool's `McpToolResult.structured_content`
+    /// (Phase 74.3) MUST validate against this schema. Claude
+    /// Code 2.1 uses this to type-check responses before forwarding
+    /// to the model — declaring it explicitly closes the class of
+    /// "schema drift" bugs that hit Phase 73's `updatedInput` flap.
+    /// Servers that don't have a stable response shape can leave
+    /// it as `None` (default); the field is omitted from the wire
+    /// then, matching pre-2025-11-25 behaviour.
+    #[serde(
+        default,
+        rename = "outputSchema",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub output_schema: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -93,6 +109,22 @@ pub struct McpToolResult {
     pub content: Vec<McpContent>,
     #[serde(default, rename = "isError")]
     pub is_error: bool,
+    /// Phase 74.3 — MCP 2025-11-25 typed result. When `Some`,
+    /// Claude Code 2.1 prefers this over re-parsing
+    /// `content[0].text` as JSON, which is the round-trip that
+    /// surfaced the Phase 73 `updatedInput` validation flap (the
+    /// text was re-serialised through Claude's Zod schema and the
+    /// drift between our shape and theirs blew up). Servers that
+    /// declare an `outputSchema` on the tool SHOULD populate this
+    /// so the validator runs against the typed object directly.
+    /// Omitted from the wire when `None` to stay compatible with
+    /// pre-2025-11-25 clients.
+    #[serde(
+        default,
+        rename = "structuredContent",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub structured_content: Option<serde_json::Value>,
 }
 
 /// Server handshake response carried on `initialize`.

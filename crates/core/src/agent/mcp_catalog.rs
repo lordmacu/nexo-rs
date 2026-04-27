@@ -222,6 +222,7 @@ impl McpToolCatalog {
                 name: entry.tool_name.clone(),
                 description: entry.description.clone(),
                 input_schema: entry.input_schema.clone(),
+                output_schema: None,
             };
             let def = McpTool::tool_def(&desc, &entry.server_name);
             let effective_passthrough = self

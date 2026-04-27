@@ -113,9 +113,7 @@ pub async fn drain_running_goals(
 mod tests {
     use super::*;
     use chrono::Utc;
-    use nexo_agent_registry::{
-        AgentHandle, AgentSnapshot, MemoryAgentRegistryStore,
-    };
+    use nexo_agent_registry::{AgentHandle, AgentSnapshot, MemoryAgentRegistryStore};
     use nexo_driver_types::GoalId;
     use std::sync::Mutex;
     use uuid::Uuid;
