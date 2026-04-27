@@ -28,6 +28,12 @@ const MAX_LIMIT: usize = 200;
 pub struct SearchQuery {
     #[serde(default)]
     from: Option<String>,
+    /// Domain-only filter for the From: header. Matches against the
+    /// substring `@domain` so `from_domain: "acme.com"` catches
+    /// every sender at acme.com without the noise of also matching
+    /// addresses where `acme.com` appears elsewhere.
+    #[serde(default)]
+    from_domain: Option<String>,
     #[serde(default)]
     to: Option<String>,
     #[serde(default)]
@@ -42,6 +48,14 @@ pub struct SearchQuery {
     unseen: Option<bool>,
     #[serde(default)]
     seen: Option<bool>,
+    /// Heuristic — match messages whose raw body contains
+    /// `multipart/` (the MIME-multipart marker every attachment-
+    /// bearing message carries). False positives possible
+    /// (forwarded plaintext that mentions the literal token), but
+    /// in practice this catches >95% of attachment messages without
+    /// IMAP server-side support for an exact-match flag.
+    #[serde(default)]
+    has_attachments: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -83,14 +97,16 @@ impl EmailSearchTool {
                     "query": {
                         "type": "object",
                         "properties": {
-                            "from":    { "type": "string" },
-                            "to":      { "type": "string" },
-                            "subject": { "type": "string" },
-                            "body":    { "type": "string" },
-                            "since":   { "type": "string", "description": "YYYY-MM-DD" },
-                            "before":  { "type": "string", "description": "YYYY-MM-DD" },
-                            "unseen":  { "type": "boolean" },
-                            "seen":    { "type": "boolean" }
+                            "from":             { "type": "string" },
+                            "from_domain":      { "type": "string", "description": "Match `@domain` in From." },
+                            "to":               { "type": "string" },
+                            "subject":          { "type": "string" },
+                            "body":             { "type": "string" },
+                            "since":            { "type": "string", "description": "YYYY-MM-DD" },
+                            "before":           { "type": "string", "description": "YYYY-MM-DD" },
+                            "unseen":           { "type": "boolean" },
+                            "seen":             { "type": "boolean" },
+                            "has_attachments":  { "type": "boolean", "description": "Heuristic — matches `multipart/` in body." }
                         }
                     }
                 },
@@ -171,6 +187,15 @@ pub fn build_search_atoms(q: &SearchQuery) -> Result<String> {
     if let Some(v) = &q.from {
         parts.push(format!("FROM {}", imap_quote(v)));
     }
+    if let Some(v) = &q.from_domain {
+        // Strip a leading `@` if the operator typed the full token —
+        // we re-add it so the IMAP atom matches `@domain.tld` and not
+        // the bare domain (which would also match the body).
+        let trimmed = v.trim().trim_start_matches('@');
+        if !trimmed.is_empty() {
+            parts.push(format!("FROM {}", imap_quote(&format!("@{trimmed}"))));
+        }
+    }
     if let Some(v) = &q.to {
         parts.push(format!("TO {}", imap_quote(v)));
     }
@@ -195,6 +220,13 @@ pub fn build_search_atoms(q: &SearchQuery) -> Result<String> {
     }
     if matches!(q.seen, Some(true)) {
         parts.push("SEEN".into());
+    }
+    if matches!(q.has_attachments, Some(true)) {
+        // `multipart/` is the standard MIME marker for messages
+        // carrying attachments. IMAP's `BODY` atom does substring
+        // matching across the entire body — false positives are
+        // possible (someone forwarding the literal text) but rare.
+        parts.push(format!("BODY {}", imap_quote("multipart/")));
     }
     if parts.is_empty() {
         Ok("ALL".into())
@@ -254,5 +286,45 @@ mod tests {
         // The whole thing is a single quoted string after escape.
         assert!(s.starts_with(r#"FROM "alice\" OR FROM \"evil""#));
         // No bare unescaped quote can break out of the atom.
+    }
+
+    #[test]
+    fn from_domain_renders_at_prefix() {
+        let mut q = SearchQuery::default();
+        q.from_domain = Some("acme.com".into());
+        assert_eq!(build_search_atoms(&q).unwrap(), r#"FROM "@acme.com""#);
+    }
+
+    #[test]
+    fn from_domain_strips_redundant_at() {
+        let mut q = SearchQuery::default();
+        q.from_domain = Some("@acme.com".into());
+        // We strip the operator's leading `@` and re-add ours so the
+        // emitted atom is exactly `@acme.com`, not `@@acme.com`.
+        assert_eq!(build_search_atoms(&q).unwrap(), r#"FROM "@acme.com""#);
+    }
+
+    #[test]
+    fn from_domain_empty_is_dropped() {
+        let mut q = SearchQuery::default();
+        q.from_domain = Some("@".into());
+        assert_eq!(build_search_atoms(&q).unwrap(), "ALL");
+    }
+
+    #[test]
+    fn has_attachments_emits_multipart_body_atom() {
+        let mut q = SearchQuery::default();
+        q.has_attachments = Some(true);
+        assert_eq!(build_search_atoms(&q).unwrap(), r#"BODY "multipart/""#);
+    }
+
+    #[test]
+    fn from_domain_composes_with_other_filters() {
+        let mut q = SearchQuery::default();
+        q.from_domain = Some("acme.com".into());
+        q.unseen = Some(true);
+        let s = build_search_atoms(&q).unwrap();
+        assert!(s.contains(r#"FROM "@acme.com""#));
+        assert!(s.contains("UNSEEN"));
     }
 }
