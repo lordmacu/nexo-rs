@@ -46,15 +46,90 @@ const TRANSIENT_BACKOFF_MAX_MS: u64 = 30_000;
 
 /// Per-instance state shared between the spawned worker and the
 /// `DispatcherHandle` impl that 48.7 tools call into.
-struct InstanceState {
+pub struct InstanceState {
     queue: Arc<OutboundQueue>,
     address: String,
+}
+
+/// Cheap, `Arc`-able core that the outbound dispatcher shares with
+/// the email tools. Holds only the per-instance map needed for
+/// `enqueue_for_instance` — keeps the dispatcher's lifetime
+/// (workers + cancel token) separate from the tool surface, so the
+/// tool registry can outlive a `stop()` call without dangling.
+pub struct DispatcherCore {
+    instances: Arc<DashMap<String, Arc<InstanceState>>>,
+}
+
+impl DispatcherCore {
+    pub fn instance_ids(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.instances.iter().map(|e| e.key().clone()).collect();
+        v.sort();
+        v
+    }
+
+    pub async fn enqueue_for_instance(
+        &self,
+        instance: &str,
+        cmd: OutboundCommand,
+    ) -> Result<String> {
+        let state = self
+            .instances
+            .get(instance)
+            .ok_or_else(|| anyhow!("unknown email instance: {instance}"))?
+            .clone();
+        let from = state.address.clone();
+        let message_id = generate_message_id(&from);
+        let raw = build_mime(
+            BuildContext {
+                message_id: &message_id,
+                from: &from,
+                now: Utc::now(),
+            },
+            &cmd,
+        )
+        .await
+        .with_context(|| format!("build outbound MIME for {message_id}"))?;
+        let now = Utc::now().timestamp();
+        let job = OutboundJob {
+            message_id: message_id.clone(),
+            instance: instance.to_string(),
+            envelope: SmtpEnvelope {
+                from,
+                to: cmd.to,
+                cc: cmd.cc,
+                bcc: cmd.bcc,
+            },
+            raw_mime: raw,
+            attempts: 0,
+            next_attempt_at: now,
+            last_error: None,
+            created_at: now,
+            done: false,
+        };
+        state.queue.enqueue(&job).await?;
+        Ok(message_id)
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::tool::DispatcherHandle for DispatcherCore {
+    async fn enqueue_for_instance(
+        &self,
+        instance: &str,
+        cmd: OutboundCommand,
+    ) -> Result<String> {
+        DispatcherCore::enqueue_for_instance(self, instance, cmd).await
+    }
+
+    fn instance_ids(&self) -> Vec<String> {
+        DispatcherCore::instance_ids(self)
+    }
 }
 
 pub struct OutboundDispatcher {
     workers: Vec<JoinHandle<()>>,
     cancel: CancellationToken,
-    instances: Arc<DashMap<String, Arc<InstanceState>>>,
+    core: Arc<DispatcherCore>,
 }
 
 impl OutboundDispatcher {
@@ -117,61 +192,26 @@ impl OutboundDispatcher {
         Ok(Self {
             workers,
             cancel,
-            instances,
+            core: Arc::new(DispatcherCore { instances }),
         })
     }
 
-    /// Sorted list of declared instance ids.
-    pub fn instance_ids(&self) -> Vec<String> {
-        let mut v: Vec<String> = self.instances.iter().map(|e| e.key().clone()).collect();
-        v.sort();
-        v
+    /// Cheap shared handle the tool surface holds. Outlives `stop()`
+    /// so a tool registry that retained a reference doesn't dangle.
+    pub fn core(&self) -> Arc<DispatcherCore> {
+        self.core.clone()
     }
 
-    /// Build a Message-ID, render MIME, persist the job. The
-    /// matching `OutboundWorker`'s drain tick picks it up on the
-    /// next cycle.
+    pub fn instance_ids(&self) -> Vec<String> {
+        self.core.instance_ids()
+    }
+
     pub async fn enqueue_for_instance(
         &self,
         instance: &str,
         cmd: OutboundCommand,
     ) -> Result<String> {
-        let state = self
-            .instances
-            .get(instance)
-            .ok_or_else(|| anyhow!("unknown email instance: {instance}"))?
-            .clone();
-        let from = state.address.clone();
-        let message_id = generate_message_id(&from);
-        let raw = build_mime(
-            BuildContext {
-                message_id: &message_id,
-                from: &from,
-                now: Utc::now(),
-            },
-            &cmd,
-        )
-        .await
-        .with_context(|| format!("build outbound MIME for {message_id}"))?;
-        let now = Utc::now().timestamp();
-        let job = OutboundJob {
-            message_id: message_id.clone(),
-            instance: instance.to_string(),
-            envelope: SmtpEnvelope {
-                from,
-                to: cmd.to,
-                cc: cmd.cc,
-                bcc: cmd.bcc,
-            },
-            raw_mime: raw,
-            attempts: 0,
-            next_attempt_at: now,
-            last_error: None,
-            created_at: now,
-            done: false,
-        };
-        state.queue.enqueue(&job).await?;
-        Ok(message_id)
+        self.core.enqueue_for_instance(instance, cmd).await
     }
 
     pub async fn stop(self) {

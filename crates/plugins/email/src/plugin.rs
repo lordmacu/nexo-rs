@@ -73,6 +73,20 @@ impl EmailPlugin {
         &self.cfg
     }
 
+    /// Cheap shared handle the email tools (Phase 48.7) need. Returns
+    /// `None` until `start` has armed the outbound dispatcher; the
+    /// runtime should invoke this *after* `plugins.start_all()` so
+    /// the registry build sees a primed handle.
+    pub async fn dispatcher_handle(
+        &self,
+    ) -> Option<std::sync::Arc<dyn crate::tool::DispatcherHandle>> {
+        self.outbound
+            .lock()
+            .await
+            .as_ref()
+            .map(|d| d.core() as std::sync::Arc<dyn crate::tool::DispatcherHandle>)
+    }
+
     /// Snapshot of every account's worker health. `None` until `start`
     /// has been called.
     pub async fn health_map(&self) -> Option<HealthMap> {

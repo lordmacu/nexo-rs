@@ -685,13 +685,13 @@ Open:
     `secrets/email/<inst>.toml` by hand. `provider_hint(domain)`
     returns ready-to-paste endpoints; the `dialoguer` glue is
     unwritten.
-  - **Tool registration in `src/main.rs`.** `register_email_tools(
-    &registry, ctx)` exists and is fully tested but isn't called at
-    boot: the registry build runs before `EmailPlugin::start` arms
-    the `OutboundDispatcher` whose `DispatcherHandle` the tools
-    need. Two clean fixes — construct the dispatcher externally
-    and share an `Arc<dyn DispatcherHandle>`, or add a post-start
-    hook on the plugin.
+  - **Tool registration in `src/main.rs`.** ✅ Shipped 2026-04-27.
+    `OutboundDispatcher` extracts a cheap `Arc<DispatcherCore>` that
+    `EmailPlugin::dispatcher_handle()` returns post-start; main.rs
+    builds an `EmailToolContext` after `plugins.start_all()` and the
+    per-agent loop calls `register_email_tools(&tools, ctx)` when
+    `agent.plugins` lists `email`. Six handlers (send / reply /
+    archive / move_to / label / search) now reach the LLM.
   - **greenmail e2e** harness (Docker compose + a `feature =
     "email-e2e"` test suite that runs send → inbound → reply →
     archive against a real IMAP/SMTP server).
