@@ -70,6 +70,9 @@ impl InboundManager {
                 idle_reissue: Duration::from_secs(cfg.idle_reissue_minutes * 60),
                 poll_fallback: Duration::from_secs(cfg.poll_fallback_seconds),
                 inbox_folder: account_cfg.folders.inbox.clone(),
+                max_body_bytes: cfg.max_body_bytes,
+                max_attachment_bytes: cfg.max_attachment_bytes,
+                attachments_dir: std::path::PathBuf::from(&cfg.attachments_dir),
             };
             workers.push(tokio::spawn(worker.run()));
         }
@@ -106,6 +109,12 @@ struct AccountWorker {
     idle_reissue: Duration,
     poll_fallback: Duration,
     inbox_folder: String,
+    /// Phase 48.5 — MIME enrichment knobs cloned from the plugin
+    /// config so the worker doesn't need to reach back into the
+    /// shared cfg (and so hot-reload can swap workers cleanly).
+    max_body_bytes: usize,
+    max_attachment_bytes: usize,
+    attachments_dir: std::path::PathBuf,
 }
 
 impl AccountWorker {
@@ -260,14 +269,41 @@ impl AccountWorker {
         let mut highest = last_uid;
         for uid in uids {
             let msg = conn.fetch_uid(uid).await?;
+            // Phase 48.5 — best-effort MIME parse. Failures degrade
+            // to a raw-only publish so a malformed message never
+            // wedges the worker.
+            let parse_cfg = crate::mime_parse::ParseConfig {
+                max_body_bytes: self.max_body_bytes,
+                max_attachment_bytes: self.max_attachment_bytes,
+                attachments_dir: self.attachments_dir.clone(),
+                fallback_internal_date: msg.internal_date,
+            };
+            let (meta, attachments) = match crate::mime_parse::parse_eml(
+                &msg.raw_bytes,
+                &parse_cfg,
+            )
+            .await
+            {
+                Ok(p) => (Some(p.meta), p.attachments),
+                Err(e) => {
+                    warn!(
+                        target: "plugin.email",
+                        instance = %self.account_cfg.instance,
+                        uid = msg.uid,
+                        error = %e,
+                        "email.parse.malformed — publishing raw-only"
+                    );
+                    (None, Vec::new())
+                }
+            };
             let event = InboundEvent {
                 account_id: self.account_cfg.address.clone(),
                 instance: self.account_cfg.instance.clone(),
                 uid: msg.uid,
                 internal_date: msg.internal_date,
                 raw_bytes: msg.raw_bytes,
-                meta: None,
-                attachments: vec![],
+                meta,
+                attachments,
             };
             let topic = inbound_topic_for(&self.account_cfg.instance);
             let payload = serde_json::to_value(&event)?;
