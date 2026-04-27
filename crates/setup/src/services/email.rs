@@ -6,6 +6,12 @@
 //! enter the address, accept the auto-detected provider preset (or
 //! override), pick an auth kind, persist both files atomically.
 //!
+//! Phase 48 UX polish — `run_email_wizard` is now a menu loop
+//! (List / Add / Edit / Delete / Probe). The single-shot add flow
+//! lives in `run_add_or_edit_account` and is reused by both Add and
+//! Edit. Probe runs IMAP login + SMTP test_connection against the
+//! form so credentials are validated before persisting.
+//!
 //! Pure-helpers (`derive_default_instance`, `auth_kind_choices`,
 //! `render_account_block`, `serialise_secret_toml`) are unit-
 //! tested. The interactive `run_email_wizard` orchestrator wraps
@@ -13,12 +19,18 @@
 //! TTY mock that's out of scope here.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
 use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password, Select};
+use nexo_auth::email::{EmailAccount, EmailAuth};
+use nexo_auth::google::GoogleCredentialStore;
+use nexo_plugin_email::imap_conn::ImapConnection;
 use nexo_plugin_email::provider_hint;
+use nexo_plugin_email::smtp_conn::SmtpClient;
+use secrecy::SecretString;
 
-use nexo_config::types::plugins::{EmailProvider, TlsMode};
+use nexo_config::types::plugins::{EmailProvider, ImapEndpoint, SmtpEndpoint, TlsMode};
 
 /// In-memory snapshot the wizard hands to the writers. Decoupled
 /// from the YAML/TOML serialisers so tests can drive them directly.
@@ -266,32 +278,300 @@ pub fn upsert_email_account_yaml(
     Ok(path)
 }
 
-/// Interactive entry point. Opens prompts via `dialoguer`, builds an
-/// `EmailAccountForm`, persists YAML + TOML. Returns the resolved
-/// paths so the caller can echo them.
-pub fn run_email_wizard(
+/// One row of `list_accounts` — what we show in the menu's "List"
+/// branch and what `Edit`/`Delete` pick from.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AccountSummary {
+    pub instance: String,
+    pub address: String,
+    pub provider: String,
+    pub imap_host: String,
+    pub smtp_host: String,
+    pub has_secret_toml: bool,
+}
+
+/// Parse `<config_dir>/plugins/email.yaml` and return one summary
+/// per `accounts:` entry, plus a flag for whether the matching
+/// `<secrets_dir>/email/<instance>.toml` exists.
+pub fn list_accounts(config_dir: &Path, secrets_dir: &Path) -> Result<Vec<AccountSummary>> {
+    let path = config_dir.join("plugins").join("email.yaml");
+    if !path.exists() {
+        return Ok(vec![]);
+    }
+    let raw = std::fs::read_to_string(&path)
+        .with_context(|| format!("read {}", path.display()))?;
+    let root: serde_yaml::Value = serde_yaml::from_str(&raw)
+        .with_context(|| format!("parse {} (existing YAML invalid)", path.display()))?;
+    let accounts = root
+        .as_mapping()
+        .and_then(|m| m.get(serde_yaml::Value::String("email".into())))
+        .and_then(|v| v.as_mapping())
+        .and_then(|m| m.get(serde_yaml::Value::String("accounts".into())))
+        .and_then(|v| v.as_sequence())
+        .cloned()
+        .unwrap_or_default();
+    let mut out = Vec::with_capacity(accounts.len());
+    for acct in accounts {
+        let map = match acct.as_mapping() {
+            Some(m) => m,
+            None => continue,
+        };
+        let s = |k: &str| -> String {
+            map.get(serde_yaml::Value::String(k.into()))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        };
+        let nested_str = |outer: &str, inner: &str| -> String {
+            map.get(serde_yaml::Value::String(outer.into()))
+                .and_then(|v| v.as_mapping())
+                .and_then(|m| m.get(serde_yaml::Value::String(inner.into())))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        };
+        let instance = s("instance");
+        if instance.is_empty() {
+            continue;
+        }
+        let toml_exists = secrets_dir
+            .join("email")
+            .join(format!("{instance}.toml"))
+            .exists();
+        out.push(AccountSummary {
+            instance,
+            address: s("address"),
+            provider: s("provider"),
+            imap_host: nested_str("imap", "host"),
+            smtp_host: nested_str("smtp", "host"),
+            has_secret_toml: toml_exists,
+        });
+    }
+    Ok(out)
+}
+
+/// Remove an account from `email.yaml` (by `instance`) and delete
+/// its secret TOML. Returns `Ok(())` even if the secret was already
+/// missing — the operation is idempotent so a half-applied previous
+/// run can be cleaned up safely.
+pub fn delete_account(
     config_dir: &Path,
     secrets_dir: &Path,
+    instance: &str,
+) -> Result<()> {
+    use serde_yaml::Value;
+    let path = config_dir.join("plugins").join("email.yaml");
+    if !path.exists() {
+        return Err(anyhow!(
+            "no email.yaml at {} — nothing to delete",
+            path.display()
+        ));
+    }
+    let raw = std::fs::read_to_string(&path)
+        .with_context(|| format!("read {}", path.display()))?;
+    let mut root: Value = serde_yaml::from_str(&raw)
+        .with_context(|| format!("parse {}", path.display()))?;
+    let accounts_seq = root
+        .as_mapping_mut()
+        .and_then(|m| m.get_mut(Value::String("email".into())))
+        .and_then(|v| v.as_mapping_mut())
+        .and_then(|m| m.get_mut(Value::String("accounts".into())))
+        .and_then(|v| v.as_sequence_mut())
+        .ok_or_else(|| anyhow!("`email.accounts` missing or malformed in {}", path.display()))?;
+    let before = accounts_seq.len();
+    accounts_seq.retain(|slot| {
+        slot.as_mapping()
+            .and_then(|m| m.get(Value::String("instance".into())))
+            .and_then(|v| v.as_str())
+            != Some(instance)
+    });
+    if accounts_seq.len() == before {
+        return Err(anyhow!("no account with instance '{instance}' in {}", path.display()));
+    }
+    let body = serde_yaml::to_string(&root).context("serialise email.yaml after delete")?;
+    std::fs::write(&path, body).with_context(|| format!("write {}", path.display()))?;
+
+    let toml_path = secrets_dir.join("email").join(format!("{instance}.toml"));
+    if toml_path.exists() {
+        std::fs::remove_file(&toml_path)
+            .with_context(|| format!("delete {}", toml_path.display()))?;
+    }
+    Ok(())
+}
+
+/// Render a human-readable preview of what the wizard is about to
+/// write. Used by the review screen so the operator can spot typos
+/// before secrets land on disk.
+pub fn render_review(form: &EmailAccountForm) -> String {
+    fn tls_label(t: &TlsMode) -> &'static str {
+        match t {
+            TlsMode::ImplicitTls => "implicit_tls",
+            TlsMode::Starttls => "starttls",
+            TlsMode::Plain => "plain",
+        }
+    }
+    let auth = match &form.auth {
+        AuthForm::Password { username, .. } => format!("password (user={username}, pwd=<hidden>)"),
+        AuthForm::Oauth2Static { username, .. } => {
+            format!("oauth2_static (user={username}, token=<hidden>)")
+        }
+        AuthForm::Oauth2Google {
+            username,
+            google_account_id,
+        } => format!(
+            "oauth2_google (user={username}, google_account_id={google_account_id})"
+        ),
+    };
+    format!(
+        "  instance : {}\n  address  : {}\n  provider : {:?}\n  imap     : {}:{} ({})\n  smtp     : {}:{} ({})\n  auth     : {}",
+        form.instance,
+        form.address,
+        form.provider,
+        form.imap_host,
+        form.imap_port,
+        tls_label(&form.imap_tls),
+        form.smtp_host,
+        form.smtp_port,
+        tls_label(&form.smtp_tls),
+        auth,
+    )
+}
+
+/// IMAP+SMTP probe report. Each leg is independently `Ok` / `Err`
+/// so the operator sees both diagnostics — a working IMAP with a
+/// broken SMTP is the most common misconfiguration shape.
+#[derive(Debug)]
+pub struct ProbeReport {
+    pub imap: std::result::Result<String, String>,
+    pub smtp: std::result::Result<String, String>,
+}
+
+impl ProbeReport {
+    pub fn ok(&self) -> bool {
+        self.imap.is_ok() && self.smtp.is_ok()
+    }
+}
+
+/// Build a transient `EmailAccount` from the form (no allow_agents,
+/// no Google store wiring) and exercise IMAP login + SMTP
+/// `test_connection`. OAuth2Google is skipped since resolving the
+/// access token requires a live `GoogleCredentialStore`; the
+/// operator gets a clear "skipped — daemon will probe at boot" note
+/// instead of a misleading failure.
+pub async fn probe_connectivity(form: &EmailAccountForm) -> ProbeReport {
+    let google = Arc::new(GoogleCredentialStore::empty());
+    let auth = match form_auth_to_runtime(&form.auth) {
+        Ok(a) => a,
+        Err(e) => {
+            let msg = format!("skipped — {e}");
+            return ProbeReport {
+                imap: Err(msg.clone()),
+                smtp: Err(msg),
+            };
+        }
+    };
+    let account = EmailAccount {
+        instance: form.instance.clone(),
+        address: form.address.clone(),
+        auth,
+        allow_agents: vec![],
+    };
+    let imap_endpoint = ImapEndpoint {
+        host: form.imap_host.clone(),
+        port: form.imap_port,
+        tls: form.imap_tls,
+    };
+    let smtp_endpoint = SmtpEndpoint {
+        host: form.smtp_host.clone(),
+        port: form.smtp_port,
+        tls: form.smtp_tls,
+    };
+
+    let imap = match ImapConnection::connect(&imap_endpoint, &account, google.clone()).await {
+        Ok(conn) => {
+            let _ = conn.logout().await;
+            Ok(format!(
+                "{}:{} login OK",
+                imap_endpoint.host, imap_endpoint.port
+            ))
+        }
+        Err(e) => Err(format!("{e:#}")),
+    };
+
+    let smtp = match SmtpClient::build(&smtp_endpoint, &account, google.clone()).await {
+        Ok(client) => match client.test_connection().await {
+            Ok(true) => Ok(format!(
+                "{}:{} reachable",
+                smtp_endpoint.host, smtp_endpoint.port
+            )),
+            Ok(false) => Err(format!(
+                "{}:{} test_connection returned false",
+                smtp_endpoint.host, smtp_endpoint.port
+            )),
+            Err(e) => Err(format!("test_connection: {e:#}")),
+        },
+        Err(e) => Err(format!("{e:#}")),
+    };
+
+    ProbeReport { imap, smtp }
+}
+
+/// Map the wizard-local `AuthForm` to the runtime `EmailAuth`.
+/// `Oauth2Google` is rejected with a friendly message because the
+/// probe path can't resolve the Google access token without a fully
+/// initialised `GoogleCredentialStore` (which lives in the daemon,
+/// not in `nexo setup`).
+fn form_auth_to_runtime(auth: &AuthForm) -> Result<EmailAuth> {
+    match auth {
+        AuthForm::Password { username, password } => Ok(EmailAuth::Password {
+            username: username.clone(),
+            password: SecretString::new(password.clone()),
+        }),
+        AuthForm::Oauth2Static {
+            username,
+            access_token,
+        } => Ok(EmailAuth::OAuth2Static {
+            username: username.clone(),
+            access_token: SecretString::new(access_token.clone()),
+            refresh_token: None,
+            expires_at: None,
+        }),
+        AuthForm::Oauth2Google { .. } => Err(anyhow!(
+            "OAuth2 Google probe needs a live google store; the daemon will probe at boot",
+        )),
+    }
+}
+
+/// Single-shot Add or Edit flow. `prefill` populates defaults from
+/// an existing account so Edit doesn't force the operator to
+/// retype everything; pass `None` for a fresh Add.
+fn run_add_or_edit_account(
+    config_dir: &Path,
+    secrets_dir: &Path,
+    prefill: Option<&AccountSummary>,
 ) -> Result<(PathBuf, PathBuf)> {
     let theme = ColorfulTheme::default();
-    println!("Email account wizard");
-    println!("--------------------");
-    println!("Press Ctrl-C to abort. Existing instance ids are overwritten in place.");
 
     let address: String = Input::with_theme(&theme)
         .with_prompt("Email address (e.g. ops@example.com)")
+        .with_initial_text(prefill.map(|p| p.address.as_str()).unwrap_or(""))
         .interact_text()?;
     let address = address.trim().to_string();
-    if !address.contains('@') {
-        return Err(anyhow!("address must contain '@'"));
+    if !is_valid_address(&address) {
+        return Err(anyhow!("address must look like 'local@domain.tld'"));
     }
 
-    let default_instance = derive_default_instance(&address);
+    let default_instance = prefill
+        .map(|p| p.instance.clone())
+        .unwrap_or_else(|| derive_default_instance(&address));
     let instance: String = Input::with_theme(&theme)
         .with_prompt("Instance id (used in `plugin.inbound.email.<instance>`)")
         .default(default_instance)
         .interact_text()?;
     let instance = instance.trim().to_string();
+    if instance.is_empty() {
+        return Err(anyhow!("instance id cannot be empty"));
+    }
 
     let domain = address.split_once('@').map(|(_, d)| d).unwrap_or("");
     let hint = provider_hint(domain);
@@ -352,6 +632,7 @@ pub fn run_email_wizard(
                 .interact_text()?;
             let password = Password::with_theme(&theme)
                 .with_prompt("Password / app password")
+                .with_confirmation("Confirm password", "Passwords do not match")
                 .interact()?;
             AuthForm::Password { username, password }
         }
@@ -396,13 +677,277 @@ pub fn run_email_wizard(
         auth,
     };
 
+    println!("\nReview:");
+    println!("{}", render_review(&form));
+    if !Confirm::with_theme(&theme)
+        .with_prompt("Probe IMAP + SMTP before saving?")
+        .default(true)
+        .interact()?
+    {
+        // Operator declined probe — still ask for a final confirm
+        // before persisting.
+    } else {
+        println!("Probing… (this can take up to 30s)");
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .context("build tokio runtime for connectivity probe")?;
+        let report = rt.block_on(probe_connectivity(&form));
+        match &report.imap {
+            Ok(s) => println!("  ✔ IMAP {s}"),
+            Err(e) => println!("  ✘ IMAP {e}"),
+        }
+        match &report.smtp {
+            Ok(s) => println!("  ✔ SMTP {s}"),
+            Err(e) => println!("  ✘ SMTP {e}"),
+        }
+        if !report.ok()
+            && !Confirm::with_theme(&theme)
+                .with_prompt("Probe failed. Save anyway?")
+                .default(false)
+                .interact()?
+        {
+            return Err(anyhow!("aborted by operator after failed probe"));
+        }
+    }
+
+    if !Confirm::with_theme(&theme)
+        .with_prompt("Persist YAML + secret TOML?")
+        .default(true)
+        .interact()?
+    {
+        return Err(anyhow!("aborted by operator before persist"));
+    }
+
     let yaml_path = upsert_email_account_yaml(config_dir, &form)?;
     let toml_path =
         write_secret_toml(secrets_dir, &form.instance, &serialise_secret_toml(&form))?;
     println!("\n✔ wrote {}", yaml_path.display());
     println!("✔ wrote {} (mode 0o600)", toml_path.display());
+    println!(
+        "ℹ  if the daemon is running it will hot-reload via the config file watcher; \
+         otherwise the next `nexo run` picks up the change."
+    );
     Ok((yaml_path, toml_path))
 }
+
+/// Email setup menu — list / add / edit / delete / probe / quit.
+/// Loops until the operator picks "Salir". Each action is
+/// independent and any error inside a single action is surfaced
+/// (with a friendly print) without aborting the loop, so a
+/// mis-typed password on Add doesn't block the operator from
+/// reaching Delete.
+pub fn run_email_wizard(config_dir: &Path, secrets_dir: &Path) -> Result<()> {
+    let theme = ColorfulTheme::default();
+    println!("\nEmail setup");
+    println!("-----------");
+    loop {
+        let actions = [
+            "Listar cuentas",
+            "Agregar cuenta",
+            "Editar cuenta",
+            "Eliminar cuenta",
+            "Probar conectividad",
+            "Salir",
+        ];
+        let pick = Select::with_theme(&theme)
+            .with_prompt("¿Qué querés hacer?")
+            .items(&actions)
+            .default(0)
+            .interact()?;
+        let outcome: Result<()> = match pick {
+            0 => action_list(config_dir, secrets_dir),
+            1 => action_add(config_dir, secrets_dir),
+            2 => action_edit(config_dir, secrets_dir),
+            3 => action_delete(config_dir, secrets_dir),
+            4 => action_probe(config_dir, secrets_dir),
+            _ => return Ok(()),
+        };
+        if let Err(e) = outcome {
+            eprintln!("⚠  {e:#}");
+        }
+        println!();
+    }
+}
+
+fn action_list(config_dir: &Path, secrets_dir: &Path) -> Result<()> {
+    let accounts = list_accounts(config_dir, secrets_dir)?;
+    if accounts.is_empty() {
+        println!("(sin cuentas configuradas)");
+        return Ok(());
+    }
+    println!("{} cuentas configuradas:", accounts.len());
+    for a in &accounts {
+        let secret_marker = if a.has_secret_toml { "✔" } else { "✘ falta secret" };
+        println!(
+            "  • {:<16} {:<32} provider={} imap={} smtp={} {}",
+            a.instance, a.address, a.provider, a.imap_host, a.smtp_host, secret_marker,
+        );
+    }
+    Ok(())
+}
+
+fn action_add(config_dir: &Path, secrets_dir: &Path) -> Result<()> {
+    run_add_or_edit_account(config_dir, secrets_dir, None).map(|_| ())
+}
+
+fn action_edit(config_dir: &Path, secrets_dir: &Path) -> Result<()> {
+    let accounts = list_accounts(config_dir, secrets_dir)?;
+    if accounts.is_empty() {
+        return Err(anyhow!("no hay cuentas configuradas — usá 'Agregar cuenta'"));
+    }
+    let labels: Vec<String> = accounts
+        .iter()
+        .map(|a| format!("{} ({})", a.instance, a.address))
+        .collect();
+    let theme = ColorfulTheme::default();
+    let idx = Select::with_theme(&theme)
+        .with_prompt("Cuenta a editar")
+        .items(&labels)
+        .default(0)
+        .interact()?;
+    run_add_or_edit_account(config_dir, secrets_dir, Some(&accounts[idx])).map(|_| ())
+}
+
+fn action_delete(config_dir: &Path, secrets_dir: &Path) -> Result<()> {
+    let accounts = list_accounts(config_dir, secrets_dir)?;
+    if accounts.is_empty() {
+        return Err(anyhow!("no hay cuentas configuradas — nada para borrar"));
+    }
+    let labels: Vec<String> = accounts
+        .iter()
+        .map(|a| format!("{} ({})", a.instance, a.address))
+        .collect();
+    let theme = ColorfulTheme::default();
+    let idx = Select::with_theme(&theme)
+        .with_prompt("Cuenta a eliminar")
+        .items(&labels)
+        .default(0)
+        .interact()?;
+    let target = &accounts[idx];
+    if !Confirm::with_theme(&theme)
+        .with_prompt(format!(
+            "¿Borrar '{}' ({}) y su secret TOML?",
+            target.instance, target.address
+        ))
+        .default(false)
+        .interact()?
+    {
+        return Err(anyhow!("cancelado"));
+    }
+    delete_account(config_dir, secrets_dir, &target.instance)?;
+    println!("✔ '{}' eliminado.", target.instance);
+    Ok(())
+}
+
+fn action_probe(_config_dir: &Path, _secrets_dir: &Path) -> Result<()> {
+    // Probe-without-persist: run the same prompts as Add but don't
+    // call upsert/write_secret. Useful for "do my creds work?"
+    // before committing to email.yaml.
+    println!("(probe sin guardar — pedí los mismos campos que en 'Agregar', sin persistir)");
+    let theme = ColorfulTheme::default();
+    let address: String = Input::with_theme(&theme)
+        .with_prompt("Email address")
+        .interact_text()?;
+    let address = address.trim().to_string();
+    if !is_valid_address(&address) {
+        return Err(anyhow!("address must look like 'local@domain.tld'"));
+    }
+    let domain = address.split_once('@').map(|(_, d)| d).unwrap_or("");
+    let hint = provider_hint(domain);
+    let auth_idx = Select::with_theme(&theme)
+        .with_prompt("Auth kind")
+        .items(auth_kind_choices())
+        .default(if hint.suggest_oauth_google { 2 } else { 0 })
+        .interact()?;
+    let auth = match auth_idx {
+        0 => {
+            let username: String = Input::with_theme(&theme)
+                .with_prompt("Username")
+                .default(address.clone())
+                .interact_text()?;
+            let password = Password::with_theme(&theme)
+                .with_prompt("Password / app password")
+                .interact()?;
+            AuthForm::Password { username, password }
+        }
+        1 => {
+            let username: String = Input::with_theme(&theme)
+                .with_prompt("Username")
+                .default(address.clone())
+                .interact_text()?;
+            let access_token = Password::with_theme(&theme)
+                .with_prompt("OAuth2 access token")
+                .interact()?;
+            AuthForm::Oauth2Static {
+                username,
+                access_token,
+            }
+        }
+        _ => {
+            let username: String = Input::with_theme(&theme)
+                .with_prompt("Username")
+                .default(address.clone())
+                .interact_text()?;
+            AuthForm::Oauth2Google {
+                username,
+                google_account_id: String::new(),
+            }
+        }
+    };
+    let form = EmailAccountForm {
+        instance: derive_default_instance(&address),
+        address,
+        provider: hint.provider,
+        imap_host: hint.imap_host.clone(),
+        imap_port: hint.imap_port,
+        imap_tls: hint.imap_tls,
+        smtp_host: hint.smtp_host.clone(),
+        smtp_port: hint.smtp_port,
+        smtp_tls: hint.smtp_tls,
+        auth,
+    };
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("build tokio runtime for connectivity probe")?;
+    let report = rt.block_on(probe_connectivity(&form));
+    match &report.imap {
+        Ok(s) => println!("  ✔ IMAP {s}"),
+        Err(e) => println!("  ✘ IMAP {e}"),
+    }
+    match &report.smtp {
+        Ok(s) => println!("  ✔ SMTP {s}"),
+        Err(e) => println!("  ✘ SMTP {e}"),
+    }
+    Ok(())
+}
+
+fn is_valid_address(addr: &str) -> bool {
+    // Cheap syntactic check — full RFC 5322 is overkill for a CLI
+    // wizard. Require: exactly one '@', non-empty local + domain,
+    // domain has at least one dot, no whitespace.
+    if addr.chars().any(|c| c.is_whitespace()) {
+        return false;
+    }
+    let mut parts = addr.split('@');
+    let local = match parts.next() {
+        Some(s) if !s.is_empty() => s,
+        _ => return false,
+    };
+    let domain = match parts.next() {
+        Some(s) if !s.is_empty() => s,
+        _ => return false,
+    };
+    if parts.next().is_some() {
+        return false;
+    }
+    if !domain.contains('.') {
+        return false;
+    }
+    !local.is_empty()
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -523,5 +1068,119 @@ mod tests {
         let body = std::fs::read_to_string(&path).unwrap();
         assert!(body.contains("ops@x.com"));
         assert!(body.contains("support@x.com"));
+    }
+
+    #[test]
+    fn list_accounts_empty_when_yaml_missing() {
+        let dir = tempdir().unwrap();
+        let out = list_accounts(dir.path(), dir.path()).unwrap();
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn list_accounts_returns_summaries() {
+        let cfg = tempdir().unwrap();
+        let sec = tempdir().unwrap();
+        upsert_email_account_yaml(cfg.path(), &form("ops", "ops@x.com")).unwrap();
+        upsert_email_account_yaml(cfg.path(), &form("support", "support@x.com")).unwrap();
+        // Only `ops` has a secret on disk.
+        write_secret_toml(sec.path(), "ops", "[auth]\nkind=\"password\"\n").unwrap();
+        let out = list_accounts(cfg.path(), sec.path()).unwrap();
+        assert_eq!(out.len(), 2);
+        let ops = out.iter().find(|a| a.instance == "ops").unwrap();
+        let sup = out.iter().find(|a| a.instance == "support").unwrap();
+        assert_eq!(ops.address, "ops@x.com");
+        assert!(ops.has_secret_toml);
+        assert!(!sup.has_secret_toml);
+        assert_eq!(ops.imap_host, "imap.example.com");
+    }
+
+    #[test]
+    fn delete_account_removes_yaml_block_and_secret() {
+        let cfg = tempdir().unwrap();
+        let sec = tempdir().unwrap();
+        upsert_email_account_yaml(cfg.path(), &form("ops", "ops@x.com")).unwrap();
+        upsert_email_account_yaml(cfg.path(), &form("support", "support@x.com")).unwrap();
+        write_secret_toml(sec.path(), "ops", "[auth]\nkind=\"password\"\n").unwrap();
+        delete_account(cfg.path(), sec.path(), "ops").unwrap();
+        let body =
+            std::fs::read_to_string(cfg.path().join("plugins").join("email.yaml")).unwrap();
+        assert!(!body.contains("ops@x.com"));
+        assert!(body.contains("support@x.com"));
+        assert!(!sec.path().join("email").join("ops.toml").exists());
+    }
+
+    #[test]
+    fn delete_account_idempotent_on_missing_secret() {
+        let cfg = tempdir().unwrap();
+        let sec = tempdir().unwrap();
+        upsert_email_account_yaml(cfg.path(), &form("ops", "ops@x.com")).unwrap();
+        // No write_secret_toml → secret never landed on disk.
+        delete_account(cfg.path(), sec.path(), "ops").unwrap();
+        let body =
+            std::fs::read_to_string(cfg.path().join("plugins").join("email.yaml")).unwrap();
+        assert!(!body.contains("ops@x.com"));
+    }
+
+    #[test]
+    fn delete_account_errors_on_unknown_instance() {
+        let cfg = tempdir().unwrap();
+        let sec = tempdir().unwrap();
+        upsert_email_account_yaml(cfg.path(), &form("ops", "ops@x.com")).unwrap();
+        let err = delete_account(cfg.path(), sec.path(), "nope").unwrap_err();
+        assert!(format!("{err:#}").contains("nope"));
+    }
+
+    #[test]
+    fn render_review_includes_each_field_and_redacts_secret() {
+        let f = form("ops", "ops@x.com");
+        let s = render_review(&f);
+        assert!(s.contains("ops@x.com"));
+        assert!(s.contains("imap.example.com:993"));
+        assert!(s.contains("smtp.example.com:587"));
+        assert!(s.contains("password"));
+        assert!(s.contains("<hidden>"));
+        // The plaintext password from the form must NOT appear in
+        // the review screen — operators can be screen-recorded.
+        assert!(!s.contains("hunter2"));
+    }
+
+    #[test]
+    fn is_valid_address_accepts_normal_form() {
+        assert!(is_valid_address("ops@example.com"));
+        assert!(is_valid_address("a.b+c@sub.example.co.uk"));
+    }
+
+    #[test]
+    fn is_valid_address_rejects_pathological() {
+        assert!(!is_valid_address(""));
+        assert!(!is_valid_address("nodomain@"));
+        assert!(!is_valid_address("@nodomain"));
+        assert!(!is_valid_address("a@b")); // no TLD dot
+        assert!(!is_valid_address("a@@b.c"));
+        assert!(!is_valid_address("a b@c.d"));
+    }
+
+    #[test]
+    fn form_auth_to_runtime_password_round_trips_username() {
+        let f = AuthForm::Password {
+            username: "ops@x.com".into(),
+            password: "hunter2".into(),
+        };
+        let runtime = form_auth_to_runtime(&f).unwrap();
+        match runtime {
+            EmailAuth::Password { username, .. } => assert_eq!(username, "ops@x.com"),
+            _ => panic!("expected Password variant"),
+        }
+    }
+
+    #[test]
+    fn form_auth_to_runtime_oauth2_google_skipped() {
+        let f = AuthForm::Oauth2Google {
+            username: "ops@x.com".into(),
+            google_account_id: "ops".into(),
+        };
+        let err = form_auth_to_runtime(&f).unwrap_err();
+        assert!(format!("{err:#}").contains("google"));
     }
 }
