@@ -1,0 +1,33 @@
+[package]
+name          = "nexo-lsp"
+description   = "In-process Language Server Protocol client for Nexo (rust-analyzer + pylsp + tsserver + gopls)."
+version       = "0.1.1"
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+homepage      = { workspace = true }
+documentation = { workspace = true }
+readme        = "README.md"
+keywords      = { workspace = true }
+categories    = { workspace = true }
+
+[dependencies]
+anyhow       = { workspace = true }
+async-trait  = { workspace = true }
+bytes        = { workspace = true }
+dashmap      = { workspace = true }
+futures      = { workspace = true }
+lsp-types    = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+thiserror    = { workspace = true }
+tokio        = { workspace = true }
+tokio-util   = { workspace = true, features = ["codec", "rt"] }
+tracing      = { workspace = true }
+url          = "2"
+which        = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
