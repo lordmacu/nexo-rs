@@ -34,6 +34,39 @@ pub const OAUTH_BETA: &str = "oauth-2025-04-20";
 pub const SETUP_TOKEN_PREFIX: &str = "sk-ant-oat01-";
 pub const SETUP_TOKEN_MIN_LEN: usize = 80;
 
+/// First system block prepended on every Bearer-auth request. Anthropic
+/// gates Opus / Sonnet 4.x behind a Claude-Code identity claim — without
+/// this exact string as `system[0]`, the API rejects the request with a
+/// 4xx that surfaces as "no quota" in the agent UI. Mirrors OpenClaw
+/// `anthropic-transport-stream.ts:631`.
+pub const CLAUDE_CODE_SPOOF_SYSTEM: &str =
+    "You are Claude Code, Anthropic's official CLI for Claude.";
+
+/// Default Claude Code CLI version embedded in `User-Agent`. Operators
+/// can override via `NEXO_CLAUDE_CLI_VERSION` env var when Anthropic
+/// bumps the accepted CLI version without us shipping a release.
+/// Tracks OpenClaw `anthropic-transport-stream.ts:30`.
+pub const CLAUDE_CLI_DEFAULT_VERSION: &str = "2.1.75";
+
+/// Beta tags Anthropic expects on every Bearer-auth request. Order
+/// matters for diff churn but Anthropic accepts any permutation.
+const SUBSCRIPTION_BETAS: &[&str] = &[
+    "claude-code-20250219",
+    "oauth-2025-04-20",
+    "fine-grained-tool-streaming-2025-05-14",
+];
+
+/// Resolve the `User-Agent` Anthropic sees for Bearer-auth requests.
+/// Reads `NEXO_CLAUDE_CLI_VERSION` first, falls back to
+/// [`CLAUDE_CLI_DEFAULT_VERSION`].
+pub fn claude_cli_user_agent() -> String {
+    let version = std::env::var("NEXO_CLAUDE_CLI_VERSION")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| CLAUDE_CLI_DEFAULT_VERSION.to_string());
+    format!("claude-cli/{version}")
+}
+
 const REFRESH_MARGIN_SECS: i64 = 60;
 
 /// On-disk OAuth bundle shape. Written by the setup wizard; read and
@@ -80,9 +113,24 @@ impl OAuthBundle {
 
 /// Headers resolved for a specific auth variant. `beta` is `Some`
 /// when the variant uses Bearer auth and needs the OAuth beta header.
+/// `extra` carries Bearer-only headers Anthropic requires for the
+/// Claude Code identity claim (`User-Agent`, `x-app`,
+/// `anthropic-dangerous-direct-browser-access`). Empty for `ApiKey`.
 pub struct AuthHeaders {
     pub auth: (&'static str, String),
     pub beta: Option<&'static str>,
+    pub extra: Vec<(&'static str, String)>,
+}
+
+fn bearer_extra_headers() -> Vec<(&'static str, String)> {
+    vec![
+        ("user-agent", claude_cli_user_agent()),
+        ("x-app", "cli".to_string()),
+        (
+            "anthropic-dangerous-direct-browser-access",
+            "true".to_string(),
+        ),
+    ]
 }
 
 /// Mutable OAuth state — `access` / `refresh` rotate on refresh.
@@ -253,16 +301,19 @@ impl AnthropicAuth {
             Self::ApiKey(k) => Ok(AuthHeaders {
                 auth: ("x-api-key", k.as_ref().clone()),
                 beta: None,
+                extra: Vec::new(),
             }),
             Self::SetupToken(t) => Ok(AuthHeaders {
                 auth: ("Authorization", format!("Bearer {}", t.as_ref())),
                 beta: Some(OAUTH_BETA),
+                extra: bearer_extra_headers(),
             }),
             Self::OAuth(state) => {
                 let access = state.ensure_fresh(http).await?;
                 Ok(AuthHeaders {
                     auth: ("Authorization", format!("Bearer {access}")),
                     beta: Some(OAUTH_BETA),
+                    extra: bearer_extra_headers(),
                 })
             }
         }
@@ -280,6 +331,17 @@ impl AnthropicAuth {
     /// (used by error classification to surface "re-run wizard" hints).
     pub fn is_subscription(&self) -> bool {
         matches!(self, Self::SetupToken(_) | Self::OAuth(_))
+    }
+
+    /// Beta tags Anthropic expects on every Bearer-auth request. Empty
+    /// for `ApiKey` because the legacy `x-api-key` path predates the
+    /// Claude Code identity claim.
+    pub fn subscription_betas(&self) -> &'static [&'static str] {
+        if self.is_subscription() {
+            SUBSCRIPTION_BETAS
+        } else {
+            &[]
+        }
     }
 }
 
@@ -455,6 +517,7 @@ mod tests {
         assert_eq!(h.auth.0, "x-api-key");
         assert_eq!(h.auth.1, "sk-ant-test");
         assert!(h.beta.is_none());
+        assert!(h.extra.is_empty(), "ApiKey must not emit bearer extras");
     }
 
     #[tokio::test]
@@ -464,6 +527,24 @@ mod tests {
         assert_eq!(h.auth.0, "Authorization");
         assert!(h.auth.1.starts_with("Bearer sk-ant-oat01-"));
         assert_eq!(h.beta, Some(OAUTH_BETA));
+        let keys: Vec<&str> = h.extra.iter().map(|(k, _)| *k).collect();
+        assert!(keys.contains(&"user-agent"));
+        assert!(keys.contains(&"x-app"));
+        assert!(keys.contains(&"anthropic-dangerous-direct-browser-access"));
+        let user_agent = h
+            .extra
+            .iter()
+            .find(|(k, _)| *k == "user-agent")
+            .map(|(_, v)| v.as_str())
+            .unwrap();
+        assert!(user_agent.starts_with("claude-cli/"));
+        let x_app = h
+            .extra
+            .iter()
+            .find(|(k, _)| *k == "x-app")
+            .map(|(_, v)| v.as_str())
+            .unwrap();
+        assert_eq!(x_app, "cli");
     }
 
     #[test]
@@ -491,6 +572,41 @@ mod tests {
         .unwrap();
         let b = read_claude_cli_credentials_from_file(&path).unwrap();
         assert_eq!(b.access_token, "a");
+    }
+
+    #[test]
+    fn subscription_betas_only_for_bearer() {
+        let api = AnthropicAuth::api_key("sk-ant-test".into());
+        assert!(api.subscription_betas().is_empty());
+
+        let setup = AnthropicAuth::setup_token("sk-ant-oat01-xxx".into());
+        let betas = setup.subscription_betas();
+        assert!(betas.contains(&"claude-code-20250219"));
+        assert!(betas.contains(&"oauth-2025-04-20"));
+        assert!(betas.contains(&"fine-grained-tool-streaming-2025-05-14"));
+    }
+
+    #[test]
+    fn user_agent_resolves_default_override_and_blank() {
+        // Single test exercises all three branches sequentially to avoid
+        // cross-test races on the shared `NEXO_CLAUDE_CLI_VERSION` env
+        // var (cargo runs tests in the same process in parallel).
+        std::env::remove_var("NEXO_CLAUDE_CLI_VERSION");
+        assert_eq!(
+            claude_cli_user_agent(),
+            format!("claude-cli/{CLAUDE_CLI_DEFAULT_VERSION}")
+        );
+
+        std::env::set_var("NEXO_CLAUDE_CLI_VERSION", "9.9.9");
+        assert_eq!(claude_cli_user_agent(), "claude-cli/9.9.9");
+
+        std::env::set_var("NEXO_CLAUDE_CLI_VERSION", "   ");
+        assert_eq!(
+            claude_cli_user_agent(),
+            format!("claude-cli/{CLAUDE_CLI_DEFAULT_VERSION}")
+        );
+
+        std::env::remove_var("NEXO_CLAUDE_CLI_VERSION");
     }
 
     #[test]

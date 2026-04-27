@@ -283,6 +283,54 @@ the daemon side lands.
 - [ ] **Subscribe to resources** (`resources/subscribe`) — file
   watchers, DB triggers; medium effort, niche use.
 
+### MCP server hardening (Phase 76)
+
+Surfaces the new server-side runtime so operators can manage
+third-party MCP plugins (e.g. `nexo-marketing`) from the admin UI
+the moment Phase 76 lands.
+
+- [ ] **HTTP transport endpoint editor (76.1)** — list of
+  bound listeners (`stdio` vs `http://addr:port`), edit form to
+  add/remove HTTP listeners and bind addresses, badge per
+  listener showing live socket state.
+- [ ] **Auth configuration per listener (76.3)** — picker
+  `None / StaticToken / BearerJwt / MutualTls`, JWKS URL +
+  cache TTL editor for JWT, secret-redacted token vault for
+  StaticToken, mTLS PEM upload + fingerprint preview.
+- [ ] **Tenant matrix (76.4)** — table of registered tenants
+  (`tenant_id`, principal count, scopes), drill-down to view
+  what tools each tenant has called in the last 24 h. Cross-
+  tenant leak alerts pulled from the audit log.
+- [ ] **Rate-limit editor (76.5)** — global default + per-tool
+  overrides as `(rps, burst)` pairs. Live counter
+  `mcp_server_rate_limit_hits_total{tenant,tool}` heatmap so the
+  operator sees who is hitting the wall.
+- [ ] **Backpressure dashboard (76.6)** — gauges for
+  `mcp_server_in_flight{tenant}`, queue depth, per-tool timeout
+  breach count; "kill all in-flight for tenant X" emergency
+  button (calls into the cancellation token registry).
+- [ ] **Sessions explorer (76.8)** — list active sessions
+  (`session_id`, `tenant`, `principal`, idle_for, subscriptions),
+  toggle for `durable_sessions`, revoke button.
+- [ ] **Audit-log viewer (76.11)** — admin-side equivalent of
+  `mcp_audit_tail`: filterable by tenant / tool / status /
+  timeframe, export CSV. Reuses the same SQLite that the CLI
+  reads so the two never disagree.
+- [ ] **Live tool catalog per server (76.7)** — fed by
+  `tools/list_changed` notifications (server-side now), keeps the
+  "MCP server manager" tool count fresh without polling.
+- [ ] **Health + readiness pills (76.10)** — `/healthz` +
+  `/readyz` per listener, p99 latency sparkline pulled from
+  `mcp_server_latency_seconds`.
+- [ ] **TLS / reverse-proxy guidance card (76.13)** — surface
+  whether the listener terminates TLS itself, sits behind a
+  proxy, or is plain HTTP (with a red banner if non-loopback
+  + plain HTTP + auth != `None` mismatch).
+- [ ] **Extension template scaffolder (76.15)** — one-click
+  "create new MCP-server extension from template" that drops
+  `extensions/templates/mcp-server-skeleton/` and pre-wires
+  the listener config in `mcp_server.yaml`.
+
 ---
 
 ## Phase A7 — Memory inspector   ⬜
@@ -364,6 +412,13 @@ IOUs — features that landed in the daemon but have no UI yet.
 
 - [ ] `credentials:` block (Phase 17) — Phase A3 agent-config tab
   Phase A3 covers this
+- [ ] `NEXO_CLAUDE_CLI_VERSION` env override (Phase 15.9) — surface in
+  the setup-wizard env-vars panel and the Anthropic auth tab so
+  operators can patch the Claude-Code CLI version stamp without
+  redeploying when Anthropic bumps the accepted version. Backend
+  reads the env at request time via `claude_cli_user_agent()` in
+  `crates/llm/src/anthropic_auth.rs`; default lives in
+  `CLAUDE_CLI_DEFAULT_VERSION`.
 - [ ] Release pipeline (Phase 27.1 `cargo-dist` baseline + 27.2
   GH Actions release workflow + 27.4 Debian/RPM packages Tier 1+3)
   — tag-to-asset pipeline complete: push `nexo-rs-v<version>` →

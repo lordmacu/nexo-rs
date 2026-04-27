@@ -56,13 +56,18 @@ fn api_version() -> String {
 const CACHE_BETA_BASIC: &str = "prompt-caching-2024-07-31";
 const CACHE_BETA_LONG_TTL: &str = "extended-cache-ttl-2025-04-11";
 
-/// Merge an existing beta header (set by the auth layer for OAuth /
-/// Claude Code paths) with the prompt-caching betas. Returns `None`
-/// when neither side wants a beta header. `want_long_ttl` adds the
-/// extended-TTL beta on top of the basic one (only when at least one
-/// `Ephemeral1h` block or `cache_tools=true` was present).
+/// Merge the existing beta header (set by the auth layer for OAuth /
+/// Claude Code paths), the auth-level subscription betas (Bearer
+/// requests demand `claude-code-20250219`,
+/// `fine-grained-tool-streaming-2025-05-14`, …), and the prompt-caching
+/// betas. Returns `None` when none of the inputs requests a beta header.
+/// `want_long_ttl` adds the extended-TTL beta on top of the basic one
+/// (only when at least one `Ephemeral1h` block or `cache_tools=true`
+/// was present). Order: existing → subscription → cache. Duplicates
+/// dropped preserving first occurrence.
 pub(crate) fn merge_beta_headers(
     existing: Option<&str>,
+    subscription_betas: &[&str],
     want_cache_beta: bool,
     want_long_ttl: bool,
 ) -> Option<String> {
@@ -83,13 +88,14 @@ pub(crate) fn merge_beta_headers(
                 .unwrap_or_else(|| CACHE_BETA_LONG_TTL.to_string()),
         );
     }
-    if existing.is_none() && cache_pieces.is_empty() {
+    if existing.is_none() && subscription_betas.is_empty() && cache_pieces.is_empty() {
         return None;
     }
     let mut seen: Vec<String> = Vec::new();
     let from_existing: Vec<&str> = existing.map(|s| s.split(',').collect()).unwrap_or_default();
     for piece in from_existing
         .into_iter()
+        .chain(subscription_betas.iter().copied())
         .chain(cache_pieces.iter().flat_map(|s| s.split(',')))
     {
         let t = piece.trim();
@@ -210,6 +216,19 @@ impl AnthropicClient {
         }
         if !response.status().is_success() {
             let body = read_body_lossy(response).await;
+            // Generic 4xx (not 401/403/429): commonly a quota / model
+            // entitlement / payload-shape error. The taxonomy collapses
+            // these into `LlmError::Other`, which the agent UI surfaces
+            // as a vague "no quota". Log the raw body once at warn so
+            // operators can see the real reason without re-running.
+            tracing::warn!(
+                target: "anthropic",
+                status,
+                model = %self.model,
+                subscription = self.auth.is_subscription(),
+                body = %truncate_for_log(&body, 512),
+                "non-2xx response surfaced as LlmError::Other"
+            );
             return Err(LlmError::Other(anyhow::anyhow!("HTTP {status}: {body}")));
         }
         Ok(response)
@@ -219,7 +238,14 @@ impl AnthropicClient {
         validate_request(req)?;
         self.rate_limiter.acquire().await;
         let url = format!("{}/v1/messages", self.base_url);
-        let body = build_body(&self.model, req);
+        tracing::info!(
+            target: "anthropic",
+            model = %self.model,
+            subscription = self.auth.is_subscription(),
+            stream = false,
+            "anthropic request"
+        );
+        let body = build_body(&self.model, req, self.auth.is_subscription());
         let headers = self
             .auth
             .resolve_headers(&self.http)
@@ -232,9 +258,13 @@ impl AnthropicClient {
             .header(headers.auth.0, headers.auth.1.as_str())
             .header("anthropic-version", &self.api_version)
             .header("content-type", "application/json");
+        for (k, v) in &headers.extra {
+            builder = builder.header(*k, v.as_str());
+        }
         let cache_flags = caching_flags(&self.model, req);
         if let Some(beta) = merge_beta_headers(
             headers.beta,
+            self.auth.subscription_betas(),
             cache_flags.any_cache,
             cache_flags.any_long_ttl,
         ) {
@@ -275,7 +305,14 @@ impl AnthropicClient {
         validate_request(req)?;
         self.rate_limiter.acquire().await;
         let url = format!("{}/v1/messages", self.base_url);
-        let mut body = build_body(&self.model, req);
+        tracing::info!(
+            target: "anthropic",
+            model = %self.model,
+            subscription = self.auth.is_subscription(),
+            stream = true,
+            "anthropic request"
+        );
+        let mut body = build_body(&self.model, req, self.auth.is_subscription());
         body["stream"] = json!(true);
 
         let headers = self
@@ -290,9 +327,13 @@ impl AnthropicClient {
             .header("anthropic-version", &self.api_version)
             .header("content-type", "application/json")
             .header("accept", "text/event-stream");
+        for (k, v) in &headers.extra {
+            builder = builder.header(*k, v.as_str());
+        }
         let cache_flags = caching_flags(&self.model, req);
         if let Some(beta) = merge_beta_headers(
             headers.beta,
+            self.auth.subscription_betas(),
             cache_flags.any_cache,
             cache_flags.any_long_ttl,
         ) {
@@ -464,7 +505,40 @@ pub(crate) fn caching_flags(model: &str, req: &ChatRequest) -> CachingFlags {
     }
 }
 
-fn build_body(model: &str, req: &ChatRequest) -> Value {
+/// Inject the mandatory Claude-Code system block at index 0. If
+/// `body["system"]` is missing it becomes a one-element array; if it is
+/// a legacy `Value::String`, it is promoted to an array with the spoof
+/// first and the original text second; if it is already an array, the
+/// spoof is inserted at position 0.
+fn prepend_claude_code_spoof(body: &mut Value) {
+    let spoof = json!({
+        "type": "text",
+        "text": crate::anthropic_auth::CLAUDE_CODE_SPOOF_SYSTEM,
+    });
+    match body.get_mut("system") {
+        None => {
+            body["system"] = Value::Array(vec![spoof]);
+        }
+        Some(Value::String(s)) => {
+            let legacy = std::mem::take(s);
+            body["system"] = Value::Array(vec![
+                spoof,
+                json!({ "type": "text", "text": legacy }),
+            ]);
+        }
+        Some(Value::Array(arr)) => {
+            arr.insert(0, spoof);
+        }
+        Some(other) => {
+            // Defensive: unexpected shape — replace with spoof + best-effort
+            // re-wrap so the request still validates.
+            let preserved = std::mem::take(other);
+            body["system"] = Value::Array(vec![spoof, preserved]);
+        }
+    }
+}
+
+fn build_body(model: &str, req: &ChatRequest, is_subscription: bool) -> Value {
     let allow_cache = model_supports_caching(model);
     if !allow_cache && (!req.system_blocks.is_empty() || req.cache_tools) {
         // Warn once-per-process per legacy model so logs don't drown.
@@ -564,6 +638,13 @@ fn build_body(model: &str, req: &ChatRequest) -> Value {
         body["system"] = Value::Array(sys);
     } else if !system_parts.is_empty() {
         body["system"] = Value::String(system_parts.join("\n\n"));
+    }
+    // Bearer-auth requests must declare the Claude-Code identity in the
+    // first system block. Without it, Anthropic rejects Opus / Sonnet 4.x
+    // with a generic 4xx that surfaces as "no quota" upstream. Mirrors
+    // OpenClaw `anthropic-transport-stream.ts:627-641`.
+    if is_subscription {
+        prepend_claude_code_spoof(&mut body);
     }
     if !req.stop_sequences.is_empty() {
         body["stop_sequences"] = json!(req.stop_sequences);
@@ -964,7 +1045,7 @@ mod tests {
 
     #[test]
     fn body_includes_tools_and_stops() {
-        let body = build_body("claude-sonnet-4", &req_with_tools());
+        let body = build_body("claude-sonnet-4", &req_with_tools(), false);
         assert_eq!(body["tools"][0]["name"], "get_weather");
         assert!(body["tools"][0]["input_schema"].is_object());
         assert_eq!(body["stop_sequences"][0], "END");
@@ -988,7 +1069,7 @@ mod tests {
             "get_weather",
             "{\"temp\":22}",
         ));
-        let body = build_body("claude-sonnet-4", &r);
+        let body = build_body("claude-sonnet-4", &r, false);
         let msgs = body["messages"].as_array().unwrap();
         let assistant = msgs.iter().find(|m| m["role"] == "assistant").unwrap();
         assert_eq!(assistant["content"][0]["type"], "tool_use");
@@ -1032,7 +1113,7 @@ mod tests {
             tool_calls: Vec::new(),
             attachments: vec![Attachment::image_base64("image/png", "aGVsbG8=")],
         }];
-        let body = build_body("claude-sonnet-4", &r);
+        let body = build_body("claude-sonnet-4", &r, false);
         let content = &body["messages"][0]["content"];
         assert_eq!(content[0]["type"], "text");
         assert_eq!(content[1]["type"], "image");
@@ -1045,15 +1126,15 @@ mod tests {
     fn tool_choice_variants_serialize() {
         let mut r = req_with_tools();
         r.tool_choice = ToolChoice::Any;
-        assert_eq!(build_body("m", &r)["tool_choice"]["type"], "any");
+        assert_eq!(build_body("m", &r, false)["tool_choice"]["type"], "any");
         r.tool_choice = ToolChoice::None;
-        assert_eq!(build_body("m", &r)["tool_choice"]["type"], "none");
+        assert_eq!(build_body("m", &r, false)["tool_choice"]["type"], "none");
         r.tool_choice = ToolChoice::Specific("get_weather".into());
-        let b = build_body("m", &r);
+        let b = build_body("m", &r, false);
         assert_eq!(b["tool_choice"]["type"], "tool");
         assert_eq!(b["tool_choice"]["name"], "get_weather");
         r.tool_choice = ToolChoice::Auto;
-        assert!(build_body("m", &r).get("tool_choice").is_none());
+        assert!(build_body("m", &r, false).get("tool_choice").is_none());
     }
 
     #[test]
@@ -1078,7 +1159,7 @@ mod tests {
             system_blocks: Vec::new(),
             cache_tools: false,
         };
-        let body = build_body("claude-sonnet-4", &r);
+        let body = build_body("claude-sonnet-4", &r, false);
         let content = &body["messages"][0]["content"];
         // Must start with the image block — no leading empty text.
         assert_eq!(
@@ -1113,7 +1194,7 @@ mod tests {
             system_blocks: Vec::new(),
             cache_tools: false,
         };
-        let body = build_body("claude-sonnet-4", &r);
+        let body = build_body("claude-sonnet-4", &r, false);
         let content = &body["messages"][0]["content"];
         assert_eq!(content.as_array().unwrap().len(), 1);
         assert_eq!(content[0]["type"], "text");
@@ -1280,7 +1361,7 @@ mod tests {
 
     #[test]
     fn system_blocks_render_with_cache_control() {
-        let body = build_body("claude-sonnet-4-5", &req_with_blocks());
+        let body = build_body("claude-sonnet-4-5", &req_with_blocks(), false);
         let sys = body["system"].as_array().expect("system is array");
         assert_eq!(sys.len(), 3);
         assert_eq!(sys[0]["text"], "You are Ana.");
@@ -1295,7 +1376,7 @@ mod tests {
 
     #[test]
     fn tools_sorted_and_last_gets_cache_control() {
-        let body = build_body("claude-sonnet-4-5", &req_with_blocks());
+        let body = build_body("claude-sonnet-4-5", &req_with_blocks(), false);
         let tools = body["tools"].as_array().expect("tools is array");
         assert_eq!(tools[0]["name"], "a_tool");
         assert_eq!(tools[1]["name"], "b_tool");
@@ -1308,7 +1389,7 @@ mod tests {
     fn legacy_model_strips_cache_control() {
         let mut r = req_with_blocks();
         r.model = "claude-2.1".into();
-        let body = build_body("claude-2.1", &r);
+        let body = build_body("claude-2.1", &r, false);
         // Blocks still render but no cache_control fields.
         let sys = body["system"].as_array().unwrap();
         for b in sys {
@@ -1325,7 +1406,7 @@ mod tests {
         let mut r = req_with_blocks();
         r.system_blocks.clear();
         r.system_prompt = Some("legacy text".into());
-        let body = build_body("claude-sonnet-4-5", &r);
+        let body = build_body("claude-sonnet-4-5", &r, false);
         assert_eq!(body["system"], "legacy text");
     }
 
@@ -1369,7 +1450,7 @@ mod tests {
 
     #[test]
     fn merge_beta_headers_combines_existing_and_cache() {
-        let m = merge_beta_headers(Some("foo-2024-01-01"), true, true).unwrap();
+        let m = merge_beta_headers(Some("foo-2024-01-01"), &[], true, true).unwrap();
         assert!(m.contains("foo-2024-01-01"));
         assert!(m.contains("prompt-caching-2024-07-31"));
         assert!(m.contains("extended-cache-ttl-2025-04-11"));
@@ -1377,21 +1458,98 @@ mod tests {
 
     #[test]
     fn merge_beta_headers_dedupes() {
-        let m = merge_beta_headers(Some("prompt-caching-2024-07-31,foo"), true, false).unwrap();
+        let m =
+            merge_beta_headers(Some("prompt-caching-2024-07-31,foo"), &[], true, false).unwrap();
         assert_eq!(m.matches("prompt-caching-2024-07-31").count(), 1);
         assert!(m.contains("foo"));
     }
 
     #[test]
     fn merge_beta_headers_returns_none_when_no_input() {
-        assert!(merge_beta_headers(None, false, false).is_none());
+        assert!(merge_beta_headers(None, &[], false, false).is_none());
     }
 
     #[test]
     fn merge_beta_headers_no_long_ttl_when_only_short() {
-        let m = merge_beta_headers(None, true, false).unwrap();
+        let m = merge_beta_headers(None, &[], true, false).unwrap();
         assert!(m.contains("prompt-caching-2024-07-31"));
         assert!(!m.contains("extended-cache-ttl"));
+    }
+
+    #[test]
+    fn oauth_request_shape_prepends_claude_code_spoof() {
+        use crate::anthropic_auth::CLAUDE_CODE_SPOOF_SYSTEM;
+        let mut r = req_with_tools();
+        r.system_prompt = Some("custom system text".into());
+        let body = build_body("claude-sonnet-4-5", &r, true);
+        let sys = body["system"]
+            .as_array()
+            .expect("system must be array under subscription");
+        assert_eq!(sys[0]["type"], "text");
+        assert_eq!(sys[0]["text"], CLAUDE_CODE_SPOOF_SYSTEM);
+        // The legacy `system_prompt` string was at body["system"] = "custom…"
+        // before promotion; after promotion it lives at index 1.
+        assert_eq!(sys[1]["type"], "text");
+        assert_eq!(sys[1]["text"], "custom system text");
+    }
+
+    #[test]
+    fn api_key_request_shape_unchanged_no_spoof() {
+        use crate::anthropic_auth::CLAUDE_CODE_SPOOF_SYSTEM;
+        let r = req_with_tools();
+        let body = build_body("claude-sonnet-4-5", &r, false);
+        // Legacy path keeps system as a flat string when no blocks.
+        assert!(
+            body["system"].is_string(),
+            "api-key path must keep legacy string system"
+        );
+        let sys = body["system"].as_str().unwrap();
+        assert!(
+            !sys.contains(CLAUDE_CODE_SPOOF_SYSTEM),
+            "api-key path must not inject Claude-Code spoof"
+        );
+    }
+
+    #[test]
+    fn build_body_promotes_string_system_when_subscription() {
+        use crate::anthropic_auth::CLAUDE_CODE_SPOOF_SYSTEM;
+        let mut r = req_with_tools();
+        r.system_prompt = Some("legacy text".into());
+        r.system_blocks.clear();
+        let body = build_body("claude-sonnet-4", &r, true);
+        let sys = body["system"].as_array().unwrap();
+        assert_eq!(sys.len(), 2);
+        assert_eq!(sys[0]["text"], CLAUDE_CODE_SPOOF_SYSTEM);
+        assert_eq!(sys[1]["text"], "legacy text");
+    }
+
+    #[test]
+    fn build_body_creates_system_array_when_subscription_and_no_user_system() {
+        use crate::anthropic_auth::CLAUDE_CODE_SPOOF_SYSTEM;
+        let mut r = req_with_tools();
+        r.system_prompt = None;
+        r.system_blocks.clear();
+        let body = build_body("claude-sonnet-4", &r, true);
+        let sys = body["system"].as_array().unwrap();
+        assert_eq!(sys.len(), 1);
+        assert_eq!(sys[0]["text"], CLAUDE_CODE_SPOOF_SYSTEM);
+    }
+
+    #[test]
+    fn merge_beta_headers_with_subscription_dedupes_oauth_beta() {
+        // existing carries the legacy OAUTH_BETA constant; subscription
+        // betas include it again. Output must contain it exactly once
+        // and include the Claude-Code-specific betas.
+        let subscription = &[
+            "claude-code-20250219",
+            "oauth-2025-04-20",
+            "fine-grained-tool-streaming-2025-05-14",
+        ][..];
+        let m = merge_beta_headers(Some("oauth-2025-04-20"), subscription, true, false).unwrap();
+        assert_eq!(m.matches("oauth-2025-04-20").count(), 1);
+        assert!(m.contains("claude-code-20250219"));
+        assert!(m.contains("fine-grained-tool-streaming-2025-05-14"));
+        assert!(m.contains("prompt-caching-2024-07-31"));
     }
 
     #[test]

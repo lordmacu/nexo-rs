@@ -13,6 +13,7 @@ pub mod registry;
 pub mod retry;
 pub mod stream;
 pub mod telemetry;
+pub mod text_sanitize;
 pub mod token_counter;
 pub mod types;
 
