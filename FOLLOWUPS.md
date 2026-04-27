@@ -728,11 +728,16 @@ Open:
     surfaces; the `dkim_missing` WARN now logs the full list of
     probed selectors so the operator chasing a custom one knows
     what's already covered.
-  - **`/healthz` HTTP integration** for the per-account
-    `EmailPlugin::health_map()` rows. The data is already
-    populated (`outbound_queue_depth`, `outbound_dlq_depth`,
-    `outbound_sent_total`, `outbound_failed_total`,
-    `last_idle_alive_ts`); only the HTTP surface is missing.
+  - **`/healthz` HTTP integration.** ✅ Shipped 2026-04-27.
+    `RuntimeHealth.email_plugin: Option<Arc<EmailPlugin>>` and a
+    new `/email/health` route on the existing health server emit
+    a sorted JSON array — one row per account with `state`
+    (connecting / idle / polling / down), the IDLE / poll /
+    connect timestamps, `consecutive_failures`,
+    `messages_seen_total`, `last_error`, and the outbound
+    queue/DLQ/sent/failed totals. Returns `[]` (not 404) when
+    the plugin isn't configured so monitoring scripts can hit
+    the route unconditionally.
   - **Dedicated Prometheus metrics** for email
     (`email_imap_state{instance}` gauge,
     `email_imap_messages_fetched_total{instance}` counter,

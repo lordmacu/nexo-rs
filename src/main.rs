@@ -230,6 +230,11 @@ struct RuntimeHealth {
     ///   `/whatsapp/instances` — JSON list of available instances
     wa_pairing:
         std::collections::BTreeMap<String, nexo_plugin_whatsapp::pairing::SharedPairingState>,
+    /// Phase 48 follow-up #7 — `/email/health` exposes the per-account
+    /// `AccountHealth` map (state, IDLE alive ts, queue / DLQ depths,
+    /// sent / failed totals). `None` when the email plugin isn't
+    /// configured.
+    email_plugin: Option<Arc<nexo_plugin_email::EmailPlugin>>,
 }
 
 #[derive(Clone, Copy)]
@@ -911,6 +916,7 @@ async fn main() -> Result<()> {
         broker: broker.clone(),
         running_agents: Arc::clone(&running_agents),
         wa_pairing: wa_pairing.clone(),
+        email_plugin: email_plugin.clone(),
     };
     let metrics_handle = tokio::spawn(run_metrics_server(health.clone()));
     let health_handle = tokio::spawn(run_health_server(health.clone()));
@@ -7618,6 +7624,18 @@ async fn handle_health_conn(mut stream: TcpStream, health: RuntimeHealth) -> any
             )
             .await?;
         }
+        "/email/health" => {
+            // Phase 48 follow-up #7. Snapshot every account's
+            // `AccountHealth` row. Returns `[]` when the plugin
+            // isn't configured (vs 404), so monitoring scripts
+            // can hit the route unconditionally.
+            let body = match health.email_plugin.as_ref() {
+                Some(plugin) => render_email_health(plugin.as_ref()).await,
+                None => "[]".to_string(),
+            };
+            write_http_response(&mut stream, 200, "application/json; charset=utf-8", &body)
+                .await?;
+        }
         "/ready" => {
             let broker_ready = health.broker.is_ready();
             let agents = health.running_agents.load(Ordering::Relaxed);
@@ -7639,6 +7657,43 @@ async fn handle_health_conn(mut stream: TcpStream, health: RuntimeHealth) -> any
         }
     }
     Ok(())
+}
+
+/// Render the per-account email health snapshot as a stable JSON
+/// array. Phase 48 follow-up #7. Sorted by instance for
+/// deterministic output that monitoring agents can diff.
+async fn render_email_health(plugin: &nexo_plugin_email::EmailPlugin) -> String {
+    let Some(map) = plugin.health_map().await else {
+        return "[]".to_string();
+    };
+    let mut keys: Vec<String> = map.iter().map(|e| e.key().clone()).collect();
+    keys.sort();
+    let mut rows = Vec::with_capacity(keys.len());
+    for k in keys {
+        if let Some(arc) = map.get(&k).map(|v| v.value().clone()) {
+            let h = arc.read().await;
+            rows.push(serde_json::json!({
+                "instance": k,
+                "state": match h.state {
+                    nexo_plugin_email::WorkerState::Connecting => "connecting",
+                    nexo_plugin_email::WorkerState::Idle => "idle",
+                    nexo_plugin_email::WorkerState::Polling => "polling",
+                    nexo_plugin_email::WorkerState::Down => "down",
+                },
+                "last_idle_alive_ts": h.last_idle_alive_ts,
+                "last_poll_ts": h.last_poll_ts,
+                "last_connect_ok_ts": h.last_connect_ok_ts,
+                "consecutive_failures": h.consecutive_failures,
+                "messages_seen_total": h.messages_seen_total,
+                "last_error": h.last_error,
+                "outbound_queue_depth": h.outbound_queue_depth,
+                "outbound_dlq_depth": h.outbound_dlq_depth,
+                "outbound_sent_total": h.outbound_sent_total,
+                "outbound_failed_total": h.outbound_failed_total,
+            }));
+        }
+    }
+    serde_json::to_string(&rows).unwrap_or_else(|_| "[]".into())
 }
 
 async fn read_http_path(stream: &mut TcpStream) -> anyhow::Result<String> {
