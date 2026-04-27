@@ -3,6 +3,7 @@ pub mod config_reload;
 pub mod config_watch;
 pub mod heartbeat;
 pub mod link_understanding;
+pub mod cron_runner;
 pub mod cron_schedule;
 pub mod plan_mode;
 pub mod runtime_snapshot;

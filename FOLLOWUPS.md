@@ -909,21 +909,24 @@ Open:
 
 ## Phase 79.7 — ScheduleCron follow-ups
 
-  - **Runtime firing not wired.** ⬜ Pending. The MVP ships
-    `cron_create` / `cron_list` / `cron_delete` + the SQLite
-    store + cron-expression validation, but no tokio task polls
-    `due_at` to fire LLM turns. Production wiring should:
-    1. Spawn one background task per process that polls
-       `store.due_at(now)` every 5 s.
-    2. For each due entry, hand `(prompt, channel)` to the
-       Phase 20 `agent_turn` poller machinery (that machinery
-       already knows how to enqueue an LLM turn against a
-       binding).
-    3. After firing: if `recurring`, recompute `next_fire_at`
-       with `next_fire_after(cron_expr, now)` and update the
-       row; if one-shot, delete.
-    Until shipped, entries persist but never fire — useful for
-    testing schedule shapes + populating the durable table.
+  - ~~**Runtime firing not wired.**~~ ✅ shipped 2026-04-27.
+    `crates/core/src/cron_runner.rs::CronRunner` polls
+    `store.due_at(now)` every 5 s, dispatches via
+    `Arc<dyn CronDispatcher>`, advances state per-entry
+    (recurring → `advance_after_fire`, one-shot → `delete`).
+    Dispatcher failures still advance state so a stuck entry
+    never refires forever. Spawned in `src/main.rs` right
+    before `shutdown_signal().await` with a `LoggingCronDispatcher`
+    (emits `[cron] fired` per dispatch).
+  - **LLM-call cron dispatcher.** ⬜ Pending. The runner
+    currently uses `LoggingCronDispatcher` so operators verify
+    fires happen, but the actual LLM call + outbound publish
+    isn't wired. Lift the Phase 20 `agent_turn` poller pattern
+    (`crates/poller/src/builtins/agent_turn.rs`): build LLM
+    client from `LlmRegistry`, call `chat`, publish response
+    to the binding's outbound topic. Should be a single new
+    file `crates/core/src/llm_cron_dispatcher.rs` plus the
+    main.rs wiring swap.
   - **CLI `nexo cron list / drop / pause`.** ⬜ Pending. The
     spec called for operator-side inspection commands. Today
     operators must use SQL or `cron_list` from inside an agent
