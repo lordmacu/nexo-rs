@@ -685,11 +685,41 @@ fn run_add_or_edit_account(
         )
     };
 
+    // Plain TLS guard — silently storing creds for a server that
+    // exchanges them in cleartext is a security trap; require an
+    // explicit opt-in before continuing.
+    if matches!(imap_tls, TlsMode::Plain) || matches!(smtp_tls, TlsMode::Plain) {
+        println!(
+            "\n⚠  Plain TLS chosen for {}. Credentials will travel in cleartext over the network.",
+            plain_tls_legs(&imap_tls, &smtp_tls),
+        );
+        if !Confirm::with_theme(&theme)
+            .with_prompt("Confirm: I understand and want to continue with PLAIN TLS")
+            .default(false)
+            .interact()?
+        {
+            return Err(anyhow!("aborted by operator (plain TLS rejected)"));
+        }
+    }
+
     let auth_idx = Select::with_theme(&theme)
         .with_prompt("Auth kind")
         .items(auth_kind_choices())
         .default(if hint.suggest_oauth_google { 2 } else { 0 })
         .interact()?;
+    if auth_idx == 0 && password_likely_to_fail(&hint.provider) {
+        println!(
+            "\n⚠  {:?} typically rejects raw account passwords. Use an app-password (gmail / outlook → 'app password' in account settings) or switch to OAuth2.",
+            hint.provider,
+        );
+        if !Confirm::with_theme(&theme)
+            .with_prompt("Continue with Password anyway?")
+            .default(false)
+            .interact()?
+        {
+            return Err(anyhow!("aborted by operator (password rejected for managed provider)"));
+        }
+    }
     let auth = match auth_idx {
         0 => {
             let username: String = Input::with_theme(&theme)
@@ -1041,6 +1071,29 @@ fn pick_or_prompt_google_account_id(
     }
 }
 
+/// Render the comma-separated list of legs that ended up on plain
+/// TLS. Used by the warning banner so the operator knows whether
+/// the IMAP, SMTP, or both connections are plaintext.
+fn plain_tls_legs(imap: &TlsMode, smtp: &TlsMode) -> String {
+    let mut legs = Vec::with_capacity(2);
+    if matches!(imap, TlsMode::Plain) {
+        legs.push("IMAP");
+    }
+    if matches!(smtp, TlsMode::Plain) {
+        legs.push("SMTP");
+    }
+    legs.join(" + ")
+}
+
+/// True for providers known to refuse raw account passwords on
+/// IMAP/SMTP (Gmail / Outlook). Yahoo + iCloud accept app-passwords
+/// too but allow IMAP/SMTP with the regular password when the user
+/// hasn't enrolled 2FA — the warn would be noisy. Custom is opaque
+/// and never warned.
+fn password_likely_to_fail(provider: &EmailProvider) -> bool {
+    matches!(provider, EmailProvider::Gmail | EmailProvider::Outlook)
+}
+
 fn is_valid_address(addr: &str) -> bool {
     // Cheap syntactic check — full RFC 5322 is overkill for a CLI
     // wizard. Require: exactly one '@', non-empty local + domain,
@@ -1290,6 +1343,32 @@ mod tests {
             EmailAuth::Password { username, .. } => assert_eq!(username, "ops@x.com"),
             _ => panic!("expected Password variant"),
         }
+    }
+
+    #[test]
+    fn plain_tls_legs_renders_each_leg() {
+        assert_eq!(
+            plain_tls_legs(&TlsMode::Plain, &TlsMode::ImplicitTls),
+            "IMAP"
+        );
+        assert_eq!(
+            plain_tls_legs(&TlsMode::ImplicitTls, &TlsMode::Plain),
+            "SMTP"
+        );
+        assert_eq!(plain_tls_legs(&TlsMode::Plain, &TlsMode::Plain), "IMAP + SMTP");
+        assert_eq!(
+            plain_tls_legs(&TlsMode::Starttls, &TlsMode::Starttls),
+            ""
+        );
+    }
+
+    #[test]
+    fn password_likely_to_fail_only_for_managed_providers() {
+        assert!(password_likely_to_fail(&EmailProvider::Gmail));
+        assert!(password_likely_to_fail(&EmailProvider::Outlook));
+        assert!(!password_likely_to_fail(&EmailProvider::Yahoo));
+        assert!(!password_likely_to_fail(&EmailProvider::Icloud));
+        assert!(!password_likely_to_fail(&EmailProvider::Custom));
     }
 
     #[test]
