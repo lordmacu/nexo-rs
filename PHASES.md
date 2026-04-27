@@ -2226,8 +2226,59 @@ Sub-phases:
   successful `parse_eml`. Workspace `uuid` workspace dep gains
   `v5` + `macro-diagnostics` features. 28 unit tests; 84 / 84
   plugin total; clippy clean.)
-- 48.7 — Tools: `email_send` / `_reply` / `_archive` / `_label` / `_move_to` / `_search`   🔄
-  (48.7.b adds the two outbound-leaning handlers.
+- 48.7 — Tools: `email_send` / `_reply` / `_archive` / `_label` / `_move_to` / `_search`   ✅
+  (48.7.c adds the four IMAP-leaning handlers and closes the
+  phase. `imap_conn.rs` grows wrappers for `UID SEARCH`, `UID
+  MOVE`, `UID COPY`, `UID STORE` (drains the response stream so
+  the session is ready for the next command), `EXPUNGE` (pinned
+  in-place because async-imap's stream isn't `Unpin`), and
+  `fetch_search_rows` returning a stable `SearchRow` row with
+  `uid`, `message_id?`, `from`, `subject`, `date`, and a
+  ≤200-char snippet from `BODY.PEEK[TEXT]<0.200>`. The header
+  block from `BODY.PEEK[HEADER.FIELDS (FROM SUBJECT MESSAGE-
+  ID)]` is parsed with a tolerant fold-aware reader so a
+  continued line never drops the field.
+
+  `tool/uid_set.rs` formats `Vec<u32>` → IMAP `sequence-set`
+  (`1,2,3`). `tool/dispatcher_stub.rs` is a #[cfg(test)] stub of
+  `DispatcherHandle` shared by every handler's unit tests so they
+  exercise the schema + dispatcher routing without standing up
+  `AgentContext` or a real broker.
+
+  `email_archive` runs `UID MOVE` to `folders.archive` when the
+  server advertises MOVE (RFC 6851), else falls back to `UID
+  COPY` + `UID STORE +FLAGS (\Deleted)` + `EXPUNGE` and reports
+  `fallback: true` in the result so the operator knows the
+  expensive path triggered. `email_move_to` is the same dance
+  for an arbitrary folder (no auto-create — missing folder
+  surfaces as IMAP NO in the result envelope). `email_label` is
+  Gmail-only: detects `provider == EmailProvider::Gmail` and
+  emits a clean `requires gmail provider` error otherwise rather
+  than confusing the agent with a downstream IMAP NO. Labels go
+  through `format_label_list` which quotes only when needed
+  (whitespace, parens, backslash, double quote) — keeps simple
+  labels readable on the wire while staying RFC 3501 valid.
+
+  `email_search` is the largest of the four. Translates a
+  portable JSON DSL (`from / to / subject / body` substring,
+  `since / before` YYYY-MM-DD, `unseen / seen` booleans) into
+  IMAP SEARCH atoms. Every user-controlled string passes
+  through `imap_quote` (RFC 3501 quoted-string + CRLF collapse)
+  before reaching the wire — quoting is the security boundary,
+  not aesthetic. `since`/`before` parse via `chrono::NaiveDate`
+  → `imap_date` (`d-MMM-yyyy`). Empty query → `ALL` so the
+  server doesn't receive a syntactically invalid empty query.
+  `limit` defaults to 50, capped at 200 (context-friendly for
+  the LLM). FETCHes one row per matched UID.
+
+  `tool/mod.rs::register_email_tools` now wires all six
+  handlers. 18 new unit tests across the four handlers and the
+  helpers (uid_set format, label list quoting / escaping,
+  search atom composition, injection-attempt quoting, date
+  parse error). 116 / 116 plugin total. Phase 48.7 closes;
+  greenmail e2e for the IMAP/SMTP wire pinned to 48.10.
+
+  48.7.b adds the two outbound-leaning handlers.
   `email_send` accepts the same shape as 48.4's
   `OutboundCommand` (instance, to/cc/bcc, subject, body,
   attachments path-by-reference) and forwards through the

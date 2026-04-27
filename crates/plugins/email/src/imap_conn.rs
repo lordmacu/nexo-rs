@@ -322,6 +322,181 @@ impl ImapConnection {
             .context("email/imap: LOGOUT")?;
         Ok(())
     }
+
+    // ── Phase 48.7 helpers (tools) ────────────────────────────────
+
+    /// `UID SEARCH <atoms>` — caller composes the atom string (already
+    /// quoted via `tool::imap_quote`).
+    pub async fn uid_search(&mut self, atoms: &str) -> Result<Vec<u32>> {
+        let set = self
+            .session
+            .uid_search(atoms)
+            .await
+            .with_context(|| format!("email/imap: UID SEARCH {atoms}"))?;
+        let mut uids: Vec<u32> = set.into_iter().collect();
+        uids.sort_unstable();
+        Ok(uids)
+    }
+
+    /// `UID MOVE <set> <folder>` (RFC 6851). Caller verifies the
+    /// server advertised `MOVE` via `capabilities.move_ext` before
+    /// reaching here; otherwise route through `uid_copy` +
+    /// `uid_store_flags("+FLAGS (\\Deleted)")` + `expunge`.
+    pub async fn uid_move(&mut self, uid_set: &str, mailbox: &str) -> Result<()> {
+        self.session
+            .uid_mv(uid_set, mailbox)
+            .await
+            .with_context(|| format!("email/imap: UID MOVE {uid_set} → {mailbox}"))?;
+        Ok(())
+    }
+
+    /// `UID COPY <set> <folder>`.
+    pub async fn uid_copy(&mut self, uid_set: &str, mailbox: &str) -> Result<()> {
+        self.session
+            .uid_copy(uid_set, mailbox)
+            .await
+            .with_context(|| format!("email/imap: UID COPY {uid_set} → {mailbox}"))?;
+        Ok(())
+    }
+
+    /// `UID STORE <set> <query>` — caller composes the query
+    /// (e.g. `+FLAGS (\\Deleted)`, `+X-GM-LABELS (Important)`).
+    /// Drains the response stream so the session is ready for the
+    /// next command.
+    pub async fn uid_store(&mut self, uid_set: &str, query: &str) -> Result<()> {
+        let mut stream = self
+            .session
+            .uid_store(uid_set, query)
+            .await
+            .with_context(|| format!("email/imap: UID STORE {uid_set} {query}"))?;
+        while let Some(item) = futures::StreamExt::next(&mut stream).await {
+            let _ = item; // server echoes the new flag list per UID
+        }
+        drop(stream);
+        Ok(())
+    }
+
+    /// `EXPUNGE` — drains the resulting stream of expunged sequence
+    /// numbers. The async-imap stream isn't `Unpin`, so we pin it
+    /// in place before iterating.
+    pub async fn expunge(&mut self) -> Result<()> {
+        let stream = self.session.expunge().await.context("email/imap: EXPUNGE")?;
+        futures::pin_mut!(stream);
+        while let Some(item) = futures::StreamExt::next(&mut stream).await {
+            let _ = item;
+        }
+        Ok(())
+    }
+
+    /// `UID FETCH <set> (UID INTERNALDATE BODY.PEEK[HEADER.FIELDS
+    /// (FROM SUBJECT MESSAGE-ID)] BODY.PEEK[TEXT]<0.200>)` — used by
+    /// `email_search` to render the result rows. Returns one row per
+    /// matched UID, preserving caller order.
+    pub async fn fetch_search_rows(&mut self, uid_set: &str) -> Result<Vec<SearchRow>> {
+        let query = "(UID INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM SUBJECT MESSAGE-ID)] BODY.PEEK[TEXT]<0.200>)";
+        let mut stream = self
+            .session
+            .uid_fetch(uid_set, query)
+            .await
+            .with_context(|| format!("email/imap: UID FETCH {uid_set}"))?;
+        let mut rows = Vec::new();
+        use futures::StreamExt;
+        while let Some(item) = stream.next().await {
+            let f = item.context("email/imap: FETCH stream item")?;
+            let uid = f.uid.unwrap_or(0);
+            let internal_date = f.internal_date().map(|d| d.timestamp()).unwrap_or(0);
+            let header_bytes = f.header().map(|b| b.to_vec()).unwrap_or_default();
+            let snippet_bytes = f.text().map(|b| b.to_vec()).unwrap_or_default();
+            let header_str = String::from_utf8_lossy(&header_bytes);
+            let (from, subject, message_id) = parse_search_headers(&header_str);
+            let snippet = String::from_utf8_lossy(&snippet_bytes)
+                .chars()
+                .take(200)
+                .collect();
+            rows.push(SearchRow {
+                uid,
+                message_id,
+                from,
+                subject,
+                date: internal_date,
+                snippet,
+            });
+        }
+        drop(stream);
+        Ok(rows)
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SearchRow {
+    pub uid: u32,
+    pub message_id: Option<String>,
+    pub from: String,
+    pub subject: String,
+    pub date: i64,
+    pub snippet: String,
+}
+
+/// Pull `From:`, `Subject:`, `Message-ID:` from a small header block
+/// returned by `BODY.PEEK[HEADER.FIELDS (...)]`. Tolerant of folded
+/// lines and missing fields.
+fn parse_search_headers(s: &str) -> (String, String, Option<String>) {
+    let mut from = String::new();
+    let mut subject = String::new();
+    let mut message_id: Option<String> = None;
+    let mut current: Option<&'static str> = None;
+    let mut buf_from = String::new();
+    let mut buf_subject = String::new();
+    let mut buf_msgid = String::new();
+    for line in s.lines() {
+        if line.starts_with(' ') || line.starts_with('\t') {
+            // Folded continuation of the previous header.
+            match current {
+                Some("from") => {
+                    buf_from.push(' ');
+                    buf_from.push_str(line.trim());
+                }
+                Some("subject") => {
+                    buf_subject.push(' ');
+                    buf_subject.push_str(line.trim());
+                }
+                Some("message-id") => {
+                    buf_msgid.push_str(line.trim());
+                }
+                _ => {}
+            }
+            continue;
+        }
+        if let Some((name, value)) = line.split_once(':') {
+            let n = name.trim().to_ascii_lowercase();
+            let v = value.trim();
+            match n.as_str() {
+                "from" => {
+                    buf_from = v.to_string();
+                    current = Some("from");
+                }
+                "subject" => {
+                    buf_subject = v.to_string();
+                    current = Some("subject");
+                }
+                "message-id" => {
+                    buf_msgid = v.to_string();
+                    current = Some("message-id");
+                }
+                _ => current = None,
+            }
+        }
+    }
+    if !buf_from.is_empty() {
+        from = buf_from;
+    }
+    if !buf_subject.is_empty() {
+        subject = buf_subject;
+    }
+    if !buf_msgid.is_empty() {
+        message_id = Some(buf_msgid);
+    }
+    (from, subject, message_id)
 }
 
 /// Build a `rustls` config trusting the OS's native root store. Set
