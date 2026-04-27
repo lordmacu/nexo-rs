@@ -153,3 +153,13 @@ pub fn token_expires_at(token: &str) -> Option<DateTime<Utc>> {
     let claims: TokenClaims = serde_json::from_slice(&claims_bytes).ok()?;
     Some(claims.expires_at)
 }
+
+/// Convenience: reads the `device_label` from an unverified token payload.
+/// Used by the companion to label the persisted session file without needing
+/// the HMAC secret (the daemon verifies the signature on its side).
+pub fn token_device_label(token: &str) -> Option<String> {
+    let claims_b64 = token.split_once('.')?.0;
+    let claims_bytes = URL_SAFE_NO_PAD.decode(claims_b64).ok()?;
+    let claims: TokenClaims = serde_json::from_slice(&claims_bytes).ok()?;
+    claims.device_label
+}

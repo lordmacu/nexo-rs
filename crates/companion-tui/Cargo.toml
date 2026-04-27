@@ -14,10 +14,13 @@ keywords      = { workspace = true }
 categories    = { workspace = true }
 
 [dependencies]
-anyhow        = { workspace = true }
-chrono        = { workspace = true }
-serde_json    = { workspace = true }
-nexo-pairing  = { version = "0.1.2", path = "../pairing", default-features = false }
+anyhow             = { workspace = true }
+chrono             = { workspace = true }
+futures            = { workspace = true }
+serde_json         = { workspace = true }
+tokio              = { workspace = true }
+tokio-tungstenite  = { workspace = true }
+nexo-pairing       = { version = "0.1.2", path = "../pairing", default-features = false }
 
 [[bin]]
 name = "nexo-companion"
