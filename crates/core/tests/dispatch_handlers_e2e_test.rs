@@ -112,6 +112,7 @@ fn empty_config(dispatch_full: bool) -> Arc<AgentConfig> {
             ..Default::default()
         },
         plan_mode: Default::default(),
+        remote_triggers: Vec::new(),
     })
 }
 

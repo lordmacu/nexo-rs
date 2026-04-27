@@ -366,6 +366,7 @@ mod tests {
             context_optimization: None,
             dispatch_policy: Default::default(),
             plan_mode: Default::default(),
+            remote_triggers: Vec::new(),
         };
         AgentContext::new(
             "a",

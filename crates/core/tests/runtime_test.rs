@@ -85,6 +85,7 @@ fn make_config(
         context_optimization: None,
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),
+        remote_triggers: Vec::new(),
     }
 }
 
@@ -306,6 +307,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             context_optimization: None,
             dispatch_policy: Default::default(),
             plan_mode: Default::default(),
+            remote_triggers: Vec::new(),
         },
         behavior_a,
     ));
@@ -355,6 +357,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             context_optimization: None,
             dispatch_policy: Default::default(),
             plan_mode: Default::default(),
+            remote_triggers: Vec::new(),
         },
         behavior_b,
     ));
