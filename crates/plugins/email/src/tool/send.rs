@@ -1,0 +1,275 @@
+//! `email_send` — outbound email via the dispatcher (Phase 48.7).
+//!
+//! Schema is path-by-reference for attachments (matches 48.5
+//! `OutboundAttachmentRef` / 48.4 dispatcher). The `from` address is
+//! pinned to `EmailAccountConfig.address` server-side; agents cannot
+//! spoof it.
+
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use nexo_core::agent::context::AgentContext;
+use nexo_core::agent::tool_registry::{ToolHandler, ToolRegistry};
+use nexo_llm::ToolDef;
+use serde::Deserialize;
+use serde_json::{json, Value};
+
+use crate::events::{OutboundAttachmentRef, OutboundCommand};
+
+use super::context::EmailToolContext;
+
+#[derive(Debug, Deserialize)]
+struct SendArgs {
+    instance: String,
+    to: Vec<String>,
+    #[serde(default)]
+    cc: Vec<String>,
+    #[serde(default)]
+    bcc: Vec<String>,
+    subject: String,
+    body: String,
+    #[serde(default)]
+    attachments: Vec<OutboundAttachmentRef>,
+}
+
+pub struct EmailSendTool {
+    ctx: Arc<EmailToolContext>,
+}
+
+impl EmailSendTool {
+    pub fn new(ctx: Arc<EmailToolContext>) -> Self {
+        Self { ctx }
+    }
+
+    pub fn tool_def() -> ToolDef {
+        ToolDef {
+            name: "email_send".into(),
+            description:
+                "Send an email through the configured outbound dispatcher. The `from` address is \
+                 fixed to the account's configured address (anti-spoof). Returns the \
+                 generated `message_id` so the caller can correlate the eventual ack on \
+                 `plugin.outbound.email.<instance>.ack`. Attachments are referenced by \
+                 file path; the dispatcher reads them at enqueue time and fails fast on \
+                 missing files."
+                    .into(),
+            parameters: json!({
+                "type": "object",
+                "required": ["instance", "to", "subject", "body"],
+                "properties": {
+                    "instance": { "type": "string", "description": "Email account instance id." },
+                    "to":  { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+                    "cc":  { "type": "array", "items": { "type": "string" } },
+                    "bcc": { "type": "array", "items": { "type": "string" } },
+                    "subject": { "type": "string" },
+                    "body":    { "type": "string" },
+                    "attachments": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["data_path", "filename"],
+                            "properties": {
+                                "data_path":  { "type": "string" },
+                                "filename":   { "type": "string" },
+                                "mime_type":  { "type": "string" },
+                                "content_id": { "type": "string" },
+                                "disposition": {
+                                    "type": "string",
+                                    "enum": ["inline", "attachment"]
+                                }
+                            }
+                        }
+                    }
+                },
+                "additionalProperties": false
+            }),
+        }
+    }
+}
+
+impl EmailSendTool {
+    /// Pure-logic entry point. The trait `call` wraps it so unit tests
+    /// can exercise schema + dispatcher routing without standing up
+    /// an `AgentContext`.
+    pub async fn run(&self, args: Value) -> Value {
+        let parsed: SendArgs = match serde_json::from_value(args) {
+            Ok(p) => p,
+            Err(e) => {
+                return json!({
+                    "ok": false,
+                    "error": format!("invalid arguments: {e}"),
+                });
+            }
+        };
+        if self.ctx.account(&parsed.instance).is_none() {
+            return json!({
+                "ok": false,
+                "error": format!("unknown email instance: {}", parsed.instance),
+            });
+        }
+        let cmd = OutboundCommand {
+            to: parsed.to,
+            cc: parsed.cc,
+            bcc: parsed.bcc,
+            subject: parsed.subject,
+            body: parsed.body,
+            in_reply_to: None,
+            references: vec![],
+            attachments: parsed.attachments,
+        };
+        match self
+            .ctx
+            .dispatcher
+            .enqueue_for_instance(&parsed.instance, cmd)
+            .await
+        {
+            Ok(message_id) => json!({ "ok": true, "message_id": message_id }),
+            Err(e) => json!({ "ok": false, "error": format!("{e:#}") }),
+        }
+    }
+}
+
+#[async_trait]
+impl ToolHandler for EmailSendTool {
+    async fn call(&self, _ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
+        Ok(self.run(args).await)
+    }
+}
+
+pub fn register(registry: &ToolRegistry, ctx: Arc<EmailToolContext>) {
+    let tool = EmailSendTool::new(ctx);
+    registry.register(EmailSendTool::tool_def(), tool);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::events::OutboundCommand;
+    use crate::inbound::HealthMap;
+    use anyhow::Result;
+    use async_trait::async_trait;
+    use dashmap::DashMap;
+    use nexo_auth::email::EmailCredentialStore;
+    use nexo_auth::google::GoogleCredentialStore;
+    use nexo_config::types::plugins::EmailPluginConfigFile;
+    use std::sync::Mutex;
+
+    /// Test stub of `DispatcherHandle` that records every call and
+    /// returns a deterministic message_id.
+    struct StubDispatcher {
+        instance_ids_list: Vec<String>,
+        captured: Mutex<Vec<(String, OutboundCommand)>>,
+        next_id: Mutex<u32>,
+        force_err: bool,
+    }
+
+    #[async_trait]
+    impl crate::tool::DispatcherHandle for StubDispatcher {
+        async fn enqueue_for_instance(
+            &self,
+            instance: &str,
+            cmd: OutboundCommand,
+        ) -> Result<String> {
+            if self.force_err {
+                anyhow::bail!("dispatcher rejected for test");
+            }
+            let mut n = self.next_id.lock().unwrap();
+            *n += 1;
+            let id = format!("<stub-{n}@test>");
+            self.captured.lock().unwrap().push((instance.into(), cmd));
+            Ok(id)
+        }
+        fn instance_ids(&self) -> Vec<String> {
+            self.instance_ids_list.clone()
+        }
+    }
+
+    fn build_ctx(declared: Vec<String>, force_err: bool) -> (Arc<EmailToolContext>, Arc<StubDispatcher>) {
+        let yaml = format!(
+            "email:\n  accounts:\n{}\n",
+            declared
+                .iter()
+                .map(|i| format!(
+                    "    - instance: {i}\n      address: {i}@example.com\n      imap: {{ host: imap.x, port: 993 }}\n      smtp: {{ host: smtp.x, port: 587 }}\n"
+                ))
+                .collect::<String>()
+        );
+        let f: EmailPluginConfigFile = serde_yaml::from_str(&yaml).unwrap();
+        let dispatcher = Arc::new(StubDispatcher {
+            instance_ids_list: declared.clone(),
+            captured: Mutex::new(vec![]),
+            next_id: Mutex::new(0),
+            force_err,
+        });
+        let ctx = Arc::new(EmailToolContext {
+            creds: Arc::new(EmailCredentialStore::empty()),
+            google: Arc::new(GoogleCredentialStore::empty()),
+            config: Arc::new(f.email),
+            dispatcher: dispatcher.clone(),
+            health: HealthMap::new(DashMap::new().into()),
+        });
+        (ctx, dispatcher)
+    }
+
+    #[tokio::test]
+    async fn happy_send_returns_message_id() {
+        let (ctx, disp) = build_ctx(vec!["ops".into()], false);
+        let tool = EmailSendTool::new(ctx);
+        let r = tool
+            .run(json!({
+                "instance": "ops",
+                "to": ["alice@x"],
+                "subject": "Hi",
+                "body": "hello"
+            }))
+            .await;
+        assert_eq!(r["ok"], json!(true));
+        assert!(r["message_id"].as_str().unwrap().contains("stub-1"));
+        let captured = disp.captured.lock().unwrap();
+        assert_eq!(captured.len(), 1);
+        assert_eq!(captured[0].0, "ops");
+        assert_eq!(captured[0].1.subject, "Hi");
+    }
+
+    #[tokio::test]
+    async fn unknown_instance_errors() {
+        let (ctx, _) = build_ctx(vec!["ops".into()], false);
+        let tool = EmailSendTool::new(ctx);
+        let r = tool
+            .run(json!({
+                "instance": "ghost",
+                "to": ["alice@x"],
+                "subject": "Hi",
+                "body": "hello"
+            }))
+            .await;
+        assert_eq!(r["ok"], json!(false));
+        assert!(r["error"].as_str().unwrap().contains("unknown email instance"));
+    }
+
+    #[tokio::test]
+    async fn missing_required_field_returns_error_envelope() {
+        let (ctx, _) = build_ctx(vec!["ops".into()], false);
+        let tool = EmailSendTool::new(ctx);
+        let r = tool
+            .run(json!({ "instance": "ops", "to": ["a@x"] }))
+            .await;
+        assert_eq!(r["ok"], json!(false));
+        assert!(r["error"].as_str().unwrap().contains("invalid arguments"));
+    }
+
+    #[tokio::test]
+    async fn dispatcher_error_surfaces_in_envelope() {
+        let (ctx, _) = build_ctx(vec!["ops".into()], true);
+        let tool = EmailSendTool::new(ctx);
+        let r = tool
+            .run(json!({
+                "instance": "ops",
+                "to": ["a@x"],
+                "subject": "Hi",
+                "body": "ok"
+            }))
+            .await;
+        assert_eq!(r["ok"], json!(false));
+        assert!(r["error"].as_str().unwrap().contains("rejected"));
+    }
+}
