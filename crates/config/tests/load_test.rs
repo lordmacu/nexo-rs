@@ -98,12 +98,13 @@ telegram:
         "email.yaml",
         r#"
 email:
-  smtp:
-    host: "${SMTP_HOST}"
-    username: "${SMTP_USER}"
-    password: "${SMTP_PASSWORD}"
-  imap:
-    host: "${IMAP_HOST}"
+  enabled: true
+  accounts:
+    - instance: ops
+      address: ops@test.com
+      provider: custom
+      imap: { host: "${IMAP_HOST}", port: 993, tls: implicit_tls }
+      smtp: { host: "${SMTP_HOST}", port: 587, tls: starttls }
 "#,
     );
 }
