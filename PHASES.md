@@ -2227,7 +2227,36 @@ Sub-phases:
   `v5` + `macro-diagnostics` features. 28 unit tests; 84 / 84
   plugin total; clippy clean.)
 - 48.7 — Tools: `email_send` / `_reply` / `_archive` / `_label` / `_move_to` / `_search`   🔄
-  (48.7.a foundational slice: `tool/context.rs` declares the
+  (48.7.b adds the two outbound-leaning handlers.
+  `email_send` accepts the same shape as 48.4's
+  `OutboundCommand` (instance, to/cc/bcc, subject, body,
+  attachments path-by-reference) and forwards through the
+  `DispatcherHandle` from 48.7.a; `from` is fixed to the
+  account address (anti-spoof) and never appears in the schema.
+  Result envelope is `{ ok, message_id }` on success or
+  `{ ok: false, error }` on schema / dispatcher failure — uniform
+  LLM-friendly shape. `email_reply` takes
+  `{ instance, parent_uid, body, reply_all?, attachments? }`,
+  opens an ephemeral IMAP via `run_imap_op`, FETCHes the parent
+  raw bytes, parses with 48.5, derives recipients via the
+  `derive_reply_recipients` helper (To = parent.From; reply_all
+  → +parent.To/Cc minus own address, deduped case-insensitively),
+  prefixes `Re: ` only when the parent subject lacks one,
+  invokes 48.6 `enrich_reply_threading`, and dispatches.
+  Returns `{ ok, message_id, to, cc }` so the caller audits who
+  got the reply. Handlers expose pure-logic `run(args)` helpers
+  the tests exercise without standing up a full
+  `nexo_core::AgentContext`. 10 new unit tests (4 send: happy /
+  unknown instance / missing field / dispatcher Err; 6 reply:
+  single recipient / reply_all dedup / case-insensitivity /
+  exclude parent.From / empty From → empty To / `Re:` prefix
+  idempotency). `crates/plugins/email/Cargo.toml` gains a
+  `nexo-llm` workspace path dep so tools can reference
+  `ToolDef`. 98 / 98 plugin total. Phase 48.7.a foundational
+  pieces unchanged. 48.7.c (archive / move_to / label / search)
+  remains.
+
+  48.7.a foundational slice: `tool/context.rs` declares the
   `DispatcherHandle` async trait + `EmailToolContext` aggregate
   (creds + Google + config + dispatcher façade + health map),
   with a convenience `account(instance)` lookup. `tool/imap_op.rs`

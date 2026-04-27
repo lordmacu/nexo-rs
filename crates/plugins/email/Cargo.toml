@@ -44,6 +44,7 @@ base64       = { workspace = true }
 secrecy      = "0.8"
 socket2      = "0.5"
 nexo-broker     = { version = "0.1.1", path = "../../broker" }
+nexo-llm        = { version = "0.1.1", path = "../../llm" }
 nexo-core       = { version = "0.1.1", path = "../../core" }
 nexo-config     = { version = "0.1.1", path = "../../config" }
 nexo-auth       = { version = "0.1.1", path = "../../auth" }
