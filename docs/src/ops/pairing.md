@@ -138,10 +138,17 @@ presents the token as `Authorization: Bearer <bootstrap_token>`.
 Priority chain (first non-empty wins):
 
 1. `--public-url` (CLI flag)
-2. `tunnel.url` (Phase tunnel — TODO: wire when accessor lands)
-3. `gateway.remote.url`
-4. LAN bind address (when `gateway.bind=lan`)
-5. **fail-closed**: the daemon refuses to issue a code on a
+2. `pairing.yaml::pairing.public_url` (deployment-pinned)
+3. `tunnel.url` — resolved as either:
+   - `NEXO_TUNNEL_URL` env (back-compat / cross-shell override), or
+   - `$NEXO_HOME/state/tunnel.url` sidecar file written atomically
+     by `TunnelManager::start()` (in-process accessor —
+     `nexo_tunnel::{read_url_file, write_url_file, clear_url_file,
+     url_state_path}`). Atomic `<path>.tmp` + rename so a CLI
+     reading mid-write never sees a torn URL.
+4. `gateway.remote.url`
+5. LAN bind address (when `gateway.bind=lan`)
+6. **fail-closed**: the daemon refuses to issue a code on a
    loopback-only gateway. As of Phase 70.5 the CLI also prints a
    ready-to-run `nexo pair seed <channel> <account> <SENDER>` for
    every plugin instance configured under `config/plugins/`, so a
