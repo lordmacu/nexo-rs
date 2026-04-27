@@ -78,21 +78,36 @@ categories   = { workspace = true }
 [lints]
 workspace = true
 
+[build-dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+# Phase 27.1 — opt the root crate into cargo-dist. The dev/smoke bins
+# (`browser-test`, `integration-browser-check`, `llm_smoke`) carry
+# `required-features = ["dev-bins"]` so `cargo build` (default
+# features) skips them, and cargo-dist's per-crate `cargo build` runs
+# without that feature so they don't end up in release tarballs.
+[package.metadata.dist]
+dist = true
+
 [[bin]]
 name = "nexo"
 path = "src/main.rs"
 
-[[bin]]
+# Phase 27.1 — dev/smoke programs live as examples so cargo-dist
+# doesn't pick them up. Run with `cargo run --example browser-test`,
+# `cargo run --example integration-browser-check`, or
+# `cargo run --example llm_smoke`.
+[[example]]
 name = "browser-test"
-path = "src/browser_test.rs"
+path = "examples/browser-test.rs"
 
-[[bin]]
+[[example]]
 name = "integration-browser-check"
-path = "src/integration_browser_check.rs"
+path = "examples/integration-browser-check.rs"
 
-[[bin]]
+[[example]]
 name = "llm_smoke"
-path = "src/bin/llm_smoke.rs"
+path = "examples/llm_smoke.rs"
 
 [workspace.dependencies]
 tokio              = { version = "1", features = ["full"] }
@@ -180,3 +195,8 @@ serde_yaml          = { workspace = true }
 chrono              = { workspace = true }
 humantime           = { workspace = true }
 async-trait         = { workspace = true }
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

@@ -33,3 +33,7 @@ tempfile = "3"
 [[bin]]
 name = "nexo-driver-permission-mcp"
 path = "src/bin/permission_mcp.rs"
+
+# Phase 27.1 — keep this internal driver bin out of release tarballs.
+[package.metadata.dist]
+dist = false

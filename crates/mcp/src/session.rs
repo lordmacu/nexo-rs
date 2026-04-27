@@ -442,6 +442,7 @@ mod tests {
             Ok(McpToolResult {
                 content: Vec::<McpContent>::new(),
                 is_error: false,
+                structured_content: None,
             })
         }
         async fn shutdown(&self) {}

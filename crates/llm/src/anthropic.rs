@@ -528,12 +528,25 @@ fn build_body(model: &str, req: &ChatRequest) -> Value {
             })),
         }
     }
-    let mut body = json!({
-        "model": model,
-        "max_tokens": req.max_tokens,
-        "messages": messages,
-        "temperature": req.temperature,
-    });
+    // `temperature` was deprecated starting with Opus 4.7. Sending it
+    // returns HTTP 400 (`temperature is deprecated for this model`),
+    // so omit it for any model whose ID starts with `claude-opus-4-7`
+    // and forward as before for everything else.
+    let supports_temperature = !model.starts_with("claude-opus-4-7");
+    let mut body = if supports_temperature {
+        json!({
+            "model": model,
+            "max_tokens": req.max_tokens,
+            "messages": messages,
+            "temperature": req.temperature,
+        })
+    } else {
+        json!({
+            "model": model,
+            "max_tokens": req.max_tokens,
+            "messages": messages,
+        })
+    };
     // System: prefer structured `system_blocks` when present (enables
     // cache_control breakpoints). Fallback to flat string from legacy
     // `system_prompt` + any role=System messages collected above. When

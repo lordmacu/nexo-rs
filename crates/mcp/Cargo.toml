@@ -12,6 +12,11 @@ documentation = { workspace = true }
 readme        = "README.md"
 keywords      = { workspace = true }
 categories    = { workspace = true }
+
+# Phase 27.1 — `src/bin/mock_mcp_server.rs` is a test fixture, not a
+# shipped binary. Keep it out of release tarballs.
+[package.metadata.dist]
+dist = false
 [dependencies]
 serde      = { workspace = true }
 serde_json = { workspace = true }

@@ -190,7 +190,11 @@ impl TurnLogStore for SqliteTurnLogStore {
         goal_id: GoalId,
         n: usize,
     ) -> Result<Vec<TurnRecord>, AgentRegistryStoreError> {
-        let limit = if n == 0 { TAIL_HARD_CAP } else { n.min(TAIL_HARD_CAP) };
+        let limit = if n == 0 {
+            TAIL_HARD_CAP
+        } else {
+            n.min(TAIL_HARD_CAP)
+        };
         // Pull the most recent N rows desc, then flip back to
         // chronological order in the caller's view so reading top to
         // bottom matches the run.
@@ -235,12 +239,10 @@ impl TurnLogStore for SqliteTurnLogStore {
     }
 
     async fn count(&self, goal_id: GoalId) -> Result<u64, AgentRegistryStoreError> {
-        let row: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM goal_turns WHERE goal_id = ?1",
-        )
-        .bind(goal_id.0.to_string())
-        .fetch_one(&self.pool)
-        .await?;
+        let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM goal_turns WHERE goal_id = ?1")
+            .bind(goal_id.0.to_string())
+            .fetch_one(&self.pool)
+            .await?;
         Ok(row.0.max(0) as u64)
     }
 

@@ -48,3 +48,7 @@ which    = { workspace = true }
 [[bin]]
 name = "nexo-driver"
 path = "src/bin/nexo_driver.rs"
+
+# Phase 27.1 — keep this internal driver bin out of release tarballs.
+[package.metadata.dist]
+dist = false

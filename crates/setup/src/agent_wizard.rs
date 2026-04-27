@@ -39,7 +39,7 @@ use crate::yaml_patch;
 pub const MODEL_CATALOG: &[(&str, &[&str])] = &[
     (
         "minimax",
-        &["MiniMax-M2.5", "MiniMax-M2", "MiniMax-Text-01"],
+        &["MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M2.5"],
     ),
     (
         "anthropic",

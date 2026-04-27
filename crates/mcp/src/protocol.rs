@@ -6,6 +6,35 @@ use serde::Serialize;
 
 pub const PROTOCOL_VERSION: &str = "2024-11-05";
 
+/// MCP protocol versions the server has been verified against.
+/// When a client sends one of these in `initialize.protocolVersion`
+/// we echo it back so the client moves forward at its preferred
+/// version. Anything else falls back to [`PROTOCOL_VERSION`].
+///
+/// 2024-11-05 — original release that this crate was first wired
+///              against; still used by older clients (Anthropic
+///              SDK helpers, mock fixtures, internal probes).
+/// 2025-03-26 — interim revision that some Claude desktop builds
+///              still negotiate against; behaviourally identical
+///              for our subset (initialize → tools/list →
+///              tools/call).
+/// 2025-06-18 — pre-release used briefly by Claude Code 2.0.x;
+///              listed for parity, no behaviour difference.
+/// 2025-11-25 — version Claude Code 2.1+ negotiates. Phase 73
+///              exposed the bug where echoing 2024-11-05 to a
+///              2025-11-25 client made Claude register the
+///              server but silently drop every tool from its
+///              permission registry, surfacing as "Available MCP
+///              tools: none" on the first permission check.
+pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] =
+    &["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
+
+/// `true` when `v` is one of the protocol versions the server has
+/// been verified to honour.
+pub fn is_supported_protocol_version(v: &str) -> bool {
+    SUPPORTED_PROTOCOL_VERSIONS.contains(&v)
+}
+
 /// Reserved id for the `initialize` request. Regular calls start at 1.
 pub const INITIALIZE_ID: u64 = 0;
 

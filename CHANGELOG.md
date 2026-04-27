@@ -10,6 +10,22 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- Phase 27.1 — `cargo-dist` baseline. `dist-workspace.toml` declares
+  the cross-target matrix (`x86_64-unknown-linux-gnu` host fallback +
+  `x86_64`/`aarch64-unknown-linux-musl` + `x86_64`/`aarch64-apple-darwin`
+  + `x86_64-pc-windows-msvc`). `make dist-check` runs the local smoke
+  gate (`scripts/release-check.sh`) over whatever `dist build`
+  produced, validating tarball contents + sha256 + host-native
+  `--version`. `nexo version` (or `nexo --version --verbose`) prints
+  build provenance — git-sha, target triple, build channel, build
+  timestamp — captured at compile time by `build.rs` and consumed
+  via `env!("NEXO_BUILD_*")`. Dev-only programs (`browser-test`,
+  `integration-browser-check`, `llm_smoke`) moved to `examples/` so
+  cargo-dist excludes them from release tarballs. `release-plz`
+  remains the source of truth for version bumps + crates.io publish
+  + per-crate `CHANGELOG.md`. Operator notes:
+  [`packaging/README.md`](packaging/README.md), contributor docs:
+  [Releases](docs/src/contributing/release.md).
 - `agent admin` subcommand: runs a web admin UI behind a Cloudflare
   quick tunnel. Auto-installs `cloudflared` per OS/arch on first run,
   starts a loopback HTTP server, mints a fresh 24-char random
