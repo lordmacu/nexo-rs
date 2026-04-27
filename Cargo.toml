@@ -39,6 +39,7 @@ members = [
     "crates/agent-registry",
     "crates/dispatch-tools",
     "crates/companion-tui",
+    "crates/lsp",
 ]
 # Keep standalone extension templates out of the agent workspace so they don't
 # inherit our deps or lockfile. Users copy them verbatim and build separately.
@@ -157,6 +158,7 @@ chardetng          = "0.1"
 mime_guess         = "2"
 encoding_rs        = "0.8"
 hickory-resolver   = "0.24"
+lsp-types          = "0.97"
 tokio-rustls       = "0.26"
 rustls             = { version = "0.23", default-features = false, features = ["std", "ring", "tls12", "logging"] }
 rustls-native-certs = "0.7"
