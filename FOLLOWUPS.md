@@ -700,10 +700,19 @@ Open:
     teardown one `AccountWorker` per change) would let an
     operator add a new mailbox without dropping IDLE on the
     others.
-  - **Persistent bounce history.** 48.8 emits `BounceEvent` but
-    doesn't store anything; an `email_bounces` SQLite table keyed
-    on `(recipient, instance)` would let `email_send` warn the
-    agent before reattempting a permanently-bounced recipient.
+  - **Persistent bounce history.** ✅ Shipped 2026-04-27.
+    `bounce_store.rs` ships a sqlx-sqlite `BounceStore` keyed on
+    `(instance, recipient)` (recipient lowercased on insert /
+    lookup). `inbound::drain_pending` now upserts every parsed
+    bounce before publishing the wire event, incrementing a
+    `count` column so a flapping recipient surfaces as a single
+    row. `EmailToolContext.bounce_store: Option<Arc<BounceStore>>`
+    is wired by main.rs from `plugin.bounce_store_handle()`;
+    `email_send` consults it for every recipient (to + cc + bcc)
+    and includes a `recipient_warnings` array in its success
+    envelope when it finds prior bounces. Advisory only — the
+    operator may have fixed the destination since the bounce, so
+    the tool doesn't refuse to send.
   - **IMAP STARTTLS.** ✅ Shipped 2026-04-27.
     `ImapConnection::connect` now accepts `TlsMode::Starttls`:
     plain TCP dial, consume `* OK` greeting, run `STARTTLS`,

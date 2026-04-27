@@ -4,6 +4,7 @@
 //! Inbound IDLE worker, SMTP outbound, MIME parse, threading, tools,
 //! loop-prevention, DSN handling and SPF/DKIM checks land in 48.2..48.10.
 
+pub mod bounce_store;
 pub mod cursor;
 pub mod events;
 pub mod health;
@@ -34,6 +35,7 @@ pub use threading::{
 pub use outbound::OutboundDispatcher;
 pub use outbound_queue::{OutboundJob, OutboundQueue, SmtpEnvelope};
 pub use smtp_conn::{SmtpClient, SmtpSendOutcome};
+pub use bounce_store::{BounceStore, RecipientStatus};
 pub use dsn::{parse_bounce, BounceClassification, BounceEvent, ParsedBounce};
 pub use loop_prevent::{should_skip, SkipReason};
 pub use provider_hint::{provider_hint, ProviderHint};

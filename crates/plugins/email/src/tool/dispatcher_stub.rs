@@ -70,6 +70,7 @@ pub fn stub_ctx(
         config: Arc::new(f.email),
         dispatcher: dispatcher.clone(),
         health: HealthMap::new(DashMap::new().into()),
-    });
+            bounce_store: None,
+        });
     (ctx, dispatcher)
 }

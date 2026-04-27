@@ -106,6 +106,19 @@ impl EmailSendTool {
                 "error": format!("unknown email instance: {}", parsed.instance),
             });
         }
+        // Phase 48 follow-up #4 — surface any prior bounce against
+        // the recipients we're about to mail. Advisory only; the
+        // operator may have fixed the destination since the
+        // bounce. The agent decides what to do with the warning.
+        let recipient_warnings = collect_recipient_warnings(
+            &self.ctx,
+            &parsed.instance,
+            &parsed.to,
+            &parsed.cc,
+            &parsed.bcc,
+        )
+        .await;
+
         let cmd = OutboundCommand {
             to: parsed.to,
             cc: parsed.cc,
@@ -122,10 +135,61 @@ impl EmailSendTool {
             .enqueue_for_instance(&parsed.instance, cmd)
             .await
         {
-            Ok(message_id) => json!({ "ok": true, "message_id": message_id }),
+            Ok(message_id) => {
+                let mut out = json!({ "ok": true, "message_id": message_id });
+                if !recipient_warnings.is_empty() {
+                    out["recipient_warnings"] =
+                        serde_json::to_value(&recipient_warnings).unwrap_or_default();
+                }
+                out
+            }
             Err(e) => json!({ "ok": false, "error": format!("{e:#}") }),
         }
     }
+}
+
+/// Look up every recipient (to + cc + bcc) against the bounce
+/// store and emit a one-line summary per match. Empty when the
+/// store is unavailable or no recipient has bounced before.
+async fn collect_recipient_warnings(
+    ctx: &EmailToolContext,
+    instance: &str,
+    to: &[String],
+    cc: &[String],
+    bcc: &[String],
+) -> Vec<Value> {
+    let Some(store) = ctx.bounce_store.as_ref() else {
+        return vec![];
+    };
+    let mut out = Vec::new();
+    for r in to.iter().chain(cc.iter()).chain(bcc.iter()) {
+        match store.get(instance, r).await {
+            Ok(Some(status)) => {
+                let label = match status.classification {
+                    crate::dsn::BounceClassification::Permanent => "permanent",
+                    crate::dsn::BounceClassification::Transient => "transient",
+                    crate::dsn::BounceClassification::Unknown => "unknown",
+                };
+                out.push(json!({
+                    "recipient": r,
+                    "classification": label,
+                    "status_code": status.status_code,
+                    "last_seen": status.last_seen,
+                    "count": status.count,
+                }));
+            }
+            Ok(None) => {}
+            Err(e) => {
+                tracing::debug!(
+                    target: "plugin.email",
+                    recipient = %r,
+                    error = %e,
+                    "bounce_store lookup failed"
+                );
+            }
+        }
+    }
+    out
 }
 
 #[async_trait]
@@ -206,6 +270,7 @@ mod tests {
             config: Arc::new(f.email),
             dispatcher: dispatcher.clone(),
             health: HealthMap::new(DashMap::new().into()),
+            bounce_store: None,
         });
         (ctx, dispatcher)
     }
