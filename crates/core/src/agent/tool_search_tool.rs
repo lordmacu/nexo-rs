@@ -34,15 +34,86 @@
 use super::context::AgentContext;
 use super::tool_registry::ToolHandler;
 use async_trait::async_trait;
+use dashmap::DashMap;
 use nexo_llm::ToolDef;
 use serde_json::{json, Value};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 pub const TOOL_SEARCH_DEFAULT_MAX_RESULTS: usize = 5;
 pub const TOOL_SEARCH_HARD_CAP: usize = 25;
 
-pub struct ToolSearchTool;
+/// Default cap on `ToolSearch` calls per agent per minute. Lift
+/// from the leak's spec (5 / turn). We use per-minute instead of
+/// per-turn because nexo-rs's runtime does not surface a clean
+/// turn boundary to the tool layer.
+pub const TOOL_SEARCH_DEFAULT_RATE_PER_MINUTE: u32 = 5;
+
+/// Process-shared sliding-window rate limiter for `ToolSearch`.
+/// Keyed by `agent_id`. Used to cap exploration so a runaway
+/// model can't pathologically explode the surface (PHASES.md
+/// 79.2 follow-up).
+#[derive(Default)]
+pub struct ToolSearchRateLimiter {
+    buckets: DashMap<String, Mutex<std::collections::VecDeque<Instant>>>,
+}
+
+impl ToolSearchRateLimiter {
+    /// `true` when the call is admitted. `limit_per_minute == 0`
+    /// always admits (no limit).
+    pub fn try_acquire(&self, agent_id: &str, limit_per_minute: u32) -> bool {
+        if limit_per_minute == 0 {
+            return true;
+        }
+        let entry = self
+            .buckets
+            .entry(agent_id.to_string())
+            .or_default();
+        let mut q = entry.lock().unwrap();
+        let now = Instant::now();
+        let cutoff = now - Duration::from_secs(60);
+        while let Some(front) = q.front() {
+            if *front < cutoff {
+                q.pop_front();
+            } else {
+                break;
+            }
+        }
+        if q.len() < limit_per_minute as usize {
+            q.push_back(now);
+            true
+        } else {
+            false
+        }
+    }
+}
+
+
+pub struct ToolSearchTool {
+    rate_limiter: std::sync::Arc<ToolSearchRateLimiter>,
+    rate_per_minute: u32,
+}
+
+impl Default for ToolSearchTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl ToolSearchTool {
+    pub fn new() -> Self {
+        Self {
+            rate_limiter: std::sync::Arc::new(ToolSearchRateLimiter::default()),
+            rate_per_minute: TOOL_SEARCH_DEFAULT_RATE_PER_MINUTE,
+        }
+    }
+
+    /// Override the rate limit (test convenience). `0` disables.
+    pub fn with_rate_per_minute(mut self, rate: u32) -> Self {
+        self.rate_per_minute = rate;
+        self
+    }
+
     pub fn tool_def() -> ToolDef {
         ToolDef {
             name: "ToolSearch".to_string(),
@@ -170,6 +241,22 @@ impl ToolHandler for ToolSearchTool {
             .to_string();
         if query.is_empty() {
             return Err(anyhow::anyhow!("ToolSearch: `query` cannot be empty"));
+        }
+
+        // Phase 79.2 follow-up — sliding-window rate limit per
+        // agent. Cap defaults to 5 / minute (matches the leak's
+        // 5 / turn intent — we use minutes because there is no
+        // clean turn boundary at the tool layer). Per-instance
+        // limiter so each tests construct its own.
+        if !self
+            .rate_limiter
+            .try_acquire(&ctx.agent_id, self.rate_per_minute)
+        {
+            return Err(anyhow::anyhow!(
+                "ToolSearch: rate limit exceeded ({} calls/min for agent `{}`). Wait or refine the query so fewer calls are needed.",
+                self.rate_per_minute,
+                ctx.agent_id
+            ));
         }
 
         let max_results = args
@@ -407,7 +494,7 @@ mod tests {
             ("Glob", "Match paths by glob", None),
         ]);
         let ctx = ctx_with(reg);
-        let res = ToolSearchTool
+        let res = ToolSearchTool::new().with_rate_per_minute(0)
             .call(&ctx, json!({"query": "select:FileEdit"}))
             .await
             .unwrap();
@@ -421,7 +508,7 @@ mod tests {
     async fn select_multi_with_some_missing_reports_missing() {
         let reg = reg_with_deferred(&[("FileEdit", "Edit a file", None)]);
         let ctx = ctx_with(reg);
-        let res = ToolSearchTool
+        let res = ToolSearchTool::new().with_rate_per_minute(0)
             .call(&ctx, json!({"query": "select:FileEdit,Imaginary,Glob"}))
             .await
             .unwrap();
@@ -444,7 +531,7 @@ mod tests {
             ("Glob", "Match by glob", None),
         ]);
         let ctx = ctx_with(reg);
-        let res = ToolSearchTool
+        let res = ToolSearchTool::new().with_rate_per_minute(0)
             .call(&ctx, json!({"query": "file edit"}))
             .await
             .unwrap();
@@ -466,7 +553,7 @@ mod tests {
             ("Glob", "Match by glob", None),
         ]);
         let ctx = ctx_with(reg);
-        let res = ToolSearchTool
+        let res = ToolSearchTool::new().with_rate_per_minute(0)
             .call(&ctx, json!({"query": "+glob match"}))
             .await
             .unwrap();
@@ -489,7 +576,7 @@ mod tests {
             .collect();
         let reg = reg_with_deferred(&many);
         let ctx = ctx_with(reg);
-        let res = ToolSearchTool
+        let res = ToolSearchTool::new().with_rate_per_minute(0)
             .call(
                 &ctx,
                 json!({"query": "shared description", "max_results": 3}),
@@ -505,7 +592,7 @@ mod tests {
         // Register a non-deferred tool — must be ignored.
         reg.register(def("FileEdit", "edit"), Stub);
         let ctx = ctx_with(reg);
-        let res = ToolSearchTool
+        let res = ToolSearchTool::new().with_rate_per_minute(0)
             .call(&ctx, json!({"query": "file"}))
             .await
             .unwrap();
@@ -517,7 +604,7 @@ mod tests {
     async fn empty_query_errors() {
         let reg = ToolRegistry::new();
         let ctx = ctx_with(reg);
-        let err = ToolSearchTool
+        let err = ToolSearchTool::new().with_rate_per_minute(0)
             .call(&ctx, json!({"query": "   "}))
             .await
             .unwrap_err()
@@ -532,7 +619,7 @@ mod tests {
             ("ToolB", "totally unrelated", Some("send a slack message")),
         ]);
         let ctx = ctx_with(reg);
-        let res = ToolSearchTool
+        let res = ToolSearchTool::new().with_rate_per_minute(0)
             .call(&ctx, json!({"query": "slack"}))
             .await
             .unwrap();
@@ -543,5 +630,37 @@ mod tests {
             .map(|m| m["name"].as_str().unwrap())
             .collect();
         assert_eq!(names[0], "ToolB", "search_hint should beat description");
+    }
+
+    #[tokio::test]
+    async fn rate_limit_blocks_after_budget() {
+        let reg = reg_with_deferred(&[("FileEdit", "Edit a file", None)]);
+        let ctx = ctx_with(reg);
+        let tool = ToolSearchTool::new().with_rate_per_minute(2);
+        // 2 admitted, 3rd refused.
+        tool.call(&ctx, json!({"query": "select:FileEdit"}))
+            .await
+            .unwrap();
+        tool.call(&ctx, json!({"query": "select:FileEdit"}))
+            .await
+            .unwrap();
+        let err = tool
+            .call(&ctx, json!({"query": "select:FileEdit"}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("rate limit exceeded"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn rate_limit_zero_means_unlimited() {
+        let reg = reg_with_deferred(&[("FileEdit", "Edit a file", None)]);
+        let ctx = ctx_with(reg);
+        let tool = ToolSearchTool::new().with_rate_per_minute(0);
+        for _ in 0..50 {
+            tool.call(&ctx, json!({"query": "select:FileEdit"}))
+                .await
+                .unwrap();
+        }
     }
 }

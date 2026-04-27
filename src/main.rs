@@ -1775,7 +1775,7 @@ async fn main() -> Result<()> {
         // turn time. MVP caveat tracked in FOLLOWUPS.md::Phase 79.2.
         tools.register(
             nexo_core::agent::tool_search_tool::ToolSearchTool::tool_def(),
-            nexo_core::agent::tool_search_tool::ToolSearchTool,
+            nexo_core::agent::tool_search_tool::ToolSearchTool::new(),
         );
 
         // Phase 79.3 — `SyntheticOutput` typed-output validator.
