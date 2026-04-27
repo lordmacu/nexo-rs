@@ -199,10 +199,45 @@ Consumer: admin-ui Phase A4 dashboard.
 
 #### 26.z — `tunnel.url` integration in URL resolver   ⬜
 
-Tracks **PR-3** in `FOLLOWUPS.md`. `nexo pair start` honours only
-`--public-url` today; spec'd priority chain places `tunnel.url`
-second. Blocked on `nexo-tunnel` exposing a read-only public-URL
-accessor (small refactor in tunnel crate).
+`nexo pair start` should consult a fixed priority chain when
+resolving the public URL it embeds in the QR/setup-code payload.
+Most of the chain already shipped under PR-3 in `FOLLOWUPS.md`
+(see that section for the bullet-by-bullet history); this
+sub-phase verifies the wire-up end-to-end and lands the missing
+sidecar precedence.
+
+Concrete done criteria:
+
+1. `crates/pairing/src/url_resolver.rs` (or equivalent module —
+   create one if missing) exposes `resolve_public_url(opts) ->
+   Result<String, ResolverError>` consulted by `run_pair_start`
+   in `src/main.rs`. Priority order, top wins:
+   1. `--public-url <URL>` CLI flag (already wired via clap).
+   2. `pairing.yaml::public_url` (if `config/pairing.yaml`
+      loader exists; otherwise leave the hook + TODO and fall
+      through — do **not** invent a fake loader).
+   3. `$NEXO_HOME/state/tunnel.url` sidecar via
+      `nexo_tunnel::read_url_file()` (already shipped per PR-3).
+   4. `NEXO_TUNNEL_URL` env var.
+   5. Loopback `http://127.0.0.1:<port>` fallback (existing
+      `pair_paths` behaviour, fail-closed when port unknown).
+2. `ws_cleartext_allow` from `pairing.yaml` (when present) is
+   threaded into the resolver `extras` so the cleartext-host
+   allowlist can be set from YAML.
+3. Unit tests in `crates/pairing/src/url_resolver.rs::tests`:
+   - Each priority level overrides the levels below it.
+   - Sidecar trim + idempotent absence (file missing → next
+     fallback, no error).
+   - Loopback fail-closed when no port supplied.
+4. `nexo pair start --public-url https://override` smoke test
+   (existing test or new) still passes — explicit flag wins.
+5. `cargo build --workspace && cargo test --workspace` exits 0
+   on the goal worktree.
+
+Reference for shipped pieces: see PR-3 in `FOLLOWUPS.md` —
+`url_state_path()`, `write_url_file()`, `read_url_file()`,
+`clear_url_file()` in `crates/tunnel/`. Do **not** re-implement
+those; just consume them.
 
 #### 26.aa — `pair_approve` scope-gated agent tool   ⬜  (security review required)
 
