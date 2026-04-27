@@ -9,9 +9,13 @@ pub mod events;
 pub mod health;
 pub mod imap_conn;
 pub mod inbound;
+pub mod mime_text;
+pub mod outbound_queue;
 pub mod plugin;
 
 pub use cursor::{CursorStore, UidCursor};
-pub use events::InboundEvent;
+pub use events::{AckStatus, InboundEvent, OutboundAck, OutboundCommand};
 pub use health::{AccountHealth, WorkerState};
+pub use mime_text::{build_text_mime, generate_message_id};
+pub use outbound_queue::{OutboundJob, OutboundQueue, SmtpEnvelope};
 pub use plugin::{EmailPlugin, TOPIC_INBOUND, TOPIC_OUTBOUND};

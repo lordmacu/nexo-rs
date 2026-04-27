@@ -26,6 +26,7 @@ dashmap      = { workspace = true }
 sqlx         = { workspace = true }
 rand         = { workspace = true }
 async-imap   = { workspace = true }
+uuid         = { workspace = true }
 tokio-rustls = { workspace = true }
 rustls       = { workspace = true }
 rustls-native-certs = { workspace = true }
