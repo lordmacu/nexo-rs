@@ -139,23 +139,21 @@ impl EmailAccount {
                 // workers do not race a token rotation on disk. The
                 // lock is held only across the read; the actual rotate
                 // is the Google plugin's job.
-                let handle = CredentialHandle::new(
-                    crate::handle::GOOGLE,
-                    &account.id,
-                    "<email-resolve>",
-                );
-                let lock = google.refresh_lock(&handle).ok_or(CredentialError::NotFound {
-                    channel: crate::handle::GOOGLE,
-                    account: google_account_id.clone(),
-                })?;
-                let _guard = lock.lock().await;
-                let token =
-                    std::fs::read_to_string(&account.token_path).map_err(|e| {
-                        CredentialError::Unreadable {
-                            path: account.token_path.clone(),
-                            source: e,
-                        }
+                let handle =
+                    CredentialHandle::new(crate::handle::GOOGLE, &account.id, "<email-resolve>");
+                let lock = google
+                    .refresh_lock(&handle)
+                    .ok_or(CredentialError::NotFound {
+                        channel: crate::handle::GOOGLE,
+                        account: google_account_id.clone(),
                     })?;
+                let _guard = lock.lock().await;
+                let token = std::fs::read_to_string(&account.token_path).map_err(|e| {
+                    CredentialError::Unreadable {
+                        path: account.token_path.clone(),
+                        source: e,
+                    }
+                })?;
                 Ok(SecretString::new(token.trim().to_string()))
             }
         }
@@ -587,10 +585,7 @@ mod tests {
         let s = EmailCredentialStore::new(vec![acct]);
         let r = s.validate();
         assert_eq!(r.accounts_ok, 0);
-        assert!(r
-            .warnings
-            .iter()
-            .any(|w| w.contains("empty access_token")));
+        assert!(r.warnings.iter().any(|w| w.contains("empty access_token")));
     }
 
     #[test]

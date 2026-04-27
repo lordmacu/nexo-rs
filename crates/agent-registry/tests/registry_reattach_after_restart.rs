@@ -29,7 +29,7 @@ fn handle(
         started_at: Utc::now(),
         finished_at,
         snapshot: AgentSnapshot::default(),
-    plan_mode: None,
+        plan_mode: None,
     }
 }
 

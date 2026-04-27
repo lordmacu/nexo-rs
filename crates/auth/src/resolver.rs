@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 
-use crate::error::{BuildError, ResolveError};
 use crate::email::EmailCredentialStore;
+use crate::error::{BuildError, ResolveError};
 use crate::google::GoogleCredentialStore;
 use crate::handle::{AgentId, Channel, CredentialHandle, EMAIL, GOOGLE, TELEGRAM, WHATSAPP};
 use crate::store::CredentialStore;

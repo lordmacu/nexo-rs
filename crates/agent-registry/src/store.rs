@@ -184,11 +184,9 @@ impl SqliteAgentRegistryStore {
         // rewrite) and idempotent here because we tolerate the
         // "duplicate column name" error so migrate() stays callable on
         // every boot.
-        let alter = sqlx::query(
-            "ALTER TABLE agent_registry ADD COLUMN plan_mode TEXT",
-        )
-        .execute(pool)
-        .await;
+        let alter = sqlx::query("ALTER TABLE agent_registry ADD COLUMN plan_mode TEXT")
+            .execute(pool)
+            .await;
         if let Err(e) = alter {
             let msg = e.to_string();
             if !msg.contains("duplicate column") {

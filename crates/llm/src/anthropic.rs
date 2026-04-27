@@ -521,10 +521,7 @@ fn prepend_claude_code_spoof(body: &mut Value) {
         }
         Some(Value::String(s)) => {
             let legacy = std::mem::take(s);
-            body["system"] = Value::Array(vec![
-                spoof,
-                json!({ "type": "text", "text": legacy }),
-            ]);
+            body["system"] = Value::Array(vec![spoof, json!({ "type": "text", "text": legacy })]);
         }
         Some(Value::Array(arr)) => {
             arr.insert(0, spoof);

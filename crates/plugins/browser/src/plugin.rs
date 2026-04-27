@@ -294,7 +294,9 @@ impl Plugin for BrowserPlugin {
     async fn stop(&self) -> anyhow::Result<()> {
         self.shutdown.cancel();
         *self.inner.session.lock().await = None;
-        *self.inner.chrome.lock().await = None;
+        if let Some(chrome) = self.inner.chrome.lock().await.take() {
+            chrome.shutdown().await;
+        }
         Ok(())
     }
 

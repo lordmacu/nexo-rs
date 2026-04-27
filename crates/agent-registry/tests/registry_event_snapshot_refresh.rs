@@ -21,7 +21,7 @@ fn fresh_handle(phase: &str) -> AgentHandle {
         started_at: Utc::now(),
         finished_at: None,
         snapshot: AgentSnapshot::default(),
-    plan_mode: None,
+        plan_mode: None,
     }
 }
 

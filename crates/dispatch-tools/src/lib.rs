@@ -48,8 +48,9 @@ pub use subjects::{
 
 pub use hooks::{
     CompletionHook, DefaultHookDispatcher, DispatchPhaseChainer, HookAction, HookDispatcher,
-    HookError, HookPayload, HookRegistryStore, HookStoreError, HookTransition, HookTrigger,
-    NatsHookPublisher, NoopNatsHookPublisher, SqliteHookRegistryStore,
+    HookError, HookIdempotencyStore, HookPayload, HookRegistryStore, HookStoreError,
+    HookTransition, HookTrigger, IdempotencyError, NatsHookPublisher, NoopNatsHookPublisher,
+    SqliteHookRegistryStore,
 };
 
 pub use dispatch_followup::{

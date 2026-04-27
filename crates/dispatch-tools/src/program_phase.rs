@@ -327,9 +327,10 @@ async fn collect_referenced_followups(
     let mut out = Vec::with_capacity(codes.len());
     for code in &codes {
         if let Some(fu) = all.iter().find(|f| f.code.eq_ignore_ascii_case(code)) {
-            if !out.iter().any(|f: &nexo_project_tracker::FollowUp| {
-                f.code.eq_ignore_ascii_case(code)
-            }) {
+            if !out
+                .iter()
+                .any(|f: &nexo_project_tracker::FollowUp| f.code.eq_ignore_ascii_case(code))
+            {
                 out.push(fu.clone());
             }
         }

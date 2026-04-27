@@ -13,10 +13,9 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use nexo_config::types::agents::AgentConfig;
 use nexo_config::types::credentials::{GoogleAccountConfig, GoogleAuthConfig, GoogleAuthFile};
-use nexo_config::types::plugins::{
-    EmailPluginConfig, TelegramPluginConfig, WhatsappPluginConfig,
-};
+use nexo_config::types::plugins::{EmailPluginConfig, TelegramPluginConfig, WhatsappPluginConfig};
 
+use crate::email::{load_email_secrets, EmailAccount, EmailCredentialStore};
 use crate::error::BuildError;
 use crate::gauntlet::{
     canonicalize_session_dirs, check_duplicate_paths, check_permissions, check_prefix_overlap,
@@ -27,7 +26,6 @@ use crate::handle::{Channel, GOOGLE, TELEGRAM, WHATSAPP};
 use crate::resolver::{
     AgentCredentialResolver, AgentCredentialsInput, CredentialStores, StrictLevel,
 };
-use crate::email::{load_email_secrets, EmailAccount, EmailCredentialStore};
 use crate::store::CredentialStore;
 use crate::telegram::{TelegramAccount, TelegramCredentialStore};
 use crate::whatsapp::{WhatsappAccount, WhatsappCredentialStore};
@@ -555,6 +553,8 @@ mod tests {
             pairing_policy: serde_json::Value::Null,
             context_optimization: None,
             dispatch_policy: Default::default(),
+            plan_mode: Default::default(),
+            remote_triggers: Vec::new(),
         }
     }
 

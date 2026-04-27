@@ -120,7 +120,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 async-nats         = "0.35"
 reqwest            = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "cookies", "charset", "http2", "macos-system-configuration"] }
 sqlx               = { version = "0.8", features = ["sqlite", "runtime-tokio"] }
-tokio-tungstenite  = "0.21"
+tokio-tungstenite  = { version = "0.21", features = ["rustls-tls-native-roots"] }
 uuid               = { version = "1", features = ["v4", "v5", "serde", "macro-diagnostics"] }
 chrono             = { version = "0.4", features = ["serde"] }
 config             = "0.14"
@@ -199,6 +199,7 @@ nexo-driver-claude     = { version = "0.1.1", path = "crates/driver-claude" }
 nexo-driver-loop       = { version = "0.1.1", path = "crates/driver-loop" }
 nexo-driver-permission = { version = "0.1.1", path = "crates/driver-permission" }
 nexo-project-tracker   = { version = "0.1.1", path = "crates/project-tracker" }
+tokio-tungstenite   = { workspace = true }
 tokio-util          = { workspace = true }
 tracing             = { workspace = true }
 tracing-subscriber  = { workspace = true }
