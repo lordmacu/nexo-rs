@@ -2739,6 +2739,20 @@ dependencies = [
 [[package]]
 name = "nexo-plugin-email"
 version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "nexo-broker",
+ "nexo-config",
+ "nexo-core",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "nexo-plugin-google"

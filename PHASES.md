@@ -479,54 +479,89 @@ ghcr.io/lordmacu/nexo-rs:<tag>` AND `cosign verify-blob
 public Rekor log. Image side passes now; blob side activates
 when 27.2 lands the release workflow.
 
-#### 27.4 — Debian + RPM packages   🔄
+#### 27.4 — Debian + RPM packages   ✅
 
-Build recipes + systemd unit + maintainer scripts shipped; signed
-apt / yum repo deferred (block on Phase 27.3 GPG/cosign infra).
+**Tier 1** (downloadable `.deb` / `.rpm` as GH release assets) and
+**Tier 3** (CI install-test matrix) shipped.
+**Tier 2** (signed apt/yum repos in GH Pages) split out as
+`27.4.b` — see below.
 
 Shipped:
-- `packaging/debian/build.sh` — produces
-  `dist/nexo-rs_<version>_<arch>.deb` for amd64 (native) and arm64
-  (cross via `cargo-zigbuild`). Reads version + description from
-  `Cargo.toml`. Pre-install creates the `nexo` system user;
-  post-install owns `/var/lib/nexo-rs/`, `/var/log/nexo-rs/`,
-  `/etc/nexo-rs/` mode 0750; pre-removal stops the unit;
-  post-purge wipes state + drops the user.
-- `packaging/debian/nexo-rs.service` — systemd unit with hardening
-  defaults: `NoNewPrivileges`, `ProtectSystem=strict`,
-  `ProtectHome`, `PrivateTmp`, `PrivateDevices`,
-  `ProtectKernel*`, `ProtectControlGroups`, `RestrictNamespaces`,
-  `LockPersonality`, `RestrictRealtime`, `RestrictSUIDSGID`,
-  `RemoveIPC`, `ReadWritePaths` scoped to state + log dirs,
-  `LimitNOFILE=65536`, `TasksMax=4096`. `Restart=on-failure`
-  with backoff. 30s SIGTERM grace.
-- `packaging/debian/README.md` — local build paths, install
-  command, what the postinst sets up, hardening notes, removal
-  semantics, deferred apt-repo publish plan.
-- `packaging/rpm/nexo-rs.spec` — RPM spec for Fedora / RHEL /
-  openSUSE. Same systemd unit reused as `Source1`. `%pre` creates
-  the `nexo` user, `%post` chowns + prints next steps,
-  `%preun`/`%postun` use the systemd-rpm-macros for proper
-  service handling, `%postun` on full removal wipes state.
-- `packaging/rpm/build.sh` — produces `dist/nexo-rs-<version>-1.<dist>.<arch>.rpm`
-  for x86_64 (native) and aarch64 (cross). Stages a source tarball,
-  invokes `rpmbuild` with the workspace version injected.
+- `release.yml` gains 4 jobs: `build-debian` matrix x2 (`amd64` +
+  `arm64`) + `build-rpm` matrix x2 (`x86_64` + `aarch64`). Both
+  reuse the musl static binary already built by `build-musl`
+  (cross-job artifact passing via `actions/download-artifact@v4`
+  with `name: dist-${target}`); zero recompile.
+- `release.yml` gains 2 install-test matrix jobs:
+  `install-test-deb` on `debian:12` + `ubuntu:24.04` +
+  `ubuntu:22.04` (`apt install ./nexo-rs_*_amd64.deb` + `nexo
+  --version` regex match + `nexo --help`); `install-test-rpm` on
+  `fedora:40` + `rockylinux:9` (`dnf install
+  ./nexo-rs-*-x86_64.rpm` + same smoke). `fail-fast: false` per
+  matrix; container `--user root`. Skip systemd boot test
+  (containers without pid-1 systemd).
+- `publish.needs:` extended to wait for the new build jobs;
+  `download-artifact` already uses `pattern: dist-*` so the new
+  `dist-deb-*` / `dist-rpm-*` artifacts are picked up
+  automatically.
+- `packaging/debian/build.sh` control file cleaned up:
+  `Pre-Depends: adduser` (preinst runs before Depends are
+  resolved), `Depends: ca-certificates` only (musl-static binary
+  bundles libsqlite + libssl in), `Recommends:` ampliated to
+  `nats-server, git, ffmpeg, tesseract-ocr, cloudflared, yt-dlp,
+  python3`. `VERSION` extraction switched from a broken greedy
+  awk to `grep -m1 '^version' | cut -d'"' -f2` (same fix applied
+  to `packaging/rpm/build.sh` and `packaging/termux/build.sh`).
+- `packaging/rpm/nexo-rs.spec` mirrors the cleanup: drop
+  `Requires: sqlite-libs` and `Requires: openssl-libs`, keep
+  `Requires: ca-certificates`, append `Recommends: cloudflared,
+  yt-dlp, python3`. `packaging/rpm/build.sh::cp` of the systemd
+  unit fixed to read from `packaging/debian/` (single source of
+  truth).
+- `docs/src/getting-started/install-deb.md` (NEW) — quick install
+  + verify (sha256 + cosign) + start service + Recommends +
+  uninstall + 27.4.b deferral note. Mirror at
+  `docs/src/getting-started/install-rpm.md` (NEW). Both
+  registered in `docs/src/SUMMARY.md`.
+- `docs/src/contributing/release.md` "automatic vs manual" table
+  expanded with the 4 new release.yml ownerships + 27.4.b
+  deferred rows.
 
-Deferred:
-- Apt repo at `https://lordmacu.github.io/nexo-rs/apt/` with a
-  signed `Release` file + GPG key — needs the key infra from
-  Phase 27.3.
-- Yum / dnf repo equivalent at `.../yum/` with `RPM-GPG-KEY-nexo`.
-- GitHub Pages publish job that mirrors `dist/*.deb` /
-  `dist/*.rpm` into the repo layout — needs Phase 27.2 release
-  workflow.
-- Auto-test that the deb actually installs cleanly on a fresh
-  Debian 12 / Ubuntu 24.04 container (CI matrix step).
+Deferred (to `27.4.b` below):
+- Signed apt repo at `https://lordmacu.github.io/nexo-rs/apt/`
+  with a clearsigned `InRelease` + GPG keyring.
+- Signed yum/dnf repo at `.../yum/` with `RPM-GPG-KEY-nexo`.
+- GitHub Pages publish job that mirrors release assets into the
+  repo layout.
+- One-line bootstrap installer (`curl ... | sh`) that wires the
+  repo + key.
 
-Done when (revised): an Ubuntu user adds the apt repo, runs
-`apt install nexo-rs`, and ends up with a daemon under systemd
-that came from a signed package. Recipe + unit + scripts done
-now; signed-repo half blocks on 27.2 + 27.3.
+Deferred (general):
+- arm64 docker install-test via qemu (~3 min overhead per image)
+  — backlog until demand.
+- systemd boot smoke (needs systemd-pid-1 container or VM).
+- `NEXO_BUILD_CHANNEL` drift: the `.deb`/`.rpm` ship the binary
+  built for the musl tarball, so `nexo --version --verbose`
+  reports `channel: tarball-x86_64-unknown-linux-musl` even when
+  installed via `dnf` / `apt`. Acceptable.
+
+Done when (revised): tag `nexo-rs-v<version>` push produces 2
+`.deb` + 2 `.rpm` + sha256 sidecars on the GH release; the
+install-test matrix passes on 5 docker images.
+
+#### 27.4.b — Signed apt/yum repos in GH Pages   ⬜
+
+GPG key generation + management, repo metadata generation
+(`apt-ftparchive` + `createrepo_c`), GH Pages publish job, and
+the `nexo-rs.repo` / `apt sources.list` snippets that turn
+`apt install nexo-rs` (or `dnf install nexo-rs`) into a one-liner
+with auto-upgrades. Cosign keyless (Phase 27.3) covers
+per-asset integrity but does NOT satisfy apt/yum trust chains —
+GPG is a separate signing system serving distinct verification.
+
+Done when an operator can drop a `sources.list` line + import the
+public key once, then run `apt install nexo-rs` and `apt upgrade`
+with package-manager-native UX.
 
 #### 27.5 — Docker image at GHCR   ✅
 
@@ -2018,6 +2053,28 @@ first-class channel.
 Done when an agent can subscribe to an inbox, reply
 contextually with proper threading, and operate on labels +
 folders.
+
+Sub-phases:
+
+- 48.1 — Scaffold + multi-account config schema   ✅
+  (`crates/plugins/email/{lib,plugin}.rs` Plugin-trait stub,
+  `EmailPluginConfig` extended to `accounts: [{instance,
+  address, provider, imap{host,port,tls},
+  smtp{host,port,tls}, folders, filters}]` plus
+  `loop_prevention`, `max_body_bytes=32 KiB`,
+  `idle_reissue_minutes=28`, `poll_fallback_seconds=60`,
+  `spf_dkim_warn`, sample `config/plugins/email.yaml` empty
+  by default. 3 round-trip + 2 plugin unit tests pass; old
+  single-account schema replaced in `load_test.rs` fixtures.)
+- 48.2 — `nexo-auth` `EmailCredentialStore` (Password / OAuth2 / OAuth2-Google)   ⬜
+- 48.3 — IMAP IDLE worker + poll fallback (CB-wrapped)   ⬜
+- 48.4 — SMTP outbound + disk-queue + Message-ID idempotency   ⬜
+- 48.5 — MIME parse/build + Attachment envelope   ⬜
+- 48.6 — Threading via `Message-ID` / `In-Reply-To` / `References`   ⬜
+- 48.7 — Tools: `email_send` / `_reply` / `_archive` / `_label` / `_move_to` / `_search`   ⬜
+- 48.8 — Loop-prevention + DSN/bounce parsing   ⬜
+- 48.9 — SPF/DKIM boot warn + setup-CLI submenu   ⬜
+- 48.10 — Health + hot-reload + e2e + docs   ⬜
 
 ### Phase 49 — Multimodal: vision input
 

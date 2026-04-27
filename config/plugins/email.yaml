@@ -1,9 +1,39 @@
+# Phase 48 — Email plugin (multi-account IMAP/SMTP).
+#
+# Credentials live in `nexo-auth` (Phase 17), not here. This file owns
+# transport endpoints + per-account behavior flags only. Drop a matching
+# entry under `secrets/email/<instance>.toml` (or supply via env vars) so
+# the boot gauntlet can resolve the LOGIN/XOAUTH2 secret at start-up.
+#
+# Per-account inbound topic: `plugin.inbound.email.<instance>`.
+# Per-account outbound topic: `plugin.outbound.email.<instance>`.
+
 email:
-  smtp:
-    host: "${SMTP_HOST:-}"
-    port: 587
-    username: "${SMTP_USER:-}"
-    password: "${SMTP_PASSWORD:-}"
-  imap:
-    host: "${IMAP_HOST:-}"
-    port: 993
+  enabled: true
+  max_body_bytes: 32768
+  attachments_dir: data/email-attachments
+  outbound_queue_dir: data/email-outbound
+  poll_fallback_seconds: 60
+  idle_reissue_minutes: 28
+  spf_dkim_warn: true
+  loop_prevention:
+    auto_submitted: true
+    list_headers: true
+    self_from: true
+
+  accounts: []
+  # Example — uncomment and fill once 48.2 ships the credential store:
+  #
+  # accounts:
+  #   - instance: ops
+  #     address: ops@example.com
+  #     provider: custom        # gmail | outlook | yahoo | icloud | custom
+  #     imap: { host: imap.example.com, port: 993, tls: implicit_tls }
+  #     smtp: { host: smtp.example.com, port: 587, tls: starttls }
+  #     folders:
+  #       inbox: INBOX
+  #       sent: Sent
+  #       archive: Archive
+  #     filters:
+  #       from_allowlist: []
+  #       from_denylist: []

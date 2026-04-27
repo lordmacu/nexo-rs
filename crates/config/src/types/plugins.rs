@@ -469,41 +469,261 @@ pub struct TelegramAllowlistConfig {
     pub chat_ids: Vec<i64>,
 }
 
+// ── Email plugin config (Phase 48) ────────────────────────────────────────────
+//
+// Multi-account IMAP/SMTP. Credentials live in `nexo-auth` (Phase 17),
+// not in this YAML — only transport endpoints + per-account behavior
+// flags belong here. The `instance` label threads into
+// `plugin.inbound.email.<instance>` so agent bindings can target a
+// specific mailbox.
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EmailPluginConfigFile {
     pub email: EmailPluginConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct EmailPluginConfig {
-    pub smtp: SmtpConfig,
-    pub imap: Option<ImapConfig>,
+    #[serde(default = "default_email_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_max_body_bytes")]
+    pub max_body_bytes: usize,
+    #[serde(default = "default_attachments_dir")]
+    pub attachments_dir: String,
+    #[serde(default = "default_outbound_queue_dir")]
+    pub outbound_queue_dir: String,
+    #[serde(default = "default_poll_fallback_seconds")]
+    pub poll_fallback_seconds: u64,
+    #[serde(default = "default_idle_reissue_minutes")]
+    pub idle_reissue_minutes: u64,
+    #[serde(default = "default_spf_dkim_warn")]
+    pub spf_dkim_warn: bool,
+    #[serde(default)]
+    pub loop_prevention: LoopPreventionCfg,
+    #[serde(default)]
+    pub accounts: Vec<EmailAccountConfig>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
-pub struct SmtpConfig {
-    pub host: String,
-    #[serde(default = "default_smtp_port")]
-    pub port: u16,
-    pub username: String,
-    pub password: String,
+pub struct LoopPreventionCfg {
+    #[serde(default = "default_true")]
+    pub auto_submitted: bool,
+    #[serde(default = "default_true")]
+    pub list_headers: bool,
+    #[serde(default = "default_true")]
+    pub self_from: bool,
 }
 
-fn default_smtp_port() -> u16 {
-    587
+impl Default for LoopPreventionCfg {
+    fn default() -> Self {
+        Self {
+            auto_submitted: true,
+            list_headers: true,
+            self_from: true,
+        }
+    }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
-pub struct ImapConfig {
-    pub host: String,
-    #[serde(default = "default_imap_port")]
-    pub port: u16,
+pub struct EmailAccountConfig {
+    /// Stable instance id — threads into `plugin.inbound.email.<instance>`
+    /// and is the lookup key for credentials in `nexo-auth`.
+    pub instance: String,
+    /// Operator-visible address (used for `From` and self-loop detection).
+    pub address: String,
+    #[serde(default = "default_provider")]
+    pub provider: EmailProvider,
+    pub imap: ImapEndpoint,
+    pub smtp: SmtpEndpoint,
+    #[serde(default)]
+    pub folders: EmailFolders,
+    #[serde(default)]
+    pub filters: EmailFilters,
 }
 
-fn default_imap_port() -> u16 {
-    993
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EmailProvider {
+    Gmail,
+    Outlook,
+    Yahoo,
+    Icloud,
+    Custom,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ImapEndpoint {
+    pub host: String,
+    pub port: u16,
+    #[serde(default = "default_imap_tls")]
+    pub tls: TlsMode,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct SmtpEndpoint {
+    pub host: String,
+    pub port: u16,
+    #[serde(default = "default_smtp_tls")]
+    pub tls: TlsMode,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TlsMode {
+    /// No TLS at all — only safe on localhost / loopback.
+    Plain,
+    /// Plaintext on connect, upgrade with STARTTLS (typical SMTP 587, IMAP 143).
+    Starttls,
+    /// TLS handshake on connect (typical SMTP 465, IMAP 993).
+    ImplicitTls,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EmailFolders {
+    #[serde(default = "default_folder_inbox")]
+    pub inbox: String,
+    #[serde(default = "default_folder_sent")]
+    pub sent: String,
+    #[serde(default = "default_folder_archive")]
+    pub archive: String,
+}
+
+impl Default for EmailFolders {
+    fn default() -> Self {
+        Self {
+            inbox: default_folder_inbox(),
+            sent: default_folder_sent(),
+            archive: default_folder_archive(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub struct EmailFilters {
+    /// If non-empty, only addresses matching this allowlist produce
+    /// inbound `ChatMessage`s. Other senders are dropped silently.
+    #[serde(default)]
+    pub from_allowlist: Vec<String>,
+    /// Always-drop list — short-circuit before any other check.
+    #[serde(default)]
+    pub from_denylist: Vec<String>,
+}
+
+fn default_email_enabled() -> bool {
+    true
+}
+fn default_max_body_bytes() -> usize {
+    32 * 1024
+}
+fn default_attachments_dir() -> String {
+    "data/email-attachments".to_string()
+}
+fn default_outbound_queue_dir() -> String {
+    "data/email-outbound".to_string()
+}
+fn default_poll_fallback_seconds() -> u64 {
+    60
+}
+fn default_idle_reissue_minutes() -> u64 {
+    28
+}
+fn default_spf_dkim_warn() -> bool {
+    true
+}
+fn default_provider() -> EmailProvider {
+    EmailProvider::Custom
+}
+fn default_imap_tls() -> TlsMode {
+    TlsMode::ImplicitTls
+}
+fn default_smtp_tls() -> TlsMode {
+    TlsMode::Starttls
+}
+fn default_folder_inbox() -> String {
+    "INBOX".to_string()
+}
+fn default_folder_sent() -> String {
+    "Sent".to_string()
+}
+fn default_folder_archive() -> String {
+    "Archive".to_string()
+}
+
+#[cfg(test)]
+mod email_config_tests {
+    use super::*;
+
+    #[test]
+    fn parses_minimal_account() {
+        let yaml = r#"
+email:
+  accounts:
+    - instance: ops
+      address: ops@example.com
+      imap: { host: imap.example.com, port: 993 }
+      smtp: { host: smtp.example.com, port: 587 }
+"#;
+        let f: EmailPluginConfigFile = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(f.email.accounts.len(), 1);
+        let acc = &f.email.accounts[0];
+        assert_eq!(acc.instance, "ops");
+        assert_eq!(acc.imap.tls, TlsMode::ImplicitTls);
+        assert_eq!(acc.smtp.tls, TlsMode::Starttls);
+        assert!(matches!(acc.provider, EmailProvider::Custom));
+        assert_eq!(f.email.max_body_bytes, 32 * 1024);
+        assert!(f.email.loop_prevention.auto_submitted);
+    }
+
+    #[test]
+    fn parses_full_account() {
+        let yaml = r#"
+email:
+  enabled: true
+  max_body_bytes: 65536
+  attachments_dir: /tmp/atts
+  outbound_queue_dir: /tmp/outq
+  poll_fallback_seconds: 30
+  idle_reissue_minutes: 25
+  spf_dkim_warn: false
+  loop_prevention: { auto_submitted: false, list_headers: true, self_from: true }
+  accounts:
+    - instance: gmail-ops
+      address: ops@gmail.com
+      provider: gmail
+      imap: { host: imap.gmail.com, port: 993, tls: implicit_tls }
+      smtp: { host: smtp.gmail.com, port: 587, tls: starttls }
+      folders: { inbox: INBOX, sent: "[Gmail]/Sent Mail", archive: "[Gmail]/All Mail" }
+      filters:
+        from_allowlist: ["@team.example.com"]
+        from_denylist: ["noreply@spam.example"]
+"#;
+        let f: EmailPluginConfigFile = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(f.email.poll_fallback_seconds, 30);
+        assert_eq!(f.email.idle_reissue_minutes, 25);
+        assert!(!f.email.spf_dkim_warn);
+        assert!(!f.email.loop_prevention.auto_submitted);
+        let acc = &f.email.accounts[0];
+        assert!(matches!(acc.provider, EmailProvider::Gmail));
+        assert_eq!(acc.folders.sent, "[Gmail]/Sent Mail");
+        assert_eq!(acc.filters.from_allowlist.len(), 1);
+    }
+
+    #[test]
+    fn rejects_unknown_field() {
+        let yaml = r#"
+email:
+  bogus_field: 1
+  accounts: []
+"#;
+        let r: Result<EmailPluginConfigFile, _> = serde_yaml::from_str(yaml);
+        assert!(r.is_err());
+    }
 }
