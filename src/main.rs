@@ -7545,6 +7545,15 @@ async fn handle_metrics_conn(mut stream: TcpStream, health: RuntimeHealth) -> an
     body.push_str(&nexo_llm::telemetry::render_prometheus());
     body.push_str(&nexo_mcp::telemetry::render_prometheus());
     body.push_str(&nexo_poller::telemetry::render_prometheus());
+    // Phase 48 follow-up #8 — append email metrics. Counters live in
+    // `nexo_plugin_email::metrics`; gauges (`imap_state`, queue
+    // depths) sample the live `health_map()` so the values are
+    // authoritative at scrape time.
+    let email_health = match health.email_plugin.as_ref() {
+        Some(p) => p.health_map().await,
+        None => None,
+    };
+    body.push_str(&nexo_plugin_email::metrics::render_prometheus(email_health.as_ref()).await);
     write_http_response(&mut stream, 200, "text/plain; version=0.0.4", &body).await?;
     Ok(())
 }
