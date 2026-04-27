@@ -60,9 +60,19 @@ pub struct LoadLimits {
 }
 impl Default for LoadLimits {
     fn default() -> Self {
+        // Phase 67 roadmaps grow into the 100KB+ range
+        // (PHASES.md, FOLLOWUPS.md) and the 12K/60K legacy
+        // defaults silently truncated them to ~10%, hiding the
+        // tail from the LLM. Modern Claude 4.x context is 200K
+        // tokens (1M on Opus 4.7 / Sonnet 4.6), so loading
+        // ~50K extra characters of workspace docs costs us
+        // <5% of the window — a much better trade than
+        // chopping the roadmap mid-table. Operators with very
+        // small models can lower this via a per-agent override
+        // (future work: surface as YAML field).
         Self {
-            max_per_file: 12_000,
-            max_total: 60_000,
+            max_per_file: 200_000,
+            max_total: 300_000,
         }
     }
 }

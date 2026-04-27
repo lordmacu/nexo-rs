@@ -56,6 +56,10 @@ fn with_mcp_config() {
     assert!(args
         .windows(2)
         .any(|w| w == ["--mcp-config", "/etc/mcp.json"]));
+    // Phase 73 — strict flag follows so Claude does not merge
+    // with the user's ~/.claude.json (which silently drops the
+    // driver's nexo-driver server).
+    assert!(args.iter().any(|a| a == "--strict-mcp-config"));
 }
 
 #[test]

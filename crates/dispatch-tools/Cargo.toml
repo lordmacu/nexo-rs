@@ -49,6 +49,10 @@ optional  = true
 name = "nexo-driver-tools"
 path = "src/bin/nexo_driver_tools.rs"
 
+# Phase 27.1 — keep this internal dispatch bin out of release tarballs.
+[package.metadata.dist]
+dist = false
+
 [dev-dependencies]
 anyhow      = { workspace = true }
 async-trait = { workspace = true }

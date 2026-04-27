@@ -35,14 +35,11 @@ pub async fn audit(config_dir: &Path) -> Vec<EmptyPairing> {
         return Vec::new();
     };
     let store_path = resolve_store_path(config_dir, &cfg);
-    let store = match nexo_pairing::PairingStore::open(
-        store_path.to_str().unwrap_or("pairing.db"),
-    )
-    .await
-    {
-        Ok(s) => s,
-        Err(_) => return Vec::new(),
-    };
+    let store =
+        match nexo_pairing::PairingStore::open(store_path.to_str().unwrap_or("pairing.db")).await {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
     let mut findings: Vec<EmptyPairing> = Vec::new();
     for agent in &cfg.agents.agents {
         for binding in &agent.inbound_bindings {

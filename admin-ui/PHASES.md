@@ -364,6 +364,13 @@ IOUs — features that landed in the daemon but have no UI yet.
 
 - [ ] `credentials:` block (Phase 17) — Phase A3 agent-config tab
   Phase A3 covers this
+- [ ] Release pipeline (Phase 27.1 `cargo-dist` baseline) — local
+  smoke gate (`make dist-check`) shipped; the GH Actions release
+  workflow + per-target tarball download links + release-channel
+  badge land in Phase 27.2. Admin UI `About` / footer should
+  surface `nexo --version --verbose` output (git-sha, target,
+  channel, built-at) once the daemon exposes those four stamps
+  through `/api/info` (deferred).
 - [ ] Driver/goal monitor (Phase 67) — pending tile to surface
   active goals, decisions taken (allow/deny/observe), budget
   consumption per axis, acceptance verdicts, escalation status,

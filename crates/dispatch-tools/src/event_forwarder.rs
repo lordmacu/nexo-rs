@@ -297,8 +297,8 @@ fn build_turn_record(
         AttemptOutcome::BudgetExhausted { axis } => Some(format!("budget exhausted: {axis:?}")),
         _ => None,
     };
-    let raw_json =
-        serde_json::to_string(result).unwrap_or_else(|e| format!("{{\"serialize_error\":\"{e}\"}}"));
+    let raw_json = serde_json::to_string(result)
+        .unwrap_or_else(|e| format!("{{\"serialize_error\":\"{e}\"}}"));
     TurnRecord {
         goal_id: result.goal_id,
         turn_index: result.turn_index,

@@ -18,6 +18,17 @@ use crate::types::{FollowUp, Phase, PhaseStatus, SubPhase, TrackerError};
 
 #[async_trait]
 pub trait ProjectTracker: Send + Sync + 'static {
+    /// Phase 76 — the on-disk directory the tracker is rooted at.
+    /// Default returns `None` so existing impls keep building; the
+    /// concrete `FsProjectTracker` / `MutableTracker` types
+    /// override with their actual root so `program_phase_dispatch`
+    /// can detect when the active workspace is a separate git repo
+    /// from the daemon's source and pin the per-goal worktree to
+    /// it. None for in-memory / fixture trackers used in tests.
+    fn root(&self) -> Option<std::path::PathBuf> {
+        None
+    }
+
     async fn phases(&self) -> Result<Vec<Phase>, TrackerError>;
     async fn followups(&self) -> Result<Vec<FollowUp>, TrackerError>;
 
@@ -224,6 +235,11 @@ impl FsProjectTracker {
 
 #[async_trait]
 impl ProjectTracker for FsProjectTracker {
+    fn root(&self) -> Option<std::path::PathBuf> {
+        // PHASES.md path's parent is the tracker root.
+        self.phases_path.parent().map(|p| p.to_path_buf())
+    }
+
     async fn phases(&self) -> Result<Vec<Phase>, TrackerError> {
         if let Some(v) = self.phases_fresh() {
             return Ok(v);

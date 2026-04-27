@@ -451,7 +451,104 @@ PT-8. **Multi-agent end-to-end test not shipped**
   the chat origin propagates into the hook payload.
 - Target: alongside PT-1 / PT-3 / PT-4.
 
+### Browser plugin leaks zombie child processes
+
+- Missing: child reaping in the browser plugin's CDP launcher. A
+  long-lived `headless-shell` (or `chromium --headless`) parent
+  accumulates `<defunct>` children every time a session is torn
+  down — observed 25+ zombies pinned to a single PID after a
+  3-day uptime. The OS only releases them when the parent dies, so
+  a stable daemon eventually fills the process table.
+- Why deferred: needs an audit of `crates/plugins/browser/`'s child
+  spawning code (likely `bot.rs` / launch + close paths) to
+  guarantee `wait()` is called on every CDP child handle, plus a
+  reaper loop or `prctl(PR_SET_CHILD_SUBREAPER)` for cases where the
+  child outlives the immediate launcher (e.g. crashpad handlers,
+  zygote forks). Fix is mechanical but spans the plugin lifecycle.
+- Workaround: restart `headless-shell` periodically (kills the
+  zombies along with the parent). Ours had to be killed as root
+  because it was launched by a privileged container.
+- Target: Phase 9 hardening / next browser-plugin reliability pass.
+
+### `set_active_workspace` state lost on daemon restart
+
+- Missing: when an operator (or `init_project`) switches the active
+  tracker workspace mid-session, that switch lives only in the
+  `MutableTracker`'s in-memory state. A daemon restart resets the
+  tracker back to the boot-time root, so Cody loses the workspace
+  context and `program_phase` for any phase id defined in the
+  switched-to PHASES.md returns `not_found`. Operator workaround
+  today: re-issue `set_active_workspace path=...` after every
+  restart before dispatching.
+- Why deferred: needs a small SQLite (or JSON) sidecar to persist
+  the active workspace per dispatcher (or globally), plus a
+  read-on-boot path in `boot_dispatch_ctx_if_enabled` to apply
+  the saved root before tools register.
+- Target: next dispatch reliability sweep / Phase 67 follow-up.
+
+### Phase 27.1 — cargo-dist baseline deferrals
+
+- **Local musl validation blocked by zig 0.16 ↔ cargo-zigbuild 0.22
+  incompat.** zig 0.16 changed target-triple parsing
+  (`x86_64-unknown-linux-musl` rejected with `UnknownOperatingSystem`)
+  while cargo-zigbuild 0.22.x still emits both `--target=<triple>` and
+  `-target <triple>` in cc-rs invocations. As of 2026-04-27 the
+  `python-zig` shipped via `pipx install ziglang` is the only zig in
+  reach, so full musl validation is CI-only until either
+  cargo-zigbuild catches up or we can pin an older `zig` version.
+  Track upstream: <https://github.com/rust-cross/cargo-zigbuild>.
+  Phase 27.2 CI runners install a known-good zig version so the
+  cross matrix builds there.
+- **macOS / Windows local validation needs vendor SDKs.** Neither
+  builds on a stock developer Linux box. Phase 27.2 GH Actions matrix
+  spawns one runner per target with the right SDK pre-installed. Local
+  `make dist-check` gracefully WARNs on missing tarballs.
+- **`x86_64-unknown-linux-gnu` shipped as host-fallback target.**
+  Listed first in `dist-workspace.toml::targets` so a stock developer
+  Linux box can validate the pipeline end-to-end. NOT advertised as
+  an installable channel — Linux users get musl static. Remove this
+  entry once full musl validation works locally.
+- **`NEXO_BUILD_CHANNEL` env stamp defaults to `source`.** Phase 27.2
+  release workflow needs to set `NEXO_BUILD_CHANNEL=apt-musl`,
+  `brew-arm64`, `tarball-x86_64-musl`, etc. so `nexo --version
+  --verbose` reports install provenance in bug reports. Today every
+  binary built from a `make dist-build` tags itself `source`.
+- **`/api/info` daemon endpoint to expose build stamps.** Admin UI
+  footer / About page wants the same four stamps (`git-sha`, `target`,
+  `channel`, `built-at`) over HTTP, not just the CLI. Wire when
+  Phase A4 dashboard lands.
+- **`nexo self-update` (Phase 27.10).** `install-updater = false` in
+  `dist-workspace.toml` keeps `axoupdater` off until the GH-releases
+  source-of-truth is wired. Re-evaluate after 27.2 ships.
+- **CHANGELOG.md root entry duplicated with per-crate.** release-plz
+  generates per-crate `CHANGELOG.md` on first release-PR; root file
+  is mostly an index for the bin shipped from this crate. Keep an
+  eye on whether the bullet style stays in sync — drift is acceptable
+  but not desirable.
+
 ## Resolved (recent highlights)
+
+- 2026-04-26 — `skills_dir: ./skills` in every agent YAML now points
+  at `../skills` so the `resolve_relative_paths` step in
+  `crates/config/src/lib.rs` (which roots relative paths at
+  `<config_dir>/`) hits the project-level `skills/` tree instead of
+  the non-existent `config/skills/`. Also dropped `web-search` from
+  `agents.d/cody.yaml::skills` because no `skills/web-search/SKILL.md`
+  ships in this checkout. Removes the WARN flood on every Cody turn
+  and stops "missing SKILL.md" entries from masking real errors.
+
+- 2026-04-26 — `nexo-driver-loop`'s `substitute_env_vars` no longer
+  mangles UTF-8 in `config/driver/claude.yaml`. The loader copied
+  bytes as `char` one at a time, so any multi-byte codepoint (e.g.
+  the em-dash on line 1 of the shipped reference config) split into
+  raw bytes — including C1 control bytes 0x80–0x9F that YAML
+  rejects with "control characters are not allowed". Driver boot
+  failed silently with a WARN, which Cody surfaced as "in-process
+  driver isn't booted" and disabled every dispatch tool. Now the
+  substitution copies the unmodified UTF-8 around each `${VAR}`
+  span instead.
+
+
 
 - 2026-04-26 — Admin first-run wizard at `/api/bootstrap/finish` now
   refuses to create `agents.d/<slug>.yaml` when an agent with that id

@@ -202,6 +202,7 @@ mod tests {
             name: "echo".into(),
             description: Some("echoes".into()),
             input_schema: serde_json::json!({"type":"object"}),
+            output_schema: None,
         };
         let def = McpTool::tool_def(&desc, "util");
         assert_eq!(def.name, "mcp_util_echo");
@@ -214,6 +215,7 @@ mod tests {
             name: "ping".into(),
             description: None,
             input_schema: serde_json::json!({}),
+            output_schema: None,
         };
         let def = McpTool::tool_def(&desc, "util");
         assert!(def.description.starts_with("[mcp:util]"));

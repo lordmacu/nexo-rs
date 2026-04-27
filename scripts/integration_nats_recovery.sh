@@ -23,7 +23,7 @@ echo "[1/6] pre-check: stack health"
 ./scripts/integration_stack_smoke.sh
 
 echo "[2/6] pre-check: browser NATS roundtrip"
-cargo run --quiet --bin integration-browser-check
+cargo run --quiet --example integration-browser-check
 
 echo "[3/6] stopping nats to force not-ready state"
 docker compose stop nats >/dev/null
@@ -72,6 +72,6 @@ if [[ "$code" != "200" ]]; then
 fi
 
 echo "[6/6] post-check: browser NATS roundtrip after recovery"
-cargo run --quiet --bin integration-browser-check
+cargo run --quiet --example integration-browser-check
 
 echo "nats recovery integration checks passed"

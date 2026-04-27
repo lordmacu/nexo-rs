@@ -125,13 +125,22 @@ impl ToolRegistryBridge {
     }
     /// Convert a tool handler result into the MCP tool_result envelope.
     fn wrap_ok(value: Value) -> McpToolResult {
-        let text = match value {
-            Value::String(s) => s,
-            other => serde_json::to_string_pretty(&other).unwrap_or_default(),
+        let text = match &value {
+            Value::String(s) => s.clone(),
+            other => serde_json::to_string_pretty(other).unwrap_or_default(),
+        };
+        // Phase 74.3 — populate `structured_content` only when the
+        // payload is non-string (objects/arrays). Pure-string
+        // results stay text-only because Claude wouldn't gain a
+        // typed view from echoing the same string twice.
+        let structured = match &value {
+            Value::String(_) | Value::Null => None,
+            _ => Some(value),
         };
         McpToolResult {
             content: vec![McpContent::Text { text }],
             is_error: false,
+            structured_content: structured,
         }
     }
     fn wrap_err(err: &anyhow::Error) -> McpToolResult {
@@ -140,6 +149,7 @@ impl ToolRegistryBridge {
                 text: format!("{err}"),
             }],
             is_error: true,
+            structured_content: None,
         }
     }
 
@@ -218,6 +228,7 @@ impl McpServerHandler for ToolRegistryBridge {
                 name: d.name,
                 description: Some(d.description),
                 input_schema: d.parameters,
+                output_schema: None,
             })
             .collect();
         Ok(tools)

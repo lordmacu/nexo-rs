@@ -202,6 +202,14 @@ enum Mode {
     Admin {
         port: u16,
     },
+    /// Phase 27.1 — print version + (optionally) build provenance.
+    /// Short form (`nexo --version` / `-V`) prints `nexo <pkg-version>`.
+    /// Verbose form (`nexo version` or `nexo --version --verbose`)
+    /// prints the package version plus git-sha, target triple, build
+    /// channel, and build timestamp captured by `build.rs`.
+    Version {
+        verbose: bool,
+    },
     Help,
 }
 
@@ -341,6 +349,10 @@ async fn main() -> Result<()> {
     match args.mode {
         Mode::Help => {
             print_usage();
+            return Ok(());
+        }
+        Mode::Version { verbose } => {
+            print_version(verbose);
             return Ok(());
         }
         Mode::DlqList => return run_dlq_list(&args.config_dir).await,
@@ -2441,10 +2453,7 @@ async fn boot_dispatch_ctx_if_enabled(
         .as_ref()
         .map(|c| c.program_phase.require_trusted)
         .unwrap_or(true);
-    tracing::info!(
-        require_trusted,
-        "dispatch boot: program_phase gate"
-    );
+    tracing::info!(require_trusted, "dispatch boot: program_phase gate");
 
     // Driver config — fall back to a shipped default path.
     // Production deploys override with NEXO_DRIVER_CONFIG.
@@ -2640,10 +2649,8 @@ async fn boot_dispatch_ctx_if_enabled(
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            match nexo_agent_registry::SqliteAgentRegistryStore::open(
-                path.to_str().unwrap_or(""),
-            )
-            .await
+            match nexo_agent_registry::SqliteAgentRegistryStore::open(path.to_str().unwrap_or(""))
+                .await
             {
                 Ok(s) => {
                     tracing::info!(path = %path.display(), "agent registry: sqlite-backed (survives restart)");
@@ -2659,7 +2666,9 @@ async fn boot_dispatch_ctx_if_enabled(
             }
         }
         None => {
-            tracing::info!("agent registry: memory-only (no agent_registry.store path; goals lost on restart)");
+            tracing::info!(
+                "agent registry: memory-only (no agent_registry.store path; goals lost on restart)"
+            );
             (
                 Arc::new(nexo_agent_registry::MemoryAgentRegistryStore::default()),
                 false,
@@ -2678,10 +2687,8 @@ async fn boot_dispatch_ctx_if_enabled(
     let turn_log_store: Option<Arc<dyn nexo_agent_registry::TurnLogStore>> =
         match registry_store_path.as_ref() {
             Some(path) => {
-                match nexo_agent_registry::SqliteTurnLogStore::open(
-                    path.to_str().unwrap_or(""),
-                )
-                .await
+                match nexo_agent_registry::SqliteTurnLogStore::open(path.to_str().unwrap_or(""))
+                    .await
                 {
                     Ok(s) => {
                         tracing::info!(path = %path.display(), "turn log: sqlite-backed (every AttemptResult persisted)");
@@ -2827,15 +2834,10 @@ async fn boot_dispatch_ctx_if_enabled(
                                 origin: handle.origin.clone(),
                             };
                             for hook in hooks {
-                                if !hook
-                                    .on
-                                    .matches(nexo_dispatch_tools::HookTransition::Failed)
-                                {
+                                if !hook.on.matches(nexo_dispatch_tools::HookTransition::Failed) {
                                     continue;
                                 }
-                                if let Err(e) =
-                                    hook_dispatcher.dispatch(&hook, &payload).await
-                                {
+                                if let Err(e) = hook_dispatcher.dispatch(&hook, &payload).await {
                                     tracing::warn!(
                                         goal_id = ?handle.goal_id,
                                         hook_id = %hook.id,
@@ -3531,9 +3533,7 @@ fn print_loopback_seed_hint(config_dir: &std::path::Path) {
         if let Ok(file) = serde_yaml::from_str::<nexo_config::TelegramPluginConfigFile>(&text) {
             for tg in file.telegram.into_vec() {
                 let account = tg.instance.as_deref().unwrap_or("default");
-                eprintln!(
-                    "  nexo pair seed telegram {account} <YOUR_TELEGRAM_USER_ID>"
-                );
+                eprintln!("  nexo pair seed telegram {account} <YOUR_TELEGRAM_USER_ID>");
                 suggested = true;
             }
         }
@@ -3542,9 +3542,7 @@ fn print_loopback_seed_hint(config_dir: &std::path::Path) {
         if let Ok(file) = serde_yaml::from_str::<nexo_config::WhatsappPluginConfigFile>(&text) {
             for wa in file.whatsapp.into_vec() {
                 let account = wa.instance.as_deref().unwrap_or("default");
-                eprintln!(
-                    "  nexo pair seed whatsapp {account} <YOUR_WHATSAPP_NUMBER>"
-                );
+                eprintln!("  nexo pair seed whatsapp {account} <YOUR_WHATSAPP_NUMBER>");
                 suggested = true;
             }
         }
@@ -3804,6 +3802,17 @@ fn parse_args() -> CliArgs {
         }
     }
 
+    // Phase 27.1 — `--version` / `-V`. Pair with `--verbose` for the
+    // build-provenance block. The `version` subcommand is handled below
+    // alongside the other positional commands.
+    if positional.iter().any(|a| a == "--version" || a == "-V") {
+        let verbose = positional.iter().any(|a| a == "--verbose");
+        return CliArgs {
+            config_dir,
+            mode: Mode::Version { verbose },
+        };
+    }
+
     let has_json_flag = positional.iter().any(|a| a == "--json");
     let pos_no_flags: Vec<String> = positional
         .iter()
@@ -3846,6 +3855,10 @@ fn parse_args() -> CliArgs {
 
     let mode = match pos_no_flags.as_slice() {
         [] => Mode::Run,
+        // Phase 27.1 — `nexo version` is the verbose form (always
+        // includes the build-provenance block). `nexo --version` short
+        // form is handled before the match.
+        [cmd] if cmd == "version" => Mode::Version { verbose: true },
         [cmd] if cmd == "dlq" => {
             eprintln!("error: `dlq` requires a subcommand (list|replay <id>|purge)");
             Mode::Help
@@ -3977,6 +3990,20 @@ fn parse_args() -> CliArgs {
     };
 
     CliArgs { config_dir, mode }
+}
+
+/// Phase 27.1 — print version to stdout. `verbose=false` mirrors clap's
+/// auto `--version` (`nexo <pkg-version>`); `verbose=true` adds the four
+/// build stamps captured by `build.rs` so bug reports carry provenance.
+fn print_version(verbose: bool) {
+    let version = env!("CARGO_PKG_VERSION");
+    println!("nexo {version}");
+    if verbose {
+        println!("  git-sha:   {}", env!("NEXO_BUILD_GIT_SHA"));
+        println!("  target:    {}", env!("NEXO_BUILD_TARGET_TRIPLE"));
+        println!("  channel:   {}", env!("NEXO_BUILD_CHANNEL"));
+        println!("  built-at:  {}", env!("NEXO_BUILD_TIMESTAMP"));
+    }
 }
 
 fn print_usage() {
@@ -8043,5 +8070,30 @@ fn truncate(s: &str, max: usize) -> String {
         let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
         out.push('…');
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Phase 27.1 — verify the four `NEXO_BUILD_*` env stamps are
+    /// non-empty at compile time. The actual stdout-capture form
+    /// of `print_version` would need `#[no_main]` redirection; this
+    /// test guards the inputs the function reads, which is the part
+    /// build.rs owns.
+    #[test]
+    fn build_stamps_are_populated() {
+        let sha = env!("NEXO_BUILD_GIT_SHA");
+        let target = env!("NEXO_BUILD_TARGET_TRIPLE");
+        let channel = env!("NEXO_BUILD_CHANNEL");
+        let ts = env!("NEXO_BUILD_TIMESTAMP");
+        assert!(!sha.is_empty(), "git-sha stamp empty");
+        assert!(!target.is_empty(), "target triple stamp empty");
+        assert!(!channel.is_empty(), "channel stamp empty");
+        assert!(!ts.is_empty(), "timestamp stamp empty");
+        // build.rs should have produced an ISO8601 UTC timestamp.
+        assert!(
+            ts.ends_with('Z') && ts.contains('T'),
+            "timestamp not ISO8601 UTC: {ts}"
+        );
     }
 }

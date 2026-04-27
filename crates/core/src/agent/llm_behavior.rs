@@ -368,6 +368,19 @@ impl LlmAgentBehavior {
             }
         };
         let duration_ms = started_tool.elapsed().as_millis() as u64;
+        // Surface every tool invocation at INFO so operators can
+        // diagnose "why did the agent not call X" or "why did X fail
+        // silently" without flipping the whole crate to debug.
+        let preview: String = result.chars().take(160).collect::<String>();
+        tracing::info!(
+            agent_id = %ctx.agent_id,
+            tool = %call.name,
+            outcome,
+            duration_ms,
+            error = tool_err.as_deref().unwrap_or(""),
+            result_preview = %preview,
+            "tool executed"
+        );
         (result, tool_err, outcome, duration_ms)
     }
     async fn run_turn(
@@ -934,11 +947,13 @@ impl LlmAgentBehavior {
                     break;
                 }
                 ResponseContent::ToolCalls(calls) => {
+                    let tool_names: Vec<&str> = calls.iter().map(|c| c.name.as_str()).collect();
                     tracing::info!(
                         agent_id = %ctx.agent_id,
                         session_id = %msg.session_id,
                         message_id = %msg.id,
                         tool_calls = calls.len(),
+                        tool_names = ?tool_names,
                         iteration,
                         "llm requested tool calls"
                     );

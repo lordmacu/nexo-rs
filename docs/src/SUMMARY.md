@@ -146,5 +146,6 @@
 ---
 
 [Contributing](./contributing.md)
+[Releases](./contributing/release.md)
 [License](./license.md)
 [API reference (rustdoc) ↗](./api-reference.md)

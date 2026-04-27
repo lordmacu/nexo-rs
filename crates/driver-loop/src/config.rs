@@ -276,6 +276,13 @@ fn substitute_env_vars(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let bytes = input.as_bytes();
     let mut i = 0;
+    // `last_copy` marks the start of the next ASCII-safe slice we
+    // owe to the output. Copying via `push_str(&input[..])` keeps
+    // multi-byte UTF-8 (em-dashes, accents, …) intact — the
+    // earlier byte-by-byte `as char` cast split codepoints into
+    // bytes, and bytes like 0x80–0x9F are C1 control characters
+    // that YAML rejects with "control characters are not allowed".
+    let mut last_copy = 0;
     while i < bytes.len() {
         if bytes[i] == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
             if let Some(end) = find_close_brace(bytes, i + 2) {
@@ -285,17 +292,19 @@ fn substitute_env_vars(input: &str) -> String {
                     None => (inner, None),
                 };
                 if is_var_name(name) {
+                    out.push_str(&input[last_copy..i]);
                     let value = std::env::var(name).ok();
                     let resolved = value.as_deref().or(fallback).unwrap_or("");
                     out.push_str(resolved);
                     i = end + 1;
+                    last_copy = i;
                     continue;
                 }
             }
         }
-        out.push(input.as_bytes()[i] as char);
         i += 1;
     }
+    out.push_str(&input[last_copy..]);
     out
 }
 

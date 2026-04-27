@@ -28,6 +28,7 @@ impl McpServerHandler for FixtureHandler {
                 "type": "object",
                 "properties": {"text": {"type": "string"}},
             }),
+            output_schema: None,
         }])
     }
 
@@ -45,6 +46,7 @@ impl McpServerHandler for FixtureHandler {
                 text: format!("echo: {text}"),
             }],
             is_error: false,
+            structured_content: None,
         })
     }
 }

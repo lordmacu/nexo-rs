@@ -11,7 +11,10 @@ binary: claude
 
 default_args:
   output_format: stream_json
-  permission_prompt_tool: mcp__nexo-driver__permission_prompt
+  # Phase 73 — must match `mcp__<serverInfo.name>__<tool-name>` of
+  # the spawned MCP server. The bin's `serverInfo.name` is
+  # `nexo-driver-permission`, the tool is `permission_prompt`.
+  permission_prompt_tool: mcp__nexo-driver-permission__permission_prompt
   allowed_tools:
     - Read
     - Grep
@@ -51,7 +54,7 @@ turn_timeout: 10m
 # bindings are always hidden from `get`.
 binding_store:
   kind: sqlite
-  path: ${NEXO_DRIVER_DB:-/var/lib/nexo-rs/driver.db}
+  path: ${NEXO_DRIVER_DB:-./data/driver.db}
   idle_ttl: 24h
   max_age: 30d
 
@@ -70,7 +73,7 @@ binding_store:
 # `session_cache_max`: hard cap on the in-process AllowSession cache
 # so a runaway turn cannot blow up RSS.
 permission:
-  socket: ${NEXO_DRIVER_DECISION_SOCKET:-/run/nexo-rs/driver.sock}
+  socket: ${NEXO_DRIVER_DECISION_SOCKET:-./data/driver.sock}
   decision_timeout: 30s
   session_cache_max: 1024
   decider:
@@ -84,7 +87,7 @@ permission:
     # (with namespace=global) across goals.
     memory:
       enabled: false
-      path: ${NEXO_DRIVER_MEM_DB:-/var/lib/nexo-rs/driver.db}
+      path: ${NEXO_DRIVER_MEM_DB:-./data/driver-mem.db}
       embedding_provider:
         kind: http
         base_url: ${EMBEDDING_API_URL:-http://localhost:8001/v1}
@@ -101,7 +104,7 @@ workspace:
   root: ${NEXO_DRIVER_WORKSPACE_ROOT:-/tmp/claude-runs}
   cleanup_on_done: false
   git:
-    enabled: false
+    enabled: true
     source_repo: ${NEXO_DRIVER_SOURCE_REPO:-}
     base_ref: HEAD
 

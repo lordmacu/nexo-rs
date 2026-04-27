@@ -64,7 +64,38 @@ impl WorkspaceManager {
         tokio::fs::create_dir_all(&self.root).await?;
         let canonical_root = tokio::fs::canonicalize(&self.root).await?;
 
-        match &self.git {
+        // Phase 76 — per-goal source repo override. When
+        // `program_phase_dispatch` detects the active tracker is a
+        // standalone git repo (typical after `init_project`), it
+        // stamps `goal.metadata["worktree.source_repo"]` with that
+        // path. The override takes precedence over `self.git` so
+        // the per-goal worktree clones the right repo even when
+        // the daemon was booted against a different one.
+        let override_source: Option<PathBuf> = goal
+            .metadata
+            .get("worktree.source_repo")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .filter(|p| p.join(".git").exists());
+
+        let resolved = if let Some(repo) = override_source {
+            // Use the operator-provided source repo with the same
+            // base_ref the boot config picked, falling back to a
+            // sane default when the boot mode is `Disabled`.
+            let base_ref = match &self.git {
+                GitWorktreeMode::SourceRepo { base_ref, .. } => base_ref.clone(),
+                GitWorktreeMode::Disabled => "HEAD".to_string(),
+            };
+            GitWorktreeMode::SourceRepo {
+                path: repo,
+                base_ref,
+            }
+        } else {
+            self.git.clone()
+        };
+
+        match &resolved {
             GitWorktreeMode::Disabled => {
                 let candidate = match &goal.workspace {
                     Some(p) => PathBuf::from(p),

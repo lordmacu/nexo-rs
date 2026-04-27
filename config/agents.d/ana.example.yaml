@@ -28,7 +28,7 @@ agents:
       queue_cap: 5
     workspace: ./data/workspace/example_sales_agent
     skills: []
-    skills_dir: ./skills
+    skills_dir: ../skills
     transcripts_dir: ./data/transcripts/example_sales_agent
     dreaming:
       enabled: false

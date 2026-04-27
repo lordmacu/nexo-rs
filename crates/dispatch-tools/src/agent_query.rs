@@ -194,10 +194,7 @@ fn default_turns() -> usize {
 /// the table top-to-bottom and follow the run. The header reports
 /// `<shown> of <total>` so a 200-turn goal isn't silently
 /// truncated.
-pub async fn agent_turns_tail(
-    input: AgentTurnsTailInput,
-    store: Arc<dyn TurnLogStore>,
-) -> String {
+pub async fn agent_turns_tail(input: AgentTurnsTailInput, store: Arc<dyn TurnLogStore>) -> String {
     let n = input.n.clamp(1, 1000);
     let total = match store.count(input.goal_id).await {
         Ok(c) => c,
@@ -341,7 +338,10 @@ mod tests {
             store.append(&record(goal, i, "continue")).await.unwrap();
         }
         let out = agent_turns_tail(
-            AgentTurnsTailInput { goal_id: goal, n: 3 },
+            AgentTurnsTailInput {
+                goal_id: goal,
+                n: 3,
+            },
             Arc::clone(&store),
         )
         .await;
@@ -359,7 +359,10 @@ mod tests {
             Arc::new(SqliteTurnLogStore::open_memory().await.unwrap());
         let goal = GoalId(Uuid::new_v4());
         let out = agent_turns_tail(
-            AgentTurnsTailInput { goal_id: goal, n: 10 },
+            AgentTurnsTailInput {
+                goal_id: goal,
+                n: 10,
+            },
             store,
         )
         .await;
@@ -380,4 +383,3 @@ mod tests {
         assert!(trimmed.ends_with('…'));
     }
 }
-

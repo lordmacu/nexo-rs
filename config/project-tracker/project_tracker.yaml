@@ -24,8 +24,8 @@ tracker:
     max_commits: 5
 
 program_phase:
-  enabled: false              # opt-in once 67.E.1 lands
-  require_trusted: true       # only pairing.trusted=true senders may dispatch
+  enabled: true
+  require_trusted: false      # dev: any approved sender may dispatch
   max_concurrent_agents: 4    # global cap across all dispatchers
   max_concurrent_per_sender: 2
   progress_every_turns: 5
@@ -41,6 +41,6 @@ agent_registry:
   # Empty path → in-memory only (registry state is lost on daemon
   # restart). File path → SQLite, survives restart and powers
   # reattach + audit.
-  store: ${NEXO_AGENT_REGISTRY_DB:-/var/lib/nexo-rs/agents.db}
+  store: ${NEXO_AGENT_REGISTRY_DB:-./data/agents.db}
   reattach_on_boot: true
   log_buffer_lines: 200

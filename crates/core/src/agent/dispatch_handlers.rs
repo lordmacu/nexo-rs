@@ -923,6 +923,21 @@ impl ToolHandler for InitProjectHandler {
             }));
         }
 
+        // Phase 76 — initialise a git repo at the project root when
+        // one isn't already present and the dir lives outside the
+        // daemon's source repo. Without this, the orchestrator
+        // falls back to cloning the *parent* repo (nexo-rs) into
+        // every per-goal worktree and Claude can't tell which
+        // sub-tree is the actual project. The init runs as
+        // best-effort; the project is still scaffolded if `git`
+        // isn't on PATH or the parent dir is already inside another
+        // repo (in which case the caller's workspace is the parent).
+        let git_init_log = if !target_root.join(".git").exists() {
+            init_git_repo(&target_root)
+        } else {
+            None
+        };
+
         // Switch the active tracker to the new project so the next
         // `program_phase` lands inside it.
         if let Err(e) = dispatch.tracker.switch_to(&target_root) {
@@ -938,8 +953,65 @@ impl ToolHandler for InitProjectHandler {
             "path": target_root.display().to_string(),
             "files_created": ["PHASES.md", "FOLLOWUPS.md"],
             "active_workspace": target_root.display().to_string(),
+            "git_init": git_init_log,
         }))
     }
+}
+
+/// Phase 76 — `git init` + initial commit on a fresh project so
+/// the per-goal worktree can branch from it instead of cloning the
+/// daemon's outer repo. Returns a short status string for the
+/// `init_project` response payload; `None` when the git CLI is
+/// missing entirely.
+///
+/// We INTENTIONALLY init even when the parent is already a git
+/// repo. The whole point is that `program_phase` will detect this
+/// project's own `.git` and pin the per-goal worktree to it; if
+/// we deferred to the parent the worktree would clone the outer
+/// repo (typically nexo-rs) and Claude would land in a tree where
+/// the project root isn't obvious. Operators that want the
+/// project to live outside any other repo should pass an absolute
+/// path (e.g. `/tmp/<name>`) — both branches now produce a
+/// stand-alone repo.
+fn init_git_repo(target_root: &std::path::Path) -> Option<String> {
+    use std::process::Command;
+    let init = Command::new("git")
+        .args([
+            "-C",
+            &target_root.display().to_string(),
+            "init",
+            "-q",
+            "-b",
+            "main",
+        ])
+        .output();
+    if let Err(e) = init.as_ref() {
+        return Some(format!("git init failed: {e}"));
+    }
+    let _ = Command::new("git")
+        .args([
+            "-C",
+            &target_root.display().to_string(),
+            "add",
+            "PHASES.md",
+            "FOLLOWUPS.md",
+        ])
+        .output();
+    let _ = Command::new("git")
+        .args([
+            "-C",
+            &target_root.display().to_string(),
+            "-c",
+            "user.email=nexo-driver@localhost",
+            "-c",
+            "user.name=nexo-driver",
+            "commit",
+            "-q",
+            "-m",
+            "init: scaffolded by nexo-driver",
+        ])
+        .output();
+    Some("initialised empty git repo at HEAD".into())
 }
 
 fn render_phases_md(input: &InitProjectInput) -> String {

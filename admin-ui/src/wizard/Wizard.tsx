@@ -30,7 +30,7 @@ You are warm but sharp. You keep replies short and on the point.
 - If unsure, ask before proceeding.`;
 
 const DEFAULT_MODELS: Record<Provider, string> = {
-  minimax: "MiniMax-M2.5",
+  minimax: "MiniMax-M2.7",
   anthropic: "claude-haiku-4-5",
   openai: "gpt-4o-mini",
   gemini: "gemini-2.0-flash",
@@ -392,7 +392,7 @@ function Step2Soul({ draft, setDraft }: StepProps) {
 
 function Step3Brain({ draft, setDraft }: StepProps) {
   const options: { id: Provider; label: string; hint: string }[] = [
-    { id: "minimax", label: "MiniMax M2.5", hint: "Primary — recommended" },
+    { id: "minimax", label: "MiniMax M2.7", hint: "Primary — recommended" },
     { id: "anthropic", label: "Anthropic Claude", hint: "API key or OAuth" },
     { id: "openai", label: "OpenAI-compatible", hint: "OpenAI, Groq, Ollama…" },
     { id: "gemini", label: "Google Gemini", hint: "Free tier friendly" },

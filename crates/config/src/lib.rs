@@ -148,9 +148,11 @@ fn resolve_relative_paths(dir: &Path, agents: &mut AgentsConfig) {
         a.skills_dir = resolve(&a.skills_dir);
         a.workspace = resolve(&a.workspace);
         a.transcripts_dir = resolve(&a.transcripts_dir);
-        for d in &mut a.extra_docs {
-            *d = resolve(d);
-        }
+        // `extra_docs` are workspace-relative — `workspace::read_opt`
+        // joins each entry against the already-resolved workspace
+        // root. Prefixing them with the config dir made the loader
+        // chase `<config>/<workspace>/<config>/<doc>`, which never
+        // exists. Leave them untouched.
     }
 }
 
