@@ -76,7 +76,11 @@ const MAILER_DAEMON_LOCALPARTS: &[&str] = &[
 /// when the message is regular conversational mail. Caller (the
 /// inbound worker) supplies the surrounding `account_id` /
 /// `instance` to assemble the wire `BounceEvent`.
-pub fn parse_bounce(meta: &EmailMeta, raw_bytes: &[u8]) -> Option<ParsedBounce> {
+pub fn parse_bounce(
+    meta: &EmailMeta,
+    raw_bytes: &[u8],
+    account_address: &str,
+) -> Option<ParsedBounce> {
     let parsed = MessageParser::default().parse(raw_bytes)?;
 
     // Primary path: DSN content-type marker.
@@ -102,15 +106,44 @@ pub fn parse_bounce(meta: &EmailMeta, raw_bytes: &[u8]) -> Option<ParsedBounce> 
     // Heuristic fallback: MAILER-DAEMON / postmaster sender even
     // when the message lacks `multipart/report`. Some legacy MTAs
     // ship plain text/plain bounces.
+    //
+    // Audit follow-up D — require the sender's *domain* to match
+    // the recipient account's domain (or a sub/parent of it).
+    // Otherwise a spoofed `From: mailer-daemon@attacker.com` could
+    // poison the bounce store. Real DSNs come from an MTA in the
+    // same hosting domain as the mailbox; cross-domain MAILER-
+    // DAEMONs are noise we don't want to count.
     let from_local = meta
         .from
         .address
         .split_once('@')
         .map(|(l, _)| l.trim().to_ascii_lowercase());
+    let from_domain = meta
+        .from
+        .address
+        .rsplit_once('@')
+        .map(|(_, d)| d.trim().to_ascii_lowercase());
+    let account_domain = account_address
+        .rsplit_once('@')
+        .map(|(_, d)| d.trim().to_ascii_lowercase());
+    let domain_aligned = match (from_domain.as_deref(), account_domain.as_deref()) {
+        (Some(f), Some(a)) => {
+            // Exact, sub-domain (mta.example.com vs example.com),
+            // or super-domain (example.com vs mta.example.com)
+            // all count. Empty domain on either side fails.
+            !a.is_empty()
+                && !f.is_empty()
+                && (f == a
+                    || f.ends_with(&format!(".{a}"))
+                    || a.ends_with(&format!(".{f}")))
+        }
+        _ => false,
+    };
     let heuristic = from_local
         .as_deref()
         .map(|l| MAILER_DAEMON_LOCALPARTS.iter().any(|m| l.eq_ignore_ascii_case(m)))
-        .unwrap_or(false);
+        .unwrap_or(false)
+        && domain_aligned;
 
     if !dsn && !heuristic {
         return None;
@@ -345,7 +378,7 @@ To: ghost@unknown.com\r\n\
     #[test]
     fn parses_postfix_dsn() {
         let m = meta("MAILER-DAEMON@mail.example.com");
-        let b = parse_bounce(&m, POSTFIX_DSN).expect("dsn parsed");
+        let b = parse_bounce(&m, POSTFIX_DSN, "ops@example.com").expect("dsn parsed");
         assert_eq!(b.recipient.as_deref(), Some("ghost@unknown.com"));
         assert_eq!(b.action.as_deref(), Some("failed"));
         assert_eq!(b.status_code.as_deref(), Some("5.1.1"));
@@ -377,7 +410,7 @@ Status: 4.7.0\r\n\
     #[test]
     fn parses_transient_dsn() {
         let m = meta("postmaster@example.com");
-        let b = parse_bounce(&m, TRANSIENT_DSN).expect("dsn parsed");
+        let b = parse_bounce(&m, TRANSIENT_DSN, "ops@example.com").expect("dsn parsed");
         assert_eq!(b.classification, BounceClassification::Transient);
         assert_eq!(b.action.as_deref(), Some("delayed"));
         assert_eq!(b.recipient.as_deref(), Some("alice@x.com"));
@@ -394,7 +427,7 @@ The recipient could not be reached.\r\n";
     #[test]
     fn heuristic_mailer_daemon_without_dsn_marker() {
         let m = meta("mailer-daemon@x.com");
-        let b = parse_bounce(&m, HEURISTIC_PLAIN).expect("heuristic match");
+        let b = parse_bounce(&m, HEURISTIC_PLAIN, "ops@x.com").expect("heuristic match");
         assert!(b.recipient.is_none());
         assert!(b.status_code.is_none());
         assert_eq!(b.classification, BounceClassification::Unknown);
@@ -404,7 +437,7 @@ The recipient could not be reached.\r\n";
     fn regular_mail_returns_none() {
         let m = meta("alice@x.com");
         let plain = b"From: alice@x.com\r\nTo: ops@example.com\r\nSubject: hi\r\nMIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\nhi\r\n";
-        assert!(parse_bounce(&m, plain).is_none());
+        assert!(parse_bounce(&m, plain, "ops@x.com").is_none());
     }
 
     #[test]
@@ -422,7 +455,7 @@ Content-Type: text/plain\r\n\
 oops\r\n\
 \r\n\
 --B--\r\n";
-        let b = parse_bounce(&m, raw).expect("still recognised as bounce");
+        let b = parse_bounce(&m, raw, "ops@x").expect("still recognised as bounce");
         // No delivery-status part → Unknown classification, fields empty.
         assert!(b.recipient.is_none());
         assert!(b.status_code.is_none());

@@ -403,7 +403,7 @@ impl AccountWorker {
             // surface as conversational `InboundEvent`.
             let mut suppressed = false;
             if let Some(meta_ref) = meta.as_ref() {
-                if let Some(parsed) = crate::dsn::parse_bounce(meta_ref, &msg.raw_bytes) {
+                if let Some(parsed) = crate::dsn::parse_bounce(meta_ref, &msg.raw_bytes, &self.account_cfg.address) {
                     let bounce = crate::dsn::BounceEvent {
                         account_id: self.account_cfg.address.clone(),
                         instance: self.account_cfg.instance.clone(),

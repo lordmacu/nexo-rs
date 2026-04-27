@@ -906,6 +906,24 @@ async fn main() -> Result<()> {
             // with the full list so the operator sees it once at
             // boot rather than discovering it in the middle of an
             // `email_send` failure.
+            // Audit follow-up J — soft connectivity probe. Wait up
+            // to 10 s for every account to land its first
+            // successful connect; anything still pending is logged
+            // as a structured WARN. Doesn't abort boot — auth /
+            // DNS issues should keep the daemon alive while the
+            // operator triages.
+            let pending = plugin
+                .verify_accounts_connected(std::time::Duration::from_secs(10))
+                .await;
+            if !pending.is_empty() {
+                tracing::warn!(
+                    target: "plugin.email",
+                    pending = ?pending,
+                    "email accounts have not completed initial connect within 10s — \
+                     check IMAP credentials, network reachability, or TLS settings. \
+                     The plugin will keep retrying via the per-instance circuit breaker."
+                );
+            }
             let live: std::collections::HashSet<String> =
                 dispatcher.instance_ids().into_iter().collect();
             let missing: Vec<&str> = email_cfg
