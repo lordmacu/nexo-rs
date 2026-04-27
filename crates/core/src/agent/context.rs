@@ -108,8 +108,7 @@ pub struct AgentContext {
     /// installs a waiter when `plan_mode.require_approval` is on; the
     /// `plan_mode_resolve` operator tool fires the matching waiter.
     /// Tests construct their own registry to avoid cross-test races.
-    pub plan_approval_registry:
-        Arc<crate::agent::plan_mode_tool::PlanApprovalRegistry>,
+    pub plan_approval_registry: Arc<crate::agent::plan_mode_tool::PlanApprovalRegistry>,
     /// Phase 79.4 — intra-turn scratch todo list. Owned by the model
     /// (mutated via `TodoWrite`). Distinct from Phase 14 TaskFlow:
     /// Todo is in-memory + per-goal + flat; TaskFlow is persistent

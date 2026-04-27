@@ -227,8 +227,7 @@ impl ToolHandler for ReadMcpResourceTool {
             .find(|(name, _)| name == &server)
             .map(|(_, c)| c)
             .ok_or_else(|| {
-                let known: Vec<String> =
-                    mcp.clients().into_iter().map(|(n, _)| n).collect();
+                let known: Vec<String> = mcp.clients().into_iter().map(|(n, _)| n).collect();
                 anyhow::anyhow!(
                     "ReadMcpResource: no MCP server named `{server}` (connected: {})",
                     known.join(", ")

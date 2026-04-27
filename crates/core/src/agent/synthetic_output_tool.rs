@@ -101,9 +101,7 @@ fn json_type_name(v: &Value) -> &'static str {
 fn validate(schema: &Value, value: &Value) -> anyhow::Result<()> {
     use jsonschema::Validator;
     let validator = Validator::new(schema).map_err(|e| {
-        anyhow::anyhow!(
-            "SyntheticOutput: invalid `schema` (JSONSchema compile error): {e}"
-        )
+        anyhow::anyhow!("SyntheticOutput: invalid `schema` (JSONSchema compile error): {e}")
     })?;
     // jsonschema 0.20 API: `validate(value)` returns
     // `Result<(), ErrorIterator>`; on failure we drain the

@@ -851,11 +851,16 @@ impl ToolHandler for SetActiveWorkspaceHandler {
         let input: SetActiveWorkspaceInput = serde_json::from_value(args)?;
         let path = std::path::PathBuf::from(input.path);
         match dispatch.tracker.switch_to(&path) {
-            Ok(prev) => Ok(serde_json::json!({
-                "status": "switched",
-                "previous": prev.display().to_string(),
-                "current": path.display().to_string(),
-            })),
+            Ok(prev) => {
+                if let Err(e) = nexo_project_tracker::state::write_active_workspace(&path) {
+                    tracing::warn!(error = %e, path = %path.display(), "failed to persist active workspace — restart will revert to default");
+                }
+                Ok(serde_json::json!({
+                    "status": "switched",
+                    "previous": prev.display().to_string(),
+                    "current": path.display().to_string(),
+                }))
+            }
             Err(e) => Ok(serde_json::json!({
                 "status": "error",
                 "error": e.to_string(),
@@ -947,6 +952,9 @@ impl ToolHandler for InitProjectHandler {
                 "path": target_root.display().to_string(),
                 "switch_error": e.to_string(),
             }));
+        }
+        if let Err(e) = nexo_project_tracker::state::write_active_workspace(&target_root) {
+            tracing::warn!(error = %e, path = %target_root.display(), "failed to persist active workspace — restart will revert to default");
         }
 
         Ok(serde_json::json!({
@@ -1370,6 +1378,7 @@ mod tests {
             context_optimization: None,
             dispatch_policy: Default::default(),
             plan_mode: Default::default(),
+            remote_triggers: Vec::new(),
         })
     }
 

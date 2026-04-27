@@ -143,14 +143,14 @@ fn fresh_cell_id() -> String {
     // Cheap pseudo-random — combines high-resolution time with a
     // process-local counter. Good enough for nbformat ids; the leak
     // also uses `Math.random()` (not a CSPRNG).
-    static COUNTER: std::sync::atomic::AtomicU64 =
-        std::sync::atomic::AtomicU64::new(0);
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.subsec_nanos() as u64 ^ d.as_secs())
         .unwrap_or(0);
     let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let mut value = nanos.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ n.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    let mut value =
+        nanos.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ n.wrapping_mul(0xbf58_476d_1ce4_e5b9);
     let alphabet: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
     let mut out = String::with_capacity(12);
     for _ in 0..12 {
@@ -200,7 +200,10 @@ impl ToolHandler for NotebookEditTool {
 
         let edit_mode = parse_edit_mode(args.get("edit_mode").and_then(|v| v.as_str()))?;
         let cell_id = args.get("cell_id").and_then(|v| v.as_str()).unwrap_or("");
-        let new_source = args.get("new_source").and_then(|v| v.as_str()).unwrap_or("");
+        let new_source = args
+            .get("new_source")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let cell_type = args.get("cell_type").and_then(|v| v.as_str());
 
         if matches!(edit_mode, EditMode::Replace | EditMode::Insert)
@@ -309,9 +312,7 @@ impl ToolHandler for NotebookEditTool {
                 if idx == cells.len() {
                     // Defensive: replace-at-end auto-converts to
                     // insert. Lift from leak `:372-377`.
-                    let ct = effective_cell_type
-                        .clone()
-                        .unwrap_or_else(|| "code".into());
+                    let ct = effective_cell_type.clone().unwrap_or_else(|| "code".into());
                     let fresh_id = if nbformat_minor_5 {
                         Some(fresh_cell_id())
                     } else {

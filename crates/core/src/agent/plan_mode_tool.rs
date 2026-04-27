@@ -573,7 +573,10 @@ mod tests {
         let ctx = ctx_interactive();
         EnterPlanModeTool.call(&ctx, json!({})).await.unwrap();
         let out = ExitPlanModeTool
-            .call(&ctx, json!({"final_plan": "1. Read auth.rs\n2. Add OAuth handler"}))
+            .call(
+                &ctx,
+                json!({"final_plan": "1. Read auth.rs\n2. Add OAuth handler"}),
+            )
             .await
             .unwrap();
         assert_eq!(out["exited_plan_mode"], true);
@@ -683,7 +686,10 @@ mod tests {
         let ctx_for_task = ctx.clone();
         let exit_handle = tokio::spawn(async move {
             ExitPlanModeTool
-                .call(&ctx_for_task, json!({"final_plan": "1. read auth.rs\n2. patch"}))
+                .call(
+                    &ctx_for_task,
+                    json!({"final_plan": "1. read auth.rs\n2. patch"}),
+                )
                 .await
         });
 

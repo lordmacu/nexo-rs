@@ -60,10 +60,7 @@ impl RemoteTriggerRateLimiter {
         if limit_per_minute == 0 {
             return true;
         }
-        let entry = self
-            .buckets
-            .entry(trigger_name.to_string())
-            .or_default();
+        let entry = self.buckets.entry(trigger_name.to_string()).or_default();
         let mut q = entry.lock().unwrap();
         let now = Instant::now();
         let cutoff = now - Duration::from_secs(60);
@@ -269,10 +266,7 @@ impl ToolHandler for RemoteTriggerTool {
             } => {
                 let now_unix = chrono::Utc::now().timestamp();
                 let mut headers: Vec<(String, String)> = Vec::with_capacity(3);
-                headers.push((
-                    "X-Nexo-Trigger-Name".to_string(),
-                    entry.name().to_string(),
-                ));
+                headers.push(("X-Nexo-Trigger-Name".to_string(), entry.name().to_string()));
                 headers.push(("X-Nexo-Timestamp".to_string(), now_unix.to_string()));
                 if let Some(env) = secret_env {
                     let secret = std::env::var(env).map_err(|_| {
@@ -287,10 +281,7 @@ impl ToolHandler for RemoteTriggerTool {
                 }
                 let timeout = Duration::from_millis(*timeout_ms);
                 let started = Instant::now();
-                let status = self
-                    .sink
-                    .post_webhook(url, &body, headers, timeout)
-                    .await?;
+                let status = self.sink.post_webhook(url, &body, headers, timeout).await?;
                 Ok(json!({
                     "ok": true,
                     "kind": "webhook",
@@ -325,8 +316,8 @@ mod tests {
         AgentConfig, AgentRuntimeConfig, DreamingYamlConfig, HeartbeatConfig, ModelConfig,
         OutboundAllowlistConfig, WorkspaceGitConfig,
     };
-    use std::sync::Mutex;
     use std::sync::Arc;
+    use std::sync::Mutex;
 
     #[derive(Default)]
     struct CapturedCall {
@@ -454,10 +445,7 @@ mod tests {
         let ctx = ctx_with_triggers(vec![webhook("ops", None, 10)]);
         let sink = FakeSink::new();
         let err = tool(sink.clone())
-            .call(
-                &ctx,
-                json!({"name": "imaginary", "payload": {"a": 1}}),
-            )
+            .call(&ctx, json!({"name": "imaginary", "payload": {"a": 1}}))
             .await
             .unwrap_err()
             .to_string();
@@ -529,7 +517,10 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("not set"), "got: {err}");
-        assert!(sink.webhook_calls.lock().unwrap().is_empty(), "must not send unsigned");
+        assert!(
+            sink.webhook_calls.lock().unwrap().is_empty(),
+            "must not send unsigned"
+        );
     }
 
     #[tokio::test]

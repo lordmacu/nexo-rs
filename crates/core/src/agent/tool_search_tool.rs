@@ -65,10 +65,7 @@ impl ToolSearchRateLimiter {
         if limit_per_minute == 0 {
             return true;
         }
-        let entry = self
-            .buckets
-            .entry(agent_id.to_string())
-            .or_default();
+        let entry = self.buckets.entry(agent_id.to_string()).or_default();
         let mut q = entry.lock().unwrap();
         let now = Instant::now();
         let cutoff = now - Duration::from_secs(60);
@@ -87,7 +84,6 @@ impl ToolSearchRateLimiter {
         }
     }
 }
-
 
 pub struct ToolSearchTool {
     rate_limiter: std::sync::Arc<ToolSearchRateLimiter>,
@@ -146,9 +142,7 @@ fn parse_tool_name(name: &str) -> Vec<String> {
         return stripped
             .to_ascii_lowercase()
             .split("__")
-            .flat_map(|p| {
-                p.split('_').map(str::to_string).collect::<Vec<_>>()
-            })
+            .flat_map(|p| p.split('_').map(str::to_string).collect::<Vec<_>>())
             .filter(|s| !s.is_empty())
             .collect();
     }
@@ -188,14 +182,15 @@ fn score_tool(
     let parts = parse_tool_name(name);
     let is_mcp = name.starts_with("mcp__");
     let desc_lower = description.to_ascii_lowercase();
-    let hint_lower = search_hint.map(|s| s.to_ascii_lowercase()).unwrap_or_default();
+    let hint_lower = search_hint
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
 
     // Required terms must match SOMETHING (name part / desc / hint),
     // otherwise the tool is filtered out entirely.
     for term in required {
         let lower = term.to_ascii_lowercase();
-        let in_parts =
-            parts.iter().any(|p| p == &lower || p.contains(&lower));
+        let in_parts = parts.iter().any(|p| p == &lower || p.contains(&lower));
         let in_desc = desc_lower.contains(&lower);
         let in_hint = !hint_lower.is_empty() && hint_lower.contains(&lower);
         if !(in_parts || in_desc || in_hint) {
@@ -268,10 +263,7 @@ impl ToolHandler for ToolSearchTool {
         // Source registry: prefer the binding's effective tool set
         // (post per-binding allowlist filter) so the query never
         // surfaces a tool the binding cannot actually call.
-        let registry = ctx
-            .effective_tools
-            .as_deref()
-            .map(|r| r.clone());
+        let registry = ctx.effective_tools.as_deref().map(|r| r.clone());
         let registry = registry.as_ref();
 
         let deferred = match registry {
@@ -285,7 +277,9 @@ impl ToolHandler for ToolSearchTool {
         // FULL registry so that selecting an already-loaded tool is
         // a harmless no-op; the result's "matched" array reports
         // actual hits.
-        if let Some(rest) = query.strip_prefix("select:").or_else(|| query.strip_prefix("SELECT:"))
+        if let Some(rest) = query
+            .strip_prefix("select:")
+            .or_else(|| query.strip_prefix("SELECT:"))
         {
             let mut found: Vec<(String, ToolDef)> = Vec::new();
             let mut missing: Vec<String> = Vec::new();
@@ -479,7 +473,10 @@ mod tests {
     #[test]
     fn parse_tool_name_camel_and_underscore_and_mcp() {
         assert_eq!(parse_tool_name("FileEdit"), vec!["file", "edit"]);
-        assert_eq!(parse_tool_name("send_user_file"), vec!["send", "user", "file"]);
+        assert_eq!(
+            parse_tool_name("send_user_file"),
+            vec!["send", "user", "file"]
+        );
         assert_eq!(
             parse_tool_name("mcp__slack__send_message"),
             vec!["slack", "send", "message"]
@@ -494,7 +491,8 @@ mod tests {
             ("Glob", "Match paths by glob", None),
         ]);
         let ctx = ctx_with(reg);
-        let res = ToolSearchTool::new().with_rate_per_minute(0)
+        let res = ToolSearchTool::new()
+            .with_rate_per_minute(0)
             .call(&ctx, json!({"query": "select:FileEdit"}))
             .await
             .unwrap();
@@ -508,7 +506,8 @@ mod tests {
     async fn select_multi_with_some_missing_reports_missing() {
         let reg = reg_with_deferred(&[("FileEdit", "Edit a file", None)]);
         let ctx = ctx_with(reg);
-        let res = ToolSearchTool::new().with_rate_per_minute(0)
+        let res = ToolSearchTool::new()
+            .with_rate_per_minute(0)
             .call(&ctx, json!({"query": "select:FileEdit,Imaginary,Glob"}))
             .await
             .unwrap();
@@ -531,7 +530,8 @@ mod tests {
             ("Glob", "Match by glob", None),
         ]);
         let ctx = ctx_with(reg);
-        let res = ToolSearchTool::new().with_rate_per_minute(0)
+        let res = ToolSearchTool::new()
+            .with_rate_per_minute(0)
             .call(&ctx, json!({"query": "file edit"}))
             .await
             .unwrap();
@@ -553,7 +553,8 @@ mod tests {
             ("Glob", "Match by glob", None),
         ]);
         let ctx = ctx_with(reg);
-        let res = ToolSearchTool::new().with_rate_per_minute(0)
+        let res = ToolSearchTool::new()
+            .with_rate_per_minute(0)
             .call(&ctx, json!({"query": "+glob match"}))
             .await
             .unwrap();
@@ -569,14 +570,13 @@ mod tests {
     #[tokio::test]
     async fn keyword_max_results_caps_output() {
         let many: Vec<(&str, &str, Option<&str>)> = (0..10)
-            .map(|i| {
-                Box::leak(format!("Tool{i}").into_boxed_str()) as &str
-            })
+            .map(|i| Box::leak(format!("Tool{i}").into_boxed_str()) as &str)
             .map(|name| (name, "shared description token", None))
             .collect();
         let reg = reg_with_deferred(&many);
         let ctx = ctx_with(reg);
-        let res = ToolSearchTool::new().with_rate_per_minute(0)
+        let res = ToolSearchTool::new()
+            .with_rate_per_minute(0)
             .call(
                 &ctx,
                 json!({"query": "shared description", "max_results": 3}),
@@ -592,7 +592,8 @@ mod tests {
         // Register a non-deferred tool — must be ignored.
         reg.register(def("FileEdit", "edit"), Stub);
         let ctx = ctx_with(reg);
-        let res = ToolSearchTool::new().with_rate_per_minute(0)
+        let res = ToolSearchTool::new()
+            .with_rate_per_minute(0)
             .call(&ctx, json!({"query": "file"}))
             .await
             .unwrap();
@@ -604,7 +605,8 @@ mod tests {
     async fn empty_query_errors() {
         let reg = ToolRegistry::new();
         let ctx = ctx_with(reg);
-        let err = ToolSearchTool::new().with_rate_per_minute(0)
+        let err = ToolSearchTool::new()
+            .with_rate_per_minute(0)
             .call(&ctx, json!({"query": "   "}))
             .await
             .unwrap_err()
@@ -619,7 +621,8 @@ mod tests {
             ("ToolB", "totally unrelated", Some("send a slack message")),
         ]);
         let ctx = ctx_with(reg);
-        let res = ToolSearchTool::new().with_rate_per_minute(0)
+        let res = ToolSearchTool::new()
+            .with_rate_per_minute(0)
             .call(&ctx, json!({"query": "slack"}))
             .await
             .unwrap();
