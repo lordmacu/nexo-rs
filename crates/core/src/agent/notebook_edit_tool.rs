@@ -181,6 +181,7 @@ fn build_new_cell(cell_type: &str, source: &str, fresh_id: Option<String>) -> Va
 
 #[async_trait]
 impl ToolHandler for NotebookEditTool {
+    #[allow(unused_assignments)]
     async fn call(&self, _ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
         let notebook_path = args
             .get("notebook_path")

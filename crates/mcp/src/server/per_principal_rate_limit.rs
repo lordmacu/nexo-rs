@@ -157,6 +157,7 @@ pub(crate) struct TokenBucket {
     /// Last time we emitted an early-warning log for this bucket.
     /// Throttles the warning to once per minute per bucket so a
     /// hot key doesn't flood the operator's terminal.
+    #[allow(dead_code)]
     pub(crate) last_warn: Option<Instant>,
     rps: f64,
     burst: f64,
@@ -184,6 +185,7 @@ impl TokenBucket {
     /// `last_seen` is unconditionally bumped so the TTL sweeper
     /// (Phase 76.5 step 4) sees the bucket as recently active —
     /// rejected requests still count as "the client is here".
+    #[allow(dead_code)]
     pub(crate) fn check(&mut self) -> Result<(), u64> {
         self.check_at(Instant::now())
     }

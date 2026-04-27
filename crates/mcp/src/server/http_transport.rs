@@ -1033,6 +1033,7 @@ fn json_response(body: &Value) -> Response {
         .into_response()
 }
 
+#[allow(dead_code)]
 fn unauthorized_response() -> Response {
     let body = serde_json::json!({
         "jsonrpc": "2.0",
