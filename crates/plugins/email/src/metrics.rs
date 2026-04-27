@@ -43,6 +43,11 @@ static LOOP_SKIPPED: LazyLock<DashMap<LoopKey, AtomicU64>> = LazyLock::new(DashM
 static BOUNCES: LazyLock<DashMap<BounceKey, AtomicU64>> = LazyLock::new(DashMap::new);
 static OUTBOUND_SENT: LazyLock<DashMap<InstanceKey, AtomicU64>> = LazyLock::new(DashMap::new);
 static OUTBOUND_FAILED: LazyLock<DashMap<InstanceKey, AtomicU64>> = LazyLock::new(DashMap::new);
+// Audit follow-up H — attachment write failure counter (process-
+// global, not per-instance because the de-dup dir is shared) and
+// per-instance MIME parse errors (currently only WARN-logged).
+static ATTACHMENT_WRITE_ERRORS: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static PARSE_ERRORS: LazyLock<DashMap<InstanceKey, AtomicU64>> = LazyLock::new(DashMap::new);
 
 pub fn inc_messages_fetched(instance: &str) {
     MESSAGES_FETCHED
@@ -77,6 +82,19 @@ pub fn inc_bounce(instance: &str, classification: BounceClassification) {
 
 pub fn inc_outbound_sent(instance: &str) {
     OUTBOUND_SENT
+        .entry(InstanceKey {
+            instance: instance.to_string(),
+        })
+        .or_insert_with(|| AtomicU64::new(0))
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn inc_attachment_write_error() {
+    ATTACHMENT_WRITE_ERRORS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn inc_parse_error(instance: &str) {
+    PARSE_ERRORS
         .entry(InstanceKey {
             instance: instance.to_string(),
         })
@@ -169,6 +187,17 @@ pub async fn render_prometheus(health: Option<&HealthMap>) -> String {
     out.push_str("# HELP email_outbound_failed_total SMTP messages that ended in DLQ (5xx or 5+ transients).\n");
     out.push_str("# TYPE email_outbound_failed_total counter\n");
     render_instance_counter(&mut out, &OUTBOUND_FAILED, "email_outbound_failed_total");
+
+    out.push_str("# HELP email_attachment_write_errors_total Attachment write failures (disk full, fs error). Process-global because the de-dup dir is shared.\n");
+    out.push_str("# TYPE email_attachment_write_errors_total counter\n");
+    out.push_str(&format!(
+        "email_attachment_write_errors_total {}\n",
+        ATTACHMENT_WRITE_ERRORS.load(Ordering::Relaxed)
+    ));
+
+    out.push_str("# HELP email_parse_errors_total Inbound MIME parse failures per instance — message published raw-only.\n");
+    out.push_str("# TYPE email_parse_errors_total counter\n");
+    render_instance_counter(&mut out, &PARSE_ERRORS, "email_parse_errors_total");
 
     // Gauges — sampled at scrape time from health_map.
     out.push_str("# HELP email_imap_state IMAP worker state (0=connecting, 1=idle, 2=polling, 3=down).\n");

@@ -136,9 +136,14 @@ pub async fn parse_eml(raw: &[u8], cfg: &ParseConfig) -> Result<ParsedMessage> {
         hasher.update(truncated_bytes);
         let sha256 = hex::encode(hasher.finalize());
         let local_path = cfg.attachments_dir.join(&sha256);
-        write_dedup(&local_path, truncated_bytes).await.with_context(|| {
-            format!("email/mime: persist attachment {}", local_path.display())
-        })?;
+        if let Err(e) = write_dedup(&local_path, truncated_bytes).await {
+            // Audit follow-up H — surface via Prometheus so a sustained
+            // disk-full / fs error doesn't sit in the WARN log unread.
+            crate::metrics::inc_attachment_write_error();
+            return Err(e).with_context(|| {
+                format!("email/mime: persist attachment {}", local_path.display())
+            });
+        }
 
         let mime_type = part
             .content_type()
