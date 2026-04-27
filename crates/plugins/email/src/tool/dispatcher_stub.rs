@@ -72,6 +72,8 @@ pub fn stub_ctx_with_bounce(
         dispatcher: dispatcher.clone(),
         health: HealthMap::new(DashMap::new().into()),
         bounce_store,
+        attachment_store: None,
+        attachments_dir: std::path::PathBuf::new(),
     });
     (ctx, dispatcher)
 }
@@ -102,7 +104,9 @@ pub fn stub_ctx(
         config: Arc::new(f.email),
         dispatcher: dispatcher.clone(),
         health: HealthMap::new(DashMap::new().into()),
-            bounce_store: None,
-        });
+        bounce_store: None,
+        attachment_store: None,
+        attachments_dir: std::path::PathBuf::new(),
+    });
     (ctx, dispatcher)
 }

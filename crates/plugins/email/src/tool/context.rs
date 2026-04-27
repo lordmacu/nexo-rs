@@ -41,6 +41,15 @@ pub struct EmailToolContext {
     /// when the plugin couldn't open `bounces.db`; the tools
     /// degrade to "no warnings" rather than refusing to send.
     pub bounce_store: Option<Arc<crate::bounce_store::BounceStore>>,
+    /// Phase 48 use cases — attachment dedup store. `None` when
+    /// the SQLite file couldn't be opened at boot. `email_attachment_get`
+    /// requires both this and `attachments_dir` to be set.
+    pub attachment_store: Option<Arc<crate::attachment_store::AttachmentStore>>,
+    /// Phase 48 use cases — resolved data directory for attachment
+    /// blobs. `email_attachment_get` joins this with `<sha256>` to
+    /// read bytes off disk after verifying the hash exists in
+    /// `attachment_store`.
+    pub attachments_dir: std::path::PathBuf,
 }
 
 impl EmailToolContext {

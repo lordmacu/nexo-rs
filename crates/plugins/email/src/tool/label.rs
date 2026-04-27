@@ -183,6 +183,8 @@ mod tests {
             dispatcher: ctx.dispatcher.clone(),
             health: ctx.health.clone(),
             bounce_store: None,
+            attachment_store: None,
+            attachments_dir: std::path::PathBuf::new(),
         });
         let tool = EmailLabelTool::new(new_ctx);
         let r = tool

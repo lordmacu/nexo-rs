@@ -954,6 +954,8 @@ async fn main() -> Result<()> {
                 dispatcher,
                 health,
                 bounce_store: plugin.bounce_store_handle(),
+                attachment_store: plugin.attachment_store_handle(),
+                attachments_dir: plugin.attachments_dir(),
             }))
         }
         _ => None,
@@ -7162,10 +7164,80 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         }
     });
 
-    run_stdio_server_with_auth(bridge, shutdown, auth_token)
-        .await
-        .context("mcp-server loop failed")?;
+    // Phase 76.1 — opt-in HTTP transport runs alongside stdio.
+    let http_handle = if let Some(http_yaml) = server_cfg.http.clone() {
+        if http_yaml.enabled {
+            Some(start_http_transport(&bridge, &http_yaml, &shutdown).await?)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let stdio_result = run_stdio_server_with_auth(bridge, shutdown.clone(), auth_token).await;
+
+    // Drain HTTP transport before propagating stdio result.
+    if let Some(handle) = http_handle {
+        // shutdown was already cancelled if stdio exited cleanly via signal.
+        shutdown.cancel();
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle.join).await;
+    }
+
+    stdio_result.context("mcp-server loop failed")?;
     Ok(())
+}
+
+/// Phase 76.1 — boot the HTTP transport from the YAML block, reusing
+/// the same `ToolRegistryBridge` the stdio path consumes (cloned, since
+/// the bridge is `Clone`).
+async fn start_http_transport(
+    bridge: &nexo_core::agent::ToolRegistryBridge,
+    yaml: &nexo_config::types::mcp_server::HttpTransportConfigYaml,
+    shutdown: &tokio_util::sync::CancellationToken,
+) -> anyhow::Result<nexo_mcp::HttpServerHandle> {
+    use nexo_mcp::{start_http_server, HttpTransportConfig};
+
+    let auth_token = if let Some(env_name) = yaml.auth_token_env.as_deref() {
+        let token = std::env::var(env_name).with_context(|| {
+            format!(
+                "mcp_server.http.auth_token_env={env_name} is set but env var `{env_name}` is missing"
+            )
+        })?;
+        if token.trim().is_empty() {
+            anyhow::bail!(
+                "mcp_server.http.auth_token_env={env_name} resolved to an empty token"
+            );
+        }
+        Some(token)
+    } else {
+        None
+    };
+
+    let cfg = HttpTransportConfig {
+        enabled: yaml.enabled,
+        bind: yaml.bind,
+        auth_token,
+        allow_origins: yaml.allow_origins.clone(),
+        body_max_bytes: yaml.body_max_bytes,
+        max_in_flight: yaml.max_in_flight,
+        per_ip_rate_limit: nexo_mcp::server::http_config::PerIpRateLimit {
+            rps: yaml.per_ip_rate_limit.rps,
+            burst: yaml.per_ip_rate_limit.burst,
+        },
+        request_timeout_secs: yaml.request_timeout_secs,
+        session_idle_timeout_secs: yaml.session_idle_timeout_secs,
+        session_max_lifetime_secs: yaml.session_max_lifetime_secs,
+        max_sessions: yaml.max_sessions,
+        sse_keepalive_secs: yaml.sse_keepalive_secs,
+        sse_max_age_secs: yaml.sse_max_age_secs,
+        sse_buffer_size: yaml.sse_buffer_size,
+        enable_legacy_sse: yaml.enable_legacy_sse,
+    };
+
+    let handle = start_http_server(bridge.clone(), cfg, shutdown.clone()).await?;
+    tracing::info!(addr = %handle.bind_addr, "mcp-server http transport ready");
+    Ok(handle)
 }
 
 /// Build a `BrokerClientForDoctor` adapter from the loaded broker config.
