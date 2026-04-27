@@ -1,40 +1,25 @@
 //! Reference companion CLI for the Nexo pairing protocol.
 //!
-//! FOLLOWUPS PR-4 — minimal scaffold. This binary is the
-//! consumer side of `nexo pair start`'s output: takes the
-//! base64url setup-code payload (from a QR scan, paste, or
-//! `--code <payload>` arg), decodes it, validates the embedded
-//! token expiry, and prints a connect plan describing what a
-//! full companion would do next.
-//!
-//! What it does NOT do yet (deferred to PR-4 follow-ups):
-//! - Open the WebSocket against `payload.url`.
-//! - Present the bootstrap token.
-//! - Receive + persist a session token.
-//! - Re-render the QR for hands-off scanning workflows.
-//!
-//! What it does today:
-//! - Parses + validates the wire format end-to-end so the
-//!   protocol contract is exercised by a non-`nexo-pairing`
-//!   consumer (proves third parties can integrate).
-//! - Surfaces the URL + token-expiry + device-label / profile
-//!   metadata so the operator can sanity-check before the full
-//!   companion lands.
-//!
 //! Usage:
 //!     nexo-companion --code <BASE64URL>     # explicit
 //!     echo <BASE64URL> | nexo-companion     # stdin
 //!     nexo-companion --json                 # machine output
+//!     nexo-companion --no-connect           # decode only (no WS handshake)
+
+mod ws;
 
 use std::io::Read;
+use std::path::PathBuf;
 
 use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
-use nexo_pairing::setup_code::{decode_setup_code, token_expires_at};
+use nexo_pairing::setup_code::{decode_setup_code, token_device_label, token_expires_at};
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let json = args.iter().any(|a| a == "--json");
+    let no_connect = args.iter().any(|a| a == "--no-connect");
 
     let code = pick_code(&args)?;
     let payload =
@@ -44,6 +29,7 @@ fn main() -> Result<()> {
     let now = Utc::now();
     let payload_expired = payload.expires_at < now;
     let token_expired = token_expiry.map(|exp| exp < now).unwrap_or(true);
+    let expired = payload_expired || token_expired;
 
     if json {
         let v = serde_json::json!({
@@ -54,35 +40,76 @@ fn main() -> Result<()> {
             "payload_expired": payload_expired,
             "token_expired": token_expired,
             "now": now,
-            "next_step": next_step(&payload.url, payload_expired || token_expired),
         });
         println!("{}", serde_json::to_string_pretty(&v).unwrap());
-    } else {
-        println!("Decoded setup-code payload:");
-        println!();
-        println!("  URL                : {}", payload.url);
-        println!(
-            "  Bootstrap token    : {}",
-            redacted(&payload.bootstrap_token)
-        );
-        println!("  Payload expires at : {}", payload.expires_at);
-        if let Some(exp) = token_expiry {
-            println!("  Token expires at   : {}", exp);
-        }
-        println!("  Now (UTC)          : {}", now);
-        println!();
-        if payload_expired || token_expired {
-            println!("✗ The setup-code is EXPIRED.");
-            println!("  Ask the operator to regenerate one with `nexo pair start`.");
+        if expired {
             std::process::exit(2);
         }
-        println!("✓ Payload is valid. Next step:");
+        if !no_connect {
+            let device_label = token_device_label(&payload.bootstrap_token)
+                .unwrap_or_else(|| "default".to_string());
+            let sessions_dir = nexo_home().join("pairing").join("sessions");
+            match ws::perform_handshake(&payload, &device_label, &sessions_dir).await {
+                Ok(outcome) => {
+                    let v2 = serde_json::json!({
+                        "paired": true,
+                        "token_path": outcome.token_path,
+                    });
+                    println!("{}", serde_json::to_string_pretty(&v2).unwrap());
+                }
+                Err(e) => {
+                    let v2 = serde_json::json!({"paired": false, "error": e.to_string()});
+                    println!("{}", serde_json::to_string_pretty(&v2).unwrap());
+                    std::process::exit(1);
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    println!("Decoded setup-code payload:");
+    println!();
+    println!("  URL                : {}", payload.url);
+    println!(
+        "  Bootstrap token    : {}",
+        redacted(&payload.bootstrap_token)
+    );
+    println!("  Payload expires at : {}", payload.expires_at);
+    if let Some(exp) = token_expiry {
+        println!("  Token expires at   : {}", exp);
+    }
+    println!("  Now (UTC)          : {}", now);
+    println!();
+
+    if expired {
+        println!("✗ The setup-code is EXPIRED.");
+        println!("  Ask the operator to regenerate one with `nexo pair start`.");
+        std::process::exit(2);
+    }
+
+    if no_connect {
+        println!("✓ Payload valid. (--no-connect: skipping WS handshake)");
         println!();
-        println!("    {}", next_step(&payload.url, false));
-        println!();
-        println!("(This binary is a reference scaffold — the actual WebSocket");
-        println!(" handshake lands in a follow-up PR-4.x. Until then, the URL");
-        println!(" + token above are the values your real companion would use.)");
+        println!("  To connect: {}", payload.url);
+        return Ok(());
+    }
+
+    let device_label =
+        token_device_label(&payload.bootstrap_token).unwrap_or_else(|| "default".to_string());
+    let sessions_dir = nexo_home().join("pairing").join("sessions");
+
+    println!("✓ Connecting to {} …", payload.url);
+    println!();
+
+    match ws::perform_handshake(&payload, &device_label, &sessions_dir).await {
+        Ok(outcome) => {
+            println!("✓ Paired successfully.");
+            println!("  Session token saved to: {}", outcome.token_path.display());
+        }
+        Err(e) => {
+            println!("✗ Pairing failed: {e}");
+            std::process::exit(1);
+        }
     }
 
     Ok(())
@@ -95,8 +122,7 @@ fn pick_code(args: &[String]) -> Result<String> {
         }
         return Err(anyhow!("--code expects a value"));
     }
-    // Fallback to stdin so QR-scan tools that pipe their output
-    // can use this binary without quoting.
+    // Fallback to stdin so QR-scan tools that pipe their output can be used.
     let mut buf = String::new();
     std::io::stdin()
         .read_to_string(&mut buf)
@@ -111,10 +137,6 @@ fn pick_code(args: &[String]) -> Result<String> {
 }
 
 fn redacted(token: &str) -> String {
-    // Show only the first 8 + last 4 chars; bootstrap tokens can
-    // hit a phone screen log so a user might post one in a
-    // bug report. Keep enough to triage a "wrong token" complaint
-    // without leaking the full bearer.
     if token.len() <= 16 {
         return "<short>".to_string();
     }
@@ -130,14 +152,14 @@ fn redacted(token: &str) -> String {
     format!("{head}…{tail}")
 }
 
-fn next_step(url: &str, expired: bool) -> String {
-    if expired {
-        return "Ask the operator to regenerate the setup-code (`nexo pair start`).".to_string();
-    }
-    format!(
-        "Open a WebSocket to {url} and present the bootstrap token in the \
-         first frame. Server returns a session token on success."
-    )
+fn nexo_home() -> PathBuf {
+    std::env::var("NEXO_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            std::env::var("HOME")
+                .map(|h| PathBuf::from(h).join(".nexo"))
+                .unwrap_or_else(|_| PathBuf::from(".nexo"))
+        })
 }
 
 #[cfg(test)]
@@ -156,18 +178,5 @@ mod tests {
         assert!(r.starts_with("01234567"));
         assert!(r.ends_with("cdef"));
         assert!(r.contains('…'));
-    }
-
-    #[test]
-    fn next_step_expired_path() {
-        let s = next_step("wss://x", true);
-        assert!(s.contains("regenerate"));
-    }
-
-    #[test]
-    fn next_step_active_path() {
-        let s = next_step("wss://x.example/pair", false);
-        assert!(s.contains("WebSocket"));
-        assert!(s.contains("wss://x.example/pair"));
     }
 }
