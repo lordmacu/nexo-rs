@@ -151,6 +151,21 @@ impl OutboundQueue {
     /// most recent `max` lines when it grows past the limit.
     /// `max == 0` disables the cap. Returns the number of lines
     /// dropped (0 when no work was needed).
+    ///
+    /// **Single-process invariant.** This routine reads every line,
+    /// rewrites the kept tail to a sibling temp, then `rename(2)`s
+    /// the temp on top of `dlq.jsonl`. The `self.lock` is an
+    /// in-process `tokio::sync::Mutex` so concurrent calls inside
+    /// the same daemon serialise correctly, but a second OS
+    /// process appending to (or rewriting) the same file races us
+    /// — the rename is atomic at the inode level, so the loser's
+    /// appended bytes are silently dropped. Operators must not run
+    /// two daemon instances against the same `data/email/`
+    /// directory, and out-of-band edits (`tail -f`-ish workflows)
+    /// should be read-only. The plugin's boot health check warns
+    /// when it finds a stale `dlq.jsonl.compact` left behind by a
+    /// previous crash, which is the only externally-visible signal
+    /// that this contract was violated.
     pub async fn trim_dlq(&self, max: usize) -> Result<usize> {
         if max == 0 {
             return Ok(0);
