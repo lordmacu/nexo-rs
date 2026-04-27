@@ -16,6 +16,7 @@ pub mod outbound_queue;
 pub mod threading;
 pub mod plugin;
 pub mod smtp_conn;
+pub mod tool;
 
 pub use cursor::{CursorStore, UidCursor};
 pub use events::{AckStatus, InboundEvent, OutboundAck, OutboundCommand};
@@ -30,3 +31,6 @@ pub use outbound::OutboundDispatcher;
 pub use outbound_queue::{OutboundJob, OutboundQueue, SmtpEnvelope};
 pub use smtp_conn::{SmtpClient, SmtpSendOutcome};
 pub use plugin::{EmailPlugin, TOPIC_INBOUND, TOPIC_OUTBOUND};
+pub use tool::{
+    imap_date, imap_quote, register_email_tools, run_imap_op, DispatcherHandle, EmailToolContext,
+};
