@@ -318,6 +318,9 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
     // per-goal todos cache; never touches the workspace, broker, or
     // external state.
     "TodoWrite",
+    // Phase 79.3 — terminal output validator. Pure validate-and-echo;
+    // never touches any external state.
+    "SyntheticOutput",
     // Memory + observability tools that read but never write.
     "memory_search",
     "agent_query",
