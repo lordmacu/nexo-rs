@@ -2226,7 +2226,26 @@ Sub-phases:
   successful `parse_eml`. Workspace `uuid` workspace dep gains
   `v5` + `macro-diagnostics` features. 28 unit tests; 84 / 84
   plugin total; clippy clean.)
-- 48.7 — Tools: `email_send` / `_reply` / `_archive` / `_label` / `_move_to` / `_search`   ⬜
+- 48.7 — Tools: `email_send` / `_reply` / `_archive` / `_label` / `_move_to` / `_search`   🔄
+  (48.7.a foundational slice: `tool/context.rs` declares the
+  `DispatcherHandle` async trait + `EmailToolContext` aggregate
+  (creds + Google + config + dispatcher façade + health map),
+  with a convenience `account(instance)` lookup. `tool/imap_op.rs`
+  ships `run_imap_op` (ephemeral connect → SELECT → closure →
+  LOGOUT, no pool in v1), `imap_quote` (RFC 3501 quoted-string
+  escape with CRLF collapse — defends search atoms against
+  header-injection), and `imap_date` (`d-MMM-yyyy` for SEARCH
+  SINCE/BEFORE). `tool/mod.rs::register_email_tools` is a stub
+  for now — the six handlers themselves arrive in 48.7.b/c.
+  `OutboundDispatcher` grows `instances:
+  Arc<DashMap<String, InstanceState>>` populated at `start`,
+  plus public `instance_ids()` and `enqueue_for_instance(inst,
+  cmd)` (generates Message-ID, builds MIME via 48.5, persists
+  via 48.4 queue — worker drain tick picks it up). The
+  `DispatcherHandle` impl on `OutboundDispatcher` is a thin
+  forwarder. `lib.rs` re-exports the new public surface. 4 unit
+  tests in `imap_op` (quote escape, CRLF collapse, simple wrap,
+  date format); 88 / 88 plugin total; clippy clean.)
 - 48.8 — Loop-prevention + DSN/bounce parsing   ⬜
 - 48.9 — SPF/DKIM boot warn + setup-CLI submenu   ⬜
 - 48.10 — Health + hot-reload + e2e + docs   ⬜

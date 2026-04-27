@@ -44,9 +44,17 @@ const MAX_ATTEMPTS: u32 = 5;
 const TRANSIENT_BACKOFF_BASE_MS: u64 = 2_000;
 const TRANSIENT_BACKOFF_MAX_MS: u64 = 30_000;
 
+/// Per-instance state shared between the spawned worker and the
+/// `DispatcherHandle` impl that 48.7 tools call into.
+struct InstanceState {
+    queue: Arc<OutboundQueue>,
+    address: String,
+}
+
 pub struct OutboundDispatcher {
     workers: Vec<JoinHandle<()>>,
     cancel: CancellationToken,
+    instances: Arc<DashMap<String, Arc<InstanceState>>>,
 }
 
 impl OutboundDispatcher {
@@ -63,6 +71,7 @@ impl OutboundDispatcher {
     ) -> Result<Self> {
         let cancel = CancellationToken::new();
         let mut workers = Vec::with_capacity(cfg.accounts.len());
+        let instances: Arc<DashMap<String, Arc<InstanceState>>> = Arc::new(DashMap::new());
 
         let queue_dir = data_dir.join("email").join("outbound");
         for account_cfg in &cfg.accounts {
@@ -75,6 +84,13 @@ impl OutboundDispatcher {
                             account_cfg.instance
                         )
                     })?,
+            );
+            instances.insert(
+                account_cfg.instance.clone(),
+                Arc::new(InstanceState {
+                    queue: queue.clone(),
+                    address: account_cfg.address.clone(),
+                }),
             );
             let h = health
                 .entry(account_cfg.instance.clone())
@@ -98,13 +114,85 @@ impl OutboundDispatcher {
             workers.push(tokio::spawn(worker.run()));
         }
 
-        Ok(Self { workers, cancel })
+        Ok(Self {
+            workers,
+            cancel,
+            instances,
+        })
+    }
+
+    /// Sorted list of declared instance ids.
+    pub fn instance_ids(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.instances.iter().map(|e| e.key().clone()).collect();
+        v.sort();
+        v
+    }
+
+    /// Build a Message-ID, render MIME, persist the job. The
+    /// matching `OutboundWorker`'s drain tick picks it up on the
+    /// next cycle.
+    pub async fn enqueue_for_instance(
+        &self,
+        instance: &str,
+        cmd: OutboundCommand,
+    ) -> Result<String> {
+        let state = self
+            .instances
+            .get(instance)
+            .ok_or_else(|| anyhow!("unknown email instance: {instance}"))?
+            .clone();
+        let from = state.address.clone();
+        let message_id = generate_message_id(&from);
+        let raw = build_mime(
+            BuildContext {
+                message_id: &message_id,
+                from: &from,
+                now: Utc::now(),
+            },
+            &cmd,
+        )
+        .await
+        .with_context(|| format!("build outbound MIME for {message_id}"))?;
+        let now = Utc::now().timestamp();
+        let job = OutboundJob {
+            message_id: message_id.clone(),
+            instance: instance.to_string(),
+            envelope: SmtpEnvelope {
+                from,
+                to: cmd.to,
+                cc: cmd.cc,
+                bcc: cmd.bcc,
+            },
+            raw_mime: raw,
+            attempts: 0,
+            next_attempt_at: now,
+            last_error: None,
+            created_at: now,
+            done: false,
+        };
+        state.queue.enqueue(&job).await?;
+        Ok(message_id)
     }
 
     pub async fn stop(self) {
         self.cancel.cancel();
         let join = futures::future::join_all(self.workers);
         let _ = tokio::time::timeout(Duration::from_secs(5), join).await;
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::tool::DispatcherHandle for OutboundDispatcher {
+    async fn enqueue_for_instance(
+        &self,
+        instance: &str,
+        cmd: OutboundCommand,
+    ) -> Result<String> {
+        OutboundDispatcher::enqueue_for_instance(self, instance, cmd).await
+    }
+
+    fn instance_ids(&self) -> Vec<String> {
+        OutboundDispatcher::instance_ids(self)
     }
 }
 
