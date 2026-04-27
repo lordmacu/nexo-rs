@@ -2407,7 +2407,42 @@ Sub-phases:
   (`run_email_wizard` + `yaml_patch::upsert_email_account` +
   TOML-secret writer with 0o600) deferred to 48.10 along with
   the rest of the operator-facing surface.)
-- 48.10 — Health + hot-reload + e2e + docs   ⬜
+- 48.10 — Health + hot-reload + e2e + docs   ✅
+  (Closing slice: `src/main.rs` instantiates `EmailPlugin::new(
+  cfg, creds_email, creds_google, data_dir)` when
+  `cfg.plugins.email.enabled && !accounts.is_empty()` and
+  registers it alongside Telegram / WhatsApp; tool registration
+  via `register_email_tools` is intentionally deferred (the
+  registry build runs before `EmailPlugin::start` arms the
+  `OutboundDispatcher` whose `DispatcherHandle` the tools need
+  — tracked in FOLLOWUPS).
+  `crates/setup/src/capabilities.rs::INVENTORY` gains an
+  `EMAIL_INSECURE_TLS` row (`Risk::High`) so `agent doctor
+  capabilities` surfaces the toggle that 48.3 wired into the
+  TLS connector. `docs/src/plugins/email.md` is rewritten end
+  to end (~400 lines) covering the YAML schema, TOML secrets
+  with all three auth kinds, the provider-hint table, the six
+  tools with sample payloads, the inbound + bounce + ack wire
+  formats, the loop-prevention matrix, the SPF/DKIM warn tags
+  and what each one means, troubleshooting (UIDVALIDITY
+  changes, IDLE-unsupported, DLQ growth, XOAUTH2 failures,
+  insecure-TLS), and an explicit "Limitations" table that
+  links every deferred item back to FOLLOWUPS or the phase
+  that will pick it up. `admin-ui/PHASES.md` gains an Email
+  plugin block enumerating the operator-visible knobs the
+  future admin UI must surface (account CRUD, secrets editor,
+  SPF/DKIM banner, bounce inbox, queue/DLQ inspector,
+  `EMAIL_INSECURE_TLS` capability badge). `crates/plugins/
+  email/README.md` drops the AWS-SES sales pitch the original
+  scaffold shipped with and points at the mdBook page.
+  `proyecto/FOLLOWUPS.md` registers the deferrals: setup
+  wizard, greenmail e2e, hot-reload account-diff, persistent
+  bounce history, IMAP STARTTLS, multi-selector DKIM, healthz
+  HTTP integration, dedicated Prometheus metrics, Phase 16
+  binding-policy auto-filter, cross-account attachment GC.
+  `cargo build --workspace` green; `cargo test -p
+  nexo-plugin-email` 154 / 154; clippy clean across plugin +
+  setup.)
 
 ### Phase 49 — Multimodal: vision input
 
@@ -3169,6 +3204,31 @@ behaviour stays in lockstep with the rest of the wizard.
   `try_hot_reload` after every successful mutation, integration tests
   re-parse the mutated YAML through `AgentsConfig`, docs page +
   SUMMARY entry, admin-ui PHASES tech-debt line.
+
+### Phase 78 — Replay-loop visibility   ✅
+
+A goal that returned `Continue` once appeared to stall on turn 0
+because the loop had no log between `attempt returned` and the
+next spawn — operators couldn't tell whether `replay_policy`
+classified, whether `NextTurn` actually fired, or whether the
+loop was wedged. Phase 78 closes the gap with structured tracing
+plus a synthetic test that pins the Continue → `NextTurn` →
+turn N+1 path so a future regression can't silently re-introduce
+the stall.
+
+- 78.1 ✅ — `crates/driver-loop/src/orchestrator.rs` emits
+  `phase78: spawning attempt`, `phase78: attempt returned`,
+  `phase78: replay decision`, plus per-branch markers
+  (`FreshSessionRetry — looping`, `NextTurn — looping`) inside
+  the replay match. Goal id + turn index on every line so logs
+  for one goal can be grepped out of a multi-goal daemon.
+- 78.2 ✅ — `crates/driver-loop/tests/orchestrator_replay_continue_test.rs`
+  drives the orchestrator with a counter-backed bash mock that
+  emits an init-only stream on turn 0 (→ `Continue { reason:
+  "stream ended without result event" }`) and a full success
+  fixture on turn 1. Asserts `Done` with `total_turns == 2`,
+  proving the replay loop advances. New fixture
+  `crates/driver-claude/tests/fixtures/continue_no_result.jsonl`.
 
 ### Phase 75 — Acceptance autodetect by project type   ✅
 
