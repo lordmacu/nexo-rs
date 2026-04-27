@@ -119,6 +119,57 @@ impl BounceStore {
         Ok(())
     }
 
+    /// Audit #3 follow-up — drop bounce rows that have grown stale
+    /// or belong to instances that no longer exist in config.
+    ///
+    /// A row is pruned when *either* condition holds:
+    ///   - `last_seen < (now - retention_secs)`. Pass `retention_secs <= 0`
+    ///     to disable the age check (still prunes orphan instances).
+    ///   - `instance` is not present in `kept_instances`. Pass an empty
+    ///     slice to disable the orphan check (still prunes by age).
+    ///
+    /// Returns the number of rows deleted. Idempotent — calling on
+    /// an empty table or a table that's already trimmed is a no-op.
+    pub async fn prune(
+        &self,
+        retention_secs: i64,
+        kept_instances: &[String],
+    ) -> Result<u64> {
+        let mut deleted = 0u64;
+
+        if retention_secs > 0 {
+            let cutoff = chrono::Utc::now()
+                .timestamp()
+                .saturating_sub(retention_secs);
+            let result = sqlx::query("DELETE FROM email_bounces WHERE last_seen < ?")
+                .bind(cutoff)
+                .execute(&self.pool)
+                .await?;
+            deleted = deleted.saturating_add(result.rows_affected());
+        }
+
+        // Orphan-instance prune. SQLite has no array type, so we
+        // build a `NOT IN (?, ?, …)` clause. With an empty slice we
+        // skip — caller asked to disable orphan pruning.
+        if !kept_instances.is_empty() {
+            let placeholders = std::iter::repeat("?")
+                .take(kept_instances.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!(
+                "DELETE FROM email_bounces WHERE instance NOT IN ({placeholders})"
+            );
+            let mut q = sqlx::query(&sql);
+            for inst in kept_instances {
+                q = q.bind(inst);
+            }
+            let result = q.execute(&self.pool).await?;
+            deleted = deleted.saturating_add(result.rows_affected());
+        }
+
+        Ok(deleted)
+    }
+
     pub async fn get(
         &self,
         instance: &str,
@@ -248,5 +299,65 @@ mod tests {
         let b = s.get("b", "x@y").await.unwrap().unwrap();
         assert_eq!(a.classification, BounceClassification::Permanent);
         assert_eq!(b.classification, BounceClassification::Transient);
+    }
+
+    #[tokio::test]
+    async fn prune_drops_orphan_instances() {
+        let s = fresh().await;
+        s.record(&ev("alive", Some("a@x"), BounceClassification::Permanent))
+            .await
+            .unwrap();
+        s.record(&ev("dead", Some("b@x"), BounceClassification::Permanent))
+            .await
+            .unwrap();
+        let kept = vec!["alive".to_string()];
+        let n = s.prune(0, &kept).await.unwrap();
+        assert_eq!(n, 1);
+        assert!(s.get("alive", "a@x").await.unwrap().is_some());
+        assert!(s.get("dead", "b@x").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn prune_drops_rows_older_than_retention() {
+        let s = fresh().await;
+        s.record(&ev("ops", Some("old@x"), BounceClassification::Permanent))
+            .await
+            .unwrap();
+        // Backdate `old@x` by 100 days so it beats a 90-day retention.
+        let now = chrono::Utc::now().timestamp();
+        let backdated = now - 100 * 86_400;
+        sqlx::query("UPDATE email_bounces SET last_seen = ? WHERE recipient = ?")
+            .bind(backdated)
+            .bind("old@x")
+            .execute(&s.pool)
+            .await
+            .unwrap();
+        s.record(&ev("ops", Some("recent@x"), BounceClassification::Permanent))
+            .await
+            .unwrap();
+        let n = s.prune(90 * 86_400, &[]).await.unwrap();
+        assert_eq!(n, 1);
+        assert!(s.get("ops", "old@x").await.unwrap().is_none());
+        assert!(s.get("ops", "recent@x").await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn prune_idempotent_on_empty_table() {
+        let s = fresh().await;
+        let n = s.prune(86_400, &["ops".to_string()]).await.unwrap();
+        assert_eq!(n, 0);
+    }
+
+    #[tokio::test]
+    async fn prune_with_no_filters_is_noop() {
+        let s = fresh().await;
+        s.record(&ev("ops", Some("a@x"), BounceClassification::Permanent))
+            .await
+            .unwrap();
+        // retention <= 0 disables age check; empty kept_instances
+        // disables orphan check. Nothing should be pruned.
+        let n = s.prune(0, &[]).await.unwrap();
+        assert_eq!(n, 0);
+        assert!(s.get("ops", "a@x").await.unwrap().is_some());
     }
 }

@@ -506,6 +506,15 @@ pub struct EmailPluginConfig {
     /// history, small enough to never run a host out of disk.
     #[serde(default = "default_max_dlq_lines")]
     pub max_dlq_lines: usize,
+    /// Audit #3 follow-up — bounce row retention. Days to keep a
+    /// row in `email_bounces` past its `last_seen`. Rows whose
+    /// `instance` no longer appears in `accounts` are pruned
+    /// regardless of age. `0` disables retention pruning (rows
+    /// stay forever — legacy behaviour). Default `365` so a year
+    /// of bounce history is preserved without the table growing
+    /// unboundedly.
+    #[serde(default = "default_bounce_retention_days")]
+    pub bounce_retention_days: u64,
     #[serde(default = "default_attachments_dir")]
     pub attachments_dir: String,
     #[serde(default = "default_outbound_queue_dir")]
@@ -647,6 +656,9 @@ fn default_attachment_retention_days() -> u64 {
 }
 fn default_max_dlq_lines() -> usize {
     10_000
+}
+fn default_bounce_retention_days() -> u64 {
+    365
 }
 fn default_attachments_dir() -> String {
     "data/email-attachments".to_string()

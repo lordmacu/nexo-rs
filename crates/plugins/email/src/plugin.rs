@@ -400,57 +400,92 @@ impl Plugin for EmailPlugin {
             self.google.clone(),
             cursor,
             broker.clone(),
-            bounce,
+            bounce.clone(),
             attachments.clone(),
         );
 
-        // Phase 48 follow-up #10 — daily attachment GC. Kicks off
-        // when retention > 0; otherwise the operator opted into
-        // unbounded storage. The cancel token lives in `gc_cancel`
-        // so `stop()` shuts it down cleanly.
-        if self.cfg.attachment_retention_days > 0 {
-            if let Some(store) = attachments {
-                let cancel = tokio_util::sync::CancellationToken::new();
-                let attachments_dir = self.data_dir.join(&self.cfg.attachments_dir);
-                let retention_secs =
-                    (self.cfg.attachment_retention_days as i64).saturating_mul(86_400);
-                let task_cancel = cancel.clone();
-                // Audit follow-up A — spawn the task FIRST (and only
-                // record the cancel handle once it's live) so a
-                // racing `stop()` between `cancel.cancel()` and
-                // the task's first `select!` poll never observes a
-                // half-armed cancel token. `tokio::time::interval`
-                // also fires the first tick immediately by default;
-                // we consume it before entering the loop so a
-                // pre-cancelled task doesn't do one stray sweep.
-                tokio::spawn(async move {
-                    let mut interval =
-                        tokio::time::interval(std::time::Duration::from_secs(86_400));
-                    interval.tick().await; // consume the immediate-fire tick
-                    loop {
-                        tokio::select! {
-                            biased;
-                            _ = task_cancel.cancelled() => return,
-                            _ = interval.tick() => {
-                                match store.gc(&attachments_dir, retention_secs).await {
-                                    Ok(n) if n > 0 => tracing::info!(
-                                        target: "plugin.email",
-                                        files_removed = n,
-                                        "attachment GC swept stale files"
-                                    ),
-                                    Ok(_) => {}
-                                    Err(e) => tracing::warn!(
-                                        target: "plugin.email",
-                                        error = %e,
-                                        "attachment GC failed (will retry tomorrow)"
-                                    ),
+        // Phase 48 follow-up #10 + Audit #3 #3 — daily GC ticker.
+        // Sweeps stale attachment files and prunes the bounce
+        // table on the same 24h cadence. Kicks off when either
+        // retention knob is set above 0; otherwise the operator
+        // opted into unbounded storage on both axes. The cancel
+        // token lives in `gc_cancel` so `stop()` shuts the task
+        // down cleanly.
+        let attachment_gc_enabled =
+            self.cfg.attachment_retention_days > 0 && attachments.is_some();
+        let bounce_gc_enabled = self.cfg.bounce_retention_days > 0 && bounce.is_some();
+        if attachment_gc_enabled || bounce_gc_enabled {
+            let cancel = tokio_util::sync::CancellationToken::new();
+            let attachments_store = attachments.clone();
+            let attachments_dir = self.data_dir.join(&self.cfg.attachments_dir);
+            let attachment_retention_secs =
+                (self.cfg.attachment_retention_days as i64).saturating_mul(86_400);
+            let bounce_store_handle = bounce.clone();
+            let bounce_retention_secs =
+                (self.cfg.bounce_retention_days as i64).saturating_mul(86_400);
+            let kept_instances: Vec<String> = self
+                .cfg
+                .accounts
+                .iter()
+                .map(|a| a.instance.clone())
+                .collect();
+            let task_cancel = cancel.clone();
+            // Audit follow-up A — spawn the task FIRST (and only
+            // record the cancel handle once it's live) so a
+            // racing `stop()` between `cancel.cancel()` and
+            // the task's first `select!` poll never observes a
+            // half-armed cancel token. `tokio::time::interval`
+            // also fires the first tick immediately by default;
+            // we consume it before entering the loop so a
+            // pre-cancelled task doesn't do one stray sweep.
+            tokio::spawn(async move {
+                let mut interval =
+                    tokio::time::interval(std::time::Duration::from_secs(86_400));
+                interval.tick().await; // consume the immediate-fire tick
+                loop {
+                    tokio::select! {
+                        biased;
+                        _ = task_cancel.cancelled() => return,
+                        _ = interval.tick() => {
+                            if attachment_gc_enabled {
+                                if let Some(store) = &attachments_store {
+                                    match store.gc(&attachments_dir, attachment_retention_secs).await {
+                                        Ok(n) if n > 0 => tracing::info!(
+                                            target: "plugin.email",
+                                            files_removed = n,
+                                            "attachment GC swept stale files"
+                                        ),
+                                        Ok(_) => {}
+                                        Err(e) => tracing::warn!(
+                                            target: "plugin.email",
+                                            error = %e,
+                                            "attachment GC failed (will retry tomorrow)"
+                                        ),
+                                    }
+                                }
+                            }
+                            if bounce_gc_enabled {
+                                if let Some(store) = &bounce_store_handle {
+                                    match store.prune(bounce_retention_secs, &kept_instances).await {
+                                        Ok(n) if n > 0 => tracing::info!(
+                                            target: "plugin.email",
+                                            rows_removed = n,
+                                            "bounce GC pruned stale / orphan rows"
+                                        ),
+                                        Ok(_) => {}
+                                        Err(e) => tracing::warn!(
+                                            target: "plugin.email",
+                                            error = %e,
+                                            "bounce GC failed (will retry tomorrow)"
+                                        ),
+                                    }
                                 }
                             }
                         }
                     }
-                });
-                let _ = self.gc_cancel.set(cancel);
-            }
+                }
+            });
+            let _ = self.gc_cancel.set(cancel);
         }
         let health = manager.health_map();
         *self.inbound.lock().await = Some(manager);
