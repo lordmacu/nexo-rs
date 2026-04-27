@@ -2920,8 +2920,16 @@ async fn boot_dispatch_ctx_if_enabled(
         Arc::new(fwd)
     };
 
-    let acceptance: Arc<dyn nexo_driver_loop::AcceptanceEvaluator> =
-        Arc::new(nexo_driver_loop::DefaultAcceptanceEvaluator::new());
+    let acceptance: Arc<dyn nexo_driver_loop::AcceptanceEvaluator> = {
+        let mut ev = nexo_driver_loop::DefaultAcceptanceEvaluator::new();
+        if let Some(t) = driver_cfg.acceptance.default_shell_timeout {
+            ev = ev.with_default_shell_timeout(t);
+        }
+        if let Some(n) = driver_cfg.acceptance.evidence_byte_limit {
+            ev = ev.with_evidence_byte_limit(n);
+        }
+        Arc::new(ev)
+    };
     let orchestrator = match nexo_driver_loop::DriverOrchestrator::builder()
         .claude_config(driver_cfg.claude.clone())
         .binding_store(binding_store)

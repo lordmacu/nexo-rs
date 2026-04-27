@@ -117,7 +117,10 @@ driver:
 # stdout regex, file-match with workspace path-traversal guard, custom
 # verifiers (built-ins: no_paths_touched, git_clean).
 acceptance:
-  default_shell_timeout: 5m
+  # Cargo workspace builds + tests on this repo can take ~15 min cold
+  # cache. Goals running `cargo test --workspace` against nexo-rs
+  # itself were timing out at 5 m and looping forever in NeedsRetry.
+  default_shell_timeout: 30m
   evidence_byte_limit: 4096
 
 # Phase 67.9 — opportunistic /compact injection. When the running
