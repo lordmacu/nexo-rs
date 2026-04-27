@@ -191,6 +191,7 @@ fn make_context(broker: AnyBroker) -> AgentContext {
         context_optimization: None,
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),
+        remote_triggers: Vec::new(),
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     AgentContext::new("test-agent", cfg, broker, sessions)
@@ -279,6 +280,7 @@ async fn system_prompt_prepended_to_llm_request() {
         context_optimization: None,
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),
+        remote_triggers: Vec::new(),
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     let ctx = AgentContext::new("test-agent", cfg, broker, sessions);
@@ -352,6 +354,7 @@ async fn output_language_directive_renders_when_configured() {
         context_optimization: None,
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),
+        remote_triggers: Vec::new(),
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     let ctx = AgentContext::new("test-agent", cfg, broker, sessions);
@@ -483,6 +486,7 @@ async fn workspace_bundle_prepended_to_system_message() -> anyhow::Result<()> {
         context_optimization: None,
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),
+        remote_triggers: Vec::new(),
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     let ctx = AgentContext::new("test-agent", cfg, broker, sessions);
@@ -582,6 +586,7 @@ async fn skills_loaded_between_workspace_and_system_prompt() -> anyhow::Result<(
         context_optimization: None,
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),
+        remote_triggers: Vec::new(),
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     let ctx = AgentContext::new("test-agent", cfg, broker, sessions);
@@ -673,6 +678,7 @@ async fn workspace_memory_skipped_when_source_is_peer_agent() -> anyhow::Result<
         context_optimization: None,
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),
+        remote_triggers: Vec::new(),
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     let ctx = AgentContext::new("test-agent", cfg, broker, sessions);
@@ -752,6 +758,7 @@ async fn transcript_written_when_dir_configured() -> anyhow::Result<()> {
         context_optimization: None,
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),
+        remote_triggers: Vec::new(),
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     let ctx = AgentContext::new("test-agent", cfg, broker, sessions);
@@ -913,6 +920,7 @@ async fn heartbeat_delivers_due_reminders_once() {
         context_optimization: None,
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),
+        remote_triggers: Vec::new(),
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     let memory = Arc::new(LongTermMemory::open(":memory:").await.unwrap());
@@ -998,6 +1006,7 @@ async fn schedule_reminder_tool_uses_current_conversation_context() {
         context_optimization: None,
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),
+        remote_triggers: Vec::new(),
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     let memory = Arc::new(LongTermMemory::open(":memory:").await.unwrap());
@@ -1086,6 +1095,7 @@ async fn llm_can_call_delegate_tool_and_receive_result() {
         context_optimization: None,
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),
+        remote_triggers: Vec::new(),
     };
     let runtime_b = AgentRuntime::new(
         Arc::new(Agent::new(cfg_b, ResponderBehavior)),
@@ -1130,6 +1140,7 @@ async fn llm_can_call_delegate_tool_and_receive_result() {
         context_optimization: None,
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),
+        remote_triggers: Vec::new(),
     });
     let mut sub = broker.subscribe("plugin.outbound.telegram").await.unwrap();
     let router = Arc::new(AgentRouter::new());
@@ -1524,6 +1535,7 @@ async fn delegation_rejects_target_outside_allowed_delegates() {
         context_optimization: None,
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),
+        remote_triggers: Vec::new(),
     });
     let router = Arc::new(AgentRouter::new());
     let ctx = AgentContext::new("agent-a", cfg, broker, sessions).with_router(router);
@@ -1625,6 +1637,7 @@ async fn peer_directory_renders_into_system_prompt() {
         context_optimization: None,
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),
+        remote_triggers: Vec::new(),
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     let ctx = AgentContext::new("ventas", cfg, broker, sessions).with_peers(peers);

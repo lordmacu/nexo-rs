@@ -505,6 +505,7 @@ mod tests {
             context_optimization: None,
             dispatch_policy: Default::default(),
             plan_mode: Default::default(),
+            remote_triggers: Vec::new(),
         };
         AgentContext::new(
             "a",
@@ -661,6 +662,7 @@ mod tests {
                 approval_timeout_secs: timeout_secs,
                 require_approval: true,
             },
+            remote_triggers: Vec::new(),
         };
         AgentContext::new(
             "a",

@@ -157,6 +157,7 @@ fn two_binding_agent() -> AgentConfig {
         context_optimization: None,
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),
+        remote_triggers: Vec::new(),
     }
 }
 
@@ -338,6 +339,7 @@ async fn agent_without_bindings_drops_inbound_events() {
         context_optimization: None,
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),
+        remote_triggers: Vec::new(),
     };
     let (runtime, captures, broker) = spawn_runtime(cfg).await;
 

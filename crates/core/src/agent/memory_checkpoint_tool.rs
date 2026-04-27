@@ -110,6 +110,7 @@ mod tests {
             context_optimization: None,
             dispatch_policy: Default::default(),
             plan_mode: Default::default(),
+            remote_triggers: Vec::new(),
         });
         let broker = AnyBroker::local();
         let sessions = Arc::new(SessionManager::new(std::time::Duration::from_secs(60), 20));
