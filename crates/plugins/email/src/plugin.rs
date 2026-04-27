@@ -1,11 +1,17 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use nexo_auth::email::EmailCredentialStore;
+use nexo_auth::google::GoogleCredentialStore;
 use nexo_broker::AnyBroker;
 use nexo_config::types::plugins::EmailPluginConfig;
 use nexo_core::agent::plugin::{Command, Plugin, Response};
-use tokio::sync::OnceCell;
+use tokio::sync::{Mutex, OnceCell};
 use tracing::info;
+
+use crate::cursor::CursorStore;
+use crate::inbound::{HealthMap, InboundManager};
 
 pub const TOPIC_INBOUND: &str = "plugin.inbound.email";
 pub const TOPIC_OUTBOUND: &str = "plugin.outbound.email";
@@ -29,24 +35,59 @@ pub fn outbound_topic_for(instance: &str) -> String {
     }
 }
 
-/// Phase 48.1 stub. Wires config + lifecycle no-ops so the plugin can
-/// be registered at boot without panicking. Real IDLE/SMTP work lands
-/// in 48.3+.
+/// Phase 48.3 — wires the inbound IMAP IDLE workers. Outbound (SMTP) +
+/// MIME parse + tools land in 48.4..48.7.
 pub struct EmailPlugin {
     cfg: Arc<EmailPluginConfig>,
-    broker: OnceCell<AnyBroker>,
+    creds: Arc<EmailCredentialStore>,
+    google: Arc<GoogleCredentialStore>,
+    data_dir: PathBuf,
+    inbound: Mutex<Option<InboundManager>>,
+    cursor: OnceCell<Arc<CursorStore>>,
 }
 
 impl EmailPlugin {
-    pub fn new(cfg: EmailPluginConfig) -> Self {
+    /// Construct the plugin with its dependencies. `data_dir` is the
+    /// daemon's runtime directory; the cursor SQLite lives at
+    /// `<data_dir>/email/cursor.db`.
+    pub fn new(
+        cfg: EmailPluginConfig,
+        creds: Arc<EmailCredentialStore>,
+        google: Arc<GoogleCredentialStore>,
+        data_dir: PathBuf,
+    ) -> Self {
         Self {
             cfg: Arc::new(cfg),
-            broker: OnceCell::new(),
+            creds,
+            google,
+            data_dir,
+            inbound: Mutex::new(None),
+            cursor: OnceCell::new(),
         }
     }
 
     pub fn config(&self) -> &EmailPluginConfig {
         &self.cfg
+    }
+
+    /// Snapshot of every account's worker health. `None` until `start`
+    /// has been called.
+    pub async fn health_map(&self) -> Option<HealthMap> {
+        self.inbound
+            .lock()
+            .await
+            .as_ref()
+            .map(|m| m.health_map())
+    }
+
+    async fn cursor_store(&self) -> anyhow::Result<Arc<CursorStore>> {
+        if let Some(c) = self.cursor.get() {
+            return Ok(c.clone());
+        }
+        let path = self.data_dir.join("email").join("cursor.db");
+        let store = Arc::new(CursorStore::open_path(&path).await?);
+        let _ = self.cursor.set(store.clone());
+        Ok(store)
     }
 }
 
@@ -57,18 +98,39 @@ impl Plugin for EmailPlugin {
     }
 
     async fn start(&self, broker: AnyBroker) -> anyhow::Result<()> {
-        let _ = self.broker.set(broker);
+        if !self.cfg.enabled {
+            info!(target: "plugin.email", "plugin disabled — skipping start");
+            return Ok(());
+        }
+        if self.cfg.accounts.is_empty() {
+            info!(
+                target: "plugin.email",
+                "no accounts configured — start is a noop until 48.10 hot-reload adds one"
+            );
+            return Ok(());
+        }
+        let cursor = self.cursor_store().await?;
+        let manager = InboundManager::start(
+            &self.cfg,
+            self.creds.clone(),
+            self.google.clone(),
+            cursor,
+            broker,
+        );
+        *self.inbound.lock().await = Some(manager);
         info!(
             target: "plugin.email",
             accounts = self.cfg.accounts.len(),
-            enabled = self.cfg.enabled,
-            "email plugin started (48.1 scaffold — IDLE/SMTP land in 48.3+)"
+            "email inbound workers spawned"
         );
         Ok(())
     }
 
     async fn stop(&self) -> anyhow::Result<()> {
-        info!(target: "plugin.email", "email plugin stopped");
+        if let Some(manager) = self.inbound.lock().await.take() {
+            manager.stop().await;
+            info!(target: "plugin.email", "email inbound workers stopped");
+        }
         Ok(())
     }
 
@@ -84,7 +146,7 @@ mod tests {
     use super::*;
     use nexo_config::types::plugins::EmailPluginConfigFile;
 
-    fn cfg() -> EmailPluginConfig {
+    fn cfg_no_accounts() -> EmailPluginConfig {
         let yaml = r#"
 email:
   accounts: []
@@ -103,11 +165,16 @@ email:
 
     #[tokio::test]
     async fn lifecycle_noop_does_not_panic() {
-        let p = EmailPlugin::new(cfg());
+        let p = EmailPlugin::new(
+            cfg_no_accounts(),
+            Arc::new(EmailCredentialStore::empty()),
+            Arc::new(GoogleCredentialStore::empty()),
+            std::env::temp_dir().join("nexo-email-test"),
+        );
         assert_eq!(p.name(), "email");
-        // start/stop without broker registration is exercised in the
-        // higher-level integration tests once 48.3 lands. Here we just
-        // confirm the plugin can be constructed and stopped cleanly.
+        // start with zero accounts is a noop — no broker needed.
+        // Only stop is exercised here; the start path requires a real
+        // broker which integration tests will wire up.
         p.stop().await.unwrap();
     }
 }

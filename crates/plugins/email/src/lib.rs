@@ -7,6 +7,8 @@
 pub mod cursor;
 pub mod events;
 pub mod health;
+pub mod imap_conn;
+pub mod inbound;
 pub mod plugin;
 
 pub use cursor::{CursorStore, UidCursor};
