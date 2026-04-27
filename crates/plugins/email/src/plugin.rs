@@ -189,7 +189,8 @@ impl Plugin for EmailPlugin {
                                 target: "plugin.email",
                                 instance = %instance,
                                 domain = %domain,
-                                "email.dkim.missing — no TXT at default._domainkey; common selectors: default, google, selector1, mail"
+                                selectors_probed = ?crate::spf_dkim::DKIM_SELECTORS,
+                                "email.dkim.missing — no TXT at any probed selector; if your domain rotates a custom selector, publish a DKIM record there"
                             ),
                             "dns_error" => tracing::warn!(
                                 target: "plugin.email",

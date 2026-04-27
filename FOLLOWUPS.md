@@ -707,11 +707,13 @@ Open:
   - **IMAP STARTTLS.** v1 ships `ImplicitTls` (port 993) only.
     `Starttls` and `Plain` reject at `ImapConnection::connect`
     with operator-actionable errors.
-  - **Multi-selector DKIM probe.** v1 only checks
-    `default._domainkey.<domain>`. Adding a fallback walk over
-    `google`, `selector1`, `selector2`, `mail` would catch the
-    common providers without making the operator read the
-    boot-warn hint.
+  - **Multi-selector DKIM probe.** ✅ Shipped 2026-04-27.
+    `spf_dkim::DKIM_SELECTORS = ["default", "google", "selector1",
+    "selector2", "mail"]` — first match wins. `AlignmentReport`
+    carries `dkim_selector: Option<String>` so the matched selector
+    surfaces; the `dkim_missing` WARN now logs the full list of
+    probed selectors so the operator chasing a custom one knows
+    what's already covered.
   - **`/healthz` HTTP integration** for the per-account
     `EmailPlugin::health_map()` rows. The data is already
     populated (`outbound_queue_depth`, `outbound_dlq_depth`,

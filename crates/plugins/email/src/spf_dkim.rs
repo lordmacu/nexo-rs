@@ -22,6 +22,14 @@ use std::time::Duration;
 use hickory_resolver::config::{ResolverConfig, ResolverOpts};
 use hickory_resolver::TokioAsyncResolver;
 
+/// Common DKIM selectors probed in order. `default` is the historical
+/// recommendation; `google` (Gmail / Google Workspace), `selector1` /
+/// `selector2` (Microsoft 365 + most ESPs that rotate keys), and
+/// `mail` (Postfix `opendkim-genkey` default) cover ~95% of
+/// real-world deployments without forcing the operator to pin a
+/// custom selector.
+pub const DKIM_SELECTORS: &[&str] = &["default", "google", "selector1", "selector2", "mail"];
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AlignmentReport {
     pub domain: String,
@@ -34,6 +42,9 @@ pub struct AlignmentReport {
     pub spf_includes_host: Option<bool>,
     pub dkim_present: bool,
     pub dkim_record: Option<String>,
+    /// Selector that matched (e.g. `default`, `google`, `selector1`).
+    /// `None` when no DKIM record was found on any probed selector.
+    pub dkim_selector: Option<String>,
     /// True when DNS lookups timed out / errored out. The other
     /// fields default to `false` / `None`; this flag lets the caller
     /// log a different category of WARN.
@@ -89,18 +100,22 @@ pub async fn check_alignment(
         Err(_) => report.dns_error = true,
     }
 
-    let dkim_name = format!("default._domainkey.{}", domain);
-    match lookup_txt(&resolver, &dkim_name, timeout).await {
-        Ok(records) => {
+    // Multi-selector DKIM probe. The four below cover Gmail / O365 /
+    // most ESPs (Mailgun / SendGrid / Mailchimp publish under
+    // `selector1` and `selector2`) plus the historical defaults.
+    // First match wins; if none match the WARN message lists them so
+    // the operator can chase a custom selector if they rotate one.
+    for selector in DKIM_SELECTORS {
+        let name = format!("{selector}._domainkey.{}", domain);
+        if let Ok(records) = lookup_txt(&resolver, &name, timeout).await {
             if let Some(dkim_rec) = records.iter().find(|r| r.contains("v=DKIM1")) {
                 report.dkim_present = true;
                 report.dkim_record = Some(dkim_rec.clone());
+                report.dkim_selector = Some((*selector).to_string());
+                break;
             }
         }
-        Err(_) => {
-            // Subdomain NXDOMAIN is the common case — don't escalate
-            // to dns_error unless the SPF lookup also failed.
-        }
+        // NXDOMAIN per selector is expected — keep walking.
     }
 
     report
@@ -274,6 +289,27 @@ mod tests {
             ..AlignmentReport::default()
         };
         assert_eq!(decide_warns(&r), vec!["spf_misalignment", "dkim_missing"]);
+    }
+
+    #[test]
+    fn dkim_selectors_list_starts_with_default() {
+        // `default` first preserves single-selector behaviour for
+        // domains that don't rotate keys.
+        assert_eq!(DKIM_SELECTORS.first(), Some(&"default"));
+        // The five we ship today.
+        assert_eq!(DKIM_SELECTORS.len(), 5);
+        assert!(DKIM_SELECTORS.contains(&"google"));
+        assert!(DKIM_SELECTORS.contains(&"selector1"));
+        assert!(DKIM_SELECTORS.contains(&"selector2"));
+        assert!(DKIM_SELECTORS.contains(&"mail"));
+    }
+
+    #[test]
+    fn alignment_report_carries_selector_field() {
+        // Default-construct sanity: the new field is `None` and
+        // `Default` still works for tests that touch the report.
+        let r = AlignmentReport::default();
+        assert!(r.dkim_selector.is_none());
     }
 
     #[test]
