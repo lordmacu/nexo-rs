@@ -278,13 +278,23 @@ impl AccountWorker {
                 attachments_dir: self.attachments_dir.clone(),
                 fallback_internal_date: msg.internal_date,
             };
-            let (meta, attachments) = match crate::mime_parse::parse_eml(
+            let (meta, attachments, thread_root_id) = match crate::mime_parse::parse_eml(
                 &msg.raw_bytes,
                 &parse_cfg,
             )
             .await
             {
-                Ok(p) => (Some(p.meta), p.attachments),
+                Ok(p) => {
+                    // Phase 48.6 — derive a stable thread root so
+                    // downstream tools can group by hilo without
+                    // re-parsing meta.
+                    let root = crate::threading::resolve_thread_root(
+                        &p.meta,
+                        msg.uid,
+                        &self.account_cfg.address,
+                    );
+                    (Some(p.meta), p.attachments, Some(root))
+                }
                 Err(e) => {
                     warn!(
                         target: "plugin.email",
@@ -293,7 +303,7 @@ impl AccountWorker {
                         error = %e,
                         "email.parse.malformed — publishing raw-only"
                     );
-                    (None, Vec::new())
+                    (None, Vec::new(), None)
                 }
             };
             let event = InboundEvent {
@@ -304,6 +314,7 @@ impl AccountWorker {
                 raw_bytes: msg.raw_bytes,
                 meta,
                 attachments,
+                thread_root_id,
             };
             let topic = inbound_topic_for(&self.account_cfg.instance);
             let payload = serde_json::to_value(&event)?;

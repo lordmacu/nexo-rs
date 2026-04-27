@@ -121,7 +121,7 @@ async-nats         = "0.35"
 reqwest            = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "cookies", "charset", "http2", "macos-system-configuration"] }
 sqlx               = { version = "0.8", features = ["sqlite", "runtime-tokio"] }
 tokio-tungstenite  = "0.21"
-uuid               = { version = "1", features = ["v4", "serde"] }
+uuid               = { version = "1", features = ["v4", "v5", "serde", "macro-diagnostics"] }
 chrono             = { version = "0.4", features = ["serde"] }
 config             = "0.14"
 serde_yaml         = "0.9"

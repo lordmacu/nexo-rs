@@ -2204,7 +2204,28 @@ Sub-phases:
   passthrough, RFC 2047 subject, multipart/mixed emission with
   mime_guess, missing-file Err, explicit-mime override).
   58 / 58 plugin unit tests; clippy clean.)
-- 48.6 — Threading via `Message-ID` / `In-Reply-To` / `References`   ⬜
+- 48.6 — Threading via `Message-ID` / `In-Reply-To` / `References`   ✅
+  (`crates/plugins/email/src/threading.rs` ships pure helpers:
+  `canonicalize_message_id` (lowercase + bracket-strip + reject
+  CR/LF/comma/whitespace as defence against header injection),
+  `resolve_thread_root` walking RFC 5322 §3.6.4 priority
+  (`references[0]` → `in_reply_to` → `message_id` →
+  `<orphan-{uid}@{account}>` synth so the helper never returns
+  None), `session_id_for_thread` = `Uuid::new_v5(EMAIL_NS,
+  root)` mirroring `telegram::session_id_for_chat` /
+  `whatsapp::session_id_for_jid`, `truncate_references` keeping
+  root + last `(max-1)` ids per RFC 5322, `enrich_reply_threading`
+  mutating an `OutboundCommand` so a reply inherits the parent
+  chain (idempotent — re-invoking is a no-op via dedupe), and
+  `is_self_thread` for 48.8 loop-prev. `EMAIL_NS` is pinned via
+  `uuid!("c1c0a700-48e6-5000-a000-000000000000")` — bumping it
+  re-shuffles every email session id, hence the regression test
+  asserting the v5 derivation. `InboundEvent.thread_root_id:
+  Option<String>` (skip-on-None for back-compat with 48.3/48.4
+  payloads) is populated by `inbound::drain_pending` after
+  successful `parse_eml`. Workspace `uuid` workspace dep gains
+  `v5` + `macro-diagnostics` features. 28 unit tests; 84 / 84
+  plugin total; clippy clean.)
 - 48.7 — Tools: `email_send` / `_reply` / `_archive` / `_label` / `_move_to` / `_search`   ⬜
 - 48.8 — Loop-prevention + DSN/bounce parsing   ⬜
 - 48.9 — SPF/DKIM boot warn + setup-CLI submenu   ⬜
