@@ -918,15 +918,26 @@ Open:
     never refires forever. Spawned in `src/main.rs` right
     before `shutdown_signal().await` with a `LoggingCronDispatcher`
     (emits `[cron] fired` per dispatch).
-  - **LLM-call cron dispatcher.** ⬜ Pending. The runner
-    currently uses `LoggingCronDispatcher` so operators verify
-    fires happen, but the actual LLM call + outbound publish
-    isn't wired. Lift the Phase 20 `agent_turn` poller pattern
-    (`crates/poller/src/builtins/agent_turn.rs`): build LLM
-    client from `LlmRegistry`, call `chat`, publish response
-    to the binding's outbound topic. Should be a single new
-    file `crates/core/src/llm_cron_dispatcher.rs` plus the
-    main.rs wiring swap.
+  - ~~**LLM-call cron dispatcher.**~~ ✅ shipped 2026-04-27.
+    `crates/core/src/llm_cron_dispatcher.rs::LlmCronDispatcher`
+    builds `ChatRequest` from `entry.prompt`, calls
+    `LlmClient::chat`, logs response with id + binding +
+    cron + 200-char preview. `with_system_prompt` +
+    `with_max_tokens` knobs. main.rs wires it from the FIRST
+    agent's `model` config; falls back to
+    `LoggingCronDispatcher` when no agents configured or
+    LLM-client build fails (degraded boot stays observable).
+    7 unit tests cover system-prompt prepended/empty/skipped,
+    max-tokens propagation, LLM failure → error, empty
+    response → ok, model_id taken from client, user-prompt
+    routed.
+  - **Outbound publish to binding's channel.** ⬜ Pending.
+    `LlmCronDispatcher` currently logs the model's response.
+    The follow-up routes it to the binding's outbound topic
+    so the user sees it on WhatsApp / Telegram / email.
+    Likely shape: dispatcher takes an
+    `Arc<dyn ChannelPublisher>` parameter; production wiring
+    binds it to the existing per-plugin outbound paths.
   - **CLI `nexo cron list / drop / pause`.** ⬜ Pending. The
     spec called for operator-side inspection commands. Today
     operators must use SQL or `cron_list` from inside an agent

@@ -37,7 +37,7 @@ transitive workspace dep).
 - SQLite-backed (`nexo_cron_entries` table); survives daemon
   restart.
 
-## Runtime firing — shipped (logging dispatcher)
+## Runtime firing — shipped (LLM dispatcher live)
 
 `crates/core/src/cron_runner.rs::CronRunner` polls
 `store.due_at(now)` every 5 s and dispatches due entries
@@ -46,13 +46,21 @@ through an `Arc<dyn CronDispatcher>`. State advance is
 recomputes `next_fire_at` (recurring) or deletes the entry
 (one-shot) so a single broken entry never re-fires forever.
 
-Production wiring at boot uses `LoggingCronDispatcher`, which
-emits one `[cron] fired` line per dispatch with id + binding +
-prompt-char count. Operators tail the log to verify cron fires
-are happening. The actual LLM call + outbound publish lands as
-a follow-up that swaps the dispatcher to an `LlmCronDispatcher`
-(Phase 20 `agent_turn` poller pattern). Tracked in
-`FOLLOWUPS.md::Phase 79.7`.
+Production wiring at boot uses `LlmCronDispatcher`
+(`crates/core/src/llm_cron_dispatcher.rs`): builds a
+`ChatRequest` from `entry.prompt`, calls `LlmClient::chat` on a
+client built from the FIRST agent's `model` config, logs the
+response with id + binding + cron expression + 200-char
+preview. Operators tail the log to verify cron fires actually
+talk to the model.
+
+Fallback: when no agents are configured or the LLM-client build
+fails, the runner falls back to `LoggingCronDispatcher` so cron
+fires stay observable in degraded boot.
+
+Outbound publish to the binding's channel (so the user sees the
+response on WhatsApp / Telegram / email) is the remaining
+follow-up. Tracked in `FOLLOWUPS.md::Phase 79.7`.
 
 ## Tool shapes
 
