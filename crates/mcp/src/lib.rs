@@ -34,6 +34,9 @@ pub use runtime_config::{McpRuntimeConfig, McpServerRuntimeConfig};
 pub use server::{
     run_stdio_server, run_stdio_server_with_auth, run_with_io, run_with_io_auth, McpServerHandler,
 };
+// Phase 76.1 — HTTP transport top-level re-exports.
+pub use server::http_config::HttpTransportConfig;
+pub use server::http_transport::{start_http_server, HttpServerHandle};
 pub use session::{RuntimeCallError, SessionMcpRuntime};
 pub use types::{
     McpAnnotations, McpCapabilities, McpClientInfo, McpContent, McpPrompt, McpPromptArgument,

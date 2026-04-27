@@ -26,6 +26,7 @@ tokio      = { workspace = true }
 tokio-util = { workspace = true }
 dashmap    = { workspace = true }
 async-trait = { workspace = true }
+parking_lot = "0.12"
 nexo-resilience = { version = "0.1.1", path = "../resilience" }
 nexo-extensions = { version = "0.1.1", path = "../extensions" }
 nexo-config = { version = "0.1.1", path = "../config" }
@@ -43,13 +44,37 @@ notify-debouncer-full = { workspace = true }
 anyhow           = { workspace = true }
 serde_yaml       = { workspace = true }
 lru              = { workspace = true }
+# Phase 76.1 — HTTP+SSE server transport.
+axum             = { version = "0.7", features = ["macros", "tokio"] }
+tower            = { version = "0.5", features = ["limit", "util"] }
+tower-http       = { version = "0.5", features = ["cors", "limit", "timeout", "trace"] }
+# `governor` was considered for per-IP rate-limit; replaced by the
+# in-tree `PerIpRateLimiter` (DashMap + token bucket) in 76.1 to
+# keep dep surface minimal. Re-evaluate when 76.5 introduces the
+# per-tenant / per-tool layer.
+headers          = "0.4"
+async-stream     = "0.3"
+tokio-stream     = "0.1"
+# Phase 76.3 — pluggable authentication.
+jsonwebtoken     = "9"
+subtle           = "2"
+zeroize          = "1"
+# Phase 76.4 — tenant id validation (NFKC normalization + percent-decode
+# guards mirror claude-code-leak/src/memdir/teamMemPaths.ts:22-64).
+unicode-normalization = "0.1"
+percent-encoding      = "2"
 
 [dev-dependencies]
 tokio      = { workspace = true, features = ["macros", "rt-multi-thread", "process", "io-util", "time", "sync", "net"] }
-axum       = "0.7"
-tower      = "0.5"
 tempfile   = "3"
 tracing-subscriber = { workspace = true }
+eventsource-stream = "0.2"
+# Phase 76.3 — JWT signing fixtures (RSA keypair + JWKS server).
+rsa        = "0.9"
+rand       = "0.8"
+base64     = "0.22"
+# Phase 76.10 — serialise telemetry tests (module-global counters).
+serial_test = "3"
 
 # Auto-discovered from `src/bin/mock_mcp_server.rs`. Used by
 # `tests/mock_server_test.rs` via `CARGO_BIN_EXE_mock_mcp_server`.
