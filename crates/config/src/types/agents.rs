@@ -209,6 +209,12 @@ pub struct AgentConfig {
     /// even without binding-level overrides.
     #[serde(default)]
     pub plan_mode: crate::types::plan_mode::PlanModePolicy,
+    /// Phase 79.8 — allowlist of remote-trigger destinations the
+    /// agent's `RemoteTrigger` tool may publish to. Empty (the
+    /// default) keeps the tool registered but every call refuses
+    /// with a clear "name not in allowlist" error.
+    #[serde(default)]
+    pub remote_triggers: Vec<crate::types::remote_triggers::RemoteTriggerEntry>,
 }
 
 /// Tri-state dispatch capability. The same enum is used for the
