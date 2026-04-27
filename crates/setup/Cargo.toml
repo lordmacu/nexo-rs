@@ -14,6 +14,7 @@ keywords      = { workspace = true }
 categories    = { workspace = true }
 [dependencies]
 nexo-config = { version = "0.1.1", path = "../config" }
+nexo-plugin-email = { version = "0.1.1", path = "../plugins/email" }
 nexo-core = { version = "0.1.1", path = "../core" }
 nexo-auth = { version = "0.1.1", path = "../auth" }
 anyhow       = { workspace = true }
