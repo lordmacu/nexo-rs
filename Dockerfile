@@ -1,14 +1,38 @@
+FROM node:20-bookworm-slim AS admin-ui-builder
+
+# Phase 27.x — admin-ui SPA pre-built so RustEmbed bundles the
+# `admin-ui/dist/` directory at compile time. Without this stage the
+# Rust build fails with `RustEmbed folder admin-ui/dist/ does not
+# exist`. Stays minimal: only the admin-ui sources land in this
+# layer; the daemon stage copies just the built artifact.
+WORKDIR /admin-ui
+COPY admin-ui/package.json admin-ui/package-lock.json* ./
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+COPY admin-ui ./
+RUN npm run build
+
 FROM rust:1-bookworm AS builder
 
 WORKDIR /app
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml Cargo.lock build.rs ./
 COPY crates ./crates
 COPY src ./src
+COPY examples ./examples
 COPY config ./config
+COPY --from=admin-ui-builder /admin-ui/dist ./admin-ui/dist
 
 # Build the renamed `nexo` bin. The legacy `agent` binary name was
 # retired in commit 4bccdc3 (rename: agent_* crates → nexo_*, agent
 # bin → nexo).
+#
+# `NEXO_BUILD_GIT_SHA` is fed in from the GitHub Actions workflow so
+# the runtime `nexo --version` carries the real revision; build.rs
+# falls back to "unknown" when the var is absent (Docker context
+# does not include `.git/`).
+ARG NEXO_BUILD_GIT_SHA=unknown
+ARG NEXO_BUILD_CHANNEL=docker
+ENV NEXO_BUILD_GIT_SHA=${NEXO_BUILD_GIT_SHA} \
+    NEXO_BUILD_CHANNEL=${NEXO_BUILD_CHANNEL}
 RUN cargo build --release --bin nexo
 
 FROM debian:bookworm-slim AS runtime
