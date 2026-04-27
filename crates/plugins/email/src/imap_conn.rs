@@ -427,7 +427,7 @@ impl ImapConnection {
     /// `email_search` to render the result rows. Returns one row per
     /// matched UID, preserving caller order.
     pub async fn fetch_search_rows(&mut self, uid_set: &str) -> Result<Vec<SearchRow>> {
-        let query = "(UID INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM SUBJECT MESSAGE-ID)] BODY.PEEK[TEXT]<0.200>)";
+        let query = "(UID INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM SUBJECT MESSAGE-ID IN-REPLY-TO REFERENCES)] BODY.PEEK[TEXT]<0.200>)";
         let mut stream = self
             .session
             .uid_fetch(uid_set, query)
@@ -442,18 +442,20 @@ impl ImapConnection {
             let header_bytes = f.header().map(|b| b.to_vec()).unwrap_or_default();
             let snippet_bytes = f.text().map(|b| b.to_vec()).unwrap_or_default();
             let header_str = String::from_utf8_lossy(&header_bytes);
-            let (from, subject, message_id) = parse_search_headers(&header_str);
+            let parsed = parse_search_headers(&header_str);
             let snippet = String::from_utf8_lossy(&snippet_bytes)
                 .chars()
                 .take(200)
                 .collect();
             rows.push(SearchRow {
                 uid,
-                message_id,
-                from,
-                subject,
+                message_id: parsed.message_id,
+                from: parsed.from,
+                subject: parsed.subject,
                 date: internal_date,
                 snippet,
+                in_reply_to: parsed.in_reply_to,
+                references: parsed.references,
             });
         }
         drop(stream);
@@ -469,19 +471,35 @@ pub struct SearchRow {
     pub subject: String,
     pub date: i64,
     pub snippet: String,
+    /// Phase 48 use cases — RFC 5322 threading headers. Used by the
+    /// search tool to resolve every row's thread root + session id
+    /// without forcing the caller to fetch the full message.
+    /// `skip_serializing_if` keeps the wire payload small for rows
+    /// with no threading headers (root messages or one-offs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_reply_to: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<String>,
 }
 
-/// Pull `From:`, `Subject:`, `Message-ID:` from a small header block
-/// returned by `BODY.PEEK[HEADER.FIELDS (...)]`. Tolerant of folded
-/// lines and missing fields.
-fn parse_search_headers(s: &str) -> (String, String, Option<String>) {
-    let mut from = String::new();
-    let mut subject = String::new();
-    let mut message_id: Option<String> = None;
+/// Headers pulled from a `BODY.PEEK[HEADER.FIELDS (...)]` block.
+/// `parse_search_headers` is tolerant of folded continuation lines
+/// (RFC 5322 §2.2.3) and of any field being absent.
+pub(crate) struct ParsedSearchHeaders {
+    pub from: String,
+    pub subject: String,
+    pub message_id: Option<String>,
+    pub in_reply_to: Option<String>,
+    pub references: Vec<String>,
+}
+
+pub(crate) fn parse_search_headers(s: &str) -> ParsedSearchHeaders {
     let mut current: Option<&'static str> = None;
     let mut buf_from = String::new();
     let mut buf_subject = String::new();
     let mut buf_msgid = String::new();
+    let mut buf_in_reply_to = String::new();
+    let mut buf_references = String::new();
     for line in s.lines() {
         if line.starts_with(' ') || line.starts_with('\t') {
             // Folded continuation of the previous header.
@@ -496,6 +514,13 @@ fn parse_search_headers(s: &str) -> (String, String, Option<String>) {
                 }
                 Some("message-id") => {
                     buf_msgid.push_str(line.trim());
+                }
+                Some("in-reply-to") => {
+                    buf_in_reply_to.push_str(line.trim());
+                }
+                Some("references") => {
+                    buf_references.push(' ');
+                    buf_references.push_str(line.trim());
                 }
                 _ => {}
             }
@@ -517,20 +542,34 @@ fn parse_search_headers(s: &str) -> (String, String, Option<String>) {
                     buf_msgid = v.to_string();
                     current = Some("message-id");
                 }
+                "in-reply-to" => {
+                    buf_in_reply_to = v.to_string();
+                    current = Some("in-reply-to");
+                }
+                "references" => {
+                    buf_references = v.to_string();
+                    current = Some("references");
+                }
                 _ => current = None,
             }
         }
     }
-    if !buf_from.is_empty() {
-        from = buf_from;
+    let references: Vec<String> = buf_references
+        .split_whitespace()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect();
+    ParsedSearchHeaders {
+        from: buf_from,
+        subject: buf_subject,
+        message_id: if buf_msgid.is_empty() { None } else { Some(buf_msgid) },
+        in_reply_to: if buf_in_reply_to.is_empty() {
+            None
+        } else {
+            Some(buf_in_reply_to)
+        },
+        references,
     }
-    if !buf_subject.is_empty() {
-        subject = buf_subject;
-    }
-    if !buf_msgid.is_empty() {
-        message_id = Some(buf_msgid);
-    }
-    (from, subject, message_id)
 }
 
 /// Build a `rustls` config trusting the OS's native root store. Set
