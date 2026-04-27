@@ -17,6 +17,10 @@ use nexo_llm::ToolDef;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::events::{AddressEntry, EmailMeta};
+use crate::imap_conn::SearchRow;
+use crate::threading::{resolve_thread_root, session_id_for_thread};
+
 use super::context::EmailToolContext;
 use super::imap_op::{imap_date, imap_quote, run_imap_op};
 use super::uid_set::format_uid_set;
@@ -159,9 +163,19 @@ impl EmailSearchTool {
         })
         .await?;
 
+        // Phase 48 use cases — enrich each row with thread_root +
+        // thread_session_id resolved from RFC 5322 §3.6.4 priority.
+        // We re-use the inbound parser's helper so search and the
+        // inbound bridge converge on the same UUIDv5 keys.
+        let acct_address = acct_cfg.address.clone();
+        let enriched: Vec<Value> = rows
+            .iter()
+            .map(|r| row_with_threading(r, &acct_address))
+            .collect();
+
         Ok(json!({
             "ok": true,
-            "rows": rows,
+            "rows": enriched,
             "count": rows.len(),
         }))
     }
@@ -178,6 +192,43 @@ pub fn register(registry: &ToolRegistry, ctx: Arc<EmailToolContext>) {
     let tool = EmailSearchTool::new(ctx);
     registry.register(EmailSearchTool::tool_def(), tool);
 }
+
+/// Enrich a `SearchRow` with thread_root + thread_session_id so the
+/// caller doesn't have to follow up with `email_thread`. Builds a
+/// minimal `EmailMeta` shaped like the inbound parser's so the
+/// existing `resolve_thread_root` helper applies — same UUIDv5
+/// session id as the inbound bridge produces.
+pub(crate) fn row_with_threading(
+    r: &SearchRow,
+    account_address: &str,
+) -> Value {
+    let meta = EmailMeta {
+        message_id: r.message_id.clone(),
+        in_reply_to: r.in_reply_to.clone(),
+        references: r.references.clone(),
+        from: AddressEntry {
+            address: r.from.clone(),
+            name: None,
+        },
+        to: vec![],
+        cc: vec![],
+        subject: r.subject.clone(),
+        body_text: String::new(),
+        body_html: None,
+        date: r.date,
+        headers_extra: Default::default(),
+        body_truncated: false,
+    };
+    let thread_root = resolve_thread_root(&meta, r.uid, account_address);
+    let session_id = session_id_for_thread(&thread_root).to_string();
+    let mut value = serde_json::to_value(r).unwrap_or(json!({}));
+    if let Some(m) = value.as_object_mut() {
+        m.insert("thread_root".into(), json!(thread_root));
+        m.insert("thread_session_id".into(), json!(session_id));
+    }
+    value
+}
+
 
 /// Translate the JSON DSL into an IMAP SEARCH atom string. Falls
 /// back to `ALL` when no fields are set so the server doesn't
@@ -326,5 +377,56 @@ mod tests {
         let s = build_search_atoms(&q).unwrap();
         assert!(s.contains(r#"FROM "@acme.com""#));
         assert!(s.contains("UNSEEN"));
+    }
+
+    fn row(uid: u32, message_id: Option<&str>, refs: &[&str]) -> SearchRow {
+        SearchRow {
+            uid,
+            message_id: message_id.map(String::from),
+            from: "alice@x".into(),
+            subject: "hi".into(),
+            date: 100,
+            snippet: "".into(),
+            in_reply_to: None,
+            references: refs.iter().map(|s| (*s).into()).collect(),
+        }
+    }
+
+    #[test]
+    fn row_with_threading_uses_first_reference_as_root() {
+        let r = row(
+            42,
+            Some("<reply@x>"),
+            &["<root@x>", "<middle@x>"],
+        );
+        let v = row_with_threading(&r, "ops@example.com");
+        assert_eq!(v["thread_root"], "<root@x>");
+        // session_id should be a UUIDv5 string.
+        assert_eq!(v["thread_session_id"].as_str().unwrap().len(), 36);
+    }
+
+    #[test]
+    fn row_with_threading_falls_back_to_message_id() {
+        let r = row(7, Some("<msg@x>"), &[]);
+        let v = row_with_threading(&r, "ops@example.com");
+        assert_eq!(v["thread_root"], "<msg@x>");
+    }
+
+    #[test]
+    fn row_with_threading_synthesises_orphan_when_headerless() {
+        let r = row(99, None, &[]);
+        let v = row_with_threading(&r, "ops@example.com");
+        let root = v["thread_root"].as_str().unwrap();
+        assert!(root.starts_with("<orphan-99@"));
+    }
+
+    #[test]
+    fn row_with_threading_session_id_is_stable() {
+        let r1 = row(1, Some("<msg@x>"), &[]);
+        let r2 = row(2, Some("<msg@x>"), &[]);
+        // Same root → same session_id even when uid differs.
+        let v1 = row_with_threading(&r1, "ops@example.com");
+        let v2 = row_with_threading(&r2, "ops@example.com");
+        assert_eq!(v1["thread_session_id"], v2["thread_session_id"]);
     }
 }
