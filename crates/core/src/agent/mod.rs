@@ -20,6 +20,7 @@ pub mod hook_registry;
 pub mod llm_behavior;
 pub mod mcp_catalog;
 pub mod mcp_resource_tool;
+pub mod mcp_router_tool;
 pub mod mcp_server_bridge;
 pub mod mcp_session;
 pub mod mcp_tool;

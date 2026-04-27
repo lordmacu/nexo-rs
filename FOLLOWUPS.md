@@ -294,13 +294,26 @@ PR-4. ~~**Companion-tui not shipped**~~ ✅ 2026-04-27 (PR-4.x WS handshake comp
   - `run_pair_start` now embeds the full `/pair` path in the
     setup-code URL so the companion connects directly.
   - 4 session_store unit tests + 3 ws sanitize tests.
+- Bugs found and fixed during 2026-04-27 audit (all corrected in-session):
+  - `pair_url` variable never applied to `run_pair_start` — `issuer.issue()`
+    was still passing `&resolved.url` without `/pair`, so the companion would
+    connect to the base URL and the peek-router would never route to `handle_pair_ws`.
+  - Session TTL used `default_ttl_secs * 144` formula — if operator set
+    `default_ttl_secs = 3600`, sessions lasted 6 days. Fixed to always 86400 s.
+  - `remote_triggers: Vec::new()` missing from `run_mcp_server` `AgentConfig`
+    initializer — caused compile error when `AgentConfig` gained the field.
+  - `insert_session` called `Utc::now()` twice (skew between `issued_at` and
+    `expires_at`). Fixed to single capture.
+  - `lookup_session` used `unwrap_or_else(Utc::now)` for corrupt timestamp —
+    silently returned current time as expiry. Fixed to propagate error via
+    `.ok_or(PairingError::Storage(...))? + .transpose()`.
 - Remaining open items:
   - Session token validation on subsequent companion requests
     (not yet consumed by any handler — `lookup_session` exists
-    but is not wired to an auth gate).
-  - `pairing.session_ttl_secs` YAML config field (currently
-    hardcoded 24h; the `session_ttl` computation uses
-    `default_ttl_secs * 144` as an approximation).
+    but is not wired to any auth gate).
+  - `pairing.session_ttl_secs` YAML config field — currently hardcoded 86400 s.
+    Add as an optional override in `PairingConfig` so operators can tune
+    without rebuilding.
 
 PR-5. **`pair_approve` as scope-gated agent tool**
 - Missing: a built-in tool that lets agents approve pending
@@ -930,6 +943,20 @@ Open:
   - **`cron_pause` / `cron_resume` tools.** ⬜ Pending. The
     `paused` column already exists; surface tools that toggle
     it without dropping the entry.
+
+## Phase 79.11 — McpAuth follow-up
+
+  - **`McpAuth` tool not shipped.** ⬜ Pending. Spec called for
+    `McpAuth { server, op: refresh|status }` so the model can
+    trigger an OAuth refresh or report auth state on a connected
+    MCP server. The `McpClient` trait
+    (`crates/mcp/src/client_trait.rs`) does not yet expose a
+    `refresh_auth` / `auth_state` method — refresh is currently
+    transparent inside the client. Once the trait grows the
+    method (lift from
+    `claude-code-leak/src/services/mcp/oauthPort.ts`), wire a
+    third tool into `agent/mcp_router_tool.rs` and register it
+    in `src/main.rs` next to the other two router tools.
 
 ## Maintenance note
 
