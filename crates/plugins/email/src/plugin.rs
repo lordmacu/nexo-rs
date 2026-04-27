@@ -286,6 +286,33 @@ impl EmailPlugin {
         self.bounce.get().cloned()
     }
 
+    /// Audit follow-up J — soft post-start connectivity probe.
+    /// Polls every account's health entry for up to `wait` and
+    /// returns the instance ids of accounts that never reached
+    /// `last_connect_ok_ts > 0`. Caller decides what to do with
+    /// the failed list (typically a structured WARN at boot so
+    /// the operator sees auth / network problems immediately
+    /// instead of discovering them at first tool-call time).
+    pub async fn verify_accounts_connected(&self, wait: std::time::Duration) -> Vec<String> {
+        let Some(map) = self.health_map().await else {
+            return Vec::new();
+        };
+        let deadline = std::time::Instant::now() + wait;
+        loop {
+            let mut still_pending: Vec<String> = Vec::new();
+            for entry in map.iter() {
+                let h = entry.value().read().await;
+                if h.last_connect_ok_ts == 0 {
+                    still_pending.push(entry.key().clone());
+                }
+            }
+            if still_pending.is_empty() || std::time::Instant::now() >= deadline {
+                return still_pending;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+    }
+
     /// Cheap shared handle the email tools (Phase 48.7) need. Returns
     /// `None` until `start` has armed the outbound dispatcher; the
     /// runtime should invoke this *after* `plugins.start_all()` so
