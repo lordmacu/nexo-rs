@@ -2128,20 +2128,38 @@ Sub-phases:
   tests across `cursor`, `events`, `health`, `imap_conn`,
   `inbound`, `plugin`. Real-server e2e (greenmail) deferred to
   48.10 along with `Starttls` support.)
-- 48.4 — SMTP outbound + disk-queue + Message-ID idempotency   🔄
-  (48.4.a foundational slice shipped: `events.rs` extension with
-  `OutboundCommand` / `AckStatus { Sent, Failed, Retrying }` /
-  `OutboundAck`, `mime_text.rs` with `generate_message_id` →
-  `<{ts_ms}.{uuid_v4}@{domain}>` and `build_text_mime` (text/plain
-  UTF-8, RFC 2822 Date, optional `In-Reply-To`/`References`
-  passthrough, RFC 2047 base64 encoded-word for non-ASCII subjects,
-  Bcc explicitly omitted from headers), `outbound_queue.rs` JSONL
-  store with append-only writes + tombstone `done` rows + DLQ file +
-  `compact_if_needed` (rewrites when `done` rows are >50% of total)
-  + persists across reopen. 14 new tests; total
-  `cargo test -p nexo-plugin-email` 34 / 34 green. Lettre wiring,
-  SMTP send classify, dispatcher run loop, plugin start/stop wiring
-  remain.)
+- 48.4 — SMTP outbound + disk-queue + Message-ID idempotency   ✅
+  (Foundational slice 48.4.a + lettre/dispatcher slice 48.4.b ship
+  the full outbound channel. `mime_text.rs` generates stable
+  `<{ts_ms}.{uuid_v4}@{domain}>` Message-IDs and renders RFC 5322
+  text/plain (Bcc omitted from headers, RFC 2047 encoded-word for
+  non-ASCII subjects, In-Reply-To / References passthrough for
+  48.6). `outbound_queue.rs` is a single-writer JSONL append-log per
+  `<dir>/<instance>.jsonl` plus DLQ sibling, with tombstone rows +
+  `compact_if_needed` (rewrites at >50% done ratio) keeping the
+  file bounded. `smtp_conn.rs` wraps `lettre 0.11`
+  `AsyncSmtpTransport<Tokio1Executor>` for `Plain` / `Starttls` /
+  `ImplicitTls`, picks `Mechanism::Plain` for `Password` and
+  `Mechanism::Xoauth2` for OAuth (token resolved through 48.2's
+  per-account refresh mutex), and classifies `lettre::Error::is_
+  permanent()` / `is_transient()` into the coarse outcome enum.
+  `outbound.rs::OutboundDispatcher` spawns one `OutboundWorker` per
+  account: subscribes to `plugin.outbound.email.<instance>` and
+  drives a 1s drain ticker. Retries: `2s, 4s, 8s, 16s, 30s` cap
+  with ±20% jitter, max 5 attempts. 4xx → bump attempts and
+  reschedule; 5xx → DLQ immediately + ack `Failed`; network errors
+  count against the SMTP-specific `(EMAIL, "<inst>.smtp")`
+  CircuitBreaker. `DashMap` in-flight guard prevents two concurrent
+  drain ticks from reissuing the same Message-ID. Acks publish on
+  `plugin.outbound.email.<instance>.ack` (`Sent` / `Failed` /
+  `Retrying`). Health gains `outbound_queue_depth` /
+  `outbound_dlq_depth` / `outbound_sent_total` /
+  `outbound_failed_total` per account, refreshed each tick.
+  `EmailPlugin::start` now arms inbound + outbound, sharing the
+  `HealthMap`; `stop` brings outbound down first to flush in-flight
+  sends, then inbound, with the existing 5s budget. 40 unit tests
+  green; clippy clean. Real-server e2e (greenmail) deferred to
+  48.10 along with `Starttls` IMAP support.)
 - 48.5 — MIME parse/build + Attachment envelope   ⬜
 - 48.6 — Threading via `Message-ID` / `In-Reply-To` / `References`   ⬜
 - 48.7 — Tools: `email_send` / `_reply` / `_archive` / `_label` / `_move_to` / `_search`   ⬜

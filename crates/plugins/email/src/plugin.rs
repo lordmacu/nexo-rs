@@ -12,6 +12,7 @@ use tracing::info;
 
 use crate::cursor::CursorStore;
 use crate::inbound::{HealthMap, InboundManager};
+use crate::outbound::OutboundDispatcher;
 
 pub const TOPIC_INBOUND: &str = "plugin.inbound.email";
 pub const TOPIC_OUTBOUND: &str = "plugin.outbound.email";
@@ -43,6 +44,7 @@ pub struct EmailPlugin {
     google: Arc<GoogleCredentialStore>,
     data_dir: PathBuf,
     inbound: Mutex<Option<InboundManager>>,
+    outbound: Mutex<Option<OutboundDispatcher>>,
     cursor: OnceCell<Arc<CursorStore>>,
 }
 
@@ -62,6 +64,7 @@ impl EmailPlugin {
             google,
             data_dir,
             inbound: Mutex::new(None),
+            outbound: Mutex::new(None),
             cursor: OnceCell::new(),
         }
     }
@@ -115,22 +118,38 @@ impl Plugin for EmailPlugin {
             self.creds.clone(),
             self.google.clone(),
             cursor,
-            broker,
+            broker.clone(),
         );
+        let health = manager.health_map();
         *self.inbound.lock().await = Some(manager);
+
+        let dispatcher = OutboundDispatcher::start(
+            &self.cfg,
+            self.creds.clone(),
+            self.google.clone(),
+            broker,
+            &self.data_dir,
+            health,
+        )
+        .await?;
+        *self.outbound.lock().await = Some(dispatcher);
+
         info!(
             target: "plugin.email",
             accounts = self.cfg.accounts.len(),
-            "email inbound workers spawned"
+            "email inbound + outbound workers spawned"
         );
         Ok(())
     }
 
     async fn stop(&self) -> anyhow::Result<()> {
+        if let Some(dispatcher) = self.outbound.lock().await.take() {
+            dispatcher.stop().await;
+        }
         if let Some(manager) = self.inbound.lock().await.take() {
             manager.stop().await;
-            info!(target: "plugin.email", "email inbound workers stopped");
         }
+        info!(target: "plugin.email", "email workers stopped");
         Ok(())
     }
 

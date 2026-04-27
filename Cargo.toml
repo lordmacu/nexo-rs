@@ -149,6 +149,7 @@ semver             = "1"
 tiktoken-rs        = "0.6"
 blake3             = "1"
 async-imap         = "0.10"
+lettre             = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder"] }
 tokio-rustls       = "0.26"
 rustls             = { version = "0.23", default-features = false, features = ["std", "ring", "tls12", "logging"] }
 rustls-native-certs = "0.7"
