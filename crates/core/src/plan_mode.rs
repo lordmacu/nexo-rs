@@ -314,6 +314,10 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
     "Sleep",
     "EnterPlanMode",
     "ExitPlanMode",
+    // Phase 79.4 — intra-turn scratch list. Mutates only the
+    // per-goal todos cache; never touches the workspace, broker, or
+    // external state.
+    "TodoWrite",
     // Memory + observability tools that read but never write.
     "memory_search",
     "agent_query",
