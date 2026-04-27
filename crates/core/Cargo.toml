@@ -20,6 +20,7 @@ schema-validation = ["dep:jsonschema"]
 [dependencies]
 jsonschema = { version = "0.20", optional = true, default-features = false }
 sha2        = { workspace = true }
+hmac        = "0.12"
 tokio       = { workspace = true }
 serde       = { workspace = true }
 serde_json  = { workspace = true }

@@ -5059,7 +5059,7 @@ Done when:
   fires `cron.cancelled` event; cap rejection at the
   51st entry; minimum-interval rejection at 30 s.
 
-#### 79.8 — RemoteTriggerTool   ⬜
+#### 79.8 — RemoteTriggerTool   ✅
 
 LLM-time webhook / NATS publish: from inside a turn, the
 model triggers a configured remote endpoint. Surface for
