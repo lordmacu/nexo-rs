@@ -257,6 +257,31 @@ impl EmailPlugin {
         bounce: Option<Arc<BounceStore>>,
         attachments: Option<Arc<AttachmentStore>>,
     ) -> anyhow::Result<()> {
+        // Audit follow-up — verify the credential exists *before*
+        // we spawn workers. Without this check, a hot-reload that
+        // adds an account whose secret was deleted from the
+        // EmailCredentialStore between reloads would still spawn
+        // an inbound worker that crashes on every connect attempt
+        // with the per-instance circuit breaker permanently
+        // half-open. Detecting it here turns the failure into a
+        // clean error the operator sees once, instead of a hot
+        // retry loop they have to find in the log stream.
+        use nexo_auth::store::CredentialStore;
+        if self.creds.get(&nexo_auth::handle::CredentialHandle::new(
+            nexo_auth::handle::EMAIL,
+            &account_cfg.instance,
+            "<reload-validate>",
+        ))
+        .is_err()
+        {
+            anyhow::bail!(
+                "cannot spawn email instance '{}': no credential in EmailCredentialStore \
+                 (was the secret file removed between reloads? re-create \
+                 `secrets/email/{}.toml` or remove the account from `email.yaml`)",
+                account_cfg.instance,
+                account_cfg.instance
+            );
+        }
         if let Some(mgr) = self.inbound.lock().await.as_mut() {
             mgr.add_account(
                 new_cfg,
