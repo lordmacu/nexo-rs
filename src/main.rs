@@ -218,6 +218,15 @@ struct CliArgs {
     mode: Mode,
 }
 
+/// Shared state for the companion WebSocket pairing handshake.
+/// Stored in an `OnceLock` so it can be populated after the health server
+/// binds (pairing init happens slightly later in the startup sequence).
+struct PairingHandshakeCtx {
+    issuer: Arc<nexo_pairing::SetupCodeIssuer>,
+    session_store: Arc<nexo_pairing::PairingSessionStore>,
+    session_ttl: std::time::Duration,
+}
+
 #[derive(Clone)]
 struct RuntimeHealth {
     broker: AnyBroker,
@@ -235,6 +244,9 @@ struct RuntimeHealth {
     /// sent / failed totals). `None` when the email plugin isn't
     /// configured.
     email_plugin: Option<Arc<nexo_plugin_email::EmailPlugin>>,
+    /// Companion WS handshake context — populated after pairing init.
+    /// `None` until the daemon's pairing block completes.
+    pairing_handshake: Arc<std::sync::OnceLock<PairingHandshakeCtx>>,
 }
 
 #[derive(Clone, Copy)]
@@ -963,11 +975,15 @@ async fn main() -> Result<()> {
 
     // Agents ---------------------------------------------------------------
     let running_agents = Arc::new(AtomicUsize::new(0));
+    // Slot for companion WS handshake context — filled after pairing init below.
+    let pairing_handshake_slot: Arc<std::sync::OnceLock<PairingHandshakeCtx>> =
+        Arc::new(std::sync::OnceLock::new());
     let health = RuntimeHealth {
         broker: broker.clone(),
         running_agents: Arc::clone(&running_agents),
         wa_pairing: wa_pairing.clone(),
         email_plugin: email_plugin.clone(),
+        pairing_handshake: Arc::clone(&pairing_handshake_slot),
     };
     let metrics_handle = tokio::spawn(run_metrics_server(health.clone()));
     let health_handle = tokio::spawn(run_health_server(health.clone()));
@@ -1331,6 +1347,31 @@ async fn main() -> Result<()> {
     // store + gate flow into every AgentRuntime below.
     let _ = (Arc::clone(&pairing_store), Arc::clone(&setup_code_issuer));
 
+    // Wire the companion WS handshake context now that both issuer and the
+    // state directory are known. Failure is non-fatal — the daemon continues
+    // without WS pairing (clients get a 503 on /pair).
+    {
+        let state_dir = nexo_project_tracker::state::nexo_state_dir();
+        std::fs::create_dir_all(&state_dir).ok();
+        let sessions_db_path = state_dir.join("pairing_sessions.db");
+        match nexo_pairing::PairingSessionStore::open(&sessions_db_path).await {
+            Ok(session_store) => {
+                let ctx = PairingHandshakeCtx {
+                    issuer: Arc::clone(&setup_code_issuer),
+                    session_store: Arc::new(session_store),
+                    // Session tokens last 24h. FOLLOWUP: expose
+                    // pairing.session_ttl_secs in the YAML config.
+                    session_ttl: std::time::Duration::from_secs(86400),
+                };
+                let _ = pairing_handshake_slot.set(ctx);
+                tracing::info!(path = %sessions_db_path.display(), "companion WS pairing ready");
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "companion WS pairing disabled — could not open session store");
+            }
+        }
+    }
+
     // Phase 67 — auto-boot the in-process driver subsystem when
     // ANY configured agent has `dispatch_policy.mode: full`
     // (agent-level OR per-binding) AND a driver config file is
@@ -1623,14 +1664,9 @@ async fn main() -> Result<()> {
                 // `agent.allowed_tools` lists explicit names, only
                 // register the email handlers that actually appear.
                 // `*` / `email_*` / empty list = register all six.
-                let filter = nexo_plugin_email::filter_from_allowed_patterns(
-                    &agent_cfg.allowed_tools,
-                );
-                nexo_plugin_email::register_email_tools_filtered(
-                    &tools,
-                    ctx,
-                    filter.as_deref(),
-                );
+                let filter =
+                    nexo_plugin_email::filter_from_allowed_patterns(&agent_cfg.allowed_tools);
+                nexo_plugin_email::register_email_tools_filtered(&tools, ctx, filter.as_deref());
                 let kept = filter
                     .as_ref()
                     .map(|f| f.len())
@@ -1814,9 +1850,9 @@ async fn main() -> Result<()> {
         // URLs and subjects never leak through.
         if !agent_cfg.remote_triggers.is_empty() {
             let sink: std::sync::Arc<dyn nexo_core::agent::remote_trigger_tool::RemoteTriggerSink> =
-                std::sync::Arc::new(
-                    nexo_core::agent::remote_trigger_tool::ReqwestSink::new(broker.clone()),
-                );
+                std::sync::Arc::new(nexo_core::agent::remote_trigger_tool::ReqwestSink::new(
+                    broker.clone(),
+                ));
             tools.register(
                 nexo_core::agent::remote_trigger_tool::RemoteTriggerTool::tool_def(),
                 nexo_core::agent::remote_trigger_tool::RemoteTriggerTool::new(sink),
@@ -1845,44 +1881,31 @@ async fn main() -> Result<()> {
         // permission. MVP caveat: the runtime task that polls
         // `due_at` and fires LLM turns is a follow-up — entries
         // persist but never fire until that ships.
-        let cron_db = nexo_project_tracker::state::nexo_state_dir()
-            .join("nexo_cron.db");
-        std::fs::create_dir_all(
-            cron_db.parent().unwrap_or(std::path::Path::new(".")),
-        )
-        .ok();
+        let cron_db = nexo_project_tracker::state::nexo_state_dir().join("nexo_cron.db");
+        std::fs::create_dir_all(cron_db.parent().unwrap_or(std::path::Path::new("."))).ok();
         match nexo_core::cron_schedule::SqliteCronStore::open(
             cron_db.to_str().unwrap_or("nexo_cron.db"),
         )
         .await
         {
             Ok(store) => {
-                let store: std::sync::Arc<
-                    dyn nexo_core::cron_schedule::CronStore,
-                > = std::sync::Arc::new(store);
+                let store: std::sync::Arc<dyn nexo_core::cron_schedule::CronStore> =
+                    std::sync::Arc::new(store);
                 tools.register(
                     nexo_core::agent::cron_tool::CronCreateTool::tool_def(),
-                    nexo_core::agent::cron_tool::CronCreateTool::new(
-                        std::sync::Arc::clone(&store),
-                    ),
+                    nexo_core::agent::cron_tool::CronCreateTool::new(std::sync::Arc::clone(&store)),
                 );
                 tools.register(
                     nexo_core::agent::cron_tool::CronListTool::tool_def(),
-                    nexo_core::agent::cron_tool::CronListTool::new(
-                        std::sync::Arc::clone(&store),
-                    ),
+                    nexo_core::agent::cron_tool::CronListTool::new(std::sync::Arc::clone(&store)),
                 );
                 tools.register(
                     nexo_core::agent::cron_tool::CronDeleteTool::tool_def(),
-                    nexo_core::agent::cron_tool::CronDeleteTool::new(
-                        std::sync::Arc::clone(&store),
-                    ),
+                    nexo_core::agent::cron_tool::CronDeleteTool::new(std::sync::Arc::clone(&store)),
                 );
                 tools.register(
                     nexo_core::agent::cron_tool::CronPauseTool::tool_def(),
-                    nexo_core::agent::cron_tool::CronPauseTool::new(
-                        std::sync::Arc::clone(&store),
-                    ),
+                    nexo_core::agent::cron_tool::CronPauseTool::new(std::sync::Arc::clone(&store)),
                 );
                 tools.register(
                     nexo_core::agent::cron_tool::CronResumeTool::tool_def(),
@@ -2620,8 +2643,7 @@ async fn main() -> Result<()> {
     // client build fails (so cron entries are still observable
     // via logs even in degraded boot).
     let cron_runner_cancel = tokio_util::sync::CancellationToken::new();
-    let cron_db_path = nexo_project_tracker::state::nexo_state_dir()
-        .join("nexo_cron.db");
+    let cron_db_path = nexo_project_tracker::state::nexo_state_dir().join("nexo_cron.db");
     if let Some(parent) = cron_db_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -2878,16 +2900,20 @@ async fn boot_dispatch_ctx_if_enabled(
     };
 
     // Tracker rooted at workspace root. Resolution order:
-    //   1. `NEXO_PROJECT_ROOT` env var — operator override.
-    //   2. Walk up from the daemon's cwd looking for the first
+    //   1. `NEXO_PROJECT_ROOT` env var — operator override (highest priority).
+    //   2. Saved sidecar at `$NEXO_HOME/state/active_workspace_path` — survives
+    //      daemon restarts so `set_active_workspace` / `init_project` calls are
+    //      not lost when the daemon is restarted.
+    //   3. Walk up from the daemon's cwd looking for the first
     //      ancestor that contains `PHASES.md`. Lets the operator
     //      run `./target/debug/nexo` from any subdirectory without
     //      having to export an env var or hardcode a path in the
     //      YAML (which would break portable deployments).
-    //   3. Fall back to cwd verbatim.
-    let tracker_root: PathBuf = std::env::var("NEXO_PROJECT_ROOT")
+    //   4. Fall back to cwd verbatim.
+    let default_root: PathBuf = std::env::var("NEXO_PROJECT_ROOT")
         .map(PathBuf::from)
         .ok()
+        .or_else(|| nexo_project_tracker::state::read_active_workspace())
         .or_else(|| {
             let cwd = std::env::current_dir().ok()?;
             let mut probe: &std::path::Path = cwd.as_path();
@@ -2899,6 +2925,7 @@ async fn boot_dispatch_ctx_if_enabled(
             }
         })
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    let tracker_root = default_root;
     tracing::info!(root = %tracker_root.display(), "dispatch boot: opening tracker");
     let tracker: Arc<nexo_project_tracker::MutableTracker> =
         match nexo_project_tracker::MutableTracker::open_fs(&tracker_root) {
@@ -3171,11 +3198,40 @@ async fn boot_dispatch_ctx_if_enabled(
     pairing_registry.register(Arc::new(nexo_plugin_telegram::TelegramPairingAdapter::new(
         _broker.clone(),
     )));
-    let hook_dispatcher: Arc<dyn nexo_dispatch_tools::HookDispatcher> =
-        Arc::new(nexo_dispatch_tools::DefaultHookDispatcher::new(
+    // PT-4 — hook idempotency store. Lives next to other state sidecars
+    // in $NEXO_HOME/state/. On failure the dispatcher degrades to
+    // idempotency-less mode (hooks can fire twice on NATS replay) but
+    // nothing hard-fails — same contract as the turn-log store.
+    let idempotency_store: Option<Arc<nexo_dispatch_tools::HookIdempotencyStore>> = {
+        let path = nexo_project_tracker::state::nexo_state_dir().join("hook_idempotency.db");
+        match nexo_dispatch_tools::HookIdempotencyStore::open(
+            path.to_str().unwrap_or("hook_idempotency.db"),
+        )
+        .await
+        {
+            Ok(s) => {
+                tracing::info!(path = %path.display(), "dispatch boot: hook idempotency store opened");
+                Some(Arc::new(s))
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e, path = %path.display(),
+                    "dispatch boot: hook idempotency store failed — hooks may fire twice on NATS replay"
+                );
+                None
+            }
+        }
+    };
+    let hook_dispatcher: Arc<dyn nexo_dispatch_tools::HookDispatcher> = {
+        let mut d = nexo_dispatch_tools::DefaultHookDispatcher::new(
             pairing_registry,
             Arc::new(nexo_dispatch_tools::NoopNatsHookPublisher),
-        ));
+        );
+        if let Some(store) = idempotency_store.clone() {
+            d = d.with_idempotency(store);
+        }
+        Arc::new(d)
+    };
 
     // Phase 71.2 — reattach sweep. When the registry is sqlite-backed
     // and `reattach_on_boot: true`, walk every Running row from the
@@ -3280,6 +3336,9 @@ async fn boot_dispatch_ctx_if_enabled(
         );
         if let Some(store) = turn_log_store.as_ref() {
             fwd = fwd.with_turn_log(Arc::clone(store));
+        }
+        if let Some(store) = idempotency_store.as_ref() {
+            fwd = fwd.with_idempotency(Arc::clone(store));
         }
         Arc::new(fwd)
     };
@@ -3893,8 +3952,15 @@ async fn run_pair_start(
         }
         Err(e) => return Err(anyhow::anyhow!("{e}")),
     };
+    // Embed the full WS endpoint URL (including path) so the companion
+    // can call `connect_async(&payload.url)` directly.
+    let pair_url = if resolved.url.ends_with("/pair") {
+        resolved.url.clone()
+    } else {
+        format!("{}/pair", resolved.url.trim_end_matches('/'))
+    };
     let code = issuer.issue(
-        &resolved.url,
+        &pair_url,
         "companion-v1",
         std::time::Duration::from_secs(resolved_ttl_secs),
         device_label,
@@ -7457,9 +7523,7 @@ async fn start_http_transport(
             )
         })?;
         if token.trim().is_empty() {
-            anyhow::bail!(
-                "mcp_server.http.auth_token_env={env_name} resolved to an empty token"
-            );
+            anyhow::bail!("mcp_server.http.auth_token_env={env_name} resolved to an empty token");
         }
         Some(token)
     } else {
@@ -7563,9 +7627,7 @@ fn yaml_auth_to_runtime(
 fn yaml_pp_rate_limit_to_runtime(
     yaml: &nexo_config::types::mcp_server::PerPrincipalRateLimitYaml,
 ) -> nexo_mcp::server::per_principal_rate_limit::PerPrincipalRateLimiterConfig {
-    use nexo_mcp::server::per_principal_rate_limit::{
-        PerPrincipalRateLimiterConfig, PerToolLimit,
-    };
+    use nexo_mcp::server::per_principal_rate_limit::{PerPrincipalRateLimiterConfig, PerToolLimit};
     let convert = |y: &nexo_config::types::mcp_server::PerToolLimitYaml| PerToolLimit {
         rps: y.rps,
         burst: y.burst,
@@ -7593,11 +7655,10 @@ fn yaml_pp_concurrency_to_runtime(
     use nexo_mcp::server::per_principal_concurrency::{
         PerPrincipalConcurrencyConfig, PerToolConcurrency,
     };
-    let convert =
-        |y: &nexo_config::types::mcp_server::PerToolConcurrencyYaml| PerToolConcurrency {
-            max_in_flight: y.max_in_flight,
-            timeout_secs: y.timeout_secs,
-        };
+    let convert = |y: &nexo_config::types::mcp_server::PerToolConcurrencyYaml| PerToolConcurrency {
+        max_in_flight: y.max_in_flight,
+        timeout_secs: y.timeout_secs,
+    };
     PerPrincipalConcurrencyConfig {
         enabled: yaml.enabled,
         default: convert(&yaml.default),
@@ -8057,6 +8118,10 @@ async fn handle_metrics_conn(mut stream: TcpStream, health: RuntimeHealth) -> an
     let mut body = render_prometheus(nats_open);
     body.push_str(&nexo_llm::telemetry::render_prometheus());
     body.push_str(&nexo_mcp::telemetry::render_prometheus());
+    // Phase 76.10 — server-side dispatch metrics
+    // (`mcp_requests_total`, `mcp_request_duration_seconds`,
+    // `mcp_in_flight`, `mcp_rate_limit_hits_total`, etc.).
+    body.push_str(&nexo_mcp::server::telemetry::render_prometheus());
     body.push_str(&nexo_poller::telemetry::render_prometheus());
     // Phase 48 follow-up #8 — append email metrics. Counters live in
     // `nexo_plugin_email::metrics`; gauges (`imap_state`, queue
@@ -8072,6 +8137,30 @@ async fn handle_metrics_conn(mut stream: TcpStream, health: RuntimeHealth) -> an
 }
 
 async fn handle_health_conn(mut stream: TcpStream, health: RuntimeHealth) -> anyhow::Result<()> {
+    // Peek (non-destructive) at the first bytes to detect the request path
+    // before consuming. Required for /pair which must pass a clean stream to
+    // tokio_tungstenite::accept_async.
+    let mut peek_buf = [0u8; 512];
+    let n = stream.peek(&mut peek_buf).await.unwrap_or(0);
+    let req_str = std::str::from_utf8(&peek_buf[..n]).unwrap_or_default();
+    let peek_path = req_str
+        .lines()
+        .next()
+        .and_then(|l| l.split_whitespace().nth(1))
+        .unwrap_or_default();
+    if peek_path == "/pair" {
+        if let Some(ctx) = health.pairing_handshake.get() {
+            return handle_pair_ws(stream, ctx).await;
+        }
+        return write_http_response(
+            &mut stream,
+            503,
+            "application/json; charset=utf-8",
+            r#"{"error":"pairing not configured"}"#,
+        )
+        .await;
+    }
+
     let path = read_http_path(&mut stream).await?;
     // Try to match `/whatsapp/...` routes first. Routing rules live in
     // `nexo_plugin_whatsapp::pairing::dispatch_route` so they're
@@ -8155,8 +8244,7 @@ async fn handle_health_conn(mut stream: TcpStream, health: RuntimeHealth) -> any
                 Some(plugin) => render_email_health(plugin.as_ref()).await,
                 None => "[]".to_string(),
             };
-            write_http_response(&mut stream, 200, "application/json; charset=utf-8", &body)
-                .await?;
+            write_http_response(&mut stream, 200, "application/json; charset=utf-8", &body).await?;
         }
         "/ready" => {
             let broker_ready = health.broker.is_ready();
@@ -8216,6 +8304,93 @@ async fn render_email_health(plugin: &nexo_plugin_email::EmailPlugin) -> String 
         }
     }
     serde_json::to_string(&rows).unwrap_or_else(|_| "[]".into())
+}
+
+/// Companion WS pairing handshake:
+/// 1. tokio_tungstenite upgrades the raw TCP stream.
+/// 2. Client sends `{"bootstrap_token": "<hmac-signed>"}`.
+/// 3. Server verifies HMAC + expiry via `SetupCodeIssuer::verify`.
+/// 4. Server generates a session token, persists it, returns
+///    `{"session_token": "<token>"}` to the client.
+async fn handle_pair_ws(stream: TcpStream, ctx: &PairingHandshakeCtx) -> anyhow::Result<()> {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine;
+    use futures::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+
+    let ws = tokio_tungstenite::accept_async(stream)
+        .await
+        .context("WS upgrade")?;
+    let (mut tx, mut rx) = ws.split();
+
+    let msg = match rx.next().await {
+        Some(Ok(m)) => m,
+        Some(Err(e)) => return Err(anyhow::anyhow!("WS read error: {e}")),
+        None => {
+            return Err(anyhow::anyhow!(
+                "companion disconnected before sending token"
+            ))
+        }
+    };
+
+    let text = match msg {
+        Message::Text(t) => t,
+        _ => {
+            let _ = tx
+                .send(Message::Text(
+                    r#"{"error":"expected text frame"}"#.to_string(),
+                ))
+                .await;
+            return Ok(());
+        }
+    };
+
+    let parsed: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+    let bootstrap_token = parsed
+        .get("bootstrap_token")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+
+    let claims = match ctx.issuer.verify(bootstrap_token) {
+        Ok(c) => c,
+        Err(e) => {
+            let body = serde_json::json!({"error": e.to_string()}).to_string();
+            let _ = tx.send(Message::Text(body)).await;
+            tracing::warn!(error = %e, "companion WS: invalid bootstrap token");
+            return Ok(());
+        }
+    };
+
+    let token_bytes: [u8; 32] = rand::random();
+    let session_token = URL_SAFE_NO_PAD.encode(token_bytes);
+
+    if let Err(e) = ctx
+        .session_store
+        .insert_session(
+            &session_token,
+            &claims.profile,
+            claims.device_label.as_deref(),
+            ctx.session_ttl,
+        )
+        .await
+    {
+        tracing::error!(error = %e, "failed to persist pairing session");
+        let _ = tx
+            .send(Message::Text(r#"{"error":"internal"}"#.to_string()))
+            .await;
+        return Ok(());
+    }
+
+    let response = serde_json::json!({"session_token": session_token}).to_string();
+    tx.send(Message::Text(response))
+        .await
+        .context("send session token")?;
+    tracing::info!(
+        profile = %claims.profile,
+        device_label = ?claims.device_label,
+        "companion paired successfully"
+    );
+    Ok(())
 }
 
 async fn read_http_path(stream: &mut TcpStream) -> anyhow::Result<String> {

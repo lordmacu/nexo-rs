@@ -53,6 +53,8 @@ fn agent_with_inline_google(id: &str) -> AgentConfig {
         language: None,
         context_optimization: None,
         dispatch_policy: Default::default(),
+        plan_mode: Default::default(),
+        remote_triggers: Vec::new(),
     }
 }
 

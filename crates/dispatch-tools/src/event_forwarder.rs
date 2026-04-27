@@ -42,6 +42,11 @@ pub struct EventForwarder {
     /// effort: append failures log a warn but never block the
     /// driver loop.
     pub turn_log: Option<Arc<dyn TurnLogStore>>,
+    /// PT-4 — idempotency store for hook firings. When `Some`,
+    /// `forget_goal` is called after every goal completes so old
+    /// claim rows don't accumulate indefinitely. The dispatcher
+    /// itself holds the same `Arc` for pre-action claiming.
+    pub idempotency: Option<Arc<crate::hooks::idempotency::HookIdempotencyStore>>,
     pub inner: Arc<dyn DriverEventSink>,
 }
 
@@ -59,6 +64,7 @@ impl EventForwarder {
             hook_registry,
             hook_dispatcher,
             turn_log: None,
+            idempotency: None,
             inner,
         }
     }
@@ -68,6 +74,16 @@ impl EventForwarder {
     /// untouched — only the bin opts in.
     pub fn with_turn_log(mut self, store: Arc<dyn TurnLogStore>) -> Self {
         self.turn_log = Some(store);
+        self
+    }
+
+    /// Attach the hook idempotency store (PT-4). Builder-style so
+    /// existing call sites stay untouched — only the bin opts in.
+    pub fn with_idempotency(
+        mut self,
+        store: Arc<crate::hooks::idempotency::HookIdempotencyStore>,
+    ) -> Self {
+        self.idempotency = Some(store);
         self
     }
 }
@@ -190,6 +206,17 @@ impl DriverEventSink for EventForwarder {
                 self.fire_hooks_for(outcome.goal_id, transition).await;
                 // Drop hook entries so the registry doesn't leak.
                 self.hook_registry.drop_goal(outcome.goal_id);
+                // PT-4 — evict idempotency claim rows for this goal so
+                // the hook_dispatched table doesn't grow unbounded.
+                if let Some(store) = &self.idempotency {
+                    if let Err(e) = store.forget_goal(outcome.goal_id).await {
+                        tracing::warn!(
+                            goal_id = %outcome.goal_id.0,
+                            error = %e,
+                            "failed to evict idempotency rows — table may grow",
+                        );
+                    }
+                }
             }
             DriverEvent::Escalate { goal_id, reason } => {
                 self.log_buffer.push(
@@ -379,7 +406,7 @@ mod tests {
             started_at: Utc::now(),
             finished_at: None,
             snapshot: AgentSnapshot::default(),
-        plan_mode: None,
+            plan_mode: None,
         }
     }
 

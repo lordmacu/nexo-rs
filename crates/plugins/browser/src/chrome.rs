@@ -12,8 +12,25 @@ pub struct RunningChrome {
     child: tokio::process::Child,
 }
 
+impl RunningChrome {
+    /// Kill Chrome and reap the process entry.
+    /// Must be called from an async context before the value goes out of scope.
+    /// Consuming self ensures the Child is dropped only after wait() completes,
+    /// preventing a <defunct> entry in the process table.
+    pub async fn shutdown(mut self) {
+        let _ = self.child.kill().await;
+        let _ = self.child.wait().await;
+    }
+}
+
 impl Drop for RunningChrome {
     fn drop(&mut self) {
+        // Safety-net: reached only on unexpected drops (panic path, test teardown).
+        // Normal teardown must go through shutdown() to avoid zombie processes.
+        tracing::warn!(
+            pid = self.pid,
+            "RunningChrome dropped without shutdown() — Chrome process may become a zombie"
+        );
         let _ = self.child.start_kill();
     }
 }
@@ -167,4 +184,36 @@ fn which_exists(name: &str) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::process::Command as TokioCommand;
+
+    fn make_running_chrome(child: tokio::process::Child, pid: u32) -> RunningChrome {
+        RunningChrome {
+            ws_url: String::new(),
+            pid,
+            child,
+        }
+    }
+
+    #[tokio::test]
+    async fn shutdown_reaps_process() {
+        let child = TokioCommand::new("sleep")
+            .arg("30")
+            .kill_on_drop(false)
+            .spawn()
+            .expect("failed to spawn sleep");
+        let pid = child.id().expect("missing PID");
+        let running = make_running_chrome(child, pid);
+
+        running.shutdown().await;
+
+        // After shutdown(), the process must be reaped.
+        // kill(pid, 0) returns ESRCH when no such process exists.
+        let alive = unsafe { libc::kill(pid as libc::pid_t, 0) == 0 };
+        assert!(!alive, "process {pid} still exists after shutdown()");
+    }
 }
