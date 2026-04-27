@@ -2371,7 +2371,42 @@ Sub-phases:
   rate-limited `email_send` against bounce count, and DSN
   dedupe `LRU<msg_id>` deferred to 48.10. `cargo build
   --workspace` green; clippy clean.)
-- 48.9 — SPF/DKIM boot warn + setup-CLI submenu   ⬜
+- 48.9 — SPF/DKIM boot warn + setup-CLI submenu   🔄
+  (48.9.a SPF/DKIM half shipped: `spf_dkim.rs::check_alignment`
+  uses `hickory-resolver 0.24` (system config first, Cloudflare
+  fallback so CI without /etc/resolv.conf still works) to TXT-
+  lookup `domain` and `default._domainkey.<domain>` under a 3s
+  `tokio::time::timeout`. SPF policies parsed via
+  `parse_spf_includes` extract `include:<host>` mechanisms (RFC
+  7208 §5.2, tolerant of `+`/`?` qualifiers and trailing dot);
+  the report flags `spf_includes_host` when the operator-supplied
+  `sending_host` (typically the SMTP relay) matches an include
+  by exact equality or DNS-suffix. `decide_warns(report)` is the
+  pure switchboard the boot hook calls — emits `spf_missing` /
+  `spf_misalignment` / `dkim_missing` / `dns_error` tags so the
+  dispatch into `tracing::warn!` lines stays unit-testable.
+
+  `provider_hint.rs::provider_hint(domain)` ships a 5-row table
+  (Gmail / Outlook including hotmail/live/msn / Yahoo / iCloud
+  / Custom fallback) returning ready-to-paste IMAP+SMTP host /
+  port / TLS triples plus a `suggest_oauth_google` flag that the
+  setup wizard will use to surface "reuse your existing
+  google-auth.yaml account?" only when it actually applies.
+
+  `EmailPlugin::start` spawns one boot-time check task per
+  configured account when `cfg.spf_dkim_warn` is enabled. Each
+  task logs structured WARN lines (`email.spf.missing`,
+  `email.spf.misalignment` with the offending sending_host,
+  `email.dkim.missing` with the four common selectors as a
+  hint, `email.spf_dkim.dns_unavailable` for DNS flakes) and
+  never blocks the daemon. 20 new unit tests (10 spf_dkim
+  including parser edge cases + decide_warns matrix + invalid-
+  domain smoke + empty-domain dns_error; 7 provider_hint
+  including aliases + case-insensitivity + Custom fallback).
+  154 / 154 plugin total. Interactive setup wizard
+  (`run_email_wizard` + `yaml_patch::upsert_email_account` +
+  TOML-secret writer with 0o600) deferred to 48.10 along with
+  the rest of the operator-facing surface.)
 - 48.10 — Health + hot-reload + e2e + docs   ⬜
 
 ### Phase 49 — Multimodal: vision input
