@@ -19,6 +19,7 @@ pub mod metrics;
 pub mod outbound;
 pub mod outbound_queue;
 pub mod provider_hint;
+pub mod reload;
 pub mod spf_dkim;
 pub mod threading;
 pub mod plugin;
@@ -42,6 +43,7 @@ pub use bounce_store::{BounceStore, RecipientStatus};
 pub use dsn::{parse_bounce, BounceClassification, BounceEvent, ParsedBounce};
 pub use loop_prevent::{should_skip, SkipReason};
 pub use provider_hint::{provider_hint, ProviderHint};
+pub use reload::{compute_account_diff, AccountDiff};
 pub use spf_dkim::{check_alignment, decide_warns, parse_spf_includes, AlignmentReport};
 pub use plugin::{EmailPlugin, TOPIC_INBOUND, TOPIC_OUTBOUND};
 pub use tool::{

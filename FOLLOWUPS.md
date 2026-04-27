@@ -703,11 +703,20 @@ Open:
   - **greenmail e2e** harness (Docker compose + a `feature =
     "email-e2e"` test suite that runs send → inbound → reply →
     archive against a real IMAP/SMTP server).
-  - **Hot-reload account diff.** Currently a config reload
-    restarts the whole plugin; an account-level diff (spawn /
-    teardown one `AccountWorker` per change) would let an
-    operator add a new mailbox without dropping IDLE on the
-    others.
+  - **Hot-reload account diff.** 🔄 Partial 2026-04-27.
+    `reload.rs::compute_account_diff(old, new) -> AccountDiff
+    {added, removed, changed}` is the pure helper.
+    `InboundManager::add_account` spawns a single worker for
+    an added instance without touching the others, and
+    `EmailPlugin::apply_added_accounts(new_cfg, broker)`
+    walks the diff and dispatches the spawn calls.
+    Add-only is wired today; `removed` and `changed` are
+    surfaced in the returned diff and logged at WARN, but
+    teardown / respawn of those still requires a daemon
+    restart (per-instance cancel tokens for inbound +
+    outbound workers are the prerequisite, tracked here as a
+    follow-up of this follow-up). 6 unit tests on the diff
+    + integration via the existing inbound suite.
   - **Persistent bounce history.** ✅ Shipped 2026-04-27.
     `bounce_store.rs` ships a sqlx-sqlite `BounceStore` keyed on
     `(instance, recipient)` (recipient lowercased on insert /

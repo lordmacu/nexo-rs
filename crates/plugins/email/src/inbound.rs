@@ -101,6 +101,50 @@ impl InboundManager {
     pub fn health_map(&self) -> HealthMap {
         self.health.clone()
     }
+
+    /// Phase 48 follow-up #5 — spawn one worker for an account that
+    /// arrived via a config reload. Idempotent on the wire side: if
+    /// the worker for `instance` is already alive (health entry
+    /// present), the call is a noop. Caller is responsible for
+    /// computing the diff via `compute_account_diff`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_account(
+        &mut self,
+        cfg: &EmailPluginConfig,
+        account_cfg: &EmailAccountConfig,
+        creds: Arc<EmailCredentialStore>,
+        google: Arc<GoogleCredentialStore>,
+        cursor: Arc<CursorStore>,
+        broker: AnyBroker,
+        bounce_store: Option<Arc<crate::bounce_store::BounceStore>>,
+        attachment_store: Option<Arc<crate::attachment_store::AttachmentStore>>,
+    ) -> bool {
+        if self.health.contains_key(&account_cfg.instance) {
+            return false;
+        }
+        let h = Arc::new(RwLock::new(AccountHealth::default()));
+        self.health.insert(account_cfg.instance.clone(), h.clone());
+        let worker = AccountWorker {
+            account_cfg: account_cfg.clone(),
+            creds,
+            google,
+            cursor,
+            broker,
+            health: h,
+            cancel: self.cancel.child_token(),
+            idle_reissue: Duration::from_secs(cfg.idle_reissue_minutes * 60),
+            poll_fallback: Duration::from_secs(cfg.poll_fallback_seconds),
+            inbox_folder: account_cfg.folders.inbox.clone(),
+            max_body_bytes: cfg.max_body_bytes,
+            max_attachment_bytes: cfg.max_attachment_bytes,
+            attachments_dir: std::path::PathBuf::from(&cfg.attachments_dir),
+            loop_prevention: cfg.loop_prevention.clone(),
+            bounce_store,
+            attachment_store,
+        };
+        self.workers.push(tokio::spawn(worker.run()));
+        true
+    }
 }
 
 struct AccountWorker {

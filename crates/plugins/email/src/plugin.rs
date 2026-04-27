@@ -134,6 +134,64 @@ impl EmailPlugin {
         &self.cfg
     }
 
+    /// Phase 48 follow-up #5 — incremental hot-reload entry point.
+    /// Computes the diff between the plugin's *current* config and
+    /// the supplied `new_cfg`, then spawns inbound workers for
+    /// every newly-added account. `removed` and `changed` accounts
+    /// are reported in the returned `AccountDiff` but not yet acted
+    /// on (full surgical reload still needs per-instance cancel
+    /// tokens). Returns the diff so the caller can log / metric
+    /// what happened.
+    pub async fn apply_added_accounts(
+        &self,
+        new_cfg: &EmailPluginConfig,
+        broker: AnyBroker,
+    ) -> anyhow::Result<crate::reload::AccountDiff> {
+        let diff = crate::reload::compute_account_diff(&self.cfg, new_cfg);
+        if diff.added.is_empty() {
+            return Ok(diff);
+        }
+        let cursor = self.cursor_store().await?;
+        let bounce = self.bounce_store().await;
+        let attachments = self.attachment_store().await;
+        let mut guard = self.inbound.lock().await;
+        let Some(manager) = guard.as_mut() else {
+            anyhow::bail!("inbound manager not running — call start first");
+        };
+        for account_cfg in &diff.added {
+            let spawned = manager.add_account(
+                new_cfg,
+                account_cfg,
+                self.creds.clone(),
+                self.google.clone(),
+                cursor.clone(),
+                broker.clone(),
+                bounce.clone(),
+                attachments.clone(),
+            );
+            if spawned {
+                tracing::info!(
+                    target: "plugin.email",
+                    instance = %account_cfg.instance,
+                    "hot-reload spawned inbound worker"
+                );
+            }
+        }
+        if !diff.removed.is_empty() || !diff.changed.is_empty() {
+            tracing::warn!(
+                target: "plugin.email",
+                removed = ?diff.removed,
+                changed = ?diff
+                    .changed
+                    .iter()
+                    .map(|a| a.instance.as_str())
+                    .collect::<Vec<_>>(),
+                "hot-reload account diff has removed/changed entries — daemon restart still required for those"
+            );
+        }
+        Ok(diff)
+    }
+
     /// Persistent bounce history handle. Returns `None` if the
     /// SQLite file couldn't be opened. Outlives `start`/`stop`
     /// since it's `OnceCell`-backed.
