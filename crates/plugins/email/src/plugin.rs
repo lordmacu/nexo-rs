@@ -134,6 +134,62 @@ impl Plugin for EmailPlugin {
         .await?;
         *self.outbound.lock().await = Some(dispatcher);
 
+        // Phase 48.9 — boot-time SPF/DKIM check, one task per account.
+        // Non-blocking: a private domain or DNS flake produces a WARN
+        // log, not a daemon-aborting error.
+        if self.cfg.spf_dkim_warn {
+            for acct in self.cfg.accounts.iter().cloned() {
+                let domain = acct
+                    .address
+                    .split_once('@')
+                    .map(|(_, d)| d.to_string())
+                    .unwrap_or_default();
+                if domain.is_empty() {
+                    continue;
+                }
+                let smtp_host = acct.smtp.host.clone();
+                let instance = acct.instance.clone();
+                tokio::spawn(async move {
+                    let report = crate::spf_dkim::check_alignment(
+                        &domain,
+                        Some(&smtp_host),
+                        std::time::Duration::from_secs(3),
+                    )
+                    .await;
+                    for tag in crate::spf_dkim::decide_warns(&report) {
+                        match tag {
+                            "spf_missing" => tracing::warn!(
+                                target: "plugin.email",
+                                instance = %instance,
+                                domain = %domain,
+                                "email.spf.missing — no v=spf1 TXT at apex"
+                            ),
+                            "spf_misalignment" => tracing::warn!(
+                                target: "plugin.email",
+                                instance = %instance,
+                                domain = %domain,
+                                sending_host = %smtp_host,
+                                "email.spf.misalignment — sending_host not in SPF policy; recipients may flag as spoof"
+                            ),
+                            "dkim_missing" => tracing::warn!(
+                                target: "plugin.email",
+                                instance = %instance,
+                                domain = %domain,
+                                "email.dkim.missing — no TXT at default._domainkey; common selectors: default, google, selector1, mail"
+                            ),
+                            "dns_error" => tracing::warn!(
+                                target: "plugin.email",
+                                instance = %instance,
+                                domain = %domain,
+                                "email.spf_dkim.dns_unavailable — skipping alignment check this boot"
+                            ),
+                            _ => {}
+                        }
+                    }
+                });
+            }
+        }
+
         info!(
             target: "plugin.email",
             accounts = self.cfg.accounts.len(),

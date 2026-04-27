@@ -33,6 +33,7 @@ html2text    = { workspace = true }
 chardetng    = { workspace = true }
 mime_guess   = { workspace = true }
 encoding_rs  = { workspace = true }
+hickory-resolver = { workspace = true }
 sha2         = { workspace = true }
 hex          = { workspace = true }
 uuid         = { workspace = true }

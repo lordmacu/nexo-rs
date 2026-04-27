@@ -15,6 +15,8 @@ pub mod dsn;
 pub mod loop_prevent;
 pub mod outbound;
 pub mod outbound_queue;
+pub mod provider_hint;
+pub mod spf_dkim;
 pub mod threading;
 pub mod plugin;
 pub mod smtp_conn;
@@ -34,6 +36,8 @@ pub use outbound_queue::{OutboundJob, OutboundQueue, SmtpEnvelope};
 pub use smtp_conn::{SmtpClient, SmtpSendOutcome};
 pub use dsn::{parse_bounce, BounceClassification, BounceEvent, ParsedBounce};
 pub use loop_prevent::{should_skip, SkipReason};
+pub use provider_hint::{provider_hint, ProviderHint};
+pub use spf_dkim::{check_alignment, decide_warns, parse_spf_includes, AlignmentReport};
 pub use plugin::{EmailPlugin, TOPIC_INBOUND, TOPIC_OUTBOUND};
 pub use tool::{
     imap_date, imap_quote, register_email_tools, run_imap_op, DispatcherHandle, EmailToolContext,
