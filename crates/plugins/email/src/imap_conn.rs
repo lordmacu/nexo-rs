@@ -136,15 +136,8 @@ impl ImapConnection {
         account: &EmailAccount,
         google: Arc<GoogleCredentialStore>,
     ) -> Result<Self> {
-        match endpoint.tls {
-            TlsMode::ImplicitTls => {}
-            TlsMode::Starttls => bail!(
-                "email/imap: STARTTLS not yet supported (Phase 48.3 v1 ships ImplicitTls only); \
-                 either move to ImplicitTls (port 993) or wait for the STARTTLS follow-up"
-            ),
-            TlsMode::Plain => bail!(
-                "email/imap: plaintext IMAP not supported — use ImplicitTls (port 993)"
-            ),
+        if matches!(endpoint.tls, TlsMode::Plain) {
+            bail!("email/imap: plaintext IMAP not supported — use ImplicitTls (port 993) or Starttls (port 143)");
         }
 
         let tcp = TcpStream::connect((endpoint.host.as_str(), endpoint.port))
@@ -169,10 +162,51 @@ impl ImapConnection {
         let tls = build_tls_connector()?;
         let server_name = ServerName::try_from(endpoint.host.clone())
             .with_context(|| format!("email/imap: invalid TLS server name: {}", endpoint.host))?;
-        let stream = tls
-            .connect(server_name, tcp)
-            .await
-            .with_context(|| format!("email/imap: TLS handshake to {} failed", endpoint.host))?;
+
+        // STARTTLS path: connect plain, consume `* OK` greeting, run
+        // `STARTTLS`, then upgrade the TCP socket to TLS in-place.
+        // ImplicitTls path: TLS handshake before any IMAP wire bytes.
+        let stream = match endpoint.tls {
+            TlsMode::ImplicitTls => tls
+                .connect(server_name, tcp)
+                .await
+                .with_context(|| {
+                    format!("email/imap: TLS handshake to {} failed", endpoint.host)
+                })?,
+            TlsMode::Starttls => {
+                let mut plain_client = async_imap::Client::new(tcp.compat());
+                // Consume the unsolicited `* OK ...` greeting. Without
+                // this, the next `run_command` interprets the greeting
+                // as a continuation of its own response.
+                let _greeting = plain_client
+                    .read_response()
+                    .await
+                    .ok_or_else(|| anyhow!("email/imap: no greeting on STARTTLS dial"))?
+                    .with_context(|| {
+                        format!("email/imap: malformed greeting from {}", endpoint.host)
+                    })?;
+                plain_client
+                    .run_command_and_check_ok("STARTTLS", None)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "email/imap: STARTTLS rejected by {} (server may not advertise STARTTLS — try ImplicitTls)",
+                            endpoint.host
+                        )
+                    })?;
+                // Reach back through async-imap's compat wrapper to
+                // recover the raw `TcpStream` for the TLS handshake.
+                let upgraded_compat = plain_client.into_inner();
+                let raw_tcp = upgraded_compat.into_inner();
+                tls.connect(server_name, raw_tcp).await.with_context(|| {
+                    format!(
+                        "email/imap: TLS upgrade after STARTTLS to {} failed",
+                        endpoint.host
+                    )
+                })?
+            }
+            TlsMode::Plain => unreachable!("plain rejected above"),
+        };
 
         let client = async_imap::Client::new(stream.compat());
         // Discard the unsolicited `* OK` greeting before issuing
