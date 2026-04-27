@@ -159,6 +159,7 @@ impl HttpSessionManager {
         removed
     }
 
+    #[allow(dead_code)]
     pub(crate) fn len(&self) -> usize {
         self.inner.sessions.len()
     }

@@ -320,6 +320,7 @@ mod tests {
     use std::sync::Mutex;
 
     #[derive(Default)]
+    #[allow(dead_code)]
     struct CapturedCall {
         url: String,
         body: String,

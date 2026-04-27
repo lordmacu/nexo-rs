@@ -91,6 +91,7 @@ impl Principal {
     /// Test-only constructor — keeps the same shape as `stdio_local`
     /// but is plain on the tin. Phase 76.4 keeps this `pub(crate)` so
     /// callers can't accidentally use it as a real principal.
+    #[allow(dead_code)]
     pub(crate) fn test_local() -> Self {
         Self::stdio_local()
     }
