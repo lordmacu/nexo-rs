@@ -884,28 +884,59 @@ async fn main() -> Result<()> {
         cfg.plugins.email.as_ref(),
     ) {
         (Some(plugin), Some(creds_bundle), Some(email_cfg)) => {
-            match plugin.dispatcher_handle().await {
-                Some(dispatcher) => {
-                    let health = plugin
-                        .health_map()
-                        .await
-                        .unwrap_or_else(nexo_plugin_email::inbound::HealthMap::default);
-                    Some(Arc::new(nexo_plugin_email::EmailToolContext {
-                        creds: creds_bundle.stores.email.clone(),
-                        google: creds_bundle.stores.google.clone(),
-                        config: Arc::new(email_cfg.clone()),
-                        dispatcher,
-                        health,
-                        bounce_store: plugin.bounce_store_handle(),
-                    }))
-                }
-                None => {
-                    tracing::warn!(
-                        "email plugin started without dispatcher handle — tools unavailable"
-                    );
-                    None
-                }
+            // Audit follow-up E — `dispatcher_handle()` returning
+            // None after a plugin we *did* register is a hard
+            // failure: the email plugin is unusable, and silently
+            // proceeding would let agents declare `plugins: [email]`
+            // and discover at first tool-call time that nothing
+            // was registered. Better to refuse boot now.
+            let dispatcher = plugin.dispatcher_handle().await.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "email plugin registered but `dispatcher_handle()` is None — \
+                     OutboundDispatcher::start failed earlier. Check the boot log \
+                     for the underlying error, or set `email.enabled: false` to \
+                     skip the plugin entirely."
+                )
+            })?;
+            // Audit follow-up F — surface accounts that didn't make
+            // it into the dispatcher's live instance set. The
+            // declared list is `email_cfg.accounts`; the live set
+            // is `dispatcher.instance_ids()`. Anything declared but
+            // not live crashed during spawn — log structured WARN
+            // with the full list so the operator sees it once at
+            // boot rather than discovering it in the middle of an
+            // `email_send` failure.
+            let live: std::collections::HashSet<String> =
+                dispatcher.instance_ids().into_iter().collect();
+            let missing: Vec<&str> = email_cfg
+                .accounts
+                .iter()
+                .map(|a| a.instance.as_str())
+                .filter(|i| !live.contains(*i))
+                .collect();
+            if !missing.is_empty() {
+                tracing::warn!(
+                    target: "plugin.email",
+                    declared = ?email_cfg.accounts.iter().map(|a| a.instance.as_str()).collect::<Vec<_>>(),
+                    live = ?live.iter().collect::<Vec<_>>(),
+                    missing = ?missing,
+                    "some declared email accounts are not live in the dispatcher — \
+                     `email_send` against those instances will fail with `unknown email instance`. \
+                     Inspect the boot log for the per-account spawn error."
+                );
             }
+            let health = plugin
+                .health_map()
+                .await
+                .unwrap_or_else(nexo_plugin_email::inbound::HealthMap::default);
+            Some(Arc::new(nexo_plugin_email::EmailToolContext {
+                creds: creds_bundle.stores.email.clone(),
+                google: creds_bundle.stores.google.clone(),
+                config: Arc::new(email_cfg.clone()),
+                dispatcher,
+                health,
+                bounce_store: plugin.bounce_store_handle(),
+            }))
         }
         _ => None,
     };
