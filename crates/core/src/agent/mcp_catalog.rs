@@ -230,12 +230,31 @@ impl McpToolCatalog {
                 .get(&entry.server_name)
                 .copied()
                 .unwrap_or(self.context_passthrough);
+            let prefixed = def.name.clone();
+            let description_for_hint = entry.description.clone().unwrap_or_default();
             let inserted = registry.register_if_absent(
                 def,
                 McpTool::new(&entry.server_name, &entry.tool_name, client)
                     .with_context_passthrough(effective_passthrough),
             );
             if inserted {
+                // Phase 79.2 follow-up — MCP-imported tools are
+                // auto-marked as deferred so `ToolSearch` can fetch
+                // their schemas on demand. Search hint = first 80
+                // chars of the description, lower-case (lift from
+                // leak `ToolSearchTool/prompt.ts:62-68` —
+                // "MCP tools are always deferred (workflow-specific)").
+                let hint: String = description_for_hint
+                    .chars()
+                    .take(80)
+                    .collect::<String>()
+                    .to_ascii_lowercase();
+                let meta = if hint.trim().is_empty() {
+                    super::tool_registry::ToolMeta::deferred()
+                } else {
+                    super::tool_registry::ToolMeta::deferred_with_hint(hint)
+                };
+                registry.set_meta(&prefixed, meta);
                 registered += 1;
             } else {
                 skipped_collision += 1;

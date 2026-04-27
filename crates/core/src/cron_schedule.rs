@@ -163,6 +163,48 @@ pub trait CronStore: Send + Sync {
     /// exists so a follow-up can wire it in without changing the
     /// trait surface. Tests cover the index works.
     async fn due_at(&self, now_unix: i64) -> Result<Vec<CronEntry>, CronStoreError>;
+    /// Toggle the `paused` flag on a single entry. `paused = true`
+    /// keeps the row in storage but `due_at` skips it.
+    async fn set_paused(&self, id: &str, paused: bool) -> Result<(), CronStoreError>;
+    /// Fetch a single entry by id. Returns `NotFound` when absent.
+    async fn get(&self, id: &str) -> Result<CronEntry, CronStoreError>;
+}
+
+/// Apply ±`pct_pct/100` jitter to a future-fire timestamp. Used to
+/// avoid thundering-herd when many bindings schedule at the same
+/// `every:1h`. Lift from `claude-code-leak/src/utils/cronJitterConfig.ts`.
+///
+/// `from_unix` is the reference "now" used to compute the spread —
+/// jitter is applied in seconds and bounded so the result never
+/// goes BEFORE `from_unix` (a negative jitter past `from_unix`
+/// would re-fire immediately).
+pub fn apply_jitter(next_fire_at: i64, from_unix: i64, pct: u32) -> i64 {
+    if pct == 0 {
+        return next_fire_at;
+    }
+    let span = next_fire_at - from_unix;
+    if span <= 0 {
+        return next_fire_at;
+    }
+    let max_offset = ((span as i128) * (pct as i128) / 100).max(0) as i64;
+    if max_offset == 0 {
+        return next_fire_at;
+    }
+    // Cheap deterministic jitter — combines next_fire_at with a
+    // process counter so consecutive calls don't produce the same
+    // value. Not a CSPRNG; jitter is ops noise, not cryptographic.
+    static COUNTER: std::sync::atomic::AtomicU64 =
+        std::sync::atomic::AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mix = (next_fire_at as i128).wrapping_mul(0x9e37_79b9_7f4a_7c15)
+        ^ (n as i128).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    let mut signed: i64 = ((mix.unsigned_abs() % (2 * max_offset as u128 + 1)) as i64) - max_offset;
+    // Clamp so the result never goes earlier than `from_unix + 1` —
+    // we never want a jittered timestamp to fire instantly.
+    if next_fire_at + signed <= from_unix {
+        signed = from_unix + 1 - next_fire_at;
+    }
+    next_fire_at + signed
 }
 
 pub struct SqliteCronStore {
@@ -268,6 +310,27 @@ impl CronStore for SqliteCronStore {
         .fetch_all(&self.pool)
         .await?;
         rows.iter().map(row_to_entry).collect()
+    }
+
+    async fn set_paused(&self, id: &str, paused: bool) -> Result<(), CronStoreError> {
+        let res = sqlx::query("UPDATE nexo_cron_entries SET paused = ?1 WHERE id = ?2")
+            .bind(paused as i64)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        if res.rows_affected() == 0 {
+            return Err(CronStoreError::NotFound(id.to_string()));
+        }
+        Ok(())
+    }
+
+    async fn get(&self, id: &str) -> Result<CronEntry, CronStoreError> {
+        let row = sqlx::query("SELECT * FROM nexo_cron_entries WHERE id = ?1 LIMIT 1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?
+            .ok_or_else(|| CronStoreError::NotFound(id.to_string()))?;
+        row_to_entry(&row)
     }
 }
 
@@ -421,6 +484,65 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, CronStoreError::BindingFull(_, 50, _)));
+    }
+
+    #[tokio::test]
+    async fn set_paused_toggles_and_get_round_trips() {
+        let store = SqliteCronStore::open_memory().await.unwrap();
+        let e = entry("whatsapp:ops", "*/5 * * * *");
+        store.insert(&e).await.unwrap();
+        assert!(!store.get(&e.id).await.unwrap().paused);
+        store.set_paused(&e.id, true).await.unwrap();
+        assert!(store.get(&e.id).await.unwrap().paused);
+        // Paused entry no longer in due_at output.
+        let due = store.due_at(e.next_fire_at + 60).await.unwrap();
+        assert!(due.iter().all(|x| x.id != e.id));
+        store.set_paused(&e.id, false).await.unwrap();
+        let due_again = store.due_at(e.next_fire_at + 60).await.unwrap();
+        assert!(due_again.iter().any(|x| x.id == e.id));
+    }
+
+    #[tokio::test]
+    async fn set_paused_unknown_id_errors() {
+        let store = SqliteCronStore::open_memory().await.unwrap();
+        let err = store.set_paused("nope", true).await.unwrap_err();
+        assert!(matches!(err, CronStoreError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn get_unknown_id_errors() {
+        let store = SqliteCronStore::open_memory().await.unwrap();
+        let err = store.get("nope").await.unwrap_err();
+        assert!(matches!(err, CronStoreError::NotFound(_)));
+    }
+
+    #[test]
+    fn apply_jitter_zero_pct_is_identity() {
+        let from = 1_700_000_000;
+        let next = 1_700_003_600;
+        assert_eq!(apply_jitter(next, from, 0), next);
+    }
+
+    #[test]
+    fn apply_jitter_within_pct_bound() {
+        let from = 1_700_000_000;
+        let next = 1_700_003_600; // +1h
+        for _ in 0..50 {
+            let jittered = apply_jitter(next, from, 10);
+            let span = next - from;
+            let max_offset = span / 10; // 10% of 3600 = 360
+            assert!(
+                jittered >= next - max_offset && jittered <= next + max_offset,
+                "jittered={jittered} outside [next±10%]"
+            );
+            assert!(jittered > from, "jitter pulled fire to or past from_unix");
+        }
+    }
+
+    #[test]
+    fn apply_jitter_returns_same_when_already_past() {
+        // next_fire_at <= from_unix → no jitter possible.
+        assert_eq!(apply_jitter(100, 200, 50), 100);
     }
 
     #[tokio::test]

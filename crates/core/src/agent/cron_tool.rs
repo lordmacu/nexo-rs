@@ -168,6 +168,81 @@ impl ToolHandler for CronListTool {
     }
 }
 
+/// `cron_pause` / `cron_resume` — toggle the `paused` flag on an
+/// entry without dropping it. Useful to silence a recurring job
+/// during a maintenance window.
+pub struct CronPauseTool {
+    store: Arc<dyn CronStore>,
+}
+
+impl CronPauseTool {
+    pub fn new(store: Arc<dyn CronStore>) -> Self {
+        Self { store }
+    }
+    pub fn tool_def() -> ToolDef {
+        ToolDef {
+            name: "cron_pause".to_string(),
+            description: "Pause a scheduled cron entry by id. The row stays in storage; the future runtime fires it again only after cron_resume.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Entry id from cron_create or cron_list." }
+                },
+                "required": ["id"]
+            }),
+        }
+    }
+}
+
+#[async_trait]
+impl ToolHandler for CronPauseTool {
+    async fn call(&self, _ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
+        let id = args
+            .get("id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("cron_pause requires `id` (string)"))?
+            .to_string();
+        self.store.set_paused(&id, true).await.map_err(map_err)?;
+        Ok(json!({"ok": true, "id": id, "paused": true}))
+    }
+}
+
+pub struct CronResumeTool {
+    store: Arc<dyn CronStore>,
+}
+
+impl CronResumeTool {
+    pub fn new(store: Arc<dyn CronStore>) -> Self {
+        Self { store }
+    }
+    pub fn tool_def() -> ToolDef {
+        ToolDef {
+            name: "cron_resume".to_string(),
+            description: "Resume a paused cron entry by id (inverse of cron_pause).".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Entry id." }
+                },
+                "required": ["id"]
+            }),
+        }
+    }
+}
+
+#[async_trait]
+impl ToolHandler for CronResumeTool {
+    async fn call(&self, _ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
+        let id = args
+            .get("id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("cron_resume requires `id` (string)"))?
+            .to_string();
+        self.store.set_paused(&id, false).await.map_err(map_err)?;
+        Ok(json!({"ok": true, "id": id, "paused": false}))
+    }
+}
+
 /// `cron_delete` — drop a scheduled entry by id.
 pub struct CronDeleteTool {
     store: Arc<dyn CronStore>,
@@ -433,6 +508,39 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err2.contains("requires `prompt`"));
+    }
+
+    #[tokio::test]
+    async fn pause_then_resume_round_trip() {
+        let (ctx, store) = ctx_with_origin().await;
+        let create = CronCreateTool::new(store.clone());
+        let res = create
+            .call(&ctx, json!({"cron": "*/5 * * * *", "prompt": "x"}))
+            .await
+            .unwrap();
+        let id = res["id"].as_str().unwrap().to_string();
+
+        let pause = CronPauseTool::new(store.clone());
+        let res = pause.call(&ctx, json!({"id": id.clone()})).await.unwrap();
+        assert_eq!(res["paused"], true);
+        assert!(store.get(&id).await.unwrap().paused);
+
+        let resume = CronResumeTool::new(store.clone());
+        let res = resume.call(&ctx, json!({"id": id.clone()})).await.unwrap();
+        assert_eq!(res["paused"], false);
+        assert!(!store.get(&id).await.unwrap().paused);
+    }
+
+    #[tokio::test]
+    async fn pause_unknown_id_errors() {
+        let (ctx, store) = ctx_with_origin().await;
+        let pause = CronPauseTool::new(store);
+        let err = pause
+            .call(&ctx, json!({"id": "nope"}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("not found"));
     }
 
     #[tokio::test]
