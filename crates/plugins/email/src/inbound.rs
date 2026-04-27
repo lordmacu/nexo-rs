@@ -35,8 +35,15 @@ const MAX_BACKOFF_MS: u64 = 60_000;
 /// `EmailPlugin::health()` reads (Phase 48.10).
 pub type HealthMap = Arc<DashMap<String, Arc<RwLock<AccountHealth>>>>;
 
+/// Per-instance worker handle. Cancel kills just this account's
+/// IDLE loop; the parent plugin-level token is the union.
+struct WorkerSlot {
+    handle: JoinHandle<()>,
+    cancel: CancellationToken,
+}
+
 pub struct InboundManager {
-    workers: Vec<JoinHandle<()>>,
+    workers: std::collections::HashMap<String, WorkerSlot>,
     cancel: CancellationToken,
     health: HealthMap,
 }
@@ -55,38 +62,24 @@ impl InboundManager {
     ) -> Self {
         let cancel = CancellationToken::new();
         let health: HealthMap = Arc::new(DashMap::new());
-        let mut workers = Vec::with_capacity(cfg.accounts.len());
-
-        for account_cfg in &cfg.accounts {
-            let h = Arc::new(RwLock::new(AccountHealth::default()));
-            health.insert(account_cfg.instance.clone(), h.clone());
-
-            let worker = AccountWorker {
-                account_cfg: account_cfg.clone(),
-                creds: creds.clone(),
-                google: google.clone(),
-                cursor: cursor.clone(),
-                broker: broker.clone(),
-                health: h,
-                cancel: cancel.child_token(),
-                idle_reissue: Duration::from_secs(cfg.idle_reissue_minutes * 60),
-                poll_fallback: Duration::from_secs(cfg.poll_fallback_seconds),
-                inbox_folder: account_cfg.folders.inbox.clone(),
-                max_body_bytes: cfg.max_body_bytes,
-                max_attachment_bytes: cfg.max_attachment_bytes,
-                attachments_dir: std::path::PathBuf::from(&cfg.attachments_dir),
-                loop_prevention: cfg.loop_prevention.clone(),
-                bounce_store: bounce_store.clone(),
-                attachment_store: attachment_store.clone(),
-            };
-            workers.push(tokio::spawn(worker.run()));
-        }
-
-        Self {
-            workers,
-            cancel,
+        let mut mgr = Self {
+            workers: std::collections::HashMap::new(),
+            cancel: cancel.clone(),
             health,
+        };
+        for account_cfg in &cfg.accounts {
+            mgr.add_account(
+                cfg,
+                account_cfg,
+                creds.clone(),
+                google.clone(),
+                cursor.clone(),
+                broker.clone(),
+                bounce_store.clone(),
+                attachment_store.clone(),
+            );
         }
+        mgr
     }
 
     /// Cancel every worker and join them with a 5s upper bound. Workers
@@ -94,8 +87,24 @@ impl InboundManager {
     /// abort, the daemon must shut down promptly.
     pub async fn stop(self) {
         self.cancel.cancel();
-        let join = futures::future::join_all(self.workers);
+        let handles: Vec<_> = self.workers.into_values().map(|w| w.handle).collect();
+        let join = futures::future::join_all(handles);
         let _ = tokio::time::timeout(Duration::from_secs(5), join).await;
+    }
+
+    /// Phase 48 follow-up #5 — cancel one account's worker without
+    /// touching siblings. Returns `true` when a worker was found
+    /// and cancelled. The handle is awaited up to 5 s; a worker
+    /// stuck in IDLE that doesn't unwind in time is dropped (the
+    /// IMAP server tolerates the abort, same as `stop`).
+    pub async fn remove_account(&mut self, instance: &str) -> bool {
+        let Some(slot) = self.workers.remove(instance) else {
+            return false;
+        };
+        slot.cancel.cancel();
+        let _ = tokio::time::timeout(Duration::from_secs(5), slot.handle).await;
+        self.health.remove(instance);
+        true
     }
 
     pub fn health_map(&self) -> HealthMap {
@@ -119,11 +128,12 @@ impl InboundManager {
         bounce_store: Option<Arc<crate::bounce_store::BounceStore>>,
         attachment_store: Option<Arc<crate::attachment_store::AttachmentStore>>,
     ) -> bool {
-        if self.health.contains_key(&account_cfg.instance) {
+        if self.workers.contains_key(&account_cfg.instance) {
             return false;
         }
         let h = Arc::new(RwLock::new(AccountHealth::default()));
         self.health.insert(account_cfg.instance.clone(), h.clone());
+        let per_instance_cancel = self.cancel.child_token();
         let worker = AccountWorker {
             account_cfg: account_cfg.clone(),
             creds,
@@ -131,7 +141,7 @@ impl InboundManager {
             cursor,
             broker,
             health: h,
-            cancel: self.cancel.child_token(),
+            cancel: per_instance_cancel.clone(),
             idle_reissue: Duration::from_secs(cfg.idle_reissue_minutes * 60),
             poll_fallback: Duration::from_secs(cfg.poll_fallback_seconds),
             inbox_folder: account_cfg.folders.inbox.clone(),
@@ -142,7 +152,13 @@ impl InboundManager {
             bounce_store,
             attachment_store,
         };
-        self.workers.push(tokio::spawn(worker.run()));
+        self.workers.insert(
+            account_cfg.instance.clone(),
+            WorkerSlot {
+                handle: tokio::spawn(worker.run()),
+                cancel: per_instance_cancel,
+            },
+        );
         true
     }
 }

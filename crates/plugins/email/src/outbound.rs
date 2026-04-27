@@ -126,10 +126,24 @@ impl crate::tool::DispatcherHandle for DispatcherCore {
     }
 }
 
+/// Per-instance outbound worker handle. Cancel kills just one
+/// account's drain loop; the parent dispatcher token is the union.
+struct OutboundSlot {
+    handle: JoinHandle<()>,
+    cancel: CancellationToken,
+}
+
 pub struct OutboundDispatcher {
-    workers: Vec<JoinHandle<()>>,
+    workers: std::collections::HashMap<String, OutboundSlot>,
     cancel: CancellationToken,
     core: Arc<DispatcherCore>,
+    /// Shared scratch the per-account spawner reuses on
+    /// `add_account`. Captured at `start` time.
+    creds: Arc<EmailCredentialStore>,
+    google: Arc<GoogleCredentialStore>,
+    broker: AnyBroker,
+    data_dir: std::path::PathBuf,
+    health: HealthMap,
 }
 
 impl OutboundDispatcher {
@@ -145,55 +159,95 @@ impl OutboundDispatcher {
         health: HealthMap,
     ) -> Result<Self> {
         let cancel = CancellationToken::new();
-        let mut workers = Vec::with_capacity(cfg.accounts.len());
         let instances: Arc<DashMap<String, Arc<InstanceState>>> = Arc::new(DashMap::new());
 
-        let queue_dir = data_dir.join("email").join("outbound");
+        let mut dispatcher = Self {
+            workers: std::collections::HashMap::new(),
+            cancel: cancel.clone(),
+            core: Arc::new(DispatcherCore {
+                instances: instances.clone(),
+            }),
+            creds: creds.clone(),
+            google: google.clone(),
+            broker: broker.clone(),
+            data_dir: data_dir.to_path_buf(),
+            health: health.clone(),
+        };
         for account_cfg in &cfg.accounts {
-            let queue = Arc::new(
-                OutboundQueue::open(&queue_dir, &account_cfg.instance)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "email/outbound: open queue for instance '{}'",
-                            account_cfg.instance
-                        )
-                    })?,
-            );
-            instances.insert(
-                account_cfg.instance.clone(),
-                Arc::new(InstanceState {
-                    queue: queue.clone(),
-                    address: account_cfg.address.clone(),
-                }),
-            );
-            let h = health
-                .entry(account_cfg.instance.clone())
-                .or_insert_with(|| Arc::new(RwLock::new(AccountHealth::default())))
-                .clone();
-            let breaker = Arc::new(CircuitBreaker::new(
-                format!("email/{}/smtp", account_cfg.instance),
-                CircuitBreakerConfig::default(),
-            ));
-            let worker = OutboundWorker {
-                account_cfg: account_cfg.clone(),
-                creds: creds.clone(),
-                google: google.clone(),
-                queue,
-                breaker,
-                broker: broker.clone(),
-                health: h,
-                cancel: cancel.child_token(),
-                in_flight: Arc::new(DashMap::new()),
-            };
-            workers.push(tokio::spawn(worker.run()));
+            dispatcher.add_account(account_cfg).await?;
         }
+        Ok(dispatcher)
+    }
 
-        Ok(Self {
-            workers,
-            cancel,
-            core: Arc::new(DispatcherCore { instances }),
-        })
+    /// Phase 48 follow-up #5 — spawn one outbound worker for an
+    /// account that arrived via a config reload. Idempotent on
+    /// instance id; opens the queue file fresh each time.
+    pub async fn add_account(&mut self, account_cfg: &EmailAccountConfig) -> Result<bool> {
+        if self.workers.contains_key(&account_cfg.instance) {
+            return Ok(false);
+        }
+        let queue_dir = self.data_dir.join("email").join("outbound");
+        let queue = Arc::new(
+            OutboundQueue::open(&queue_dir, &account_cfg.instance)
+                .await
+                .with_context(|| {
+                    format!(
+                        "email/outbound: open queue for instance '{}'",
+                        account_cfg.instance
+                    )
+                })?,
+        );
+        self.core.instances.insert(
+            account_cfg.instance.clone(),
+            Arc::new(InstanceState {
+                queue: queue.clone(),
+                address: account_cfg.address.clone(),
+            }),
+        );
+        let h = self
+            .health
+            .entry(account_cfg.instance.clone())
+            .or_insert_with(|| Arc::new(RwLock::new(AccountHealth::default())))
+            .clone();
+        let breaker = Arc::new(CircuitBreaker::new(
+            format!("email/{}/smtp", account_cfg.instance),
+            CircuitBreakerConfig::default(),
+        ));
+        let per_instance_cancel = self.cancel.child_token();
+        let worker = OutboundWorker {
+            account_cfg: account_cfg.clone(),
+            creds: self.creds.clone(),
+            google: self.google.clone(),
+            queue,
+            breaker,
+            broker: self.broker.clone(),
+            health: h,
+            cancel: per_instance_cancel.clone(),
+            in_flight: Arc::new(DashMap::new()),
+        };
+        self.workers.insert(
+            account_cfg.instance.clone(),
+            OutboundSlot {
+                handle: tokio::spawn(worker.run()),
+                cancel: per_instance_cancel,
+            },
+        );
+        Ok(true)
+    }
+
+    /// Phase 48 follow-up #5 — cancel one account's outbound
+    /// worker without touching siblings. Removes the queue
+    /// reference from `DispatcherCore.instances` so subsequent
+    /// `enqueue_for_instance` calls fail with "unknown email
+    /// instance" — operators removing an account expect that.
+    pub async fn remove_account(&mut self, instance: &str) -> bool {
+        let Some(slot) = self.workers.remove(instance) else {
+            return false;
+        };
+        slot.cancel.cancel();
+        let _ = tokio::time::timeout(Duration::from_secs(5), slot.handle).await;
+        self.core.instances.remove(instance);
+        true
     }
 
     /// Cheap shared handle the tool surface holds. Outlives `stop()`
@@ -216,7 +270,8 @@ impl OutboundDispatcher {
 
     pub async fn stop(self) {
         self.cancel.cancel();
-        let join = futures::future::join_all(self.workers);
+        let handles: Vec<_> = self.workers.into_values().map(|s| s.handle).collect();
+        let join = futures::future::join_all(handles);
         let _ = tokio::time::timeout(Duration::from_secs(5), join).await;
     }
 }

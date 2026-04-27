@@ -134,62 +134,149 @@ impl EmailPlugin {
         &self.cfg
     }
 
-    /// Phase 48 follow-up #5 — incremental hot-reload entry point.
+    /// Phase 48 follow-up #5 — surgical hot-reload entry point.
     /// Computes the diff between the plugin's *current* config and
-    /// the supplied `new_cfg`, then spawns inbound workers for
-    /// every newly-added account. `removed` and `changed` accounts
-    /// are reported in the returned `AccountDiff` but not yet acted
-    /// on (full surgical reload still needs per-instance cancel
-    /// tokens). Returns the diff so the caller can log / metric
-    /// what happened.
-    pub async fn apply_added_accounts(
+    /// `new_cfg`, then teardown / respawn / spawn one worker pair
+    /// per affected account on both the inbound and outbound sides.
+    /// Sibling accounts keep their IDLE / drain loops untouched.
+    /// Returns the diff so the caller can log / metric.
+    ///
+    /// Order matters: process `removed` first, then `changed`
+    /// (teardown of stale + spawn fresh), then `added`. This
+    /// matches the natural lifecycle and avoids transient
+    /// instance-id collisions when a `changed` account hasn't
+    /// finished its old worker before the new one tries to claim
+    /// the queue file.
+    pub async fn apply_account_diff(
         &self,
         new_cfg: &EmailPluginConfig,
         broker: AnyBroker,
     ) -> anyhow::Result<crate::reload::AccountDiff> {
         let diff = crate::reload::compute_account_diff(&self.cfg, new_cfg);
-        if diff.added.is_empty() {
+        if diff.is_empty() {
             return Ok(diff);
         }
         let cursor = self.cursor_store().await?;
         let bounce = self.bounce_store().await;
         let attachments = self.attachment_store().await;
-        let mut guard = self.inbound.lock().await;
-        let Some(manager) = guard.as_mut() else {
-            anyhow::bail!("inbound manager not running — call start first");
-        };
-        for account_cfg in &diff.added {
-            let spawned = manager.add_account(
+
+        // Removed: tear down inbound + outbound. Order is
+        // outbound-first so any in-flight job lands on disk before
+        // the inbound worker that read it disappears.
+        for instance in &diff.removed {
+            if let Some(disp) = self.outbound.lock().await.as_mut() {
+                if disp.remove_account(instance).await {
+                    tracing::info!(
+                        target: "plugin.email",
+                        %instance,
+                        "hot-reload removed outbound worker"
+                    );
+                }
+            }
+            if let Some(mgr) = self.inbound.lock().await.as_mut() {
+                if mgr.remove_account(instance).await {
+                    tracing::info!(
+                        target: "plugin.email",
+                        %instance,
+                        "hot-reload removed inbound worker"
+                    );
+                }
+            }
+        }
+
+        // Changed: teardown then respawn. Same outbound-first
+        // ordering on the teardown leg.
+        for account_cfg in &diff.changed {
+            let instance = &account_cfg.instance;
+            if let Some(disp) = self.outbound.lock().await.as_mut() {
+                let _ = disp.remove_account(instance).await;
+            }
+            if let Some(mgr) = self.inbound.lock().await.as_mut() {
+                let _ = mgr.remove_account(instance).await;
+            }
+            self.spawn_account(
                 new_cfg,
                 account_cfg,
-                self.creds.clone(),
-                self.google.clone(),
                 cursor.clone(),
                 broker.clone(),
                 bounce.clone(),
                 attachments.clone(),
-            );
-            if spawned {
-                tracing::info!(
-                    target: "plugin.email",
-                    instance = %account_cfg.instance,
-                    "hot-reload spawned inbound worker"
-                );
-            }
-        }
-        if !diff.removed.is_empty() || !diff.changed.is_empty() {
-            tracing::warn!(
+            )
+            .await?;
+            tracing::info!(
                 target: "plugin.email",
-                removed = ?diff.removed,
-                changed = ?diff
-                    .changed
-                    .iter()
-                    .map(|a| a.instance.as_str())
-                    .collect::<Vec<_>>(),
-                "hot-reload account diff has removed/changed entries — daemon restart still required for those"
+                %instance,
+                "hot-reload respawned changed account"
+            );
+        }
+
+        // Added: brand-new accounts. No teardown needed.
+        for account_cfg in &diff.added {
+            self.spawn_account(
+                new_cfg,
+                account_cfg,
+                cursor.clone(),
+                broker.clone(),
+                bounce.clone(),
+                attachments.clone(),
+            )
+            .await?;
+            tracing::info!(
+                target: "plugin.email",
+                instance = %account_cfg.instance,
+                "hot-reload spawned new account"
             );
         }
         Ok(diff)
+    }
+
+    /// Backward-compat alias retained for callers who only need
+    /// the add-only behaviour. Equivalent to
+    /// `apply_account_diff` since this commit shipped surgical
+    /// teardown — the additional removed/changed branches are
+    /// no-ops for an unchanged account set.
+    #[deprecated(note = "use apply_account_diff; behaviour is identical now")]
+    pub async fn apply_added_accounts(
+        &self,
+        new_cfg: &EmailPluginConfig,
+        broker: AnyBroker,
+    ) -> anyhow::Result<crate::reload::AccountDiff> {
+        self.apply_account_diff(new_cfg, broker).await
+    }
+
+    /// Internal helper used by both `added` and `changed` branches
+    /// of `apply_account_diff`. Spawns inbound + outbound workers
+    /// for the supplied account, sharing the per-plugin stores.
+    #[allow(clippy::too_many_arguments)]
+    async fn spawn_account(
+        &self,
+        new_cfg: &EmailPluginConfig,
+        account_cfg: &nexo_config::types::plugins::EmailAccountConfig,
+        cursor: Arc<CursorStore>,
+        broker: AnyBroker,
+        bounce: Option<Arc<BounceStore>>,
+        attachments: Option<Arc<AttachmentStore>>,
+    ) -> anyhow::Result<()> {
+        if let Some(mgr) = self.inbound.lock().await.as_mut() {
+            mgr.add_account(
+                new_cfg,
+                account_cfg,
+                self.creds.clone(),
+                self.google.clone(),
+                cursor,
+                broker,
+                bounce,
+                attachments,
+            );
+        } else {
+            anyhow::bail!("inbound manager not running — call start first");
+        }
+        if let Some(disp) = self.outbound.lock().await.as_mut() {
+            disp.add_account(account_cfg).await?;
+        } else {
+            anyhow::bail!("outbound dispatcher not running — call start first");
+        }
+        Ok(())
     }
 
     /// Persistent bounce history handle. Returns `None` if the
