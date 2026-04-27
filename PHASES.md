@@ -3485,6 +3485,155 @@ tool. This phase closes the loop on each.
 - 70.8 ✅ — PHASES.md / CLAUDE.md / admin-ui / docs sync (this
   phase's progress entry).
 
+### Phase 76 — MCP server hardening   ⬜
+
+Today's `crates/mcp/src/server/` is stdio-only (923 LOC) and
+single-tenant. The client side (1151 LOC HTTP, sampling, hot-reload,
+Phase 73+74 conformance) is production-grade; the server side is the
+weak link. To let third-party plugins (`nexo-marketing`, future CRM
+/ analytics / billing extensions) build on top of the agent's MCP
+surface without touching core, the server needs HTTP+SSE transport,
+pluggable auth, multi-tenant isolation, rate-limit, backpressure,
+durable sessions, observability, and a builder ergonomic enough that
+a new extension is < 50 LOC of bootstrap.
+
+Goal: MCP server becomes a reusable runtime — `nexo-marketing-mcp`
+(and any other plugin) consumes it via `McpServerBuilder` and ships
+without forking core. Existing stdio path stays at parity (same tests
+pass through the new abstraction).
+
+- 76.1 ✅ — HTTP + SSE server transport. New
+  `crates/mcp/src/server/http_transport.rs` on `axum 0.7` +
+  `tower-http`, plus `http_config.rs`, `http_session.rs`, and
+  `parse.rs` (JSON-RPC body defenses). Endpoints: `POST /mcp`,
+  `GET /mcp` (SSE), `DELETE /mcp`, `/healthz`, `/readyz`, plus
+  optional legacy SSE alias (`GET /sse` + `POST /messages?sessionId=…`)
+  behind `enable_legacy_sse: true`. Reuses the 76.2 `Dispatcher`
+  verbatim. Defaults: loopback bind, 1 MiB body cap, 30 s
+  request timeout, 300 s session idle, 24 h max-lifetime, 1000
+  concurrent sessions, 60 rps/IP, 256-event SSE buffer with
+  drop-oldest. Boot validates that any non-loopback bind has
+  both an `auth_token` and a non-`*` `allow_origins`; otherwise
+  refuses to start. Per-call constant-time auth via
+  `Authorization: Bearer X` or `Mcp-Auth-Token`. Sessions in a
+  DashMap cap'd by `max_sessions` with a 30 s background janitor
+  expiring idle / over-lifetime entries. Graceful shutdown
+  broadcasts `event: shutdown` to every active SSE consumer
+  before tearing the listener down. New `start_http_server`
+  re-exported from `nexo_mcp::*`; `src/main.rs::run_mcp_server`
+  spins up HTTP and stdio side-by-side when `mcp_server.http.enabled`
+  is true. `crates/config/src/types/mcp_server.rs` extended with
+  `http: Option<HttpTransportConfigYaml>` + `auth_token_env`
+  indirection. 13 adversarial integration tests (body-too-big,
+  depth-100, batch reject, missing/unknown session, panic
+  recovery, 50-session concurrency, rate-limit, legacy alias,
+  idempotent DELETE) and 11 conformance tests porting the
+  Phase 12.6/73/74 stdio cases over HTTP, all green. Docs
+  page `docs/src/extensions/mcp-server.md` registered in
+  `SUMMARY.md`. Done: `cargo test -p nexo-mcp` green
+  (228 tests pass: 168 unit + 60 integration); `cargo build
+  --workspace` clean.
+- 76.2 ✅ — `McpTransport` trait + stdio refactor. Extract
+  `read_frame` / `write_frame` abstraction; `StdioTransport` and
+  `HttpTransport` both implement; server core depends on the trait
+  only. Done: every Phase 73+74 conformance test still passes
+  through stdio; HTTP shares 100 % of the protocol path.
+- 76.3 ⬜ — Pluggable authentication. Trait `McpAuthenticator`
+  with `StaticToken`, `BearerJwt` (jwks fetch + cache), `MutualTls`,
+  and `None` (dev-only, refuses to bind non-loopback). Result is a
+  `Principal { tenant_id, subject, scopes }` injected into every
+  `ToolContext`. Stdio principal derives from process (`local`).
+  Done: missing/invalid token → 401; valid token → tool sees
+  `principal.tenant_id`.
+- 76.4 ⬜ — Multi-tenant isolation. `ToolContext.tenant_id`
+  mandatory, `TenantScoped<T>` helper, `tenant_scoped_path` for
+  filesystem/SQLite namespacing. Cross-tenant leak is a unit-test
+  fixture (tenant-A reads tenant-B → must fail). Done: 2-tenant
+  fixture asserts no resource bleed.
+- 76.5 ⬜ — Per-principal rate-limiting. Token bucket keyed on
+  `(tenant_id, tool_name)`, configurable globally + per-tool, sane
+  defaults (100 rps burst 200). Excess returns JSON-RPC error
+  `-32099` with `Retry-After`. Counter
+  `mcp_server_rate_limit_hits_total{tenant,tool}`. Done: 1 000 rps
+  load test produces clean 429s, no panic, no leaked permits.
+- 76.6 ⬜ — Backpressure + concurrency caps. Per-tenant semaphore
+  (max-in-flight), bounded queue, per-call timeout (default 30 s,
+  override per-tool), tokio `CancellationToken` propagated to
+  handlers. Done: handler that sleeps 60 s with timeout 5 s →
+  cancels, releases permit, leaves no half-state.
+- 76.7 ⬜ — Server-side notifications + streaming. Close the
+  `tools/list_changed` loop on the server (Phase 12.8 cliente-side
+  pre-existed); add `progress` notifications via
+  `ToolContext.report_progress`; `resources/updated` for live
+  resource sets. SSE delivers per-session in order; client drop
+  doesn't crash sender. Done: long-running tool emits 100 progress
+  events that arrive ordered; abrupt SSE disconnect leaves server
+  healthy.
+- 76.8 ⬜ — Durable sessions + reconnection. Server-assigned
+  session-id returned on `initialize`, replayed on reconnect to
+  restore subscriptions/cursors. Idle TTL configurable (default
+  5 min). Optional `durable_sessions: true` flag persists session
+  state to SQLite so it survives a server restart. Done: kill -HUP
+  → client reconnects, subscriptions intact.
+- 76.9 ⬜ — `McpServerBuilder` ergonomic API. Fluent registration:
+  `.tool(name, schema, handler)`, `.resource(name, lister)`,
+  `.auth(...)`, `.rate_limit(...)`, `.listen_http(addr)`. Optional
+  `#[mcp_tool]` proc-macro derives schema from typed handler.
+  Done: `examples/marketing_mcp_skeleton.rs` < 50 LOC boots a
+  full server.
+- 76.10 ⬜ — Server-side observability. Mirror `telemetry.rs`
+  client-side: `mcp_server_requests_total`,
+  `mcp_server_latency_seconds`, `mcp_server_errors_total`,
+  `mcp_server_in_flight`, `mcp_server_sessions_active`, all with
+  `tenant` label. Tracing span per-request, correlation-id
+  propagated. `GET /healthz` + `GET /readyz`. Reuses
+  `http/redact.rs` so tokens never reach logs. Done: Prometheus
+  scrape returns full metric set; logs scrubbed.
+- 76.11 ⬜ — Per-call audit log. New `McpAuditSink` trait;
+  `SqliteMcpAuditSink` writes table `mcp_call_log (tenant_id,
+  principal, tool, ts, duration_ms, status, request_hash)`,
+  idempotent on `(session_id, request_id)`, capped tail. Mirrors
+  Phase 72 (`agent_turns_tail`). New tool `mcp_audit_tail
+  tenant_id=<…> [n=20]`. Done: 100 calls → 100 rows, survives
+  daemon restart.
+- 76.12 ⬜ — Conformance + fuzz suite. New
+  `tests/mcp_server_conformance.rs` exercises spec MCP 2025-11-25
+  fixtures end-to-end through both transports; `proptest` over
+  malformed JSON-RPC frames asserts no panic, only typed errors;
+  Claude Code 2.1 cases (Phase 73+74) re-run against HTTP path;
+  multi-client smoke (50 sessions × 10 k requests) gates p99 < X.
+  Done: `cargo test -p nexo-mcp --features server-conformance`
+  green.
+- 76.13 ⬜ — TLS + reverse-proxy guidance. Optional `rustls` behind
+  feature `server-tls` for direct termination; docs recommending
+  nginx/caddy/Traefik in front for prod; mTLS recipe for
+  in-VPC nexo-core ↔ extension-mcp. Done: example nginx + caddy
+  configs in `docs/src/extensions/mcp-server.md`.
+- 76.14 ⬜ — CLI ops `nexo mcp-server`. Subcommands: `inspect <url>`
+  (lists tools/resources of any reachable server), `bench <url>
+  --tool X --rps N` (load test), `tail-audit <db>` (reads
+  `mcp_call_log`). Smoke entry in `scripts/release-check.sh`.
+  Done: subcommands present in CLI, smoke green.
+- 76.15 ⬜ — Docs + extension template. New chapter
+  `docs/src/extensions/mcp-server.md` covers transports, auth,
+  multi-tenant, rate-limit, audit, ops. New skeleton
+  `extensions/templates/mcp-server-skeleton/` (extends Phase 11.8
+  templates). Phase 12.6 (agent-as-MCP-server) migration to the
+  new HTTP path documented. Done: `mdbook build docs` clean,
+  `cargo check` on the instantiated template green.
+
+**Acceptance for the whole phase:** stdio path keeps every Phase
+73+74 test green; HTTP path passes the same conformance suite plus
+multi-tenant, rate-limit, backpressure, sessions, audit, and the
+smoke `examples/marketing_mcp_skeleton.rs` boots an authenticated
+server in under 50 LOC of plugin code. After 76.x lands the
+`nexo-marketing` extension can be built without a single change to
+`crates/mcp/`.
+
+**Critical path for the marketing extension:** 76.1 → 76.2 → 76.3
+→ 76.4 → 76.5 → 76.9. Rest hardens production but does not gate
+the first marketing MVP.
+
 ---
 
 ## Deliberately NOT roadmapped
@@ -3512,6 +3661,54 @@ keeps the door open without committing scope.
 - New work is tracked as follow-ups and hardening tasks.
 - Active backlog lives in `FOLLOWUPS.md`.
 - Architecture remains documented in `design-agent-framework.md`.
+
+### Phase 15.9 — Anthropic OAuth Claude-Code request shape   ✅
+
+**Goal:** Unblock Opus 4.x / Sonnet 4.x for users on Claude
+Pro / Max plans by mirroring the request envelope Claude Code itself
+sends. Before this phase only Haiku passed Bearer-auth; Opus / Sonnet
+failed with a 4xx that the runtime collapsed into a generic "no
+quota" error.
+
+Done criteria:
+
+- [x] `AnthropicAuth::subscription_betas() -> &'static [&'static str]`
+  returns `["claude-code-20250219", "oauth-2025-04-20",
+  "fine-grained-tool-streaming-2025-05-14"]` for Bearer variants.
+- [x] `AuthHeaders` grows `extra: Vec<(&'static str, String)>` carrying
+  `User-Agent: claude-cli/<version>`, `x-app: cli`,
+  `anthropic-dangerous-direct-browser-access: true` only on Bearer
+  paths.
+- [x] `build_body` prepends the canonical `"You are Claude Code,
+  Anthropic's official CLI for Claude."` system block at index 0 when
+  the auth variant is a subscription. Legacy string-shaped `system` is
+  promoted to a 2-element array; existing arrays get the spoof
+  inserted at position 0.
+- [x] `merge_beta_headers` accepts subscription betas, dedupes against
+  existing + cache betas, preserves first-occurrence order.
+- [x] `crates/llm/src/text_sanitize.rs::sanitize_payload_text` ports
+  OpenClaw's lone-surrogate stripper as a defensive parity guard
+  (zero-copy `Cow` on valid UTF-8).
+- [x] `classify_response` logs the truncated body via
+  `tracing::warn!(target = "anthropic", …)` before collapsing
+  generic 4xxs into `LlmError::Other` so the next "no quota" surprise
+  leaves a diagnosable reason in logs.
+- [x] `NEXO_CLAUDE_CLI_VERSION` env var overrides the User-Agent
+  version stamp without a release.
+- [x] Tests: `oauth_request_shape_prepends_claude_code_spoof`,
+  `api_key_request_shape_unchanged_no_spoof`,
+  `build_body_promotes_string_system_when_subscription`,
+  `build_body_creates_system_array_when_subscription_and_no_user_system`,
+  `merge_beta_headers_with_subscription_dedupes_oauth_beta`,
+  `subscription_betas_only_for_bearer`,
+  `setup_token_headers_bearer_with_beta` (extended for `extra`),
+  `user_agent_resolves_default_override_and_blank`.
+- [x] Docs: `docs/src/llm/anthropic.md` documents the OAuth
+  subscription request shape and `NEXO_CLAUDE_CLI_VERSION` override.
+- [x] API-key path unchanged — none of the spoof headers or the
+  system block leak into static `x-api-key` requests.
+
+Reference: `research/src/agents/anthropic-transport-stream.ts:558-641`.
 
 ## How to add a new phase
 

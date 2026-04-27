@@ -105,6 +105,41 @@ and `message_delta` events.
 | 5xx | `LlmError::ServerError` | Retried |
 | Other 4xx | `LlmError::Other` | Fail fast |
 
+## OAuth subscription request shape
+
+Anthropic gates Opus 4.x and Sonnet 4.x behind a Claude-Code identity
+claim when the request is authenticated with a Bearer token (setup
+token or OAuth bundle). Without the claim, only Haiku passes — every
+other model returns a 4xx that surfaces as a vague "no quota" error.
+
+When `AnthropicAuth::is_subscription()` is true (`SetupToken` or
+`OAuth` variants), the client adds:
+
+- Header `anthropic-beta: claude-code-20250219, oauth-2025-04-20,
+  fine-grained-tool-streaming-2025-05-14` (cache betas merged in on top).
+- Header `anthropic-dangerous-direct-browser-access: true`.
+- Header `User-Agent: claude-cli/<version>`.
+- Header `x-app: cli`.
+- A first system block whose text is exactly:
+  `You are Claude Code, Anthropic's official CLI for Claude.`
+
+The user's `system_prompt` (and any structured `system_blocks`) follow
+the spoof block, preserving the original instructions verbatim.
+
+`User-Agent` version: defaults to the value of
+`CLAUDE_CLI_DEFAULT_VERSION` in `crates/llm/src/anthropic_auth.rs`.
+Operators can override it without rebuilding by exporting:
+
+```bash
+export NEXO_CLAUDE_CLI_VERSION=2.1.99
+```
+
+The API-key path is unchanged — none of these headers or the spoof
+block are added when `AnthropicAuth::ApiKey` is in use.
+
+> Mirrors OpenClaw's `anthropic-transport-stream.ts:558-641`. Reference
+> implementation lives in `research/src/agents/`.
+
 ## Supported features
 
 - Chat completions ✅
@@ -113,6 +148,8 @@ and `message_delta` events.
 - Multimodal (images) ✅
 - Prompt caching ✅ (via Anthropic beta headers)
 - Extended thinking ✅ (model-dependent)
+- OAuth subscription (Pro / Max plans) ✅ — Opus / Sonnet require the
+  Claude-Code request shape documented above.
 
 ## Common mistakes
 
