@@ -37,18 +37,21 @@ transitive workspace dep).
 - SQLite-backed (`nexo_cron_entries` table); survives daemon
   restart.
 
-## MVP caveat — runtime firing deferred
+## Runtime firing — shipped (logging dispatcher)
 
-Entries land in SQLite but **the tokio task that polls `due_at`
-and fires LLM turns is not yet shipped**. Useful today for:
+`crates/core/src/cron_runner.rs::CronRunner` polls
+`store.due_at(now)` every 5 s and dispatches due entries
+through an `Arc<dyn CronDispatcher>`. State advance is
+**unconditional** — even when the dispatcher fails the runner
+recomputes `next_fire_at` (recurring) or deletes the entry
+(one-shot) so a single broken entry never re-fires forever.
 
-- Testing schedule shapes + cron expression parsing.
-- Populating the durable table so the firing follow-up has data
-  on day 1.
-- `cron_list` debugging / visibility.
-
-The firing layer lands as a follow-up that wires into the existing
-Phase 20 `agent_turn` poller machinery. Tracked in
+Production wiring at boot uses `LoggingCronDispatcher`, which
+emits one `[cron] fired` line per dispatch with id + binding +
+prompt-char count. Operators tail the log to verify cron fires
+are happening. The actual LLM call + outbound publish lands as
+a follow-up that swaps the dispatcher to an `LlmCronDispatcher`
+(Phase 20 `agent_turn` poller pattern). Tracked in
 `FOLLOWUPS.md::Phase 79.7`.
 
 ## Tool shapes

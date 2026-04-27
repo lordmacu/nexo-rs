@@ -3679,14 +3679,40 @@ pass through the new abstraction).
   `#[mcp_tool]` proc-macro derives schema from typed handler.
   Done: `examples/marketing_mcp_skeleton.rs` < 50 LOC boots a
   full server.
-- 76.10 ⬜ — Server-side observability. Mirror `telemetry.rs`
-  client-side: `mcp_server_requests_total`,
-  `mcp_server_latency_seconds`, `mcp_server_errors_total`,
-  `mcp_server_in_flight`, `mcp_server_sessions_active`, all with
-  `tenant` label. Tracing span per-request, correlation-id
-  propagated. `GET /healthz` + `GET /readyz`. Reuses
-  `http/redact.rs` so tokens never reach logs. Done: Prometheus
-  scrape returns full metric set; logs scrubbed.
+- 76.10 ✅ — Server-side observability + health. New module
+  `crates/mcp/src/server/telemetry.rs` (~470 LOC) emits hand-rolled
+  Prometheus text via `LazyLock<DashMap<Key, AtomicU64>>` module
+  globals (in-tree pattern from `crates/web-search/src/telemetry.rs`,
+  `crates/llm/src/telemetry.rs`). Metrics:
+  `mcp_requests_total{tenant,tool,outcome}`,
+  `mcp_request_duration_seconds{tenant,tool}` (8 buckets:
+  50/100/250/500/1k/2.5k/5k/10k ms),
+  `mcp_in_flight{tenant,tool}` (signed gauge via RAII
+  `InFlightGuard` — drops on success/error/timeout/cancel/panic),
+  `mcp_rate_limit_hits_total{tenant,tool}`,
+  `mcp_timeouts_total{tenant,tool}`,
+  `mcp_concurrency_rejections_total{tenant,tool}`,
+  `mcp_progress_notifications_total{outcome=ok|drop}`. `Outcome`
+  enum bounded set (ok/error/cancelled/timeout/rate_limited/
+  denied/panicked) — reusable by 76.11 audit. **Cardinality
+  discipline**: tool-name allowlist capped at 256 distinct names;
+  beyond → "other". Pattern ported from
+  `claude-code-leak/src/services/analytics/datadog.ts:195-217`
+  (`mcp__*` collapsed to `'mcp'`). Tenant labels bounded by
+  `TenantId::parse` (`[a-z0-9_-]{1,64}`). `DispatchContext`
+  extended with `correlation_id: Option<String>`; HTTP transport
+  extracts `X-Request-ID` (or generates UUIDv4), echoes back in
+  response, logged on every dispatch span. Client-supplied values
+  >128 chars replaced with fresh UUIDv4 (don't trust unbounded
+  headers). Render wired into the existing
+  `/metrics` aggregator at `src/main.rs:8059` alongside
+  `nexo_mcp::telemetry::render_prometheus()` (session-lifecycle).
+  11 unit tests (RAII drop on panic unwind, bucket-cumulative
+  semantics, cardinality cap, every metric family has HELP+TYPE).
+  Tests serialised via `serial_test = "3"` because module-globals
+  are shared. **Note**: `/healthz` + `/readyz` and dependency
+  caching landed as part of this phase; `/readyz` 503 vs 200 +
+  structured JSON is in `src/main.rs`.
 - 76.11 ⬜ — Per-call audit log. New `McpAuditSink` trait;
   `SqliteMcpAuditSink` writes table `mcp_call_log (tenant_id,
   principal, tool, ts, duration_ms, status, request_hash)`,
@@ -5013,7 +5039,7 @@ Done when:
     drain helper extended);
   - non-coordinator caller gets `permission_denied`.
 
-#### 79.7 — ScheduleCronTool   ✅ (MVP — runtime firing deferred)
+#### 79.7 — ScheduleCronTool   ✅ (runtime firing live; LLM-dispatcher follow-up pending)
 
 Agent-time scheduling: from inside a turn, the model can
 register a cron entry that fires a future goal. Complements

@@ -168,6 +168,16 @@ pub trait CronStore: Send + Sync {
     async fn set_paused(&self, id: &str, paused: bool) -> Result<(), CronStoreError>;
     /// Fetch a single entry by id. Returns `NotFound` when absent.
     async fn get(&self, id: &str) -> Result<CronEntry, CronStoreError>;
+    /// Advance a recurring entry after a fire: bump
+    /// `next_fire_at` to the next match and stamp
+    /// `last_fired_at`. Caller decides between this and
+    /// [`Self::delete`] based on the entry's `recurring` flag.
+    async fn advance_after_fire(
+        &self,
+        id: &str,
+        new_next_fire_at: i64,
+        last_fired_at: i64,
+    ) -> Result<(), CronStoreError>;
 }
 
 /// Apply ±`pct_pct/100` jitter to a future-fire timestamp. Used to
@@ -331,6 +341,26 @@ impl CronStore for SqliteCronStore {
             .await?
             .ok_or_else(|| CronStoreError::NotFound(id.to_string()))?;
         row_to_entry(&row)
+    }
+
+    async fn advance_after_fire(
+        &self,
+        id: &str,
+        new_next_fire_at: i64,
+        last_fired_at: i64,
+    ) -> Result<(), CronStoreError> {
+        let res = sqlx::query(
+            "UPDATE nexo_cron_entries SET next_fire_at = ?1, last_fired_at = ?2 WHERE id = ?3",
+        )
+        .bind(new_next_fire_at)
+        .bind(last_fired_at)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        if res.rows_affected() == 0 {
+            return Err(CronStoreError::NotFound(id.to_string()));
+        }
+        Ok(())
     }
 }
 

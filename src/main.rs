@@ -2602,9 +2602,50 @@ async fn main() -> Result<()> {
         tracing::warn!(error = %e, "config reload coordinator failed to start — hot-reload disabled");
     }
 
+    // Phase 79.7 runtime firing — spawn ONE cron runner per
+    // process. Polls the SQLite cron store every 5s and dispatches
+    // due entries through `LoggingCronDispatcher`. Real LLM call
+    // + outbound publish lands as a follow-up that swaps in an
+    // `LlmCronDispatcher` (Phase 20-style).
+    let cron_runner_cancel = tokio_util::sync::CancellationToken::new();
+    let cron_db_path = nexo_project_tracker::state::nexo_state_dir()
+        .join("nexo_cron.db");
+    if let Some(parent) = cron_db_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match nexo_core::cron_schedule::SqliteCronStore::open(
+        cron_db_path.to_str().unwrap_or("nexo_cron.db"),
+    )
+    .await
+    {
+        Ok(store) => {
+            let runner = std::sync::Arc::new(nexo_core::cron_runner::CronRunner::new(
+                std::sync::Arc::new(store)
+                    as std::sync::Arc<dyn nexo_core::cron_schedule::CronStore>,
+                std::sync::Arc::new(
+                    nexo_core::cron_runner::LoggingCronDispatcher,
+                ),
+            ));
+            let cancel_for_runner = cron_runner_cancel.clone();
+            tokio::spawn(async move { runner.run(cancel_for_runner).await });
+            tracing::info!(
+                path = %cron_db_path.display(),
+                "[cron] runner spawned (logging dispatcher; LLM wiring is a Phase 79.7 follow-up)"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                path = %cron_db_path.display(),
+                "[cron] runner not spawned — could not open cron store"
+            );
+        }
+    }
+
     tracing::info!("agent ready — waiting for shutdown signal (SIGTERM / Ctrl+C)");
     shutdown_signal().await;
     tracing::info!("shutdown signal received — stopping");
+    cron_runner_cancel.cancel();
 
     // Phase 71.3 — drain in-flight goals BEFORE bringing channel
     // plugins down. Walk the registry that lives inside the
