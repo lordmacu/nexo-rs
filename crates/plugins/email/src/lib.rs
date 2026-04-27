@@ -45,5 +45,7 @@ pub use provider_hint::{provider_hint, ProviderHint};
 pub use spf_dkim::{check_alignment, decide_warns, parse_spf_includes, AlignmentReport};
 pub use plugin::{EmailPlugin, TOPIC_INBOUND, TOPIC_OUTBOUND};
 pub use tool::{
-    imap_date, imap_quote, register_email_tools, run_imap_op, DispatcherHandle, EmailToolContext,
+    filter_from_allowed_patterns, imap_date, imap_quote, register_email_tools,
+    register_email_tools_filtered, run_imap_op, DispatcherHandle, EmailToolContext,
+    EMAIL_TOOL_NAMES,
 };

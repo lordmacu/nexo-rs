@@ -743,11 +743,18 @@ Open:
     `email_imap_messages_fetched_total{instance}` counter,
     `email_loop_skipped_total{reason}`,
     `email_bounces_total{instance, classification}`).
-  - **Phase 16 binding-policy auto-filter** so
-    `register_email_tools` only exposes the per-instance tool
-    surface to agents whose binding allows it. Today the runtime
-    `EffectiveBindingPolicy` check covers it; surface-level
-    filtering is cleaner.
+  - **Phase 16 binding-policy auto-filter.** ✅ Shipped 2026-04-27.
+    `register_email_tools_filtered(registry, ctx, allow)` accepts
+    an optional list of tool names to register; the no-arg
+    `register_email_tools` is preserved as the all-six wrapper.
+    `EMAIL_TOOL_NAMES` is the public canonical list.
+    `filter_from_allowed_patterns(allowed)` derives the filter
+    from `agent.allowed_tools` honouring the `*` / `email_*` /
+    empty-list "register everything" semantics. main.rs's
+    per-agent loop now passes the derived filter so
+    `allowed_tools: ["email_send", "email_search"]` only
+    registers those two handlers — instead of registering all
+    six and pruning at LLM turn time.
   - **Cross-account attachment GC.** ✅ Shipped 2026-04-27.
     `attachment_store.rs` ships `AttachmentStore` (sqlx-sqlite,
     `email_attachments` table keyed on sha256 with first_seen /

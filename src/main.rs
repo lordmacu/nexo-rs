@@ -1559,8 +1559,27 @@ async fn main() -> Result<()> {
         // send / reply / archive / move_to / label / search.
         if agent_cfg.plugins.iter().any(|p| p == "email") {
             if let Some(ctx) = email_tool_ctx.clone() {
-                nexo_plugin_email::register_email_tools(&tools, ctx);
-                tracing::info!(agent = %agent_id, "registered email_* tools for agent");
+                // Phase 48 follow-up #9 — surface-level filter. If
+                // `agent.allowed_tools` lists explicit names, only
+                // register the email handlers that actually appear.
+                // `*` / `email_*` / empty list = register all six.
+                let filter = nexo_plugin_email::filter_from_allowed_patterns(
+                    &agent_cfg.allowed_tools,
+                );
+                nexo_plugin_email::register_email_tools_filtered(
+                    &tools,
+                    ctx,
+                    filter.as_deref(),
+                );
+                let kept = filter
+                    .as_ref()
+                    .map(|f| f.len())
+                    .unwrap_or(nexo_plugin_email::EMAIL_TOOL_NAMES.len());
+                tracing::info!(
+                    agent = %agent_id,
+                    kept,
+                    "registered email_* tools for agent"
+                );
             } else {
                 tracing::warn!(
                     agent = %agent_id,
