@@ -266,6 +266,8 @@ impl AccountWorker {
                 uid: msg.uid,
                 internal_date: msg.internal_date,
                 raw_bytes: msg.raw_bytes,
+                meta: None,
+                attachments: vec![],
             };
             let topic = inbound_topic_for(&self.account_cfg.instance);
             let payload = serde_json::to_value(&event)?;

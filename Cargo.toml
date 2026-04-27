@@ -150,6 +150,12 @@ tiktoken-rs        = "0.6"
 blake3             = "1"
 async-imap         = "0.10"
 lettre             = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder"] }
+mail-parser        = "0.9"
+mail-builder       = "0.4"
+html2text          = "0.13"
+chardetng          = "0.1"
+mime_guess         = "2"
+encoding_rs        = "0.8"
 tokio-rustls       = "0.26"
 rustls             = { version = "0.23", default-features = false, features = ["std", "ring", "tls12", "logging"] }
 rustls-native-certs = "0.7"

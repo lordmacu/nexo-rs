@@ -2160,7 +2160,26 @@ Sub-phases:
   sends, then inbound, with the existing 5s budget. 40 unit tests
   green; clippy clean. Real-server e2e (greenmail) deferred to
   48.10 along with `Starttls` IMAP support.)
-- 48.5 — MIME parse/build + Attachment envelope   ⬜
+- 48.5 — MIME parse/build + Attachment envelope   🔄
+  (48.5.a foundational slice: workspace + plugin deps for
+  `mail-parser`, `mail-builder`, `html2text`, `chardetng`,
+  `mime_guess`, `encoding_rs`. `EmailPluginConfig` gains
+  `max_attachment_bytes` (default 25 MiB). `events.rs` extended
+  with `EmailMeta { message_id, in_reply_to, references, from, to,
+  cc, subject, body_text, body_html, date, headers_extra,
+  body_truncated }`, `EmailAttachment { sha256, local_path,
+  size_bytes, mime_type, filename, content_id, disposition,
+  truncated }`, `AddressEntry { address, name }`,
+  `AttachmentDisposition { Inline, Attachment }` (snake_case),
+  `OutboundAttachmentRef { data_path, filename, mime_type?,
+  content_id?, disposition }`. `InboundEvent` + `OutboundCommand`
+  carry the new fields with `#[serde(default,
+  skip_serializing_if = "...")]` so the 48.3 / 48.4 payload shape
+  remains forward-compatible — a back-compat test parses an old
+  payload and asserts `meta` is `None`. 6 new round-trip tests; 46
+  unit tests total. `mime_parse.rs` parser + `mime_build.rs`
+  multipart builder + drain_pending enrich + outbound attachment
+  read still pending.)
 - 48.6 — Threading via `Message-ID` / `In-Reply-To` / `References`   ⬜
 - 48.7 — Tools: `email_send` / `_reply` / `_archive` / `_label` / `_move_to` / `_search`   ⬜
 - 48.8 — Loop-prevention + DSN/bounce parsing   ⬜

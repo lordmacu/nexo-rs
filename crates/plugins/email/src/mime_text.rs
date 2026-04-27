@@ -103,6 +103,7 @@ mod tests {
             body: body.into(),
             in_reply_to: None,
             references: vec![],
+            attachments: vec![],
         }
     }
 

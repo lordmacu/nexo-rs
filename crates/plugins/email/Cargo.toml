@@ -27,6 +27,14 @@ sqlx         = { workspace = true }
 rand         = { workspace = true }
 async-imap   = { workspace = true }
 lettre       = { workspace = true }
+mail-parser  = { workspace = true }
+mail-builder = { workspace = true }
+html2text    = { workspace = true }
+chardetng    = { workspace = true }
+mime_guess   = { workspace = true }
+encoding_rs  = { workspace = true }
+sha2         = { workspace = true }
+hex          = { workspace = true }
 uuid         = { workspace = true }
 tokio-rustls = { workspace = true }
 rustls       = { workspace = true }
