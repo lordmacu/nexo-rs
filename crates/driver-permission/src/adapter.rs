@@ -4,14 +4,13 @@
 //! Anthropic wire shape (Claude Code 2.1+, verified by reproducing
 //! the validator's error message — `"expected record, received
 //! undefined"`):
-//! - allow:  `{ "behavior": "allow", "updatedInput": object }`
-//!           — `updatedInput` is REQUIRED. When the decider has no
-//!           override, the server must echo the caller's original
-//!           tool input. Earlier Claude builds tolerated the field
-//!           being absent; 2.1 rejects with a Zod
-//!           `invalid_union` / `invalid_type` error and the tool
-//!           call fails server-side.
-//! - deny:   `{ "behavior": "deny",  "message": string }`
+//! - allow: `{ "behavior": "allow", "updatedInput": object }` —
+//!   `updatedInput` is REQUIRED. When the decider has no override,
+//!   the server must echo the caller's original tool input. Earlier
+//!   Claude builds tolerated the field being absent; 2.1 rejects
+//!   with a Zod `invalid_union` / `invalid_type` error and the tool
+//!   call fails server-side.
+//! - deny: `{ "behavior": "deny", "message": string }`
 
 use serde_json::{json, Value};
 
