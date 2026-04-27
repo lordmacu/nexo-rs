@@ -14,6 +14,7 @@ pub mod mime_build;
 pub mod mime_parse;
 pub mod dsn;
 pub mod loop_prevent;
+pub mod metrics;
 pub mod outbound;
 pub mod outbound_queue;
 pub mod provider_hint;

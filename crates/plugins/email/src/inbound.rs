@@ -371,6 +371,11 @@ impl AccountWorker {
                         reason = "dsn_inbound",
                         "email.loop_skip"
                     );
+                    crate::metrics::inc_loop_skipped("dsn_inbound");
+                    crate::metrics::inc_bounce(
+                        &self.account_cfg.instance,
+                        bounce.classification,
+                    );
                     suppressed = true;
                 } else if let Some(reason) = crate::loop_prevent::should_skip(
                     meta_ref,
@@ -384,6 +389,7 @@ impl AccountWorker {
                         reason = %reason.metric_label(),
                         "email.loop_skip"
                     );
+                    crate::metrics::inc_loop_skipped(reason.metric_label());
                     suppressed = true;
                 }
             }
@@ -405,6 +411,7 @@ impl AccountWorker {
                     .publish(&topic, Event::new(topic.clone(), SOURCE, payload))
                     .await?;
                 self.note_message().await;
+                crate::metrics::inc_messages_fetched(&self.account_cfg.instance);
             }
             highest = uid;
             // Persist cursor each message; cheap (sqlite WAL) and

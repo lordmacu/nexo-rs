@@ -415,6 +415,7 @@ impl OutboundWorker {
                     let mut h = self.health.write().await;
                     h.outbound_sent_total = h.outbound_sent_total.saturating_add(1);
                 }
+                crate::metrics::inc_outbound_sent(&self.account_cfg.instance);
                 (AckStatus::Sent, None)
             }
             Ok(SmtpSendOutcome::Permanent { code, message }) => {
@@ -424,6 +425,7 @@ impl OutboundWorker {
                     let mut h = self.health.write().await;
                     h.outbound_failed_total = h.outbound_failed_total.saturating_add(1);
                 }
+                crate::metrics::inc_outbound_failed(&self.account_cfg.instance);
                 (AckStatus::Failed, Some(format!("smtp {code}: {message}")))
             }
             Ok(SmtpSendOutcome::Transient { code, message }) => {
@@ -433,6 +435,7 @@ impl OutboundWorker {
                     self.queue.move_to_dlq(&job).await?;
                     let mut h = self.health.write().await;
                     h.outbound_failed_total = h.outbound_failed_total.saturating_add(1);
+                    crate::metrics::inc_outbound_failed(&self.account_cfg.instance);
                     (
                         AckStatus::Failed,
                         Some(format!(
@@ -461,6 +464,7 @@ impl OutboundWorker {
                     self.queue.move_to_dlq(&job).await?;
                     let mut h = self.health.write().await;
                     h.outbound_failed_total = h.outbound_failed_total.saturating_add(1);
+                    crate::metrics::inc_outbound_failed(&self.account_cfg.instance);
                     (AckStatus::Failed, Some(format!("network: {e:#}")))
                 } else {
                     let mut updated = job.clone();
