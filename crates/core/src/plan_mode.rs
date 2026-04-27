@@ -313,6 +313,8 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
     "WebFetch",
     "ListMcpResources",
     "ReadMcpResource",
+    "list_mcp_resources",
+    "read_mcp_resource",
     "ToolSearch",
     "AskUserQuestion",
     "Sleep",

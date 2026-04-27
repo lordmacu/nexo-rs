@@ -1814,6 +1814,20 @@ async fn main() -> Result<()> {
             );
         }
 
+        // Phase 79.11 — `ListMcpResources` + `ReadMcpResource`
+        // router-shaped tools. Useful for agents talking to many MCP
+        // servers — single discovery surface instead of N×2
+        // per-server tools (which still ship via the Phase 12.5
+        // catalog). Cheap, classified `ReadOnly`, always registered.
+        tools.register(
+            nexo_core::agent::mcp_router_tool::ListMcpResourcesTool::tool_def(),
+            nexo_core::agent::mcp_router_tool::ListMcpResourcesTool,
+        );
+        tools.register(
+            nexo_core::agent::mcp_router_tool::ReadMcpResourceTool::tool_def(),
+            nexo_core::agent::mcp_router_tool::ReadMcpResourceTool,
+        );
+
         // Phase 79.7 — cron schedule store + 5 tools (cron_create,
         // cron_list, cron_delete, cron_pause, cron_resume). Lives in
         // `$NEXO_HOME/state/nexo_cron.db` so entries persist across

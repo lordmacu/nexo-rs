@@ -5277,7 +5277,7 @@ Done when:
   `crates/setup` exports zero entry points until the
   feature is on.
 
-#### 79.11 — McpAuth + ListMcpResources + ReadMcpResource   ⬜
+#### 79.11 — McpAuth + ListMcpResources + ReadMcpResource   ✅ (MVP — McpAuth deferred, trait lacks refresh hook)
 
 Three tools that expose the MCP resource surface to the
 LLM. Today (Phase 12.5) MCP resources are accessible via
