@@ -512,11 +512,14 @@ async fn main() -> Result<()> {
     // `agent --check-config --strict` to gate PRs.
     let google_auth =
         nexo_auth::load_google_auth(&config_dir).context("failed to load google-auth.yaml")?;
+    let secrets_dir = secrets_dir_for(&config_dir);
     let credentials = match nexo_auth::build_credentials(
         &cfg.agents.agents,
         &cfg.plugins.whatsapp,
         &cfg.plugins.telegram,
         &google_auth,
+        cfg.plugins.email.as_ref(),
+        &secrets_dir,
         nexo_auth::StrictLevel::Lenient,
     ) {
         Ok(bundle) => {
@@ -2966,6 +2969,19 @@ async fn boot_dispatch_ctx_if_enabled(
                 as Arc<dyn nexo_dispatch_tools::DispatchPhaseChainer>),
         },
     ))
+}
+
+/// Resolve the secrets directory for credential loaders. Convention is
+/// `<config_dir>/../secrets`; override with `NEXO_SECRETS_DIR` for
+/// Docker (`/run/secrets`) or non-standard layouts.
+fn secrets_dir_for(config_dir: &std::path::Path) -> std::path::PathBuf {
+    if let Ok(env) = std::env::var("NEXO_SECRETS_DIR") {
+        return std::path::PathBuf::from(env);
+    }
+    config_dir
+        .parent()
+        .map(|p| p.join("secrets"))
+        .unwrap_or_else(|| std::path::PathBuf::from("secrets"))
 }
 
 fn build_mcp_sampling_provider(
@@ -7381,6 +7397,7 @@ async fn handle_admin_conn(
         match credentials.as_deref() {
             Some(bundle) => match nexo_auth::wire::reload_resolver(
                 &config_dir,
+                &secrets_dir_for(&config_dir),
                 bundle,
                 nexo_auth::StrictLevel::Lenient,
             ) {
@@ -7956,6 +7973,8 @@ fn run_check_config(config_dir: &std::path::Path, strict: bool) -> Result<()> {
         &cfg.plugins.whatsapp,
         &cfg.plugins.telegram,
         &google,
+        cfg.plugins.email.as_ref(),
+        &secrets_dir_for(config_dir),
         level,
     );
     let code = nexo_auth::print_report(&result);

@@ -24,6 +24,9 @@ sha2       = { workspace = true }
 hex        = { workspace = true }
 tokio      = { workspace = true }
 arc-swap   = { workspace = true }
+secrecy    = "0.8"
+toml       = "0.8"
+base64     = { workspace = true }
 nexo-config = { version = "0.1.1", path = "../config" }
 nexo-resilience = { version = "0.1.1", path = "../resilience" }
 

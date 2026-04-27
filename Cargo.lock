@@ -2323,10 +2323,12 @@ version = "0.1.1"
 dependencies = [
  "anyhow",
  "arc-swap",
+ "base64 0.22.1",
  "dashmap",
  "hex",
  "nexo-config",
  "nexo-resilience",
+ "secrecy",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -2334,6 +2336,7 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "toml",
  "tracing",
  "tracing-subscriber",
 ]
@@ -4247,6 +4250,15 @@ name = "sdd"
 version = "3.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "490dcfcbfef26be6800d11870ff2df8774fa6e86d047e3e8c8a76b25655e41ca"
+
+[[package]]
+name = "secrecy"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9bd1c54ea06cfd2f6b63219704de0b9b4f72dcc2b8fdef820be6cd799780e91e"
+dependencies = [
+ "zeroize",
+]
 
 [[package]]
 name = "security-framework"

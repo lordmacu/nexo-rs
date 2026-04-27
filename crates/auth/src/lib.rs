@@ -9,6 +9,7 @@
 
 pub mod audit;
 pub mod breaker;
+pub mod email;
 pub mod error;
 pub mod gauntlet;
 pub mod google;
@@ -27,3 +28,7 @@ pub use error::{BuildError, CredentialError, ResolveError};
 pub use handle::{AgentId, Channel, CredentialHandle, Fingerprint};
 pub use resolver::{AgentCredentialResolver, AgentCredentialsInput, CredentialStores, StrictLevel};
 pub use store::{CredentialStore, ValidationReport};
+
+pub use email::{
+    load_email_secrets, EmailAccount, EmailAuth, EmailCredentialStore,
+};

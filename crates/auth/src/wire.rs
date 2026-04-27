@@ -13,7 +13,9 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use nexo_config::types::agents::AgentConfig;
 use nexo_config::types::credentials::{GoogleAccountConfig, GoogleAuthConfig, GoogleAuthFile};
-use nexo_config::types::plugins::{TelegramPluginConfig, WhatsappPluginConfig};
+use nexo_config::types::plugins::{
+    EmailPluginConfig, TelegramPluginConfig, WhatsappPluginConfig,
+};
 
 use crate::error::BuildError;
 use crate::gauntlet::{
@@ -25,6 +27,7 @@ use crate::handle::{Channel, GOOGLE, TELEGRAM, WHATSAPP};
 use crate::resolver::{
     AgentCredentialResolver, AgentCredentialsInput, CredentialStores, StrictLevel,
 };
+use crate::email::{load_email_secrets, EmailAccount, EmailCredentialStore};
 use crate::store::CredentialStore;
 use crate::telegram::{TelegramAccount, TelegramCredentialStore};
 use crate::whatsapp::{WhatsappAccount, WhatsappCredentialStore};
@@ -47,6 +50,7 @@ impl std::fmt::Debug for CredentialsBundle {
             .field("whatsapp_instances", &self.stores.whatsapp.list().len())
             .field("telegram_instances", &self.stores.telegram.list().len())
             .field("google_accounts", &self.stores.google.list().len())
+            .field("email_accounts", &self.stores.email.list().len())
             .field("resolver_version", &self.resolver.version())
             .field("warnings", &self.warnings.len())
             .finish()
@@ -77,6 +81,8 @@ pub fn build_credentials(
     whatsapp: &[WhatsappPluginConfig],
     telegram: &[TelegramPluginConfig],
     google: &GoogleAuthConfig,
+    email: Option<&EmailPluginConfig>,
+    secrets_dir: &Path,
     strict: StrictLevel,
 ) -> Result<CredentialsBundle, Vec<BuildError>> {
     let mut errors: Vec<BuildError> = Vec::new();
@@ -203,24 +209,82 @@ pub fn build_credentials(
         });
     }
 
+    // ── Email accounts: load secrets/email/<inst>.toml for every
+    //    declared instance. Missing files / malformed TOML accumulate
+    //    into `errors` like every other gauntlet branch.
+    let (email_accounts, email_warnings, email_errors) = match email {
+        Some(cfg) => {
+            let declared: Vec<(String, String)> = cfg
+                .accounts
+                .iter()
+                .map(|a| (a.instance.clone(), a.address.clone()))
+                .collect();
+            load_email_secrets(secrets_dir, &declared)
+        }
+        None => (Vec::<EmailAccount>::new(), Vec::new(), Vec::new()),
+    };
+    errors.extend(email_errors);
+
+    // Cross-store check: every `OAuth2Google` email account must point
+    // at an existing google_account_id. Strict in both modes — a typo
+    // here would silently fall through to a runtime NotFound.
+    if let Some(cfg) = email {
+        let google_ids: std::collections::HashSet<&str> =
+            goog_accounts.iter().map(|a| a.id.as_str()).collect();
+        for acct in &email_accounts {
+            if let crate::email::EmailAuth::OAuth2Google {
+                google_account_id, ..
+            } = &acct.auth
+            {
+                if !google_ids.contains(google_account_id.as_str()) {
+                    errors.push(BuildError::Credential {
+                        channel: crate::handle::EMAIL,
+                        instance: acct.instance.clone(),
+                        source: crate::error::CredentialError::OrphanedGoogleRef {
+                            account: acct.instance.clone(),
+                            google_account_id: google_account_id.clone(),
+                        },
+                    });
+                }
+            }
+        }
+        // Permission check on TOML files (mode 0o600).
+        let mut email_perm_paths: Vec<(Channel, String, std::path::PathBuf)> = Vec::new();
+        for acct in &cfg.accounts {
+            let p = secrets_dir
+                .join("email")
+                .join(format!("{}.toml", acct.instance));
+            if p.exists() {
+                email_perm_paths.push((crate::handle::EMAIL, acct.instance.clone(), p));
+            }
+        }
+        let email_perm_errs = check_permissions(&email_perm_paths);
+        errors.extend(email_perm_errs);
+    }
+
     let stores = CredentialStores {
         whatsapp: Arc::new(WhatsappCredentialStore::new(wa_accounts.clone())),
         telegram: Arc::new(TelegramCredentialStore::new(tg_accounts.clone())),
         google: Arc::new(GoogleCredentialStore::new(goog_accounts.clone())),
+        email: Arc::new(EmailCredentialStore::new(email_accounts.clone())),
     };
 
     // Per-store self-check (missing scopes / empty token etc).
     let wa_report = stores.whatsapp.validate();
     let tg_report = stores.telegram.validate();
     let g_report = stores.google.validate();
+    let e_report = stores.email.validate();
     errors.extend(wa_report.errors);
     errors.extend(tg_report.errors);
     errors.extend(g_report.errors);
+    errors.extend(e_report.errors);
     let mut warnings: Vec<String> = wa_report
         .warnings
         .into_iter()
         .chain(tg_report.warnings)
         .chain(g_report.warnings)
+        .chain(e_report.warnings)
+        .chain(email_warnings)
         .chain(legacy_warnings)
         .collect();
 
@@ -228,6 +292,7 @@ pub fn build_credentials(
     crate::telemetry::set_accounts_total(WHATSAPP, wa_accounts.len() as u64);
     crate::telemetry::set_accounts_total(TELEGRAM, tg_accounts.len() as u64);
     crate::telemetry::set_accounts_total(GOOGLE, goog_accounts.len() as u64);
+    crate::telemetry::set_accounts_total(crate::handle::EMAIL, email_accounts.len() as u64);
 
     // ── 3. Build resolver inputs from agent configs ──
     let inputs: Vec<AgentCredentialsInput> = agents.iter().map(agent_to_input).collect();
@@ -256,7 +321,7 @@ pub fn build_credentials(
             warnings.extend(resolver.warnings().iter().cloned());
             // Export 0/1 binding gauge for dashboards.
             for agent in agents {
-                for channel in [WHATSAPP, TELEGRAM, GOOGLE] {
+                for channel in [WHATSAPP, TELEGRAM, GOOGLE, crate::handle::EMAIL] {
                     let bound = resolver.resolve(&agent.id, channel).is_ok();
                     crate::telemetry::set_binding(channel, &agent.id, bound);
                 }
@@ -336,6 +401,7 @@ fn agent_to_input(agent: &AgentConfig) -> AgentCredentialsInput {
 /// warnings the rebuild surfaced.
 pub fn reload_resolver(
     config_dir: &Path,
+    secrets_dir: &Path,
     bundle: &CredentialsBundle,
     strict: StrictLevel,
 ) -> Result<ReloadOutcome, Vec<BuildError>> {
@@ -375,6 +441,8 @@ pub fn reload_resolver(
         &cfg.plugins.whatsapp,
         &cfg.plugins.telegram,
         &google,
+        cfg.plugins.email.as_ref(),
+        secrets_dir,
         strict,
     )?;
 
@@ -392,6 +460,7 @@ pub fn reload_resolver(
         accounts_wa: fresh.stores.whatsapp.list().len(),
         accounts_tg: fresh.stores.telegram.list().len(),
         accounts_google: fresh.stores.google.list().len(),
+        accounts_email: fresh.stores.email.list().len(),
         warnings: fresh.warnings,
         version: bundle.resolver.version(),
     })
@@ -402,6 +471,7 @@ pub struct ReloadOutcome {
     pub accounts_wa: usize,
     pub accounts_tg: usize,
     pub accounts_google: usize,
+    pub accounts_email: usize,
     pub warnings: Vec<String>,
     pub version: u64,
 }
@@ -519,6 +589,8 @@ mod tests {
             &wa,
             &[],
             &GoogleAuthConfig::default(),
+            None,
+            std::path::Path::new("/nonexistent"),
             StrictLevel::Strict,
         )
         .unwrap();
@@ -537,6 +609,8 @@ mod tests {
             &wa,
             &[],
             &GoogleAuthConfig::default(),
+            None,
+            std::path::Path::new("/nonexistent"),
             StrictLevel::Lenient,
         )
         .unwrap_err();
@@ -560,6 +634,8 @@ mod tests {
             &wa,
             &[],
             &GoogleAuthConfig::default(),
+            None,
+            std::path::Path::new("/nonexistent"),
             StrictLevel::Lenient,
         )
         .unwrap_err();

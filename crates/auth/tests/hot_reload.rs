@@ -42,6 +42,7 @@ fn rebuild_swaps_bindings_in_place() {
         ])),
         telegram: Arc::new(TelegramCredentialStore::empty()),
         google: Arc::new(nexo_auth::google::GoogleCredentialStore::empty()),
+        email: Arc::new(nexo_auth::email::EmailCredentialStore::empty()),
     };
 
     let resolver = Arc::new(
@@ -82,6 +83,7 @@ fn rebuild_failure_leaves_old_state_intact() {
         whatsapp: Arc::new(WhatsappCredentialStore::new(vec![wa("personal", &["ana"])])),
         telegram: Arc::new(TelegramCredentialStore::empty()),
         google: Arc::new(nexo_auth::google::GoogleCredentialStore::empty()),
+        email: Arc::new(nexo_auth::email::EmailCredentialStore::empty()),
     };
     let resolver =
         AgentCredentialResolver::build(&[input("ana", "personal")], &stores, StrictLevel::Strict)
@@ -110,6 +112,7 @@ fn handles_issued_before_reload_keep_working() {
         whatsapp: Arc::new(WhatsappCredentialStore::new(vec![wa("personal", &["ana"])])),
         telegram: Arc::new(TelegramCredentialStore::empty()),
         google: Arc::new(nexo_auth::google::GoogleCredentialStore::empty()),
+        email: Arc::new(nexo_auth::email::EmailCredentialStore::empty()),
     };
     let resolver =
         AgentCredentialResolver::build(&[input("ana", "personal")], &stores, StrictLevel::Strict)

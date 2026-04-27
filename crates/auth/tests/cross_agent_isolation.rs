@@ -55,6 +55,7 @@ fn stores_of(
         whatsapp: Arc::new(WhatsappCredentialStore::new(wa_accounts)),
         telegram: Arc::new(TelegramCredentialStore::new(tg_accounts)),
         google: Arc::new(nexo_auth::google::GoogleCredentialStore::empty()),
+        email: Arc::new(nexo_auth::email::EmailCredentialStore::empty()),
     }
 }
 
