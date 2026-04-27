@@ -42,13 +42,19 @@ fn default_true() -> bool {
 }
 
 impl AcceptanceCriterion {
-    /// Build a default `ShellCommand` (exit 0, no stdout match, 5 min).
+    /// Build a default `ShellCommand` (exit 0, no stdout match,
+    /// timeout deferred to the evaluator's `default_shell_timeout`).
+    /// Setting `timeout_secs: 0` opts into the evaluator default
+    /// instead of pinning a per-criterion cap, so a config bump
+    /// (`acceptance.default_shell_timeout: 30m`) actually changes
+    /// the limit for goals built via `program_phase`. Callers that
+    /// want a hard cap can construct `ShellCommand` directly.
     pub fn shell(command: impl Into<String>) -> Self {
         Self::ShellCommand {
             command: command.into(),
             expected_exit: None,
             stdout_must_match: None,
-            timeout_secs: default_shell_timeout(),
+            timeout_secs: 0,
         }
     }
 
@@ -98,7 +104,7 @@ mod tests {
                 assert_eq!(command, "cargo build");
                 assert_eq!(expected_exit, None);
                 assert_eq!(stdout_must_match, None);
-                assert_eq!(timeout_secs, 300);
+                assert_eq!(timeout_secs, 0);
             }
             other => panic!("expected ShellCommand, got {other:?}"),
         }

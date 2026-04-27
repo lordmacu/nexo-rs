@@ -192,6 +192,25 @@ pub fn build_goal_prompt(
     body: Option<&str>,
     acceptance: &[AcceptanceCriterion],
 ) -> String {
+    build_goal_prompt_with_followups(phase_id, title, body, acceptance, &[])
+}
+
+/// Same as [`build_goal_prompt`] but injects a "## Related
+/// FOLLOWUPS" section between the sub-phase body and the
+/// acceptance block. Use this when the sub-phase body references
+/// `PR-N` codes — without the referenced FOLLOWUPS content the
+/// LLM has no spec to implement against and routinely claims the
+/// goal "done" at turn 0 (see Phase 78 incident: 26.z body was
+/// "Tracks PR-3 in FOLLOWUPS.md … Blocked on …" → Claude wrote
+/// nothing). Each follow-up is rendered as `### {code} — {title}`
+/// followed by its body verbatim.
+pub fn build_goal_prompt_with_followups(
+    phase_id: &str,
+    title: &str,
+    body: Option<&str>,
+    acceptance: &[AcceptanceCriterion],
+    followups: &[(&str, &str, &str)],
+) -> String {
     use std::fmt::Write as _;
     let mut p = String::new();
     let _ = writeln!(p, "# Goal");
@@ -209,6 +228,23 @@ pub fn build_goal_prompt(
     if let Some(b) = body.map(|s| s.trim()).filter(|s| !s.is_empty()) {
         let _ = writeln!(p, "{b}");
         let _ = writeln!(p);
+    }
+    if !followups.is_empty() {
+        let _ = writeln!(p, "## Related FOLLOWUPS spec");
+        let _ = writeln!(p);
+        let _ = writeln!(
+            p,
+            "The sub-phase body references the items below. Read \
+             each one before deciding what code to write — they \
+             carry the concrete acceptance for the work."
+        );
+        let _ = writeln!(p);
+        for (code, fu_title, fu_body) in followups {
+            let _ = writeln!(p, "### {code} — {fu_title}");
+            let _ = writeln!(p);
+            let _ = writeln!(p, "{}", fu_body.trim());
+            let _ = writeln!(p);
+        }
     }
     let _ = writeln!(p, "## Acceptance");
     let _ = writeln!(p);
@@ -268,6 +304,64 @@ pub fn build_goal_prompt(
          go in `FOLLOWUPS.md`, not in this commit."
     );
     p
+}
+
+/// Scan `body` for `PR-N` codes and return the matching follow-ups
+/// from the tracker, preserving the order each code first appears
+/// in the body. Silent fallback to `[]` on any tracker error — the
+/// FOLLOWUPS appendix is best-effort, the prompt should still go
+/// out without it.
+async fn collect_referenced_followups(
+    body: Option<&str>,
+    tracker: &dyn ProjectTracker,
+) -> Vec<nexo_project_tracker::FollowUp> {
+    let Some(body) = body else { return vec![] };
+    let codes = extract_pr_codes(body);
+    if codes.is_empty() {
+        return vec![];
+    }
+    let all = match tracker.followups().await {
+        Ok(v) => v,
+        Err(_) => return vec![],
+    };
+    let mut out = Vec::with_capacity(codes.len());
+    for code in &codes {
+        if let Some(fu) = all.iter().find(|f| f.code.eq_ignore_ascii_case(code)) {
+            if !out.iter().any(|f: &nexo_project_tracker::FollowUp| {
+                f.code.eq_ignore_ascii_case(code)
+            }) {
+                out.push(fu.clone());
+            }
+        }
+    }
+    out
+}
+
+fn extract_pr_codes(body: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let bytes = body.as_bytes();
+    let mut i = 0;
+    while i + 3 <= bytes.len() {
+        if (bytes[i] == b'P' || bytes[i] == b'p')
+            && (bytes[i + 1] == b'R' || bytes[i + 1] == b'r')
+            && bytes[i + 2] == b'-'
+        {
+            let mut j = i + 3;
+            while j < bytes.len() && bytes[j].is_ascii_digit() {
+                j += 1;
+            }
+            if j > i + 3 {
+                let prev_alphanum = i > 0 && bytes[i - 1].is_ascii_alphanumeric();
+                if !prev_alphanum {
+                    out.push(format!("PR-{}", &body[i + 3..j]));
+                }
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
 }
 
 /// Dispatch implementation, decoupled from the `ToolHandler` trait
@@ -353,11 +447,22 @@ pub async fn program_phase_dispatch(
     // that mirrors the operator's mental model so Claude does not
     // declare done until the build / tests it sees here actually
     // pass.
-    let description = build_goal_prompt(
+    //
+    // Phase 78.3 — when the body cross-references `PR-N` items
+    // tracked in FOLLOWUPS.md, splice the referenced entries into
+    // the prompt verbatim. Without this Claude only sees the
+    // pointer ("Tracks PR-3") and has no spec to implement.
+    let referenced = collect_referenced_followups(sub.body.as_deref(), tracker).await;
+    let referenced_view: Vec<(&str, &str, &str)> = referenced
+        .iter()
+        .map(|f| (f.code.as_str(), f.title.as_str(), f.body.as_str()))
+        .collect();
+    let description = build_goal_prompt_with_followups(
         &input.phase_id,
         &sub.title,
         sub.body.as_deref(),
         &acceptance,
+        &referenced_view,
     );
 
     // B1 — stamp origin + dispatcher into goal.metadata so
