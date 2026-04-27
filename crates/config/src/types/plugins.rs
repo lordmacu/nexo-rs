@@ -492,6 +492,12 @@ pub struct EmailPluginConfig {
     pub max_body_bytes: usize,
     #[serde(default = "default_max_attachment_bytes")]
     pub max_attachment_bytes: usize,
+    /// Phase 48 follow-up #10. Days to keep an attachment file under
+    /// `attachments_dir` after the most recent message that
+    /// referenced it. `0` disables GC entirely (legacy behaviour —
+    /// attachments accumulate forever). Default 90.
+    #[serde(default = "default_attachment_retention_days")]
+    pub attachment_retention_days: u64,
     #[serde(default = "default_attachments_dir")]
     pub attachments_dir: String,
     #[serde(default = "default_outbound_queue_dir")]
@@ -627,6 +633,9 @@ fn default_max_body_bytes() -> usize {
 }
 fn default_max_attachment_bytes() -> usize {
     25 * 1024 * 1024
+}
+fn default_attachment_retention_days() -> u64 {
+    90
 }
 fn default_attachments_dir() -> String {
     "data/email-attachments".to_string()

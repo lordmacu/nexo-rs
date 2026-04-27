@@ -10,6 +10,7 @@ use nexo_core::agent::plugin::{Command, Plugin, Response};
 use tokio::sync::{Mutex, OnceCell};
 use tracing::info;
 
+use crate::attachment_store::AttachmentStore;
 use crate::bounce_store::BounceStore;
 use crate::cursor::CursorStore;
 use crate::inbound::{HealthMap, InboundManager};
@@ -48,6 +49,8 @@ pub struct EmailPlugin {
     outbound: Mutex<Option<OutboundDispatcher>>,
     cursor: OnceCell<Arc<CursorStore>>,
     bounce: OnceCell<Arc<BounceStore>>,
+    attachments: OnceCell<Arc<AttachmentStore>>,
+    gc_cancel: OnceCell<tokio_util::sync::CancellationToken>,
 }
 
 impl EmailPlugin {
@@ -69,6 +72,34 @@ impl EmailPlugin {
             outbound: Mutex::new(None),
             cursor: OnceCell::new(),
             bounce: OnceCell::new(),
+            attachments: OnceCell::new(),
+            gc_cancel: OnceCell::new(),
+        }
+    }
+
+    /// Lazily-opened attachment ref store. Failures degrade — a
+    /// missing store just means GC doesn't run; attachments still
+    /// land on disk.
+    async fn attachment_store(&self) -> Option<Arc<AttachmentStore>> {
+        if let Some(s) = self.attachments.get() {
+            return Some(s.clone());
+        }
+        let path = self.data_dir.join("email").join("attachments.db");
+        match AttachmentStore::open_path(&path).await {
+            Ok(store) => {
+                let arc = Arc::new(store);
+                let _ = self.attachments.set(arc.clone());
+                Some(arc)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "plugin.email",
+                    path = %path.display(),
+                    error = %e,
+                    "attachment store unavailable — GC disabled this run"
+                );
+                None
+            }
         }
     }
 
@@ -165,6 +196,7 @@ impl Plugin for EmailPlugin {
         }
         let cursor = self.cursor_store().await?;
         let bounce = self.bounce_store().await;
+        let attachments = self.attachment_store().await;
         let manager = InboundManager::start(
             &self.cfg,
             self.creds.clone(),
@@ -172,7 +204,47 @@ impl Plugin for EmailPlugin {
             cursor,
             broker.clone(),
             bounce,
+            attachments.clone(),
         );
+
+        // Phase 48 follow-up #10 — daily attachment GC. Kicks off
+        // when retention > 0; otherwise the operator opted into
+        // unbounded storage. The cancel token lives in `gc_cancel`
+        // so `stop()` shuts it down cleanly.
+        if self.cfg.attachment_retention_days > 0 {
+            if let Some(store) = attachments {
+                let cancel = tokio_util::sync::CancellationToken::new();
+                let _ = self.gc_cancel.set(cancel.clone());
+                let attachments_dir = self.data_dir.join(&self.cfg.attachments_dir);
+                let retention_secs =
+                    (self.cfg.attachment_retention_days as i64).saturating_mul(86_400);
+                tokio::spawn(async move {
+                    // Run an initial sweep then daily.
+                    let mut interval =
+                        tokio::time::interval(std::time::Duration::from_secs(86_400));
+                    loop {
+                        tokio::select! {
+                            _ = cancel.cancelled() => return,
+                            _ = interval.tick() => {
+                                match store.gc(&attachments_dir, retention_secs).await {
+                                    Ok(n) if n > 0 => tracing::info!(
+                                        target: "plugin.email",
+                                        files_removed = n,
+                                        "attachment GC swept stale files"
+                                    ),
+                                    Ok(_) => {}
+                                    Err(e) => tracing::warn!(
+                                        target: "plugin.email",
+                                        error = %e,
+                                        "attachment GC failed (will retry tomorrow)"
+                                    ),
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        }
         let health = manager.health_map();
         *self.inbound.lock().await = Some(manager);
 
@@ -253,6 +325,9 @@ impl Plugin for EmailPlugin {
     }
 
     async fn stop(&self) -> anyhow::Result<()> {
+        if let Some(cancel) = self.gc_cancel.get() {
+            cancel.cancel();
+        }
         if let Some(dispatcher) = self.outbound.lock().await.take() {
             dispatcher.stop().await;
         }
