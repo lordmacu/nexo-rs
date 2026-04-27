@@ -1,9 +1,20 @@
-# Phase 27.1 — cargo-dist baseline.
+# Phase 27.1 + 27.2 — cargo-dist baseline + GH Actions release workflow.
 #
-# Produces release tarballs of the `nexo` bin for the targets below
-# whenever `dist build --tag nexo-rs-v<version>` runs locally, and
-# (post Phase 27.2) whenever the GH release workflow fires on a tag
-# push. Keeps release-plz as the source of truth for version bumps +
+# Produces release tarballs of the `nexo` bin for the 2 musl Linux
+# targets below whenever `dist build --tag nexo-rs-v<version>` runs
+# locally, and whenever the GH release workflow at
+# `.github/workflows/release.yml` (Phase 27.2) fires on a tag push.
+# Termux ships separately as a `.deb` produced by
+# `packaging/termux/build.sh` (cross-compiled to aarch64-linux-android,
+# bionic libc — incompatible with musl); the workflow runs that script
+# in its own job and uploads the `.deb` to the same GH release.
+#
+# Apple targets (`x86_64`/`aarch64-apple-darwin`) and Windows
+# (`x86_64-pc-windows-msvc`) are deliberately NOT shipped — see the
+# Phase 27.2 spec. Re-enabling: add the targets back here, restore
+# matrix entries in `release.yml`, and revive `packaging/homebrew/`.
+#
+# Keeps release-plz as the source of truth for version bumps +
 # crates.io publish + per-crate CHANGELOG; cargo-dist only owns the
 # binary side.
 #
@@ -18,34 +29,22 @@ members = ["cargo:."]
 # together with `dist init --yes`.
 cargo-dist-version = "0.31.0"
 
-# Phase 27.2 will switch this to "github" once the release workflow
-# lands. Leaving as "github" today is a no-op locally — only matters
-# when `dist generate` writes the workflow file.
+# `dist generate` consults this when emitting the GH workflow. Today
+# our hand-rolled `release.yml` (Phase 27.2) is the canonical workflow;
+# `dist generate` is used as a sanity check during config bumps.
 ci = "github"
 
-# `curl | sh` (Linux/macOS) and PowerShell (Windows) installers.
-# Homebrew + npm + msi installers explicitly NOT enabled — Phase 27.6
-# already maintains a hand-written formula and the others don't fit
-# the Rust binary distribution model.
-installers = ["shell", "powershell"]
+# `curl | sh` installer only. PowerShell / Homebrew / npm / msi
+# installers DROPPED with the Apple/Windows targets — re-add when
+# those targets are revived.
+installers = ["shell"]
 
-# Target matrix. The first entry (`x86_64-unknown-linux-gnu`) is
-# kept so `make dist-check` runs end-to-end on a stock developer
-# Linux box without zig / cargo-zigbuild / Apple-SDK / MSVC. Phase
-# 27.2 CI runners use the full musl/darwin/msvc matrix below; locally
-# whichever toolchains are missing simply produce no tarball and the
-# `release-check.sh` smoke gate emits a WARN line instead of failing.
-#
-# musl static (linux/x86_64, linux/aarch64) is the shippable Linux
-# distribution form — glibc gnu is here only as a local fallback and
-# should NOT be advertised on the install page.
+# 2-target shippable matrix. Both linked statically against musl via
+# `cargo-zigbuild`. Termux (`aarch64-linux-android`, bionic) is built
+# OUTSIDE cargo-dist by `packaging/termux/build.sh`.
 targets = [
-    "x86_64-unknown-linux-gnu",
-    "aarch64-apple-darwin",
-    "aarch64-unknown-linux-musl",
-    "x86_64-apple-darwin",
     "x86_64-unknown-linux-musl",
-    "x86_64-pc-windows-msvc",
+    "aarch64-unknown-linux-musl",
 ]
 
 # Each crate that opted in via `[package.metadata.dist] dist = true`

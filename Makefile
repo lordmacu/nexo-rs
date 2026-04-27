@@ -106,11 +106,12 @@ setup-google-docker:
 # Phase 27.2 enforces the full matrix.
 NEXO_VERSION := $(shell grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
 
-# Default to the host triple so `make dist-build` finishes on a stock
-# developer Linux box (no zig / cargo-zigbuild / Apple-SDK / MSVC).
-# CI in Phase 27.2 sweeps the full musl/darwin/msvc matrix by passing
-# explicit --target flags from the workflow.
-HOST_TARGET ?= $(shell rustc -vV | sed -n 's|host: ||p')
+# Default to the canonical shippable Linux target. Local dev needs
+# zig 0.13.0 + cargo-zigbuild 0.22.3 installed — see packaging/README.md.
+# CI in Phase 27.2 (`.github/workflows/release.yml`) builds both
+# musl variants + the Termux .deb on tag push. Override locally with
+# `HOST_TARGET=aarch64-unknown-linux-musl make dist-check` if needed.
+HOST_TARGET ?= x86_64-unknown-linux-musl
 
 dist-build:
 	@command -v dist >/dev/null 2>&1 || { \

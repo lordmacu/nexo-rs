@@ -157,5 +157,11 @@ else
 fi
 
 echo "==> built $OUT ($(du -h "$OUT" | cut -f1))"
+
+# Phase 27.2 — emit a sha256 sidecar so `gh release upload` (and
+# `scripts/release-check.sh`) can verify integrity end-to-end.
+( cd "$DIST_DIR" && sha256sum "$DEB_NAME" > "${DEB_NAME}.sha256" )
+echo "==> wrote $OUT.sha256"
+
 echo "==> install on Termux with:"
 echo "      pkg install ./nexo-rs_${VERSION}_${ARCH}.deb"

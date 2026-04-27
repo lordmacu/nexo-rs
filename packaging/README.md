@@ -4,62 +4,61 @@ This directory holds the release-time recipes that turn a tagged
 commit into installable artifacts. Each subdirectory targets a
 distribution channel:
 
-| Subdir | Channel | Phase |
-| ------ | ------- | ----- |
-| `debian/` | `apt install nexo-rs` (.deb) | 27.4 |
-| `rpm/`    | `dnf install nexo-rs` (.rpm) | 27.4 |
-| `homebrew/` | `brew install nexo-rs` formula | 27.6 |
-| `termux/` | `pkg install nexo-rs` (.deb under Termux `$PREFIX`) | 27.8 |
+| Subdir      | Channel                                                    | Phase |
+| ----------- | ---------------------------------------------------------- | ----- |
+| `debian/`   | `apt install nexo-rs` (.deb)                               | 27.4  |
+| `rpm/`      | `dnf install nexo-rs` (.rpm)                               | 27.4  |
+| `termux/`   | `pkg install nexo-rs` (.deb under Termux `$PREFIX`)        | 27.8  |
+| `homebrew/` | `brew install nexo-rs` formula — **PARKED** (Phase 27.2 spec) | 27.6  |
 
-The cross-target binary tarballs that feed those channels are produced
-by [`cargo-dist`](https://opensource.axo.dev/cargo-dist/) — config
-lives in [`dist-workspace.toml`](../dist-workspace.toml). This file
-documents how to rebuild them locally.
+Phase 27.2 reduced the supported binary matrix to **Linux + Termux**.
+Apple (`x86_64`/`aarch64-apple-darwin`) and Windows
+(`x86_64-pc-windows-msvc`) targets are deliberately not shipped today.
+Reviving them: add the targets back to
+[`dist-workspace.toml`](../dist-workspace.toml), restore the matrix
+entries in [`.github/workflows/release.yml`](../.github/workflows/release.yml),
+and revive `packaging/homebrew/`.
+
+The cross-target binary tarballs are produced by
+[`cargo-dist`](https://opensource.axo.dev/cargo-dist/) — config lives
+in [`dist-workspace.toml`](../dist-workspace.toml). The Termux `.deb`
+is produced by [`packaging/termux/build.sh`](./termux/build.sh) and
+runs alongside cargo-dist as a separate job in the release workflow.
 
 ## Building release artifacts locally
 
-The full Phase 27 matrix is:
+The Phase 27.2 shippable matrix:
 
-- `x86_64-unknown-linux-gnu` — local-host fallback (always builds)
-- `x86_64-unknown-linux-musl` — shippable Linux glibc-free build
-- `aarch64-unknown-linux-musl` — shippable Linux ARM build
-- `x86_64-apple-darwin` / `aarch64-apple-darwin` — macOS Intel / Apple Silicon
-- `x86_64-pc-windows-msvc` — Windows tier-2 (bin only, runtime plugins not validated)
-
-A stock developer Linux box will only build the gnu fallback out of
-the box — the other targets need extra toolchains. Phase 27.2 wires
-the GH-Actions release workflow that runs the full matrix on
-purpose-built CI runners; locally it's enough to validate the gnu
-target end-to-end and trust CI for the rest.
+| Target                          | Tool                                       | Output                                                  |
+| ------------------------------- | ------------------------------------------ | ------------------------------------------------------- |
+| `x86_64-unknown-linux-musl`     | `cargo-dist` + `cargo-zigbuild`            | `nexo-rs-x86_64-unknown-linux-musl.tar.xz` (+ sha256)   |
+| `aarch64-unknown-linux-musl`    | `cargo-dist` + `cargo-zigbuild`            | `nexo-rs-aarch64-unknown-linux-musl.tar.xz` (+ sha256)  |
+| `aarch64-linux-android` (Termux) | `packaging/termux/build.sh` + `cargo-zigbuild` | `nexo-rs_<version>_aarch64.deb` (+ sha256)              |
 
 ### One-time setup
 
 ```bash
-# 1. cargo-dist itself (binary is named `dist`, not `cargo-dist`).
+# 1. cargo-dist itself (the binary is named `dist`, not `cargo-dist`).
 cargo install cargo-dist --locked --version 0.31.0
 
-# 2. cargo-zigbuild — needed for Linux musl cross builds. Optional
-#    for the gnu fallback; required if you want to validate musl
-#    locally.
-cargo install cargo-zigbuild --locked
+# 2. cargo-zigbuild — needed for every musl + Termux build.
+cargo install cargo-zigbuild --locked --version 0.22.3
 
-# 3. zig itself — cargo-zigbuild dispatches to a `zig` on PATH.
-#    Recommended on a developer box: pipx (avoids PEP-668 conflicts
-#    with system Python).
-pipx install ziglang
+# 3. zig — cargo-zigbuild dispatches to a `zig` on PATH. PIN to 0.13.0:
+#    cargo-zigbuild 0.22.x is incompatible with zig 0.14+ / 0.16
+#    (target-triple parsing changed upstream).
+pipx install ziglang==0.13.0
 ln -sf "$(which python-zig)" ~/.cargo/bin/zig
 
-# 4. The rustup target.
-rustup target add x86_64-unknown-linux-gnu      # always
-rustup target add x86_64-unknown-linux-musl     # for musl validation
-rustup target add aarch64-unknown-linux-musl    # for ARM validation
+# 4. rustup targets.
+rustup target add x86_64-unknown-linux-musl
+rustup target add aarch64-unknown-linux-musl
+rustup target add aarch64-linux-android       # Termux (bionic libc)
 ```
 
-Note: the `python-zig` shipped via `ziglang` 0.16.0 is NOT compatible
-with `cargo-zigbuild` 0.22.x — the triple parsing changed in zig 0.16
-and cargo-zigbuild hasn't caught up. Until that thaws, full musl
-validation is CI-only. Track upstream:
-<https://github.com/rust-cross/cargo-zigbuild/issues>.
+The CI runners in [`.github/workflows/release.yml`](../.github/workflows/release.yml)
+use the same pins (zig 0.13.0, cargo-zigbuild 0.22.3, cargo-dist 0.31.0)
+— if a local build works, the CI build works.
 
 ### Run the local smoke gate
 
@@ -67,20 +66,19 @@ validation is CI-only. Track upstream:
 make dist-check
 ```
 
-This invokes `dist build --artifacts=local --tag nexo-rs-v$VERSION
---target $(rustc -vV | sed -n 's|host: ||p')` followed by the
-[`scripts/release-check.sh`](../scripts/release-check.sh) smoke gate,
-which verifies:
+Invokes `dist build --artifacts=local --tag nexo-rs-v$VERSION --target
+$HOST_TARGET` (default `x86_64-unknown-linux-musl`) followed by
+[`scripts/release-check.sh`](../scripts/release-check.sh), which:
 
-1. each tarball that was actually built contains `nexo` (the bin),
-   both `LICENSE-*` files, and `README.md`
-2. each tarball's sha256 matches its sidecar (when emitted)
-3. the host-native tarball extracts and `./nexo --version` prints
-   `nexo $VERSION`
+1. verifies each tarball contains `nexo`, both `LICENSE-*` files, and `README.md`
+2. checks each tarball's sha256 against its sidecar
+3. extracts the host-native tarball and confirms `./nexo --version`
+   prints `nexo $VERSION`
+4. validates the Termux `.deb` sha256 sidecar (when present; the
+   bionic-libc binary cannot be smoke-run on this host)
 
 Targets the local toolchain can't satisfy emit `[release-check] WARN`
-lines instead of failing the gate. Phase 27.2 CI enforces the full
-matrix.
+lines instead of failing the gate.
 
 ### Force a specific target
 
@@ -88,20 +86,28 @@ matrix.
 HOST_TARGET=aarch64-unknown-linux-musl make dist-check
 ```
 
-The `HOST_TARGET` Makefile variable overrides what `dist build
---target` is invoked with.
+### Build only the Termux `.deb`
+
+```bash
+bash packaging/termux/build.sh
+# → dist/nexo-rs_<version>_aarch64.deb + .sha256
+```
+
+The script cross-compiles via `cargo zigbuild --target aarch64-linux-android`,
+stages the deb tree under `data/data/com.termux/files/usr/`, and emits
+the sha256 sidecar consumed by the release workflow.
 
 ## How this interacts with `release-plz`
 
-Two complementary tools:
+Two complementary tools, no overlap:
 
-- **`release-plz`** owns version bumps, tag creation, `crates.io`
-  publish, and per-crate `CHANGELOG.md` regeneration. Configured in
-  [`release-plz.toml`](../release-plz.toml).
-- **`cargo-dist`** owns binary tarball production for the targets
-  above plus generating the `curl | sh` / PowerShell installers. It
-  fires on the same tags `release-plz` creates (`nexo-rs-v<version>`)
-  and uploads tarballs to the same GH release.
+- **`release-plz`** ([`release-plz.toml`](../release-plz.toml)) owns
+  version bumps, git-tag creation (`nexo-rs-v<version>`), `crates.io`
+  publish, and per-crate `CHANGELOG.md` regeneration.
+- **`cargo-dist` + `release.yml`** owns binary tarball production +
+  Termux `.deb` build + uploading them to the GH release that
+  release-plz already created. Triggered by the same
+  `nexo-rs-v<version>` tag push.
 
-There is no overlap — adding `git-cliff` or `release-please` would
-duplicate `release-plz` and is intentionally avoided.
+Adding `git-cliff` or `release-please` would duplicate `release-plz`
+and is intentionally avoided.
