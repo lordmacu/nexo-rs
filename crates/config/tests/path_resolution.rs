@@ -84,12 +84,18 @@ fn load_canonicalises_skills_and_workspace_paths() {
         .join("data/transcripts/ana")
         .to_string_lossy()
         .into_owned();
-    let expected_rules = tmp.path().join("RULES.md").to_string_lossy().into_owned();
 
     assert_eq!(ana.skills_dir, expected_skills);
     assert_eq!(ana.workspace, expected_workspace);
     assert_eq!(ana.transcripts_dir, expected_transcripts);
-    assert_eq!(ana.extra_docs, vec![expected_rules]);
+    // `extra_docs` are workspace-relative by design (see the
+    // `resolve_relative_paths` comment in `crates/config/src/lib.rs`):
+    // the workspace reader joins each entry against the already-
+    // resolved workspace root at read time, so prefixing them with
+    // the config dir at load time would produce
+    // `<config>/<workspace>/<config>/<doc>` and miss the file.
+    // Confirm the loader leaves the relative form untouched.
+    assert_eq!(ana.extra_docs, vec!["./RULES.md".to_string()]);
 }
 
 #[test]
