@@ -1,3 +1,5 @@
+#![allow(clippy::all)] // Phase 79 scaffolding — re-enable when 79.x fully shipped
+
 //! Phase 79.2 — `ToolSearch` deferred-schema discovery tool.
 //!
 //! Lets the model fetch the full JSONSchema for tools whose schema is

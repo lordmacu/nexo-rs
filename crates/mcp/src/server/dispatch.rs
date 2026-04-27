@@ -63,6 +63,10 @@ struct DispatcherInner<H: McpServerHandler> {
     /// passes `None` and the corresponding methods reply
     /// `Reply({})` without state.
     session_lookup: Option<Arc<dyn crate::server::http_session::SessionLookup>>,
+    /// Phase 76.11 — per-call audit log writer. `None` disables
+    /// audit; otherwise the dispatcher emits one `AuditRow` per
+    /// dispatched method.
+    audit_writer: Option<Arc<crate::server::audit_log::AuditWriter>>,
 }
 
 /// Per-request dispatch context. Built fresh by the transport for
@@ -190,6 +194,7 @@ impl<H: McpServerHandler + 'static> Dispatcher<H> {
                 rate_limiter: None,
                 concurrency_cap: None,
                 session_lookup: None,
+                audit_writer: None,
             }),
         }
     }
@@ -210,6 +215,7 @@ impl<H: McpServerHandler + 'static> Dispatcher<H> {
                 rate_limiter: Some(rate_limiter),
                 concurrency_cap: None,
                 session_lookup: None,
+                audit_writer: None,
             }),
         }
     }
@@ -234,6 +240,7 @@ impl<H: McpServerHandler + 'static> Dispatcher<H> {
                 rate_limiter,
                 concurrency_cap,
                 session_lookup: None,
+                audit_writer: None,
             }),
         }
     }
@@ -256,6 +263,34 @@ impl<H: McpServerHandler + 'static> Dispatcher<H> {
                 rate_limiter,
                 concurrency_cap,
                 session_lookup,
+                audit_writer: None,
+            }),
+        }
+    }
+
+    /// Phase 76.11 — full constructor with the audit writer.
+    /// Mirrors `with_rate_concurrency_and_sessions` and adds the
+    /// last-mile durable trail. Each subsequent phase may add a
+    /// new constructor; older ones stay compatible by setting the
+    /// new field to `None`.
+    pub fn with_full_stack(
+        handler: H,
+        auth_token: Option<String>,
+        rate_limiter: Option<Arc<crate::server::per_principal_rate_limit::PerPrincipalRateLimiter>>,
+        concurrency_cap: Option<
+            Arc<crate::server::per_principal_concurrency::PerPrincipalConcurrencyCap>,
+        >,
+        session_lookup: Option<Arc<dyn crate::server::http_session::SessionLookup>>,
+        audit_writer: Option<Arc<crate::server::audit_log::AuditWriter>>,
+    ) -> Self {
+        Self {
+            inner: Arc::new(DispatcherInner {
+                handler,
+                auth_token,
+                rate_limiter,
+                concurrency_cap,
+                session_lookup,
+                audit_writer,
             }),
         }
     }
@@ -572,6 +607,75 @@ impl<H: McpServerHandler + 'static> Dispatcher<H> {
                     &metrics_tool,
                     started_total.elapsed(),
                 );
+
+                // Phase 76.11 — emit one audit row per
+                // tools/call dispatch. Non-blocking try_send;
+                // drops counted internally.
+                if let Some(writer) = self.inner.audit_writer.as_ref() {
+                    let now_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as i64)
+                        .unwrap_or(0);
+                    let started_ms = now_ms - started_total.elapsed().as_millis() as i64;
+                    let principal = ctx.principal.as_ref();
+                    let tenant_str = principal
+                        .map(|p| p.tenant.as_str().to_string())
+                        .unwrap_or_else(|| "-".to_string());
+                    let subject = principal.map(|p| p.subject.clone());
+                    let auth_method = principal
+                        .map(|p| {
+                            match p.auth_method {
+                                crate::server::auth::AuthMethod::Stdio => "stdio",
+                                crate::server::auth::AuthMethod::StaticToken => "static_token",
+                                crate::server::auth::AuthMethod::Jwt => "jwt",
+                                crate::server::auth::AuthMethod::MutualTls => "mutual_tls",
+                                crate::server::auth::AuthMethod::None => "none",
+                            }
+                            .to_string()
+                        })
+                        .unwrap_or_else(|| "none".to_string());
+
+                    let (error_code, error_message, retry_after_ms) = match &outcome {
+                        DispatchOutcome::Error {
+                            code,
+                            message,
+                            data,
+                        } => (
+                            Some(*code),
+                            Some({
+                                let mut m = message.clone();
+                                m.truncate(512);
+                                m
+                            }),
+                            data.as_ref()
+                                .and_then(|d| d.get("retry_after_ms"))
+                                .and_then(|v| v.as_i64()),
+                        ),
+                        _ => (None, None, None),
+                    };
+                    let row = crate::server::audit_log::AuditRow {
+                        call_id: uuid::Uuid::new_v4().to_string(),
+                        request_id: ctx.correlation_id.clone(),
+                        session_id: ctx.session_id.clone(),
+                        tenant: tenant_str,
+                        subject,
+                        auth_method,
+                        method: "tools/call".to_string(),
+                        tool_name: Some(metrics_tool.clone()),
+                        args_hash: None, // Phase 76.11 follow-up: hash params.arguments
+                        args_size_bytes: 0,
+                        started_at_ms: started_ms,
+                        completed_at_ms: Some(now_ms),
+                        duration_ms: Some(started_total.elapsed().as_millis() as i64),
+                        outcome: outcome_label,
+                        error_code,
+                        error_message,
+                        result_size_bytes: None,
+                        retry_after_ms,
+                    };
+                    writer.try_send(row);
+                }
+
                 outcome
             }
             "resources/list" => {

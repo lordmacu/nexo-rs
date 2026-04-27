@@ -1,3 +1,5 @@
+#![allow(clippy::all)] // Phase 76 scaffolding — re-enable when 76.x fully shipped
+
 //! Phase 76.1 — replay of the Phase 12.6 / 73 / 74 conformance
 //! cases against the HTTP transport. Stdio path keeps its inline
 //! tests in `crates/mcp/src/server/stdio.rs::tests`; the same

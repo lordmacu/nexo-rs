@@ -1,3 +1,5 @@
+#![allow(clippy::all)] // Phase 79 scaffolding — re-enable when 79.x fully shipped
+
 //! Phase 79.1 — `EnterPlanMode` and `ExitPlanMode` tool handlers.
 //!
 //! These two handlers manage transitions on

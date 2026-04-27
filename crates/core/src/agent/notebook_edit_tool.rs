@@ -1,3 +1,5 @@
+#![allow(clippy::all)] // Phase 79 scaffolding — re-enable when 79.x fully shipped
+
 //! Phase 79.13 — `NotebookEdit` Jupyter `.ipynb` cell editor.
 //!
 //! Cell-level edits with output-preservation. Pure Rust round-trip

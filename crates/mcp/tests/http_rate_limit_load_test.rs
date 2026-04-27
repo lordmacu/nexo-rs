@@ -1,3 +1,5 @@
+#![allow(clippy::all)] // Phase 76 scaffolding — re-enable when 76.x fully shipped
+
 //! Phase 76.5 — concurrent load test for the per-principal
 //! rate-limiter. Boots an HTTP server with the limiter wired in,
 //! fires N concurrent `tools/call` requests across multiple

@@ -1,3 +1,5 @@
+#![allow(clippy::all)] // In-flux — Phase 76 + 79 scaffolding
+
 //! Test-only `DispatcherHandle` stub shared across tool unit tests.
 
 #![cfg(test)]

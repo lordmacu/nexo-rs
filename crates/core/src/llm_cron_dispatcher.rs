@@ -44,12 +44,7 @@ pub trait ChannelPublisher: Send + Sync {
     /// `channel_hint` is the `<plugin>:<instance>` string from
     /// [`CronEntry::channel`]. `recipient` is the JID/chat-id/email
     /// from [`CronEntry::recipient`]. `body` is the raw LLM text.
-    async fn publish(
-        &self,
-        channel_hint: &str,
-        recipient: &str,
-        body: &str,
-    ) -> anyhow::Result<()>;
+    async fn publish(&self, channel_hint: &str, recipient: &str, body: &str) -> anyhow::Result<()>;
 }
 
 /// Split a `<plugin>:<instance>` hint into its two parts. Refuses
@@ -87,16 +82,9 @@ impl<B: BrokerHandle + ?Sized> BrokerChannelPublisher<B> {
 impl<B: BrokerHandle + ?Sized + Send + Sync + 'static> ChannelPublisher
     for BrokerChannelPublisher<B>
 {
-    async fn publish(
-        &self,
-        channel_hint: &str,
-        recipient: &str,
-        body: &str,
-    ) -> anyhow::Result<()> {
+    async fn publish(&self, channel_hint: &str, recipient: &str, body: &str) -> anyhow::Result<()> {
         let (plugin, instance) = parse_channel_hint(channel_hint).ok_or_else(|| {
-            anyhow::anyhow!(
-                "cron channel hint `{channel_hint}` is not `<plugin>:<instance>`"
-            )
+            anyhow::anyhow!("cron channel hint `{channel_hint}` is not `<plugin>:<instance>`")
         })?;
         let topic = format!("plugin.outbound.{plugin}.{instance}");
         let payload = serde_json::json!({
@@ -439,10 +427,13 @@ mod tests {
     async fn publisher_invoked_when_channel_and_recipient_set() {
         let mock = MockLlmClient::new("hello back");
         let pub_ = MockPublisher::new();
-        let dispatcher =
-            LlmCronDispatcher::new(mock.clone()).with_publisher(pub_.clone());
+        let dispatcher = LlmCronDispatcher::new(mock.clone()).with_publisher(pub_.clone());
         dispatcher
-            .fire(&entry_with_route("ping", "whatsapp:primary", "5511999@s.whatsapp.net"))
+            .fire(&entry_with_route(
+                "ping",
+                "whatsapp:primary",
+                "5511999@s.whatsapp.net",
+            ))
             .await
             .unwrap();
         let pubs = pub_.published();
@@ -456,8 +447,7 @@ mod tests {
     async fn publisher_skipped_when_channel_missing() {
         let mock = MockLlmClient::new("ok");
         let pub_ = MockPublisher::new();
-        let dispatcher =
-            LlmCronDispatcher::new(mock.clone()).with_publisher(pub_.clone());
+        let dispatcher = LlmCronDispatcher::new(mock.clone()).with_publisher(pub_.clone());
         // entry() leaves channel/recipient = None
         dispatcher.fire(&entry("x", true)).await.unwrap();
         assert!(pub_.published().is_empty());
@@ -467,8 +457,7 @@ mod tests {
     async fn publisher_skipped_when_recipient_missing() {
         let mock = MockLlmClient::new("ok");
         let pub_ = MockPublisher::new();
-        let dispatcher =
-            LlmCronDispatcher::new(mock.clone()).with_publisher(pub_.clone());
+        let dispatcher = LlmCronDispatcher::new(mock.clone()).with_publisher(pub_.clone());
         let mut e = entry("x", true);
         e.channel = Some("whatsapp:primary".into());
         // recipient stays None
@@ -481,8 +470,7 @@ mod tests {
         let mock = MockLlmClient::new("ok");
         let pub_ = MockPublisher::new();
         pub_.force_err("upstream-down");
-        let dispatcher =
-            LlmCronDispatcher::new(mock.clone()).with_publisher(pub_.clone());
+        let dispatcher = LlmCronDispatcher::new(mock.clone()).with_publisher(pub_.clone());
         // fire() still returns Ok — cron state advances even if the
         // user-facing publish failed (the runner already counts the
         // entry as fired).

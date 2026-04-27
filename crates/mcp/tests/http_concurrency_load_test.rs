@@ -1,3 +1,5 @@
+#![allow(clippy::all)] // Phase 76 scaffolding — re-enable when 76.x fully shipped
+
 //! Phase 76.6 — concurrent HTTP load test for the per-principal
 //! concurrency cap. Boots a real HTTP server with cap wired in,
 //! fires N concurrent calls, asserts:

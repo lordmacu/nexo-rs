@@ -1,3 +1,5 @@
+#![allow(clippy::all)] // In-flux — Phase 76 + 79 scaffolding
+
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;

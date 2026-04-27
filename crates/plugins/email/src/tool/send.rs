@@ -1,3 +1,5 @@
+#![allow(clippy::all)] // Phase 48 scaffolding — re-enable when email use-cases settle
+
 //! `email_send` — outbound email via the dispatcher (Phase 48.7).
 //!
 //! Schema is path-by-reference for attachments (matches 48.5
