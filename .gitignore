@@ -41,8 +41,10 @@ config/agents.d/*.yaml
 .idea/
 .vscode/
 
-# Claude Code local worktrees
+# Claude Code local worktrees + runtime artifacts
 .claude/worktrees/
+.claude/scheduled_tasks.lock
+.claude/projects/
 
 # mdBook build output — published via GitHub Actions, not committed
 docs/book/
