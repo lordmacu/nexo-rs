@@ -28,6 +28,7 @@ use nexo_auth::google::GoogleCredentialStore;
 use nexo_plugin_email::imap_conn::ImapConnection;
 use nexo_plugin_email::provider_hint;
 use nexo_plugin_email::smtp_conn::SmtpClient;
+use nexo_plugin_email::spf_dkim::{check_alignment, decide_warns};
 use secrecy::SecretString;
 
 use nexo_config::types::plugins::{EmailProvider, ImapEndpoint, SmtpEndpoint, TlsMode};
@@ -444,12 +445,52 @@ pub fn render_review(form: &EmailAccountForm) -> String {
 pub struct ProbeReport {
     pub imap: std::result::Result<String, String>,
     pub smtp: std::result::Result<String, String>,
+    /// SPF/DKIM warnings for the sender domain. `None` when the
+    /// probe was skipped (DNS error, empty domain). Empty vec means
+    /// the domain looks aligned. Non-empty means the operator
+    /// should fix DNS before relying on this account for outbound —
+    /// not a hard fail because some setups intentionally rely on
+    /// the relay's SPF/DKIM (Mailgun-as-relay etc.).
+    pub spf_dkim_warns: Option<Vec<String>>,
 }
 
 impl ProbeReport {
     pub fn ok(&self) -> bool {
         self.imap.is_ok() && self.smtp.is_ok()
     }
+}
+
+/// Read `<config_dir>/plugins/google-auth.yaml` and return the
+/// account ids the operator can pick when wiring `OAuth2Google` for
+/// email. Returns empty when the file is missing or has no
+/// accounts. Tolerant of a malformed file (returns empty + lets the
+/// caller fall back to the free-text prompt).
+pub fn list_google_account_ids(config_dir: &Path) -> Vec<String> {
+    let path = config_dir.join("plugins").join("google-auth.yaml");
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(_) => return vec![],
+    };
+    let root: serde_yaml::Value = match serde_yaml::from_str(&raw) {
+        Ok(v) => v,
+        Err(_) => return vec![],
+    };
+    root.as_mapping()
+        .and_then(|m| m.get(serde_yaml::Value::String("google_auth".into())))
+        .and_then(|v| v.as_mapping())
+        .and_then(|m| m.get(serde_yaml::Value::String("accounts".into())))
+        .and_then(|v| v.as_sequence())
+        .map(|seq| {
+            seq.iter()
+                .filter_map(|a| {
+                    a.as_mapping()
+                        .and_then(|m| m.get(serde_yaml::Value::String("id".into())))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Build a transient `EmailAccount` from the form (no allow_agents,
@@ -467,6 +508,7 @@ pub async fn probe_connectivity(form: &EmailAccountForm) -> ProbeReport {
             return ProbeReport {
                 imap: Err(msg.clone()),
                 smtp: Err(msg),
+                spf_dkim_warns: None,
             };
         }
     };
@@ -513,7 +555,31 @@ pub async fn probe_connectivity(form: &EmailAccountForm) -> ProbeReport {
         Err(e) => Err(format!("{e:#}")),
     };
 
-    ProbeReport { imap, smtp }
+    // SPF/DKIM probe — sender domain (the part after `@`) plus the
+    // configured SMTP host so the alignment check can flag when the
+    // host isn't authorised by the domain's SPF record.
+    let domain = form.address.split_once('@').map(|(_, d)| d).unwrap_or("");
+    let spf_dkim_warns = if domain.is_empty() {
+        None
+    } else {
+        let report = check_alignment(
+            domain,
+            Some(&smtp_endpoint.host),
+            std::time::Duration::from_secs(5),
+        )
+        .await;
+        if report.dns_error {
+            None
+        } else {
+            Some(decide_warns(&report).iter().map(|s| (*s).to_string()).collect())
+        }
+    };
+
+    ProbeReport {
+        imap,
+        smtp,
+        spf_dkim_warns,
+    }
 }
 
 /// Map the wizard-local `AuthForm` to the runtime `EmailAuth`.
@@ -654,9 +720,7 @@ fn run_add_or_edit_account(
                 .with_prompt("Username")
                 .default(address.clone())
                 .interact_text()?;
-            let google_account_id: String = Input::with_theme(&theme)
-                .with_prompt("Google account id (from google-auth.yaml)")
-                .interact_text()?;
+            let google_account_id = pick_or_prompt_google_account_id(config_dir, &theme)?;
             AuthForm::Oauth2Google {
                 username,
                 google_account_id,
@@ -700,6 +764,16 @@ fn run_add_or_edit_account(
         match &report.smtp {
             Ok(s) => println!("  ✔ SMTP {s}"),
             Err(e) => println!("  ✘ SMTP {e}"),
+        }
+        match &report.spf_dkim_warns {
+            None => println!("  ⊘ SPF/DKIM probe skipped (DNS error or empty domain)"),
+            Some(v) if v.is_empty() => println!("  ✔ SPF/DKIM aligned for sender domain"),
+            Some(warns) => {
+                println!("  ⚠  SPF/DKIM warnings:");
+                for w in warns {
+                    println!("       - {w}");
+                }
+            }
         }
         if !report.ok()
             && !Confirm::with_theme(&theme)
@@ -920,7 +994,51 @@ fn action_probe(_config_dir: &Path, _secrets_dir: &Path) -> Result<()> {
         Ok(s) => println!("  ✔ SMTP {s}"),
         Err(e) => println!("  ✘ SMTP {e}"),
     }
+    match &report.spf_dkim_warns {
+        None => println!("  ⊘ SPF/DKIM probe skipped (DNS error or empty domain)"),
+        Some(v) if v.is_empty() => println!("  ✔ SPF/DKIM aligned for sender domain"),
+        Some(warns) => {
+            println!("  ⚠  SPF/DKIM warnings:");
+            for w in warns {
+                println!("       - {w}");
+            }
+        }
+    }
     Ok(())
+}
+
+/// Surface a `Select` of `id`s from `google-auth.yaml`. Falls back to
+/// a free-text `Input` when the file is missing / empty / unparseable
+/// so a brand-new operator (no Google accounts wired yet) can still
+/// type the id they intend to add later. Adds a "(other — type
+/// manually)" sentinel as the last item so the operator can override
+/// even when accounts exist.
+fn pick_or_prompt_google_account_id(
+    config_dir: &Path,
+    theme: &ColorfulTheme,
+) -> Result<String> {
+    let ids = list_google_account_ids(config_dir);
+    if ids.is_empty() {
+        let s: String = Input::with_theme(theme)
+            .with_prompt("Google account id (from google-auth.yaml)")
+            .interact_text()?;
+        return Ok(s.trim().to_string());
+    }
+    let mut labels: Vec<String> = ids.iter().map(|s| s.to_string()).collect();
+    labels.push("(otra — escribir a mano)".into());
+    let idx = Select::with_theme(theme)
+        .with_prompt("Google account")
+        .items(&labels)
+        .default(0)
+        .interact()?;
+    if idx == labels.len() - 1 {
+        let s: String = Input::with_theme(theme)
+            .with_prompt("Google account id")
+            .interact_text()?;
+        Ok(s.trim().to_string())
+    } else {
+        Ok(ids[idx].clone())
+    }
 }
 
 fn is_valid_address(addr: &str) -> bool {
@@ -1172,6 +1290,48 @@ mod tests {
             EmailAuth::Password { username, .. } => assert_eq!(username, "ops@x.com"),
             _ => panic!("expected Password variant"),
         }
+    }
+
+    #[test]
+    fn list_google_account_ids_empty_when_file_missing() {
+        let dir = tempdir().unwrap();
+        assert!(list_google_account_ids(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn list_google_account_ids_returns_ids_when_present() {
+        let dir = tempdir().unwrap();
+        let plugins = dir.path().join("plugins");
+        std::fs::create_dir_all(&plugins).unwrap();
+        std::fs::write(
+            plugins.join("google-auth.yaml"),
+            r#"google_auth:
+  accounts:
+    - id: ana@x.com
+      agent_id: ana
+      client_id_path: /tmp/c
+      client_secret_path: /tmp/s
+      token_path: /tmp/t
+    - id: bob@x.com
+      agent_id: bob
+      client_id_path: /tmp/c2
+      client_secret_path: /tmp/s2
+      token_path: /tmp/t2
+"#,
+        )
+        .unwrap();
+        let ids = list_google_account_ids(dir.path());
+        assert_eq!(ids, vec!["ana@x.com".to_string(), "bob@x.com".to_string()]);
+    }
+
+    #[test]
+    fn list_google_account_ids_tolerates_malformed_yaml() {
+        let dir = tempdir().unwrap();
+        let plugins = dir.path().join("plugins");
+        std::fs::create_dir_all(&plugins).unwrap();
+        std::fs::write(plugins.join("google-auth.yaml"), "this: [is: bad").unwrap();
+        // Malformed file → empty vec, never panics.
+        assert!(list_google_account_ids(dir.path()).is_empty());
     }
 
     #[test]
