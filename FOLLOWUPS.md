@@ -700,9 +700,17 @@ Open:
     per-agent loop calls `register_email_tools(&tools, ctx)` when
     `agent.plugins` lists `email`. Six handlers (send / reply /
     archive / move_to / label / search) now reach the LLM.
-  - **greenmail e2e** harness (Docker compose + a `feature =
-    "email-e2e"` test suite that runs send → inbound → reply →
-    archive against a real IMAP/SMTP server).
+  - **greenmail e2e** harness. 🔄 Partial 2026-04-27.
+    `tests/pipeline_in_process.rs` covers the in-process slice:
+    `OutboundDispatcher::enqueue_for_instance` →
+    JSONL queue + Message-ID idempotency, `parse_eml` →
+    `resolve_thread_root` → `session_id_for_thread` →
+    `enrich_reply_threading`, `BounceStore` upsert + count
+    increment, loop_prevent self-from skip. Five integration
+    tests; broker is the local in-process bus, so the SMTP
+    `DATA` round-trip and IMAP IDLE / FETCH / MOVE wire calls
+    still need a Docker compose with greenmail in CI to land
+    fully ✅.
   - **Hot-reload account diff.** ✅ Shipped 2026-04-27.
     `reload.rs::compute_account_diff(old, new) -> AccountDiff
     {added, removed, changed}` is the pure helper.

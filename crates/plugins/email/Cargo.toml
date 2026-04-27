@@ -55,3 +55,5 @@ nexo-resilience = { version = "0.1.1", path = "../../resilience" }
 serde_yaml   = { workspace = true }
 tempfile     = "3"
 tokio        = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }
+nexo-auth    = { version = "0.1.1", path = "../../auth" }
+dashmap      = { workspace = true }
