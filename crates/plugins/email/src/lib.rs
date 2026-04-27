@@ -13,6 +13,7 @@ pub mod mime_build;
 pub mod mime_parse;
 pub mod outbound;
 pub mod outbound_queue;
+pub mod threading;
 pub mod plugin;
 pub mod smtp_conn;
 
@@ -21,6 +22,10 @@ pub use events::{AckStatus, InboundEvent, OutboundAck, OutboundCommand};
 pub use health::{AccountHealth, WorkerState};
 pub use mime_build::{build_mime, generate_message_id, BuildContext};
 pub use mime_parse::{parse_eml, ParseConfig, ParsedMessage};
+pub use threading::{
+    canonicalize_message_id, enrich_reply_threading, is_self_thread, resolve_thread_root,
+    session_id_for_thread, truncate_references, EMAIL_NS,
+};
 pub use outbound::OutboundDispatcher;
 pub use outbound_queue::{OutboundJob, OutboundQueue, SmtpEnvelope};
 pub use smtp_conn::{SmtpClient, SmtpSendOutcome};

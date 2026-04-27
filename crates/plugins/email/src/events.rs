@@ -29,6 +29,11 @@ pub struct InboundEvent {
     /// Phase 48.5 — empty when no attachments or `meta` is `None`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<EmailAttachment>,
+    /// Phase 48.6 — canonical thread root for
+    /// `session_id_for_thread`. `None` for raw-only publishes (parse
+    /// failure path); always `Some` when `meta` is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_root_id: Option<String>,
 }
 
 /// Parsed metadata for an inbound message (Phase 48.5).
@@ -175,6 +180,7 @@ mod tests {
             raw_bytes: vec![0u8, 1, 2, 250, 251, 252],
             meta: None,
             attachments: vec![],
+            thread_root_id: None,
         };
         let json = serde_json::to_string(&ev).unwrap();
         let back: InboundEvent = serde_json::from_str(&json).unwrap();
@@ -307,6 +313,7 @@ mod tests {
         let back: InboundEvent = serde_json::from_str(json).unwrap();
         assert!(back.meta.is_none());
         assert!(back.attachments.is_empty());
+        assert!(back.thread_root_id.is_none());
     }
 
     #[test]
