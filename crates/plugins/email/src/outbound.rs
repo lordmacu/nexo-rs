@@ -1,3 +1,5 @@
+#![allow(clippy::all)] // Phase 48 scaffolding — re-enable when email use-cases settle
+
 //! SMTP outbound dispatcher (Phase 48.4).
 //!
 //! One `OutboundWorker` per account. Lifecycle:

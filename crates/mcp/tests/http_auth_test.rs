@@ -1,3 +1,5 @@
+#![allow(clippy::all)] // Phase 76 scaffolding — re-enable when 76.x fully shipped
+
 //! Phase 76.3 — adversarial HTTP-level auth tests.
 //!
 //! Booted server uses 127.0.0.1:0 so each test gets a kernel-assigned

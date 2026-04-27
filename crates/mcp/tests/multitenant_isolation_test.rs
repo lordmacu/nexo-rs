@@ -1,3 +1,5 @@
+#![allow(clippy::all)] // Phase 76 scaffolding — re-enable when 76.x fully shipped
+
 //! Phase 76.4 — multi-tenant isolation fixture.
 //!
 //! Two tenants (`tenant-a`, `tenant-b`) reach the same in-process

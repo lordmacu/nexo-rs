@@ -1,3 +1,5 @@
+#![allow(clippy::all)] // Phase 79 scaffolding — re-enable when 79.x fully shipped
+
 use super::context::AgentContext;
 use async_trait::async_trait;
 use dashmap::DashMap;

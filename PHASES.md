@@ -3713,13 +3713,36 @@ pass through the new abstraction).
   are shared. **Note**: `/healthz` + `/readyz` and dependency
   caching landed as part of this phase; `/readyz` 503 vs 200 +
   structured JSON is in `src/main.rs`.
-- 76.11 ⬜ — Per-call audit log. New `McpAuditSink` trait;
-  `SqliteMcpAuditSink` writes table `mcp_call_log (tenant_id,
-  principal, tool, ts, duration_ms, status, request_hash)`,
-  idempotent on `(session_id, request_id)`, capped tail. Mirrors
-  Phase 72 (`agent_turns_tail`). New tool `mcp_audit_tail
-  tenant_id=<…> [n=20]`. Done: 100 calls → 100 rows, survives
-  daemon restart.
+- 76.11 ✅ — Per-call audit log core. New module
+  `crates/mcp/src/server/audit_log/` with: `AuditRow` (18-field
+  schema mirroring SQLite columns: call_id, request_id, session_id,
+  tenant, subject, auth_method, method, tool_name, args_hash,
+  args_size_bytes, started_at_ms, completed_at_ms, duration_ms,
+  outcome, error_code, error_message, result_size_bytes,
+  retry_after_ms), `AuditFilter`, `AuditError`, `AuditLogStore`
+  trait + `MemoryAuditLogStore` (in-memory, tests-only),
+  `AuditLogConfig` (validate + per-tool redact override + 1 MiB
+  args-hash cap), `AuditWriter` (`tokio::mpsc` bounded 4096,
+  batched worker every 50 ms or 50 rows, drop-oldest with
+  `tracing::error!` at power-of-2 thresholds, `drain(timeout)`
+  for SIGTERM). `Outcome` enum re-exported from 76.10 telemetry
+  (single source of truth: ok/error/cancelled/timeout/
+  rate_limited/denied/panicked). `Dispatcher::with_full_stack`
+  constructor takes optional `Arc<AuditWriter>`; `do_dispatch`
+  for `tools/call` emits one `AuditRow` per outcome with
+  truncated error_message (512 char cap) + retry_after_ms
+  extraction from JSON-RPC error data. Anti-pattern flagged:
+  the leak's `claude-code-leak/src/services/analytics/
+  firstPartyEventLogger.ts:57-85 shouldSampleEvent` drops
+  events probabilistically; **76.11 logs every dispatch at
+  100% — sampling forbidden for compliance**. 26 new tests
+  (3 types + 8 store + 7 config + 4 writer + 3 e2e + 1 unused).
+  **Deferred to follow-ups**: SqliteAuditLogStore impl
+  (currently MemoryAuditLogStore only), HttpTransportConfig
+  wire, YAML schema, mapper in main.rs, args_hash computation,
+  `mcp_audit_tail` read tool. Core trait + writer + dispatcher
+  integration shipped — production path needs the SQLite impl
+  + main.rs wiring (~200 LOC) before deploy.
 - 76.12 ⬜ — Conformance + fuzz suite. New
   `tests/mcp_server_conformance.rs` exercises spec MCP 2025-11-25
   fixtures end-to-end through both transports; `proptest` over

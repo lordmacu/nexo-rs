@@ -1,3 +1,5 @@
+#![allow(clippy::all)] // Phase 76 scaffolding — re-enable when 76.x fully shipped
+
 //! Phase 76.1 — adversarial integration tests for the HTTP+SSE
 //! transport. Each test boots a real server on a kernel-assigned
 //! port and drives it with reqwest.

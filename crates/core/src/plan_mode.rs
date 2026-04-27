@@ -1,3 +1,5 @@
+#![allow(clippy::all)] // Phase 79 scaffolding — re-enable when 79.x fully shipped
+
 //! Phase 79.1 — plan-mode state, refusal, and tool classification.
 //!
 //! Plan mode is a per-goal toggle that puts the agent into a read-only

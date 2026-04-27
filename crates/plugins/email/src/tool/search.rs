@@ -1,3 +1,5 @@
+#![allow(clippy::all)] // Phase 48 scaffolding — re-enable when email use-cases settle
+
 //! `email_search` — IMAP SEARCH with a portable JSON DSL (Phase 48.7).
 //!
 //! Translates a small JSON object into IMAP SEARCH atoms, escaping

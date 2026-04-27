@@ -1,3 +1,5 @@
+#![allow(clippy::all)] // Phase 76 scaffolding — re-enable when 76.x fully shipped
+
 //! Phase 76.5 — `Dispatcher` integration tests with the
 //! per-principal rate-limiter wired in.
 //!

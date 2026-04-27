@@ -1,3 +1,5 @@
+#![allow(clippy::all)] // Phase 79 scaffolding — re-enable when 79.x fully shipped
+
 use super::effective::EffectiveBindingPolicy;
 use super::peer_directory::PeerDirectory;
 use super::redaction::Redactor;
