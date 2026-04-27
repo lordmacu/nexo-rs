@@ -144,6 +144,7 @@ pub struct OutboundDispatcher {
     broker: AnyBroker,
     data_dir: std::path::PathBuf,
     health: HealthMap,
+    max_dlq_lines: usize,
 }
 
 impl OutboundDispatcher {
@@ -172,6 +173,7 @@ impl OutboundDispatcher {
             broker: broker.clone(),
             data_dir: data_dir.to_path_buf(),
             health: health.clone(),
+            max_dlq_lines: cfg.max_dlq_lines,
         };
         for account_cfg in &cfg.accounts {
             dispatcher.add_account(account_cfg).await?;
@@ -224,6 +226,7 @@ impl OutboundDispatcher {
             health: h,
             cancel: per_instance_cancel.clone(),
             in_flight: Arc::new(DashMap::new()),
+            max_dlq_lines: self.max_dlq_lines,
         };
         self.workers.insert(
             account_cfg.instance.clone(),
@@ -301,6 +304,9 @@ struct OutboundWorker {
     health: Arc<RwLock<AccountHealth>>,
     cancel: CancellationToken,
     in_flight: Arc<DashMap<String, ()>>,
+    /// Audit follow-up I — DLQ size cap. `0` disables; positive
+    /// values trigger a trim during the idle compaction tick.
+    max_dlq_lines: usize,
 }
 
 impl OutboundWorker {
@@ -422,6 +428,20 @@ impl OutboundWorker {
         if pending.is_empty() {
             // Cheap compaction check while idle.
             let _ = self.queue.compact_if_needed().await;
+            // Audit follow-up I — DLQ trim. Idle ticks are the
+            // right place: trimming under load risks renaming the
+            // file out from under a fresh `move_to_dlq` append.
+            if let Ok(n) = self.queue.trim_dlq(self.max_dlq_lines).await {
+                if n > 0 {
+                    tracing::info!(
+                        target: "plugin.email",
+                        instance = %self.account_cfg.instance,
+                        dropped = n,
+                        cap = self.max_dlq_lines,
+                        "DLQ trimmed (oldest entries dropped)"
+                    );
+                }
+            }
             return Ok(());
         }
 

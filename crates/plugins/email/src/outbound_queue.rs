@@ -134,6 +134,45 @@ impl OutboundQueue {
         Ok(())
     }
 
+    /// Audit follow-up I — DLQ size cap. Trim the DLQ file to the
+    /// most recent `max` lines when it grows past the limit.
+    /// `max == 0` disables the cap. Returns the number of lines
+    /// dropped (0 when no work was needed).
+    pub async fn trim_dlq(&self, max: usize) -> Result<usize> {
+        if max == 0 {
+            return Ok(0);
+        }
+        let _g = self.lock.lock().await;
+        let count = count_lines(&self.dlq_path).await?;
+        if count <= max {
+            return Ok(0);
+        }
+        // Read every line, keep only the tail.
+        if !self.dlq_path.exists() {
+            return Ok(0);
+        }
+        let f = File::open(&self.dlq_path).await?;
+        let mut reader = BufReader::new(f).lines();
+        let mut all: Vec<String> = Vec::new();
+        while let Some(line) = reader.next_line().await? {
+            if !line.trim().is_empty() {
+                all.push(line);
+            }
+        }
+        let drop_n = all.len().saturating_sub(max);
+        let kept = &all[drop_n..];
+        let tmp = self.dlq_path.with_extension("dlq.jsonl.compact");
+        let mut out = File::create(&tmp).await?;
+        for line in kept {
+            out.write_all(line.as_bytes()).await?;
+            out.write_all(b"\n").await?;
+        }
+        out.flush().await?;
+        drop(out);
+        tokio::fs::rename(&tmp, &self.dlq_path).await?;
+        Ok(drop_n)
+    }
+
     pub async fn list_pending(&self) -> Result<Vec<OutboundJob>> {
         let latest = read_latest_per_id(&self.queue_path).await?;
         let mut out: Vec<OutboundJob> = latest.into_values().filter(|j| !j.done).collect();

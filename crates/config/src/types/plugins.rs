@@ -498,6 +498,14 @@ pub struct EmailPluginConfig {
     /// attachments accumulate forever). Default 90.
     #[serde(default = "default_attachment_retention_days")]
     pub attachment_retention_days: u64,
+    /// Audit follow-up I — DLQ size cap. When the per-instance
+    /// `<dir>/<inst>.dlq.jsonl` reaches this many lines, the
+    /// oldest entries are trimmed before each new append. `0`
+    /// disables the cap (legacy unbounded behaviour). Default
+    /// `10_000` — large enough for a multi-week incident
+    /// history, small enough to never run a host out of disk.
+    #[serde(default = "default_max_dlq_lines")]
+    pub max_dlq_lines: usize,
     #[serde(default = "default_attachments_dir")]
     pub attachments_dir: String,
     #[serde(default = "default_outbound_queue_dir")]
@@ -636,6 +644,9 @@ fn default_max_attachment_bytes() -> usize {
 }
 fn default_attachment_retention_days() -> u64 {
     90
+}
+fn default_max_dlq_lines() -> usize {
+    10_000
 }
 fn default_attachments_dir() -> String {
     "data/email-attachments".to_string()

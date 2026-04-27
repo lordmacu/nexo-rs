@@ -387,6 +387,7 @@ impl AccountWorker {
                     (Some(p.meta), p.attachments, Some(root))
                 }
                 Err(e) => {
+                    crate::metrics::inc_parse_error(&self.account_cfg.instance);
                     warn!(
                         target: "plugin.email",
                         instance = %self.account_cfg.instance,
