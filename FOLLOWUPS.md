@@ -486,45 +486,61 @@ PT-8. **Multi-agent end-to-end test not shipped**
   the saved root before tools register.
 - Target: next dispatch reliability sweep / Phase 67 follow-up.
 
-### Phase 27.1 — cargo-dist baseline deferrals
+### Phase 27.1 / 27.2 — cargo-dist + GH Actions release deferrals
 
-- **Local musl validation blocked by zig 0.16 ↔ cargo-zigbuild 0.22
-  incompat.** zig 0.16 changed target-triple parsing
-  (`x86_64-unknown-linux-musl` rejected with `UnknownOperatingSystem`)
-  while cargo-zigbuild 0.22.x still emits both `--target=<triple>` and
-  `-target <triple>` in cc-rs invocations. As of 2026-04-27 the
-  `python-zig` shipped via `pipx install ziglang` is the only zig in
-  reach, so full musl validation is CI-only until either
-  cargo-zigbuild catches up or we can pin an older `zig` version.
-  Track upstream: <https://github.com/rust-cross/cargo-zigbuild>.
-  Phase 27.2 CI runners install a known-good zig version so the
-  cross matrix builds there.
-- **macOS / Windows local validation needs vendor SDKs.** Neither
-  builds on a stock developer Linux box. Phase 27.2 GH Actions matrix
-  spawns one runner per target with the right SDK pre-installed. Local
-  `make dist-check` gracefully WARNs on missing tarballs.
-- **`x86_64-unknown-linux-gnu` shipped as host-fallback target.**
-  Listed first in `dist-workspace.toml::targets` so a stock developer
-  Linux box can validate the pipeline end-to-end. NOT advertised as
-  an installable channel — Linux users get musl static. Remove this
-  entry once full musl validation works locally.
-- **`NEXO_BUILD_CHANNEL` env stamp defaults to `source`.** Phase 27.2
-  release workflow needs to set `NEXO_BUILD_CHANNEL=apt-musl`,
-  `brew-arm64`, `tarball-x86_64-musl`, etc. so `nexo --version
-  --verbose` reports install provenance in bug reports. Today every
-  binary built from a `make dist-build` tags itself `source`.
+Resolved by Phase 27.2 (kept here for traceability):
+- ~~`NEXO_BUILD_CHANNEL` env stamp defaulted to `source` everywhere.~~
+  CI release workflow now exports
+  `NEXO_BUILD_CHANNEL=tarball-${target}` per musl runner and
+  `NEXO_BUILD_CHANNEL=termux-aarch64` for the Termux job.
+- ~~`x86_64-unknown-linux-gnu` host-fallback target.~~ Dropped from
+  `dist-workspace.toml` in 27.2 — local builds use musl directly
+  (operator must install zig 0.13.0 + cargo-zigbuild 0.22.3 per
+  `packaging/README.md`).
+- ~~macOS / Windows local validation needs vendor SDKs.~~ Targets
+  removed from scope entirely (see backlog item below); no longer
+  a deferral.
+
+Open:
+
+- **Local musl validation requires the pinned toolchain.** zig
+  0.13.0 + cargo-zigbuild 0.22.3 must be on PATH; newer zig
+  (0.14+ / 0.16) is incompatible with cargo-zigbuild 0.22.x.
+  `make dist-check` fails loud with a pointer to
+  `packaging/README.md` if zig is missing. Track upstream:
+  <https://github.com/rust-cross/cargo-zigbuild>.
+- **Termux runtime smoke-test.** Phase 27.2 validates the `.deb`
+  sha256 sidecar but cannot run the bionic-libc binary on the
+  ubuntu runner. Manual install on a device or Android emulator
+  is the gate. Watch for headless Termux smoke options
+  (proot-distro inside ubuntu? android-emulator GH action?).
+- **Smoke-test auto-rollback.** When the post-publish smoke test
+  fails, the assets are already up. Workflow goes red, operator
+  decides. A rollback step would call `gh release delete-asset`
+  per `EXPECTED_TARBALLS` member, idempotent. Risk: race with
+  `sign-artifacts.yml` that may have already started.
+- **`dist generate` vs hand-rolled `release.yml` drift.** When
+  bumping `cargo-dist-version`, run `dist generate` in a scratch
+  branch + diff against the hand-rolled file to catch new schema
+  requirements. Today no automation flags drift.
+- **Apple + Windows targets parked.** Apple
+  (`x86_64`/`aarch64-apple-darwin`) and Windows
+  (`x86_64-pc-windows-msvc`) dropped from scope in 27.2. Phase 27.6
+  (Homebrew) parked with them. To revive: add the targets back to
+  `dist-workspace.toml`, restore matrix entries in `release.yml`,
+  revive `packaging/homebrew/`, restore PowerShell installer.
 - **`/api/info` daemon endpoint to expose build stamps.** Admin UI
-  footer / About page wants the same four stamps (`git-sha`, `target`,
-  `channel`, `built-at`) over HTTP, not just the CLI. Wire when
-  Phase A4 dashboard lands.
-- **`nexo self-update` (Phase 27.10).** `install-updater = false` in
-  `dist-workspace.toml` keeps `axoupdater` off until the GH-releases
-  source-of-truth is wired. Re-evaluate after 27.2 ships.
-- **CHANGELOG.md root entry duplicated with per-crate.** release-plz
-  generates per-crate `CHANGELOG.md` on first release-PR; root file
-  is mostly an index for the bin shipped from this crate. Keep an
-  eye on whether the bullet style stays in sync — drift is acceptable
-  but not desirable.
+  footer / About page wants the same four stamps (`git-sha`,
+  `target`, `channel`, `built-at`) over HTTP, not just the CLI.
+  Wire when Phase A4 dashboard lands.
+- **`nexo self-update` (Phase 27.10).** `install-updater = false`
+  in `dist-workspace.toml` keeps `axoupdater` off until the
+  GH-releases source-of-truth is wired. Re-evaluate after the
+  first live tag push exercises the workflow.
+- **CHANGELOG.md root entry vs per-crate.** release-plz generates
+  per-crate `CHANGELOG.md` on first release-PR; root file is the
+  bin's changelog plus an index. Watch for bullet-style drift —
+  acceptable but not desirable.
 
 ## Resolved (recent highlights)
 

@@ -26,47 +26,31 @@ if [[ ! -d "${DIST_DIR}" ]]; then
     exit 1
 fi
 
-# Tarball naming follows cargo-dist's default: `<bin>-<target>.tar.xz`
-# on Unix targets and `<bin>-<target>.zip` on Windows.
+# Tarball naming follows cargo-dist's default: `<bin>-<target>.tar.xz`.
+# Phase 27.2 reduced the matrix to 2 musl Linux targets. Termux ships
+# as a separate `.deb` produced by `packaging/termux/build.sh`.
 EXPECTED_TARBALLS=(
-    "nexo-rs-x86_64-unknown-linux-gnu.tar.xz"
     "nexo-rs-x86_64-unknown-linux-musl.tar.xz"
     "nexo-rs-aarch64-unknown-linux-musl.tar.xz"
-    "nexo-rs-x86_64-apple-darwin.tar.xz"
-    "nexo-rs-aarch64-apple-darwin.tar.xz"
-    "nexo-rs-x86_64-pc-windows-msvc.zip"
 )
 
-# Targets the local host is expected to be able to actually build
-# (the rest may legitimately be skipped on a developer laptop without
-# the right SDK).
+# Termux .deb glob — checked separately at the end of the script;
+# bionic-libc binary can't be smoke-run on this host.
+EXPECTED_TERMUX_DEB_GLOB="nexo-rs_*_aarch64.deb"
+
+# Targets the local host is expected to be able to actually build.
+# Without zig 0.13.0 + cargo-zigbuild 0.22.x installed locally,
+# `dist build` will fail and the gate emits WARN; CI runners in
+# Phase 27.2 are the ground truth.
 HOST_ARCH="$(uname -m)"
 HOST_OS="$(uname -s)"
 HOST_NATIVE_TARBALL=""
-case "${HOST_OS}" in
-    Linux)
-        # Prefer the gnu fallback tarball (always builds locally),
-        # falling back to musl if the gnu target was disabled.
-        case "${HOST_ARCH}" in
-            x86_64)
-                if [[ -f "${DIST_DIR}/nexo-rs-x86_64-unknown-linux-gnu.tar.xz" ]]; then
-                    HOST_NATIVE_TARBALL="nexo-rs-x86_64-unknown-linux-gnu.tar.xz"
-                else
-                    HOST_NATIVE_TARBALL="nexo-rs-x86_64-unknown-linux-musl.tar.xz"
-                fi
-                ;;
-            aarch64)
-                HOST_NATIVE_TARBALL="nexo-rs-aarch64-unknown-linux-musl.tar.xz"
-                ;;
-        esac
-        ;;
-    Darwin)
-        case "${HOST_ARCH}" in
-            x86_64)  HOST_NATIVE_TARBALL="nexo-rs-x86_64-apple-darwin.tar.xz" ;;
-            arm64)   HOST_NATIVE_TARBALL="nexo-rs-aarch64-apple-darwin.tar.xz" ;;
-        esac
-        ;;
-esac
+if [[ "${HOST_OS}" == "Linux" ]]; then
+    case "${HOST_ARCH}" in
+        x86_64)  HOST_NATIVE_TARBALL="nexo-rs-x86_64-unknown-linux-musl.tar.xz" ;;
+        aarch64) HOST_NATIVE_TARBALL="nexo-rs-aarch64-unknown-linux-musl.tar.xz" ;;
+    esac
+fi
 
 fail() {
     echo "[release-check] FAIL: $*" >&2
@@ -173,10 +157,24 @@ else
 fi
 
 # Surface missing tarballs as warnings (not failures) so a partial
-# local build (e.g. no Apple SDK) still passes the gate. CI in Phase
-# 27.2 enforces the full matrix.
+# local build (e.g. no zig toolchain) still passes the gate. CI in
+# Phase 27.2 enforces the full matrix.
 if [[ ${#missing[@]} -gt 0 ]]; then
     echo "[release-check] WARN: tarballs not built locally: ${missing[*]}"
 fi
 
-echo "[release-check] PASS — ${#present[@]} tarball(s) validated"
+# 5. Termux .deb sanity (when uploaded by CI). Validate sha256 only;
+# can't run the bionic-libc binary on this host.
+shopt -s nullglob
+termux_count=0
+for deb in "${DIST_DIR}"/${EXPECTED_TERMUX_DEB_GLOB}; do
+    verify_sha256 "${deb}"
+    pass "$(basename "${deb}") sha256 OK"
+    termux_count=$((termux_count + 1))
+done
+shopt -u nullglob
+if [[ ${termux_count} -eq 0 ]]; then
+    echo "[release-check] WARN: no Termux .deb found (${EXPECTED_TERMUX_DEB_GLOB}); skipping"
+fi
+
+echo "[release-check] PASS — ${#present[@]} tarball(s) + ${termux_count} Termux deb(s) validated"

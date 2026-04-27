@@ -364,13 +364,19 @@ IOUs — features that landed in the daemon but have no UI yet.
 
 - [ ] `credentials:` block (Phase 17) — Phase A3 agent-config tab
   Phase A3 covers this
-- [ ] Release pipeline (Phase 27.1 `cargo-dist` baseline) — local
-  smoke gate (`make dist-check`) shipped; the GH Actions release
-  workflow + per-target tarball download links + release-channel
-  badge land in Phase 27.2. Admin UI `About` / footer should
-  surface `nexo --version --verbose` output (git-sha, target,
-  channel, built-at) once the daemon exposes those four stamps
-  through `/api/info` (deferred).
+- [ ] Release pipeline (Phase 27.1 `cargo-dist` baseline + 27.2
+  GH Actions release workflow) — tag-to-asset pipeline complete:
+  push `nexo-rs-v<version>` → 2 musl tarballs (x86_64 + aarch64) +
+  Termux `.deb` + sha256 sidecars uploaded to the GH release; smoke
+  test verifies `--version` provenance stamps. Apple (`x86_64`/
+  `aarch64-apple-darwin`) and Windows (`x86_64-pc-windows-msvc`)
+  targets parked — Phase 27.6 (Homebrew) parked with them.
+  Admin UI tasks: surface `nexo --version --verbose` (git-sha,
+  target, channel, built-at) on the About page once the daemon
+  exposes those four stamps via `/api/info` (deferred); add
+  per-channel install links (apt / yum / Termux) once Phase 27.4
+  + 27.8 publish their pkg indexes; revive Apple/Windows install
+  channel docs when their matrix entries return.
 - [ ] Driver/goal monitor (Phase 67) — pending tile to surface
   active goals, decisions taken (allow/deny/observe), budget
   consumption per axis, acceptance verdicts, escalation status,
