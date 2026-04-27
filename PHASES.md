@@ -2128,7 +2128,20 @@ Sub-phases:
   tests across `cursor`, `events`, `health`, `imap_conn`,
   `inbound`, `plugin`. Real-server e2e (greenmail) deferred to
   48.10 along with `Starttls` support.)
-- 48.4 — SMTP outbound + disk-queue + Message-ID idempotency   ⬜
+- 48.4 — SMTP outbound + disk-queue + Message-ID idempotency   🔄
+  (48.4.a foundational slice shipped: `events.rs` extension with
+  `OutboundCommand` / `AckStatus { Sent, Failed, Retrying }` /
+  `OutboundAck`, `mime_text.rs` with `generate_message_id` →
+  `<{ts_ms}.{uuid_v4}@{domain}>` and `build_text_mime` (text/plain
+  UTF-8, RFC 2822 Date, optional `In-Reply-To`/`References`
+  passthrough, RFC 2047 base64 encoded-word for non-ASCII subjects,
+  Bcc explicitly omitted from headers), `outbound_queue.rs` JSONL
+  store with append-only writes + tombstone `done` rows + DLQ file +
+  `compact_if_needed` (rewrites when `done` rows are >50% of total)
+  + persists across reopen. 14 new tests; total
+  `cargo test -p nexo-plugin-email` 34 / 34 green. Lettre wiring,
+  SMTP send classify, dispatcher run loop, plugin start/stop wiring
+  remain.)
 - 48.5 — MIME parse/build + Attachment envelope   ⬜
 - 48.6 — Threading via `Message-ID` / `In-Reply-To` / `References`   ⬜
 - 48.7 — Tools: `email_send` / `_reply` / `_archive` / `_label` / `_move_to` / `_search`   ⬜

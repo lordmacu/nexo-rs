@@ -3031,6 +3031,7 @@ dependencies = [
  "tokio-rustls",
  "tokio-util",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
