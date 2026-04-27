@@ -14,7 +14,7 @@ keywords      = { workspace = true }
 categories    = { workspace = true }
 [dependencies]
 tokio        = { workspace = true }
-tokio-util   = { workspace = true }
+tokio-util   = { workspace = true, features = ["compat"] }
 serde        = { workspace = true }
 serde_json   = { workspace = true }
 serde_bytes  = { workspace = true }
@@ -25,6 +25,14 @@ chrono       = { workspace = true }
 dashmap      = { workspace = true }
 sqlx         = { workspace = true }
 rand         = { workspace = true }
+async-imap   = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls       = { workspace = true }
+rustls-native-certs = { workspace = true }
+futures      = { workspace = true }
+base64       = { workspace = true }
+secrecy      = "0.8"
+socket2      = "0.5"
 nexo-broker     = { version = "0.1.1", path = "../../broker" }
 nexo-core       = { version = "0.1.1", path = "../../core" }
 nexo-config     = { version = "0.1.1", path = "../../config" }

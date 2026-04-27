@@ -2094,7 +2094,40 @@ Sub-phases:
   / `hot_reload` / `strict_legacy_google_auth` / `wire`
   integration tests migrated to the new 7-arg signature; full
   `cargo test --workspace` green at 1943 / 0.)
-- 48.3 — IMAP IDLE worker + poll fallback (CB-wrapped)   ⬜
+- 48.3 — IMAP IDLE worker + poll fallback (CB-wrapped)   ✅
+  (Multi-account `InboundManager` spawns one `AccountWorker` per
+  declared account; each owns one `ImapConnection` (rustls TLS over
+  TCP, port 993 / `ImplicitTls` only in v1 — `Starttls`/`Plain`
+  reject at boot with operator-actionable error). Auth picks LOGIN
+  for `Password`, `AUTHENTICATE XOAUTH2` for `OAuth2Static` /
+  `OAuth2Google` (token resolved via 48.2's per-account refresh
+  mutex). `CAPABILITY` cached post-login (`idle`, `uidplus`,
+  `move`); servers without IDLE permanently enter `WorkerState::
+  Polling` (60s `UID SEARCH UID last+1:*`). Workers in IDLE issue
+  `wait_with_timeout(idle_reissue_minutes * 60)` (default 28 min,
+  under RFC 2177's 29-min ceiling) with a `CancellationToken` arm
+  on `tokio::select!` so plugin shutdown unwinds cleanly via
+  `IDLE DONE`. Reconnect path runs through `nexo_resilience::
+  CircuitBreaker` (default 5-fail / 10s..120s) with ±20% jittered
+  exponential backoff (`1s, 2s, 4s, ..., 60s` cap) so N accounts
+  losing connectivity simultaneously don't thunder-herd. `BODY.
+  PEEK[]` + `INTERNALDATE` fetch — never marks `\Seen`. `(uid_
+  validity, last_uid)` cursor in `<data_dir>/email/cursor.db`
+  (sqlx-sqlite, WAL); cursor reset to `last_uid=0` whenever the
+  server announces a different `UIDVALIDITY`. Cursor advance
+  happens **after** a successful publish so a crash mid-batch
+  reprocesses, not loses (at-least-once). `InboundEvent
+  {account_id, instance, uid, internal_date, raw_bytes}`
+  published as JSON on `plugin.inbound.email.<instance>` (raw
+  bytes via `serde_bytes`); MIME parsing + threading still
+  deferred to 48.5/48.6. Per-account `AccountHealth` map exposed
+  via `EmailPlugin::health_map()` for 48.10. TCP keepalive 30s
+  survives CGNAT idle drops that would otherwise kill IDLE
+  silently. `EMAIL_INSECURE_TLS=1` env opens a logged WARN escape
+  hatch for fake-server tests; production ignores it. 15 unit
+  tests across `cursor`, `events`, `health`, `imap_conn`,
+  `inbound`, `plugin`. Real-server e2e (greenmail) deferred to
+  48.10 along with `Starttls` support.)
 - 48.4 — SMTP outbound + disk-queue + Message-ID idempotency   ⬜
 - 48.5 — MIME parse/build + Attachment envelope   ⬜
 - 48.6 — Threading via `Message-ID` / `In-Reply-To` / `References`   ⬜
