@@ -3604,11 +3604,35 @@ pass through the new abstraction).
   unit + 7 dispatcher integration + 1 HTTP concurrent load
   + 5 YAML schema). Sweeper holds `Weak<Self>` so it dies on
   Drop without keeping the limiter alive.
-- 76.6 ⬜ — Backpressure + concurrency caps. Per-tenant semaphore
-  (max-in-flight), bounded queue, per-call timeout (default 30 s,
-  override per-tool), tokio `CancellationToken` propagated to
-  handlers. Done: handler that sleeps 60 s with timeout 5 s →
-  cancels, releases permit, leaves no half-state.
+- 76.6 ✅ — Backpressure + concurrency caps. Per-(tenant, tool)
+  `tokio::sync::Semaphore` keyed in `DashMap` (mirrors 76.5 shape
+  with `TokenBucket` swapped for `Semaphore`). Default
+  `max_in_flight: 10`, override per-tool. Bounded `queue_wait_ms`
+  (default 5_000) — over wait → JSON-RPC `-32002 concurrent calls
+  exceeded` with `data.max_in_flight` + `data.queue_wait_ms_exceeded`.
+  Per-call `tokio::time::timeout(timeout_for(tool), handler_fut)`
+  wraps every `tools/call`; per-tool override via
+  `per_tool[*].timeout_secs`, fallback `default.timeout_secs` then
+  `default_timeout_secs` (default 30 s). Hard cap `MAX_TIMEOUT_SECS`
+  600 s. Timeout → `-32001 request timeout` with
+  `data.timeout_ms`. RAII permits via `OwnedSemaphorePermit` —
+  released on success / error / timeout / cancel; verified by load
+  test (50 calls × max_in_flight=5 → permits restored). Sweeper
+  evicts entries where `available_permits() == max_in_flight`,
+  never strands in-flight permits. Hard-cap LRU eviction (default
+  50 000). Stdio principals bypass entirely. `tools/list`,
+  `initialize`, `shutdown` bypass the cap. `disabled: true` mode
+  returns no-op permits from a sentinel semaphore so caller code
+  path is uniform. Reference patterns: RAII acquire from in-tree
+  `crates/mcp/src/client.rs:873-899`; cancellation propagation
+  pattern from `claude-code-leak/src/Task.ts:39` + `src/services/
+  tools/toolExecution.ts:415-416` (the leak itself does NOT
+  implement server-side caps — only the cancel idea is portable);
+  unbounded-queue anti-pattern flagged in OpenClaw
+  `research/src/acp/control-plane/session-actor-queue.ts:6-37`,
+  explicitly rejected. 36 new tests across 3 files (3 entry +
+  13 config + 11 limiter unit + 8 dispatcher integration +
+  1 HTTP load).
 - 76.7 ⬜ — Server-side notifications + streaming. Close the
   `tools/list_changed` loop on the server (Phase 12.8 cliente-side
   pre-existed); add `progress` notifications via
@@ -4704,7 +4728,7 @@ Done when:
   consumes this design when emitting `tools/list_changed`
   — only stubs are pushed, schemas fetched on demand.
 
-#### 79.3 — SyntheticOutputTool   ⬜
+#### 79.3 — SyntheticOutputTool   ✅
 
 A tool that takes a JSONSchema and forces the model to
 return a typed object matching it — the model "calls" the

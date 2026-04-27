@@ -1778,6 +1778,16 @@ async fn main() -> Result<()> {
             nexo_core::agent::tool_search_tool::ToolSearchTool,
         );
 
+        // Phase 79.3 — `SyntheticOutput` typed-output validator.
+        // Always registered (cheap, pure, classified `ReadOnly`).
+        // The model invokes it to terminate a goal with a JSON
+        // value that matches a caller-provided JSONSchema —
+        // direct input for Phase 19/20 pollers + Phase 51 eval.
+        tools.register(
+            nexo_core::agent::synthetic_output_tool::SyntheticOutputTool::tool_def(),
+            nexo_core::agent::synthetic_output_tool::SyntheticOutputTool,
+        );
+
         // Phase 25 — `web_search` tool. Registered when the agent's
         // top-level policy has `enabled: true` and a router exists.
         // Per-binding overrides are enforced inside the tool itself
