@@ -4630,7 +4630,7 @@ Done when:
     refusal events, and the unlocking event are all
     present, in order.
 
-#### 79.2 — ToolSearchTool (deferred schemas)   ⬜
+#### 79.2 — ToolSearchTool (deferred schemas)   ✅ (MVP — provider filtering deferred)
 
 Today every registered tool ships its full JSONSchema in the
 system prompt — when the surface is wide (40+ tools after

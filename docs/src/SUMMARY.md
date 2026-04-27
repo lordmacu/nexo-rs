@@ -29,6 +29,7 @@
 - [Project tracker + dispatch (Phase 67.A–H)](./architecture/project-tracker.md)
 - [Plan mode (Phase 79.1)](./architecture/plan-mode.md)
 - [TodoWrite scratch list (Phase 79.4)](./architecture/todo-write.md)
+- [ToolSearch deferred schemas (Phase 79.2)](./architecture/tool-search.md)
 
 # Configuration
 

@@ -1767,6 +1767,17 @@ async fn main() -> Result<()> {
             nexo_core::agent::todo_write_tool::TodoWriteTool,
         );
 
+        // Phase 79.2 — `ToolSearch` discovery surface for deferred
+        // tools. Always registered; `ToolMeta::default` keeps it
+        // non-deferred itself (the model needs it to load everything
+        // else). When MCP-imported tools start opting into
+        // `ToolMeta::deferred`, this surface becomes useful at LLM
+        // turn time. MVP caveat tracked in FOLLOWUPS.md::Phase 79.2.
+        tools.register(
+            nexo_core::agent::tool_search_tool::ToolSearchTool::tool_def(),
+            nexo_core::agent::tool_search_tool::ToolSearchTool,
+        );
+
         // Phase 25 — `web_search` tool. Registered when the agent's
         // top-level policy has `enabled: true` and a router exists.
         // Per-binding overrides are enforced inside the tool itself
@@ -7264,6 +7275,11 @@ async fn start_http_transport(
         .as_ref()
         .map(yaml_pp_rate_limit_to_runtime);
 
+    let per_principal_concurrency = yaml
+        .per_principal_concurrency
+        .as_ref()
+        .map(yaml_pp_concurrency_to_runtime);
+
     let cfg = HttpTransportConfig {
         enabled: yaml.enabled,
         bind: yaml.bind,
@@ -7285,6 +7301,7 @@ async fn start_http_transport(
         sse_buffer_size: yaml.sse_buffer_size,
         enable_legacy_sse: yaml.enable_legacy_sse,
         per_principal_rate_limit,
+        per_principal_concurrency,
     };
 
     let handle = start_http_server(bridge.clone(), cfg, shutdown.clone()).await?;
@@ -7366,6 +7383,35 @@ fn yaml_pp_rate_limit_to_runtime(
         max_buckets: yaml.max_buckets,
         stale_ttl_secs: yaml.stale_ttl_secs,
         warn_threshold: yaml.warn_threshold,
+    }
+}
+
+/// Phase 76.6 — translate the YAML per-principal concurrency block
+/// into the runtime config. Field-by-field copy; the runtime
+/// validates values at `PerPrincipalConcurrencyCap::new()` time.
+fn yaml_pp_concurrency_to_runtime(
+    yaml: &nexo_config::types::mcp_server::PerPrincipalConcurrencyYaml,
+) -> nexo_mcp::server::per_principal_concurrency::PerPrincipalConcurrencyConfig {
+    use nexo_mcp::server::per_principal_concurrency::{
+        PerPrincipalConcurrencyConfig, PerToolConcurrency,
+    };
+    let convert =
+        |y: &nexo_config::types::mcp_server::PerToolConcurrencyYaml| PerToolConcurrency {
+            max_in_flight: y.max_in_flight,
+            timeout_secs: y.timeout_secs,
+        };
+    PerPrincipalConcurrencyConfig {
+        enabled: yaml.enabled,
+        default: convert(&yaml.default),
+        per_tool: yaml
+            .per_tool
+            .iter()
+            .map(|(k, v)| (k.clone(), convert(v)))
+            .collect(),
+        default_timeout_secs: yaml.default_timeout_secs,
+        queue_wait_ms: yaml.queue_wait_ms,
+        max_buckets: yaml.max_buckets,
+        stale_ttl_secs: yaml.stale_ttl_secs,
     }
 }
 
