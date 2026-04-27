@@ -73,6 +73,7 @@ impl InboundManager {
                 max_body_bytes: cfg.max_body_bytes,
                 max_attachment_bytes: cfg.max_attachment_bytes,
                 attachments_dir: std::path::PathBuf::from(&cfg.attachments_dir),
+                loop_prevention: cfg.loop_prevention.clone(),
             };
             workers.push(tokio::spawn(worker.run()));
         }
@@ -115,6 +116,10 @@ struct AccountWorker {
     max_body_bytes: usize,
     max_attachment_bytes: usize,
     attachments_dir: std::path::PathBuf,
+    /// Phase 48.8 — Loop-prevention toggles cloned from the plugin
+    /// config so the worker doesn't reach back into shared state on
+    /// the hot path.
+    loop_prevention: nexo_config::types::plugins::LoopPreventionCfg,
 }
 
 impl AccountWorker {
@@ -306,23 +311,83 @@ impl AccountWorker {
                     (None, Vec::new(), None)
                 }
             };
-            let event = InboundEvent {
-                account_id: self.account_cfg.address.clone(),
-                instance: self.account_cfg.instance.clone(),
-                uid: msg.uid,
-                internal_date: msg.internal_date,
-                raw_bytes: msg.raw_bytes,
-                meta,
-                attachments,
-                thread_root_id,
-            };
-            let topic = inbound_topic_for(&self.account_cfg.instance);
-            let payload = serde_json::to_value(&event)?;
-            self.broker
-                .publish(&topic, Event::new(topic.clone(), SOURCE, payload))
-                .await?;
+            // Phase 48.8 — DSN check first. A delivery report should
+            // emit a `BounceEvent` (operational signal) and NOT
+            // surface as conversational `InboundEvent`.
+            let mut suppressed = false;
+            if let Some(meta_ref) = meta.as_ref() {
+                if let Some(parsed) = crate::dsn::parse_bounce(meta_ref, &msg.raw_bytes) {
+                    let bounce = crate::dsn::BounceEvent {
+                        account_id: self.account_cfg.address.clone(),
+                        instance: self.account_cfg.instance.clone(),
+                        original_message_id: parsed.original_message_id,
+                        recipient: parsed.recipient,
+                        status_code: parsed.status_code,
+                        action: parsed.action,
+                        reason: parsed.reason,
+                        classification: parsed.classification,
+                    };
+                    let topic = format!(
+                        "email.bounce.{}",
+                        self.account_cfg.instance
+                    );
+                    if let Ok(payload) = serde_json::to_value(&bounce) {
+                        if let Err(e) = self
+                            .broker
+                            .publish(&topic, Event::new(topic.clone(), SOURCE, payload))
+                            .await
+                        {
+                            warn!(
+                                target: "plugin.email",
+                                instance = %self.account_cfg.instance,
+                                error = %e,
+                                "bounce publish failed (continuing — cursor advances)"
+                            );
+                        }
+                    }
+                    info!(
+                        target: "plugin.email",
+                        instance = %self.account_cfg.instance,
+                        uid = msg.uid,
+                        reason = "dsn_inbound",
+                        "email.loop_skip"
+                    );
+                    suppressed = true;
+                } else if let Some(reason) = crate::loop_prevent::should_skip(
+                    meta_ref,
+                    &self.account_cfg.address,
+                    &self.loop_prevention,
+                ) {
+                    info!(
+                        target: "plugin.email",
+                        instance = %self.account_cfg.instance,
+                        uid = msg.uid,
+                        reason = %reason.metric_label(),
+                        "email.loop_skip"
+                    );
+                    suppressed = true;
+                }
+            }
+
+            if !suppressed {
+                let event = InboundEvent {
+                    account_id: self.account_cfg.address.clone(),
+                    instance: self.account_cfg.instance.clone(),
+                    uid: msg.uid,
+                    internal_date: msg.internal_date,
+                    raw_bytes: msg.raw_bytes,
+                    meta,
+                    attachments,
+                    thread_root_id,
+                };
+                let topic = inbound_topic_for(&self.account_cfg.instance);
+                let payload = serde_json::to_value(&event)?;
+                self.broker
+                    .publish(&topic, Event::new(topic.clone(), SOURCE, payload))
+                    .await?;
+                self.note_message().await;
+            }
             highest = uid;
-            self.note_message().await;
             // Persist cursor each message; cheap (sqlite WAL) and
             // tightens the at-least-once window on crash.
             let cursor = UidCursor {

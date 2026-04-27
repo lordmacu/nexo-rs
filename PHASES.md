@@ -2326,7 +2326,51 @@ Sub-phases:
   forwarder. `lib.rs` re-exports the new public surface. 4 unit
   tests in `imap_op` (quote escape, CRLF collapse, simple wrap,
   date format); 88 / 88 plugin total; clippy clean.)
-- 48.8 — Loop-prevention + DSN/bounce parsing   ⬜
+- 48.8 — Loop-prevention + DSN/bounce parsing   ✅
+  (Two pure modules wired into `inbound.rs::drain_pending`.
+  `loop_prevent.rs::should_skip(meta, account, cfg)` walks
+  `Auto-Submitted` (RFC 3834 — anything other than the literal
+  `no` is the loop signal) → `List-Id` / `List-Unsubscribe` (RFC
+  2369) → `Precedence: bulk|junk|list` (RFC 2076) →
+  `is_self_thread` (48.6 reuse) and returns the first match as a
+  `SkipReason` with a stable `metric_label()`. First-match
+  ordering means the most specific category wins (a list mail
+  that also ships `Auto-Submitted` reports as `auto_submitted`).
+  `dsn.rs::parse_bounce(meta, raw)` detects DSNs by the
+  `Content-Type: multipart/report; report-type=delivery-status`
+  marker, falling back to a heuristic localpart match
+  (`MAILER-DAEMON` / `mail-daemon` / `mail.daemon` /
+  `postmaster`) when the marker is missing — some legacy MTAs
+  ship plain-text bounces. Walks the parts: `message/delivery-
+  status` body is parsed by hand (mail-parser doesn't expose
+  the inner Message) with a fold-aware reader for `Action`,
+  `Status`, `Final-Recipient` (`rfc822;` prefix stripped),
+  `Diagnostic-Code`. `message/rfc822` is re-parsed for the
+  original Message-ID; `text/rfc822-headers` is the cheaper
+  variant. `BounceClassification::from_status_code` — `5.x` →
+  `Permanent`, `4.x` → `Transient`, missing → `Unknown`. Wire
+  payload `BounceEvent { account_id, instance,
+  original_message_id?, recipient?, status_code?, action?,
+  reason?, classification }` published on `email.bounce.<inst>`.
+
+  `drain_pending` evaluates DSN first (a delivery report still
+  emits a BounceEvent even when it ships `Auto-Submitted`),
+  then loop-prevention. Either way the cursor advances — a
+  suppressed message has been *processed* successfully and must
+  not reprocess on the next IDLE wake. `AccountWorker` now
+  carries a cloned `LoopPreventionCfg` so the hot path doesn't
+  reach back into shared config.
+
+  18 new unit tests (8 `dsn` covering classification, Postfix
+  5.1.1, Exchange-style 4.7.0 transient, MAILER-DAEMON
+  heuristic, malformed partial, regular-mail-returns-None,
+  Final-Recipient `addr-type;` strip; 9 `loop_prevent` covering
+  every branch + cfg-off-skips-nothing + Auto-Submitted-no
+  doesn't-skip + first-match priority).
+  134 / 134 plugin total. Persistent bounce history,
+  rate-limited `email_send` against bounce count, and DSN
+  dedupe `LRU<msg_id>` deferred to 48.10. `cargo build
+  --workspace` green; clippy clean.)
 - 48.9 — SPF/DKIM boot warn + setup-CLI submenu   ⬜
 - 48.10 — Health + hot-reload + e2e + docs   ⬜
 
