@@ -3633,14 +3633,40 @@ pass through the new abstraction).
   explicitly rejected. 36 new tests across 3 files (3 entry +
   13 config + 11 limiter unit + 8 dispatcher integration +
   1 HTTP load).
-- 76.7 ⬜ — Server-side notifications + streaming. Close the
-  `tools/list_changed` loop on the server (Phase 12.8 cliente-side
-  pre-existed); add `progress` notifications via
-  `ToolContext.report_progress`; `resources/updated` for live
-  resource sets. SSE delivers per-session in order; client drop
-  doesn't crash sender. Done: long-running tool emits 100 progress
-  events that arrive ordered; abrupt SSE disconnect leaves server
-  healthy.
+- 76.7 ✅ — Server-side notifications + streaming. Closes the
+  `notifications/tools/list_changed`, `resources/list_changed`,
+  `resources/updated` loops on the server (Phase 12.8 client-side
+  pre-existed) via new `HttpServerHandle::notify_tools_list_changed`,
+  `notify_resources_list_changed`, and `notify_resource_updated`
+  methods. Adds `notifications/progress` via a new trait method
+  `McpServerHandler::call_tool_streaming(name, args, ProgressReporter)`
+  with a default impl that delegates to `call_tool` (non-breaking).
+  `ProgressReporter` is `Clone`, non-blocking, and drop-oldest on
+  broadcast overflow; coalesces with a 20 ms gate per reporter so
+  a tight-loop `report()` doesn't storm the wire (last call wins
+  on flush). `noop()` reporter is allocation-free for callers
+  without a `progressToken`. `resources/subscribe` /
+  `resources/unsubscribe` arms in the dispatcher persist per-session
+  URI subscriptions in a `DashSet<String>` on `HttpSession`;
+  `notify_resource_updated` only fans out to subscribed sessions.
+  `DispatchContext` extended with `progress_token: Option<Value>`
+  and `session_sink: Option<broadcast::Sender<SessionEvent>>` —
+  HTTP transport extracts the token from `params._meta.progressToken`
+  (strict MCP 2025-11-25) and the sink from the session's
+  `notif_tx`. Stdio principals receive `session_sink: None` →
+  reporter is automatically noop. `SessionEvent` promoted to
+  `pub` + `#[non_exhaustive]`. Capability advertisement now
+  default-enables `tools.listChanged`, `resources.listChanged`,
+  `resources.subscribe` so clients don't need to probe. Reference
+  patterns: client-side consumption shape from
+  `claude-code-leak/src/services/mcp/useManageMCPConnections.ts:618-664`
+  (the leak does NOT implement server-side notifications — it
+  consumes them from upstream MCP servers). 11 new tests across
+  3 files (7 progress unit + 1 dispatcher integration progress
+  storm + 3 progress e2e). Wire shape compact JSON-RPC notification
+  routed through existing `SessionEvent::Message` per-session
+  broadcast — no new variant needed (Phase 76.1 already shipped
+  the right primitive).
 - 76.8 ⬜ — Durable sessions + reconnection. Server-assigned
   session-id returned on `initialize`, replayed on reconnect to
   restore subscriptions/cursors. Idle TTL configurable (default
@@ -4987,7 +5013,7 @@ Done when:
     drain helper extended);
   - non-coordinator caller gets `permission_denied`.
 
-#### 79.7 — ScheduleCronTool   ⬜
+#### 79.7 — ScheduleCronTool   ✅ (MVP — runtime firing deferred)
 
 Agent-time scheduling: from inside a turn, the model can
 register a cron entry that fires a future goal. Complements
