@@ -23,8 +23,11 @@ transitive workspace dep).
 
 ## MVP scope
 
-- `cron_create { cron, prompt, channel?, recurring? }` — schedule a
-  recurring or one-shot prompt.
+- `cron_create { cron, prompt, channel?, recipient?, recurring? }` —
+  schedule a recurring or one-shot prompt. `recipient` is the
+  `to` address for outbound publish (JID for WhatsApp, chat id
+  for Telegram, email for SMTP); without it the dispatcher only
+  logs the LLM response.
 - `cron_list` — read-only, returns the binding's entries.
 - `cron_delete { id }` — remove an entry.
 - 5-field cron expression (`M H DoM Mon DoW`); 6-field also
@@ -37,7 +40,7 @@ transitive workspace dep).
 - SQLite-backed (`nexo_cron_entries` table); survives daemon
   restart.
 
-## Runtime firing — shipped (LLM dispatcher live)
+## Runtime firing — shipped (end-to-end)
 
 `crates/core/src/cron_runner.rs::CronRunner` polls
 `store.due_at(now)` every 5 s and dispatches due entries
@@ -51,16 +54,34 @@ Production wiring at boot uses `LlmCronDispatcher`
 `ChatRequest` from `entry.prompt`, calls `LlmClient::chat` on a
 client built from the FIRST agent's `model` config, logs the
 response with id + binding + cron expression + 200-char
-preview. Operators tail the log to verify cron fires actually
-talk to the model.
+preview, then forwards the body to the user-facing channel via
+`BrokerChannelPublisher` when the entry carries both a `channel`
+and a `recipient`.
 
 Fallback: when no agents are configured or the LLM-client build
 fails, the runner falls back to `LoggingCronDispatcher` so cron
 fires stay observable in degraded boot.
 
-Outbound publish to the binding's channel (so the user sees the
-response on WhatsApp / Telegram / email) is the remaining
-follow-up. Tracked in `FOLLOWUPS.md::Phase 79.7`.
+### Outbound publish
+
+`BrokerChannelPublisher` parses `<plugin>:<instance>` from
+`entry.channel` and emits an event on
+`plugin.outbound.<plugin>.<instance>` carrying:
+
+```json
+{ "kind": "text", "to": "<recipient>", "text": "<llm body>" }
+```
+
+This is the same envelope the WhatsApp / Telegram / Email
+outbound tools already speak — the receiving plugin's dispatcher
+delivers the message to the user.
+
+Failure mode: a publish error is logged via `tracing::warn!`
+but never fails `fire()`. The runner still advances state, so a
+stuck downstream channel (NATS down, plugin not subscribed)
+cannot deadlock the cron loop. Set both `channel` and
+`recipient` on `cron_create` to enable user-facing delivery —
+either missing → the dispatcher only logs.
 
 ## Tool shapes
 
@@ -71,6 +92,7 @@ follow-up. Tracked in `FOLLOWUPS.md::Phase 79.7`.
   "cron": "*/5 * * * *",
   "prompt": "Check the build queue and report",
   "channel": "whatsapp:default",
+  "recipient": "5511999999999@s.whatsapp.net",
   "recurring": true
 }
 ```

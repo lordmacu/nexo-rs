@@ -2631,38 +2631,41 @@ async fn main() -> Result<()> {
     .await
     {
         Ok(store) => {
-            let dispatcher: std::sync::Arc<
-                dyn nexo_core::cron_runner::CronDispatcher,
-            > = match first_agent_for_cron.as_ref() {
-                Some((agent_id, model)) => match llm_registry.build(&cfg.llm, model) {
-                    Ok(client) => {
-                        tracing::info!(
-                            provider = %model.provider,
-                            model = %model.model,
-                            "[cron] LlmCronDispatcher wired (model from agent `{}`)",
-                            agent_id
-                        );
-                        std::sync::Arc::new(
-                            nexo_core::llm_cron_dispatcher::LlmCronDispatcher::new(client),
-                        )
+            let dispatcher: std::sync::Arc<dyn nexo_core::cron_runner::CronDispatcher> =
+                match first_agent_for_cron.as_ref() {
+                    Some((agent_id, model)) => match llm_registry.build(&cfg.llm, model) {
+                        Ok(client) => {
+                            tracing::info!(
+                                provider = %model.provider,
+                                model = %model.model,
+                                "[cron] LlmCronDispatcher wired (model from agent `{}`)",
+                                agent_id
+                            );
+                            let publisher: std::sync::Arc<
+                                dyn nexo_core::llm_cron_dispatcher::ChannelPublisher,
+                            > = std::sync::Arc::new(
+                                nexo_core::llm_cron_dispatcher::BrokerChannelPublisher::new(
+                                    std::sync::Arc::new(broker.clone()),
+                                ),
+                            );
+                            std::sync::Arc::new(
+                                nexo_core::llm_cron_dispatcher::LlmCronDispatcher::new(client)
+                                    .with_publisher(publisher),
+                            )
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                "[cron] LlmCronDispatcher build failed — falling back to logging"
+                            );
+                            std::sync::Arc::new(nexo_core::cron_runner::LoggingCronDispatcher)
+                        }
+                    },
+                    None => {
+                        tracing::warn!("[cron] no agents configured — using logging dispatcher");
+                        std::sync::Arc::new(nexo_core::cron_runner::LoggingCronDispatcher)
                     }
-                    Err(e) => {
-                        tracing::warn!(
-                            error = %e,
-                            "[cron] LlmCronDispatcher build failed — falling back to logging"
-                        );
-                        std::sync::Arc::new(
-                            nexo_core::cron_runner::LoggingCronDispatcher,
-                        )
-                    }
-                },
-                None => {
-                    tracing::warn!(
-                        "[cron] no agents configured — using logging dispatcher"
-                    );
-                    std::sync::Arc::new(nexo_core::cron_runner::LoggingCronDispatcher)
-                }
-            };
+                };
             let runner = std::sync::Arc::new(nexo_core::cron_runner::CronRunner::new(
                 std::sync::Arc::new(store)
                     as std::sync::Arc<dyn nexo_core::cron_schedule::CronStore>,
