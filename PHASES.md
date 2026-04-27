@@ -2161,25 +2161,33 @@ Sub-phases:
   green; clippy clean. Real-server e2e (greenmail) deferred to
   48.10 along with `Starttls` IMAP support.)
 - 48.5 — MIME parse/build + Attachment envelope   🔄
-  (48.5.a foundational slice: workspace + plugin deps for
-  `mail-parser`, `mail-builder`, `html2text`, `chardetng`,
-  `mime_guess`, `encoding_rs`. `EmailPluginConfig` gains
-  `max_attachment_bytes` (default 25 MiB). `events.rs` extended
-  with `EmailMeta { message_id, in_reply_to, references, from, to,
-  cc, subject, body_text, body_html, date, headers_extra,
-  body_truncated }`, `EmailAttachment { sha256, local_path,
-  size_bytes, mime_type, filename, content_id, disposition,
-  truncated }`, `AddressEntry { address, name }`,
-  `AttachmentDisposition { Inline, Attachment }` (snake_case),
-  `OutboundAttachmentRef { data_path, filename, mime_type?,
-  content_id?, disposition }`. `InboundEvent` + `OutboundCommand`
-  carry the new fields with `#[serde(default,
-  skip_serializing_if = "...")]` so the 48.3 / 48.4 payload shape
-  remains forward-compatible — a back-compat test parses an old
-  payload and asserts `meta` is `None`. 6 new round-trip tests; 46
-  unit tests total. `mime_parse.rs` parser + `mime_build.rs`
-  multipart builder + drain_pending enrich + outbound attachment
-  read still pending.)
+  (48.5.a foundational slice + 48.5.b inbound parser shipped.
+  `mime_parse.rs` wraps `mail-parser 0.9` to lift `BODY.PEEK[]`
+  bytes into `EmailMeta` + `Vec<EmailAttachment>`. Body text
+  picks the `text/plain` part; HTML-only messages get
+  `html2text`-stripped into `body_text` while keeping the raw
+  HTML in `body_html` for archive/render fidelity. UTF-8-safe
+  truncation at `max_body_bytes` (32 KiB default), oversized
+  attachments capped at `max_attachment_bytes` (25 MiB) with the
+  `truncated: true` signal. Attachments persisted to
+  `<attachments_dir>/<sha256>` via atomic temp-rename; identical
+  bytes across accounts hit disk once. `Date:` falls back to IMAP
+  `INTERNALDATE` when the header is missing or malformed. From /
+  To / Cc parsed into `AddressEntry` (display name preserved).
+  `headers_extra` whitelists the `Auto-Submitted` / `List-*` /
+  `Precedence` family that 48.8 needs; mail-parser's
+  `HeaderValue::Address` flattening means `<list-id>` style
+  headers round-trip without losing brackets. `Content-
+  Disposition: inline` lifts to `AttachmentDisposition::Inline`,
+  preserving `Content-ID` for tools/UI. Drain hook in
+  `inbound.rs::drain_pending` wraps `parse_eml` in a best-effort
+  branch — parse failure logs WARN `email.parse.malformed` and
+  publishes the event raw-only so a single corrupt MIME never
+  wedges the worker. 10 new parser tests cover plain / HTML-only /
+  multipart-with-attachment / sha256 dedupe / truncation / list
+  headers / missing Date / malformed / display-name. 56 unit tests
+  total. Outbound multipart builder, `enqueue_command` attachment
+  read, and `mime_text.rs` → `mime_build.rs` rename remain.)
 - 48.6 — Threading via `Message-ID` / `In-Reply-To` / `References`   ⬜
 - 48.7 — Tools: `email_send` / `_reply` / `_archive` / `_label` / `_move_to` / `_search`   ⬜
 - 48.8 — Loop-prevention + DSN/bounce parsing   ⬜
