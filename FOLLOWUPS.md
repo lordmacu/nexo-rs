@@ -676,6 +676,62 @@ Open:
 - 2026-04-25 — TaskFlow runtime wiring: shared `FlowManager`, `WaitEngine` tick loop, `taskflow.resume` NATS bridge, and tool actions `wait`/`finish`/`fail` with guardrails (`timer_max_horizon`, non-empty topic+correlation).
 - 2026-04-25 — Transcripts FTS5 index + redaction module: `transcripts.yaml` config, write-through index from `TranscriptWriter`, `session_logs search` uses FTS when present (substring fallback otherwise), opt-in regex redactor with 6 built-in patterns (Bearer JWT, sk-/sk-ant-, AWS access key, hex token, home path) and operator-defined `extra_patterns`.
 
+- 2026-04-27 — **Phase 48 (Email channel) deferrals.** Phase 48 closed
+  with sub-phases 48.1–48.10 ✅ but ten knobs were intentionally
+  parked rather than bloat the closing slice:
+  - **Interactive setup wizard** (`run_email_wizard` +
+    `yaml_patch::upsert_email_account` + 0o600 TOML secret writer).
+    Operators currently edit `config/plugins/email.yaml` and
+    `secrets/email/<inst>.toml` by hand. `provider_hint(domain)`
+    returns ready-to-paste endpoints; the `dialoguer` glue is
+    unwritten.
+  - **Tool registration in `src/main.rs`.** `register_email_tools(
+    &registry, ctx)` exists and is fully tested but isn't called at
+    boot: the registry build runs before `EmailPlugin::start` arms
+    the `OutboundDispatcher` whose `DispatcherHandle` the tools
+    need. Two clean fixes — construct the dispatcher externally
+    and share an `Arc<dyn DispatcherHandle>`, or add a post-start
+    hook on the plugin.
+  - **greenmail e2e** harness (Docker compose + a `feature =
+    "email-e2e"` test suite that runs send → inbound → reply →
+    archive against a real IMAP/SMTP server).
+  - **Hot-reload account diff.** Currently a config reload
+    restarts the whole plugin; an account-level diff (spawn /
+    teardown one `AccountWorker` per change) would let an
+    operator add a new mailbox without dropping IDLE on the
+    others.
+  - **Persistent bounce history.** 48.8 emits `BounceEvent` but
+    doesn't store anything; an `email_bounces` SQLite table keyed
+    on `(recipient, instance)` would let `email_send` warn the
+    agent before reattempting a permanently-bounced recipient.
+  - **IMAP STARTTLS.** v1 ships `ImplicitTls` (port 993) only.
+    `Starttls` and `Plain` reject at `ImapConnection::connect`
+    with operator-actionable errors.
+  - **Multi-selector DKIM probe.** v1 only checks
+    `default._domainkey.<domain>`. Adding a fallback walk over
+    `google`, `selector1`, `selector2`, `mail` would catch the
+    common providers without making the operator read the
+    boot-warn hint.
+  - **`/healthz` HTTP integration** for the per-account
+    `EmailPlugin::health_map()` rows. The data is already
+    populated (`outbound_queue_depth`, `outbound_dlq_depth`,
+    `outbound_sent_total`, `outbound_failed_total`,
+    `last_idle_alive_ts`); only the HTTP surface is missing.
+  - **Dedicated Prometheus metrics** for email
+    (`email_imap_state{instance}` gauge,
+    `email_imap_messages_fetched_total{instance}` counter,
+    `email_loop_skipped_total{reason}`,
+    `email_bounces_total{instance, classification}`).
+  - **Phase 16 binding-policy auto-filter** so
+    `register_email_tools` only exposes the per-instance tool
+    surface to agents whose binding allows it. Today the runtime
+    `EffectiveBindingPolicy` check covers it; surface-level
+    filtering is cleaner.
+  - **Cross-account attachment GC.** `mime_parse::parse_eml`
+    persists attachments to `data/email-attachments/<sha256>`
+    deduped across every account; nothing reaps an attachment
+    when no account references it any more.
+
 ## Maintenance note
 
 If a future historical import includes non-English notes, keep them in `archive/spanish/*.txt` and update this Markdown tracker in English only.

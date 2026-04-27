@@ -522,4 +522,37 @@ IOUs — features that landed in the daemon but have no UI yet.
 - [ ] **Restart-survivor goals view (Phase 71.2)** — surface goals whose `status=LostOnRestart` in the agents tab, with a one-click "re-dispatch" button that calls `program_phase phase_id={…}` against the same origin. Matches the boot-time sweep so operators don't need to scroll the daemon log to know what got abandoned.
 - [ ] **Shutdown drain log inspector (Phase 71.3)** — admin event timeline should highlight the `shutdown drain swept in-flight goals` line + report counters (`running_seen`, `hooks_fired`, `hook_dispatch_timeouts`) so operators can audit whether SIGTERM actually drained or hit the per-hook timeout.
 - [ ] **Turn timeline (Phase 72)** — per-goal panel that streams `goal_turns` rows: one row per turn with outcome glyph, decision preview, summary, error, and a "show raw_json" expand. Filters: outcome (`needs_retry` only, `error` only). Admin should reuse the same SQLite table that `agent_turns_tail` reads, so the chat tool and the dashboard never disagree.
+- [ ] **Email plugin (Phase 48)** — the email plugin lands a fresh
+  per-instance surface that has no admin-UI yet. Phase A3 / A4
+  needs:
+  - **Account CRUD** under the channels matrix: instance, address,
+    provider preset (Gmail / Outlook / Yahoo / iCloud / Custom),
+    IMAP `host:port:tls`, SMTP `host:port:tls`, folders (inbox /
+    sent / archive), `from_allowlist` / `from_denylist`. The CLI
+    setup wizard is still deferred (see FOLLOWUPS) — the UI
+    should land first or the wizard ship in parallel.
+  - **Secrets editor** for `secrets/email/<inst>.toml` that hides
+    the secret value, exposes the `kind` selector
+    (`password` / `oauth2_static` / `oauth2_google`), and surfaces
+    a "reuse google-auth account" picker when `provider = Gmail`.
+    Enforce 0o600 on write.
+  - **SPF / DKIM banner** showing the boot-warn matrix per account
+    (`spf_missing`, `spf_misalignment`, `dkim_missing`,
+    `dns_unavailable`) with the same operator-actionable hint
+    text the daemon logs.
+  - **`spf_dkim_warn` toggle** per plugin block + `loop_prevention`
+    toggles (`auto_submitted` / `list_headers` / `self_from`)
+    visible on the same page so an operator can mute warns
+    without `vim`-ing the YAML.
+  - **Bounce inbox** view backed by `email.bounce.<instance>`
+    (when persisted bounce history lands; today the events fire
+    but aren't stored).
+  - **Outbound queue depth + DLQ inspector** — `health_map()`
+    already exposes `outbound_queue_depth` / `outbound_dlq_depth`
+    / `outbound_sent_total` / `outbound_failed_total` per account.
+  - **`max_body_bytes` / `max_attachment_bytes` editor** with
+    sensible defaults (32 KiB / 25 MiB).
+  - **`EMAIL_INSECURE_TLS` capability badge** pulled from
+    `setup::capabilities::INVENTORY` (registered 48.10) — warns
+    red when armed in prod.
 - [ ] (add lines as features land — see auto-memory rule)

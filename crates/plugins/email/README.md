@@ -1,118 +1,65 @@
 # nexo-plugin-email
 
-> Email channel plugin for Nexo — IMAP inbound + SMTP outbound, with native AWS SES adapter.
+> Multi-account IMAP / SMTP channel for [Nexo](https://github.com/lordmacu/nexo-rs) agents.
 
-This crate is part of **[Nexo](https://github.com/lordmacu/nexo-rs)** — a multi-agent Rust framework with a NATS event bus, pluggable LLM providers (MiniMax, Anthropic, OpenAI-compat, Gemini, DeepSeek), per-agent credentials, MCP support, and channel plugins for WhatsApp, Telegram, Email, and Browser (CDP).
+This crate ships the email channel plugin: IMAP IDLE inbound (with a
+60 s polling fallback), SMTP outbound under a CircuitBreaker, MIME
+parse + multipart build (`mail-parser` + `mail-builder`), six
+agent-callable tools (`email_send`, `email_reply`, `email_archive`,
+`email_move_to`, `email_label`, `email_search`), threading via
+`Message-ID` / `In-Reply-To` / `References` (Phase 48.6 UUIDv5
+session ids), loop-prevention against auto-replies / list mail /
+self-bounces, and DSN/bounce parsing into a dedicated
+`email.bounce.<instance>` topic.
 
 - **Main repo:** <https://github.com/lordmacu/nexo-rs>
-- **Runtime engine:** [`nexo-core`](https://github.com/lordmacu/nexo-rs/tree/main/crates/core)
-- **Public docs:** <https://lordmacu.github.io/nexo-rs/>
+- **Operator docs (mdBook):** <https://lordmacu.github.io/nexo-rs/plugins/email.html>
 
-## What this crate does
+## Status
 
-- **Inbound IMAP polling** — connects to a Gmail / Office365 / generic
-  IMAP server, fetches new messages since the last cursor, normalises
-  them into `InboundMessage { sender, text, attachments }`, and
-  publishes on `plugin.inbound.email[.<account>]`.
-- **Outbound SMTP send** — consumes `plugin.outbound.email[.<account>]`
-  and dispatches messages via SMTP+STARTTLS or implicit TLS.
-- **AWS SES adapter** — when `provider: ses` is configured, uses
-  the EC2 instance role / `~/.aws/credentials` instead of stuffing
-  SMTP creds into YAML.
-- **Threading-aware** — preserves `In-Reply-To` + `References`
-  headers so reply chains stay threaded in the recipient's inbox.
-- **Attachment support** — base64-decodes inbound attachments into
-  `data/attachments/<sha256>` (deduped) and references them by
-  digest in the inbound payload.
-- **Per-agent credentials** — Phase 17 `nexo-auth` resolver picks
-  the mailbox keys per agent, so a multi-tenant deployment can
-  ship one daemon serving N customer inboxes.
+Phase 48 closed. v1 ships IMAP `ImplicitTls` (port 993) only.
+STARTTLS for IMAP, multi-selector DKIM probe, persistent bounce
+history, the interactive setup wizard, and a greenmail e2e harness
+are tracked in [`proyecto/FOLLOWUPS.md`](https://github.com/lordmacu/nexo-rs/blob/main/proyecto/FOLLOWUPS.md)
+for follow-up phases.
 
-## Configuration
+## Quickstart
+
+Drop a YAML block under `config/plugins/email.yaml` and a TOML
+secret under `secrets/email/<instance>.toml` (mode `0o600`). Full
+schema, secret format, tool catalog, inbound/bounce wire formats,
+loop-prevention rules and SPF/DKIM behaviour live in the operator
+docs at the link above.
 
 ```yaml
-# config/plugins/email.yaml (or inline under plugins:)
-plugins:
-  email:
-    instance: primary
-    inbox:
-      provider: imap                # imap | gmail-oauth
-      host: imap.gmail.com
-      port: 993
-      username: ${EMAIL_USER}
-      password_file: /run/secrets/email_password
-      poll_interval_secs: 60
-    outbox:
-      provider: smtp                # smtp | ses
-      host: smtp.gmail.com
-      port: 587
-      username: ${EMAIL_USER}
-      password_file: /run/secrets/email_password
-      from: "agent@yourdomain.com"
-```
-
-For SES with EC2 instance role:
-
-```yaml
-plugins:
-  email:
-    outbox:
-      provider: ses
-      aws_region: us-east-1
-      from: "agent@yourdomain.com"
-```
-
-## Wire format
-
-Inbound published on `plugin.inbound.email[.<instance>]`:
-
-```json
-{
-  "channel": "email",
-  "instance": "primary",
-  "sender": "user@example.com",
-  "text": "...",
-  "subject": "...",
-  "in_reply_to": "...",
-  "attachments": [
-    { "sha256": "...", "filename": "report.pdf", "mime": "application/pdf" }
-  ]
-}
-```
-
-Outbound consumed on `plugin.outbound.email[.<instance>]`:
-
-```json
-{ "kind": "email", "to": "user@example.com", "subject": "...", "text": "..." }
-```
-
-## Install
-
-```toml
-[dependencies]
-nexo-plugin-email = "0.1"
+email:
+  enabled: true
+  spf_dkim_warn: true
+  accounts:
+    - instance: ops
+      address: ops@example.com
+      provider: custom
+      imap: { host: imap.example.com, port: 993, tls: implicit_tls }
+      smtp: { host: smtp.example.com, port: 587, tls: starttls }
 ```
 
 ## When to use this crate vs not
 
-- ✅ Customer support agent that triages support@yourdomain.com.
-- ✅ Personal agent that summarises your inbox + drafts replies.
-- ✅ Async batch flows (form submissions / receipts).
-- ❌ Real-time chat — IMAP poll latency is 30-120s. Use WhatsApp
-  or Telegram for sub-second.
-- ❌ One-off transactional sends — use AWS SES SDK or a transactional
-  provider directly.
-
-## Documentation for this crate
-
-- [Email plugin guide](https://lordmacu.github.io/nexo-rs/plugins/email.html)
-- [Per-agent credentials](https://lordmacu.github.io/nexo-rs/config/credentials.html)
+- ✅ Customer-support agent triaging `support@yourdomain.com`.
+- ✅ Personal agent that summarises your inbox and drafts replies.
+- ✅ Async batch flows (form submissions, receipts).
+- ❌ Real-time chat — IMAP latency is 30-120 s. Use the WhatsApp or
+  Telegram plugins for sub-second.
+- ❌ One-off transactional sends from a marketing pipeline — reach
+  for SES / Postmark directly.
 
 ## License
 
 Licensed under either of:
 
-- Apache License, Version 2.0 ([LICENSE-APACHE](https://github.com/lordmacu/nexo-rs/blob/main/LICENSE-APACHE))
-- MIT license ([LICENSE-MIT](https://github.com/lordmacu/nexo-rs/blob/main/LICENSE-MIT))
+- Apache License, Version 2.0
+  ([LICENSE-APACHE](https://github.com/lordmacu/nexo-rs/blob/main/LICENSE-APACHE))
+- MIT license
+  ([LICENSE-MIT](https://github.com/lordmacu/nexo-rs/blob/main/LICENSE-MIT))
 
 at your option.

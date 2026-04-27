@@ -838,7 +838,37 @@ async fn main() -> Result<()> {
         plugins.register(plugin);
         tracing::info!(instance = %instance_label, "registered plugin: telegram");
     }
-    // email: Phase 6+
+    // Email plugin (Phase 48). Registers when configured + accounts
+    // declared. Tool registration (`register_email_tools`) is
+    // deferred — tools need a `DispatcherHandle` extracted from the
+    // plugin's owned `OutboundDispatcher`, which the registry
+    // ordering doesn't yet support cleanly. Tracked in FOLLOWUPS.md.
+    if let Some(email_cfg) = cfg.plugins.email.as_ref() {
+        if email_cfg.enabled && !email_cfg.accounts.is_empty() {
+            if let Some(creds_bundle) = credentials.as_ref() {
+                let data_dir = std::env::var("NEXO_DATA_DIR")
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|_| std::path::PathBuf::from("data"));
+                let plugin = nexo_plugin_email::EmailPlugin::new(
+                    email_cfg.clone(),
+                    creds_bundle.stores.email.clone(),
+                    creds_bundle.stores.google.clone(),
+                    data_dir,
+                );
+                plugins.register(plugin);
+                tracing::info!(
+                    accounts = email_cfg.accounts.len(),
+                    "registered plugin: email"
+                );
+            } else {
+                tracing::warn!(
+                    "email plugin configured but credential bundle is missing — skipping registration"
+                );
+            }
+        } else {
+            tracing::info!("email plugin configured but disabled / no accounts — skipping");
+        }
+    }
     plugins
         .start_all(broker.clone())
         .await
