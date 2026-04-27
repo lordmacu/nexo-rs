@@ -891,6 +891,7 @@ async fn main() -> Result<()> {
                         config: Arc::new(email_cfg.clone()),
                         dispatcher,
                         health,
+                        bounce_store: plugin.bounce_store_handle(),
                     }))
                 }
                 None => {

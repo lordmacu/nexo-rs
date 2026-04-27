@@ -10,6 +10,7 @@ use nexo_core::agent::plugin::{Command, Plugin, Response};
 use tokio::sync::{Mutex, OnceCell};
 use tracing::info;
 
+use crate::bounce_store::BounceStore;
 use crate::cursor::CursorStore;
 use crate::inbound::{HealthMap, InboundManager};
 use crate::outbound::OutboundDispatcher;
@@ -46,6 +47,7 @@ pub struct EmailPlugin {
     inbound: Mutex<Option<InboundManager>>,
     outbound: Mutex<Option<OutboundDispatcher>>,
     cursor: OnceCell<Arc<CursorStore>>,
+    bounce: OnceCell<Arc<BounceStore>>,
 }
 
 impl EmailPlugin {
@@ -66,11 +68,46 @@ impl EmailPlugin {
             inbound: Mutex::new(None),
             outbound: Mutex::new(None),
             cursor: OnceCell::new(),
+            bounce: OnceCell::new(),
+        }
+    }
+
+    /// Lazily-opened persistent bounce history. Path is
+    /// `<data_dir>/email/bounces.db`. Failures degrade gracefully —
+    /// a bounce that can't be persisted still publishes its event
+    /// over the broker.
+    async fn bounce_store(&self) -> Option<Arc<BounceStore>> {
+        if let Some(s) = self.bounce.get() {
+            return Some(s.clone());
+        }
+        let path = self.data_dir.join("email").join("bounces.db");
+        match BounceStore::open_path(&path).await {
+            Ok(store) => {
+                let arc = Arc::new(store);
+                let _ = self.bounce.set(arc.clone());
+                Some(arc)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "plugin.email",
+                    path = %path.display(),
+                    error = %e,
+                    "bounce store unavailable — bounce events will publish but won't persist"
+                );
+                None
+            }
         }
     }
 
     pub fn config(&self) -> &EmailPluginConfig {
         &self.cfg
+    }
+
+    /// Persistent bounce history handle. Returns `None` if the
+    /// SQLite file couldn't be opened. Outlives `start`/`stop`
+    /// since it's `OnceCell`-backed.
+    pub fn bounce_store_handle(&self) -> Option<Arc<BounceStore>> {
+        self.bounce.get().cloned()
     }
 
     /// Cheap shared handle the email tools (Phase 48.7) need. Returns
@@ -127,12 +164,14 @@ impl Plugin for EmailPlugin {
             return Ok(());
         }
         let cursor = self.cursor_store().await?;
+        let bounce = self.bounce_store().await;
         let manager = InboundManager::start(
             &self.cfg,
             self.creds.clone(),
             self.google.clone(),
             cursor,
             broker.clone(),
+            bounce,
         );
         let health = manager.health_map();
         *self.inbound.lock().await = Some(manager);

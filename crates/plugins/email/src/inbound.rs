@@ -50,6 +50,7 @@ impl InboundManager {
         google: Arc<GoogleCredentialStore>,
         cursor: Arc<CursorStore>,
         broker: AnyBroker,
+        bounce_store: Option<Arc<crate::bounce_store::BounceStore>>,
     ) -> Self {
         let cancel = CancellationToken::new();
         let health: HealthMap = Arc::new(DashMap::new());
@@ -74,6 +75,7 @@ impl InboundManager {
                 max_attachment_bytes: cfg.max_attachment_bytes,
                 attachments_dir: std::path::PathBuf::from(&cfg.attachments_dir),
                 loop_prevention: cfg.loop_prevention.clone(),
+                bounce_store: bounce_store.clone(),
             };
             workers.push(tokio::spawn(worker.run()));
         }
@@ -120,6 +122,10 @@ struct AccountWorker {
     /// config so the worker doesn't reach back into shared state on
     /// the hot path.
     loop_prevention: nexo_config::types::plugins::LoopPreventionCfg,
+    /// Phase 48 follow-up #4 — persistent bounce history. `None`
+    /// when the operator hasn't opted in; populated by
+    /// `EmailPlugin::start` when the SQLite file is reachable.
+    bounce_store: Option<std::sync::Arc<crate::bounce_store::BounceStore>>,
 }
 
 impl AccountWorker {
@@ -327,6 +333,19 @@ impl AccountWorker {
                         reason: parsed.reason,
                         classification: parsed.classification,
                     };
+                    // Persist to the bounce store before publishing so
+                    // a downstream `email_send` retry that races the
+                    // broker hop still sees the new row.
+                    if let Some(store) = &self.bounce_store {
+                        if let Err(e) = store.record(&bounce).await {
+                            warn!(
+                                target: "plugin.email",
+                                instance = %self.account_cfg.instance,
+                                error = %e,
+                                "bounce_store record failed (continuing)"
+                            );
+                        }
+                    }
                     let topic = format!(
                         "email.bounce.{}",
                         self.account_cfg.instance

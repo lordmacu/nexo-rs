@@ -37,6 +37,10 @@ pub struct EmailToolContext {
     pub config: Arc<EmailPluginConfig>,
     pub dispatcher: Arc<dyn DispatcherHandle>,
     pub health: HealthMap,
+    /// Phase 48 follow-up #4 — persistent bounce history. `None`
+    /// when the plugin couldn't open `bounces.db`; the tools
+    /// degrade to "no warnings" rather than refusing to send.
+    pub bounce_store: Option<Arc<crate::bounce_store::BounceStore>>,
 }
 
 impl EmailToolContext {

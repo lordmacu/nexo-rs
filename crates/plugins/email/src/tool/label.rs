@@ -182,6 +182,7 @@ mod tests {
             config: Arc::new(cfg),
             dispatcher: ctx.dispatcher.clone(),
             health: ctx.health.clone(),
+            bounce_store: None,
         });
         let tool = EmailLabelTool::new(new_ctx);
         let r = tool
