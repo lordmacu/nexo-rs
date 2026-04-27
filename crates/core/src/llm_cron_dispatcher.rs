@@ -32,13 +32,92 @@
 use crate::cron_runner::CronDispatcher;
 use crate::cron_schedule::CronEntry;
 use async_trait::async_trait;
+use nexo_broker::{BrokerHandle, Event};
 use nexo_llm::{ChatMessage, ChatRequest, ChatRole, LlmClient, ResponseContent};
 use std::sync::Arc;
+
+/// Publishes the LLM response to a user-facing channel. The cron
+/// dispatcher delegates to this trait so production can route through
+/// the NATS broker while tests use an in-memory capture.
+#[async_trait]
+pub trait ChannelPublisher: Send + Sync {
+    /// `channel_hint` is the `<plugin>:<instance>` string from
+    /// [`CronEntry::channel`]. `recipient` is the JID/chat-id/email
+    /// from [`CronEntry::recipient`]. `body` is the raw LLM text.
+    async fn publish(
+        &self,
+        channel_hint: &str,
+        recipient: &str,
+        body: &str,
+    ) -> anyhow::Result<()>;
+}
+
+/// Split a `<plugin>:<instance>` hint into its two parts. Refuses
+/// any string that does not contain exactly one `:` separator with
+/// non-empty halves — keeps malformed config from publishing to a
+/// surprising topic like `plugin.outbound.whatsapp.` (trailing dot).
+pub fn parse_channel_hint(hint: &str) -> Option<(String, String)> {
+    let mut parts = hint.splitn(2, ':');
+    let plugin = parts.next()?.trim();
+    let instance = parts.next()?.trim();
+    if plugin.is_empty() || instance.is_empty() || instance.contains(':') {
+        return None;
+    }
+    Some((plugin.to_string(), instance.to_string()))
+}
+
+/// Production publisher that emits an outbound event on
+/// `plugin.outbound.<plugin>.<instance>` carrying
+/// `{"kind": "text", "to": <recipient>, "text": <body>}`. The shape
+/// matches what the WhatsApp / Telegram / Email plugins already
+/// consume from their own outbound tools (see
+/// `crates/plugins/whatsapp/src/tool.rs:209` and
+/// `crates/plugins/telegram/src/tool.rs:157`).
+pub struct BrokerChannelPublisher<B: BrokerHandle + ?Sized> {
+    broker: Arc<B>,
+}
+
+impl<B: BrokerHandle + ?Sized> BrokerChannelPublisher<B> {
+    pub fn new(broker: Arc<B>) -> Self {
+        Self { broker }
+    }
+}
+
+#[async_trait]
+impl<B: BrokerHandle + ?Sized + Send + Sync + 'static> ChannelPublisher
+    for BrokerChannelPublisher<B>
+{
+    async fn publish(
+        &self,
+        channel_hint: &str,
+        recipient: &str,
+        body: &str,
+    ) -> anyhow::Result<()> {
+        let (plugin, instance) = parse_channel_hint(channel_hint).ok_or_else(|| {
+            anyhow::anyhow!(
+                "cron channel hint `{channel_hint}` is not `<plugin>:<instance>`"
+            )
+        })?;
+        let topic = format!("plugin.outbound.{plugin}.{instance}");
+        let payload = serde_json::json!({
+            "kind": "text",
+            "to": recipient,
+            "text": body,
+        });
+        let event = Event::new(topic.clone(), "cron-dispatcher", payload);
+        self.broker
+            .publish(&topic, event)
+            .await
+            .map_err(|e| anyhow::anyhow!("broker publish failed on `{topic}`: {e}"))?;
+        Ok(())
+    }
+}
 
 pub struct LlmCronDispatcher {
     client: Arc<dyn LlmClient>,
     system_prompt: Option<String>,
     max_tokens: Option<u32>,
+    publisher: Option<Arc<dyn ChannelPublisher>>,
 }
 
 impl LlmCronDispatcher {
@@ -47,6 +126,7 @@ impl LlmCronDispatcher {
             client,
             system_prompt: None,
             max_tokens: None,
+            publisher: None,
         }
     }
 
@@ -60,6 +140,15 @@ impl LlmCronDispatcher {
 
     pub fn with_max_tokens(mut self, mt: u32) -> Self {
         self.max_tokens = Some(mt);
+        self
+    }
+
+    /// Opt-in: when set, fired entries with both a `channel` hint and
+    /// a `recipient` will have their LLM response forwarded to the
+    /// channel via this publisher. When absent, the dispatcher only
+    /// logs (the historical behaviour).
+    pub fn with_publisher(mut self, publisher: Arc<dyn ChannelPublisher>) -> Self {
+        self.publisher = Some(publisher);
         self
     }
 }
@@ -92,12 +181,10 @@ impl CronDispatcher for LlmCronDispatcher {
             req.max_tokens = mt;
         }
 
-        let response = self.client.chat(req).await.map_err(|e| {
-            anyhow::anyhow!(
-                "LLM chat failed for cron entry `{}`: {e}",
-                entry.id
-            )
-        })?;
+        let response =
+            self.client.chat(req).await.map_err(|e| {
+                anyhow::anyhow!("LLM chat failed for cron entry `{}`: {e}", entry.id)
+            })?;
 
         let body = match &response.content {
             ResponseContent::Text(s) => s.clone(),
@@ -118,10 +205,37 @@ impl CronDispatcher for LlmCronDispatcher {
             cron = %entry.cron_expr,
             recurring = entry.recurring,
             channel = ?entry.channel,
+            recipient = ?entry.recipient,
             response_chars = text_chars,
             preview = %truncated_preview,
-            "[cron] llm response (outbound publish is a Phase 79.7 sub-follow-up)"
+            "[cron] llm response"
         );
+
+        // Outbound publish: only when the operator wired a publisher
+        // AND the entry carries both a channel hint and a recipient.
+        // Tool-call responses are still published — operators get a
+        // visible "(tool_calls: foo, bar)" line so the cron is not
+        // silently swallowing the model's intent.
+        if let Some(publisher) = self.publisher.as_ref() {
+            match (entry.channel.as_deref(), entry.recipient.as_deref()) {
+                (Some(ch), Some(to)) if !ch.is_empty() && !to.is_empty() => {
+                    if let Err(e) = publisher.publish(ch, to, &body).await {
+                        tracing::warn!(
+                            id = %entry.id,
+                            channel = %ch,
+                            error = %e,
+                            "[cron] outbound publish failed"
+                        );
+                    }
+                }
+                _ => {
+                    tracing::debug!(
+                        id = %entry.id,
+                        "[cron] no channel+recipient — response logged only"
+                    );
+                }
+            }
+        }
 
         Ok(())
     }
@@ -189,6 +303,7 @@ mod tests {
             next_fire_at: 0,
             last_fired_at: None,
             paused: false,
+            recipient: None,
         }
     }
 
@@ -218,8 +333,7 @@ mod tests {
     #[tokio::test]
     async fn system_prompt_prepended_when_set() {
         let mock = MockLlmClient::new("ok");
-        let dispatcher =
-            LlmCronDispatcher::new(mock.clone()).with_system_prompt("Be terse.");
+        let dispatcher = LlmCronDispatcher::new(mock.clone()).with_system_prompt("Be terse.");
         dispatcher.fire(&entry("status?", true)).await.unwrap();
         let reqs = mock.captured_requests();
         let sys = reqs[0]
@@ -278,6 +392,146 @@ mod tests {
         let dispatcher = LlmCronDispatcher::new(mock.clone());
         let res = dispatcher.fire(&entry("hello", true)).await;
         assert!(res.is_ok());
+    }
+
+    struct MockPublisher {
+        captured: Mutex<Vec<(String, String, String)>>,
+        force_error: Mutex<Option<String>>,
+    }
+
+    impl MockPublisher {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                captured: Mutex::new(Vec::new()),
+                force_error: Mutex::new(None),
+            })
+        }
+        fn force_err(&self, msg: &str) {
+            *self.force_error.lock().unwrap() = Some(msg.to_string());
+        }
+        fn published(&self) -> Vec<(String, String, String)> {
+            self.captured.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl ChannelPublisher for MockPublisher {
+        async fn publish(&self, ch: &str, to: &str, body: &str) -> anyhow::Result<()> {
+            if let Some(msg) = self.force_error.lock().unwrap().clone() {
+                anyhow::bail!(msg);
+            }
+            self.captured
+                .lock()
+                .unwrap()
+                .push((ch.to_string(), to.to_string(), body.to_string()));
+            Ok(())
+        }
+    }
+
+    fn entry_with_route(prompt: &str, channel: &str, recipient: &str) -> CronEntry {
+        let mut e = entry(prompt, true);
+        e.channel = Some(channel.to_string());
+        e.recipient = Some(recipient.to_string());
+        e
+    }
+
+    #[tokio::test]
+    async fn publisher_invoked_when_channel_and_recipient_set() {
+        let mock = MockLlmClient::new("hello back");
+        let pub_ = MockPublisher::new();
+        let dispatcher =
+            LlmCronDispatcher::new(mock.clone()).with_publisher(pub_.clone());
+        dispatcher
+            .fire(&entry_with_route("ping", "whatsapp:primary", "5511999@s.whatsapp.net"))
+            .await
+            .unwrap();
+        let pubs = pub_.published();
+        assert_eq!(pubs.len(), 1);
+        assert_eq!(pubs[0].0, "whatsapp:primary");
+        assert_eq!(pubs[0].1, "5511999@s.whatsapp.net");
+        assert_eq!(pubs[0].2, "hello back");
+    }
+
+    #[tokio::test]
+    async fn publisher_skipped_when_channel_missing() {
+        let mock = MockLlmClient::new("ok");
+        let pub_ = MockPublisher::new();
+        let dispatcher =
+            LlmCronDispatcher::new(mock.clone()).with_publisher(pub_.clone());
+        // entry() leaves channel/recipient = None
+        dispatcher.fire(&entry("x", true)).await.unwrap();
+        assert!(pub_.published().is_empty());
+    }
+
+    #[tokio::test]
+    async fn publisher_skipped_when_recipient_missing() {
+        let mock = MockLlmClient::new("ok");
+        let pub_ = MockPublisher::new();
+        let dispatcher =
+            LlmCronDispatcher::new(mock.clone()).with_publisher(pub_.clone());
+        let mut e = entry("x", true);
+        e.channel = Some("whatsapp:primary".into());
+        // recipient stays None
+        dispatcher.fire(&e).await.unwrap();
+        assert!(pub_.published().is_empty());
+    }
+
+    #[tokio::test]
+    async fn publisher_failure_does_not_fail_fire() {
+        let mock = MockLlmClient::new("ok");
+        let pub_ = MockPublisher::new();
+        pub_.force_err("upstream-down");
+        let dispatcher =
+            LlmCronDispatcher::new(mock.clone()).with_publisher(pub_.clone());
+        // fire() still returns Ok — cron state advances even if the
+        // user-facing publish failed (the runner already counts the
+        // entry as fired).
+        let res = dispatcher
+            .fire(&entry_with_route("x", "whatsapp:primary", "abc"))
+            .await;
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn dispatcher_without_publisher_still_logs() {
+        let mock = MockLlmClient::new("ok");
+        let dispatcher = LlmCronDispatcher::new(mock.clone());
+        // No publisher set; should still succeed and not panic.
+        let res = dispatcher
+            .fire(&entry_with_route("x", "whatsapp:primary", "abc"))
+            .await;
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn parse_channel_hint_accepts_well_formed() {
+        let (p, i) = parse_channel_hint("whatsapp:primary").unwrap();
+        assert_eq!(p, "whatsapp");
+        assert_eq!(i, "primary");
+    }
+
+    #[test]
+    fn parse_channel_hint_trims_surrounding_whitespace() {
+        let (p, i) = parse_channel_hint(" whatsapp : primary ").unwrap();
+        assert_eq!(p, "whatsapp");
+        assert_eq!(i, "primary");
+    }
+
+    #[test]
+    fn parse_channel_hint_rejects_missing_separator() {
+        assert!(parse_channel_hint("whatsapp").is_none());
+    }
+
+    #[test]
+    fn parse_channel_hint_rejects_empty_halves() {
+        assert!(parse_channel_hint(":primary").is_none());
+        assert!(parse_channel_hint("whatsapp:").is_none());
+        assert!(parse_channel_hint(":").is_none());
+    }
+
+    #[test]
+    fn parse_channel_hint_rejects_extra_separator() {
+        assert!(parse_channel_hint("whatsapp:primary:extra").is_none());
     }
 
     #[tokio::test]

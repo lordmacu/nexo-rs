@@ -5039,7 +5039,7 @@ Done when:
     drain helper extended);
   - non-coordinator caller gets `permission_denied`.
 
-#### 79.7 — ScheduleCronTool   ✅ (LLM dispatcher live; outbound publish follow-up pending)
+#### 79.7 — ScheduleCronTool   ✅
 
 Agent-time scheduling: from inside a turn, the model can
 register a cron entry that fires a future goal. Complements

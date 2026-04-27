@@ -931,13 +931,26 @@ Open:
     max-tokens propagation, LLM failure → error, empty
     response → ok, model_id taken from client, user-prompt
     routed.
-  - **Outbound publish to binding's channel.** ⬜ Pending.
-    `LlmCronDispatcher` currently logs the model's response.
-    The follow-up routes it to the binding's outbound topic
-    so the user sees it on WhatsApp / Telegram / email.
-    Likely shape: dispatcher takes an
-    `Arc<dyn ChannelPublisher>` parameter; production wiring
-    binds it to the existing per-plugin outbound paths.
+  - ~~**Outbound publish to binding's channel.**~~ ✅ shipped 2026-04-27.
+    `LlmCronDispatcher::with_publisher(Arc<dyn ChannelPublisher>)`
+    routes the model's response to the user-facing channel when
+    the entry carries both a `channel` (`<plugin>:<instance>`) and
+    a `recipient` (JID / chat-id / email). Production wiring uses
+    `BrokerChannelPublisher` which emits
+    `{"kind": "text", "to": <recipient>, "text": <body>}` on
+    `plugin.outbound.<plugin>.<instance>` — same envelope the
+    WhatsApp / Telegram / Email outbound tools already speak.
+    `parse_channel_hint` rejects malformed `<plugin>:<instance>`
+    strings so the broker never sees `plugin.outbound.whatsapp.`
+    (trailing dot). Publisher errors are logged via
+    `tracing::warn!` but never fail `fire()` — the runner still
+    advances state so a stuck downstream channel cannot deadlock
+    the cron loop. `CronEntry.recipient: Option<String>` was added
+    with an idempotent `ALTER TABLE` for older DBs and threaded
+    through `cron_create` (new `recipient` arg). 5 publisher tests
+    + 5 `parse_channel_hint` tests cover the happy path and edge
+    cases (missing channel, missing recipient, publisher error,
+    no publisher, malformed hints).
   - **CLI `nexo cron list / drop / pause`.** ⬜ Pending. The
     spec called for operator-side inspection commands. Today
     operators must use SQL or `cron_list` from inside an agent
