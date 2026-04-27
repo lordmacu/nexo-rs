@@ -32,7 +32,12 @@ impl AttachmentStore {
         let opts = SqliteConnectOptions::from_str(db_path)
             .with_context(|| format!("invalid sqlite path: {db_path}"))?
             .create_if_missing(true)
-            .journal_mode(SqliteJournalMode::Wal);
+            .journal_mode(SqliteJournalMode::Wal)
+            // Audit follow-up G — `synchronous = NORMAL` keeps WAL
+            // crash-safe (fsync on checkpoint) without an fsync per
+            // commit. Hot-path writes (record / upsert) become orders
+            // of magnitude cheaper under load.
+            .synchronous(sqlx::sqlite::SqliteSynchronous::Normal);
         let pool = SqlitePool::connect_with(opts).await?;
         let store = Self { pool };
         store.migrate().await?;

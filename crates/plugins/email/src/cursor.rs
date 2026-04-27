@@ -32,7 +32,12 @@ impl CursorStore {
         let opts = SqliteConnectOptions::from_str(db_path)
             .with_context(|| format!("invalid sqlite path: {db_path}"))?
             .create_if_missing(true)
-            .journal_mode(SqliteJournalMode::Wal);
+            .journal_mode(SqliteJournalMode::Wal)
+            // Audit follow-up G — WAL + `synchronous = NORMAL` is
+            // crash-safe (fsync on checkpoint, not on every commit)
+            // and avoids the per-message fsync that would otherwise
+            // bottleneck cursor updates under email storms.
+            .synchronous(sqlx::sqlite::SqliteSynchronous::Normal);
         let pool = SqlitePool::connect_with(opts).await?;
         let store = Self { pool };
         store.migrate().await?;
