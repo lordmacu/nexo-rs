@@ -20,12 +20,19 @@
 
 use std::net::IpAddr;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct UrlInputs {
     pub public_url: Option<String>,
     pub tunnel_url: Option<String>,
     pub gateway_remote_url: Option<String>,
     pub lan_url: Option<String>,
+    /// Loopback gateway port. When set and every higher-priority
+    /// candidate is empty, the resolver yields
+    /// `http://127.0.0.1:<port>` instead of failing closed. Phase
+    /// 26.z makes the loopback fallback an explicit, opt-in level
+    /// of the chain — `None` keeps the historical fail-closed
+    /// behaviour.
+    pub loopback_port: Option<u16>,
     /// Extra hostnames where cleartext `ws://` is allowed.
     pub ws_cleartext_allow_extra: Vec<String>,
 }
@@ -79,6 +86,12 @@ fn pick_candidate(inputs: &UrlInputs) -> Result<ResolvedUrl, ResolveError> {
         return Ok(ResolvedUrl {
             url: u.trim().to_string(),
             source: "gateway.bind=lan",
+        });
+    }
+    if let Some(port) = inputs.loopback_port {
+        return Ok(ResolvedUrl {
+            url: format!("http://127.0.0.1:{port}"),
+            source: "loopback",
         });
     }
     Err(ResolveError::LoopbackOnly)
@@ -147,13 +160,7 @@ mod tests {
     use super::*;
 
     fn empty() -> UrlInputs {
-        UrlInputs {
-            public_url: None,
-            tunnel_url: None,
-            gateway_remote_url: None,
-            lan_url: None,
-            ws_cleartext_allow_extra: vec![],
-        }
+        UrlInputs::default()
     }
 
     #[test]
@@ -224,6 +231,66 @@ mod tests {
         let mut i = empty();
         i.public_url = Some("ws://10.0.2.2:9090".into());
         resolve(&i).unwrap();
+    }
+
+    #[test]
+    fn priority_tunnel_over_lan() {
+        let mut i = empty();
+        i.tunnel_url = Some("https://abc.trycloudflare.com".into());
+        i.lan_url = Some("ws://192.168.1.10:9090".into());
+        let r = resolve(&i).unwrap();
+        assert_eq!(r.source, "tunnel.url");
+    }
+
+    #[test]
+    fn priority_lan_over_loopback_port() {
+        let mut i = empty();
+        i.lan_url = Some("ws://192.168.1.10:9090".into());
+        i.loopback_port = Some(9090);
+        let r = resolve(&i).unwrap();
+        assert_eq!(r.source, "gateway.bind=lan");
+    }
+
+    #[test]
+    fn loopback_port_used_when_higher_levels_empty() {
+        let mut i = empty();
+        i.loopback_port = Some(9090);
+        let r = resolve(&i).unwrap();
+        assert_eq!(r.source, "loopback");
+        assert_eq!(r.url, "http://127.0.0.1:9090");
+    }
+
+    #[test]
+    fn loopback_fail_closed_when_no_port() {
+        let i = empty();
+        let err = resolve(&i).unwrap_err();
+        assert!(matches!(err, ResolveError::LoopbackOnly));
+    }
+
+    #[test]
+    fn whitespace_trimmed_on_input() {
+        let mut i = empty();
+        i.tunnel_url = Some("\n  https://abc.trycloudflare.com  \n".into());
+        let r = resolve(&i).unwrap();
+        assert_eq!(r.url, "https://abc.trycloudflare.com");
+        assert_eq!(r.source, "tunnel.url");
+    }
+
+    #[test]
+    fn empty_tunnel_falls_through_to_next_level() {
+        // Sidecar absence at the main.rs layer surfaces here as
+        // `tunnel_url: None`; an empty string from a torn read
+        // also has to fall through, not produce an error.
+        let mut i = empty();
+        i.tunnel_url = Some("   ".into());
+        i.lan_url = Some("ws://192.168.1.10:9090".into());
+        let r = resolve(&i).unwrap();
+        assert_eq!(r.source, "gateway.bind=lan");
+
+        let mut j = empty();
+        j.tunnel_url = None;
+        let err = resolve(&j).unwrap_err();
+        assert!(matches!(err, ResolveError::LoopbackOnly));
     }
 
     #[test]

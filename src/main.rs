@@ -3533,16 +3533,17 @@ async fn run_pair_start(
         .as_ref()
         .map(|p| p.ws_cleartext_allow.clone())
         .unwrap_or_default();
-    // FOLLOWUPS PR-3 — tunnel URL discovery priority:
-    //   1. `NEXO_TUNNEL_URL` env (back-compat, explicit overrides win).
-    //   2. `$NEXO_HOME/state/tunnel.url` sidecar file written by
+    // FOLLOWUPS PR-3 / Phase 26.z — tunnel URL discovery priority:
+    //   1. `$NEXO_HOME/state/tunnel.url` sidecar file written by
     //      the daemon when `TunnelManager::start()` succeeded.
     //      This is the in-process accessor — no daemon connection,
     //      no env-var coordination across shells.
-    let tunnel_url = std::env::var("NEXO_TUNNEL_URL")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .or_else(nexo_tunnel::read_url_file);
+    //   2. `NEXO_TUNNEL_URL` env (back-compat fallback).
+    let tunnel_url = nexo_tunnel::read_url_file().or_else(|| {
+        std::env::var("NEXO_TUNNEL_URL")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+    });
 
     // FOLLOWUPS PR-6 — TTL resolution priority:
     //   1. `--ttl-secs` CLI flag (operator override at invoke time).
@@ -3561,6 +3562,12 @@ async fn run_pair_start(
         tunnel_url,
         gateway_remote_url: None,
         lan_url: None,
+        // Phase 26.z — loopback port plumbing waits on a gateway
+        // bind discovery (tracked under FOLLOWUPS). Until then the
+        // resolver fails closed when no higher-priority URL is
+        // available, which keeps the existing `pair_paths`
+        // behaviour and the loopback hint banner.
+        loopback_port: None,
         ws_cleartext_allow_extra: yaml_cleartext,
     };
     let resolved = match nexo_pairing::url_resolver::resolve(&inputs) {
