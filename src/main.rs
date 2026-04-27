@@ -1798,6 +1798,83 @@ async fn main() -> Result<()> {
             nexo_core::agent::notebook_edit_tool::NotebookEditTool,
         );
 
+        // Phase 79.8 — `RemoteTrigger` outbound publisher. Per-agent
+        // YAML allowlist gates which destinations can receive
+        // payloads (HTTP POST with optional HMAC sign, or NATS
+        // publish). The model passes only `name` + `payload` —
+        // URLs and subjects never leak through.
+        if !agent_cfg.remote_triggers.is_empty() {
+            let sink: std::sync::Arc<dyn nexo_core::agent::remote_trigger_tool::RemoteTriggerSink> =
+                std::sync::Arc::new(
+                    nexo_core::agent::remote_trigger_tool::ReqwestSink::new(broker.clone()),
+                );
+            tools.register(
+                nexo_core::agent::remote_trigger_tool::RemoteTriggerTool::tool_def(),
+                nexo_core::agent::remote_trigger_tool::RemoteTriggerTool::new(sink),
+            );
+        }
+
+        // Phase 79.7 — cron schedule store + 5 tools (cron_create,
+        // cron_list, cron_delete, cron_pause, cron_resume). Lives in
+        // `$NEXO_HOME/state/nexo_cron.db` so entries persist across
+        // restarts. On open failure the tools stay unregistered and
+        // a warn line names the path so operators can fix the FS
+        // permission. MVP caveat: the runtime task that polls
+        // `due_at` and fires LLM turns is a follow-up — entries
+        // persist but never fire until that ships.
+        let cron_db = nexo_project_tracker::state::nexo_state_dir()
+            .join("nexo_cron.db");
+        std::fs::create_dir_all(
+            cron_db.parent().unwrap_or(std::path::Path::new(".")),
+        )
+        .ok();
+        match nexo_core::cron_schedule::SqliteCronStore::open(
+            cron_db.to_str().unwrap_or("nexo_cron.db"),
+        )
+        .await
+        {
+            Ok(store) => {
+                let store: std::sync::Arc<
+                    dyn nexo_core::cron_schedule::CronStore,
+                > = std::sync::Arc::new(store);
+                tools.register(
+                    nexo_core::agent::cron_tool::CronCreateTool::tool_def(),
+                    nexo_core::agent::cron_tool::CronCreateTool::new(
+                        std::sync::Arc::clone(&store),
+                    ),
+                );
+                tools.register(
+                    nexo_core::agent::cron_tool::CronListTool::tool_def(),
+                    nexo_core::agent::cron_tool::CronListTool::new(
+                        std::sync::Arc::clone(&store),
+                    ),
+                );
+                tools.register(
+                    nexo_core::agent::cron_tool::CronDeleteTool::tool_def(),
+                    nexo_core::agent::cron_tool::CronDeleteTool::new(
+                        std::sync::Arc::clone(&store),
+                    ),
+                );
+                tools.register(
+                    nexo_core::agent::cron_tool::CronPauseTool::tool_def(),
+                    nexo_core::agent::cron_tool::CronPauseTool::new(
+                        std::sync::Arc::clone(&store),
+                    ),
+                );
+                tools.register(
+                    nexo_core::agent::cron_tool::CronResumeTool::tool_def(),
+                    nexo_core::agent::cron_tool::CronResumeTool::new(store),
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    path = %cron_db.display(),
+                    "cron tools disabled — could not open SqliteCronStore"
+                );
+            }
+        }
+
         // Phase 25 — `web_search` tool. Registered when the agent's
         // top-level policy has `enabled: true` and a router exists.
         // Per-binding overrides are enforced inside the tool itself
@@ -7104,6 +7181,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         context_optimization: None,
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),
+        remote_triggers: Vec::new(),
     });
     let broker = AnyBroker::local();
     let sessions = Arc::new(SessionManager::new(std::time::Duration::from_secs(300), 20));
