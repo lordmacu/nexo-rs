@@ -838,41 +838,71 @@ async fn main() -> Result<()> {
         plugins.register(plugin);
         tracing::info!(instance = %instance_label, "registered plugin: telegram");
     }
-    // Email plugin (Phase 48). Registers when configured + accounts
-    // declared. Tool registration (`register_email_tools`) is
-    // deferred — tools need a `DispatcherHandle` extracted from the
-    // plugin's owned `OutboundDispatcher`, which the registry
-    // ordering doesn't yet support cleanly. Tracked in FOLLOWUPS.md.
-    if let Some(email_cfg) = cfg.plugins.email.as_ref() {
-        if email_cfg.enabled && !email_cfg.accounts.is_empty() {
-            if let Some(creds_bundle) = credentials.as_ref() {
+    // Email plugin (Phase 48). Wrapped in `Arc` so the email tool
+    // registry below can pull `dispatcher_handle()` after `start_all`
+    // arms the OutboundDispatcher (the handle is `None` until then).
+    let email_plugin: Option<Arc<nexo_plugin_email::EmailPlugin>> = cfg
+        .plugins
+        .email
+        .as_ref()
+        .filter(|c| c.enabled && !c.accounts.is_empty())
+        .and_then(|email_cfg| {
+            credentials.as_ref().map(|creds_bundle| {
                 let data_dir = std::env::var("NEXO_DATA_DIR")
                     .map(std::path::PathBuf::from)
                     .unwrap_or_else(|_| std::path::PathBuf::from("data"));
-                let plugin = nexo_plugin_email::EmailPlugin::new(
+                Arc::new(nexo_plugin_email::EmailPlugin::new(
                     email_cfg.clone(),
                     creds_bundle.stores.email.clone(),
                     creds_bundle.stores.google.clone(),
                     data_dir,
-                );
-                plugins.register(plugin);
-                tracing::info!(
-                    accounts = email_cfg.accounts.len(),
-                    "registered plugin: email"
-                );
-            } else {
-                tracing::warn!(
-                    "email plugin configured but credential bundle is missing — skipping registration"
-                );
-            }
-        } else {
-            tracing::info!("email plugin configured but disabled / no accounts — skipping");
-        }
+                ))
+            })
+        });
+    if let Some(plugin) = email_plugin.clone() {
+        plugins.register_arc(plugin as Arc<dyn nexo_core::agent::plugin::Plugin>);
+        tracing::info!("registered plugin: email");
+    } else if cfg.plugins.email.is_some() {
+        tracing::info!("email plugin present but disabled / empty / missing creds — skipping");
     }
     plugins
         .start_all(broker.clone())
         .await
         .context("failed to start plugins")?;
+
+    // Email tool context — built post-start so the dispatcher handle
+    // is primed. Each agent loop below picks it up when its `plugins`
+    // list mentions `email`.
+    let email_tool_ctx: Option<Arc<nexo_plugin_email::EmailToolContext>> = match (
+        email_plugin.as_ref(),
+        credentials.as_ref(),
+        cfg.plugins.email.as_ref(),
+    ) {
+        (Some(plugin), Some(creds_bundle), Some(email_cfg)) => {
+            match plugin.dispatcher_handle().await {
+                Some(dispatcher) => {
+                    let health = plugin
+                        .health_map()
+                        .await
+                        .unwrap_or_else(nexo_plugin_email::inbound::HealthMap::default);
+                    Some(Arc::new(nexo_plugin_email::EmailToolContext {
+                        creds: creds_bundle.stores.email.clone(),
+                        google: creds_bundle.stores.google.clone(),
+                        config: Arc::new(email_cfg.clone()),
+                        dispatcher,
+                        health,
+                    }))
+                }
+                None => {
+                    tracing::warn!(
+                        "email plugin started without dispatcher handle — tools unavailable"
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
 
     // Agents ---------------------------------------------------------------
     let running_agents = Arc::new(AtomicUsize::new(0));
@@ -1516,6 +1546,20 @@ async fn main() -> Result<()> {
         if agent_cfg.plugins.iter().any(|p| p == "telegram") {
             nexo_plugin_telegram::register_telegram_tools(&tools);
             tracing::info!(agent = %agent_id, "registered telegram_* tools for agent");
+        }
+        // Email tools — gated on `plugins: [email]` + dispatcher
+        // primed (the post-`start_all` ctx above). Six handlers:
+        // send / reply / archive / move_to / label / search.
+        if agent_cfg.plugins.iter().any(|p| p == "email") {
+            if let Some(ctx) = email_tool_ctx.clone() {
+                nexo_plugin_email::register_email_tools(&tools, ctx);
+                tracing::info!(agent = %agent_id, "registered email_* tools for agent");
+            } else {
+                tracing::warn!(
+                    agent = %agent_id,
+                    "agent declares `email` plugin but the email plugin isn't armed — skipping tool registration"
+                );
+            }
         }
         // Google OAuth tools — gated on either `agents.<id>.google_auth`
         // (legacy inline) or an entry in `plugins/google-auth.yaml`
