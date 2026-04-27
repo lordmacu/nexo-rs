@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "nexo-driver-permission": {
+      "args": [
+        "--socket",
+        "/home/familia/chat/proyecto/data/driver.sock"
+      ],
+      "command": "/home/familia/chat/proyecto/target/debug/nexo-driver-permission-mcp",
+      "env": {}
+    }
+  }
+}
