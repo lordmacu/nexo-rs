@@ -31,6 +31,7 @@
 - [TodoWrite scratch list (Phase 79.4)](./architecture/todo-write.md)
 - [ToolSearch deferred schemas (Phase 79.2)](./architecture/tool-search.md)
 - [SyntheticOutput typed-output (Phase 79.3)](./architecture/synthetic-output.md)
+- [NotebookEdit Jupyter cells (Phase 79.13)](./architecture/notebook-edit.md)
 
 # Configuration
 

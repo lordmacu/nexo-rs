@@ -41,6 +41,7 @@ pub mod self_report;
 pub mod sender_rate_limit;
 pub mod session_logs_tool;
 pub mod skills;
+pub mod notebook_edit_tool;
 pub mod synthetic_output_tool;
 pub mod taskflow_tool;
 pub mod todo_write_tool;

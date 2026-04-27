@@ -5394,7 +5394,7 @@ Done when:
   - non-Linux platform without `sandbox-exec` refuses to
     start.
 
-#### 79.13 — NotebookEditTool   ⬜
+#### 79.13 — NotebookEditTool   ✅
 
 Cell-level edits on Jupyter `.ipynb` files preserving
 outputs and metadata. Niche but cheap — the read path is
