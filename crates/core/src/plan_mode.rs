@@ -291,6 +291,8 @@ pub const MUTATING_TOOLS: &[&str] = &[
     "TeamDelete",
     // Schedulers + remote.
     "ScheduleCron",
+    "cron_create",
+    "cron_delete",
     "RemoteTrigger",
     // Config self-edit (79.10) — only `apply` op is mutating; the gate
     // resolves the op at call time. `Config` as a name is listed here
@@ -321,6 +323,8 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
     // Phase 79.3 — terminal output validator. Pure validate-and-echo;
     // never touches any external state.
     "SyntheticOutput",
+    // Phase 79.7 — cron list reads the schedule store.
+    "cron_list",
     // Memory + observability tools that read but never write.
     "memory_search",
     "agent_query",

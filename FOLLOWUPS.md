@@ -50,7 +50,7 @@ P-3. **Push-based watchers (Gmail Push, generic inbound webhooks)**
 
 ### Hardening
 
-H-1. ~~**CircuitBreaker missing on Telegram + Google plugins**~~  🔄 partial 2026-04-26
+H-1. ~~**CircuitBreaker missing on Telegram + Google plugins**~~  ✅ 2026-04-26
 - ~~Telegram side fully wired~~ — `BotClient` now owns
   `circuit: Arc<CircuitBreaker>` (one breaker per `BotClient`
   instance, breaker name `telegram.<redacted-host>` so logs
@@ -277,27 +277,30 @@ PR-3. ~~**`tunnel.url` integration in URL resolver**~~  🔄 partial 2026-04-26
   sees a torn URL. Round-trip unit test covers happy path +
   whitespace trim + idempotent clear.
 
-PR-4. ~~**Companion-tui not shipped**~~  🔄 partial 2026-04-26
-- ~~Reference scaffold shipped~~ as `crates/companion-tui` with
-  binary `nexo-companion`. Decodes the base64url setup-code
-  payload `nexo pair start` emits, validates the embedded
-  bootstrap-token expiry, and prints the URL + redacted token
-  + next-step instructions in pretty or `--json` form.
-- Reads the code from `--code <BASE64URL>` arg or stdin (so
-  QR-scan tools can pipe their output without quoting).
-- 4 unit tests cover the redactor (short → placeholder, long
-  → head + tail with `…` middle), and the next-step text
-  builder (expired vs active branches).
-- **Still deferred**: the actual WebSocket handshake against
-  `payload.url`, presenting the bootstrap token in the first
-  frame, receiving + persisting a session token. The scaffold
-  exercises the wire format end-to-end so the protocol
-  contract is enforced; the WS layer is its own follow-up
-  (PR-4.x).
-- Why ship the scaffold first: third parties asked how to
-  integrate; pointing them at this binary as a reference is
-  cheaper than maintaining a side-doc that drifts out of
-  sync with the actual `setup_code` schema.
+PR-4. ~~**Companion-tui not shipped**~~ ✅ 2026-04-27 (PR-4.x WS handshake complete)
+- ~~Reference scaffold shipped~~ as `crates/companion-tui`.
+- ~~PR-4.x~~ WS handshake shipped 2026-04-27:
+  - Server: `GET /pair` detected via `TcpStream::peek()` in
+    `handle_health_conn`; `tokio_tungstenite::accept_async` upgrades
+    the raw stream without consuming bytes. Server verifies HMAC via
+    `SetupCodeIssuer::verify`, issues a 32-byte random session token
+    (base64url), persists in `PairingSessionStore` (SQLite,
+    `$NEXO_HOME/state/pairing_sessions.db`, 24h TTL), returns
+    `{"session_token": "..."}`. Context available via
+    `PairingHandshakeCtx` in `OnceLock` in `RuntimeHealth`.
+  - Client: `nexo-companion` calls `ws::perform_handshake`, writes
+    session token to `$NEXO_HOME/pairing/sessions/<label>.token`
+    (0600, atomic rename).
+  - `run_pair_start` now embeds the full `/pair` path in the
+    setup-code URL so the companion connects directly.
+  - 4 session_store unit tests + 3 ws sanitize tests.
+- Remaining open items:
+  - Session token validation on subsequent companion requests
+    (not yet consumed by any handler — `lookup_session` exists
+    but is not wired to an auth gate).
+  - `pairing.session_ttl_secs` YAML config field (currently
+    hardcoded 24h; the `session_ttl` computation uses
+    `default_ttl_secs * 144` as an approximation).
 
 PR-5. **`pair_approve` as scope-gated agent tool**
 - Missing: a built-in tool that lets agents approve pending
@@ -343,10 +346,10 @@ PR-6. ~~**`nexo-config::pairing.yaml` loader**~~  🔄 partial 2026-04-26
   (3) 600s hardcoded fallback. The CLI parser switched to
   `Option<u64>` so absent flag is genuinely "no override"
   rather than the previous baked-in 600 default.
-- **Still deferred**: `ws_cleartext_allow` is parsed but not
-  yet plumbed into `pair start`'s URL resolver — the resolver
-  takes its `extras` list from a different code path. One-step
-  rewire when 26.x reaches the URL resolver again.
+- ~~**`ws_cleartext_allow` not plumbed**~~ ✅ already wired —
+  `run_pair_start` reads `yaml_overrides.ws_cleartext_allow` into
+  `yaml_cleartext` and passes it to `UrlInputs.ws_cleartext_allow_extra`
+  before calling the resolver. FOLLOWUPS entry was stale.
 
 ### Phase 67.A–H — Project tracker + multi-agent dispatch
 
@@ -385,29 +388,27 @@ hook dispatcher / registry**
   layer. Pure plumbing — no decision left.
 - Target: alongside PT-1 / PT-2.
 
-PT-4. **`HookIdempotencyStore` not consumed by
-`DefaultHookDispatcher`**
-- Missing: the SQLite store ships in Phase 67.F.3 but the hook
-  dispatcher does not yet wrap firings in
-  `try_claim` → side effect → ok. Without it, an at-least-once
-  NATS replay or a daemon restart between "decide hook fires"
-  and "side effect committed" can fire a hook twice.
-- Why deferred: the wrap needs the dispatcher to take a store
-  reference and decide pre- vs post-side-effect claim per
-  action kind. Out of scope for the F.3 step (which only
-  shipped the persistence primitive).
-- Target: hardening pass post-PT-1.
+PT-4. ~~**`HookIdempotencyStore` not consumed by `DefaultHookDispatcher`**~~  ✅ 2026-04-27
+- The dispatcher's pre-action claim + post-failure release was already
+  implemented in `dispatcher.rs:180-217` (shipped in an earlier pass).
+- Boot wiring added in `src/main.rs`: opens
+  `$NEXO_HOME/state/hook_idempotency.db` and passes it to
+  `DefaultHookDispatcher::with_idempotency()`. Failure degrades to
+  idempotency-less mode with `tracing::warn!` — non-fatal.
+- `EventForwarder` gains `idempotency: Option<Arc<HookIdempotencyStore>>`
+  field + `with_idempotency()` builder. On `GoalCompleted` it calls
+  `store.forget_goal(goal_id)` after `hook_registry.drop_goal()` to
+  prevent unbounded table growth. Failures are best-effort (warn only).
+- 5 existing tests in `hook_idempotency_after_restart.rs` cover the
+  full flow (replay skip, restart persistence, B10 retry, forget).
 
-PT-5. **Single-flight cap-counting race in `AgentRegistry::admit`**
-- Missing: `admit` reads `count_running()` then writes; under
-  concurrent dispatch the cap can be overshot by N where N =
-  number of in-flight admits.
-- Why deferred: low-impact in practice (cap is a soft hint and
-  the orchestrator's per-goal worktree contention surfaces the
-  real ceiling); a Mutex over the cap counter would serialise
-  every admit.
-- Target: when contention shows up in the multi-agent e2e
-  benchmark.
+PT-5. ~~**Single-flight cap-counting race in `AgentRegistry::admit`**~~  ✅ already shipped
+- `admit_lock: tokio::sync::Mutex<()>` in `registry.rs:71` serialises
+  the entire `count_running → cap check → insert` critical section.
+- Test `concurrent_admits_do_not_overshoot_cap` validates 10 concurrent
+  admits with cap=3 → exactly 3 Running + 7 Queued.
+- FOLLOWUPS entry was stale; fix was deployed alongside the registry
+  hardening pass. No further action needed.
 
 PT-6. **`nexo-driver` and `nexo-driver-tools` are separate bins**
 - Missing: a single binary that exposes both `run` (Claude
@@ -429,17 +430,16 @@ PT-7. **No NATS-backed `DispatchTelemetry` impl**
   as PT-6.
 - Target: alongside PT-6.
 
-PT-9. **Non-chat origin discriminator hardcoded as 'console'**
-- Missing: `notify_origin` short-circuits when
-  `origin.plugin == "console"` so CLI dispatch never publishes a
-  chat reply. Future non-chat origins (`cron`, `webhook`,
-  `heartbeat`) will need the same opt-out.
-- Why deferred: only `console` exists today. Cleanest fix is a
-  trait-based `OriginAdapter::wants_notify()` so each plugin
-  declares its own behaviour, but it isn't worth the surface
-  change before a second non-chat plugin lands.
-- Target: when a second non-chat origin (cron / webhook / etc.)
-  appears.
+PT-9. ~~**Non-chat origin discriminator hardcoded as 'console'**~~  ✅ effectively resolved
+- `NON_CHAT_ORIGIN_PLUGINS: &[&str] = &["console", "cron", "webhook", "heartbeat"]`
+  already exists at `dispatch-tools/src/hooks/dispatcher.rs:21-25` and
+  the `run_action()` check uses `.contains()` against it. All four
+  non-chat origins are covered — no cron/webhook/heartbeat goal will
+  send a spurious chat reply.
+- The code comment explicitly notes the constant is a bridge until a
+  full `OriginAdapter` trait lands. That trait is better deferred until
+  a plugin needs custom behavior beyond a boolean (e.g., per-origin
+  render format). Current constant is the right level of complexity.
 
 PT-8. **Multi-agent end-to-end test not shipped**
 - Missing: a single integration test that wires
@@ -465,21 +465,23 @@ PT-8. **Multi-agent end-to-end test not shipped**
   after shutdown (blocked on nexo-core Phase 79 WIP compile errors;
   test code is correct and will run once those are resolved).
 
-### `set_active_workspace` state lost on daemon restart
+### ~~`set_active_workspace` state lost on daemon restart~~  ✅ 2026-04-27
 
-- Missing: when an operator (or `init_project`) switches the active
-  tracker workspace mid-session, that switch lives only in the
-  `MutableTracker`'s in-memory state. A daemon restart resets the
-  tracker back to the boot-time root, so Cody loses the workspace
-  context and `program_phase` for any phase id defined in the
-  switched-to PHASES.md returns `not_found`. Operator workaround
-  today: re-issue `set_active_workspace path=...` after every
-  restart before dispatching.
-- Why deferred: needs a small SQLite (or JSON) sidecar to persist
-  the active workspace per dispatcher (or globally), plus a
-  read-on-boot path in `boot_dispatch_ctx_if_enabled` to apply
-  the saved root before tools register.
-- Target: next dispatch reliability sweep / Phase 67 follow-up.
+- Fixed via text-file sidecar at `$NEXO_HOME/state/active_workspace_path`
+  (same pattern as `nexo-tunnel`'s `tunnel.url` sidecar).
+- `crates/project-tracker/src/state.rs` — new module with
+  `write_active_workspace_to(state_dir, path)` (temp+rename atomic write)
+  and `read_active_workspace_from(state_dir)` (reads + verifies path exists).
+  Public `write_active_workspace` / `read_active_workspace` convenience
+  wrappers resolve `$NEXO_HOME/state/` automatically.
+- `src/main.rs::boot_dispatch_ctx_if_enabled` — resolution order is now
+  (1) `NEXO_PROJECT_ROOT` env var, (2) saved sidecar, (3) walk-up for
+  `PHASES.md`, (4) cwd fallback.
+- `dispatch_handlers.rs::SetActiveWorkspaceHandler` + `InitProjectHandler`
+  — call `write_active_workspace` after every successful `switch_to()`.
+  Failures log `tracing::warn!` and are non-fatal (in-memory state still
+  correct; only the restart persistence is lost).
+- 3 unit tests: roundtrip, missing-file → None, nonexistent-path → None.
 
 ### Phase 27.1 / 27.2 — cargo-dist + GH Actions release deferrals
 
@@ -891,6 +893,43 @@ Open:
     real `<function>` declarations on the next turn. Useful for
     Anthropic-native callers that want zero JSON-parsing on the
     model side.
+
+## Phase 79.7 — ScheduleCron follow-ups
+
+  - **Runtime firing not wired.** ⬜ Pending. The MVP ships
+    `cron_create` / `cron_list` / `cron_delete` + the SQLite
+    store + cron-expression validation, but no tokio task polls
+    `due_at` to fire LLM turns. Production wiring should:
+    1. Spawn one background task per process that polls
+       `store.due_at(now)` every 5 s.
+    2. For each due entry, hand `(prompt, channel)` to the
+       Phase 20 `agent_turn` poller machinery (that machinery
+       already knows how to enqueue an LLM turn against a
+       binding).
+    3. After firing: if `recurring`, recompute `next_fire_at`
+       with `next_fire_after(cron_expr, now)` and update the
+       row; if one-shot, delete.
+    Until shipped, entries persist but never fire — useful for
+    testing schedule shapes + populating the durable table.
+  - **CLI `nexo cron list / drop / pause`.** ⬜ Pending. The
+    spec called for operator-side inspection commands. Today
+    operators must use SQL or `cron_list` from inside an agent
+    turn. Add `nexo cron list` / `nexo cron drop <id>` /
+    `nexo cron pause <id>` once `nexo` CLI subcommand
+    plumbing is touched.
+  - **Capability gate `cron.enabled` per binding.** ⬜ Pending.
+    The MVP registers the tools globally — every agent gets
+    them regardless of role. Spec called for `cron.enabled:
+    bool` per binding (default `true` only for `coordinator` /
+    `proactive` roles). Wire when 77.18 coordinator role
+    lands.
+  - **Jitter on firing.** ⬜ Pending. To avoid thundering
+    herd when many goals schedule at the same `every:1h`,
+    apply ±10 % jitter to `next_fire_at`. Lift from the leak's
+    `cronJitterConfig.ts`.
+  - **`cron_pause` / `cron_resume` tools.** ⬜ Pending. The
+    `paused` column already exists; surface tools that toggle
+    it without dropping the entry.
 
 ## Maintenance note
 
