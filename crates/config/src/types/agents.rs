@@ -203,6 +203,12 @@ pub struct AgentConfig {
     /// must opt in by raising `mode` to `read_only` or `full`.
     #[serde(default)]
     pub dispatch_policy: DispatchPolicy,
+    /// Phase 79.1 — plan-mode policy default (per-binding overrides
+    /// this via `InboundBinding::plan_mode`). The field is always
+    /// present so an operator can pin behaviour at the agent level
+    /// even without binding-level overrides.
+    #[serde(default)]
+    pub plan_mode: crate::types::plan_mode::PlanModePolicy,
 }
 
 /// Tri-state dispatch capability. The same enum is used for the
@@ -368,6 +374,17 @@ pub struct InboundBinding {
     /// Telegram chat where it's `full`").
     #[serde(default)]
     pub dispatch_policy: Option<DispatchPolicy>,
+    /// Phase 79.1 — per-binding override of `agents.plan_mode`. `None`
+    /// (default) inherits the agent-level policy; populated replaces
+    /// the whole struct.
+    #[serde(default)]
+    pub plan_mode: Option<crate::types::plan_mode::PlanModePolicy>,
+    /// Phase 79.1 — optional role tag consulted by
+    /// `PlanModePolicy::compute_default_active`. Accepts
+    /// `"coordinator"`, `"worker"`, `"proactive"` (case-insensitive);
+    /// any other value (or omission) is treated as unset.
+    #[serde(default)]
+    pub role: Option<String>,
 }
 
 /// Per-binding override for the sender rate limit.

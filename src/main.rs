@@ -1732,6 +1732,33 @@ async fn main() -> Result<()> {
             }
         }
 
+        // Phase 79.1 — register EnterPlanMode + ExitPlanMode tools
+        // when the binding's plan-mode policy says `enabled: true`.
+        // Default config (`enabled: true`) keeps these registered for
+        // every agent; operators can opt out per-binding by setting
+        // `plan_mode.enabled: false`. The dispatcher gate
+        // (llm_behavior.rs) does not depend on registration — it
+        // consults `ctx.plan_mode` directly — so an opt-out only
+        // hides the tools from the model's catalogue.
+        if agent_cfg.plan_mode.enabled {
+            tools.register(
+                nexo_core::agent::plan_mode_tool::EnterPlanModeTool::tool_def(),
+                nexo_core::agent::plan_mode_tool::EnterPlanModeTool,
+            );
+            tools.register(
+                nexo_core::agent::plan_mode_tool::ExitPlanModeTool::tool_def(),
+                nexo_core::agent::plan_mode_tool::ExitPlanModeTool,
+            );
+            // Operator-side resolver — when require_approval is on,
+            // this is the path through which the operator wakes a
+            // pending ExitPlanMode. Future: pairing parser will call
+            // it on inbound `[plan-mode] approve|reject plan_id=…`.
+            tools.register(
+                nexo_core::agent::plan_mode_tool::PlanModeResolveTool::tool_def(),
+                nexo_core::agent::plan_mode_tool::PlanModeResolveTool,
+            );
+        }
+
         // Phase 25 — `web_search` tool. Registered when the agent's
         // top-level policy has `enabled: true` and a router exists.
         // Per-binding overrides are enforced inside the tool itself
@@ -7037,6 +7064,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         language: primary.language.clone(),
         context_optimization: None,
         dispatch_policy: Default::default(),
+        plan_mode: Default::default(),
     });
     let broker = AnyBroker::local();
     let sessions = Arc::new(SessionManager::new(std::time::Duration::from_secs(300), 20));
@@ -7198,6 +7226,13 @@ async fn start_http_transport(
 ) -> anyhow::Result<nexo_mcp::HttpServerHandle> {
     use nexo_mcp::{start_http_server, HttpTransportConfig};
 
+    if yaml.auth.is_some() && yaml.auth_token_env.is_some() {
+        anyhow::bail!(
+            "mcp_server.http: set either `auth` (Phase 76.3) or the legacy \
+             `auth_token_env`, not both"
+        );
+    }
+
     let auth_token = if let Some(env_name) = yaml.auth_token_env.as_deref() {
         let token = std::env::var(env_name).with_context(|| {
             format!(
@@ -7214,9 +7249,17 @@ async fn start_http_transport(
         None
     };
 
+    let auth = yaml.auth.as_ref().map(yaml_auth_to_runtime).transpose()?;
+
+    let per_principal_rate_limit = yaml
+        .per_principal_rate_limit
+        .as_ref()
+        .map(yaml_pp_rate_limit_to_runtime);
+
     let cfg = HttpTransportConfig {
         enabled: yaml.enabled,
         bind: yaml.bind,
+        auth,
         auth_token,
         allow_origins: yaml.allow_origins.clone(),
         body_max_bytes: yaml.body_max_bytes,
@@ -7233,11 +7276,89 @@ async fn start_http_transport(
         sse_max_age_secs: yaml.sse_max_age_secs,
         sse_buffer_size: yaml.sse_buffer_size,
         enable_legacy_sse: yaml.enable_legacy_sse,
+        per_principal_rate_limit,
     };
 
     let handle = start_http_server(bridge.clone(), cfg, shutdown.clone()).await?;
     tracing::info!(addr = %handle.bind_addr, "mcp-server http transport ready");
     Ok(handle)
+}
+
+/// Phase 76.3 — translate the YAML auth schema into the runtime
+/// `AuthConfig`. Env var resolution for `static_token` happens lazily
+/// inside the runtime's `AuthConfig::build`; mTLS and JWT need no env.
+fn yaml_auth_to_runtime(
+    yaml: &nexo_config::types::mcp_server::AuthConfigYaml,
+) -> anyhow::Result<nexo_mcp::server::auth::AuthConfig> {
+    use nexo_config::types::mcp_server as y;
+    use nexo_mcp::server::auth as r;
+    use nexo_mcp::server::auth::bearer_jwt::JwtConfig;
+    use nexo_mcp::server::auth::mutual_tls::MutualTlsConfig;
+
+    Ok(match yaml {
+        y::AuthConfigYaml::None => r::AuthConfig::None,
+        y::AuthConfigYaml::StaticToken { token_env, tenant } => {
+            if token_env.trim().is_empty() {
+                anyhow::bail!("mcp_server.http.auth.token_env must not be empty");
+            }
+            r::AuthConfig::StaticToken {
+                token: None,
+                token_env: Some(token_env.clone()),
+                tenant: tenant.clone(),
+            }
+        }
+        y::AuthConfigYaml::BearerJwt(j) => r::AuthConfig::BearerJwt(JwtConfig {
+            jwks_url: j.jwks_url.clone(),
+            jwks_cache_ttl_secs: j.jwks_ttl_secs,
+            jwks_refresh_cooldown_secs: j.jwks_refresh_cooldown_secs,
+            algorithms: j.algorithms.clone(),
+            issuer: j.issuer.clone(),
+            audiences: j.audiences.clone(),
+            tenant_claim: j.tenant_claim.clone(),
+            scopes_claim: j.scopes_claim.clone(),
+            leeway_secs: j.leeway_secs,
+        }),
+        y::AuthConfigYaml::MutualTls(m) => match m {
+            y::MutualTlsConfigYaml::FromHeader {
+                header_name,
+                cn_allowlist,
+                cn_to_tenant,
+            } => r::AuthConfig::MutualTls(MutualTlsConfig::FromHeader {
+                header_name: header_name.clone(),
+                cn_allowlist: cn_allowlist.clone(),
+                cn_to_tenant: cn_to_tenant
+                    .as_ref()
+                    .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect()),
+            }),
+        },
+    })
+}
+
+/// Phase 76.5 — translate the YAML per-principal block into the
+/// runtime config. Direct field-by-field copy; the runtime
+/// validates the values at `PerPrincipalRateLimiter::new()` time.
+fn yaml_pp_rate_limit_to_runtime(
+    yaml: &nexo_config::types::mcp_server::PerPrincipalRateLimitYaml,
+) -> nexo_mcp::server::per_principal_rate_limit::PerPrincipalRateLimiterConfig {
+    use nexo_mcp::server::per_principal_rate_limit::{
+        PerPrincipalRateLimiterConfig, PerToolLimit,
+    };
+    let convert = |y: &nexo_config::types::mcp_server::PerToolLimitYaml| PerToolLimit {
+        rps: y.rps,
+        burst: y.burst,
+    };
+    PerPrincipalRateLimiterConfig {
+        enabled: yaml.enabled,
+        default: convert(&yaml.default),
+        per_tool: yaml
+            .per_tool
+            .iter()
+            .map(|(k, v)| (k.clone(), convert(v)))
+            .collect(),
+        max_buckets: yaml.max_buckets,
+        stale_ttl_secs: yaml.stale_ttl_secs,
+        warn_threshold: yaml.warn_threshold,
+    }
 }
 
 /// Build a `BrokerClientForDoctor` adapter from the loaded broker config.

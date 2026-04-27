@@ -57,6 +57,29 @@ impl ToolRegistry {
     pub fn to_tool_defs(&self) -> Vec<ToolDef> {
         self.handlers.iter().map(|e| e.value().0.clone()).collect()
     }
+    /// All registered tool names — cheap because [`HandlerEntry`]
+    /// already owns the name string. Phase 79.1 boot guard consumes
+    /// this list to verify every tool is classified for plan-mode
+    /// gating.
+    pub fn names(&self) -> Vec<String> {
+        self.handlers.iter().map(|e| e.key().clone()).collect()
+    }
+    /// Phase 79.1 — return tool names that are NOT classified for
+    /// plan-mode gating. Empty result = every registered tool is
+    /// recognised by `nexo_core::plan_mode::classify_tool`. Callers
+    /// (main.rs boot path) typically `tracing::warn!` the slice and
+    /// hard-fail under a feature flag.
+    pub fn plan_mode_unclassified(&self) -> Vec<String> {
+        crate::plan_mode::unclassified_tools(self.names())
+    }
+    /// Hard-fail companion to [`Self::plan_mode_unclassified`]. Panics
+    /// with a descriptive message naming every unclassified tool.
+    /// Wire into the boot path when you want plan-mode gating to be
+    /// strict (production deployments where an unguarded mutator
+    /// would be dangerous).
+    pub fn assert_plan_mode_classified(&self) {
+        crate::plan_mode::assert_registry_classified(self.names());
+    }
     /// Drop every tool whose name does not match at least one of the
     /// glob patterns (trailing `*` or exact). Used by per-agent
     /// `allowed_tools`: register everything first, then prune down to
@@ -311,5 +334,32 @@ mod tests {
         reg.register(mk_def("present"), Noop);
         assert!(reg.contains("present"));
         assert!(!reg.contains("still-missing"));
+    }
+
+    #[test]
+    fn plan_mode_unclassified_reports_unknown_names() {
+        let reg = ToolRegistry::new();
+        reg.register(mk_def("FileRead"), Noop); // classified read-only
+        reg.register(mk_def("totally_unknown_tool"), Noop); // unclassified
+        let bad = reg.plan_mode_unclassified();
+        assert_eq!(bad, vec!["totally_unknown_tool".to_string()]);
+    }
+
+    #[test]
+    fn plan_mode_unclassified_empty_when_all_known() {
+        let reg = ToolRegistry::new();
+        reg.register(mk_def("FileRead"), Noop);
+        reg.register(mk_def("FileEdit"), Noop);
+        reg.register(mk_def("EnterPlanMode"), Noop);
+        reg.register(mk_def("whatsapp.send"), Noop); // dotted convention
+        assert!(reg.plan_mode_unclassified().is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "plan_mode:")]
+    fn assert_plan_mode_classified_panics_on_unknown() {
+        let reg = ToolRegistry::new();
+        reg.register(mk_def("totally_unknown_tool"), Noop);
+        reg.assert_plan_mode_classified();
     }
 }

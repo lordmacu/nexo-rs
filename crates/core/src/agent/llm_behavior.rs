@@ -245,6 +245,33 @@ impl LlmAgentBehavior {
             tool_call_id = %call.id,
             "tool call dispatch"
         );
+        // Phase 79.1 — centralised plan-mode gate. Runs before any
+        // other check so the refusal message stays consistent with
+        // the structured `PlanModeRefusal` shape regardless of which
+        // downstream gate would have matched. The Bash classifier
+        // verdict is `None` until Phase 77.8 ships — `gate_tool_call`
+        // treats `Bash + None` as fail-safe blocking, which matches
+        // the spec ("default to blocking if classifier returns
+        // Unknown").
+        {
+            let state = ctx.plan_mode.read().await;
+            if let Some(refusal) =
+                crate::plan_mode::gate_tool_call(&state, &call.name, None)
+            {
+                let body = serde_json::json!({
+                    "is_error": true,
+                    "kind": "plan_mode_refusal",
+                    "refusal": refusal,
+                });
+                let err = format!("plan_mode: refused {} ({:?})", call.name, refusal.tool_kind);
+                tracing::info!(
+                    agent_id = %ctx.agent_id,
+                    tool = %call.name,
+                    "plan_mode gate refused tool call"
+                );
+                return (body.to_string(), Some(err), "plan_mode_refused", 0);
+            }
+        }
         // Defense-in-depth: enforce the per-binding `allowed_tools`
         // list at execution time. The tool was already hidden from
         // the LLM's tool_defs for this binding (see filter below at
@@ -569,6 +596,13 @@ impl LlmAgentBehavior {
                     sender
                 ));
             }
+        }
+        // Phase 79.1 — inject the canonical plan-mode hint while
+        // plan mode is on. Frozen string keeps the prompt cache warm.
+        if let Some(hint) =
+            crate::plan_mode::plan_mode_system_hint(&*ctx.plan_mode.read().await)
+        {
+            channel_meta_parts.push(hint.to_string());
         }
         let prompt_inputs = super::prompt_assembly::PromptInputs {
             workspace: workspace_section,

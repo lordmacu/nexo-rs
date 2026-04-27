@@ -150,10 +150,13 @@ fn two_binding_agent() -> AgentConfig {
                 web_search: serde_json::Value::Null,
                 pairing_policy: serde_json::Value::Null,
                 dispatch_policy: Default::default(),
+                plan_mode: Default::default(),
+                role: None,
             },
         ],
         context_optimization: None,
         dispatch_policy: Default::default(),
+        plan_mode: Default::default(),
     }
 }
 
@@ -334,6 +337,7 @@ async fn agent_without_bindings_drops_inbound_events() {
         language: None,
         context_optimization: None,
         dispatch_policy: Default::default(),
+        plan_mode: Default::default(),
     };
     let (runtime, captures, broker) = spawn_runtime(cfg).await;
 

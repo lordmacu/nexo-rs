@@ -33,4 +33,5 @@ uuid             = { workspace = true }
 [dev-dependencies]
 # in-test temp dirs for SQLite paths.
 nexo-driver-types = { version = "0.1.1", path = "../driver-types" }
+tempfile = "3"
 

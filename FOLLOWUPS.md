@@ -794,6 +794,70 @@ Open:
     `EmailPluginConfig.attachment_retention_days` (default 90,
     `0` disables GC entirely).
 
+## Phase 79.1 — Plan mode follow-ups
+
+  - **Operator-approval scope check.** ⬜ Pending. Phase 79.1
+    pairing approval (`[plan-mode] approve|reject plan_id=<ulid>`)
+    currently authorises any sender on the binding's pairing
+    channel. OpenClaw's `research/src/gateway/exec-approval-ios-push.ts:55-89`
+    enforces a `roleScopesAllow({role: 'operator',
+    requestedScopes: ['operator.approvals']})` check before
+    accepting an approval message. When 79.10 ships
+    `approval_correlator`, port that pattern: per-binding
+    `operator.approvals` scope on the `(channel, account_id)`
+    tuple, refusal logs `[plan-mode] approval rejected:
+    sender lacks operator.approvals`. Hard prereq before the
+    config-self-edit flow (79.10) opens up.
+  - **`final_plan_path` variant.** ⬜ Pending if 8 KiB cap
+    proves restrictive. The leak's `ExitPlanModeV2Tool.ts`
+    reads the plan from disk via `getPlanFilePath(agentId)`;
+    add an `ExitPlanMode { final_plan_path: PathBuf }` arm
+    that points at a file written via `FileWrite` during
+    plan mode. Only pursue when real workloads hit the cap.
+  - **Acceptance retry policy.** ⬜ Pending. Phase 79.1
+    fire-and-forget acceptance can be flaky (slow tests,
+    transient network). Add bounded retry (1 retry after 30 s)
+    before publishing `[plan-mode] acceptance: fail`.
+  - **Acceptance hook fire-and-forget integration.** ⬜
+    Pending (was step 14 of original 79.1 plan, parked at MVP).
+    `ExitPlanMode` should spawn a tokio task on approve that
+    runs the Phase 75 acceptance autodetect against the plan
+    and posts `[plan-mode] acceptance: pass|fail (<summary>)`
+    to `notify_origin` asynchronously. Today the unlock is
+    inline; acceptance integration is a pure addition.
+  - **Auto-enter-on-destructive (cfg-gated).** ⬜ Pending
+    (was step 15 of original 79.1 plan). When
+    `auto_enter_on_destructive: true` and the next call is
+    classified destructive by Phase 77.8, the dispatcher
+    pre-empts with a refusal carrying
+    `entered_reason: AutoDestructive { tripped_check }` and
+    flips state to On in the same step. Hard dep on Phase
+    77.8 destructive-command warning shipping first.
+  - **Pairing parser for `[plan-mode] approve|reject plan_id=…`.**
+    ⬜ Pending. Today the operator must call the
+    `plan_mode_resolve` tool directly from another agent
+    session or CLI; the pairing-side parser that watches
+    inbound chat messages for the canonical strings and
+    forwards to `PlanApprovalRegistry::resolve` is not yet
+    wired. Same shape as OpenClaw's
+    `[trust]` / `[command]` parsers in `pi-tools.before-tool-call.ts`.
+  - **Notify_origin actual delivery (not just tracing).** ⬜
+    Pending. The canonical `[plan-mode]` notify lines emit
+    via `tracing::info!` today; production deployments need
+    them surfaced through the pairing channel that owns the
+    goal. Wire via the existing `HookDispatcher` /
+    `PairingAdapterRegistry` plumbing that
+    `notify_origin` already uses for completion hooks.
+  - **End-to-end integration tests via dispatcher.** ⬜
+    Pending (was step 16 of original 79.1 plan). Unit tests
+    cover individual pieces (37 across `plan_mode`,
+    `plan_mode_tool`, `tool_registry`, registry persistence,
+    reattach). A dispatcher-level e2e — "goal calls Bash
+    mutating while plan-mode On → receives PlanModeRefusal
+    as `tool_result`" — would prove the wired-up gate
+    end-to-end. Lives in
+    `crates/dispatch-tools/tests/plan_mode_*.rs`.
+
 ## Maintenance note
 
 If a future historical import includes non-English notes, keep them in `archive/spanish/*.txt` and update this Markdown tracker in English only.

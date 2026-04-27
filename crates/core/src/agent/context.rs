@@ -4,12 +4,14 @@ use super::redaction::Redactor;
 use super::routing::AgentRouter;
 use super::tool_registry::ToolRegistry;
 use super::transcripts_index::TranscriptsIndex;
+use crate::plan_mode::PlanModeState;
 use crate::session::SessionManager;
 use nexo_broker::AnyBroker;
 use nexo_config::types::agents::AgentConfig;
 use nexo_mcp::SessionMcpRuntime;
 use nexo_memory::LongTermMemory;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 use uuid::Uuid;
 #[derive(Clone)]
 pub struct AgentContext {
@@ -93,6 +95,20 @@ pub struct AgentContext {
     /// Lets the dispatch handler synthesise an `OriginChannel` for
     /// `program_phase` so `notify_origin` lands back in the chat.
     pub inbound_origin: Option<(String, String, String)>,
+    /// Phase 79.1 — plan-mode state for this goal. Shared across the
+    /// dispatcher (read on every tool call) and the EnterPlanMode /
+    /// ExitPlanMode tools (write). SQLite is canonical (column on
+    /// `agent_registry.goals.plan_mode`); this is a hot cache. New
+    /// contexts default to `Off`; the runtime hydrates the value from
+    /// the registry at goal spawn / reattach (Phase 71).
+    pub plan_mode: Arc<RwLock<PlanModeState>>,
+    /// Phase 79.1 — process-shared registry of pending plan-mode
+    /// approvals. `EnterPlanMode` does not touch it; `ExitPlanMode`
+    /// installs a waiter when `plan_mode.require_approval` is on; the
+    /// `plan_mode_resolve` operator tool fires the matching waiter.
+    /// Tests construct their own registry to avoid cross-test races.
+    pub plan_approval_registry:
+        Arc<crate::agent::plan_mode_tool::PlanApprovalRegistry>,
 }
 impl AgentContext {
     pub fn new(
@@ -123,7 +139,45 @@ impl AgentContext {
             dispatch: None,
             sender_trusted: false,
             inbound_origin: None,
+            plan_mode: Arc::new(RwLock::new(PlanModeState::default())),
+            plan_approval_registry: Arc::new(
+                crate::agent::plan_mode_tool::PlanApprovalRegistry::default(),
+            ),
         }
+    }
+
+    /// Phase 79.1 — install a pre-built plan-mode handle. Used at
+    /// goal hydration so the runtime can share the same `Arc<RwLock>`
+    /// between the dispatcher (gate) and the registry mirror (write
+    /// path).
+    pub fn with_plan_mode(mut self, state: Arc<RwLock<PlanModeState>>) -> Self {
+        self.plan_mode = state;
+        self
+    }
+
+    /// Phase 79.1 — install a process-shared plan-mode approval
+    /// registry. Production wiring constructs one per process and
+    /// hands it to every `AgentContext`; tests build their own to
+    /// avoid cross-test races.
+    pub fn with_plan_approval_registry(
+        mut self,
+        registry: Arc<crate::agent::plan_mode_tool::PlanApprovalRegistry>,
+    ) -> Self {
+        self.plan_approval_registry = registry;
+        self
+    }
+
+    /// Phase 79.1 — `true` when this goal is rooted in a live channel
+    /// that can deliver an operator approval message. Sub-agent goals
+    /// (delegations, future TeamCreate workers), cron / poller /
+    /// heartbeat-spawned goals, and bootstrap contexts all return
+    /// `false` because they have no inbound channel through which an
+    /// operator could approve a plan.
+    ///
+    /// Reference: `research/src/acp/session-interaction-mode.ts:4-15`
+    /// — same intent, "interactive" vs "parent-owned-background".
+    pub fn is_interactive(&self) -> bool {
+        self.inbound_origin.is_some()
     }
 
     pub fn with_sender_trusted(mut self, v: bool) -> Self {
@@ -223,5 +277,106 @@ impl AgentContext {
             return Arc::clone(eff);
         }
         Arc::new(EffectiveBindingPolicy::from_agent_defaults(&self.config))
+    }
+}
+
+#[cfg(test)]
+mod plan_mode_tests {
+    use super::*;
+    use crate::plan_mode::{PlanModeReason, PlanModeState};
+    use nexo_config::types::agents::{
+        AgentConfig, AgentRuntimeConfig, DreamingYamlConfig, HeartbeatConfig, ModelConfig,
+        OutboundAllowlistConfig, WorkspaceGitConfig,
+    };
+
+    fn ctx() -> AgentContext {
+        let cfg = AgentConfig {
+            id: "a".into(),
+            model: ModelConfig {
+                provider: "x".into(),
+                model: "y".into(),
+            },
+            plugins: Vec::new(),
+            heartbeat: HeartbeatConfig::default(),
+            config: AgentRuntimeConfig::default(),
+            system_prompt: String::new(),
+            workspace: String::new(),
+            skills: Vec::new(),
+            skills_dir: "./skills".into(),
+            skill_overrides: Default::default(),
+            transcripts_dir: String::new(),
+            dreaming: DreamingYamlConfig::default(),
+            workspace_git: WorkspaceGitConfig::default(),
+            tool_rate_limits: None,
+            tool_args_validation: None,
+            extra_docs: Vec::new(),
+            inbound_bindings: Vec::new(),
+            allowed_tools: Vec::new(),
+            sender_rate_limit: None,
+            allowed_delegates: Vec::new(),
+            accept_delegates_from: Vec::new(),
+            description: String::new(),
+            google_auth: None,
+            credentials: Default::default(),
+            link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
+            language: None,
+            outbound_allowlist: OutboundAllowlistConfig::default(),
+            context_optimization: None,
+            dispatch_policy: Default::default(),
+            plan_mode: Default::default(),
+        };
+        AgentContext::new(
+            "a",
+            Arc::new(cfg),
+            AnyBroker::local(),
+            Arc::new(SessionManager::new(std::time::Duration::from_secs(60), 8)),
+        )
+    }
+
+    #[tokio::test]
+    async fn plan_mode_default_off() {
+        let c = ctx();
+        assert!(c.plan_mode.read().await.is_off());
+    }
+
+    #[tokio::test]
+    async fn plan_mode_set_then_read() {
+        let c = ctx();
+        {
+            let mut g = c.plan_mode.write().await;
+            *g = PlanModeState::on(
+                42,
+                PlanModeReason::ModelRequested {
+                    reason: Some("rationale".into()),
+                },
+            );
+        }
+        assert!(c.plan_mode.read().await.is_on());
+    }
+
+    #[tokio::test]
+    async fn is_interactive_requires_inbound_origin() {
+        let c = ctx();
+        assert!(!c.is_interactive());
+        let c = c.with_inbound_origin("whatsapp", "default", "+1234");
+        assert!(c.is_interactive());
+    }
+
+    #[tokio::test]
+    async fn with_plan_mode_shares_handle() {
+        let shared = Arc::new(RwLock::new(PlanModeState::on(
+            7,
+            PlanModeReason::OperatorRequested,
+        )));
+        let c = ctx().with_plan_mode(Arc::clone(&shared));
+        // Mutating the shared handle is observed via the context
+        // — proves the Arc was wired through, not cloned-by-value.
+        {
+            let mut g = shared.write().await;
+            *g = PlanModeState::Off;
+        }
+        assert!(c.plan_mode.read().await.is_off());
     }
 }

@@ -552,6 +552,7 @@ impl nexo_dispatch_tools::DispatchPhaseChainer for AuditChainer {
                 max_turns: goal.budget.max_turns,
                 ..AgentSnapshot::default()
             },
+            plan_mode: None,
         };
         // B24 — admit with enqueue=false so audits don't queue
         // behind main dispatch; if the audit_cap check above
@@ -1368,6 +1369,7 @@ mod tests {
             outbound_allowlist: OutboundAllowlistConfig::default(),
             context_optimization: None,
             dispatch_policy: Default::default(),
+            plan_mode: Default::default(),
         })
     }
 

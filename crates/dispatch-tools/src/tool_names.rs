@@ -9,6 +9,19 @@
 
 use nexo_config::{DispatchCapability, DispatchPolicy};
 
+/// Phase 79.1 — canonical names of the plan-mode tools. Exported as
+/// consts so other modules (the dispatcher gate, the LLM provider
+/// shims, the deferred-schema registry) reference one source of
+/// truth instead of stringly-typed literals scattered across the
+/// codebase.
+///
+/// Both names are classified `read_only` in
+/// `nexo_core::plan_mode::READ_ONLY_TOOLS`, so plan-mode gating
+/// itself never blocks them — entering / exiting plan mode is the
+/// model's only escape from a refusal loop.
+pub const ENTER_PLAN_MODE_TOOL: &str = "EnterPlanMode";
+pub const EXIT_PLAN_MODE_TOOL: &str = "ExitPlanMode";
+
 /// Tools that only read state. Always registered when capability is
 /// `ReadOnly` or `Full`; never when capability is `None`.
 pub const READ_TOOL_NAMES: &[&str] = &[
@@ -152,5 +165,15 @@ mod tests {
         for n in WRITE_TOOL_NAMES {
             assert!(!ADMIN_TOOL_NAMES.contains(n), "{n} in both write+admin");
         }
+    }
+
+    #[test]
+    fn plan_mode_tool_name_consts_match_canonical_strings() {
+        // Phase 79.1 — these must literally equal the strings listed
+        // in `nexo_core::plan_mode::READ_ONLY_TOOLS` (a no-cycle
+        // verification — the round-trip through `classify_tool`
+        // lives in `nexo-core` itself).
+        assert_eq!(ENTER_PLAN_MODE_TOOL, "EnterPlanMode");
+        assert_eq!(EXIT_PLAN_MODE_TOOL, "ExitPlanMode");
     }
 }

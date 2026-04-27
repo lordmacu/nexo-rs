@@ -84,6 +84,7 @@ fn make_config(
         language: None,
         context_optimization: None,
         dispatch_policy: Default::default(),
+        plan_mode: Default::default(),
     }
 }
 
@@ -304,6 +305,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             language: None,
             context_optimization: None,
             dispatch_policy: Default::default(),
+            plan_mode: Default::default(),
         },
         behavior_a,
     ));
@@ -352,6 +354,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             language: None,
             context_optimization: None,
             dispatch_policy: Default::default(),
+            plan_mode: Default::default(),
         },
         behavior_b,
     ));

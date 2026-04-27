@@ -28,6 +28,7 @@ pub mod memory_tool;
 pub mod mock_plugin;
 pub mod noop;
 pub mod peer_directory;
+pub mod plan_mode_tool;
 pub mod plugin;
 pub mod prompt_assembly;
 pub mod rate_limit;

@@ -97,6 +97,14 @@ pub struct AgentHandle {
     /// `Some` once the goal reached a terminal state.
     pub finished_at: Option<DateTime<Utc>>,
     pub snapshot: AgentSnapshot,
+    /// Phase 79.1 — JSON-encoded `nexo_core::plan_mode::PlanModeState`
+    /// for this goal. `None` is the implicit "Off" — the field is
+    /// kept opaque (a string) so this crate stays free of a `nexo_core`
+    /// dependency. Mirrored to a dedicated `plan_mode` column at the
+    /// SQLite store so reattach can hydrate without touching
+    /// `handle_json`.
+    #[serde(default)]
+    pub plan_mode: Option<String>,
 }
 
 impl AgentHandle {

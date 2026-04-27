@@ -59,6 +59,7 @@ fn handle(id: GoalId) -> AgentHandle {
         started_at: Utc::now(),
         finished_at: None,
         snapshot: AgentSnapshot::default(),
+        plan_mode: None,
     }
 }
 

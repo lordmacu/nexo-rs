@@ -170,6 +170,7 @@ pub async fn dispatch_followup_call(
             max_turns: goal.budget.max_turns,
             ..AgentSnapshot::default()
         },
+        plan_mode: None,
     };
     let outcome = registry
         .admit(handle, caps.queue_when_full)

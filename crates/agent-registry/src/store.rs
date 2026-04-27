@@ -179,6 +179,22 @@ impl SqliteAgentRegistryStore {
         )
         .execute(pool)
         .await?;
+        // Phase 79.1 — additive column for plan-mode state. Older DBs
+        // miss this column; ALTER TABLE ... ADD COLUMN is fast (no row
+        // rewrite) and idempotent here because we tolerate the
+        // "duplicate column name" error so migrate() stays callable on
+        // every boot.
+        let alter = sqlx::query(
+            "ALTER TABLE agent_registry ADD COLUMN plan_mode TEXT",
+        )
+        .execute(pool)
+        .await;
+        if let Err(e) = alter {
+            let msg = e.to_string();
+            if !msg.contains("duplicate column") {
+                return Err(e.into());
+            }
+        }
         sqlx::query(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))
             .execute(pool)
             .await?;
@@ -222,6 +238,11 @@ fn row_to_handle(row: &sqlx::sqlite::SqliteRow) -> Result<AgentHandle, AgentRegi
     handle.started_at = from_unix(started);
     let finished: Option<i64> = row.try_get("finished_at")?;
     handle.finished_at = finished.map(from_unix);
+    // Phase 79.1 — plan_mode column wins over the handle_json copy so
+    // a hot update via `set_plan_mode` is observable without rewriting
+    // the whole handle blob.
+    let plan_mode: Option<String> = row.try_get("plan_mode").unwrap_or(None);
+    handle.plan_mode = plan_mode;
     Ok(handle)
 }
 
@@ -231,13 +252,14 @@ impl AgentRegistryStore for SqliteAgentRegistryStore {
         let json = serde_json::to_string(handle)
             .map_err(|e| AgentRegistryStoreError::Json(e.to_string()))?;
         sqlx::query(
-            "INSERT INTO agent_registry (goal_id, phase_id, status, started_at, finished_at, handle_json) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+            "INSERT INTO agent_registry (goal_id, phase_id, status, started_at, finished_at, handle_json, plan_mode) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
              ON CONFLICT(goal_id) DO UPDATE SET \
                  phase_id     = excluded.phase_id, \
                  status       = excluded.status, \
                  finished_at  = excluded.finished_at, \
-                 handle_json  = excluded.handle_json",
+                 handle_json  = excluded.handle_json, \
+                 plan_mode    = excluded.plan_mode",
         )
         .bind(handle.goal_id.0.to_string())
         .bind(&handle.phase_id)
@@ -245,6 +267,7 @@ impl AgentRegistryStore for SqliteAgentRegistryStore {
         .bind(unix(handle.started_at))
         .bind(handle.finished_at.map(unix))
         .bind(json)
+        .bind(handle.plan_mode.as_deref())
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -252,7 +275,7 @@ impl AgentRegistryStore for SqliteAgentRegistryStore {
 
     async fn get(&self, goal_id: GoalId) -> Result<Option<AgentHandle>, AgentRegistryStoreError> {
         let row = sqlx::query(
-            "SELECT goal_id, phase_id, status, started_at, finished_at, handle_json \
+            "SELECT goal_id, phase_id, status, started_at, finished_at, handle_json, plan_mode \
              FROM agent_registry WHERE goal_id = ?1 LIMIT 1",
         )
         .bind(goal_id.0.to_string())
@@ -263,7 +286,7 @@ impl AgentRegistryStore for SqliteAgentRegistryStore {
 
     async fn list(&self) -> Result<Vec<AgentHandle>, AgentRegistryStoreError> {
         let rows = sqlx::query(
-            "SELECT goal_id, phase_id, status, started_at, finished_at, handle_json \
+            "SELECT goal_id, phase_id, status, started_at, finished_at, handle_json, plan_mode \
              FROM agent_registry ORDER BY started_at DESC",
         )
         .fetch_all(&self.pool)
@@ -280,7 +303,7 @@ impl AgentRegistryStore for SqliteAgentRegistryStore {
         status: AgentRunStatus,
     ) -> Result<Vec<AgentHandle>, AgentRegistryStoreError> {
         let rows = sqlx::query(
-            "SELECT goal_id, phase_id, status, started_at, finished_at, handle_json \
+            "SELECT goal_id, phase_id, status, started_at, finished_at, handle_json, plan_mode \
              FROM agent_registry WHERE status = ?1 ORDER BY started_at DESC",
         )
         .bind(status.as_str())
@@ -322,3 +345,77 @@ impl AgentRegistryStore for SqliteAgentRegistryStore {
 const _: fn() = || {
     let _: &Path = Path::new("/");
 };
+
+#[cfg(test)]
+mod plan_mode_persistence_tests {
+    use super::*;
+    use crate::types::AgentSnapshot;
+    use chrono::Utc;
+    use uuid::Uuid;
+
+    fn handle_with_plan_mode(plan_mode: Option<String>) -> AgentHandle {
+        AgentHandle {
+            goal_id: GoalId(Uuid::new_v4()),
+            phase_id: "p1".into(),
+            status: AgentRunStatus::Running,
+            origin: None,
+            dispatcher: None,
+            started_at: Utc::now(),
+            finished_at: None,
+            snapshot: AgentSnapshot::default(),
+            plan_mode,
+        }
+    }
+
+    #[tokio::test]
+    async fn migrate_is_idempotent_on_repeated_open() {
+        // Memory DB cannot survive a re-open; use a temp file so the
+        // second open hits the existing schema and exercises the
+        // ALTER-TABLE-tolerant branch.
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_str().unwrap().to_string();
+        let _ = SqliteAgentRegistryStore::open(&path).await.unwrap();
+        // Second call must not error even though the column already
+        // exists.
+        let _ = SqliteAgentRegistryStore::open(&path).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn upsert_roundtrip_with_plan_mode_some() {
+        let store = SqliteAgentRegistryStore::open_memory().await.unwrap();
+        let h = handle_with_plan_mode(Some(
+            r#"{"state":"on","entered_at":1700000000,"reason":{"kind":"model_requested","reason":"explore"},"prior_mode":"default"}"#.into(),
+        ));
+        store.upsert(&h).await.unwrap();
+        let read = store.get(h.goal_id).await.unwrap().unwrap();
+        assert_eq!(read.plan_mode, h.plan_mode);
+    }
+
+    #[tokio::test]
+    async fn upsert_roundtrip_with_plan_mode_none() {
+        let store = SqliteAgentRegistryStore::open_memory().await.unwrap();
+        let h = handle_with_plan_mode(None);
+        store.upsert(&h).await.unwrap();
+        let read = store.get(h.goal_id).await.unwrap().unwrap();
+        assert_eq!(read.plan_mode, None);
+    }
+
+    #[tokio::test]
+    async fn column_overrides_handle_json_on_drift() {
+        // Simulate the case where handle_json carries a stale plan_mode
+        // (e.g. the column was hot-updated separately). The column
+        // wins on read.
+        let store = SqliteAgentRegistryStore::open_memory().await.unwrap();
+        let mut h = handle_with_plan_mode(Some("\"original\"".into()));
+        store.upsert(&h).await.unwrap();
+        // Hot-patch only the column.
+        sqlx::query("UPDATE agent_registry SET plan_mode = ?1 WHERE goal_id = ?2")
+            .bind("\"hotpatched\"")
+            .bind(h.goal_id.0.to_string())
+            .execute(&store.pool)
+            .await
+            .unwrap();
+        h = store.get(h.goal_id).await.unwrap().unwrap();
+        assert_eq!(h.plan_mode.as_deref(), Some("\"hotpatched\""));
+    }
+}
