@@ -1788,6 +1788,16 @@ async fn main() -> Result<()> {
             nexo_core::agent::synthetic_output_tool::SyntheticOutputTool,
         );
 
+        // Phase 79.13 — `NotebookEdit` for `.ipynb` cell-level edits.
+        // Pure-Rust round-trip via serde_json — no `jupyter` binary
+        // required. Always registered (operators that don't touch
+        // notebooks pay zero cost — the tool is filtered out by
+        // `allowed_tools` if undesired).
+        tools.register(
+            nexo_core::agent::notebook_edit_tool::NotebookEditTool::tool_def(),
+            nexo_core::agent::notebook_edit_tool::NotebookEditTool,
+        );
+
         // Phase 25 — `web_search` tool. Registered when the agent's
         // top-level policy has `enabled: true` and a router exists.
         // Per-binding overrides are enforced inside the tool itself
