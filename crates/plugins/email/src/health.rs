@@ -45,6 +45,11 @@ pub struct AccountHealth {
     pub consecutive_failures: u32,
     pub messages_seen_total: u64,
     pub last_error: Option<String>,
+    /// Phase 48.4 outbound additions.
+    pub outbound_queue_depth: usize,
+    pub outbound_dlq_depth: usize,
+    pub outbound_sent_total: u64,
+    pub outbound_failed_total: u64,
 }
 
 #[cfg(test)]
