@@ -2,6 +2,7 @@
 
 pub mod anthropic_oauth;
 pub mod channels_dashboard;
+pub mod email;
 mod infra;
 mod llm;
 mod memory;

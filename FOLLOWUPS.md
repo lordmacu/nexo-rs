@@ -679,12 +679,20 @@ Open:
 - 2026-04-27 — **Phase 48 (Email channel) deferrals.** Phase 48 closed
   with sub-phases 48.1–48.10 ✅ but ten knobs were intentionally
   parked rather than bloat the closing slice:
-  - **Interactive setup wizard** (`run_email_wizard` +
-    `yaml_patch::upsert_email_account` + 0o600 TOML secret writer).
-    Operators currently edit `config/plugins/email.yaml` and
-    `secrets/email/<inst>.toml` by hand. `provider_hint(domain)`
-    returns ready-to-paste endpoints; the `dialoguer` glue is
-    unwritten.
+  - **Interactive setup wizard.** ✅ Shipped 2026-04-27.
+    `crates/setup/src/services/email.rs::run_email_wizard(
+    config_dir, secrets_dir)` walks the operator through
+    address → provider auto-detect via `provider_hint(domain)`
+    (preset accept / override) → auth kind (Password /
+    OAuth2Static / OAuth2Google) → secret entry.
+    `upsert_email_account_yaml` upserts into `email.yaml`
+    (idempotent on instance id, accounts beside it preserved)
+    and `write_secret_toml` writes the TOML at mode 0o600
+    (Unix) via temp+rename so a partial write never lands.
+    Pure helpers (`derive_default_instance`,
+    `serialise_secret_toml`, `render_account_block`) ship 10
+    unit tests; the interactive shell still requires a TTY so
+    e2e of the dialoguer flow is out of scope.
   - **Tool registration in `src/main.rs`.** ✅ Shipped 2026-04-27.
     `OutboundDispatcher` extracts a cheap `Arc<DispatcherCore>` that
     `EmailPlugin::dispatcher_handle()` returns post-start; main.rs
