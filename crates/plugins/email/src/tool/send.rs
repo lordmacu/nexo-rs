@@ -30,6 +30,14 @@ struct SendArgs {
     body: String,
     #[serde(default)]
     attachments: Vec<OutboundAttachmentRef>,
+    /// When `true`, refuse to enqueue if any recipient already has a
+    /// permanent bounce on record. Default `false` keeps the legacy
+    /// advisory-warning behaviour (recipient_warnings on the
+    /// success envelope). Use this from automation that should
+    /// halt rather than spend deliverability budget retrying a
+    /// known-dead address.
+    #[serde(default)]
+    strict_bounce_check: bool,
 }
 
 pub struct EmailSendTool {
@@ -78,6 +86,10 @@ impl EmailSendTool {
                                 }
                             }
                         }
+                    },
+                    "strict_bounce_check": {
+                        "type": "boolean",
+                        "description": "Refuse to enqueue when any recipient has a permanent bounce on record (default false)."
                     }
                 },
                 "additionalProperties": false
@@ -118,6 +130,27 @@ impl EmailSendTool {
             &parsed.bcc,
         )
         .await;
+
+        // strict_bounce_check — refuse to enqueue when any recipient
+        // already has a permanent bounce on record. Distinct from
+        // the advisory path above: that one annotates a successful
+        // enqueue; this one short-circuits before we burn an
+        // SMTP attempt.
+        if parsed.strict_bounce_check {
+            let permanent: Vec<&Value> = recipient_warnings
+                .iter()
+                .filter(|w| {
+                    w.get("classification").and_then(|v| v.as_str()) == Some("permanent")
+                })
+                .collect();
+            if !permanent.is_empty() {
+                return json!({
+                    "ok": false,
+                    "error": "strict_bounce_check: at least one recipient has a permanent bounce on record",
+                    "recipient_warnings": permanent,
+                });
+            }
+        }
 
         let cmd = OutboundCommand {
             to: parsed.to,
@@ -336,5 +369,143 @@ mod tests {
             .await;
         assert_eq!(r["ok"], json!(false));
         assert!(r["error"].as_str().unwrap().contains("rejected"));
+    }
+
+    fn build_ctx_with_bounce(
+        declared: Vec<String>,
+        bounce_store: Arc<crate::bounce_store::BounceStore>,
+    ) -> Arc<EmailToolContext> {
+        let yaml = format!(
+            "email:\n  accounts:\n{}\n",
+            declared
+                .iter()
+                .map(|i| format!(
+                    "    - instance: {i}\n      address: {i}@example.com\n      imap: {{ host: imap.x, port: 993 }}\n      smtp: {{ host: smtp.x, port: 587 }}\n"
+                ))
+                .collect::<String>()
+        );
+        let f: EmailPluginConfigFile = serde_yaml::from_str(&yaml).unwrap();
+        let dispatcher = Arc::new(StubDispatcher {
+            instance_ids_list: declared.clone(),
+            captured: Mutex::new(vec![]),
+            next_id: Mutex::new(0),
+            force_err: false,
+        });
+        Arc::new(EmailToolContext {
+            creds: Arc::new(EmailCredentialStore::empty()),
+            google: Arc::new(GoogleCredentialStore::empty()),
+            config: Arc::new(f.email),
+            dispatcher,
+            health: HealthMap::new(DashMap::new().into()),
+            bounce_store: Some(bounce_store),
+        })
+    }
+
+    #[tokio::test]
+    async fn strict_bounce_check_refuses_when_recipient_is_permanently_bounced() {
+        use crate::bounce_store::BounceStore;
+        use crate::dsn::{BounceClassification, BounceEvent};
+        let store = BounceStore::open("sqlite::memory:").await.unwrap();
+        store
+            .record(&BounceEvent {
+                account_id: "ops@example.com".into(),
+                instance: "ops".into(),
+                original_message_id: Some("<o@x>".into()),
+                recipient: Some("dead@x".into()),
+                status_code: Some("5.1.1".into()),
+                action: Some("failed".into()),
+                reason: None,
+                classification: BounceClassification::Permanent,
+            })
+            .await
+            .unwrap();
+        let ctx = build_ctx_with_bounce(vec!["ops".into()], Arc::new(store));
+        let tool = EmailSendTool::new(ctx);
+        let r = tool
+            .run(json!({
+                "instance": "ops",
+                "to": ["dead@x"],
+                "subject": "Hi",
+                "body": "ok",
+                "strict_bounce_check": true
+            }))
+            .await;
+        assert_eq!(r["ok"], false);
+        assert!(r["error"]
+            .as_str()
+            .unwrap()
+            .contains("strict_bounce_check"));
+        let warns = r["recipient_warnings"].as_array().unwrap();
+        assert_eq!(warns.len(), 1);
+        assert_eq!(warns[0]["recipient"], "dead@x");
+        assert_eq!(warns[0]["classification"], "permanent");
+    }
+
+    #[tokio::test]
+    async fn strict_bounce_check_allows_when_recipient_is_only_transient() {
+        use crate::bounce_store::BounceStore;
+        use crate::dsn::{BounceClassification, BounceEvent};
+        let store = BounceStore::open("sqlite::memory:").await.unwrap();
+        store
+            .record(&BounceEvent {
+                account_id: "ops@example.com".into(),
+                instance: "ops".into(),
+                original_message_id: Some("<o@x>".into()),
+                recipient: Some("flaky@x".into()),
+                status_code: Some("4.7.1".into()),
+                action: Some("delayed".into()),
+                reason: None,
+                classification: BounceClassification::Transient,
+            })
+            .await
+            .unwrap();
+        let ctx = build_ctx_with_bounce(vec!["ops".into()], Arc::new(store));
+        let tool = EmailSendTool::new(ctx);
+        let r = tool
+            .run(json!({
+                "instance": "ops",
+                "to": ["flaky@x"],
+                "subject": "Hi",
+                "body": "ok",
+                "strict_bounce_check": true
+            }))
+            .await;
+        // Transient bounces don't block — the agent gets the
+        // message_id + an advisory warning.
+        assert_eq!(r["ok"], true);
+        assert!(r["recipient_warnings"].as_array().is_some());
+    }
+
+    #[tokio::test]
+    async fn default_send_does_not_strict_check() {
+        use crate::bounce_store::BounceStore;
+        use crate::dsn::{BounceClassification, BounceEvent};
+        let store = BounceStore::open("sqlite::memory:").await.unwrap();
+        store
+            .record(&BounceEvent {
+                account_id: "ops@example.com".into(),
+                instance: "ops".into(),
+                original_message_id: Some("<o@x>".into()),
+                recipient: Some("dead@x".into()),
+                status_code: Some("5.1.1".into()),
+                action: Some("failed".into()),
+                reason: None,
+                classification: BounceClassification::Permanent,
+            })
+            .await
+            .unwrap();
+        let ctx = build_ctx_with_bounce(vec!["ops".into()], Arc::new(store));
+        let tool = EmailSendTool::new(ctx);
+        let r = tool
+            .run(json!({
+                "instance": "ops",
+                "to": ["dead@x"],
+                "subject": "Hi",
+                "body": "ok"
+            }))
+            .await;
+        // Default behaviour: still enqueues, advisory warning surfaced.
+        assert_eq!(r["ok"], true);
+        assert!(r["recipient_warnings"].as_array().is_some());
     }
 }
