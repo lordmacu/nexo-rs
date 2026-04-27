@@ -51,6 +51,7 @@ impl InboundManager {
         cursor: Arc<CursorStore>,
         broker: AnyBroker,
         bounce_store: Option<Arc<crate::bounce_store::BounceStore>>,
+        attachment_store: Option<Arc<crate::attachment_store::AttachmentStore>>,
     ) -> Self {
         let cancel = CancellationToken::new();
         let health: HealthMap = Arc::new(DashMap::new());
@@ -76,6 +77,7 @@ impl InboundManager {
                 attachments_dir: std::path::PathBuf::from(&cfg.attachments_dir),
                 loop_prevention: cfg.loop_prevention.clone(),
                 bounce_store: bounce_store.clone(),
+                attachment_store: attachment_store.clone(),
             };
             workers.push(tokio::spawn(worker.run()));
         }
@@ -126,6 +128,8 @@ struct AccountWorker {
     /// when the operator hasn't opted in; populated by
     /// `EmailPlugin::start` when the SQLite file is reachable.
     bounce_store: Option<std::sync::Arc<crate::bounce_store::BounceStore>>,
+    /// Phase 48 follow-up #10 — attachment ref-counter for GC.
+    attachment_store: Option<std::sync::Arc<crate::attachment_store::AttachmentStore>>,
 }
 
 impl AccountWorker {
@@ -304,6 +308,22 @@ impl AccountWorker {
                         msg.uid,
                         &self.account_cfg.address,
                     );
+                    // Phase 48 follow-up #10 — bump ref-count for
+                    // every attachment so the GC sweep knows the
+                    // file is still live. Best-effort: storage
+                    // failures don't block delivery.
+                    if let Some(store) = &self.attachment_store {
+                        for att in &p.attachments {
+                            if let Err(e) = store.record(&att.sha256).await {
+                                warn!(
+                                    target: "plugin.email",
+                                    sha256 = %att.sha256,
+                                    error = %e,
+                                    "attachment_store record failed (continuing)"
+                                );
+                            }
+                        }
+                    }
                     (Some(p.meta), p.attachments, Some(root))
                 }
                 Err(e) => {

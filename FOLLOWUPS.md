@@ -748,10 +748,19 @@ Open:
     surface to agents whose binding allows it. Today the runtime
     `EffectiveBindingPolicy` check covers it; surface-level
     filtering is cleaner.
-  - **Cross-account attachment GC.** `mime_parse::parse_eml`
-    persists attachments to `data/email-attachments/<sha256>`
-    deduped across every account; nothing reaps an attachment
-    when no account references it any more.
+  - **Cross-account attachment GC.** ✅ Shipped 2026-04-27.
+    `attachment_store.rs` ships `AttachmentStore` (sqlx-sqlite,
+    `email_attachments` table keyed on sha256 with first_seen /
+    last_seen / count). `inbound::drain_pending` records every
+    attachment after a successful parse so `last_seen` reflects
+    the most recent message that referenced the file.
+    `EmailPlugin::start` spawns a daily GC task that calls
+    `gc(attachments_dir, retention_secs)` — sweeps both the row
+    and the on-disk file when `last_seen < now - retention`.
+    Missing files (manual cleanup, fs error) drop the row
+    anyway so we don't keep retrying. New
+    `EmailPluginConfig.attachment_retention_days` (default 90,
+    `0` disables GC entirely).
 
 ## Maintenance note
 
