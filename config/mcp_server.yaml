@@ -38,3 +38,35 @@ mcp_server:
   #   - my_stats
   #   - memory_recall
   #   - ext_weather_ping
+
+  # Phase 76.1 — Optional HTTP+SSE transport. Stdio remains the
+  # primary path; HTTP is opt-in and adds Streamable HTTP (current
+  # MCP 2025-11-25 spec) plus an optional SSE legacy alias for
+  # older clients. Defaults are conservative: loopback only, body
+  # cap 1 MiB, 300 s idle TTL, 60 rps/IP, 1000-session cap.
+  #
+  # Bind 0.0.0.0 (or any non-loopback) requires:
+  #   - auth_token_env set to an env var holding a strong bearer
+  #     token (token compared in constant time)
+  #   - allow_origins listing the exact origins permitted (no '*')
+  # Otherwise the server refuses to start.
+  http:
+    enabled: false
+    bind: "127.0.0.1:7575"
+    auth_token_env: null               # e.g. NEXO_MCP_HTTP_TOKEN
+    allow_origins:
+      - "http://localhost"
+      - "http://127.0.0.1"
+    body_max_bytes: 1048576            # 1 MiB; hard cap 16 MiB
+    max_in_flight: 500
+    per_ip_rate_limit:
+      rps: 60
+      burst: 120
+    request_timeout_secs: 30           # hard cap 600
+    session_idle_timeout_secs: 300     # hard cap 86400
+    session_max_lifetime_secs: 86400
+    max_sessions: 1000
+    sse_keepalive_secs: 15
+    sse_max_age_secs: 600              # 10 min, then server-initiated close
+    sse_buffer_size: 256               # drop-oldest on overflow
+    enable_legacy_sse: false           # GET /sse + POST /messages alias

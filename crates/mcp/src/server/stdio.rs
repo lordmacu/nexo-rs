@@ -1,28 +1,48 @@
-//! Stdio-transport MCP server loop. Reads JSON-RPC requests line by line,
-//! dispatches them against the supplied `McpServerHandler`, writes
-//! responses to stdout. Exits on stdin EOF or `shutdown_token` cancel.
+//! Stdio-transport MCP server loop. Reads JSON-RPC requests line by
+//! line, dispatches them against the supplied `McpServerHandler`,
+//! writes responses to stdout. Exits on stdin EOF or
+//! `shutdown_token` cancel.
+//!
+//! Phase 76.2 — protocol logic moved to
+//! [`super::dispatch::Dispatcher`]; framing logic moved to
+//! [`super::stdio_transport::StdioTransport`]. The four public
+//! entry points below preserve their pre-refactor signature and
+//! behaviour byte-for-byte; they exist as thin wrappers that build
+//! the dispatcher + transport and delegate to the shared
+//! `server_loop` driver.
 
-use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::sync::CancellationToken;
 
-use crate::errors::McpError;
-use crate::protocol::{is_supported_protocol_version, PROTOCOL_VERSION};
-
+use super::dispatch::Dispatcher;
+use super::stdio_transport::{server_loop, StdioTransport};
 use super::McpServerHandler;
 
-/// Run the server against the real process stdio. Cancel with `shutdown`
-/// or close stdin on the peer side to exit.
-pub async fn run_stdio_server<H: McpServerHandler>(
+// Re-imported at module scope so the inline `mod tests` (which uses
+// `super::*`) keeps the same surface it had before the refactor.
+// Tests reference `PROTOCOL_VERSION`, `Value`, `McpError` through
+// `use super::*;` — these `use` statements make them visible there
+// without touching any test assertion.
+#[allow(unused_imports)]
+use crate::errors::McpError;
+#[allow(unused_imports)]
+use crate::protocol::PROTOCOL_VERSION;
+#[allow(unused_imports)]
+use serde_json::Value;
+
+/// Run the server against the real process stdio. Cancel with
+/// `shutdown` or close stdin on the peer side to exit.
+pub async fn run_stdio_server<H: McpServerHandler + 'static>(
     handler: H,
     shutdown: CancellationToken,
 ) -> std::io::Result<()> {
     run_stdio_server_with_auth(handler, shutdown, None).await
 }
 
-/// Same as [`run_stdio_server`] but enforces an initialize auth token
-/// when `auth_token` is `Some`.
-pub async fn run_stdio_server_with_auth<H: McpServerHandler>(
+/// Same as [`run_stdio_server`] but enforces an initialize auth
+/// token when `auth_token` is `Some`. The token is compared in
+/// constant time (see `super::dispatch::consteq`).
+pub async fn run_stdio_server_with_auth<H: McpServerHandler + 'static>(
     handler: H,
     shutdown: CancellationToken,
     auth_token: Option<String>,
@@ -32,8 +52,9 @@ pub async fn run_stdio_server_with_auth<H: McpServerHandler>(
     run_with_io_auth(handler, stdin, stdout, shutdown, auth_token).await
 }
 
-/// Transport-agnostic loop used by both the real stdio entry point and
-/// the integration tests (which feed `tokio::io::duplex` halves).
+/// Transport-agnostic loop used by both the real stdio entry point
+/// and the integration tests (which feed `tokio::io::duplex`
+/// halves).
 pub async fn run_with_io<H, I, O>(
     handler: H,
     stdin: I,
@@ -41,376 +62,31 @@ pub async fn run_with_io<H, I, O>(
     shutdown: CancellationToken,
 ) -> std::io::Result<()>
 where
-    H: McpServerHandler,
+    H: McpServerHandler + 'static,
     I: AsyncRead + Unpin + Send,
     O: AsyncWrite + Unpin + Send,
 {
     run_with_io_auth(handler, stdin, stdout, shutdown, None).await
 }
 
-/// Auth-capable variant of [`run_with_io`]. When `auth_token` is `Some`,
-/// `initialize` must provide the same token via `params.auth_token` or
-/// `params._meta.auth_token`.
+/// Auth-capable variant of [`run_with_io`]. When `auth_token` is
+/// `Some`, `initialize` must provide the same token via either
+/// `params.auth_token` or `params._meta.auth_token`.
 pub async fn run_with_io_auth<H, I, O>(
     handler: H,
     stdin: I,
-    mut stdout: O,
+    stdout: O,
     shutdown: CancellationToken,
     auth_token: Option<String>,
 ) -> std::io::Result<()>
 where
-    H: McpServerHandler,
+    H: McpServerHandler + 'static,
     I: AsyncRead + Unpin + Send,
     O: AsyncWrite + Unpin + Send,
 {
-    let mut lines = BufReader::new(stdin).lines();
-    loop {
-        tokio::select! {
-            _ = shutdown.cancelled() => break,
-            maybe = lines.next_line() => {
-                let line = match maybe {
-                    Ok(Some(l)) => l,
-                    Ok(None) => break,
-                    Err(e) => {
-                        tracing::warn!(error = %e, "stdin read error");
-                        break;
-                    }
-                };
-                if line.trim().is_empty() {
-                    continue;
-                }
-                let request: Value = match serde_json::from_str(&line) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        tracing::warn!(error = %e, raw = %line, "invalid jsonrpc line");
-                        continue;
-                    }
-                };
-                let method = request
-                    .get("method")
-                    .and_then(|m| m.as_str())
-                    .unwrap_or("");
-                let params = request
-                    .get("params")
-                    .cloned()
-                    .unwrap_or(Value::Null);
-                let id = request.get("id").cloned();
-
-                tracing::debug!(
-                    method,
-                    id = %id.as_ref().map(|v| v.to_string()).unwrap_or_else(|| "-".into()),
-                    "mcp request received"
-                );
-                let outcome = dispatch(method, params, &handler, auth_token.as_deref()).await;
-                let should_shutdown = matches!(outcome, DispatchOutcome::ReplyAndShutdown(_));
-
-                if let Some(id_value) = id {
-                    let response = match outcome {
-                        DispatchOutcome::Reply(result) => serde_json::json!({
-                            "jsonrpc": "2.0",
-                            "result": result,
-                            "id": id_value,
-                        }),
-                        DispatchOutcome::ReplyAndShutdown(result) => serde_json::json!({
-                            "jsonrpc": "2.0",
-                            "result": result,
-                            "id": id_value,
-                        }),
-                        DispatchOutcome::Error { code, message } => serde_json::json!({
-                            "jsonrpc": "2.0",
-                            "error": {"code": code, "message": message},
-                            "id": id_value,
-                        }),
-                        DispatchOutcome::Silent => continue,
-                    };
-                    let mut body = response.to_string();
-                    body.push('\n');
-                    if let Err(e) = stdout.write_all(body.as_bytes()).await {
-                        tracing::warn!(error = %e, "stdout write failed");
-                        break;
-                    }
-                    if let Err(e) = stdout.flush().await {
-                        tracing::warn!(error = %e, "stdout flush failed");
-                        break;
-                    }
-                } else {
-                    // Notification — no response even on error.
-                    if let DispatchOutcome::Error { code, message } = outcome {
-                        tracing::debug!(method, code, %message, "notification produced error; ignored");
-                    }
-                }
-                if should_shutdown {
-                    break;
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-enum DispatchOutcome {
-    Reply(Value),
-    ReplyAndShutdown(Value),
-    Error { code: i32, message: String },
-    Silent,
-}
-
-async fn dispatch<H: McpServerHandler>(
-    method: &str,
-    params: Value,
-    handler: &H,
-    expected_auth_token: Option<&str>,
-) -> DispatchOutcome {
-    match method {
-        "initialize" => {
-            if let Some(expected) = expected_auth_token {
-                let provided = extract_auth_token(&params);
-                if provided != Some(expected) {
-                    tracing::warn!("mcp initialize rejected: invalid auth token");
-                    return DispatchOutcome::Error {
-                        code: -32001,
-                        message: "unauthorized initialize".into(),
-                    };
-                }
-            }
-            let client_info = params.get("clientInfo");
-            let client_name = client_info
-                .and_then(|c| c.get("name"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("<unknown>");
-            let client_version = client_info
-                .and_then(|c| c.get("version"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("<unknown>");
-            // Phase 73 — echo the client's requested protocol
-            // version when it is recognised. Claude Code 2.1+ sends
-            // `2025-11-25`; replying with our hardcoded
-            // `2024-11-05` made Claude treat the server as
-            // protocol-mismatched and silently drop every tool the
-            // server announced via `tools/list` (the exposed
-            // tools/list response was correct, but the permission
-            // registry treated the server as if it had zero
-            // tools — the operator saw "Available MCP tools:
-            // none" while the init log line still claimed
-            // `status: connected`). MCP's negotiation rule is
-            // "server returns the version it supports, ideally
-            // matching the client". When the client speaks a
-            // version newer than ours, we still echo ours; when
-            // it speaks a known version, we echo its choice so
-            // the client moves forward without downgrading.
-            let client_protocol_version = params.get("protocolVersion").and_then(|v| v.as_str());
-            let agreed_version = match client_protocol_version {
-                Some(v) if is_supported_protocol_version(v) => v,
-                _ => PROTOCOL_VERSION,
-            };
-            tracing::info!(
-                client_name,
-                client_version,
-                client_protocol_version = client_protocol_version.unwrap_or("<missing>"),
-                agreed_protocol_version = agreed_version,
-                "mcp client connected",
-            );
-            DispatchOutcome::Reply(serde_json::json!({
-                "protocolVersion": agreed_version,
-                "capabilities": handler.capabilities(),
-                "serverInfo": handler.server_info(),
-            }))
-        }
-        "notifications/initialized" | "notifications/cancelled" => {
-            tracing::debug!(method, "mcp notification");
-            DispatchOutcome::Silent
-        }
-        "ping" => DispatchOutcome::Reply(serde_json::json!({})),
-        "shutdown" => DispatchOutcome::ReplyAndShutdown(Value::Null),
-        "completion/complete" => {
-            tracing::debug!("mcp completion/complete");
-            DispatchOutcome::Reply(serde_json::json!({
-                "completion": { "values": [] }
-            }))
-        }
-        "tools/list" => match handler.list_tools().await {
-            Ok(tools) => {
-                tracing::debug!(count = tools.len(), "mcp tools/list");
-                // Phase 73 — omit `nextCursor` when there is no
-                // next page. MCP spec treats the field as
-                // pagination-only; some clients (Claude Code 2.1)
-                // refuse to register tools when the response
-                // includes `nextCursor: null` because their
-                // schema validator wants either a string token
-                // or absence-of-key. Returning an empty cursor as
-                // null caused the operator-visible
-                // "Available MCP tools: none" while the
-                // `mcp_servers.status` line still claimed
-                // `connected`.
-                DispatchOutcome::Reply(serde_json::json!({ "tools": tools }))
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "mcp tools/list failed");
-                map_handler_error(e)
-            }
-        },
-        "tools/call" => {
-            let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
-            let args = params.get("arguments").cloned().unwrap_or(Value::Null);
-            if name.is_empty() {
-                tracing::warn!("mcp tools/call missing 'name'");
-                return DispatchOutcome::Error {
-                    code: -32602,
-                    message: "tools/call missing 'name'".into(),
-                };
-            }
-            let started = std::time::Instant::now();
-            let result = handler.call_tool(name, args).await;
-            let duration_ms = started.elapsed().as_millis() as u64;
-            match result {
-                Ok(result) => {
-                    tracing::info!(
-                        tool = %name,
-                        duration_ms,
-                        is_error = result.is_error,
-                        "mcp tool call"
-                    );
-                    match serde_json::to_value(result) {
-                        Ok(v) => DispatchOutcome::Reply(v),
-                        Err(e) => DispatchOutcome::Error {
-                            code: -32603,
-                            message: format!("encode result: {e}"),
-                        },
-                    }
-                }
-                Err(McpError::Protocol(msg)) => {
-                    tracing::warn!(
-                        tool = %name,
-                        duration_ms,
-                        code = -32602,
-                        error = %msg,
-                        "mcp tool call failed"
-                    );
-                    DispatchOutcome::Error {
-                        code: -32602,
-                        message: msg,
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        tool = %name,
-                        duration_ms,
-                        error = %e,
-                        "mcp tool call failed"
-                    );
-                    map_handler_error(e)
-                }
-            }
-        }
-        "resources/list" => match handler.list_resources().await {
-            Ok(resources) => {
-                tracing::debug!(count = resources.len(), "mcp resources/list");
-                DispatchOutcome::Reply(serde_json::json!({
-                    "resources": resources,
-                    "nextCursor": Value::Null,
-                }))
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "mcp resources/list failed");
-                map_handler_error(e)
-            }
-        },
-        "resources/read" => {
-            let uri = params.get("uri").and_then(|n| n.as_str()).unwrap_or("");
-            if uri.is_empty() {
-                tracing::warn!("mcp resources/read missing 'uri'");
-                return DispatchOutcome::Error {
-                    code: -32602,
-                    message: "resources/read missing 'uri'".into(),
-                };
-            }
-            match handler.read_resource(uri).await {
-                Ok(contents) => DispatchOutcome::Reply(serde_json::json!({
-                    "contents": contents,
-                })),
-                Err(e) => {
-                    tracing::warn!(uri, error = %e, "mcp resources/read failed");
-                    map_handler_error(e)
-                }
-            }
-        }
-        "resources/templates/list" => match handler.list_resource_templates().await {
-            Ok(templates) => DispatchOutcome::Reply(serde_json::json!({
-                "resourceTemplates": templates,
-                "nextCursor": Value::Null,
-            })),
-            Err(e) => {
-                tracing::warn!(error = %e, "mcp resources/templates/list failed");
-                map_handler_error(e)
-            }
-        },
-        "prompts/list" => match handler.list_prompts().await {
-            Ok(prompts) => DispatchOutcome::Reply(serde_json::json!({
-                "prompts": prompts,
-                "nextCursor": Value::Null,
-            })),
-            Err(e) => {
-                tracing::warn!(error = %e, "mcp prompts/list failed");
-                map_handler_error(e)
-            }
-        },
-        "prompts/get" => {
-            let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
-            if name.is_empty() {
-                tracing::warn!("mcp prompts/get missing 'name'");
-                return DispatchOutcome::Error {
-                    code: -32602,
-                    message: "prompts/get missing 'name'".into(),
-                };
-            }
-            let args = params.get("arguments").cloned().unwrap_or(Value::Null);
-            match handler.get_prompt(name, args).await {
-                Ok(result) => match serde_json::to_value(result) {
-                    Ok(v) => DispatchOutcome::Reply(v),
-                    Err(e) => DispatchOutcome::Error {
-                        code: -32603,
-                        message: format!("encode result: {e}"),
-                    },
-                },
-                Err(e) => {
-                    tracing::warn!(prompt = %name, error = %e, "mcp prompts/get failed");
-                    map_handler_error(e)
-                }
-            }
-        }
-        _ => {
-            tracing::warn!(method, "mcp unknown method");
-            DispatchOutcome::Error {
-                code: -32601,
-                message: format!("method not found: {method}"),
-            }
-        }
-    }
-}
-
-fn map_handler_error(err: McpError) -> DispatchOutcome {
-    match err {
-        McpError::Protocol(message) => DispatchOutcome::Error {
-            code: -32602,
-            message,
-        },
-        other => DispatchOutcome::Error {
-            code: -32000,
-            message: other.to_string(),
-        },
-    }
-}
-
-fn extract_auth_token(params: &Value) -> Option<&str> {
-    params
-        .get("auth_token")
-        .and_then(|v| v.as_str())
-        .or_else(|| {
-            params
-                .get("_meta")
-                .and_then(|m| m.get("auth_token"))
-                .and_then(|v| v.as_str())
-        })
+    let dispatcher = Dispatcher::new(handler, auth_token);
+    let mut transport = StdioTransport::new(stdin, stdout);
+    server_loop(&mut transport, &dispatcher, shutdown).await
 }
 
 #[cfg(test)]
