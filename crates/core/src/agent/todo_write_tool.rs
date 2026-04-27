@@ -17,7 +17,7 @@
 
 use super::context::AgentContext;
 use super::tool_registry::ToolHandler;
-use crate::todo::{all_completed, validate_todos, TodoItem, TodoStatus, TodoList};
+use crate::todo::{all_completed, validate_todos, TodoItem, TodoList, TodoStatus};
 use async_trait::async_trait;
 use nexo_llm::ToolDef;
 use serde_json::{json, Value};
@@ -245,10 +245,7 @@ mod tests {
             .await
             .unwrap();
         let res = TodoWriteTool
-            .call(
-                &c,
-                json!({"todos": [item("C", "in_progress", "Doing C")]}),
-            )
+            .call(&c, json!({"todos": [item("C", "in_progress", "Doing C")]}))
             .await
             .unwrap();
         assert_eq!(res["old_todos"].as_array().unwrap().len(), 2);
@@ -261,17 +258,11 @@ mod tests {
     async fn all_completed_wipes_stored_list_but_echoes_old() {
         let c = ctx();
         TodoWriteTool
-            .call(
-                &c,
-                json!({"todos": [item("A", "in_progress", "Doing A")]}),
-            )
+            .call(&c, json!({"todos": [item("A", "in_progress", "Doing A")]}))
             .await
             .unwrap();
         let res = TodoWriteTool
-            .call(
-                &c,
-                json!({"todos": [item("A", "completed", "Doing A")]}),
-            )
+            .call(&c, json!({"todos": [item("A", "completed", "Doing A")]}))
             .await
             .unwrap();
         assert_eq!(res["wiped_on_all_completed"], true);
@@ -303,10 +294,7 @@ mod tests {
     async fn rejects_too_many_items_without_clobbering_state() {
         let c = ctx();
         TodoWriteTool
-            .call(
-                &c,
-                json!({"todos": [item("seed", "pending", "Seeding")]}),
-            )
+            .call(&c, json!({"todos": [item("seed", "pending", "Seeding")]}))
             .await
             .unwrap();
         let too_many: Vec<Value> = (0..51)
@@ -362,16 +350,10 @@ mod tests {
     async fn empty_todos_argument_is_valid_clears_list() {
         let c = ctx();
         TodoWriteTool
-            .call(
-                &c,
-                json!({"todos": [item("seed", "pending", "Seeding")]}),
-            )
+            .call(&c, json!({"todos": [item("seed", "pending", "Seeding")]}))
             .await
             .unwrap();
-        let res = TodoWriteTool
-            .call(&c, json!({"todos": []}))
-            .await
-            .unwrap();
+        let res = TodoWriteTool.call(&c, json!({"todos": []})).await.unwrap();
         assert_eq!(res["old_todos"].as_array().unwrap().len(), 1);
         assert_eq!(res["new_todos"].as_array().unwrap().len(), 0);
         assert!(c.todos.read().await.is_empty());

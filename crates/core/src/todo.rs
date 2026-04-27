@@ -300,10 +300,7 @@ mod tests {
             active_form: "Running".into(),
         };
         let json = serde_json::to_string(&item).unwrap();
-        assert!(
-            json.contains(r#""status":"in_progress""#),
-            "got: {json}"
-        );
+        assert!(json.contains(r#""status":"in_progress""#), "got: {json}");
         let back: TodoItem = serde_json::from_str(&json).unwrap();
         assert_eq!(back, item);
     }

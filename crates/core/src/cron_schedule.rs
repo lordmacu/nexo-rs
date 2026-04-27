@@ -67,6 +67,14 @@ pub struct CronEntry {
     /// Optional channel hint (`whatsapp:default`, `telegram:bot`).
     /// `None` = inherit binding's primary channel.
     pub channel: Option<String>,
+    /// Phase 79.7 outbound — optional recipient (channel-specific
+    /// id: WhatsApp JID, Telegram chat_id, email address). When
+    /// `Some`, the runtime's `LlmCronDispatcher` (with publisher
+    /// wired) routes the model response to
+    /// `plugin.outbound.{plugin}.{instance}` with `{to: recipient,
+    /// text: response}`. `None` keeps the entry log-only.
+    #[serde(default)]
+    pub recipient: Option<String>,
     /// `true` (default) → fire on every cron match until deleted.
     /// `false` → fire once at the next match, then auto-delete.
     pub recurring: bool,
@@ -106,7 +114,8 @@ const SCHEMA: &str = "
         created_at      INTEGER NOT NULL,
         next_fire_at    INTEGER NOT NULL,
         last_fired_at   INTEGER,
-        paused          INTEGER NOT NULL DEFAULT 0
+        paused          INTEGER NOT NULL DEFAULT 0,
+        recipient       TEXT
     )
 ";
 
@@ -131,14 +140,13 @@ pub fn next_fire_after(cron_expr: &str, from_unix: i64) -> Result<i64, CronStore
     };
     let schedule = Schedule::from_str(&parsed_expr)
         .map_err(|e| CronStoreError::InvalidCron(cron_expr.to_string(), e.to_string()))?;
-    let from = Utc
-        .timestamp_opt(from_unix, 0)
-        .single()
-        .ok_or_else(|| CronStoreError::InvalidCron(cron_expr.to_string(), "bad timestamp".into()))?;
+    let from = Utc.timestamp_opt(from_unix, 0).single().ok_or_else(|| {
+        CronStoreError::InvalidCron(cron_expr.to_string(), "bad timestamp".into())
+    })?;
     let mut iter = schedule.after(&from);
-    let first: DateTime<Utc> = iter
-        .next()
-        .ok_or_else(|| CronStoreError::InvalidCron(cron_expr.to_string(), "no future fire".into()))?;
+    let first: DateTime<Utc> = iter.next().ok_or_else(|| {
+        CronStoreError::InvalidCron(cron_expr.to_string(), "no future fire".into())
+    })?;
     let second_opt = iter.next();
     if let Some(second) = second_opt {
         let delta = (second - first).num_seconds();
@@ -203,8 +211,7 @@ pub fn apply_jitter(next_fire_at: i64, from_unix: i64, pct: u32) -> i64 {
     // Cheap deterministic jitter — combines next_fire_at with a
     // process counter so consecutive calls don't produce the same
     // value. Not a CSPRNG; jitter is ops noise, not cryptographic.
-    static COUNTER: std::sync::atomic::AtomicU64 =
-        std::sync::atomic::AtomicU64::new(0);
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mix = (next_fire_at as i128).wrapping_mul(0x9e37_79b9_7f4a_7c15)
         ^ (n as i128).wrapping_mul(0xbf58_476d_1ce4_e5b9);
@@ -234,6 +241,19 @@ impl SqliteCronStore {
         sqlx::query(SCHEMA).execute(&pool).await?;
         sqlx::query(INDEX_BINDING).execute(&pool).await?;
         sqlx::query(INDEX_FIRE).execute(&pool).await?;
+        // Idempotent ALTER for DBs created before the recipient
+        // column existed. Same pattern as Phase 71's plan_mode
+        // column on agent_registry: tolerate "duplicate column"
+        // errors so migrate() stays callable on every boot.
+        let alter = sqlx::query("ALTER TABLE nexo_cron_entries ADD COLUMN recipient TEXT")
+            .execute(&pool)
+            .await;
+        if let Err(e) = alter {
+            let msg = e.to_string();
+            if !msg.contains("duplicate column") {
+                return Err(CronStoreError::Sql(e));
+            }
+        }
         Ok(Self { pool })
     }
 
@@ -254,6 +274,11 @@ fn row_to_entry(row: &SqliteRow) -> Result<CronEntry, CronStoreError> {
         next_fire_at: row.try_get("next_fire_at")?,
         last_fired_at: row.try_get("last_fired_at")?,
         paused: row.try_get::<i64, _>("paused")? != 0,
+        // The column was added by an idempotent ALTER, so older
+        // DBs may still be missing it on the first read after
+        // migration. Default to None when the row predates the
+        // column.
+        recipient: row.try_get("recipient").unwrap_or(None),
     })
 }
 
@@ -262,8 +287,8 @@ impl CronStore for SqliteCronStore {
     async fn insert(&self, entry: &CronEntry) -> Result<(), CronStoreError> {
         sqlx::query(
             "INSERT INTO nexo_cron_entries \
-             (id, binding_id, cron_expr, prompt, channel, recurring, created_at, next_fire_at, last_fired_at, paused) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+             (id, binding_id, cron_expr, prompt, channel, recurring, created_at, next_fire_at, last_fired_at, paused, recipient) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         )
         .bind(&entry.id)
         .bind(&entry.binding_id)
@@ -275,6 +300,7 @@ impl CronStore for SqliteCronStore {
         .bind(entry.next_fire_at)
         .bind(entry.last_fired_at)
         .bind(entry.paused as i64)
+        .bind(entry.recipient.as_deref())
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -374,6 +400,7 @@ pub async fn build_new_entry(
     prompt: &str,
     channel: Option<&str>,
     recurring: bool,
+    recipient: Option<&str>,
 ) -> Result<CronEntry, CronStoreError> {
     let now = Utc::now().timestamp();
     let next_fire_at = next_fire_after(cron_expr, now)?;
@@ -396,6 +423,7 @@ pub async fn build_new_entry(
         next_fire_at,
         last_fired_at: None,
         paused: false,
+        recipient: recipient.map(str::to_string),
     })
 }
 
@@ -416,6 +444,7 @@ mod tests {
             next_fire_at: next_fire_after(expr, now).unwrap(),
             last_fired_at: None,
             paused: false,
+            recipient: None,
         }
     }
 
@@ -462,8 +491,7 @@ mod tests {
 
         let listed = store.list_by_binding("whatsapp:ops").await.unwrap();
         assert_eq!(listed.len(), 2);
-        let ids: std::collections::HashSet<_> =
-            listed.iter().map(|e| e.id.clone()).collect();
+        let ids: std::collections::HashSet<_> = listed.iter().map(|e| e.id.clone()).collect();
         assert!(ids.contains(&e1.id));
         assert!(ids.contains(&e2.id));
 
@@ -502,17 +530,32 @@ mod tests {
 
     #[tokio::test]
     async fn build_new_entry_caps_at_50_per_binding() {
-        let store: Arc<dyn CronStore> =
-            Arc::new(SqliteCronStore::open_memory().await.unwrap());
+        let store: Arc<dyn CronStore> = Arc::new(SqliteCronStore::open_memory().await.unwrap());
         for _ in 0..50 {
-            let e = build_new_entry(&store, "whatsapp:ops", "*/5 * * * *", "ping", None, true)
-                .await
-                .unwrap();
+            let e = build_new_entry(
+                &store,
+                "whatsapp:ops",
+                "*/5 * * * *",
+                "ping",
+                None,
+                true,
+                None,
+            )
+            .await
+            .unwrap();
             store.insert(&e).await.unwrap();
         }
-        let err = build_new_entry(&store, "whatsapp:ops", "*/5 * * * *", "ping", None, true)
-            .await
-            .unwrap_err();
+        let err = build_new_entry(
+            &store,
+            "whatsapp:ops",
+            "*/5 * * * *",
+            "ping",
+            None,
+            true,
+            None,
+        )
+        .await
+        .unwrap_err();
         assert!(matches!(err, CronStoreError::BindingFull(_, 50, _)));
     }
 
@@ -577,16 +620,15 @@ mod tests {
 
     #[tokio::test]
     async fn build_new_entry_isolated_per_binding() {
-        let store: Arc<dyn CronStore> =
-            Arc::new(SqliteCronStore::open_memory().await.unwrap());
+        let store: Arc<dyn CronStore> = Arc::new(SqliteCronStore::open_memory().await.unwrap());
         for _ in 0..50 {
-            let e = build_new_entry(&store, "binding-a", "*/5 * * * *", "ping", None, true)
+            let e = build_new_entry(&store, "binding-a", "*/5 * * * *", "ping", None, true, None)
                 .await
                 .unwrap();
             store.insert(&e).await.unwrap();
         }
         // Different binding admits even when the first one is at cap.
-        let e = build_new_entry(&store, "binding-b", "*/5 * * * *", "ping", None, true)
+        let e = build_new_entry(&store, "binding-b", "*/5 * * * *", "ping", None, true, None)
             .await
             .unwrap();
         store.insert(&e).await.unwrap();

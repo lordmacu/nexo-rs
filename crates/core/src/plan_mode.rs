@@ -168,8 +168,7 @@ pub struct PlanModeRefusal {
 }
 
 impl PlanModeRefusal {
-    pub const HINT: &'static str =
-        "Call ExitPlanMode { final_plan } when the plan is ready.";
+    pub const HINT: &'static str = "Call ExitPlanMode { final_plan } when the plan is ready.";
 }
 
 /// Frozen system-prompt suffix injected on every turn while plan
@@ -229,7 +228,11 @@ pub fn format_notify_entered(entered_at: i64, reason: &PlanModeReason) -> String
 /// the full body lives in the Phase 72 turn log (referenced by index).
 pub fn format_notify_exited(plan: &str, turn_log_index: u64) -> String {
     let snippet: String = plan.chars().take(200).collect();
-    let ellipsis = if plan.chars().count() > 200 { "…" } else { "" };
+    let ellipsis = if plan.chars().count() > 200 {
+        "…"
+    } else {
+        ""
+    };
     format!(
         "[plan-mode] exited — plan: {snippet}{ellipsis} (full plan in turn log #{turn_log_index})"
     )
@@ -523,10 +526,7 @@ mod tests {
 
     #[test]
     fn gate_on_blocks_mutators() {
-        let state = PlanModeState::on(
-            123,
-            PlanModeReason::ModelRequested { reason: None },
-        );
+        let state = PlanModeState::on(123, PlanModeReason::ModelRequested { reason: None });
         let refusal = gate_tool_call(&state, "FileEdit", None).unwrap();
         assert_eq!(refusal.tool_kind, ToolKind::FileEdit);
         assert_eq!(refusal.entered_at, 123);
@@ -534,10 +534,7 @@ mod tests {
 
     #[test]
     fn gate_on_allows_read_only() {
-        let state = PlanModeState::on(
-            123,
-            PlanModeReason::ModelRequested { reason: None },
-        );
+        let state = PlanModeState::on(123, PlanModeReason::ModelRequested { reason: None });
         assert!(gate_tool_call(&state, "FileRead", None).is_none());
         assert!(gate_tool_call(&state, "ExitPlanMode", None).is_none());
     }
@@ -545,29 +542,20 @@ mod tests {
     #[test]
     fn gate_bash_with_classifier_unknown_blocks() {
         // 77.8 not yet shipped: caller passes None → fail-safe block.
-        let state = PlanModeState::on(
-            123,
-            PlanModeReason::ModelRequested { reason: None },
-        );
+        let state = PlanModeState::on(123, PlanModeReason::ModelRequested { reason: None });
         let refusal = gate_tool_call(&state, "Bash", None).unwrap();
         assert_eq!(refusal.tool_kind, ToolKind::Bash);
     }
 
     #[test]
     fn gate_bash_read_only_passes() {
-        let state = PlanModeState::on(
-            123,
-            PlanModeReason::ModelRequested { reason: None },
-        );
+        let state = PlanModeState::on(123, PlanModeReason::ModelRequested { reason: None });
         assert!(gate_tool_call(&state, "Bash", Some(false)).is_none());
     }
 
     #[test]
     fn gate_bash_destructive_blocks() {
-        let state = PlanModeState::on(
-            123,
-            PlanModeReason::ModelRequested { reason: None },
-        );
+        let state = PlanModeState::on(123, PlanModeReason::ModelRequested { reason: None });
         let refusal = gate_tool_call(&state, "Bash", Some(true)).unwrap();
         assert_eq!(refusal.tool_kind, ToolKind::Bash);
     }
@@ -600,14 +588,8 @@ mod tests {
 
     #[test]
     fn system_hint_returns_string_when_on() {
-        let state = PlanModeState::on(
-            1,
-            PlanModeReason::ModelRequested { reason: None },
-        );
-        assert_eq!(
-            plan_mode_system_hint(&state),
-            Some(PLAN_MODE_SYSTEM_HINT)
-        );
+        let state = PlanModeState::on(1, PlanModeReason::ModelRequested { reason: None });
+        assert_eq!(plan_mode_system_hint(&state), Some(PLAN_MODE_SYSTEM_HINT));
     }
 
     #[test]
@@ -648,10 +630,7 @@ mod tests {
 
     #[test]
     fn notify_entered_operator() {
-        let s = format_notify_entered(
-            1_700_000_000,
-            &PlanModeReason::OperatorRequested,
-        );
+        let s = format_notify_entered(1_700_000_000, &PlanModeReason::OperatorRequested);
         assert!(s.ends_with("reason: operator"));
     }
 

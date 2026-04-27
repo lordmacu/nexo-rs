@@ -255,9 +255,7 @@ impl LlmAgentBehavior {
         // Unknown").
         {
             let state = ctx.plan_mode.read().await;
-            if let Some(refusal) =
-                crate::plan_mode::gate_tool_call(&state, &call.name, None)
-            {
+            if let Some(refusal) = crate::plan_mode::gate_tool_call(&state, &call.name, None) {
                 let body = serde_json::json!({
                     "is_error": true,
                     "kind": "plan_mode_refusal",
@@ -599,9 +597,7 @@ impl LlmAgentBehavior {
         }
         // Phase 79.1 — inject the canonical plan-mode hint while
         // plan mode is on. Frozen string keeps the prompt cache warm.
-        if let Some(hint) =
-            crate::plan_mode::plan_mode_system_hint(&*ctx.plan_mode.read().await)
-        {
+        if let Some(hint) = crate::plan_mode::plan_mode_system_hint(&*ctx.plan_mode.read().await) {
             channel_meta_parts.push(hint.to_string());
         }
         let prompt_inputs = super::prompt_assembly::PromptInputs {

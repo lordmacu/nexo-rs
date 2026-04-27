@@ -272,15 +272,19 @@ mod tests {
         }
     }
 
-    async fn populated_store(
-        recurring: bool,
-        cron: &str,
-    ) -> (Arc<dyn CronStore>, String) {
-        let store: Arc<dyn CronStore> =
-            Arc::new(SqliteCronStore::open_memory().await.unwrap());
-        let mut e = build_new_entry(&store, "whatsapp:default", cron, "ping", None, recurring)
-            .await
-            .unwrap();
+    async fn populated_store(recurring: bool, cron: &str) -> (Arc<dyn CronStore>, String) {
+        let store: Arc<dyn CronStore> = Arc::new(SqliteCronStore::open_memory().await.unwrap());
+        let mut e = build_new_entry(
+            &store,
+            "whatsapp:default",
+            cron,
+            "ping",
+            None,
+            recurring,
+            None,
+        )
+        .await
+        .unwrap();
         e.next_fire_at = 1_700_000_000;
         let id = e.id.clone();
         store.insert(&e).await.unwrap();
@@ -295,7 +299,10 @@ mod tests {
         let outcomes = runner.tick_once(1_700_000_500).await;
         assert_eq!(outcomes.len(), 1);
         match &outcomes[0] {
-            FireOutcome::Advanced { id: out_id, new_next_fire_at } => {
+            FireOutcome::Advanced {
+                id: out_id,
+                new_next_fire_at,
+            } => {
                 assert_eq!(out_id, &id);
                 assert!(*new_next_fire_at > 1_700_000_500);
             }
@@ -316,7 +323,9 @@ mod tests {
         let runner = CronRunner::new(store.clone(), dispatcher.clone());
         let outcomes = runner.tick_once(1_700_000_500).await;
         assert_eq!(outcomes.len(), 1);
-        assert!(matches!(&outcomes[0], FireOutcome::OneShotDeleted { id: out_id } if out_id == &id));
+        assert!(
+            matches!(&outcomes[0], FireOutcome::OneShotDeleted { id: out_id } if out_id == &id)
+        );
         // Entry gone.
         assert!(store.get(&id).await.is_err());
         assert_eq!(dispatcher.captured().len(), 1);
@@ -336,7 +345,7 @@ mod tests {
     #[tokio::test]
     async fn tick_skips_future_entries() {
         let (store, _id) = populated_store(true, "0 9 * * *").await; // daily 9am UTC
-        // Force next_fire_at way ahead.
+                                                                     // Force next_fire_at way ahead.
         let entries = store.list_by_binding("whatsapp:default").await.unwrap();
         let id = entries[0].id.clone();
         store
@@ -384,8 +393,7 @@ mod tests {
 
     #[tokio::test]
     async fn many_due_entries_all_fire_in_one_tick() {
-        let store: Arc<dyn CronStore> =
-            Arc::new(SqliteCronStore::open_memory().await.unwrap());
+        let store: Arc<dyn CronStore> = Arc::new(SqliteCronStore::open_memory().await.unwrap());
         for i in 0..5 {
             let mut e = build_new_entry(
                 &store,
@@ -394,6 +402,7 @@ mod tests {
                 &format!("ping-{i}"),
                 None,
                 true,
+                None,
             )
             .await
             .unwrap();
@@ -412,8 +421,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_loop_terminates_on_cancel() {
-        let store: Arc<dyn CronStore> =
-            Arc::new(SqliteCronStore::open_memory().await.unwrap());
+        let store: Arc<dyn CronStore> = Arc::new(SqliteCronStore::open_memory().await.unwrap());
         let dispatcher = FakeDispatcher::new();
         let runner = Arc::new(
             CronRunner::new(store, dispatcher.clone())
@@ -446,6 +454,7 @@ mod tests {
             next_fire_at: 0,
             last_fired_at: None,
             paused: false,
+            recipient: None,
         };
         assert!(LoggingCronDispatcher.fire(&entry).await.is_ok());
     }

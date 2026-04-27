@@ -21,8 +21,7 @@
 use super::context::AgentContext;
 use super::tool_registry::ToolHandler;
 use crate::cron_schedule::{
-    build_new_entry, next_fire_after, CronStore, CronStoreError,
-    MAX_CRON_ENTRIES_PER_BINDING,
+    build_new_entry, next_fire_after, CronStore, CronStoreError, MAX_CRON_ENTRIES_PER_BINDING,
 };
 use async_trait::async_trait;
 use nexo_llm::ToolDef;
@@ -61,6 +60,10 @@ impl CronCreateTool {
                         "type": "string",
                         "description": "Optional channel hint (e.g. 'whatsapp:default'). Inherits the binding's primary channel when omitted."
                     },
+                    "recipient": {
+                        "type": "string",
+                        "description": "Optional channel-specific recipient id (WhatsApp JID, Telegram chat_id, email address). When set together with `channel`, the runtime routes the model's response back to this recipient on every fire. Without it, fires log only."
+                    },
                     "recurring": {
                         "type": "boolean",
                         "description": "true (default) = fire on every cron match until deleted. false = fire once at the next match, then auto-delete (use for 'remind me at X')."
@@ -97,6 +100,10 @@ impl ToolHandler for CronCreateTool {
             .get("channel")
             .and_then(|v| v.as_str())
             .map(str::to_string);
+        let recipient = args
+            .get("recipient")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
         let recurring = args
             .get("recurring")
             .and_then(|v| v.as_bool())
@@ -110,6 +117,7 @@ impl ToolHandler for CronCreateTool {
             &prompt,
             channel.as_deref(),
             recurring,
+            recipient.as_deref(),
         )
         .await
         .map_err(map_err)?;
@@ -141,7 +149,8 @@ impl CronListTool {
     pub fn tool_def() -> ToolDef {
         ToolDef {
             name: "cron_list".to_string(),
-            description: "List the scheduled cron entries for the current binding. Read-only.".to_string(),
+            description: "List the scheduled cron entries for the current binding. Read-only."
+                .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {},
@@ -256,7 +265,8 @@ impl CronDeleteTool {
     pub fn tool_def() -> ToolDef {
         ToolDef {
             name: "cron_delete".to_string(),
-            description: "Delete a scheduled cron entry by id. Use cron_list first to find the id.".to_string(),
+            description: "Delete a scheduled cron entry by id. Use cron_list first to find the id."
+                .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -371,8 +381,7 @@ mod tests {
             Arc::new(SessionManager::new(std::time::Duration::from_secs(60), 8)),
         )
         .with_inbound_origin("whatsapp", "default", "+1234");
-        let store: Arc<dyn CronStore> =
-            Arc::new(SqliteCronStore::open_memory().await.unwrap());
+        let store: Arc<dyn CronStore> = Arc::new(SqliteCronStore::open_memory().await.unwrap());
         (ctx, store)
     }
 
@@ -393,10 +402,7 @@ mod tests {
         assert_eq!(res["ok"], true);
         assert_eq!(res["binding_id"], "whatsapp:default");
         assert!(res["next_fire_at"].as_i64().unwrap() > 0);
-        assert_eq!(
-            store.count_by_binding("whatsapp:default").await.unwrap(),
-            1
-        );
+        assert_eq!(store.count_by_binding("whatsapp:default").await.unwrap(), 1);
     }
 
     #[tokio::test]
@@ -404,10 +410,7 @@ mod tests {
         let (ctx, store) = ctx_with_origin().await;
         let tool = CronCreateTool::new(store);
         let err = tool
-            .call(
-                &ctx,
-                json!({"cron": "not a cron", "prompt": "x"}),
-            )
+            .call(&ctx, json!({"cron": "not a cron", "prompt": "x"}))
             .await
             .unwrap_err()
             .to_string();
@@ -419,10 +422,7 @@ mod tests {
         let (ctx, store) = ctx_with_origin().await;
         let tool = CronCreateTool::new(store);
         let err = tool
-            .call(
-                &ctx,
-                json!({"cron": "* * * * * *", "prompt": "x"}),
-            )
+            .call(&ctx, json!({"cron": "* * * * * *", "prompt": "x"}))
             .await
             .unwrap_err()
             .to_string();
@@ -444,16 +444,9 @@ mod tests {
             .unwrap();
         // Insert one in a different binding bypassing the tool —
         // simulates another goal's data.
-        let other = build_new_entry(
-            &store,
-            "telegram:bot",
-            "0 */2 * * *",
-            "c",
-            None,
-            true,
-        )
-        .await
-        .unwrap();
+        let other = build_new_entry(&store, "telegram:bot", "0 */2 * * *", "c", None, true, None)
+            .await
+            .unwrap();
         store.insert(&other).await.unwrap();
 
         let list = CronListTool::new(store);
@@ -474,10 +467,7 @@ mod tests {
         let del = CronDeleteTool::new(store.clone());
         let res2 = del.call(&ctx, json!({"id": id.clone()})).await.unwrap();
         assert_eq!(res2["ok"], true);
-        assert_eq!(
-            store.count_by_binding("whatsapp:default").await.unwrap(),
-            0
-        );
+        assert_eq!(store.count_by_binding("whatsapp:default").await.unwrap(), 0);
     }
 
     #[tokio::test]
@@ -589,8 +579,7 @@ mod tests {
             AnyBroker::local(),
             Arc::new(SessionManager::new(std::time::Duration::from_secs(60), 8)),
         );
-        let store: Arc<dyn CronStore> =
-            Arc::new(SqliteCronStore::open_memory().await.unwrap());
+        let store: Arc<dyn CronStore> = Arc::new(SqliteCronStore::open_memory().await.unwrap());
         let tool = CronCreateTool::new(store.clone());
         let res = tool
             .call(&ctx, json!({"cron": "*/5 * * * *", "prompt": "x"}))
