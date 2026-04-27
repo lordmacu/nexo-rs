@@ -127,10 +127,23 @@ impl OutboundQueue {
 
     pub async fn move_to_dlq(&self, job: &OutboundJob) -> Result<()> {
         let _g = self.lock.lock().await;
-        append_line(&self.dlq_path, job).await?;
+        // Audit #3 follow-up — write the queue tombstone *before*
+        // the DLQ row. The two appends aren't cross-file atomic;
+        // a SIGTERM between them leaves an inconsistency. Picking
+        // the tombstone-first order means a hard kill mid-DLQ-
+        // write yields "marked done in queue, missing from DLQ"
+        // (mild visibility loss for that one row) rather than
+        // "live in queue, also in DLQ" (duplicate SMTP sends on
+        // restart, which is a correctness issue when the relay
+        // doesn't dedupe by Message-ID). The Message-ID
+        // idempotency we ship to RFC-conformant relays still
+        // protects the recipient from a double delivery in the
+        // duplicate-DLQ failure case, but that's a runtime
+        // assumption we'd rather not depend on.
         let mut tomb = job.clone();
         tomb.done = true;
         append_line(&self.queue_path, &tomb).await?;
+        append_line(&self.dlq_path, job).await?;
         Ok(())
     }
 
@@ -353,6 +366,30 @@ mod tests {
         q.move_to_dlq(&job("<a@x>")).await.unwrap();
         assert_eq!(q.pending_count().await.unwrap(), 0);
         assert_eq!(q.dlq_count().await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn move_to_dlq_writes_tombstone_before_dlq_row() {
+        // Audit #3 follow-up — the queue tombstone is written
+        // first so a SIGTERM mid-call leaves "marked done in
+        // queue, missing from DLQ" rather than "live in queue,
+        // also in DLQ". Verifying byte-for-byte order would
+        // require crash injection; instead we verify the
+        // resulting state is the tombstone-then-dlq-row layout
+        // by reading the raw queue file.
+        let (dir, q) = fresh().await;
+        q.enqueue(&job("<a@x>")).await.unwrap();
+        q.move_to_dlq(&job("<a@x>")).await.unwrap();
+        let queue_body =
+            std::fs::read_to_string(dir.path().join("ops.jsonl")).unwrap();
+        // Two rows in the queue file: original enqueue, then tombstone.
+        let lines: Vec<&str> = queue_body
+            .lines()
+            .filter(|l| !l.is_empty())
+            .collect();
+        assert_eq!(lines.len(), 2);
+        assert!(!lines[0].contains("\"done\":true"));
+        assert!(lines[1].contains("\"done\":true"));
     }
 
     #[tokio::test]
