@@ -72,6 +72,19 @@ impl DispatcherCore {
         instance: &str,
         cmd: OutboundCommand,
     ) -> Result<String> {
+        // Audit #3 follow-up — refuse a command with no recipients.
+        // Without this guard, lettre's `Envelope::new(Some(from),
+        // vec![])` succeeds, the SMTP server rejects with "no
+        // recipients", we classify the response as Transient and
+        // retry MAX_ATTEMPTS times before DLQ — a tight retry loop
+        // for a malformed payload that can never succeed. Catch it
+        // at enqueue so the caller (tool, broker subscriber) gets a
+        // clear error instead of phantom queue activity.
+        if cmd.to.is_empty() && cmd.cc.is_empty() && cmd.bcc.is_empty() {
+            anyhow::bail!(
+                "outbound command for instance '{instance}' has no recipients (to / cc / bcc all empty); refusing to enqueue"
+            );
+        }
         let state = self
             .instances
             .get(instance)
