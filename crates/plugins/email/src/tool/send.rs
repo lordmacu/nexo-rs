@@ -304,6 +304,8 @@ mod tests {
             dispatcher: dispatcher.clone(),
             health: HealthMap::new(DashMap::new().into()),
             bounce_store: None,
+            attachment_store: None,
+            attachments_dir: std::path::PathBuf::new(),
         });
         (ctx, dispatcher)
     }
@@ -398,6 +400,8 @@ mod tests {
             dispatcher,
             health: HealthMap::new(DashMap::new().into()),
             bounce_store: Some(bounce_store),
+            attachment_store: None,
+            attachments_dir: std::path::PathBuf::new(),
         })
     }
 

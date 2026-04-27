@@ -1,10 +1,13 @@
 //! Email-channel tool handlers (Phase 48.7).
 
 pub mod archive;
+pub mod attachment_get;
 pub mod bounces_summary;
 pub mod context;
 pub mod get;
+pub mod health;
 pub mod imap_op;
+pub mod instances_list;
 pub mod label;
 pub mod move_to;
 pub mod reply;
@@ -34,6 +37,9 @@ pub const EMAIL_TOOL_NAMES: &[&str] = &[
     "email_get",
     "email_thread",
     "email_bounces_summary",
+    "email_attachment_get",
+    "email_health",
+    "email_instances_list",
 ];
 
 /// Register every email-channel tool against the supplied registry.
@@ -88,7 +94,16 @@ pub fn register_email_tools_filtered(
         thread::register(registry, ctx.clone());
     }
     if want("email_bounces_summary") {
-        bounces_summary::register(registry, ctx);
+        bounces_summary::register(registry, ctx.clone());
+    }
+    if want("email_attachment_get") {
+        attachment_get::register(registry, ctx.clone());
+    }
+    if want("email_health") {
+        health::register(registry, ctx.clone());
+    }
+    if want("email_instances_list") {
+        instances_list::register(registry, ctx);
     }
 }
 

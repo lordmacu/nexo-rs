@@ -311,6 +311,19 @@ impl EmailPlugin {
         self.bounce.get().cloned()
     }
 
+    /// Attachment dedup-store handle (Phase 48 use cases). Returns
+    /// `None` if the SQLite file couldn't be opened at boot.
+    pub fn attachment_store_handle(&self) -> Option<Arc<crate::attachment_store::AttachmentStore>> {
+        self.attachments.get().cloned()
+    }
+
+    /// Resolved attachment directory (data_dir + cfg.attachments_dir).
+    /// Tools that fetch raw bytes by sha256 join this path with the
+    /// hash before reading.
+    pub fn attachments_dir(&self) -> std::path::PathBuf {
+        self.data_dir.join(&self.cfg.attachments_dir)
+    }
+
     /// Audit follow-up J — soft post-start connectivity probe.
     /// Polls every account's health entry for up to `wait` and
     /// returns the instance ids of accounts that never reached
