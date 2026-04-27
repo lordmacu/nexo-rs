@@ -1518,6 +1518,15 @@ async fn main() -> Result<()> {
         }
     };
 
+    // Phase 79.7 — snapshot the first agent's model config before
+    // the per-agent loop consumes `cfg.agents.agents`. Used at
+    // shutdown-block bottom to wire `LlmCronDispatcher`.
+    let first_agent_for_cron: Option<(String, nexo_config::types::agents::ModelConfig)> = cfg
+        .agents
+        .agents
+        .first()
+        .map(|a| (a.id.clone(), a.model.clone()));
+
     for agent_cfg in cfg.agents.agents {
         let agent_id = agent_cfg.id.clone();
         let dream_yaml = agent_cfg.dreaming.clone();
@@ -2576,9 +2585,10 @@ async fn main() -> Result<()> {
     // CancellationToken tied to `watcher_shutdown` so the watcher +
     // broker subscriber exit alongside the extensions watcher on
     // SIGTERM.
+    let llm_registry = Arc::new(llm_registry);
     let reload_coord = Arc::new(nexo_core::ConfigReloadCoordinator::new(
         config_dir.clone(),
-        Arc::new(llm_registry),
+        Arc::clone(&llm_registry),
         watcher_shutdown.clone(),
     ));
     for (id, tx, known) in reload_senders.drain(..) {
@@ -2603,10 +2613,12 @@ async fn main() -> Result<()> {
     }
 
     // Phase 79.7 runtime firing — spawn ONE cron runner per
-    // process. Polls the SQLite cron store every 5s and dispatches
-    // due entries through `LoggingCronDispatcher`. Real LLM call
-    // + outbound publish lands as a follow-up that swaps in an
-    // `LlmCronDispatcher` (Phase 20-style).
+    // process. Polls the SQLite cron store every 5s. Dispatches
+    // through an `LlmCronDispatcher` built from the FIRST agent's
+    // model config when LLM is reachable; falls back to the
+    // logging dispatcher when no agents are configured or the LLM
+    // client build fails (so cron entries are still observable
+    // via logs even in degraded boot).
     let cron_runner_cancel = tokio_util::sync::CancellationToken::new();
     let cron_db_path = nexo_project_tracker::state::nexo_state_dir()
         .join("nexo_cron.db");
@@ -2619,18 +2631,48 @@ async fn main() -> Result<()> {
     .await
     {
         Ok(store) => {
+            let dispatcher: std::sync::Arc<
+                dyn nexo_core::cron_runner::CronDispatcher,
+            > = match first_agent_for_cron.as_ref() {
+                Some((agent_id, model)) => match llm_registry.build(&cfg.llm, model) {
+                    Ok(client) => {
+                        tracing::info!(
+                            provider = %model.provider,
+                            model = %model.model,
+                            "[cron] LlmCronDispatcher wired (model from agent `{}`)",
+                            agent_id
+                        );
+                        std::sync::Arc::new(
+                            nexo_core::llm_cron_dispatcher::LlmCronDispatcher::new(client),
+                        )
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "[cron] LlmCronDispatcher build failed — falling back to logging"
+                        );
+                        std::sync::Arc::new(
+                            nexo_core::cron_runner::LoggingCronDispatcher,
+                        )
+                    }
+                },
+                None => {
+                    tracing::warn!(
+                        "[cron] no agents configured — using logging dispatcher"
+                    );
+                    std::sync::Arc::new(nexo_core::cron_runner::LoggingCronDispatcher)
+                }
+            };
             let runner = std::sync::Arc::new(nexo_core::cron_runner::CronRunner::new(
                 std::sync::Arc::new(store)
                     as std::sync::Arc<dyn nexo_core::cron_schedule::CronStore>,
-                std::sync::Arc::new(
-                    nexo_core::cron_runner::LoggingCronDispatcher,
-                ),
+                dispatcher,
             ));
             let cancel_for_runner = cron_runner_cancel.clone();
             tokio::spawn(async move { runner.run(cancel_for_runner).await });
             tracing::info!(
                 path = %cron_db_path.display(),
-                "[cron] runner spawned (logging dispatcher; LLM wiring is a Phase 79.7 follow-up)"
+                "[cron] runner spawned"
             );
         }
         Err(e) => {

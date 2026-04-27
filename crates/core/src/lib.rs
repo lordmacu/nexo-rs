@@ -5,6 +5,7 @@ pub mod heartbeat;
 pub mod link_understanding;
 pub mod cron_runner;
 pub mod cron_schedule;
+pub mod llm_cron_dispatcher;
 pub mod plan_mode;
 pub mod runtime_snapshot;
 pub mod session;
