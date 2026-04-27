@@ -504,7 +504,20 @@ impl DriverOrchestrator {
                 bin_path: &self.bin_path,
                 cancel: goal_cancel.clone(),
             };
+            tracing::info!(
+                target: "driver-loop",
+                goal_id = ?goal_id,
+                turn_index = total_turns,
+                "phase78: spawning attempt",
+            );
             let mut result = run_attempt(ctx, params).await?;
+            tracing::info!(
+                target: "driver-loop",
+                goal_id = ?goal_id,
+                turn_index = total_turns,
+                outcome = ?result.outcome,
+                "phase78: attempt returned",
+            );
 
             // Phase 67.6 — best-effort diff_stat injection.
             if cp_sha != crate::workspace::WorkspaceManager::NO_GIT_SENTINEL {
@@ -641,6 +654,14 @@ impl DriverOrchestrator {
                         last_outcome_hint: hint,
                     };
                     let decision = self.replay_policy.classify(&ctx).await;
+                    tracing::info!(
+                        target: "driver-loop",
+                        goal_id = ?goal_id,
+                        turn_index = total_turns,
+                        reason = %reason,
+                        decision = ?decision,
+                        "phase78: replay decision",
+                    );
                     let _ = self
                         .event_sink
                         .publish(DriverEvent::ReplayDecision {
@@ -662,6 +683,11 @@ impl DriverOrchestrator {
                             total_turns = total_turns.saturating_sub(1);
                             usage.turns = total_turns;
                             prior_failures.clear();
+                            tracing::info!(
+                                target: "driver-loop",
+                                goal_id = ?goal_id,
+                                "phase78: FreshSessionRetry — looping",
+                            );
                             continue;
                         }
                         ReplayDecision::NextTurn { rollback_to } => {
@@ -669,6 +695,12 @@ impl DriverOrchestrator {
                                 let _ = self.workspace_manager.rollback(&workspace, &sha).await;
                             }
                             prior_failures.clear();
+                            tracing::info!(
+                                target: "driver-loop",
+                                goal_id = ?goal_id,
+                                next_turn = total_turns,
+                                "phase78: NextTurn — looping",
+                            );
                             continue;
                         }
                         ReplayDecision::Escalate { reason } => {
