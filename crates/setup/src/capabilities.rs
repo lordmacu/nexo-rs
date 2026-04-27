@@ -160,6 +160,14 @@ const INVENTORY: &[CapabilityToggle] = &[
         effect: "Let `program_phase` register shell-cmd completion hooks that run inside the daemon process.",
         hint: "export PROGRAM_PHASE_ALLOW_SHELL_HOOKS=true",
     },
+    CapabilityToggle {
+        extension: "plugin-email",
+        env_var: "EMAIL_INSECURE_TLS",
+        kind: ToggleKind::Boolean,
+        risk: Risk::High,
+        effect: "Skip IMAP TLS certificate verification (dev / fake servers only). In production this opens MITM attack vectors.",
+        hint: "export EMAIL_INSECURE_TLS=1",
+    },
 ];
 
 pub fn inventory() -> &'static [CapabilityToggle] {

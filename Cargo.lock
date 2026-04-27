@@ -3457,6 +3457,7 @@ dependencies = [
  "nexo-memory",
  "nexo-pairing",
  "nexo-plugin-browser",
+ "nexo-plugin-email",
  "nexo-plugin-google",
  "nexo-plugin-telegram",
  "nexo-plugin-whatsapp",
