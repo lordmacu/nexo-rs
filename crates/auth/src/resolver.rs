@@ -9,8 +9,9 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 
 use crate::error::{BuildError, ResolveError};
+use crate::email::EmailCredentialStore;
 use crate::google::GoogleCredentialStore;
-use crate::handle::{AgentId, Channel, CredentialHandle, GOOGLE, TELEGRAM, WHATSAPP};
+use crate::handle::{AgentId, Channel, CredentialHandle, EMAIL, GOOGLE, TELEGRAM, WHATSAPP};
 use crate::store::CredentialStore;
 use crate::telegram::TelegramCredentialStore;
 use crate::whatsapp::WhatsappCredentialStore;
@@ -48,6 +49,7 @@ pub struct CredentialStores {
     pub whatsapp: Arc<WhatsappCredentialStore>,
     pub telegram: Arc<TelegramCredentialStore>,
     pub google: Arc<GoogleCredentialStore>,
+    pub email: Arc<EmailCredentialStore>,
 }
 
 impl CredentialStores {
@@ -56,6 +58,7 @@ impl CredentialStores {
             whatsapp: Arc::new(WhatsappCredentialStore::empty()),
             telegram: Arc::new(TelegramCredentialStore::empty()),
             google: Arc::new(GoogleCredentialStore::empty()),
+            email: Arc::new(EmailCredentialStore::empty()),
         }
     }
 }
@@ -144,7 +147,7 @@ impl AgentCredentialResolver {
 
         for agent in agents {
             let mut per_channel: HashMap<Channel, CredentialHandle> = HashMap::new();
-            for channel in [WHATSAPP, TELEGRAM, GOOGLE] {
+            for channel in [WHATSAPP, TELEGRAM, GOOGLE, EMAIL] {
                 let outbound = agent.outbound.get(channel).cloned();
                 let inbound = agent.inbound.get(channel).cloned().unwrap_or_default();
                 let asymmetric_ok = *agent.asymmetric_allowed.get(channel).unwrap_or(&false);
@@ -279,6 +282,7 @@ fn store_list(stores: &CredentialStores, channel: Channel) -> Vec<String> {
         WHATSAPP => stores.whatsapp.list(),
         TELEGRAM => stores.telegram.list(),
         GOOGLE => stores.google.list(),
+        EMAIL => stores.email.list(),
         _ => Vec::new(),
     }
 }
@@ -292,6 +296,7 @@ fn store_allow_agents(
         WHATSAPP => stores.whatsapp.allow_agents(account_id),
         TELEGRAM => stores.telegram.allow_agents(account_id),
         GOOGLE => stores.google.allow_agents(account_id),
+        EMAIL => stores.email.allow_agents(account_id),
         _ => Vec::new(),
     }
 }
@@ -306,6 +311,7 @@ fn store_issue(
         WHATSAPP => stores.whatsapp.issue(account_id, agent_id),
         TELEGRAM => stores.telegram.issue(account_id, agent_id),
         GOOGLE => stores.google.issue(account_id, agent_id),
+        EMAIL => stores.email.issue(account_id, agent_id),
         _ => Err(crate::error::CredentialError::NotFound {
             channel,
             account: account_id.to_string(),
@@ -359,6 +365,7 @@ mod tests {
             whatsapp: Arc::new(WhatsappCredentialStore::new(wa_list)),
             telegram: Arc::new(TelegramCredentialStore::new(tg_list)),
             google: Arc::new(GoogleCredentialStore::new(g_list)),
+            email: Arc::new(EmailCredentialStore::empty()),
         }
     }
 

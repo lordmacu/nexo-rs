@@ -9,6 +9,7 @@ pub type Channel = &'static str;
 pub const WHATSAPP: Channel = "whatsapp";
 pub const TELEGRAM: Channel = "telegram";
 pub const GOOGLE: Channel = "google";
+pub const EMAIL: Channel = "email";
 
 /// 8-byte prefix of `sha256(account_id)`. Stable across boots and
 /// safe to emit to logs, metrics, and transcripts — unlike the raw

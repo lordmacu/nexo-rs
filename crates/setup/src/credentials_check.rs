@@ -7,9 +7,21 @@
 //! surfaced immediately so the user catches missing `credentials`
 //! bindings before the daemon starts.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
+
+/// Convention: `<config_dir>/../secrets`. Override via `NEXO_SECRETS_DIR`
+/// for non-standard layouts (Docker secrets at `/run/secrets`, etc.).
+fn secrets_dir_for(config_dir: &Path) -> PathBuf {
+    if let Ok(env) = std::env::var("NEXO_SECRETS_DIR") {
+        return PathBuf::from(env);
+    }
+    config_dir
+        .parent()
+        .map(|p| p.join("secrets"))
+        .unwrap_or_else(|| PathBuf::from("secrets"))
+}
 
 pub struct Summary {
     pub accounts_wa: usize,
@@ -25,11 +37,14 @@ pub fn run(config_dir: &Path) -> Result<Summary> {
 
     let cfg = nexo_config::AppConfig::load(config_dir)?;
     let google = nexo_auth::load_google_auth(config_dir)?;
+    let secrets_dir = secrets_dir_for(config_dir);
     let result = nexo_auth::build_credentials(
         &cfg.agents.agents,
         &cfg.plugins.whatsapp,
         &cfg.plugins.telegram,
         &google,
+        cfg.plugins.email.as_ref(),
+        &secrets_dir,
         nexo_auth::StrictLevel::Lenient,
     );
 
@@ -42,6 +57,7 @@ pub fn run(config_dir: &Path) -> Result<Summary> {
                     nexo_auth::handle::WHATSAPP,
                     nexo_auth::handle::TELEGRAM,
                     nexo_auth::handle::GOOGLE,
+                    nexo_auth::handle::EMAIL,
                 ] {
                     if let Ok(handle) = bundle.resolver.resolve(&agent.id, channel) {
                         per.push((channel.to_string(), handle.account_id_raw().to_string()));

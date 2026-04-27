@@ -64,6 +64,8 @@ fn strict_rejects_inline_google_auth() {
         &[],
         &[],
         &GoogleAuthConfig::default(),
+        None,
+        std::path::Path::new("/nonexistent"),
         StrictLevel::Strict,
     )
     .unwrap_err();
@@ -82,6 +84,8 @@ fn lenient_accepts_inline_google_auth_with_warning() {
         &[],
         &[],
         &GoogleAuthConfig::default(),
+        None,
+        std::path::Path::new("/nonexistent"),
         StrictLevel::Lenient,
     )
     .expect("lenient must not hard-fail");
@@ -103,6 +107,8 @@ fn strict_error_never_leaks_client_id() {
         &[],
         &[],
         &GoogleAuthConfig::default(),
+        None,
+        std::path::Path::new("/nonexistent"),
         StrictLevel::Strict,
     )
     .unwrap_err();

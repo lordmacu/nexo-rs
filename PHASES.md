@@ -2066,7 +2066,34 @@ Sub-phases:
   `spf_dkim_warn`, sample `config/plugins/email.yaml` empty
   by default. 3 round-trip + 2 plugin unit tests pass; old
   single-account schema replaced in `load_test.rs` fixtures.)
-- 48.2 — `nexo-auth` `EmailCredentialStore` (Password / OAuth2 / OAuth2-Google)   ⬜
+- 48.2 — `nexo-auth` `EmailCredentialStore` (Password / OAuth2 / OAuth2-Google)   ✅
+  (`crates/auth/src/email.rs` adds `EmailAccount` + `EmailAuth`
+  enum (`Password` / `OAuth2Static` / `OAuth2Google`) backed by
+  `secrecy::SecretString` so `tracing::debug!("{:?}")` redacts
+  every secret to `<redacted>`. New `Channel::EMAIL = "email"`.
+  TOML loader at `secrets/email/<instance>.toml` with env-var
+  interpolation via `nexo_config::env::resolve_placeholders`.
+  Gauntlet branch in `wire::build_credentials` is gated on
+  `Option<&EmailPluginConfig>`: missing TOML →
+  `CredentialError::FileMissing`, malformed →
+  `CredentialError::InvalidSecret`, `OAuth2Google` pointing at a
+  non-existent google account →
+  `CredentialError::OrphanedGoogleRef`, mode > `0o600` →
+  `CredentialError::InsecurePermissions`.
+  `EmailAccount::resolve_access_token` delegates Google variant
+  to the existing per-account `refresh_lock` so concurrent IDLE
+  workers do not race a token rotation.
+  `xoauth2_sasl(user, token)` static helper emits the RFC 7628
+  SASL payload base64'd. `CredentialStores.email` + resolver
+  ramas EMAIL en `store_list` / `allow_agents_for` /
+  `store_issue`. Hot-reload (`reload_resolver`) takes a
+  `secrets_dir: &Path` so admin endpoint can pick up new TOMLs
+  without daemon restart. Telemetry: `set_accounts_total(EMAIL,
+  …)` reuses the generic credential gauge (no new metric).
+  20 unit tests in `email::tests`; existing `cross_agent_isolation`
+  / `hot_reload` / `strict_legacy_google_auth` / `wire`
+  integration tests migrated to the new 7-arg signature; full
+  `cargo test --workspace` green at 1943 / 0.)
 - 48.3 — IMAP IDLE worker + poll fallback (CB-wrapped)   ⬜
 - 48.4 — SMTP outbound + disk-queue + Message-ID idempotency   ⬜
 - 48.5 — MIME parse/build + Attachment envelope   ⬜

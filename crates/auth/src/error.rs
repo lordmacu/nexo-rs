@@ -47,6 +47,17 @@ pub enum CredentialError {
 
     #[error("google token expired and no refresh_token; run setup wizard for account '{account}'")]
     GoogleExpired { account: String },
+
+    #[error("invalid secret file ({path}): {message}", path = display_path(path))]
+    InvalidSecret { path: PathBuf, message: String },
+
+    #[error(
+        "email account '{account}' references google_account_id='{google_account_id}' but no such google account exists"
+    )]
+    OrphanedGoogleRef {
+        account: String,
+        google_account_id: String,
+    },
 }
 
 /// Errors collected by the boot-time gauntlet. The resolver builder
