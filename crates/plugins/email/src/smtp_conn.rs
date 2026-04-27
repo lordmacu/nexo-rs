@@ -96,6 +96,17 @@ impl SmtpClient {
             Err(e) => Ok(classify_error(&e)),
         }
     }
+
+    /// Lettre `test_connection` pass-through — opens a TCP+TLS+AUTH
+    /// session against the configured endpoint and tears it down
+    /// immediately. Used by `nexo setup` to validate credentials
+    /// before persisting `email.yaml` + the secret TOML.
+    pub async fn test_connection(&self) -> Result<bool> {
+        self.transport
+            .test_connection()
+            .await
+            .context("email/smtp: test_connection")
+    }
 }
 
 fn build_lettre_envelope(env: &SmtpEnvelope) -> Result<lettre::address::Envelope> {

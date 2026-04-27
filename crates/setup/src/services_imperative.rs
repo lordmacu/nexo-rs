@@ -390,6 +390,10 @@ pub fn dispatch(svc_id: &str, config_dir: &Path, secrets_dir: &Path) -> Result<O
         "whatsapp" => run_whatsapp(config_dir, secrets_dir),
         "telegram" => run_telegram(config_dir, secrets_dir),
         "google" => run_google(config_dir, secrets_dir),
+        "email" => {
+            crate::services::email::run_email_wizard(config_dir, secrets_dir)?;
+            Ok(Outcome::Handled)
+        }
         _ => Ok(Outcome::NotHandled),
     }
 }
