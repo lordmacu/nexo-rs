@@ -6,6 +6,7 @@ use super::tool_registry::ToolRegistry;
 use super::transcripts_index::TranscriptsIndex;
 use crate::plan_mode::PlanModeState;
 use crate::session::SessionManager;
+use crate::todo::TodoList;
 use nexo_broker::AnyBroker;
 use nexo_config::types::agents::AgentConfig;
 use nexo_mcp::SessionMcpRuntime;
@@ -109,6 +110,13 @@ pub struct AgentContext {
     /// Tests construct their own registry to avoid cross-test races.
     pub plan_approval_registry:
         Arc<crate::agent::plan_mode_tool::PlanApprovalRegistry>,
+    /// Phase 79.4 — intra-turn scratch todo list. Owned by the model
+    /// (mutated via `TodoWrite`). Distinct from Phase 14 TaskFlow:
+    /// Todo is in-memory + per-goal + flat; TaskFlow is persistent
+    /// + cross-session + DAG. Reattach does not restore todos —
+    /// they die with the goal because re-deriving them mid-turn is
+    /// cheap and stale items are confusing.
+    pub todos: Arc<RwLock<TodoList>>,
 }
 impl AgentContext {
     pub fn new(
@@ -143,6 +151,7 @@ impl AgentContext {
             plan_approval_registry: Arc::new(
                 crate::agent::plan_mode_tool::PlanApprovalRegistry::default(),
             ),
+            todos: Arc::new(RwLock::new(TodoList::new())),
         }
     }
 

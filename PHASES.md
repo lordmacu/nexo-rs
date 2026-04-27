@@ -4763,7 +4763,7 @@ Done when:
   - poller-driven `terminal_schema` rejects a value that
     does not match.
 
-#### 79.4 — TodoWriteTool (intra-turn scratch list)   ⬜
+#### 79.4 — TodoWriteTool (intra-turn scratch list)   ✅
 
 Distinct from Phase 14 TaskFlow: `TodoWrite` is an
 in-memory, per-goal todo list that the model owns and edits

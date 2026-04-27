@@ -1759,6 +1759,14 @@ async fn main() -> Result<()> {
             );
         }
 
+        // Phase 79.4 — `TodoWrite` is always available. Cheap,
+        // in-memory scratch list per goal; classified `ReadOnly` so
+        // it stays callable while plan mode is on.
+        tools.register(
+            nexo_core::agent::todo_write_tool::TodoWriteTool::tool_def(),
+            nexo_core::agent::todo_write_tool::TodoWriteTool,
+        );
+
         // Phase 25 — `web_search` tool. Registered when the agent's
         // top-level policy has `enabled: true` and a router exists.
         // Per-binding overrides are enforced inside the tool itself

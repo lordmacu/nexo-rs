@@ -7,6 +7,7 @@ pub mod plan_mode;
 pub mod runtime_snapshot;
 pub mod session;
 pub mod telemetry;
+pub mod todo;
 
 pub use config_reload::{ConfigReloadCoordinator, ReloadOutcome, ReloadRejection};
 pub use runtime_snapshot::RuntimeSnapshot;
