@@ -138,9 +138,16 @@ presents the token as `Authorization: Bearer <bootstrap_token>`.
 Priority chain (first non-empty wins):
 
 1. `--public-url` (CLI flag)
-2. `tunnel.url` (Phase tunnel — TODO: wire when accessor lands)
-3. `gateway.remote.url`
-4. LAN bind address (when `gateway.bind=lan`)
+2. `pairing.yaml::pairing.public_url` (deployment-pinned)
+3. `NEXO_TUNNEL_URL` env (back-compat)
+4. `$NEXO_HOME/state/tunnel.url` sidecar — `nexo-tunnel`
+   writes the active `https://*.trycloudflare.com` URL on
+   `TunnelManager::start()` success via atomic
+   `<path>.tmp` + rename, so a separately-launched
+   `nexo pair start` reads it without IPC plumbing
+   (`nexo_tunnel::read_url_file`)
+5. `gateway.remote.url` (legacy)
+6. LAN bind address (when `gateway.bind=lan`)
 5. **fail-closed**: the daemon refuses to issue a code on a
    loopback-only gateway. As of Phase 70.5 the CLI also prints a
    ready-to-run `nexo pair seed <channel> <account> <SENDER>` for

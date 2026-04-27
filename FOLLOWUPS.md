@@ -250,7 +250,7 @@ PR-2. **Telemetry counters not wired** ✅ Closed 2026-04-25 (Phase 26.y).
   `nexo_core::telemetry::render_prometheus` stitches them in next to
   the web-search block. Consumer: admin-ui Phase A4.
 
-PR-3. ~~**`tunnel.url` integration in URL resolver**~~  🔄 partial 2026-04-26
+PR-3. ~~**`tunnel.url` integration in URL resolver**~~  ✅ shipped 2026-04-27 (Phase 26.z)
 - ~~`run_pair_start` URL resolver chain wired~~ — priority is
   now (1) `--public-url` CLI flag, (2) `pairing.yaml`
   `public_url`, (3) `NEXO_TUNNEL_URL` env var, (4) loopback

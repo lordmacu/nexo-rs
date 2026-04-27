@@ -3156,6 +3156,7 @@ dependencies = [
  "nexo-broker",
  "nexo-config",
  "nexo-core",
+ "nexo-llm",
  "nexo-resilience",
  "rand 0.8.6",
  "rustls",

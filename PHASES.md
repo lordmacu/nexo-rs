@@ -197,12 +197,17 @@ already shipped in 26.x:
 
 Consumer: admin-ui Phase A4 dashboard.
 
-#### 26.z — `tunnel.url` integration in URL resolver   ⬜
+#### 26.z — `tunnel.url` integration in URL resolver   ✅
 
-Tracks **PR-3** in `FOLLOWUPS.md`. `nexo pair start` honours only
-`--public-url` today; spec'd priority chain places `tunnel.url`
-second. Blocked on `nexo-tunnel` exposing a read-only public-URL
-accessor (small refactor in tunnel crate).
+Tracks **PR-3** in `FOLLOWUPS.md`. `nexo pair start` resolver chain
+shipped: (1) `--public-url` CLI flag, (2) `pairing.yaml::public_url`,
+(3) `NEXO_TUNNEL_URL` env, (4) `$NEXO_HOME/state/tunnel.url` sidecar
+written by `nexo-tunnel` daemon (`url_state_path` / `write_url_file`
+/ `read_url_file` / `clear_url_file`, atomic write via `<path>.tmp`
++ rename), (5) loopback fail-closed. `ws_cleartext_allow` from YAML
+plumbed into resolver `extras`. Round-trip + priority unit tests in
+`nexo-tunnel::tests::sidecar_round_trip` and
+`nexo_pairing::url_resolver::tests::priority_*`.
 
 #### 26.aa — `pair_approve` scope-gated agent tool   ⬜  (security review required)
 
