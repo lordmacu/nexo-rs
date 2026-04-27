@@ -490,6 +490,8 @@ pub struct EmailPluginConfig {
     pub enabled: bool,
     #[serde(default = "default_max_body_bytes")]
     pub max_body_bytes: usize,
+    #[serde(default = "default_max_attachment_bytes")]
+    pub max_attachment_bytes: usize,
     #[serde(default = "default_attachments_dir")]
     pub attachments_dir: String,
     #[serde(default = "default_outbound_queue_dir")]
@@ -623,6 +625,9 @@ fn default_email_enabled() -> bool {
 fn default_max_body_bytes() -> usize {
     32 * 1024
 }
+fn default_max_attachment_bytes() -> usize {
+    25 * 1024 * 1024
+}
 fn default_attachments_dir() -> String {
     "data/email-attachments".to_string()
 }
@@ -679,6 +684,7 @@ email:
         assert_eq!(acc.smtp.tls, TlsMode::Starttls);
         assert!(matches!(acc.provider, EmailProvider::Custom));
         assert_eq!(f.email.max_body_bytes, 32 * 1024);
+        assert_eq!(f.email.max_attachment_bytes, 25 * 1024 * 1024);
         assert!(f.email.loop_prevention.auto_submitted);
     }
 
