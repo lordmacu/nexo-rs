@@ -1597,6 +1597,49 @@ async fn main() -> Result<()> {
         }
     };
 
+    // Phase 79.6 — open the team store (registry + audit). Always
+    // tried; failure is non-fatal (the 5 Team* tools simply don't
+    // register for this run).
+    let team_store: Option<std::sync::Arc<nexo_team_store::SqliteTeamStore>> = {
+        let path = nexo_project_tracker::state::nexo_state_dir().join("teams.db");
+        std::fs::create_dir_all(path.parent().unwrap_or(std::path::Path::new("."))).ok();
+        match nexo_team_store::SqliteTeamStore::open(
+            path.to_str().unwrap_or("teams.db"),
+        )
+        .await
+        {
+            Ok(s) => {
+                tracing::info!(
+                    path = %path.display(),
+                    "[team] team store opened"
+                );
+                Some(std::sync::Arc::new(s))
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    path = %path.display(),
+                    "[team] team store could not be opened — Team* tools disabled"
+                );
+                None
+            }
+        }
+    };
+
+    // Phase 79.6 — per-process team message router. Spawns the
+    // `team.>` broker subscriber under a fresh cancel token; the
+    // SIGTERM handler below cancels it before plugin teardown.
+    let team_router_cancel = tokio_util::sync::CancellationToken::new();
+    let team_router: std::sync::Arc<
+        nexo_core::team_message_router::TeamMessageRouter<nexo_broker::AnyBroker>,
+    > = {
+        let r = nexo_core::team_message_router::TeamMessageRouter::new(
+            std::sync::Arc::new(broker.clone()),
+        );
+        r.spawn(team_router_cancel.clone());
+        r
+    };
+
     let first_agent_for_cron: Option<(String, nexo_config::types::agents::ModelConfig)> = cfg
         .agents
         .agents
@@ -2194,6 +2237,64 @@ async fn main() -> Result<()> {
                 languages = ?agent_cfg.lsp.languages,
                 "registered Lsp tool"
             );
+        }
+
+        // Phase 79.6 — register the 5 Team* tools when the agent
+        // opts in (`team.enabled: true`) AND the team store opened
+        // successfully. The lead's `current_goal_id` placeholder
+        // here is the agent_id — Phase 67 driver-loop overrides it
+        // per-goal when team-aware spawn lands in 79.6.b.
+        if agent_cfg.team.enabled {
+            if let Some(store) = team_store.as_ref() {
+                let team_tools_inner = nexo_core::agent::team_tools::TeamTools::new(
+                    std::sync::Arc::clone(store)
+                        as std::sync::Arc<dyn nexo_team_store::TeamStore>,
+                    std::sync::Arc::clone(&team_router),
+                    broker.clone(),
+                    agent_cfg.team.clone(),
+                    agent_id.clone(),
+                    agent_id.clone(),
+                );
+                tools.register(
+                    nexo_core::agent::team_tools::TeamCreateTool::tool_def(),
+                    nexo_core::agent::team_tools::TeamCreateTool::new(
+                        std::sync::Arc::clone(&team_tools_inner),
+                    ),
+                );
+                tools.register(
+                    nexo_core::agent::team_tools::TeamDeleteTool::tool_def(),
+                    nexo_core::agent::team_tools::TeamDeleteTool::new(
+                        std::sync::Arc::clone(&team_tools_inner),
+                    ),
+                );
+                tools.register(
+                    nexo_core::agent::team_tools::TeamSendMessageTool::tool_def(),
+                    nexo_core::agent::team_tools::TeamSendMessageTool::new(
+                        std::sync::Arc::clone(&team_tools_inner),
+                    ),
+                );
+                tools.register(
+                    nexo_core::agent::team_tools::TeamListTool::tool_def(),
+                    nexo_core::agent::team_tools::TeamListTool::new(
+                        std::sync::Arc::clone(&team_tools_inner),
+                    ),
+                );
+                tools.register(
+                    nexo_core::agent::team_tools::TeamStatusTool::tool_def(),
+                    nexo_core::agent::team_tools::TeamStatusTool::new(team_tools_inner),
+                );
+                tracing::info!(
+                    agent = %agent_id,
+                    max_members = agent_cfg.team.effective_max_members(),
+                    max_concurrent = agent_cfg.team.effective_max_concurrent(),
+                    "[team] registered 5 Team* tools"
+                );
+            } else {
+                tracing::warn!(
+                    agent = %agent_id,
+                    "[team] team.enabled = true but team store unavailable — Team* tools not registered"
+                );
+            }
         }
 
         // Phase 79.10 — `config_changes_tail` (read-only audit log).
@@ -3076,6 +3177,11 @@ async fn main() -> Result<()> {
     shutdown_signal().await;
     tracing::info!("shutdown signal received — stopping");
     cron_runner_cancel.cancel();
+    // Phase 79.6 — drop the team router subscriber. Active teams
+    // keep their soft-deleted state; force-kill of in-flight
+    // teammate goals is delegated to the existing
+    // `drain_running_goals` pattern (Phase 71.3) that runs below.
+    team_router_cancel.cancel();
     // Phase 79.5 — shut down the LSP manager BEFORE plugin
     // teardown so any in-flight `$/cancelRequest` notifications
     // make it out to the language servers and child processes
@@ -7722,7 +7828,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
     });
     let broker = AnyBroker::local();
     let sessions = Arc::new(SessionManager::new(std::time::Duration::from_secs(300), 20));
-    let ctx = AgentContext::new(primary.id.clone(), agent_cfg, broker, sessions);
+    let ctx = AgentContext::new(primary.id.clone(), agent_cfg, broker.clone(), sessions);
 
     let workspace_dir = if primary.workspace.is_empty() {
         None
@@ -7799,6 +7905,83 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
     }
     if !primary.transcripts_dir.trim().is_empty() {
         registry.register(SessionLogsTool::tool_def(), SessionLogsTool::new());
+    }
+
+    // Phase 76.16 — register additional Phase 79 tools according to
+    // `mcp_server.expose_tools`. Empty list = legacy behaviour (5 tools).
+    for tool_name in &server_cfg.expose_tools {
+        use nexo_core::agent::{
+            notebook_edit_tool::NotebookEditTool,
+            plan_mode_tool::{EnterPlanModeTool, ExitPlanModeTool},
+            remote_trigger_tool::{RemoteTriggerTool, ReqwestSink},
+            synthetic_output_tool::SyntheticOutputTool,
+            todo_write_tool::TodoWriteTool,
+            tool_search_tool::ToolSearchTool,
+        };
+        match tool_name.as_str() {
+            "EnterPlanMode" => registry.register(
+                EnterPlanModeTool::tool_def(),
+                EnterPlanModeTool,
+            ),
+            "ExitPlanMode" => registry.register(
+                ExitPlanModeTool::tool_def(),
+                ExitPlanModeTool,
+            ),
+            "ToolSearch" => registry.register(
+                ToolSearchTool::tool_def(),
+                ToolSearchTool::new(),
+            ),
+            "TodoWrite" => registry.register(
+                TodoWriteTool::tool_def(),
+                TodoWriteTool,
+            ),
+            "SyntheticOutput" => registry.register(
+                SyntheticOutputTool::tool_def(),
+                SyntheticOutputTool,
+            ),
+            "NotebookEdit" => registry.register(
+                NotebookEditTool::tool_def(),
+                NotebookEditTool,
+            ),
+            "RemoteTrigger" => {
+                let sink = Arc::new(ReqwestSink::new(broker.clone()));
+                registry.register(
+                    RemoteTriggerTool::tool_def(),
+                    RemoteTriggerTool::new(sink),
+                );
+            }
+            "Config" | "Lsp" => {
+                tracing::warn!(
+                    tool = tool_name.as_str(),
+                    "expose_tools: '{}' requires additional infrastructure \
+                     not yet available in mcp-server mode — skipping. \
+                     See FOLLOWUPS.md for wiring details.",
+                    tool_name
+                );
+            }
+            // Phase 79.6 — Team* tools require a `SqliteTeamStore`
+            // + `TeamMessageRouter` boot here; deferred to 79.6.b
+            // (the dedicated MCP exposure parity sweep). Until
+            // then, mcp-server clients can use other tools while
+            // the model-side runtime (`nexo run`) exposes the
+            // full team surface.
+            "TeamCreate" | "TeamDelete" | "TeamSendMessage" | "TeamList" | "TeamStatus" => {
+                tracing::warn!(
+                    tool = tool_name.as_str(),
+                    "expose_tools: '{}' requires team store + router \
+                     boot in mcp-server mode — skipping. Phase 79.6.b \
+                     wires the full surface.",
+                    tool_name
+                );
+            }
+            unknown => {
+                tracing::warn!(
+                    tool = unknown,
+                    "expose_tools: unknown tool name '{}' — skipping",
+                    unknown
+                );
+            }
+        }
     }
 
     let name = server_cfg

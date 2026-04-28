@@ -3634,6 +3634,7 @@ dependencies = [
  "nexo-project-tracker",
  "nexo-setup",
  "nexo-taskflow",
+ "nexo-team-store",
  "nexo-tunnel",
  "nexo-web-search",
  "rand 0.8.6",
