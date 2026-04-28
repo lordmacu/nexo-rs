@@ -28,8 +28,8 @@ pub mod types;
 
 pub use store::{SqliteTeamStore, TeamStore};
 pub use types::{
-    sanitize_name, validate_member_name, validate_team_name, TeamEventRow, TeamMemberRow,
-    TeamRow, TeamStoreError, DM_BODY_MAX_BYTES, MEMBER_NAME_MAX_LEN, SHUTDOWN_DRAIN_SECS,
-    TEAM_IDLE_TIMEOUT_SECS, TEAM_LEAD_NAME, TEAM_MAX_CONCURRENT_DEFAULT, TEAM_MAX_MEMBERS,
-    TEAM_NAME_MAX_LEN,
+    sanitize_name, validate_member_name, validate_member_name_for_lead, validate_team_name,
+    TeamEventRow, TeamMemberRow, TeamRow, TeamStoreError, DM_BODY_MAX_BYTES,
+    MEMBER_NAME_MAX_LEN, SHUTDOWN_DRAIN_SECS, TEAM_IDLE_TIMEOUT_SECS, TEAM_LEAD_NAME,
+    TEAM_MAX_CONCURRENT_DEFAULT, TEAM_MAX_MEMBERS, TEAM_NAME_MAX_LEN,
 };
