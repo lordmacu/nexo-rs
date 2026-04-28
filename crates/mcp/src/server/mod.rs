@@ -21,7 +21,9 @@
 
 pub mod audit_log;
 pub mod auth;
+pub mod builder;
 pub mod dispatch;
+pub mod event_store;
 pub mod http_config;
 pub mod http_session;
 pub mod per_principal_concurrency;
@@ -70,6 +72,17 @@ pub trait McpServerHandler: Send + Sync {
 
     async fn call_tool(&self, name: &str, arguments: Value) -> Result<McpToolResult, McpError>;
 
+    /// Phase 79.M — context-aware tool call variant. Default keeps
+    /// backward compatibility by delegating to [`call_tool`].
+    async fn call_tool_with_context(
+        &self,
+        name: &str,
+        arguments: Value,
+        _ctx: &crate::server::dispatch::DispatchContext,
+    ) -> Result<McpToolResult, McpError> {
+        self.call_tool(name, arguments).await
+    }
+
     /// Phase 76.7 — streaming-aware variant. Default delegates
     /// to [`call_tool`] and ignores the reporter, so existing
     /// handlers compile unchanged. Tools that want to emit
@@ -88,6 +101,19 @@ pub trait McpServerHandler: Send + Sync {
     ) -> Result<McpToolResult, McpError> {
         let _ = progress;
         self.call_tool(name, arguments).await
+    }
+
+    /// Phase 79.M — context-aware streaming tool call variant.
+    /// Default delegates to [`call_tool_streaming`] so existing
+    /// handlers compile unchanged.
+    async fn call_tool_streaming_with_context(
+        &self,
+        name: &str,
+        arguments: Value,
+        progress: progress::ProgressReporter,
+        _ctx: &crate::server::dispatch::DispatchContext,
+    ) -> Result<McpToolResult, McpError> {
+        self.call_tool_streaming(name, arguments, progress).await
     }
 
     /// Optional `resources/list` support.

@@ -18,6 +18,147 @@ Historical detailed notes that were previously written in Spanish are preserved 
 
 ## Open items
 
+### Autonomous mode hardening (audit 2026-04-28)
+- No open items.
+
+### MCP server — Phase 79.M follow-ups
+
+**79.M.c.full** — Full Config tool body in mcp-server mode. **SHIPPED 2026-04-28**.
+- Cargo feature `config-self-edit` gates the Config arm in
+  `boot_exposable`. Boot context carries seven Config-only handles
+  (applier + denylist + redactor + correlator + reload + policy +
+  proposals_dir). `run_mcp_server` constructs all seven from the
+  agent's YAML when `Config` is in `expose_tools`, then plus three
+  hard refusals: (1) Cargo feature off → `SkippedFeatureGated`,
+  (2) `mcp_server.auth_token_env` / `http.auth` missing →
+  `SkippedDenied { config-requires-auth-token }`, (3)
+  `agents.<id>.config_tool.self_edit = false` →
+  `SkippedDenied { config-self-edit-policy-disabled }`,
+  (4) `config_tool.allowed_paths` empty → refuse (operator must
+  pick an explicit subset).
+- Reload semantics in mcp-server mode: stub `McpServerReloadTrigger`
+  warns + returns Ok. The operator-side `nexo run` daemon picks up
+  YAML changes via Phase 18 file watcher. mcp-server itself does
+  not host a `ConfigReloadCoordinator`.
+- Threat model: see
+  `docs/src/architecture/mcp-server-exposable.md::Threat-model`.
+
+**79.M.h** — Hot-reload of `mcp_server.expose_tools`.
+- Today: boot-time only. Operator must restart the mcp-server
+  process to add/remove tools.
+- Why deferred: Phase 18 hot-reload coverage doesn't yet drive a
+  registry rebuild path. Acceptable: stdio mcp-server processes are
+  short-lived (Claude Desktop / Cursor spawn them per-session).
+  HTTP mcp-server is the real motivator — track under Phase 18
+  coordinator extensions.
+
+**79.M.completion** — MCP `completion/complete` returns empty
+values for every request. Dispatcher recognises the method (no 404),
+but no provider-side completion logic. Useful follow-up: tools with
+declared enums populate a static `values` list automatically.
+
+**79.M.followup-autonomous** — `nexo mcp-server` cannot run
+autonomous wait/retry loops by itself.
+- Missing: a durable autonomous loop in mcp-server mode that
+  processes due follow-ups/reminders without requiring a separate
+  `nexo run` daemon (`AgentRuntime` + heartbeat tick path). Today
+  mcp-server exposes control-plane calls (`start_followup`,
+  `check_followup`, `cancel_followup`) but does not host the
+  runtime turn loop.
+- Why deferred: current architecture keeps mcp-server as a
+  tool-bridge process; autonomous scheduling/execution lives in
+  `nexo run`. Merging both concerns needs clear ownership of broker
+  subscriptions, session lifecycle, and tick concurrency in mcp mode.
+- Target: 79.M follow-up sub-phase (design + implementation of an
+  optional autonomous worker profile for mcp-server).
+
+**79.7.tool-calls** — shipped (opt-in) on 2026-04-28.
+- Delivered: `LlmCronDispatcher` now supports an iterative
+  tool-call loop (assistant tool_calls -> registry dispatch ->
+  tool_result chaining -> follow-up model turn) with bounded
+  iterations.
+- Policy gates: disabled by default; operators must enable
+  `runtime.cron.tool_calls.enabled`. Effective tool surface is
+  narrowed by binding policy plus `runtime.cron.tool_calls.allowlist`.
+  A stable per-entry `session_id` is injected for tool contexts.
+- Minimal runtime profile (marketing follow-ups safe allowlist):
+  ```yaml
+  schema_version: 11
+  cron:
+    tool_calls:
+      enabled: true
+      max_iterations: 6
+      allowlist:
+        - email_search
+        - email_thread
+        - email_reply
+        - cancel_followup
+        - check_followup
+  ```
+- Manual smoke (reproducible):
+  1. Fast dispatcher proof:
+     `cargo test -p nexo-core llm_cron_dispatcher::tests::tool_calls_execute_when_executor_enabled -- --nocapture`
+  2. Runtime wiring proof:
+     run `nexo run` with `config/runtime.yaml` above and confirm startup log:
+     `"[cron] tool-call execution enabled"` with expected `allowlist`.
+  3. End-to-end follow-up flow (from your MCP client):
+     - `start_followup` args example:
+       ```json
+       {
+         "thread_root_id": "<message-id-root>",
+         "instance": "ops",
+         "recipient": "cliente@example.com",
+         "check_after": "24h",
+         "max_attempts": 3
+       }
+       ```
+       Save returned `flow.flow_id`.
+     - `cron_create` args example (one-shot):
+       ```json
+       {
+         "cron": "*/2 * * * *",
+         "recurring": false,
+         "prompt": "Usa check_followup con flow_id=<FLOW_ID>. Si flow.status es active, llama cancel_followup con reason='smoke'. Cierra con texto: smoke-ok."
+       }
+       ```
+     - Verify after next fire window:
+       `check_followup` on the same `flow_id` returns `flow.status = \"cancelled\"`.
+       Optional: `nexo cron list --json` no longer includes that one-shot entry.
+- Remaining hardening follow-up: per-tool timeout/idempotency policy
+  for high-side-effect tools, plus richer compensation semantics.
+
+**79.M.denied-by-default surface** — shipped on 2026-04-28.
+- Delivered: `mcp_server.denied_tools_profile` is now a mandatory
+  hardening gate for denied overrides (`Heartbeat`, `delegate`,
+  `RemoteTrigger`), with fail-closed defaults (`enabled=false`, all
+  allow bits false).
+- Policy: denied tool registration now requires:
+  1) tool in `expose_denied_tools`,
+  2) `denied_tools_profile.enabled=true`,
+  3) matching `denied_tools_profile.allow.<tool>=true`.
+- Validation checks:
+  - `require_auth` (default true) enforces MCP auth before denied
+    side-effect tools boot.
+  - `require_delegate_allowlist` (default true) requires explicit
+    restricted `agents.<id>.allowed_delegates` (non-empty, not `*`)
+    for `delegate`.
+  - `require_remote_trigger_targets` (default true) requires explicit
+    `agents.<id>.remote_triggers` entries for `RemoteTrigger`.
+
+**79.M.taskflow-session-context** — shipped on 2026-04-28.
+- Delivered: MCP `tools/call` now forwards request-scoped
+  `DispatchContext` to handlers through context-aware trait hooks
+  (`call_tool_with_context` / `call_tool_streaming_with_context`).
+- Bridge fix: `ToolRegistryBridge` now executes each tool call with a
+  per-call `AgentContext` clone that injects `session_id` from MCP
+  dispatch context (UUID parse, fallback deterministic UUIDv5 for
+  non-UUID ids), instead of always using the fixed boot context.
+- Stdio parity: stdio transport now stamps a stable per-process
+  implicit `session_id`, so context-dependent tools (`taskflow`) also
+  work in stdio MCP sessions.
+- Coverage: bridge unit test verifies session-id injection from
+  dispatch context.
+
 ### Pollers (Phase 19 V2)
 
 P-1. **`inventory!` macro registry for built-in pollers**
@@ -588,6 +729,98 @@ Open:
 
 ## Resolved (recent highlights)
 
+- 2026-04-28 — MCP denied-tool override now supports `Heartbeat`
+  (`schedule_reminder`) with explicit hardening. In `nexo mcp-server`,
+  `Heartbeat` can be exposed only when listed in both
+  `mcp_server.expose_tools` and `mcp_server.expose_denied_tools`,
+  auth is configured (`auth_token_env` or `http.auth`), the agent has
+  `heartbeat.enabled = true`, and memory is available. The tool now also
+  accepts MCP-friendly explicit route fields
+  (`session_id`, `source_plugin` + optional `source_instance`,
+  `recipient`) and falls back to `AgentContext` (`session_id`,
+  `inbound_origin`) when present.
+
+- 2026-04-28 — Cron tool/docs descriptions are now aligned with shipped
+  semantics (A-8 closure). Updated `cron_*` `ToolDef` descriptions to
+  explicitly cover origin-tagged binding scope, 60-second minimum
+  interval, per-binding cap, and one-shot retry/drop behavior. Also
+  removed stale "follow-up not shipped" wording in
+  `cron_schedule`/`cron_runner`/`llm_cron_dispatcher` module docs and
+  refreshed `docs/src/architecture/cron-schedule.md` to include
+  `cron_pause`/`cron_resume`, origin tagging, model pinning, and the
+  current plan-mode classification.
+
+- 2026-04-28 — Cron one-shot dispatch now supports bounded retries
+  instead of drop-on-first-failure only. `runtime.yaml` gained
+  `cron.one_shot_retry` (`max_retries`, `base_backoff_secs`,
+  `max_backoff_secs`; defaults `3 / 30 / 1800`). `CronRunner`
+  schedules exponential-backoff retries on one-shot dispatch failure,
+  increments durable `failure_count` per row, and drops the entry only
+  after budget exhaustion. Store schema now includes
+  `nexo_cron_entries.failure_count` with idempotent migration for
+  existing DBs. Coverage added in `cron_schedule` + `cron_runner`
+  tests.
+
+- 2026-04-28 — `RemoteTrigger` now honors per-binding overrides.
+  `InboundBinding` gained `remote_triggers` (replace semantics over
+  `agents[].remote_triggers`), `EffectiveBindingPolicy` now resolves
+  and carries that list, and `RemoteTriggerTool` reads from the
+  session-effective policy instead of agent-level config only. Tool
+  registration now considers both agent-level and binding-level
+  remote-trigger lists so binding-only configs still expose the tool.
+  Hardening included rate-limit bucket scoping by `(binding_index,
+  trigger_name)` to avoid cross-binding interference when names match.
+  Coverage added in `remote_trigger_tool` tests plus parse coverage in
+  `crates/config/tests/binding_overrides.rs`.
+
+- 2026-04-28 — Runtime now stamps interactive turn context from the
+  inbound message (not session bootstrap only). `flush()` in
+  `crates/core/src/agent/runtime.rs` builds a per-message context
+  carrying `inbound_origin` and `sender_trusted`, so `EnterPlanMode`
+  and trusted dispatch gates read real channel/account/sender data on
+  live inbound turns. `sender_trusted` is asserted from pairing-gate
+  `Decision::Admit` and defaults fail-closed elsewhere. Coverage added
+  in `crates/core/tests/pairing_gate_intake_test.rs`.
+
+- 2026-04-28 — Config approval subscriber now accepts both
+  `plugin.inbound.<channel>` and
+  `plugin.inbound.<channel>.<instance>` topics. No-instance events map
+  to account `default`, which unblocks approvals from single-instance
+  plugin routes.
+
+- 2026-04-28 — `ConfigTool` now resolves proposal actor origin from the
+  current `AgentContext.inbound_origin` when available, instead of
+  always using a boot-time fallback binding. Approval correlation and
+  staged proposal YAML now carry the real
+  `(channel, account_id, sender_id)` of the turn that proposed the
+  change. Coverage added in
+  `agent::config_tool::tests::propose_uses_inbound_origin_from_context_when_available`
+  (`--features config-self-edit`).
+
+- 2026-04-28 — `ConfigTool` pending proposal recovery now survives
+  process restarts. On boot, each tool instance rehydrates unexpired
+  staged proposals from disk into both the correlator and
+  `pending_receivers`; expired staging files are cleaned up. `apply`
+  also has a lazy fallback that rebuilds a receiver from staging when
+  the in-memory map is missing. Additional hardening kept from the
+  earlier patch: propose-time staging failures now clean up both maps,
+  and apply staging read/parse failures requeue the receiver instead of
+  consuming it. Coverage added in
+  `agent::config_tool::tests::boot_recovery_rehydrates_pending_proposals_from_staging`
+  and
+  `agent::config_tool::tests::apply_no_pending_can_recover_receiver_from_staging_file`
+  (`--features config-self-edit`).
+
+- 2026-04-28 — MCP resource URI allowlist now enforces hard reject
+  before dispatch (no warn-only bypass). Both per-server
+  `mcp_<server>_read_resource` and router `ReadMcpResource` paths
+  share the same scheme gate, emit a `warn`, increment
+  `mcp_resource_uri_allowlist_violations_total{server=...}`, and
+  return an explicit error when the URI scheme is outside
+  `mcp.resource_uri_allowlist`. Integration coverage updated in
+  `crates/core/tests/mcp_resource_tool_test.rs` including router-path
+  rejection/success cases.
+
 - 2026-04-26 — `skills_dir: ./skills` in every agent YAML now points
   at `../skills` so the `resolve_relative_paths` step in
   `crates/config/src/lib.rs` (which roots relative paths at
@@ -912,10 +1145,11 @@ Open:
   - ~~**Runtime firing not wired.**~~ ✅ shipped 2026-04-27.
     `crates/core/src/cron_runner.rs::CronRunner` polls
     `store.due_at(now)` every 5 s, dispatches via
-    `Arc<dyn CronDispatcher>`, advances state per-entry
-    (recurring → `advance_after_fire`, one-shot → `delete`).
-    Dispatcher failures still advance state so a stuck entry
-    never refires forever. Spawned in `src/main.rs` right
+    `Arc<dyn CronDispatcher>`, and advances state per-entry:
+    recurring always advances (even on dispatch failure), while
+    one-shot uses bounded retry policy
+    (`runtime.cron.one_shot_retry`) before final drop. Spawned in
+    `src/main.rs` right
     before `shutdown_signal().await` with a `LoggingCronDispatcher`
     (emits `[cron] fired` per dispatch).
   - ~~**LLM-call cron dispatcher.**~~ ✅ shipped 2026-04-27.
@@ -923,8 +1157,9 @@ Open:
     builds `ChatRequest` from `entry.prompt`, calls
     `LlmClient::chat`, logs response with id + binding +
     cron + 200-char preview. `with_system_prompt` +
-    `with_max_tokens` knobs. main.rs wires it from the FIRST
-    agent's `model` config; falls back to
+    `with_max_tokens` knobs. Runtime resolves the client from the
+    entry's pinned `model_provider`/`model_name` with legacy
+    fallback for rows created before model pinning. Falls back to
     `LoggingCronDispatcher` when no agents configured or
     LLM-client build fails (degraded boot stays observable).
     7 unit tests cover system-prompt prepended/empty/skipped,
@@ -951,12 +1186,13 @@ Open:
     + 5 `parse_channel_hint` tests cover the happy path and edge
     cases (missing channel, missing recipient, publisher error,
     no publisher, malformed hints).
-  - **CLI `nexo cron list / drop / pause`.** ⬜ Pending. The
-    spec called for operator-side inspection commands. Today
-    operators must use SQL or `cron_list` from inside an agent
-    turn. Add `nexo cron list` / `nexo cron drop <id>` /
-    `nexo cron pause <id>` once `nexo` CLI subcommand
-    plumbing is touched.
+  - ~~**CLI `nexo cron list / drop / pause / resume`.**~~ ✅ shipped 2026-04-28.
+    Operator-side cron admin now ships in `src/main.rs`:
+    `agent cron list [--json] [--binding <id>]`,
+    `agent cron drop <id>`, `agent cron pause <id>`, and
+    `agent cron resume <id>`.
+    This removes the need for direct SQL access for routine cron
+    inspection and pause/resume/delete actions.
   - **Capability gate `cron.enabled` per binding.** ⬜ Pending.
     The MVP registers the tools globally — every agent gets
     them regardless of role. Spec called for `cron.enabled:
@@ -967,9 +1203,10 @@ Open:
     herd when many goals schedule at the same `every:1h`,
     apply ±10 % jitter to `next_fire_at`. Lift from the leak's
     `cronJitterConfig.ts`.
-  - **`cron_pause` / `cron_resume` tools.** ⬜ Pending. The
-    `paused` column already exists; surface tools that toggle
-    it without dropping the entry.
+  - ~~**`cron_pause` / `cron_resume` tools.**~~ ✅ shipped 2026-04-28.
+    The `paused` column is now operator-reachable through tools:
+    `cron_pause {id}` sets `paused=true` and `cron_resume {id}`
+    sets `paused=false` without dropping the entry.
 
 ## Phase 79.11 — McpAuth follow-up
 
@@ -984,6 +1221,23 @@ Open:
     `claude-code-leak/src/services/mcp/oauthPort.ts`), wire a
     third tool into `agent/mcp_router_tool.rs` and register it
     in `src/main.rs` next to the other two router tools.
+
+## Phase 76.16 — expose_tools deferred items
+
+  - **`Config` tool gated.** ⬜ Pending. `expose_tools: [Config]`
+    emits a `tracing::warn!` and skips registration at startup.
+    The Config tool (Phase 79.10) requires the full approval-correlator
+    + plan-mode op-aware gating before it can safely be exposed to
+    external MCP clients. Wire it once Phase 79.10 ships the
+    approval workflow end-to-end and the `config_tool.self_edit` gate
+    is validated against the originating channel.
+  - **`Lsp` tool gated.** ⬜ Pending. `expose_tools: [Lsp]` emits
+    a `tracing::warn!` and skips. LSP (Phase 79.5) requires spawning
+    and managing a language server process; the tool itself is
+    registered correctly for agent goals but the process lifetime
+    is not safe to share across arbitrary MCP client sessions
+    without additional session isolation. Defer until Phase 79.5
+    follow-up lands per-session LSP process management.
 
 ## Maintenance note
 

@@ -536,8 +536,9 @@ impl<H: McpServerHandler + 'static> Dispatcher<H> {
 
                 let started = std::time::Instant::now();
                 let name_owned = name.to_string();
+                let dispatch_ctx = ctx.clone();
                 let handler_fut = guarded(
-                    handler.call_tool_streaming(name, args, progress),
+                    handler.call_tool_streaming_with_context(name, args, progress, &dispatch_ctx),
                     "tools/call",
                     move |result| {
                         let duration_ms = started.elapsed().as_millis() as u64;

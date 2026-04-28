@@ -92,6 +92,9 @@ enum Mode {
     },
     SetupList,
     SetupDoctor,
+    SetupMigrate {
+        apply: bool,
+    },
     SetupTelegramLink {
         agent: Option<String>,
     },
@@ -195,6 +198,22 @@ enum Mode {
         yes: bool,
     },
     PollersReload,
+    /// Operator-side cron admin (Phase 79.7 follow-up):
+    /// inspect persistent schedule rows and manage them out-of-band
+    /// from an agent turn.
+    CronList {
+        binding: Option<String>,
+        json: bool,
+    },
+    CronDrop {
+        id: String,
+    },
+    CronPause {
+        id: String,
+    },
+    CronResume {
+        id: String,
+    },
     /// Run the web admin UI exposed through a fresh Cloudflare quick
     /// tunnel. Ensures `cloudflared` is installed (downloads it per
     /// OS/arch if absent), starts a loopback HTTP server, opens a new
@@ -249,6 +268,64 @@ struct RuntimeHealth {
     /// Companion WS handshake context — populated after pairing init.
     /// `None` until the daemon's pairing block completes.
     pairing_handshake: Arc<std::sync::OnceLock<PairingHandshakeCtx>>,
+}
+
+#[derive(Clone)]
+struct CronToolBindingContext {
+    ctx: nexo_core::agent::AgentContext,
+    tools: Arc<nexo_core::agent::ToolRegistry>,
+}
+
+#[derive(Clone)]
+struct RuntimeCronToolExecutor {
+    by_binding: Arc<std::collections::HashMap<String, CronToolBindingContext>>,
+}
+
+impl RuntimeCronToolExecutor {
+    fn new(by_binding: std::collections::HashMap<String, CronToolBindingContext>) -> Self {
+        Self {
+            by_binding: Arc::new(by_binding),
+        }
+    }
+
+    fn resolve_binding(&self, binding_id: &str) -> Option<&CronToolBindingContext> {
+        self.by_binding.get(binding_id)
+    }
+}
+
+#[async_trait::async_trait]
+impl nexo_core::llm_cron_dispatcher::CronToolExecutor for RuntimeCronToolExecutor {
+    fn list_tools(&self, entry: &nexo_core::cron_schedule::CronEntry) -> Vec<nexo_llm::ToolDef> {
+        self.resolve_binding(&entry.binding_id)
+            .map(|b| b.tools.to_tool_defs())
+            .unwrap_or_default()
+    }
+
+    async fn call_tool(
+        &self,
+        entry: &nexo_core::cron_schedule::CronEntry,
+        tool_name: &str,
+        args: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        let binding = self.resolve_binding(&entry.binding_id).ok_or_else(|| {
+            anyhow::anyhow!(
+                "cron tool execution has no binding context for `{}`",
+                entry.binding_id
+            )
+        })?;
+        let (_def, handler) = binding.tools.get(tool_name).ok_or_else(|| {
+            anyhow::anyhow!(
+                "cron tool `{tool_name}` is not enabled for binding `{}`",
+                entry.binding_id
+            )
+        })?;
+        // Stable per-entry session key so tools that require
+        // `ctx.session_id` (taskflow) can run in cron context.
+        const CRON_SESSION_NS: uuid::Uuid = uuid::uuid!("f7ba24d0-3f70-54e2-8cd5-43b1de1002af");
+        let session_id = uuid::Uuid::new_v5(&CRON_SESSION_NS, entry.id.as_bytes());
+        let ctx = binding.ctx.clone().with_session_id(session_id);
+        handler.call(&ctx, args).await
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -400,6 +477,7 @@ async fn main() -> Result<()> {
         Mode::SetupOne { service } => return nexo_setup::run_one(&args.config_dir, &service),
         Mode::SetupList => return nexo_setup::run_list(&args.config_dir),
         Mode::SetupDoctor => return nexo_setup::run_doctor(&args.config_dir).await,
+        Mode::SetupMigrate { apply } => return run_setup_migrate(&args.config_dir, apply),
         Mode::DoctorCapabilities { json } => {
             let statuses = nexo_setup::capabilities::evaluate_all();
             if json {
@@ -476,6 +554,10 @@ async fn main() -> Result<()> {
         Mode::PollersResume { id } => return nexo_poller::cli::resume(&id).await,
         Mode::PollersReset { id, yes } => return nexo_poller::cli::reset(&id, yes).await,
         Mode::PollersReload => return nexo_poller::cli::reload().await,
+        Mode::CronList { binding, json } => return run_cron_list(binding.as_deref(), json).await,
+        Mode::CronDrop { id } => return run_cron_drop(&id).await,
+        Mode::CronPause { id } => return run_cron_pause(&id).await,
+        Mode::CronResume { id } => return run_cron_resume(&id).await,
         Mode::ExtInstall {
             source,
             update,
@@ -1561,9 +1643,10 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Phase 79.7 — snapshot the first agent's model config before
-    // the per-agent loop consumes `cfg.agents.agents`. Used at
-    // shutdown-block bottom to wire `LlmCronDispatcher`.
+    // Phase 79.7.B — snapshot a fallback model for legacy cron rows
+    // that predate per-entry model metadata (`model_provider`,
+    // `model_name`). New rows carry their own model and do not depend
+    // on this fallback.
     // Phase 79.10 — open the durable audit store for ConfigTool
     // proposals. Always opened (gated tool may be off, but the
     // read-only `config_changes_tail` tool is always available).
@@ -1603,11 +1686,7 @@ async fn main() -> Result<()> {
     let team_store: Option<std::sync::Arc<nexo_team_store::SqliteTeamStore>> = {
         let path = nexo_project_tracker::state::nexo_state_dir().join("teams.db");
         std::fs::create_dir_all(path.parent().unwrap_or(std::path::Path::new("."))).ok();
-        match nexo_team_store::SqliteTeamStore::open(
-            path.to_str().unwrap_or("teams.db"),
-        )
-        .await
-        {
+        match nexo_team_store::SqliteTeamStore::open(path.to_str().unwrap_or("teams.db")).await {
             Ok(s) => {
                 tracing::info!(
                     path = %path.display(),
@@ -1633,9 +1712,9 @@ async fn main() -> Result<()> {
     let team_router: std::sync::Arc<
         nexo_core::team_message_router::TeamMessageRouter<nexo_broker::AnyBroker>,
     > = {
-        let r = nexo_core::team_message_router::TeamMessageRouter::new(
-            std::sync::Arc::new(broker.clone()),
-        );
+        let r = nexo_core::team_message_router::TeamMessageRouter::new(std::sync::Arc::new(
+            broker.clone(),
+        ));
         r.spawn(team_router_cancel.clone());
         r
     };
@@ -1645,6 +1724,24 @@ async fn main() -> Result<()> {
         .agents
         .first()
         .map(|a| (a.id.clone(), a.model.clone()));
+    let cron_tool_call_cfg = cfg.runtime.cron.tool_calls.clone();
+    let mut cron_tool_bindings: std::collections::HashMap<String, CronToolBindingContext> =
+        std::collections::HashMap::new();
+    let mut legacy_cron_binding_models: std::collections::HashMap<
+        String,
+        nexo_config::types::agents::ModelConfig,
+    > = std::collections::HashMap::new();
+    for a in &cfg.agents.agents {
+        legacy_cron_binding_models
+            .entry(a.id.clone())
+            .or_insert_with(|| a.model.clone());
+        for b in &a.inbound_bindings {
+            let model = b.model.clone().unwrap_or_else(|| a.model.clone());
+            let inst = b.instance.as_deref().unwrap_or("default");
+            let key = format!("{}:{inst}", b.plugin);
+            legacy_cron_binding_models.entry(key).or_insert(model);
+        }
+    }
 
     // Phase 79.10.b — bootstrap the approval correlator + reload
     // bridge for the gated `Config` tool. Always built (cheap;
@@ -1654,9 +1751,7 @@ async fn main() -> Result<()> {
     // applier writes back to; falls back to `config_dir/agents.yaml`.
     #[cfg(feature = "config-self-edit")]
     let (config_correlator, config_reload_trigger, agents_yaml_path, reload_cell) = {
-        use nexo_core::agent::approval_correlator::{
-            ApprovalCorrelator, ApprovalCorrelatorConfig,
-        };
+        use nexo_core::agent::approval_correlator::{ApprovalCorrelator, ApprovalCorrelatorConfig};
         let correlator = ApprovalCorrelator::new(ApprovalCorrelatorConfig::default());
         // Subscribe to inbound topics for approval routing. Spawned
         // in a fire-and-forget task; ends with the correlator's
@@ -1678,13 +1773,21 @@ async fn main() -> Result<()> {
             };
             tracing::info!("[config] approval subscriber on plugin.inbound.> running");
             while let Some(ev) = sub.next().await {
-                // Topic shape: plugin.inbound.<channel>.<instance>
-                let parts: Vec<&str> = ev.topic.split('.').collect();
-                if parts.len() < 4 {
+                // Topic shape: plugin.inbound.<channel>[.<instance>]
+                // No-instance topics map to account `default`.
+                let Some(rest) = ev.topic.strip_prefix("plugin.inbound.") else {
+                    continue;
+                };
+                if rest.is_empty() {
                     continue;
                 }
-                let channel = parts[2].to_string();
-                let account_id = parts[3..].join(".");
+                let (channel, account_id) = match rest.split_once('.') {
+                    Some((channel, instance)) if !channel.is_empty() && !instance.is_empty() => {
+                        (channel.to_string(), instance.to_string())
+                    }
+                    Some(_) => continue,
+                    None => (rest.to_string(), "default".to_string()),
+                };
                 let payload = &ev.payload;
                 let body = payload
                     .get("text")
@@ -1798,9 +1901,7 @@ async fn main() -> Result<()> {
         .flat_map(|a| {
             a.lsp.prewarm.iter().map(|w| match w {
                 nexo_config::types::lsp::LspLanguageWire::Rust => nexo_lsp::LspLanguage::Rust,
-                nexo_config::types::lsp::LspLanguageWire::Python => {
-                    nexo_lsp::LspLanguage::Python
-                }
+                nexo_config::types::lsp::LspLanguageWire::Python => nexo_lsp::LspLanguage::Python,
                 nexo_config::types::lsp::LspLanguageWire::TypeScript => {
                     nexo_lsp::LspLanguage::TypeScript
                 }
@@ -2025,6 +2126,31 @@ async fn main() -> Result<()> {
                 );
             }
         }
+        // Durable email follow-up control plane. Requires:
+        // - memory backend for persistent flow state
+        // - email plugin enabled on this agent (tools rely on
+        //   email_search/email_thread/email_reply at execution time).
+        if agent_cfg.plugins.iter().any(|p| p == "email") {
+            if let Some(mem) = memory.clone() {
+                tools.register(
+                    nexo_core::agent::StartFollowupTool::tool_def(),
+                    nexo_core::agent::StartFollowupTool::new(mem.clone()),
+                );
+                tools.register(
+                    nexo_core::agent::CheckFollowupTool::tool_def(),
+                    nexo_core::agent::CheckFollowupTool::new(mem.clone()),
+                );
+                tools.register(
+                    nexo_core::agent::CancelFollowupTool::tool_def(),
+                    nexo_core::agent::CancelFollowupTool::new(mem),
+                );
+            } else {
+                tracing::warn!(
+                    agent = %agent_id,
+                    "email follow-up tools disabled: memory backend unavailable"
+                );
+            }
+        }
 
         // Phase 79.1 — register EnterPlanMode + ExitPlanMode tools
         // when the binding's plan-mode policy says `enabled: true`.
@@ -2082,6 +2208,22 @@ async fn main() -> Result<()> {
             nexo_core::agent::synthetic_output_tool::SyntheticOutputTool,
         );
 
+        // Phase 77.20 — Sleep is visible only for agents/bindings that can
+        // enter proactive mode. It follows Claude Code's guidance: use Sleep
+        // instead of Bash(sleep ...) so no shell process is held while idle.
+        let proactive_enabled_somewhere = agent_cfg.proactive.enabled
+            || agent_cfg
+                .inbound_bindings
+                .iter()
+                .filter_map(|b| b.proactive.as_ref())
+                .any(|p| p.enabled);
+        if proactive_enabled_somewhere {
+            tools.register(
+                nexo_core::agent::SleepTool::tool_def(),
+                nexo_core::agent::SleepTool,
+            );
+        }
+
         // Phase 79.13 — `NotebookEdit` for `.ipynb` cell-level edits.
         // Pure-Rust round-trip via serde_json — no `jupyter` binary
         // required. Always registered (operators that don't touch
@@ -2092,12 +2234,19 @@ async fn main() -> Result<()> {
             nexo_core::agent::notebook_edit_tool::NotebookEditTool,
         );
 
-        // Phase 79.8 — `RemoteTrigger` outbound publisher. Per-agent
-        // YAML allowlist gates which destinations can receive
-        // payloads (HTTP POST with optional HMAC sign, or NATS
-        // publish). The model passes only `name` + `payload` —
-        // URLs and subjects never leak through.
-        if !agent_cfg.remote_triggers.is_empty() {
+        // Phase 79.8 — `RemoteTrigger` outbound publisher. Allowlist
+        // comes from the session effective policy: agent-level
+        // `remote_triggers` or a per-binding override when present.
+        // Register the tool when either source exposes at least one
+        // destination; the runtime call path enforces the actual
+        // matched binding's allowlist.
+        let remote_triggers_enabled_somewhere = !agent_cfg.remote_triggers.is_empty()
+            || agent_cfg
+                .inbound_bindings
+                .iter()
+                .filter_map(|b| b.remote_triggers.as_ref())
+                .any(|list| !list.is_empty());
+        if remote_triggers_enabled_somewhere {
             let sink: std::sync::Arc<dyn nexo_core::agent::remote_trigger_tool::RemoteTriggerSink> =
                 std::sync::Arc::new(nexo_core::agent::remote_trigger_tool::ReqwestSink::new(
                     broker.clone(),
@@ -2127,9 +2276,7 @@ async fn main() -> Result<()> {
         // `$NEXO_HOME/state/nexo_cron.db` so entries persist across
         // restarts. On open failure the tools stay unregistered and
         // a warn line names the path so operators can fix the FS
-        // permission. MVP caveat: the runtime task that polls
-        // `due_at` and fires LLM turns is a follow-up — entries
-        // persist but never fire until that ships.
+        // permission.
         let cron_db = nexo_project_tracker::state::nexo_state_dir().join("nexo_cron.db");
         std::fs::create_dir_all(cron_db.parent().unwrap_or(std::path::Path::new("."))).ok();
         match nexo_core::cron_schedule::SqliteCronStore::open(
@@ -2205,9 +2352,7 @@ async fn main() -> Result<()> {
                 .languages
                 .iter()
                 .map(|w| match w {
-                    nexo_config::types::lsp::LspLanguageWire::Rust => {
-                        nexo_lsp::LspLanguage::Rust
-                    }
+                    nexo_config::types::lsp::LspLanguageWire::Rust => nexo_lsp::LspLanguage::Rust,
                     nexo_config::types::lsp::LspLanguageWire::Python => {
                         nexo_lsp::LspLanguage::Python
                     }
@@ -2247,8 +2392,7 @@ async fn main() -> Result<()> {
         if agent_cfg.team.enabled {
             if let Some(store) = team_store.as_ref() {
                 let team_tools_inner = nexo_core::agent::team_tools::TeamTools::new(
-                    std::sync::Arc::clone(store)
-                        as std::sync::Arc<dyn nexo_team_store::TeamStore>,
+                    std::sync::Arc::clone(store) as std::sync::Arc<dyn nexo_team_store::TeamStore>,
                     std::sync::Arc::clone(&team_router),
                     broker.clone(),
                     agent_cfg.team.clone(),
@@ -2257,27 +2401,27 @@ async fn main() -> Result<()> {
                 );
                 tools.register(
                     nexo_core::agent::team_tools::TeamCreateTool::tool_def(),
-                    nexo_core::agent::team_tools::TeamCreateTool::new(
-                        std::sync::Arc::clone(&team_tools_inner),
-                    ),
+                    nexo_core::agent::team_tools::TeamCreateTool::new(std::sync::Arc::clone(
+                        &team_tools_inner,
+                    )),
                 );
                 tools.register(
                     nexo_core::agent::team_tools::TeamDeleteTool::tool_def(),
-                    nexo_core::agent::team_tools::TeamDeleteTool::new(
-                        std::sync::Arc::clone(&team_tools_inner),
-                    ),
+                    nexo_core::agent::team_tools::TeamDeleteTool::new(std::sync::Arc::clone(
+                        &team_tools_inner,
+                    )),
                 );
                 tools.register(
                     nexo_core::agent::team_tools::TeamSendMessageTool::tool_def(),
-                    nexo_core::agent::team_tools::TeamSendMessageTool::new(
-                        std::sync::Arc::clone(&team_tools_inner),
-                    ),
+                    nexo_core::agent::team_tools::TeamSendMessageTool::new(std::sync::Arc::clone(
+                        &team_tools_inner,
+                    )),
                 );
                 tools.register(
                     nexo_core::agent::team_tools::TeamListTool::tool_def(),
-                    nexo_core::agent::team_tools::TeamListTool::new(
-                        std::sync::Arc::clone(&team_tools_inner),
-                    ),
+                    nexo_core::agent::team_tools::TeamListTool::new(std::sync::Arc::clone(
+                        &team_tools_inner,
+                    )),
                 );
                 tools.register(
                     nexo_core::agent::team_tools::TeamStatusTool::tool_def(),
@@ -2329,16 +2473,20 @@ async fn main() -> Result<()> {
                 use nexo_core::agent::config_tool::{
                     ActorOrigin, ConfigTool, DefaultSecretRedactor,
                 };
-                use nexo_setup::config_tool_bridge::{
-                    SetupDenylistChecker, SetupYamlPatchApplier,
-                };
+                use nexo_setup::config_tool_bridge::{SetupDenylistChecker, SetupYamlPatchApplier};
                 let proposals_dir =
                     nexo_project_tracker::state::nexo_state_dir().join("config-proposals");
                 std::fs::create_dir_all(&proposals_dir).ok();
                 let binding_id = agent_cfg
                     .inbound_bindings
                     .first()
-                    .map(|b| format!("{}:{}", b.plugin, b.instance.as_deref().unwrap_or("default")))
+                    .map(|b| {
+                        format!(
+                            "{}:{}",
+                            b.plugin,
+                            b.instance.as_deref().unwrap_or("default")
+                        )
+                    })
                     .unwrap_or_else(|| agent_id.clone());
                 // For the actor origin, default to the binding's
                 // first plugin instance with empty sender (the
@@ -2382,6 +2530,19 @@ async fn main() -> Result<()> {
                         Default::default(),
                     )),
                 };
+                match cfg_tool.recover_pending_from_staging().await {
+                    Ok(n) if n > 0 => tracing::info!(
+                        agent = %agent_id,
+                        recovered = n,
+                        "[config] recovered pending staged proposals after boot"
+                    ),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(
+                        agent = %agent_id,
+                        error = %e,
+                        "[config] pending staged proposal recovery failed"
+                    ),
+                }
                 tools.register(ConfigTool::tool_def(), cfg_tool);
                 tracing::info!(
                     agent = %agent_id,
@@ -2396,7 +2557,6 @@ async fn main() -> Result<()> {
                 );
             }
         }
-
 
         // FOLLOWUPS W-2 — `web_fetch` tool. Sibling of `web_search`,
         // shares the runtime's LinkExtractor + cache + telemetry.
@@ -2758,6 +2918,87 @@ async fn main() -> Result<()> {
             )?;
         }
 
+        if cron_tool_call_cfg.enabled {
+            let mut register_cron_binding =
+                |binding_key: String,
+                 effective: Arc<nexo_core::agent::EffectiveBindingPolicy>,
+                 inbound_origin: Option<(String, String, String)>| {
+                    let filtered = tools.filtered_clone(&effective.allowed_tools);
+                    filtered.apply_dispatch_capability(&effective.dispatch_policy, false);
+                    if !cron_tool_call_cfg.allowlist.is_empty() {
+                        filtered.retain_matching(&cron_tool_call_cfg.allowlist);
+                    }
+                    let filtered = Arc::new(filtered);
+                    let mut cron_ctx = nexo_core::agent::AgentContext::new(
+                        agent_id.clone(),
+                        Arc::new(agent_cfg.clone()),
+                        broker.clone(),
+                        Arc::clone(&sessions),
+                    )
+                    .with_effective(Arc::clone(&effective))
+                    .with_effective_tools(Arc::clone(&filtered));
+                    if let Some(mem) = memory.as_ref() {
+                        cron_ctx = cron_ctx.with_memory(Arc::clone(mem));
+                    }
+                    cron_ctx = cron_ctx.with_peers(Arc::clone(&peer_directory));
+                    if let Some(bundle) = credentials.as_ref() {
+                        cron_ctx = cron_ctx.with_credentials(Arc::clone(&bundle.resolver));
+                        cron_ctx = cron_ctx.with_breakers(Arc::clone(&bundle.breakers));
+                    }
+                    if let Some(router) = web_search_router.as_ref() {
+                        cron_ctx = cron_ctx.with_web_search_router(Arc::clone(router));
+                    }
+                    cron_ctx = cron_ctx.with_link_extractor(Arc::clone(&link_extractor));
+                    if let Some(dc) = dispatch_ctx.as_ref() {
+                        cron_ctx = cron_ctx.with_dispatch(Arc::clone(dc));
+                    }
+                    if let Some((plugin, instance, sender)) = inbound_origin {
+                        cron_ctx = cron_ctx.with_inbound_origin(plugin, instance, sender);
+                    }
+                    let existing = cron_tool_bindings.insert(
+                        binding_key.clone(),
+                        CronToolBindingContext {
+                            ctx: cron_ctx,
+                            tools: filtered,
+                        },
+                    );
+                    if existing.is_some() {
+                        tracing::warn!(
+                            binding_id = %binding_key,
+                            agent = %agent_id,
+                            "cron tool context duplicated binding key; latest entry wins"
+                        );
+                    }
+                };
+
+            // Legacy/unbound fallback key used by cron rows created
+            // outside a concrete inbound binding.
+            register_cron_binding(
+                agent_id.clone(),
+                Arc::new(nexo_core::agent::EffectiveBindingPolicy::from_agent_defaults(&agent_cfg)),
+                None,
+            );
+            for (idx, binding) in agent_cfg.inbound_bindings.iter().enumerate() {
+                let instance = binding
+                    .instance
+                    .as_deref()
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or("default");
+                let binding_id = format!("{}:{instance}", binding.plugin);
+                register_cron_binding(
+                    binding_id,
+                    Arc::new(nexo_core::agent::EffectiveBindingPolicy::resolve(
+                        &agent_cfg, idx,
+                    )),
+                    Some((
+                        binding.plugin.clone(),
+                        instance.to_string(),
+                        "cron".to_string(),
+                    )),
+                );
+            }
+        }
+
         let mut behavior = LlmAgentBehavior::new(llm, Arc::clone(&tools))
             .with_hooks(Arc::clone(&hooks))
             .with_tool_policy(tool_policy_registry.for_agent(&agent_id));
@@ -2850,6 +3091,13 @@ async fn main() -> Result<()> {
                     tool_result_max_chars: (cfg_compaction.tool_result_max_pct
                         * effective_window
                         * 4.0) as usize,
+                    micro_threshold_bytes: cfg_compaction.micro.threshold_bytes,
+                    micro_summary_max_chars: cfg_compaction.micro.summary_max_chars,
+                    micro_model: if cfg_compaction.micro.provider.is_empty() {
+                        cfg_compaction.summarizer_model.clone()
+                    } else {
+                        cfg_compaction.micro.provider.clone()
+                    },
                     lock_ttl_seconds: cfg_compaction.lock_ttl_seconds,
                     summarizer_model: cfg_compaction.summarizer_model.clone(),
                 };
@@ -3099,13 +3347,12 @@ async fn main() -> Result<()> {
         let _ = cell.set(Arc::clone(&reload_coord));
     }
 
-    // Phase 79.7 runtime firing — spawn ONE cron runner per
-    // process. Polls the SQLite cron store every 5s. Dispatches
-    // through an `LlmCronDispatcher` built from the FIRST agent's
-    // model config when LLM is reachable; falls back to the
-    // logging dispatcher when no agents are configured or the LLM
-    // client build fails (so cron entries are still observable
-    // via logs even in degraded boot).
+    // Phase 79.7 runtime firing — spawn ONE cron runner per process.
+    // Polls the SQLite cron store every 5s. Dispatches through a
+    // model-routing `LlmCronDispatcher` that picks provider+model per
+    // cron entry (`model_provider`/`model_name`) and caches clients by
+    // pair. Legacy rows without model metadata use the first agent's
+    // model as fallback when present.
     let cron_runner_cancel = tokio_util::sync::CancellationToken::new();
     let cron_db_path = nexo_project_tracker::state::nexo_state_dir().join("nexo_cron.db");
     if let Some(parent) = cron_db_path.parent() {
@@ -3117,50 +3364,78 @@ async fn main() -> Result<()> {
     .await
     {
         Ok(store) => {
-            let dispatcher: std::sync::Arc<dyn nexo_core::cron_runner::CronDispatcher> =
-                match first_agent_for_cron.as_ref() {
-                    Some((agent_id, model)) => match llm_registry.build(&cfg.llm, model) {
-                        Ok(client) => {
-                            tracing::info!(
-                                provider = %model.provider,
-                                model = %model.model,
-                                "[cron] LlmCronDispatcher wired (model from agent `{}`)",
-                                agent_id
-                            );
-                            let publisher: std::sync::Arc<
-                                dyn nexo_core::llm_cron_dispatcher::ChannelPublisher,
-                            > = std::sync::Arc::new(
-                                nexo_core::llm_cron_dispatcher::BrokerChannelPublisher::new(
-                                    std::sync::Arc::new(broker.clone()),
-                                ),
-                            );
-                            std::sync::Arc::new(
-                                nexo_core::llm_cron_dispatcher::LlmCronDispatcher::new(client)
-                                    .with_publisher(publisher),
-                            )
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                error = %e,
-                                "[cron] LlmCronDispatcher build failed — falling back to logging"
-                            );
-                            std::sync::Arc::new(nexo_core::cron_runner::LoggingCronDispatcher)
-                        }
-                    },
-                    None => {
-                        tracing::warn!("[cron] no agents configured — using logging dispatcher");
-                        std::sync::Arc::new(nexo_core::cron_runner::LoggingCronDispatcher)
+            if let Some((agent_id, model)) = first_agent_for_cron.as_ref() {
+                tracing::info!(
+                    agent_id = %agent_id,
+                    provider = %model.provider,
+                    model = %model.model,
+                    "[cron] fallback model for legacy cron rows"
+                );
+            } else {
+                tracing::warn!(
+                    "[cron] no fallback model configured (legacy cron rows without model metadata will fail)"
+                );
+            }
+            let fallback_model = first_agent_for_cron.as_ref().map(|(_, m)| m.clone());
+            let dispatcher: std::sync::Arc<dyn nexo_core::cron_runner::CronDispatcher> = {
+                let publisher: std::sync::Arc<
+                    dyn nexo_core::llm_cron_dispatcher::ChannelPublisher,
+                > = std::sync::Arc::new(
+                    nexo_core::llm_cron_dispatcher::BrokerChannelPublisher::new(
+                        std::sync::Arc::new(broker.clone()),
+                    ),
+                );
+                let mut d = nexo_core::llm_cron_dispatcher::LlmCronDispatcher::from_registry(
+                    Arc::clone(&llm_registry),
+                    cfg.llm.clone(),
+                    legacy_cron_binding_models.clone(),
+                    fallback_model,
+                )
+                .with_publisher(publisher);
+                if cron_tool_call_cfg.enabled {
+                    if cron_tool_bindings.is_empty() {
+                        tracing::warn!(
+                            "[cron] runtime.cron.tool_calls.enabled=true but no cron tool contexts were built; tool-call execution remains off"
+                        );
+                    } else {
+                        d = d.with_tool_executor(
+                            std::sync::Arc::new(RuntimeCronToolExecutor::new(
+                                cron_tool_bindings.clone(),
+                            )),
+                            cron_tool_call_cfg.max_iterations,
+                        );
+                        tracing::info!(
+                            bindings = cron_tool_bindings.len(),
+                            max_iterations = cron_tool_call_cfg.max_iterations,
+                            allowlist = ?cron_tool_call_cfg.allowlist,
+                            "[cron] tool-call execution enabled"
+                        );
                     }
-                };
-            let runner = std::sync::Arc::new(nexo_core::cron_runner::CronRunner::new(
-                std::sync::Arc::new(store)
-                    as std::sync::Arc<dyn nexo_core::cron_schedule::CronStore>,
-                dispatcher,
-            ));
+                }
+                std::sync::Arc::new(d)
+            };
+            let retry_cfg = &cfg.runtime.cron.one_shot_retry;
+            let base_backoff_secs = retry_cfg.base_backoff_secs.max(1);
+            let one_shot_retry_policy = nexo_core::cron_runner::OneShotRetryPolicy {
+                max_retries: retry_cfg.max_retries,
+                base_backoff_secs,
+                max_backoff_secs: retry_cfg.max_backoff_secs.max(base_backoff_secs),
+            };
+            let runner = std::sync::Arc::new(
+                nexo_core::cron_runner::CronRunner::new(
+                    std::sync::Arc::new(store)
+                        as std::sync::Arc<dyn nexo_core::cron_schedule::CronStore>,
+                    dispatcher,
+                )
+                .with_one_shot_retry_policy(one_shot_retry_policy),
+            );
             let cancel_for_runner = cron_runner_cancel.clone();
             tokio::spawn(async move { runner.run(cancel_for_runner).await });
             tracing::info!(
                 path = %cron_db_path.display(),
+                one_shot_max_retries = one_shot_retry_policy.max_retries,
+                one_shot_base_backoff_secs = one_shot_retry_policy.base_backoff_secs,
+                one_shot_max_backoff_secs = one_shot_retry_policy.max_backoff_secs,
                 "[cron] runner spawned"
             );
         }
@@ -3737,6 +4012,7 @@ async fn boot_dispatch_ctx_if_enabled(
             Ok(outcomes) => {
                 let mut lost = 0usize;
                 let mut requeued = 0usize;
+                let mut sleeping = 0usize;
                 let mut recorded = 0usize;
                 let mut skipped = 0usize;
                 for outcome in &outcomes {
@@ -3775,6 +4051,7 @@ async fn boot_dispatch_ctx_if_enabled(
                             }
                         }
                         nexo_agent_registry::ReattachOutcome::Requeued(_) => requeued += 1,
+                        nexo_agent_registry::ReattachOutcome::Sleeping(_) => sleeping += 1,
                         nexo_agent_registry::ReattachOutcome::Recorded(_) => recorded += 1,
                         nexo_agent_registry::ReattachOutcome::Skipped { .. } => skipped += 1,
                         nexo_agent_registry::ReattachOutcome::Resume(_) => {
@@ -3785,6 +4062,7 @@ async fn boot_dispatch_ctx_if_enabled(
                 tracing::info!(
                     lost,
                     requeued,
+                    sleeping,
                     recorded,
                     skipped,
                     "agent registry reattach swept previous run",
@@ -3850,6 +4128,19 @@ async fn boot_dispatch_ctx_if_enabled(
         workspace = %tracker_root.display(),
         "dispatch tools wired end-to-end (NEXO_DRIVER_INTEGRATED=1)"
     );
+
+    // Phase 77.16 — after reattach restores paused rows from sqlite,
+    // re-arm AskUserQuestion in-memory timeout tasks so pending
+    // questions still expire/cancel after daemon restart.
+    let rearmed = nexo_dispatch_tools::rearm_ask_user_timeouts(
+        orchestrator.clone(),
+        registry.clone(),
+        Some(hook_dispatcher.clone()),
+    )
+    .await;
+    if rearmed > 0 {
+        tracing::info!(rearmed, "ask_user_question timeouts re-armed after boot");
+    }
 
     Some(Arc::new(
         nexo_core::agent::dispatch_handlers::DispatchToolContext {
@@ -4625,6 +4916,119 @@ async fn run_pair_seed(
     Ok(())
 }
 
+fn cron_db_path() -> std::path::PathBuf {
+    nexo_project_tracker::state::nexo_state_dir().join("nexo_cron.db")
+}
+
+async fn open_cron_store_for_cli() -> Result<nexo_core::cron_schedule::SqliteCronStore> {
+    let path = cron_db_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    let path_s = path.to_string_lossy().into_owned();
+    nexo_core::cron_schedule::SqliteCronStore::open(&path_s)
+        .await
+        .with_context(|| format!("failed to open cron db at {}", path.display()))
+}
+
+fn format_unix_utc(ts: i64) -> String {
+    chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0)
+        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+        .unwrap_or_else(|| ts.to_string())
+}
+
+async fn run_cron_list(binding: Option<&str>, json: bool) -> Result<()> {
+    use nexo_core::cron_schedule::CronStore;
+
+    let store = open_cron_store_for_cli().await?;
+    let entries = match binding {
+        Some(b) => store.list_by_binding(b).await?,
+        None => store.list_all().await?,
+    };
+
+    if json {
+        let out = serde_json::json!({
+            "binding": binding,
+            "count": entries.len(),
+            "entries": entries,
+        });
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
+    }
+
+    if entries.is_empty() {
+        match binding {
+            Some(b) => println!("(no cron entries for binding `{b}`)"),
+            None => println!("(no cron entries)"),
+        }
+        return Ok(());
+    }
+
+    println!(
+        "{} cron entr{}{}",
+        entries.len(),
+        if entries.len() == 1 { "y" } else { "ies" },
+        binding
+            .map(|b| format!(" for binding `{b}`"))
+            .unwrap_or_default()
+    );
+
+    for e in entries {
+        let mode = if e.recurring { "recurring" } else { "one-shot" };
+        let status = if e.paused { "paused" } else { "active" };
+        println!("- {} [{} | {}] {}", e.id, mode, status, e.cron_expr);
+        println!("  binding:     {}", e.binding_id);
+        println!("  next_fire:   {}", format_unix_utc(e.next_fire_at));
+        if let Some(last) = e.last_fired_at {
+            println!("  last_fired:  {}", format_unix_utc(last));
+        }
+        if e.failure_count > 0 {
+            println!("  failures:    {}", e.failure_count);
+        }
+        if let Some(ch) = e.channel.as_deref() {
+            println!("  channel:     {ch}");
+        }
+        if let Some(to) = e.recipient.as_deref() {
+            println!("  recipient:   {to}");
+        }
+        if let (Some(provider), Some(model)) =
+            (e.model_provider.as_deref(), e.model_name.as_deref())
+        {
+            println!("  model:       {provider}/{model}");
+        }
+        let prompt = e.prompt.replace('\n', " ");
+        println!("  prompt:      {}", truncate(&prompt, 120));
+    }
+    Ok(())
+}
+
+async fn run_cron_drop(id: &str) -> Result<()> {
+    use nexo_core::cron_schedule::CronStore;
+
+    let store = open_cron_store_for_cli().await?;
+    store.delete(id).await?;
+    println!("dropped cron entry {id}");
+    Ok(())
+}
+
+async fn run_cron_pause(id: &str) -> Result<()> {
+    use nexo_core::cron_schedule::CronStore;
+
+    let store = open_cron_store_for_cli().await?;
+    store.set_paused(id, true).await?;
+    println!("paused cron entry {id}");
+    Ok(())
+}
+
+async fn run_cron_resume(id: &str) -> Result<()> {
+    use nexo_core::cron_schedule::CronStore;
+
+    let store = open_cron_store_for_cli().await?;
+    store.set_paused(id, false).await?;
+    println!("resumed cron entry {id}");
+    Ok(())
+}
+
 /// Route a `nexo pair ...` invocation. Returns `Some(Mode)` for any
 /// recognised subcommand (including `help` and the bare `pair` form),
 /// `None` for unknown so the main dispatcher can show the global
@@ -4723,6 +5127,76 @@ fn route_pair_subcommand(positional: &[String], has_json_flag: bool) -> Option<M
     })
 }
 
+/// Route a `nexo cron ...` invocation. Handles kv flags without
+/// letting their values shift positional arity.
+fn route_cron_subcommand(positional: &[String], has_json_flag: bool) -> Option<Mode> {
+    let known_kv = ["--binding"];
+    let mut structural: Vec<&str> = Vec::new();
+    let mut i = 0;
+    while i < positional.len() {
+        let a = positional[i].as_str();
+        if known_kv.contains(&a) {
+            i += 2; // skip flag + value
+            continue;
+        }
+        if a.starts_with("--") {
+            i += 1;
+            continue;
+        }
+        if known_kv.iter().any(|f| a.starts_with(&format!("{f}="))) {
+            i += 1;
+            continue;
+        }
+        structural.push(a);
+        i += 1;
+    }
+
+    let mut iter = structural.into_iter();
+    let cmd = iter.next()?;
+    if cmd != "cron" {
+        return None;
+    }
+
+    Some(match iter.next() {
+        Some("list") => Mode::CronList {
+            binding: parse_kv_flag(positional, "--binding")
+                .or_else(|| iter.next().map(str::to_string)),
+            json: has_json_flag,
+        },
+        Some("drop") => match iter.next() {
+            Some(id) => Mode::CronDrop { id: id.to_string() },
+            None => {
+                eprintln!("error: `cron drop` requires an entry id");
+                Mode::Help
+            }
+        },
+        Some("pause") => match iter.next() {
+            Some(id) => Mode::CronPause { id: id.to_string() },
+            None => {
+                eprintln!("error: `cron pause` requires an entry id");
+                Mode::Help
+            }
+        },
+        Some("resume") => match iter.next() {
+            Some(id) => Mode::CronResume { id: id.to_string() },
+            None => {
+                eprintln!("error: `cron resume` requires an entry id");
+                Mode::Help
+            }
+        },
+        None | Some("help") => {
+            eprintln!(
+                "error: `cron` requires a subcommand (list|drop <id>|pause <id>|resume <id>)"
+            );
+            Mode::Help
+        }
+        Some(other) => {
+            eprintln!("error: unknown cron subcommand `{other}`");
+            Mode::Help
+        }
+    })
+}
+
 /// Pull a `--name value` pair out of a flat positional list. Used by
 /// the pair CLI and any other subcommand that accepts simple kv args.
 fn parse_kv_flag(positional: &[String], name: &str) -> Option<String> {
@@ -4811,6 +5285,12 @@ fn parse_args() -> CliArgs {
         }
     }
 
+    if pos_no_flags.first().map(|s| s.as_str()) == Some("cron") {
+        if let Some(mode) = route_cron_subcommand(&positional, has_json_flag) {
+            return CliArgs { config_dir, mode };
+        }
+    }
+
     let mode = match pos_no_flags.as_slice() {
         [] => Mode::Run,
         // Phase 27.1 — `nexo version` is the verbose form (always
@@ -4868,6 +5348,9 @@ fn parse_args() -> CliArgs {
         [cmd] if cmd == "setup" => Mode::SetupInteractive,
         [cmd, sub] if cmd == "setup" && sub == "list" => Mode::SetupList,
         [cmd, sub] if cmd == "setup" && sub == "doctor" => Mode::SetupDoctor,
+        [cmd, sub] if cmd == "setup" && sub == "migrate" => Mode::SetupMigrate {
+            apply: positional.iter().any(|a| a == "--apply"),
+        },
         [cmd, sub] if cmd == "doctor" && sub == "capabilities" => Mode::DoctorCapabilities {
             json: has_json_flag,
         },
@@ -4995,6 +5478,7 @@ fn print_usage() {
         "  agent setup list                       Print every credential service the wizard knows"
     );
     println!("  agent setup doctor                     Audit configured secrets and report what's missing");
+    println!("  agent setup migrate [--dry-run|--apply] Run versioned YAML config migrations");
     println!(
         "  agent setup telegram-link [<agent>]    Pair an existing Telegram instance to an agent"
     );
@@ -5009,6 +5493,48 @@ fn print_usage() {
     println!(
         "  agent pollers reload                   Re-read config/pollers.yaml without restart"
     );
+    println!("  agent cron list [--json] [--binding <id>]  List scheduled cron entries");
+    println!("  agent cron drop <id>                   Delete a scheduled cron entry");
+    println!("  agent cron pause <id>                  Pause a scheduled cron entry");
+    println!("  agent cron resume <id>                 Resume a paused cron entry");
+}
+
+fn run_setup_migrate(config_dir: &std::path::Path, apply: bool) -> Result<()> {
+    let report = nexo_config::migrations::migrate_config_dir(config_dir, apply)?;
+    let mode = if apply { "apply" } else { "dry-run" };
+    println!(
+        "setup migrate ({mode}) — latest schema version {}",
+        nexo_config::migrations::LATEST_SCHEMA_VERSION
+    );
+    if report.files.is_empty() {
+        println!("no config files found under {}", config_dir.display());
+        return Ok(());
+    }
+    for f in &report.files {
+        let marker = if f.changed { "*" } else { "=" };
+        println!(
+            "{} {}: v{} -> v{}{}",
+            marker,
+            f.file,
+            f.from_version,
+            f.to_version,
+            if f.changed && !apply {
+                " (pending)"
+            } else {
+                ""
+            }
+        );
+    }
+    println!(
+        "{} file(s) {}",
+        report.changed_count(),
+        if apply {
+            "migrated"
+        } else {
+            "with pending changes"
+        }
+    );
+    Ok(())
 }
 
 enum ExtCmd {
@@ -7756,6 +8282,27 @@ fn admin_mime_for(path: &str) -> &'static str {
     }
 }
 
+fn has_restricted_delegate_allowlist(patterns: &[String]) -> bool {
+    !patterns.is_empty() && !patterns.iter().any(|p| p.trim() == "*")
+}
+
+fn mcp_server_has_auth(cfg: &nexo_config::types::mcp_server::McpServerConfig) -> bool {
+    if cfg.auth_token_env.is_some() {
+        return true;
+    }
+    let Some(http) = cfg.http.as_ref() else {
+        return false;
+    };
+    if http.auth_token_env.is_some() {
+        return true;
+    }
+    match http.auth.as_ref() {
+        Some(nexo_config::types::mcp_server::AuthConfigYaml::None) => false,
+        Some(_) => true,
+        None => false,
+    }
+}
+
 async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
     use nexo_core::agent::self_report::WhoAmITool;
     use nexo_core::agent::tool_registry::ToolRegistry;
@@ -7783,52 +8330,98 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
     let primary = boot.agents.agents.first().ok_or_else(|| {
         anyhow::anyhow!("agents.yaml has no agents; cannot derive identity for mcp-server")
     })?;
-    // AgentConfig lacks `Clone`; build a synthetic copy with the fields the
-    // mcp-server context actually uses (id, model, workspace).
-    let agent_cfg = Arc::new(nexo_config::types::agents::AgentConfig {
-        id: primary.id.clone(),
-        model: nexo_config::types::agents::ModelConfig {
-            provider: primary.model.provider.clone(),
-            model: primary.model.model.clone(),
+    // Keep mcp-server behavior aligned with the same per-agent policy surface
+    // used by `nexo run` (web_search/link/team/lsp/etc.).
+    let agent_cfg = Arc::new(primary.clone());
+    // Prefer broker.yaml when available so outbound tools (RemoteTrigger,
+    // delegate bridge) share the same transport as the main runtime.
+    // Fall back to local broker for tolerant bootstrap.
+    let broker = match nexo_config::load_optional::<nexo_config::BrokerConfig>(
+        config_dir,
+        "broker.yaml",
+    ) {
+        Ok(Some(bcfg)) => match AnyBroker::from_config(&bcfg.broker).await {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "mcp-server: broker.yaml present but broker init failed; falling back to local broker"
+                );
+                AnyBroker::local()
+            }
         },
-        plugins: primary.plugins.clone(),
-        heartbeat: nexo_config::types::agents::HeartbeatConfig::default(),
-        config: nexo_config::types::agents::AgentRuntimeConfig::default(),
-        system_prompt: primary.system_prompt.clone(),
-        workspace: primary.workspace.clone(),
-        skills: primary.skills.clone(),
-        skills_dir: primary.skills_dir.clone(),
-        skill_overrides: Default::default(),
-        transcripts_dir: primary.transcripts_dir.clone(),
-        dreaming: primary.dreaming.clone(),
-        workspace_git: Default::default(),
-        tool_rate_limits: None,
-        tool_args_validation: None,
-        extra_docs: primary.extra_docs.clone(),
-        inbound_bindings: primary.inbound_bindings.clone(),
-        allowed_tools: primary.allowed_tools.clone(),
-        sender_rate_limit: primary.sender_rate_limit.clone(),
-        allowed_delegates: primary.allowed_delegates.clone(),
-        accept_delegates_from: primary.accept_delegates_from.clone(),
-        description: primary.description.clone(),
-        google_auth: primary.google_auth.clone(),
-        outbound_allowlist: primary.outbound_allowlist.clone(),
-        credentials: primary.credentials.clone(),
-        link_understanding: serde_json::Value::Null,
-        web_search: serde_json::Value::Null,
-        pairing_policy: serde_json::Value::Null,
-        language: primary.language.clone(),
-        context_optimization: None,
-        dispatch_policy: Default::default(),
-        plan_mode: Default::default(),
-        remote_triggers: Vec::new(),
-        lsp: nexo_config::types::lsp::LspPolicy::default(),
-            config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
-            team: nexo_config::types::team::TeamPolicy::default(),
-    });
-    let broker = AnyBroker::local();
+        Ok(None) => AnyBroker::local(),
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "mcp-server: failed to parse broker.yaml; falling back to local broker"
+            );
+            AnyBroker::local()
+        }
+    };
     let sessions = Arc::new(SessionManager::new(std::time::Duration::from_secs(300), 20));
-    let ctx = AgentContext::new(primary.id.clone(), agent_cfg, broker.clone(), sessions);
+    let mut ctx = AgentContext::new(primary.id.clone(), agent_cfg, broker.clone(), sessions);
+    // Mirror the daemon path: always carry a shared LinkExtractor so
+    // web_fetch/web_search-expand can execute instead of hard-failing.
+    let link_extractor = Arc::new(nexo_core::link_understanding::LinkExtractor::new(
+        &nexo_core::link_understanding::LinkUnderstandingConfig::default(),
+    ));
+    ctx = ctx.with_link_extractor(Arc::clone(&link_extractor));
+
+    // Optional delegate bridge for mcp-server mode. Enabled only when the
+    // operator explicitly overrides denied-by-policy tools and requests
+    // `delegate` in `expose_tools`.
+    let delegate_override_requested = server_cfg.expose_tools.iter().any(|n| n == "delegate")
+        && server_cfg
+            .expose_denied_tools
+            .iter()
+            .any(|n| n == "delegate");
+    let mut delegate_override_ready = false;
+    if delegate_override_requested {
+        let router = Arc::new(nexo_core::agent::AgentRouter::new());
+        let topic = nexo_core::agent::routing::route_topic(&primary.id);
+        match broker.subscribe(&topic).await {
+            Ok(mut sub) => {
+                let router_for_sub = Arc::clone(&router);
+                let agent_id = primary.id.clone();
+                tokio::spawn(async move {
+                    while let Some(ev) = sub.next().await {
+                        let msg: nexo_core::agent::AgentMessage = match serde_json::from_value(
+                            ev.payload,
+                        ) {
+                            Ok(m) => m,
+                            Err(err) => {
+                                tracing::debug!(
+                                    error = %err,
+                                    "mcp-server delegate bridge: dropping malformed route payload"
+                                );
+                                continue;
+                            }
+                        };
+                        if msg.to != agent_id {
+                            continue;
+                        }
+                        if let nexo_core::agent::AgentPayload::Result { output, .. } = msg.payload {
+                            let _ = router_for_sub.resolve(msg.correlation_id, output);
+                        }
+                    }
+                });
+                ctx = ctx.with_router(router);
+                delegate_override_ready = true;
+                tracing::info!(
+                    topic = %topic,
+                    "mcp-server delegate bridge subscribed"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    topic = %topic,
+                    "mcp-server delegate bridge unavailable; delegate will stay denied"
+                );
+            }
+        }
+    }
 
     let workspace_dir = if primary.workspace.is_empty() {
         None
@@ -7907,80 +8500,551 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         registry.register(SessionLogsTool::tool_def(), SessionLogsTool::new());
     }
 
-    // Phase 76.16 — register additional Phase 79 tools according to
-    // `mcp_server.expose_tools`. Empty list = legacy behaviour (5 tools).
-    for tool_name in &server_cfg.expose_tools {
-        use nexo_core::agent::{
-            notebook_edit_tool::NotebookEditTool,
-            plan_mode_tool::{EnterPlanModeTool, ExitPlanModeTool},
-            remote_trigger_tool::{RemoteTriggerTool, ReqwestSink},
-            synthetic_output_tool::SyntheticOutputTool,
-            todo_write_tool::TodoWriteTool,
-            tool_search_tool::ToolSearchTool,
+    // Phase 79.M — boot dispatcher. The runtime tool registry is
+    // populated by walking `EXPOSABLE_TOOLS`, filtering by the
+    // operator's `mcp_server.expose_tools` allowlist, and calling
+    // each per-tool boot helper with whatever handles this server
+    // process happens to carry. Missing handles → `SkippedInfraMissing`
+    // with a clear label so the operator knows what to enable.
+    {
+        use nexo_config::types::mcp_exposable::{lookup_exposable, EXPOSABLE_TOOLS};
+        use nexo_core::agent::mcp_server_bridge::{
+            boot_exposable, telemetry as bridge_telem, BootResult, McpServerBootContext,
         };
-        match tool_name.as_str() {
-            "EnterPlanMode" => registry.register(
-                EnterPlanModeTool::tool_def(),
-                EnterPlanModeTool,
-            ),
-            "ExitPlanMode" => registry.register(
-                ExitPlanModeTool::tool_def(),
-                ExitPlanModeTool,
-            ),
-            "ToolSearch" => registry.register(
-                ToolSearchTool::tool_def(),
-                ToolSearchTool::new(),
-            ),
-            "TodoWrite" => registry.register(
-                TodoWriteTool::tool_def(),
-                TodoWriteTool,
-            ),
-            "SyntheticOutput" => registry.register(
-                SyntheticOutputTool::tool_def(),
-                SyntheticOutputTool,
-            ),
-            "NotebookEdit" => registry.register(
-                NotebookEditTool::tool_def(),
-                NotebookEditTool,
-            ),
-            "RemoteTrigger" => {
-                let sink = Arc::new(ReqwestSink::new(broker.clone()));
-                registry.register(
-                    RemoteTriggerTool::tool_def(),
-                    RemoteTriggerTool::new(sink),
-                );
+        use std::collections::HashSet;
+
+        // Best-effort handles. Each `Option<_>` left as `None` causes the
+        // dependent tool's boot helper to return `SkippedInfraMissing`
+        // with a labelled handle name.
+        let cron_store: Option<Arc<dyn nexo_core::cron_schedule::CronStore>> = {
+            // mcp-server mode keeps cron storage in `<state_dir>/cron.db`
+            // when the operator listed any `cron_*` entry in expose_tools.
+            // Phase 79.M.1 ships a tolerant boot — if we can't open the
+            // file the cron tools just fall back to SkippedInfraMissing.
+            let needs_cron = server_cfg
+                .expose_tools
+                .iter()
+                .any(|n| n.starts_with("cron_"));
+            if needs_cron {
+                match nexo_core::cron_schedule::SqliteCronStore::open("./data/cron.db").await {
+                    Ok(s) => Some(Arc::new(s) as Arc<dyn nexo_core::cron_schedule::CronStore>),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "mcp-server: failed to open cron.db; cron_* tools disabled");
+                        None
+                    }
+                }
+            } else {
+                None
             }
-            "Config" | "Lsp" => {
-                tracing::warn!(
-                    tool = tool_name.as_str(),
-                    "expose_tools: '{}' requires additional infrastructure \
-                     not yet available in mcp-server mode — skipping. \
-                     See FOLLOWUPS.md for wiring details.",
-                    tool_name
-                );
+        };
+
+        let config_changes_store: Option<
+            Arc<dyn nexo_core::config_changes_store::ConfigChangesStore>,
+        > = {
+            if server_cfg
+                .expose_tools
+                .iter()
+                .any(|n| n == "config_changes_tail")
+            {
+                match nexo_core::config_changes_store::SqliteConfigChangesStore::open(
+                    "./data/config_changes.db",
+                )
+                .await
+                {
+                    Ok(s) => {
+                        Some(Arc::new(s)
+                            as Arc<
+                                dyn nexo_core::config_changes_store::ConfigChangesStore,
+                            >)
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "mcp-server: failed to open config_changes.db");
+                        None
+                    }
+                }
+            } else {
+                None
             }
-            // Phase 79.6 — Team* tools require a `SqliteTeamStore`
-            // + `TeamMessageRouter` boot here; deferred to 79.6.b
-            // (the dedicated MCP exposure parity sweep). Until
-            // then, mcp-server clients can use other tools while
-            // the model-side runtime (`nexo run`) exposes the
-            // full team surface.
-            "TeamCreate" | "TeamDelete" | "TeamSendMessage" | "TeamList" | "TeamStatus" => {
-                tracing::warn!(
-                    tool = tool_name.as_str(),
-                    "expose_tools: '{}' requires team store + router \
-                     boot in mcp-server mode — skipping. Phase 79.6.b \
-                     wires the full surface.",
-                    tool_name
-                );
+        };
+
+        // web_search_router boot — env-driven provider discovery
+        // (mirrors the `nexo run` startup at src/main.rs:1259-1281).
+        let web_search_router: Option<Arc<nexo_web_search::WebSearchRouter>> = {
+            if server_cfg.expose_tools.iter().any(|n| n == "web_search") {
+                let mut providers: Vec<Arc<dyn nexo_web_search::WebSearchProvider>> = Vec::new();
+                if let Ok(k) = std::env::var("BRAVE_SEARCH_API_KEY") {
+                    providers.push(Arc::new(
+                        nexo_web_search::providers::brave::BraveProvider::new(k, 8000),
+                    ));
+                }
+                if let Ok(k) = std::env::var("TAVILY_API_KEY") {
+                    providers.push(Arc::new(
+                        nexo_web_search::providers::tavily::TavilyProvider::new(k, 10000),
+                    ));
+                }
+                providers.push(Arc::new(
+                    nexo_web_search::providers::duckduckgo::DuckDuckGoProvider::new(12000),
+                ));
+                Some(Arc::new(nexo_web_search::WebSearchRouter::new(
+                    providers, None,
+                )))
+            } else {
+                None
             }
-            unknown => {
-                tracing::warn!(
-                    tool = unknown,
-                    "expose_tools: unknown tool name '{}' — skipping",
-                    unknown
-                );
+        };
+        if let Some(router) = web_search_router.as_ref() {
+            ctx = ctx.with_web_search_router(Arc::clone(router));
+        }
+
+        // mcp_runtime boot — when router tools are requested, build a
+        // session runtime from mcp.yaml if present/enabled. Fallback to an
+        // empty runtime so router tools still register and return a stable
+        // "no servers connected" surface instead of hard-missing infra.
+        let mcp_runtime: Option<Arc<nexo_mcp::SessionMcpRuntime>> = {
+            let needs_mcp_router = server_cfg
+                .expose_tools
+                .iter()
+                .any(|n| n == "ListMcpResources" || n == "ReadMcpResource");
+            if !needs_mcp_router {
+                None
+            } else {
+                let fallback_empty = || {
+                    Arc::new(nexo_mcp::SessionMcpRuntime::new(
+                        uuid::Uuid::new_v4(),
+                        "mcp-server-empty".to_string(),
+                        std::collections::HashMap::<String, Arc<dyn nexo_mcp::McpClient>>::new(),
+                    ))
+                };
+                match nexo_config::load_optional::<nexo_config::types::McpConfigFile>(
+                    config_dir, "mcp.yaml",
+                ) {
+                    Ok(Some(mcp_file)) if mcp_file.mcp.enabled => {
+                        if let Err(e) = mcp_file.mcp.validate() {
+                            tracing::warn!(
+                                error = %e,
+                                "mcp-server: mcp.yaml validation failed; mcp router tools will expose empty runtime"
+                            );
+                            Some(fallback_empty())
+                        } else {
+                            let rt_cfg = nexo_mcp::McpRuntimeConfig::from_yaml(&mcp_file.mcp);
+                            let mgr = nexo_mcp::McpRuntimeManager::new(rt_cfg);
+                            Some(mgr.get_or_create(uuid::Uuid::new_v4()).await)
+                        }
+                    }
+                    Ok(Some(_)) => {
+                        tracing::warn!(
+                            "mcp-server: mcp.yaml has `mcp.enabled: false`; mcp router tools will expose empty runtime"
+                        );
+                        Some(fallback_empty())
+                    }
+                    Ok(None) => {
+                        tracing::warn!(
+                            "mcp-server: config/mcp.yaml not found; mcp router tools will expose empty runtime"
+                        );
+                        Some(fallback_empty())
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "mcp-server: failed to read mcp.yaml; mcp router tools will expose empty runtime"
+                        );
+                        Some(fallback_empty())
+                    }
+                }
             }
+        };
+        if let Some(rt) = mcp_runtime.as_ref() {
+            ctx = ctx.with_mcp(Arc::clone(rt));
+        }
+
+        // memory_git boot — only when the operator listed
+        // `forge_memory_checkpoint` or `memory_history`. Mirrors the
+        // `nexo run` setup at src/main.rs:2471-2499 (workspace_git.enabled).
+        let memory_git: Option<Arc<nexo_core::agent::MemoryGitRepo>> = {
+            let needs_git = server_cfg
+                .expose_tools
+                .iter()
+                .any(|n| n == "forge_memory_checkpoint" || n == "memory_history");
+            if needs_git && !primary.workspace.is_empty() {
+                let ws = std::path::PathBuf::from(&primary.workspace);
+                let author_name = if primary.workspace_git.author_name.is_empty() {
+                    "nexo-mcp".to_string()
+                } else {
+                    primary.workspace_git.author_name.clone()
+                };
+                let author_email = if primary.workspace_git.author_email.is_empty() {
+                    "nexo-mcp@local".to_string()
+                } else {
+                    primary.workspace_git.author_email.clone()
+                };
+                match nexo_core::agent::MemoryGitRepo::open_or_init(&ws, author_name, author_email)
+                {
+                    Ok(g) => Some(Arc::new(g)),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "mcp-server: workspace-git open failed; memory tools disabled");
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        };
+
+        // taskflow_manager boot — open the taskflow store when
+        // `taskflow` is in expose_tools.
+        let taskflow_manager: Option<Arc<nexo_taskflow::FlowManager>> = {
+            if server_cfg.expose_tools.iter().any(|n| n == "taskflow") {
+                match open_flow_manager().await {
+                    Ok(m) => Some(Arc::new(m)),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "mcp-server: taskflow store open failed; taskflow tool disabled");
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        };
+
+        // lsp_manager boot — only when `Lsp` is in expose_tools.
+        // Mirrors the `nexo run` startup wiring (Phase 79.5).
+        let lsp_manager: Option<Arc<nexo_lsp::LspManager>> = {
+            if server_cfg.expose_tools.iter().any(|n| n == "Lsp") {
+                Some(nexo_lsp::LspManager::new(nexo_lsp::SessionConfig::default()))
+            } else {
+                None
+            }
+        };
+
+        // team_store boot — when any Team* tool is requested
+        // (read-only TeamList/Status or mutating Create/Delete/Send).
+        let team_store_handle: Option<Arc<dyn nexo_team_store::TeamStore>> = {
+            let needs_team = server_cfg
+                .expose_tools
+                .iter()
+                .any(|n| n.starts_with("Team"));
+            if needs_team {
+                match nexo_team_store::SqliteTeamStore::open("./data/teams.db").await {
+                    Ok(s) => Some(Arc::new(s) as Arc<dyn nexo_team_store::TeamStore>),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "mcp-server: teams.db open failed; Team* read-only tools disabled");
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        };
+
+        // Build boot context. AgentContext already carries policy +
+        // optional handles (link extractor, MCP runtime) for call-time use.
+        let agent_ctx = Arc::new(ctx.clone());
+        let boot_ctx =
+            McpServerBootContext::builder("mcp-server", broker.clone(), agent_ctx).build();
+        let mut boot_ctx_enriched = boot_ctx;
+        boot_ctx_enriched.cron_store = cron_store;
+        boot_ctx_enriched.mcp_runtime = mcp_runtime;
+        boot_ctx_enriched.config_changes_store = config_changes_store;
+        boot_ctx_enriched.web_search_router = web_search_router;
+        boot_ctx_enriched.link_extractor = Some(link_extractor);
+        boot_ctx_enriched.long_term_memory = long_term_memory.clone();
+        boot_ctx_enriched.memory_git = memory_git;
+        boot_ctx_enriched.taskflow_manager = taskflow_manager;
+        boot_ctx_enriched.lsp_manager = lsp_manager;
+        boot_ctx_enriched.team_store = team_store_handle;
+
+        // Phase 79.M.c.full — Config self-edit handles. Compiled
+        // out when `config-self-edit` is off so the default build
+        // carries no overhead.
+        #[cfg(feature = "config-self-edit")]
+        if server_cfg.expose_tools.iter().any(|n| n == "Config") {
+            use nexo_core::agent::approval_correlator::{
+                ApprovalCorrelator, ApprovalCorrelatorConfig,
+            };
+            use nexo_core::agent::config_tool::{DefaultSecretRedactor, ReloadTrigger};
+            use nexo_setup::config_tool_bridge::{SetupDenylistChecker, SetupYamlPatchApplier};
+            use std::sync::Arc;
+
+            // Synthetic ReloadTrigger — mcp-server doesn't run a
+            // ConfigReloadCoordinator; operator-side `nexo run`
+            // picks up YAML changes via Phase 18 file watcher.
+            // Returning Ok keeps the apply-path success contract
+            // (the YAML write succeeded; reload is async on the
+            // other process).
+            struct McpServerReloadTrigger;
+            #[async_trait::async_trait]
+            impl ReloadTrigger for McpServerReloadTrigger {
+                async fn reload(&self) -> Result<(), String> {
+                    tracing::info!(
+                        "[config] mcp-server: YAML written successfully. Reload deferred — \
+                         operator-side `nexo run` (or restart) will pick up the change \
+                         via Phase 18 hot-reload."
+                    );
+                    Ok(())
+                }
+            }
+
+            let agents_yaml = config_dir.join("agents.yaml");
+            let binding_id = format!("mcp:{}", primary.id);
+            let applier: Arc<dyn nexo_core::agent::config_tool::YamlPatchApplier> =
+                Arc::new(SetupYamlPatchApplier::new(agents_yaml, binding_id));
+            let denylist: Arc<dyn nexo_core::agent::config_tool::DenylistChecker> =
+                Arc::new(SetupDenylistChecker);
+            let redactor: Arc<dyn nexo_core::agent::config_tool::SecretRedactor> =
+                Arc::new(DefaultSecretRedactor);
+            let correlator = ApprovalCorrelator::new(ApprovalCorrelatorConfig::default());
+            let reload: Arc<dyn ReloadTrigger> = Arc::new(McpServerReloadTrigger);
+
+            let proposals_dir = std::path::PathBuf::from("./data/config-proposals");
+            std::fs::create_dir_all(&proposals_dir).ok();
+
+            boot_ctx_enriched.config_yaml_applier = Some(applier);
+            boot_ctx_enriched.config_denylist_checker = Some(denylist);
+            boot_ctx_enriched.config_secret_redactor = Some(redactor);
+            boot_ctx_enriched.config_approval_correlator = Some(correlator);
+            boot_ctx_enriched.config_reload_trigger = Some(reload);
+            boot_ctx_enriched.config_tool_policy = Some(primary.config_tool.clone());
+            boot_ctx_enriched.config_proposals_dir = Some(proposals_dir);
+        }
+
+        // Phase 79.M.c hardening — Config self-edit requires an
+        // auth_token to be configured. Refuse the boot otherwise.
+        let config_self_edit_auth_ok = mcp_server_has_auth(&server_cfg);
+        // Same auth hardening for operator-overridden policy-denied tools.
+        let mcp_auth_configured = config_self_edit_auth_ok;
+        let denied_overrides: HashSet<String> =
+            server_cfg.expose_denied_tools.iter().cloned().collect();
+        let denied_profile = &server_cfg.denied_tools_profile;
+        if !denied_overrides.is_empty() && !denied_profile.enabled {
+            tracing::error!(
+                "mcp-server: expose_denied_tools requested but `mcp_server.denied_tools_profile.enabled=false`; denied overrides stay blocked"
+            );
+        }
+
+        let mut requested: HashSet<String> = server_cfg.expose_tools.iter().cloned().collect();
+        for entry in EXPOSABLE_TOOLS {
+            if !requested.remove(entry.name) {
+                continue;
+            }
+            // Cargo feature gate is checked from the root crate so
+            // `nexo-core` doesn't need a `feature = "config-self-edit"`
+            // of its own. When off, override the dispatcher's verdict.
+            let result = if matches!(
+                entry.boot_kind,
+                nexo_config::types::mcp_exposable::BootKind::DeniedByPolicy { .. }
+            ) && denied_overrides.contains(entry.name)
+            {
+                if !denied_profile.enabled {
+                    BootResult::SkippedDenied {
+                        reason: "denied-profile-disabled",
+                    }
+                } else if !denied_profile.allows(entry.name) {
+                    BootResult::SkippedDenied {
+                        reason: "denied-profile-tool-not-allowed",
+                    }
+                } else {
+                    match entry.name {
+                        "Heartbeat" => {
+                            if denied_profile.require_auth && !mcp_auth_configured {
+                                tracing::error!(
+                                    "mcp-server: Heartbeat override requires auth (`mcp_server.auth_token_env` \
+                                     or `http.auth`) to protect delayed outbound side-effects"
+                                );
+                                BootResult::SkippedDenied {
+                                    reason: "heartbeat-requires-auth-token",
+                                }
+                            } else if !primary.heartbeat.enabled {
+                                tracing::warn!(
+                                    agent = %primary.id,
+                                    "mcp-server: Heartbeat override requested but `agents.{}.heartbeat.enabled = false`",
+                                    primary.id
+                                );
+                                BootResult::SkippedDenied {
+                                    reason: "heartbeat-disabled",
+                                }
+                            } else if let Some(mem) = long_term_memory.as_ref() {
+                                BootResult::Registered(
+                                    HeartbeatTool::tool_def(),
+                                    Arc::new(HeartbeatTool::new(Arc::clone(mem))),
+                                )
+                            } else {
+                                BootResult::SkippedInfraMissing {
+                                    handle: "long_term_memory",
+                                }
+                            }
+                        }
+                        "RemoteTrigger" => {
+                            if denied_profile.require_auth && !mcp_auth_configured {
+                                tracing::error!(
+                                    "mcp-server: RemoteTrigger override requires auth (`mcp_server.auth_token_env` \
+                                     or `http.auth`) to protect outbound side-effects"
+                                );
+                                BootResult::SkippedDenied {
+                                    reason: "remote-trigger-requires-auth-token",
+                                }
+                            } else if denied_profile.require_remote_trigger_targets
+                                && primary.remote_triggers.is_empty()
+                            {
+                                tracing::error!(
+                                    agent = %primary.id,
+                                    "mcp-server: RemoteTrigger override requires explicit `agents.{}.remote_triggers` entries",
+                                    primary.id
+                                );
+                                BootResult::SkippedDenied {
+                                    reason: "remote-trigger-targets-required",
+                                }
+                            } else {
+                                let sink: Arc<
+                                    dyn nexo_core::agent::remote_trigger_tool::RemoteTriggerSink,
+                                > = Arc::new(
+                                    nexo_core::agent::remote_trigger_tool::ReqwestSink::new(
+                                        broker.clone(),
+                                    ),
+                                );
+                                let tool =
+                                    nexo_core::agent::remote_trigger_tool::RemoteTriggerTool::new(
+                                        sink,
+                                    );
+                                BootResult::Registered(
+                                    nexo_core::agent::remote_trigger_tool::RemoteTriggerTool::tool_def(),
+                                    Arc::new(tool),
+                                )
+                            }
+                        }
+                        "delegate" => {
+                            if denied_profile.require_auth && !mcp_auth_configured {
+                                tracing::error!(
+                                    "mcp-server: delegate override requires auth (`mcp_server.auth_token_env` \
+                                     or `http.auth`) to protect cross-agent side-effects"
+                                );
+                                BootResult::SkippedDenied {
+                                    reason: "delegate-requires-auth-token",
+                                }
+                            } else if denied_profile.require_delegate_allowlist
+                                && !has_restricted_delegate_allowlist(&primary.allowed_delegates)
+                            {
+                                tracing::error!(
+                                    agent = %primary.id,
+                                    "mcp-server: delegate override requires explicit restricted `agents.{}.allowed_delegates` (non-empty and not `*`)",
+                                    primary.id
+                                );
+                                BootResult::SkippedDenied {
+                                    reason: "delegate-allowlist-required",
+                                }
+                            } else if delegate_override_ready {
+                                BootResult::Registered(
+                                    nexo_core::agent::DelegationTool::tool_def(),
+                                    Arc::new(nexo_core::agent::DelegationTool),
+                                )
+                            } else {
+                                BootResult::SkippedDenied {
+                                    reason: "delegate-bridge-unavailable",
+                                }
+                            }
+                        }
+                        _ => BootResult::SkippedDenied {
+                            reason: "denied-tool-override-unsupported",
+                        },
+                    }
+                }
+            } else if matches!(
+                entry.boot_kind,
+                nexo_config::types::mcp_exposable::BootKind::FeatureGated
+            ) && !cfg!(feature = "config-self-edit")
+            {
+                BootResult::SkippedFeatureGated {
+                    feature: entry.feature_gate.unwrap_or("unknown"),
+                }
+            } else if entry.name == "Config" && !config_self_edit_auth_ok {
+                tracing::error!(
+                    "mcp-server: Config tool refuses to register without `mcp_server.auth_token_env` \
+                     or `http.auth` configured. Set an auth token and restart."
+                );
+                BootResult::SkippedDenied {
+                    reason: "config-requires-auth-token",
+                }
+            } else if entry.name == "Config" && !primary.config_tool.self_edit {
+                tracing::error!(
+                    agent = %primary.id,
+                    "mcp-server: Config tool refuses to register because `agents.{}.config_tool.self_edit = false`. \
+                     Set `self_edit: true` in agents.yaml to opt in.",
+                    primary.id
+                );
+                BootResult::SkippedDenied {
+                    reason: "config-self-edit-policy-disabled",
+                }
+            } else if entry.name == "Config" && primary.config_tool.allowed_paths.is_empty() {
+                tracing::error!(
+                    agent = %primary.id,
+                    "mcp-server: Config tool refuses to register because `agents.{}.config_tool.allowed_paths` is empty. \
+                     Empty list means 'every supported key' which is too permissive for MCP exposure — \
+                     pick an explicit subset (e.g. ['language', 'description']).",
+                    primary.id
+                );
+                BootResult::SkippedDenied {
+                    reason: "config-allowed-paths-must-be-explicit",
+                }
+            } else {
+                boot_exposable(entry.name, &boot_ctx_enriched)
+            };
+            match result {
+                BootResult::Registered(def, handler) => {
+                    registry.register_arc(def, handler);
+                    bridge_telem::record_registered(entry.name, entry.tier);
+                    tracing::info!(
+                        tool = entry.name,
+                        tier = entry.tier.as_str(),
+                        "mcp-server: registered exposable tool"
+                    );
+                }
+                BootResult::SkippedDenied { reason } => {
+                    bridge_telem::record_skipped(entry.name, "denied_by_policy");
+                    tracing::warn!(
+                        tool = entry.name,
+                        reason,
+                        "mcp-server: tool denied by policy — never exposable"
+                    );
+                }
+                BootResult::SkippedDeferred { phase, reason } => {
+                    bridge_telem::record_skipped(entry.name, "deferred");
+                    tracing::warn!(
+                        tool = entry.name,
+                        phase,
+                        reason,
+                        "mcp-server: tool wiring deferred to follow-up sub-phase"
+                    );
+                }
+                BootResult::SkippedFeatureGated { feature } => {
+                    bridge_telem::record_skipped(entry.name, "feature_gate_off");
+                    tracing::warn!(
+                        tool = entry.name,
+                        feature,
+                        "mcp-server: tool requires Cargo feature; rebuild with --features {feature}"
+                    );
+                }
+                BootResult::SkippedInfraMissing { handle } => {
+                    bridge_telem::record_skipped(entry.name, "infra_missing");
+                    tracing::warn!(
+                        tool = entry.name,
+                        handle,
+                        "mcp-server: tool needs handle '{handle}' which this process didn't construct"
+                    );
+                }
+                BootResult::UnknownName => {
+                    // Unreachable here — we iterated EXPOSABLE_TOOLS.
+                    bridge_telem::record_skipped(entry.name, "unknown_name");
+                }
+            }
+        }
+        // Anything left in `requested` is operator typo / removed tool.
+        for typo in requested {
+            // Cross-check: maybe it just isn't in the catalog.
+            let _ = lookup_exposable(&typo);
+            bridge_telem::record_skipped(&typo, "unknown_name");
+            tracing::warn!(
+                tool = typo.as_str(),
+                "mcp-server: expose_tools entry not in EXPOSABLE_TOOLS catalog — typo or removed tool"
+            );
         }
     }
 
@@ -7997,6 +9061,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
     } else {
         Some(server_cfg.allowlist.iter().cloned().collect())
     };
+    let worker_ctx_seed = ctx.clone();
     let bridge = ToolRegistryBridge::new(
         server_info,
         registry,
@@ -8029,6 +9094,23 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         }
     });
 
+    let autonomous_worker_join = if server_cfg.autonomous_worker.enabled {
+        Some(
+            start_mcp_autonomous_worker(
+                config_dir,
+                primary,
+                worker_ctx_seed,
+                broker.clone(),
+                long_term_memory.clone(),
+                shutdown.clone(),
+                server_cfg.autonomous_worker.tick_secs,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+
     // Phase 76.1 — opt-in HTTP transport runs alongside stdio.
     let http_handle = if let Some(http_yaml) = server_cfg.http.clone() {
         if http_yaml.enabled {
@@ -8048,9 +9130,208 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         shutdown.cancel();
         let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle.join).await;
     }
+    if let Some(join) = autonomous_worker_join {
+        shutdown.cancel();
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(10), join).await;
+    }
 
     stdio_result.context("mcp-server loop failed")?;
     Ok(())
+}
+
+async fn start_mcp_autonomous_worker(
+    config_dir: &std::path::Path,
+    primary: &nexo_config::types::agents::AgentConfig,
+    mcp_bridge_ctx: nexo_core::agent::AgentContext,
+    broker: AnyBroker,
+    long_term_memory: Option<Arc<nexo_memory::LongTermMemory>>,
+    shutdown: tokio_util::sync::CancellationToken,
+    tick_secs: u64,
+) -> anyhow::Result<tokio::task::JoinHandle<()>> {
+    use nexo_auth::StrictLevel;
+    use nexo_core::agent::{
+        AgentBehavior, AgentContext, CancelFollowupTool, CheckFollowupTool, LlmAgentBehavior,
+        ToolRegistry,
+    };
+    use nexo_core::Plugin;
+
+    let memory = long_term_memory.ok_or_else(|| {
+        anyhow::anyhow!(
+            "mcp_server.autonomous_worker.enabled=true requires long-term memory (config/memory.yaml)"
+        )
+    })?;
+
+    let full_cfg = AppConfig::load(config_dir)
+        .context("mcp-server autonomous worker requires full runtime config")?;
+    let mut worker_agent_cfg = full_cfg
+        .agents
+        .agents
+        .iter()
+        .find(|a| a.id == primary.id)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("agent `{}` not found in full config", primary.id))?;
+    if !worker_agent_cfg.allowed_tools.is_empty() {
+        tracing::warn!(
+            agent = %worker_agent_cfg.id,
+            "mcp-server autonomous worker ignores agent.allowed_tools and uses a dedicated restricted registry"
+        );
+        worker_agent_cfg.allowed_tools.clear();
+    }
+
+    let google_auth = nexo_auth::load_google_auth(config_dir)
+        .context("failed to load plugins/google-auth.yaml")?;
+    let secrets_dir = secrets_dir_for(config_dir);
+    let creds_bundle = nexo_auth::build_credentials(
+        &full_cfg.agents.agents,
+        &full_cfg.plugins.whatsapp,
+        &full_cfg.plugins.telegram,
+        &google_auth,
+        full_cfg.plugins.email.as_ref(),
+        &secrets_dir,
+        StrictLevel::Lenient,
+    )
+    .map_err(|errs| {
+        let joined = errs
+            .into_iter()
+            .map(|e| format!("  - {e}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        anyhow::anyhow!("failed to bootstrap credentials for mcp autonomous worker:\n{joined}")
+    })?;
+    for w in &creds_bundle.warnings {
+        tracing::warn!(target: "credentials", "{w}");
+    }
+    let creds_bundle = Arc::new(creds_bundle);
+
+    let email_cfg = full_cfg.plugins.email.clone().ok_or_else(|| {
+        anyhow::anyhow!(
+            "mcp_server.autonomous_worker.enabled=true requires config/plugins/email.yaml"
+        )
+    })?;
+    if !email_cfg.enabled || email_cfg.accounts.is_empty() {
+        anyhow::bail!(
+            "mcp_server.autonomous_worker.enabled=true requires email.enabled=true and at least one account"
+        );
+    }
+
+    let data_dir = std::env::var("NEXO_DATA_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("data"));
+    let email_plugin = Arc::new(nexo_plugin_email::EmailPlugin::new(
+        email_cfg.clone(),
+        creds_bundle.stores.email.clone(),
+        creds_bundle.stores.google.clone(),
+        data_dir,
+    ));
+    email_plugin
+        .start(broker.clone())
+        .await
+        .context("failed to start email plugin for mcp autonomous worker")?;
+
+    let dispatcher = match email_plugin.dispatcher_handle().await {
+        Some(h) => h,
+        None => {
+            let _ = email_plugin.stop().await;
+            anyhow::bail!(
+                "email plugin started without dispatcher handle; autonomous follow-up worker cannot send replies"
+            );
+        }
+    };
+
+    let email_health = email_plugin
+        .health_map()
+        .await
+        .unwrap_or_else(nexo_plugin_email::inbound::HealthMap::default);
+    let email_tool_ctx = Arc::new(nexo_plugin_email::EmailToolContext {
+        creds: creds_bundle.stores.email.clone(),
+        google: creds_bundle.stores.google.clone(),
+        config: Arc::new(email_cfg),
+        dispatcher,
+        health: email_health,
+        bounce_store: email_plugin.bounce_store_handle(),
+        attachment_store: email_plugin.attachment_store_handle(),
+        attachments_dir: email_plugin.attachments_dir(),
+    });
+
+    let worker_tools = Arc::new(ToolRegistry::new());
+    worker_tools.register(
+        CancelFollowupTool::tool_def(),
+        CancelFollowupTool::new(Arc::clone(&memory)),
+    );
+    worker_tools.register(
+        CheckFollowupTool::tool_def(),
+        CheckFollowupTool::new(Arc::clone(&memory)),
+    );
+    nexo_plugin_email::register_email_tools(&worker_tools, email_tool_ctx);
+
+    let llm_registry = LlmRegistry::with_builtins();
+    let llm = match llm_registry.build(&full_cfg.llm, &worker_agent_cfg.model) {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = email_plugin.stop().await;
+            return Err(anyhow::anyhow!(
+                "failed to build LLM for mcp autonomous worker agent `{}`: {e}",
+                worker_agent_cfg.id
+            ));
+        }
+    };
+    let behavior = LlmAgentBehavior::new(llm, Arc::clone(&worker_tools));
+
+    let mut worker_ctx = AgentContext::new(
+        worker_agent_cfg.id.clone(),
+        Arc::new(worker_agent_cfg),
+        broker,
+        Arc::clone(&mcp_bridge_ctx.sessions),
+    )
+    .with_memory(memory)
+    .with_credentials(Arc::clone(&creds_bundle.resolver))
+    .with_breakers(Arc::clone(&creds_bundle.breakers));
+    if let Some(ext) = mcp_bridge_ctx.link_extractor.clone() {
+        worker_ctx = worker_ctx.with_link_extractor(ext);
+    }
+
+    let tick = std::time::Duration::from_secs(tick_secs.max(10));
+    let join = tokio::spawn(async move {
+        tracing::info!(
+            agent = %worker_ctx.agent_id,
+            tick_secs = tick.as_secs(),
+            "mcp-server autonomous worker started"
+        );
+        if let Err(e) = behavior.on_heartbeat(&worker_ctx).await {
+            tracing::warn!(
+                agent = %worker_ctx.agent_id,
+                error = %e,
+                "mcp-server autonomous worker heartbeat failed"
+            );
+        }
+        let mut interval = tokio::time::interval(tick);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        interval.tick().await;
+        let shutdown_wait = shutdown.cancelled_owned();
+        tokio::pin!(shutdown_wait);
+        loop {
+            tokio::select! {
+                _ = &mut shutdown_wait => break,
+                _ = interval.tick() => {
+                    if let Err(e) = behavior.on_heartbeat(&worker_ctx).await {
+                        tracing::warn!(
+                            agent = %worker_ctx.agent_id,
+                            error = %e,
+                            "mcp-server autonomous worker heartbeat failed"
+                        );
+                    }
+                }
+            }
+        }
+        if let Err(e) = email_plugin.stop().await {
+            tracing::warn!(
+                error = %e,
+                "mcp-server autonomous worker failed to stop email plugin cleanly"
+            );
+        }
+        tracing::info!(agent = %worker_ctx.agent_id, "mcp-server autonomous worker stopped");
+    });
+    Ok(join)
 }
 
 /// Phase 76.1 — boot the HTTP transport from the YAML block, reusing
@@ -9527,6 +10808,10 @@ fn truncate(s: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::{
+        has_restricted_delegate_allowlist, mcp_server_has_auth, route_cron_subcommand, Mode,
+    };
+
     /// Phase 27.1 — verify the four `NEXO_BUILD_*` env stamps are
     /// non-empty at compile time. The actual stdout-capture form
     /// of `print_version` would need `#[no_main]` redirection; this
@@ -9547,5 +10832,117 @@ mod tests {
             ts.ends_with('Z') && ts.contains('T'),
             "timestamp not ISO8601 UTC: {ts}"
         );
+    }
+
+    #[test]
+    fn cron_route_list_defaults() {
+        let args = vec!["cron".to_string(), "list".to_string()];
+        let mode = route_cron_subcommand(&args, false).expect("cron route");
+        match mode {
+            Mode::CronList { binding, json } => {
+                assert!(binding.is_none());
+                assert!(!json);
+            }
+            other => panic!(
+                "expected CronList, got {:?}",
+                std::mem::discriminant(&other)
+            ),
+        }
+    }
+
+    #[test]
+    fn cron_route_list_with_binding_and_json() {
+        let args = vec![
+            "cron".to_string(),
+            "list".to_string(),
+            "--binding".to_string(),
+            "whatsapp:default".to_string(),
+            "--json".to_string(),
+        ];
+        let mode = route_cron_subcommand(&args, true).expect("cron route");
+        match mode {
+            Mode::CronList { binding, json } => {
+                assert_eq!(binding.as_deref(), Some("whatsapp:default"));
+                assert!(json);
+            }
+            other => panic!(
+                "expected CronList, got {:?}",
+                std::mem::discriminant(&other)
+            ),
+        }
+    }
+
+    #[test]
+    fn cron_route_resume_requires_id() {
+        let args = vec!["cron".to_string(), "resume".to_string()];
+        let mode = route_cron_subcommand(&args, false).expect("cron route");
+        assert!(matches!(mode, Mode::Help));
+    }
+
+    #[test]
+    fn cron_route_resume_with_id() {
+        let args = vec![
+            "cron".to_string(),
+            "resume".to_string(),
+            "abc123".to_string(),
+        ];
+        let mode = route_cron_subcommand(&args, false).expect("cron route");
+        match mode {
+            Mode::CronResume { id } => assert_eq!(id, "abc123"),
+            other => panic!(
+                "expected CronResume, got {:?}",
+                std::mem::discriminant(&other)
+            ),
+        }
+    }
+
+    #[test]
+    fn delegate_allowlist_helper_rejects_unrestricted_shapes() {
+        assert!(!has_restricted_delegate_allowlist(&[]));
+        assert!(!has_restricted_delegate_allowlist(&["*".to_string()]));
+        assert!(!has_restricted_delegate_allowlist(&[
+            "sales_*".to_string(),
+            "*".to_string()
+        ]));
+    }
+
+    #[test]
+    fn delegate_allowlist_helper_accepts_restricted_shapes() {
+        assert!(has_restricted_delegate_allowlist(&["sales".to_string()]));
+        assert!(has_restricted_delegate_allowlist(&[
+            "sales_*".to_string(),
+            "ops".to_string()
+        ]));
+    }
+
+    #[test]
+    fn mcp_auth_helper_treats_http_auth_none_as_unauthenticated() {
+        let yaml = r#"
+mcp_server:
+  enabled: true
+  http:
+    enabled: true
+    auth:
+      kind: none
+"#;
+        let parsed: nexo_config::types::mcp_server::McpServerConfigFile =
+            serde_yaml::from_str(yaml).expect("parse mcp_server yaml");
+        assert!(!mcp_server_has_auth(&parsed.mcp_server));
+    }
+
+    #[test]
+    fn mcp_auth_helper_accepts_explicit_auth_modes() {
+        let yaml = r#"
+mcp_server:
+  enabled: true
+  http:
+    enabled: true
+    auth:
+      kind: static_token
+      token_env: NEXO_MCP_TOKEN
+"#;
+        let parsed: nexo_config::types::mcp_server::McpServerConfigFile =
+            serde_yaml::from_str(yaml).expect("parse mcp_server yaml");
+        assert!(mcp_server_has_auth(&parsed.mcp_server));
     }
 }

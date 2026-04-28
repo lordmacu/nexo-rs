@@ -118,6 +118,10 @@ where
     T: McpTransport + ?Sized,
     H: McpServerHandler + 'static,
 {
+    // Phase 79.M — stdio has one implicit connection/session.
+    // Stamp a stable per-process session id so context-aware tools
+    // (taskflow owner scoping) can rely on `ctx.session_id`.
+    let stdio_session_id = uuid::Uuid::new_v4().to_string();
     loop {
         tokio::select! {
             biased;
@@ -161,7 +165,7 @@ where
                 // `principal` with the constant `stdio_local()`
                 // identity so 76.4 / 76.11 see a uniform field.
                 let ctx = DispatchContext {
-                    session_id: None,
+                    session_id: Some(stdio_session_id.clone()),
                     request_id: id.clone(),
                     cancel,
                     principal: Some(crate::server::auth::Principal::stdio_local()),
