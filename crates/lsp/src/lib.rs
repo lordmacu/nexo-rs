@@ -34,6 +34,7 @@ pub mod manager;
 pub mod session;
 pub mod types;
 
+pub use client::{DiagnosticsCache, FileDiagnostics, LspClient};
 pub use error::LspError;
 pub use launcher::LspLauncher;
 pub use types::{
