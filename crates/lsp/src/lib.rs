@@ -37,6 +37,7 @@ pub mod types;
 pub use client::{DiagnosticsCache, FileDiagnostics, LspClient};
 pub use error::LspError;
 pub use launcher::LspLauncher;
+pub use manager::{boot, ExecutePolicy, LspManager};
 pub use session::{session_from_launcher, LspSession, SessionConfig};
 pub use types::{
     language_for_extension, matrix_entry, LspLanguage, LspRequest, LspToolOutput,
