@@ -263,31 +263,23 @@ fn flush_dsn_field(current: Option<&'static str>, buf: &str, out: &mut ParsedBou
         return;
     }
     match key {
-        "action" => {
-            if out.action.is_none() {
-                out.action = Some(v.to_string());
-            }
+        "action" if out.action.is_none() => {
+            out.action = Some(v.to_string());
         }
-        "status" => {
-            if out.status_code.is_none() {
-                out.status_code = Some(v.to_string());
-            }
+        "status" if out.status_code.is_none() => {
+            out.status_code = Some(v.to_string());
         }
-        "final_recipient" => {
-            if out.recipient.is_none() {
-                // `Final-Recipient: rfc822; ghost@x` → strip
-                // the `addr-type;` prefix.
-                let addr = match v.split_once(';') {
-                    Some((_, rest)) => rest.trim().to_string(),
-                    None => v.to_string(),
-                };
-                out.recipient = Some(addr);
-            }
+        "final_recipient" if out.recipient.is_none() => {
+            // `Final-Recipient: rfc822; ghost@x` → strip
+            // the `addr-type;` prefix.
+            let addr = match v.split_once(';') {
+                Some((_, rest)) => rest.trim().to_string(),
+                None => v.to_string(),
+            };
+            out.recipient = Some(addr);
         }
-        "diagnostic_code" => {
-            if out.reason.is_none() {
-                out.reason = Some(v.to_string());
-            }
+        "diagnostic_code" if out.reason.is_none() => {
+            out.reason = Some(v.to_string());
         }
         _ => {}
     }
