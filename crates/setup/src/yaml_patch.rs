@@ -1610,3 +1610,237 @@ pub fn google_auth_upsert_account(
         .map_err(|e| anyhow::anyhow!("persist yaml {}: {e}", file.display()))?;
     Ok(())
 }
+
+// =====================================================================
+// Phase 79.10 — `YamlPatch` shape + denylist-aware applier.
+//
+// `YamlPatch` is the wire shape persisted under
+// `.nexo/config-proposals/<patch_id>.yaml` between `propose` and
+// `apply`. `apply_patch_with_denylist` runs the denylist gate FIRST
+// (defense-in-depth — `propose` already gated; `apply` re-gates because
+// the staging file may have been edited externally) and only then
+// delegates to the existing `upsert_agent_field` / `remove_agent_field`
+// (Phase 69 helpers).
+//
+// Reference (PRIMARY): leak's `claude-code-leak/src/tools/ConfigTool/
+// ConfigTool.ts:310-343` (`updateSettingsForSource('userSettings', update)`)
+// — the leak ships no denylist gate; we add it.
+// =====================================================================
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ActorInfo {
+    pub agent_id: String,
+    pub binding_id: String,
+    pub channel: String,
+    pub account_id: String,
+    pub sender_id: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum YamlOp {
+    Upsert {
+        agent_id: String,
+        dotted: String,
+        value: Value,
+    },
+    Remove {
+        agent_id: String,
+        dotted: String,
+    },
+}
+
+impl YamlOp {
+    pub fn dotted(&self) -> &str {
+        match self {
+            YamlOp::Upsert { dotted, .. } | YamlOp::Remove { dotted, .. } => dotted.as_str(),
+        }
+    }
+
+    pub fn agent_id(&self) -> &str {
+        match self {
+            YamlOp::Upsert { agent_id, .. } | YamlOp::Remove { agent_id, .. } => agent_id.as_str(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct YamlPatch {
+    pub patch_id: String,
+    pub binding_id: String,
+    pub agent_id: String,
+    pub created_at: i64,
+    pub expires_at: i64,
+    pub actor: ActorInfo,
+    pub justification: String,
+    pub op: YamlOp,
+}
+
+impl YamlPatch {
+    pub fn dotted(&self) -> &str {
+        self.op.dotted()
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ApplyError {
+    #[error(transparent)]
+    Forbidden(#[from] crate::capabilities::ForbiddenKey),
+    #[error("yaml apply: io error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("yaml apply: {0}")]
+    Yaml(String),
+}
+
+impl From<anyhow::Error> for ApplyError {
+    fn from(e: anyhow::Error) -> Self {
+        ApplyError::Yaml(e.to_string())
+    }
+}
+
+pub fn apply_patch_with_denylist(
+    file: &Path,
+    patch: &YamlPatch,
+) -> std::result::Result<(), ApplyError> {
+    if let Some(matched_glob) = crate::capabilities::denylist_match(patch.dotted()) {
+        return Err(ApplyError::Forbidden(crate::capabilities::ForbiddenKey {
+            path: patch.dotted().to_string(),
+            matched_glob,
+        }));
+    }
+    match &patch.op {
+        YamlOp::Upsert {
+            agent_id,
+            dotted,
+            value,
+        } => {
+            upsert_agent_field(file, agent_id, dotted, value.clone()).map_err(ApplyError::from)?;
+        }
+        YamlOp::Remove { agent_id, dotted } => {
+            remove_agent_field(file, agent_id, dotted).map_err(ApplyError::from)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod patch_tests {
+    use super::*;
+    use std::io::Write;
+
+    fn write_fixture(dir: &std::path::Path) -> std::path::PathBuf {
+        let path = dir.join("agents.yaml");
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(
+            br#"
+agents:
+  - id: cody
+    model:
+      provider: anthropic
+      model: claude-sonnet-4-6
+    language: en
+"#,
+        )
+        .unwrap();
+        path
+    }
+
+    fn upsert_patch(agent: &str, dotted: &str, value: Value) -> YamlPatch {
+        YamlPatch {
+            patch_id: "01J".into(),
+            binding_id: "wa:default".into(),
+            agent_id: agent.into(),
+            created_at: 0,
+            expires_at: 0,
+            actor: ActorInfo {
+                agent_id: agent.into(),
+                binding_id: "wa:default".into(),
+                channel: "whatsapp".into(),
+                account_id: "default".into(),
+                sender_id: "user".into(),
+            },
+            justification: "test".into(),
+            op: YamlOp::Upsert {
+                agent_id: agent.into(),
+                dotted: dotted.into(),
+                value,
+            },
+        }
+    }
+
+    fn remove_patch(agent: &str, dotted: &str) -> YamlPatch {
+        YamlPatch {
+            patch_id: "01J".into(),
+            binding_id: "wa:default".into(),
+            agent_id: agent.into(),
+            created_at: 0,
+            expires_at: 0,
+            actor: ActorInfo {
+                agent_id: agent.into(),
+                binding_id: "wa:default".into(),
+                channel: "whatsapp".into(),
+                account_id: "default".into(),
+                sender_id: "user".into(),
+            },
+            justification: "test".into(),
+            op: YamlOp::Remove {
+                agent_id: agent.into(),
+                dotted: dotted.into(),
+            },
+        }
+    }
+
+    #[test]
+    fn apply_patch_upsert_writes_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_fixture(dir.path());
+        let patch = upsert_patch("cody", "model.model", Value::String("claude-opus-4-7".into()));
+        apply_patch_with_denylist(&path, &patch).unwrap();
+        let after = read_agent_field(&path, "cody", "model.model").unwrap().unwrap();
+        assert_eq!(after, Value::String("claude-opus-4-7".into()));
+    }
+
+    #[test]
+    fn apply_patch_remove_clears_field() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_fixture(dir.path());
+        let patch = remove_patch("cody", "language");
+        apply_patch_with_denylist(&path, &patch).unwrap();
+        let after = read_agent_field(&path, "cody", "language").unwrap();
+        assert!(after.is_none());
+    }
+
+    #[test]
+    fn apply_patch_blocks_pairing_glob() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_fixture(dir.path());
+        let patch = upsert_patch(
+            "cody",
+            "pairing.session_token",
+            Value::String("sneaky".into()),
+        );
+        let err = apply_patch_with_denylist(&path, &patch).unwrap_err();
+        match err {
+            ApplyError::Forbidden(fk) => {
+                assert!(
+                    fk.matched_glob == "pairing.*" || fk.matched_glob == "*_token",
+                    "got `{}`",
+                    fk.matched_glob
+                );
+                assert_eq!(fk.path, "pairing.session_token");
+            }
+            other => panic!("expected Forbidden, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn apply_patch_idempotent_when_value_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_fixture(dir.path());
+        let patch = upsert_patch("cody", "language", Value::String("en".into()));
+        apply_patch_with_denylist(&path, &patch).unwrap();
+        apply_patch_with_denylist(&path, &patch).unwrap();
+        let after = read_agent_field(&path, "cody", "language").unwrap().unwrap();
+        assert_eq!(after, Value::String("en".into()));
+    }
+}
