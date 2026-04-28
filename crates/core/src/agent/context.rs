@@ -118,6 +118,32 @@ pub struct AgentContext {
     /// they die with the goal because re-deriving them mid-turn is
     /// cheap and stale items are confusing.
     pub todos: Arc<RwLock<TodoList>>,
+    /// Phase 79.6 — when set, this goal is running as a member
+    /// of a named team. The lead's `team_id` is its own team's
+    /// id; ordinary sub-agents stay `None`.
+    pub team_id: Option<String>,
+    /// Phase 79.6 — human-readable member name within
+    /// `team_id` (e.g. `"researcher"`). `None` ⇔ `team_id.is_none()`.
+    /// `Some(TEAM_LEAD_NAME)` for the lead's own goal.
+    pub team_member_name: Option<String>,
+    /// Phase 79.6 — DMs the team router delivered while this
+    /// goal was running. Consumed at the start of each turn by
+    /// the prompt-assembly path. Concurrent appends are
+    /// serialised by the goal's tokio task scheduler — there is
+    /// no inner lock because the consume is single-threaded
+    /// per-goal.
+    pub inbox: Arc<RwLock<Vec<DmMessage>>>,
+}
+
+/// One inbound team message attached to a goal's `AgentContext.inbox`.
+/// Mirror of [`crate::team_message_router::DmFrame`] minus the wire
+/// fields the call site already knows (`team_id`, `to`).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct DmMessage {
+    pub from: String,
+    pub body: serde_json::Value,
+    pub correlation_id: Option<String>,
+    pub received_at: i64,
 }
 impl AgentContext {
     pub fn new(
@@ -153,7 +179,26 @@ impl AgentContext {
                 crate::agent::plan_mode_tool::PlanApprovalRegistry::default(),
             ),
             todos: Arc::new(RwLock::new(TodoList::new())),
+            team_id: None,
+            team_member_name: None,
+            inbox: Arc::new(RwLock::new(Vec::new())),
         }
+    }
+
+    /// Phase 79.6 — mark this context as running as a teammate.
+    /// `name` is the human-readable handle within the team
+    /// (`"researcher"`, `"tester"`, or `TEAM_LEAD_NAME`).
+    pub fn with_team(mut self, team_id: impl Into<String>, name: impl Into<String>) -> Self {
+        self.team_id = Some(team_id.into());
+        self.team_member_name = Some(name.into());
+        self
+    }
+
+    /// Phase 79.6 — `true` when both `team_id` and
+    /// `team_member_name` are set. The runtime's
+    /// teammate-cannot-spawn-teammate guard inspects this.
+    pub fn is_teammate(&self) -> bool {
+        self.team_id.is_some() && self.team_member_name.is_some()
     }
 
     /// Phase 79.1 — install a pre-built plan-mode handle. Used at
@@ -392,5 +437,54 @@ mod plan_mode_tests {
             *g = PlanModeState::Off;
         }
         assert!(c.plan_mode.read().await.is_off());
+    }
+
+    // -----------------------------------------------------------
+    // Phase 79.6 — team fields
+    // -----------------------------------------------------------
+
+    #[tokio::test]
+    async fn team_fields_default_to_none() {
+        let c = ctx();
+        assert!(c.team_id.is_none());
+        assert!(c.team_member_name.is_none());
+        assert!(!c.is_teammate());
+        assert!(c.inbox.read().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn with_team_sets_both_fields() {
+        let c = ctx().with_team("feature-x", "researcher");
+        assert_eq!(c.team_id.as_deref(), Some("feature-x"));
+        assert_eq!(c.team_member_name.as_deref(), Some("researcher"));
+        assert!(c.is_teammate());
+    }
+
+    #[tokio::test]
+    async fn dm_message_serde_roundtrip() {
+        let m = DmMessage {
+            from: "team-lead".into(),
+            body: serde_json::json!({"hi": 1}),
+            correlation_id: Some("c-1".into()),
+            received_at: 100,
+        };
+        let json = serde_json::to_string(&m).unwrap();
+        let back: DmMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(m, back);
+    }
+
+    #[tokio::test]
+    async fn inbox_appends_persist_across_clones() {
+        // Inbox is `Arc<RwLock<Vec<DmMessage>>>` so two refs
+        // to the same context share the queue.
+        let c = ctx().with_team("feature-x", "researcher");
+        c.inbox.write().await.push(DmMessage {
+            from: "team-lead".into(),
+            body: serde_json::json!("hi"),
+            correlation_id: None,
+            received_at: 1,
+        });
+        let same = c.clone();
+        assert_eq!(same.inbox.read().await.len(), 1);
     }
 }
