@@ -88,6 +88,97 @@ pub struct HttpTransportConfigYaml {
     /// per-call timeout. `None` (block omitted) disables.
     #[serde(default)]
     pub per_principal_concurrency: Option<PerPrincipalConcurrencyYaml>,
+    /// Phase 76.11 — durable per-call audit log. `None` (block
+    /// omitted) disables; otherwise the runtime opens a
+    /// `SqliteAuditLogStore(db_path)` and wires it into the
+    /// dispatcher.
+    #[serde(default)]
+    pub audit_log: Option<AuditLogYaml>,
+    /// Phase 76.8 — durable session event store for SSE
+    /// `Last-Event-ID` reconnect. `None` keeps the in-memory
+    /// behavior; `Some(_)` with `enabled: true` opens a
+    /// `SqliteSessionEventStore(db_path)`.
+    #[serde(default)]
+    pub session_event_store: Option<SessionEventStoreYaml>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SessionEventStoreYaml {
+    #[serde(default = "default_ses_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_ses_db_path")]
+    pub db_path: std::path::PathBuf,
+    #[serde(default = "default_ses_max_per_session")]
+    pub max_events_per_session: u64,
+    #[serde(default = "default_ses_max_replay_batch")]
+    pub max_replay_batch: usize,
+    #[serde(default = "default_ses_purge_interval_secs")]
+    pub purge_interval_secs: u64,
+}
+
+fn default_ses_enabled() -> bool {
+    true
+}
+fn default_ses_db_path() -> std::path::PathBuf {
+    std::path::PathBuf::from("data/mcp_sessions.db")
+}
+fn default_ses_max_per_session() -> u64 {
+    10_000
+}
+fn default_ses_max_replay_batch() -> usize {
+    1_000
+}
+fn default_ses_purge_interval_secs() -> u64 {
+    60
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct AuditLogYaml {
+    #[serde(default = "default_audit_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_audit_db_path")]
+    pub db_path: std::path::PathBuf,
+    #[serde(default = "default_audit_retention_secs")]
+    pub retention_secs: u64,
+    #[serde(default = "default_audit_writer_buffer")]
+    pub writer_buffer: usize,
+    #[serde(default = "default_audit_flush_interval_ms")]
+    pub flush_interval_ms: u64,
+    #[serde(default = "default_audit_flush_batch_size")]
+    pub flush_batch_size: usize,
+    #[serde(default = "default_audit_redact_args")]
+    pub redact_args: bool,
+    #[serde(default)]
+    pub per_tool_redact_args: std::collections::BTreeMap<String, bool>,
+    #[serde(default = "default_audit_args_hash_max_bytes")]
+    pub args_hash_max_bytes: usize,
+}
+
+fn default_audit_enabled() -> bool {
+    true
+}
+fn default_audit_db_path() -> std::path::PathBuf {
+    std::path::PathBuf::from("data/mcp_audit.db")
+}
+fn default_audit_retention_secs() -> u64 {
+    90 * 86_400
+}
+fn default_audit_writer_buffer() -> usize {
+    4096
+}
+fn default_audit_flush_interval_ms() -> u64 {
+    50
+}
+fn default_audit_flush_batch_size() -> usize {
+    50
+}
+fn default_audit_redact_args() -> bool {
+    true
+}
+fn default_audit_args_hash_max_bytes() -> usize {
+    1024 * 1024
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]

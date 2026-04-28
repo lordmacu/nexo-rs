@@ -221,6 +221,17 @@ pub struct AgentConfig {
     /// registered for this agent's goals.
     #[serde(default)]
     pub lsp: crate::types::lsp::LspPolicy,
+    /// Phase 79.10 — agent-level `ConfigTool` policy. Default
+    /// `self_edit: false` (opt-in). When enabled, the `Config`
+    /// tool is registered for this agent's goals and the
+    /// approval correlator listens for operator approvals on the
+    /// originating channel.
+    ///
+    /// YAML key is `config_tool` — `config` is already taken by
+    /// `AgentRuntimeConfig` (line ~38). Operators write
+    /// `agents[].config_tool: { self_edit: true, ... }`.
+    #[serde(default)]
+    pub config_tool: crate::types::config_tool::ConfigToolPolicy,
 }
 
 /// Tri-state dispatch capability. The same enum is used for the

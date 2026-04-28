@@ -3673,12 +3673,40 @@ pass through the new abstraction).
   5 min). Optional `durable_sessions: true` flag persists session
   state to SQLite so it survives a server restart. Done: kill -HUP
   → client reconnects, subscriptions intact.
-- 76.9 ⬜ — `McpServerBuilder` ergonomic API. Fluent registration:
-  `.tool(name, schema, handler)`, `.resource(name, lister)`,
-  `.auth(...)`, `.rate_limit(...)`, `.listen_http(addr)`. Optional
-  `#[mcp_tool]` proc-macro derives schema from typed handler.
-  Done: `examples/marketing_mcp_skeleton.rs` < 50 LOC boots a
-  full server.
+- 76.9 ✅ — `McpServerBuilder` ergonomic API (core; proc-macro
+  follow-up). New `crates/mcp/src/server/builder.rs` (~440 LOC):
+  * `Tool` async trait with typed `Args: DeserializeOwned +
+    JsonSchema` and `Output: Serialize`. Default `deferred(): false`,
+    `search_hint(): None` (Phase 79.2 surface ready).
+  * `ToolCtx<'a>` borrowed-fields ctx (tenant, correlation_id,
+    session_id, progress, cancel) + `ToolCtxOwned` for the boxed
+    handler future.
+  * `McpServerBuilder::new(name, version).tool(impl).build_handler()`
+    returns `BuiltHandler` which implements `McpServerHandler`.
+  * Schema derived **once at registration** via
+    `schemars::schema_for!(T::Args)` and cached as `Value` —
+    eliminates the hand-rolled-schema drift in
+    `crates/core/src/agent/web_search_tool.rs:26-42`. Hard cap
+    `MAX_SCHEMA_BYTES = 64 KB` panics at registration on cyclic /
+    pathological types so the operator notices.
+  * `list_tools()` returns deterministic alphabetical order so
+    schema diff stays byte-stable for clients.
+  * Duplicate-name registration warns + overwrites (mirrors
+    Phase 11.5 `ToolRegistry::register` semantics).
+  * `examples/hello_mcp.rs` ships a stdio MCP server with one
+    typed tool in **60 LOC of operator code** vs ~120 LOC pre-76.9
+    (ToolHandler trait + JSON literal + manual register).
+  * Reference patterns: `claude-code-leak/src/Tool.ts:362-695`
+    one-tool-per-struct shape; `:783-792 buildTool(def)` defaults
+    helper; `src/tools/WebSearchTool/WebSearchTool.ts:25-41`
+    lazy-schema concept (we cache once at registration).
+  * 6 unit tests (registers + lists, round-trip typed args,
+    rejects invalid args, rejects unknown name, deterministic
+    list order, duplicate overwrites with warn).
+  Deferred to follow-up (76.9.b): `#[mcp_tool]` proc-macro in
+  `crates/mcp-macro/` to drop the boilerplate from ~40 LOC per
+  tool to ~10. Trait foundation enough for the marketing plugin
+  to start; macro is sugar.
 - 76.10 ✅ — Server-side observability + health. New module
   `crates/mcp/src/server/telemetry.rs` (~470 LOC) emits hand-rolled
   Prometheus text via `LazyLock<DashMap<Key, AtomicU64>>` module
@@ -3737,12 +3765,27 @@ pass through the new abstraction).
   events probabilistically; **76.11 logs every dispatch at
   100% — sampling forbidden for compliance**. 26 new tests
   (3 types + 8 store + 7 config + 4 writer + 3 e2e + 1 unused).
-  **Deferred to follow-ups**: SqliteAuditLogStore impl
-  (currently MemoryAuditLogStore only), HttpTransportConfig
-  wire, YAML schema, mapper in main.rs, args_hash computation,
-  `mcp_audit_tail` read tool. Core trait + writer + dispatcher
-  integration shipped — production path needs the SQLite impl
-  + main.rs wiring (~200 LOC) before deploy.
+  **Production wire-up shipped**: `SqliteAuditLogStore`
+  (`crates/mcp/src/server/audit_log/sqlite_store.rs`, ~440 LOC,
+  WAL + synchronous=NORMAL + 3 indexes + idempotent INSERT OR
+  REPLACE in transaction, mirrors Phase 72 `turn_log.rs`, 9
+  passing unit tests including round-trip + filter + idempotent
+  upsert + retention purge). `HttpTransportConfig.audit_log:
+  Option<AuditLogConfig>` field; `HttpTransportConfigYaml.audit_log:
+  Option<AuditLogYaml>` mirror in `crates/config/src/types/mcp_server.rs`
+  with `deny_unknown_fields` + 9 default fns. `yaml_audit_log_to_runtime`
+  mapper in `src/main.rs::start_http_transport`. `start_http_server`
+  in `crates/mcp/src/server/http_transport.rs` opens
+  `SqliteAuditLogStore::open(db_path)` + spawns `AuditWriter` when
+  `audit_log.enabled = true`, switches dispatcher constructor from
+  `with_rate_concurrency_and_sessions` to `with_full_stack`. SIGTERM
+  graceful-shutdown closure calls `audit_writer.drain(Duration::from_secs(5))`
+  before axum tears down the listener — pending rows flush
+  synchronously inside the Phase 71 5 s shutdown budget. **Deferred
+  to follow-ups**: `args_hash` computation in dispatcher hot path
+  (currently emits `args_hash: None` + `args_size_bytes: Some(N)`),
+  `mcp_audit_tail` read tool (read-side surface for ops + Phase
+  76.14 CLI).
 - 76.12 ⬜ — Conformance + fuzz suite. New
   `tests/mcp_server_conformance.rs` exercises spec MCP 2025-11-25
   fixtures end-to-end through both transports; `proptest` over
