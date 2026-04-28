@@ -508,6 +508,7 @@ mod tests {
             dispatch_policy: Default::default(),
             plan_mode: Default::default(),
             remote_triggers: Vec::new(),
+            lsp: nexo_config::types::lsp::LspPolicy::default(),
         };
         AgentContext::new(
             "a",
@@ -668,6 +669,7 @@ mod tests {
                 require_approval: true,
             },
             remote_triggers: Vec::new(),
+            lsp: nexo_config::types::lsp::LspPolicy::default(),
         };
         AgentContext::new(
             "a",

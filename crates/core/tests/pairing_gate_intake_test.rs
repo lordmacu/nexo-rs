@@ -96,6 +96,7 @@ fn agent_with_pairing_on() -> AgentConfig {
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),
         remote_triggers: Vec::new(),
+            lsp: nexo_config::types::lsp::LspPolicy::default(),
     }
 }
 

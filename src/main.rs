@@ -1570,6 +1570,49 @@ async fn main() -> Result<()> {
         .first()
         .map(|a| (a.id.clone(), a.model.clone()));
 
+    // Phase 79.5 — boot the LSP manager once per process. Probes
+    // rust-analyzer / pylsp / typescript-language-server / gopls
+    // on PATH; missing binaries get a single warn line with the
+    // install hint. The manager survives across all agents and is
+    // shut down in the SIGTERM handler below. Pre-warm covers
+    // languages requested by *any* agent's `lsp.prewarm` field.
+    let lsp_workspace = cfg
+        .agents
+        .agents
+        .first()
+        .map(|a| a.workspace.clone())
+        .filter(|s| !s.trim().is_empty())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+        });
+    let lsp_prewarm: Vec<nexo_lsp::LspLanguage> = cfg
+        .agents
+        .agents
+        .iter()
+        .filter(|a| a.lsp.enabled)
+        .flat_map(|a| {
+            a.lsp.prewarm.iter().map(|w| match w {
+                nexo_config::types::lsp::LspLanguageWire::Rust => nexo_lsp::LspLanguage::Rust,
+                nexo_config::types::lsp::LspLanguageWire::Python => {
+                    nexo_lsp::LspLanguage::Python
+                }
+                nexo_config::types::lsp::LspLanguageWire::TypeScript => {
+                    nexo_lsp::LspLanguage::TypeScript
+                }
+                nexo_config::types::lsp::LspLanguageWire::Go => nexo_lsp::LspLanguage::Go,
+            })
+        })
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    let lsp_manager = nexo_lsp::boot(&[], &lsp_prewarm, &lsp_workspace).await;
+    tracing::info!(
+        discovered = ?lsp_manager.discovered_languages(),
+        prewarm = ?lsp_prewarm,
+        "[lsp] manager booted"
+    );
+
     for agent_cfg in cfg.agents.agents {
         let agent_id = agent_cfg.id.clone();
         let dream_yaml = agent_cfg.dreaming.clone();
@@ -1945,6 +1988,51 @@ async fn main() -> Result<()> {
                     "agent has web_search.enabled but no provider is configured (set BRAVE_SEARCH_API_KEY / TAVILY_API_KEY or rely on DuckDuckGo)"
                 );
             }
+        }
+
+        // Phase 79.5 — `Lsp` tool, per-agent. Registered only when
+        // the agent's `lsp.enabled` is `true`. Languages whitelist
+        // empty means "all discovered". Workspace_root falls back
+        // to the daemon's `lsp_workspace` (first agent's
+        // workspace) when the agent itself doesn't declare one.
+        if agent_cfg.lsp.enabled {
+            let allowed: Vec<nexo_lsp::LspLanguage> = agent_cfg
+                .lsp
+                .languages
+                .iter()
+                .map(|w| match w {
+                    nexo_config::types::lsp::LspLanguageWire::Rust => {
+                        nexo_lsp::LspLanguage::Rust
+                    }
+                    nexo_config::types::lsp::LspLanguageWire::Python => {
+                        nexo_lsp::LspLanguage::Python
+                    }
+                    nexo_config::types::lsp::LspLanguageWire::TypeScript => {
+                        nexo_lsp::LspLanguage::TypeScript
+                    }
+                    nexo_config::types::lsp::LspLanguageWire::Go => nexo_lsp::LspLanguage::Go,
+                })
+                .collect();
+            let policy = nexo_lsp::ExecutePolicy {
+                allowed_languages: allowed,
+            };
+            let agent_workspace: std::path::PathBuf = if agent_cfg.workspace.trim().is_empty() {
+                lsp_workspace.clone()
+            } else {
+                std::path::PathBuf::from(&agent_cfg.workspace)
+            };
+            let lsp_tool = nexo_core::agent::lsp_tool::LspTool::new(
+                std::sync::Arc::clone(&lsp_manager),
+                policy,
+                agent_workspace,
+            );
+            let def = lsp_tool.tool_def().await;
+            tools.register(def, lsp_tool);
+            tracing::info!(
+                agent = %agent_id,
+                languages = ?agent_cfg.lsp.languages,
+                "registered Lsp tool"
+            );
         }
 
         // FOLLOWUPS W-2 — `web_fetch` tool. Sibling of `web_search`,
@@ -2715,6 +2803,11 @@ async fn main() -> Result<()> {
     shutdown_signal().await;
     tracing::info!("shutdown signal received — stopping");
     cron_runner_cancel.cancel();
+    // Phase 79.5 — shut down the LSP manager BEFORE plugin
+    // teardown so any in-flight `$/cancelRequest` notifications
+    // make it out to the language servers and child processes
+    // exit cleanly. `kill_on_drop(true)` is the safety net.
+    lsp_manager.shutdown().await;
 
     // Phase 71.3 — drain in-flight goals BEFORE bringing channel
     // plugins down. Walk the registry that lives inside the
@@ -7350,6 +7443,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),
         remote_triggers: Vec::new(),
+        lsp: nexo_config::types::lsp::LspPolicy::default(),
     });
     let broker = AnyBroker::local();
     let sessions = Arc::new(SessionManager::new(std::time::Duration::from_secs(300), 20));
