@@ -18,6 +18,7 @@ pub mod extension_tool;
 pub mod heartbeat_tool;
 pub mod hook_registry;
 pub mod llm_behavior;
+pub mod lsp_tool;
 pub mod mcp_catalog;
 pub mod mcp_resource_tool;
 pub mod mcp_router_tool;

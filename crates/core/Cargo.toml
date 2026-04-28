@@ -39,6 +39,7 @@ tracing       = { workspace = true }
 async-trait   = { workspace = true }
 tokio-util    = { workspace = true }
 nexo-llm = { version = "0.1.1", path = "../llm" }
+nexo-lsp = { version = "0.1.1", path = "../lsp" }
 nexo-memory = { version = "0.1.2", path = "../memory" }
 nexo-extensions = { version = "0.1.1", path = "../extensions" }
 nexo-mcp = { version = "0.1.1", path = "../mcp" }
