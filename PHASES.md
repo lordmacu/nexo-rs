@@ -4921,7 +4921,7 @@ Done when:
   - 51st item rejected;
   - restart hydration round-trips.
 
-#### 79.5 — LSPTool   ⬜
+#### 79.5 — LSPTool   ✅
 
 Run a Language Server Protocol query in-process: `go_to_def`,
 `hover`, `references`, `workspace_symbol`, `diagnostics`.
