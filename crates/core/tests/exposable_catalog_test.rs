@@ -177,7 +177,15 @@ async fn full_boot_ctx() -> McpServerBootContext {
     // leaking it — these are test fixtures, lifetime semantics are
     // tolerable. Real boot wiring uses persistent paths.
     Box::leak(Box::new(td));
-    // TaskFlow manager fixture backed by a temp sqlite file.
+    // TaskFlow manager — in-memory store stub.
+    {
+        struct InMemFlowStore;
+        // Minimal impl for boot-time call: every method returns an
+        // empty result. Boot helpers don't invoke the store.
+        // Use the real SqliteFlowStore in a temp file instead so the
+        // FlowManager's constraint (Arc<dyn FlowStore>) is satisfied
+        // without a hand-rolled stub that touches every method.
+    }
     let _td2 = tempfile::tempdir().expect("tempdir2");
     let path = _td2.path().join("taskflow.db");
     Box::leak(Box::new(_td2));

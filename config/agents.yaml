@@ -4,10 +4,10 @@ agents:
     provider: anthropic
     model: claude-haiku-4-5
   plugins:
-  - telegram
   - browser
-  - memory
   - email
+  - memory
+  - telegram
   inbound_bindings:
   - plugin: telegram
     instance: kate_bot
@@ -71,3 +71,5 @@ agents:
     - tasks
     - photoslibrary.readonly
     - youtube.readonly
+  allowed_tools: []
+schema_version: 11

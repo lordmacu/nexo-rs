@@ -21,8 +21,8 @@
 //!      * success → `delete(...)`
 //!      * failure and retries left → backoff + reschedule
 //!      * failure and retries exhausted → `delete(...)`
-//!        This keeps one-shot semantics bounded while avoiding silent
-//!        loss on the first transient failure.
+//!      This keeps one-shot semantics bounded while avoiding silent
+//!      loss on the first transient failure.
 //! 3. Sleep `tick_interval` and repeat. `cancel` stops the loop
 //!    cleanly.
 //!

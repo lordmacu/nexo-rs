@@ -1,42 +1,26 @@
-# Phase 11 — extension system (plug-and-play plugins).
-#
-# Drop a directory under `search_paths` containing a `plugin.toml` manifest.
-# The agent discovers it on boot; 11.3+ will spawn and register the
-# extension's tools. 11.2 only logs candidates.
 extensions:
   enabled: true
   search_paths:
-    - "./extensions"
-  # `template-rust` ships without a pre-built binary to keep clones
-  # fast. Spawning it would fail with ENOENT at boot and spam the
-  # logs. Enable after running
-  # `cd extensions/template-rust && cargo build --release` and moving
-  # the resulting binary next to `plugin.toml`.
+  - ./extensions
   disabled:
-    - "template-rust"
+  - template-rust
   allowlist: []
   ignore_dirs:
-    - "target"
-    - ".git"
-    - "node_modules"
-    - "dist"
-    - ".build"
+  - target
+  - .git
+  - node_modules
+  - dist
+  - .build
   max_depth: 3
-  # Phase 11.4 — defaults for NATS-backed extensions discovered via
-  # `{prefix}.registry.announce`. Stdio extensions ignore these fields.
   transport_defaults:
     nats:
-      subject_prefix: "ext"
-      call_timeout: "30s"
-      handshake_timeout: "10s"
-      heartbeat_interval: "15s"
+      subject_prefix: ext
+      call_timeout: 30s
+      handshake_timeout: 10s
+      heartbeat_interval: 15s
       heartbeat_grace_factor: 3
-      shutdown_grace: "2s"
-
-  # Phase 11.2 follow-up — opt-in watcher for `plugin.toml` files across
-  # `search_paths`. When enabled, manifest edits/adds/removes log at
-  # `warn`. No auto-respawn: the process must restart to apply changes.
-  # Invalid TOML logs `error`; last good runtime continues unchanged.
+      shutdown_grace: 2s
   watch:
     enabled: false
     debounce_ms: 500
+schema_version: 11

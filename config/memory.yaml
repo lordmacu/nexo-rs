@@ -1,27 +1,18 @@
 short_term:
   max_history_turns: 50
-  session_ttl: "24h"
-
+  session_ttl: 24h
 long_term:
-  backend: "sqlite"
+  backend: sqlite
   sqlite:
-    path: "./data/memory.db"
-
-# Phase 5.4 — semantic memory. Opt-in: set `enabled: true` after pointing
-# `base_url` at an OpenAI-compatible embeddings server (Ollama, LocalAI,
-# llama-server, vLLM, or the real OpenAI API). `dimensions` must match the
-# model output; a mismatch against an existing DB aborts startup.
+    path: ./data/memory.db
 vector:
   enabled: false
-  backend: "sqlite-vec"
-  # Default recall mode for `memory` tool when caller omits `mode`.
-  # One of: keyword | vector | hybrid
-  default_recall_mode: "keyword"
+  backend: sqlite-vec
+  default_recall_mode: keyword
   embedding:
-    provider: "http"
-    base_url: "http://localhost:11434/v1"   # Ollama default
-    model: "nomic-embed-text"
-    # Set this to $EMBEDDING_API_KEY-like placeholder for hosted providers.
-    api_key: ""
-    dimensions: 768
+    provider: http
+    base_url: http://localhost:11434/v1
+    model: nomic-embed-text
     timeout_secs: 30
+    dimensions: 768
+schema_version: 11

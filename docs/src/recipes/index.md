@@ -12,6 +12,7 @@ are at the top.
 | [MCP server from Claude Desktop](./mcp-from-claude-desktop.md) | Expose the agent's tools to the Anthropic desktop client. |
 | [NATS with TLS + auth](./nats-tls-auth.md) | Harden the broker for a multi-node deployment. |
 | [Rotating config without downtime](./hot-reload.md) | Three Phase 18 hot-reload scenarios: API key rotation, A/B prompt swap, narrowing an outbound allowlist mid-incident. |
+| [Future marketing plugin (multi-client)](./marketing-plugin-future.md) | Prepare multi-client autonomous marketing agents with strict instance/model isolation before plugin implementation. |
 
 If a recipe drifts from reality, open an issue — it means the docs
 didn't get updated alongside a code change.

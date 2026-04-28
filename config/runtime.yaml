@@ -1,0 +1,11 @@
+schema_version: 11
+cron:
+  tool_calls:
+    enabled: true
+    max_iterations: 6
+    allowlist:
+      - email_search
+      - email_thread
+      - email_reply
+      - cancel_followup
+      - check_followup

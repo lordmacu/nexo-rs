@@ -1,0 +1,128 @@
+# Template for future multi-client marketing automation.
+# Keep this file tracked and copy the parts you need into a gitignored
+# `config/agents.d/*.yaml` file with real prompts, recipients, and limits.
+#
+# Design goal:
+# - one agent per client surface
+# - each agent can use a different model
+# - each binding is pinned to one marketing plugin instance
+# - proactive mode can review inboxes automatically between user messages
+agents:
+  - id: marketing_acme_intake
+    model:
+      provider: minimax
+      model: MiniMax-M2.5
+    plugins:
+      - marketing
+    inbound_bindings:
+      - plugin: marketing
+        instance: acme_inbox
+        role: proactive
+        proactive:
+          enabled: true
+          tick_interval_secs: 300
+          jitter_pct: 20
+          max_idle_secs: 86400
+          initial_greeting: false
+          cache_aware_schedule: true
+          allow_short_intervals: false
+          daily_turn_budget: 120
+        sender_rate_limit:
+          rps: 1.0
+          burst: 20
+    # Keep broad at first; narrow once your plugin tools are finalized.
+    allowed_tools: []
+    outbound_allowlist: {}
+    heartbeat:
+      enabled: false
+    config:
+      debounce_ms: 1000
+      queue_cap: 64
+    workspace: ./data/workspace/marketing_acme_intake
+    skills: []
+    skills_dir: ../skills
+    transcripts_dir: ./data/transcripts/marketing_acme_intake
+    dreaming:
+      enabled: false
+    system_prompt: |
+      You are the ACME marketing intake agent.
+      Classify inbound emails/messages, detect urgency, and prepare concise
+      next actions for the human team.
+
+  - id: marketing_bravo_retention
+    model:
+      provider: anthropic
+      model: claude-haiku-4-5
+    plugins:
+      - marketing
+    inbound_bindings:
+      - plugin: marketing
+        instance: bravo_retention
+        role: proactive
+        proactive:
+          enabled: true
+          tick_interval_secs: 600
+          jitter_pct: 10
+          max_idle_secs: 86400
+          initial_greeting: false
+          cache_aware_schedule: true
+          allow_short_intervals: false
+          daily_turn_budget: 80
+        sender_rate_limit:
+          rps: 0.5
+          burst: 10
+    allowed_tools: []
+    outbound_allowlist: {}
+    heartbeat:
+      enabled: false
+    config:
+      debounce_ms: 1500
+      queue_cap: 64
+    workspace: ./data/workspace/marketing_bravo_retention
+    skills: []
+    skills_dir: ../skills
+    transcripts_dir: ./data/transcripts/marketing_bravo_retention
+    dreaming:
+      enabled: false
+    system_prompt: |
+      You are the BRAVO retention marketing agent.
+      Focus on churn-risk signals and prioritize urgent follow-ups.
+
+  - id: marketing_charlie_exec
+    model:
+      provider: deepseek
+      model: deepseek-chat
+    plugins:
+      - marketing
+    inbound_bindings:
+      - plugin: marketing
+        instance: charlie_exec
+        role: proactive
+        proactive:
+          enabled: true
+          tick_interval_secs: 900
+          jitter_pct: 15
+          max_idle_secs: 86400
+          initial_greeting: false
+          cache_aware_schedule: true
+          allow_short_intervals: false
+          daily_turn_budget: 50
+        sender_rate_limit:
+          rps: 0.5
+          burst: 8
+    allowed_tools: []
+    outbound_allowlist: {}
+    heartbeat:
+      enabled: false
+    config:
+      debounce_ms: 2000
+      queue_cap: 64
+    workspace: ./data/workspace/marketing_charlie_exec
+    skills: []
+    skills_dir: ../skills
+    transcripts_dir: ./data/transcripts/marketing_charlie_exec
+    dreaming:
+      enabled: false
+    system_prompt: |
+      You are the CHARLIE executive marketing assistant.
+      Summarize important inbound threads and raise only high-value decisions.

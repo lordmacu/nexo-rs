@@ -1,11 +1,3 @@
-# Phase 19 — generic poller subsystem.
-#
-# Every entry in `jobs:` is an independent task: own schedule, own
-# SQLite cursor, own circuit breaker, own metrics. Same `kind` can
-# appear N times for the same agent — each runs independently.
-#
-# Reference: docs/src/config/pollers.md
-
 pollers:
   enabled: true
   state_db: ./data/poller.db
@@ -13,68 +5,37 @@ pollers:
   lease_ttl_factor: 2.0
   failure_alert_cooldown_secs: 3600
   breaker_threshold: 5
-
   jobs:
-    # ──────────────────────────────────────────────────────────────
-    # Equivalente exacto al job legacy `solicitud-llamada` que vivía
-    # en `config/plugins/gmail-poller.yaml`. Misma query, mismos
-    # regex, mismo destino — ahora corriendo en el runner genérico
-    # con cursor SQLite + breaker per-job + tools `pollers_*` para
-    # el LLM y telemetría Prometheus.
-    # ──────────────────────────────────────────────────────────────
-    - id: kate_solicitud_llamada
-      kind: gmail
-      agent: kate
-      schedule:
-        every_secs: 60
-      failure_to:
-        channel: telegram
-        to: "1194292426"
-      config:
-        query: 'subject:"Nueva solicitud de llamada" is:unread'
-        newer_than: "1d"
-        max_per_tick: 20
-        dispatch_delay_ms: 1000
-        sender_allowlist: []
-        extract:
-          nombre:   '(?is)nombre[:\s]+([^\n\r]+)'
-          telefono: '(?is)tel[eé]fono[:\s]+([+\d\s\-]+)'
-          email:    '(?is)e-?mail[:\s]+([\w.@+-]+)'
-          mensaje:  '(?is)mensaje[:\s]+(.+?)(?:\n\n|$)'
-        require_fields: [nombre, telefono]
-        message_template: |
-          📞 Nueva solicitud de llamada
-          Cliente: {nombre}
-          Tel: {telefono}
-          Email: {email}
-          Mensaje: {mensaje}
-        mark_read_on_dispatch: true
-        deliver:
-          channel: whatsapp
-          to: "573115728852@s.whatsapp.net"
-
-    # ──────────────────────────────────────────────────────────────
-    # Phase 20 — `agent_turn` runs an LLM turn on a schedule and
-    # dispatches the reply. Cron-style replacement for OpenClaw's
-    # isolated-agent cron use case without writing a Poller module.
-    # ──────────────────────────────────────────────────────────────
-    # - id: kate_daily_summary
-    #   kind: agent_turn
-    #   agent: kate
-    #   schedule:
-    #     cron: "0 0 8 * * *"
-    #     tz: America/Bogota
-    #   config:
-    #     llm:
-    #       provider: anthropic
-    #       model: claude-haiku-4-5
-    #     system_prompt: |
-    #       You are Kate, a personal assistant.
-    #     user_prompt: |
-    #       Summarise the day's unanswered emails. One bullet per
-    #       email; include sender + subject.
-    #     deliver:
-    #       channel: telegram
-    #       recipient: "-1001234567890"
-    #     language: en        # optional output-language directive
-    #     max_tokens: 1024    # optional cap
+  - id: kate_solicitud_llamada
+    kind: gmail
+    agent: kate
+    schedule:
+      every_secs: 60
+    failure_to:
+      channel: telegram
+      to: '1194292426'
+    config:
+      query: subject:"Nueva solicitud de llamada" is:unread
+      newer_than: 1d
+      max_per_tick: 20
+      dispatch_delay_ms: 1000
+      sender_allowlist: []
+      extract:
+        nombre: (?is)nombre[:\s]+([^\n\r]+)
+        telefono: (?is)tel[eé]fono[:\s]+([+\d\s\-]+)
+        email: (?is)e-?mail[:\s]+([\w.@+-]+)
+        mensaje: (?is)mensaje[:\s]+(.+?)(?:\n\n|$)
+      require_fields:
+      - nombre
+      - telefono
+      message_template: |
+        📞 Nueva solicitud de llamada
+        Cliente: {nombre}
+        Tel: {telefono}
+        Email: {email}
+        Mensaje: {mensaje}
+      mark_read_on_dispatch: true
+      deliver:
+        channel: whatsapp
+        to: 573115728852@s.whatsapp.net
+schema_version: 11

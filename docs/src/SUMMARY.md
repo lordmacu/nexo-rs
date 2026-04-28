@@ -38,6 +38,7 @@
 - [MCP router tools (Phase 79.11)](./architecture/mcp-router-tools.md)
 - [ConfigTool gated self-config (Phase 79.10)](./architecture/config-tool.md)
 - [Team tools (Phase 79.6)](./architecture/team-tools.md)
+- [MCP server exposable catalog (Phase 79.M)](./architecture/mcp-server-exposable.md)
 
 # Configuration
 
@@ -110,14 +111,19 @@
 # CLI
 
 - [Reference](./cli/reference.md)
+- [Migrations CLI (status)](./cli/migrations.md)
 
 # Operations
 
+- [Proactive mode](./agents/proactive-mode.md)
 - [Docker](./ops/docker.md)
 - [Metrics (Prometheus)](./ops/metrics.md)
 - [Logging](./ops/logging.md)
 - [DLQ](./ops/dlq.md)
 - [Config hot-reload](./ops/hot-reload.md)
+- [Compact tiers](./ops/compact-tiers.md)
+- [Memdir scanner](./ops/memdir-scanner.md)
+- [Bash safety knobs](./ops/bash-safety.md)
 - [Capability toggles](./ops/capabilities.md)
 - [Context optimization](./ops/context-optimization.md)
 - [Link understanding](./ops/link-understanding.md)
@@ -140,6 +146,7 @@
 - [MCP server from Claude Desktop](./recipes/mcp-from-claude-desktop.md)
 - [NATS with TLS + auth](./recipes/nats-tls-auth.md)
 - [Rotating config without downtime](./recipes/hot-reload.md)
+- [Future marketing plugin (multi-client)](./recipes/marketing-plugin-future.md)
 - [Build a poller module](./recipes/build-a-poller.md)
 - [Deploy on Hetzner Cloud](./recipes/deploy-hetzner.md)
 - [Deploy on Fly.io](./recipes/deploy-fly.md)
