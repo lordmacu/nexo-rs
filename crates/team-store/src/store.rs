@@ -12,9 +12,7 @@
 //!     query-by-secondary-index) and store the same data in
 //!     normalised SQL.
 
-use crate::types::{
-    TeamEventRow, TeamMemberRow, TeamRow, TeamStoreError, TEAM_MAX_MEMBERS,
-};
+use crate::types::{TeamEventRow, TeamMemberRow, TeamRow, TeamStoreError, TEAM_MAX_MEMBERS};
 use async_trait::async_trait;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
@@ -235,12 +233,11 @@ impl TeamStore for SqliteTeamStore {
         // documented invariant. Counts active members of the same
         // team excluding any deleted parent (FK guarantees the team
         // exists).
-        let count: i64 = sqlx::query_scalar(
-            r#"SELECT COUNT(*) FROM team_members WHERE team_id = ?"#,
-        )
-        .bind(&member.team_id)
-        .fetch_one(&self.pool)
-        .await?;
+        let count: i64 =
+            sqlx::query_scalar(r#"SELECT COUNT(*) FROM team_members WHERE team_id = ?"#)
+                .bind(&member.team_id)
+                .fetch_one(&self.pool)
+                .await?;
         if (count as usize) >= TEAM_MAX_MEMBERS {
             return Err(TeamStoreError::TeamFull {
                 team_id: member.team_id.clone(),
@@ -319,13 +316,11 @@ impl TeamStore for SqliteTeamStore {
     }
 
     async fn remove_member(&self, team_id: &str, name: &str) -> Result<(), TeamStoreError> {
-        let res = sqlx::query(
-            r#"DELETE FROM team_members WHERE team_id = ? AND name = ?"#,
-        )
-        .bind(team_id)
-        .bind(name)
-        .execute(&self.pool)
-        .await?;
+        let res = sqlx::query(r#"DELETE FROM team_members WHERE team_id = ? AND name = ?"#)
+            .bind(team_id)
+            .bind(name)
+            .execute(&self.pool)
+            .await?;
         if res.rows_affected() == 0 {
             return Err(TeamStoreError::MemberNotFound {
                 team_id: team_id.to_string(),
@@ -359,9 +354,9 @@ impl TeamStore for SqliteTeamStore {
         n: usize,
     ) -> Result<Vec<TeamEventRow>, TeamStoreError> {
         let limit = n.clamp(1, MAX_TAIL_EVENTS) as i64;
-        let rows = match team_id {
-            Some(tid) => {
-                sqlx::query_as::<_, TeamEventRow>(
+        let rows =
+            match team_id {
+                Some(tid) => sqlx::query_as::<_, TeamEventRow>(
                     r#"SELECT event_id, team_id, kind, actor_member_name, payload_json, created_at
                          FROM team_events WHERE team_id = ?
                         ORDER BY created_at DESC, rowid DESC
@@ -370,10 +365,8 @@ impl TeamStore for SqliteTeamStore {
                 .bind(tid)
                 .bind(limit)
                 .fetch_all(&self.pool)
-                .await?
-            }
-            None => {
-                sqlx::query_as::<_, TeamEventRow>(
+                .await?,
+                None => sqlx::query_as::<_, TeamEventRow>(
                     r#"SELECT event_id, team_id, kind, actor_member_name, payload_json, created_at
                          FROM team_events
                         ORDER BY created_at DESC, rowid DESC
@@ -381,9 +374,8 @@ impl TeamStore for SqliteTeamStore {
                 )
                 .bind(limit)
                 .fetch_all(&self.pool)
-                .await?
-            }
-        };
+                .await?,
+            };
         Ok(rows)
     }
 }
@@ -508,7 +500,10 @@ mod tests {
     #[tokio::test]
     async fn create_team_then_get_returns_row() {
         let store = SqliteTeamStore::open_in_memory().await.unwrap();
-        store.create_team(&fixture_team("feature-x", "cody", 100)).await.unwrap();
+        store
+            .create_team(&fixture_team("feature-x", "cody", 100))
+            .await
+            .unwrap();
         let got = store.get_team("feature-x").await.unwrap().unwrap();
         assert_eq!(got.lead_agent_id, "cody");
         assert_eq!(got.flow_id, "feature-x");
@@ -517,16 +512,28 @@ mod tests {
     #[tokio::test]
     async fn create_team_idempotent_on_conflict_errors_with_team_name_taken() {
         let store = SqliteTeamStore::open_in_memory().await.unwrap();
-        store.create_team(&fixture_team("feature-x", "cody", 100)).await.unwrap();
-        let err = store.create_team(&fixture_team("feature-x", "cody", 200)).await.unwrap_err();
+        store
+            .create_team(&fixture_team("feature-x", "cody", 100))
+            .await
+            .unwrap();
+        let err = store
+            .create_team(&fixture_team("feature-x", "cody", 200))
+            .await
+            .unwrap_err();
         assert!(matches!(err, TeamStoreError::TeamNameTaken(t) if t == "feature-x"));
     }
 
     #[tokio::test]
     async fn soft_delete_team_excludes_from_active_listing() {
         let store = SqliteTeamStore::open_in_memory().await.unwrap();
-        store.create_team(&fixture_team("a", "cody", 100)).await.unwrap();
-        store.create_team(&fixture_team("b", "cody", 200)).await.unwrap();
+        store
+            .create_team(&fixture_team("a", "cody", 100))
+            .await
+            .unwrap();
+        store
+            .create_team(&fixture_team("b", "cody", 200))
+            .await
+            .unwrap();
         store.soft_delete_team("a", 300).await.unwrap();
         let active = store.list_teams(Some("cody"), true).await.unwrap();
         assert_eq!(active.len(), 1);
@@ -538,9 +545,18 @@ mod tests {
     #[tokio::test]
     async fn add_member_round_trip() {
         let store = SqliteTeamStore::open_in_memory().await.unwrap();
-        store.create_team(&fixture_team("a", "cody", 100)).await.unwrap();
-        store.add_member(&fixture_member("a", "researcher", 110)).await.unwrap();
-        store.add_member(&fixture_member("a", "tester", 120)).await.unwrap();
+        store
+            .create_team(&fixture_team("a", "cody", 100))
+            .await
+            .unwrap();
+        store
+            .add_member(&fixture_member("a", "researcher", 110))
+            .await
+            .unwrap();
+        store
+            .add_member(&fixture_member("a", "tester", 120))
+            .await
+            .unwrap();
         let members = store.list_members("a").await.unwrap();
         assert_eq!(members.len(), 2);
         assert_eq!(members[0].name, "researcher");
@@ -550,9 +566,18 @@ mod tests {
     #[tokio::test]
     async fn add_member_rejects_duplicate_name_in_team() {
         let store = SqliteTeamStore::open_in_memory().await.unwrap();
-        store.create_team(&fixture_team("a", "cody", 100)).await.unwrap();
-        store.add_member(&fixture_member("a", "researcher", 110)).await.unwrap();
-        let err = store.add_member(&fixture_member("a", "researcher", 120)).await.unwrap_err();
+        store
+            .create_team(&fixture_team("a", "cody", 100))
+            .await
+            .unwrap();
+        store
+            .add_member(&fixture_member("a", "researcher", 110))
+            .await
+            .unwrap();
+        let err = store
+            .add_member(&fixture_member("a", "researcher", 120))
+            .await
+            .unwrap_err();
         match err {
             TeamStoreError::MemberNameTaken { team_id, name } => {
                 assert_eq!(team_id, "a");
@@ -565,7 +590,10 @@ mod tests {
     #[tokio::test]
     async fn add_member_rejects_when_at_team_full() {
         let store = SqliteTeamStore::open_in_memory().await.unwrap();
-        store.create_team(&fixture_team("a", "cody", 100)).await.unwrap();
+        store
+            .create_team(&fixture_team("a", "cody", 100))
+            .await
+            .unwrap();
         for i in 0..TEAM_MAX_MEMBERS {
             store
                 .add_member(&fixture_member("a", &format!("m{i}"), 100 + i as i64))
@@ -583,8 +611,14 @@ mod tests {
     #[tokio::test]
     async fn set_member_active_toggles_state_with_last_active_at() {
         let store = SqliteTeamStore::open_in_memory().await.unwrap();
-        store.create_team(&fixture_team("a", "cody", 100)).await.unwrap();
-        store.add_member(&fixture_member("a", "x", 100)).await.unwrap();
+        store
+            .create_team(&fixture_team("a", "cody", 100))
+            .await
+            .unwrap();
+        store
+            .add_member(&fixture_member("a", "x", 100))
+            .await
+            .unwrap();
         store.set_member_active("a", "x", false, 200).await.unwrap();
         let members = store.list_members("a").await.unwrap();
         assert!(!members[0].is_active);
@@ -594,17 +628,32 @@ mod tests {
     #[tokio::test]
     async fn set_member_active_unknown_returns_member_not_found() {
         let store = SqliteTeamStore::open_in_memory().await.unwrap();
-        store.create_team(&fixture_team("a", "cody", 100)).await.unwrap();
-        let err = store.set_member_active("a", "ghost", false, 200).await.unwrap_err();
+        store
+            .create_team(&fixture_team("a", "cody", 100))
+            .await
+            .unwrap();
+        let err = store
+            .set_member_active("a", "ghost", false, 200)
+            .await
+            .unwrap_err();
         assert!(matches!(err, TeamStoreError::MemberNotFound { .. }));
     }
 
     #[tokio::test]
     async fn count_active_for_agent_filters_deleted() {
         let store = SqliteTeamStore::open_in_memory().await.unwrap();
-        store.create_team(&fixture_team("a", "cody", 100)).await.unwrap();
-        store.create_team(&fixture_team("b", "cody", 110)).await.unwrap();
-        store.create_team(&fixture_team("c", "alice", 120)).await.unwrap();
+        store
+            .create_team(&fixture_team("a", "cody", 100))
+            .await
+            .unwrap();
+        store
+            .create_team(&fixture_team("b", "cody", 110))
+            .await
+            .unwrap();
+        store
+            .create_team(&fixture_team("c", "alice", 120))
+            .await
+            .unwrap();
         store.soft_delete_team("a", 300).await.unwrap();
 
         let cody = store.count_active_for_agent("cody").await.unwrap();
@@ -616,10 +665,22 @@ mod tests {
     #[tokio::test]
     async fn record_event_then_tail_returns_in_desc_order() {
         let store = SqliteTeamStore::open_in_memory().await.unwrap();
-        store.create_team(&fixture_team("a", "cody", 100)).await.unwrap();
-        store.record_event(&fixture_event("e1", "a", "team_created", 100)).await.unwrap();
-        store.record_event(&fixture_event("e2", "a", "member_joined", 200)).await.unwrap();
-        store.record_event(&fixture_event("e3", "a", "member_idled", 300)).await.unwrap();
+        store
+            .create_team(&fixture_team("a", "cody", 100))
+            .await
+            .unwrap();
+        store
+            .record_event(&fixture_event("e1", "a", "team_created", 100))
+            .await
+            .unwrap();
+        store
+            .record_event(&fixture_event("e2", "a", "member_joined", 200))
+            .await
+            .unwrap();
+        store
+            .record_event(&fixture_event("e3", "a", "member_idled", 300))
+            .await
+            .unwrap();
 
         let tail = store.tail_events(Some("a"), 10).await.unwrap();
         assert_eq!(tail.len(), 3);
@@ -631,9 +692,18 @@ mod tests {
     #[tokio::test]
     async fn record_event_idempotent_on_event_id() {
         let store = SqliteTeamStore::open_in_memory().await.unwrap();
-        store.create_team(&fixture_team("a", "cody", 100)).await.unwrap();
-        store.record_event(&fixture_event("e1", "a", "team_created", 100)).await.unwrap();
-        store.record_event(&fixture_event("e1", "a", "team_created", 999)).await.unwrap();
+        store
+            .create_team(&fixture_team("a", "cody", 100))
+            .await
+            .unwrap();
+        store
+            .record_event(&fixture_event("e1", "a", "team_created", 100))
+            .await
+            .unwrap();
+        store
+            .record_event(&fixture_event("e1", "a", "team_created", 999))
+            .await
+            .unwrap();
         let tail = store.tail_events(Some("a"), 10).await.unwrap();
         assert_eq!(tail.len(), 1);
         assert_eq!(tail[0].created_at, 100, "first insert wins, no overwrite");
@@ -642,10 +712,22 @@ mod tests {
     #[tokio::test]
     async fn tail_events_filters_by_team_id() {
         let store = SqliteTeamStore::open_in_memory().await.unwrap();
-        store.create_team(&fixture_team("a", "cody", 100)).await.unwrap();
-        store.create_team(&fixture_team("b", "cody", 200)).await.unwrap();
-        store.record_event(&fixture_event("e1", "a", "team_created", 100)).await.unwrap();
-        store.record_event(&fixture_event("e2", "b", "team_created", 200)).await.unwrap();
+        store
+            .create_team(&fixture_team("a", "cody", 100))
+            .await
+            .unwrap();
+        store
+            .create_team(&fixture_team("b", "cody", 200))
+            .await
+            .unwrap();
+        store
+            .record_event(&fixture_event("e1", "a", "team_created", 100))
+            .await
+            .unwrap();
+        store
+            .record_event(&fixture_event("e2", "b", "team_created", 200))
+            .await
+            .unwrap();
 
         let only_a = store.tail_events(Some("a"), 10).await.unwrap();
         assert_eq!(only_a.len(), 1);
@@ -658,7 +740,10 @@ mod tests {
     #[tokio::test]
     async fn tail_events_caps_at_max() {
         let store = SqliteTeamStore::open_in_memory().await.unwrap();
-        store.create_team(&fixture_team("a", "cody", 100)).await.unwrap();
+        store
+            .create_team(&fixture_team("a", "cody", 100))
+            .await
+            .unwrap();
         for i in 0..250 {
             store
                 .record_event(&fixture_event(&format!("e{i:03}"), "a", "noop", i as i64))
@@ -672,7 +757,10 @@ mod tests {
     #[tokio::test]
     async fn touch_team_updates_last_active_at() {
         let store = SqliteTeamStore::open_in_memory().await.unwrap();
-        store.create_team(&fixture_team("a", "cody", 100)).await.unwrap();
+        store
+            .create_team(&fixture_team("a", "cody", 100))
+            .await
+            .unwrap();
         store.touch_team("a", 999).await.unwrap();
         let got = store.get_team("a").await.unwrap().unwrap();
         assert_eq!(got.last_active_at, 999);
@@ -681,7 +769,10 @@ mod tests {
     #[tokio::test]
     async fn remove_member_returns_member_not_found_for_unknown() {
         let store = SqliteTeamStore::open_in_memory().await.unwrap();
-        store.create_team(&fixture_team("a", "cody", 100)).await.unwrap();
+        store
+            .create_team(&fixture_team("a", "cody", 100))
+            .await
+            .unwrap();
         let err = store.remove_member("a", "ghost").await.unwrap_err();
         assert!(matches!(err, TeamStoreError::MemberNotFound { .. }));
     }

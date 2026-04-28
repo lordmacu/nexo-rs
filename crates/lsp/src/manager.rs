@@ -20,7 +20,7 @@
 use crate::client::FileDiagnostics;
 use crate::error::LspError;
 use crate::format::{
-    build_output, format_diagnostics, format_hover, format_locations, format_location,
+    build_output, format_diagnostics, format_hover, format_location, format_locations,
     format_workspace_symbols, resolve_input_path,
 };
 use crate::launcher::LspLauncher;
@@ -40,18 +40,10 @@ use tokio_util::sync::CancellationToken;
 /// caller (`nexo-core::agent::lsp_tool`) constructs this from the
 /// binding's `LspPolicy` (Phase 79.5 step 9) so that this crate
 /// stays free of `nexo-config` dep.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ExecutePolicy {
     /// Empty = all discovered languages allowed.
     pub allowed_languages: Vec<LspLanguage>,
-}
-
-impl Default for ExecutePolicy {
-    fn default() -> Self {
-        Self {
-            allowed_languages: Vec::new(),
-        }
-    }
 }
 
 impl ExecutePolicy {
@@ -279,7 +271,6 @@ impl LspManager {
                     line,
                     character,
                     "textDocument/definition",
-                    "go_to_def",
                 )
                 .await
             }
@@ -297,7 +288,9 @@ impl LspManager {
                         "character": character.saturating_sub(1),
                     }
                 });
-                let raw = session.request_with_retry("textDocument/hover", pos).await?;
+                let raw = session
+                    .request_with_retry("textDocument/hover", pos)
+                    .await?;
                 let hover: Option<lsp_types::Hover> =
                     serde_json::from_value(raw.clone()).unwrap_or(None);
                 let formatted = match hover {
@@ -334,10 +327,7 @@ impl LspManager {
                 // running so workspace_symbol has indexed targets.
                 session.ensure_started().await?;
                 let raw = session
-                    .request_with_retry(
-                        "workspace/symbol",
-                        serde_json::json!({ "query": query }),
-                    )
+                    .request_with_retry("workspace/symbol", serde_json::json!({ "query": query }))
                     .await?;
                 let symbols: Vec<lsp_types::SymbolInformation> =
                     serde_json::from_value(raw.clone()).unwrap_or_default();
@@ -348,7 +338,10 @@ impl LspManager {
                 let abs = resolve_input_path(&file, workspace_root);
                 let uri = session.ensure_open(&abs).await?;
                 let snapshot: Option<FileDiagnostics> = session.diagnostics_for(&uri).await?;
-                let items = snapshot.as_ref().map(|s| s.items.clone()).unwrap_or_default();
+                let items = snapshot
+                    .as_ref()
+                    .map(|s| s.items.clone())
+                    .unwrap_or_default();
                 let formatted = format_diagnostics(&abs, Some(workspace_root), &items);
                 let structured = serde_json::to_value(&items).unwrap_or(serde_json::Value::Null);
                 Ok(build_output(formatted, structured))
@@ -364,7 +357,6 @@ impl LspManager {
         line: u32,
         character: u32,
         method: &str,
-        _kind: &str,
     ) -> Result<LspToolOutput, LspError> {
         let abs = resolve_input_path(file, workspace_root);
         let uri = session.ensure_open(&abs).await?;
@@ -520,8 +512,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_routes_by_extension() {
-        let manager =
-            LspManager::with_launcher(empty_launcher(), SessionConfig::default());
+        let manager = LspManager::with_launcher(empty_launcher(), SessionConfig::default());
         let req = LspRequest::Hover {
             file: "src/foo.unknown_ext".into(),
             line: 1,
@@ -549,8 +540,7 @@ mod tests {
         let file = dir.path().join("foo.rs");
         std::fs::write(&file, "fn main() {}").unwrap();
 
-        let manager =
-            LspManager::with_launcher(empty_launcher(), SessionConfig::default());
+        let manager = LspManager::with_launcher(empty_launcher(), SessionConfig::default());
         let req = LspRequest::Hover {
             file: file.to_string_lossy().into_owned(),
             line: 1,
@@ -561,7 +551,13 @@ mod tests {
             .await
             .unwrap_err();
         assert!(
-            matches!(err, LspError::ServerUnavailable { language: LspLanguage::Rust, .. }),
+            matches!(
+                err,
+                LspError::ServerUnavailable {
+                    language: LspLanguage::Rust,
+                    ..
+                }
+            ),
             "got: {err:?}"
         );
         manager.shutdown().await;
@@ -591,7 +587,12 @@ mod tests {
             .await
             .unwrap_err();
         assert!(
-            matches!(err, LspError::LanguageNotEnabled { language: LspLanguage::Python }),
+            matches!(
+                err,
+                LspError::LanguageNotEnabled {
+                    language: LspLanguage::Python
+                }
+            ),
             "got: {err:?}"
         );
         manager.shutdown().await;
@@ -599,8 +600,7 @@ mod tests {
 
     #[tokio::test]
     async fn aggregated_capabilities_or_across_sessions() {
-        let manager =
-            LspManager::with_launcher(empty_launcher(), SessionConfig::default());
+        let manager = LspManager::with_launcher(empty_launcher(), SessionConfig::default());
         // No sessions yet → all flags false.
         let caps = manager.aggregated_capabilities().await;
         assert!(!caps.definition);
@@ -610,8 +610,7 @@ mod tests {
 
     #[tokio::test]
     async fn shutdown_cancels_idle_reaper() {
-        let manager =
-            LspManager::with_launcher(empty_launcher(), SessionConfig::default());
+        let manager = LspManager::with_launcher(empty_launcher(), SessionConfig::default());
         // Just exercise the shutdown path — must not deadlock.
         manager.shutdown().await;
     }

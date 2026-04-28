@@ -79,13 +79,13 @@ impl TeamPolicy {
 
     /// Effective members cap, clamped at `TEAM_MAX_MEMBERS`.
     pub fn effective_max_members(&self) -> u32 {
-        self.max_members.min(TEAM_MAX_MEMBERS).max(1)
+        self.max_members.clamp(1, TEAM_MAX_MEMBERS)
     }
 
     /// Effective concurrent cap, clamped at
     /// `TEAM_MAX_CONCURRENT_DEFAULT`.
     pub fn effective_max_concurrent(&self) -> u32 {
-        self.max_concurrent.min(TEAM_MAX_CONCURRENT_DEFAULT).max(1)
+        self.max_concurrent.clamp(1, TEAM_MAX_CONCURRENT_DEFAULT)
     }
 }
 

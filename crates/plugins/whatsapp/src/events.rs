@@ -25,6 +25,10 @@ pub enum InboundEvent {
         chat: String,
         text: Option<String>,
         reply_to: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reply_to_question_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ask_question_id: Option<String>,
         is_group: bool,
         timestamp: i64,
         msg_id: String,

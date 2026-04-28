@@ -59,7 +59,10 @@ pub async fn drain_running_goals(
         Err(_) => return report,
     };
     for summary in summaries {
-        if !matches!(summary.status, AgentRunStatus::Running) {
+        if !matches!(
+            summary.status,
+            AgentRunStatus::Running | AgentRunStatus::Sleeping
+        ) {
             continue;
         }
         report.running_seen += 1;

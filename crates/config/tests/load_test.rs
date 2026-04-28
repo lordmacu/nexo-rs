@@ -280,3 +280,74 @@ agents:
     assert_eq!(cfg.agents.agents[0].heartbeat.interval, "5m");
     assert_eq!(cfg.agents.agents[0].config.debounce_ms, 2000);
 }
+
+#[test]
+fn migrations_auto_apply_false_leaves_files_untouched() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    write_fixtures(dir.path());
+    write_file(
+        dir.path(),
+        "agents.yaml",
+        r#"
+agent:
+  id: "kate"
+  model:
+    provider: "minimax"
+    model: "MiniMax-M2.5"
+"#,
+    );
+    write_file(
+        dir.path(),
+        "runtime.yaml",
+        r#"
+migrations:
+  auto_apply: false
+"#,
+    );
+
+    let err = AppConfig::load(dir.path()).expect_err("legacy shape should fail without auto-apply");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("agents") || msg.contains("unknown"),
+        "got: {msg}"
+    );
+
+    let agents_raw = fs::read_to_string(dir.path().join("agents.yaml")).unwrap();
+    assert!(!agents_raw.contains("schema_version:"));
+    assert!(agents_raw.contains("agent:"));
+}
+
+#[test]
+fn migrations_auto_apply_true_rewrites_then_loads() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    write_fixtures(dir.path());
+    write_file(
+        dir.path(),
+        "agents.yaml",
+        r#"
+agent:
+  id: "kate"
+  model:
+    provider: "minimax"
+    model: "MiniMax-M2.5"
+"#,
+    );
+    write_file(
+        dir.path(),
+        "runtime.yaml",
+        r#"
+migrations:
+  auto_apply: true
+"#,
+    );
+
+    let cfg = AppConfig::load(dir.path()).expect("auto-apply should migrate legacy shape");
+    assert_eq!(cfg.agents.agents.len(), 1);
+    assert_eq!(cfg.agents.agents[0].id, "kate");
+
+    let agents_raw = fs::read_to_string(dir.path().join("agents.yaml")).unwrap();
+    assert!(agents_raw.contains("schema_version: 11"));
+    assert!(agents_raw.contains("agents:"));
+}

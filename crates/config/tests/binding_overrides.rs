@@ -126,3 +126,20 @@ fn unknown_field_under_binding_rejected() {
         "error should mention the unknown field, got: {msg}"
     );
 }
+
+#[test]
+fn remote_triggers_override_parses() {
+    let yaml = r#"
+plugin: telegram
+remote_triggers:
+  - kind: nats
+    name: followup
+    subject: marketing.followup
+"#;
+    let b = parse(yaml);
+    let list = b
+        .remote_triggers
+        .expect("remote_triggers binding override should parse");
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].name(), "followup");
+}

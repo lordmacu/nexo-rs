@@ -152,15 +152,18 @@ fn two_binding_agent() -> AgentConfig {
                 dispatch_policy: Default::default(),
                 plan_mode: Default::default(),
                 role: None,
+                proactive: None,
+                remote_triggers: None,
             },
         ],
         context_optimization: None,
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),
         remote_triggers: Vec::new(),
-            lsp: nexo_config::types::lsp::LspPolicy::default(),
-            config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
-            team: nexo_config::types::team::TeamPolicy::default(),
+        lsp: nexo_config::types::lsp::LspPolicy::default(),
+        config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
+        team: nexo_config::types::team::TeamPolicy::default(),
+        proactive: Default::default(),
     }
 }
 
@@ -343,9 +346,10 @@ async fn agent_without_bindings_drops_inbound_events() {
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),
         remote_triggers: Vec::new(),
-            lsp: nexo_config::types::lsp::LspPolicy::default(),
-            config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
-            team: nexo_config::types::team::TeamPolicy::default(),
+        lsp: nexo_config::types::lsp::LspPolicy::default(),
+        config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
+        team: nexo_config::types::team::TeamPolicy::default(),
+        proactive: Default::default(),
     };
     let (runtime, captures, broker) = spawn_runtime(cfg).await;
 
@@ -431,4 +435,43 @@ async fn effective_policy_defense_in_depth_blocks_hallucinated_tools() {
     assert_eq!(inherited.allowed_tools, vec!["weather".to_string()]);
     assert!(!inherited.tool_allowed("browser_open"));
     assert!(inherited.tool_allowed("weather"));
+}
+
+#[tokio::test]
+async fn worker_role_uses_curated_default_tools_in_runtime() {
+    let mut cfg = two_binding_agent();
+    cfg.allowed_tools = vec!["*".into()];
+    cfg.inbound_bindings = vec![InboundBinding {
+        plugin: "telegram".into(),
+        instance: Some("worker_bot".into()),
+        role: Some("worker".into()),
+        allowed_tools: None,
+        ..Default::default()
+    }];
+
+    let (runtime, captures, broker) = spawn_runtime(cfg).await;
+    publish_on(
+        &broker,
+        "plugin.inbound.telegram.worker_bot",
+        Uuid::new_v4(),
+        "worker ping",
+    )
+    .await;
+    sleep(Duration::from_millis(60)).await;
+    runtime.stop().await;
+
+    let snap = captures.lock().unwrap();
+    let worker = snap
+        .iter()
+        .find(|c| c.text == "worker ping")
+        .expect("worker capture");
+    assert_eq!(
+        worker.allowed_tools,
+        vec![
+            "bash".to_string(),
+            "file_read".to_string(),
+            "file_edit".to_string(),
+            "agent_turns_tail".to_string()
+        ]
+    );
 }

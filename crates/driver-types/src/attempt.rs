@@ -53,6 +53,8 @@ pub enum AttemptOutcome {
     /// CLI handed control back without claiming done — mid-conversation
     /// pause, e.g. waiting on a long tool result.
     Continue { reason: String },
+    /// Runtime-local park request emitted when the model calls Sleep.
+    Sleep { duration_ms: u64, reason: String },
     /// Budget exhausted on one of the four axes — driver routes to
     /// 67.10 escalate.
     BudgetExhausted { axis: BudgetAxis },

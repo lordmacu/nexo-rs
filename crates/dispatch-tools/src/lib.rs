@@ -28,8 +28,10 @@ pub use admin::{
     EvictCompletedOutput, FlushAgentQueueOutput, SetConcurrencyCapInput, SetConcurrencyCapOutput,
 };
 pub use agent_control::{
-    cancel_agent, pause_agent, resume_agent, update_budget, AgentControlError, CancelAgentInput,
-    CancelAgentOutput, PauseAgentInput, PauseAgentOutput, UpdateBudgetInput, UpdateBudgetOutput,
+    ask_user_question, cancel_agent, pause_agent, rearm_ask_user_timeouts, resume_agent,
+    update_budget, AgentControlError, AskUserQuestionInput, AskUserQuestionOutput,
+    CancelAgentInput, CancelAgentOutput, PauseAgentInput, PauseAgentOutput, UpdateBudgetInput,
+    UpdateBudgetOutput,
 };
 pub use agent_query::{
     agent_hooks_list, agent_logs_tail, agent_status, agent_turns_tail, list_agents,

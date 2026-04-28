@@ -102,7 +102,7 @@ pub const LANGUAGE_MATRIX: &[LanguageMatrixEntry] = &[
 pub fn language_for_extension(ext_with_dot: &str) -> Option<LspLanguage> {
     let lower = ext_with_dot.to_ascii_lowercase();
     for entry in LANGUAGE_MATRIX {
-        if entry.extensions.iter().any(|e| *e == lower.as_str()) {
+        if entry.extensions.contains(&lower.as_str()) {
             return Some(entry.language);
         }
     }
@@ -288,7 +288,10 @@ mod tests {
     fn language_for_extension_routes_correctly() {
         assert_eq!(language_for_extension(".rs"), Some(LspLanguage::Rust));
         assert_eq!(language_for_extension(".PY"), Some(LspLanguage::Python));
-        assert_eq!(language_for_extension(".tsx"), Some(LspLanguage::TypeScript));
+        assert_eq!(
+            language_for_extension(".tsx"),
+            Some(LspLanguage::TypeScript)
+        );
         assert_eq!(language_for_extension(".go"), Some(LspLanguage::Go));
         assert_eq!(language_for_extension(".unknown"), None);
         assert_eq!(language_for_extension(""), None);

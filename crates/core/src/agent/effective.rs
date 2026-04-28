@@ -18,6 +18,7 @@
 //! | `system_prompt`       | agent base + `\n\n# CHANNEL ADDENDUM\n<extra>` |
 //! | `sender_rate_limit`   | `Inherit` / `Disable` / `Config(cfg)` keyword  |
 //! | `allowed_delegates`   | replace                                        |
+//! | `remote_triggers`     | replace                                        |
 //!
 //! Bindings without overrides resolve to exactly the agent-level values, so
 //! pre-binding YAML keeps working unchanged.
@@ -26,7 +27,7 @@ use std::sync::Arc;
 
 use nexo_config::{
     AgentConfig, DispatchPolicy, InboundBinding, ModelConfig, OutboundAllowlistConfig,
-    SenderRateLimitConfig, SenderRateLimitKeyword, SenderRateLimitOverride,
+    ProactiveConfig, SenderRateLimitConfig, SenderRateLimitKeyword, SenderRateLimitOverride,
 };
 
 /// Concrete capability snapshot for one session attached to one binding.
@@ -56,6 +57,10 @@ pub struct EffectiveBindingPolicy {
     /// keyword and an absent agent-level limit resolve to `None`.
     pub sender_rate_limit: Option<SenderRateLimitConfig>,
     pub allowed_delegates: Vec<String>,
+    /// Phase 79.8 — resolved `RemoteTrigger` destination allowlist.
+    /// `InboundBinding::remote_triggers` replaces the agent-level list when
+    /// present; otherwise the agent-level `remote_triggers` is inherited.
+    pub remote_triggers: Vec<nexo_config::types::remote_triggers::RemoteTriggerEntry>,
     /// Output language for LLM replies. `None` = no directive (model
     /// picks based on user input). When `Some(lang)`, the runtime
     /// renders a `# OUTPUT LANGUAGE` system block telling the model
@@ -82,6 +87,10 @@ pub struct EffectiveBindingPolicy {
     /// pairing trust signal before admitting a `program_phase`
     /// call.
     pub dispatch_policy: DispatchPolicy,
+    /// Phase 77.20 — resolved proactive tick-loop config for this binding.
+    pub proactive: ProactiveConfig,
+    /// Optional binding role tag (`coordinator`, `worker`, `proactive`).
+    pub role: Option<String>,
 }
 
 /// Per-agent / per-binding web-search policy. Mirrors the YAML shape
@@ -149,11 +158,14 @@ impl EffectiveBindingPolicy {
             system_prompt: resolve_prompt(agent, binding),
             sender_rate_limit: resolve_rate_limit(agent, binding),
             allowed_delegates: resolve_delegates(agent, binding),
+            remote_triggers: resolve_remote_triggers(agent, binding),
             language: resolve_language(agent, binding),
             link_understanding: resolve_link_understanding(agent, binding),
             web_search: resolve_web_search(agent, binding),
             pairing: resolve_pairing(agent, binding),
             dispatch_policy: resolve_dispatch_policy(agent, binding),
+            proactive: resolve_proactive(agent, binding),
+            role: binding.and_then(|b| b.role.clone()),
         }
     }
 
@@ -179,10 +191,13 @@ impl EffectiveBindingPolicy {
             language: agent.language.as_deref().and_then(sanitize_language),
             sender_rate_limit: agent.sender_rate_limit.clone(),
             allowed_delegates: agent.allowed_delegates.clone(),
+            remote_triggers: agent.remote_triggers.clone(),
             link_understanding: parse_link_understanding(&agent.link_understanding),
             web_search: parse_web_search(&agent.web_search),
             pairing: parse_pairing(&agent.pairing_policy),
             dispatch_policy: agent.dispatch_policy.clone(),
+            proactive: agent.proactive.clone(),
+            role: None,
         }
     }
 
@@ -227,9 +242,46 @@ pub fn allowlist_matches(patterns: &[String], name: &str) -> bool {
 }
 
 fn resolve_allowed_tools(agent: &AgentConfig, binding: Option<&InboundBinding>) -> Vec<String> {
-    binding
+    let base = binding
         .and_then(|b| b.allowed_tools.clone())
-        .unwrap_or_else(|| agent.allowed_tools.clone())
+        .unwrap_or_else(|| agent.allowed_tools.clone());
+    let role = binding
+        .and_then(|b| b.role.as_deref())
+        .map(str::trim)
+        .map(str::to_ascii_lowercase);
+    if role.as_deref() == Some("worker") {
+        return resolve_worker_allowed_tools(binding);
+    }
+    base
+}
+
+fn resolve_worker_allowed_tools(binding: Option<&InboundBinding>) -> Vec<String> {
+    const WORKER_DEFAULT: [&str; 4] = ["bash", "file_read", "file_edit", "agent_turns_tail"];
+    // Worker defaults only apply when the binding does not provide its
+    // own allowlist. This keeps the role configurable via
+    // `inbound_bindings[].allowed_tools` while still giving a safe
+    // least-privilege baseline.
+    let raw: Vec<String> = match binding.and_then(|b| b.allowed_tools.clone()) {
+        Some(list) => list,
+        None => WORKER_DEFAULT.iter().map(|s| s.to_string()).collect(),
+    };
+    raw.into_iter()
+        .filter(|tool| !worker_disallowed(tool))
+        .filter(|tool| tool != "*")
+        .collect()
+}
+
+fn worker_disallowed(tool: &str) -> bool {
+    matches!(
+        tool,
+        "Sleep"
+            | "sleep"
+            | "TeamCreate"
+            | "team_create"
+            | "TeamSendMessage"
+            | "team_send_message"
+            | "send_message"
+    )
 }
 
 fn resolve_outbound(
@@ -289,6 +341,15 @@ fn resolve_delegates(agent: &AgentConfig, binding: Option<&InboundBinding>) -> V
     binding
         .and_then(|b| b.allowed_delegates.clone())
         .unwrap_or_else(|| agent.allowed_delegates.clone())
+}
+
+fn resolve_remote_triggers(
+    agent: &AgentConfig,
+    binding: Option<&InboundBinding>,
+) -> Vec<nexo_config::types::remote_triggers::RemoteTriggerEntry> {
+    binding
+        .and_then(|b| b.remote_triggers.clone())
+        .unwrap_or_else(|| agent.remote_triggers.clone())
 }
 
 /// Sanitises a YAML-supplied language directive. Strips newlines and
@@ -413,6 +474,12 @@ fn resolve_dispatch_policy(
         .unwrap_or_else(|| agent.dispatch_policy.clone())
 }
 
+fn resolve_proactive(agent: &AgentConfig, binding: Option<&InboundBinding>) -> ProactiveConfig {
+    binding
+        .and_then(|b| b.proactive.clone())
+        .unwrap_or_else(|| agent.proactive.clone())
+}
+
 fn resolve_language(agent: &AgentConfig, binding: Option<&InboundBinding>) -> Option<String> {
     binding
         .and_then(|b| b.language.clone())
@@ -474,6 +541,7 @@ mod tests {
             lsp: nexo_config::types::lsp::LspPolicy::default(),
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
             team: nexo_config::types::team::TeamPolicy::default(),
+            proactive: Default::default(),
         }
     }
 
@@ -481,6 +549,14 @@ mod tests {
         InboundBinding {
             plugin: "whatsapp".into(),
             ..Default::default()
+        }
+    }
+
+    fn remote_trigger_named(name: &str) -> nexo_config::types::remote_triggers::RemoteTriggerEntry {
+        nexo_config::types::remote_triggers::RemoteTriggerEntry::Nats {
+            name: name.to_string(),
+            subject: format!("agent.outbound.{name}"),
+            rate_limit_per_minute: 10,
         }
     }
 
@@ -498,6 +574,24 @@ mod tests {
         assert_eq!(
             eff.outbound_allowlist.whatsapp,
             a.outbound_allowlist.whatsapp
+        );
+        assert_eq!(eff.remote_triggers, a.remote_triggers);
+    }
+
+    #[test]
+    fn remote_triggers_binding_override_replaces_agent_level() {
+        let mut a = sample_agent();
+        a.remote_triggers = vec![remote_trigger_named("agent_default")];
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "telegram".into(),
+            remote_triggers: Some(vec![remote_trigger_named("binding_only")]),
+            ..Default::default()
+        });
+
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+        assert_eq!(
+            eff.remote_triggers,
+            vec![remote_trigger_named("binding_only")]
         );
     }
 
@@ -822,5 +916,81 @@ mod tests {
             nexo_config::DispatchCapability::ReadOnly
         );
         assert_eq!(eff.dispatch_policy.max_concurrent_per_dispatcher, 1);
+    }
+
+    #[test]
+    fn proactive_binding_override_wins_over_agent_default() {
+        let mut a = sample_agent();
+        a.proactive.enabled = false;
+        a.proactive.tick_interval_secs = 600;
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "telegram".into(),
+            role: Some("proactive".into()),
+            proactive: Some(ProactiveConfig {
+                enabled: true,
+                tick_interval_secs: 120,
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+
+        assert!(eff.proactive.enabled);
+        assert_eq!(eff.proactive.tick_interval_secs, 120);
+        assert_eq!(eff.role.as_deref(), Some("proactive"));
+    }
+
+    #[test]
+    fn proactive_inherits_agent_default_when_binding_omits_field() {
+        let mut a = sample_agent();
+        a.proactive.enabled = true;
+        a.proactive.tick_interval_secs = 900;
+        a.inbound_bindings.push(legacy_binding());
+
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+
+        assert!(eff.proactive.enabled);
+        assert_eq!(eff.proactive.tick_interval_secs, 900);
+    }
+
+    #[test]
+    fn worker_role_defaults_to_curated_tool_subset() {
+        let mut a = sample_agent();
+        a.allowed_tools = vec!["*".into()];
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "telegram".into(),
+            role: Some("worker".into()),
+            allowed_tools: None,
+            ..Default::default()
+        });
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+        assert_eq!(
+            eff.allowed_tools,
+            vec![
+                "bash".to_string(),
+                "file_read".to_string(),
+                "file_edit".to_string(),
+                "agent_turns_tail".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn worker_role_strips_disallowed_tools_from_override() {
+        let mut a = sample_agent();
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "telegram".into(),
+            role: Some("worker".into()),
+            allowed_tools: Some(vec![
+                "file_read".into(),
+                "Sleep".into(),
+                "TeamCreate".into(),
+                "send_message".into(),
+            ]),
+            ..Default::default()
+        });
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+        assert_eq!(eff.allowed_tools, vec!["file_read".to_string()]);
     }
 }

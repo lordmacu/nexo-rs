@@ -21,6 +21,7 @@ use crate::compact::{CompactContext, CompactPolicy, DefaultCompactPolicy};
 use crate::error::DriverError;
 use crate::events::{DriverEvent, DriverEventSink, NoopEventSink};
 use crate::mcp_config::write_mcp_config;
+use crate::proactive::{build_tick_prompt, wait_for_wake, ScheduledWake, WakeResult};
 use crate::replay::{
     DefaultReplayPolicy, ReplayContext, ReplayDecision, ReplayOutcomeHint, ReplayPolicy,
 };
@@ -629,6 +630,34 @@ impl DriverOrchestrator {
                     usage.consecutive_errors = 0;
                     prior_failures = failures.clone();
                     continue;
+                }
+                AttemptOutcome::Sleep {
+                    duration_ms,
+                    reason,
+                } => {
+                    usage.consecutive_errors = 0;
+                    prior_failures.clear();
+                    let wake = ScheduledWake {
+                        duration_ms: *duration_ms,
+                        reason: reason.clone(),
+                        sleep_started_at: Instant::now(),
+                    };
+                    match wait_for_wake(&wake, &goal_cancel).await {
+                        WakeResult::Cancelled => {
+                            final_outcome = AttemptOutcome::Cancelled;
+                            break;
+                        }
+                        WakeResult::Fired { elapsed_ms } => {
+                            let mut extras =
+                                build_attempt_extras(&prior_failures, &goal.budget, total_turns);
+                            extras.insert(
+                                "synthetic_tick_prompt".into(),
+                                serde_json::Value::String(build_tick_prompt(&wake, elapsed_ms)),
+                            );
+                            next_extras = Some(extras);
+                            continue;
+                        }
+                    }
                 }
                 AttemptOutcome::Continue { reason } | AttemptOutcome::Escalate { reason } => {
                     // Phase 67.8 — replay-policy classifies the

@@ -21,8 +21,8 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::Utc;
-use nexo_agent_registry::{AgentRegistry, LogBuffer, TurnLogStore, TurnRecord};
+use chrono::{Duration as ChronoDuration, Utc};
+use nexo_agent_registry::{AgentRegistry, AgentRunStatus, LogBuffer, TurnLogStore, TurnRecord};
 use nexo_driver_loop::{DriverError, DriverEvent, DriverEventSink};
 use nexo_driver_types::{AttemptOutcome, AttemptResult};
 
@@ -104,6 +104,21 @@ impl DriverEventSink for EventForwarder {
                 if let Err(e) = self.registry.apply_attempt(result).await {
                     tracing::warn!(target: "event_forwarder", "apply_attempt failed: {e}");
                 }
+                if let AttemptOutcome::Sleep {
+                    duration_ms,
+                    reason,
+                } = &result.outcome
+                {
+                    let wake_at = Utc::now()
+                        + ChronoDuration::milliseconds((*duration_ms).min(i64::MAX as u64) as i64);
+                    if let Err(e) = self
+                        .registry
+                        .set_sleeping(result.goal_id, wake_at, *duration_ms, reason.clone())
+                        .await
+                    {
+                        tracing::warn!(target: "event_forwarder", "set_sleeping failed: {e}");
+                    }
+                }
                 // B7 — log line.
                 let outcome_label = outcome_label(&result.outcome);
                 self.log_buffer.push(
@@ -139,6 +154,16 @@ impl DriverEventSink for EventForwarder {
                 turn_index,
                 ..
             } => {
+                if self
+                    .registry
+                    .handle(*goal_id)
+                    .map(|h| h.status == AgentRunStatus::Sleeping || h.snapshot.sleep.is_some())
+                    .unwrap_or(false)
+                {
+                    if let Err(e) = self.registry.clear_sleeping(*goal_id).await {
+                        tracing::warn!(target: "event_forwarder", "clear_sleeping failed: {e}");
+                    }
+                }
                 self.log_buffer.push(
                     *goal_id,
                     "agent.driver.attempt.started",
@@ -356,6 +381,7 @@ fn outcome_label(o: &AttemptOutcome) -> &'static str {
         AttemptOutcome::BudgetExhausted { .. } => "budget_exhausted",
         AttemptOutcome::Cancelled => "cancelled",
         AttemptOutcome::Escalate { .. } => "escalate",
+        AttemptOutcome::Sleep { .. } => "sleep",
     }
 }
 

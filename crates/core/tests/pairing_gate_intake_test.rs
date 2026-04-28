@@ -22,14 +22,25 @@ use tokio::time::sleep;
 use uuid::Uuid;
 
 #[derive(Default)]
-struct Recorder(Mutex<Vec<String>>);
+struct Recorder(Mutex<Vec<IntakeRecord>>);
+
+#[derive(Debug, Clone)]
+struct IntakeRecord {
+    text: String,
+    sender_trusted: bool,
+    inbound_origin: Option<(String, String, String)>,
+}
 
 struct CountingBehavior(Arc<Recorder>);
 
 #[async_trait]
 impl AgentBehavior for CountingBehavior {
-    async fn on_message(&self, _ctx: &AgentContext, msg: InboundMessage) -> anyhow::Result<()> {
-        self.0 .0.lock().unwrap().push(msg.text.clone());
+    async fn on_message(&self, ctx: &AgentContext, msg: InboundMessage) -> anyhow::Result<()> {
+        self.0 .0.lock().unwrap().push(IntakeRecord {
+            text: msg.text.clone(),
+            sender_trusted: ctx.sender_trusted,
+            inbound_origin: ctx.inbound_origin.clone(),
+        });
         Ok(())
     }
     async fn on_heartbeat(&self, _ctx: &AgentContext) -> anyhow::Result<()> {
@@ -96,9 +107,10 @@ fn agent_with_pairing_on() -> AgentConfig {
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),
         remote_triggers: Vec::new(),
-            lsp: nexo_config::types::lsp::LspPolicy::default(),
-            config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
-            team: nexo_config::types::team::TeamPolicy::default(),
+        lsp: nexo_config::types::lsp::LspPolicy::default(),
+        config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
+        team: nexo_config::types::team::TeamPolicy::default(),
+        proactive: Default::default(),
     }
 }
 
@@ -148,7 +160,20 @@ async fn unknown_sender_dropped_admitted_after_seed() {
     {
         let captured = recorder.0.lock().unwrap();
         assert_eq!(captured.len(), 1);
-        assert_eq!(captured[0], "hola known");
+        assert_eq!(captured[0].text, "hola known");
+        assert!(
+            captured[0].sender_trusted,
+            "admitted sender should be marked trusted in turn context"
+        );
+        assert_eq!(
+            captured[0].inbound_origin.as_ref(),
+            Some(&(
+                "whatsapp".to_string(),
+                "default".to_string(),
+                "+57222".to_string()
+            )),
+            "runtime should stamp inbound origin as plugin+default-account+sender"
+        );
     }
 
     runtime.stop().await;

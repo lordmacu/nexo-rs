@@ -6,8 +6,14 @@
 //! idle / over-lifetime entries every 30 s. Server shutdown
 //! broadcasts a `Shutdown` event to every active SSE consumer
 //! before tearing down listeners.
+//!
+//! Phase 76.8 — when an [`SessionEventStore`] is wired in, every
+//! emit() call assigns a per-session monotonic `seq`, persists the
+//! frame, and ships [`SessionEvent::IndexedMessage`] over the
+//! broadcast so SSE handlers can label the wire frame with `id:`
+//! and reconnecting clients can replay the gap via `Last-Event-ID`.
 
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -16,6 +22,7 @@ use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use super::event_store::SessionEventStore;
 use super::http_config::HttpTransportConfig;
 
 /// One server-pushed event delivered through the per-session
@@ -32,8 +39,16 @@ use super::http_config::HttpTransportConfig;
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum SessionEvent {
-    /// JSON-RPC envelope to forward as `event: message`.
+    /// JSON-RPC envelope to forward as `event: message` — legacy
+    /// path with no replay. `progress.rs` still emits this because
+    /// per-call progress is by-design ephemeral. SSE frames built
+    /// from `Message` carry no `id:` line.
     Message(serde_json::Value),
+    /// Phase 76.8 — JSON-RPC envelope tagged with the per-session
+    /// monotonic event-id. SSE frames built from `IndexedMessage`
+    /// carry `id: <seq>` so reconnecting clients can resume via
+    /// `Last-Event-ID`.
+    IndexedMessage { seq: u64, body: serde_json::Value },
     /// Server is going down gracefully.
     Shutdown { reason: String },
     /// SSE stream should close (max-age, explicit close, idle).
@@ -53,6 +68,11 @@ pub(crate) struct HttpSession {
     /// without taking the session lock. Cleared when the session
     /// is removed from the manager.
     pub(crate) subscriptions: DashSet<String>,
+    /// Phase 76.8 — per-session monotonic event-id counter. Bumped
+    /// once per `emit()`. Starts at 1 (seq 0 is reserved as "no
+    /// events yet"; clients send `Last-Event-ID: 0` for full
+    /// stream).
+    pub(crate) next_seq: AtomicU64,
 }
 
 impl HttpSession {
@@ -67,6 +87,7 @@ impl HttpSession {
             sse_active: AtomicUsize::new(0),
             cancel: parent_cancel.child_token(),
             subscriptions: DashSet::new(),
+            next_seq: AtomicU64::new(1),
         })
     }
 
@@ -108,10 +129,35 @@ struct Inner {
     max_lifetime: Duration,
     sse_buffer_size: usize,
     parent_cancel: CancellationToken,
+    /// Phase 76.8 — when set, every `emit()` persists the frame to
+    /// the store + assigns a per-session monotonic seq.
+    event_store: Option<Arc<dyn SessionEventStore>>,
+    /// Phase 76.8 — per-session ring cap. Triggers
+    /// `purge_oldest_for_session(keep)` when `seq % cap_check_every == 0`.
+    max_events_per_session: u64,
+    /// Phase 76.8 — replay batch ceiling — passed through to
+    /// `replay()`.
+    max_replay_batch: usize,
 }
 
 impl HttpSessionManager {
+    #[allow(dead_code)]
     pub(crate) fn new(cfg: &HttpTransportConfig, parent_cancel: CancellationToken) -> Arc<Self> {
+        Self::with_event_store(cfg, parent_cancel, None)
+    }
+
+    /// Phase 76.8 — construct with an optional event store + caps
+    /// pulled from the runtime config block.
+    pub(crate) fn with_event_store(
+        cfg: &HttpTransportConfig,
+        parent_cancel: CancellationToken,
+        event_store: Option<Arc<dyn SessionEventStore>>,
+    ) -> Arc<Self> {
+        let (max_per, max_replay) = cfg
+            .session_event_store
+            .as_ref()
+            .map(|c| (c.max_events_per_session, c.max_replay_batch))
+            .unwrap_or((10_000, 1_000));
         Arc::new(Self {
             inner: Arc::new(Inner {
                 sessions: DashMap::new(),
@@ -120,8 +166,21 @@ impl HttpSessionManager {
                 max_lifetime: cfg.session_max_lifetime(),
                 sse_buffer_size: cfg.sse_buffer_size,
                 parent_cancel,
+                event_store,
+                max_events_per_session: max_per,
+                max_replay_batch: max_replay,
             }),
         })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn event_store(&self) -> Option<&Arc<dyn SessionEventStore>> {
+        self.inner.event_store.as_ref()
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn max_replay_batch(&self) -> usize {
+        self.inner.max_replay_batch
     }
 
     /// Allocate a fresh session. Returns `Err(SessionLimitExceeded)`
@@ -211,20 +270,13 @@ impl HttpSessionManager {
     }
 
     /// Phase 76.7 — broadcast a JSON-RPC notification to every
-    /// active session. Returns the number of sessions reached
-    /// (including those whose receiver was lagged or dropped —
-    /// the broadcast `send` returns the receiver count, but
-    /// here we count successfully-sent envelopes; failed sends
-    /// are counted as 0).
+    /// active session. Phase 76.8 — when an event store is wired,
+    /// each per-session emission goes through `emit()` so the
+    /// frame is persisted + tagged with a monotonic seq.
     pub(crate) fn broadcast_to_all(&self, body: serde_json::Value) -> usize {
         let mut reached = 0;
         for entry in self.inner.sessions.iter() {
-            if entry
-                .value()
-                .notif_tx
-                .send(SessionEvent::Message(body.clone()))
-                .is_ok()
-            {
+            if self.emit_to(entry.value(), body.clone()) {
                 reached += 1;
             }
         }
@@ -241,15 +293,93 @@ impl HttpSessionManager {
             if !session.subscriptions.contains(uri) {
                 continue;
             }
-            if session
-                .notif_tx
-                .send(SessionEvent::Message(body.clone()))
-                .is_ok()
-            {
+            if self.emit_to(session, body.clone()) {
                 reached += 1;
             }
         }
         reached
+    }
+
+    /// Phase 76.8 — assign seq, persist (best-effort), broadcast
+    /// `IndexedMessage`. Returns true if the broadcast had a live
+    /// receiver. Persist failures are logged but do NOT abort the
+    /// emission — the in-memory broadcast is the primary path.
+    fn emit_to(&self, session: &Arc<HttpSession>, body: serde_json::Value) -> bool {
+        let seq = session.next_seq.fetch_add(1, Ordering::Relaxed);
+        if let Some(store) = self.inner.event_store.as_ref() {
+            let store = Arc::clone(store);
+            let session_id = session.id.clone();
+            let body_for_persist = body.clone();
+            let cap = self.inner.max_events_per_session;
+            tokio::spawn(async move {
+                if let Err(e) = store.append(&session_id, seq, &body_for_persist).await {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        seq,
+                        error = %e,
+                        "mcp session event_store append failed"
+                    );
+                }
+                // Cap enforcement: every 1000th emit, prune oldest.
+                if cap > 0 && seq % 1000 == 0 {
+                    if let Err(e) = store.purge_oldest_for_session(&session_id, cap).await {
+                        tracing::warn!(
+                            session_id = %session_id,
+                            error = %e,
+                            "mcp session event_store purge_oldest failed"
+                        );
+                    }
+                }
+            });
+        }
+        session
+            .notif_tx
+            .send(SessionEvent::IndexedMessage { seq, body })
+            .is_ok()
+    }
+
+    /// Phase 76.8 — surface for the SSE handler. Returns persisted
+    /// frames with `seq > min_seq`, capped at `max_replay_batch`.
+    /// Empty when no store is configured or no gap exists.
+    pub(crate) async fn replay(
+        &self,
+        session_id: &str,
+        min_seq: u64,
+    ) -> Vec<(u64, serde_json::Value)> {
+        let Some(store) = self.inner.event_store.as_ref() else {
+            return Vec::new();
+        };
+        match store
+            .tail_after(session_id, min_seq, self.inner.max_replay_batch)
+            .await
+        {
+            Ok(rows) => rows.into_iter().map(|r| (r.seq, r.frame)).collect(),
+            Err(e) => {
+                tracing::warn!(
+                    session_id = %session_id,
+                    min_seq,
+                    error = %e,
+                    "mcp session event_store replay failed"
+                );
+                Vec::new()
+            }
+        }
+    }
+
+    /// Phase 76.8 — background purge tick. Drops events older than
+    /// the session max-lifetime cutoff.
+    pub(crate) async fn purge_expired_events(&self) {
+        let Some(store) = self.inner.event_store.as_ref() else {
+            return;
+        };
+        let cutoff = now_ms().saturating_sub(self.inner.max_lifetime.as_millis() as i64);
+        if let Err(e) = store.purge_older_than(cutoff).await {
+            tracing::warn!(
+                cutoff_ms = cutoff,
+                error = %e,
+                "mcp session event_store purge_older_than failed"
+            );
+        }
     }
 
     /// Phase 76.7 — public accessor for `SessionLookup`
@@ -273,6 +403,7 @@ impl SessionLookup for HttpSessionManager {
     fn subscribe(&self, session_id: &str, uri: &str) -> bool {
         if let Some(session) = self.session_by_id(session_id) {
             session.subscriptions.insert(uri.to_string());
+            self.persist_subscriptions(&session);
             true
         } else {
             false
@@ -282,11 +413,47 @@ impl SessionLookup for HttpSessionManager {
     fn unsubscribe(&self, session_id: &str, uri: &str) -> bool {
         if let Some(session) = self.session_by_id(session_id) {
             session.subscriptions.remove(uri);
+            self.persist_subscriptions(&session);
             true
         } else {
             false
         }
     }
+}
+
+impl HttpSessionManager {
+    /// Phase 76.8 — fire-and-forget snapshot of the in-mem
+    /// subscription set into the event store. Async write off the
+    /// hot path; failures are logged.
+    fn persist_subscriptions(&self, session: &Arc<HttpSession>) {
+        let Some(store) = self.inner.event_store.as_ref() else {
+            return;
+        };
+        let store = Arc::clone(store);
+        let session_id = session.id.clone();
+        let uris: Vec<String> = session
+            .subscriptions
+            .iter()
+            .map(|r| r.key().clone())
+            .collect();
+        tokio::spawn(async move {
+            if let Err(e) = store.put_subscriptions(&session_id, &uris).await {
+                tracing::warn!(
+                    session_id = %session_id,
+                    error = %e,
+                    "mcp session event_store put_subscriptions failed"
+                );
+            }
+        });
+    }
+}
+
+fn now_ms() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -380,6 +547,97 @@ mod tests {
         ));
         assert!(a.cancel.is_cancelled());
         assert!(b.cancel.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn emit_assigns_monotonic_seq_and_persists() {
+        use crate::server::event_store::MemorySessionEventStore;
+        use serde_json::json;
+        let cancel = CancellationToken::new();
+        let store = MemorySessionEventStore::new();
+        let store_dyn: Arc<dyn SessionEventStore> = store.clone();
+        let mgr = HttpSessionManager::with_event_store(&cfg(10), cancel, Some(store_dyn));
+        let s = mgr.create().unwrap();
+        let mut rx = s.notif_tx.subscribe();
+        mgr.broadcast_to_all(json!({"v": 1}));
+        mgr.broadcast_to_all(json!({"v": 2}));
+        let e1 = rx.recv().await.unwrap();
+        let e2 = rx.recv().await.unwrap();
+        match (e1, e2) {
+            (
+                SessionEvent::IndexedMessage { seq: s1, .. },
+                SessionEvent::IndexedMessage { seq: s2, .. },
+            ) => assert_eq!((s1, s2), (1, 2)),
+            other => panic!("expected IndexedMessage pair, got {other:?}"),
+        }
+        // Persist is fire-and-forget; yield until the store sees both.
+        for _ in 0..50 {
+            let rows = store.tail_after(&s.id, 0, 100).await.unwrap();
+            if rows.len() == 2 {
+                assert_eq!(rows[0].seq, 1);
+                assert_eq!(rows[1].seq, 2);
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("event_store did not see persisted rows in time");
+    }
+
+    #[tokio::test]
+    async fn replay_returns_gap_after_min_seq() {
+        use crate::server::event_store::MemorySessionEventStore;
+        use serde_json::json;
+        let cancel = CancellationToken::new();
+        let store = MemorySessionEventStore::new();
+        let store_dyn: Arc<dyn SessionEventStore> = store.clone();
+        let mgr = HttpSessionManager::with_event_store(&cfg(10), cancel, Some(store_dyn));
+        let s = mgr.create().unwrap();
+        for n in 0..5 {
+            mgr.broadcast_to_all(json!({"n": n}));
+        }
+        // Wait for persist.
+        for _ in 0..50 {
+            if store.tail_after(&s.id, 0, 100).await.unwrap().len() == 5 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let gap = mgr.replay(&s.id, 2).await;
+        assert_eq!(gap.len(), 3);
+        assert_eq!(gap[0].0, 3);
+        assert_eq!(gap[2].0, 5);
+    }
+
+    #[tokio::test]
+    async fn subscribe_persists_uri_set() {
+        use crate::server::event_store::MemorySessionEventStore;
+        let cancel = CancellationToken::new();
+        let store = MemorySessionEventStore::new();
+        let store_dyn: Arc<dyn SessionEventStore> = store.clone();
+        let mgr = HttpSessionManager::with_event_store(&cfg(10), cancel, Some(store_dyn));
+        let s = mgr.create().unwrap();
+        assert!(<HttpSessionManager as SessionLookup>::subscribe(
+            &mgr,
+            &s.id,
+            "res://foo"
+        ));
+        for _ in 0..50 {
+            let got = store.load_subscriptions(&s.id).await.unwrap();
+            if got == vec!["res://foo".to_string()] {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("subscription was not persisted in time");
+    }
+
+    #[tokio::test]
+    async fn replay_without_store_returns_empty() {
+        let cancel = CancellationToken::new();
+        let mgr = HttpSessionManager::new(&cfg(10), cancel);
+        let s = mgr.create().unwrap();
+        let gap = mgr.replay(&s.id, 0).await;
+        assert!(gap.is_empty());
     }
 
     #[tokio::test]

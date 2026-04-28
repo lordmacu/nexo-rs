@@ -92,7 +92,7 @@ impl TeamCreateTool {
             name: "TeamCreate".to_string(),
             description: r#"Create a new named team for coordinated parallel work. Returns a `team_id` you reference in subsequent calls.
 
-After creating the team, spawn members by calling `delegate_to` with extra args `team_id` and `team_member_name`. Members operate in parallel, share a Phase 14 TaskFlow task list, and DM each other via `TeamSendMessage`. Idle members go to sleep between turns and wake when they receive a DM.
+After creating the team, members can be added by the operator (via `nexo team add-member` CLI — Phase 79.6.b) or registered programmatically through the team store. The MVP exposes `TeamSendMessage` (DM + broadcast), `TeamList`, and `TeamStatus` so the lead can coordinate already-spawned members. Direct goal-spawn-as-teammate from inside a turn lands in Phase 79.6.b.
 
 Caps: 8 members per team (incl. lead), 4 concurrent teams per agent, 24 h idle timeout."#
                 .to_string(),
@@ -274,8 +274,8 @@ impl TeamStatusTool {
 //     — discriminated union of structured messages.
 
 use nexo_team_store::{
-    sanitize_name, validate_member_name_for_lead, validate_team_name, TeamEventRow,
-    TeamMemberRow, TeamRow, TeamStoreError, DM_BODY_MAX_BYTES, TEAM_LEAD_NAME,
+    sanitize_name, validate_member_name_for_lead, validate_team_name, TeamEventRow, TeamMemberRow,
+    TeamRow, TeamStoreError, DM_BODY_MAX_BYTES, TEAM_LEAD_NAME,
 };
 
 fn now_ts() -> i64 {
@@ -336,7 +336,10 @@ impl ToolHandler for TeamCreateTool {
             ));
         }
         if !self.inner.policy.tool_enabled() {
-            return Ok(err("TeamingDisabled", "team feature not enabled for this agent"));
+            return Ok(err(
+                "TeamingDisabled",
+                "team feature not enabled for this agent",
+            ));
         }
 
         let team_name = match args.get("team_name").and_then(|v| v.as_str()) {
@@ -359,7 +362,12 @@ impl ToolHandler for TeamCreateTool {
 
         let team_id = match validate_team_name(&team_name) {
             Ok(s) => s,
-            Err(_) => return Ok(err("InvalidName", format!("invalid team_name: `{team_name}`"))),
+            Err(_) => {
+                return Ok(err(
+                    "InvalidName",
+                    format!("invalid team_name: `{team_name}`"),
+                ))
+            }
         };
 
         // Per-agent concurrent cap.
@@ -470,7 +478,7 @@ impl ToolHandler for TeamCreateTool {
             "lead_member_name": lead_name,
             "flow_id": team_row.flow_id,
             "created_at": now,
-            "instructions": "Spawn members via `delegate_to` with extra args `team_id` and `team_member_name`. DM members via `TeamSendMessage`. Wind down via `TeamSendMessage { to: \"broadcast\", message: { type: \"shutdown_request\" } }` then `TeamDelete`."
+            "instructions": "Members are added by the operator (Phase 79.6.b CLI) or by the runtime when sub-goals spawn. From inside a turn, the model coordinates members via `TeamSendMessage` (DM or broadcast) + `TeamStatus`. Wind down via `TeamSendMessage { to: \"broadcast\", message: { type: \"shutdown_request\" } }` then `TeamDelete`."
         }))
     }
 }
@@ -501,7 +509,10 @@ impl ToolHandler for TeamDeleteTool {
         if team.lead_agent_id != self.inner.agent_id {
             return Ok(err(
                 "NotLeader",
-                format!("agent `{}` is not the lead of team `{team_id}`", self.inner.agent_id),
+                format!(
+                    "agent `{}` is not the lead of team `{team_id}`",
+                    self.inner.agent_id
+                ),
             ));
         }
         if team.deleted_at.is_some() {
@@ -587,7 +598,12 @@ impl ToolHandler for TeamSendMessageTool {
         let team_id = sanitize_name(&team_id_raw);
         let to = match args.get("to").and_then(|v| v.as_str()) {
             Some(s) => s.to_string(),
-            None => return Ok(err("Wire", "TeamSendMessage requires `to` (member name or \"broadcast\")")),
+            None => {
+                return Ok(err(
+                    "Wire",
+                    "TeamSendMessage requires `to` (member name or \"broadcast\")",
+                ))
+            }
         };
         let body = args.get("message").cloned().unwrap_or(Value::Null);
         if body.is_null() {
@@ -617,7 +633,10 @@ impl ToolHandler for TeamSendMessageTool {
             Err(e) => return Err(anyhow::anyhow!("get_team: {e}")),
         };
         if team.deleted_at.is_some() {
-            return Ok(err("TeamDeleted", format!("team `{team_id}` is soft-deleted")));
+            return Ok(err(
+                "TeamDeleted",
+                format!("team `{team_id}` is soft-deleted"),
+            ));
         }
 
         // Membership: caller must be lead OR a member of the team.
@@ -642,7 +661,10 @@ impl ToolHandler for TeamSendMessageTool {
                 None => {
                     return Ok(err(
                         "NotMember",
-                        format!("agent `{}` is not a member of team `{team_id}`", self.inner.agent_id),
+                        format!(
+                            "agent `{}` is not a member of team `{team_id}`",
+                            self.inner.agent_id
+                        ),
                     ))
                 }
             }
@@ -860,7 +882,12 @@ mod tests {
         assert!(required.iter().any(|v| v == "team_name"));
         // Optional fields surfaced in properties.
         let props = def.parameters["properties"].as_object().unwrap();
-        for k in ["team_name", "description", "agent_type", "worktree_per_member"] {
+        for k in [
+            "team_name",
+            "description",
+            "agent_type",
+            "worktree_per_member",
+        ] {
             assert!(props.contains_key(k), "missing property `{k}`");
         }
     }
@@ -963,6 +990,7 @@ mod tests {
                 enabled: true,
                 ..TeamPolicy::default()
             },
+            proactive: Default::default(),
         }
     }
 
@@ -981,8 +1009,7 @@ mod tests {
 
     async fn build_inner(policy: TeamPolicy, agent_id: &str) -> Arc<TeamTools> {
         let broker = Arc::new(AnyBroker::local());
-        let store: Arc<dyn TeamStore> =
-            Arc::new(SqliteTeamStore::open_in_memory().await.unwrap());
+        let store: Arc<dyn TeamStore> = Arc::new(SqliteTeamStore::open_in_memory().await.unwrap());
         let router = TeamMessageRouter::new(broker.clone());
         let cancel = tokio_util::sync::CancellationToken::new();
         router.spawn(cancel);
@@ -1004,10 +1031,7 @@ mod tests {
         let inner = build_inner(TeamPolicy::default(), "cody").await;
         let tool = TeamCreateTool::new(inner);
         let res = tool
-            .call(
-                &ctx_lead().await,
-                json!({ "team_name": "feature-x" }),
-            )
+            .call(&ctx_lead().await, json!({ "team_name": "feature-x" }))
             .await
             .unwrap();
         assert_eq!(res["ok"], false);
@@ -1041,7 +1065,11 @@ mod tests {
         assert_eq!(res["lead_member_name"], "team-lead");
 
         // Audit row recorded.
-        let events = inner.store.tail_events(Some("feature-x"), 10).await.unwrap();
+        let events = inner
+            .store
+            .tail_events(Some("feature-x"), 10)
+            .await
+            .unwrap();
         assert!(events.iter().any(|e| e.kind == "team_created"));
     }
 
@@ -1106,10 +1134,7 @@ mod tests {
         .await;
         let tool = TeamCreateTool::new(inner);
         let res = tool
-            .call(
-                &ctx_teammate().await,
-                json!({ "team_name": "nested" }),
-            )
+            .call(&ctx_teammate().await, json!({ "team_name": "nested" }))
             .await
             .unwrap();
         assert_eq!(res["ok"], false);
@@ -1228,7 +1253,11 @@ mod tests {
         let team = inner.store.get_team("feature-x").await.unwrap().unwrap();
         assert!(team.deleted_at.is_some());
 
-        let events = inner.store.tail_events(Some("feature-x"), 10).await.unwrap();
+        let events = inner
+            .store
+            .tail_events(Some("feature-x"), 10)
+            .await
+            .unwrap();
         assert!(events.iter().any(|e| e.kind == "team_deleted"));
     }
 
@@ -1340,7 +1369,11 @@ mod tests {
         assert_eq!(res["ok"], true);
         assert!(res["correlation_id"].is_string());
 
-        let events = inner.store.tail_events(Some("feature-x"), 20).await.unwrap();
+        let events = inner
+            .store
+            .tail_events(Some("feature-x"), 20)
+            .await
+            .unwrap();
         assert!(events.iter().any(|e| e.kind == "dm_sent"));
     }
 

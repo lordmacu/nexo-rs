@@ -1,9 +1,11 @@
 pub mod env;
+pub mod migrations;
 pub mod types;
 
 pub use types::*;
 
 use anyhow::{Context, Result};
+use serde_yaml::Value;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
@@ -55,6 +57,7 @@ pub struct McpServerBootConfig {
 
 impl AppConfig {
     pub fn load(dir: &Path) -> Result<Self> {
+        maybe_run_yaml_migrations(dir)?;
         let mut agents = load_required::<AgentsConfig>(dir, "agents.yaml")?;
         merge_agents_drop_in(dir, &mut agents)?;
         resolve_relative_paths(dir, &mut agents);
@@ -104,6 +107,30 @@ impl AppConfig {
             load_optional::<McpServerConfigFile>(dir, "mcp_server.yaml")?.map(|f| f.mcp_server);
         Ok(McpServerBootConfig { agents, mcp_server })
     }
+}
+
+fn maybe_run_yaml_migrations(dir: &Path) -> Result<()> {
+    let runtime = load_optional::<RuntimeConfig>(dir, "runtime.yaml")?.unwrap_or_default();
+    let report = migrations::migrate_config_dir(dir, runtime.migrations.auto_apply)?;
+    let pending: Vec<_> = report.files.iter().filter(|f| f.changed).collect();
+    if pending.is_empty() {
+        return Ok(());
+    }
+    if runtime.migrations.auto_apply {
+        eprintln!(
+            "[config] auto-applied {} schema migration(s) to config/*.yaml",
+            pending.len()
+        );
+    } else {
+        eprintln!(
+            "[config] {} config file(s) have pending schema migrations; run `nexo setup migrate --apply` (or set runtime.migrations.auto_apply: true)",
+            pending.len()
+        );
+        for f in pending {
+            eprintln!("  - {}: v{} -> v{}", f.file, f.from_version, f.to_version);
+        }
+    }
+    Ok(())
 }
 
 /// Merge private agent definitions from `config/agents.d/*.yaml` into the
@@ -202,7 +229,8 @@ pub fn load_required<T: serde::de::DeserializeOwned>(dir: &Path, filename: &str)
     let raw = std::fs::read_to_string(&path)
         .with_context(|| format!("cannot read {}", path.display()))?;
     let resolved = env::resolve_placeholders(&raw, filename)?;
-    serde_yaml::from_str(&resolved).with_context(|| format!("invalid config in {}", path.display()))
+    deserialize_yaml_with_schema_version(&resolved)
+        .with_context(|| format!("invalid config in {}", path.display()))
 }
 
 /// Load an optional YAML file, resolving `${ENV_VAR}` placeholders. Returns
@@ -218,9 +246,17 @@ pub fn load_optional<T: serde::de::DeserializeOwned>(
     let raw = std::fs::read_to_string(&path)
         .with_context(|| format!("cannot read {}", path.display()))?;
     let resolved = env::resolve_placeholders(&raw, filename)?;
-    let value = serde_yaml::from_str(&resolved)
+    let value = deserialize_yaml_with_schema_version(&resolved)
         .with_context(|| format!("invalid config in {}", path.display()))?;
     Ok(Some(value))
+}
+
+fn deserialize_yaml_with_schema_version<T: serde::de::DeserializeOwned>(raw: &str) -> Result<T> {
+    let mut v: Value = serde_yaml::from_str(raw)?;
+    if let Some(map) = v.as_mapping_mut() {
+        map.remove(Value::String("schema_version".to_string()));
+    }
+    Ok(serde_yaml::from_value(v)?)
 }
 
 fn load_plugins(dir: &Path) -> Result<PluginsConfig> {

@@ -55,15 +55,21 @@ pub struct InboundApprovalMessage {
 /// block. Kept minimal — `patch_id` is the only mandatory field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApprovalCommand {
-    Approve { patch_id: String },
-    Reject { patch_id: String, reason: Option<String> },
+    Approve {
+        patch_id: String,
+    },
+    Reject {
+        patch_id: String,
+        reason: Option<String>,
+    },
 }
 
 impl ApprovalCommand {
     pub fn patch_id(&self) -> &str {
         match self {
-            ApprovalCommand::Approve { patch_id }
-            | ApprovalCommand::Reject { patch_id, .. } => patch_id.as_str(),
+            ApprovalCommand::Approve { patch_id } | ApprovalCommand::Reject { patch_id, .. } => {
+                patch_id.as_str()
+            }
         }
     }
 }
@@ -133,10 +139,7 @@ impl ApprovalCorrelator {
     /// awaits. The caller MUST consume the receiver exactly once;
     /// dropping it without awaiting drops the entry on the next
     /// inbound or reaper sweep.
-    pub fn park(
-        &self,
-        patch: PendingApproval,
-    ) -> oneshot::Receiver<ApprovalDecision> {
+    pub fn park(&self, patch: PendingApproval) -> oneshot::Receiver<ApprovalDecision> {
         let (tx, rx) = oneshot::channel();
         self.pending.insert(
             patch.patch_id.clone(),
@@ -151,6 +154,13 @@ impl ApprovalCorrelator {
     /// Number of pending entries (for diagnostics + tests).
     pub fn pending_count(&self) -> usize {
         self.pending.len()
+    }
+
+    /// Drop a pending entry explicitly (best-effort). Used by
+    /// ConfigTool cleanup paths when proposal staging fails after a
+    /// `park()` already reserved the patch id.
+    pub fn cancel_patch(&self, patch_id: &str) -> bool {
+        self.pending.remove(patch_id).is_some()
     }
 
     /// Spawn the inbound subscriber + reaper tasks. `source` is
@@ -218,8 +228,7 @@ impl ApprovalCorrelator {
                 "[config] approval came from wrong binding — discarded"
             );
             // Re-insert the entry; the originator may still approve.
-            self.pending
-                .insert(entry.patch.patch_id.clone(), entry);
+            self.pending.insert(entry.patch.patch_id.clone(), entry);
             return;
         }
         let decision = match cmd {
@@ -309,10 +318,7 @@ impl ApprovalSource for MockApprovalSource {
             if let Some(m) = self.queue.lock().await.pop_front() {
                 return Some(m);
             }
-            if self
-                .closed
-                .load(std::sync::atomic::Ordering::Relaxed)
-            {
+            if self.closed.load(std::sync::atomic::Ordering::Relaxed) {
                 return None;
             }
             self.notify.notified().await;
@@ -384,7 +390,7 @@ mod tests {
         }
     }
 
-    fn fixture_inbound(patch_id: &str, body: &str) -> InboundApprovalMessage {
+    fn fixture_inbound(_patch_id: &str, body: &str) -> InboundApprovalMessage {
         InboundApprovalMessage {
             channel: "whatsapp".into(),
             account_id: "default".into(),
@@ -445,10 +451,10 @@ mod tests {
     #[test]
     fn parse_strict_anchors_full_message() {
         // Embedded inside a sentence — must NOT match.
-        assert!(parse_approval_command(
-            "let's go [config-approve patch_id=01J7HVK9MWXYZ] thanks"
-        )
-        .is_none());
+        assert!(
+            parse_approval_command("let's go [config-approve patch_id=01J7HVK9MWXYZ] thanks")
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -526,16 +532,13 @@ mod tests {
     #[tokio::test]
     async fn mock_source_round_trips_messages() {
         let src = Arc::new(MockApprovalSource::new());
-        let inbound = fixture_inbound(
-            "01J7HVK9MWXYZ",
-            "[config-approve patch_id=01J7HVK9MWXYZ]",
-        );
+        let inbound = fixture_inbound("01J7HVK9MWXYZ", "[config-approve patch_id=01J7HVK9MWXYZ]");
         src.inject(inbound.clone()).await;
         let got = src.next_message().await.unwrap();
         assert_eq!(got.body, inbound.body);
         src.close();
         // Closed → None.
         assert!(src.next_message().await.is_none());
-        assert!(!src.closed.load(Ordering::Relaxed) || true);
+        assert!(src.closed.load(Ordering::Relaxed));
     }
 }

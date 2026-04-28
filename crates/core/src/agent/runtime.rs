@@ -1,21 +1,23 @@
 use super::agent::Agent;
-use super::behavior::AgentBehavior;
+use super::behavior::{AgentBehavior, AgentTurnControl};
 use super::context::AgentContext;
 use super::effective::EffectiveBindingPolicy;
 use super::peer_directory::PeerDirectory;
 use super::routing::{route_topic, AgentMessage, AgentPayload, AgentRouter};
 use super::sender_rate_limit::SenderRateLimiter;
-use super::types::{InboundMedia, InboundMessage, RunTrigger};
+use super::types::{InboundMedia, InboundMessage, MessagePriority, RunTrigger};
 use crate::heartbeat::{heartbeat_interval, heartbeat_topic, publish_heartbeat};
 use crate::runtime_snapshot::RuntimeSnapshot;
 use crate::session::SessionManager;
-use crate::telemetry::inc_messages_processed_total;
+use crate::telemetry::{inc_messages_processed_total, inc_proactive_event};
 use arc_swap::ArcSwap;
 use dashmap::DashMap;
 use nexo_broker::{AnyBroker, BrokerHandle};
 use nexo_config::types::agents::InboundBinding;
+use nexo_driver_loop::proactive::{build_tick_prompt, ScheduledWake};
 use nexo_memory::LongTermMemory;
 use serde_json::Value;
+use std::collections::VecDeque;
 use std::mem;
 use std::sync::Arc;
 use std::time::Duration;
@@ -488,6 +490,76 @@ impl AgentRuntime {
                             .get("from")
                             .and_then(|v| v.as_str())
                             .map(|s| s.to_string());
+                        let reply_question_id = event
+                            .payload
+                            .get("reply_to_question_id")
+                            .and_then(|v| v.as_str())
+                            .or_else(|| {
+                                event
+                                    .payload
+                                    .get("ask_question_id")
+                                    .and_then(|v| v.as_str())
+                            })
+                            .map(|s| s.to_string());
+                        // Phase 77.16 — AskUserQuestion reply routing.
+                        // If this inbound message comes from a sender that has
+                        // a paused goal waiting on a question, resume that goal
+                        // and inject the text as an operator interrupt.
+                        if let (Some(dc), Some(sender), true) = (
+                            dispatch_ctx.as_ref(),
+                            sender_id.as_deref(),
+                            !text.is_empty(),
+                        ) {
+                            let inst = source_instance.as_deref().unwrap_or("default");
+                            let waiting_goal = match reply_question_id.as_deref() {
+                                Some(qid) => dc.registry.find_paused_by_question_id(
+                                    &source_plugin,
+                                    inst,
+                                    sender,
+                                    qid,
+                                ),
+                                None => dc
+                                    .registry
+                                    .find_paused_by_origin(&source_plugin, inst, sender),
+                            };
+                            if let Some(waiting_goal) = waiting_goal
+                            {
+                                let Some(waiting_handle) = dc.registry.handle(waiting_goal) else {
+                                    continue;
+                                };
+                                let Some(pending) = waiting_handle.snapshot.ask_pending.clone() else {
+                                    // Paused for a different reason; do not auto-resume.
+                                    continue;
+                                };
+                                let queued = dc.orchestrator.interrupt_goal(waiting_goal, format!(
+                                    "[ask_user_question reply id={} from {source_plugin}:{inst}:{sender}] {text}",
+                                    pending.question_id
+                                ));
+                                let resumed = dc.orchestrator.resume_goal(waiting_goal);
+                                if resumed {
+                                    let _ = dc.registry.set_ask_pending(waiting_goal, None).await;
+                                    let _ = dc
+                                        .registry
+                                        .set_status(
+                                            waiting_goal,
+                                            nexo_agent_registry::AgentRunStatus::Running,
+                                        )
+                                        .await;
+                                }
+                                tracing::info!(
+                                    agent_id = %agent.id,
+                                    goal_id = ?waiting_goal,
+                                    question_id = %pending.question_id,
+                                    plugin = %source_plugin,
+                                    instance = %inst,
+                                    sender = %sender,
+                                    queued_interrupts = queued,
+                                    resumed,
+                                    "ask_user_question reply routed to paused goal"
+                                );
+                                continue;
+                            }
+                        }
                         // Phase 26 — pairing gate. Runs before the
                         // rate limiter so unknown senders cannot
                         // exhaust their bucket. Only active when the
@@ -498,6 +570,7 @@ impl AgentRuntime {
                         // approve`); a future pass will publish it
                         // back through the channel adapter so the
                         // sender sees it in their chat.
+                        let mut sender_trusted = false;
                         if effective.pairing.auto_challenge {
                             if let (Some(gate), Some(sender)) =
                                 (pairing_gate.as_ref(), sender_id.as_deref())
@@ -517,7 +590,9 @@ impl AgentRuntime {
                                     )
                                     .await
                                 {
-                                    Ok(nexo_pairing::Decision::Admit) => {}
+                                    Ok(nexo_pairing::Decision::Admit) => {
+                                        sender_trusted = true;
+                                    }
                                     Ok(nexo_pairing::Decision::Challenge { code }) => {
                                         tracing::warn!(
                                             agent_id = %agent.id,
@@ -612,6 +687,8 @@ impl AgentRuntime {
                         msg.source_instance = source_instance;
                         msg.sender_id = sender_id;
                         msg.media = media;
+                        msg.priority = parse_inbound_priority(&event.payload);
+                        msg.sender_trusted = sender_trusted;
                         let message_id = msg.id;
                         // Atomic get-or-insert: DashMap::entry::or_insert_with
                         // guarantees only one task is spawned per session even
@@ -953,8 +1030,10 @@ async fn session_debounce_task(
 ) {
     let mut buffer: Vec<InboundMessage> = Vec::new();
     let mut deadline: Option<Instant> = None;
+    let mut wake: Option<ScheduledWake> = None;
     // Rolling idle deadline: reset on every recv, fire when reached.
     let mut idle_deadline = Instant::now() + SESSION_IDLE_TTL;
+    let mut tick_budget = TickBudgetWindow::new();
     loop {
         tokio::select! {
             biased;
@@ -964,18 +1043,46 @@ async fn session_debounce_task(
                     buffer.push(m);
                 }
                 if !buffer.is_empty() {
-                    flush(&behavior, &ctx, mem::take(&mut buffer)).await;
+                    let _ = flush(
+                        &behavior,
+                        &ctx,
+                        mem::take(&mut buffer),
+                        &mut rx,
+                        None,
+                    )
+                    .await;
                 }
                 break;
             },
             msg = rx.recv() => {
                 match msg {
                     Some(m) => {
+                        if let Some(cancelled) = wake.take() {
+                            inc_proactive_event(&ctx.agent_id, "sleep.interrupted");
+                            tracing::info!(
+                                agent_id = %ctx.agent_id,
+                                %session_id,
+                                reason = %cancelled.reason,
+                                "proactive sleep interrupted by inbound message"
+                            );
+                        }
+                        let is_now = matches!(m.priority, MessagePriority::Now);
                         buffer.push(m);
                         idle_deadline = Instant::now() + SESSION_IDLE_TTL;
-                        if debounce_ms.is_zero() {
+                        if debounce_ms.is_zero() || is_now {
                             // flush immediately — no timer needed
-                            flush(&behavior, &ctx, mem::take(&mut buffer)).await;
+                            if let Some(control) =
+                                flush(
+                                    &behavior,
+                                    &ctx,
+                                    mem::take(&mut buffer),
+                                    &mut rx,
+                                    Some(&shutdown),
+                                )
+                                .await
+                            {
+                                apply_turn_control(control, &ctx, session_id, &mut wake, &mut idle_deadline);
+                            }
                             deadline = None;
                         } else {
                             deadline = Some(Instant::now() + debounce_ms);
@@ -984,7 +1091,14 @@ async fn session_debounce_task(
                     None => {
                         // sender dropped — flush remaining
                         if !buffer.is_empty() {
-                            flush(&behavior, &ctx, mem::take(&mut buffer)).await;
+                            let _ = flush(
+                                &behavior,
+                                &ctx,
+                                mem::take(&mut buffer),
+                                &mut rx,
+                                Some(&shutdown),
+                            )
+                            .await;
                         }
                         break;
                     }
@@ -998,7 +1112,84 @@ async fn session_debounce_task(
             } => {
                 let items = mem::take(&mut buffer);
                 deadline = None;
-                flush(&behavior, &ctx, items).await;
+                if let Some(control) = flush(&behavior, &ctx, items, &mut rx, Some(&shutdown)).await
+                {
+                    apply_turn_control(control, &ctx, session_id, &mut wake, &mut idle_deadline);
+                }
+            }
+            _ = async {
+                match wake.as_ref() {
+                    Some(w) => {
+                        sleep_until(
+                            (w.sleep_started_at + Duration::from_millis(w.duration_ms)).into(),
+                        )
+                        .await
+                    }
+                    None => std::future::pending().await,
+                }
+            } => {
+                if let Some(fired) = wake.take() {
+                    let daily_turn_budget = ctx
+                        .effective
+                        .as_ref()
+                        .map(|p| p.proactive.daily_turn_budget)
+                        .unwrap_or(0);
+                    if !tick_budget.try_consume(daily_turn_budget) {
+                        let retry_ms = ctx
+                            .effective
+                            .as_ref()
+                            .map(|p| p.proactive.effective_tick_interval_secs().saturating_mul(1_000))
+                            .unwrap_or(600_000);
+                        tracing::warn!(
+                            agent_id = %ctx.agent_id,
+                            %session_id,
+                            daily_turn_budget,
+                            "proactive tick suppressed: daily budget exhausted"
+                        );
+                        wake = Some(ScheduledWake {
+                            duration_ms: retry_ms.max(60_000),
+                            reason: "daily_turn_budget_exhausted".to_string(),
+                            sleep_started_at: std::time::Instant::now(),
+                        });
+                        continue;
+                    }
+                    inc_proactive_event(&ctx.agent_id, "tick.fired");
+                    let elapsed_ms = fired.sleep_started_at.elapsed().as_millis() as u64;
+                    let tick_text = build_tick_prompt(&fired, elapsed_ms);
+                    let mut tick = InboundMessage::new(session_id, &ctx.agent_id, tick_text);
+                    tick.trigger = RunTrigger::Tick;
+                    tick.source_plugin = "proactive".to_string();
+                    tick.sender_id = None;
+                    tick.priority = MessagePriority::Later;
+                    tracing::info!(
+                        agent_id = %ctx.agent_id,
+                        %session_id,
+                        elapsed_ms,
+                        reason = %fired.reason,
+                        "proactive sleep fired; injecting tick"
+                    );
+                    if !buffer.is_empty() {
+                        let _ = flush(
+                            &behavior,
+                            &ctx,
+                            mem::take(&mut buffer),
+                            &mut rx,
+                            Some(&shutdown),
+                        )
+                        .await;
+                    }
+                    if let Some(control) =
+                        flush(&behavior, &ctx, vec![tick], &mut rx, Some(&shutdown)).await
+                    {
+                        apply_turn_control(
+                            control,
+                            &ctx,
+                            session_id,
+                            &mut wake,
+                            &mut idle_deadline,
+                        );
+                    }
+                }
             }
             _ = sleep_until(idle_deadline) => {
                 // No activity for `SESSION_IDLE_TTL`. Exit so the
@@ -1021,8 +1212,102 @@ async fn session_debounce_task(
     // evict the newcomer's sender.
     session_txs.remove_if(&session_id, |_, current_tx| current_tx.same_channel(&my_tx));
 }
-async fn flush(behavior: &Arc<dyn AgentBehavior>, ctx: &AgentContext, items: Vec<InboundMessage>) {
-    for msg in items {
+fn apply_turn_control(
+    control: AgentTurnControl,
+    ctx: &AgentContext,
+    session_id: Uuid,
+    wake: &mut Option<ScheduledWake>,
+    idle_deadline: &mut Instant,
+) {
+    match control {
+        AgentTurnControl::Done => {}
+        AgentTurnControl::Sleep {
+            duration_ms,
+            reason,
+        } => {
+            let sleep_started_at = std::time::Instant::now();
+            let max_idle_secs = ctx
+                .effective
+                .as_ref()
+                .map(|p| p.proactive.max_idle_secs)
+                .unwrap_or(86_400);
+            let idle_ms = max_idle_secs
+                .saturating_mul(1_000)
+                .max(duration_ms.saturating_add(60_000));
+            *idle_deadline = Instant::now() + Duration::from_millis(idle_ms);
+            *wake = Some(ScheduledWake {
+                duration_ms,
+                reason,
+                sleep_started_at,
+            });
+            inc_proactive_event(&ctx.agent_id, "sleep.entered");
+            if let Some(w) = wake.as_ref() {
+                tracing::info!(
+                    agent_id = %ctx.agent_id,
+                    %session_id,
+                    duration_ms = w.duration_ms,
+                    reason = %w.reason,
+                    "proactive sleep scheduled"
+                );
+            }
+        }
+    }
+}
+
+struct TickBudgetWindow {
+    started_at: std::time::Instant,
+    used: u32,
+}
+
+impl TickBudgetWindow {
+    fn new() -> Self {
+        Self {
+            started_at: std::time::Instant::now(),
+            used: 0,
+        }
+    }
+
+    fn try_consume(&mut self, budget: u32) -> bool {
+        if self.started_at.elapsed() >= Duration::from_secs(86_400) {
+            self.started_at = std::time::Instant::now();
+            self.used = 0;
+        }
+        if budget == 0 {
+            return true;
+        }
+        if self.used >= budget {
+            return false;
+        }
+        self.used = self.used.saturating_add(1);
+        true
+    }
+}
+
+async fn flush(
+    behavior: &Arc<dyn AgentBehavior>,
+    ctx: &AgentContext,
+    items: Vec<InboundMessage>,
+    rx: &mut mpsc::Receiver<InboundMessage>,
+    shutdown: Option<&CancellationToken>,
+) -> Option<AgentTurnControl> {
+    let mut queue: VecDeque<InboundMessage> = items.into();
+    queue.make_contiguous().sort_by_key(|m| m.priority.rank());
+
+    let mut last_control = None;
+    while let Some(msg) = queue.pop_front() {
+        let source_plugin = msg.source_plugin.clone();
+        let source_instance = msg.source_instance.clone();
+        let sender_id = msg.sender_id.clone();
+        let mut turn_ctx = ctx.clone().with_sender_trusted(msg.sender_trusted);
+        if matches!(msg.trigger, RunTrigger::User) && !source_plugin.is_empty() {
+            turn_ctx = turn_ctx.with_inbound_origin(
+                source_plugin.clone(),
+                source_instance
+                    .clone()
+                    .unwrap_or_else(|| "default".to_string()),
+                sender_id.clone().unwrap_or_default(),
+            );
+        }
         inc_messages_processed_total(&ctx.agent_id);
         let span = tracing::info_span!(
             "agent.message",
@@ -1030,7 +1315,8 @@ async fn flush(behavior: &Arc<dyn AgentBehavior>, ctx: &AgentContext, items: Vec
             session_id = %msg.session_id,
             message_id = %msg.id,
             trigger = ?msg.trigger,
-            source_plugin = %msg.source_plugin
+            priority = %msg.priority.as_str(),
+            source_plugin = %source_plugin
         );
         // Capture a snapshot of the message before we move it so that
         // a handler panic / error path can DLQ it without losing data.
@@ -1039,41 +1325,101 @@ async fn flush(behavior: &Arc<dyn AgentBehavior>, ctx: &AgentContext, items: Vec
             "session_id": msg.session_id,
             "message_id": msg.id,
             "text": msg.text,
-            "source_plugin": msg.source_plugin,
-            "source_instance": msg.source_instance,
-            "sender_id": msg.sender_id,
+            "source_plugin": source_plugin,
+            "source_instance": source_instance,
+            "sender_id": sender_id,
+            "priority": msg.priority.as_str(),
         });
-        if let Err(e) = behavior.on_message(ctx, msg).instrument(span).await {
-            tracing::error!(
-                agent_id = %ctx.agent_id,
-                error = %e,
-                "on_message failed — publishing to DLQ topic for ops review"
-            );
-            // Best-effort DLQ: publish to a well-known topic so ops
-            // can attach alerting / retry tooling. Never blocks the
-            // loop — a broker hiccup here is logged and we move on.
-            let dlq_topic = format!("agent.dlq.{}", ctx.agent_id);
-            let mut ev = nexo_broker::Event::new(
-                &dlq_topic,
-                &ctx.agent_id,
-                serde_json::json!({
-                    "error": e.to_string(),
-                    "message": dlq_payload,
-                }),
-            );
-            ev.session_id = dlq_payload
-                .get("session_id")
-                .and_then(|v| v.as_str())
-                .and_then(|s| Uuid::parse_str(s).ok());
-            if let Err(pe) = ctx.broker.publish(&dlq_topic, ev).await {
-                tracing::warn!(
-                    agent_id = %ctx.agent_id,
-                    error = %pe,
-                    "DLQ publish failed — message unrecoverable"
+        let call = behavior.on_message_control(&turn_ctx, msg).instrument(span);
+        tokio::pin!(call);
+        let mut interrupted_by_now = false;
+        let mut call_result: Option<anyhow::Result<AgentTurnControl>> = None;
+
+        loop {
+            tokio::select! {
+                biased;
+                _ = async {
+                    match shutdown {
+                        Some(tok) => tok.cancelled().await,
+                        None => std::future::pending::<()>().await,
+                    }
+                } => {
+                    return last_control;
+                }
+                incoming = rx.recv() => {
+                    let Some(incoming) = incoming else {
+                        continue;
+                    };
+                    if matches!(incoming.priority, MessagePriority::Now) {
+                        tracing::info!(
+                            agent_id = %ctx.agent_id,
+                            session_id = %incoming.session_id,
+                            message_id = %incoming.id,
+                            "priority=now received; interrupting in-flight turn"
+                        );
+                        push_by_priority(&mut queue, incoming);
+                        interrupted_by_now = true;
+                        break;
+                    }
+                    push_by_priority(&mut queue, incoming);
+                }
+                res = &mut call => {
+                    call_result = Some(res);
+                    break;
+                }
+            }
+        }
+
+        if interrupted_by_now {
+            continue;
+        }
+
+        match call_result.expect("call must resolve unless interrupted/cancelled") {
+            Ok(control) => {
+                last_control = Some(control);
+            }
+            Err(e) => {
+                tracing::error!(
+                    agent_id = %turn_ctx.agent_id,
+                    error = %e,
+                    "on_message failed — publishing to DLQ topic for ops review"
                 );
+                // Best-effort DLQ: publish to a well-known topic so ops
+                // can attach alerting / retry tooling. Never blocks the
+                // loop — a broker hiccup here is logged and we move on.
+                let dlq_topic = format!("agent.dlq.{}", turn_ctx.agent_id);
+                let mut ev = nexo_broker::Event::new(
+                    &dlq_topic,
+                    &turn_ctx.agent_id,
+                    serde_json::json!({
+                        "error": e.to_string(),
+                        "message": dlq_payload,
+                    }),
+                );
+                ev.session_id = dlq_payload
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| Uuid::parse_str(s).ok());
+                if let Err(pe) = turn_ctx.broker.publish(&dlq_topic, ev).await {
+                    tracing::warn!(
+                        agent_id = %turn_ctx.agent_id,
+                        error = %pe,
+                        "DLQ publish failed — message unrecoverable"
+                    );
+                }
             }
         }
     }
+    last_control
+}
+
+fn push_by_priority(queue: &mut VecDeque<InboundMessage>, msg: InboundMessage) {
+    let rank = msg.priority.rank();
+    let idx = queue
+        .iter()
+        .position(|m| m.priority.rank() > rank)
+        .unwrap_or(queue.len());
+    queue.insert(idx, msg);
 }
 fn parse_session_id_from_context(context: &Value) -> Option<Uuid> {
     context
@@ -1103,6 +1449,21 @@ fn extract_inbound_media(payload: &Value) -> Option<InboundMedia> {
         path,
         mime_type,
     })
+}
+
+/// Parse optional payload priority (`now` | `next` | `later`).
+/// Unknown / missing values fall back to `next`.
+fn parse_inbound_priority(payload: &Value) -> MessagePriority {
+    let Some(raw) = payload.get("priority").and_then(|v| v.as_str()) else {
+        return MessagePriority::Next;
+    };
+    if raw.eq_ignore_ascii_case("now") {
+        MessagePriority::Now
+    } else if raw.eq_ignore_ascii_case("later") {
+        MessagePriority::Later
+    } else {
+        MessagePriority::Next
+    }
 }
 /// Split `plugin.inbound.<plugin>[.<instance>]` into its parts.
 /// Returns `("", None)` if the topic doesn't have the expected prefix
@@ -1255,6 +1616,31 @@ mod tests {
         assert_eq!(
             parse_inbound_topic("plugin.inbound."),
             (String::new(), None)
+        );
+    }
+
+    #[test]
+    fn parse_inbound_priority_accepts_known_values_and_defaults() {
+        assert_eq!(
+            parse_inbound_priority(&serde_json::json!({"priority":"now"})),
+            MessagePriority::Now
+        );
+        assert_eq!(
+            parse_inbound_priority(&serde_json::json!({"priority":"NEXT"})),
+            MessagePriority::Next
+        );
+        assert_eq!(
+            parse_inbound_priority(&serde_json::json!({"priority":"later"})),
+            MessagePriority::Later
+        );
+        // Unknown values fail-safe to `next`.
+        assert_eq!(
+            parse_inbound_priority(&serde_json::json!({"priority":"whatever"})),
+            MessagePriority::Next
+        );
+        assert_eq!(
+            parse_inbound_priority(&serde_json::json!({})),
+            MessagePriority::Next
         );
     }
     #[test]

@@ -198,6 +198,7 @@ mod tests {
             lsp: nexo_config::types::lsp::LspPolicy::default(),
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
             team: nexo_config::types::team::TeamPolicy::default(),
+            proactive: Default::default(),
         });
         let broker = AnyBroker::local();
         let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));

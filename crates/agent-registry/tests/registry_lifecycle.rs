@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use chrono::{Duration as ChronoDuration, Utc};
 use nexo_agent_registry::{
-    AgentHandle, AgentRegistryStore, AgentRunStatus, AgentSnapshot, MemoryAgentRegistryStore,
-    SqliteAgentRegistryStore,
+    AgentHandle, AgentRegistryStore, AgentRunStatus, AgentSleepState, AgentSnapshot,
+    MemoryAgentRegistryStore, SqliteAgentRegistryStore,
 };
 use nexo_driver_types::GoalId;
 use uuid::Uuid;
@@ -102,6 +102,29 @@ async fn list_by_status_filters_correctly() {
     assert_eq!(queued.len(), 1);
     let dn = store.list_by_status(AgentRunStatus::Done).await.unwrap();
     assert_eq!(dn.len(), 1);
+}
+
+#[tokio::test]
+async fn sqlite_sleeping_state_round_trips_through_columns() {
+    let store = SqliteAgentRegistryStore::open_memory().await.unwrap();
+    let mut h = handle("77.20", AgentRunStatus::Sleeping);
+    h.snapshot.sleep = Some(AgentSleepState {
+        wake_at: Utc::now() + ChronoDuration::minutes(10),
+        duration_ms: 600_000,
+        reason: "waiting for new work".into(),
+    });
+    store.upsert(&h).await.unwrap();
+
+    let read = store.get(h.goal_id).await.unwrap().unwrap();
+    assert_eq!(read.status, AgentRunStatus::Sleeping);
+    let sleep = read.snapshot.sleep.expect("sleep state");
+    assert_eq!(sleep.duration_ms, 600_000);
+    assert_eq!(sleep.reason, "waiting for new work");
+    let sleeping = store
+        .list_by_status(AgentRunStatus::Sleeping)
+        .await
+        .unwrap();
+    assert_eq!(sleeping.len(), 1);
 }
 
 #[tokio::test]

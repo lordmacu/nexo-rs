@@ -41,6 +41,7 @@ pub struct ForwardInfo {
     pub date: Option<i64>,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum InboundEvent {
@@ -50,6 +51,10 @@ pub enum InboundEvent {
         chat_type: String,
         text: Option<String>,
         reply_to: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reply_to_question_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ask_question_id: Option<String>,
         is_group: bool,
         timestamp: i64,
         msg_id: String,

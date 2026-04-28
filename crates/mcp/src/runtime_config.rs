@@ -62,8 +62,8 @@ pub struct McpRuntimeConfig {
     /// by default.
     pub resource_cache: ResourceCacheConfig,
     /// Phase 12.5 follow-up — opt-in URI scheme allowlist (e.g.
-    /// `["file", "db"]`). Empty = permissive; otherwise violations are
-    /// logged + counted before the call is dispatched.
+    /// `["file", "db"]`). Empty = permissive; otherwise unknown schemes
+    /// are rejected before dispatch (and logged + counted).
     pub resource_uri_allowlist: Vec<String>,
 }
 

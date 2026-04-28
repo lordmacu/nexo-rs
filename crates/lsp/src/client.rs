@@ -49,6 +49,9 @@ enum Outgoing {
     },
 }
 
+type PendingRequests =
+    Arc<Mutex<HashMap<i64, oneshot::Sender<Result<serde_json::Value, LspError>>>>>;
+
 /// Snapshot of the latest diagnostics for one URI plus the
 /// publish timestamp. Sessions consult `published_at` to decide
 /// whether to wait for fresher data after `didOpen`.
@@ -81,8 +84,8 @@ impl DiagnosticsCache {
 
 /// LSP client wrapper around one child process. The `request_tx`
 /// + reader-task + writer-task topology means callers never block
-/// on each other; multiple concurrent `request<R>()` calls are
-/// safe.
+///   on each other; multiple concurrent `request<R>()` calls are
+///   safe.
 #[derive(Debug)]
 pub struct LspClient {
     request_tx: mpsc::UnboundedSender<Outgoing>,
@@ -138,8 +141,7 @@ impl LspClient {
         }
 
         let diagnostics = Arc::new(DiagnosticsCache::default());
-        let pending: Arc<Mutex<HashMap<i64, oneshot::Sender<Result<serde_json::Value, LspError>>>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
         let (request_tx, request_rx) = mpsc::unbounded_channel::<Outgoing>();
 
         // Writer task: pulls from the channel, encodes, writes.
@@ -231,10 +233,7 @@ impl LspClient {
             )),
             Err(_) => {
                 // Best-effort cancel — server may already be done.
-                let _ = self.notify_raw(
-                    "$/cancelRequest",
-                    serde_json::json!({ "id": id }),
-                );
+                let _ = self.notify_raw("$/cancelRequest", serde_json::json!({ "id": id }));
                 Err(LspError::RequestTimeout {
                     method: method.to_string(),
                     timeout_secs: self.request_timeout.as_secs(),
@@ -265,10 +264,12 @@ impl LspClient {
         workspace_root: &Path,
     ) -> Result<ResolvedCapabilities, LspError> {
         let workspace_uri = url::Url::from_directory_path(workspace_root)
-            .map_err(|_| LspError::Wire(format!(
-                "workspace_root `{}` is not a valid URI base",
-                workspace_root.display()
-            )))?
+            .map_err(|_| {
+                LspError::Wire(format!(
+                    "workspace_root `{}` is not a valid URI base",
+                    workspace_root.display()
+                ))
+            })?
             .to_string();
         // Lift from `claude-code-leak/src/services/lsp/LSPServerInstance.ts:165-200`
         // — keep both the deprecated rootUri/rootPath fields and
@@ -314,11 +315,8 @@ impl LspClient {
     /// errors are absorbed because shutdown is on the cleanup path.
     pub async fn shutdown(&self, grace: Duration) {
         // Send shutdown request — server may take a moment to flush.
-        let _ = tokio::time::timeout(
-            grace,
-            self.request_raw("shutdown", serde_json::Value::Null),
-        )
-        .await;
+        let _ = tokio::time::timeout(grace, self.request_raw("shutdown", serde_json::Value::Null))
+            .await;
         // Send exit notification.
         let _ = self.notify_raw("exit", serde_json::Value::Null);
 
@@ -364,7 +362,7 @@ async fn drain_stderr(stderr: tokio::process::ChildStderr, binary_name: String) 
 
 async fn reader_loop<R>(
     mut framed: FramedRead<R, LspCodec>,
-    pending: Arc<Mutex<HashMap<i64, oneshot::Sender<Result<serde_json::Value, LspError>>>>>,
+    pending: PendingRequests,
     diagnostics: Arc<DiagnosticsCache>,
 ) where
     R: tokio::io::AsyncRead + Unpin,
@@ -393,12 +391,9 @@ async fn reader_loop<R>(
             if value.get("method").is_some() {
                 // Server-to-client request — minimal ack.
                 handle_server_request(&value, &diagnostics).await;
-            } else if let Some(responder) =
-                pending.lock().await.remove(&id)
-            {
+            } else if let Some(responder) = pending.lock().await.remove(&id) {
                 if let Some(error) = value.get("error") {
-                    let _ = responder
-                        .send(Err(LspError::Wire(format!("{error}"))));
+                    let _ = responder.send(Err(LspError::Wire(format!("{error}"))));
                 } else {
                     let result = value
                         .get("result")
@@ -444,10 +439,9 @@ async fn handle_notification(
             Some(u) => u,
             None => return,
         };
-        let items: Vec<lsp_types::Diagnostic> = serde_json::from_value(
-            params.get("diagnostics").cloned().unwrap_or_default(),
-        )
-        .unwrap_or_default();
+        let items: Vec<lsp_types::Diagnostic> =
+            serde_json::from_value(params.get("diagnostics").cloned().unwrap_or_default())
+                .unwrap_or_default();
         diagnostics
             .put(
                 uri,
@@ -460,10 +454,7 @@ async fn handle_notification(
     }
 }
 
-async fn handle_server_request(
-    _value: &serde_json::Value,
-    _diagnostics: &Arc<DiagnosticsCache>,
-) {
+async fn handle_server_request(_value: &serde_json::Value, _diagnostics: &Arc<DiagnosticsCache>) {
     // Server-to-client requests we don't handle — out-of-scope for
     // the MVP. tsserver's `workspace/configuration` is not gated to
     // an explicit ack here because we declared
@@ -583,7 +574,6 @@ mod tests {
 mod io_loop_tests {
     use super::*;
     use serde_json::json;
-    use tokio::io::AsyncWriteExt;
 
     /// In-memory mock LSP server: an end-to-end pair where the
     /// "server" side is a tokio task that responds to JSON-RPC
@@ -591,14 +581,8 @@ mod io_loop_tests {
     /// a real binary in unit tests.
     struct MockServer {
         // Server-side framed read/write of the client's stdin/stdout.
-        client_to_server_read: FramedRead<
-            BufReader<tokio::io::DuplexStream>,
-            LspCodec,
-        >,
-        server_to_client_write: FramedWrite<
-            BufWriter<tokio::io::DuplexStream>,
-            LspCodec,
-        >,
+        client_to_server_read: FramedRead<BufReader<tokio::io::DuplexStream>, LspCodec>,
+        server_to_client_write: FramedWrite<BufWriter<tokio::io::DuplexStream>, LspCodec>,
     }
 
     /// Build a `LspClient` whose stdin/stdout are connected to a
@@ -609,14 +593,11 @@ mod io_loop_tests {
         let (server_write, client_stdout_r) = tokio::io::duplex(64 * 1024);
 
         let diagnostics = Arc::new(DiagnosticsCache::default());
-        let pending: Arc<
-            Mutex<HashMap<i64, oneshot::Sender<Result<serde_json::Value, LspError>>>>,
-        > = Arc::new(Mutex::new(HashMap::new()));
+        let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
         let (request_tx, request_rx) = mpsc::unbounded_channel::<Outgoing>();
 
         // Writer side.
-        let mut framed_write =
-            FramedWrite::new(BufWriter::new(client_stdin_w), LspCodec);
+        let mut framed_write = FramedWrite::new(BufWriter::new(client_stdin_w), LspCodec);
         let pending_for_writer = Arc::clone(&pending);
         tokio::spawn(async move {
             let mut rx = request_rx;
@@ -629,12 +610,9 @@ mod io_loop_tests {
                     } => {
                         pending_for_writer.lock().await.insert(id, responder);
                         if let Err(e) = framed_write.send(body).await {
-                            if let Some(resp) =
-                                pending_for_writer.lock().await.remove(&id)
-                            {
-                                let _ = resp.send(Err(LspError::Wire(format!(
-                                    "write failed: {e}"
-                                ))));
+                            if let Some(resp) = pending_for_writer.lock().await.remove(&id) {
+                                let _ =
+                                    resp.send(Err(LspError::Wire(format!("write failed: {e}"))));
                             }
                         }
                     }
@@ -679,9 +657,8 @@ mod io_loop_tests {
         // Issue request from client.
         let client_arc = Arc::new(client);
         let c2 = Arc::clone(&client_arc);
-        let req = tokio::spawn(async move {
-            c2.request_raw("textDocument/hover", json!({})).await
-        });
+        let req =
+            tokio::spawn(async move { c2.request_raw("textDocument/hover", json!({})).await });
 
         // Mock server reads the request, replies.
         let req_msg = mock.client_to_server_read.next().await.unwrap().unwrap();
@@ -724,11 +701,7 @@ mod io_loop_tests {
         // Give the reader task a chance to pump.
         tokio::task::yield_now().await;
         for _ in 0..20 {
-            if cache
-                .get(&url::Url::parse(uri).unwrap())
-                .await
-                .is_some()
-            {
+            if cache.get(&url::Url::parse(uri).unwrap()).await.is_some() {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(5)).await;
@@ -739,7 +712,6 @@ mod io_loop_tests {
             .expect("publishDiagnostics should populate cache");
         assert_eq!(snap.items.len(), 1);
         assert_eq!(snap.items[0].message, "test error");
-
     }
 
     #[tokio::test]

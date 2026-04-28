@@ -32,6 +32,7 @@ use crate::pairing::{PairingState, SharedPairingState};
 /// back to direct `Session::send_text` when no sender matches — that's
 /// how proactive Heartbeat / A2A outputs reach the user.
 pub(crate) type PendingMap = Arc<DashMap<Uuid, oneshot::Sender<String>>>;
+pub(crate) type AskReplyIndex = Arc<DashMap<String, String>>;
 
 pub struct WhatsappPlugin {
     cfg: Arc<WhatsappPluginConfig>,
@@ -43,6 +44,7 @@ pub struct WhatsappPlugin {
     session: Arc<OnceCell<Arc<whatsapp_rs::Session>>>,
     broker: Arc<OnceCell<AnyBroker>>,
     pending: PendingMap,
+    ask_reply_index: AskReplyIndex,
     lifecycle: SharedLifecycle,
     pairing: SharedPairingState,
     shutdown: CancellationToken,
@@ -63,6 +65,7 @@ impl WhatsappPlugin {
             session: Arc::new(OnceCell::new()),
             broker: Arc::new(OnceCell::new()),
             pending: Arc::new(DashMap::new()),
+            ask_reply_index: Arc::new(DashMap::new()),
             lifecycle: Arc::new(Mutex::new(LifecycleState::default())),
             pairing: PairingState::new(),
             shutdown: CancellationToken::new(),
@@ -156,6 +159,7 @@ impl Plugin for WhatsappPlugin {
         let handler = crate::bridge::build_handler(
             broker.clone(),
             self.pending.clone(),
+            self.ask_reply_index.clone(),
             self.cfg.clone(),
             session.clone(),
         );
@@ -200,6 +204,7 @@ impl Plugin for WhatsappPlugin {
             broker.clone(),
             session.clone(),
             self.pending.clone(),
+            self.ask_reply_index.clone(),
             self.shutdown.clone(),
             outbound_topic,
         );

@@ -133,6 +133,14 @@ pub struct AgentContext {
     /// no inner lock because the consume is single-threaded
     /// per-goal.
     pub inbox: Arc<RwLock<Vec<DmMessage>>>,
+    /// Phase 77.20 — whether this goal runs in proactive tick-loop mode.
+    /// Set at goal spawn from `EffectiveBindingPolicy::proactive().enabled`.
+    /// Read by `llm_behavior` to inject the proactive system hint.
+    pub proactive_enabled: bool,
+    /// Phase 77.20 — binding role tag (`"coordinator"`, `"worker"`, `"proactive"`,
+    /// or `None`). Stored here so `llm_behavior` can inject the coordinator
+    /// hint without re-reading the binding config on every turn.
+    pub binding_role: Option<String>,
 }
 
 /// One inbound team message attached to a goal's `AgentContext.inbox`.
@@ -182,6 +190,8 @@ impl AgentContext {
             team_id: None,
             team_member_name: None,
             inbox: Arc::new(RwLock::new(Vec::new())),
+            proactive_enabled: false,
+            binding_role: None,
         }
     }
 
@@ -305,6 +315,8 @@ impl AgentContext {
         self
     }
     pub fn with_effective(mut self, effective: Arc<EffectiveBindingPolicy>) -> Self {
+        self.proactive_enabled = effective.proactive.enabled;
+        self.binding_role = effective.role.clone();
         self.effective = Some(effective);
         self
     }
@@ -385,6 +397,7 @@ mod plan_mode_tests {
             lsp: nexo_config::types::lsp::LspPolicy::default(),
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
             team: nexo_config::types::team::TeamPolicy::default(),
+            proactive: Default::default(),
         };
         AgentContext::new(
             "a",

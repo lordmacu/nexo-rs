@@ -12,6 +12,7 @@ pub mod llm_decider;
 pub mod mcp_config;
 pub mod memory;
 pub mod orchestrator;
+pub mod proactive;
 pub mod prompt;
 pub mod replay;
 pub mod socket;

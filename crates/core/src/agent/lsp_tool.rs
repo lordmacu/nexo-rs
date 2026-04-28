@@ -85,6 +85,24 @@ impl LspTool {
     /// running yet), the description includes all 5 kinds with a
     /// note that the result may be `ServerUnavailable` until a
     /// session warms up.
+    /// Phase 79.M.b — synchronous tool_def for boot dispatchers
+    /// (`mcp_server_bridge::dispatch`) that can't `await` during
+    /// catalog construction. Always returns the empty-caps
+    /// description; the dynamic version above is reserved for
+    /// `nexo run` agents that have a tokio runtime around them.
+    pub fn tool_def_static() -> ToolDef {
+        ToolDef {
+            name: "Lsp".to_string(),
+            description: String::from(
+                "Query a Language Server Protocol server in-process for code intelligence. \
+                 No servers are warm yet — the first call to a supported language will spawn the server (~500 ms cold start). \
+                 Supported kinds: go_to_def | hover | references | workspace_symbol | diagnostics.\n\n\
+                 All `line` and `character` parameters are 1-based (matching editor UX, not the LSP wire which is 0-based).",
+            ),
+            parameters: Self::parameters_schema(),
+        }
+    }
+
     pub async fn tool_def(&self) -> ToolDef {
         let caps = self.manager.aggregated_capabilities().await;
         let mut active = Vec::new();
@@ -210,9 +228,7 @@ fn read_required_position(args: &Value, field: &str) -> Result<u32, String> {
         .and_then(|v| v.as_u64())
         .ok_or_else(|| format!("Lsp tool requires `{field}` (positive integer)"))?;
     if n == 0 {
-        return Err(format!(
-            "Lsp tool `{field}` must be 1-based (>= 1); got 0"
-        ));
+        return Err(format!("Lsp tool `{field}` must be 1-based (>= 1); got 0"));
     }
     Ok(n as u32)
 }

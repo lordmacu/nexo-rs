@@ -175,6 +175,7 @@ mod tests {
             lsp: nexo_config::types::lsp::LspPolicy::default(),
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
             team: nexo_config::types::team::TeamPolicy::default(),
+            proactive: Default::default(),
         };
         AgentContext::new(
             "test-agent",
@@ -212,10 +213,7 @@ mod tests {
         let tool = ConfigChangesTailTool::new(store);
         // No `n` arg → default 20.
         let res = tool
-            .call(
-                &agent_context_fixture(),
-                json!({}),
-            )
+            .call(&agent_context_fixture(), json!({}))
             .await
             .unwrap();
         assert_eq!(res["n"], 20);
@@ -232,10 +230,7 @@ mod tests {
             .unwrap();
         let tool = ConfigChangesTailTool::new(store);
         let res = tool
-            .call(
-                &agent_context_fixture(),
-                json!({ "n": 5 }),
-            )
+            .call(&agent_context_fixture(), json!({ "n": 5 }))
             .await
             .unwrap();
         let formatted = res["formatted"].as_str().unwrap();
@@ -271,10 +266,7 @@ mod tests {
         let tool = ConfigChangesTailTool::new(store);
         // Caller asks 1000; capped at MAX_N (200).
         let res = tool
-            .call(
-                &agent_context_fixture(),
-                json!({ "n": 1000 }),
-            )
+            .call(&agent_context_fixture(), json!({ "n": 1000 }))
             .await
             .unwrap();
         assert_eq!(res["n"], 200);

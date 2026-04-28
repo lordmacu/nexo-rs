@@ -31,6 +31,7 @@
 //!     grows the method).
 
 use super::context::AgentContext;
+use super::mcp_resource_tool::ensure_uri_scheme_allowed;
 use super::tool_registry::ToolHandler;
 use async_trait::async_trait;
 use nexo_llm::ToolDef;
@@ -233,6 +234,8 @@ impl ToolHandler for ReadMcpResourceTool {
                     known.join(", ")
                 )
             })?;
+        let allowlist = mcp.resource_uri_allowlist();
+        ensure_uri_scheme_allowed(&server, &uri, allowlist.as_ref())?;
 
         let contents = client
             .read_resource(&uri)

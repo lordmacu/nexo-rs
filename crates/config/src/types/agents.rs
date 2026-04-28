@@ -116,14 +116,16 @@ pub struct AgentConfig {
     /// its own `# RULES — <filename>` block.
     #[serde(default)]
     pub extra_docs: Vec<String>,
-    /// Which plugin topics this agent accepts inbound from. Empty =
-    /// legacy wildcard (`plugin.inbound.>`, receive everything — matches
-    /// pre-binding behavior). Populated = strict allowlist.
+    /// Which plugin topics this agent accepts inbound from. Empty means
+    /// "accept nothing from plugin.inbound.*" (strict mode); operators must
+    /// declare at least one binding per channel they want to receive.
     ///
     /// Topic parse rules:
     ///   `plugin.inbound.<plugin>`                → (plugin, None)
     ///   `plugin.inbound.<plugin>.<instance>`     → (plugin, Some(inst))
-    /// A binding with `instance=None` matches any instance of `plugin`.
+    /// Matching is strict on the instance axis:
+    /// - `instance=None` matches only `plugin.inbound.<plugin>`
+    /// - `instance=Some(x)` matches only `plugin.inbound.<plugin>.<x>`
     #[serde(default)]
     pub inbound_bindings: Vec<InboundBinding>,
     /// Explicit allowlist of tool names this agent may call. Glob with
@@ -237,6 +239,12 @@ pub struct AgentConfig {
     /// tools register for this agent's goals.
     #[serde(default)]
     pub team: crate::types::team::TeamPolicy,
+    /// Phase 77.20 — proactive tick-loop config. When `enabled: true` the
+    /// driver-loop keeps the goal alive after every turn and injects
+    /// periodic `<tick>` prompts. The agent controls its own wake-up
+    /// interval via `Sleep { duration_ms }`.
+    #[serde(default)]
+    pub proactive: crate::types::proactive::ProactiveConfig,
 }
 
 /// Tri-state dispatch capability. The same enum is used for the
@@ -330,8 +338,8 @@ fn default_sender_burst() -> u64 {
     5
 }
 
-/// Matches inbound plugin events to an agent. A binding is "plugin X"
-/// (any instance) or "plugin X, instance Y" (exact).
+/// Matches inbound plugin events to an agent using strict
+/// `(plugin, instance)` equality.
 ///
 /// Per-binding overrides: each optional field replaces the matching
 /// agent-level setting when `Some(..)`. `None` (the default) inherits the
@@ -413,6 +421,16 @@ pub struct InboundBinding {
     /// any other value (or omission) is treated as unset.
     #[serde(default)]
     pub role: Option<String>,
+    /// Phase 77.20 — per-binding proactive config override. `None` inherits
+    /// the agent-level `proactive` block. When present, replaces the whole
+    /// struct for goals spawned from this binding.
+    #[serde(default)]
+    pub proactive: Option<crate::types::proactive::ProactiveConfig>,
+    /// Phase 79.8 — per-binding override of `agents.remote_triggers`.
+    /// `None` (default) inherits the agent-level allowlist; `Some(vec)`
+    /// replaces it entirely for this binding.
+    #[serde(default)]
+    pub remote_triggers: Option<Vec<crate::types::remote_triggers::RemoteTriggerEntry>>,
 }
 
 /// Per-binding override for the sender rate limit.

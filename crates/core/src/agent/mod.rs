@@ -19,6 +19,7 @@ pub mod dreaming;
 pub mod effective;
 pub mod extension_hook;
 pub mod extension_tool;
+pub mod followup_tool;
 pub mod heartbeat_tool;
 pub mod hook_registry;
 pub mod llm_behavior;
@@ -38,6 +39,7 @@ pub mod notebook_edit_tool;
 pub mod peer_directory;
 pub mod plan_mode_tool;
 pub mod plugin;
+pub mod proactive_hint;
 pub mod prompt_assembly;
 pub mod rate_limit;
 pub mod redaction;
@@ -50,6 +52,7 @@ pub mod self_report;
 pub mod sender_rate_limit;
 pub mod session_logs_tool;
 pub mod skills;
+pub mod sleep_tool;
 pub mod synthetic_output_tool;
 pub mod taskflow_tool;
 pub mod team_tools;
@@ -80,6 +83,7 @@ pub use dreaming::{DreamCandidate, DreamEngine, DreamReport, DreamWeights, Dream
 pub use effective::EffectiveBindingPolicy;
 pub use extension_hook::ExtensionHook;
 pub use extension_tool::{ExtensionTool, EXT_NAME_PREFIX};
+pub use followup_tool::{CancelFollowupTool, CheckFollowupTool, StartFollowupTool};
 pub use heartbeat_tool::HeartbeatTool;
 pub use hook_registry::{HookHandler, HookOutcome, HookRegistry};
 pub use llm_behavior::LlmAgentBehavior;
@@ -112,6 +116,7 @@ pub use skills::{
     BinVersionSpec, LoadedSkill, MissingVersion, SkillLoadAction, SkillLoadStatus, SkillLoader,
     VersionFailReason,
 };
+pub use sleep_tool::{extract_sleep_ms, is_sleep_result, SleepTool, SLEEP_SENTINEL};
 pub use taskflow_tool::{TaskFlowTool, TaskFlowToolGuardrails};
 pub use tool_registry::{ToolHandler, ToolRegistry};
 pub use tool_registry_cache::ToolRegistryCache;
@@ -120,7 +125,7 @@ pub use transcripts::{
     TRANSCRIPT_VERSION,
 };
 pub use transcripts_index::{IndexedHit, TranscriptsIndex};
-pub use types::{InboundMessage, RunTrigger};
+pub use types::{InboundMessage, MessagePriority, RunTrigger};
 pub use web_fetch_tool::WebFetchTool;
 pub use web_search_tool::WebSearchTool;
 pub use workspace::{

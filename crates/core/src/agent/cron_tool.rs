@@ -13,10 +13,8 @@
 //!     `croner` + cache. Cron expression semantics are
 //!     compatible.
 //!
-//! MVP caveat: these tools only mutate the SQLite table. The
-//! tokio runtime that polls `due_at` and fires LLM turns is
-//! deferred — it lands as a follow-up that wires into the
-//! Phase 20 `agent_turn` poller.
+//! Runtime firing is shipped: `CronRunner` polls `due_at` and
+//! dispatches due entries through `LlmCronDispatcher`.
 
 use super::context::AgentContext;
 use super::tool_registry::ToolHandler;
@@ -42,7 +40,7 @@ impl CronCreateTool {
         ToolDef {
             name: "cron_create".to_string(),
             description: format!(
-                "Schedule a recurring or one-shot prompt to fire on a cron schedule. The runtime persists the entry to SQLite and survives daemon restarts. Cap: {} entries per binding. Minimum interval: 60 seconds.\n\nMVP caveat: entries are persisted but the runtime task that fires due entries is not yet wired (lands as a follow-up). Useful today for testing schedule shapes + populating the durable table.",
+                "Schedule a recurring or one-shot prompt to fire on a cron schedule. The runtime persists the entry to SQLite and survives daemon restarts. Entries are namespaced to the originating binding (`plugin:instance` from inbound origin; fallback `agent_id`). Cap: {} entries per binding. Minimum interval: 60 seconds. One-shot entries auto-delete on success; on dispatch failure they retry with bounded backoff per `runtime.cron.one_shot_retry` before final drop.",
                 MAX_CRON_ENTRIES_PER_BINDING
             ),
             parameters: json!({
@@ -50,7 +48,7 @@ impl CronCreateTool {
                 "properties": {
                     "cron": {
                         "type": "string",
-                        "description": "Standard 5-field cron expression in UTC: \"M H DoM Mon DoW\". Examples: \"*/5 * * * *\" (every 5 minutes), \"0 9 * * *\" (daily 9am UTC), \"30 14 28 2 *\" (Feb 28 14:30 UTC, runs once if recurring=false)."
+                        "description": "Standard cron expression in UTC. Prefer 5-field: \"M H DoM Mon DoW\" (6-field with seconds is also accepted). Examples: \"*/5 * * * *\" (every 5 minutes), \"0 9 * * *\" (daily 9am UTC), \"30 14 28 2 *\" (Feb 28 14:30 UTC, runs once if recurring=false). Expressions that fire more often than once per 60 seconds are rejected."
                     },
                     "prompt": {
                         "type": "string",
@@ -58,7 +56,7 @@ impl CronCreateTool {
                     },
                     "channel": {
                         "type": "string",
-                        "description": "Optional channel hint (e.g. 'whatsapp:default'). Inherits the binding's primary channel when omitted."
+                        "description": "Optional channel hint (e.g. 'whatsapp:default'). Used only when paired with `recipient` for outbound delivery; otherwise the cron fire is log-only."
                     },
                     "recipient": {
                         "type": "string",
@@ -110,6 +108,9 @@ impl ToolHandler for CronCreateTool {
             .unwrap_or(true);
 
         let binding_id = binding_id_from_ctx(ctx);
+        let effective = ctx.effective_policy();
+        let model_provider = effective.model.provider.trim();
+        let model_name = effective.model.model.trim();
         let entry = build_new_entry(
             &self.store,
             &binding_id,
@@ -118,6 +119,16 @@ impl ToolHandler for CronCreateTool {
             channel.as_deref(),
             recurring,
             recipient.as_deref(),
+            if model_provider.is_empty() {
+                None
+            } else {
+                Some(model_provider)
+            },
+            if model_name.is_empty() {
+                None
+            } else {
+                Some(model_name)
+            },
         )
         .await
         .map_err(map_err)?;
@@ -131,7 +142,9 @@ impl ToolHandler for CronCreateTool {
             "cron": cron,
             "recurring": recurring,
             "next_fire_at": next_fire_at,
-            "instructions": "Entry persisted. The runtime fires it on schedule (firing wired in a follow-up). Use cron_list to inspect, cron_delete to cancel."
+            "model_provider": entry.model_provider,
+            "model_name": entry.model_name,
+            "instructions": "Entry persisted. The runtime fires it on schedule. Use cron_list to inspect, cron_pause/cron_resume to temporarily stop/restart, and cron_delete to cancel."
         }))
     }
 }
@@ -149,7 +162,7 @@ impl CronListTool {
     pub fn tool_def() -> ToolDef {
         ToolDef {
             name: "cron_list".to_string(),
-            description: "List the scheduled cron entries for the current binding. Read-only."
+            description: "List scheduled cron entries for the current binding namespace (origin-tagged `plugin:instance`, or `agent_id` fallback). Read-only."
                 .to_string(),
             parameters: json!({
                 "type": "object",
@@ -191,11 +204,12 @@ impl CronPauseTool {
     pub fn tool_def() -> ToolDef {
         ToolDef {
             name: "cron_pause".to_string(),
-            description: "Pause a scheduled cron entry by id. The row stays in storage; the future runtime fires it again only after cron_resume.".to_string(),
+            description: "Pause a scheduled cron entry by id. The row stays in storage (`paused=true`) and `CronRunner` skips it until `cron_resume`."
+                .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "id": { "type": "string", "description": "Entry id from cron_create or cron_list." }
+                    "id": { "type": "string", "description": "Entry id from cron_create response or cron_list output." }
                 },
                 "required": ["id"]
             }),
@@ -227,11 +241,13 @@ impl CronResumeTool {
     pub fn tool_def() -> ToolDef {
         ToolDef {
             name: "cron_resume".to_string(),
-            description: "Resume a paused cron entry by id (inverse of cron_pause).".to_string(),
+            description:
+                "Resume a paused cron entry by id (`paused=false`, inverse of cron_pause)."
+                    .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "id": { "type": "string", "description": "Entry id." }
+                    "id": { "type": "string", "description": "Entry id from cron_create response or cron_list output." }
                 },
                 "required": ["id"]
             }),
@@ -265,7 +281,7 @@ impl CronDeleteTool {
     pub fn tool_def() -> ToolDef {
         ToolDef {
             name: "cron_delete".to_string(),
-            description: "Delete a scheduled cron entry by id. Use cron_list first to find the id."
+            description: "Delete a scheduled cron entry by id (works for recurring and one-shot entries). Use cron_list first to find the id."
                 .to_string(),
             parameters: json!({
                 "type": "object",
@@ -316,10 +332,10 @@ fn map_err(e: CronStoreError) -> anyhow::Error {
     }
 }
 
-/// Helper exposed for tests + future runtime wiring: compute the
+/// Helper exposed for tests and runtime integrations: compute the
 /// next-fire timestamp for a given expression. Re-exports the
 /// `cron_schedule` helper through the agent module so callers
-/// (poller follow-up, doctor commands) have one entry point.
+/// (poller hooks, doctor commands) have one entry point.
 pub fn next_fire_for(cron_expr: &str, from_unix: i64) -> Result<i64, CronStoreError> {
     next_fire_after(cron_expr, from_unix)
 }
@@ -376,6 +392,7 @@ mod tests {
             lsp: nexo_config::types::lsp::LspPolicy::default(),
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
             team: nexo_config::types::team::TeamPolicy::default(),
+            proactive: Default::default(),
         };
         let ctx = AgentContext::new(
             "a",
@@ -447,9 +464,19 @@ mod tests {
             .unwrap();
         // Insert one in a different binding bypassing the tool —
         // simulates another goal's data.
-        let other = build_new_entry(&store, "telegram:bot", "0 */2 * * *", "c", None, true, None)
-            .await
-            .unwrap();
+        let other = build_new_entry(
+            &store,
+            "telegram:bot",
+            "0 */2 * * *",
+            "c",
+            None,
+            true,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         store.insert(&other).await.unwrap();
 
         let list = CronListTool::new(store);
@@ -578,6 +605,7 @@ mod tests {
             lsp: nexo_config::types::lsp::LspPolicy::default(),
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
             team: nexo_config::types::team::TeamPolicy::default(),
+            proactive: Default::default(),
         };
         let ctx = AgentContext::new(
             "agent-z",

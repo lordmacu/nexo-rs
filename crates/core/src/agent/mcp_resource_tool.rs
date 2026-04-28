@@ -28,11 +28,8 @@ pub struct McpResourceReadTool {
     context_passthrough: bool,
     cache: Option<Arc<ResourceCache>>,
     /// Phase 12.5 follow-up — if non-empty, URIs whose scheme is absent
-    /// from the list are logged at `warn` and counted via
-    /// `mcp_resource_uri_allowlist_violations_total`. The call still
-    /// proceeds (permissive-by-design so the LLM gets an error surface
-    /// from the server rather than a silent skip); operators who want
-    /// hard blocking can combine this signal with a rate-limit.
+    /// from the list are rejected before dispatch, logged at `warn`,
+    /// and counted via `mcp_resource_uri_allowlist_violations_total`.
     uri_allowlist: Arc<Vec<String>>,
 }
 pub struct McpResourceListTemplatesTool {
@@ -153,6 +150,31 @@ impl McpResourceReadTool {
             .collect();
         Value::String(parts.join("\n\n"))
     }
+}
+
+pub(crate) fn ensure_uri_scheme_allowed(
+    server_name: &str,
+    uri: &str,
+    allowlist: &[String],
+) -> anyhow::Result<()> {
+    if allowlist.is_empty() {
+        return Ok(());
+    }
+    let scheme = uri.split(':').next().unwrap_or("");
+    if allowlist.iter().any(|s| s == scheme) {
+        return Ok(());
+    }
+    tracing::warn!(
+        mcp = %server_name,
+        uri = %uri,
+        scheme = %scheme,
+        allowed = ?allowlist,
+        "mcp read_resource: URI scheme outside allowlist"
+    );
+    nexo_mcp::telemetry::inc_resource_uri_allowlist_violation(server_name);
+    Err(anyhow::anyhow!(
+        "mcp '{server_name}' read_resource: URI scheme '{scheme}' is not allowed by resource_uri_allowlist"
+    ))
 }
 impl McpResourceListTemplatesTool {
     pub fn new(server_name: impl Into<String>, client: Arc<dyn McpClient>) -> Self {
@@ -281,19 +303,7 @@ impl ToolHandler for McpResourceReadTool {
                 self.server_name
             )
         })?;
-        if !self.uri_allowlist.is_empty() {
-            let scheme = uri.split(':').next().unwrap_or("");
-            if !self.uri_allowlist.iter().any(|s| s == scheme) {
-                tracing::warn!(
-                    mcp = %self.server_name,
-                    uri = %uri,
-                    scheme = %scheme,
-                    allowed = ?self.uri_allowlist,
-                    "mcp read_resource: URI scheme outside allowlist"
-                );
-                nexo_mcp::telemetry::inc_resource_uri_allowlist_violation(&self.server_name);
-            }
-        }
+        ensure_uri_scheme_allowed(&self.server_name, uri, self.uri_allowlist.as_ref())?;
         // Cache is bypassed when `_meta` is propagated: the server may
         // produce user-specific content so cross-agent reuse is unsafe.
         let use_cache = self.cache.is_some() && !self.context_passthrough;

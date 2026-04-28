@@ -48,6 +48,7 @@ pub const WRITE_TOOL_NAMES: &[&str] = &[
     "pause_agent",
     "resume_agent",
     "update_budget",
+    "AskUserQuestion",
     "add_hook",
     "remove_hook",
 ];

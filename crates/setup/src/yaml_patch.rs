@@ -1794,9 +1794,15 @@ agents:
     fn apply_patch_upsert_writes_value() {
         let dir = tempfile::tempdir().unwrap();
         let path = write_fixture(dir.path());
-        let patch = upsert_patch("cody", "model.model", Value::String("claude-opus-4-7".into()));
+        let patch = upsert_patch(
+            "cody",
+            "model.model",
+            Value::String("claude-opus-4-7".into()),
+        );
         apply_patch_with_denylist(&path, &patch).unwrap();
-        let after = read_agent_field(&path, "cody", "model.model").unwrap().unwrap();
+        let after = read_agent_field(&path, "cody", "model.model")
+            .unwrap()
+            .unwrap();
         assert_eq!(after, Value::String("claude-opus-4-7".into()));
     }
 
@@ -1840,7 +1846,9 @@ agents:
         let patch = upsert_patch("cody", "language", Value::String("en".into()));
         apply_patch_with_denylist(&path, &patch).unwrap();
         apply_patch_with_denylist(&path, &patch).unwrap();
-        let after = read_agent_field(&path, "cody", "language").unwrap().unwrap();
+        let after = read_agent_field(&path, "cody", "language")
+            .unwrap()
+            .unwrap();
         assert_eq!(after, Value::String("en".into()));
     }
 }

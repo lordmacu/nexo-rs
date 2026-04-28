@@ -189,23 +189,131 @@ where
     } else {
         None
     };
+    // Phase 76.8 — when a session-event-store block is configured
+    // AND `enabled: true`, open the SQLite store and feed it into
+    // the session manager so every emit() is durable + every
+    // reconnect with `Last-Event-ID` can replay the gap.
+    let session_event_store_opt: Option<Arc<dyn super::event_store::SessionEventStore>> =
+        if let Some(ses_cfg) = cfg.session_event_store.as_ref() {
+            if ses_cfg.enabled {
+                ses_cfg
+                    .validate()
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+                let path_str = ses_cfg
+                    .db_path
+                    .to_str()
+                    .ok_or_else(|| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "session_event_store.db_path must be valid UTF-8",
+                        )
+                    })?
+                    .to_string();
+                let store = super::event_store::SqliteSessionEventStore::open(&path_str)
+                    .await
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+                tracing::info!(
+                    db_path = %path_str,
+                    max_events_per_session = ses_cfg.max_events_per_session,
+                    max_replay_batch = ses_cfg.max_replay_batch,
+                    "mcp http session event store ready"
+                );
+                Some(Arc::new(store) as Arc<dyn super::event_store::SessionEventStore>)
+            } else {
+                tracing::info!(
+                    "mcp http session event store present but disabled (enabled = false)"
+                );
+                None
+            }
+        } else {
+            None
+        };
+
     // Build the session manager BEFORE the dispatcher so the
     // dispatcher can hold an `Arc<dyn SessionLookup>` pointing
     // at it (Phase 76.7 `resources/subscribe`).
-    let sessions = HttpSessionManager::new(&cfg, shutdown.clone());
+    let sessions = HttpSessionManager::with_event_store(
+        &cfg,
+        shutdown.clone(),
+        session_event_store_opt.clone(),
+    );
     // Phase 76.7 — keep an `Arc` for the `HttpServerHandle` so
     // operators can call `notify_*` after `start_http_server`
     // returns. `AppState` clones it again for in-flight handlers.
     let handle_sessions = Arc::clone(&sessions);
     let _janitor = sessions.spawn_janitor();
+    // Phase 76.8 — periodic purge worker. Drops events older than
+    // `session_max_lifetime_secs` so the SQLite file does not grow
+    // without bound. Stops on parent shutdown.
+    if session_event_store_opt.is_some() {
+        let purge_interval = cfg
+            .session_event_store
+            .as_ref()
+            .map(|c| c.purge_interval_secs)
+            .unwrap_or(60);
+        let mgr_for_purge = Arc::clone(&sessions);
+        let shutdown_for_purge = shutdown.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(purge_interval));
+            tick.tick().await; // skip immediate fire
+            loop {
+                tokio::select! {
+                    _ = shutdown_for_purge.cancelled() => break,
+                    _ = tick.tick() => mgr_for_purge.purge_expired_events().await,
+                }
+            }
+        });
+    }
     let session_lookup: Arc<dyn super::http_session::SessionLookup> =
         Arc::clone(&sessions) as Arc<dyn super::http_session::SessionLookup>;
-    let dispatcher = Dispatcher::with_rate_concurrency_and_sessions(
+
+    // Phase 76.11 — when an audit-log block is configured AND
+    // `enabled: true`, open the SQLite store and spawn the writer
+    // worker. The worker drains on `audit_writer.drain(...)` from
+    // the graceful-shutdown closure further down.
+    let audit_writer_opt = if let Some(audit_cfg) = cfg.audit_log.clone() {
+        if audit_cfg.enabled {
+            audit_cfg
+                .validate()
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+            let path_str = audit_cfg
+                .db_path
+                .to_str()
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "audit_log.db_path must be valid UTF-8",
+                    )
+                })?
+                .to_string();
+            let store = super::audit_log::SqliteAuditLogStore::open(&path_str)
+                .await
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+            let store_arc: Arc<dyn super::audit_log::AuditLogStore> = Arc::new(store);
+            let writer = super::audit_log::AuditWriter::spawn(audit_cfg, store_arc)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+            tracing::info!(
+                db_path = %path_str,
+                buffer = writer.config().writer_buffer,
+                flush_ms = writer.config().flush_interval_ms,
+                "mcp http audit log writer ready"
+            );
+            Some(writer)
+        } else {
+            tracing::info!("mcp http audit log present but disabled (audit_log.enabled = false)");
+            None
+        }
+    } else {
+        None
+    };
+
+    let dispatcher = Dispatcher::with_full_stack(
         handler,
         cfg.auth_token.clone(),
         rate_limiter_opt,
         concurrency_cap_opt,
         Some(session_lookup),
+        audit_writer_opt.clone(),
     );
     let rate_limiter = Arc::new(PerIpRateLimiter::new(
         cfg.per_ip_rate_limit.rps,
@@ -234,6 +342,7 @@ where
 
     let shutdown_for_serve = shutdown.clone();
     let sessions_for_drain = sessions.clone();
+    let audit_for_drain = audit_writer_opt.clone();
     let join = tokio::spawn(async move {
         let server = axum::serve(listener, app).with_graceful_shutdown(async move {
             shutdown_for_serve.cancelled().await;
@@ -241,6 +350,12 @@ where
             // Give SSE consumers a brief beat to drain the
             // shutdown event before axum tears the listener down.
             tokio::time::sleep(Duration::from_millis(100)).await;
+            // Phase 76.11 — flush pending audit rows synchronously
+            // before the process exits. 5 s ceiling per Phase 71
+            // shutdown-drain budget.
+            if let Some(w) = audit_for_drain {
+                w.drain(Duration::from_secs(5)).await;
+            }
         });
         server.await
     });
@@ -853,18 +968,145 @@ async fn get_mcp<H: McpServerHandler + 'static>(
     };
     let session = match state.sessions.get(&id_str) {
         Some(s) => s,
-        None => return (StatusCode::NOT_FOUND, "unknown session\n").into_response(),
+        // Phase 76.8 — match the leak's wire contract:
+        // `claude-code-leak/src/services/mcp/client.ts:189-206`
+        // — clients treat 404 + `-32001 "Session not found"` as a
+        // permanent failure and re-`initialize`.
+        None => {
+            let body = serde_json::json!({
+                "jsonrpc": "2.0",
+                "error": {"code": -32001, "message": "Session not found"},
+            });
+            let mut resp = (StatusCode::NOT_FOUND, body.to_string()).into_response();
+            resp.headers_mut().insert(
+                axum::http::header::CONTENT_TYPE,
+                HeaderValue::from_static("application/json"),
+            );
+            return resp;
+        }
     };
     state.sessions.touch(&session.id);
 
-    sse_stream_for_session(&state, session).into_response()
+    // Phase 76.8 — `Last-Event-ID: <u64>` triggers replay from the
+    // durable store. Header absent → no replay (live stream only).
+    // Header present but malformed → treat as 0 (replay everything).
+    let last_event_id: Option<u64> = headers
+        .get(axum::http::header::HeaderName::from_static("last-event-id"))
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim().parse::<u64>().unwrap_or(0));
+
+    sse_stream_for_session_with_resume(&state, session, last_event_id).into_response()
 }
 
-fn sse_stream_for_session<H: McpServerHandler + 'static>(
+/// Phase 76.8 — SSE stream with `Last-Event-ID` replay. When
+/// `last_event_id > 0`, the stream first drains
+/// `manager.replay(session_id, last_event_id)` (capped at
+/// `max_replay_batch`) yielding one SSE frame per persisted row,
+/// then transitions to the live broadcast loop.
+fn sse_stream_for_session_with_resume<H: McpServerHandler + 'static>(
     state: &AppState<H>,
     session: std::sync::Arc<HttpSession>,
+    last_event_id: Option<u64>,
 ) -> Sse<Pin<Box<dyn Stream<Item = Result<Event, std::convert::Infallible>> + Send>>> {
-    sse_stream_for_session_with_prelude(state, session, None)
+    use async_stream::stream;
+    use std::convert::Infallible;
+
+    let cfg = Arc::clone(&state.cfg);
+    let server_shutdown = state.shutdown.clone();
+    let mut rx = session.notif_tx.subscribe();
+    let session_for_stream = session.clone();
+    let session_max_age = cfg.sse_max_age();
+    let sessions_for_replay = Arc::clone(&state.sessions);
+    let session_id = session.id.clone();
+
+    session_for_stream
+        .sse_active
+        .fetch_add(1, Ordering::Relaxed);
+    let active_decrement = SseActiveGuard {
+        active: Arc::clone(&session_for_stream),
+    };
+
+    let s = stream! {
+        let _guard = active_decrement;
+
+        // Replay the persisted gap before subscribing to live.
+        if let Some(min_seq) = last_event_id {
+            let rows = sessions_for_replay.replay(&session_id, min_seq).await;
+            for (seq, body) in rows {
+                yield Ok::<Event, Infallible>(
+                    Event::default()
+                        .id(seq.to_string())
+                        .event("message")
+                        .data(body.to_string())
+                );
+            }
+        }
+
+        let max_age_sleep = tokio::time::sleep(session_max_age);
+        tokio::pin!(max_age_sleep);
+
+        loop {
+            tokio::select! {
+                _ = session_for_stream.cancel.cancelled() => {
+                    yield Ok::<Event, Infallible>(
+                        Event::default()
+                            .event("end")
+                            .data(r#"{"reason":"session_closed"}"#)
+                    );
+                    break;
+                }
+                _ = server_shutdown.cancelled() => {
+                    yield Ok(
+                        Event::default()
+                            .event("shutdown")
+                            .data(r#"{"reason":"server_shutdown"}"#)
+                    );
+                    break;
+                }
+                _ = &mut max_age_sleep => {
+                    yield Ok(
+                        Event::default()
+                            .event("end")
+                            .data(r#"{"reason":"max_age"}"#)
+                    );
+                    break;
+                }
+                msg = rx.recv() => {
+                    match msg {
+                        Ok(SessionEvent::Message(v)) => {
+                            yield Ok(Event::default().event("message").data(v.to_string()));
+                        }
+                        Ok(SessionEvent::IndexedMessage { seq, body }) => {
+                            yield Ok(
+                                Event::default()
+                                    .id(seq.to_string())
+                                    .event("message")
+                                    .data(body.to_string())
+                            );
+                        }
+                        Ok(SessionEvent::Shutdown { reason }) => {
+                            let payload = serde_json::json!({"reason": reason});
+                            yield Ok(Event::default().event("shutdown").data(payload.to_string()));
+                            break;
+                        }
+                        Ok(SessionEvent::EndOfStream { reason }) => {
+                            let payload = serde_json::json!({"reason": reason});
+                            yield Ok(Event::default().event("end").data(payload.to_string()));
+                            break;
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            let payload = serde_json::json!({"dropped": n});
+                            yield Ok(Event::default().event("lagged").data(payload.to_string()));
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+            }
+        }
+    };
+
+    let stream: Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>> = Box::pin(s);
+    Sse::new(stream).keep_alive(KeepAlive::new().interval(cfg.sse_keepalive()))
 }
 
 fn sse_stream_for_session_with_prelude<H: McpServerHandler + 'static>(
@@ -927,6 +1169,14 @@ fn sse_stream_for_session_with_prelude<H: McpServerHandler + 'static>(
                     match msg {
                         Ok(SessionEvent::Message(v)) => {
                             yield Ok(Event::default().event("message").data(v.to_string()));
+                        }
+                        Ok(SessionEvent::IndexedMessage { seq, body }) => {
+                            yield Ok(
+                                Event::default()
+                                    .id(seq.to_string())
+                                    .event("message")
+                                    .data(body.to_string())
+                            );
                         }
                         Ok(SessionEvent::Shutdown { reason }) => {
                             let payload = serde_json::json!({"reason": reason});

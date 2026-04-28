@@ -115,6 +115,21 @@ pub struct HttpTransportConfig {
     #[serde(default)]
     pub per_principal_concurrency:
         Option<crate::server::per_principal_concurrency::PerPrincipalConcurrencyConfig>,
+
+    /// Phase 76.11 — durable per-call audit log. When `Some`, the
+    /// runtime opens `SqliteAuditLogStore(db_path)` and spawns
+    /// the writer worker; the dispatcher emits one row per
+    /// `tools/call` outcome.
+    #[serde(default)]
+    pub audit_log: Option<crate::server::audit_log::AuditLogConfig>,
+
+    /// Phase 76.8 — durable session event store. When `Some` and
+    /// `enabled = true`, the HTTP transport persists every SSE
+    /// frame so reconnecting clients can replay missed events via
+    /// the `Last-Event-ID` header. `None` keeps the in-memory
+    /// behavior shipped in 76.1.
+    #[serde(default)]
+    pub session_event_store: Option<crate::server::event_store::SessionEventStoreConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -156,6 +171,8 @@ impl Default for HttpTransportConfig {
             enable_legacy_sse: false,
             per_principal_rate_limit: None,
             per_principal_concurrency: None,
+            audit_log: None,
+            session_event_store: None,
         }
     }
 }
@@ -235,6 +252,9 @@ impl HttpTransportConfig {
         }
         if self.per_ip_rate_limit.burst == 0 {
             return Err("per_ip_rate_limit.burst must be > 0".into());
+        }
+        if let Some(ses) = self.session_event_store.as_ref() {
+            ses.validate()?;
         }
         Ok(())
     }

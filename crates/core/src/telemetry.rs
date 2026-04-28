@@ -45,6 +45,7 @@ static LLM_REQUESTS: LazyLock<DashMap<LlmKey, AtomicU64>> = LazyLock::new(DashMa
 static LLM_LATENCY: LazyLock<DashMap<LlmKey, Histogram>> = LazyLock::new(DashMap::new);
 static MESSAGES_PROCESSED: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
 static CIRCUIT_BREAKER_STATE: LazyLock<DashMap<String, AtomicU64>> = LazyLock::new(DashMap::new);
+static PROACTIVE_EVENTS: LazyLock<DashMap<ToolCallKey, AtomicU64>> = LazyLock::new(DashMap::new);
 
 /// Phase 9.2 follow-up — per-tool call counter with outcome label.
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
@@ -63,6 +64,22 @@ struct ToolKey {
 
 static TOOL_CALLS: LazyLock<DashMap<ToolCallKey, AtomicU64>> = LazyLock::new(DashMap::new);
 static TOOL_LATENCY: LazyLock<DashMap<ToolKey, Histogram>> = LazyLock::new(DashMap::new);
+
+// Phase 79.M — MCP server boot dispatcher counters.
+#[derive(Clone, Debug, Hash, Eq, PartialEq)]
+struct McpServerToolKey {
+    name: String,
+    tier: String,
+}
+#[derive(Clone, Debug, Hash, Eq, PartialEq)]
+struct McpServerSkipKey {
+    name: String,
+    reason: String,
+}
+static MCP_SERVER_TOOL_REGISTERED: LazyLock<DashMap<McpServerToolKey, AtomicU64>> =
+    LazyLock::new(DashMap::new);
+static MCP_SERVER_TOOL_SKIPPED: LazyLock<DashMap<McpServerSkipKey, AtomicU64>> =
+    LazyLock::new(DashMap::new);
 /// Per-(agent, tool, event) cache counters. `event` is one of
 /// `"hit" | "miss" | "put" | "evict"`. Lets ops measure cache hit
 /// rate without instrumenting each handler by hand.
@@ -222,6 +239,24 @@ pub fn link_cache_total(hit: bool) -> u64 {
 pub fn inc_messages_processed_total(agent_id: &str) {
     MESSAGES_PROCESSED
         .entry(agent_id.to_string())
+        .or_insert_with(|| AtomicU64::new(0))
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Phase 77.20.4 — proactive runtime counters.
+/// `event` values include:
+/// - `tick.fired`
+/// - `sleep.entered`
+/// - `sleep.interrupted`
+/// - `cache_aware.snapped`
+pub fn inc_proactive_event(agent_id: &str, event: &str) {
+    let key = ToolCallKey {
+        agent: agent_id.to_string(),
+        tool: "proactive".to_string(),
+        outcome: event.to_string(),
+    };
+    PROACTIVE_EVENTS
+        .entry(key)
         .or_insert_with(|| AtomicU64::new(0))
         .fetch_add(1, Ordering::Relaxed);
 }
@@ -487,6 +522,28 @@ pub fn set_circuit_breaker_state(breaker: &str, open: bool) {
         .store(if open { 1 } else { 0 }, Ordering::Relaxed);
 }
 
+/// Phase 79.M — count an MCP-server boot registration by tool name + tier.
+pub fn inc_mcp_server_tool_registered(name: &str, tier: &str) {
+    MCP_SERVER_TOOL_REGISTERED
+        .entry(McpServerToolKey {
+            name: name.to_string(),
+            tier: tier.to_string(),
+        })
+        .or_insert_with(|| AtomicU64::new(0))
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Phase 79.M — count an MCP-server boot skip with a reason label.
+pub fn inc_mcp_server_tool_skipped(name: &str, reason: &str) {
+    MCP_SERVER_TOOL_SKIPPED
+        .entry(McpServerSkipKey {
+            name: name.to_string(),
+            reason: reason.to_string(),
+        })
+        .or_insert_with(|| AtomicU64::new(0))
+        .fetch_add(1, Ordering::Relaxed);
+}
+
 /// Reset every metric — intended for test isolation only.
 #[cfg(test)]
 pub fn reset_for_test() {
@@ -504,6 +561,9 @@ pub fn reset_for_test() {
     CONFIG_RELOAD_APPLIED.store(0, Ordering::Relaxed);
     CONFIG_RELOAD_REJECTED.store(0, Ordering::Relaxed);
     RUNTIME_CONFIG_VERSION.clear();
+    MCP_SERVER_TOOL_REGISTERED.clear();
+    MCP_SERVER_TOOL_SKIPPED.clear();
+    PROACTIVE_EVENTS.clear();
 }
 
 pub fn render_prometheus(fallback_nats_open: bool) -> String {
@@ -653,6 +713,55 @@ pub fn render_prometheus(fallback_nats_open: bool) -> String {
         }
     }
 
+    // Phase 79.M — MCP server boot dispatcher counters.
+    out.push_str(
+        "# HELP mcp_server_tool_registered_total Tools registered by `nexo mcp-server` boot dispatcher, labelled by name and security tier.\n",
+    );
+    out.push_str("# TYPE mcp_server_tool_registered_total counter\n");
+    if MCP_SERVER_TOOL_REGISTERED.is_empty() {
+        out.push_str("mcp_server_tool_registered_total 0\n");
+    } else {
+        let mut rows: Vec<_> = MCP_SERVER_TOOL_REGISTERED
+            .iter()
+            .map(|e| (e.key().clone(), e.value().load(Ordering::Relaxed)))
+            .collect();
+        rows.sort_by(|a, b| {
+            (a.0.name.clone(), a.0.tier.clone()).cmp(&(b.0.name.clone(), b.0.tier.clone()))
+        });
+        for (key, v) in rows {
+            out.push_str(&format!(
+                "mcp_server_tool_registered_total{{name=\"{}\",tier=\"{}\"}} {}\n",
+                escape(&key.name),
+                escape(&key.tier),
+                v
+            ));
+        }
+    }
+
+    out.push_str(
+        "# HELP mcp_server_tool_skipped_total Tools skipped by `nexo mcp-server` boot dispatcher, labelled by name and reason.\n",
+    );
+    out.push_str("# TYPE mcp_server_tool_skipped_total counter\n");
+    if MCP_SERVER_TOOL_SKIPPED.is_empty() {
+        out.push_str("mcp_server_tool_skipped_total 0\n");
+    } else {
+        let mut rows: Vec<_> = MCP_SERVER_TOOL_SKIPPED
+            .iter()
+            .map(|e| (e.key().clone(), e.value().load(Ordering::Relaxed)))
+            .collect();
+        rows.sort_by(|a, b| {
+            (a.0.name.clone(), a.0.reason.clone()).cmp(&(b.0.name.clone(), b.0.reason.clone()))
+        });
+        for (key, v) in rows {
+            out.push_str(&format!(
+                "mcp_server_tool_skipped_total{{name=\"{}\",reason=\"{}\"}} {}\n",
+                escape(&key.name),
+                escape(&key.reason),
+                v
+            ));
+        }
+    }
+
     // Tool policy cache observability.
     out.push_str("# HELP nexo_tool_cache_events_total Tool cache events by agent/tool/event.\n");
     out.push_str("# TYPE nexo_tool_cache_events_total counter\n");
@@ -723,6 +832,30 @@ pub fn render_prometheus(fallback_nats_open: bool) -> String {
             ));
             out.push_str(&format!(
                 "nexo_tool_latency_ms_count{{agent=\"{agent}\",tool=\"{tool}\"}} {count}\n"
+            ));
+        }
+    }
+
+    out.push_str(
+        "# HELP nexo_proactive_events_total Proactive tick/sleep/cache-snap events by agent.\n",
+    );
+    out.push_str("# TYPE nexo_proactive_events_total counter\n");
+    if PROACTIVE_EVENTS.is_empty() {
+        out.push_str("nexo_proactive_events_total 0\n");
+    } else {
+        let mut rows: Vec<_> = PROACTIVE_EVENTS
+            .iter()
+            .map(|e| (e.key().clone(), e.value().load(Ordering::Relaxed)))
+            .collect();
+        rows.sort_by(|a, b| {
+            (a.0.agent.clone(), a.0.outcome.clone()).cmp(&(b.0.agent.clone(), b.0.outcome.clone()))
+        });
+        for (key, v) in rows {
+            out.push_str(&format!(
+                "nexo_proactive_events_total{{agent=\"{}\",event=\"{}\"}} {}\n",
+                escape(&key.agent),
+                escape(&key.outcome),
+                v
             ));
         }
     }
@@ -958,6 +1091,19 @@ mod tests {
         assert!(body.contains("nexo_extensions_discovered{status=\"ok\"} 2"));
         assert!(body.contains("nexo_extensions_discovered{status=\"disabled\"} 1"));
         assert!(body.contains("nexo_extensions_discovered{status=\"invalid\"} 0"));
+    }
+
+    #[test]
+    fn proactive_event_metrics_render() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_for_test();
+        inc_proactive_event("ana", "tick.fired");
+        inc_proactive_event("ana", "tick.fired");
+        inc_proactive_event("ana", "sleep.interrupted");
+        let body = render_prometheus(false);
+        assert!(body.contains("nexo_proactive_events_total{agent=\"ana\",event=\"tick.fired\"} 2"));
+        assert!(body
+            .contains("nexo_proactive_events_total{agent=\"ana\",event=\"sleep.interrupted\"} 1"));
     }
 
     #[test]

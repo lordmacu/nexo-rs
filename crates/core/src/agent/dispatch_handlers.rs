@@ -22,11 +22,11 @@ use async_trait::async_trait;
 use nexo_agent_registry::{AgentRegistry, LogBuffer};
 use nexo_dispatch_tools::policy_gate::CapSnapshot;
 use nexo_dispatch_tools::{
-    agent_hooks_list, agent_logs_tail, agent_status, cancel_agent, list_agents, pause_agent,
-    program_phase_dispatch, resume_agent, update_budget, AgentHooksListInput, AgentLogsTailInput,
-    AgentStatusInput, CancelAgentInput, DispatchDeniedPayload, DispatchSpawnedPayload,
-    HookRegistry, ListAgentsInput, PauseAgentInput, ProgramPhaseInput, ProgramPhaseOutput,
-    UpdateBudgetInput,
+    agent_hooks_list, agent_logs_tail, agent_status, ask_user_question, cancel_agent, list_agents,
+    pause_agent, program_phase_dispatch, resume_agent, update_budget, AgentHooksListInput,
+    AgentLogsTailInput, AgentStatusInput, AskUserQuestionInput, CancelAgentInput,
+    DispatchDeniedPayload, DispatchSpawnedPayload, HookRegistry, ListAgentsInput, PauseAgentInput,
+    ProgramPhaseInput, ProgramPhaseOutput, UpdateBudgetInput,
 };
 use nexo_driver_claude::{DispatcherIdentity, OriginChannel};
 use nexo_driver_loop::DriverOrchestrator;
@@ -371,6 +371,25 @@ impl ToolHandler for UpdateBudgetHandler {
     }
 }
 
+pub struct AskUserQuestionHandler;
+
+#[async_trait]
+impl ToolHandler for AskUserQuestionHandler {
+    async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
+        let dispatch = dispatch_ctx(ctx)?;
+        let input: AskUserQuestionInput = serde_json::from_value(args)?;
+        let out = ask_user_question(
+            input,
+            dispatch.orchestrator.clone(),
+            dispatch.registry.clone(),
+            dispatch.hook_dispatcher.clone(),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("ask_user_question: {e}"))?;
+        Ok(serde_json::to_value(out)?)
+    }
+}
+
 pub struct AgentLogsTailHandler;
 
 #[async_trait]
@@ -464,7 +483,8 @@ impl nexo_dispatch_tools::DispatchPhaseChainer for AuditChainer {
             let running = rows
                 .iter()
                 .filter(|r| {
-                    matches!(r.status, AgentRunStatus::Running) && r.phase_id.starts_with("audit:")
+                    matches!(r.status, AgentRunStatus::Running | AgentRunStatus::Sleeping)
+                        && r.phase_id.starts_with("audit:")
                 })
                 .count() as u32;
             if running >= cap {
@@ -1234,6 +1254,21 @@ pub fn register_dispatch_tools_into(registry: &ToolRegistry) {
     );
     registry.register(
         def(
+            "AskUserQuestion",
+            "Pause a running goal, send a question back to the originating chat, and wait for operator input. If timeout_secs elapses while still paused, the goal is cancelled as [abandoned].",
+            obj_schema(
+                &["goal_id", "question"],
+                json!({
+                    "goal_id": { "type": "string" },
+                    "question": { "type": "string" },
+                    "timeout_secs": { "type": ["integer", "null"] }
+                }),
+            ),
+        ),
+        AskUserQuestionHandler,
+    );
+    registry.register(
+        def(
             "agent_logs_tail",
             "Last N events recorded for the goal.",
             obj_schema(
@@ -1382,6 +1417,7 @@ mod tests {
             lsp: nexo_config::types::lsp::LspPolicy::default(),
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
             team: nexo_config::types::team::TeamPolicy::default(),
+            proactive: Default::default(),
         })
     }
 

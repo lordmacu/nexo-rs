@@ -1,5 +1,5 @@
 //! Phase 79.8 — `RemoteTrigger` tool: webhook + NATS publisher
-//! gated by a per-agent allowlist.
+//! gated by a per-session allowlist (agent-level or per-binding override).
 //!
 //! Diff vs leak: the leak's `RemoteTriggerTool` is a CRUD client
 //! for claude.ai's hosted scheduled-agent API
@@ -178,13 +178,13 @@ impl RemoteTriggerTool {
     pub fn tool_def() -> ToolDef {
         ToolDef {
             name: "RemoteTrigger".to_string(),
-            description: "Publish a JSON payload to a pre-configured outbound destination — webhook (HTTP POST, optionally HMAC-SHA256 signed) or NATS subject. Destinations are named in the agent's YAML; the model passes only the name and payload, never URLs or subjects. Per-destination rate limit + 256 KiB body cap apply.".to_string(),
+            description: "Publish a JSON payload to a pre-configured outbound destination — webhook (HTTP POST, optionally HMAC-SHA256 signed) or NATS subject. Destinations are named in YAML (`agents[].remote_triggers` or binding override); the model passes only the name and payload, never URLs or subjects. Per-destination rate limit + 256 KiB body cap apply.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "name": {
                         "type": "string",
-                        "description": "Name of the destination as configured in `agents[].remote_triggers[].name`."
+                        "description": "Name of the destination as configured in `remote_triggers[].name` for this session's effective policy."
                     },
                     "payload": {
                         "description": "JSON payload to send. Object / array / scalar — any JSON. Capped at 256 KiB serialised."
@@ -220,18 +220,18 @@ impl ToolHandler for RemoteTriggerTool {
             .get("payload")
             .ok_or_else(|| anyhow::anyhow!("RemoteTrigger requires `payload`"))?;
 
-        // Resolve via agent allowlist. (Per-binding override is a
-        // follow-up — the canonical source today is `AgentConfig
-        // .remote_triggers`.)
-        let entry = ctx
-            .config
+        // Resolve via the effective per-session allowlist:
+        // `InboundBinding::remote_triggers` override when present,
+        // otherwise `AgentConfig::remote_triggers`.
+        let effective = ctx.effective_policy();
+        let entry = effective
             .remote_triggers
             .iter()
             .find(|e| e.name() == name)
             .cloned()
             .ok_or_else(|| {
                 anyhow::anyhow!(
-                    "RemoteTrigger: no destination named `{name}` in this agent's allowlist. Operator must add it under `agents[].remote_triggers[]`."
+                    "RemoteTrigger: no destination named `{name}` in this session allowlist. Operator must add it under `agents[].remote_triggers[]` or the matched `inbound_bindings[].remote_triggers[]` override."
                 )
             })?;
 
@@ -247,9 +247,13 @@ impl ToolHandler for RemoteTriggerTool {
             ));
         }
 
+        let rate_limit_key = match effective.binding_index {
+            Some(idx) => format!("{idx}:{}", entry.name()),
+            None => format!("agent:{}", entry.name()),
+        };
         if !self
             .rate_limiter
-            .try_acquire(entry.name(), entry.rate_limit_per_minute())
+            .try_acquire(&rate_limit_key, entry.rate_limit_per_minute())
         {
             return Err(anyhow::anyhow!(
                 "RemoteTrigger: rate limit exceeded for `{name}` ({} calls/min). Wait or raise `rate_limit_per_minute` in YAML.",
@@ -372,8 +376,8 @@ mod tests {
         }
     }
 
-    fn ctx_with_triggers(triggers: Vec<RemoteTriggerEntry>) -> AgentContext {
-        let cfg = AgentConfig {
+    fn agent_config_with_triggers(triggers: Vec<RemoteTriggerEntry>) -> AgentConfig {
+        AgentConfig {
             id: "a".into(),
             model: ModelConfig {
                 provider: "x".into(),
@@ -413,13 +417,36 @@ mod tests {
             lsp: nexo_config::types::lsp::LspPolicy::default(),
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
             team: nexo_config::types::team::TeamPolicy::default(),
-        };
+            proactive: Default::default(),
+        }
+    }
+
+    fn ctx_with_triggers(triggers: Vec<RemoteTriggerEntry>) -> AgentContext {
+        let cfg = agent_config_with_triggers(triggers);
         AgentContext::new(
             "a",
             Arc::new(cfg),
             AnyBroker::local(),
             Arc::new(SessionManager::new(std::time::Duration::from_secs(60), 8)),
         )
+    }
+
+    fn ctx_with_binding_override(
+        agent_level: Vec<RemoteTriggerEntry>,
+        binding_level: Vec<RemoteTriggerEntry>,
+        binding_index: usize,
+    ) -> AgentContext {
+        let cfg = Arc::new(agent_config_with_triggers(agent_level));
+        let mut eff = crate::agent::EffectiveBindingPolicy::from_agent_defaults(&cfg);
+        eff.binding_index = Some(binding_index);
+        eff.remote_triggers = binding_level;
+        AgentContext::new(
+            "a",
+            Arc::clone(&cfg),
+            AnyBroker::local(),
+            Arc::new(SessionManager::new(std::time::Duration::from_secs(60), 8)),
+        )
+        .with_effective(Arc::new(eff))
     }
 
     fn webhook(name: &str, secret: Option<&str>, rate: u32) -> RemoteTriggerEntry {
@@ -456,6 +483,64 @@ mod tests {
         assert!(err.contains("not in allowlist") || err.contains("no destination"));
         assert!(sink.webhook_calls.lock().unwrap().is_empty());
         assert!(sink.nats_calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn binding_override_allowlist_wins_over_agent_level() {
+        let ctx = ctx_with_binding_override(
+            vec![webhook("agent_only", None, 10)],
+            vec![webhook("binding_only", None, 10)],
+            4,
+        );
+        let sink = FakeSink::new();
+        let t = tool(sink.clone());
+
+        t.call(&ctx, json!({"name": "binding_only", "payload": {"a": 1}}))
+            .await
+            .unwrap();
+        let err = t
+            .call(&ctx, json!({"name": "agent_only", "payload": {"a": 1}}))
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(
+            err.contains("no destination"),
+            "agent-level destination must be hidden by binding override, got: {err}"
+        );
+        let calls = sink.webhook_calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].url, "https://example.test/binding_only");
+    }
+
+    #[tokio::test]
+    async fn rate_limit_isolated_per_binding_for_same_trigger_name() {
+        let ctx_a = ctx_with_binding_override(vec![], vec![webhook("ops", None, 1)], 0);
+        let ctx_b = ctx_with_binding_override(vec![], vec![webhook("ops", None, 1)], 1);
+        let sink = FakeSink::new();
+        let t = tool(sink.clone());
+
+        // Same trigger name, different binding index: each gets its own bucket.
+        t.call(&ctx_a, json!({"name": "ops", "payload": {}}))
+            .await
+            .unwrap();
+        t.call(&ctx_b, json!({"name": "ops", "payload": {}}))
+            .await
+            .unwrap();
+
+        let err_a = t
+            .call(&ctx_a, json!({"name": "ops", "payload": {}}))
+            .await
+            .unwrap_err()
+            .to_string();
+        let err_b = t
+            .call(&ctx_b, json!({"name": "ops", "payload": {}}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err_a.contains("rate limit"), "got: {err_a}");
+        assert!(err_b.contains("rate limit"), "got: {err_b}");
+        assert_eq!(sink.webhook_calls.lock().unwrap().len(), 2);
     }
 
     #[tokio::test]

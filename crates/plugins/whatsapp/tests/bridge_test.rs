@@ -42,6 +42,8 @@ fn sample_event(jid: &str) -> InboundEvent {
         chat: jid.into(),
         text: Some("hola".into()),
         reply_to: None,
+        reply_to_question_id: None,
+        ask_question_id: None,
         is_group: false,
         timestamp: 0,
         msg_id: "M1".into(),

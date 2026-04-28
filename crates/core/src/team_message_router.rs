@@ -164,11 +164,7 @@ impl<B: BrokerHandle + ?Sized + 'static> TeamMessageRouter<B> {
     /// `name` plus every broadcast for `team_id`. The caller
     /// MUST filter on its own `name` (the broadcast subject is
     /// shared across the team).
-    pub fn subscribe_member(
-        &self,
-        team_id: &str,
-        _name: &str,
-    ) -> broadcast::Receiver<DmFrame> {
+    pub fn subscribe_member(&self, team_id: &str, _name: &str) -> broadcast::Receiver<DmFrame> {
         let entry = self
             .per_team
             .entry(team_id.to_string())
@@ -213,7 +209,13 @@ mod tests {
         // Give the spawned subscriber a moment to set up.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         router
-            .publish_dm("feature-x", "team-lead", "researcher", json!({"hello": 1}), None)
+            .publish_dm(
+                "feature-x",
+                "team-lead",
+                "researcher",
+                json!({"hello": 1}),
+                None,
+            )
             .await
             .unwrap();
 
@@ -240,7 +242,11 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         router
-            .publish_broadcast("feature-x", "team-lead", json!({"type": "shutdown_request"}))
+            .publish_broadcast(
+                "feature-x",
+                "team-lead",
+                json!({"type": "shutdown_request"}),
+            )
             .await
             .unwrap();
 
@@ -268,7 +274,13 @@ mod tests {
         // Subscribe receivers see the channel close once their
         // sender drops.
         router
-            .publish_dm("feature-x", "team-lead", "researcher", json!({"hi": 1}), None)
+            .publish_dm(
+                "feature-x",
+                "team-lead",
+                "researcher",
+                json!({"hi": 1}),
+                None,
+            )
             .await
             .unwrap();
         // Receiver: either Closed (sender dropped) or no message
@@ -276,7 +288,7 @@ mod tests {
         let res = tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await;
         match res {
             Ok(Err(_lagged_or_closed)) => {} // expected
-            Err(_timeout) => {}             // expected
+            Err(_timeout) => {}              // expected
             Ok(Ok(_)) => panic!("dropped team should not deliver new messages"),
         }
         assert_eq!(router.live_teams(), 0);

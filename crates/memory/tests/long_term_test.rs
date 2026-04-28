@@ -1,5 +1,5 @@
 use chrono::{Duration, Utc};
-use nexo_memory::LongTermMemory;
+use nexo_memory::{EmailFollowupStatus, LongTermMemory};
 use uuid::Uuid;
 
 async fn open_temp_db() -> LongTermMemory {
@@ -234,6 +234,146 @@ async fn released_claim_allows_retry() {
     let second = db.claim_due_reminders("agent-a", now, 10).await.unwrap();
     assert_eq!(second.len(), 1);
     assert_eq!(second[0].id, id);
+}
+
+#[tokio::test]
+async fn start_email_followup_is_idempotent_per_flow_id() {
+    let db = open_temp_db().await;
+    let flow_id = Uuid::new_v4();
+    let session_id = Uuid::new_v4();
+    let first_due = Utc::now() + Duration::hours(2);
+
+    let (created_entry, created) = db
+        .start_email_followup(
+            flow_id,
+            "agent-a",
+            session_id,
+            "email",
+            Some("sales"),
+            "client@example.com",
+            "<root@example.com>",
+            "check response and follow up",
+            86_400,
+            3,
+            first_due,
+        )
+        .await
+        .unwrap();
+    assert!(created);
+    assert_eq!(created_entry.flow_id, flow_id);
+    assert_eq!(created_entry.status, EmailFollowupStatus::Active);
+    assert_eq!(created_entry.attempts, 0);
+
+    let (existing_entry, created_again) = db
+        .start_email_followup(
+            flow_id,
+            "agent-a",
+            Uuid::new_v4(),
+            "email",
+            Some("support"),
+            "other@example.com",
+            "<other-root@example.com>",
+            "different instruction",
+            60,
+            9,
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+    assert!(!created_again);
+    assert_eq!(existing_entry.flow_id, created_entry.flow_id);
+    assert_eq!(existing_entry.session_id, created_entry.session_id);
+    assert_eq!(existing_entry.thread_root_id, created_entry.thread_root_id);
+    assert_eq!(existing_entry.recipient, created_entry.recipient);
+}
+
+#[tokio::test]
+async fn claim_and_advance_email_followup_updates_lifecycle() {
+    let db = open_temp_db().await;
+    let now = Utc::now();
+    let flow_id = Uuid::new_v4();
+    let session_id = Uuid::new_v4();
+
+    db.start_email_followup(
+        flow_id,
+        "agent-a",
+        session_id,
+        "email",
+        Some("ops"),
+        "client@example.com",
+        "<thread@example.com>",
+        "wait and retry",
+        3_600,
+        2,
+        now - Duration::minutes(1),
+    )
+    .await
+    .unwrap();
+
+    let claimed = db
+        .claim_due_email_followups("agent-a", now, 10)
+        .await
+        .unwrap();
+    assert_eq!(claimed.len(), 1);
+    assert_eq!(claimed[0].flow_id, flow_id);
+    assert!(claimed[0].claimed_at.is_some());
+
+    let second_claim = db
+        .claim_due_email_followups("agent-a", now, 10)
+        .await
+        .unwrap();
+    assert!(second_claim.is_empty());
+
+    let next_check = now + Duration::hours(1);
+    assert!(db
+        .advance_email_followup_attempt(flow_id, Some(next_check), Some("attempted"))
+        .await
+        .unwrap());
+    let updated = db.get_email_followup(flow_id).await.unwrap().unwrap();
+    assert_eq!(updated.attempts, 1);
+    assert_eq!(updated.status, EmailFollowupStatus::Active);
+    assert!(updated.claimed_at.is_none());
+
+    assert!(db
+        .cancel_email_followup(flow_id, Some("customer replied"))
+        .await
+        .unwrap());
+    let cancelled = db.get_email_followup(flow_id).await.unwrap().unwrap();
+    assert_eq!(cancelled.status, EmailFollowupStatus::Cancelled);
+    assert!(db
+        .cancel_email_followup(flow_id, Some("duplicate cancel"))
+        .await
+        .unwrap());
+
+    let flow_id_2 = Uuid::new_v4();
+    db.start_email_followup(
+        flow_id_2,
+        "agent-a",
+        Uuid::new_v4(),
+        "email",
+        Some("ops"),
+        "client2@example.com",
+        "<thread2@example.com>",
+        "exhaust in one step",
+        3_600,
+        1,
+        now - Duration::minutes(1),
+    )
+    .await
+    .unwrap();
+    let due2 = db
+        .claim_due_email_followups("agent-a", now, 10)
+        .await
+        .unwrap();
+    assert_eq!(due2.len(), 1);
+    assert_eq!(due2[0].flow_id, flow_id_2);
+    assert!(db
+        .advance_email_followup_attempt(flow_id_2, None, Some("max attempts reached"))
+        .await
+        .unwrap());
+    let exhausted = db.get_email_followup(flow_id_2).await.unwrap().unwrap();
+    assert_eq!(exhausted.status, EmailFollowupStatus::Exhausted);
+    assert_eq!(exhausted.attempts, 1);
 }
 
 // ── Recall signal tracking (Phase 10.5) ──────────────────────────────────────

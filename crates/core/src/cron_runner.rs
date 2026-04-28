@@ -15,11 +15,14 @@
 //!      `next_fire_at <= now`.
 //!    - For each entry, `dispatcher.fire(&entry)` runs the side
 //!      effect.
-//!    - **Always** advance state regardless of dispatcher result —
-//!      a stuck dispatcher would otherwise refire the same entry
-//!      forever. Failures log loudly so an operator notices.
-//!    - Recurring → `advance_after_fire(now, next_fire_after(...))`.
-//!    - One-shot → `delete(...)`.
+//!    - Recurring entries always advance state even on dispatcher
+//!      failure (avoids infinite hot-loop on a broken schedule).
+//!    - One-shot entries use a retry policy:
+//!      * success → `delete(...)`
+//!      * failure and retries left → backoff + reschedule
+//!      * failure and retries exhausted → `delete(...)`
+//!        This keeps one-shot semantics bounded while avoiding silent
+//!        loss on the first transient failure.
 //! 3. Sleep `tick_interval` and repeat. `cancel` stops the loop
 //!    cleanly.
 //!
@@ -31,21 +34,14 @@
 //!
 //! Reference (secondary):
 //!   * Phase 20 `agent_turn` poller (`crates/poller/src/builtins/agent_turn.rs`)
-//!     — the LLM dispatcher follow-up will reuse this pattern
-//!     (build client from `LlmRegistry`, call `chat`, publish
-//!     response).
+//!     — similar dispatch shape (`LlmRegistry::build` → `chat` →
+//!     optional outbound publish).
 //!
-//! MVP scope:
-//!   * Loop + state advance + 60-second-min interval cap honoured
-//!     via the existing `next_fire_after` validator.
-//!   * `LoggingCronDispatcher` ships as the default — emits
-//!     `tracing::info!` per fire so operators verify cron entries
-//!     are firing.
-//!   * Out of scope: real LLM call + outbound publish. The
-//!     follow-up wires `LlmCronDispatcher` (Phase 20-style:
-//!     `LlmRegistry::build` → `client.chat` → publish to
-//!     binding's outbound topic). Tracked in
-//!     `FOLLOWUPS.md::Phase 79.7`.
+//! Runtime status:
+//!   * `LlmCronDispatcher` is the production path (model-routed chat,
+//!     optional channel publish).
+//!   * `LoggingCronDispatcher` remains as a safe fallback so cron
+//!     fires stay observable under degraded boot wiring.
 
 use crate::cron_schedule::{next_fire_after, CronEntry, CronStore};
 use async_trait::async_trait;
@@ -57,6 +53,40 @@ use tokio_util::sync::CancellationToken;
 /// `next_fire_at` and actual fire; higher = less DB load. 5s is
 /// the leak's pace and a sane default.
 pub const DEFAULT_TICK_INTERVAL_SECS: u64 = 5;
+
+/// Retry policy for one-shot cron entries when dispatch fails.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OneShotRetryPolicy {
+    /// Number of retry attempts after the first failure. `0` keeps
+    /// at-most-once semantics (drop on first failure).
+    pub max_retries: u32,
+    /// Delay (seconds) before attempt #1. Attempt N uses
+    /// exponential backoff (`base * 2^(N-1)`) capped at
+    /// `max_backoff_secs`.
+    pub base_backoff_secs: u64,
+    /// Upper bound for exponential delay growth.
+    pub max_backoff_secs: u64,
+}
+
+impl OneShotRetryPolicy {
+    pub fn retry_delay_secs(&self, attempt: u32) -> u64 {
+        let base = self.base_backoff_secs.max(1);
+        let pow = attempt.saturating_sub(1).min(31);
+        let factor = 1u64 << pow;
+        base.saturating_mul(factor)
+            .min(self.max_backoff_secs.max(1))
+    }
+}
+
+impl Default for OneShotRetryPolicy {
+    fn default() -> Self {
+        Self {
+            max_retries: 3,
+            base_backoff_secs: 30,
+            max_backoff_secs: 1800,
+        }
+    }
+}
 
 /// Side-effect invoker for a fired cron entry. Implementations
 /// fan out to LLM, NATS, webhook, etc.
@@ -80,7 +110,7 @@ impl CronDispatcher for LoggingCronDispatcher {
             recurring = entry.recurring,
             channel = ?entry.channel,
             prompt_chars = entry.prompt.chars().count(),
-            "[cron] fired (logging dispatcher; LLM + outbound wiring is a Phase 79.7 follow-up)"
+            "[cron] fired (logging dispatcher fallback)"
         );
         Ok(())
     }
@@ -96,6 +126,22 @@ pub enum FireOutcome {
     Advanced { id: String, new_next_fire_at: i64 },
     /// One-shot entry fired and was deleted.
     OneShotDeleted { id: String },
+    /// One-shot dispatch failed and was rescheduled for a retry.
+    OneShotRetryScheduled {
+        id: String,
+        retry_at: i64,
+        attempt: u32,
+        max_retries: u32,
+        error: String,
+    },
+    /// One-shot dispatch failed and exhausted the retry budget; the
+    /// entry was dropped.
+    OneShotDroppedAfterRetries {
+        id: String,
+        attempts: u32,
+        max_retries: u32,
+        error: String,
+    },
     /// Dispatcher failed; state was still advanced (or the
     /// entry deleted) so the loop never re-fires the same
     /// stuck entry.
@@ -110,6 +156,7 @@ pub struct CronRunner {
     store: Arc<dyn CronStore>,
     dispatcher: Arc<dyn CronDispatcher>,
     tick_interval: Duration,
+    one_shot_retry: OneShotRetryPolicy,
 }
 
 impl CronRunner {
@@ -118,11 +165,17 @@ impl CronRunner {
             store,
             dispatcher,
             tick_interval: Duration::from_secs(DEFAULT_TICK_INTERVAL_SECS),
+            one_shot_retry: OneShotRetryPolicy::default(),
         }
     }
 
     pub fn with_tick_interval(mut self, interval: Duration) -> Self {
         self.tick_interval = interval;
+        self
+    }
+
+    pub fn with_one_shot_retry_policy(mut self, policy: OneShotRetryPolicy) -> Self {
+        self.one_shot_retry = policy;
         self
     }
 
@@ -193,6 +246,80 @@ impl CronRunner {
                     }
                 }
             } else {
+                if let Some(err) = dispatch_err {
+                    let next_attempt = entry.failure_count.saturating_add(1);
+                    if entry.failure_count < self.one_shot_retry.max_retries {
+                        let delay = self.one_shot_retry.retry_delay_secs(next_attempt);
+                        let retry_at = now_unix.saturating_add(delay as i64);
+                        match self
+                            .store
+                            .schedule_one_shot_retry(&entry.id, retry_at, now_unix)
+                            .await
+                        {
+                            Ok(attempt) => {
+                                tracing::warn!(
+                                    id = %id,
+                                    binding_id = %entry.binding_id,
+                                    attempt = attempt,
+                                    max_retries = self.one_shot_retry.max_retries,
+                                    retry_at = retry_at,
+                                    error = %err,
+                                    "[cron] one-shot dispatch failed; retry scheduled"
+                                );
+                                outcomes.push(FireOutcome::OneShotRetryScheduled {
+                                    id,
+                                    retry_at,
+                                    attempt,
+                                    max_retries: self.one_shot_retry.max_retries,
+                                    error: err,
+                                });
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    id = %id,
+                                    error = %e,
+                                    "[cron] one-shot retry schedule failed; entry may re-fire unexpectedly"
+                                );
+                                outcomes.push(FireOutcome::NextFireUnknown {
+                                    id,
+                                    error: e.to_string(),
+                                });
+                            }
+                        }
+                        continue;
+                    }
+
+                    if let Err(e) = self.store.delete(&entry.id).await {
+                        tracing::error!(
+                            id = %id,
+                            error = %e,
+                            "[cron] one-shot retry budget exhausted but delete failed"
+                        );
+                        outcomes.push(FireOutcome::NextFireUnknown {
+                            id,
+                            error: e.to_string(),
+                        });
+                        continue;
+                    }
+
+                    let attempts = entry.failure_count.saturating_add(1);
+                    tracing::error!(
+                        id = %id,
+                        binding_id = %entry.binding_id,
+                        attempts = attempts,
+                        max_retries = self.one_shot_retry.max_retries,
+                        error = %err,
+                        "[cron] one-shot dispatch failed; retry budget exhausted, dropping entry"
+                    );
+                    outcomes.push(FireOutcome::OneShotDroppedAfterRetries {
+                        id,
+                        attempts,
+                        max_retries: self.one_shot_retry.max_retries,
+                        error: err,
+                    });
+                    continue;
+                }
+
                 if let Err(e) = self.store.delete(&entry.id).await {
                     tracing::error!(
                         id = %id,
@@ -205,11 +332,7 @@ impl CronRunner {
                     });
                     continue;
                 }
-                if let Some(err) = dispatch_err {
-                    outcomes.push(FireOutcome::DispatcherFailed { id, error: err });
-                } else {
-                    outcomes.push(FireOutcome::OneShotDeleted { id });
-                }
+                outcomes.push(FireOutcome::OneShotDeleted { id });
             }
         }
         outcomes
@@ -281,6 +404,8 @@ mod tests {
             "ping",
             None,
             recurring,
+            None,
+            None,
             None,
         )
         .await
@@ -377,7 +502,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dispatcher_failure_on_one_shot_still_deletes() {
+    async fn dispatcher_failure_on_one_shot_schedules_retry() {
         let (store, id) = populated_store(false, "*/5 * * * *").await;
         let dispatcher = FakeDispatcher::new();
         dispatcher.force_err("boom");
@@ -385,10 +510,48 @@ mod tests {
         let outcomes = runner.tick_once(1_700_000_500).await;
         assert!(matches!(
             &outcomes[0],
-            FireOutcome::DispatcherFailed { id: out_id, .. } if out_id == &id
+            FireOutcome::OneShotRetryScheduled { id: out_id, attempt: 1, .. } if out_id == &id
         ));
-        // One-shot was deleted despite dispatcher failure.
-        assert!(store.get(&id).await.is_err());
+        // One-shot is retained and moved forward for retry.
+        let updated = store.get(&id).await.unwrap();
+        assert_eq!(updated.failure_count, 1);
+        assert!(updated.next_fire_at > 1_700_000_500);
+    }
+
+    #[tokio::test]
+    async fn one_shot_drops_after_retry_budget_exhausted() {
+        let (store, id) = populated_store(false, "*/5 * * * *").await;
+        let dispatcher = FakeDispatcher::new();
+        dispatcher.force_err("boom");
+        let runner = CronRunner::new(store.clone(), dispatcher.clone()).with_one_shot_retry_policy(
+            OneShotRetryPolicy {
+                max_retries: 1,
+                base_backoff_secs: 10,
+                max_backoff_secs: 60,
+            },
+        );
+
+        // First failure schedules retry.
+        let first = runner.tick_once(1_700_000_500).await;
+        assert!(matches!(
+            &first[0],
+            FireOutcome::OneShotRetryScheduled { id: out_id, attempt: 1, .. } if out_id == &id
+        ));
+        let scheduled = store.get(&id).await.unwrap();
+        assert_eq!(scheduled.failure_count, 1);
+
+        // Second failure exhausts budget and drops entry.
+        let second = runner.tick_once(scheduled.next_fire_at + 1).await;
+        assert!(matches!(
+            &second[0],
+            FireOutcome::OneShotDroppedAfterRetries {
+                id: out_id,
+                attempts: 2,
+                max_retries: 1,
+                ..
+            } if out_id == &id
+        ));
+        assert!(store.get(&id).await.is_err(), "entry should be deleted");
     }
 
     #[tokio::test]
@@ -402,6 +565,8 @@ mod tests {
                 &format!("ping-{i}"),
                 None,
                 true,
+                None,
+                None,
                 None,
             )
             .await
@@ -449,10 +614,13 @@ mod tests {
             cron_expr: "*/5 * * * *".into(),
             prompt: "ping".into(),
             channel: None,
+            model_provider: None,
+            model_name: None,
             recurring: true,
             created_at: 0,
             next_fire_at: 0,
             last_fired_at: None,
+            failure_count: 0,
             paused: false,
             recipient: None,
         };

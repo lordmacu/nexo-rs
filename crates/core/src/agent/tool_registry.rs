@@ -85,6 +85,21 @@ impl ToolRegistry {
         self.handlers.insert(name, (def, Arc::new(handler)));
     }
 
+    /// Phase 79.M — register an already-boxed handler. Used by the
+    /// MCP-server boot dispatcher which constructs handlers via
+    /// `Arc<dyn ToolHandler>` so the `EXPOSABLE_TOOLS` match arm
+    /// can return a uniform type per tool.
+    pub fn register_arc(&self, def: ToolDef, handler: Arc<dyn ToolHandler>) {
+        let name = def.name.clone();
+        if self.handlers.contains_key(&name) {
+            tracing::warn!(
+                tool = %name,
+                "tool registered twice — previous handler overwritten (use `register_if_absent` to preserve)"
+            );
+        }
+        self.handlers.insert(name, (def, handler));
+    }
+
     /// Phase 79.2 — register a tool together with its metadata
     /// (deferred flag, search hint). Useful for callers that mark
     /// MCP tools as deferred at import time, or built-ins that want

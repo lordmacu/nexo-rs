@@ -101,8 +101,7 @@ impl SqliteConfigChangesStore {
     /// Open or create the SQLite store at `url`. Pass
     /// `"sqlite::memory:"` for tests. Schema is idempotent.
     pub async fn open(url: &str) -> Result<Self, ConfigChangesError> {
-        let opts = SqliteConnectOptions::from_str(url)?
-            .create_if_missing(true);
+        let opts = SqliteConnectOptions::from_str(url)?.create_if_missing(true);
         let pool = SqlitePoolOptions::new()
             .max_connections(2)
             .connect_with(opts)
@@ -220,9 +219,18 @@ mod tests {
     #[tokio::test]
     async fn record_then_tail_returns_rows() {
         let store = SqliteConfigChangesStore::open_in_memory().await.unwrap();
-        store.record(&fixture("01J7AAA", "proposed", 100)).await.unwrap();
-        store.record(&fixture("01J7BBB", "proposed", 200)).await.unwrap();
-        store.record(&fixture("01J7CCC", "proposed", 300)).await.unwrap();
+        store
+            .record(&fixture("01J7AAA", "proposed", 100))
+            .await
+            .unwrap();
+        store
+            .record(&fixture("01J7BBB", "proposed", 200))
+            .await
+            .unwrap();
+        store
+            .record(&fixture("01J7CCC", "proposed", 300))
+            .await
+            .unwrap();
         let tail = store.tail(10).await.unwrap();
         assert_eq!(tail.len(), 3);
         // Newest first.
@@ -234,9 +242,15 @@ mod tests {
     #[tokio::test]
     async fn idempotent_on_patch_id_status() {
         let store = SqliteConfigChangesStore::open_in_memory().await.unwrap();
-        store.record(&fixture("01J7AAA", "proposed", 100)).await.unwrap();
+        store
+            .record(&fixture("01J7AAA", "proposed", 100))
+            .await
+            .unwrap();
         // Same (patch_id, status) — no-op.
-        store.record(&fixture("01J7AAA", "proposed", 999)).await.unwrap();
+        store
+            .record(&fixture("01J7AAA", "proposed", 999))
+            .await
+            .unwrap();
         let tail = store.tail(10).await.unwrap();
         assert_eq!(tail.len(), 1);
         // Original timestamp survives.
@@ -246,8 +260,14 @@ mod tests {
     #[tokio::test]
     async fn different_status_for_same_patch_id_appends_new_row() {
         let store = SqliteConfigChangesStore::open_in_memory().await.unwrap();
-        store.record(&fixture("01J7AAA", "proposed", 100)).await.unwrap();
-        store.record(&fixture("01J7AAA", "applied", 200)).await.unwrap();
+        store
+            .record(&fixture("01J7AAA", "proposed", 100))
+            .await
+            .unwrap();
+        store
+            .record(&fixture("01J7AAA", "applied", 200))
+            .await
+            .unwrap();
         let tail = store.tail(10).await.unwrap();
         assert_eq!(tail.len(), 2);
     }
@@ -255,8 +275,14 @@ mod tests {
     #[tokio::test]
     async fn get_returns_latest_status_for_patch() {
         let store = SqliteConfigChangesStore::open_in_memory().await.unwrap();
-        store.record(&fixture("01J7AAA", "proposed", 100)).await.unwrap();
-        store.record(&fixture("01J7AAA", "applied", 200)).await.unwrap();
+        store
+            .record(&fixture("01J7AAA", "proposed", 100))
+            .await
+            .unwrap();
+        store
+            .record(&fixture("01J7AAA", "applied", 200))
+            .await
+            .unwrap();
         let got = store.get("01J7AAA").await.unwrap().unwrap();
         assert_eq!(got.status, "applied");
         assert_eq!(got.created_at, 200);

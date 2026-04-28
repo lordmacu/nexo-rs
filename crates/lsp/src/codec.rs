@@ -228,11 +228,7 @@ mod tests {
         assert_eq!(codec.decode(&mut buf).unwrap(), None);
 
         // Read 2: rest of the header + part of the body.
-        let body_start = framed
-            .windows(4)
-            .position(|w| w == b"\r\n\r\n")
-            .unwrap()
-            + 4;
+        let body_start = framed.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
         buf.extend_from_slice(&framed[10..body_start + 5]);
         assert_eq!(codec.decode(&mut buf).unwrap(), None);
 
