@@ -305,6 +305,11 @@ pub const MUTATING_TOOLS: &[&str] = &[
     // resolves the op at call time. `Config` as a name is listed here
     // so an unclassified registration fails the boot assert.
     "Config",
+    // Phase 79.6 — team-management tools. All three either spawn /
+    // tear down N goals or deliver DMs that wake idle teammates.
+    "TeamCreate",
+    "TeamDelete",
+    "TeamSendMessage",
 ];
 
 /// Canonical read-only tool list. Tools not in either bucket trigger a
@@ -344,6 +349,9 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
     // proposals. Always available (not gated by the Cargo
     // feature flag); reads only.
     "config_changes_tail",
+    // Phase 79.6 — read-only team query tools.
+    "TeamList",
+    "TeamStatus",
     // Memory + observability tools that read but never write.
     "memory_search",
     "agent_query",
@@ -363,7 +371,7 @@ pub fn classify_tool(tool_name: &str) -> Option<ToolKind> {
         return Some(match tool_name {
             "Bash" => ToolKind::Bash,
             "FileWrite" | "FileEdit" | "NotebookEdit" => ToolKind::FileEdit,
-            "delegate_to" | "TeamCreate" | "TeamDelete" => ToolKind::Delegate,
+            "delegate_to" | "TeamCreate" | "TeamDelete" | "TeamSendMessage" => ToolKind::Delegate,
             "program_phase" | "dispatch_followup" => ToolKind::Dispatch,
             "ScheduleCron" => ToolKind::Schedule,
             "RemoteTrigger" => ToolKind::Outbound,
@@ -592,6 +600,44 @@ mod tests {
         assert!(READ_ONLY_TOOLS.contains(&"config_changes_tail"));
         let state = PlanModeState::on(123, PlanModeReason::ModelRequested { reason: None });
         assert!(gate_tool_call(&state, "config_changes_tail", None).is_none());
+    }
+
+    // Phase 79.6 — team tool classification.
+
+    #[test]
+    fn team_create_classified_as_delegate() {
+        assert_eq!(classify_tool("TeamCreate"), Some(ToolKind::Delegate));
+    }
+
+    #[test]
+    fn team_delete_classified_as_delegate() {
+        assert_eq!(classify_tool("TeamDelete"), Some(ToolKind::Delegate));
+    }
+
+    #[test]
+    fn team_send_message_classified_as_delegate() {
+        assert_eq!(classify_tool("TeamSendMessage"), Some(ToolKind::Delegate));
+    }
+
+    #[test]
+    fn team_create_blocked_under_plan_mode() {
+        let state = PlanModeState::on(123, PlanModeReason::ModelRequested { reason: None });
+        let refusal = gate_tool_call(&state, "TeamCreate", None).unwrap();
+        assert_eq!(refusal.tool_kind, ToolKind::Delegate);
+    }
+
+    #[test]
+    fn team_list_passes_plan_mode() {
+        assert!(READ_ONLY_TOOLS.contains(&"TeamList"));
+        let state = PlanModeState::on(123, PlanModeReason::ModelRequested { reason: None });
+        assert!(gate_tool_call(&state, "TeamList", None).is_none());
+    }
+
+    #[test]
+    fn team_status_passes_plan_mode() {
+        assert!(READ_ONLY_TOOLS.contains(&"TeamStatus"));
+        let state = PlanModeState::on(123, PlanModeReason::ModelRequested { reason: None });
+        assert!(gate_tool_call(&state, "TeamStatus", None).is_none());
     }
 
     #[test]
