@@ -16,6 +16,7 @@ FROM rust:1-bookworm AS builder
 WORKDIR /app
 COPY Cargo.toml Cargo.lock build.rs ./
 COPY crates ./crates
+COPY extensions ./extensions
 COPY src ./src
 COPY examples ./examples
 COPY config ./config

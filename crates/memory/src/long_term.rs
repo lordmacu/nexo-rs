@@ -1067,6 +1067,7 @@ impl LongTermMemory {
         Ok(updated > 0)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn start_email_followup(
         &self,
         flow_id: Uuid,
