@@ -8,6 +8,7 @@ pub mod approval_correlator;
 pub mod behavior;
 pub mod binding_validate;
 pub mod compaction;
+pub mod config_changes_tail_tool;
 pub mod context;
 pub mod cron_tool;
 pub mod delegation_tool;
