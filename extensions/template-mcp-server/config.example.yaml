@@ -1,0 +1,109 @@
+# Phase 76.15 — Reference YAML for the MCP server template.
+#
+# This file is NOT consumed by the binary directly; it documents
+# the same config surface the agent's `mcp_server.http` block in
+# `config/mcp_server.yaml` accepts. Operators paste the relevant
+# fragment under their agent's main config and the runtime wires
+# everything via `src/main.rs::start_http_transport`.
+#
+# Two ways to boot the template:
+#
+#   1. Direct: set MCP_TEMPLATE_HTTP_BIND=127.0.0.1:7676 and run
+#      `./template-mcp-server` — the binary parses just two env
+#      vars (BIND + optional TOKEN). For dev / smoke tests.
+#
+#   2. Production: copy this template into your domain (e.g.
+#      `nexo-marketing`) and have the agent boot it via the
+#      stdio extension supervisor. The HTTP block below sits in
+#      the agent's `config/mcp_server.yaml`, NOT here.
+
+# ---- Transport ----
+http:
+  enabled: true
+  bind: "127.0.0.1:7676"
+
+  # ---- Auth (Phase 76.3) — pick ONE block ----
+  # Loopback dev — no auth, only safe on 127.0.0.1.
+  # auth:
+  #   kind: none
+
+  # Static bearer token, env-resolved (recommended for first prod).
+  # auth:
+  #   kind: static_token
+  #   token_env: "MARKETING_MCP_TOKEN"
+  #   tenant: "marketing"
+
+  # JWT via JWKS (best for multi-tenant + rotation).
+  # auth:
+  #   kind: bearer_jwt
+  #   jwks_url: "https://idp.example.com/.well-known/jwks.json"
+  #   jwks_ttl_secs: 600
+  #   algorithms: ["RS256"]
+  #   issuer: "https://idp.example.com/"
+  #   audiences: ["https://marketing.example.com/"]
+  #   tenant_claim: "tenant"
+  #   scopes_claim: "scope"
+  #   leeway_secs: 30
+
+  # ---- CORS ----
+  allow_origins:
+    - "http://localhost"
+    - "http://127.0.0.1"
+
+  # ---- Hard caps ----
+  body_max_bytes: 1048576       # 1 MiB
+  max_in_flight: 500
+  request_timeout_secs: 30
+
+  # ---- Sessions ----
+  session_idle_timeout_secs: 300
+  session_max_lifetime_secs: 86400
+  max_sessions: 1000
+  sse_keepalive_secs: 15
+  sse_max_age_secs: 600
+  sse_buffer_size: 256
+
+  # ---- Per-IP rate-limit ----
+  per_ip_rate_limit:
+    rps: 60
+    burst: 120
+
+  # ---- Per-(tenant, tool) rate-limit (Phase 76.5) ----
+  # Uncomment when you hit a noisy tenant.
+  # per_principal_rate_limit:
+  #   enabled: true
+  #   default: { rps: 10.0, burst: 20.0 }
+  #   per_tool:
+  #     send_email: { rps: 1.0, burst: 5.0 }
+  #   max_buckets: 50000
+  #   stale_ttl_secs: 300
+  #   warn_threshold: 0.8
+
+  # ---- Per-(tenant, tool) concurrency cap (Phase 76.6) ----
+  # Caps in-flight calls per tenant + per-tool timeout.
+  # per_principal_concurrency:
+  #   enabled: true
+  #   default: { max_in_flight: 10 }
+  #   default_timeout_secs: 30
+  #   queue_wait_ms: 5000
+  #   max_buckets: 50000
+  #   stale_ttl_secs: 300
+
+  # ---- Audit log (Phase 76.11) ----
+  # Durable per-call trail. Strongly recommended in prod.
+  # audit_log:
+  #   enabled: true
+  #   db_path: "data/marketing_mcp_audit.db"
+  #   retention_secs: 7776000     # 90 days
+  #   redact_args: true
+
+  # ---- Session resumption (Phase 76.8) ----
+  # Persists SSE frames so reconnecting clients can replay via
+  # `Last-Event-ID`. Default off; turn on for clients that hold
+  # long-lived streams.
+  # session_event_store:
+  #   enabled: true
+  #   db_path: "data/marketing_mcp_sessions.db"
+  #   max_events_per_session: 10000
+  #   max_replay_batch: 1000
+  #   purge_interval_secs: 60

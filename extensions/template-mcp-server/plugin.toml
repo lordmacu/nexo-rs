@@ -1,0 +1,19 @@
+[plugin]
+id = "template-mcp-server"
+version = "0.1.0"
+name = "MCP Server Template"
+description = "Skeleton MCP server using McpServerBuilder. Copy + rename to bootstrap a domain-specific server (e.g. nexo-marketing)."
+
+[capabilities]
+tools = ["echo"]
+
+# Phase 76.15 — this template ships BOTH transports. The agent's
+# extension supervisor only uses `stdio`; HTTP boots only when the
+# `MCP_TEMPLATE_HTTP_BIND` env var is set (see `src/main.rs`).
+[transport]
+kind = "stdio"
+command = "./template-mcp-server"
+
+[meta]
+author = "nexo-rs"
+license = "MIT OR Apache-2.0"
