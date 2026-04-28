@@ -52,6 +52,7 @@ pub mod session_logs_tool;
 pub mod skills;
 pub mod synthetic_output_tool;
 pub mod taskflow_tool;
+pub mod team_tools;
 pub mod todo_write_tool;
 pub mod tool_filter;
 pub mod tool_policy;
