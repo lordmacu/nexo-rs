@@ -340,6 +340,10 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
     // tool name level is enough since the discriminator lives
     // INSIDE the args, not the tool name.
     "Lsp",
+    // Phase 79.10 — read-only audit-log tool for ConfigTool
+    // proposals. Always available (not gated by the Cargo
+    // feature flag); reads only.
+    "config_changes_tail",
     // Memory + observability tools that read but never write.
     "memory_search",
     "agent_query",
@@ -394,6 +398,21 @@ pub fn gate_tool_call(
     tool_name: &str,
     bash_is_mutating: Option<bool>,
 ) -> Option<PlanModeRefusal> {
+    gate_tool_call_with_args(state, tool_name, bash_is_mutating, &serde_json::Value::Null)
+}
+
+/// Args-aware gate. Same contract as [`gate_tool_call`] but
+/// accepts the tool's call args so per-op discriminators can be
+/// honoured. Phase 79.10 `Config { op: read }` is read-only and
+/// should pass under plan-mode; `op: propose | apply` is mutating
+/// and should refuse. Other tools fall through to the simple
+/// classifier.
+pub fn gate_tool_call_with_args(
+    state: &PlanModeState,
+    tool_name: &str,
+    bash_is_mutating: Option<bool>,
+    args: &serde_json::Value,
+) -> Option<PlanModeRefusal> {
     let PlanModeState::On {
         entered_at,
         reason,
@@ -403,6 +422,16 @@ pub fn gate_tool_call(
         return None;
     };
     let kind = classify_tool(tool_name)?;
+    // Phase 79.10 — `Config { op: read }` is read-only despite
+    // `Config` being in MUTATING_TOOLS. Fast path: when the tool is
+    // `Config` and the op is `read`, bypass the gate entirely.
+    if tool_name == "Config" {
+        if let Some(op) = args.get("op").and_then(|v| v.as_str()) {
+            if op == "read" {
+                return None;
+            }
+        }
+    }
     let blocked = match kind {
         ToolKind::Bash => bash_is_mutating.unwrap_or(true),
         ToolKind::ReadOnly => false,
@@ -533,6 +562,36 @@ mod tests {
         assert!(READ_ONLY_TOOLS.contains(&"Lsp"));
         let state = PlanModeState::on(123, PlanModeReason::ModelRequested { reason: None });
         assert!(gate_tool_call(&state, "Lsp", None).is_none());
+    }
+
+    #[test]
+    fn config_read_passes_plan_mode() {
+        let state = PlanModeState::on(123, PlanModeReason::ModelRequested { reason: None });
+        let args = serde_json::json!({ "op": "read", "key": "model.model" });
+        assert!(gate_tool_call_with_args(&state, "Config", None, &args).is_none());
+    }
+
+    #[test]
+    fn config_propose_blocked_by_plan_mode() {
+        let state = PlanModeState::on(123, PlanModeReason::ModelRequested { reason: None });
+        let args = serde_json::json!({ "op": "propose", "key": "model.model", "value": "claude-opus-4-7" });
+        let refusal = gate_tool_call_with_args(&state, "Config", None, &args).unwrap();
+        assert_eq!(refusal.tool_kind, ToolKind::Config);
+    }
+
+    #[test]
+    fn config_apply_blocked_by_plan_mode() {
+        let state = PlanModeState::on(123, PlanModeReason::ModelRequested { reason: None });
+        let args = serde_json::json!({ "op": "apply", "patch_id": "01J7" });
+        let refusal = gate_tool_call_with_args(&state, "Config", None, &args).unwrap();
+        assert_eq!(refusal.tool_kind, ToolKind::Config);
+    }
+
+    #[test]
+    fn config_changes_tail_is_read_only() {
+        assert!(READ_ONLY_TOOLS.contains(&"config_changes_tail"));
+        let state = PlanModeState::on(123, PlanModeReason::ModelRequested { reason: None });
+        assert!(gate_tool_call(&state, "config_changes_tail", None).is_none());
     }
 
     #[test]
