@@ -52,7 +52,7 @@ enum Outgoing {
 /// Snapshot of the latest diagnostics for one URI plus the
 /// publish timestamp. Sessions consult `published_at` to decide
 /// whether to wait for fresher data after `didOpen`.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct FileDiagnostics {
     pub items: Vec<lsp_types::Diagnostic>,
     pub published_at: Instant,
@@ -60,7 +60,7 @@ pub struct FileDiagnostics {
 
 /// Read-only handle to the diagnostics cache. The session reaches
 /// in to read; the I/O loop owns the write side.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct DiagnosticsCache {
     inner: RwLock<HashMap<url::Url, FileDiagnostics>>,
 }
@@ -83,6 +83,7 @@ impl DiagnosticsCache {
 /// + reader-task + writer-task topology means callers never block
 /// on each other; multiple concurrent `request<R>()` calls are
 /// safe.
+#[derive(Debug)]
 pub struct LspClient {
     request_tx: mpsc::UnboundedSender<Outgoing>,
     pub diagnostics: Arc<DiagnosticsCache>,
