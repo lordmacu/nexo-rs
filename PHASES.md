@@ -5032,7 +5032,7 @@ Done when:
 - Unit test: missing binary → tool returns clear error
   with the install hint above.
 
-#### 79.6 — TeamCreateTool / TeamDeleteTool   ⬜
+#### 79.6 — TeamCreateTool / TeamDeleteTool   ✅ (MVP — spawn-as-teammate via Phase 67 dispatch deferred to 79.6.b)
 
 Spawn a *team* of N parallel agents, each with a different
 role, sharing a scratchpad dir for cross-agent message
