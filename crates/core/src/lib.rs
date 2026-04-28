@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod config_changes_store;
 pub mod config_reload;
 pub mod config_watch;
 pub mod cron_runner;
