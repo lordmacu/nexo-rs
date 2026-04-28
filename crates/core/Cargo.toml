@@ -16,9 +16,20 @@ categories    = { workspace = true }
 default = ["schema-validation"]
 # Enables pre-handler JSON Schema validation of tool arguments.
 schema-validation = ["dep:jsonschema"]
+# Phase 79.10 — gated self-config tool. Off by default until
+# security review. Compiling this feature exposes `Config { op:
+# read | propose | apply }` per agent (still subject to the
+# per-binding `config_tool.self_edit` YAML knob + the hard-coded
+# denylist).
+config-self-edit = ["dep:globset"]
 
 [dependencies]
 jsonschema = { version = "0.20", optional = true, default-features = false }
+# Phase 79.10 — gated by `config-self-edit` feature. `nexo-setup`
+# is pulled in lazily via the runtime call site (cannot be a hard
+# dep here — `nexo-setup` already depends on `nexo-core`, so a
+# direct dep would form a cycle).
+globset    = { workspace = true, optional = true }
 sha2        = { workspace = true }
 hmac        = "0.12"
 cron        = "0.12"

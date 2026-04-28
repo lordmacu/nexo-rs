@@ -2986,6 +2986,7 @@ dependencies = [
  "dashmap",
  "futures",
  "git2",
+ "globset",
  "hmac",
  "humantime",
  "jsonschema",
