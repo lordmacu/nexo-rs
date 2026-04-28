@@ -9,6 +9,7 @@ pub mod link_understanding;
 pub mod llm_cron_dispatcher;
 pub mod plan_mode;
 pub mod runtime_snapshot;
+pub mod team_message_router;
 pub mod session;
 pub mod telemetry;
 pub mod todo;
