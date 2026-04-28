@@ -33,9 +33,124 @@ pub struct McpServerConfig {
     /// (`auth_token` or `_meta.auth_token`).
     #[serde(default)]
     pub auth_token_env: Option<String>,
+    /// Phase 76.16 — Phase 79 tools to expose via MCP server.
+    /// Empty = legacy behaviour (5 built-in tools only).
+    /// Valid names: EnterPlanMode, ExitPlanMode, ToolSearch, TodoWrite,
+    /// SyntheticOutput, NotebookEdit, RemoteTrigger.
+    /// Config and Lsp require additional infrastructure (see FOLLOWUPS).
+    #[serde(default)]
+    pub expose_tools: Vec<String>,
+    /// Advanced override: expose tools that the static MCP catalog marks as
+    /// `DeniedByPolicy` (for example `Heartbeat`, `RemoteTrigger`, or
+    /// `delegate`) when they are also present in `expose_tools`.
+    ///
+    /// Empty by default. Intended for trusted/operator-controlled MCP clients.
+    #[serde(default)]
+    pub expose_denied_tools: Vec<String>,
+    /// Safe enablement profile for tools that are denied-by-default in the
+    /// exposable catalog (`Heartbeat`, `delegate`, `RemoteTrigger`).
+    ///
+    /// `expose_denied_tools` selects *which* denied tools are requested;
+    /// this profile defines *how* those requests are hardened.
+    #[serde(default)]
+    pub denied_tools_profile: DeniedToolsProfileConfig,
+    /// Explicit opt-in gate for Config tool. Reserved for future use —
+    /// requires full applier+store+correlator wiring not yet available
+    /// in mcp-server mode.
+    #[serde(default)]
+    pub allow_config_tool: bool,
+    /// Optional in-process autonomous worker profile for mcp-server mode.
+    /// When enabled, the server runs a heartbeat loop that can execute
+    /// durable follow-up checks without requiring a separate `nexo run`
+    /// daemon.
+    #[serde(default)]
+    pub autonomous_worker: McpAutonomousWorkerConfig,
     /// Phase 76.1 — optional HTTP+SSE transport. Stdio is unaffected.
     #[serde(default)]
     pub http: Option<HttpTransportConfigYaml>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct DeniedToolsProfileConfig {
+    /// Master opt-in switch. When false, denied-tool overrides are refused
+    /// even if listed in `expose_denied_tools`.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Require MCP auth (`mcp_server.auth_token_env` or `http.auth`) before
+    /// enabling denied tools.
+    #[serde(default = "default_true")]
+    pub require_auth: bool,
+    /// Require an explicit delegate allowlist (non-empty and not wildcard
+    /// `*`) before enabling `delegate`.
+    #[serde(default = "default_true")]
+    pub require_delegate_allowlist: bool,
+    /// Require at least one configured remote trigger destination before
+    /// enabling `RemoteTrigger`.
+    #[serde(default = "default_true")]
+    pub require_remote_trigger_targets: bool,
+    /// Per-tool explicit permissions inside the profile.
+    #[serde(default)]
+    pub allow: DeniedToolsAllowConfig,
+}
+
+impl DeniedToolsProfileConfig {
+    pub fn allows(&self, tool_name: &str) -> bool {
+        match tool_name {
+            "Heartbeat" => self.allow.heartbeat,
+            "delegate" => self.allow.delegate,
+            "RemoteTrigger" => self.allow.remote_trigger,
+            _ => false,
+        }
+    }
+}
+
+impl Default for DeniedToolsProfileConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            require_auth: default_true(),
+            require_delegate_allowlist: default_true(),
+            require_remote_trigger_targets: default_true(),
+            allow: DeniedToolsAllowConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct DeniedToolsAllowConfig {
+    #[serde(default)]
+    pub heartbeat: bool,
+    #[serde(default)]
+    pub delegate: bool,
+    #[serde(default)]
+    pub remote_trigger: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct McpAutonomousWorkerConfig {
+    /// Opt-in gate. Defaults to `false` so existing mcp-server installs
+    /// keep their current "tool bridge only" behavior.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Heartbeat tick cadence in seconds. Lower bound is enforced at runtime.
+    #[serde(default = "default_autonomous_worker_tick_secs")]
+    pub tick_secs: u64,
+}
+
+impl Default for McpAutonomousWorkerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            tick_secs: default_autonomous_worker_tick_secs(),
+        }
+    }
+}
+
+fn default_autonomous_worker_tick_secs() -> u64 {
+    60
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -419,6 +534,11 @@ impl Default for McpServerConfig {
             allowlist: Vec::new(),
             expose_proxies: false,
             auth_token_env: None,
+            expose_tools: Vec::new(),
+            expose_denied_tools: Vec::new(),
+            denied_tools_profile: DeniedToolsProfileConfig::default(),
+            allow_config_tool: false,
+            autonomous_worker: McpAutonomousWorkerConfig::default(),
             http: None,
         }
     }
@@ -426,6 +546,10 @@ impl Default for McpServerConfig {
 
 fn default_enabled() -> bool {
     false
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[cfg(test)]
@@ -438,8 +562,22 @@ mod tests {
         let f: McpServerConfigFile = serde_yaml::from_str(yaml).unwrap();
         assert!(f.mcp_server.enabled);
         assert!(f.mcp_server.allowlist.is_empty());
+        assert!(f.mcp_server.expose_denied_tools.is_empty());
+        assert!(!f.mcp_server.denied_tools_profile.enabled);
+        assert!(f.mcp_server.denied_tools_profile.require_auth);
+        assert!(f.mcp_server.denied_tools_profile.require_delegate_allowlist);
+        assert!(
+            f.mcp_server
+                .denied_tools_profile
+                .require_remote_trigger_targets
+        );
+        assert!(!f.mcp_server.denied_tools_profile.allow.heartbeat);
+        assert!(!f.mcp_server.denied_tools_profile.allow.delegate);
+        assert!(!f.mcp_server.denied_tools_profile.allow.remote_trigger);
         assert!(!f.mcp_server.expose_proxies);
         assert!(f.mcp_server.auth_token_env.is_none());
+        assert!(!f.mcp_server.autonomous_worker.enabled);
+        assert_eq!(f.mcp_server.autonomous_worker.tick_secs, 60);
     }
 
     #[test]
@@ -468,6 +606,66 @@ mcp_server:
 "#;
         let f: McpServerConfigFile = serde_yaml::from_str(yaml).unwrap();
         assert!(f.mcp_server.expose_proxies);
+    }
+
+    #[test]
+    fn parses_expose_denied_tools() {
+        let yaml = r#"
+mcp_server:
+  enabled: true
+  expose_tools: ["RemoteTrigger", "delegate"]
+  expose_denied_tools: ["RemoteTrigger"]
+"#;
+        let f: McpServerConfigFile = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            f.mcp_server.expose_denied_tools,
+            vec!["RemoteTrigger".to_string()]
+        );
+    }
+
+    #[test]
+    fn parses_denied_tools_profile_block() {
+        let yaml = r#"
+mcp_server:
+  enabled: true
+  expose_tools: ["Heartbeat", "delegate", "RemoteTrigger"]
+  expose_denied_tools: ["Heartbeat", "delegate", "RemoteTrigger"]
+  denied_tools_profile:
+    enabled: true
+    require_auth: true
+    require_delegate_allowlist: true
+    require_remote_trigger_targets: true
+    allow:
+      heartbeat: true
+      delegate: true
+      remote_trigger: false
+"#;
+        let f: McpServerConfigFile = serde_yaml::from_str(yaml).unwrap();
+        let p = &f.mcp_server.denied_tools_profile;
+        assert!(p.enabled);
+        assert!(p.require_auth);
+        assert!(p.require_delegate_allowlist);
+        assert!(p.require_remote_trigger_targets);
+        assert!(p.allow.heartbeat);
+        assert!(p.allow.delegate);
+        assert!(!p.allow.remote_trigger);
+        assert!(p.allows("Heartbeat"));
+        assert!(p.allows("delegate"));
+        assert!(!p.allows("RemoteTrigger"));
+    }
+
+    #[test]
+    fn parses_autonomous_worker_block() {
+        let yaml = r#"
+mcp_server:
+  enabled: true
+  autonomous_worker:
+    enabled: true
+    tick_secs: 15
+"#;
+        let f: McpServerConfigFile = serde_yaml::from_str(yaml).unwrap();
+        assert!(f.mcp_server.autonomous_worker.enabled);
+        assert_eq!(f.mcp_server.autonomous_worker.tick_secs, 15);
     }
 
     #[test]

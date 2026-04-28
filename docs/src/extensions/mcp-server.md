@@ -15,8 +15,9 @@ share identical wire-level behaviour:
 
 > Phase 76.1 only ships the transport layer. Pluggable auth
 > (Phase 76.3), multi-tenant isolation (76.4), per-tool rate-limit
-> (76.5), durable sessions (76.8), and TLS-in-process (76.13) are
-> tracked separately. For production today, terminate TLS at
+> (76.5), durable sessions + SSE replay (76.8 — see "Session
+> resumption" below), and TLS-in-process (76.13) are tracked
+> separately. For production today, terminate TLS at
 > nginx/caddy/Traefik in front of the loopback bind.
 
 ## Enabling HTTP
@@ -601,6 +602,75 @@ sessions whose subscription set contains `uri` receive the event.
   `Lagged` event handling on SSE overflow. Reused as-is for
   `notifications/progress` storm scenarios.
 
+## Session resumption + SSE replay (Phase 76.8)
+
+The HTTP transport persists every server-pushed SSE frame to a
+SQLite event store so a reconnecting client can replay the gap via
+the `Last-Event-ID` header instead of re-`initialize`-ing from
+scratch.
+
+### Wire contract
+
+* SSE frames carry `id: <seq>` (per-session monotonic, starting at
+  1) plus `event: message` / `data: <json-rpc-frame>`.
+* Reconnect: `GET /mcp` with `Mcp-Session-Id: <uuid>` +
+  `Last-Event-ID: <seq>`. The server replays persisted frames
+  with `seq > <Last-Event-ID>` (capped at `max_replay_batch`)
+  before the live broadcast loop attaches.
+* Header absent → no replay (live only). Header present (any
+  numeric value, including `0`) → replay everything above.
+* Unknown `Mcp-Session-Id` → HTTP **404** + JSON-RPC body
+  `{"error":{"code":-32001,"message":"Session not found"}}`. This
+  matches the leaked Claude Code client's
+  `isMcpSessionExpiredError` contract — a permanent failure that
+  the client must recover by re-`initialize`.
+
+### Configuration
+
+```yaml
+mcp_server:
+  http:
+    session_event_store:
+      enabled: true                     # opt-in; default off when block omitted
+      db_path: "data/mcp_sessions.db"   # absolute path recommended in prod
+      max_events_per_session: 10000     # ring cap; oldest pruned every 1000 emits
+      max_replay_batch: 1000            # hard ceiling per replay (max 10000)
+      purge_interval_secs: 60           # background prune older than session_max_lifetime_secs
+```
+
+The `session_max_lifetime_secs` (default 24 h) gates how long
+events live in the store. The background purge worker stops on
+parent shutdown; SIGTERM does not block on it.
+
+### What does *not* survive a daemon restart
+
+The in-memory `HttpSession` (broadcast channel + cancellation
+token) is gone after a restart. Only **events + subscriptions**
+persist on disk. A client that reconnects with its old session-id
+gets the 404 + -32001 contract above and is expected to
+re-`initialize`. Full session reattach (rehydrating
+`HttpSession` entire) is parked as **76.8.b** until a real client
+asks for it — the leak's own client treats expired sessions as
+permanent failure, so the parity gap is intentional.
+
+### Observability
+
+The same `mcp_requests_total{outcome}` and `mcp_request_duration_seconds`
+metrics from 76.10 cover replay path requests transparently.
+Replay-specific counters (`mcp_replay_rows_total`,
+`mcp_replay_skipped_total{reason="cap"}`) are deferred to a
+follow-up — file an issue if you need them sooner.
+
+### Reference patterns
+
+* `claude-code-leak/src/cli/transports/SSETransport.ts:159-266`
+  — wire format SSE `id:` + `Last-Event-ID` reconnect.
+* `claude-code-leak/src/services/mcp/client.ts:189-206` —
+  HTTP 404 + JSON-RPC `-32001` permanent-failure contract.
+* `crates/agent-registry/src/turn_log.rs:64-89` — in-tree
+  `TurnLogStore` pattern mirrored verbatim for the
+  `SessionEventStore` trait shape (Phase 72 alignment).
+
 ## Observability + health (Phase 76.10)
 
 The server emits Prometheus metrics for every dispatch path
@@ -787,14 +857,90 @@ The agent's per-IP rate limiter trusts `X-Forwarded-For` only when
 the listener is bound to loopback (operator behind a proxy);
 otherwise the direct peer IP is authoritative.
 
+## Exposing additional tools (Phase 76.16)
+
+By default the MCP server exposes the five agent introspection tools
+(`who_am_i`, `what_do_i_know`, `my_stats`, `memory`, `session_logs`).
+To surface any subset of the Phase 79 agentic tools to external MCP
+clients, add them to `expose_tools` in `config/mcp_server.yaml`:
+
+```yaml
+mcp_server:
+  expose_tools:
+    - EnterPlanMode   # puts the session into read-only plan review mode
+    - ExitPlanMode    # lifts plan-mode; requires operator approval
+    - ToolSearch      # on-demand schema fetch for deferred tools
+    - TodoWrite       # ephemeral intra-turn checklist
+    - SyntheticOutput # typed/structured output forcing
+    - NotebookEdit    # Jupyter cell-level edits
+    - RemoteTrigger   # webhook / NATS publish from inside a turn
+```
+
+Unknown names and the two gated tools (`Config`, `Lsp`) are skipped
+with a `tracing::warn!` log at startup — the daemon continues
+normally. The existing `allowlist` field in `mcp_server.yaml` still
+applies on top of `expose_tools`, letting operators further restrict
+which of the registered tools each client session may call.
+
+Denied-by-default tools (`Heartbeat`, `delegate`, `RemoteTrigger`)
+require an additional safe profile:
+
+1. List the tool in `expose_denied_tools`.
+2. Enable `denied_tools_profile.enabled`.
+3. Set the matching `denied_tools_profile.allow.* = true`.
+
+Example (safe minimal override for reminders only):
+
+```yaml
+mcp_server:
+  auth_token_env: MCP_SERVER_TOKEN
+  expose_tools: ["Heartbeat"]
+  expose_denied_tools: ["Heartbeat"]
+  denied_tools_profile:
+    enabled: true
+    require_auth: true
+    require_delegate_allowlist: true
+    require_remote_trigger_targets: true
+    allow:
+      heartbeat: true
+      delegate: false
+      remote_trigger: false
+```
+
+> **Security note:** `Config` (self-config write-back) and `Lsp`
+> (in-process rust-analyzer / pylsp) require additional infrastructure
+> and are deferred to a later sub-phase. They are intentionally not
+> enabled via `expose_tools` today.
+
+## Testing the server
+
+Run the full conformance + fuzz suite (Phase 76.12):
+
+```bash
+cargo test -p nexo-mcp --features server-conformance
+```
+
+This runs:
+- **5 proptest cases** over `parse_jsonrpc_frame` — arbitrary bytes,
+  strings, methods, depths, and batch arrays. Invariant: no panic.
+- **11 HTTP conformance cases** — MCP 2025-11-25 spec fixtures via HTTP transport.
+- **11 stdio conformance cases** — same fixtures via stdio transport,
+  verifying transport parity.
+
+For the load smoke test (50 sessions × 200 requests = 10 000 calls,
+p99 gate < 500 ms; takes ~5 s):
+
+```bash
+cargo test -p nexo-mcp --features server-conformance \
+    -- --include-ignored load_smoke
+```
+
 ## Coming in later sub-phases
 
-* **76.8** — durable session store backed by SQLite for
-  resumability across daemon restarts.
-* **76.9** — `McpServerBuilder` ergonomic API for third-party
-  extensions.
-* **76.11–76.15** — audit log, fuzz suite, TLS in-process,
-  CLI ops, plugin template.
+* **76.13** — TLS in-process (`rustls` behind `server-tls` feature)
+  and nginx/caddy/Traefik reverse-proxy recipes.
+* **76.14** — `nexo mcp-server` CLI ops: `inspect`, `bench`,
+  `tail-audit`.
 
 Track the rollout in [`PHASES.md`](https://github.com/lordmacu/nexo-rs/blob/main/proyecto/PHASES.md)
 and the public surface diff in [`CLAUDE.md`](https://github.com/lordmacu/nexo-rs/blob/main/proyecto/CLAUDE.md).

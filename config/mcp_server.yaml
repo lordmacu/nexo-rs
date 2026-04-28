@@ -1,72 +1,41 @@
-# Phase 12.6 — Expose this agent as an MCP server over stdio.
-#
-# When `enabled: true`, `agent mcp-server` advertises the native tool set
-# (self-report + memory + whatever is in the allowlist) to any MCP client
-# that spawns the binary. Use this to plug the agent into Claude Desktop,
-# Cursor, Zed, etc.
-#
-# Claude Desktop install example:
-#   {
-#     "mcpServers": {
-#       "kate": {
-#         "command": "/usr/local/bin/agent",
-#         "args": ["--config", "/etc/agent/config", "mcp-server"]
-#       }
-#     }
-#   }
 mcp_server:
   enabled: false
-  name: "agent"
-  # Empty allowlist exposes native tools, but NOT proxy tools (`ext_*`,
-  # `mcp_*`) unless `expose_proxies: true`.
-  # For safety, enumerate explicit tool names here in production.
+  name: agent
   allowlist: []
-  # Opt-in global exposure for proxy tools (`ext_*`, `mcp_*`) when
-  # allowlist is empty. Explicit allowlist entries always win.
   expose_proxies: false
-  # Optional initialize auth token. When set, the server reads the expected
-  # token from this env var and rejects `initialize` unless params include:
-  #   - auth_token: "<token>"
-  #   - or _meta.auth_token: "<token>"
-  # Example Claude Desktop snippet:
-  #   "env": { "MCP_SERVER_TOKEN": "change-me" }
   auth_token_env: null
-  # Example curated allowlist:
-  # allowlist:
-  #   - who_am_i
-  #   - what_do_i_know
-  #   - my_stats
-  #   - memory_recall
-  #   - ext_weather_ping
-
-  # Phase 76.1 — Optional HTTP+SSE transport. Stdio remains the
-  # primary path; HTTP is opt-in and adds Streamable HTTP (current
-  # MCP 2025-11-25 spec) plus an optional SSE legacy alias for
-  # older clients. Defaults are conservative: loopback only, body
-  # cap 1 MiB, 300 s idle TTL, 60 rps/IP, 1000-session cap.
-  #
-  # Bind 0.0.0.0 (or any non-loopback) requires:
-  #   - auth_token_env set to an env var holding a strong bearer
-  #     token (token compared in constant time)
-  #   - allow_origins listing the exact origins permitted (no '*')
-  # Otherwise the server refuses to start.
+  expose_tools: []
+  expose_denied_tools: []
+  denied_tools_profile:
+    enabled: false
+    require_auth: true
+    require_delegate_allowlist: true
+    require_remote_trigger_targets: true
+    allow:
+      heartbeat: false
+      delegate: false
+      remote_trigger: false
+  autonomous_worker:
+    enabled: false
+    tick_secs: 60
   http:
     enabled: false
-    bind: "127.0.0.1:7575"
-    auth_token_env: null               # e.g. NEXO_MCP_HTTP_TOKEN
+    bind: 127.0.0.1:7575
+    auth_token_env: null
     allow_origins:
-      - "http://localhost"
-      - "http://127.0.0.1"
-    body_max_bytes: 1048576            # 1 MiB; hard cap 16 MiB
+    - http://localhost
+    - http://127.0.0.1
+    body_max_bytes: 1048576
     max_in_flight: 500
     per_ip_rate_limit:
       rps: 60
       burst: 120
-    request_timeout_secs: 30           # hard cap 600
-    session_idle_timeout_secs: 300     # hard cap 86400
+    request_timeout_secs: 30
+    session_idle_timeout_secs: 300
     session_max_lifetime_secs: 86400
     max_sessions: 1000
     sse_keepalive_secs: 15
-    sse_max_age_secs: 600              # 10 min, then server-initiated close
-    sse_buffer_size: 256               # drop-oldest on overflow
-    enable_legacy_sse: false           # GET /sse + POST /messages alias
+    sse_max_age_secs: 600
+    sse_buffer_size: 256
+    enable_legacy_sse: false
+schema_version: 11

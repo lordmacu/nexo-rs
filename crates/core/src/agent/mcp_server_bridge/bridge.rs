@@ -1,8 +1,8 @@
 //! Phase 12.6 — adapt `ToolRegistry` to `McpServerHandler`. Powers the
 //! `agent mcp-server` subcommand so external MCP clients (Claude Desktop,
 //! Cursor) can call the agent's registered tools.
-use super::context::AgentContext;
-use super::tool_registry::ToolRegistry;
+use crate::agent::context::AgentContext;
+use crate::agent::tool_registry::ToolRegistry;
 use async_trait::async_trait;
 use nexo_mcp::{
     McpAnnotations, McpContent, McpError, McpPrompt, McpPromptArgument, McpPromptMessage,
@@ -13,6 +13,7 @@ use serde_json::Value;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use uuid::Uuid;
 
 const RESOURCE_TEXT_CHAR_LIMIT: usize = 32_000;
 
@@ -201,6 +202,39 @@ impl ToolRegistryBridge {
         };
         Ok(truncate_with_marker(&text, RESOURCE_TEXT_CHAR_LIMIT))
     }
+
+    fn derive_session_uuid(raw: &str) -> Uuid {
+        Uuid::parse_str(raw).unwrap_or_else(|_| Uuid::new_v5(&Uuid::NAMESPACE_OID, raw.as_bytes()))
+    }
+
+    async fn call_tool_inner(
+        &self,
+        name: &str,
+        arguments: Value,
+        dispatch_ctx: Option<&nexo_mcp::server::DispatchContext>,
+    ) -> Result<McpToolResult, McpError> {
+        if !self.is_allowed(name) {
+            return Err(McpError::Protocol(format!(
+                "tool '{name}' is not allowed by the mcp_server allowlist"
+            )));
+        }
+        let (_def, handler) = self
+            .registry
+            .get(name)
+            .ok_or_else(|| McpError::Protocol(format!("tool '{name}' is not registered")))?;
+
+        let call_ctx = if let Some(raw) = dispatch_ctx.and_then(|c| c.session_id.as_deref()) {
+            self.ctx
+                .clone()
+                .with_session_id(Self::derive_session_uuid(raw))
+        } else {
+            self.ctx.clone()
+        };
+        match handler.call(&call_ctx, arguments).await {
+            Ok(v) => Ok(Self::wrap_ok(v)),
+            Err(e) => Ok(Self::wrap_err(&e)),
+        }
+    }
 }
 
 fn truncate_with_marker(s: &str, max_chars: usize) -> String {
@@ -238,19 +272,27 @@ impl McpServerHandler for ToolRegistryBridge {
         Ok(tools)
     }
     async fn call_tool(&self, name: &str, arguments: Value) -> Result<McpToolResult, McpError> {
-        if !self.is_allowed(name) {
-            return Err(McpError::Protocol(format!(
-                "tool '{name}' is not allowed by the mcp_server allowlist"
-            )));
-        }
-        let (_def, handler) = self
-            .registry
-            .get(name)
-            .ok_or_else(|| McpError::Protocol(format!("tool '{name}' is not registered")))?;
-        match handler.call(&self.ctx, arguments).await {
-            Ok(v) => Ok(Self::wrap_ok(v)),
-            Err(e) => Ok(Self::wrap_err(&e)),
-        }
+        self.call_tool_inner(name, arguments, None).await
+    }
+
+    async fn call_tool_with_context(
+        &self,
+        name: &str,
+        arguments: Value,
+        ctx: &nexo_mcp::server::DispatchContext,
+    ) -> Result<McpToolResult, McpError> {
+        self.call_tool_inner(name, arguments, Some(ctx)).await
+    }
+
+    async fn call_tool_streaming_with_context(
+        &self,
+        name: &str,
+        arguments: Value,
+        progress: nexo_mcp::server::progress::ProgressReporter,
+        ctx: &nexo_mcp::server::DispatchContext,
+    ) -> Result<McpToolResult, McpError> {
+        let _ = progress;
+        self.call_tool_inner(name, arguments, Some(ctx)).await
     }
 
     async fn list_resources(&self) -> Result<Vec<McpResource>, McpError> {
@@ -334,8 +376,8 @@ impl McpServerHandler for ToolRegistryBridge {
 }
 #[cfg(test)]
 mod tests {
-    use super::super::tool_registry::ToolHandler;
     use super::*;
+    use crate::agent::tool_registry::ToolHandler;
     use crate::session::SessionManager;
     use async_trait::async_trait;
     use nexo_broker::AnyBroker;
@@ -347,6 +389,7 @@ mod tests {
     struct FixedHandler {
         result: Result<Value, String>,
     }
+    struct SessionEchoHandler;
     #[async_trait]
     impl ToolHandler for FixedHandler {
         async fn call(&self, _ctx: &AgentContext, _args: Value) -> anyhow::Result<Value> {
@@ -354,6 +397,14 @@ mod tests {
                 Ok(v) => Ok(v.clone()),
                 Err(msg) => Err(anyhow::anyhow!(msg.clone())),
             }
+        }
+    }
+    #[async_trait]
+    impl ToolHandler for SessionEchoHandler {
+        async fn call(&self, ctx: &AgentContext, _args: Value) -> anyhow::Result<Value> {
+            Ok(serde_json::json!({
+                "session_id": ctx.session_id.map(|s| s.to_string())
+            }))
         }
     }
     fn ctx(workspace: Option<&std::path::Path>) -> AgentContext {
@@ -399,6 +450,7 @@ mod tests {
             lsp: nexo_config::types::lsp::LspPolicy::default(),
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
             team: nexo_config::types::team::TeamPolicy::default(),
+            proactive: Default::default(),
         });
         let broker = AnyBroker::local();
         let sessions = Arc::new(SessionManager::new(std::time::Duration::from_secs(60), 20));
@@ -535,6 +587,22 @@ mod tests {
             McpError::Protocol(msg) => assert!(msg.contains("allowlist")),
             other => panic!("unexpected: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn call_tool_with_dispatch_context_injects_session_id() {
+        let (bridge, registry) = build_bridge(None, false, None);
+        registry.register(def("echo_session"), SessionEchoHandler);
+        let sid = Uuid::new_v4().to_string();
+        let mut dctx = nexo_mcp::server::DispatchContext::empty();
+        dctx.session_id = Some(sid.clone());
+        let out = bridge
+            .call_tool_with_context("echo_session", serde_json::json!({}), &dctx)
+            .await
+            .unwrap();
+        assert!(!out.is_error);
+        let structured = out.structured_content.expect("structured content");
+        assert_eq!(structured["session_id"], sid);
     }
 
     #[tokio::test]
