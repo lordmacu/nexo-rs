@@ -1603,6 +1603,134 @@ async fn main() -> Result<()> {
         .first()
         .map(|a| (a.id.clone(), a.model.clone()));
 
+    // Phase 79.10.b — bootstrap the approval correlator + reload
+    // bridge for the gated `Config` tool. Always built (cheap;
+    // tasks idle when no agent has `self_edit: true`); the gated
+    // per-agent registration below decides whether to consume
+    // them. `agents_yaml_path` is the canonical config file the
+    // applier writes back to; falls back to `config_dir/agents.yaml`.
+    #[cfg(feature = "config-self-edit")]
+    let (config_correlator, config_reload_trigger, agents_yaml_path, reload_cell) = {
+        use nexo_core::agent::approval_correlator::{
+            ApprovalCorrelator, ApprovalCorrelatorConfig,
+        };
+        let correlator = ApprovalCorrelator::new(ApprovalCorrelatorConfig::default());
+        // Subscribe to inbound topics for approval routing. Spawned
+        // in a fire-and-forget task; ends with the correlator's
+        // CancellationToken on shutdown.
+        let broker_clone = broker.clone();
+        let cor_clone = std::sync::Arc::clone(&correlator);
+        tokio::spawn(async move {
+            use nexo_broker::BrokerHandle;
+            use nexo_core::agent::approval_correlator::InboundApprovalMessage;
+            let mut sub = match broker_clone.subscribe("plugin.inbound.>").await {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "[config] could not subscribe to plugin.inbound — approvals offline"
+                    );
+                    return;
+                }
+            };
+            tracing::info!("[config] approval subscriber on plugin.inbound.> running");
+            while let Some(ev) = sub.next().await {
+                // Topic shape: plugin.inbound.<channel>.<instance>
+                let parts: Vec<&str> = ev.topic.split('.').collect();
+                if parts.len() < 4 {
+                    continue;
+                }
+                let channel = parts[2].to_string();
+                let account_id = parts[3..].join(".");
+                let payload = &ev.payload;
+                let body = payload
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                if body.is_empty() {
+                    continue;
+                }
+                let sender_id = payload
+                    .get("from")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let msg = InboundApprovalMessage {
+                    channel,
+                    account_id,
+                    sender_id,
+                    body: body.to_string(),
+                    received_at: chrono::Utc::now().timestamp(),
+                };
+                cor_clone.on_inbound(msg);
+            }
+        });
+        // Reload bridge: `reload_coord` is built AFTER the agent
+        // loop (line ~2927), so the trigger holds a `OnceCell` and
+        // resolves it lazily. main.rs sets the cell after the
+        // coordinator is built. Until then, a `Config { op: apply }`
+        // call returns a clear "reload coordinator not yet ready"
+        // error — practically impossible because applies require an
+        // operator approval which itself requires the daemon to be
+        // up.
+        struct ReloadWrapper(
+            std::sync::Arc<
+                tokio::sync::OnceCell<std::sync::Arc<nexo_core::ConfigReloadCoordinator>>,
+            >,
+        );
+        #[async_trait::async_trait]
+        impl nexo_core::agent::config_tool::ReloadTrigger for ReloadWrapper {
+            async fn reload(&self) -> Result<(), String> {
+                let coord = match self.0.get() {
+                    Some(c) => c,
+                    None => return Err("reload coordinator not yet initialised".into()),
+                };
+                let outcome = coord.reload().await;
+                if outcome.rejected.is_empty() {
+                    Ok(())
+                } else {
+                    let summary: Vec<String> = outcome
+                        .rejected
+                        .iter()
+                        .map(|r| {
+                            format!(
+                                "{}: {}",
+                                r.agent_id.as_deref().unwrap_or("workspace"),
+                                r.reason
+                            )
+                        })
+                        .collect();
+                    Err(summary.join("; "))
+                }
+            }
+        }
+        let reload_cell: std::sync::Arc<
+            tokio::sync::OnceCell<std::sync::Arc<nexo_core::ConfigReloadCoordinator>>,
+        > = std::sync::Arc::new(tokio::sync::OnceCell::new());
+        let reload_trigger: std::sync::Arc<dyn nexo_core::agent::config_tool::ReloadTrigger> =
+            std::sync::Arc::new(ReloadWrapper(std::sync::Arc::clone(&reload_cell)));
+        let agents_yaml = config_dir.join("agents.yaml");
+        (
+            Some(correlator),
+            Some(reload_trigger),
+            Some(agents_yaml),
+            Some(reload_cell),
+        )
+    };
+    #[cfg(not(feature = "config-self-edit"))]
+    let (config_correlator, config_reload_trigger, agents_yaml_path, reload_cell) = (
+        Option::<()>::None,
+        Option::<()>::None,
+        Option::<std::path::PathBuf>::None,
+        Option::<()>::None,
+    );
+    let _ = (
+        &config_correlator,
+        &config_reload_trigger,
+        &agents_yaml_path,
+        &reload_cell,
+    );
+
     // Phase 79.5 — boot the LSP manager once per process. Probes
     // rust-analyzer / pylsp / typescript-language-server / gopls
     // on PATH; missing binaries get a single warn line with the
@@ -2084,11 +2212,90 @@ async fn main() -> Result<()> {
             );
         }
 
-        // Phase 79.10 — gated `Config { op: ... }` tool. Compiled
-        // only with `--features config-self-edit`. Per-agent
-        // registration depends on YamlPatchApplier + DenylistChecker
-        // bridge structs to nexo-setup; those are wired in a 79.10.b
-        // follow-up commit.
+        // Phase 79.10.b — gated `Config { op: ... }` tool. Compiled
+        // and registered only with `--features config-self-edit`,
+        // and only for agents whose YAML sets `config_tool.self_edit
+        // = true`. The hard ship-control is the Cargo feature, the
+        // soft per-agent gate is the YAML knob.
+        #[cfg(feature = "config-self-edit")]
+        if agent_cfg.config_tool.self_edit {
+            if let (Some(store), Some(correlator), Some(reload), Some(agents_yaml)) = (
+                config_changes_store.as_ref(),
+                config_correlator.as_ref(),
+                config_reload_trigger.as_ref(),
+                agents_yaml_path.as_ref(),
+            ) {
+                use nexo_core::agent::config_tool::{
+                    ActorOrigin, ConfigTool, DefaultSecretRedactor,
+                };
+                use nexo_setup::config_tool_bridge::{
+                    SetupDenylistChecker, SetupYamlPatchApplier,
+                };
+                let proposals_dir =
+                    nexo_project_tracker::state::nexo_state_dir().join("config-proposals");
+                std::fs::create_dir_all(&proposals_dir).ok();
+                let binding_id = agent_cfg
+                    .inbound_bindings
+                    .first()
+                    .map(|b| format!("{}:{}", b.plugin, b.instance.as_deref().unwrap_or("default")))
+                    .unwrap_or_else(|| agent_id.clone());
+                // For the actor origin, default to the binding's
+                // first plugin instance with empty sender (the
+                // approval correlator only matches on (channel,
+                // account_id) anyway). Per-call override would land
+                // when AgentContext gains the inbound origin.
+                let actor_origin = agent_cfg
+                    .inbound_bindings
+                    .first()
+                    .map(|b| ActorOrigin {
+                        channel: b.plugin.clone(),
+                        account_id: b.instance.clone().unwrap_or_else(|| "default".into()),
+                        sender_id: String::new(),
+                    })
+                    .unwrap_or(ActorOrigin {
+                        channel: "internal".into(),
+                        account_id: agent_id.clone(),
+                        sender_id: String::new(),
+                    });
+                let applier = std::sync::Arc::new(SetupYamlPatchApplier::new(
+                    agents_yaml.clone(),
+                    binding_id.clone(),
+                ));
+                let denylist = std::sync::Arc::new(SetupDenylistChecker);
+                let redactor = std::sync::Arc::new(DefaultSecretRedactor);
+                let cfg_tool = ConfigTool {
+                    agent_id: agent_id.clone(),
+                    binding_id: binding_id.clone(),
+                    allowed_paths: agent_cfg.config_tool.allowed_paths.clone(),
+                    approval_timeout_secs: agent_cfg.config_tool.approval_timeout_secs,
+                    proposals_dir,
+                    actor_origin,
+                    applier,
+                    denylist,
+                    redactor,
+                    changes_store: std::sync::Arc::clone(store)
+                        as std::sync::Arc<dyn nexo_core::config_changes_store::ConfigChangesStore>,
+                    correlator: std::sync::Arc::clone(correlator),
+                    reload: std::sync::Arc::clone(reload),
+                    pending_receivers: std::sync::Arc::new(tokio::sync::Mutex::new(
+                        Default::default(),
+                    )),
+                };
+                tools.register(ConfigTool::tool_def(), cfg_tool);
+                tracing::info!(
+                    agent = %agent_id,
+                    binding = %binding_id,
+                    allowed_paths = ?agent_cfg.config_tool.allowed_paths,
+                    "[config] registered Config tool (gated)"
+                );
+            } else {
+                tracing::warn!(
+                    agent = %agent_id,
+                    "[config] config_tool.self_edit = true but supporting infra missing — Config tool not registered"
+                );
+            }
+        }
+
 
         // FOLLOWUPS W-2 — `web_fetch` tool. Sibling of `web_search`,
         // shares the runtime's LinkExtractor + cache + telemetry.
@@ -2778,6 +2985,17 @@ async fn main() -> Result<()> {
         .await
     {
         tracing::warn!(error = %e, "config reload coordinator failed to start — hot-reload disabled");
+    }
+
+    // Phase 79.10.b — late-bind the reload coord into the
+    // ConfigTool's reload trigger. The trigger was constructed
+    // before the agent loop (so the per-agent registration could
+    // hold an `Arc<dyn ReloadTrigger>` upfront); now that the
+    // coordinator exists we resolve the OnceCell. After this point
+    // a `Config { op: apply }` call drives `coord.reload()`.
+    #[cfg(feature = "config-self-edit")]
+    if let Some(cell) = reload_cell.as_ref() {
+        let _ = cell.set(Arc::clone(&reload_coord));
     }
 
     // Phase 79.7 runtime firing — spawn ONE cron runner per

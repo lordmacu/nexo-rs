@@ -12,6 +12,14 @@ documentation = { workspace = true }
 readme        = "README.md"
 keywords      = { workspace = true }
 categories    = { workspace = true }
+[features]
+default = []
+# Phase 79.10 — propagate the gate from nexo-core. When this
+# feature is on, `crates/setup/src/config_tool_bridge.rs`
+# compiles and exposes the concrete `YamlPatchApplier` +
+# `DenylistChecker` impls main.rs wires per-agent.
+config-self-edit = ["nexo-core/config-self-edit"]
+
 [dependencies]
 nexo-config = { version = "0.1.1", path = "../config" }
 nexo-plugin-email = { version = "0.1.1", path = "../plugins/email" }

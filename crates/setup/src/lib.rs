@@ -22,6 +22,8 @@
 
 pub mod agent_wizard;
 pub mod capabilities;
+#[cfg(feature = "config-self-edit")]
+pub mod config_tool_bridge;
 pub mod credentials_check;
 pub mod pairing_check;
 pub mod prompt;
