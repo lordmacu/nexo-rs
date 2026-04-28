@@ -1246,7 +1246,7 @@ mod tests {
         allowed: Vec<String>,
         reload: Arc<dyn ReloadTrigger>,
     ) -> ConfigTool {
-        let dir = tempfile::tempdir().unwrap().into_path();
+        let dir = tempfile::tempdir().unwrap().keep();
         build_tool_with_reload_in_dir(applier, denylist, allowed, reload, dir).await
     }
 
