@@ -35,12 +35,12 @@ pub mod session;
 pub mod types;
 
 pub use error::LspError;
+pub use launcher::LspLauncher;
 pub use types::{
     language_for_extension, matrix_entry, LspLanguage, LspRequest, LspToolOutput,
     ResolvedCapabilities, ServerStatus, SessionState, LANGUAGE_MATRIX,
 };
 
 // Re-exports activated as each module is implemented:
-// pub use launcher::LspLauncher;
 // pub use manager::LspManager;
 // pub use session::{LspSession, SessionConfig};
