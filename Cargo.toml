@@ -40,6 +40,7 @@ members = [
     "crates/dispatch-tools",
     "crates/companion-tui",
     "crates/lsp",
+    "crates/team-store",
     # Phase 76.15 — MCP server skeleton extension. Member because
     # we want CI / `cargo build --workspace` to keep it green; it
     # depends on `nexo-mcp` via in-tree path dep. Operators copy
