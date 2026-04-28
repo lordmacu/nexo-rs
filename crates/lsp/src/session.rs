@@ -184,11 +184,7 @@ impl LspSession {
         match self.do_start().await {
             Ok(client) => {
                 *self.state.write().await = SessionState::Running;
-                let arc = self
-                    .client
-                    .get_or_init(|| async { client })
-                    .await
-                    .clone();
+                let arc = self.client.get_or_init(|| async { client }).await.clone();
                 tracing::info!(
                     target: "lsp::session::start",
                     language = %self.language,
@@ -270,16 +266,14 @@ impl LspSession {
             let language_id = match self.language {
                 LspLanguage::Rust => "rust",
                 LspLanguage::Python => "python",
-                LspLanguage::TypeScript => match absolute
-                    .extension()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("")
-                {
-                    "tsx" => "typescriptreact",
-                    "jsx" => "javascriptreact",
-                    "js" | "mjs" | "cjs" => "javascript",
-                    _ => "typescript",
-                },
+                LspLanguage::TypeScript => {
+                    match absolute.extension().and_then(|s| s.to_str()).unwrap_or("") {
+                        "tsx" => "typescriptreact",
+                        "jsx" => "javascriptreact",
+                        "js" | "mjs" | "cjs" => "javascript",
+                        _ => "typescript",
+                    }
+                }
                 LspLanguage::Go => "go",
             };
             client.notify_raw(
@@ -440,7 +434,11 @@ mod tests {
         // Wait so any update would be measurable.
         tokio::time::sleep(Duration::from_millis(2)).await;
         s.touch(true);
-        assert_eq!(s.last_activity_ms(), before, "synthetic origin must not touch");
+        assert_eq!(
+            s.last_activity_ms(),
+            before,
+            "synthetic origin must not touch"
+        );
         s.touch(false);
         assert!(
             s.last_activity_ms() > before,
@@ -460,7 +458,13 @@ mod tests {
         );
         s.mark_unavailable().await;
         let err = s.ensure_started().await.unwrap_err();
-        assert!(matches!(err, LspError::ServerUnavailable { language: LspLanguage::Rust, .. }));
+        assert!(matches!(
+            err,
+            LspError::ServerUnavailable {
+                language: LspLanguage::Rust,
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
@@ -470,8 +474,10 @@ mod tests {
         let big_content = "x".repeat(11_000_000);
         std::fs::write(&big_path, big_content).unwrap();
 
-        let mut cfg = SessionConfig::default();
-        cfg.max_file_bytes = 10_000_000;
+        let cfg = SessionConfig {
+            max_file_bytes: 10_000_000,
+            ..SessionConfig::default()
+        };
         let s = LspSession::new(
             LspLanguage::Rust,
             dir.path().to_path_buf(),
@@ -500,10 +506,7 @@ mod tests {
             .ensure_open(&dir.path().join("missing.rs"))
             .await
             .unwrap_err();
-        assert!(
-            matches!(err, LspError::FileNotFound { .. }),
-            "got: {err:?}"
-        );
+        assert!(matches!(err, LspError::FileNotFound { .. }), "got: {err:?}");
     }
 
     #[tokio::test]
@@ -522,8 +525,10 @@ mod tests {
 
     #[tokio::test]
     async fn restart_count_caps_at_max_restarts() {
-        let mut cfg = SessionConfig::default();
-        cfg.max_restarts = 2;
+        let cfg = SessionConfig {
+            max_restarts: 2,
+            ..SessionConfig::default()
+        };
         let s = LspSession::new(
             LspLanguage::Rust,
             PathBuf::from("/tmp"),

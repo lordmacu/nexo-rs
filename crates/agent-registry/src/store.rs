@@ -15,7 +15,7 @@ use sqlx::{Row, SqlitePool};
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::types::{AgentHandle, AgentRunStatus};
+use crate::types::{AgentHandle, AgentRunStatus, AgentSleepState};
 
 const SCHEMA_VERSION: i64 = 1;
 
@@ -179,20 +179,16 @@ impl SqliteAgentRegistryStore {
         )
         .execute(pool)
         .await?;
-        // Phase 79.1 — additive column for plan-mode state. Older DBs
-        // miss this column; ALTER TABLE ... ADD COLUMN is fast (no row
-        // rewrite) and idempotent here because we tolerate the
-        // "duplicate column name" error so migrate() stays callable on
-        // every boot.
-        let alter = sqlx::query("ALTER TABLE agent_registry ADD COLUMN plan_mode TEXT")
-            .execute(pool)
-            .await;
-        if let Err(e) = alter {
-            let msg = e.to_string();
-            if !msg.contains("duplicate column") {
-                return Err(e.into());
-            }
-        }
+        add_column_if_missing(pool, "plan_mode TEXT").await?;
+        add_column_if_missing(pool, "sleep_wake_at INTEGER").await?;
+        add_column_if_missing(pool, "sleep_duration_ms INTEGER").await?;
+        add_column_if_missing(pool, "sleep_reason TEXT").await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_agent_registry_sleep_wake_at \
+                 ON agent_registry(sleep_wake_at)",
+        )
+        .execute(pool)
+        .await?;
         sqlx::query(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))
             .execute(pool)
             .await?;
@@ -207,9 +203,28 @@ fn from_unix(secs: i64) -> DateTime<Utc> {
     Utc.timestamp_opt(secs, 0).single().unwrap_or_else(Utc::now)
 }
 
+async fn add_column_if_missing(
+    pool: &SqlitePool,
+    column_sql: &str,
+) -> Result<(), AgentRegistryStoreError> {
+    let alter = sqlx::query(&format!(
+        "ALTER TABLE agent_registry ADD COLUMN {column_sql}"
+    ))
+    .execute(pool)
+    .await;
+    if let Err(e) = alter {
+        let msg = e.to_string();
+        if !msg.contains("duplicate column") {
+            return Err(e.into());
+        }
+    }
+    Ok(())
+}
+
 fn parse_status(s: &str) -> Result<AgentRunStatus, AgentRegistryStoreError> {
     Ok(match s {
         "running" => AgentRunStatus::Running,
+        "sleeping" => AgentRunStatus::Sleeping,
         "queued" => AgentRunStatus::Queued,
         "paused" => AgentRunStatus::Paused,
         "done" => AgentRunStatus::Done,
@@ -241,6 +256,19 @@ fn row_to_handle(row: &sqlx::sqlite::SqliteRow) -> Result<AgentHandle, AgentRegi
     // the whole handle blob.
     let plan_mode: Option<String> = row.try_get("plan_mode").unwrap_or(None);
     handle.plan_mode = plan_mode;
+    let sleep_wake_at: Option<i64> = row.try_get("sleep_wake_at").unwrap_or(None);
+    let sleep_duration_ms: Option<i64> = row.try_get("sleep_duration_ms").unwrap_or(None);
+    let sleep_reason: Option<String> = row.try_get("sleep_reason").unwrap_or(None);
+    handle.snapshot.sleep = match (sleep_wake_at, sleep_duration_ms, sleep_reason) {
+        (Some(wake_at), Some(duration_ms), Some(reason)) if duration_ms >= 0 => {
+            Some(AgentSleepState {
+                wake_at: from_unix(wake_at),
+                duration_ms: duration_ms as u64,
+                reason,
+            })
+        }
+        _ => None,
+    };
     Ok(handle)
 }
 
@@ -249,15 +277,19 @@ impl AgentRegistryStore for SqliteAgentRegistryStore {
     async fn upsert(&self, handle: &AgentHandle) -> Result<(), AgentRegistryStoreError> {
         let json = serde_json::to_string(handle)
             .map_err(|e| AgentRegistryStoreError::Json(e.to_string()))?;
+        let sleep = handle.snapshot.sleep.as_ref();
         sqlx::query(
-            "INSERT INTO agent_registry (goal_id, phase_id, status, started_at, finished_at, handle_json, plan_mode) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+            "INSERT INTO agent_registry (goal_id, phase_id, status, started_at, finished_at, handle_json, plan_mode, sleep_wake_at, sleep_duration_ms, sleep_reason) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
              ON CONFLICT(goal_id) DO UPDATE SET \
                  phase_id     = excluded.phase_id, \
                  status       = excluded.status, \
                  finished_at  = excluded.finished_at, \
                  handle_json  = excluded.handle_json, \
-                 plan_mode    = excluded.plan_mode",
+                 plan_mode    = excluded.plan_mode, \
+                 sleep_wake_at = excluded.sleep_wake_at, \
+                 sleep_duration_ms = excluded.sleep_duration_ms, \
+                 sleep_reason = excluded.sleep_reason",
         )
         .bind(handle.goal_id.0.to_string())
         .bind(&handle.phase_id)
@@ -266,6 +298,9 @@ impl AgentRegistryStore for SqliteAgentRegistryStore {
         .bind(handle.finished_at.map(unix))
         .bind(json)
         .bind(handle.plan_mode.as_deref())
+        .bind(sleep.map(|s| unix(s.wake_at)))
+        .bind(sleep.map(|s| s.duration_ms as i64))
+        .bind(sleep.map(|s| s.reason.as_str()))
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -273,7 +308,7 @@ impl AgentRegistryStore for SqliteAgentRegistryStore {
 
     async fn get(&self, goal_id: GoalId) -> Result<Option<AgentHandle>, AgentRegistryStoreError> {
         let row = sqlx::query(
-            "SELECT goal_id, phase_id, status, started_at, finished_at, handle_json, plan_mode \
+            "SELECT goal_id, phase_id, status, started_at, finished_at, handle_json, plan_mode, sleep_wake_at, sleep_duration_ms, sleep_reason \
              FROM agent_registry WHERE goal_id = ?1 LIMIT 1",
         )
         .bind(goal_id.0.to_string())
@@ -284,7 +319,7 @@ impl AgentRegistryStore for SqliteAgentRegistryStore {
 
     async fn list(&self) -> Result<Vec<AgentHandle>, AgentRegistryStoreError> {
         let rows = sqlx::query(
-            "SELECT goal_id, phase_id, status, started_at, finished_at, handle_json, plan_mode \
+            "SELECT goal_id, phase_id, status, started_at, finished_at, handle_json, plan_mode, sleep_wake_at, sleep_duration_ms, sleep_reason \
              FROM agent_registry ORDER BY started_at DESC",
         )
         .fetch_all(&self.pool)
@@ -301,7 +336,7 @@ impl AgentRegistryStore for SqliteAgentRegistryStore {
         status: AgentRunStatus,
     ) -> Result<Vec<AgentHandle>, AgentRegistryStoreError> {
         let rows = sqlx::query(
-            "SELECT goal_id, phase_id, status, started_at, finished_at, handle_json, plan_mode \
+            "SELECT goal_id, phase_id, status, started_at, finished_at, handle_json, plan_mode, sleep_wake_at, sleep_duration_ms, sleep_reason \
              FROM agent_registry WHERE status = ?1 ORDER BY started_at DESC",
         )
         .bind(status.as_str())

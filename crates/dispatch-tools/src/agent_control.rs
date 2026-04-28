@@ -16,12 +16,68 @@
 //! tool wrapper serialises into Value.
 
 use std::sync::Arc;
+use std::time::Duration;
 
-use nexo_agent_registry::{AgentRegistry, AgentRunStatus};
+use chrono::Utc;
+use nexo_agent_registry::{AgentRegistry, AgentRunStatus, AskPendingState};
 use nexo_driver_loop::DriverOrchestrator;
 use nexo_driver_types::GoalId;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use crate::hooks::{
+    CompletionHook, HookAction, HookDispatcher, HookPayload, HookTransition, HookTrigger,
+};
+
+fn spawn_ask_timeout_task(
+    goal_id: GoalId,
+    question_id: String,
+    wait_secs: u64,
+    orchestrator: Arc<DriverOrchestrator>,
+    registry: Arc<AgentRegistry>,
+    hook_dispatcher: Option<Arc<dyn HookDispatcher>>,
+) {
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(wait_secs.max(1))).await;
+        let Some(h) = registry.handle(goal_id) else {
+            return;
+        };
+        if h.status != AgentRunStatus::Paused {
+            return;
+        }
+        let pending_matches = h
+            .snapshot
+            .ask_pending
+            .as_ref()
+            .map(|p| p.question_id == question_id)
+            .unwrap_or(false);
+        if !pending_matches {
+            return;
+        }
+        let _ = orchestrator.cancel_goal(goal_id);
+        let _ = registry.set_ask_pending(goal_id, None).await;
+        let _ = registry
+            .set_status(goal_id, AgentRunStatus::Cancelled)
+            .await;
+        if let (Some(dispatcher), Some(origin)) = (hook_dispatcher, h.origin.clone()) {
+            let hook = CompletionHook {
+                id: format!("ask-user-timeout-{}", uuid::Uuid::new_v4()),
+                on: HookTrigger::Cancelled,
+                action: HookAction::NotifyOrigin,
+            };
+            let payload = HookPayload {
+                goal_id,
+                phase_id: h.phase_id,
+                transition: HookTransition::Cancelled,
+                summary: "[abandoned] ask_user_question timeout reached; goal cancelled.".into(),
+                elapsed: String::new(),
+                diff_stat: None,
+                origin: Some(origin),
+            };
+            let _ = dispatcher.dispatch(&hook, &payload).await;
+        }
+    });
+}
 
 #[derive(Debug, Error)]
 pub enum AgentControlError {
@@ -83,6 +139,130 @@ pub struct PauseAgentInput {
 pub struct PauseAgentOutput {
     pub goal_id: GoalId,
     pub paused: bool,
+}
+
+fn default_ask_timeout_secs() -> u64 {
+    3600
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct AskUserQuestionInput {
+    pub goal_id: GoalId,
+    pub question: String,
+    #[serde(default = "default_ask_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct AskUserQuestionOutput {
+    pub goal_id: GoalId,
+    pub paused: bool,
+    pub asked: bool,
+    pub timeout_secs: u64,
+}
+
+pub async fn ask_user_question(
+    input: AskUserQuestionInput,
+    orchestrator: Arc<DriverOrchestrator>,
+    registry: Arc<AgentRegistry>,
+    hook_dispatcher: Option<Arc<dyn HookDispatcher>>,
+) -> Result<AskUserQuestionOutput, AgentControlError> {
+    let question_id = uuid::Uuid::new_v4().to_string();
+    let paused = orchestrator.pause_goal(input.goal_id);
+    if paused {
+        registry
+            .set_status(input.goal_id, AgentRunStatus::Paused)
+            .await
+            .map_err(|e| AgentControlError::Registry(e.to_string()))?;
+    }
+    registry
+        .set_ask_pending(
+            input.goal_id,
+            Some(AskPendingState {
+                question_id: question_id.clone(),
+                question: input.question.clone(),
+                asked_at: Utc::now(),
+                timeout_secs: input.timeout_secs.max(1),
+            }),
+        )
+        .await
+        .map_err(|e| AgentControlError::Registry(e.to_string()))?;
+    let mut asked = false;
+    if let (Some(dispatcher), Some(handle)) =
+        (hook_dispatcher.clone(), registry.handle(input.goal_id))
+    {
+        if let Some(origin) = handle.origin.clone() {
+            let hook = CompletionHook {
+                id: format!("ask-user-question-{}", uuid::Uuid::new_v4()),
+                on: HookTrigger::Progress { every_turns: 1 },
+                action: HookAction::NotifyOrigin,
+            };
+            let payload = HookPayload {
+                goal_id: input.goal_id,
+                phase_id: handle.phase_id.clone(),
+                transition: HookTransition::Progress,
+                summary: format!(
+                    "[question] {}\n[question_id] {}\n\nReply in this same chat to continue this goal.",
+                    input.question, question_id
+                ),
+                elapsed: String::new(),
+                diff_stat: None,
+                origin: Some(origin),
+            };
+            if dispatcher.dispatch(&hook, &payload).await.is_ok() {
+                asked = true;
+            }
+        }
+    }
+
+    let timeout_secs = input.timeout_secs.max(1);
+    spawn_ask_timeout_task(
+        input.goal_id,
+        question_id,
+        timeout_secs,
+        Arc::clone(&orchestrator),
+        Arc::clone(&registry),
+        hook_dispatcher,
+    );
+
+    Ok(AskUserQuestionOutput {
+        goal_id: input.goal_id,
+        paused,
+        asked,
+        timeout_secs,
+    })
+}
+
+/// Phase 77.16 — boot-time timeout rearm after registry reattach.
+/// Scans paused goals with `ask_pending` and recreates in-memory timeout
+/// tasks with the remaining duration.
+pub async fn rearm_ask_user_timeouts(
+    orchestrator: Arc<DriverOrchestrator>,
+    registry: Arc<AgentRegistry>,
+    hook_dispatcher: Option<Arc<dyn HookDispatcher>>,
+) -> usize {
+    let now = Utc::now();
+    let mut armed = 0usize;
+    for h in registry.list_handles_in_memory() {
+        if h.status != AgentRunStatus::Paused {
+            continue;
+        }
+        let Some(p) = h.snapshot.ask_pending.clone() else {
+            continue;
+        };
+        let elapsed = (now - p.asked_at).num_seconds().max(0) as u64;
+        let remaining = p.timeout_secs.saturating_sub(elapsed);
+        spawn_ask_timeout_task(
+            h.goal_id,
+            p.question_id,
+            remaining,
+            Arc::clone(&orchestrator),
+            Arc::clone(&registry),
+            hook_dispatcher.clone(),
+        );
+        armed += 1;
+    }
+    armed
 }
 
 pub async fn pause_agent(

@@ -481,9 +481,13 @@ impl AccountWorker {
                 };
                 let topic = inbound_topic_for(&self.account_cfg.instance);
                 let payload = serde_json::to_value(&event)?;
-                self.broker
-                    .publish(&topic, Event::new(topic.clone(), SOURCE, payload))
-                    .await?;
+                let mut outbound = Event::new(topic.clone(), SOURCE, payload);
+                // Keep the runtime session stable across the same email thread
+                // so autonomous follow-up turns rehydrate the right context.
+                if let Some(root) = event.thread_root_id.as_deref() {
+                    outbound.session_id = Some(crate::threading::session_id_for_thread(root));
+                }
+                self.broker.publish(&topic, outbound).await?;
                 self.note_message().await;
                 crate::metrics::inc_messages_fetched(&self.account_cfg.instance);
             }

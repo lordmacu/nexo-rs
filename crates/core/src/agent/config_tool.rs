@@ -7,10 +7,11 @@
 //! the full proposal-staging + approval-correlator + reload-rollback
 //! flow.
 //!
-//! The handler ignores `_ctx` for now; per-binding policy resolution
-//! (selection of agent, allowed_paths, approval_timeout) happens at
-//! construction time. main.rs (step 11) constructs one ConfigTool
-//! per agent.
+//! Per-binding policy resolution (selection of agent, allowed_paths,
+//! approval_timeout) happens at construction time. Per-turn actor
+//! origin (`channel/account/sender`) is resolved from `AgentContext`
+//! when `op="propose"` is called so approvals route back to the
+//! inbound source that initiated the change.
 //!
 //! Cycle resolution: `nexo-core` cannot depend on `nexo-setup` (the
 //! reverse already exists), so the YAML write helpers + denylist
@@ -107,10 +108,7 @@ impl PatchOp {
 #[derive(Debug, thiserror::Error)]
 pub enum PatchAppliedError {
     #[error("path `{path}` denied (matched glob `{matched_glob}`)")]
-    Forbidden {
-        path: String,
-        matched_glob: String,
-    },
+    Forbidden { path: String, matched_glob: String },
     #[error("io: {0}")]
     Io(String),
     #[error("yaml: {0}")]
@@ -184,9 +182,7 @@ pub struct ConfigTool {
         tokio::sync::Mutex<
             std::collections::HashMap<
                 String,
-                tokio::sync::oneshot::Receiver<
-                    crate::agent::approval_correlator::ApprovalDecision,
-                >,
+                tokio::sync::oneshot::Receiver<crate::agent::approval_correlator::ApprovalDecision>,
             >,
         >,
     >,
@@ -355,14 +351,14 @@ Rules:
 
 #[async_trait]
 impl ToolHandler for ConfigTool {
-    async fn call(&self, _ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
+    async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
         let op = args
             .get("op")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Config: missing required field `op`"))?;
         match op {
             "read" => self.handle_read(args).await,
-            "propose" => self.handle_propose(args).await,
+            "propose" => self.handle_propose(ctx, args).await,
             "apply" => self.handle_apply(args).await,
             other => Ok(json!({
                 "ok": false,
@@ -374,6 +370,127 @@ impl ToolHandler for ConfigTool {
 }
 
 impl ConfigTool {
+    pub async fn recover_pending_from_staging(&self) -> anyhow::Result<usize> {
+        let entries = match std::fs::read_dir(&self.proposals_dir) {
+            Ok(e) => e,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(e) => return Err(anyhow::anyhow!("read proposals dir: {e}")),
+        };
+
+        let now = chrono::Utc::now().timestamp();
+        let mut recovered = 0usize;
+        for entry in entries {
+            let path = match entry {
+                Ok(e) => e.path(),
+                Err(e) => {
+                    tracing::warn!(error = %e, "[config] unreadable proposals dir entry");
+                    continue;
+                }
+            };
+            if path.extension().and_then(|s| s.to_str()) != Some("yaml") {
+                continue;
+            }
+
+            let bytes = match std::fs::read(&path) {
+                Ok(b) => b,
+                Err(e) => {
+                    tracing::warn!(path = %path.display(), error = %e, "[config] could not read staged proposal during recovery");
+                    continue;
+                }
+            };
+            let staged: StagedProposal = match serde_yaml::from_slice(&bytes) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!(path = %path.display(), error = %e, "[config] could not parse staged proposal during recovery");
+                    continue;
+                }
+            };
+
+            if staged.agent_id != self.agent_id || staged.binding_id != self.binding_id {
+                continue;
+            }
+            if staged.expires_at <= now {
+                let _ = std::fs::remove_file(&path);
+                continue;
+            }
+            {
+                let pending = self.pending_receivers.lock().await;
+                if pending.contains_key(&staged.patch_id) {
+                    continue;
+                }
+            }
+            let pending = crate::agent::approval_correlator::PendingApproval {
+                patch_id: staged.patch_id.clone(),
+                binding_id: staged.binding_id.clone(),
+                agent_id: staged.agent_id.clone(),
+                channel: staged.actor.channel.clone(),
+                account_id: staged.actor.account_id.clone(),
+                sender_id: staged.actor.sender_id.clone(),
+                created_at: staged.created_at,
+                expires_at: staged.expires_at,
+            };
+            let rx = self.correlator.park(pending);
+            self.pending_receivers
+                .lock()
+                .await
+                .insert(staged.patch_id, rx);
+            recovered = recovered.saturating_add(1);
+        }
+
+        Ok(recovered)
+    }
+
+    async fn recover_receiver_for_patch(
+        &self,
+        patch_id: &str,
+    ) -> Result<
+        Option<tokio::sync::oneshot::Receiver<crate::agent::approval_correlator::ApprovalDecision>>,
+        PatchAppliedError,
+    > {
+        let staging_path = self.proposals_dir.join(format!("{patch_id}.yaml"));
+        let bytes = match std::fs::read(&staging_path) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(PatchAppliedError::Io(format!("read staging: {e}"))),
+        };
+        let staged: StagedProposal = serde_yaml::from_slice(&bytes)
+            .map_err(|e| PatchAppliedError::Yaml(format!("parse staging: {e}")))?;
+
+        if staged.patch_id != patch_id {
+            return Ok(None);
+        }
+        if staged.agent_id != self.agent_id || staged.binding_id != self.binding_id {
+            return Ok(None);
+        }
+        if staged.expires_at <= chrono::Utc::now().timestamp() {
+            let _ = std::fs::remove_file(&staging_path);
+            return Ok(None);
+        }
+
+        let pending = crate::agent::approval_correlator::PendingApproval {
+            patch_id: staged.patch_id,
+            binding_id: staged.binding_id,
+            agent_id: staged.agent_id,
+            channel: staged.actor.channel,
+            account_id: staged.actor.account_id,
+            sender_id: staged.actor.sender_id,
+            created_at: staged.created_at,
+            expires_at: staged.expires_at,
+        };
+        Ok(Some(self.correlator.park(pending)))
+    }
+
+    fn resolve_actor_origin(&self, ctx: &AgentContext) -> ActorOrigin {
+        match ctx.inbound_origin.as_ref() {
+            Some((channel, account_id, sender_id)) => ActorOrigin {
+                channel: channel.clone(),
+                account_id: account_id.clone(),
+                sender_id: sender_id.clone(),
+            },
+            None => self.actor_origin.clone(),
+        }
+    }
+
     async fn handle_read(&self, args: Value) -> anyhow::Result<Value> {
         let key = args
             .get("key")
@@ -437,7 +554,7 @@ impl ConfigTool {
         }))
     }
 
-    async fn handle_propose(&self, args: Value) -> anyhow::Result<Value> {
+    async fn handle_propose(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
         let key = args
             .get("key")
             .and_then(|v| v.as_str())
@@ -498,7 +615,10 @@ impl ConfigTool {
         // Build the patch.
         let patch_id = format!(
             "01J{}",
-            uuid::Uuid::new_v4().simple().to_string().to_ascii_uppercase()
+            uuid::Uuid::new_v4()
+                .simple()
+                .to_string()
+                .to_ascii_uppercase()
         );
         let now = chrono::Utc::now().timestamp();
         let expires_at = now + self.approval_timeout_secs as i64;
@@ -534,6 +654,7 @@ impl ConfigTool {
             justification: justification.clone(),
             op,
         };
+        let actor_origin = self.resolve_actor_origin(ctx);
 
         // Park with the correlator BEFORE writing the staging file —
         // pending entry must exist before the operator's potential
@@ -542,9 +663,9 @@ impl ConfigTool {
             patch_id: patch_id.clone(),
             binding_id: self.binding_id.clone(),
             agent_id: self.agent_id.clone(),
-            channel: self.actor_origin.channel.clone(),
-            account_id: self.actor_origin.account_id.clone(),
-            sender_id: self.actor_origin.sender_id.clone(),
+            channel: actor_origin.channel.clone(),
+            account_id: actor_origin.account_id.clone(),
+            sender_id: actor_origin.sender_id.clone(),
             created_at: now,
             expires_at,
         };
@@ -562,6 +683,8 @@ impl ConfigTool {
 
         // Write staging file.
         if let Err(e) = std::fs::create_dir_all(&self.proposals_dir) {
+            self.pending_receivers.lock().await.remove(&patch_id);
+            let _ = self.correlator.cancel_patch(&patch_id);
             return Ok(json!({
                 "ok": false,
                 "error": format!("could not create proposals dir: {e}"),
@@ -576,13 +699,30 @@ impl ConfigTool {
             created_at: now,
             expires_at,
             justification: justification.clone(),
-            actor: self.actor_origin.clone(),
+            actor: actor_origin,
             patch: SerializablePatch::from(&patch),
         };
-        let yaml = serde_yaml::to_string(&staged)
-            .map_err(|e| anyhow::anyhow!("serialise staging: {e}"))?;
-        std::fs::write(&staging_path, yaml)
-            .map_err(|e| anyhow::anyhow!("write staging: {e}"))?;
+        let yaml = match serde_yaml::to_string(&staged) {
+            Ok(y) => y,
+            Err(e) => {
+                self.pending_receivers.lock().await.remove(&patch_id);
+                let _ = self.correlator.cancel_patch(&patch_id);
+                return Ok(json!({
+                    "ok": false,
+                    "error": format!("serialise staging: {e}"),
+                    "kind": "Yaml",
+                }));
+            }
+        };
+        if let Err(e) = std::fs::write(&staging_path, yaml) {
+            self.pending_receivers.lock().await.remove(&patch_id);
+            let _ = self.correlator.cancel_patch(&patch_id);
+            return Ok(json!({
+                "ok": false,
+                "error": format!("write staging: {e}"),
+                "kind": "Io",
+            }));
+        }
 
         // Audit row.
         let _ = self
@@ -631,14 +771,41 @@ impl ConfigTool {
         let rx = self.pending_receivers.lock().await.remove(&patch_id);
         let rx = match rx {
             Some(r) => r,
-            None => {
-                return Ok(json!({
-                    "ok": false,
-                    "error": format!("no pending proposal for patch_id `{patch_id}` (expired or already consumed)"),
-                    "kind": "NoPending",
-                    "patch_id": patch_id,
-                }))
-            }
+            None => match self.recover_receiver_for_patch(&patch_id).await {
+                Ok(Some(r)) => r,
+                Ok(None) => {
+                    return Ok(json!({
+                        "ok": false,
+                        "error": format!("no pending proposal for patch_id `{patch_id}` (expired or already consumed)"),
+                        "kind": "NoPending",
+                        "patch_id": patch_id,
+                    }))
+                }
+                Err(PatchAppliedError::Io(e)) => {
+                    return Ok(json!({
+                        "ok": false,
+                        "error": e,
+                        "kind": "Io",
+                        "patch_id": patch_id,
+                    }))
+                }
+                Err(PatchAppliedError::Yaml(e)) => {
+                    return Ok(json!({
+                        "ok": false,
+                        "error": e,
+                        "kind": "Yaml",
+                        "patch_id": patch_id,
+                    }))
+                }
+                Err(e) => {
+                    return Ok(json!({
+                        "ok": false,
+                        "error": e.to_string(),
+                        "kind": "InternalError",
+                        "patch_id": patch_id,
+                    }))
+                }
+            },
         };
 
         // Re-read staging file (defense-in-depth).
@@ -646,23 +813,31 @@ impl ConfigTool {
         let staging_bytes = match std::fs::read(&staging_path) {
             Ok(b) => b,
             Err(e) => {
+                self.pending_receivers
+                    .lock()
+                    .await
+                    .insert(patch_id.clone(), rx);
                 return Ok(json!({
                     "ok": false,
                     "error": format!("could not read staging file: {e}"),
                     "kind": "Io",
                     "patch_id": patch_id,
-                }))
+                }));
             }
         };
         let staged: StagedProposal = match serde_yaml::from_slice(&staging_bytes) {
             Ok(s) => s,
             Err(e) => {
+                self.pending_receivers
+                    .lock()
+                    .await
+                    .insert(patch_id.clone(), rx);
                 return Ok(json!({
                     "ok": false,
                     "error": format!("could not parse staging file: {e}"),
                     "kind": "Yaml",
                     "patch_id": patch_id,
-                }))
+                }));
             }
         };
 
@@ -873,9 +1048,7 @@ fn yaml_to_json(v: &serde_yaml::Value) -> Value {
             }
         }
         serde_yaml::Value::String(s) => Value::String(s.clone()),
-        serde_yaml::Value::Sequence(seq) => {
-            Value::Array(seq.iter().map(yaml_to_json).collect())
-        }
+        serde_yaml::Value::Sequence(seq) => Value::Array(seq.iter().map(yaml_to_json).collect()),
         serde_yaml::Value::Mapping(m) => {
             let mut out = serde_json::Map::new();
             for (k, v) in m {
@@ -1025,6 +1198,7 @@ mod tests {
             lsp: nexo_config::types::lsp::LspPolicy::default(),
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
             team: nexo_config::types::team::TeamPolicy::default(),
+            proactive: Default::default(),
         };
         AgentContext::new(
             "cody",
@@ -1057,7 +1231,13 @@ mod tests {
         denylist: Arc<dyn DenylistChecker>,
         allowed: Vec<String>,
     ) -> ConfigTool {
-        build_tool_with_reload(applier, denylist, allowed, Arc::new(MockReload::new(Ok(())))).await
+        build_tool_with_reload(
+            applier,
+            denylist,
+            allowed,
+            Arc::new(MockReload::new(Ok(()))),
+        )
+        .await
     }
 
     async fn build_tool_with_reload(
@@ -1066,18 +1246,28 @@ mod tests {
         allowed: Vec<String>,
         reload: Arc<dyn ReloadTrigger>,
     ) -> ConfigTool {
+        let dir = tempfile::tempdir().unwrap().into_path();
+        build_tool_with_reload_in_dir(applier, denylist, allowed, reload, dir).await
+    }
+
+    async fn build_tool_with_reload_in_dir(
+        applier: Arc<dyn YamlPatchApplier>,
+        denylist: Arc<dyn DenylistChecker>,
+        allowed: Vec<String>,
+        reload: Arc<dyn ReloadTrigger>,
+        proposals_dir: std::path::PathBuf,
+    ) -> ConfigTool {
         let store: Arc<dyn crate::config_changes_store::ConfigChangesStore> =
             Arc::new(SqliteConfigChangesStore::open_in_memory().await.unwrap());
         let correlator = crate::agent::approval_correlator::ApprovalCorrelator::new(
             crate::agent::approval_correlator::ApprovalCorrelatorConfig::default(),
         );
-        let dir = tempfile::tempdir().unwrap().into_path();
         ConfigTool {
             agent_id: "cody".into(),
             binding_id: "wa:default".into(),
             allowed_paths: allowed,
             approval_timeout_secs: 86_400,
-            proposals_dir: dir,
+            proposals_dir,
             actor_origin: ActorOrigin {
                 channel: "whatsapp".into(),
                 account_id: "default".into(),
@@ -1232,13 +1422,239 @@ agents:
 
         // Staging file exists.
         let path = tool.proposals_dir.join(format!("{patch_id}.yaml"));
-        assert!(path.exists(), "staging file at `{}` must exist", path.display());
+        assert!(
+            path.exists(),
+            "staging file at `{}` must exist",
+            path.display()
+        );
 
         // Audit row recorded.
         let row = tool.changes_store.get(&patch_id).await.unwrap().unwrap();
         assert_eq!(row.status, "proposed");
         assert_eq!(row.key, "model.model");
         assert_eq!(row.value.unwrap(), "\"claude-opus-4-7\"");
+    }
+
+    #[tokio::test]
+    async fn propose_uses_inbound_origin_from_context_when_available() {
+        let tool = build_tool(
+            Arc::new(MockApplier::new(fixture_yaml())),
+            Arc::new(PermissiveDenylist),
+            vec![],
+        )
+        .await;
+        let ctx = agent_context_fixture().with_inbound_origin("telegram", "sales", "u-42");
+        let res = tool
+            .call(
+                &ctx,
+                json!({
+                    "op": "propose",
+                    "key": "model.model",
+                    "value": "claude-opus-4-7",
+                    "justification": "operator asked"
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res["ok"], true);
+        let patch_id = res["patch_id"].as_str().unwrap().to_string();
+        let path = tool.proposals_dir.join(format!("{patch_id}.yaml"));
+        let staged: StagedProposal = serde_yaml::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(staged.actor.channel, "telegram");
+        assert_eq!(staged.actor.account_id, "sales");
+        assert_eq!(staged.actor.sender_id, "u-42");
+    }
+
+    #[tokio::test]
+    async fn propose_staging_failure_cleans_pending_maps() {
+        let mut tool = build_tool(
+            Arc::new(MockApplier::new(fixture_yaml())),
+            Arc::new(PermissiveDenylist),
+            vec![],
+        )
+        .await;
+        let marker = tempfile::NamedTempFile::new().unwrap();
+        tool.proposals_dir = marker.path().to_path_buf();
+
+        let res = tool
+            .call(
+                &agent_context_fixture(),
+                json!({
+                    "op": "propose",
+                    "key": "model.model",
+                    "value": "claude-opus-4-7",
+                    "justification": "operator asked"
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res["ok"], false);
+        assert_eq!(res["kind"], "Io");
+        assert!(tool.pending_receivers.lock().await.is_empty());
+        assert_eq!(tool.correlator.pending_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn apply_staging_read_error_requeues_receiver() {
+        let tool = build_tool(
+            Arc::new(MockApplier::new(fixture_yaml())),
+            Arc::new(PermissiveDenylist),
+            vec![],
+        )
+        .await;
+        let propose = tool
+            .call(
+                &agent_context_fixture(),
+                json!({
+                    "op": "propose",
+                    "key": "model.model",
+                    "value": "claude-opus-4-7",
+                    "justification": "test"
+                }),
+            )
+            .await
+            .unwrap();
+        let patch_id = propose["patch_id"].as_str().unwrap().to_string();
+        let path = tool.proposals_dir.join(format!("{patch_id}.yaml"));
+        std::fs::remove_file(&path).unwrap();
+
+        let apply = tool
+            .call(
+                &agent_context_fixture(),
+                json!({ "op": "apply", "patch_id": patch_id.clone() }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(apply["ok"], false);
+        assert_eq!(apply["kind"], "Io");
+        let pending = tool.pending_receivers.lock().await;
+        assert!(pending.contains_key(&patch_id));
+    }
+
+    #[tokio::test]
+    async fn boot_recovery_rehydrates_pending_proposals_from_staging() {
+        let tmp = tempfile::tempdir().unwrap();
+        let proposals_dir = tmp.path().to_path_buf();
+
+        let tool_before = build_tool_with_reload_in_dir(
+            Arc::new(MockApplier::new(fixture_yaml())),
+            Arc::new(PermissiveDenylist),
+            vec![],
+            Arc::new(MockReload::new(Ok(()))),
+            proposals_dir.clone(),
+        )
+        .await;
+
+        let propose = tool_before
+            .call(
+                &agent_context_fixture(),
+                json!({
+                    "op": "propose",
+                    "key": "model.model",
+                    "value": "claude-opus-4-7",
+                    "justification": "restart test"
+                }),
+            )
+            .await
+            .unwrap();
+        let patch_id = propose["patch_id"].as_str().unwrap().to_string();
+
+        // Simulated process restart: brand new correlator + empty
+        // in-memory pending map, same proposals_dir on disk.
+        let tool_after = build_tool_with_reload_in_dir(
+            Arc::new(MockApplier::new(fixture_yaml())),
+            Arc::new(PermissiveDenylist),
+            vec![],
+            Arc::new(MockReload::new(Ok(()))),
+            proposals_dir,
+        )
+        .await;
+        assert_eq!(tool_after.pending_receivers.lock().await.len(), 0);
+        assert_eq!(tool_after.correlator.pending_count(), 0);
+
+        let recovered = tool_after.recover_pending_from_staging().await.unwrap();
+        assert_eq!(recovered, 1);
+        assert!(tool_after
+            .pending_receivers
+            .lock()
+            .await
+            .contains_key(&patch_id));
+        assert_eq!(tool_after.correlator.pending_count(), 1);
+
+        tool_after.correlator.on_inbound(
+            crate::agent::approval_correlator::InboundApprovalMessage {
+                channel: "whatsapp".into(),
+                account_id: "default".into(),
+                sender_id: "5511".into(),
+                body: format!("[config-approve patch_id={patch_id}]"),
+                received_at: 0,
+            },
+        );
+
+        let apply = tool_after
+            .call(
+                &agent_context_fixture(),
+                json!({ "op": "apply", "patch_id": patch_id.clone() }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(apply["ok"], true);
+        assert_eq!(apply["applied"], true);
+    }
+
+    #[tokio::test]
+    async fn apply_no_pending_can_recover_receiver_from_staging_file() {
+        let tool = Arc::new(
+            build_tool(
+                Arc::new(MockApplier::new(fixture_yaml())),
+                Arc::new(PermissiveDenylist),
+                vec![],
+            )
+            .await,
+        );
+        let propose = tool
+            .call(
+                &agent_context_fixture(),
+                json!({
+                    "op": "propose",
+                    "key": "model.model",
+                    "value": "claude-opus-4-7",
+                    "justification": "lazy recover test"
+                }),
+            )
+            .await
+            .unwrap();
+        let patch_id = propose["patch_id"].as_str().unwrap().to_string();
+
+        // Simulate lost in-memory map (e.g. old process died before
+        // boot recovery runs).
+        tool.pending_receivers.lock().await.remove(&patch_id);
+        let _ = tool.correlator.cancel_patch(&patch_id);
+
+        let tool_for_apply = Arc::clone(&tool);
+        let patch_for_apply = patch_id.clone();
+        let apply_task = tokio::spawn(async move {
+            tool_for_apply
+                .call(
+                    &agent_context_fixture(),
+                    json!({ "op": "apply", "patch_id": patch_for_apply }),
+                )
+                .await
+                .unwrap()
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        tool.correlator
+            .on_inbound(crate::agent::approval_correlator::InboundApprovalMessage {
+                channel: "whatsapp".into(),
+                account_id: "default".into(),
+                sender_id: "5511".into(),
+                body: format!("[config-approve patch_id={patch_id}]"),
+                received_at: 0,
+            });
+        let apply = apply_task.await.unwrap();
+        assert_eq!(apply["ok"], true);
+        assert_eq!(apply["applied"], true);
     }
 
     #[tokio::test]
@@ -1337,15 +1753,14 @@ agents:
         let patch_id = propose["patch_id"].as_str().unwrap().to_string();
 
         // 2. inject approval message via the same correlator.
-        tool.correlator.on_inbound(
-            crate::agent::approval_correlator::InboundApprovalMessage {
+        tool.correlator
+            .on_inbound(crate::agent::approval_correlator::InboundApprovalMessage {
                 channel: "whatsapp".into(),
                 account_id: "default".into(),
                 sender_id: "5511".into(),
                 body: format!("[config-approve patch_id={patch_id}]"),
                 received_at: 0,
-            },
-        );
+            });
 
         // 3. apply
         let apply = tool
@@ -1392,15 +1807,14 @@ agents:
             .unwrap();
         let patch_id = propose["patch_id"].as_str().unwrap().to_string();
 
-        tool.correlator.on_inbound(
-            crate::agent::approval_correlator::InboundApprovalMessage {
+        tool.correlator
+            .on_inbound(crate::agent::approval_correlator::InboundApprovalMessage {
                 channel: "whatsapp".into(),
                 account_id: "default".into(),
                 sender_id: "5511".into(),
                 body: format!("[config-reject patch_id={patch_id} reason=cost]"),
                 received_at: 0,
-            },
-        );
+            });
 
         let apply = tool
             .call(
@@ -1441,15 +1855,14 @@ agents:
             .unwrap();
         let patch_id = propose["patch_id"].as_str().unwrap().to_string();
 
-        tool.correlator.on_inbound(
-            crate::agent::approval_correlator::InboundApprovalMessage {
+        tool.correlator
+            .on_inbound(crate::agent::approval_correlator::InboundApprovalMessage {
                 channel: "whatsapp".into(),
                 account_id: "default".into(),
                 sender_id: "5511".into(),
                 body: format!("[config-approve patch_id={patch_id}]"),
                 received_at: 0,
-            },
-        );
+            });
 
         let apply = tool
             .call(

@@ -14,6 +14,8 @@ use thiserror::Error;
 pub enum AgentRunStatus {
     /// Spawned and consuming budget.
     Running,
+    /// Parked by proactive Sleep until `AgentSnapshot.sleep.wake_at`.
+    Sleeping,
     /// Admitted but waiting for a slot under the global concurrency cap.
     Queued,
     /// Pause requested — loop will hold before the next turn.
@@ -43,6 +45,7 @@ impl AgentRunStatus {
     pub fn as_str(self) -> &'static str {
         match self {
             AgentRunStatus::Running => "running",
+            AgentRunStatus::Sleeping => "sleeping",
             AgentRunStatus::Queued => "queued",
             AgentRunStatus::Paused => "paused",
             AgentRunStatus::Done => "done",
@@ -51,6 +54,21 @@ impl AgentRunStatus {
             AgentRunStatus::LostOnRestart => "lost_on_restart",
         }
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AgentSleepState {
+    pub wake_at: DateTime<Utc>,
+    pub duration_ms: u64,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AskPendingState {
+    pub question_id: String,
+    pub question: String,
+    pub asked_at: DateTime<Utc>,
+    pub timeout_secs: u64,
 }
 
 /// Live snapshot of one agent — refreshed on every `attempt.completed`
@@ -66,6 +84,15 @@ pub struct AgentSnapshot {
     pub last_event_at: DateTime<Utc>,
     pub last_diff_stat: Option<String>,
     pub last_progress_text: Option<String>,
+    /// Phase 77.20.3 — persisted proactive Sleep state. Stored in
+    /// the JSON snapshot and mirrored to dedicated SQLite columns so
+    /// boot-time restore can list/scan sleeping goals efficiently.
+    #[serde(default)]
+    pub sleep: Option<AgentSleepState>,
+    /// Phase 77.16 — pending AskUserQuestion checkpoint. Persisted so
+    /// reply routing + timeout logic survive daemon restart.
+    #[serde(default)]
+    pub ask_pending: Option<AskPendingState>,
 }
 
 impl Default for AgentSnapshot {
@@ -79,6 +106,8 @@ impl Default for AgentSnapshot {
             last_event_at: Utc::now(),
             last_diff_stat: None,
             last_progress_text: None,
+            sleep: None,
+            ask_pending: None,
         }
     }
 }

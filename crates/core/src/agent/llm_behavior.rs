@@ -1,9 +1,9 @@
-use super::behavior::AgentBehavior;
+use super::behavior::{AgentBehavior, AgentTurnControl};
 use super::context::AgentContext;
 use super::skills::{render_system_blocks as render_skill_blocks, SkillLoader};
 use super::tool_registry::ToolRegistry;
 use super::transcripts::{TranscriptEntry, TranscriptRole, TranscriptWriter};
-use super::types::InboundMessage;
+use super::types::{InboundMessage, MessagePriority, RunTrigger};
 use super::workspace::{SessionScope, WorkspaceLoader};
 use crate::session::types::{Interaction, Role};
 use crate::telemetry::{
@@ -16,6 +16,7 @@ use nexo_broker::{BrokerHandle, Event};
 use nexo_llm::{
     collect_stream, Attachment, ChatMessage, ChatRequest, ChatRole, LlmClient, ResponseContent,
 };
+use nexo_memory::EmailFollowupEntry;
 use std::sync::Arc;
 /// Decide whether a session is a private DM (main) or a shared surface.
 /// `MEMORY.md` loads only for `Main` — shared scopes strip it at load time.
@@ -69,6 +70,27 @@ pub struct LlmAgentBehavior {
     compaction_runtime: CompactionRuntime,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RunTurnOutcome {
+    Reply(Option<String>),
+    Sleep { duration_ms: u64, reason: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ToolExecutionResult {
+    result: String,
+    tool_err: Option<String>,
+    outcome: &'static str,
+    duration_ms: u64,
+    sleep: Option<SleepSignal>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SleepSignal {
+    duration_ms: u64,
+    reason: String,
+}
+
 /// Phase B — flattened compaction config that the agent loop reads on
 /// every turn. Lives alongside the behavior so a hot-reload can swap
 /// the whole struct via `Arc::make_mut` later (Phase F).
@@ -84,6 +106,13 @@ pub struct CompactionRuntime {
     /// Per-tool-result hard cap, in chars. Above this, the body is
     /// replaced by a `[truncated NNN bytes]` marker pre-send.
     pub tool_result_max_chars: usize,
+    /// Phase 77.1 microcompact threshold. Tool results above this
+    /// byte size are summarized before sending the next LLM request.
+    pub micro_threshold_bytes: usize,
+    /// Maximum summary body retained for one microcompacted tool result.
+    pub micro_summary_max_chars: usize,
+    /// Optional model override for microcompact. Empty = current turn model.
+    pub micro_model: String,
     /// Lock TTL for `CompactionStore::try_acquire_lock`. Above this
     /// after a crash, the next acquire wins automatically.
     pub lock_ttl_seconds: u32,
@@ -99,6 +128,9 @@ impl Default for CompactionRuntime {
             compact_at_tokens: 75_000,
             tail_keep_chars: 80_000,       // ≈20K tokens
             tool_result_max_chars: 60_000, // ≈15K tokens; per-turn pre-send only
+            micro_threshold_bytes: 16 * 1024,
+            micro_summary_max_chars: 2048,
+            micro_model: String::new(),
             lock_ttl_seconds: 300,
             summarizer_model: String::new(),
         }
@@ -226,8 +258,9 @@ impl LlmAgentBehavior {
     /// schema → cache lookup → handler → cache store. Caller picks the
     /// concurrency pattern (serial vs `join_all`).
     ///
-    /// Returns `(result_text, tool_err, outcome_label, duration_ms)`;
-    /// telemetry + `after_tool_call` hook are fired by the caller so
+    /// Returns a structured result so control-flow tools (notably
+    /// `Sleep`) can stop the LLM loop without brittle string parsing.
+    /// Telemetry + `after_tool_call` hook are fired by the caller so
     /// those observations stay in LLM-emitted order even when we
     /// parallelise.
     async fn execute_one_call(
@@ -235,7 +268,7 @@ impl LlmAgentBehavior {
         call: &nexo_llm::ToolCall,
         msg: &InboundMessage,
         ctx: &AgentContext,
-    ) -> (String, Option<String>, &'static str, u64) {
+    ) -> ToolExecutionResult {
         let args = inject_runtime_tool_args(&call.name, call.arguments.clone(), msg);
         tracing::debug!(
             agent_id = %ctx.agent_id,
@@ -267,7 +300,13 @@ impl LlmAgentBehavior {
                     tool = %call.name,
                     "plan_mode gate refused tool call"
                 );
-                return (body.to_string(), Some(err), "plan_mode_refused", 0);
+                return ToolExecutionResult {
+                    result: body.to_string(),
+                    tool_err: Some(err),
+                    outcome: "plan_mode_refused",
+                    duration_ms: 0,
+                    sleep: None,
+                };
             }
         }
         // Defense-in-depth: enforce the per-binding `allowed_tools`
@@ -283,7 +322,13 @@ impl LlmAgentBehavior {
                 "tool `{}` is not available on this binding (agent `{}`)",
                 call.name, ctx.agent_id
             );
-            return (msg_str.clone(), Some(msg_str), "not_allowed", 0);
+            return ToolExecutionResult {
+                result: msg_str.clone(),
+                tool_err: Some(msg_str),
+                outcome: "not_allowed",
+                duration_ms: 0,
+                sleep: None,
+            };
         }
         // Phase 11.6 — before_tool_call hook.
         let mut skip_call = None;
@@ -330,18 +375,23 @@ impl LlmAgentBehavior {
             } else {
                 None
             };
-        let (result, tool_err, outcome) = match (skip_call, schema_error) {
-            (Some(msg_str), _) => (msg_str, Some("blocked-by-hook".to_string()), "blocked"),
+        let (result, tool_err, outcome, sleep) = match (skip_call, schema_error) {
+            (Some(msg_str), _) => (
+                msg_str,
+                Some("blocked-by-hook".to_string()),
+                "blocked",
+                None,
+            ),
             (None, _) if !rate_allowed => {
                 let msg_str = format!(
                     "rate limited: exceeded configured rps for tool '{}'",
                     call.name
                 );
-                (msg_str.clone(), Some(msg_str), "rate_limited")
+                (msg_str.clone(), Some(msg_str), "rate_limited", None)
             }
             (None, Some(errs)) => {
                 let msg = format!("invalid arguments: {errs}");
-                (msg.clone(), Some(msg), "invalid_args")
+                (msg.clone(), Some(msg), "invalid_args", None)
             }
             (None, None) => {
                 if let Some(v) = cache_hit {
@@ -350,7 +400,8 @@ impl LlmAgentBehavior {
                         tool = %call.name,
                         "tool cache hit"
                     );
-                    (stringify_tool_result(&v), None, "cache_hit")
+                    let sleep = sleep_signal_from_value(&v);
+                    (stringify_tool_result(&v), None, "cache_hit", sleep)
                 } else {
                     match self.tools.get(&call.name) {
                         Some((_, handler)) => {
@@ -370,16 +421,19 @@ impl LlmAgentBehavior {
                                         &args,
                                         v.clone(),
                                     );
-                                    (stringify_tool_result(&v), None, "ok")
+                                    let sleep = sleep_signal_from_value(&v);
+                                    (stringify_tool_result(&v), None, "ok", sleep)
                                 }
-                                Ok(Err(e)) => (format!("error: {e}"), Some(e.to_string()), "error"),
+                                Ok(Err(e)) => {
+                                    (format!("error: {e}"), Some(e.to_string()), "error", None)
+                                }
                                 Err(_) => {
                                     let msg = format!(
                                         "timeout after {}s for tool '{}'",
                                         to.as_secs(),
                                         call.name
                                     );
-                                    (msg.clone(), Some(msg), "timeout")
+                                    (msg.clone(), Some(msg), "timeout", None)
                                 }
                             }
                         }
@@ -387,6 +441,7 @@ impl LlmAgentBehavior {
                             format!("unknown tool: {}", call.name),
                             Some(format!("unknown tool: {}", call.name)),
                             "unknown",
+                            None,
                         ),
                     }
                 }
@@ -406,14 +461,20 @@ impl LlmAgentBehavior {
             result_preview = %preview,
             "tool executed"
         );
-        (result, tool_err, outcome, duration_ms)
+        ToolExecutionResult {
+            result,
+            tool_err,
+            outcome,
+            duration_ms,
+            sleep,
+        }
     }
     async fn run_turn(
         &self,
         ctx: &AgentContext,
         msg: InboundMessage,
         publish_reply: bool,
-    ) -> anyhow::Result<Option<String>> {
+    ) -> anyhow::Result<RunTurnOutcome> {
         tracing::info!(
             agent_id = %ctx.agent_id,
             session_id = %msg.session_id,
@@ -443,7 +504,7 @@ impl LlmAgentBehavior {
                     reason = ?reason,
                     "before_message hook aborted the turn",
                 );
-                return Ok(None);
+                return Ok(RunTurnOutcome::Reply(None));
             }
         }
         let mut session = ctx.sessions.get_or_create(msg.session_id, &ctx.agent_id);
@@ -598,6 +659,18 @@ impl LlmAgentBehavior {
         // Phase 79.1 — inject the canonical plan-mode hint while
         // plan mode is on. Frozen string keeps the prompt cache warm.
         if let Some(hint) = crate::plan_mode::plan_mode_system_hint(&*ctx.plan_mode.read().await) {
+            channel_meta_parts.push(hint.to_string());
+        }
+        // Phase 77.20 — inject proactive + coordinator hints once (frozen
+        // strings → prompt-cache-friendly, same pattern as plan_mode).
+        if let Some(hint) =
+            crate::agent::proactive_hint::proactive_system_hint(ctx.proactive_enabled)
+        {
+            channel_meta_parts.push(hint.to_string());
+        }
+        if let Some(hint) =
+            crate::agent::proactive_hint::coordinator_system_hint(ctx.binding_role.as_deref())
+        {
             channel_meta_parts.push(hint.to_string());
         }
         let prompt_inputs = super::prompt_assembly::PromptInputs {
@@ -865,14 +938,55 @@ impl LlmAgentBehavior {
             }
         };
         let mut reply_text: Option<String> = None;
+        let mut sleep_signal: Option<SleepSignal> = None;
         for iteration in 0..self.max_tool_iterations {
-            // Phase B — tool-result truncation. Some tools (web fetch,
-            // SQL dump) return payloads big enough to blow the context
-            // window on their own. Replace anything past the cap with
-            // a marker before serializing the request. Operates on a
-            // local clone so the in-memory `messages` retains full
-            // detail for downstream introspection.
+            // Phase 77.1 — microcompact oversized tool results in the
+            // request clone only. The canonical in-memory messages keep
+            // the full body and the tool_call_id/name correlation stays
+            // intact in the compacted clone.
             let mut messages_for_send = messages.clone();
+            if live_compaction && self.compaction_runtime.micro_threshold_bytes > 0 {
+                let stats = if self.compaction_runtime.micro_model.is_empty() {
+                    super::compaction::clear_large_compactable_tool_results(
+                        &mut messages_for_send,
+                        self.compaction_runtime.micro_threshold_bytes,
+                    )
+                } else {
+                    let budget = super::compaction::MicroCompactBudget {
+                        threshold_bytes: self.compaction_runtime.micro_threshold_bytes,
+                        summary_max_chars: self.compaction_runtime.micro_summary_max_chars,
+                        model: self.compaction_runtime.micro_model.clone(),
+                    };
+                    let stats = super::compaction::microcompact_large_tool_results(
+                        &mut messages_for_send,
+                        self.llm.as_ref(),
+                        &budget,
+                    )
+                    .await;
+                    if stats.failed > 0 {
+                        super::compaction::clear_large_compactable_tool_results(
+                            &mut messages_for_send,
+                            self.compaction_runtime.micro_threshold_bytes,
+                        )
+                    } else {
+                        stats
+                    }
+                };
+                if stats.compacted > 0 {
+                    crate::telemetry::observe_compaction(
+                        &ctx.agent_id,
+                        "tool_result_microcompact",
+                        0,
+                    );
+                    tracing::info!(
+                        agent_id = %ctx.agent_id,
+                        compacted = stats.compacted,
+                        original_bytes = stats.original_bytes,
+                        compacted_bytes = stats.compacted_bytes,
+                        "microcompacted tool results before LLM request"
+                    );
+                }
+            }
             if self.compaction_runtime.tool_result_max_chars > 0 {
                 let truncated = super::compaction::truncate_large_tool_results(
                     &mut messages_for_send,
@@ -1008,9 +1122,8 @@ impl LlmAgentBehavior {
                     use std::pin::Pin;
                     type BoxedCallFut<'a> = Pin<
                         Box<
-                            dyn std::future::Future<
-                                    Output = (usize, (String, Option<String>, &'static str, u64)),
-                                > + Send
+                            dyn std::future::Future<Output = (usize, ToolExecutionResult)>
+                                + Send
                                 + 'a,
                         >,
                     >;
@@ -1018,10 +1131,7 @@ impl LlmAgentBehavior {
                         .partition(|i| self.tool_policy.is_parallel_safe(&calls[*i].name));
                     let par_cap = self.tool_policy.parallel_config().max_in_flight;
                     let mut in_flight: FuturesUnordered<BoxedCallFut<'_>> = FuturesUnordered::new();
-                    let mut results_by_idx: HashMap<
-                        usize,
-                        (String, Option<String>, &'static str, u64),
-                    > = HashMap::new();
+                    let mut results_by_idx: HashMap<usize, ToolExecutionResult> = HashMap::new();
                     let mut par_queue = par_idx.into_iter();
                     let msg_ref: &InboundMessage = &msg;
                     let calls_ref: &[nexo_llm::ToolCall] = &calls;
@@ -1063,38 +1173,42 @@ impl LlmAgentBehavior {
                         // an error tool_result so the agent loop keeps
                         // running. Panicking here kills the whole agent
                         // over one missing dispatch — not worth it.
-                        let (result, tool_err, outcome, duration_ms) =
-                            results_by_idx.remove(&i).unwrap_or_else(|| {
-                                tracing::error!(
-                                    session_id = %msg.session_id,
-                                    tool = %call.name,
-                                    index = i,
-                                    "tool call dispatch slot missing — emitting synthetic error"
-                                );
-                                (
-                                    serde_json::json!({
-                                        "error": "internal: tool dispatch slot missing",
-                                    })
-                                    .to_string(),
-                                    Some("tool dispatch slot missing".to_string()),
-                                    "error",
-                                    0,
-                                )
-                            });
-                        crate::telemetry::inc_tool_calls_total(&ctx.agent_id, &call.name, outcome);
+                        let tool_result = results_by_idx.remove(&i).unwrap_or_else(|| {
+                            tracing::error!(
+                                session_id = %msg.session_id,
+                                tool = %call.name,
+                                index = i,
+                                "tool call dispatch slot missing — emitting synthetic error"
+                            );
+                            ToolExecutionResult {
+                                result: serde_json::json!({
+                                    "error": "internal: tool dispatch slot missing",
+                                })
+                                .to_string(),
+                                tool_err: Some("tool dispatch slot missing".to_string()),
+                                outcome: "error",
+                                duration_ms: 0,
+                                sleep: None,
+                            }
+                        });
+                        crate::telemetry::inc_tool_calls_total(
+                            &ctx.agent_id,
+                            &call.name,
+                            tool_result.outcome,
+                        );
                         crate::telemetry::observe_tool_latency_ms(
                             &ctx.agent_id,
                             &call.name,
-                            duration_ms,
+                            tool_result.duration_ms,
                         );
                         if let Some(hooks) = &self.hooks {
                             let ev = serde_json::json!({
                                 "agent_id": ctx.agent_id,
                                 "session_id": msg.session_id.to_string(),
                                 "tool_name": call.name,
-                                "duration_ms": duration_ms,
-                                "result": result,
-                                "error": tool_err,
+                                "duration_ms": tool_result.duration_ms,
+                                "result": tool_result.result.clone(),
+                                "error": tool_result.tool_err.clone(),
                             });
                             if let crate::agent::HookOutcome::Aborted { plugin_id, reason } =
                                 hooks.fire("after_tool_call", ev).await
@@ -1107,7 +1221,23 @@ impl LlmAgentBehavior {
                                 );
                             }
                         }
-                        messages.push(ChatMessage::tool_result(&call.id, &call.name, result));
+                        if let Some(sleep) = tool_result.sleep.clone() {
+                            sleep_signal = Some(sleep);
+                        }
+                        messages.push(ChatMessage::tool_result(
+                            &call.id,
+                            &call.name,
+                            tool_result.result,
+                        ));
+                    }
+                    if sleep_signal.is_some() {
+                        tracing::info!(
+                            agent_id = %ctx.agent_id,
+                            session_id = %msg.session_id,
+                            message_id = %msg.id,
+                            "sleep tool requested proactive wake; stopping llm loop"
+                        );
+                        break;
                     }
                     if iteration + 1 >= self.max_tool_iterations {
                         tracing::warn!(
@@ -1244,9 +1374,17 @@ impl LlmAgentBehavior {
             session_id = %msg.session_id,
             message_id = %msg.id,
             produced_reply = reply_text.is_some(),
+            sleep_requested = sleep_signal.is_some(),
             "agent turn finished"
         );
-        Ok(reply_text)
+        if let Some(sleep) = sleep_signal {
+            Ok(RunTurnOutcome::Sleep {
+                duration_ms: sleep.duration_ms,
+                reason: sleep.reason,
+            })
+        } else {
+            Ok(RunTurnOutcome::Reply(reply_text))
+        }
     }
 }
 #[async_trait]
@@ -1282,15 +1420,89 @@ impl AgentBehavior for LlmAgentBehavior {
                 );
             }
         }
+        let due_followups = memory
+            .claim_due_email_followups(&ctx.agent_id, Utc::now(), 16)
+            .await?;
+        for followup in due_followups {
+            let attempt_number = followup.attempts.saturating_add(1);
+            let flow_id = followup.flow_id;
+            let mut tick = InboundMessage::new(
+                followup.session_id,
+                &ctx.agent_id,
+                build_followup_tick_prompt(&followup, attempt_number),
+            );
+            tick.trigger = RunTrigger::Tick;
+            tick.source_plugin = "followup".to_string();
+            tick.source_instance = followup.source_instance.clone();
+            tick.priority = MessagePriority::Later;
+
+            match self.run_turn(ctx, tick, false).await {
+                Ok(_) => {
+                    let exhausted = attempt_number >= followup.max_attempts;
+                    let next_check = if exhausted {
+                        None
+                    } else {
+                        Some(Utc::now() + secs_to_chrono(followup.check_every_secs))
+                    };
+                    let applied = memory
+                        .advance_email_followup_attempt(flow_id, next_check, None)
+                        .await?;
+                    if exhausted && applied {
+                        tracing::info!(
+                            agent_id = %ctx.agent_id,
+                            flow_id = %flow_id,
+                            attempts = followup.max_attempts,
+                            "email follow-up exhausted max attempts"
+                        );
+                    } else if !applied {
+                        tracing::debug!(
+                            agent_id = %ctx.agent_id,
+                            flow_id = %flow_id,
+                            "email follow-up no longer active after autonomous turn"
+                        );
+                    }
+                }
+                Err(e) => {
+                    let next_check = Utc::now() + secs_to_chrono(followup.check_every_secs);
+                    let _ = memory
+                        .requeue_email_followup_after_error(flow_id, next_check, &e.to_string())
+                        .await;
+                    tracing::warn!(
+                        agent_id = %ctx.agent_id,
+                        flow_id = %flow_id,
+                        error = %e,
+                        "email follow-up turn failed; re-queued"
+                    );
+                }
+            }
+        }
         Ok(())
+    }
+    async fn on_message_control(
+        &self,
+        ctx: &AgentContext,
+        msg: InboundMessage,
+    ) -> anyhow::Result<AgentTurnControl> {
+        match self.run_turn(ctx, msg, true).await? {
+            RunTurnOutcome::Reply(_) => Ok(AgentTurnControl::Done),
+            RunTurnOutcome::Sleep {
+                duration_ms,
+                reason,
+            } => Ok(AgentTurnControl::Sleep {
+                duration_ms,
+                reason,
+            }),
+        }
     }
     async fn on_message(&self, ctx: &AgentContext, msg: InboundMessage) -> anyhow::Result<()> {
         self.run_turn(ctx, msg, true).await?;
         Ok(())
     }
     async fn decide(&self, ctx: &AgentContext, msg: &InboundMessage) -> anyhow::Result<String> {
-        let reply = self.run_turn(ctx, msg.clone(), false).await?;
-        Ok(reply.unwrap_or_default())
+        match self.run_turn(ctx, msg.clone(), false).await? {
+            RunTurnOutcome::Reply(reply) => Ok(reply.unwrap_or_default()),
+            RunTurnOutcome::Sleep { .. } => Ok(String::new()),
+        }
     }
     async fn on_event(&self, _ctx: &AgentContext, _event: Event) -> anyhow::Result<()> {
         Ok(())
@@ -1352,6 +1564,30 @@ fn build_media_attachment(media: &super::types::InboundMedia) -> Option<Attachme
     }
     Some(att)
 }
+
+fn secs_to_chrono(raw_secs: u64) -> chrono::Duration {
+    let secs = raw_secs.max(60).min(i64::MAX as u64) as i64;
+    chrono::Duration::seconds(secs)
+}
+
+fn build_followup_tick_prompt(flow: &EmailFollowupEntry, attempt_number: u32) -> String {
+    let instance = flow
+        .source_instance
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("default");
+    format!(
+        "[followup_tick]\nflow_id: {}\nthread_root_id: {}\ninstance: {}\nrecipient: {}\nattempt: {}/{}\ninstruction: {}\n\nTarea: revisa el hilo en email instance={}, si el cliente ya respondió o el caso está resuelto llama cancel_followup {{ flow_id }}, si no respondió envía follow-up manteniendo threading.",
+        flow.flow_id,
+        flow.thread_root_id,
+        instance,
+        flow.recipient,
+        attempt_number,
+        flow.max_attempts,
+        flow.instruction,
+        instance,
+    )
+}
 /// Best-effort MIME guess from extension, falling back to `default`.
 fn guess_mime(path: &str, default: &str) -> String {
     let lower = path.to_ascii_lowercase();
@@ -1388,6 +1624,21 @@ fn stringify_tool_result(v: &serde_json::Value) -> String {
         other => other.to_string(),
     }
 }
+
+fn sleep_signal_from_value(value: &serde_json::Value) -> Option<SleepSignal> {
+    if !super::sleep_tool::is_sleep_result(value) {
+        return None;
+    }
+    Some(SleepSignal {
+        duration_ms: super::sleep_tool::extract_sleep_ms(value)?,
+        reason: value
+            .get("reason")
+            .and_then(|v| v.as_str())
+            .unwrap_or("sleep requested")
+            .to_string(),
+    })
+}
+
 fn inject_runtime_tool_args(
     tool_name: &str,
     mut args: serde_json::Value,
@@ -1479,5 +1730,24 @@ mod tests {
             mime_type: Some("application/pdf".into()),
         };
         assert!(build_media_attachment(&media).is_none());
+    }
+
+    #[test]
+    fn sleep_signal_maps_sentinel_without_parsing_stringified_result() {
+        let signal = sleep_signal_from_value(&serde_json::json!({
+            "__nexo_sleep__": true,
+            "duration_ms": 270_000,
+            "reason": "waiting for work"
+        }))
+        .expect("sleep sentinel should map");
+
+        assert_eq!(
+            signal,
+            SleepSignal {
+                duration_ms: 270_000,
+                reason: "waiting for work".into()
+            }
+        );
+        assert!(sleep_signal_from_value(&serde_json::json!({"text": "normal"})).is_none());
     }
 }

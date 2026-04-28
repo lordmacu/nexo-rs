@@ -112,3 +112,27 @@ async fn pause_resume_round_trip() {
     reg.set_status(id, AgentRunStatus::Running).await.unwrap();
     assert_eq!(reg.handle(id).unwrap().status, AgentRunStatus::Running);
 }
+
+#[tokio::test]
+async fn sleeping_state_sets_status_and_clears_on_running() {
+    let reg = AgentRegistry::new(Arc::new(MemoryAgentRegistryStore::default()), 5);
+    let h = fresh_handle("77.20");
+    let id = h.goal_id;
+    reg.admit(h, true).await.unwrap();
+    let wake_at = Utc::now() + chrono::Duration::minutes(5);
+
+    reg.set_sleeping(id, wake_at, 300_000, "idle".into())
+        .await
+        .unwrap();
+    let sleeping = reg.handle(id).unwrap();
+    assert_eq!(sleeping.status, AgentRunStatus::Sleeping);
+    assert_eq!(
+        sleeping.snapshot.sleep.as_ref().map(|s| s.reason.as_str()),
+        Some("idle")
+    );
+
+    reg.clear_sleeping(id).await.unwrap();
+    let running = reg.handle(id).unwrap();
+    assert_eq!(running.status, AgentRunStatus::Running);
+    assert!(running.snapshot.sleep.is_none());
+}

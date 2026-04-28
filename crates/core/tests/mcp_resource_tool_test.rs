@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use nexo_broker::AnyBroker;
 use nexo_config::types::agents::{AgentConfig, AgentRuntimeConfig, HeartbeatConfig, ModelConfig};
+use nexo_core::agent::mcp_router_tool::ReadMcpResourceTool;
 use nexo_core::agent::tool_registry::ToolRegistry;
 use nexo_core::agent::{AgentContext, McpToolCatalog};
 use nexo_core::session::SessionManager;
@@ -128,9 +129,10 @@ fn agent_cfg() -> Arc<AgentConfig> {
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),
         remote_triggers: Vec::new(),
-            lsp: nexo_config::types::lsp::LspPolicy::default(),
-            config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
-            team: nexo_config::types::team::TeamPolicy::default(),
+        lsp: nexo_config::types::lsp::LspPolicy::default(),
+        config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
+        team: nexo_config::types::team::TeamPolicy::default(),
+        proactive: Default::default(),
     })
 }
 
@@ -421,7 +423,7 @@ async fn read_resource_uri_outside_allowlist_counts_violation() {
     let _ = handler
         .call(&ctx, serde_json::json!({"uri":"file:///readme"}))
         .await
-        .expect("call still succeeds (permissive)");
+        .expect_err("call must be rejected before dispatch");
 
     let body = nexo_mcp::telemetry::render_prometheus();
     assert!(
@@ -456,6 +458,71 @@ async fn read_resource_uri_in_allowlist_no_violation() {
     let body = nexo_mcp::telemetry::render_prometheus();
     assert!(
         !body.contains("mcp_resource_uri_allowlist_violations_total{server=\"fsok\"}"),
+        "unexpected violation counter, body:\n{body}"
+    );
+    mgr.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn router_read_resource_uri_outside_allowlist_rejected() {
+    use nexo_core::agent::tool_registry::ToolHandler;
+
+    let mgr = manager_with_cache_and_allowlist(
+        vec![server_config("fsrouterviol", "resources")],
+        Default::default(),
+        vec!["db".to_string()],
+    );
+    let sid = Uuid::new_v4();
+    let rt = mgr.get_or_create(sid).await;
+    let ctx = null_context().with_mcp(rt.clone());
+    let tool = ReadMcpResourceTool;
+    let err = ToolHandler::call(
+        &tool,
+        &ctx,
+        serde_json::json!({"server":"fsrouterviol","uri":"file:///readme"}),
+    )
+    .await
+    .expect_err("router tool must reject scheme outside allowlist");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("not allowed by resource_uri_allowlist"),
+        "unexpected error: {msg}"
+    );
+
+    let body = nexo_mcp::telemetry::render_prometheus();
+    assert!(
+        body.contains("mcp_resource_uri_allowlist_violations_total{server=\"fsrouterviol\"} 1"),
+        "expected violation counter incremented, body:\n{body}"
+    );
+    mgr.shutdown_all().await;
+}
+
+#[tokio::test]
+async fn router_read_resource_uri_in_allowlist_succeeds() {
+    use nexo_core::agent::tool_registry::ToolHandler;
+
+    let mgr = manager_with_cache_and_allowlist(
+        vec![server_config("fsrouterok", "resources")],
+        Default::default(),
+        vec!["file".to_string()],
+    );
+    let sid = Uuid::new_v4();
+    let rt = mgr.get_or_create(sid).await;
+    let ctx = null_context().with_mcp(rt.clone());
+    let tool = ReadMcpResourceTool;
+    let out = ToolHandler::call(
+        &tool,
+        &ctx,
+        serde_json::json!({"server":"fsrouterok","uri":"file:///readme"}),
+    )
+    .await
+    .expect("router read must succeed for allowed scheme");
+    assert_eq!(out["server"], "fsrouterok");
+    assert_eq!(out["uri"], "file:///readme");
+
+    let body = nexo_mcp::telemetry::render_prometheus();
+    assert!(
+        !body.contains("mcp_resource_uri_allowlist_violations_total{server=\"fsrouterok\"}"),
         "unexpected violation counter, body:\n{body}"
     );
     mgr.shutdown_all().await;

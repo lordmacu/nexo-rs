@@ -131,7 +131,12 @@ pub fn format_locations(
         for loc in locs {
             let line = loc.range.start.line + 1;
             let col = loc.range.start.character + 1;
-            let entry = format!("  {file}:{line}:{col}\n", file = file, line = line, col = col);
+            let entry = format!(
+                "  {file}:{line}:{col}\n",
+                file = file,
+                line = line,
+                col = col
+            );
             if out.len() + entry.len() > MAX_FORMATTED_BYTES {
                 let remaining = total - emitted;
                 out.push_str(&format!("  +{remaining} more\n"));
@@ -272,7 +277,10 @@ fn display_path(p: &Path, workspace_root: Option<&Path>) -> String {
 
 /// Convenience wrapper used by the session to bundle the formatted
 /// + structured outputs.
-pub fn build_output(formatted: String, structured: serde_json::Value) -> crate::types::LspToolOutput {
+pub fn build_output(
+    formatted: String,
+    structured: serde_json::Value,
+) -> crate::types::LspToolOutput {
     crate::types::LspToolOutput {
         formatted,
         structured,
@@ -445,6 +453,7 @@ mod tests {
         assert_eq!(severity_name(Some(DiagnosticSeverity::HINT)), "Hint");
     }
 
+    #[allow(deprecated)]
     #[test]
     fn format_workspace_symbols_renders_kind_and_path() {
         let sym = SymbolInformation {

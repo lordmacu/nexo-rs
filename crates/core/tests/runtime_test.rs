@@ -8,7 +8,11 @@ use nexo_config::types::agents::{
     AgentConfig, AgentRuntimeConfig, HeartbeatConfig, InboundBinding, ModelConfig,
     SenderRateLimitConfig,
 };
-use nexo_core::agent::{Agent, AgentBehavior, AgentContext, AgentRuntime, InboundMessage};
+use nexo_config::types::proactive::ProactiveConfig;
+use nexo_core::agent::behavior::AgentTurnControl;
+use nexo_core::agent::{
+    Agent, AgentBehavior, AgentContext, AgentRuntime, InboundMessage, RunTrigger,
+};
 use serde_json::json;
 use tokio::time::sleep;
 use uuid::Uuid;
@@ -34,6 +38,53 @@ impl AgentBehavior for CaptureBehavior {
 
     async fn decide(&self, _ctx: &AgentContext, msg: &InboundMessage) -> anyhow::Result<String> {
         Ok(format!("handled: {}", msg.text))
+    }
+}
+
+struct ProactiveSleepBehavior {
+    tick_count: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl AgentBehavior for ProactiveSleepBehavior {
+    async fn on_message_control(
+        &self,
+        _ctx: &AgentContext,
+        msg: InboundMessage,
+    ) -> anyhow::Result<AgentTurnControl> {
+        if matches!(msg.trigger, RunTrigger::Tick) {
+            self.tick_count.fetch_add(1, Ordering::SeqCst);
+        }
+        Ok(AgentTurnControl::Sleep {
+            duration_ms: 30,
+            reason: "idle".to_string(),
+        })
+    }
+}
+
+struct SlowInterruptBehavior {
+    received: Arc<Mutex<Vec<String>>>,
+    slow_started: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl AgentBehavior for SlowInterruptBehavior {
+    async fn on_message_control(
+        &self,
+        _ctx: &AgentContext,
+        msg: InboundMessage,
+    ) -> anyhow::Result<AgentTurnControl> {
+        if msg.text == "slow" {
+            self.slow_started.fetch_add(1, Ordering::SeqCst);
+            sleep(Duration::from_millis(300)).await;
+            self.received
+                .lock()
+                .unwrap()
+                .push("slow-finished".to_string());
+        } else {
+            self.received.lock().unwrap().push(msg.text.clone());
+        }
+        Ok(AgentTurnControl::Done)
     }
 }
 
@@ -86,9 +137,10 @@ fn make_config(
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),
         remote_triggers: Vec::new(),
-            lsp: nexo_config::types::lsp::LspPolicy::default(),
-            config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
-            team: nexo_config::types::team::TeamPolicy::default(),
+        lsp: nexo_config::types::lsp::LspPolicy::default(),
+        config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
+        team: nexo_config::types::team::TeamPolicy::default(),
+        proactive: Default::default(),
     }
 }
 
@@ -124,6 +176,21 @@ use nexo_broker::BrokerHandle;
 
 async fn publish_text(broker: &AnyBroker, session_id: Uuid, text: &str) {
     let mut event = Event::new("plugin.inbound.test", "test", json!({ "text": text }));
+    event.session_id = Some(session_id);
+    broker.publish("plugin.inbound.test", event).await.unwrap();
+}
+
+async fn publish_text_with_priority(
+    broker: &AnyBroker,
+    session_id: Uuid,
+    text: &str,
+    priority: &str,
+) {
+    let mut event = Event::new(
+        "plugin.inbound.test",
+        "test",
+        json!({ "text": text, "priority": priority }),
+    );
     event.session_id = Some(session_id);
     broker.publish("plugin.inbound.test", event).await.unwrap();
 }
@@ -182,6 +249,124 @@ async fn runtime_debounce_batches_rapid_messages() {
     // all three arrive because debounce is reset each time,
     // then flushed together after silence
     assert_eq!(msgs.as_slice(), &["a", "b", "c"]);
+}
+
+#[tokio::test]
+async fn runtime_priority_orders_now_next_later_within_batch() {
+    let broker = AnyBroker::local();
+    let received = Arc::new(Mutex::new(Vec::new()));
+    let heartbeats = Arc::new(AtomicUsize::new(0));
+    // Keep a non-zero debounce so the three inbounds land in one batch.
+    let runtime = make_runtime(
+        60,
+        32,
+        Arc::clone(&received),
+        Arc::clone(&heartbeats),
+        broker.clone(),
+    );
+    runtime.start().await.unwrap();
+
+    let session = Uuid::new_v4();
+    publish_text_with_priority(&broker, session, "later-1", "later").await;
+    publish_text_with_priority(&broker, session, "next-1", "next").await;
+    publish_text_with_priority(&broker, session, "now-1", "now").await;
+
+    sleep(Duration::from_millis(180)).await;
+    runtime.stop().await;
+
+    let msgs = received.lock().unwrap().clone();
+    assert_eq!(
+        msgs,
+        vec![
+            "now-1".to_string(),
+            "next-1".to_string(),
+            "later-1".to_string(),
+        ],
+        "batch should respect now > next > later priority while preserving FIFO per class"
+    );
+}
+
+#[tokio::test]
+async fn runtime_now_priority_bypasses_debounce_delay() {
+    let broker = AnyBroker::local();
+    let received = Arc::new(Mutex::new(Vec::new()));
+    let heartbeats = Arc::new(AtomicUsize::new(0));
+    // Long debounce so we can prove `now` skips the wait.
+    let runtime = make_runtime(
+        500,
+        32,
+        Arc::clone(&received),
+        Arc::clone(&heartbeats),
+        broker.clone(),
+    );
+    runtime.start().await.unwrap();
+
+    let session = Uuid::new_v4();
+    publish_text_with_priority(&broker, session, "urgent-now", "now").await;
+
+    // Well below the 500ms debounce window.
+    sleep(Duration::from_millis(90)).await;
+    let early = received.lock().unwrap().clone();
+    assert!(
+        early.contains(&"urgent-now".to_string()),
+        "`now` priority should flush immediately, not wait full debounce window"
+    );
+
+    runtime.stop().await;
+}
+
+#[tokio::test]
+async fn runtime_now_priority_interrupts_in_flight_turn() {
+    let broker = AnyBroker::local();
+    let received = Arc::new(Mutex::new(Vec::new()));
+    let slow_started = Arc::new(AtomicUsize::new(0));
+
+    let mut config = make_config(0, 32, false, "5m");
+    config.id = "interrupt-priority".into();
+    config.inbound_bindings.push(InboundBinding {
+        plugin: "test".into(),
+        instance: None,
+        ..Default::default()
+    });
+    let behavior = SlowInterruptBehavior {
+        received: Arc::clone(&received),
+        slow_started: Arc::clone(&slow_started),
+    };
+    let agent = Arc::new(Agent::new(config, behavior));
+    let sessions = Arc::new(SessionManager::new(Duration::from_secs(3600), 100));
+    let runtime = AgentRuntime::new(agent, broker.clone(), sessions);
+    runtime.start().await.unwrap();
+
+    let session = Uuid::new_v4();
+    publish_text_with_priority(&broker, session, "slow", "next").await;
+
+    // Wait until the slow turn has definitely started, then preempt it.
+    for _ in 0..20 {
+        if slow_started.load(Ordering::SeqCst) > 0 {
+            break;
+        }
+        sleep(Duration::from_millis(10)).await;
+    }
+    assert!(
+        slow_started.load(Ordering::SeqCst) > 0,
+        "slow turn should have started before sending now-priority interrupt"
+    );
+
+    publish_text_with_priority(&broker, session, "urgent-now", "now").await;
+
+    // Long enough that a non-interrupted slow call would finish.
+    sleep(Duration::from_millis(380)).await;
+    runtime.stop().await;
+
+    let got = received.lock().unwrap().clone();
+    assert!(
+        got.contains(&"urgent-now".to_string()),
+        "urgent message should be processed"
+    );
+    assert!(
+        !got.contains(&"slow-finished".to_string()),
+        "slow turn should be cancelled when now-priority arrives; got {got:?}"
+    );
 }
 
 #[tokio::test]
@@ -314,6 +499,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             lsp: nexo_config::types::lsp::LspPolicy::default(),
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
             team: nexo_config::types::team::TeamPolicy::default(),
+            proactive: Default::default(),
         },
         behavior_a,
     ));
@@ -367,6 +553,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             lsp: nexo_config::types::lsp::LspPolicy::default(),
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
             team: nexo_config::types::team::TeamPolicy::default(),
+            proactive: Default::default(),
         },
         behavior_b,
     ));
@@ -625,4 +812,56 @@ async fn sender_rate_limit_drops_excess_messages_from_same_sender() {
         "u1 should be limited to burst=2 (got {u1_count}): {got:?}"
     );
     assert_eq!(u2_count, 2, "u2 has its own bucket, both pass: {got:?}");
+}
+
+#[tokio::test]
+async fn proactive_daily_turn_budget_suppresses_extra_ticks() {
+    let broker = AnyBroker::local();
+    let tick_count = Arc::new(AtomicUsize::new(0));
+
+    let mut config = make_config(0, 32, false, "5m");
+    config.id = "proactive-budget".into();
+    config.inbound_bindings.push(InboundBinding {
+        plugin: "test".into(),
+        instance: None,
+        proactive: Some(ProactiveConfig {
+            enabled: true,
+            tick_interval_secs: 1,
+            jitter_pct: 0.0,
+            max_idle_secs: 60,
+            initial_greeting: false,
+            cache_aware_schedule: true,
+            allow_short_intervals: true,
+            daily_turn_budget: 1,
+        }),
+        ..Default::default()
+    });
+    let behavior = ProactiveSleepBehavior {
+        tick_count: Arc::clone(&tick_count),
+    };
+    let agent = Arc::new(Agent::new(config, behavior));
+    let sessions = Arc::new(SessionManager::new(Duration::from_secs(3600), 100));
+    let runtime = AgentRuntime::new(agent, broker.clone(), sessions);
+    runtime.start().await.unwrap();
+
+    // Seed the loop with one inbound user message; behavior immediately
+    // requests Sleep(30ms), which then wakes into a first Tick.
+    let session = Uuid::new_v4();
+    publish_text(&broker, session, "start").await;
+
+    // Let one sleep/wake cycle fire and settle.
+    sleep(Duration::from_millis(180)).await;
+    let first = tick_count.load(Ordering::SeqCst);
+    assert_eq!(first, 1, "expected exactly one tick before budget cap");
+
+    // Another short wait should NOT produce a second tick because the
+    // second wake is suppressed by daily_turn_budget and re-armed to >=60s.
+    sleep(Duration::from_millis(220)).await;
+    let second = tick_count.load(Ordering::SeqCst);
+    assert_eq!(
+        second, 1,
+        "daily_turn_budget should suppress additional ticks in this window"
+    );
+
+    runtime.stop().await;
 }

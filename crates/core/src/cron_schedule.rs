@@ -1,5 +1,5 @@
-//! Phase 79.7 — `cron_create` / `cron_list` / `cron_delete`
-//! storage layer.
+//! Phase 79.7 — `cron_create` / `cron_list` / `cron_delete` /
+//! `cron_pause` / `cron_resume` storage layer.
 //!
 //! Persists LLM-time-scheduled cron entries to SQLite. Distinct
 //! from Phase 7 Heartbeat (config-time only) and Phase 20
@@ -18,17 +18,14 @@
 //!     parsing semantics are the same; we use Rust's `cron`
 //!     crate (already a transitive workspace dep).
 //!
-//! MVP scope (Phase 79.7):
+//! Current scope:
 //!   * SQLite-backed store with idempotent `CREATE TABLE IF NOT
 //!     EXISTS`.
-//!   * `cron_create` / `cron_list` / `cron_delete` tools.
-//!   * Cron expression validated at insert time.
+//!   * Cron expression validated at insert time with 60s minimum
+//!     interval guard.
 //!   * Cap 50 entries per binding.
-//!   * **Runtime firing is NOT shipped here.** Entries land in
-//!     SQLite; a follow-up wires into Phase 20 `agent_turn`
-//!     poller so due entries actually trigger LLM turns. Until
-//!     then the table is observable but inert. See
-//!     `FOLLOWUPS.md::Phase 79.7`.
+//!   * Runtime firing is shipped via `CronRunner` + `LlmCronDispatcher`.
+//!   * One-shot retry durability is tracked in `failure_count`.
 
 use chrono::{DateTime, TimeZone, Utc};
 use cron::Schedule;
@@ -61,12 +58,20 @@ pub struct CronEntry {
     /// `cron_list` can show the operator what was scheduled.
     pub cron_expr: String,
     /// Prompt to enqueue when the entry fires. Plain string; the
-    /// future runtime wiring will hand it to the agent's LLM turn
-    /// machinery.
+    /// runtime hands it to the cron LLM dispatch machinery.
     pub prompt: String,
     /// Optional channel hint (`whatsapp:default`, `telegram:bot`).
     /// `None` = inherit binding's primary channel.
     pub channel: Option<String>,
+    /// LLM provider pinned at schedule time. `None` on legacy rows
+    /// created before Phase 79.7.B; dispatcher falls back to process
+    /// default wiring in that case.
+    #[serde(default)]
+    pub model_provider: Option<String>,
+    /// LLM model pinned at schedule time (paired with
+    /// `model_provider`). `None` on legacy rows.
+    #[serde(default)]
+    pub model_name: Option<String>,
     /// Phase 79.7 outbound — optional recipient (channel-specific
     /// id: WhatsApp JID, Telegram chat_id, email address). When
     /// `Some`, the runtime's `LlmCronDispatcher` (with publisher
@@ -84,7 +89,13 @@ pub struct CronEntry {
     pub next_fire_at: i64,
     /// Unix-seconds of last fire. `None` until first fire.
     pub last_fired_at: Option<i64>,
-    /// Soft-disable flag — set by `cron_pause` follow-up. `true`
+    /// Consecutive dispatch failures for one-shot entries. Starts at
+    /// 0, increments on each failed fire that is rescheduled via the
+    /// retry policy, and resets to 0 on successful recurring advance.
+    /// Exposed in `cron_list` so operators can inspect degraded jobs.
+    #[serde(default)]
+    pub failure_count: u32,
+    /// Soft-disable flag — toggled by `cron_pause` / `cron_resume`. `true`
     /// keeps the entry in storage but skips firing.
     pub paused: bool,
 }
@@ -114,8 +125,11 @@ const SCHEMA: &str = "
         created_at      INTEGER NOT NULL,
         next_fire_at    INTEGER NOT NULL,
         last_fired_at   INTEGER,
+        failure_count   INTEGER NOT NULL DEFAULT 0,
         paused          INTEGER NOT NULL DEFAULT 0,
-        recipient       TEXT
+        recipient       TEXT,
+        model_provider  TEXT,
+        model_name      TEXT
     )
 ";
 
@@ -130,9 +144,9 @@ const INDEX_FIRE: &str =
 /// `Err(IntervalTooShort)` when two consecutive fires would be
 /// closer than `MIN_CRON_INTERVAL_SECS`.
 pub fn next_fire_after(cron_expr: &str, from_unix: i64) -> Result<i64, CronStoreError> {
-    // The `cron` crate uses 6-field expressions (with seconds);
-    // pre-pend "0 " so 5-field (the leak's format + classic Unix)
-    // works. Reject already-6-field expressions.
+    // The `cron` crate uses 6-field expressions (with seconds).
+    // Prepend "0 " so 5-field (the leak's format + classic Unix)
+    // works. Existing 6-field expressions pass through unchanged.
     let parsed_expr = if cron_expr.split_whitespace().count() == 5 {
         format!("0 {cron_expr}")
     } else {
@@ -166,10 +180,8 @@ pub trait CronStore: Send + Sync {
     async fn list_by_binding(&self, binding_id: &str) -> Result<Vec<CronEntry>, CronStoreError>;
     async fn count_by_binding(&self, binding_id: &str) -> Result<usize, CronStoreError>;
     async fn delete(&self, id: &str) -> Result<(), CronStoreError>;
-    /// Future-runtime helper: fetch every entry due at or before
-    /// `now`. Today the firing loop is not shipped; the method
-    /// exists so a follow-up can wire it in without changing the
-    /// trait surface. Tests cover the index works.
+    /// Fetch every non-paused entry due at or before `now`.
+    /// `CronRunner` consumes this on each tick.
     async fn due_at(&self, now_unix: i64) -> Result<Vec<CronEntry>, CronStoreError>;
     /// Toggle the `paused` flag on a single entry. `paused = true`
     /// keeps the row in storage but `due_at` skips it.
@@ -186,6 +198,16 @@ pub trait CronStore: Send + Sync {
         new_next_fire_at: i64,
         last_fired_at: i64,
     ) -> Result<(), CronStoreError>;
+    /// Reschedule a failed one-shot fire for a retry attempt.
+    /// Increments `failure_count`, stamps `last_fired_at`, and moves
+    /// `next_fire_at` to `retry_next_fire_at`. Returns the new
+    /// `failure_count` after increment.
+    async fn schedule_one_shot_retry(
+        &self,
+        id: &str,
+        retry_next_fire_at: i64,
+        last_fired_at: i64,
+    ) -> Result<u32, CronStoreError>;
 }
 
 /// Apply ±`pct_pct/100` jitter to a future-fire timestamp. Used to
@@ -254,11 +276,51 @@ impl SqliteCronStore {
                 return Err(CronStoreError::Sql(e));
             }
         }
+        let alter_model_provider =
+            sqlx::query("ALTER TABLE nexo_cron_entries ADD COLUMN model_provider TEXT")
+                .execute(&pool)
+                .await;
+        if let Err(e) = alter_model_provider {
+            let msg = e.to_string();
+            if !msg.contains("duplicate column") {
+                return Err(CronStoreError::Sql(e));
+            }
+        }
+        let alter_model_name =
+            sqlx::query("ALTER TABLE nexo_cron_entries ADD COLUMN model_name TEXT")
+                .execute(&pool)
+                .await;
+        if let Err(e) = alter_model_name {
+            let msg = e.to_string();
+            if !msg.contains("duplicate column") {
+                return Err(CronStoreError::Sql(e));
+            }
+        }
+        let alter_failure_count = sqlx::query(
+            "ALTER TABLE nexo_cron_entries ADD COLUMN failure_count INTEGER NOT NULL DEFAULT 0",
+        )
+        .execute(&pool)
+        .await;
+        if let Err(e) = alter_failure_count {
+            let msg = e.to_string();
+            if !msg.contains("duplicate column") {
+                return Err(CronStoreError::Sql(e));
+            }
+        }
         Ok(Self { pool })
     }
 
     pub async fn open_memory() -> Result<Self, CronStoreError> {
         Self::open(":memory:").await
+    }
+
+    /// CLI/admin helper: list every cron entry across bindings,
+    /// sorted by next fire time.
+    pub async fn list_all(&self) -> Result<Vec<CronEntry>, CronStoreError> {
+        let rows = sqlx::query("SELECT * FROM nexo_cron_entries ORDER BY next_fire_at ASC")
+            .fetch_all(&self.pool)
+            .await?;
+        rows.iter().map(row_to_entry).collect()
     }
 }
 
@@ -269,10 +331,13 @@ fn row_to_entry(row: &SqliteRow) -> Result<CronEntry, CronStoreError> {
         cron_expr: row.try_get("cron_expr")?,
         prompt: row.try_get("prompt")?,
         channel: row.try_get("channel")?,
+        model_provider: row.try_get("model_provider").unwrap_or(None),
+        model_name: row.try_get("model_name").unwrap_or(None),
         recurring: row.try_get::<i64, _>("recurring")? != 0,
         created_at: row.try_get("created_at")?,
         next_fire_at: row.try_get("next_fire_at")?,
         last_fired_at: row.try_get("last_fired_at")?,
+        failure_count: row.try_get::<i64, _>("failure_count").unwrap_or(0).max(0) as u32,
         paused: row.try_get::<i64, _>("paused")? != 0,
         // The column was added by an idempotent ALTER, so older
         // DBs may still be missing it on the first read after
@@ -287,8 +352,8 @@ impl CronStore for SqliteCronStore {
     async fn insert(&self, entry: &CronEntry) -> Result<(), CronStoreError> {
         sqlx::query(
             "INSERT INTO nexo_cron_entries \
-             (id, binding_id, cron_expr, prompt, channel, recurring, created_at, next_fire_at, last_fired_at, paused, recipient) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+             (id, binding_id, cron_expr, prompt, channel, recurring, created_at, next_fire_at, last_fired_at, failure_count, paused, recipient, model_provider, model_name) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         )
         .bind(&entry.id)
         .bind(&entry.binding_id)
@@ -299,8 +364,11 @@ impl CronStore for SqliteCronStore {
         .bind(entry.created_at)
         .bind(entry.next_fire_at)
         .bind(entry.last_fired_at)
+        .bind(entry.failure_count as i64)
         .bind(entry.paused as i64)
         .bind(entry.recipient.as_deref())
+        .bind(entry.model_provider.as_deref())
+        .bind(entry.model_name.as_deref())
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -376,7 +444,9 @@ impl CronStore for SqliteCronStore {
         last_fired_at: i64,
     ) -> Result<(), CronStoreError> {
         let res = sqlx::query(
-            "UPDATE nexo_cron_entries SET next_fire_at = ?1, last_fired_at = ?2 WHERE id = ?3",
+            "UPDATE nexo_cron_entries \
+             SET next_fire_at = ?1, last_fired_at = ?2, failure_count = 0 \
+             WHERE id = ?3",
         )
         .bind(new_next_fire_at)
         .bind(last_fired_at)
@@ -388,11 +458,42 @@ impl CronStore for SqliteCronStore {
         }
         Ok(())
     }
+
+    async fn schedule_one_shot_retry(
+        &self,
+        id: &str,
+        retry_next_fire_at: i64,
+        last_fired_at: i64,
+    ) -> Result<u32, CronStoreError> {
+        let mut tx = self.pool.begin().await?;
+        let res = sqlx::query(
+            "UPDATE nexo_cron_entries \
+             SET next_fire_at = ?1, last_fired_at = ?2, failure_count = failure_count + 1 \
+             WHERE id = ?3",
+        )
+        .bind(retry_next_fire_at)
+        .bind(last_fired_at)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+        if res.rows_affected() == 0 {
+            tx.rollback().await.ok();
+            return Err(CronStoreError::NotFound(id.to_string()));
+        }
+        let row = sqlx::query("SELECT failure_count FROM nexo_cron_entries WHERE id = ?1")
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+        let failure_count = row.try_get::<i64, _>("failure_count").unwrap_or(0).max(0) as u32;
+        tx.commit().await?;
+        Ok(failure_count)
+    }
 }
 
 /// Builder helper used by the `cron_create` tool: validates the
 /// expression, enforces the binding cap, and produces a fresh
 /// `CronEntry` ready to insert.
+#[allow(clippy::too_many_arguments)]
 pub async fn build_new_entry(
     store: &Arc<dyn CronStore>,
     binding_id: &str,
@@ -401,6 +502,8 @@ pub async fn build_new_entry(
     channel: Option<&str>,
     recurring: bool,
     recipient: Option<&str>,
+    model_provider: Option<&str>,
+    model_name: Option<&str>,
 ) -> Result<CronEntry, CronStoreError> {
     let now = Utc::now().timestamp();
     let next_fire_at = next_fire_after(cron_expr, now)?;
@@ -418,10 +521,13 @@ pub async fn build_new_entry(
         cron_expr: cron_expr.to_string(),
         prompt: prompt.to_string(),
         channel: channel.map(str::to_string),
+        model_provider: model_provider.map(str::to_string),
+        model_name: model_name.map(str::to_string),
         recurring,
         created_at: now,
         next_fire_at,
         last_fired_at: None,
+        failure_count: 0,
         paused: false,
         recipient: recipient.map(str::to_string),
     })
@@ -439,10 +545,13 @@ mod tests {
             cron_expr: expr.into(),
             prompt: "ping".into(),
             channel: None,
+            model_provider: None,
+            model_name: None,
             recurring: true,
             created_at: now,
             next_fire_at: next_fire_after(expr, now).unwrap(),
             last_fired_at: None,
+            failure_count: 0,
             paused: false,
             recipient: None,
         }
@@ -540,6 +649,8 @@ mod tests {
                 None,
                 true,
                 None,
+                None,
+                None,
             )
             .await
             .unwrap();
@@ -552,6 +663,8 @@ mod tests {
             "ping",
             None,
             true,
+            None,
+            None,
             None,
         )
         .await
@@ -589,6 +702,35 @@ mod tests {
         assert!(matches!(err, CronStoreError::NotFound(_)));
     }
 
+    #[tokio::test]
+    async fn schedule_one_shot_retry_increments_failure_count_and_moves_next_fire() {
+        let store = SqliteCronStore::open_memory().await.unwrap();
+        let mut e = entry("whatsapp:ops", "*/5 * * * *");
+        e.recurring = false;
+        e.next_fire_at = 1_700_000_000;
+        store.insert(&e).await.unwrap();
+
+        let count1 = store
+            .schedule_one_shot_retry(&e.id, 1_700_000_100, 1_700_000_050)
+            .await
+            .unwrap();
+        assert_eq!(count1, 1);
+        let reloaded = store.get(&e.id).await.unwrap();
+        assert_eq!(reloaded.failure_count, 1);
+        assert_eq!(reloaded.next_fire_at, 1_700_000_100);
+        assert_eq!(reloaded.last_fired_at, Some(1_700_000_050));
+
+        let count2 = store
+            .schedule_one_shot_retry(&e.id, 1_700_000_200, 1_700_000_150)
+            .await
+            .unwrap();
+        assert_eq!(count2, 2);
+        let reloaded2 = store.get(&e.id).await.unwrap();
+        assert_eq!(reloaded2.failure_count, 2);
+        assert_eq!(reloaded2.next_fire_at, 1_700_000_200);
+        assert_eq!(reloaded2.last_fired_at, Some(1_700_000_150));
+    }
+
     #[test]
     fn apply_jitter_zero_pct_is_identity() {
         let from = 1_700_000_000;
@@ -622,15 +764,35 @@ mod tests {
     async fn build_new_entry_isolated_per_binding() {
         let store: Arc<dyn CronStore> = Arc::new(SqliteCronStore::open_memory().await.unwrap());
         for _ in 0..50 {
-            let e = build_new_entry(&store, "binding-a", "*/5 * * * *", "ping", None, true, None)
-                .await
-                .unwrap();
+            let e = build_new_entry(
+                &store,
+                "binding-a",
+                "*/5 * * * *",
+                "ping",
+                None,
+                true,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
             store.insert(&e).await.unwrap();
         }
         // Different binding admits even when the first one is at cap.
-        let e = build_new_entry(&store, "binding-b", "*/5 * * * *", "ping", None, true, None)
-            .await
-            .unwrap();
+        let e = build_new_entry(
+            &store,
+            "binding-b",
+            "*/5 * * * *",
+            "ping",
+            None,
+            true,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
         store.insert(&e).await.unwrap();
         assert_eq!(store.count_by_binding("binding-b").await.unwrap(), 1);
     }

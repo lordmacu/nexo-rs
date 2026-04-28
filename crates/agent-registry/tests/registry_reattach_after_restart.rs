@@ -9,8 +9,8 @@ use std::time::Duration;
 
 use chrono::{Duration as ChronoDuration, Utc};
 use nexo_agent_registry::{
-    reattach, AgentHandle, AgentRegistry, AgentRegistryStore, AgentRunStatus, AgentSnapshot,
-    ReattachOptions, ReattachOutcome, SqliteAgentRegistryStore,
+    reattach, AgentHandle, AgentRegistry, AgentRegistryStore, AgentRunStatus, AgentSleepState,
+    AgentSnapshot, ReattachOptions, ReattachOutcome, SqliteAgentRegistryStore,
 };
 use nexo_driver_types::GoalId;
 use uuid::Uuid;
@@ -105,6 +105,39 @@ async fn running_with_resume_off_marks_lost() {
     assert!(matches!(outcomes[0], ReattachOutcome::MarkedLost(_)));
     let rows = reg.list().await.unwrap();
     assert_eq!(rows[0].status, AgentRunStatus::LostOnRestart);
+}
+
+#[tokio::test]
+async fn sleeping_goal_restores_sleep_metadata() {
+    let store = Arc::new(SqliteAgentRegistryStore::open_memory().await.unwrap());
+    let mut h = handle("77.20", AgentRunStatus::Sleeping, None);
+    h.snapshot.sleep = Some(AgentSleepState {
+        wake_at: Utc::now() + ChronoDuration::minutes(5),
+        duration_ms: 300_000,
+        reason: "waiting".into(),
+    });
+    let goal_id = h.goal_id;
+    store.upsert(&h).await.unwrap();
+
+    let reg = AgentRegistry::new(store.clone(), 4);
+    let outcomes = reattach(
+        &reg,
+        store.clone(),
+        ReattachOptions {
+            resume_running: false,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(matches!(outcomes[0], ReattachOutcome::Sleeping(_)));
+    let restored = reg.handle(goal_id).unwrap();
+    assert_eq!(restored.status, AgentRunStatus::Sleeping);
+    assert_eq!(
+        restored.snapshot.sleep.as_ref().map(|s| s.reason.as_str()),
+        Some("waiting")
+    );
 }
 
 #[tokio::test]

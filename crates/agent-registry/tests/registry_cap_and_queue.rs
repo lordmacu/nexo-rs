@@ -6,9 +6,10 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use nexo_agent_registry::{
-    AdmitOutcome, AgentHandle, AgentRegistry, AgentRunStatus, AgentSnapshot,
+    AdmitOutcome, AgentHandle, AgentRegistry, AgentRunStatus, AgentSnapshot, AskPendingState,
     MemoryAgentRegistryStore,
 };
+use nexo_driver_claude::OriginChannel;
 use nexo_driver_types::GoalId;
 use uuid::Uuid;
 
@@ -130,4 +131,88 @@ async fn list_includes_running_and_terminal() {
     reg.release(id1, AgentRunStatus::Done).await.unwrap();
     let rows = reg.list().await.unwrap();
     assert_eq!(rows.len(), 2);
+}
+
+#[tokio::test]
+async fn find_paused_by_origin_returns_newest_match() {
+    let store = Arc::new(MemoryAgentRegistryStore::default());
+    let reg = AgentRegistry::new(store, 5);
+
+    let mut a = handle("77.16");
+    a.origin = Some(OriginChannel {
+        plugin: "telegram".into(),
+        instance: "bot_a".into(),
+        sender_id: "u1".into(),
+        correlation_id: None,
+    });
+    let id_a = a.goal_id;
+    reg.admit(a, true).await.unwrap();
+    reg.set_status(id_a, AgentRunStatus::Paused).await.unwrap();
+
+    let mut b = handle("77.16");
+    b.origin = Some(OriginChannel {
+        plugin: "telegram".into(),
+        instance: "bot_a".into(),
+        sender_id: "u1".into(),
+        correlation_id: None,
+    });
+    let id_b = b.goal_id;
+    reg.admit(b, true).await.unwrap();
+    reg.set_status(id_b, AgentRunStatus::Paused).await.unwrap();
+
+    let found = reg.find_paused_by_origin("telegram", "bot_a", "u1");
+    assert_eq!(found, Some(id_b));
+}
+
+#[tokio::test]
+async fn find_paused_by_question_id_matches_exact_goal() {
+    let store = Arc::new(MemoryAgentRegistryStore::default());
+    let reg = AgentRegistry::new(store, 5);
+
+    let mut a = handle("77.16");
+    a.origin = Some(OriginChannel {
+        plugin: "telegram".into(),
+        instance: "bot_a".into(),
+        sender_id: "u1".into(),
+        correlation_id: None,
+    });
+    let id_a = a.goal_id;
+    reg.admit(a, true).await.unwrap();
+    reg.set_status(id_a, AgentRunStatus::Paused).await.unwrap();
+    reg.set_ask_pending(
+        id_a,
+        Some(AskPendingState {
+            question_id: "q-1".into(),
+            question: "one?".into(),
+            asked_at: Utc::now(),
+            timeout_secs: 60,
+        }),
+    )
+    .await
+    .unwrap();
+
+    let mut b = handle("77.16");
+    b.origin = Some(OriginChannel {
+        plugin: "telegram".into(),
+        instance: "bot_a".into(),
+        sender_id: "u1".into(),
+        correlation_id: None,
+    });
+    let id_b = b.goal_id;
+    reg.admit(b, true).await.unwrap();
+    reg.set_status(id_b, AgentRunStatus::Paused).await.unwrap();
+    reg.set_ask_pending(
+        id_b,
+        Some(AskPendingState {
+            question_id: "q-2".into(),
+            question: "two?".into(),
+            asked_at: Utc::now(),
+            timeout_secs: 60,
+        }),
+    )
+    .await
+    .unwrap();
+
+    let found = reg.find_paused_by_question_id("telegram", "bot_a", "u1", "q-1");
+    assert_eq!(found, Some(id_a));
 }

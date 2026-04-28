@@ -17,6 +17,8 @@ use nexo_driver_types::{
 use crate::acceptance::AcceptanceEvaluator;
 use crate::error::DriverError;
 
+const SLEEP_SENTINEL_KEY: &str = "__nexo_sleep__";
+
 /// Bundle of refs the loop borrows for one attempt.
 pub(crate) struct AttemptContext<'a> {
     pub claude_cfg: &'a nexo_driver_claude::ClaudeConfig,
@@ -74,6 +76,14 @@ pub(crate) async fn run_attempt(
                     }
                 }
                 p.push_str("[END OPERATOR INTERRUPT]\n\n");
+            }
+        }
+        if let Some(serde_json::Value::String(tick_prompt)) =
+            params.extras.get("synthetic_tick_prompt")
+        {
+            if !tick_prompt.is_empty() {
+                p.push_str(tick_prompt);
+                p.push_str("\n\n");
             }
         }
         p.push_str(&params.goal.description);
@@ -168,9 +178,25 @@ pub(crate) async fn run_attempt(
             ClaudeEvent::Result(ResultEvent::Success {
                 result, usage: tu, ..
             }) => {
-                final_text = result.clone();
                 let total = tu.input_tokens + tu.output_tokens + tu.cache_read_input_tokens;
                 usage.tokens = usage.tokens.saturating_add(total);
+                if let Some(text) = result.as_deref() {
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(text) {
+                        if let Some(outcome) = map_sleep_result(&json) {
+                            return Ok(AttemptResult {
+                                goal_id,
+                                turn_index: params.turn_index,
+                                outcome,
+                                decisions_recorded: vec![],
+                                usage_after: usage,
+                                acceptance: None,
+                                final_text: None,
+                                harness_extras: harness_extras_with_session(&last_session_id),
+                            });
+                        }
+                    }
+                }
+                final_text = result.clone();
                 claimed_done = true;
                 break;
             }
@@ -318,6 +344,20 @@ fn synthetic(
     }
 }
 
+fn map_sleep_result(value: &serde_json::Value) -> Option<AttemptOutcome> {
+    if !value
+        .get(SLEEP_SENTINEL_KEY)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    Some(AttemptOutcome::Sleep {
+        duration_ms: value.get("duration_ms")?.as_u64()?,
+        reason: value.get("reason")?.as_str()?.to_string(),
+    })
+}
+
 fn harness_extras_with_session(sid: &Option<String>) -> serde_json::Map<String, serde_json::Value> {
     let mut m = serde_json::Map::new();
     if let Some(s) = sid {
@@ -327,4 +367,32 @@ fn harness_extras_with_session(sid: &Option<String>) -> serde_json::Map<String, 
         );
     }
     m
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sleep_sentinel_maps_to_sleep_outcome() {
+        let value = serde_json::json!({
+            "__nexo_sleep__": true,
+            "duration_ms": 270_000,
+            "reason": "waiting"
+        });
+        let mapped = map_sleep_result(&value).unwrap();
+        assert_eq!(
+            mapped,
+            AttemptOutcome::Sleep {
+                duration_ms: 270_000,
+                reason: "waiting".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn normal_tool_result_does_not_map_to_sleep() {
+        let value = serde_json::json!({"text": "hello"});
+        assert_eq!(map_sleep_result(&value), None);
+    }
 }

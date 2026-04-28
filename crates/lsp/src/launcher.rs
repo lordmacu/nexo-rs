@@ -118,9 +118,8 @@ mod tests {
 
     #[test]
     fn probe_finds_all_when_resolver_succeeds_for_all() {
-        let launcher = LspLauncher::probe_with(|binary| {
-            Some(PathBuf::from(format!("/fake/bin/{binary}")))
-        });
+        let launcher =
+            LspLauncher::probe_with(|binary| Some(PathBuf::from(format!("/fake/bin/{binary}"))));
         assert!(launcher.any_available());
         assert_eq!(launcher.discovered_languages().len(), 4);
         assert_eq!(

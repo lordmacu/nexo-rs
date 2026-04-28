@@ -355,6 +355,10 @@ pub const CONFIG_SELF_EDIT_DENYLIST: &[&str] = &[
     // coordinator nor drop plan-mode guardrails.
     "binding.*.role",
     "binding.*.plan_mode.*",
+    // Proactive mode changes runtime/cost behavior and can create
+    // autonomous turn loops; keep operator-only.
+    "binding.*.proactive.enabled",
+    "proactive.enabled",
     // Outbound webhooks — URL + secret env both lock-in.
     "remote_triggers[*].url",
     "remote_triggers[*].secret_env",
@@ -479,6 +483,14 @@ mod denylist_tests {
         assert_eq!(
             denylist_match("binding.whatsapp.plan_mode.enabled"),
             Some("binding.*.plan_mode.*")
+        );
+        assert_eq!(
+            denylist_match("binding.whatsapp.proactive.enabled"),
+            Some("binding.*.proactive.enabled")
+        );
+        assert_eq!(
+            denylist_match("proactive.enabled"),
+            Some("proactive.enabled")
         );
     }
 }

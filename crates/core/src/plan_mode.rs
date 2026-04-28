@@ -300,6 +300,8 @@ pub const MUTATING_TOOLS: &[&str] = &[
     "cron_delete",
     "cron_pause",
     "cron_resume",
+    "start_followup",
+    "cancel_followup",
     "RemoteTrigger",
     // Config self-edit (79.10) — only `apply` op is mutating; the gate
     // resolves the op at call time. `Config` as a name is listed here
@@ -339,6 +341,7 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
     "SyntheticOutput",
     // Phase 79.7 — cron list reads the schedule store.
     "cron_list",
+    "check_followup",
     // Phase 79.5 — LSP tool. All 5 MVP ops (go_to_def, hover,
     // references, workspace_symbol, diagnostics) are pure
     // queries against the language server; classifying once at
@@ -373,7 +376,7 @@ pub fn classify_tool(tool_name: &str) -> Option<ToolKind> {
             "FileWrite" | "FileEdit" | "NotebookEdit" => ToolKind::FileEdit,
             "delegate_to" | "TeamCreate" | "TeamDelete" | "TeamSendMessage" => ToolKind::Delegate,
             "program_phase" | "dispatch_followup" => ToolKind::Dispatch,
-            "ScheduleCron" => ToolKind::Schedule,
+            "ScheduleCron" | "start_followup" | "cancel_followup" => ToolKind::Schedule,
             "RemoteTrigger" => ToolKind::Outbound,
             "Config" => ToolKind::Config,
             _ => ToolKind::Outbound, // future plugin outbound names

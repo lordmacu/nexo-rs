@@ -26,7 +26,10 @@ use nexo_driver_types::{AcceptanceVerdict, AttemptResult, GoalId};
 use parking_lot::Mutex;
 
 use crate::store::AgentRegistryStore;
-use crate::types::{AgentHandle, AgentRunStatus, AgentSnapshot, AgentSummary, RegistryError};
+use crate::types::{
+    AgentHandle, AgentRunStatus, AgentSleepState, AgentSnapshot, AgentSummary, AskPendingState,
+    RegistryError,
+};
 
 /// Outcome of an `admit()` call.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -177,6 +180,7 @@ impl AgentRegistry {
                 AdmitOutcome::Queued { .. } => AgentRunStatus::Queued,
                 AdmitOutcome::Rejected => unreachable!(),
             };
+            h.snapshot.sleep = None;
             let entry = RegistryEntry {
                 handle_meta: Arc::new(Mutex::new(HandleMeta {
                     phase_id: h.phase_id.clone(),
@@ -231,6 +235,7 @@ impl AgentRegistry {
         } else {
             return Err(RegistryError::NotFound(goal_id));
         }
+        self.clear_sleep_snapshot(goal_id);
         self.persist(goal_id).await?;
         // B12 — atomic pop-and-mark-Running of the next queued
         // goal. Two callers racing release would otherwise both
@@ -265,6 +270,58 @@ impl AgentRegistry {
             }
         }
         drop(entry);
+        if !matches!(status, AgentRunStatus::Sleeping) {
+            self.clear_sleep_snapshot(goal_id);
+        }
+        self.persist(goal_id).await
+    }
+
+    /// Phase 77.20.3 — mark a goal as parked by proactive Sleep and
+    /// persist the wake metadata separately from the turn transcript.
+    pub async fn set_sleeping(
+        &self,
+        goal_id: GoalId,
+        wake_at: chrono::DateTime<Utc>,
+        duration_ms: u64,
+        reason: String,
+    ) -> Result<(), RegistryError> {
+        let entry = self
+            .inner
+            .get(&goal_id)
+            .ok_or(RegistryError::NotFound(goal_id))?;
+        {
+            let mut meta = entry.handle_meta.lock();
+            meta.status = AgentRunStatus::Sleeping;
+        }
+        let cur = (**entry.snapshot.load()).clone();
+        entry.snapshot.store(Arc::new(AgentSnapshot {
+            sleep: Some(AgentSleepState {
+                wake_at,
+                duration_ms,
+                reason,
+            }),
+            last_event_at: Utc::now(),
+            ..cur
+        }));
+        drop(entry);
+        self.persist(goal_id).await
+    }
+
+    /// Clear any persisted Sleep metadata and mark the goal running.
+    /// Called when the orchestrator starts the wake-up/tick turn.
+    pub async fn clear_sleeping(&self, goal_id: GoalId) -> Result<(), RegistryError> {
+        let entry = self
+            .inner
+            .get(&goal_id)
+            .ok_or(RegistryError::NotFound(goal_id))?;
+        {
+            let mut meta = entry.handle_meta.lock();
+            if matches!(meta.status, AgentRunStatus::Sleeping) {
+                meta.status = AgentRunStatus::Running;
+            }
+        }
+        drop(entry);
+        self.clear_sleep_snapshot(goal_id);
         self.persist(goal_id).await
     }
 
@@ -291,6 +348,82 @@ impl AgentRegistry {
             snapshot: snap,
             plan_mode: None,
         })
+    }
+
+    /// Find the newest paused goal matching an origin tuple.
+    /// Used by AskUserQuestion reply routing to resume the waiting goal.
+    pub fn find_paused_by_origin(
+        &self,
+        plugin: &str,
+        instance: &str,
+        sender_id: &str,
+    ) -> Option<GoalId> {
+        self.inner
+            .iter()
+            .filter_map(|e| {
+                let meta = e.value().handle_meta.lock().clone();
+                if meta.status != AgentRunStatus::Paused {
+                    return None;
+                }
+                let origin = meta.origin?;
+                if origin.plugin == plugin
+                    && origin.instance == instance
+                    && origin.sender_id == sender_id
+                {
+                    Some((*e.key(), meta.started_at))
+                } else {
+                    None
+                }
+            })
+            .max_by_key(|(_, started)| *started)
+            .map(|(goal_id, _)| goal_id)
+    }
+
+    /// Find a paused goal by explicit AskUserQuestion id + origin tuple.
+    pub fn find_paused_by_question_id(
+        &self,
+        plugin: &str,
+        instance: &str,
+        sender_id: &str,
+        question_id: &str,
+    ) -> Option<GoalId> {
+        self.inner.iter().find_map(|e| {
+            let meta = e.value().handle_meta.lock().clone();
+            if meta.status != AgentRunStatus::Paused {
+                return None;
+            }
+            let origin = meta.origin?;
+            if origin.plugin != plugin
+                || origin.instance != instance
+                || origin.sender_id != sender_id
+            {
+                return None;
+            }
+            let snap = (**e.value().snapshot.load()).clone();
+            let pending = snap.ask_pending?;
+            if pending.question_id == question_id {
+                Some(*e.key())
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Set or clear AskUserQuestion pending state and persist.
+    pub async fn set_ask_pending(
+        &self,
+        goal_id: GoalId,
+        pending: Option<AskPendingState>,
+    ) -> Result<(), RegistryError> {
+        let entry = self
+            .inner
+            .get(&goal_id)
+            .ok_or(RegistryError::NotFound(goal_id))?;
+        let mut snap = (**entry.snapshot.load()).clone();
+        snap.ask_pending = pending;
+        entry.snapshot.store(Arc::new(snap));
+        drop(entry);
+        self.persist(goal_id).await
     }
 
     /// Snapshot of every in-flight + queued goal, sorted by start
@@ -329,12 +462,40 @@ impl AgentRegistry {
         Ok(out)
     }
 
+    /// Full in-memory handles snapshot. Used by bootstrap routines
+    /// that need richer fields than `AgentSummary` exposes.
+    pub fn list_handles_in_memory(&self) -> Vec<AgentHandle> {
+        self.inner
+            .iter()
+            .map(|e| {
+                let meta = e.value().handle_meta.lock().clone();
+                let snap = (**e.value().snapshot.load()).clone();
+                AgentHandle {
+                    goal_id: *e.key(),
+                    phase_id: meta.phase_id,
+                    status: meta.status,
+                    origin: meta.origin,
+                    dispatcher: meta.dispatcher,
+                    started_at: meta.started_at,
+                    finished_at: meta.finished_at,
+                    snapshot: snap,
+                    plan_mode: None,
+                }
+            })
+            .collect()
+    }
+
     /// Count of `Running` goals — used to enforce the global cap.
     /// Does not count `Queued` or terminal states.
     pub fn count_running(&self) -> u32 {
         self.inner
             .iter()
-            .filter(|e| e.value().handle_meta.lock().status == AgentRunStatus::Running)
+            .filter(|e| {
+                matches!(
+                    e.value().handle_meta.lock().status,
+                    AgentRunStatus::Running | AgentRunStatus::Sleeping
+                )
+            })
             .count() as u32
     }
 
@@ -365,6 +526,8 @@ impl AgentRegistry {
                 .map(str::to_owned)
                 .or(cur.last_diff_stat),
             last_progress_text: ev.final_text.clone().or(cur.last_progress_text),
+            sleep: cur.sleep,
+            ask_pending: cur.ask_pending,
         };
         entry.snapshot.store(Arc::new(next));
         self.persist(ev.goal_id).await
@@ -403,6 +566,19 @@ impl AgentRegistry {
         };
         self.store.upsert(&handle).await?;
         Ok(())
+    }
+
+    fn clear_sleep_snapshot(&self, goal_id: GoalId) {
+        if let Some(entry) = self.inner.get(&goal_id) {
+            let cur = (**entry.snapshot.load()).clone();
+            if cur.sleep.is_some() {
+                entry.snapshot.store(Arc::new(AgentSnapshot {
+                    sleep: None,
+                    last_event_at: Utc::now(),
+                    ..cur
+                }));
+            }
+        }
     }
 }
 

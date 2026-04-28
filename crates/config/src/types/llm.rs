@@ -60,6 +60,8 @@ impl Default for PromptCacheConfig {
 pub struct CompactionConfig {
     #[serde(default)]
     pub enabled: bool,
+    #[serde(default)]
+    pub micro: MicroCompactionConfig,
     #[serde(default = "default_compact_at_pct")]
     pub compact_at_pct: f32,
     #[serde(default = "default_tail_keep_tokens")]
@@ -77,11 +79,35 @@ impl Default for CompactionConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            micro: MicroCompactionConfig::default(),
             compact_at_pct: 0.75,
             tail_keep_tokens: 20_000,
             tool_result_max_pct: 0.30,
             summarizer_model: String::new(),
             lock_ttl_seconds: 300,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct MicroCompactionConfig {
+    #[serde(default = "default_micro_threshold_bytes")]
+    pub threshold_bytes: usize,
+    /// Empty = reuse `summarizer_model`; if that is empty, reuse the
+    /// agent's current model on the already-wired provider.
+    #[serde(default)]
+    pub provider: String,
+    #[serde(default = "default_micro_summary_max_chars")]
+    pub summary_max_chars: usize,
+}
+
+impl Default for MicroCompactionConfig {
+    fn default() -> Self {
+        Self {
+            threshold_bytes: default_micro_threshold_bytes(),
+            provider: String::new(),
+            summary_max_chars: default_micro_summary_max_chars(),
         }
     }
 }
@@ -146,6 +172,12 @@ fn default_tail_keep_tokens() -> u32 {
 }
 fn default_tool_result_max_pct() -> f32 {
     0.30
+}
+fn default_micro_threshold_bytes() -> usize {
+    16 * 1024
+}
+fn default_micro_summary_max_chars() -> usize {
+    2048
 }
 fn default_lock_ttl_seconds() -> u32 {
     300
@@ -389,6 +421,9 @@ auth:
             "workspace_cache safe by default"
         );
         assert_eq!(cfg.compaction.compact_at_pct, 0.75);
+        assert_eq!(cfg.compaction.micro.threshold_bytes, 16 * 1024);
+        assert_eq!(cfg.compaction.micro.provider, "");
+        assert_eq!(cfg.compaction.micro.summary_max_chars, 2048);
         assert_eq!(cfg.compaction.tail_keep_tokens, 20_000);
         assert_eq!(cfg.compaction.tool_result_max_pct, 0.30);
         assert_eq!(cfg.token_counter.backend, "auto");
@@ -410,6 +445,10 @@ context_optimization:
     long_ttl_providers: ["anthropic"]
   compaction:
     enabled: true
+    micro:
+      threshold_bytes: 4096
+      provider: "claude-haiku-4-5"
+      summary_max_chars: 1024
     compact_at_pct: 0.6
     tail_keep_tokens: 15000
     summarizer_model: "claude-haiku-4-5"
@@ -417,6 +456,18 @@ context_optimization:
         let cfg: LlmConfig = serde_yaml::from_str(yaml).unwrap();
         assert!(!cfg.context_optimization.prompt_cache.enabled);
         assert!(cfg.context_optimization.compaction.enabled);
+        assert_eq!(
+            cfg.context_optimization.compaction.micro.threshold_bytes,
+            4096
+        );
+        assert_eq!(
+            cfg.context_optimization.compaction.micro.provider,
+            "claude-haiku-4-5"
+        );
+        assert_eq!(
+            cfg.context_optimization.compaction.micro.summary_max_chars,
+            1024
+        );
         assert_eq!(cfg.context_optimization.compaction.compact_at_pct, 0.6);
         assert_eq!(cfg.context_optimization.compaction.tail_keep_tokens, 15_000);
         // Non-overridden fields take defaults.

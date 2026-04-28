@@ -23,4 +23,7 @@ pub use store::{
     AgentRegistryStore, AgentRegistryStoreError, MemoryAgentRegistryStore, SqliteAgentRegistryStore,
 };
 pub use turn_log::{SqliteTurnLogStore, TurnLogStore, TurnRecord};
-pub use types::{AgentHandle, AgentRunStatus, AgentSnapshot, AgentSummary, RegistryError};
+pub use types::{
+    AgentHandle, AgentRunStatus, AgentSleepState, AgentSnapshot, AgentSummary, AskPendingState,
+    RegistryError,
+};

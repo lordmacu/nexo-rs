@@ -667,6 +667,14 @@ fn spawn_poller(
                         .reply_to_message
                         .as_ref()
                         .map(|m| m.message_id.to_string()),
+                    reply_to_question_id: msg
+                        .reply_to_message
+                        .as_ref()
+                        .and_then(|m| reply_to_question_id(m.as_ref())),
+                    ask_question_id: msg
+                        .reply_to_message
+                        .as_ref()
+                        .and_then(|m| reply_to_question_id(m.as_ref())),
                     is_group: matches!(msg.chat.kind.as_str(), "group" | "supergroup" | "channel"),
                     timestamp: msg.date,
                     msg_id: msg.message_id.to_string(),
@@ -888,6 +896,26 @@ fn extract_forward_info(msg: &TgMessage) -> Option<ForwardInfo> {
             from_chat_id: Some(c.id),
             date: msg.forward_date,
         });
+    }
+    None
+}
+
+/// Extract Phase 77.17 AskUserQuestion correlation id from the quoted
+/// bot message text/caption.
+fn reply_to_question_id(msg: &TgMessage) -> Option<String> {
+    let text = msg.text.as_deref().or(msg.caption.as_deref())?;
+    extract_question_id_marker(text)
+}
+
+fn extract_question_id_marker(text: &str) -> Option<String> {
+    for line in text.lines() {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("[question_id]") {
+            let id = rest.trim();
+            if !id.is_empty() {
+                return Some(id.to_string());
+            }
+        }
     }
     None
 }
@@ -1441,7 +1469,7 @@ async fn spawn_dispatcher(
 
 #[cfg(test)]
 mod topic_tests {
-    use super::{inbound_topic_for, outbound_topic_for};
+    use super::{extract_question_id_marker, inbound_topic_for, outbound_topic_for};
 
     #[test]
     fn single_bot_uses_legacy_topic() {
@@ -1479,5 +1507,20 @@ mod topic_tests {
         let out_suffix = out_t.strip_prefix("plugin.outbound.telegram").unwrap_or("");
         assert_eq!(in_suffix, out_suffix);
         assert_eq!(in_suffix, ".bot_v2");
+    }
+
+    #[test]
+    fn extracts_question_id_marker() {
+        let text =
+            "[question] Continue?\n[question_id] 123e4567-e89b-12d3-a456-426614174000\n\nReply";
+        assert_eq!(
+            extract_question_id_marker(text).as_deref(),
+            Some("123e4567-e89b-12d3-a456-426614174000")
+        );
+    }
+
+    #[test]
+    fn missing_question_id_marker_returns_none() {
+        assert!(extract_question_id_marker("hello").is_none());
     }
 }

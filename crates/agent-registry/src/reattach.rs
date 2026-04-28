@@ -43,6 +43,11 @@ pub enum ReattachOutcome {
     /// Queued goal was re-admitted; the caller should kick the
     /// scheduler so it can promote when capacity frees up.
     Requeued(AgentHandle),
+    /// Goal was parked by proactive Sleep. The wake metadata was
+    /// restored into the registry; the process-level scheduler can
+    /// decide whether to wait until `snapshot.sleep.wake_at` or wake
+    /// immediately if it is overdue.
+    Sleeping(AgentHandle),
     /// Paused or terminal — kept in memory but no caller action.
     Recorded(AgentHandle),
     /// Old terminal row skipped (older than `keep_terminal_for`).
@@ -116,6 +121,20 @@ pub async fn reattach(
                         .await?;
                     out.push(ReattachOutcome::MarkedLost(lost));
                 }
+            }
+            AgentRunStatus::Sleeping => {
+                let h = handle.clone();
+                let _ = registry.admit(h.clone(), true).await?;
+                if let Some(sleep) = h.snapshot.sleep.clone() {
+                    registry
+                        .set_sleeping(h.goal_id, sleep.wake_at, sleep.duration_ms, sleep.reason)
+                        .await?;
+                } else {
+                    registry
+                        .set_status(h.goal_id, AgentRunStatus::Running)
+                        .await?;
+                }
+                out.push(ReattachOutcome::Sleeping(h));
             }
             AgentRunStatus::Queued => {
                 let h = handle.clone();

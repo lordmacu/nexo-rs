@@ -90,6 +90,15 @@ pub enum BindingValidationError {
         provider: String,
         known: String,
     },
+    #[error(
+        "agent '{agent}' binding[{index}]: invalid role '{role}'. Valid values: \
+         coordinator | worker | proactive"
+    )]
+    InvalidRole {
+        agent: String,
+        index: usize,
+        role: String,
+    },
 }
 
 /// Known-tools catalogue used by [`validate_agents`]. An empty set turns
@@ -382,6 +391,21 @@ fn validate_agent_into(
         }
     }
 
+    // 4.b Binding role must be one of the known tags.
+    for (idx, b) in agent.inbound_bindings.iter().enumerate() {
+        let Some(role) = b.role.as_deref() else {
+            continue;
+        };
+        let normalized = role.trim().to_ascii_lowercase();
+        if !matches!(normalized.as_str(), "coordinator" | "worker" | "proactive") {
+            errors.push(BindingValidationError::InvalidRole {
+                agent: agent.id.clone(),
+                index: idx,
+                role: role.to_string(),
+            });
+        }
+    }
+
     // 5. Skills exist on disk.
     for (idx, b) in agent.inbound_bindings.iter().enumerate() {
         let Some(skills) = b.skills.as_ref() else {
@@ -452,6 +476,7 @@ fn has_any_override(b: &nexo_config::InboundBinding) -> bool {
         || !b.web_search.is_null()
         || !b.pairing_policy.is_null()
         || b.dispatch_policy.is_some()
+        || b.remote_triggers.is_some()
         || !matches!(
             b.sender_rate_limit,
             nexo_config::SenderRateLimitOverride::Keyword(
@@ -512,6 +537,7 @@ mod tests {
             lsp: nexo_config::types::lsp::LspPolicy::default(),
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
             team: nexo_config::types::team::TeamPolicy::default(),
+            proactive: Default::default(),
         }
     }
 
@@ -693,6 +719,18 @@ mod tests {
         });
         validate_agent(&a, &[], &KnownTools::default())
             .expect("same-provider model switch must pass");
+    }
+
+    #[test]
+    fn invalid_role_rejected() {
+        let mut a = agent("ana", "./skills");
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "telegram".into(),
+            role: Some("boss-mode".into()),
+            ..Default::default()
+        });
+        let err = validate_agent(&a, &[], &KnownTools::default()).unwrap_err();
+        assert!(matches!(err, BindingValidationError::InvalidRole { .. }));
     }
 
     #[test]

@@ -44,6 +44,68 @@ pub struct ReminderEntry {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EmailFollowupStatus {
+    Active,
+    Cancelled,
+    Completed,
+    Exhausted,
+}
+
+impl EmailFollowupStatus {
+    fn from_db(raw: &str) -> Self {
+        match raw {
+            "cancelled" => EmailFollowupStatus::Cancelled,
+            "completed" => EmailFollowupStatus::Completed,
+            "exhausted" => EmailFollowupStatus::Exhausted,
+            _ => EmailFollowupStatus::Active,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmailFollowupEntry {
+    pub flow_id: Uuid,
+    pub agent_id: String,
+    pub session_id: Uuid,
+    pub source_plugin: String,
+    pub source_instance: Option<String>,
+    pub recipient: String,
+    pub thread_root_id: String,
+    pub instruction: String,
+    pub check_every_secs: u64,
+    pub max_attempts: u32,
+    pub attempts: u32,
+    pub next_check_at: DateTime<Utc>,
+    pub claimed_at: Option<DateTime<Utc>>,
+    pub status: EmailFollowupStatus,
+    pub status_note: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct EmailFollowupDbRow {
+    flow_id: String,
+    agent_id: String,
+    session_id: String,
+    source_plugin: String,
+    source_instance: Option<String>,
+    recipient: String,
+    thread_root_id: String,
+    instruction: String,
+    check_every_secs: i64,
+    max_attempts: i64,
+    attempts: i64,
+    next_check_at: i64,
+    claimed_at: Option<i64>,
+    status: String,
+    status_note: Option<String>,
+    created_at: i64,
+    updated_at: i64,
+}
+
 pub struct LongTermMemory {
     pool: SqlitePool,
     embedding: Option<Arc<dyn EmbeddingProvider>>,
@@ -230,6 +292,37 @@ impl LongTermMemory {
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_reminders_due
              ON reminders(agent_id, delivered_at, due_at ASC)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS email_followups (
+                flow_id          TEXT PRIMARY KEY,
+                agent_id         TEXT NOT NULL,
+                session_id       TEXT NOT NULL,
+                source_plugin    TEXT NOT NULL,
+                source_instance  TEXT,
+                recipient        TEXT NOT NULL,
+                thread_root_id   TEXT NOT NULL,
+                instruction      TEXT NOT NULL,
+                check_every_secs INTEGER NOT NULL,
+                max_attempts     INTEGER NOT NULL,
+                attempts         INTEGER NOT NULL DEFAULT 0,
+                next_check_at    INTEGER NOT NULL,
+                claimed_at       INTEGER,
+                status           TEXT NOT NULL DEFAULT 'active',
+                status_note      TEXT,
+                created_at       INTEGER NOT NULL,
+                updated_at       INTEGER NOT NULL
+            )",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_email_followups_due
+             ON email_followups(agent_id, status, next_check_at ASC)",
         )
         .execute(&self.pool)
         .await?;
@@ -974,6 +1067,228 @@ impl LongTermMemory {
         Ok(updated > 0)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub async fn start_email_followup(
+        &self,
+        flow_id: Uuid,
+        agent_id: &str,
+        session_id: Uuid,
+        source_plugin: &str,
+        source_instance: Option<&str>,
+        recipient: &str,
+        thread_root_id: &str,
+        instruction: &str,
+        check_every_secs: u64,
+        max_attempts: u32,
+        next_check_at: DateTime<Utc>,
+    ) -> anyhow::Result<(EmailFollowupEntry, bool)> {
+        if let Some(existing) = self.get_email_followup(flow_id).await? {
+            return Ok((existing, false));
+        }
+        let now = Utc::now().timestamp_millis();
+        sqlx::query(
+            "INSERT INTO email_followups (
+                flow_id, agent_id, session_id, source_plugin, source_instance, recipient,
+                thread_root_id, instruction, check_every_secs, max_attempts, attempts,
+                next_check_at, claimed_at, status, status_note, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL, 'active', NULL, ?, ?)",
+        )
+        .bind(flow_id.to_string())
+        .bind(agent_id)
+        .bind(session_id.to_string())
+        .bind(source_plugin)
+        .bind(source_instance.map(str::to_string))
+        .bind(recipient)
+        .bind(thread_root_id)
+        .bind(instruction)
+        .bind(check_every_secs as i64)
+        .bind(max_attempts as i64)
+        .bind(next_check_at.timestamp_millis())
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+
+        let created = self
+            .get_email_followup(flow_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("email_followup inserted but not found"))?;
+        Ok((created, true))
+    }
+
+    pub async fn get_email_followup(
+        &self,
+        flow_id: Uuid,
+    ) -> anyhow::Result<Option<EmailFollowupEntry>> {
+        let row: Option<EmailFollowupDbRow> = sqlx::query_as(
+            "SELECT flow_id, agent_id, session_id, source_plugin, source_instance, recipient,
+                    thread_root_id, instruction, check_every_secs, max_attempts, attempts,
+                    next_check_at, claimed_at, status, status_note, created_at, updated_at
+             FROM email_followups
+             WHERE flow_id = ?",
+        )
+        .bind(flow_id.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(email_followup_from_row))
+    }
+
+    pub async fn cancel_email_followup(
+        &self,
+        flow_id: Uuid,
+        note: Option<&str>,
+    ) -> anyhow::Result<bool> {
+        let now = Utc::now().timestamp_millis();
+        let updated = sqlx::query(
+            "UPDATE email_followups
+             SET status = 'cancelled',
+                 status_note = ?,
+                 claimed_at = NULL,
+                 updated_at = ?
+             WHERE flow_id = ?
+               AND status = 'active'",
+        )
+        .bind(note.map(str::to_string))
+        .bind(now)
+        .bind(flow_id.to_string())
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        if updated > 0 {
+            return Ok(true);
+        }
+
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT status FROM email_followups WHERE flow_id = ?")
+                .bind(flow_id.to_string())
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(matches!(
+            row.as_ref().map(|r| r.0.as_str()),
+            Some("cancelled")
+        ))
+    }
+
+    pub async fn claim_due_email_followups(
+        &self,
+        agent_id: &str,
+        now: DateTime<Utc>,
+        limit: usize,
+    ) -> anyhow::Result<Vec<EmailFollowupEntry>> {
+        let mut tx = self.pool.begin().await?;
+        let rows: Vec<EmailFollowupDbRow> = sqlx::query_as(
+            "SELECT flow_id, agent_id, session_id, source_plugin, source_instance, recipient,
+                    thread_root_id, instruction, check_every_secs, max_attempts, attempts,
+                    next_check_at, claimed_at, status, status_note, created_at, updated_at
+             FROM email_followups
+             WHERE agent_id = ?
+               AND status = 'active'
+               AND claimed_at IS NULL
+               AND next_check_at <= ?
+             ORDER BY next_check_at ASC
+             LIMIT ?",
+        )
+        .bind(agent_id)
+        .bind(now.timestamp_millis())
+        .bind(limit as i64)
+        .fetch_all(&mut *tx)
+        .await?;
+
+        if rows.is_empty() {
+            tx.commit().await?;
+            return Ok(Vec::new());
+        }
+
+        let claim_ts = Utc::now().timestamp_millis();
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let flow_id = row.flow_id.clone();
+            let updated = sqlx::query(
+                "UPDATE email_followups
+                 SET claimed_at = ?,
+                     updated_at = ?
+                 WHERE flow_id = ?
+                   AND status = 'active'
+                   AND claimed_at IS NULL",
+            )
+            .bind(claim_ts)
+            .bind(claim_ts)
+            .bind(&flow_id)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+            if updated == 0 {
+                continue;
+            }
+            let mut entry = email_followup_from_row(row);
+            entry.claimed_at = DateTime::from_timestamp_millis(claim_ts);
+            entry.updated_at = DateTime::from_timestamp_millis(claim_ts).unwrap_or_else(Utc::now);
+            out.push(entry);
+        }
+
+        tx.commit().await?;
+        Ok(out)
+    }
+
+    pub async fn requeue_email_followup_after_error(
+        &self,
+        flow_id: Uuid,
+        next_check_at: DateTime<Utc>,
+        error: &str,
+    ) -> anyhow::Result<bool> {
+        let now = Utc::now().timestamp_millis();
+        let updated = sqlx::query(
+            "UPDATE email_followups
+             SET claimed_at = NULL,
+                 next_check_at = ?,
+                 status_note = ?,
+                 updated_at = ?
+             WHERE flow_id = ?
+               AND status = 'active'",
+        )
+        .bind(next_check_at.timestamp_millis())
+        .bind(error.to_string())
+        .bind(now)
+        .bind(flow_id.to_string())
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        Ok(updated > 0)
+    }
+
+    pub async fn advance_email_followup_attempt(
+        &self,
+        flow_id: Uuid,
+        next_check_at: Option<DateTime<Utc>>,
+        note: Option<&str>,
+    ) -> anyhow::Result<bool> {
+        let now = Utc::now().timestamp_millis();
+        let (status, next_ms) = match next_check_at {
+            Some(ts) => ("active", ts.timestamp_millis()),
+            None => ("exhausted", now),
+        };
+        let updated = sqlx::query(
+            "UPDATE email_followups
+             SET attempts = attempts + 1,
+                 claimed_at = NULL,
+                 next_check_at = ?,
+                 status = ?,
+                 status_note = ?,
+                 updated_at = ?
+             WHERE flow_id = ?
+               AND status = 'active'",
+        )
+        .bind(next_ms)
+        .bind(status)
+        .bind(note.map(str::to_string))
+        .bind(now)
+        .bind(flow_id.to_string())
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        Ok(updated > 0)
+    }
+
     // ── Recall signal tracking (Phase 10.5) ──────────────────────────────────
 
     /// Record that a memory was surfaced by a search query. Called once per
@@ -1143,6 +1458,65 @@ fn is_duplicate_column_error(e: &sqlx::Error) -> bool {
     e.to_string()
         .to_ascii_lowercase()
         .contains("duplicate column")
+}
+
+fn email_followup_from_row(row: EmailFollowupDbRow) -> EmailFollowupEntry {
+    let (
+        flow_id,
+        agent_id,
+        session_id,
+        source_plugin,
+        source_instance,
+        recipient,
+        thread_root_id,
+        instruction,
+        check_every_secs,
+        max_attempts,
+        attempts,
+        next_check_at,
+        claimed_at,
+        status,
+        status_note,
+        created_at,
+        updated_at,
+    ) = (
+        row.flow_id,
+        row.agent_id,
+        row.session_id,
+        row.source_plugin,
+        row.source_instance,
+        row.recipient,
+        row.thread_root_id,
+        row.instruction,
+        row.check_every_secs,
+        row.max_attempts,
+        row.attempts,
+        row.next_check_at,
+        row.claimed_at,
+        row.status,
+        row.status_note,
+        row.created_at,
+        row.updated_at,
+    );
+    EmailFollowupEntry {
+        flow_id: parse_uuid_or_warn(&flow_id, "email_followups.flow_id"),
+        agent_id,
+        session_id: Uuid::parse_str(&session_id).unwrap_or_else(|_| Uuid::nil()),
+        source_plugin,
+        source_instance,
+        recipient,
+        thread_root_id,
+        instruction,
+        check_every_secs: check_every_secs.max(0) as u64,
+        max_attempts: max_attempts.clamp(0, i64::from(u32::MAX)) as u32,
+        attempts: attempts.clamp(0, i64::from(u32::MAX)) as u32,
+        next_check_at: DateTime::from_timestamp_millis(next_check_at).unwrap_or_else(Utc::now),
+        claimed_at: claimed_at.and_then(DateTime::from_timestamp_millis),
+        status: EmailFollowupStatus::from_db(&status),
+        status_note,
+        created_at: DateTime::from_timestamp_millis(created_at).unwrap_or_else(Utc::now),
+        updated_at: DateTime::from_timestamp_millis(updated_at).unwrap_or_else(Utc::now),
+    }
 }
 
 fn parse_uuid_or_warn(raw: &str, context: &str) -> Uuid {

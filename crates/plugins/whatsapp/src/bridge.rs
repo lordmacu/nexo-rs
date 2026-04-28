@@ -20,8 +20,10 @@ use uuid::Uuid;
 use whatsapp_rs::agent::{AgentCtx, Response};
 
 use crate::events::InboundEvent;
+use crate::plugin::AskReplyIndex;
 use crate::plugin::PendingMap;
 use crate::session_id::session_id_for_jid;
+use whatsapp_rs::messages::MessageContent;
 
 pub const TOPIC_INBOUND: &str = "plugin.inbound.whatsapp";
 pub const SOURCE: &str = "plugin.whatsapp";
@@ -109,12 +111,14 @@ pub async fn bridge_step(
 pub fn build_handler(
     broker: AnyBroker,
     pending: PendingMap,
+    ask_reply_index: AskReplyIndex,
     cfg: Arc<WhatsappPluginConfig>,
     session: Arc<whatsapp_rs::Session>,
 ) -> impl Fn(AgentCtx) -> futures::future::BoxFuture<'static, Response> + Send + Sync + 'static {
     move |ctx: AgentCtx| {
         let broker = broker.clone();
         let pending = pending.clone();
+        let ask_reply_index = ask_reply_index.clone();
         let cfg = cfg.clone();
         let session = session.clone();
         Box::pin(async move {
@@ -142,11 +146,18 @@ pub fn build_handler(
             }
 
             let session_id = session_id_for_jid(ctx.jid());
+            let reply_to_id = extract_reply_to_id(ctx.msg.message.as_ref());
+            let ask_qid = reply_to_id
+                .as_deref()
+                .and_then(|rid| ask_reply_index.get(rid).map(|v| v.value().clone()))
+                .or_else(|| ctx.text.as_deref().and_then(extract_question_id_marker));
             let payload = InboundEvent::Message {
                 from: ctx.sender().to_string(),
                 chat: ctx.jid().to_string(),
                 text: ctx.text.clone(),
-                reply_to: None,
+                reply_to: reply_to_id,
+                reply_to_question_id: ask_qid.clone(),
+                ask_question_id: ask_qid,
                 is_group: ctx.msg.key.remote_jid.ends_with("@g.us"),
                 timestamp: chrono::Utc::now().timestamp(),
                 msg_id: ctx.msg.key.id.clone(),
@@ -182,10 +193,53 @@ pub fn build_acl(cfg: &WhatsappPluginConfig) -> whatsapp_rs::agent::Acl {
     acl
 }
 
+fn extract_question_id_marker(text: &str) -> Option<String> {
+    for line in text.lines() {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("[question_id]") {
+            let id = rest.trim();
+            if !id.is_empty() {
+                return Some(id.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn extract_reply_to_id(content: Option<&MessageContent>) -> Option<String> {
+    match content {
+        Some(MessageContent::Reply { reply_to_id, .. }) if !reply_to_id.is_empty() => {
+            Some(reply_to_id.clone())
+        }
+        _ => None,
+    }
+}
+
 #[doc(hidden)]
 pub fn _unused_result<T>() -> Result<T>
 where
     T: Default,
 {
     Ok(T::default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{extract_question_id_marker, extract_reply_to_id};
+    use whatsapp_rs::messages::MessageContent;
+
+    #[test]
+    fn extract_question_id_marker_ok() {
+        let text = "[question] x\n[question_id] q-123\n";
+        assert_eq!(extract_question_id_marker(text).as_deref(), Some("q-123"));
+    }
+
+    #[test]
+    fn extract_reply_to_id_from_reply_variant() {
+        let c = MessageContent::Reply {
+            reply_to_id: "wamid-1".to_string(),
+            text: "answer".to_string(),
+        };
+        assert_eq!(extract_reply_to_id(Some(&c)).as_deref(), Some("wamid-1"));
+    }
 }

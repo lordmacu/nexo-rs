@@ -8,6 +8,7 @@
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use std::{fs, path::Path};
 
 use async_trait::async_trait;
 use nexo_broker::{types::Event, AnyBroker, BrokerHandle};
@@ -18,9 +19,12 @@ use nexo_config::types::agents::{
 use nexo_core::agent::runtime::ReloadCommand;
 use nexo_core::agent::{Agent, AgentBehavior, AgentContext, AgentRuntime, InboundMessage};
 use nexo_core::session::SessionManager;
+use nexo_core::ConfigReloadCoordinator;
 use nexo_core::RuntimeSnapshot;
+use nexo_llm::LlmRegistry;
 use serde_json::json;
 use tokio::time::sleep;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 struct Capture {
@@ -107,9 +111,10 @@ fn base_agent() -> AgentConfig {
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),
         remote_triggers: Vec::new(),
-            lsp: nexo_config::types::lsp::LspPolicy::default(),
-            config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
-            team: nexo_config::types::team::TeamPolicy::default(),
+        lsp: nexo_config::types::lsp::LspPolicy::default(),
+        config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
+        team: nexo_config::types::team::TeamPolicy::default(),
+        proactive: Default::default(),
     }
 }
 
@@ -205,4 +210,219 @@ async fn reload_sender_send_does_not_block_when_queue_is_full() {
     // The last swap is what remains visible.
     assert_eq!(handle.load().version, 5);
     runtime.stop().await;
+}
+
+fn write_file(dir: &Path, name: &str, content: &str) {
+    fs::write(dir.join(name), content).unwrap();
+}
+
+#[tokio::test]
+async fn reload_coordinator_auto_applies_legacy_yaml_schema_before_swap() {
+    let dir = tempfile::tempdir().unwrap();
+    write_file(
+        dir.path(),
+        "agents.yaml",
+        r#"
+agent:
+  id: "ana"
+  model:
+    provider: "anthropic"
+    model: "claude-haiku-4-5"
+  inbound_binding:
+    plugin: "whatsapp"
+    allowed_tool: "new_tool"
+"#,
+    );
+    write_file(
+        dir.path(),
+        "broker.yaml",
+        r#"
+broker:
+  type: "nats"
+  url: "nats://localhost:4222"
+"#,
+    );
+    write_file(
+        dir.path(),
+        "llm.yaml",
+        r#"
+providers:
+  anthropic:
+    api_key: "dummy"
+    base_url: "https://api.anthropic.com"
+"#,
+    );
+    write_file(
+        dir.path(),
+        "memory.yaml",
+        r#"
+short_term: {}
+long_term:
+  backend: "sqlite"
+  sqlite:
+    path: "./memory.db"
+vector:
+  backend: "sqlite-vec"
+  embedding:
+    provider: "anthropic"
+    model: "text-embedding-3-small"
+    dimensions: 1536
+"#,
+    );
+    write_file(
+        dir.path(),
+        "runtime.yaml",
+        r#"
+migrations:
+  auto_apply: true
+"#,
+    );
+
+    let broker = AnyBroker::local();
+    let out: Arc<Mutex<Vec<Capture>>> = Arc::new(Mutex::new(Vec::new()));
+    let behavior = Recorder {
+        out: Arc::clone(&out),
+    };
+    let cfg = base_agent();
+    let agent = Arc::new(Agent::new(cfg, behavior));
+    let sessions = Arc::new(SessionManager::new(Duration::from_secs(3600), 100));
+    let runtime = AgentRuntime::new(agent.clone(), broker.clone(), sessions);
+    runtime.start().await.unwrap();
+
+    publish(&broker, "plugin.inbound.whatsapp", "before").await;
+    sleep(Duration::from_millis(60)).await;
+
+    let coord = Arc::new(ConfigReloadCoordinator::new(
+        dir.path().to_path_buf(),
+        Arc::new(LlmRegistry::with_builtins()),
+        CancellationToken::new(),
+    ));
+    coord.register(
+        "ana",
+        runtime.reload_sender(),
+        Arc::new(vec!["old_tool".to_string(), "new_tool".to_string()]),
+    );
+
+    let outcome = coord.reload().await;
+    assert_eq!(outcome.applied, vec!["ana".to_string()], "{:#?}", outcome);
+    assert!(outcome.rejected.is_empty(), "{:#?}", outcome.rejected);
+
+    sleep(Duration::from_millis(80)).await;
+    publish(&broker, "plugin.inbound.whatsapp", "after").await;
+    sleep(Duration::from_millis(80)).await;
+    runtime.stop().await;
+
+    let got = out.lock().unwrap();
+    assert_eq!(got.len(), 2);
+    assert_eq!(got[0].allowed_tools, vec!["old_tool".to_string()]);
+    assert_eq!(got[1].allowed_tools, vec!["new_tool".to_string()]);
+
+    let migrated_agents = fs::read_to_string(dir.path().join("agents.yaml")).unwrap();
+    assert!(migrated_agents.contains("schema_version: 11"));
+    assert!(migrated_agents.contains("agents:"));
+}
+
+#[tokio::test]
+async fn reload_coordinator_without_auto_apply_rejects_legacy_yaml_and_keeps_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let legacy_agents = r#"
+agent:
+  id: "ana"
+  model:
+    provider: "anthropic"
+    model: "claude-haiku-4-5"
+  inbound_binding:
+    plugin: "whatsapp"
+    allowed_tool: "new_tool"
+"#;
+    write_file(dir.path(), "agents.yaml", legacy_agents);
+    write_file(
+        dir.path(),
+        "broker.yaml",
+        r#"
+broker:
+  type: "nats"
+  url: "nats://localhost:4222"
+"#,
+    );
+    write_file(
+        dir.path(),
+        "llm.yaml",
+        r#"
+providers:
+  anthropic:
+    api_key: "dummy"
+    base_url: "https://api.anthropic.com"
+"#,
+    );
+    write_file(
+        dir.path(),
+        "memory.yaml",
+        r#"
+short_term: {}
+long_term:
+  backend: "sqlite"
+  sqlite:
+    path: "./memory.db"
+vector:
+  backend: "sqlite-vec"
+  embedding:
+    provider: "anthropic"
+    model: "text-embedding-3-small"
+    dimensions: 1536
+"#,
+    );
+    write_file(
+        dir.path(),
+        "runtime.yaml",
+        r#"
+migrations:
+  auto_apply: false
+"#,
+    );
+
+    let broker = AnyBroker::local();
+    let out: Arc<Mutex<Vec<Capture>>> = Arc::new(Mutex::new(Vec::new()));
+    let behavior = Recorder {
+        out: Arc::clone(&out),
+    };
+    let cfg = base_agent();
+    let agent = Arc::new(Agent::new(cfg, behavior));
+    let sessions = Arc::new(SessionManager::new(Duration::from_secs(3600), 100));
+    let runtime = AgentRuntime::new(agent.clone(), broker.clone(), sessions);
+    runtime.start().await.unwrap();
+
+    publish(&broker, "plugin.inbound.whatsapp", "before").await;
+    sleep(Duration::from_millis(60)).await;
+
+    let coord = Arc::new(ConfigReloadCoordinator::new(
+        dir.path().to_path_buf(),
+        Arc::new(LlmRegistry::with_builtins()),
+        CancellationToken::new(),
+    ));
+    coord.register(
+        "ana",
+        runtime.reload_sender(),
+        Arc::new(vec!["old_tool".to_string(), "new_tool".to_string()]),
+    );
+
+    let outcome = coord.reload().await;
+    assert!(outcome.applied.is_empty());
+    assert_eq!(outcome.rejected.len(), 1);
+    assert!(outcome.rejected[0].agent_id.is_none());
+    assert!(outcome.rejected[0].reason.contains("AppConfig::load"));
+
+    sleep(Duration::from_millis(80)).await;
+    publish(&broker, "plugin.inbound.whatsapp", "after").await;
+    sleep(Duration::from_millis(80)).await;
+    runtime.stop().await;
+
+    let got = out.lock().unwrap();
+    assert_eq!(got.len(), 2);
+    assert_eq!(got[0].allowed_tools, vec!["old_tool".to_string()]);
+    assert_eq!(got[1].allowed_tools, vec!["old_tool".to_string()]);
+
+    let agents_after = fs::read_to_string(dir.path().join("agents.yaml")).unwrap();
+    assert_eq!(agents_after, legacy_agents);
+    assert!(!agents_after.contains("schema_version:"));
 }

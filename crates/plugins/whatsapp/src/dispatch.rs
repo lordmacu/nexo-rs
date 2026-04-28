@@ -26,7 +26,7 @@ use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
-use crate::plugin::PendingMap;
+use crate::plugin::{AskReplyIndex, PendingMap};
 
 pub const TOPIC_OUTBOUND: &str = "plugin.outbound.whatsapp";
 
@@ -70,6 +70,7 @@ pub fn spawn(
     broker: AnyBroker,
     session: Arc<whatsapp_rs::Session>,
     pending: PendingMap,
+    ask_reply_index: AskReplyIndex,
     cancel: CancellationToken,
     outbound_topic: String,
 ) -> tokio::task::JoinHandle<()> {
@@ -89,7 +90,7 @@ pub fn spawn(
                 }
                 ev = sub.next() => {
                     let Some(ev) = ev else { break };
-                    if let Err(e) = dispatch_event(ev, &session, &pending).await {
+                    if let Err(e) = dispatch_event(ev, &session, &pending, &ask_reply_index).await {
                         warn!(error = %e, "outbound dispatch failed");
                     }
                 }
@@ -102,6 +103,7 @@ async fn dispatch_event(
     ev: Event,
     session: &whatsapp_rs::Session,
     pending: &PendingMap,
+    ask_reply_index: &AskReplyIndex,
 ) -> Result<()> {
     tracing::info!(
         session_id = ?ev.session_id,
@@ -164,10 +166,13 @@ async fn dispatch_event(
                 session_id = ?ev.session_id,
                 "DISPATCH_EVENT proactive send_text"
             );
-            session
+            let sent_id = session
                 .send_text(&to, &text)
                 .await
                 .map_err(|e| anyhow::anyhow!("send_text: {e}"))?;
+            if let Some(qid) = extract_question_id_marker(&text) {
+                ask_reply_index.insert(sent_id, qid);
+            }
         }
         "reply" => {
             let to = payload.to.ok_or_else(|| anyhow::anyhow!("missing `to`"))?;
@@ -231,6 +236,19 @@ async fn dispatch_event(
         }
     }
     Ok(())
+}
+
+fn extract_question_id_marker(text: &str) -> Option<String> {
+    for line in text.lines() {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("[question_id]") {
+            let id = rest.trim();
+            if !id.is_empty() {
+                return Some(id.to_string());
+            }
+        }
+    }
+    None
 }
 
 // ── Sessionless oneshot resolver (exposed for integration tests) ─────────────

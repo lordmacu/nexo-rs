@@ -63,6 +63,19 @@ zeroize          = "1"
 # guards mirror claude-code-leak/src/memdir/teamMemPaths.ts:22-64).
 unicode-normalization = "0.1"
 percent-encoding      = "2"
+# Phase 76.9 — typed JSON Schema derive for the `Tool` trait /
+# `McpServerBuilder`. `0.8` until 1.0 stabilises (1.0 has breaking
+# attribute-syntax changes still in flux).
+schemars              = "0.8"
+# Phase 76.11 — durable audit log via SQLite. Uses workspace
+# `sqlx` 0.8 (already pulled by nexo-agent-registry / nexo-core),
+# WAL + synchronous=NORMAL for the in-tree pattern.
+sqlx                  = { workspace = true, features = ["sqlite", "runtime-tokio", "macros"] }
+
+[features]
+# Phase 76.12 — conformance + fuzz suite. Gated so normal `cargo test`
+# stays fast; CI runs `--features server-conformance`.
+server-conformance = []
 
 [dev-dependencies]
 tokio      = { workspace = true, features = ["macros", "rt-multi-thread", "process", "io-util", "time", "sync", "net"] }
@@ -75,6 +88,8 @@ rand       = "0.8"
 base64     = "0.22"
 # Phase 76.10 — serialise telemetry tests (module-global counters).
 serial_test = "3"
+# Phase 76.12 — property-based fuzz over parse_jsonrpc_frame.
+proptest   = "1"
 
 # Auto-discovered from `src/bin/mock_mcp_server.rs`. Used by
 # `tests/mock_server_test.rs` via `CARGO_BIN_EXE_mock_mcp_server`.

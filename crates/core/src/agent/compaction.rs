@@ -161,6 +161,172 @@ pub fn truncate_large_tool_results(messages: &mut [ChatMessage], max_chars: usiz
     truncated
 }
 
+#[derive(Debug, Clone)]
+pub struct MicroCompactBudget {
+    pub threshold_bytes: usize,
+    pub summary_max_chars: usize,
+    pub model: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MicroCompactStats {
+    pub compacted: usize,
+    pub failed: usize,
+    pub original_bytes: usize,
+    pub compacted_bytes: usize,
+}
+
+impl MicroCompactStats {
+    fn empty() -> Self {
+        Self {
+            compacted: 0,
+            failed: 0,
+            original_bytes: 0,
+            compacted_bytes: 0,
+        }
+    }
+}
+
+pub const MICROCOMPACT_SYSTEM_PROMPT: &str = "\
+You are compacting a single tool result before it is sent back to an assistant.
+Produce a concise plaintext summary that preserves actionable facts, errors,
+paths, identifiers, counts, and next-step clues. Do not include unrelated
+commentary. Do not invent details. If the result is structured data, keep the
+important keys and values.";
+
+pub const MICROCOMPACT_CLEARED_MESSAGE: &str = "[Old tool result content cleared]";
+
+fn is_compactable_tool_name(name: Option<&str>) -> bool {
+    matches!(
+        name,
+        Some(
+            "Bash"
+                | "bash"
+                | "FileRead"
+                | "file_read"
+                | "FileWrite"
+                | "file_write"
+                | "FileEdit"
+                | "file_edit"
+                | "Grep"
+                | "grep"
+                | "Glob"
+                | "glob"
+                | "WebSearch"
+                | "web_search"
+                | "WebFetch"
+                | "web_fetch"
+        )
+    )
+}
+
+/// Claude Code's default microcompact path content-clears old compactable
+/// tool results while preserving the `tool_use_id`/`tool_result` pairing. In
+/// nexo-rs the local `messages` vector remains canonical; callers run this on
+/// a request clone so the full result remains available for audit and replay.
+pub fn clear_large_compactable_tool_results(
+    messages: &mut [ChatMessage],
+    threshold_bytes: usize,
+) -> MicroCompactStats {
+    if threshold_bytes == 0 {
+        return MicroCompactStats::empty();
+    }
+
+    let mut stats = MicroCompactStats::empty();
+    for m in messages.iter_mut() {
+        if m.role != ChatRole::Tool
+            || !is_compactable_tool_name(m.name.as_deref())
+            || m.content == MICROCOMPACT_CLEARED_MESSAGE
+            || m.content.len() <= threshold_bytes
+        {
+            continue;
+        }
+
+        let original_bytes = m.content.len();
+        m.content = MICROCOMPACT_CLEARED_MESSAGE.to_string();
+        stats.compacted += 1;
+        stats.original_bytes = stats.original_bytes.saturating_add(original_bytes);
+        stats.compacted_bytes = stats.compacted_bytes.saturating_add(m.content.len());
+    }
+    stats
+}
+
+/// Claude Code's microcompact keeps the tool_result correlation intact while
+/// replacing only the large content body. This mirrors that contract for our
+/// flat `ChatMessage::tool_result` representation.
+pub async fn microcompact_large_tool_results(
+    messages: &mut [ChatMessage],
+    llm: &dyn LlmClient,
+    budget: &MicroCompactBudget,
+) -> MicroCompactStats {
+    if budget.threshold_bytes == 0 {
+        return MicroCompactStats::empty();
+    }
+
+    let mut stats = MicroCompactStats::empty();
+    for m in messages.iter_mut() {
+        if m.role != ChatRole::Tool
+            || !is_compactable_tool_name(m.name.as_deref())
+            || m.content.len() <= budget.threshold_bytes
+        {
+            continue;
+        }
+
+        let original = m.content.clone();
+        let original_bytes = original.len();
+        let tool_name = m.name.clone().unwrap_or_else(|| "tool".to_string());
+        let req = ChatRequest {
+            model: budget.model.clone(),
+            messages: vec![ChatMessage::user(format!(
+                "Tool: {tool_name}\nOriginal byte length: {original_bytes}\n\n{original}"
+            ))],
+            tools: Vec::new(),
+            max_tokens: 1024,
+            temperature: 0.0,
+            system_prompt: Some(MICROCOMPACT_SYSTEM_PROMPT.to_string()),
+            stop_sequences: Vec::new(),
+            tool_choice: nexo_llm::ToolChoice::None,
+            system_blocks: Vec::new(),
+            cache_tools: false,
+        };
+
+        let summary = match llm.chat(req).await {
+            Ok(response) => match response.content {
+                ResponseContent::Text(text) if !text.trim().is_empty() => text,
+                _ => {
+                    stats.failed += 1;
+                    continue;
+                }
+            },
+            Err(e) => {
+                stats.failed += 1;
+                tracing::warn!(
+                    error = %e,
+                    tool = %tool_name,
+                    "microcompact summarizer failed; leaving tool result unchanged"
+                );
+                continue;
+            }
+        };
+
+        let mut summary: String = summary.chars().take(budget.summary_max_chars).collect();
+        if summary.trim().is_empty() {
+            stats.failed += 1;
+            continue;
+        }
+        if summary.len() < original_bytes {
+            summary.push_str(&format!(
+                "\n\n[microcompact: summarized {original_bytes} bytes; full tool result retained in local turn state]"
+            ));
+            m.content = summary;
+            stats.compacted += 1;
+            stats.original_bytes = stats.original_bytes.saturating_add(original_bytes);
+            stats.compacted_bytes = stats.compacted_bytes.saturating_add(m.content.len());
+        }
+    }
+    stats
+}
+
 /// LLM-backed compactor. Builds a summarizer request from
 /// `history[..tail_start_index]` and asks the secondary LLM to fold
 /// it into a single summary string. Caller is responsible for the
@@ -340,6 +506,39 @@ mod tests {
         let n = truncate_large_tool_results(&mut msgs, 100);
         assert_eq!(n, 0);
         assert_eq!(msgs[0].content.len(), 5000);
+    }
+
+    #[test]
+    fn microcompact_clears_only_large_compactable_tool_results() {
+        let mut msgs = vec![
+            ChatMessage::tool_result("c1", "Bash", "x".repeat(5000)),
+            ChatMessage::tool_result("c2", "UnknownTool", "y".repeat(5000)),
+            ChatMessage::tool_result("c3", "Grep", "small"),
+        ];
+
+        let stats = clear_large_compactable_tool_results(&mut msgs, 1024);
+
+        assert_eq!(stats.compacted, 1);
+        assert_eq!(msgs[0].content, MICROCOMPACT_CLEARED_MESSAGE);
+        assert_eq!(msgs[0].tool_call_id.as_deref(), Some("c1"));
+        assert_eq!(msgs[0].name.as_deref(), Some("Bash"));
+        assert_eq!(msgs[1].content.len(), 5000);
+        assert_eq!(msgs[2].content, "small");
+    }
+
+    #[test]
+    fn microcompact_is_idempotent_for_already_cleared_results() {
+        let mut msgs = vec![ChatMessage::tool_result(
+            "c1",
+            "Grep",
+            MICROCOMPACT_CLEARED_MESSAGE,
+        )];
+
+        let stats = clear_large_compactable_tool_results(&mut msgs, 1);
+
+        assert_eq!(stats.compacted, 0);
+        assert_eq!(msgs[0].content, MICROCOMPACT_CLEARED_MESSAGE);
+        assert_eq!(msgs[0].tool_call_id.as_deref(), Some("c1"));
     }
 
     /// Stub LLM that returns a fixed text response.

@@ -30,6 +30,7 @@ fn cap(mut s: String) -> String {
 fn glyph(s: AgentRunStatus) -> &'static str {
     match s {
         AgentRunStatus::Running => "🟢",
+        AgentRunStatus::Sleeping => "💤",
         AgentRunStatus::Queued => "⏳",
         AgentRunStatus::Paused => "⏸",
         AgentRunStatus::Done => "✅",
@@ -41,7 +42,7 @@ fn glyph(s: AgentRunStatus) -> &'static str {
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct ListAgentsInput {
-    /// `running | queued | paused | done | failed | cancelled |
+    /// `running | sleeping | queued | paused | done | failed | cancelled |
     /// lost_on_restart` — case-insensitive. Missing → no filter.
     #[serde(default)]
     pub filter: Option<String>,
@@ -62,6 +63,7 @@ pub async fn list_agents(input: ListAgentsInput, registry: Arc<AgentRegistry>) -
         .map(|s| s.to_ascii_lowercase())
         .and_then(|s| match s.as_str() {
             "running" => Some(AgentRunStatus::Running),
+            "sleeping" => Some(AgentRunStatus::Sleeping),
             "queued" => Some(AgentRunStatus::Queued),
             "paused" => Some(AgentRunStatus::Paused),
             "done" => Some(AgentRunStatus::Done),
@@ -129,6 +131,14 @@ pub async fn agent_status(input: AgentStatusInput, registry: Arc<AgentRegistry>)
         "tokens: {} · turns_used: {}\n",
         h.snapshot.usage.tokens, h.snapshot.usage.turns
     ));
+    if let Some(sleep) = &h.snapshot.sleep {
+        out.push_str(&format!(
+            "sleep: wake_at `{}` · duration {} · reason: {}\n",
+            sleep.wake_at.format("%Y-%m-%d %H:%M:%SZ"),
+            humantime::format_duration(std::time::Duration::from_millis(sleep.duration_ms)),
+            sleep.reason
+        ));
+    }
     if let Some(diff) = &h.snapshot.last_diff_stat {
         out.push_str(&format!("diff: {}\n", diff));
     }

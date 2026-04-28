@@ -110,8 +110,10 @@ pub struct SupportedSetting {
     /// from leak's `validateOnWrite: async fn`
     /// (`supportedSettings.ts:23-24`); we make it sync because
     /// the MVP validators are pure shape checks.
-    pub validate: Option<fn(&serde_json::Value) -> Result<(), String>>,
+    pub validate: Option<ValidateFn>,
 }
+
+type ValidateFn = fn(&serde_json::Value) -> Result<(), String>;
 
 /// MVP whitelist (12 keys). Order is stable; the dynamic tool
 /// description renders them in this order.
@@ -242,9 +244,7 @@ fn lsp_languages(v: &serde_json::Value) -> Result<(), String> {
             .as_str()
             .ok_or_else(|| format!("expected string, got {item}"))?;
         if !VALID.contains(&s) {
-            return Err(format!(
-                "unknown language `{s}`; valid: {VALID:?}"
-            ));
+            return Err(format!("unknown language `{s}`; valid: {VALID:?}"));
         }
     }
     Ok(())

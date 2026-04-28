@@ -65,18 +65,19 @@ async fn main() -> anyhow::Result<()> {
         let bind_addr = bind
             .parse()
             .with_context(|| format!("MCP_TEMPLATE_HTTP_BIND={bind} is not a valid socket addr"))?;
-        let mut cfg = HttpTransportConfig::default();
-        cfg.enabled = true;
-        cfg.bind = bind_addr;
+        let auth_token = std::env::var("MCP_TEMPLATE_HTTP_TOKEN")
+            .ok()
+            .filter(|tok| !tok.is_empty());
+        let cfg = HttpTransportConfig {
+            enabled: true,
+            bind: bind_addr,
+            auth_token,
+            ..HttpTransportConfig::default()
+        };
         // Operator opts into a static-token auth via env. Empty =
         // loopback dev (none). For production, prefer the YAML-
         // driven `nexo mcp-server` boot path which supports JWT +
         // mTLS too — see `docs/src/extensions/mcp-server.md`.
-        if let Ok(tok) = std::env::var("MCP_TEMPLATE_HTTP_TOKEN") {
-            if !tok.is_empty() {
-                cfg.auth_token = Some(tok);
-            }
-        }
         let handle = start_http_server(build_handler(), cfg, shutdown.clone())
             .await
             .with_context(|| format!("failed to bind HTTP transport at {bind_addr}"))?;
