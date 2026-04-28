@@ -1,0 +1,28 @@
+[package]
+name = "template-mcp-server"
+description = "Skeleton MCP server extension for Nexo (Phase 76.15)."
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["Cristian Garcia <informacion@cristiangarcia.co>"]
+publish = false
+
+[[bin]]
+name = "template-mcp-server"
+path = "src/main.rs"
+
+[dependencies]
+# In-tree dev path. When you copy this template out of the agent-rs
+# workspace, swap to a published version, e.g.:
+#   nexo-mcp = "0.1.1"
+nexo-mcp     = { path = "../../crates/mcp" }
+async-trait  = "0.1"
+schemars     = "0.8"
+serde        = { version = "1", features = ["derive"] }
+serde_json   = "1"
+serde_yaml   = "0.9"
+tokio        = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+tokio-util   = "0.7"
+tracing      = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow       = "1"
