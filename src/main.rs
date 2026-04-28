@@ -1564,6 +1564,39 @@ async fn main() -> Result<()> {
     // Phase 79.7 — snapshot the first agent's model config before
     // the per-agent loop consumes `cfg.agents.agents`. Used at
     // shutdown-block bottom to wire `LlmCronDispatcher`.
+    // Phase 79.10 — open the durable audit store for ConfigTool
+    // proposals. Always opened (gated tool may be off, but the
+    // read-only `config_changes_tail` tool is always available).
+    // Failure to open is non-fatal — the tail tool simply isn't
+    // registered and the boot continues.
+    let config_changes_store: Option<
+        std::sync::Arc<nexo_core::config_changes_store::SqliteConfigChangesStore>,
+    > = {
+        let path = nexo_project_tracker::state::nexo_state_dir().join("config_changes.db");
+        std::fs::create_dir_all(path.parent().unwrap_or(std::path::Path::new("."))).ok();
+        match nexo_core::config_changes_store::SqliteConfigChangesStore::open(
+            path.to_str().unwrap_or("config_changes.db"),
+        )
+        .await
+        {
+            Ok(s) => {
+                tracing::info!(
+                    path = %path.display(),
+                    "[config] config_changes audit store opened"
+                );
+                Some(std::sync::Arc::new(s))
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    path = %path.display(),
+                    "[config] config_changes audit store could not be opened — tail tool disabled"
+                );
+                None
+            }
+        }
+    };
+
     let first_agent_for_cron: Option<(String, nexo_config::types::agents::ModelConfig)> = cfg
         .agents
         .agents
@@ -2034,6 +2067,28 @@ async fn main() -> Result<()> {
                 "registered Lsp tool"
             );
         }
+
+        // Phase 79.10 — `config_changes_tail` (read-only audit log).
+        // Always available regardless of the `config-self-edit`
+        // Cargo feature: even when ConfigTool itself is gated off,
+        // operators want to read past audit entries (or empty
+        // table) for post-mortem.
+        if let Some(store) = config_changes_store.as_ref() {
+            let tool = nexo_core::agent::config_changes_tail_tool::ConfigChangesTailTool::new(
+                std::sync::Arc::clone(store)
+                    as std::sync::Arc<dyn nexo_core::config_changes_store::ConfigChangesStore>,
+            );
+            tools.register(
+                nexo_core::agent::config_changes_tail_tool::ConfigChangesTailTool::tool_def(),
+                tool,
+            );
+        }
+
+        // Phase 79.10 — gated `Config { op: ... }` tool. Compiled
+        // only with `--features config-self-edit`. Per-agent
+        // registration depends on YamlPatchApplier + DenylistChecker
+        // bridge structs to nexo-setup; those are wired in a 79.10.b
+        // follow-up commit.
 
         // FOLLOWUPS W-2 — `web_fetch` tool. Sibling of `web_search`,
         // shares the runtime's LinkExtractor + cache + telemetry.
@@ -7444,6 +7499,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         plan_mode: Default::default(),
         remote_triggers: Vec::new(),
         lsp: nexo_config::types::lsp::LspPolicy::default(),
+            config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
     });
     let broker = AnyBroker::local();
     let sessions = Arc::new(SessionManager::new(std::time::Duration::from_secs(300), 20));
@@ -7638,6 +7694,13 @@ async fn start_http_transport(
         .as_ref()
         .map(yaml_pp_concurrency_to_runtime);
 
+    let audit_log = yaml.audit_log.as_ref().map(yaml_audit_log_to_runtime);
+
+    let session_event_store = yaml
+        .session_event_store
+        .as_ref()
+        .map(yaml_session_event_store_to_runtime);
+
     let cfg = HttpTransportConfig {
         enabled: yaml.enabled,
         bind: yaml.bind,
@@ -7660,6 +7723,8 @@ async fn start_http_transport(
         enable_legacy_sse: yaml.enable_legacy_sse,
         per_principal_rate_limit,
         per_principal_concurrency,
+        audit_log,
+        session_event_store,
     };
 
     let handle = start_http_server(bridge.clone(), cfg, shutdown.clone()).await?;
@@ -7767,6 +7832,41 @@ fn yaml_pp_concurrency_to_runtime(
         queue_wait_ms: yaml.queue_wait_ms,
         max_buckets: yaml.max_buckets,
         stale_ttl_secs: yaml.stale_ttl_secs,
+    }
+}
+
+/// Phase 76.11 — translate the YAML audit-log block into the runtime
+/// config. Field-by-field copy; the runtime validates values at
+/// `AuditLogConfig::validate()` time and resolves env-relative paths
+/// against process CWD.
+fn yaml_audit_log_to_runtime(
+    yaml: &nexo_config::types::mcp_server::AuditLogYaml,
+) -> nexo_mcp::server::audit_log::AuditLogConfig {
+    nexo_mcp::server::audit_log::AuditLogConfig {
+        enabled: yaml.enabled,
+        db_path: yaml.db_path.clone(),
+        retention_secs: yaml.retention_secs,
+        writer_buffer: yaml.writer_buffer,
+        flush_interval_ms: yaml.flush_interval_ms,
+        flush_batch_size: yaml.flush_batch_size,
+        redact_args: yaml.redact_args,
+        per_tool_redact_args: yaml.per_tool_redact_args.clone(),
+        args_hash_max_bytes: yaml.args_hash_max_bytes,
+    }
+}
+
+/// Phase 76.8 — translate the YAML session-event-store block into
+/// the runtime config. Field-by-field copy; the runtime validates
+/// values at `SessionEventStoreConfig::validate()` time.
+fn yaml_session_event_store_to_runtime(
+    yaml: &nexo_config::types::mcp_server::SessionEventStoreYaml,
+) -> nexo_mcp::server::event_store::SessionEventStoreConfig {
+    nexo_mcp::server::event_store::SessionEventStoreConfig {
+        enabled: yaml.enabled,
+        db_path: yaml.db_path.clone(),
+        max_events_per_session: yaml.max_events_per_session,
+        max_replay_batch: yaml.max_replay_batch,
+        purge_interval_secs: yaml.purge_interval_secs,
     }
 }
 
