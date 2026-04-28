@@ -159,6 +159,7 @@ mime_guess         = "2"
 encoding_rs        = "0.8"
 hickory-resolver   = "0.24"
 lsp-types          = "0.97"
+globset            = "0.4"
 tokio-rustls       = "0.26"
 rustls             = { version = "0.23", default-features = false, features = ["std", "ring", "tls12", "logging"] }
 rustls-native-certs = "0.7"
