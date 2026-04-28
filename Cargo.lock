@@ -3023,6 +3023,7 @@ dependencies = [
  "nexo-pairing",
  "nexo-project-tracker",
  "nexo-taskflow",
+ "nexo-team-store",
  "nexo-web-search",
  "notify",
  "notify-debouncer-full",
