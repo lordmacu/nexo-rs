@@ -5276,7 +5276,7 @@ Done when:
   - `scope: turn` auto-clears next turn;
   - restart hydration round-trips.
 
-#### 79.10 — ConfigTool (gated self-config)   ✅ (MVP — gated `Config` registration in main.rs deferred to 79.10.b)
+#### 79.10 — ConfigTool (gated self-config)   ✅
 
 Agent reads / proposes edits to its own YAML config from
 inside a turn. Powerful (the conversational `nexo setup`

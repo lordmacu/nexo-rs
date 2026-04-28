@@ -88,8 +88,10 @@ workspace = true
 [features]
 default = []
 # Phase 79.10 — gated self-config tool. Off until security review.
-# Forwards to nexo-core's `config-self-edit` feature.
-config-self-edit = ["nexo-core/config-self-edit"]
+# Forwards to both nexo-core (the tool body) and nexo-setup
+# (the YamlPatchApplier + DenylistChecker bridge structs main.rs
+# instantiates per agent).
+config-self-edit = ["nexo-core/config-self-edit", "nexo-setup/config-self-edit"]
 
 [build-dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
