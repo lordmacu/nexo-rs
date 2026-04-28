@@ -215,6 +215,14 @@ fn extract_reply_to_id(content: Option<&MessageContent>) -> Option<String> {
     }
 }
 
+#[doc(hidden)]
+pub fn _unused_result<T>() -> Result<T>
+where
+    T: Default,
+{
+    Ok(T::default())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{extract_question_id_marker, extract_reply_to_id};
@@ -234,12 +242,4 @@ mod tests {
         };
         assert_eq!(extract_reply_to_id(Some(&c)).as_deref(), Some("wamid-1"));
     }
-}
-
-#[doc(hidden)]
-pub fn _unused_result<T>() -> Result<T>
-where
-    T: Default,
-{
-    Ok(T::default())
 }

@@ -36,13 +36,16 @@ use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tokio_util::codec::{FramedRead, FramedWrite};
 
+type PendingResponseTx = oneshot::Sender<Result<serde_json::Value, LspError>>;
+type PendingRequests = Arc<Mutex<HashMap<i64, PendingResponseTx>>>;
+
 /// Outgoing message — either a request awaiting a response, or a
 /// notification (fire-and-forget).
 enum Outgoing {
     Request {
         id: i64,
         body: serde_json::Value,
-        responder: oneshot::Sender<Result<serde_json::Value, LspError>>,
+        responder: PendingResponseTx,
     },
     Notification {
         body: serde_json::Value,
@@ -79,8 +82,8 @@ impl DiagnosticsCache {
     }
 }
 
-/// LSP client wrapper around one child process. The `request_tx`
-/// + reader-task + writer-task topology means callers never block
+/// LSP client wrapper around one child process. The `request_tx`,
+/// reader-task, and writer-task topology means callers never block
 /// on each other; multiple concurrent `request<R>()` calls are
 /// safe.
 #[derive(Debug)]
@@ -138,9 +141,7 @@ impl LspClient {
         }
 
         let diagnostics = Arc::new(DiagnosticsCache::default());
-        let pending: Arc<
-            Mutex<HashMap<i64, oneshot::Sender<Result<serde_json::Value, LspError>>>>,
-        > = Arc::new(Mutex::new(HashMap::new()));
+        let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
         let (request_tx, request_rx) = mpsc::unbounded_channel::<Outgoing>();
 
         // Writer task: pulls from the channel, encodes, writes.
@@ -361,7 +362,7 @@ async fn drain_stderr(stderr: tokio::process::ChildStderr, binary_name: String) 
 
 async fn reader_loop<R>(
     mut framed: FramedRead<R, LspCodec>,
-    pending: Arc<Mutex<HashMap<i64, oneshot::Sender<Result<serde_json::Value, LspError>>>>>,
+    pending: PendingRequests,
     diagnostics: Arc<DiagnosticsCache>,
 ) where
     R: tokio::io::AsyncRead + Unpin,
@@ -573,7 +574,6 @@ mod tests {
 mod io_loop_tests {
     use super::*;
     use serde_json::json;
-    use tokio::io::AsyncWriteExt;
 
     /// In-memory mock LSP server: an end-to-end pair where the
     /// "server" side is a tokio task that responds to JSON-RPC
@@ -593,9 +593,7 @@ mod io_loop_tests {
         let (server_write, client_stdout_r) = tokio::io::duplex(64 * 1024);
 
         let diagnostics = Arc::new(DiagnosticsCache::default());
-        let pending: Arc<
-            Mutex<HashMap<i64, oneshot::Sender<Result<serde_json::Value, LspError>>>>,
-        > = Arc::new(Mutex::new(HashMap::new()));
+        let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
         let (request_tx, request_rx) = mpsc::unbounded_channel::<Outgoing>();
 
         // Writer side.

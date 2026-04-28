@@ -141,10 +141,6 @@ struct Inner {
 }
 
 impl HttpSessionManager {
-    pub(crate) fn new(cfg: &HttpTransportConfig, parent_cancel: CancellationToken) -> Arc<Self> {
-        Self::with_event_store(cfg, parent_cancel, None)
-    }
-
     /// Phase 76.8 — construct with an optional event store + caps
     /// pulled from the runtime config block.
     pub(crate) fn with_event_store(
@@ -170,14 +166,6 @@ impl HttpSessionManager {
                 max_replay_batch: max_replay,
             }),
         })
-    }
-
-    pub(crate) fn event_store(&self) -> Option<&Arc<dyn SessionEventStore>> {
-        self.inner.event_store.as_ref()
-    }
-
-    pub(crate) fn max_replay_batch(&self) -> usize {
-        self.inner.max_replay_batch
     }
 
     /// Allocate a fresh session. Returns `Err(SessionLimitExceeded)`
@@ -469,7 +457,7 @@ mod tests {
     #[tokio::test]
     async fn create_increments_count() {
         let cancel = CancellationToken::new();
-        let mgr = HttpSessionManager::new(&cfg(10), cancel);
+        let mgr = HttpSessionManager::with_event_store(&cfg(10), cancel, None);
         assert_eq!(mgr.len(), 0);
         let s = mgr.create().unwrap();
         assert_eq!(mgr.len(), 1);
@@ -479,7 +467,7 @@ mod tests {
     #[tokio::test]
     async fn over_cap_returns_err() {
         let cancel = CancellationToken::new();
-        let mgr = HttpSessionManager::new(&cfg(2), cancel);
+        let mgr = HttpSessionManager::with_event_store(&cfg(2), cancel, None);
         let _a = mgr.create().unwrap();
         let _b = mgr.create().unwrap();
         assert!(mgr.create().is_err());
@@ -488,7 +476,7 @@ mod tests {
     #[tokio::test]
     async fn touch_updates_last_seen() {
         let cancel = CancellationToken::new();
-        let mgr = HttpSessionManager::new(&cfg(10), cancel);
+        let mgr = HttpSessionManager::with_event_store(&cfg(10), cancel, None);
         let s = mgr.create().unwrap();
         let before = s.last_seen();
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -499,7 +487,7 @@ mod tests {
     #[tokio::test]
     async fn close_removes_and_cancels() {
         let cancel = CancellationToken::new();
-        let mgr = HttpSessionManager::new(&cfg(10), cancel);
+        let mgr = HttpSessionManager::with_event_store(&cfg(10), cancel, None);
         let s = mgr.create().unwrap();
         let mut rx = s.notif_tx.subscribe();
         mgr.close(&s.id);
@@ -516,7 +504,7 @@ mod tests {
         let mut c = cfg(10);
         c.session_idle_timeout_secs = 1;
         c.session_max_lifetime_secs = 1;
-        let mgr = HttpSessionManager::new(&c, cancel);
+        let mgr = HttpSessionManager::with_event_store(&c, cancel, None);
         let _s = mgr.create().unwrap();
         // Janitor runs every 30s — too slow for the test. Call
         // `expire_stale` directly after waiting past idle.
@@ -528,7 +516,7 @@ mod tests {
     #[tokio::test]
     async fn shutdown_all_broadcasts() {
         let cancel = CancellationToken::new();
-        let mgr = HttpSessionManager::new(&cfg(10), cancel);
+        let mgr = HttpSessionManager::with_event_store(&cfg(10), cancel, None);
         let a = mgr.create().unwrap();
         let b = mgr.create().unwrap();
         let mut ra = a.notif_tx.subscribe();
@@ -631,7 +619,7 @@ mod tests {
     #[tokio::test]
     async fn replay_without_store_returns_empty() {
         let cancel = CancellationToken::new();
-        let mgr = HttpSessionManager::new(&cfg(10), cancel);
+        let mgr = HttpSessionManager::with_event_store(&cfg(10), cancel, None);
         let s = mgr.create().unwrap();
         let gap = mgr.replay(&s.id, 0).await;
         assert!(gap.is_empty());
@@ -640,7 +628,7 @@ mod tests {
     #[tokio::test]
     async fn parent_cancel_stops_janitor() {
         let cancel = CancellationToken::new();
-        let mgr = HttpSessionManager::new(&cfg(10), cancel.clone());
+        let mgr = HttpSessionManager::with_event_store(&cfg(10), cancel.clone(), None);
         let h = mgr.spawn_janitor();
         cancel.cancel();
         // Should exit promptly.
