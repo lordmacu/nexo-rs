@@ -40,6 +40,12 @@ members = [
     "crates/dispatch-tools",
     "crates/companion-tui",
     "crates/lsp",
+    # Phase 76.15 — MCP server skeleton extension. Member because
+    # we want CI / `cargo build --workspace` to keep it green; it
+    # depends on `nexo-mcp` via in-tree path dep. Operators copy
+    # the directory out of the repo and switch to the crates.io
+    # version per the template's README.
+    "extensions/template-mcp-server",
 ]
 # Keep standalone extension templates out of the agent workspace so they don't
 # inherit our deps or lockfile. Users copy them verbatim and build separately.
@@ -78,6 +84,12 @@ categories   = { workspace = true }
 
 [lints]
 workspace = true
+
+[features]
+default = []
+# Phase 79.10 — gated self-config tool. Off until security review.
+# Forwards to nexo-core's `config-self-edit` feature.
+config-self-edit = ["nexo-core/config-self-edit"]
 
 [build-dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock"] }

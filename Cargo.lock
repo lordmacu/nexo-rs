@@ -5765,6 +5765,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "template-mcp-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "nexo-mcp",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "tendril"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
