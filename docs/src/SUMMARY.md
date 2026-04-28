@@ -37,6 +37,7 @@
 - [Cron schedule tools (Phase 79.7)](./architecture/cron-schedule.md)
 - [MCP router tools (Phase 79.11)](./architecture/mcp-router-tools.md)
 - [ConfigTool gated self-config (Phase 79.10)](./architecture/config-tool.md)
+- [Team tools (Phase 79.6)](./architecture/team-tools.md)
 
 # Configuration
 
