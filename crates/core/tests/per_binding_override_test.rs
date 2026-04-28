@@ -158,6 +158,7 @@ fn two_binding_agent() -> AgentConfig {
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),
         remote_triggers: Vec::new(),
+            lsp: nexo_config::types::lsp::LspPolicy::default(),
     }
 }
 
@@ -340,6 +341,7 @@ async fn agent_without_bindings_drops_inbound_events() {
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),
         remote_triggers: Vec::new(),
+            lsp: nexo_config::types::lsp::LspPolicy::default(),
     };
     let (runtime, captures, broker) = spawn_runtime(cfg).await;
 

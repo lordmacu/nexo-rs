@@ -190,6 +190,7 @@ nexo-broker = { version = "0.1.1", path = "crates/broker" }
 nexo-core = { version = "0.1.1", path = "crates/core" }
 nexo-extensions = { version = "0.1.1", path = "crates/extensions" }
 nexo-llm = { version = "0.1.1", path = "crates/llm" }
+nexo-lsp = { version = "0.1.1", path = "crates/lsp" }
 nexo-mcp = { version = "0.1.1", path = "crates/mcp" }
 nexo-memory = { version = "0.1.2", path = "crates/memory" }
 nexo-taskflow = { version = "0.1.1", path = "crates/taskflow" }

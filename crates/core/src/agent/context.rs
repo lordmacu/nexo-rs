@@ -337,6 +337,7 @@ mod plan_mode_tests {
             dispatch_policy: Default::default(),
             plan_mode: Default::default(),
             remote_triggers: Vec::new(),
+            lsp: nexo_config::types::lsp::LspPolicy::default(),
         };
         AgentContext::new(
             "a",

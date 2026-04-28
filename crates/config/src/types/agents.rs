@@ -215,6 +215,12 @@ pub struct AgentConfig {
     /// with a clear "name not in allowlist" error.
     #[serde(default)]
     pub remote_triggers: Vec<crate::types::remote_triggers::RemoteTriggerEntry>,
+    /// Phase 79.5 — agent-level LSP policy. Per-binding override
+    /// is a follow-up; today the field on `AgentConfig` is the
+    /// single source of truth for whether the `Lsp` tool is
+    /// registered for this agent's goals.
+    #[serde(default)]
+    pub lsp: crate::types::lsp::LspPolicy,
 }
 
 /// Tri-state dispatch capability. The same enum is used for the

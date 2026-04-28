@@ -55,6 +55,7 @@ fn agent_with_inline_google(id: &str) -> AgentConfig {
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),
         remote_triggers: Vec::new(),
+            lsp: nexo_config::types::lsp::LspPolicy::default(),
     }
 }
 

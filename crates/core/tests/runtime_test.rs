@@ -86,6 +86,7 @@ fn make_config(
         dispatch_policy: Default::default(),
         plan_mode: Default::default(),
         remote_triggers: Vec::new(),
+            lsp: nexo_config::types::lsp::LspPolicy::default(),
     }
 }
 
@@ -308,6 +309,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             dispatch_policy: Default::default(),
             plan_mode: Default::default(),
             remote_triggers: Vec::new(),
+            lsp: nexo_config::types::lsp::LspPolicy::default(),
         },
         behavior_a,
     ));
@@ -358,6 +360,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             dispatch_policy: Default::default(),
             plan_mode: Default::default(),
             remote_triggers: Vec::new(),
+            lsp: nexo_config::types::lsp::LspPolicy::default(),
         },
         behavior_b,
     ));
