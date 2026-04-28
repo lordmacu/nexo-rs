@@ -374,6 +374,7 @@ mod tests {
             plan_mode: Default::default(),
             remote_triggers: Vec::new(),
             lsp: nexo_config::types::lsp::LspPolicy::default(),
+            config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
         };
         let ctx = AgentContext::new(
             "a",
@@ -574,6 +575,7 @@ mod tests {
             plan_mode: Default::default(),
             remote_triggers: Vec::new(),
             lsp: nexo_config::types::lsp::LspPolicy::default(),
+            config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
         };
         let ctx = AgentContext::new(
             "agent-z",

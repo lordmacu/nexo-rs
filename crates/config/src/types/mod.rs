@@ -1,5 +1,6 @@
 pub mod agents;
 pub mod broker;
+pub mod config_tool;
 pub mod credentials;
 pub mod extensions;
 pub mod llm;
@@ -18,6 +19,7 @@ pub mod transcripts;
 
 pub use agents::*;
 pub use broker::*;
+pub use config_tool::*;
 pub use credentials::*;
 pub use extensions::*;
 pub use llm::*;
