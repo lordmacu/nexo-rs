@@ -311,6 +311,178 @@ pub fn render_json(statuses: &[ToggleStatus]) -> Value {
     Value::Array(arr)
 }
 
+// =====================================================================
+// Phase 79.10 — `ConfigTool` self-edit denylist.
+//
+// Hard-coded list of dotted-path globs the `Config` tool MUST NEVER
+// touch even when the agent's `config.self_edit: true` is set. The
+// denylist is the orthogonal counterpart of the per-key whitelist
+// (`SUPPORTED_SETTINGS`) and is enforced TWICE — at `propose` (early
+// reject) and at `apply` (defense-in-depth).
+//
+// Source-of-truth lives in code (NOT YAML) so a model that proposes
+// a patch widening the denylist cannot succeed: changing this slice
+// requires a code change + review.
+//
+// Reference (PRIMARY): `proyecto/PHASES.md:5277-5293` enumerates the
+// 13 globs. The leak's `claude-code-leak/src/tools/ConfigTool/
+// supportedSettings.ts:188-190` ships only a whitelist (`isSupported`)
+// — we add this orthogonal denylist as defense-in-depth for a
+// chat-driven approval flow that lacks the leak's `'ask'` host
+// permission prompt.
+// =====================================================================
+
+use std::sync::OnceLock;
+
+pub const CONFIG_SELF_EDIT_DENYLIST: &[&str] = &[
+    // Generic credential-shaped suffixes. Catch-all for any future
+    // YAML key whose name leaks "this is a secret".
+    "*_token",
+    "*_secret",
+    "*_password",
+    "*_key",
+    // Pairing internals — touching these revokes the operator's
+    // grip on the agent.
+    "pairing.*",
+    // Capability inventory + dispatch policy — model cannot widen
+    // its own permissions.
+    "capabilities.*",
+    // MCP server auth + spawn args — running arbitrary binaries
+    // via config self-edit is game-over.
+    "mcp.servers.*.auth.*",
+    "mcp.servers.*.command",
+    // Binding-level role + plan_mode — cannot self-promote to
+    // coordinator nor drop plan-mode guardrails.
+    "binding.*.role",
+    "binding.*.plan_mode.*",
+    // Outbound webhooks — URL + secret env both lock-in.
+    "remote_triggers[*].url",
+    "remote_triggers[*].secret_env",
+    // Operator-only knobs.
+    "cron.user_max_entries",
+    // Changing the registry store mid-run is unsafe.
+    "agent_registry.store.*",
+];
+
+/// Exact-cause for a denied target.
+#[derive(Debug, thiserror::Error)]
+#[error("path `{path}` denied by self-edit policy (matched glob `{matched_glob}`)")]
+pub struct ForbiddenKey {
+    pub path: String,
+    pub matched_glob: &'static str,
+}
+
+/// Lazy `GlobSet`, built once on first call. Pairs each glob with its
+/// position in [`CONFIG_SELF_EDIT_DENYLIST`] so [`denylist_match`] can
+/// return the *string* glob that matched (for the error message).
+static DENYLIST_SET: OnceLock<globset::GlobSet> = OnceLock::new();
+
+fn denylist_set() -> &'static globset::GlobSet {
+    DENYLIST_SET.get_or_init(|| {
+        let mut builder = globset::GlobSetBuilder::new();
+        for pat in CONFIG_SELF_EDIT_DENYLIST {
+            // `[*]` (array index syntax) is not native to globset;
+            // we normalise to the equivalent `*` segment.
+            let normalised = pat.replace("[*]", ".*");
+            let glob = globset::Glob::new(&normalised)
+                .expect("CONFIG_SELF_EDIT_DENYLIST entry must be a valid glob");
+            builder.add(glob);
+        }
+        builder
+            .build()
+            .expect("CONFIG_SELF_EDIT_DENYLIST must compile to a valid GlobSet")
+    })
+}
+
+/// Returns the matched glob (verbatim from [`CONFIG_SELF_EDIT_DENYLIST`])
+/// when `path` is denied, or `None` when the path is safe.
+///
+/// `path` is the dotted path the proposal targets (e.g.
+/// `pairing.session.token`). Internally we normalise `[*]` segments
+/// to `.*` before matching so the array-index glob form survives the
+/// `globset` translation.
+pub fn denylist_match(path: &str) -> Option<&'static str> {
+    // Normalise array-index syntax for the matcher. Patterns and
+    // input must use the same form.
+    let normalised = path.replace("[*]", ".*");
+    let matches = denylist_set().matches(&normalised);
+    let idx = matches.first()?;
+    Some(CONFIG_SELF_EDIT_DENYLIST[*idx])
+}
+
+#[cfg(test)]
+mod denylist_tests {
+    use super::*;
+
+    #[test]
+    fn denylist_compiles() {
+        // Building the set forces every glob through `Glob::new` —
+        // any malformed pattern would panic.
+        let set = denylist_set();
+        assert!(set.len() == CONFIG_SELF_EDIT_DENYLIST.len());
+    }
+
+    #[test]
+    fn denylist_matches_pairing_token() {
+        // Pairing keys are blocked even when the suffix matches a
+        // different glob (`*_token`). First match wins; either is
+        // acceptable.
+        let m = denylist_match("pairing.session_token").unwrap();
+        assert!(
+            m == "pairing.*" || m == "*_token",
+            "expected pairing.* or *_token, got `{m}`"
+        );
+    }
+
+    #[test]
+    fn denylist_matches_secret_suffix() {
+        assert_eq!(denylist_match("agents.foo.api_token"), Some("*_token"));
+        assert_eq!(denylist_match("integrations.x.api_key"), Some("*_key"));
+        assert_eq!(
+            denylist_match("integrations.x.api_password"),
+            Some("*_password")
+        );
+        assert_eq!(
+            denylist_match("integrations.x.app_secret"),
+            Some("*_secret")
+        );
+    }
+
+    #[test]
+    fn denylist_matches_array_index_form() {
+        assert_eq!(
+            denylist_match("remote_triggers[*].url"),
+            Some("remote_triggers[*].url")
+        );
+        // The `.*` normalised form should also match a concrete
+        // index since the matcher operates on the normalised input.
+        assert_eq!(
+            denylist_match("remote_triggers.0.url"),
+            Some("remote_triggers[*].url")
+        );
+    }
+
+    #[test]
+    fn denylist_match_returns_none_for_safe_paths() {
+        assert_eq!(denylist_match("model.model"), None);
+        assert_eq!(denylist_match("language"), None);
+        assert_eq!(denylist_match("heartbeat.interval_secs"), None);
+        assert_eq!(denylist_match("lsp.enabled"), None);
+    }
+
+    #[test]
+    fn denylist_blocks_role_and_plan_mode() {
+        assert_eq!(
+            denylist_match("binding.whatsapp.role"),
+            Some("binding.*.role")
+        );
+        assert_eq!(
+            denylist_match("binding.whatsapp.plan_mode.enabled"),
+            Some("binding.*.plan_mode.*")
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
