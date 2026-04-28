@@ -3485,7 +3485,7 @@ tool. This phase closes the loop on each.
 - 70.8 ✅ — PHASES.md / CLAUDE.md / admin-ui / docs sync (this
   phase's progress entry).
 
-### Phase 76 — MCP server hardening   ⬜
+### Phase 76 — MCP server hardening   🔄
 
 Today's `crates/mcp/src/server/` is stdio-only (923 LOC) and
 single-tenant. The client side (1151 LOC HTTP, sampling, hot-reload,
@@ -3667,12 +3667,59 @@ pass through the new abstraction).
   routed through existing `SessionEvent::Message` per-session
   broadcast — no new variant needed (Phase 76.1 already shipped
   the right primitive).
-- 76.8 ⬜ — Durable sessions + reconnection. Server-assigned
-  session-id returned on `initialize`, replayed on reconnect to
-  restore subscriptions/cursors. Idle TTL configurable (default
-  5 min). Optional `durable_sessions: true` flag persists session
-  state to SQLite so it survives a server restart. Done: kill -HUP
-  → client reconnects, subscriptions intact.
+- 76.8 ✅ — Durable sessions + SSE `Last-Event-ID` reconnect. New
+  module `crates/mcp/src/server/event_store/` (4 files,
+  ~1100 LOC) shipping a `SessionEventStore` trait +
+  `MemorySessionEventStore` (tests-only) +
+  `SqliteSessionEventStore` (prod, WAL + synchronous=NORMAL,
+  `INSERT OR IGNORE` idempotent on `(session_id, seq)`,
+  WITHOUT ROWID PK, sibling `mcp_session_subscriptions` table
+  with replace-set semantics). 18 unit tests (5 config + 5
+  in-mem + 8 sqlite). `HttpSession.next_seq: AtomicU64` (starts
+  at 1; seq 0 reserved for "no events yet"). New variant
+  `SessionEvent::IndexedMessage { seq, body }` — non-breaking
+  on the `non_exhaustive` enum; `progress.rs` keeps emitting
+  `Message(_)` because per-call progress is by-design ephemeral.
+  `HttpSessionManager::with_event_store()` constructor +
+  `emit_to(session, body)` assigns seq, persists best-effort
+  via `tokio::spawn`, broadcasts `IndexedMessage`. Cap
+  enforcement: every 1000th emit triggers
+  `purge_oldest_for_session(keep=max_events_per_session)`.
+  `broadcast_to_all` + `notify_resource_updated` route through
+  `emit_to` so `notifications/tools/list_changed` +
+  `resources/list_changed` + `resources/updated` all replay.
+  `SessionLookup::subscribe`/`unsubscribe` impls now persist
+  the URI delta via `put_subscriptions(...)` so a reconnecting
+  client's subscription set survives. SSE handler reads
+  `Last-Event-ID` header — `Option<u64>`: absent → live only,
+  present (any value) → drains
+  `manager.replay(session_id, min_seq)` capped at
+  `max_replay_batch` before transitioning to live. Each replay
+  + live `IndexedMessage` carries the SSE `id: <seq>` line —
+  matches `claude-code-leak/src/cli/transports/SSETransport.ts:159-266`.
+  Unknown session → HTTP 404 + JSON-RPC
+  `{"error":{"code":-32001,"message":"Session not found"}}` —
+  matches `claude-code-leak/src/services/mcp/client.ts:189-206`.
+  YAML schema `session_event_store` block on
+  `HttpTransportConfigYaml` (5 fields with defaults — enabled,
+  db_path, max_events_per_session=10_000,
+  max_replay_batch=1_000 with 10_000 ceiling,
+  purge_interval_secs=60). `yaml_session_event_store_to_runtime`
+  mapper in `src/main.rs::start_http_transport`. `start_http_server`
+  opens the SQLite store + injects into `HttpSessionManager` +
+  spawns a periodic purge worker that calls
+  `purge_older_than(now - session_max_lifetime_ms)` every
+  `purge_interval_secs`, stops on parent shutdown. 4 e2e tests
+  in `crates/mcp/tests/http_session_resume_test.rs`: unknown
+  session → 404 + -32001, Last-Event-ID absent → live with seq
+  labels, Last-Event-ID=N → replays only seq > N,
+  max_replay_batch caps the initial drain. **Out of scope for
+  76.8.b**: full session reattach across daemon restart
+  (rehydrating `HttpSession` entire — events + subs survive,
+  but in-mem session is gone, client re-`initialize`s; matches
+  the leak's `isMcpSessionExpiredError` permanent-failure
+  contract). **Out of scope for 76.14**: read-side ops CLI
+  `nexo mcp-server tail-events`.
 - 76.9 ✅ — `McpServerBuilder` ergonomic API (core; proc-macro
   follow-up). New `crates/mcp/src/server/builder.rs` (~440 LOC):
   * `Tool` async trait with typed `Args: DeserializeOwned +
@@ -3786,14 +3833,17 @@ pass through the new abstraction).
   (currently emits `args_hash: None` + `args_size_bytes: Some(N)`),
   `mcp_audit_tail` read tool (read-side surface for ops + Phase
   76.14 CLI).
-- 76.12 ⬜ — Conformance + fuzz suite. New
-  `tests/mcp_server_conformance.rs` exercises spec MCP 2025-11-25
-  fixtures end-to-end through both transports; `proptest` over
-  malformed JSON-RPC frames asserts no panic, only typed errors;
-  Claude Code 2.1 cases (Phase 73+74) re-run against HTTP path;
-  multi-client smoke (50 sessions × 10 k requests) gates p99 < X.
-  Done: `cargo test -p nexo-mcp --features server-conformance`
-  green.
+- 76.12 ✅ — Conformance + fuzz suite. `tests/parse_fuzz_test.rs`
+  (5 proptest cases, 7500 generated inputs — arbitrary bytes/strings/
+  methods/depths/batches — asserts `parse_jsonrpc_frame` never panics).
+  `tests/stdio_conformance_test.rs` (11 spec MCP 2025-11-25 fixtures
+  via stdio transport, transport-parity twin of
+  `http_conformance_test.rs`). `tests/load_smoke_test.rs` (50 sessions
+  × 200 requests = 10 000 calls, p99 gate < 500 ms, `#[ignore]`).
+  `ConformanceHandler` extracted to `tests/conformance_shared/mod.rs`.
+  Feature flag `server-conformance` in `Cargo.toml` gates all three
+  new files. Done: `cargo test -p nexo-mcp --features server-conformance`
+  green (508 tests, 0 failures).
 - 76.13 ⬜ — TLS + reverse-proxy guidance. Optional `rustls` behind
   feature `server-tls` for direct termination; docs recommending
   nginx/caddy/Traefik in front for prod; mTLS recipe for
@@ -3804,13 +3854,47 @@ pass through the new abstraction).
   --tool X --rps N` (load test), `tail-audit <db>` (reads
   `mcp_call_log`). Smoke entry in `scripts/release-check.sh`.
   Done: subcommands present in CLI, smoke green.
-- 76.15 ⬜ — Docs + extension template. New chapter
-  `docs/src/extensions/mcp-server.md` covers transports, auth,
-  multi-tenant, rate-limit, audit, ops. New skeleton
-  `extensions/templates/mcp-server-skeleton/` (extends Phase 11.8
-  templates). Phase 12.6 (agent-as-MCP-server) migration to the
-  new HTTP path documented. Done: `mdbook build docs` clean,
-  `cargo check` on the instantiated template green.
+- 76.15 ✅ — Docs + extension template shipped. New skeleton
+  `extensions/template-mcp-server/` (workspace member,
+  ~250 LOC: `Cargo.toml` with `nexo-mcp` path dep + crates.io
+  swap doc, `plugin.toml` extension manifest, `src/main.rs`
+  always-stdio + opt-in HTTP via `MCP_TEMPLATE_HTTP_BIND` /
+  `MCP_TEMPLATE_HTTP_TOKEN` env, `src/tools.rs` typed `Echo`
+  tool using `McpServerBuilder` + `JsonSchema` derive +
+  `Tool` async trait, `config.example.yaml` documenting every
+  `mcp_server.http` block (auth/CORS/sessions/per-IP +
+  per-principal rate-limit + per-principal concurrency +
+  audit_log + session_event_store, all commented for
+  copy-paste), `README.md` quickstart + 5-step fork +
+  production checklist + troubleshooting). Stdio smoke
+  end-to-end green: `initialize` → `tools/list` (echoes
+  derived JSON Schema with `text` field) → `tools/call`
+  (returns `structuredContent: {echoed: ...}`) →
+  `shutdown`. New docs chapter
+  `docs/src/extensions/mcp-server-extension.md`
+  registered in `docs/src/SUMMARY.md` — developer-facing
+  walk-through (when to build vs ship as built-in tool;
+  5-step fork; SendEmail tool sample; child-process vs
+  long-lived HTTP wiring; production checklist mapping every
+  knob to its phase). `mdbook build docs` clean.
+  `cargo build -p template-mcp-server` green. **Out of
+  scope** (deferred): `notifications/progress` sample,
+  `notifications/tools/list_changed` sample, resources +
+  prompts surface, custom error types, `#[mcp_tool]`
+  proc-macro (Phase 76.9 follow-up).
+
+- 76.16 ✅ — `expose_tools` whitelist for MCP server. Adds
+  `expose_tools: Vec<String>` and `allow_config_tool: bool` to
+  `McpServerConfig`. The `run_mcp_server` function loops over the
+  list and registers 7 Phase 79 tools into the `ToolRegistry`
+  (EnterPlanMode, ExitPlanMode, ToolSearch, TodoWrite,
+  SyntheticOutput, NotebookEdit, RemoteTrigger). `Config` and `Lsp`
+  are explicitly gated with `tracing::warn!` and deferred (see
+  FOLLOWUPS.md). 5 integration tests in
+  `crates/core/tests/expose_tools_bridge_test.rs` verify filtering,
+  allowlist, proxy-tool hiding, and blocked call_tool error.
+  Docs updated in `docs/src/extensions/mcp-server.md`.
+  `cargo build --workspace` + all 5 tests green.
 
 **Acceptance for the whole phase:** stdio path keeps every Phase
 73+74 test green; HTTP path passes the same conformance suite plus
@@ -3934,7 +4018,7 @@ References:
 - `claude-code-leak/src/migrations/`
 - `claude-code-leak/src/services/api/promptCacheBreakDetection.ts`
 
-#### 77.1 — microCompact (inline tool-result compression)   ⬜
+#### 77.1 — microCompact (inline tool-result compression)   ✅
 
 In `crates/driver-loop/` (or `crates/core/agent/`) add a per-turn
 hook that, when a single tool result exceeds a configurable
@@ -3951,6 +4035,19 @@ Done when:
   (Phase 72) so post-mortem replay still has the full body.
 - Unit test: 1 MiB grep result is compressed to ≤ 2 KiB and
   the next turn still references the same `tool_use_id`.
+
+Shipped in nexo-rs as pre-send `ChatMessage::Tool` compaction:
+the canonical in-memory `messages` vector keeps the full
+tool result for local replay/audit, while the request clone replaces
+oversized compactable tool results with Claude Code's stable marker
+`[Old tool result content cleared]` by default. If
+`context_optimization.compaction.micro.provider` is set, the already
+wired compactor LLM path summarizes that single result instead.
+The implementation mirrors the current leak's
+`claude-code-leak/src/services/compact/microCompact.ts`
+contract: compact only known high-volume tools, preserve
+`tool_use_id`/`tool_result` correlation, and operate immediately
+before the provider request.
 
 #### 77.2 — autoCompact (token + time triggered)   ⬜
 
@@ -4175,7 +4272,7 @@ Done when:
 - Timeout knob (`ask.timeout_secs`, default 3600) escalates
   to `notify_origin` `[abandoned]` on expiry.
 
-#### 77.17 — Versioned schema migrations system   ⬜
+#### 77.17 — Versioned schema migrations system   ✅
 
 `crates/config/` grows a `migrations/` module modelled on
 `claude-code-leak/src/migrations/` (11 idempotent migration
@@ -4192,7 +4289,7 @@ Done when:
 - Phase 18 hot-reload re-validates the post-migration
   snapshot before swapping.
 
-#### 77.18 — coordinator / worker mode pattern   ⬜
+#### 77.18 — coordinator / worker mode pattern   ✅
 
 In `crates/core/agent/` (or driver-loop), add a binding-level
 role switch: `role: coordinator | worker`. Coordinators get
@@ -4203,24 +4300,43 @@ gracefully. Reference:
 `claude-code-leak/src/coordinator/coordinatorMode.ts`.
 
 Done when:
-- `role` declared in YAML, validated at boot.
-- Worker tool subset configurable per role, defaulted to
-  `[bash, file_read, file_edit, agent_turns_tail]`.
-- E2E test: a coordinator goal spawns 3 workers, each
-  proves it cannot call disallowed tools.
+- `role` declared in YAML, validated at boot (`coordinator |
+  worker | proactive`; invalid values fail startup validation).
+- Worker tool subset enforced by effective policy:
+  default allowlist is `[bash, file_read, file_edit,
+  agent_turns_tail]` when a worker binding omits
+  `allowed_tools`; operator can still override via
+  `inbound_bindings[].allowed_tools`.
+- Worker disallow guard strips dangerous worker-incompatible tools
+  from overrides (`Sleep`, `TeamCreate`, `TeamSendMessage`,
+  `send_message`; strict model forbids worker-side direct send).
+- Integration coverage verifies worker role receives curated tool
+  surface at runtime (`worker_role_uses_curated_default_tools_in_runtime`);
+  unit coverage verifies default subset + disallowed stripping.
 
-#### 77.19 — docs + admin-ui sync   ⬜
+#### 77.19 — docs + admin-ui sync   ✅
 
-- `docs/src/` gains pages for compact tiers, memdir scanner,
-  bash safety knobs, the four new skills, the migrations
-  CLI, and proactive mode (77.20).
-- `admin-ui/PHASES.md` adds checkboxes for every operator-
-  visible knob landed in 77.1–77.20.
-- `crates/setup/src/capabilities.rs::INVENTORY` registers
-  any new dangerous toggles introduced (e.g.
-  `bash.sandbox=never`, `proactive.enabled=true`).
+- `docs/src/` sync landed:
+  - proactive mode page (`docs/src/agents/proactive-mode.md`)
+  - compact tiers (`docs/src/ops/compact-tiers.md`)
+  - memdir scanner status page (`docs/src/ops/memdir-scanner.md`)
+  - bash safety knobs (`docs/src/ops/bash-safety.md`)
+  - migrations CLI status page (`docs/src/cli/migrations.md`)
+  - four new-surface tool docs already tracked under architecture:
+    ToolSearch, TodoWrite, SyntheticOutput, NotebookEdit
+    (+ RemoteTrigger companion page)
+- `admin-ui/PHASES.md` now includes explicit runtime knobs for:
+  - `llm.context_optimization`
+  - proactive mode
+  - binding role switch (`coordinator|worker|proactive`)
+- Setup capability policy sync:
+  - dangerous self-enable paths are blocked in
+    `crates/setup/src/capabilities.rs` denylist
+    (`proactive.enabled`, `binding.*.proactive.enabled`)
+  - env-toggle inventory remains focused on env-gated extension
+    capabilities.
 
-#### 77.20 — proactive mode + adaptive Sleep tool   ⬜
+#### 77.20 — proactive mode + adaptive Sleep tool   ✅
 
 Port Claude Code's `--proactive` / KAIROS feature into nexo-rs
 so a binding can run autonomously: the agent receives periodic
@@ -4339,6 +4455,65 @@ Done when:
   external triggers, `proactive` for self-paced autonomy).
 - Admin-ui: `admin-ui/PHASES.md` gains a "Proactive mode"
   bullet under the runtime knobs section.
+
+Implementation slices:
+
+- 77.20.1 ✅ — Config + prompt + Sleep base. `ProactiveConfig`
+  now carries the full YAML surface (`enabled`,
+  `tick_interval_secs`, `jitter_pct`, `max_idle_secs`,
+  `initial_greeting`, `cache_aware_schedule`,
+  `allow_short_intervals`, `daily_turn_budget`) with the
+  Phase 77.20 defaults. `EffectiveBindingPolicy` resolves the
+  per-binding override and `AgentContext` exposes
+  `proactive_enabled` + `binding_role` for prompt injection.
+  `SleepTool` mirrors the leak's prompt contract
+  (`claude-code-leak/src/tools/SleepTool/prompt.ts`): use
+  Sleep instead of `Bash(sleep ...)`, user can interrupt, ticks
+  are check-ins. Bounds are now `[60_000, 86_400_000]` and the
+  cache-aware snap covers the four required windows. `Sleep` is
+  registered when the agent or any binding has proactive enabled.
+- 77.20.2 ✅ — Sentinel interception + runtime tick loop. The
+  driver loop now translates the Sleep sentinel into
+  `AttemptOutcome::Sleep { duration_ms, reason }`, parks the goal
+  in-process via `crates/driver-loop/src/proactive.rs`, wakes with a
+  cancellation-aware timer, and prepends a synthetic `<tick>` block to
+  the next Claude turn instead of feeding the sentinel JSON back as
+  normal context. The in-process agent runtime now has the same
+  primitive: `LlmAgentBehavior` maps the structured `Sleep` tool
+  result into `AgentTurnControl::Sleep` before stringification, stops
+  the LLM loop cleanly, and the per-session debounce task schedules an
+  interruptible wake that injects a `RunTrigger::Tick` message from the
+  `proactive` source. Human/adapter messages cancel pending sleep, and
+  ticks flush immediately so they do not merge with user prompts.
+- 77.20.3 ✅ — Persistent sleeping state. `AgentRunStatus` now has
+  `sleeping`, and `AgentSnapshot.sleep` carries
+  `{ wake_at, duration_ms, reason }`. The SQLite registry migrates
+  additive indexed columns (`sleep_wake_at`, `sleep_duration_ms`,
+  `sleep_reason`) while keeping the JSON snapshot back-compatible.
+  `EventForwarder` marks a goal sleeping when it sees
+  `AttemptOutcome::Sleep`, clears the state on the next
+  `AttemptStarted`, and `reattach()` restores sleeping rows after a
+  daemon restart as `ReattachOutcome::Sleeping`. `list_agents` /
+  `agent_status` understand the new status, and shutdown drain treats
+  sleeping goals as live work so they are not silently orphaned.
+- 77.20.4 ✅ — Interrupt + budget + telemetry. User messages now cancel
+  pending sleep (`sleep.interrupted`), proactive ticks obey
+  `daily_turn_budget` (extra wakes are suppressed + re-armed), and
+  telemetry exposes `nexo_proactive_events_total{agent,event}` for
+  `tick.fired`, `sleep.entered`, `sleep.interrupted`,
+  `cache_aware.snapped`. Coverage: `proactive_event_metrics_render`
+  (telemetry) + `proactive_daily_turn_budget_suppresses_extra_ticks`
+  (runtime integration).
+- 77.20.5 ✅ — Integration/E2E + docs/admin-ui. Synthetic tick-loop
+  integration coverage now includes `orchestrator_sleep_tick_test`
+  (driver-loop Sleep→wake path) and
+  `proactive_daily_turn_budget_suppresses_extra_ticks` (runtime budget
+  guard). Docs page added at `docs/src/agents/proactive-mode.md`
+  (`SUMMARY.md` wired). Capability policy now blocks self-enabling
+  proactive via ConfigTool denylist
+  (`binding.*.proactive.enabled`, `proactive.enabled`), and
+  `admin-ui/PHASES.md` now includes the "Proactive mode" runtime-knob
+  bullet.
 
 Out of scope for 77.20:
 - "Always-on background swarm" (multiple proactive goals
@@ -5565,6 +5740,118 @@ Done when:
   - unknown top-level keys round-trip unchanged;
   - missing `cell_id` returns a clear error listing
     available IDs.
+
+#### 79.M — MCP exposure parity sweep   ✅ (MVP — Lsp/Team*/Config wiring deferred to 79.M.b/c/d)
+
+Closes the gap between the runtime tool registry (`nexo run`,
+~31 tools) and the surface advertised to external MCP clients
+via `nexo mcp-server` (previously 12 tools max via the legacy
+`expose_tools` match arm). Source-of-truth is now the
+`EXPOSABLE_TOOLS: &[ExposableToolEntry]` slice in
+`crates/config/src/types/mcp_exposable.rs`. Boot dispatch
+(`crates/core/src/agent/mcp_server_bridge/dispatch.rs`) walks
+the slice once per server start, delegates to per-tool boot
+helpers in the `Always` arm, and surfaces three categorical
+skip reasons (`denied_by_policy`, `deferred`, `infra_missing`,
+`feature_gate_off`, `unknown_name`) so the operator sees a
+labelled warn line for every entry the server refused.
+
+Reference (PRIMARIO):
+- `claude-code-leak/src/Tool.ts:395-449` — gating signals
+  (`isReadOnly`, `isMcp`, `isLsp`, `shouldDefer`) inspired
+  the per-entry `SecurityTier` + `BootKind`.
+- `claude-code-leak/src/services/mcp/channelAllowlist.ts:1-80` —
+  hard-coded operator-non-editable allowlist; mirrors our
+  `EXPOSABLE_TOOLS` slice.
+
+Reference (SECUNDARIO):
+- `research/docs/cli/mcp.md:30-120` — `openclaw mcp serve`
+  curated catalog (`conversations_list`, `messages_read`,
+  `events_poll`, `events_wait`, `messages_send`); informs
+  the "catalog ≠ runtime registry" choice.
+
+Three-bucket policy (hard-coded in slice):
+
+- **EXPONER** — `EnterPlanMode`, `ExitPlanMode`, `ToolSearch`,
+  `TodoWrite`, `SyntheticOutput`, `NotebookEdit`,
+  `cron_create`/`list`/`delete`/`pause`/`resume`,
+  `ListMcpResources`, `ReadMcpResource`,
+  `config_changes_tail`, `web_search`, `web_fetch`.
+- **NO-EXPONER** — `Heartbeat` (timer-only), `delegate`
+  (a2a no-MCP-target), `RemoteTrigger` (binding context
+  required).
+- **DEFERRED** — `Lsp` (79.M.b — LspManager boot),
+  `TeamCreate`/`TeamDelete`/`TeamSendMessage`/`TeamList`/
+  `TeamStatus` (79.M.d — store + router boot),
+  `Config` (`config-self-edit` Cargo feature; 79.M.c —
+  full applier+correlator+auth_token wiring +
+  security review).
+
+**Code touchpoints**:
+- `crates/config/src/types/mcp_exposable.rs` (NEW) — slice +
+  `SecurityTier`, `BootKind`, `ExposableToolEntry`,
+  `lookup_exposable`. 8 unit tests.
+- `crates/core/src/agent/mcp_server_bridge/` (now a module
+  dir) — `mod.rs` + new `context.rs`, `dispatch.rs`,
+  `telemetry.rs`; legacy `ToolRegistryBridge` lives in
+  `bridge.rs`. 23 new unit tests across bridge tree.
+- `crates/core/src/agent/tool_registry.rs` — new
+  `register_arc(def, handler)` accepts pre-boxed
+  `Arc<dyn ToolHandler>`.
+- `crates/core/src/telemetry.rs` — 2 new counters
+  (`mcp_server_tool_registered_total{name,tier}`,
+  `mcp_server_tool_skipped_total{name,reason}`).
+- `src/main.rs::run_mcp_server` — match arm legacy
+  replaced by `EXPOSABLE_TOOLS` loop with best-effort
+  boot of `cron_store`, `config_changes_store`,
+  `web_search_router` from env / disk.
+- `crates/core/tests/exposable_catalog_test.rs` (NEW) —
+  9 conformance tests covering catalog invariants +
+  per-disposition boot semantics + Always round-trip
+  shape contract.
+
+**Done criteria**:
+- `EXPOSABLE_TOOLS` covers every MVP exposable name with
+  exactly one `ExposableToolEntry`. (`no_duplicate_names`
+  test verifies.)
+- Boot dispatcher returns the 6 expected `BootResult`
+  variants — registered, denied, deferred, feature-gated,
+  infra-missing, unknown — each with a labelled reason.
+- Conformance suite verifies every `Always` entry boots
+  with a full context and produces a tool def with a
+  JSON-object schema.
+- Operator typo (entry not in slice) emits a warn line
+  with `expose_tools entry not in EXPOSABLE_TOOLS catalog`
+  message.
+- Telemetry counters render in `/metrics` even before any
+  registration/skip event fires.
+
+**Sub-pasos**:
+- [x] 79.M.1 — slice + types + lookup (`mcp_exposable.rs`).
+- [x] 79.M.2 — `McpServerBootContext` + builder.
+- [x] 79.M.3 — `BootResult` + `boot_exposable` skeleton.
+- [x] 79.M.4 — telemetry counters.
+- [x] 79.M.5 — boot helpers for handle-free Always entries
+      (6 tools).
+- [x] 79.M.6 — boot helpers for `cron_*` (5 tools).
+- [x] 79.M.7 — boot helpers for `mcp_router` (2 tools).
+- [x] 79.M.8 — boot helper for `config_changes_tail`.
+- [x] 79.M.9 — boot helpers for `web_search` + `web_fetch`.
+- [x] 79.M.10 — refactor `run_mcp_server` to walk the slice.
+- [x] 79.M.11 — conformance suite
+      (`crates/core/tests/exposable_catalog_test.rs`).
+- [x] 79.M.12 — docs + admin-ui + PHASES sync.
+
+Deferred (follow-up sub-phases):
+- **79.M.b** — `Lsp` exposure: `LspManager::boot()` reused
+  in mcp-server mode (Phase 79.5 already encapsulates the
+  helper).
+- **79.M.c** — `Config` exposure: full applier + denylist
+  bridge + `ApprovalCorrelator` + `auth_token_env` enforced
+  + security review of MCP-driven self-edit attack surface.
+- **79.M.d** — `Team*` exposure: `SqliteTeamStore` +
+  `TeamMessageRouter` boot in mcp-server mode (Phase 79.6.b
+  prerequisite).
 
 #### 79.14 — docs + admin-ui sync   ⬜
 

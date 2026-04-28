@@ -43,7 +43,7 @@ All fields use `#[serde(deny_unknown_fields)]` — typos fail fast.
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
 | `plugins` | `[string]` | `[]` | Plugin ids this agent wants to expose tools for (`whatsapp`, `telegram`, `browser`, …). |
-| `inbound_bindings` | array | `[]` | Per-plugin binding list. Empty = legacy wildcard (receive everything). |
+| `inbound_bindings` | array | `[]` | Per-plugin binding list. Empty = receive nothing from `plugin.inbound.*` (strict mode). |
 
 Each `inbound_bindings[]` entry can **override** the agent-level
 defaults for that channel: `allowed_tools`, `outbound_allowlist`,
@@ -51,6 +51,11 @@ defaults for that channel: `allowed_tools`, `outbound_allowlist`,
 `allowed_delegates`. Useful for running the same agent on two channels
 with different rules. See [Per-binding capability override](#per-binding-capability-override)
 below for the full override surface and merge rules.
+
+Binding match rules are strict on `(plugin, instance)`:
+
+- `instance` omitted/null only matches `plugin.inbound.<plugin>`
+- `instance: foo` only matches `plugin.inbound.<plugin>.foo`
 
 ### Tool sandboxing
 
@@ -302,10 +307,9 @@ A binding that sets no overrides is allowed but logs a warn.
 
 ### Matching order
 
-Bindings are evaluated top-to-bottom; the **first** match wins. If
-you have both `{plugin: telegram, instance: None}` (wildcard) and
-`{plugin: telegram, instance: "admin"}`, declare the specific entry
-first — otherwise the wildcard consumes every Telegram event.
+Bindings are evaluated top-to-bottom; the **first** match wins. Because
+matching is strict on the instance axis, `{plugin: telegram, instance: null}`
+does not capture `plugin.inbound.telegram.admin` traffic.
 
 ### Runtime isolation
 
@@ -324,10 +328,10 @@ first — otherwise the wildcard consumes every Telegram event.
 
 ### Back-compat
 
-Agents without `inbound_bindings` keep the pre-feature behavior byte-
-for-byte: the agent-level `allowed_tools` is pruned into the base
-registry at boot, and the runtime synthesises a policy from agent-
-level defaults (keyed at `binding_index = usize::MAX`).
+Agents without `inbound_bindings` do not consume plugin inbound events.
+Internal runtime paths that are not plugin inbound (for example
+heartbeat/delegation paths) still synthesize an effective policy from
+agent-level defaults.
 
 ## Output language
 

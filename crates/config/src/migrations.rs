@@ -129,7 +129,7 @@ fn key(k: &str) -> Value {
     Value::String(k.to_string())
 }
 
-fn get_mut_map(v: &mut Value) -> Option<&mut Mapping> {
+fn get_mut_map<'a>(v: &'a mut Value) -> Option<&'a mut Mapping> {
     v.as_mapping_mut()
 }
 

@@ -27,3 +27,4 @@ retry:
   initial_backoff_ms: 1000
   max_backoff_ms: 60000
   backoff_multiplier: 2.0
+schema_version: 11

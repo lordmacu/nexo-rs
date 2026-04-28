@@ -1,15 +1,16 @@
 broker:
-  type: "nats"
-  url: "nats://localhost:4222"
+  type: nats
+  url: nats://localhost:4222
   auth:
     enabled: false
-    nkey_file: "/run/secrets/nats.nkey"
+    nkey_file: /run/secrets/nats.nkey
   persistence:
     enabled: true
-    path: "./data/queue/broker.db"
+    path: ./data/queue/broker.db
   limits:
-    max_payload: "4MB"
+    max_payload: 4MB
     max_pending: 10000
   fallback:
-    mode: "local_queue"
+    mode: local_queue
     drain_on_reconnect: true
+schema_version: 11

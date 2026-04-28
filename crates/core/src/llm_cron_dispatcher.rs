@@ -132,7 +132,7 @@ pub struct LlmCronDispatcher {
 
 enum ClientMode {
     Fixed(Arc<dyn LlmClient>),
-    Routed(Box<RoutedClientResolver>),
+    Routed(RoutedClientResolver),
 }
 
 struct RoutedClientResolver {
@@ -223,13 +223,13 @@ impl LlmCronDispatcher {
         fallback_model: Option<ModelConfig>,
     ) -> Self {
         Self {
-            client_mode: ClientMode::Routed(Box::new(RoutedClientResolver {
+            client_mode: ClientMode::Routed(RoutedClientResolver {
                 registry,
                 llm_cfg,
                 legacy_binding_models,
                 fallback_model,
                 cache: DashMap::new(),
-            })),
+            }),
             system_prompt: None,
             max_tokens: None,
             publisher: None,

@@ -141,7 +141,6 @@ struct Inner {
 }
 
 impl HttpSessionManager {
-    #[allow(dead_code)]
     pub(crate) fn new(cfg: &HttpTransportConfig, parent_cancel: CancellationToken) -> Arc<Self> {
         Self::with_event_store(cfg, parent_cancel, None)
     }
@@ -173,12 +172,10 @@ impl HttpSessionManager {
         })
     }
 
-    #[allow(dead_code)]
     pub(crate) fn event_store(&self) -> Option<&Arc<dyn SessionEventStore>> {
         self.inner.event_store.as_ref()
     }
 
-    #[allow(dead_code)]
     pub(crate) fn max_replay_batch(&self) -> usize {
         self.inner.max_replay_batch
     }

@@ -1,95 +1,20 @@
-# Phase 12.4 — MCP (Model Context Protocol) runtime.
-#
-# Each entry under `servers` defines one MCP server the agent can connect to
-# on demand. Connections are session-scoped: every agent session gets its
-# own runtime with a fresh set of clients. Idle sessions are reaped after
-# `session_ttl`.
-#
-# `transport: stdio` spawns a local process and speaks JSON-RPC 2.0 on
-# stdin/stdout. HTTP/SSE transport is scheduled for phase 12.2.
 mcp:
   enabled: true
-  session_ttl: "30m"
-  idle_reap_interval: "60s"
-  connect_timeout: "30s"
-  initialize_timeout: "10s"
-  call_timeout: "30s"
-  shutdown_grace: "3s"
-  # Naming note:
-  # - Prefer server keys without dots (e.g. `filesystem`, `brave-search`).
-  # - Keys containing `.` are reserved for explicit shadowing of
-  #   extension-declared servers (`{ext_id}.{name}`), for example:
-  #     weather.local-geo
-  #   This intentionally overrides the extension declaration with the same
-  #   full key.
+  session_ttl: 30m
+  idle_reap_interval: 60s
+  connect_timeout: 30s
+  initialize_timeout: 10s
+  call_timeout: 30s
+  shutdown_grace: 3s
   servers: {}
-  # Example stdio server (local process):
-  #   filesystem:
-  #     transport: stdio
-  #     command: npx
-  #     args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/familia"]
-  #     env: {}
-  #     # Optional: if server advertises `capabilities.logging`, the client
-  #     # sends `logging/setLevel` post-init. Levels (RFC 5424 subset):
-  #     # debug, info, notice, warning, error, critical, alert, emergency.
-  #     log_level: "warning"
-  #
-  # Example streamable-http server (remote, 2024-11-05 spec):
-  #   brave-search:
-  #     transport: streamable_http
-  #     url: "https://api.example.com/mcp"
-  #     headers:
-  #       Authorization: "Bearer ${BRAVE_TOKEN}"
-  #       X-Client: "agent-rs"
-  #
-  # Example SSE legacy server (older stack):
-  #   legacy-tools:
-  #     transport: sse
-  #     url: "https://old-mcp.example.com/sse"
-  #     headers:
-  #       Authorization: "Bearer ${LEGACY_TOKEN}"
-
-  # Phase 12.8 — per-server override for context.passthrough. When set,
-  # forces the specific server's `tools/call`/`resources/*` requests to
-  # include (or exclude) `params._meta` regardless of the global flag.
-  # Example — silence agent identity for a public MCP server:
-  #   servers:
-  #     public-search:
-  #       transport: streamable_http
-  #       url: "https://api.example.com/mcp"
-  #       context_passthrough: false
-
-  # Phase 12.8 — opt-in hot-reload of this file. When enabled, the agent
-  # watches `mcp.yaml` and calls `McpRuntimeManager::update_config` after
-  # a stable change. Invalid YAML or missing env vars are logged at warn
-  # and the last good config keeps running. Off by default — a stray
-  # editor touch should not reshape the runtime silently.
   watch:
     enabled: false
     debounce_ms: 500
-
-  # Phase 11.5 follow-up (sym with extensions) — inject caller identity
-  # into every `tools/call` request as `params._meta = { agent_id,
-  # session_id }`. Enables per-agent audit / rate-limiting on compliant
-  # servers. Off by default because not every server ignores unknown
-  # params fields gracefully.
   context:
     passthrough: false
-
-  # Phase 12.1 follow-up — client-side policy for
-  # `sampling/createMessage` (server asks the client's LLM to generate).
-  # Disabled by default for safety.
   sampling:
     enabled: false
-    # Optional hint key to pick the default client from the named pool
-    # built at startup (keys include provider/model names).
-    # default_hint: "openai"
     global_max_tokens_cap: 4096
     deny_servers: []
     per_server: {}
-    # Example:
-    # per_server:
-    #   weather:
-    #     enabled: true
-    #     rate_limit_per_minute: 30
-    #     max_tokens_cap: 512
+schema_version: 11

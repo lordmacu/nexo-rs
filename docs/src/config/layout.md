@@ -51,7 +51,7 @@ only if present.
 | `mcp.yaml` | optional |
 | `mcp_server.yaml` | optional |
 | `tool_policy.yaml` | optional |
-| `runtime.yaml` | optional — hot-reload knobs; defaults enable reload at 500 ms debounce. See [Config hot-reload](../ops/hot-reload.md). |
+| `runtime.yaml` | optional — process runtime knobs: hot-reload + cron policy (one-shot retries and optional cron tool-call execution). Defaults enable reload at 500 ms debounce, one-shot retries (3 attempts, exponential backoff), and keep cron tool-calls disabled. See [Config hot-reload](../ops/hot-reload.md). |
 | `plugins/*.yaml` | optional (only needed for plugins you enable) |
 
 ## Drop-in agents

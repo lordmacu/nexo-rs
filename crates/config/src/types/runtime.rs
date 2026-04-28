@@ -45,7 +45,7 @@ pub struct RuntimeReloadConfig {
     pub extra_watch_paths: Vec<String>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeCronConfig {
     #[serde(default)]
@@ -53,6 +53,15 @@ pub struct RuntimeCronConfig {
     /// Opt-in tool-call execution in cron LLM dispatcher.
     #[serde(default)]
     pub tool_calls: RuntimeCronToolCallsConfig,
+}
+
+impl Default for RuntimeCronConfig {
+    fn default() -> Self {
+        Self {
+            one_shot_retry: RuntimeCronOneShotRetryConfig::default(),
+            tool_calls: RuntimeCronToolCallsConfig::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

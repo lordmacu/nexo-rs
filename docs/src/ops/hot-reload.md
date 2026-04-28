@@ -61,6 +61,11 @@ reload:
   enabled: true           # master switch
   debounce_ms: 500        # notify-debouncer-full window
   extra_watch_paths: []   # appended to the built-in list
+cron:
+  one_shot_retry:
+    max_retries: 3
+    base_backoff_secs: 30
+    max_backoff_secs: 1800
 ```
 
 Set `enabled: false` to turn off the file watcher + the

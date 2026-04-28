@@ -244,6 +244,15 @@ expose yet.
   `docs/src/recipes/mcp-from-claude-desktop.md`)
 - [ ] Allowlist editor for the agent-as-server `tools` allowlist
   with glob preview ("these tools will reach Claude Desktop")
+- [x] **Exposable catalog (Phase 79.M)** — `mcp_server.expose_tools`
+  is now backed by `EXPOSABLE_TOOLS` (slice in `nexo-config`) +
+  per-tool boot dispatcher in `nexo-core::agent::mcp_server_bridge`.
+  18 entries categorised by `SecurityTier` + `BootKind`. Admin can
+  surface a curated picker (read tier label) without reinventing
+  the catalog. Telemetry counters
+  `mcp_server_tool_registered_total{name,tier}` +
+  `mcp_server_tool_skipped_total{name,reason}` available for the
+  admin status pane.
 
 ### MCP — protocol gaps the daemon owes
 
@@ -570,6 +579,18 @@ IOUs — features that landed in the daemon but have no UI yet.
   `cache_ttl_secs`, `deny_hosts`) with per-binding override.
   Phase A3 "Brain" tab needs a toggle + caps editor + denylist
   textarea, plus per-binding override row in the override matrix.
+- [ ] **Proactive mode (Phase 77.20)** — `agents.<id>.proactive` and
+  `inbound_bindings[].proactive` editor with:
+  `enabled`, `tick_interval_secs`, `jitter_pct`, `max_idle_secs`,
+  `initial_greeting`, `cache_aware_schedule`, `allow_short_intervals`,
+  `daily_turn_budget`. Dashboard tile should chart
+  `nexo_proactive_events_total{agent,event}` and highlight
+  `sleep.interrupted` / budget suppression spikes.
+- [ ] **Binding role switch (Phase 77.18)** — per-binding `role`
+  selector (`coordinator`, `worker`, `proactive`) with runtime
+  warnings when role/tool policy conflict. Worker role panel should
+  preview the curated default tool surface and blocked tools
+  (`Sleep`, `TeamCreate`, `TeamSendMessage`, `send_message`).
 - [ ] **Per-agent setup dashboard** — model attach/detach, language pick, channel bind/unbind, skill toggle in one screen per agent (CLI shipped in `nexo setup` → `Configurar agente`; admin UI needs the same single-pane editor under each agent's detail view).
 - [ ] **Pairing allowlist explorer (Phase 70.3)** — surface `PairingStore::list_allow` rows in the Pairing tab so operators can confirm seeded senders without dropping to `nexo pair list --all`. Columns: channel, account, sender, approved_via, approved_at, revoked_at. Filter by channel + toggle for "include revoked".
 - [ ] **Pairing audit banner (Phase 70.6)** — when any binding has `pairing.auto_challenge: true` and zero rows in the allowlist for its `(channel, account)`, show a top-of-page banner with the `nexo pair seed` template — same audit `agent setup doctor` runs on the CLI.
