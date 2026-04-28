@@ -88,6 +88,7 @@ fn make_config(
         remote_triggers: Vec::new(),
             lsp: nexo_config::types::lsp::LspPolicy::default(),
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
+            team: nexo_config::types::team::TeamPolicy::default(),
     }
 }
 
@@ -312,6 +313,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             remote_triggers: Vec::new(),
             lsp: nexo_config::types::lsp::LspPolicy::default(),
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
+            team: nexo_config::types::team::TeamPolicy::default(),
         },
         behavior_a,
     ));
@@ -364,6 +366,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             remote_triggers: Vec::new(),
             lsp: nexo_config::types::lsp::LspPolicy::default(),
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
+            team: nexo_config::types::team::TeamPolicy::default(),
         },
         behavior_b,
     ));

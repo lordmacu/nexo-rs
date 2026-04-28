@@ -15,6 +15,7 @@ pub mod pollers;
 pub mod remote_triggers;
 pub mod runtime;
 pub mod taskflow;
+pub mod team;
 pub mod transcripts;
 
 pub use agents::*;
@@ -34,4 +35,5 @@ pub use pollers::*;
 pub use remote_triggers::*;
 pub use runtime::*;
 pub use taskflow::*;
+pub use team::*;
 pub use transcripts::*;

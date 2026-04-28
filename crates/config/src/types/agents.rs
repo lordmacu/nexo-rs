@@ -232,6 +232,11 @@ pub struct AgentConfig {
     /// `agents[].config_tool: { self_edit: true, ... }`.
     #[serde(default)]
     pub config_tool: crate::types::config_tool::ConfigToolPolicy,
+    /// Phase 79.6 — agent-level team policy. Default
+    /// `enabled: false` (opt-in). When enabled, the 5 `Team*`
+    /// tools register for this agent's goals.
+    #[serde(default)]
+    pub team: crate::types::team::TeamPolicy,
 }
 
 /// Tri-state dispatch capability. The same enum is used for the
