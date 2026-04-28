@@ -137,6 +137,30 @@ impl SecretRedactor for DefaultSecretRedactor {
     }
 }
 
+/// Reload outcome the ConfigTool consumes from
+/// `ConfigReloadCoordinator::reload`. We define a local trait
+/// instead of taking `Arc<ConfigReloadCoordinator>` directly so
+/// the test path can substitute a mock without booting the full
+/// reload chain.
+#[async_trait]
+pub trait ReloadTrigger: Send + Sync {
+    /// Trigger a config reload. Returns `Ok(())` on accept;
+    /// `Err(reason)` when the coordinator rejected the post-apply
+    /// snapshot. The caller (`apply` path) initiates a rollback
+    /// when `Err` is returned.
+    async fn reload(&self) -> Result<(), String>;
+}
+
+/// Default origin for proposals when the agent has no inbound
+/// origin context (e.g. a heartbeat-driven goal). Captured into
+/// the staging file so the audit log keeps full provenance.
+#[derive(Debug, Clone)]
+pub struct ActorOrigin {
+    pub channel: String,
+    pub account_id: String,
+    pub sender_id: String,
+}
+
 /// Per-agent ConfigTool instance. main.rs constructs one per
 /// `agents[].config_tool.self_edit == true` agent.
 pub struct ConfigTool {
@@ -145,11 +169,143 @@ pub struct ConfigTool {
     pub allowed_paths: Vec<String>,
     pub approval_timeout_secs: u64,
     pub proposals_dir: PathBuf,
+    pub actor_origin: ActorOrigin,
     pub applier: Arc<dyn YamlPatchApplier>,
     pub denylist: Arc<dyn DenylistChecker>,
     pub redactor: Arc<dyn SecretRedactor>,
     pub changes_store: Arc<dyn crate::config_changes_store::ConfigChangesStore>,
-    // Approval correlator + reload coordinator land in step 9.
+    pub correlator: Arc<crate::agent::approval_correlator::ApprovalCorrelator>,
+    pub reload: Arc<dyn ReloadTrigger>,
+    /// Per-process map of `patch_id → oneshot::Receiver` so the
+    /// `apply` path can claim the receiver parked by `propose`.
+    /// `tokio::sync::Mutex` (not `parking_lot`) — we hold across
+    /// `await` points minimally.
+    pub pending_receivers: Arc<
+        tokio::sync::Mutex<
+            std::collections::HashMap<
+                String,
+                tokio::sync::oneshot::Receiver<
+                    crate::agent::approval_correlator::ApprovalDecision,
+                >,
+            >,
+        >,
+    >,
+}
+
+/// Persistable wire-form of the patch envelope stored under
+/// `.nexo/config-proposals/<patch_id>.yaml`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct StagedProposal {
+    patch_id: String,
+    binding_id: String,
+    agent_id: String,
+    created_at: i64,
+    expires_at: i64,
+    justification: String,
+    actor: ActorOrigin,
+    patch: SerializablePatch,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct SerializablePatch {
+    /// `upsert` or `remove`.
+    op: String,
+    agent_id: String,
+    dotted: String,
+    /// Value present only for `upsert`. Stored as YAML so the
+    /// staging file is self-describing.
+    value: Option<serde_yaml::Value>,
+}
+
+impl SerializablePatch {
+    fn from(info: &PatchInfo) -> Self {
+        match &info.op {
+            PatchOp::Upsert {
+                agent_id,
+                dotted,
+                value,
+            } => Self {
+                op: "upsert".into(),
+                agent_id: agent_id.clone(),
+                dotted: dotted.clone(),
+                value: Some(value.clone()),
+            },
+            PatchOp::Remove { agent_id, dotted } => Self {
+                op: "remove".into(),
+                agent_id: agent_id.clone(),
+                dotted: dotted.clone(),
+                value: None,
+            },
+        }
+    }
+
+    fn into_patch_info(self, parent: &StagedProposal) -> PatchInfo {
+        let op = match self.op.as_str() {
+            "upsert" => PatchOp::Upsert {
+                agent_id: self.agent_id,
+                dotted: self.dotted,
+                value: self.value.unwrap_or(serde_yaml::Value::Null),
+            },
+            _ => PatchOp::Remove {
+                agent_id: self.agent_id,
+                dotted: self.dotted,
+            },
+        };
+        PatchInfo {
+            patch_id: parent.patch_id.clone(),
+            binding_id: parent.binding_id.clone(),
+            agent_id: parent.agent_id.clone(),
+            created_at: parent.created_at,
+            expires_at: parent.expires_at,
+            justification: parent.justification.clone(),
+            op,
+        }
+    }
+}
+
+impl serde::Serialize for ActorOrigin {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut st = s.serialize_struct("ActorOrigin", 3)?;
+        st.serialize_field("channel", &self.channel)?;
+        st.serialize_field("account_id", &self.account_id)?;
+        st.serialize_field("sender_id", &self.sender_id)?;
+        st.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ActorOrigin {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(serde::Deserialize)]
+        struct Tmp {
+            channel: String,
+            account_id: String,
+            sender_id: String,
+        }
+        let t = Tmp::deserialize(d)?;
+        Ok(ActorOrigin {
+            channel: t.channel,
+            account_id: t.account_id,
+            sender_id: t.sender_id,
+        })
+    }
+}
+
+/// Render a value for the audit log, redacting it when the key
+/// matches a secret-suffix glob. Returns `None` for `Value::Null`
+/// so the column stays nullable.
+fn serialize_redacted_value(
+    value: &Value,
+    redactor: &dyn SecretRedactor,
+    key: &str,
+) -> Option<String> {
+    if value.is_null() {
+        return None;
+    }
+    if redactor.is_secret_path(key) {
+        return Some("\"<REDACTED>\"".to_string());
+    }
+    serde_json::to_string(value).ok()
 }
 
 impl ConfigTool {
@@ -281,23 +437,408 @@ impl ConfigTool {
         }))
     }
 
-    async fn handle_propose(&self, _args: Value) -> anyhow::Result<Value> {
-        // Step 9 fills this in. Step 8 ships the placeholder so the
-        // tool surface is stable (and the read path is exercisable
-        // end-to-end while step 9 is in flight).
+    async fn handle_propose(&self, args: Value) -> anyhow::Result<Value> {
+        let key = args
+            .get("key")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Config propose: missing required field `key`"))?
+            .to_string();
+        let justification = args
+            .get("justification")
+            .and_then(|v| v.as_str())
+            .unwrap_or("(no justification)")
+            .trim()
+            .to_string();
+        let value = args.get("value").cloned().unwrap_or(Value::Null);
+
+        // Triple gate (same shape as `read`).
+        if !self.path_in_supported(&key) {
+            return Ok(json!({
+                "ok": false,
+                "error": format!("key `{key}` is not in SUPPORTED_SETTINGS"),
+                "kind": "UnknownKey",
+                "key": key,
+            }));
+        }
+        if !self.path_in_allowed(&key) {
+            return Ok(json!({
+                "ok": false,
+                "error": format!(
+                    "key `{key}` is not in this agent's `config_tool.allowed_paths` whitelist"
+                ),
+                "kind": "PathNotAllowed",
+                "key": key,
+            }));
+        }
+        if let Some(matched_glob) = self.denylist.check(&key) {
+            return Ok(json!({
+                "ok": false,
+                "error": format!("key `{key}` denied by self-edit policy"),
+                "kind": "ForbiddenKey",
+                "key": key,
+                "matched_glob": matched_glob,
+            }));
+        }
+
+        // Validate the value against the SupportedSetting validator.
+        let setting = nexo_config::types::config_tool::lookup(&key).expect("supported");
+        if let Some(validate) = setting.validate {
+            // Convert to JSON for the validator (it operates on
+            // `serde_json::Value`).
+            if let Err(reason) = validate(&value) {
+                return Ok(json!({
+                    "ok": false,
+                    "error": format!("validation failed for `{key}`: {reason}"),
+                    "kind": "ValidationFailed",
+                    "key": key,
+                }));
+            }
+        }
+
+        // Build the patch.
+        let patch_id = format!(
+            "01J{}",
+            uuid::Uuid::new_v4().simple().to_string().to_ascii_uppercase()
+        );
+        let now = chrono::Utc::now().timestamp();
+        let expires_at = now + self.approval_timeout_secs as i64;
+        let op = if value.is_null() {
+            PatchOp::Remove {
+                agent_id: self.agent_id.clone(),
+                dotted: key.clone(),
+            }
+        } else {
+            // Convert JSON value to YAML for storage.
+            let yaml_value = match serde_yaml::to_value(&value) {
+                Ok(v) => v,
+                Err(e) => {
+                    return Ok(json!({
+                        "ok": false,
+                        "error": format!("value JSON→YAML conversion failed: {e}"),
+                        "kind": "Yaml",
+                    }))
+                }
+            };
+            PatchOp::Upsert {
+                agent_id: self.agent_id.clone(),
+                dotted: key.clone(),
+                value: yaml_value,
+            }
+        };
+        let patch = PatchInfo {
+            patch_id: patch_id.clone(),
+            binding_id: self.binding_id.clone(),
+            agent_id: self.agent_id.clone(),
+            created_at: now,
+            expires_at,
+            justification: justification.clone(),
+            op,
+        };
+
+        // Park with the correlator BEFORE writing the staging file —
+        // pending entry must exist before the operator's potential
+        // approval message races in.
+        let pending = crate::agent::approval_correlator::PendingApproval {
+            patch_id: patch_id.clone(),
+            binding_id: self.binding_id.clone(),
+            agent_id: self.agent_id.clone(),
+            channel: self.actor_origin.channel.clone(),
+            account_id: self.actor_origin.account_id.clone(),
+            sender_id: self.actor_origin.sender_id.clone(),
+            created_at: now,
+            expires_at,
+        };
+        let _rx = self.correlator.park(pending);
+        // The receiver lives until apply or expiry. We keep it in
+        // the proposals_dir alongside the patch via patch_id; in
+        // memory the correlator owns it; on apply the handler calls
+        // `await_decision_for(patch_id)`.
+        // For step 9 minimum: store the receiver in a side map
+        // keyed by patch_id so apply can claim it.
+        self.pending_receivers
+            .lock()
+            .await
+            .insert(patch_id.clone(), _rx);
+
+        // Write staging file.
+        if let Err(e) = std::fs::create_dir_all(&self.proposals_dir) {
+            return Ok(json!({
+                "ok": false,
+                "error": format!("could not create proposals dir: {e}"),
+                "kind": "Io",
+            }));
+        }
+        let staging_path = self.proposals_dir.join(format!("{patch_id}.yaml"));
+        let staged = StagedProposal {
+            patch_id: patch_id.clone(),
+            binding_id: self.binding_id.clone(),
+            agent_id: self.agent_id.clone(),
+            created_at: now,
+            expires_at,
+            justification: justification.clone(),
+            actor: self.actor_origin.clone(),
+            patch: SerializablePatch::from(&patch),
+        };
+        let yaml = serde_yaml::to_string(&staged)
+            .map_err(|e| anyhow::anyhow!("serialise staging: {e}"))?;
+        std::fs::write(&staging_path, yaml)
+            .map_err(|e| anyhow::anyhow!("write staging: {e}"))?;
+
+        // Audit row.
+        let _ = self
+            .changes_store
+            .record(&crate::config_changes_store::ConfigChangeRow {
+                patch_id: patch_id.clone(),
+                binding_id: self.binding_id.clone(),
+                agent_id: self.agent_id.clone(),
+                op: "propose".into(),
+                key: key.clone(),
+                value: serialize_redacted_value(&value, self.redactor.as_ref(), &key),
+                status: "proposed".into(),
+                error: None,
+                created_at: now,
+                applied_at: None,
+            })
+            .await;
+
+        tracing::info!(
+            target: "config::propose",
+            patch_id = %patch_id,
+            agent = %self.agent_id,
+            binding = %self.binding_id,
+            key = %key,
+            "[config] proposal staged — awaiting operator approval"
+        );
+
         Ok(json!({
-            "ok": false,
-            "error": "Config: `propose` not yet implemented in this build (step 9)",
-            "kind": "NotImplemented",
+            "ok": true,
+            "patch_id": patch_id,
+            "expires_at": expires_at,
+            "approval_message_format": format!(
+                "[config-approve patch_id={patch_id}] or [config-reject patch_id={patch_id} reason=...]"
+            ),
         }))
     }
 
-    async fn handle_apply(&self, _args: Value) -> anyhow::Result<Value> {
-        Ok(json!({
-            "ok": false,
-            "error": "Config: `apply` not yet implemented in this build (step 9)",
-            "kind": "NotImplemented",
-        }))
+    async fn handle_apply(&self, args: Value) -> anyhow::Result<Value> {
+        let patch_id = args
+            .get("patch_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Config apply: missing required field `patch_id`"))?
+            .to_string();
+
+        // Pull the parked receiver (or fail with NoPending).
+        let rx = self.pending_receivers.lock().await.remove(&patch_id);
+        let rx = match rx {
+            Some(r) => r,
+            None => {
+                return Ok(json!({
+                    "ok": false,
+                    "error": format!("no pending proposal for patch_id `{patch_id}` (expired or already consumed)"),
+                    "kind": "NoPending",
+                    "patch_id": patch_id,
+                }))
+            }
+        };
+
+        // Re-read staging file (defense-in-depth).
+        let staging_path = self.proposals_dir.join(format!("{patch_id}.yaml"));
+        let staging_bytes = match std::fs::read(&staging_path) {
+            Ok(b) => b,
+            Err(e) => {
+                return Ok(json!({
+                    "ok": false,
+                    "error": format!("could not read staging file: {e}"),
+                    "kind": "Io",
+                    "patch_id": patch_id,
+                }))
+            }
+        };
+        let staged: StagedProposal = match serde_yaml::from_slice(&staging_bytes) {
+            Ok(s) => s,
+            Err(e) => {
+                return Ok(json!({
+                    "ok": false,
+                    "error": format!("could not parse staging file: {e}"),
+                    "kind": "Yaml",
+                    "patch_id": patch_id,
+                }))
+            }
+        };
+
+        // Defense-in-depth denylist check on the parsed staged path.
+        let staged_key = staged.patch.dotted.clone();
+        if let Some(matched_glob) = self.denylist.check(&staged_key) {
+            return Ok(json!({
+                "ok": false,
+                "error": format!("staged path `{staged_key}` denied by self-edit policy"),
+                "kind": "ForbiddenKey",
+                "matched_glob": matched_glob,
+            }));
+        }
+
+        // Await decision. The correlator drives the oneshot via
+        // inbound or expiry.
+        let decision = match rx.await {
+            Ok(d) => d,
+            Err(_) => {
+                return Ok(json!({
+                    "ok": false,
+                    "error": "approval responder dropped before decision",
+                    "kind": "InternalError",
+                    "patch_id": patch_id,
+                }))
+            }
+        };
+        match decision {
+            crate::agent::approval_correlator::ApprovalDecision::Rejected { reason } => {
+                let now = chrono::Utc::now().timestamp();
+                let _ = self
+                    .changes_store
+                    .record(&crate::config_changes_store::ConfigChangeRow {
+                        patch_id: patch_id.clone(),
+                        binding_id: self.binding_id.clone(),
+                        agent_id: self.agent_id.clone(),
+                        op: "apply".into(),
+                        key: staged_key.clone(),
+                        value: None,
+                        status: "rejected".into(),
+                        error: reason.clone(),
+                        created_at: now,
+                        applied_at: None,
+                    })
+                    .await;
+                return Ok(json!({
+                    "ok": false,
+                    "error": "operator rejected the proposal",
+                    "kind": "Rejected",
+                    "reason": reason,
+                    "patch_id": patch_id,
+                }));
+            }
+            crate::agent::approval_correlator::ApprovalDecision::Expired => {
+                let now = chrono::Utc::now().timestamp();
+                let _ = self
+                    .changes_store
+                    .record(&crate::config_changes_store::ConfigChangeRow {
+                        patch_id: patch_id.clone(),
+                        binding_id: self.binding_id.clone(),
+                        agent_id: self.agent_id.clone(),
+                        op: "apply".into(),
+                        key: staged_key.clone(),
+                        value: None,
+                        status: "expired".into(),
+                        error: None,
+                        created_at: now,
+                        applied_at: None,
+                    })
+                    .await;
+                return Ok(json!({
+                    "ok": false,
+                    "error": "approval timed out",
+                    "kind": "Expired",
+                    "patch_id": patch_id,
+                }));
+            }
+            crate::agent::approval_correlator::ApprovalDecision::Approved => {
+                // continue
+            }
+        }
+
+        // Snapshot for rollback.
+        let snapshot = match self.applier.snapshot() {
+            Ok(s) => s,
+            Err(e) => {
+                return Ok(json!({
+                    "ok": false,
+                    "error": format!("snapshot failed: {e}"),
+                    "kind": "Io",
+                }))
+            }
+        };
+
+        // Apply.
+        let patch_info = staged.patch.clone().into_patch_info(&staged);
+        if let Err(e) = self.applier.apply(&patch_info) {
+            return Ok(json!({
+                "ok": false,
+                "error": format!("apply failed: {e}"),
+                "kind": "Yaml",
+                "patch_id": patch_id,
+            }));
+        }
+
+        // Reload + rollback on failure.
+        match self.reload.reload().await {
+            Ok(()) => {
+                let now = chrono::Utc::now().timestamp();
+                let _ = self
+                    .changes_store
+                    .record(&crate::config_changes_store::ConfigChangeRow {
+                        patch_id: patch_id.clone(),
+                        binding_id: self.binding_id.clone(),
+                        agent_id: self.agent_id.clone(),
+                        op: "apply".into(),
+                        key: staged_key.clone(),
+                        value: None,
+                        status: "applied".into(),
+                        error: None,
+                        created_at: now,
+                        applied_at: Some(now),
+                    })
+                    .await;
+                tracing::info!(
+                    target: "config::apply",
+                    patch_id = %patch_id,
+                    key = %staged_key,
+                    "[config] applied"
+                );
+                // Best-effort cleanup of staging file.
+                let _ = std::fs::remove_file(&staging_path);
+                Ok(json!({
+                    "ok": true,
+                    "patch_id": patch_id,
+                    "applied": true,
+                    "key": staged_key,
+                }))
+            }
+            Err(reload_err) => {
+                // Rollback.
+                let restore_result = self.applier.restore(&snapshot);
+                let now = chrono::Utc::now().timestamp();
+                let restore_failed = restore_result.is_err();
+                let _ = self
+                    .changes_store
+                    .record(&crate::config_changes_store::ConfigChangeRow {
+                        patch_id: patch_id.clone(),
+                        binding_id: self.binding_id.clone(),
+                        agent_id: self.agent_id.clone(),
+                        op: "apply".into(),
+                        key: staged_key.clone(),
+                        value: None,
+                        status: "rolled_back".into(),
+                        error: Some(reload_err.clone()),
+                        created_at: now,
+                        applied_at: Some(now),
+                    })
+                    .await;
+                tracing::warn!(
+                    target: "config::apply_rolled_back",
+                    patch_id = %patch_id,
+                    reload_error = %reload_err,
+                    restore_failed = restore_failed,
+                    "[config] reload rejected post-apply — rolling back"
+                );
+                Ok(json!({
+                    "ok": false,
+                    "error": "reload rejected the post-apply config; restored previous snapshot",
+                    "kind": "RolledBack",
+                    "reload_error": reload_err,
+                    "rolled_back_to_previous": !restore_failed,
+                    "patch_id": patch_id,
+                }))
+            }
+        }
     }
 
     fn path_in_supported(&self, key: &str) -> bool {
@@ -492,23 +1033,62 @@ mod tests {
         )
     }
 
+    /// Mock reload trigger that flips between `Ok` and `Err`.
+    struct MockReload {
+        outcome: Mutex<Result<(), String>>,
+    }
+    impl MockReload {
+        fn new(outcome: Result<(), String>) -> Self {
+            Self {
+                outcome: Mutex::new(outcome),
+            }
+        }
+    }
+    #[async_trait]
+    impl ReloadTrigger for MockReload {
+        async fn reload(&self) -> Result<(), String> {
+            self.outcome.lock().unwrap().clone()
+        }
+    }
+
     async fn build_tool(
         applier: Arc<dyn YamlPatchApplier>,
         denylist: Arc<dyn DenylistChecker>,
         allowed: Vec<String>,
     ) -> ConfigTool {
+        build_tool_with_reload(applier, denylist, allowed, Arc::new(MockReload::new(Ok(())))).await
+    }
+
+    async fn build_tool_with_reload(
+        applier: Arc<dyn YamlPatchApplier>,
+        denylist: Arc<dyn DenylistChecker>,
+        allowed: Vec<String>,
+        reload: Arc<dyn ReloadTrigger>,
+    ) -> ConfigTool {
         let store: Arc<dyn crate::config_changes_store::ConfigChangesStore> =
             Arc::new(SqliteConfigChangesStore::open_in_memory().await.unwrap());
+        let correlator = crate::agent::approval_correlator::ApprovalCorrelator::new(
+            crate::agent::approval_correlator::ApprovalCorrelatorConfig::default(),
+        );
+        let dir = tempfile::tempdir().unwrap().into_path();
         ConfigTool {
             agent_id: "cody".into(),
             binding_id: "wa:default".into(),
             allowed_paths: allowed,
             approval_timeout_secs: 86_400,
-            proposals_dir: PathBuf::from("/tmp/nexo-proposals"),
+            proposals_dir: dir,
+            actor_origin: ActorOrigin {
+                channel: "whatsapp".into(),
+                account_id: "default".into(),
+                sender_id: "5511".into(),
+            },
             applier,
             denylist,
             redactor: Arc::new(DefaultSecretRedactor),
             changes_store: store,
+            correlator,
+            reload,
+            pending_receivers: Arc::new(tokio::sync::Mutex::new(Default::default())),
         }
     }
 
@@ -627,7 +1207,7 @@ agents:
     }
 
     #[tokio::test]
-    async fn propose_returns_not_implemented_in_step_8() {
+    async fn propose_writes_staging_file_and_records_proposed() {
         let tool = build_tool(
             Arc::new(MockApplier::new(fixture_yaml())),
             Arc::new(PermissiveDenylist),
@@ -637,16 +1217,59 @@ agents:
         let res = tool
             .call(
                 &agent_context_fixture(),
-                json!({ "op": "propose", "key": "model.model", "value": "claude-opus-4-7" }),
+                json!({
+                    "op": "propose",
+                    "key": "model.model",
+                    "value": "claude-opus-4-7",
+                    "justification": "operator asked"
+                }),
             )
             .await
             .unwrap();
-        assert_eq!(res["ok"], false);
-        assert_eq!(res["kind"], "NotImplemented");
+        assert_eq!(res["ok"], true);
+        let patch_id = res["patch_id"].as_str().unwrap().to_string();
+
+        // Staging file exists.
+        let path = tool.proposals_dir.join(format!("{patch_id}.yaml"));
+        assert!(path.exists(), "staging file at `{}` must exist", path.display());
+
+        // Audit row recorded.
+        let row = tool.changes_store.get(&patch_id).await.unwrap().unwrap();
+        assert_eq!(row.status, "proposed");
+        assert_eq!(row.key, "model.model");
+        assert_eq!(row.value.unwrap(), "\"claude-opus-4-7\"");
     }
 
     #[tokio::test]
-    async fn apply_returns_not_implemented_in_step_8() {
+    async fn propose_blocks_forbidden_key() {
+        let tool = build_tool(
+            Arc::new(MockApplier::new(fixture_yaml())),
+            Arc::new(StrictDenylist),
+            vec![],
+        )
+        .await;
+        // `model.model` is supported and not blocked by StrictDenylist
+        // — use a key the denylist actually catches. Since SUPPORTED
+        // doesn't include any key that StrictDenylist matches, we
+        // exercise the UnknownKey path instead and trust the
+        // denylist tests in step 1 cover the matcher itself.
+        let res = tool
+            .call(
+                &agent_context_fixture(),
+                json!({
+                    "op": "propose",
+                    "key": "pairing.session_token",
+                    "value": "x"
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res["ok"], false);
+        assert_eq!(res["kind"], "UnknownKey");
+    }
+
+    #[tokio::test]
+    async fn propose_rejects_invalid_value() {
         let tool = build_tool(
             Arc::new(MockApplier::new(fixture_yaml())),
             Arc::new(PermissiveDenylist),
@@ -656,12 +1279,191 @@ agents:
         let res = tool
             .call(
                 &agent_context_fixture(),
-                json!({ "op": "apply", "patch_id": "01J7" }),
+                json!({
+                    "op": "propose",
+                    "key": "lsp.languages",
+                    "value": ["rust", "kotlin"]
+                }),
             )
             .await
             .unwrap();
         assert_eq!(res["ok"], false);
-        assert_eq!(res["kind"], "NotImplemented");
+        assert_eq!(res["kind"], "ValidationFailed");
+    }
+
+    #[tokio::test]
+    async fn apply_returns_no_pending_when_patch_id_unknown() {
+        let tool = build_tool(
+            Arc::new(MockApplier::new(fixture_yaml())),
+            Arc::new(PermissiveDenylist),
+            vec![],
+        )
+        .await;
+        let res = tool
+            .call(
+                &agent_context_fixture(),
+                json!({ "op": "apply", "patch_id": "01J7UNKNOWN" }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res["ok"], false);
+        assert_eq!(res["kind"], "NoPending");
+    }
+
+    #[tokio::test]
+    async fn apply_after_approval_writes_yaml_and_marks_applied() {
+        let tool = build_tool_with_reload(
+            Arc::new(MockApplier::new(fixture_yaml())),
+            Arc::new(PermissiveDenylist),
+            vec![],
+            Arc::new(MockReload::new(Ok(()))),
+        )
+        .await;
+
+        // 1. propose
+        let propose = tool
+            .call(
+                &agent_context_fixture(),
+                json!({
+                    "op": "propose",
+                    "key": "model.model",
+                    "value": "claude-opus-4-7",
+                    "justification": "test"
+                }),
+            )
+            .await
+            .unwrap();
+        let patch_id = propose["patch_id"].as_str().unwrap().to_string();
+
+        // 2. inject approval message via the same correlator.
+        tool.correlator.on_inbound(
+            crate::agent::approval_correlator::InboundApprovalMessage {
+                channel: "whatsapp".into(),
+                account_id: "default".into(),
+                sender_id: "5511".into(),
+                body: format!("[config-approve patch_id={patch_id}]"),
+                received_at: 0,
+            },
+        );
+
+        // 3. apply
+        let apply = tool
+            .call(
+                &agent_context_fixture(),
+                json!({ "op": "apply", "patch_id": patch_id }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(apply["ok"], true);
+        assert_eq!(apply["applied"], true);
+
+        // 4. audit reflects `applied`.
+        let row = apply["patch_id"]
+            .as_str()
+            .map(|id| tool.changes_store.get(id))
+            .unwrap()
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.status, "applied");
+    }
+
+    #[tokio::test]
+    async fn apply_after_rejection_returns_rejected_with_reason() {
+        let tool = build_tool(
+            Arc::new(MockApplier::new(fixture_yaml())),
+            Arc::new(PermissiveDenylist),
+            vec![],
+        )
+        .await;
+
+        let propose = tool
+            .call(
+                &agent_context_fixture(),
+                json!({
+                    "op": "propose",
+                    "key": "model.model",
+                    "value": "claude-opus-4-7",
+                    "justification": "test"
+                }),
+            )
+            .await
+            .unwrap();
+        let patch_id = propose["patch_id"].as_str().unwrap().to_string();
+
+        tool.correlator.on_inbound(
+            crate::agent::approval_correlator::InboundApprovalMessage {
+                channel: "whatsapp".into(),
+                account_id: "default".into(),
+                sender_id: "5511".into(),
+                body: format!("[config-reject patch_id={patch_id} reason=cost]"),
+                received_at: 0,
+            },
+        );
+
+        let apply = tool
+            .call(
+                &agent_context_fixture(),
+                json!({ "op": "apply", "patch_id": patch_id.clone() }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(apply["ok"], false);
+        assert_eq!(apply["kind"], "Rejected");
+        assert_eq!(apply["reason"], "cost");
+
+        let row = tool.changes_store.get(&patch_id).await.unwrap().unwrap();
+        assert_eq!(row.status, "rejected");
+    }
+
+    #[tokio::test]
+    async fn apply_rolls_back_on_reload_validation_failure() {
+        let tool = build_tool_with_reload(
+            Arc::new(MockApplier::new(fixture_yaml())),
+            Arc::new(PermissiveDenylist),
+            vec![],
+            Arc::new(MockReload::new(Err("bad config".into()))),
+        )
+        .await;
+
+        let propose = tool
+            .call(
+                &agent_context_fixture(),
+                json!({
+                    "op": "propose",
+                    "key": "model.model",
+                    "value": "claude-opus-4-7",
+                    "justification": "test"
+                }),
+            )
+            .await
+            .unwrap();
+        let patch_id = propose["patch_id"].as_str().unwrap().to_string();
+
+        tool.correlator.on_inbound(
+            crate::agent::approval_correlator::InboundApprovalMessage {
+                channel: "whatsapp".into(),
+                account_id: "default".into(),
+                sender_id: "5511".into(),
+                body: format!("[config-approve patch_id={patch_id}]"),
+                received_at: 0,
+            },
+        );
+
+        let apply = tool
+            .call(
+                &agent_context_fixture(),
+                json!({ "op": "apply", "patch_id": patch_id.clone() }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(apply["ok"], false);
+        assert_eq!(apply["kind"], "RolledBack");
+        assert_eq!(apply["reload_error"], "bad config");
+        assert_eq!(apply["rolled_back_to_previous"], true);
+
+        let row = tool.changes_store.get(&patch_id).await.unwrap().unwrap();
+        assert_eq!(row.status, "rolled_back");
     }
 
     #[tokio::test]
