@@ -334,6 +334,12 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
     "SyntheticOutput",
     // Phase 79.7 — cron list reads the schedule store.
     "cron_list",
+    // Phase 79.5 — LSP tool. All 5 MVP ops (go_to_def, hover,
+    // references, workspace_symbol, diagnostics) are pure
+    // queries against the language server; classifying once at
+    // tool name level is enough since the discriminator lives
+    // INSIDE the args, not the tool name.
+    "Lsp",
     // Memory + observability tools that read but never write.
     "memory_search",
     "agent_query",
@@ -517,6 +523,16 @@ mod tests {
     #[test]
     fn classify_unknown_returns_none() {
         assert_eq!(classify_tool("totally_unregistered_thing"), None);
+    }
+
+    #[test]
+    fn lsp_is_classified_as_read_only() {
+        // All 5 Lsp kinds are queries (no workspace mutation), so
+        // the tool name `Lsp` is in READ_ONLY_TOOLS. Plan mode
+        // never refuses an Lsp call.
+        assert!(READ_ONLY_TOOLS.contains(&"Lsp"));
+        let state = PlanModeState::on(123, PlanModeReason::ModelRequested { reason: None });
+        assert!(gate_tool_call(&state, "Lsp", None).is_none());
     }
 
     #[test]
