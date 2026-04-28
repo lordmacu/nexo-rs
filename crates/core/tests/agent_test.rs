@@ -51,6 +51,7 @@ fn test_config(id: &str) -> AgentConfig {
         remote_triggers: Vec::new(),
             lsp: nexo_config::types::lsp::LspPolicy::default(),
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
+            team: nexo_config::types::team::TeamPolicy::default(),
     }
 }
 

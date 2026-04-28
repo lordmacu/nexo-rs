@@ -459,6 +459,7 @@ mod tests {
             remote_triggers: Vec::new(),
             lsp: nexo_config::types::lsp::LspPolicy::default(),
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
+            team: nexo_config::types::team::TeamPolicy::default(),
         });
         let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
         let sid = Uuid::new_v4();
@@ -664,6 +665,7 @@ mod tests {
             remote_triggers: Vec::new(),
             lsp: nexo_config::types::lsp::LspPolicy::default(),
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
+            team: nexo_config::types::team::TeamPolicy::default(),
         });
         let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
         let ctx = AgentContext::new("kate", cfg, broker, sessions);

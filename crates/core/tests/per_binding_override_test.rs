@@ -160,6 +160,7 @@ fn two_binding_agent() -> AgentConfig {
         remote_triggers: Vec::new(),
             lsp: nexo_config::types::lsp::LspPolicy::default(),
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
+            team: nexo_config::types::team::TeamPolicy::default(),
     }
 }
 
@@ -344,6 +345,7 @@ async fn agent_without_bindings_drops_inbound_events() {
         remote_triggers: Vec::new(),
             lsp: nexo_config::types::lsp::LspPolicy::default(),
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
+            team: nexo_config::types::team::TeamPolicy::default(),
     };
     let (runtime, captures, broker) = spawn_runtime(cfg).await;
 
