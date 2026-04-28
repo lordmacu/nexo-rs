@@ -36,6 +36,7 @@
 - [LSP tool (Phase 79.5)](./architecture/lsp.md)
 - [Cron schedule tools (Phase 79.7)](./architecture/cron-schedule.md)
 - [MCP router tools (Phase 79.11)](./architecture/mcp-router-tools.md)
+- [ConfigTool gated self-config (Phase 79.10)](./architecture/config-tool.md)
 
 # Configuration
 
@@ -85,6 +86,7 @@
 - [Client (stdio / HTTP)](./mcp/client.md)
 - [Agent as MCP server](./mcp/server.md)
 - [HTTP+SSE transport](./extensions/mcp-server.md)
+- [Building an MCP server extension](./extensions/mcp-server-extension.md)
 
 # Skills
 
