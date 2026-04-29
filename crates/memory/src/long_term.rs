@@ -7,6 +7,8 @@ use uuid::Uuid;
 
 use crate::concepts::{derive_concept_tags, MAX_CONCEPT_TAGS};
 use crate::embedding::EmbeddingProvider;
+use crate::relevance::MemoryType;
+use crate::secret_scanner::SecretGuard;
 use crate::vector;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,6 +20,10 @@ pub struct MemoryEntry {
     #[serde(default)]
     pub concept_tags: Vec<String>,
     pub created_at: DateTime<Utc>,
+    /// Phase 77.6 — memory type for per-type half-life decay in scoring.
+    /// None = legacy record, treated as Project (most conservative default).
+    #[serde(default)]
+    pub memory_type: Option<MemoryType>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,6 +115,7 @@ struct EmailFollowupDbRow {
 pub struct LongTermMemory {
     pool: SqlitePool,
     embedding: Option<Arc<dyn EmbeddingProvider>>,
+    guard: Option<SecretGuard>,
 }
 
 impl LongTermMemory {
@@ -143,7 +150,11 @@ impl LongTermMemory {
             .await?;
         sqlx::query("PRAGMA foreign_keys=ON").execute(&pool).await?;
 
-        let store = Self { pool, embedding };
+        let store = Self {
+            pool,
+            embedding,
+            guard: None,
+        };
         store.migrate().await?;
         if let Some(provider) = &store.embedding {
             store.init_vector_schema(provider.dimension()).await?;
@@ -153,6 +164,13 @@ impl LongTermMemory {
 
     pub fn embedding_provider(&self) -> Option<&Arc<dyn EmbeddingProvider>> {
         self.embedding.as_ref()
+    }
+
+    /// Attach a secret guard. When set, `remember_typed()` scans content
+    /// before every INSERT and applies the guard's policy (Block / Redact / Warn).
+    pub fn with_guard(mut self, guard: SecretGuard) -> Self {
+        self.guard = Some(guard);
+        self
     }
 
     async fn init_vector_schema(&self, dim: usize) -> anyhow::Result<()> {
@@ -224,6 +242,18 @@ impl LongTermMemory {
         // real migration failure doesn't leave the schema half-applied.
         if let Err(e) =
             sqlx::query("ALTER TABLE memories ADD COLUMN concept_tags TEXT NOT NULL DEFAULT '[]'")
+                .execute(&self.pool)
+                .await
+        {
+            if !is_duplicate_column_error(&e) {
+                return Err(e.into());
+            }
+        }
+
+        // Phase 77.6 — memory_type column for per-type half-life decay.
+        // Idempotent: swallow "duplicate column" on re-runs.
+        if let Err(e) =
+            sqlx::query("ALTER TABLE memories ADD COLUMN memory_type TEXT")
                 .execute(&self.pool)
                 .await
         {
@@ -380,30 +410,53 @@ impl LongTermMemory {
         content: &str,
         tags: &[&str],
     ) -> anyhow::Result<Uuid> {
+        self.remember_typed(agent_id, content, tags, None).await
+    }
+
+    /// Phase 77.6 — `remember()` variant that also stores the memory type.
+    /// When `None`, the column is left NULL (legacy).
+    pub async fn remember_typed(
+        &self,
+        agent_id: &str,
+        content: &str,
+        tags: &[&str],
+        memory_type: Option<MemoryType>,
+    ) -> anyhow::Result<Uuid> {
+        // Guard: scan for secrets before committing to SQLite.
+        let content_to_store = if let Some(ref guard) = self.guard {
+            guard
+                .check(content)
+                .map_err(|e| anyhow::anyhow!("{}", e))?
+        } else {
+            content.to_string()
+        };
+
         let id = Uuid::new_v4();
         let id_str = id.to_string();
         let tags_json = serde_json::to_string(tags)?;
-        let concept_tags = derive_concept_tags("", content, MAX_CONCEPT_TAGS);
+        let concept_tags = derive_concept_tags("", &content_to_store, MAX_CONCEPT_TAGS);
         let concept_tags_json = serde_json::to_string(&concept_tags)?;
+        let memory_type_str = memory_type.map(|t| serde_json::to_string(&t)).transpose()?;
         let now = Utc::now().timestamp_millis();
 
         let mut tx = self.pool.begin().await?;
 
         sqlx::query(
-            "INSERT INTO memories (id, agent_id, content, tags, concept_tags, created_at)
-             VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO memories (id, agent_id, content, tags, concept_tags, memory_type, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id_str)
         .bind(agent_id)
-        .bind(content)
+        .bind(&content_to_store)
         .bind(&tags_json)
         .bind(&concept_tags_json)
+        .bind(&memory_type_str)
         .bind(now)
         .execute(&mut *tx)
         .await?;
 
         sqlx::query("INSERT INTO memories_fts (content, id, agent_id) VALUES (?, ?, ?)")
-            .bind(content)
+            .bind(&content_to_store)
             .bind(&id_str)
             .bind(agent_id)
             .execute(&mut *tx)
@@ -474,8 +527,8 @@ impl LongTermMemory {
     ) -> anyhow::Result<Vec<MemoryEntry>> {
         let match_expr = build_fts_match(query, extra_tags);
 
-        let rows = sqlx::query_as::<_, (String, String, String, String, i64)>(
-            "SELECT m.id, m.content, m.tags, m.concept_tags, m.created_at
+        let rows = sqlx::query_as::<_, (String, String, String, String, Option<String>, i64)>(
+            "SELECT m.id, m.content, m.tags, m.concept_tags, m.memory_type, m.created_at
              FROM memories_fts f
              JOIN memories m ON m.id = f.id
              WHERE f.content MATCH ?
@@ -491,11 +544,15 @@ impl LongTermMemory {
 
         let entries = rows
             .into_iter()
-            .map(|(id_str, content, tags_json, concept_tags_json, ts)| {
+            .map(|(id_str, content, tags_json, concept_tags_json, memory_type_str, ts)| {
                 let id = parse_uuid_or_warn(&id_str, "memory.id");
                 let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
                 let concept_tags: Vec<String> =
                     serde_json::from_str(&concept_tags_json).unwrap_or_default();
+                let memory_type = memory_type_str
+                    .as_deref()
+                    .and_then(|s| serde_json::from_str(s).ok())
+                    .and_then(|s: String| MemoryType::parse(&s));
                 let created_at = DateTime::from_timestamp_millis(ts).unwrap_or_else(Utc::now);
                 MemoryEntry {
                     id,
@@ -503,6 +560,7 @@ impl LongTermMemory {
                     content,
                     tags,
                     concept_tags,
+                    memory_type,
                     created_at,
                 }
             })
@@ -677,8 +735,8 @@ impl LongTermMemory {
             if out.len() >= limit {
                 break;
             }
-            let row: Option<(String, String, String, String, i64)> = sqlx::query_as(
-                "SELECT id, agent_id, content, tags, created_at
+            let row: Option<(String, String, String, String, Option<String>, i64)> = sqlx::query_as(
+                "SELECT id, agent_id, content, tags, memory_type, created_at
                  FROM memories
                  WHERE id = ? AND agent_id = ?",
             )
@@ -686,13 +744,18 @@ impl LongTermMemory {
             .bind(agent_id)
             .fetch_optional(&self.pool)
             .await?;
-            if let Some((id, aid, content, tags_json, created_at_ms)) = row {
+            if let Some((id, aid, content, tags_json, memory_type_str, created_at_ms)) = row {
+                let memory_type = memory_type_str
+                    .as_deref()
+                    .and_then(|s| serde_json::from_str::<String>(s).ok())
+                    .and_then(|s| MemoryType::parse(&s));
                 out.push(MemoryEntry {
                     id: Uuid::parse_str(&id)?,
                     agent_id: aid,
                     content,
                     tags: serde_json::from_str(&tags_json).unwrap_or_default(),
                     concept_tags: Vec::new(),
+                    memory_type,
                     created_at: chrono::DateTime::<Utc>::from_timestamp_millis(created_at_ms)
                         .unwrap_or_else(Utc::now),
                 });
@@ -740,6 +803,102 @@ impl LongTermMemory {
         let mut ranked: Vec<(f32, MemoryEntry)> = scores.into_values().collect();
         ranked.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
         Ok(ranked.into_iter().take(limit).map(|(_, m)| m).collect())
+    }
+
+    /// Phase 77.6 — find relevant memories with composite scoring:
+    /// similarity × recency (per-type half-life) × log1p(frequency),
+    /// filtered by already-surfaced dedup and annotated with staleness
+    /// warnings.
+    ///
+    /// Returns up to `limit` [`ScoredMemory`] entries, sorted by score desc.
+    pub async fn find_relevant(
+        &self,
+        agent_id: &str,
+        query: &str,
+        limit: usize,
+        already_surfaced: &std::collections::HashSet<Uuid>,
+        freshness_threshold_days: u32,
+    ) -> anyhow::Result<Vec<crate::relevance::ScoredMemory>> {
+        use crate::relevance::{freshness_note, score_memories, ScoredMemory};
+
+        let now = Utc::now();
+        let fetch_limit = (limit.max(1) * 3).min(30); // oversample then trim
+        let candidates = self.recall_hybrid(agent_id, query, fetch_limit).await?;
+
+        if candidates.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Build RRF-like similarity scores from hybrid ranking.
+        // Top-ranked entries get higher similarity.
+        let similarity_scores: Vec<(f32, MemoryEntry)> = candidates
+            .iter()
+            .enumerate()
+            .map(|(rank, entry)| {
+                let sim = 1.0 / (1.0 + rank as f32 * 0.1); // decay by position
+                (sim, entry.clone())
+            })
+            .collect();
+
+        // Fetch frequency counts for these candidates from recall_events.
+        let entry_refs: Vec<&MemoryEntry> = candidates.iter().collect();
+        let frequency_counts = self.frequency_counts_for(agent_id, &entry_refs).await?;
+
+        let scored = score_memories(candidates, &similarity_scores, now, &frequency_counts);
+
+        let mut results: Vec<ScoredMemory> = Vec::with_capacity(scored.len());
+        for (score, entry) in scored {
+            if already_surfaced.contains(&entry.id) {
+                continue;
+            }
+            let warning = freshness_note(&entry, now, freshness_threshold_days);
+            results.push(ScoredMemory {
+                entry,
+                score,
+                freshness_warning: warning,
+            });
+            if results.len() >= limit {
+                break;
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Phase 77.6 — fetch recall-event counts for a set of memory entries.
+    async fn frequency_counts_for(
+        &self,
+        agent_id: &str,
+        entries: &[&MemoryEntry],
+    ) -> anyhow::Result<std::collections::HashMap<Uuid, u32>> {
+        let mut counts = std::collections::HashMap::new();
+        if entries.is_empty() {
+            return Ok(counts);
+        }
+
+        // Build IN clause placeholders manually instead of using itertools join.
+        let placeholders: Vec<String> = entries.iter().map(|_| "?".to_string()).collect();
+        let sql = format!(
+            "SELECT memory_id, COUNT(*) as cnt
+             FROM recall_events
+             WHERE agent_id = ? AND memory_id IN ({})
+             GROUP BY memory_id",
+            placeholders.join(",")
+        );
+
+        let mut query = sqlx::query_as::<_, (String, i64)>(&sql)
+            .bind(agent_id);
+        for entry in entries {
+            query = query.bind(entry.id.to_string());
+        }
+        let rows = query.fetch_all(&self.pool).await?;
+
+        for (id_str, cnt) in rows {
+            if let Ok(uuid) = Uuid::parse_str(&id_str) {
+                counts.insert(uuid, cnt.max(0) as u32);
+            }
+        }
+        Ok(counts)
     }
 
     pub async fn forget(&self, id: Uuid) -> anyhow::Result<bool> {
@@ -1336,7 +1495,30 @@ impl LongTermMemory {
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(aggregate_signals(&rows, now_ms))
+        // Look up memory_type for per-type half-life. Default Project when missing.
+        let half_life = self
+            .memory_type_for(memory_id)
+            .await
+            .unwrap_or(None)
+            .map(|t| t.half_life_days())
+            .unwrap_or_else(|| MemoryType::Project.half_life_days());
+
+        Ok(aggregate_signals(&rows, now_ms, half_life))
+    }
+
+    /// Phase 77.6 — look up the memory_type for a single memory entry.
+    async fn memory_type_for(&self, memory_id: Uuid) -> anyhow::Result<Option<MemoryType>> {
+        let row: Option<(Option<String>,)> = sqlx::query_as(
+            "SELECT memory_type FROM memories WHERE id = ?",
+        )
+        .bind(memory_id.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row
+            .and_then(|(s,)| s)
+            .as_deref()
+            .and_then(|s| serde_json::from_str::<String>(s).ok())
+            .and_then(|s| MemoryType::parse(&s)))
     }
 
     /// List every memory for `agent_id` that has at least one recall event.
@@ -1438,7 +1620,11 @@ impl LongTermMemory {
 
         Ok(by_id
             .into_iter()
-            .map(|(mid, events)| (mid, aggregate_signals(&events, now_ms)))
+            .map(|(mid, events)| {
+                // Phase 77.6 — default Project half-life for bulk path.
+                // Per-memory type lookup deferred to avoid N+1 queries.
+                (mid, aggregate_signals(&events, now_ms, MemoryType::Project.half_life_days()))
+            })
             .collect())
     }
 }
@@ -1603,7 +1789,7 @@ impl Default for RecallSignals {
     }
 }
 
-fn aggregate_signals(events: &[(String, f64, i64)], now_ms: i64) -> RecallSignals {
+fn aggregate_signals(events: &[(String, f64, i64)], now_ms: i64, half_life_days: f64) -> RecallSignals {
     if events.is_empty() {
         return RecallSignals::default();
     }
@@ -1618,8 +1804,13 @@ fn aggregate_signals(events: &[(String, f64, i64)], now_ms: i64) -> RecallSignal
 
     let latest_ts = events.iter().map(|(_, _, ts)| *ts).max().unwrap_or(now_ms);
     let days_since = ((now_ms - latest_ts).max(0) as f64) / (1000.0 * 60.0 * 60.0 * 24.0);
-    // Exponential decay, half-life ~7 days.
-    let recency = (-(days_since) * std::f64::consts::LN_2 / 7.0).exp() as f32;
+    // Phase 77.6 — per-type half-life from MemoryType instead of hardcoded 7.0.
+    // half_life_days = 0 → instant decay (recency = 0.0).
+    let recency = if half_life_days <= 0.0 {
+        0.0
+    } else {
+        (-(days_since) * std::f64::consts::LN_2 / half_life_days).exp() as f32
+    };
 
     let mut distinct_queries: std::collections::HashSet<&str> = std::collections::HashSet::new();
     let mut distinct_days: std::collections::HashSet<i64> = std::collections::HashSet::new();
@@ -1660,7 +1851,7 @@ mod recall_signal_tests {
 
     #[test]
     fn empty_events_yield_zero_signals() {
-        let s = aggregate_signals(&[], 1_000_000);
+        let s = aggregate_signals(&[], 1_000_000, 90.0);
         assert_eq!(s.frequency, 0.0);
         assert_eq!(s.recall_count, 0);
     }
@@ -1671,9 +1862,9 @@ mod recall_signal_tests {
         let ev1 = vec![evt("q", 1.0, now)];
         let ev5 = vec![evt("q", 1.0, now); 5];
         let ev50 = vec![evt("q", 1.0, now); 50];
-        let s1 = aggregate_signals(&ev1, now);
-        let s5 = aggregate_signals(&ev5, now);
-        let s50 = aggregate_signals(&ev50, now);
+        let s1 = aggregate_signals(&ev1, now, 90.0);
+        let s5 = aggregate_signals(&ev5, now, 90.0);
+        let s50 = aggregate_signals(&ev50, now, 90.0);
         assert!(s1.frequency < s5.frequency);
         assert!(s5.frequency < s50.frequency);
         assert!(s50.frequency <= 1.0);
@@ -1682,9 +1873,11 @@ mod recall_signal_tests {
     #[test]
     fn recency_decays_with_distance() {
         let now = day_ms(30);
-        let fresh = aggregate_signals(&[evt("q", 1.0, now)], now);
-        let week_old = aggregate_signals(&[evt("q", 1.0, now - day_ms(7))], now);
-        let month_old = aggregate_signals(&[evt("q", 1.0, now - day_ms(30))], now);
+        // Use 7.0 day half-life for this test to verify the decay formula
+        // with a short, observable half-life.
+        let fresh = aggregate_signals(&[evt("q", 1.0, now)], now, 7.0);
+        let week_old = aggregate_signals(&[evt("q", 1.0, now - day_ms(7))], now, 7.0);
+        let month_old = aggregate_signals(&[evt("q", 1.0, now - day_ms(30))], now, 7.0);
         assert!((fresh.recency - 1.0).abs() < 1e-4);
         assert!(
             (week_old.recency - 0.5).abs() < 1e-2,
@@ -1697,12 +1890,11 @@ mod recall_signal_tests {
     #[test]
     fn diversity_counts_distinct_queries_and_days() {
         let now = day_ms(30);
-        // Same query, same day, 3 times → low diversity.
         let same = aggregate_signals(
             &[evt("q", 1.0, now), evt("q", 1.0, now), evt("q", 1.0, now)],
             now,
+            90.0,
         );
-        // Distinct queries on distinct days → high diversity.
         let varied = aggregate_signals(
             &[
                 evt("q1", 1.0, now - day_ms(0)),
@@ -1712,6 +1904,7 @@ mod recall_signal_tests {
                 evt("q5", 1.0, now - day_ms(4)),
             ],
             now,
+            90.0,
         );
         assert!(varied.diversity > same.diversity);
         assert_eq!(varied.unique_days, 5);
@@ -1724,6 +1917,7 @@ mod recall_signal_tests {
         let s = aggregate_signals(
             &[evt("q", 0.2, now), evt("q", 0.8, now), evt("q", 0.5, now)],
             now,
+            90.0,
         );
         assert!((s.relevance - 0.5).abs() < 1e-4);
     }

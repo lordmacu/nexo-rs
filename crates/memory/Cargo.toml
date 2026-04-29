@@ -23,6 +23,9 @@ uuid        = { workspace = true }
 chrono      = { workspace = true }
 sqlx        = { workspace = true }
 regex       = "1.10"
+sha2        = { workspace = true }
+hex         = { workspace = true }
+thiserror   = { workspace = true }
 unicode-normalization = "0.1"
 unicode-segmentation  = "1.12"
 unicode-script        = "0.5"
@@ -35,5 +38,6 @@ libsqlite3-sys = { workspace = true, features = ["bundled"] }
 
 [dev-dependencies]
 tempfile    = "3"
+serde_yaml  = { workspace = true }
 tokio       = { workspace = true, features = ["macros", "rt-multi-thread"] }
 wiremock    = "0.6"

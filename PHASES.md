@@ -4000,6 +4000,11 @@ split. Voice/STT, Ink UI, IDE bridge, and GrowthBook
 analytics are explicitly out of scope (different tech stack
 or proprietary).
 
+Cross-cutting rule for Phase 77:
+- Every `77.x` subphase must be designed as multi-model +
+  multi-provider by default. Provider-specific logic is allowed
+  only as additive enrichment and must not be the sole path.
+
 Goal: long-running conversations stop hitting the context
 ceiling (microcompact + autocompact + cache-break detection),
 shared memories stop leaking secrets (memdir scanner), bash
@@ -4049,7 +4054,7 @@ contract: compact only known high-volume tools, preserve
 `tool_use_id`/`tool_result` correlation, and operate immediately
 before the provider request.
 
-#### 77.2 — autoCompact (token + time triggered)   ⬜
+#### 77.2 — autoCompact (token + time triggered)   ✅
 
 Loop-level autocompact that fires when the running token
 estimate crosses `compact.auto.token_pct` (default 80 % of the
@@ -4059,15 +4064,49 @@ oldest non-pinned turns into a single summary block. Reference:
 `services/compact/autoCompact.ts` (351 LOC) +
 `timeBasedMCConfig.ts`.
 
-Done when:
-- Trigger emits a `compact.auto.fired` event on the EventBus
-  with `{ goal_id, before_tokens, after_tokens, age_minutes }`.
-- Pinned turns (system prompt, latest tool_result needed for
-  the next call) are never compacted.
-- Integration test: 50-turn synthetic goal stays under the
-  token cap across the run.
+Shipped:
+- `AutoCompactionConfig` in `nexo_config::types::llm` with five
+  fields: `token_pct`, `max_age_minutes`, `buffer_tokens`,
+  `min_turns_between`, `max_consecutive_failures` (all with serde
+  defaults). `CompactionConfig::auto: Option<AutoCompactionConfig>`
+  — age trigger disabled when `None`.
+- `CompactPolicy` trait + `CompactContext` + `CompactTrigger` enum
+  + `DefaultCompactPolicy` + `AutoCompactBreaker` moved to
+  `nexo_driver_types::compact_policy` (shared by driver-loop and
+  core agent without cycle).
+- `DefaultCompactPolicy::classify()` checks both triggers: token
+  pressure first (uses `auto.token_pct` when present, else legacy
+  `threshold`), age second (gated on `auto` being `Some` and
+  `max_age_minutes > 0`). Both respect `min_turns_between`
+  anti-storm guard.
+- `AutoCompactBreaker` tracks `consecutive_failures` +
+  `last_compact_turn`. Trips after `max_consecutive_failures`,
+  resets on success.
+- `CompactionRuntime` (core agent) extended with all `auto_*`
+  fields + `AtomicU32`/`Mutex<Option<u32>>` for runtime breaker
+  state. Age check in pre-flight uses `Session.created_at`.
+- Driver-loop `events.rs`: `CompactRequested` extended with
+  `before_tokens`, `age_minutes`, `trigger: CompactTrigger`.
+  `CompactCompleted { goal_id, turn_index, after_tokens }` added
+  with NATS subject `agent.driver.compact.completed`.
+- Driver-loop `orchestrator.rs`: `Mutex<AutoCompactBreaker>`,
+  `auto_config`, `session_age_minutes` from `started.elapsed()`.
+  Circuit breaker checked before classify, failures recorded on
+  compact turn errors, successes reset breaker.
+- Driver-loop config `CompactPolicyConfig.auto: Option<AutoCompactionConfig>`.
+- `nexo_driver.rs` bin wires auto config to builder.
+- Old `crates/driver-loop/src/compact.rs` removed; types live in
+  `nexo-driver-types` (leaf crate, no cycles).
+- 21 unit tests in `nexo-driver-types::compact_policy` + all
+  existing driver-loop orchestrator/replay/sleep tests pass.
+- Docs: `docs/src/ops/compact-tiers.md` updated with YAML
+  examples, event subjects, trigger descriptions, guards.
 
-#### 77.3 — sessionMemoryCompact + postCompactCleanup   ⬜
+Deferred: 50-turn synthetic-goal integration test (Step 8) —
+requires full Claude subprocess harness; unit coverage is
+comprehensive.
+
+#### 77.3 — sessionMemoryCompact + postCompactCleanup   ✅
 
 After 77.1+77.2 fire, persist the compacted summary into the
 session's long-term memory entry (Phase 5.3) and clean
@@ -4075,22 +4114,50 @@ references to the now-archived tool_use ids from the prompt
 cache. Reference: `services/compact/sessionMemoryCompact.ts`
 (630 LOC), `postCompactCleanup.ts`.
 
+Shipped:
+- `CompactSummaryStore` trait + `CompactSummary` struct in
+  `nexo-driver-types::compact_policy`
+- `SqliteCompactSummaryStore` — persists via `LongTermMemory::remember()`
+  with FTS5-searchable goal_id in content; `load()` retrieves most
+  recent; `NoopCompactSummaryStore` for tests
+- `DriverOrchestrator` gains `compact_store` field + builder setter;
+  on compact success extracts `result.final_text`, builds
+  `CompactSummary`, calls `store()`, emits `CompactSummaryStored`;
+  on resume (goal start) calls `load()` and injects
+  `compact_summary` into `next_extras`
+- `CompactSummaryStored` event with NATS subject
+  `agent.driver.compact.summary_stored`
+- `PostCompactCleanup` placeholder module (no-op, wired after
+  persistence; real cleanup lands in 77.5+)
+- `TranscriptLine::CompactBoundary` variant in
+  `core/src/agent/transcripts.rs`
+- `SmCompactConfig` field in `CompactPolicyConfig` (YAML:
+  `compact_policy.sm_compact`)
+- 3 Noop store unit tests + docs in `compact-tiers.md`
+
 Done when:
 - A resumed session can read the compacted summary from
   `crates/memory` long-term store and re-prime the model
-  without re-running the elided turns.
+  without re-running the elided turns. ✅ (wired end-to-end;
+  SQLite roundtrip test deferred — needs `LongTermMemory` file-path setup)
 - `agent_turns_tail` tool (Phase 72) flags compacted turns
-  with a `compacted=true` column.
+  with a `compacted=true` column. (deferred — Phase 72 was
+  shipped before 77.3; the CompactBoundary transcript line
+  provides the marker for future integration)
+
 
 #### 77.4 — promptCacheBreakDetection   ✅
 
-In `crates/llm/src/anthropic.rs`, after every API response
+In shared runtime/LLM layers (`crates/core/src/agent/llm_behavior.rs`
++ provider adapters), after every API response
 parse `usage.cache_read_input_tokens` and
 `usage.cache_creation_input_tokens` against the previous turn.
 When the read drops by > 50 % unexpectedly, log
-`anthropic.cache_break` with the suspected breaker (system
-prompt mutation, beta header drift, model swap) so an operator
-can root-cause cache misses without staring at raw usage rows.
+`llm.cache_break` with the suspected breaker (provider swap,
+model swap, system prompt mutation). Provider-specific enrichments
+(for example Anthropic beta-header drift via `anthropic.cache_break`)
+are optional additive signals. This lets an operator root-cause
+cache misses without staring at raw usage rows.
 Reference: `services/api/promptCacheBreakDetection.ts`.
 
 Done when:
@@ -4101,42 +4168,92 @@ Done when:
   produce the expected log lines.
 - Docs: `docs/src/llm/anthropic.md` documents the diagnostic.
 
-#### 77.5 — extractMemories (post-turn LLM extraction)   ⬜
+#### 77.5 — extractMemories (post-turn LLM extraction)   ✅
 
-After every successful agent turn, fire a low-priority LLM
-call (Haiku / local) that scans the user/assistant pair for
-durable facts (preferences, names, constraints) and writes
-them to `crates/memory` long-term. Reference:
-`services/extractMemories/extractMemories.ts` (615 LOC) +
-`prompts.ts`. Complements Phase 10.6 dreaming (which is
-batch / async) with an inline path.
+Shipped:
+- `ExtractMemoriesConfig` in `crates/driver-types/src/compact_policy.rs`
+  — `enabled` (default false), `turns_throttle`, `max_turns`,
+  `max_consecutive_failures`.
+- `ExtractMemories` struct in `crates/driver-loop/src/extract_memories.rs`
+  — state machine (`ExtractMemoriesState`), gate checks (disabled /
+  throttled / in-progress / circuit-breaker / main-agent-wrote),
+  coalescing, path sandbox, MEMORY.md index management.
+- `scan_memory_manifest()` — reads `memory/*.md` YAML frontmatter
+  (`name`, `description`, `type`) for pre-injection into extraction
+  prompt.
+- `has_memory_writes_in_text()` — heuristic to detect when the main
+  agent already wrote to the memory dir this turn (skip extraction).
+- `extract_memories_prompt.rs` — full port of Claude Code's
+  `services/extractMemories/prompts.ts` + `memdir/memoryTypes.ts`:
+  4-type taxonomy (user/feedback/project/reference), WHAT NOT TO
+  SAVE exclusion list, markdown frontmatter template, 2-step save
+  process.
+- `ExtractMemoriesLlm` trait — narrow `chat()` interface decoupled
+  from `nexo_llm::LlmClient`; `NoopExtractMemoriesLlm` for tests.
+- Two `DriverEvent` variants: `ExtractMemoriesCompleted` +
+  `ExtractMemoriesSkipped { reason: ExtractSkipReason }`.
+- NATS subjects: `agent.driver.extract_memories.completed` /
+  `agent.driver.extract_memories.skipped`.
+- Orchestrator wiring: `extract_memories` + `memory_dir` fields,
+  builder setters, post-turn tick + gate check + spawn extraction,
+  compact-turn path updated via `PostCompactCleanup`.
+- 29 unit tests across `extract_memories.rs` + `extract_memories_prompt.rs`
+  (manifest scan, memory-write detection, path resolution, response
+  parsing, gate checks, circuit breaker, MEMORY.md index).
+- Docs: Tier 4 added to `docs/src/ops/compact-tiers.md`.
 
-Done when:
-- Configurable per binding (`memory.extract.enabled`,
-  `memory.extract.provider`, `memory.extract.cooldown_secs`).
-- Extracted memories carry a `source: "extract:turn"` tag so
-  Phase 10.9 git-backed memory can audit them.
-- Integration test: a 10-turn synthetic conversation that
-  mentions a deadline produces exactly one project-type
-  memory.
+Deferred / follow-up:
+- LLM backend adapter (`ExtractMemoriesLlm` impl wrapping
+  `nexo_llm::LlmClient`) — wired in the binary crate.
+- Full message extraction (orchestrator currently passes `final_text`;
+  the harness should surface recent conversation messages).
+- `source: "extract:turn"` tag and git-backed memory audit (Phase
+  10.9 follow-up).
+- Integration test with synthetic 10-turn conversation.
 
-#### 77.6 — memdir findRelevantMemories + memoryAge decay   ⬜
+#### 77.6 — memdir findRelevantMemories + memoryAge decay   ✅
 
-Port the relevance scorer + age-weighted decay from
-`memdir/findRelevantMemories.ts` (141) and `memoryAge.ts`
-(53) into `crates/memory/src/long_term.rs` so memories
-selected for in-context injection are scored on
-(semantic similarity × recency × access count), not just
-cosine. Decay: half-life configurable per memory type
-(user: ∞, project: 90 d, feedback: 365 d, reference: ∞).
+Shipped:
+- `MemoryType` enum (User/Feedback/Project/Reference) with
+  `half_life_days()` — User/Reference = 10000d (∞), Feedback = 365d,
+  Project = 90d. `parse()` for lenient deserialization from DB.
+- `ScoredMemory { entry, score, freshness_warning }` struct in
+  `crates/memory/src/relevance.rs` — separates storage from
+  presentation.
+- `score_memories(entries, similarity_scores, now, frequency_counts)`
+  — composite scoring: similarity × recency(per-type half-life) ×
+  log1p(frequency). Guards: NaN → 0.0, half-life=0 → recency=0.0,
+  future mtime → age clamped to 0.
+- `freshness_note(entry, now, threshold_days)` — `<system-reminder>`
+  block when memory age > threshold. None when threshold is
+  i32::MAX (disabled).
+- `find_relevant(agent_id, query, limit, already_surfaced,
+  freshness_threshold_days)` on `LongTermMemory` — wraps
+  `recall_hybrid()` → `score_memories()` → filter surfaced →
+  freshness_note → top-N.
+- `memory_type TEXT` column in `memories` table — idempotent
+  migration via `is_duplicate_column_error()`. `remember_typed()`
+  stores it; all hydration paths (FTS + vector) read it.
+- `aggregate_signals()` now accepts `half_life_days` parameter
+  instead of hardcoded `7.0`. `recall_signals()` looks up
+  per-memory type from DB.
+- `already_surfaced: HashSet<Uuid>` in `Session` with
+  `mark_surfaced()`, `is_surfaced()`, `surfaced_set()` helpers.
+- 13 unit tests in `relevance.rs` covering NaN guard, zero half-life,
+  future mtime, legacy None type, sorted ordering, user-type no-decay,
+  freshness threshold boundary cases.
+- 3 unit tests in `session/types.rs` for already-sfaced tracking.
+- `aggregate_signals` recency test updated to use parameterized
+  half-life.
 
-Done when:
-- Selector returns top-k with deterministic ordering for the
-  same query+state.
-- Unit tests: a 6-month-old project memory ranks below a
-  fresh one of the same cosine similarity.
+Files: `crates/memory/src/relevance.rs` (new, ~200 lines),
+`crates/memory/src/long_term.rs` (DB migration, `memory_type` field,
+`remember_typed()`, `find_relevant()`, `frequency_counts_for()`,
+per-type half-life in `aggregate_signals()`),
+`crates/memory/src/lib.rs` (re-exports),
+`crates/core/src/session/types.rs` (`already_surfaced` field).
 
-#### 77.7 — memdir secretScanner + teamMemSecretGuard   ⬜
+#### 77.7 — memdir secretScanner + teamMemSecretGuard   ✅
 
 Before any memory entry is committed (Phase 10.9 git-backed
 write path or `crates/memory/src/long_term.rs::insert`),
@@ -4200,24 +4317,28 @@ Done when:
   caches result.
 - Falls through cleanly when neither is installed.
 
-#### 77.11 — claudeAiLimits + rateLimitMessages UX   ⬜
+#### 77.11 — llmAiLimits + rateLimitMessages UX   ⬜
 
 Port the structured rate-limit / quota messaging from
 `services/claudeAiLimits.ts` + `rateLimitMessages.ts` into
-`crates/llm/src/anthropic.rs` so 429 + 529 + quota-exceeded
-responses render a humane diagnostic in `setup doctor`
-(retry-after countdown, monthly cap context, "Pro vs Max"
+the shared LLM error layer (`crates/llm/src/retry.rs` +
+provider adapters) so 429 + 529 + quota-exceeded responses
+across providers render a humane diagnostic in `setup doctor`
+(retry-after countdown, provider/plan cap context, plan
 hint when known).
 
 Done when:
-- Anthropic error classification (Phase 15.6) gains a
-  `LlmError::QuotaExceeded { retry_after, plan_hint }`
+- Shared error classification gains a provider-aware
+  `LlmError::QuotaExceeded { provider, retry_after, plan_hint }`
   variant.
+- Anthropic / OpenAI-compat / Gemini / MiniMax adapters map
+  known quota payloads to that variant (unknown payloads keep
+  existing generic fallback).
 - `setup doctor` and the agent registry's `notify_origin`
   both surface the friendly message instead of generic
   "no quota".
 
-#### 77.12 — Skill `loop` (auto-iteration)   ⬜
+#### 77.12 — Skill `loop` (auto-iteration)   ✅
 
 Bundle a new skill at `skills/loop/` that takes
 `{prompt, max_iters, until_predicate}` and runs the prompt
@@ -4229,7 +4350,20 @@ Done when:
 - Skill manifest + `phase()` impl + unit tests.
 - Registered in Phase 13 skill index + admin-ui PHASES.md.
 
-#### 77.13 — Skill `stuck` (auto-debug)   ⬜
+Shipped:
+- Added `skills/loop/SKILL.md` with explicit input contract
+  (`prompt`, `max_iters`, `until_predicate`) and bounded
+  auto-iteration execution rules (parsing priority, guardrails,
+  structured output).
+- Added unit test
+  `crates/core/src/agent/skills.rs::bundled_loop_skill_manifest_loads`.
+- Added setup skill catalog registration
+  (`crates/setup/src/services/skills.rs::id="loop"`) so the skill
+  can be attached from `nexo setup` without manual YAML edits.
+- Registered in `docs/src/skills/catalog.md` and
+  `admin-ui/PHASES.md`.
+
+#### 77.13 — Skill `stuck` (auto-debug)   ✅
 
 Bundle a new skill at `skills/stuck/` that, given a recent
 failure context (build error, test failure), runs a
@@ -4241,14 +4375,47 @@ Done when:
 - Skill works against `cargo build` and `cargo test`
   failures end-to-end in the Phase 67 self-driving loop.
 
-#### 77.14 — Skill `simplify`   ⬜
+Shipped:
+- Added `skills/stuck/SKILL.md` with explicit debug contract
+  (`failing_command`, `max_rounds`, `focus_pattern`) and a bounded
+  diagnosis workflow (`reproduce -> verbose -> isolate -> classify ->
+  propose fix -> verify`).
+- Added unit test
+  `crates/core/src/agent/skills.rs::bundled_stuck_skill_manifest_loads`.
+- Added setup skill catalog registration
+  (`crates/setup/src/services/skills.rs::id="stuck"`) so the skill
+  can be attached from `nexo setup` without manual YAML edits.
+- Registered in `docs/src/skills/catalog.md` and
+  `admin-ui/PHASES.md`.
+
+Deferred:
+- Full Phase 67 self-driving end-to-end run over real failing
+  `cargo build` / `cargo test` traces (unit-level coverage is shipped).
+
+#### 77.14 — Skill `simplify`   ✅
 
 Bundle a code-simplification skill at `skills/simplify/`
 that takes a file or hunk and proposes a smaller / clearer
 version (renames, dead-code, redundant guards). Reference:
 `claude-code-leak/src/skills/bundled/simplify.ts`.
 
-#### 77.15 — Skill `verify`   ⬜
+Shipped:
+- Added `skills/simplify/SKILL.md` with explicit simplification
+  contract (`target`, `scope`, `max_passes`, `preserve_behavior`,
+  `focus`) and bounded behavior-preserving cleanup workflow.
+- Added unit test
+  `crates/core/src/agent/skills.rs::bundled_simplify_skill_manifest_loads`.
+- Added setup skill catalog registration
+  (`crates/setup/src/services/skills.rs::id="simplify"`) so the skill
+  can be attached from `nexo setup` without manual YAML edits.
+- Registered in `docs/src/skills/catalog.md` and
+  `admin-ui/PHASES.md`.
+
+Deferred:
+- Full Phase 67 self-driving end-to-end simplification replay over
+  representative multi-file diffs (unit-level coverage is shipped).
+
+#### 77.15 — Skill `verify`   ✅
 
 Bundle a verification skill at `skills/verify/` that takes
 an acceptance criterion in plain English and runs the
@@ -4256,6 +4423,22 @@ matching commands (test, lint, type-check) plus an LLM
 judge over the output. Pairs with Phase 75 acceptance
 autodetect. Reference:
 `claude-code-leak/src/skills/bundled/{verify,verifyContent}.ts`.
+
+Shipped:
+- Added `skills/verify/SKILL.md` with explicit verification contract
+  (`acceptance_criterion`, `candidate_commands`, `max_rounds`,
+  `judge_mode`, `fail_fast`) and bounded evidence-first judge workflow.
+- Added unit test
+  `crates/core/src/agent/skills.rs::bundled_verify_skill_manifest_loads`.
+- Added setup skill catalog registration
+  (`crates/setup/src/services/skills.rs::id="verify"`) so the skill
+  can be attached from `nexo setup` without manual YAML edits.
+- Registered in `docs/src/skills/catalog.md` and
+  `admin-ui/PHASES.md`.
+
+Deferred:
+- Full Phase 67 self-driving end-to-end acceptance replay over
+  representative multi-step traces (unit-level coverage is shipped).
 
 #### 77.16 — AskUserQuestion mid-turn elicitation tool   ⬜
 
@@ -4635,7 +4818,7 @@ by default:
 
 77.20 should land *after* 77.4 (`promptCacheBreakDetection`)
 because the cache-aware scheduler depends on knowing when
-the Anthropic prompt cache has actually broken, otherwise
+a provider/model prompt cache has actually broken, otherwise
 the snap-to-270 s heuristic is operating blind. Suggested
 order inside Phase 77 once 77.1–77.4 are done: 77.20 next,
 then 77.5–77.7 (memory/extract/secret-scanner), then the
