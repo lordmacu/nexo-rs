@@ -12,9 +12,12 @@ name: docker
 # Cosign signing of the digest is layered on in Phase 27.3.
 
 on:
-  push:
-    branches: [main]
-    tags: ["v*"]
+  # Disabled by default during active development to avoid long/stuck
+  # multi-arch image builds on every push.
+  # Re-enable automatic publish by uncommenting:
+  # push:
+  #   branches: [main]
+  #   tags: ["v*"]
   workflow_dispatch:
 
 permissions:
