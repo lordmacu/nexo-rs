@@ -5,7 +5,7 @@
 //! `x-api-key` + `anthropic-version` headers; API key never appears in
 //! URLs or logs.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Context;
 use async_trait::async_trait;
@@ -35,6 +35,164 @@ use crate::types::{
 
 const DEFAULT_BASE: &str = "https://api.anthropic.com";
 const DEFAULT_API_VERSION: &str = "2023-06-01";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CacheBreakSnapshot {
+    model: String,
+    system_hash: blake3::Hash,
+    beta_header: Option<String>,
+    cache_read_input_tokens: u32,
+    cache_creation_input_tokens: u32,
+}
+
+impl CacheBreakSnapshot {
+    fn from_turn(
+        req: &ChatRequest,
+        model: &str,
+        beta_header: Option<&str>,
+        cache_read_input_tokens: u32,
+        cache_creation_input_tokens: u32,
+    ) -> Self {
+        Self {
+            model: model.to_string(),
+            system_hash: system_prompt_hash(req),
+            beta_header: canonical_beta_header(beta_header),
+            cache_read_input_tokens,
+            cache_creation_input_tokens,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CacheBreakEvent {
+    previous_model: String,
+    new_model: String,
+    previous_betas: Option<String>,
+    new_betas: Option<String>,
+    previous_cache_read_input_tokens: u32,
+    cache_read_input_tokens: u32,
+    cache_creation_input_tokens: u32,
+    drop_pct: u32,
+    model_changed: bool,
+    system_prompt_changed: bool,
+    beta_header_changed: bool,
+    suspected_breaker: String,
+}
+
+#[derive(Debug, Default)]
+struct CacheBreakTracker {
+    prev: Option<CacheBreakSnapshot>,
+}
+
+impl CacheBreakTracker {
+    fn observe(&mut self, current: CacheBreakSnapshot) -> Option<CacheBreakEvent> {
+        let previous = self.prev.replace(current.clone())?;
+        let prev_read = previous.cache_read_input_tokens;
+        if prev_read == 0 {
+            return None;
+        }
+        // Phase 77.4 trigger: cache-read dropped by >50% turn-over-turn.
+        let curr_read_twice = u64::from(current.cache_read_input_tokens).saturating_mul(2);
+        if curr_read_twice >= u64::from(prev_read) {
+            return None;
+        }
+        let model_changed = previous.model != current.model;
+        let system_prompt_changed = previous.system_hash != current.system_hash;
+        let beta_header_changed = previous.beta_header != current.beta_header;
+        let mut breakers: Vec<&str> = Vec::new();
+        if model_changed {
+            breakers.push("model_swap");
+        }
+        if system_prompt_changed {
+            breakers.push("system_prompt_mutation");
+        }
+        if beta_header_changed {
+            breakers.push("beta_header_drift");
+        }
+        let suspected_breaker = if breakers.is_empty() {
+            "unknown".to_string()
+        } else {
+            breakers.join(",")
+        };
+        let drop_pct = ((u64::from(prev_read.saturating_sub(current.cache_read_input_tokens))
+            * 100)
+            / u64::from(prev_read)) as u32;
+        Some(CacheBreakEvent {
+            previous_model: previous.model,
+            new_model: current.model,
+            previous_betas: previous.beta_header,
+            new_betas: current.beta_header,
+            previous_cache_read_input_tokens: prev_read,
+            cache_read_input_tokens: current.cache_read_input_tokens,
+            cache_creation_input_tokens: current.cache_creation_input_tokens,
+            drop_pct,
+            model_changed,
+            system_prompt_changed,
+            beta_header_changed,
+            suspected_breaker,
+        })
+    }
+}
+
+fn canonical_beta_header(beta_header: Option<&str>) -> Option<String> {
+    let mut betas: Vec<String> = beta_header
+        .into_iter()
+        .flat_map(|h| h.split(','))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect();
+    if betas.is_empty() {
+        return None;
+    }
+    betas.sort();
+    betas.dedup();
+    Some(betas.join(","))
+}
+
+fn cache_policy_tag(cache: CachePolicy) -> &'static [u8] {
+    match cache {
+        CachePolicy::None => b"none",
+        CachePolicy::Ephemeral5m => b"ephemeral_5m",
+        CachePolicy::Ephemeral1h => b"ephemeral_1h",
+    }
+}
+
+fn system_prompt_hash(req: &ChatRequest) -> blake3::Hash {
+    let mut h = blake3::Hasher::new();
+    if let Some(system) = req.system_prompt.as_deref() {
+        h.update(b"system_prompt\0");
+        h.update(system.as_bytes());
+    }
+    for block in &req.system_blocks {
+        h.update(b"\0block\0");
+        h.update(block.label.as_bytes());
+        h.update(b"\0cache\0");
+        h.update(cache_policy_tag(block.cache));
+        h.update(b"\0text\0");
+        h.update(block.text.as_bytes());
+    }
+    h.finalize()
+}
+
+fn log_cache_break(event: &CacheBreakEvent) {
+    tracing::warn!(
+        target: "anthropic.cache_break",
+        previous_model = %event.previous_model,
+        new_model = %event.new_model,
+        previous_betas = ?event.previous_betas,
+        new_betas = ?event.new_betas,
+        previous_cache_read_input_tokens = event.previous_cache_read_input_tokens,
+        cache_read_input_tokens = event.cache_read_input_tokens,
+        cache_creation_input_tokens = event.cache_creation_input_tokens,
+        drop_pct = event.drop_pct,
+        model_changed = event.model_changed,
+        system_prompt_changed = event.system_prompt_changed,
+        beta_header_changed = event.beta_header_changed,
+        suspected_breaker = %event.suspected_breaker,
+        "anthropic.cache_break"
+    );
+}
 
 /// Resolve the Anthropic API version header. `ANTHROPIC_VERSION` env
 /// overrides the hardcoded default so deployments can opt into newer
@@ -134,6 +292,7 @@ pub struct AnthropicClient {
     rate_limiter: Arc<RateLimiter>,
     circuit: Arc<CircuitBreaker>,
     retry: RetryConfig,
+    cache_break_tracker: Mutex<CacheBreakTracker>,
 }
 
 impl AnthropicClient {
@@ -177,7 +336,39 @@ impl AnthropicClient {
             rate_limiter,
             circuit,
             retry,
+            cache_break_tracker: Mutex::new(CacheBreakTracker::default()),
         })
+    }
+
+    fn maybe_log_cache_break(
+        &self,
+        req: &ChatRequest,
+        beta_header: Option<&str>,
+        cache_read_input_tokens: u32,
+        cache_creation_input_tokens: u32,
+    ) {
+        let model = if req.model.trim().is_empty() {
+            self.model.as_str()
+        } else {
+            req.model.trim()
+        };
+        let current = CacheBreakSnapshot::from_turn(
+            req,
+            model,
+            beta_header,
+            cache_read_input_tokens,
+            cache_creation_input_tokens,
+        );
+        let event = {
+            let mut tracker = match self.cache_break_tracker.lock() {
+                Ok(g) => g,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            tracker.observe(current)
+        };
+        if let Some(event) = event {
+            log_cache_break(&event);
+        }
     }
 
     /// Classify an HTTP response into our error taxonomy. Shared between
@@ -262,12 +453,13 @@ impl AnthropicClient {
             builder = builder.header(*k, v.as_str());
         }
         let cache_flags = caching_flags(&self.model, req);
-        if let Some(beta) = merge_beta_headers(
+        let merged_beta = merge_beta_headers(
             headers.beta,
             self.auth.subscription_betas(),
             cache_flags.any_cache,
             cache_flags.any_long_ttl,
-        ) {
+        );
+        if let Some(beta) = merged_beta.as_deref() {
             builder = builder.header("anthropic-beta", beta);
         }
         let response = builder
@@ -290,6 +482,22 @@ impl AnthropicClient {
                 truncate_for_log(&raw_text, 512)
             ))
         })?;
+        let cache_read_input_tokens = raw
+            .usage
+            .as_ref()
+            .and_then(|u| u.cache_read_input_tokens)
+            .unwrap_or(0);
+        let cache_creation_input_tokens = raw
+            .usage
+            .as_ref()
+            .and_then(|u| u.cache_creation_input_tokens)
+            .unwrap_or(0);
+        self.maybe_log_cache_break(
+            req,
+            merged_beta.as_deref(),
+            cache_read_input_tokens,
+            cache_creation_input_tokens,
+        );
         let resp = to_chat_response(raw);
         if let Some(tracker) = self.rate_limiter.quota_tracker() {
             tracker.record_usage(resp.usage.prompt_tokens, resp.usage.completion_tokens);
@@ -1582,5 +1790,116 @@ mod tests {
         let parsed: AnthropicResponse = serde_json::from_str(raw).unwrap();
         let resp = to_chat_response(parsed);
         assert!(resp.cache_usage.is_none());
+    }
+
+    #[derive(Clone, Default)]
+    struct SharedBuf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for SharedBuf {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for SharedBuf {
+        type Writer = SharedBuf;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    fn req_for_cache_break(system: &str) -> ChatRequest {
+        ChatRequest {
+            model: "claude-sonnet-4-5".into(),
+            messages: vec![ChatMessage::user("hola")],
+            tools: vec![],
+            max_tokens: 256,
+            temperature: 0.1,
+            system_prompt: Some(system.to_string()),
+            stop_sequences: Vec::new(),
+            tool_choice: ToolChoice::Auto,
+            system_blocks: Vec::new(),
+            cache_tools: false,
+        }
+    }
+
+    #[test]
+    fn cache_hit_run_does_not_emit_cache_break_log() {
+        let buf = SharedBuf::default();
+        let subscriber = tracing_subscriber::fmt::Subscriber::builder()
+            .with_env_filter(tracing_subscriber::EnvFilter::new("warn"))
+            .with_writer(buf.clone())
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let mut tracker = CacheBreakTracker::default();
+        let first = CacheBreakSnapshot::from_turn(
+            &req_for_cache_break("stable system"),
+            "claude-sonnet-4-5",
+            Some("prompt-caching-2024-07-31"),
+            8_000,
+            0,
+        );
+        let second = CacheBreakSnapshot::from_turn(
+            &req_for_cache_break("stable system"),
+            "claude-sonnet-4-5",
+            Some("prompt-caching-2024-07-31"),
+            7_500,
+            0,
+        );
+        assert!(tracker.observe(first).is_none());
+        if let Some(ev) = tracker.observe(second) {
+            log_cache_break(&ev);
+        }
+
+        let captured = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
+        assert!(
+            !captured.contains("anthropic.cache_break"),
+            "unexpected cache-break log on cache-hit run:\n{captured}"
+        );
+    }
+
+    #[test]
+    fn cache_break_run_emits_expected_log_line() {
+        let buf = SharedBuf::default();
+        let subscriber = tracing_subscriber::fmt::Subscriber::builder()
+            .with_env_filter(tracing_subscriber::EnvFilter::new("warn"))
+            .with_writer(buf.clone())
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let mut tracker = CacheBreakTracker::default();
+        let first = CacheBreakSnapshot::from_turn(
+            &req_for_cache_break("stable system"),
+            "claude-sonnet-4-5",
+            Some("prompt-caching-2024-07-31"),
+            8_000,
+            0,
+        );
+        let second = CacheBreakSnapshot::from_turn(
+            &req_for_cache_break("mutated system"),
+            "claude-sonnet-4-5",
+            Some("prompt-caching-2024-07-31,extra-beta-2026-01-01"),
+            3_000,
+            200,
+        );
+        assert!(tracker.observe(first).is_none());
+        let ev = tracker.observe(second).expect("expected cache-break event");
+        log_cache_break(&ev);
+
+        let captured = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
+        assert!(
+            captured.contains("anthropic.cache_break"),
+            "missing cache-break log line:\n{captured}"
+        );
+        assert!(
+            captured.contains("system_prompt_mutation")
+                || captured.contains("suspected_breaker=\"system_prompt_mutation"),
+            "missing suspected breaker tag:\n{captured}"
+        );
     }
 }

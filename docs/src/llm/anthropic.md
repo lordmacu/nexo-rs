@@ -151,6 +151,28 @@ block are added when `AnthropicAuth::ApiKey` is in use.
 - OAuth subscription (Pro / Max plans) ✅ — Opus / Sonnet require the
   Claude-Code request shape documented above.
 
+## Prompt Cache Break Diagnostics (Phase 77.4)
+
+Global detector (all providers/models) in
+`crates/core/src/agent/llm_behavior.rs`:
+
+- After each parsed response, the client compares
+  `cache_read_input_tokens` against the previous turn in the same
+  session.
+- If cache-read drops by more than 50%, it emits a warning log:
+  `llm.cache_break`.
+- The log includes a `suspected_breaker` hint:
+  `provider_swap`, `model_swap`, `system_prompt_mutation`, or
+  `unknown`.
+
+Anthropic-specific enrichment in `crates/llm/src/anthropic.rs`:
+
+- Emits `anthropic.cache_break` with the same >50% drop trigger.
+- The log includes a `suspected_breaker` hint based on request drift:
+  `model_swap`, `system_prompt_mutation`, `beta_header_drift`, or
+  `unknown`.
+- First turn is baseline only (no comparison/log).
+
 ## Common mistakes
 
 - **Setup-token string under 80 chars.** The setup-token validator
