@@ -57,19 +57,7 @@ agents:
       recency: 0.15
       diversity: 0.15
       consolidation: 0.1
-  google_auth:
-    client_id: ${file:./secrets/google_client_id.txt}
-    client_secret: ${file:./secrets/google_client_secret.txt}
-    redirect_port: 8766
-    scopes:
-    - userinfo.email
-    - userinfo.profile
-    - gmail.modify
-    - calendar.events
-    - drive
-    - spreadsheets
-    - tasks
-    - photoslibrary.readonly
-    - youtube.readonly
+  credentials:
+    google: kate
   allowed_tools: []
 schema_version: 11

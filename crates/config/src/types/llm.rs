@@ -73,6 +73,10 @@ pub struct CompactionConfig {
     pub summarizer_model: String,
     #[serde(default = "default_lock_ttl_seconds")]
     pub lock_ttl_seconds: u32,
+    /// Phase 77.2 — auto-compact token + age triggers. `None` disables
+    /// the age trigger and falls back to the legacy `compact_at_pct`.
+    #[serde(default)]
+    pub auto: Option<AutoCompactionConfig>,
 }
 
 impl Default for CompactionConfig {
@@ -85,6 +89,48 @@ impl Default for CompactionConfig {
             tool_result_max_pct: 0.30,
             summarizer_model: String::new(),
             lock_ttl_seconds: 300,
+            auto: None,
+        }
+    }
+}
+
+/// Phase 77.2 — auto-compact trigger knobs.
+///
+/// When `auto` is `Some`, both token-percentage and session-age triggers
+/// are armed. `token_pct` replaces the legacy `compact_at_pct` (if you
+/// set both, `token_pct` wins). `max_age_minutes` is the only age
+/// trigger — there is no separate "gap since last message" trigger.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct AutoCompactionConfig {
+    /// Fire when estimated tokens >= `token_pct * context_window`.
+    /// 0.0 disables the token trigger (age-only).
+    #[serde(default = "default_auto_token_pct")]
+    pub token_pct: f32,
+    /// Fire when `Utc::now() - session.created_at >= max_age_minutes`.
+    /// 0 disables the age trigger (token-only).
+    #[serde(default = "default_auto_max_age_minutes")]
+    pub max_age_minutes: u64,
+    /// Safety margin below the effective context window (context_window
+    /// minus max-output-tokens). Mirrors the leak's 13 000 token buffer.
+    #[serde(default = "default_auto_buffer_tokens")]
+    pub buffer_tokens: u64,
+    /// Minimum turns between consecutive auto-compactions. Anti-storm.
+    #[serde(default = "default_auto_min_turns_between")]
+    pub min_turns_between: u32,
+    /// Consecutive compaction failures that trip the circuit breaker.
+    #[serde(default = "default_auto_max_consecutive_failures")]
+    pub max_consecutive_failures: u32,
+}
+
+impl Default for AutoCompactionConfig {
+    fn default() -> Self {
+        Self {
+            token_pct: default_auto_token_pct(),
+            max_age_minutes: default_auto_max_age_minutes(),
+            buffer_tokens: default_auto_buffer_tokens(),
+            min_turns_between: default_auto_min_turns_between(),
+            max_consecutive_failures: default_auto_max_consecutive_failures(),
         }
     }
 }
@@ -181,6 +227,21 @@ fn default_micro_summary_max_chars() -> usize {
 }
 fn default_lock_ttl_seconds() -> u32 {
     300
+}
+fn default_auto_token_pct() -> f32 {
+    0.80
+}
+fn default_auto_max_age_minutes() -> u64 {
+    120
+}
+fn default_auto_buffer_tokens() -> u64 {
+    13_000
+}
+fn default_auto_min_turns_between() -> u32 {
+    5
+}
+fn default_auto_max_consecutive_failures() -> u32 {
+    3
 }
 fn default_token_counter_backend() -> String {
     "auto".to_string()
@@ -532,5 +593,77 @@ base_url: ""
 "#;
         let cfg: LlmProviderConfig = serde_yaml::from_str(yaml).unwrap();
         assert!(cfg.auth.is_none());
+    }
+
+    #[test]
+    fn auto_config_deserializes_with_defaults() {
+        let yaml = r#"
+enabled: true
+auto: {}
+"#;
+        let cfg: CompactionConfig = serde_yaml::from_str(yaml).unwrap();
+        let auto = cfg.auto.unwrap();
+        assert!((auto.token_pct - 0.80).abs() < f32::EPSILON);
+        assert_eq!(auto.max_age_minutes, 120);
+        assert_eq!(auto.buffer_tokens, 13_000);
+        assert_eq!(auto.min_turns_between, 5);
+        assert_eq!(auto.max_consecutive_failures, 3);
+    }
+
+    #[test]
+    fn auto_config_none_when_missing() {
+        let yaml = r#"
+enabled: false
+"#;
+        let cfg: CompactionConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(cfg.auto.is_none());
+    }
+
+    #[test]
+    fn auto_config_full_override_parses() {
+        let yaml = r#"
+enabled: true
+auto:
+  token_pct: 0.90
+  max_age_minutes: 240
+  buffer_tokens: 8000
+  min_turns_between: 3
+  max_consecutive_failures: 2
+"#;
+        let cfg: CompactionConfig = serde_yaml::from_str(yaml).unwrap();
+        let auto = cfg.auto.unwrap();
+        assert!((auto.token_pct - 0.90).abs() < f32::EPSILON);
+        assert_eq!(auto.max_age_minutes, 240);
+        assert_eq!(auto.buffer_tokens, 8000);
+        assert_eq!(auto.min_turns_between, 3);
+        assert_eq!(auto.max_consecutive_failures, 2);
+    }
+
+    #[test]
+    fn auto_config_token_only() {
+        let yaml = r#"
+enabled: true
+auto:
+  token_pct: 0.85
+  max_age_minutes: 0
+"#;
+        let cfg: CompactionConfig = serde_yaml::from_str(yaml).unwrap();
+        let auto = cfg.auto.unwrap();
+        assert!((auto.token_pct - 0.85).abs() < f32::EPSILON);
+        assert_eq!(auto.max_age_minutes, 0);
+    }
+
+    #[test]
+    fn auto_config_age_only() {
+        let yaml = r#"
+enabled: true
+auto:
+  token_pct: 0.0
+  max_age_minutes: 60
+"#;
+        let cfg: CompactionConfig = serde_yaml::from_str(yaml).unwrap();
+        let auto = cfg.auto.unwrap();
+        assert!((auto.token_pct - 0.0).abs() < f32::EPSILON);
+        assert_eq!(auto.max_age_minutes, 60);
     }
 }

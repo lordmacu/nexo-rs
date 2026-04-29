@@ -204,6 +204,9 @@ pub struct LlmAgentBehavior {
     compactor: Option<Arc<super::compaction::LlmCompactor>>,
     compaction_store: Option<Arc<nexo_memory::CompactionStore>>,
     compaction_runtime: CompactionRuntime,
+    /// Phase 77.2 — runtime circuit-breaker state (Sync-safe).
+    compaction_failures: std::sync::atomic::AtomicU32,
+    compaction_last_turn: std::sync::Mutex<Option<u32>>,
     cache_break_tracker: Mutex<CacheBreakTracker>,
 }
 
@@ -256,6 +259,17 @@ pub struct CompactionRuntime {
     /// Override of the summary model. Empty = reuse the agent's main
     /// model.
     pub summarizer_model: String,
+    // ── Phase 77.2 autoCompact ─────────────────────────────────────
+    /// Token-pct trigger (0.0 disables token trigger).
+    pub auto_token_pct: f32,
+    /// Age trigger in minutes (0 disables age trigger).
+    pub auto_max_age_minutes: u64,
+    /// Safety margin below effective context window.
+    pub auto_buffer_tokens: u64,
+    /// Minimum turns between consecutive auto-compactions.
+    pub auto_min_turns_between: u32,
+    /// Consecutive failures that trip the circuit breaker.
+    pub auto_max_consecutive_failures: u32,
 }
 
 impl Default for CompactionRuntime {
@@ -270,6 +284,11 @@ impl Default for CompactionRuntime {
             micro_model: String::new(),
             lock_ttl_seconds: 300,
             summarizer_model: String::new(),
+            auto_token_pct: 0.80,
+            auto_max_age_minutes: 120,
+            auto_buffer_tokens: 13_000,
+            auto_min_turns_between: 5,
+            auto_max_consecutive_failures: 3,
         }
     }
 }
@@ -290,6 +309,8 @@ impl LlmAgentBehavior {
             compactor: None,
             compaction_store: None,
             compaction_runtime: CompactionRuntime::default(),
+            compaction_failures: std::sync::atomic::AtomicU32::new(0),
+            compaction_last_turn: std::sync::Mutex::new(None),
             cache_break_tracker: Mutex::new(CacheBreakTracker::default()),
         }
     }
@@ -891,10 +912,11 @@ impl LlmAgentBehavior {
         }
         session.push(Interaction::new(Role::User, &msg.text));
 
-        // Phase B — pre-flight compaction trigger. Only runs when the
+        // Phase B + 77.2 — pre-flight compaction trigger. Only runs when the
         // compactor is wired AND enabled in runtime config. Estimates
         // the would-be request size (system blocks + history); when
-        // it exceeds `compact_at_tokens`, runs the summarizer on
+        // it exceeds `compact_at_tokens` OR the session is older than
+        // `auto_max_age_minutes`, runs the summarizer on
         // `history[..tail_start]`, persists an audit row, and replaces
         // the head with a stored summary. The summary then gets
         // injected into `messages` below as a user/assistant pair so
@@ -934,7 +956,40 @@ impl LlmAgentBehavior {
             } else {
                 0
             };
-            if est >= self.compaction_runtime.compact_at_tokens {
+
+            // ── Phase 77.2 autoCompact triggers ───────────────────
+            let token_trigger =
+                est >= self.compaction_runtime.compact_at_tokens;
+            let age_minutes = chrono::Utc::now()
+                .signed_duration_since(session.created_at)
+                .num_minutes()
+                .max(0) as u64;
+            let age_trigger = self.compaction_runtime.auto_max_age_minutes > 0
+                && age_minutes >= self.compaction_runtime.auto_max_age_minutes;
+
+            // Circuit breaker: skip when too many consecutive failures.
+            let failures = self
+                .compaction_failures
+                .load(std::sync::atomic::Ordering::Relaxed);
+            let breaker_tripped = self.compaction_runtime.auto_max_consecutive_failures > 0
+                && failures >= self.compaction_runtime.auto_max_consecutive_failures;
+
+            // Anti-storm: respect min turns between compactions.
+            let current_turns = session.history.len() as u32;
+            let last_turn: Option<u32> = *self.compaction_last_turn.lock().unwrap();
+            let min_gap_ok = match last_turn {
+                Some(last) => {
+                    current_turns.saturating_sub(last)
+                        >= self.compaction_runtime.auto_min_turns_between
+                }
+                None => true,
+            };
+
+            let should_compact = (token_trigger || age_trigger)
+                && !breaker_tripped
+                && min_gap_ok;
+
+            if should_compact {
                 if let Some(boundary) = super::compaction::find_safe_boundary(
                     &session.history,
                     self.compaction_runtime.tail_keep_chars,
@@ -983,6 +1038,11 @@ impl LlmAgentBehavior {
                                     );
                                 }
                                 session.apply_compaction(r.summary, r.tail_start_index);
+                                // Phase 77.2 — reset circuit breaker on success.
+                                self.compaction_failures
+                                    .store(0, std::sync::atomic::Ordering::Relaxed);
+                                *self.compaction_last_turn.lock().unwrap() =
+                                    Some(session.history.len() as u32);
                                 crate::telemetry::observe_compaction(
                                     &ctx.agent_id,
                                     "ok",
@@ -992,10 +1052,17 @@ impl LlmAgentBehavior {
                                     session_id = %session.id,
                                     head_turns = r.head_turns_summarized,
                                     duration_ms = elapsed_ms,
+                                    trigger = if token_trigger { "token" } else { "age" },
+                                    age_minutes = age_minutes,
                                     "compaction applied"
                                 );
                             }
                             Err(e) => {
+                                // Phase 77.2 — increment circuit breaker.
+                                let new_failures = self
+                                    .compaction_failures
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                                    .saturating_add(1);
                                 crate::telemetry::observe_compaction(
                                     &ctx.agent_id,
                                     "failed",
@@ -1004,6 +1071,7 @@ impl LlmAgentBehavior {
                                 tracing::warn!(
                                     error = %e,
                                     session_id = %session.id,
+                                    consecutive_failures = new_failures,
                                     "compaction failed — continuing with original history"
                                 );
                             }

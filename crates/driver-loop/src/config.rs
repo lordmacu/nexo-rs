@@ -7,6 +7,8 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use nexo_config::types::llm::AutoCompactionConfig;
+use nexo_driver_types::{ExtractMemoriesConfig, SmCompactConfig};
 use serde::Deserialize;
 
 use crate::error::DriverError;
@@ -28,7 +30,7 @@ pub struct DriverConfig {
     /// Phase 67.8 — replay-policy + LlmDecider deny-shortcut tuning.
     #[serde(default)]
     pub replay_policy: ReplayPolicyConfig,
-    /// Phase 67.9 — opportunistic /compact injection.
+    /// Phase 67.9 + 77.2 — opportunistic /compact injection.
     #[serde(default)]
     pub compact_policy: CompactPolicyConfig,
 }
@@ -44,6 +46,15 @@ pub struct CompactPolicyConfig {
     pub threshold: f64,
     #[serde(default = "default_compact_min_gap")]
     pub min_turns_between_compacts: u32,
+    /// Phase 77.2 — auto-compaction triggers (token pressure + age).
+    #[serde(default)]
+    pub auto: Option<AutoCompactionConfig>,
+    /// Phase 77.3 — session-memory compact persistence config.
+    #[serde(default)]
+    pub sm_compact: Option<SmCompactConfig>,
+    /// Phase 77.5 — post-turn memory extraction config.
+    #[serde(default)]
+    pub extract_memories: Option<ExtractMemoriesConfig>,
 }
 
 impl Default for CompactPolicyConfig {
@@ -53,6 +64,9 @@ impl Default for CompactPolicyConfig {
             context_window: 0,
             threshold: default_compact_threshold(),
             min_turns_between_compacts: default_compact_min_gap(),
+            auto: None,
+            sm_compact: None,
+            extract_memories: None,
         }
     }
 }

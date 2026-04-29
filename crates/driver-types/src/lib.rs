@@ -7,6 +7,7 @@
 pub mod acceptance;
 pub mod attempt;
 pub mod cancel;
+pub mod compact_policy;
 pub mod decision;
 pub mod error;
 pub mod goal;
@@ -19,6 +20,10 @@ pub use attempt::{
     ResetReason,
 };
 pub use cancel::CancellationToken;
+pub use compact_policy::{
+    AutoCompactBreaker, CompactContext, CompactPolicy, CompactSummary, CompactSummaryStore,
+    CompactTrigger, DefaultCompactPolicy, ExtractMemoriesConfig, SmCompactConfig,
+};
 pub use decision::{Decision, DecisionChoice, DecisionId};
 pub use error::HarnessError;
 pub use goal::{BudgetAxis, BudgetGuards, BudgetUsage, Goal, GoalId};

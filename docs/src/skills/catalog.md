@@ -135,6 +135,34 @@ Call `weather_forecast(city)` to get a 3-day forecast.
 Use metric units. Default to the user's locale when unspecified.
 ```
 
+Bundled local skills currently shipped in this repo:
+
+| Id | Purpose |
+|----|---------|
+| `loop` | Bounded auto-iteration: run a prompt up to `max_iters` until `until_predicate` matches (`regex`, `exit`, or `judge`). |
+| `stuck` | Bounded auto-debug for repeated `cargo build` / `cargo test` failures via `failing_command`, `max_rounds`, `focus_pattern`, and evidence-first diagnosis. |
+| `simplify` | Bounded code simplification for a file/hunk via `target`, `scope`, `max_passes`, `preserve_behavior` (dead code, redundant guards, duplication, naming). |
+| `verify` | Bounded acceptance verification via `acceptance_criterion`, `candidate_commands`, `max_rounds`, `judge_mode` (command evidence + explicit judge decision). |
+| `skillify` | Capture a repeatable workflow and convert it into a reusable local `SKILL.md` with explicit inputs, steps, guardrails, and output contract. |
+| `remember` | Memory-hygiene review flow: classify/promote/dedupe/conflict-resolve memory artifacts before applying any changes. |
+| `update-config` | Safe config-edit skill for Nexo: map behavior changes to `config/*.yaml`, apply read-before-write merges, and surface hot-reload vs restart requirements. |
+
+`loop` can be attached from setup wizard like any other skill (`nexo setup` →
+`Configurar agente` → `Skills`) because it is registered in the setup skill
+catalog and requires no secrets.
+
+`stuck` is also attachable from setup wizard and requires no secrets.
+
+`simplify` is also attachable from setup wizard and requires no secrets.
+
+`verify` is also attachable from setup wizard and requires no secrets.
+
+`skillify` is also attachable from setup wizard and requires no secrets.
+
+`remember` is also attachable from setup wizard and requires no secrets.
+
+`update-config` is also attachable from setup wizard and requires no secrets.
+
 ### Loading flow
 
 ```mermaid

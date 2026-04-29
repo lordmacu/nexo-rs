@@ -28,6 +28,12 @@ pub const TRANSCRIPT_VERSION: u32 = 1;
 pub enum TranscriptLine {
     Session(SessionHeader),
     Entry(TranscriptEntry),
+    /// Phase 77.3 — marks a compact turn boundary in the transcript.
+    CompactBoundary {
+        uuid: String,
+        token_count: u64,
+        turn_index: u32,
+    },
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionHeader {

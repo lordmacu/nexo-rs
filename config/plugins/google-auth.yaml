@@ -1,0 +1,17 @@
+google_auth:
+  accounts:
+    - id: kate
+      agent_id: kate
+      client_id_path: ./secrets/google_client_id.txt
+      client_secret_path: ./secrets/google_client_secret.txt
+      token_path: ./secrets/kate_google_token.json
+      scopes:
+        - userinfo.email
+        - userinfo.profile
+        - gmail.modify
+        - calendar.events
+        - drive
+        - spreadsheets
+        - tasks
+        - photoslibrary.readonly
+        - youtube.readonly

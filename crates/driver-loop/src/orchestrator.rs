@@ -3,21 +3,25 @@
 //! transition.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use nexo_config::types::llm::AutoCompactionConfig;
 use nexo_driver_claude::SessionBindingStore;
 use nexo_driver_permission::PermissionDecider;
 use nexo_driver_types::{
-    AcceptanceVerdict, AttemptOutcome, AttemptParams, BudgetGuards, BudgetUsage, CancellationToken,
-    Goal, GoalId,
+    AcceptanceVerdict, AttemptOutcome, AttemptParams, AutoCompactBreaker, BudgetGuards, BudgetUsage,
+    CancellationToken, CompactContext, CompactPolicy, CompactSummary, CompactSummaryStore,
+    DefaultCompactPolicy, Goal, GoalId,
 };
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken as TokioCancel;
 
 use crate::acceptance::{AcceptanceEvaluator, NoopAcceptanceEvaluator};
 use crate::attempt::{run_attempt, AttemptContext};
-use crate::compact::{CompactContext, CompactPolicy, DefaultCompactPolicy};
+use crate::compact_store::NoopCompactSummaryStore;
+use crate::extract_memories::ExtractMemories;
+use crate::post_compact_cleanup::PostCompactCleanup;
 use crate::error::DriverError;
 use crate::events::{DriverEvent, DriverEventSink, NoopEventSink};
 use crate::mcp_config::write_mcp_config;
@@ -50,9 +54,15 @@ pub struct DriverOrchestrator {
     event_sink: Arc<dyn DriverEventSink>,
     /// Phase 67.8 — replay-policy classifies mid-turn errors.
     replay_policy: Arc<dyn ReplayPolicy>,
-    /// Phase 67.9 — opportunistic /compact policy.
+    /// Phase 67.9 + 77.2 — opportunistic /compact policy.
     compact_policy: Arc<dyn CompactPolicy>,
     compact_context_window: u64,
+    /// Phase 77.2 — token + age auto-compaction config.
+    auto_config: Option<AutoCompactionConfig>,
+    /// Phase 77.2 — circuit breaker for compaction failures.
+    compact_breaker: Mutex<AutoCompactBreaker>,
+    /// Phase 77.3 — persist compact summaries for session resume.
+    compact_store: Arc<dyn CompactSummaryStore>,
     /// Phase 67.C.1 — emit `DriverEvent::Progress` after every Nth
     /// completed attempt so chat hooks can show 'still going'. `0`
     /// disables periodic progress beacons.
@@ -79,6 +89,10 @@ pub struct DriverOrchestrator {
     /// Claude sees the operator's note in its next turn input.
     /// FIFO so multiple rapid interrupts arrive in order.
     pending_interrupts: Arc<DashMap<GoalId, std::collections::VecDeque<String>>>,
+    /// Phase 77.5 — post-turn LLM memory extraction.
+    extract_memories: Option<Arc<ExtractMemories>>,
+    /// Phase 77.5 — root directory for persistent memory files.
+    memory_dir: Option<PathBuf>,
     bin_path: PathBuf,
     socket_path: PathBuf,
     /// Owns the spawned socket server; cancelling kills it.
@@ -98,6 +112,10 @@ pub struct DriverOrchestratorBuilder {
     replay_policy: Option<Arc<dyn ReplayPolicy>>,
     compact_policy: Option<Arc<dyn CompactPolicy>>,
     compact_context_window: u64,
+    auto_config: Option<AutoCompactionConfig>,
+    compact_store: Option<Arc<dyn CompactSummaryStore>>,
+    extract_memories: Option<Arc<ExtractMemories>>,
+    memory_dir: Option<PathBuf>,
     progress_every_turns: u32,
     bin_path: Option<PathBuf>,
     socket_path: Option<PathBuf>,
@@ -153,6 +171,22 @@ impl DriverOrchestratorBuilder {
         self.compact_context_window = n;
         self
     }
+    pub fn auto_config(mut self, a: AutoCompactionConfig) -> Self {
+        self.auto_config = Some(a);
+        self
+    }
+    pub fn compact_store(mut self, s: Arc<dyn CompactSummaryStore>) -> Self {
+        self.compact_store = Some(s);
+        self
+    }
+    pub fn extract_memories(mut self, e: Arc<ExtractMemories>) -> Self {
+        self.extract_memories = Some(e);
+        self
+    }
+    pub fn memory_dir(mut self, p: impl Into<PathBuf>) -> Self {
+        self.memory_dir = Some(p.into());
+        self
+    }
     pub fn progress_every_turns(mut self, n: u32) -> Self {
         self.progress_every_turns = n;
         self
@@ -189,6 +223,10 @@ impl DriverOrchestratorBuilder {
             .compact_policy
             .unwrap_or_else(|| Arc::new(DefaultCompactPolicy::default()));
         let compact_context_window = self.compact_context_window;
+        let auto_config = self.auto_config;
+        let compact_store: Arc<dyn CompactSummaryStore> = self
+            .compact_store
+            .unwrap_or_else(|| Arc::new(NoopCompactSummaryStore));
         let progress_every_turns = self.progress_every_turns;
         let cancel_root = self.cancel_root.unwrap_or_default();
 
@@ -206,6 +244,11 @@ impl DriverOrchestratorBuilder {
             replay_policy,
             compact_policy,
             compact_context_window,
+            auto_config,
+            compact_breaker: Mutex::new(AutoCompactBreaker::default()),
+            compact_store,
+            extract_memories: self.extract_memories,
+            memory_dir: self.memory_dir,
             progress_every_turns,
             pause_signals: Arc::new(DashMap::new()),
             cancel_tokens: Arc::new(DashMap::new()),
@@ -400,10 +443,25 @@ impl DriverOrchestrator {
         let mut last_acceptance: Option<AcceptanceVerdict> = None;
         let mut final_text: Option<String> = None;
         let mut total_turns: u32 = 0;
-        // Phase 67.9 compact-policy state.
-        let mut last_compact_turn: Option<u32> = None;
-        let mut next_extras: Option<serde_json::Map<String, serde_json::Value>> = None;
+        // Phase 67.9 + 77.2 compact-policy state.
+        // Phase 77.3 — load prior compact summary for session resume.
+        let mut next_extras: Option<serde_json::Map<String, serde_json::Value>> =
+            match self.compact_store.load(&goal.id.0.to_string(), &goal_id).await {
+                Ok(Some(prior)) => {
+                    let mut e = serde_json::Map::new();
+                    e.insert(
+                        "compact_summary".into(),
+                        serde_json::Value::String(prior.summary),
+                    );
+                    Some(e)
+                }
+                _ => None,
+            };
         let mut last_was_compact = false;
+        // Phase 77.3 — token count before the compact turn (captured at
+        // schedule time, consumed in the compact-turn handler for
+        // CompactSummary persistence).
+        let mut compact_before_tokens: u64 = 0;
         let final_outcome: AttemptOutcome;
 
         loop {
@@ -537,17 +595,66 @@ impl DriverOrchestrator {
 
             usage = result.usage_after.clone();
 
-            // Phase 67.9 — compact turns are meta: absorb tokens, do
-            // not bump turn counter, do not process outcome as work.
+            // Phase 67.9 + 77.2 — compact turns are meta: absorb tokens,
+            // do not bump turn counter, do not process outcome as work.
             if last_was_compact {
-                last_compact_turn = Some(total_turns);
                 last_was_compact = false;
+                // Circuit breaker: record failure if compact turn errored.
+                let compact_ok = matches!(
+                    result.outcome,
+                    AttemptOutcome::Done | AttemptOutcome::NeedsRetry { .. }
+                );
+                if compact_ok {
+                    self.compact_breaker.lock().unwrap().record_success(total_turns);
+                } else {
+                    self.compact_breaker.lock().unwrap().record_failure();
+                }
                 let _ = self
                     .event_sink
                     .publish(DriverEvent::AttemptCompleted {
                         result: result.clone(),
                     })
                     .await;
+                let _ = self
+                    .event_sink
+                    .publish(DriverEvent::CompactCompleted {
+                        goal_id,
+                        turn_index: total_turns,
+                        after_tokens: usage.tokens,
+                    })
+                    .await;
+                // Phase 77.3 — persist compact summary for session resume.
+                if compact_ok {
+                    if let Some(ref summary_text) = result.final_text {
+                        let summary = CompactSummary {
+                            agent_id: goal.id.0.to_string(),
+                            summary: summary_text.clone(),
+                            turn_index: total_turns,
+                            before_tokens: compact_before_tokens,
+                            after_tokens: usage.tokens,
+                            stored_at: chrono::Utc::now(),
+                        };
+                        let _ = self.compact_store.store(summary).await;
+                    }
+                    let _ = self
+                        .event_sink
+                        .publish(DriverEvent::CompactSummaryStored {
+                            goal_id,
+                            turn_index: total_turns,
+                            before_tokens: compact_before_tokens,
+                            after_tokens: usage.tokens,
+                        })
+                        .await;
+                    // Phase 77.3 + 77.5 — post-compact cleanup + extraction tick.
+                    let mut cleanup = PostCompactCleanup::new();
+                    if let (Some(ref extract), Some(ref memory_dir)) =
+                        (&self.extract_memories, &self.memory_dir)
+                    {
+                        cleanup = cleanup
+                            .with_extract_memories(Arc::clone(extract), memory_dir.clone());
+                    }
+                    cleanup.run().await;
+                }
                 continue;
             }
 
@@ -579,36 +686,84 @@ impl DriverOrchestrator {
                     .await;
             }
 
-            // Phase 67.9 — opportunistic /compact: if pressure crosses
-            // threshold, schedule next iteration as a compact turn.
-            let compact_ctx = CompactContext {
-                goal_id,
-                turn_index: total_turns,
-                usage: &usage,
-                context_window: self.compact_context_window,
-                last_compact_turn,
-                goal_description: &goal.description,
+            // Phase 77.5 — post-turn memory extraction.
+            if let Some(ref extract) = self.extract_memories {
+                extract.tick();
+                match extract.check_gates() {
+                    Ok(()) => {
+                        // Gates passed — spawn extraction.
+                        if let (Some(ref memory_dir), Some(ref final_text)) =
+                            (&self.memory_dir, &result.final_text)
+                        {
+                            let messages_text = final_text.clone();
+                            let dir = memory_dir.clone();
+                            extract.extract(goal_id, total_turns, messages_text, dir);
+                        }
+                    }
+                    Err(skip_reason) => {
+                        let _ = self
+                            .event_sink
+                            .publish(DriverEvent::ExtractMemoriesSkipped {
+                                goal_id,
+                                reason: skip_reason,
+                            })
+                            .await;
+                    }
+                }
+            }
+
+            // Phase 67.9 + 77.2 — opportunistic /compact: if pressure
+            // crosses threshold or session age expires, schedule next
+            // iteration as a compact turn.
+            let session_age_minutes = started.elapsed().as_secs() / 60;
+            let max_failures = self
+                .auto_config
+                .as_ref()
+                .map(|a| a.max_consecutive_failures)
+                .unwrap_or(3);
+            let should_check = {
+                let breaker = self.compact_breaker.lock().unwrap();
+                !breaker.is_tripped(max_failures)
             };
-            if let Some(focus) = self.compact_policy.classify(&compact_ctx).await {
-                let pressure = if self.compact_context_window > 0 {
-                    usage.tokens as f64 / self.compact_context_window as f64
-                } else {
-                    0.0
+            if should_check {
+                let last_compact = self.compact_breaker.lock().unwrap().last_compact_turn;
+                let compact_ctx = CompactContext {
+                    goal_id,
+                    turn_index: total_turns,
+                    usage: &usage,
+                    context_window: self.compact_context_window,
+                    last_compact_turn: last_compact,
+                    goal_description: &goal.description,
+                    session_age_minutes,
+                    auto_config: self.auto_config.as_ref(),
                 };
-                let _ = self
-                    .event_sink
-                    .publish(DriverEvent::CompactRequested {
-                        goal_id,
-                        turn_index: total_turns,
-                        focus: focus.clone(),
-                        token_pressure: pressure,
-                    })
-                    .await;
-                let mut e = serde_json::Map::new();
-                e.insert("compact_turn".into(), serde_json::Value::Bool(true));
-                e.insert("compact_focus".into(), serde_json::Value::String(focus));
-                next_extras = Some(e);
-                last_was_compact = true;
+                if let Some((focus, trigger)) = self.compact_policy.classify(&compact_ctx).await {
+                    let before_tokens = usage.tokens;
+                    compact_before_tokens = before_tokens;
+                    let age_minutes = session_age_minutes;
+                    let pressure = if self.compact_context_window > 0 {
+                        usage.tokens as f64 / self.compact_context_window as f64
+                    } else {
+                        0.0
+                    };
+                    let _ = self
+                        .event_sink
+                        .publish(DriverEvent::CompactRequested {
+                            goal_id,
+                            turn_index: total_turns,
+                            focus: focus.clone(),
+                            token_pressure: pressure,
+                            before_tokens,
+                            age_minutes,
+                            trigger,
+                        })
+                        .await;
+                    let mut e = serde_json::Map::new();
+                    e.insert("compact_turn".into(), serde_json::Value::Bool(true));
+                    e.insert("compact_focus".into(), serde_json::Value::String(focus));
+                    next_extras = Some(e);
+                    last_was_compact = true;
+                }
             }
             if let Some(v) = &result.acceptance {
                 let _ = self

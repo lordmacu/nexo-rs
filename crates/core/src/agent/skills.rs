@@ -692,7 +692,7 @@ pub fn render_system_blocks(skills: &[LoadedSkill]) -> Option<String> {
 }
 #[cfg(test)]
 mod tests {
-    use super::{render_system_blocks, SkillLoader};
+    use super::{render_system_blocks, SkillLoadAction, SkillLoader};
     fn tmpdir() -> std::path::PathBuf {
         std::env::temp_dir().join(format!("nexo-core-skills-{}", uuid::Uuid::new_v4()))
     }
@@ -713,6 +713,266 @@ mod tests {
         tokio::fs::remove_dir_all(tmp).await.ok();
         Ok(())
     }
+
+    #[tokio::test]
+    async fn bundled_loop_skill_manifest_loads() -> anyhow::Result<()> {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("skills");
+        let loader = SkillLoader::new(&root);
+        let (loaded, status) = loader.load_many_with_status(&["loop".to_string()]).await;
+        assert_eq!(loaded.len(), 1, "loop skill should load from repo skills/");
+        assert_eq!(
+            status[0].action,
+            SkillLoadAction::Loaded,
+            "loop skill should load without missing deps"
+        );
+        let loop_skill = &loaded[0];
+        assert_eq!(loop_skill.metadata.name.as_deref(), Some("Loop"));
+        assert_eq!(
+            loop_skill.metadata.description.as_deref(),
+            Some("Bounded auto-iteration for a prompt with explicit stop predicates.")
+        );
+        assert!(loop_skill.missing_bins.is_empty());
+        assert!(loop_skill.missing_env.is_empty());
+        assert!(loop_skill.missing_versions.is_empty());
+        let rendered = render_system_blocks(&loaded).expect("rendered");
+        assert!(rendered.contains("## Loop"));
+        assert!(rendered.contains("> Bounded auto-iteration for a prompt with explicit stop predicates."));
+        assert!(loop_skill.content.contains("max_iters"));
+        assert!(loop_skill.content.contains("until_predicate"));
+        assert!(loop_skill.content.contains("regex:"));
+        assert!(loop_skill.content.contains("exit:"));
+        assert!(loop_skill.content.contains("judge:"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn bundled_stuck_skill_manifest_loads() -> anyhow::Result<()> {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("skills");
+        let loader = SkillLoader::new(&root);
+        let (loaded, status) = loader.load_many_with_status(&["stuck".to_string()]).await;
+        assert_eq!(loaded.len(), 1, "stuck skill should load from repo skills/");
+        assert_eq!(
+            status[0].action,
+            SkillLoadAction::Loaded,
+            "stuck skill should load without missing deps"
+        );
+        let stuck_skill = &loaded[0];
+        assert_eq!(stuck_skill.metadata.name.as_deref(), Some("Stuck"));
+        assert_eq!(
+            stuck_skill.metadata.description.as_deref(),
+            Some("Bounded auto-debug loop for failing build/test commands with evidence-first diagnosis.")
+        );
+        assert!(stuck_skill.missing_bins.is_empty());
+        assert!(stuck_skill.missing_env.is_empty());
+        assert!(stuck_skill.missing_versions.is_empty());
+        let rendered = render_system_blocks(&loaded).expect("rendered");
+        assert!(rendered.contains("## Stuck"));
+        assert!(rendered.contains(
+            "> Bounded auto-debug loop for failing build/test commands with evidence-first diagnosis."
+        ));
+        assert!(stuck_skill.content.contains("failing_command"));
+        assert!(stuck_skill.content.contains("max_rounds"));
+        assert!(stuck_skill.content.contains("focus_pattern"));
+        assert!(stuck_skill.content.contains("cargo build"));
+        assert!(stuck_skill.content.contains("cargo test"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn bundled_simplify_skill_manifest_loads() -> anyhow::Result<()> {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("skills");
+        let loader = SkillLoader::new(&root);
+        let (loaded, status) = loader.load_many_with_status(&["simplify".to_string()]).await;
+        assert_eq!(loaded.len(), 1, "simplify skill should load from repo skills/");
+        assert_eq!(
+            status[0].action,
+            SkillLoadAction::Loaded,
+            "simplify skill should load without missing deps"
+        );
+        let simplify_skill = &loaded[0];
+        assert_eq!(simplify_skill.metadata.name.as_deref(), Some("Simplify"));
+        assert_eq!(
+            simplify_skill.metadata.description.as_deref(),
+            Some("Bounded simplification pass for a file or hunk that preserves behavior while reducing complexity.")
+        );
+        assert!(simplify_skill.missing_bins.is_empty());
+        assert!(simplify_skill.missing_env.is_empty());
+        assert!(simplify_skill.missing_versions.is_empty());
+        let rendered = render_system_blocks(&loaded).expect("rendered");
+        assert!(rendered.contains("## Simplify"));
+        assert!(rendered.contains(
+            "> Bounded simplification pass for a file or hunk that preserves behavior while reducing complexity."
+        ));
+        assert!(simplify_skill.content.contains("target"));
+        assert!(simplify_skill.content.contains("max_passes"));
+        assert!(simplify_skill.content.contains("preserve_behavior"));
+        assert!(simplify_skill.content.contains("dead_code"));
+        assert!(simplify_skill.content.contains("redundant_guards"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn bundled_verify_skill_manifest_loads() -> anyhow::Result<()> {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("skills");
+        let loader = SkillLoader::new(&root);
+        let (loaded, status) = loader.load_many_with_status(&["verify".to_string()]).await;
+        assert_eq!(loaded.len(), 1, "verify skill should load from repo skills/");
+        assert_eq!(
+            status[0].action,
+            SkillLoadAction::Loaded,
+            "verify skill should load without missing deps"
+        );
+        let verify_skill = &loaded[0];
+        assert_eq!(verify_skill.metadata.name.as_deref(), Some("Verify"));
+        assert_eq!(
+            verify_skill.metadata.description.as_deref(),
+            Some("Bounded acceptance verification that runs concrete checks and an explicit LLM judge over evidence.")
+        );
+        assert!(verify_skill.missing_bins.is_empty());
+        assert!(verify_skill.missing_env.is_empty());
+        assert!(verify_skill.missing_versions.is_empty());
+        let rendered = render_system_blocks(&loaded).expect("rendered");
+        assert!(rendered.contains("## Verify"));
+        assert!(rendered.contains(
+            "> Bounded acceptance verification that runs concrete checks and an explicit LLM judge over evidence."
+        ));
+        assert!(verify_skill.content.contains("acceptance_criterion"));
+        assert!(verify_skill.content.contains("candidate_commands"));
+        assert!(verify_skill.content.contains("judge_mode"));
+        assert!(verify_skill.content.contains("LLM judge"));
+        assert!(verify_skill.content.contains("cargo test"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn bundled_skillify_skill_manifest_loads() -> anyhow::Result<()> {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("skills");
+        let loader = SkillLoader::new(&root);
+        let (loaded, status) = loader.load_many_with_status(&["skillify".to_string()]).await;
+        assert_eq!(loaded.len(), 1, "skillify skill should load from repo skills/");
+        assert_eq!(
+            status[0].action,
+            SkillLoadAction::Loaded,
+            "skillify skill should load without missing deps"
+        );
+        let skillify_skill = &loaded[0];
+        assert_eq!(skillify_skill.metadata.name.as_deref(), Some("Skillify"));
+        assert_eq!(
+            skillify_skill.metadata.description.as_deref(),
+            Some("Turn a repeatable workflow into a reusable local SKILL.md with explicit steps, criteria, and safe defaults.")
+        );
+        assert!(skillify_skill.missing_bins.is_empty());
+        assert!(skillify_skill.missing_env.is_empty());
+        assert!(skillify_skill.missing_versions.is_empty());
+        let rendered = render_system_blocks(&loaded).expect("rendered");
+        assert!(rendered.contains("## Skillify"));
+        assert!(rendered.contains(
+            "> Turn a repeatable workflow into a reusable local SKILL.md with explicit steps, criteria, and safe defaults."
+        ));
+        assert!(skillify_skill.content.contains("workflow_name"));
+        assert!(skillify_skill.content.contains("source_scope"));
+        assert!(skillify_skill.content.contains("target_location"));
+        assert!(skillify_skill.content.contains("confirm_before_write"));
+        assert!(skillify_skill.content.contains("Use when"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn bundled_remember_skill_manifest_loads() -> anyhow::Result<()> {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("skills");
+        let loader = SkillLoader::new(&root);
+        let (loaded, status) = loader.load_many_with_status(&["remember".to_string()]).await;
+        assert_eq!(loaded.len(), 1, "remember skill should load from repo skills/");
+        assert_eq!(
+            status[0].action,
+            SkillLoadAction::Loaded,
+            "remember skill should load without missing deps"
+        );
+        let remember_skill = &loaded[0];
+        assert_eq!(remember_skill.metadata.name.as_deref(), Some("Remember"));
+        assert_eq!(
+            remember_skill.metadata.description.as_deref(),
+            Some("Memory hygiene workflow to classify, deduplicate, and promote durable knowledge across local memory layers.")
+        );
+        assert!(remember_skill.missing_bins.is_empty());
+        assert!(remember_skill.missing_env.is_empty());
+        assert!(remember_skill.missing_versions.is_empty());
+        let rendered = render_system_blocks(&loaded).expect("rendered");
+        assert!(rendered.contains("## Remember"));
+        assert!(rendered.contains(
+            "> Memory hygiene workflow to classify, deduplicate, and promote durable knowledge across local memory layers."
+        ));
+        assert!(remember_skill.content.contains("review_scope"));
+        assert!(remember_skill.content.contains("apply_changes"));
+        assert!(remember_skill.content.contains("priority"));
+        assert!(remember_skill.content.contains("Promotions"));
+        assert!(remember_skill.content.contains("Cleanup"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn bundled_update_config_skill_manifest_loads() -> anyhow::Result<()> {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("skills");
+        let loader = SkillLoader::new(&root);
+        let (loaded, status) = loader
+            .load_many_with_status(&["update-config".to_string()])
+            .await;
+        assert_eq!(
+            loaded.len(),
+            1,
+            "update-config skill should load from repo skills/"
+        );
+        assert_eq!(
+            status[0].action,
+            SkillLoadAction::Loaded,
+            "update-config skill should load without missing deps"
+        );
+        let update_config_skill = &loaded[0];
+        assert_eq!(
+            update_config_skill.metadata.name.as_deref(),
+            Some("Update Config")
+        );
+        assert_eq!(
+            update_config_skill.metadata.description.as_deref(),
+            Some("Safely update Nexo config files with read-before-write merges, schema-aware mapping, and reload/restart awareness.")
+        );
+        assert!(update_config_skill.missing_bins.is_empty());
+        assert!(update_config_skill.missing_env.is_empty());
+        assert!(update_config_skill.missing_versions.is_empty());
+        let rendered = render_system_blocks(&loaded).expect("rendered");
+        assert!(rendered.contains("## Update Config"));
+        assert!(rendered.contains(
+            "> Safely update Nexo config files with read-before-write merges, schema-aware mapping, and reload/restart awareness."
+        ));
+        assert!(update_config_skill.content.contains("target_scope"));
+        assert!(update_config_skill.content.contains("merge_mode"));
+        assert!(update_config_skill.content.contains("Hot-reload vs restart"));
+        assert!(update_config_skill.content.contains("config/agents.yaml"));
+        assert!(update_config_skill.content.contains("config/llm.yaml"));
+        Ok(())
+    }
+
     #[tokio::test]
     async fn parses_frontmatter_and_uses_display_name_and_description() -> anyhow::Result<()> {
         let tmp = tmpdir();

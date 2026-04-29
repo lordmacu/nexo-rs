@@ -3,15 +3,18 @@
 
 pub mod acceptance;
 pub mod attempt;
-pub mod compact;
+pub mod compact_store;
 pub mod config;
 pub mod error;
 pub mod events;
+pub mod extract_memories;
+pub mod extract_memories_prompt;
 pub mod harness;
 pub mod llm_decider;
 pub mod mcp_config;
 pub mod memory;
 pub mod orchestrator;
+pub mod post_compact_cleanup;
 pub mod proactive;
 pub mod prompt;
 pub mod replay;
@@ -22,7 +25,6 @@ pub use acceptance::{
     AcceptanceEvaluator, CustomVerifier, CustomVerifierRegistry, DefaultAcceptanceEvaluator,
     GitClean, NoPathsTouched, NoopAcceptanceEvaluator, ShellResult, ShellRunner,
 };
-pub use compact::{CompactContext, CompactPolicy, DefaultCompactPolicy};
 pub use config::{
     AcceptanceConfig, BindingStoreConfig, BindingStoreKind, CompactPolicyConfig, DeciderConfig,
     DeciderMemoryConfig, DenyShortcutConfig, DriverBinConfig, DriverConfig,

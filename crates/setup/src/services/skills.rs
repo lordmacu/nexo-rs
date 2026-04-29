@@ -762,6 +762,84 @@ pub fn defs() -> Vec<ServiceDef> {
                 validator: Some(validate_nonempty),
             }],
         },
+        ServiceDef {
+            id: "loop",
+            label: "Loop skill (auto-iteración acotada)",
+            category: Category::Skill,
+            description: Some(
+                "Skill local (sin credenciales) para ejecutar un prompt en ciclo acotado \
+                 con contrato `{prompt, max_iters, until_predicate}`. Útil para \
+                 retry/refine/verify sin bucles infinitos.",
+            ),
+            fields: vec![],
+        },
+        ServiceDef {
+            id: "stuck",
+            label: "Stuck skill (auto-debug acotado)",
+            category: Category::Skill,
+            description: Some(
+                "Skill local (sin credenciales) para depurar fallos repetidos de \
+                 `cargo build`/`cargo test` con contrato \
+                 `{failing_command, max_rounds, focus_pattern}` y salida de evidencia.",
+            ),
+            fields: vec![],
+        },
+        ServiceDef {
+            id: "simplify",
+            label: "Simplify skill (refactor acotado)",
+            category: Category::Skill,
+            description: Some(
+                "Skill local (sin credenciales) para simplificar un archivo/hunk con \
+                 contrato `{target, scope, max_passes, preserve_behavior}`. Reduce \
+                 complejidad (dead code, guards redundantes, duplicación) sin romper \
+                 comportamiento por defecto.",
+            ),
+            fields: vec![],
+        },
+        ServiceDef {
+            id: "verify",
+            label: "Verify skill (validación acotada)",
+            category: Category::Skill,
+            description: Some(
+                "Skill local (sin credenciales) para validar criterios de aceptación \
+                 con contrato `{acceptance_criterion, candidate_commands, max_rounds, \
+                 judge_mode}` ejecutando checks reales + juicio explícito sobre evidencia.",
+            ),
+            fields: vec![],
+        },
+        ServiceDef {
+            id: "skillify",
+            label: "Skillify skill (captura workflow reusable)",
+            category: Category::Skill,
+            description: Some(
+                "Skill local (sin credenciales) para convertir un proceso \
+                 repetible en un `SKILL.md` reusable con contrato \
+                 `{workflow_name, source_scope, target_location, required_args}`.",
+            ),
+            fields: vec![],
+        },
+        ServiceDef {
+            id: "remember",
+            label: "Remember skill (higiene de memoria)",
+            category: Category::Skill,
+            description: Some(
+                "Skill local (sin credenciales) para revisar capas de memoria \
+                 y proponer promociones/limpieza/conflictos con contrato \
+                 `{review_scope, apply_changes, priority, target_files}`.",
+            ),
+            fields: vec![],
+        },
+        ServiceDef {
+            id: "update-config",
+            label: "Update-config skill (edición segura de config)",
+            category: Category::Skill,
+            description: Some(
+                "Skill local (sin credenciales) para mapear cambios de \
+                 comportamiento a `config/*.yaml` de Nexo y aplicar \
+                 merges seguros con awareness de hot-reload vs restart.",
+            ),
+            fields: vec![],
+        },
         // FOLLOWUPS W-3 — Phase 25 in-process `web_search` router.
         // Distinct from the `brave-search` ServiceDef above, which
         // configures the *MCP-based* brave skill. The runtime
@@ -834,4 +912,128 @@ pub fn defs() -> Vec<ServiceDef> {
             ],
         },
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::defs;
+
+    #[test]
+    fn loop_skill_is_present_and_secretless() {
+        let all = defs();
+        let loop_svc = all
+            .into_iter()
+            .find(|s| s.id == "loop")
+            .expect("loop skill service must exist");
+        assert!(matches!(
+            loop_svc.category,
+            crate::registry::Category::Skill
+        ));
+        assert!(
+            loop_svc.fields.is_empty(),
+            "loop skill should not require setup fields/secrets"
+        );
+    }
+
+    #[test]
+    fn stuck_skill_is_present_and_secretless() {
+        let all = defs();
+        let stuck_svc = all
+            .into_iter()
+            .find(|s| s.id == "stuck")
+            .expect("stuck skill service must exist");
+        assert!(matches!(
+            stuck_svc.category,
+            crate::registry::Category::Skill
+        ));
+        assert!(
+            stuck_svc.fields.is_empty(),
+            "stuck skill should not require setup fields/secrets"
+        );
+    }
+
+    #[test]
+    fn simplify_skill_is_present_and_secretless() {
+        let all = defs();
+        let simplify_svc = all
+            .into_iter()
+            .find(|s| s.id == "simplify")
+            .expect("simplify skill service must exist");
+        assert!(matches!(
+            simplify_svc.category,
+            crate::registry::Category::Skill
+        ));
+        assert!(
+            simplify_svc.fields.is_empty(),
+            "simplify skill should not require setup fields/secrets"
+        );
+    }
+
+    #[test]
+    fn verify_skill_is_present_and_secretless() {
+        let all = defs();
+        let verify_svc = all
+            .into_iter()
+            .find(|s| s.id == "verify")
+            .expect("verify skill service must exist");
+        assert!(matches!(
+            verify_svc.category,
+            crate::registry::Category::Skill
+        ));
+        assert!(
+            verify_svc.fields.is_empty(),
+            "verify skill should not require setup fields/secrets"
+        );
+    }
+
+    #[test]
+    fn skillify_skill_is_present_and_secretless() {
+        let all = defs();
+        let skillify_svc = all
+            .into_iter()
+            .find(|s| s.id == "skillify")
+            .expect("skillify skill service must exist");
+        assert!(matches!(
+            skillify_svc.category,
+            crate::registry::Category::Skill
+        ));
+        assert!(
+            skillify_svc.fields.is_empty(),
+            "skillify skill should not require setup fields/secrets"
+        );
+    }
+
+    #[test]
+    fn remember_skill_is_present_and_secretless() {
+        let all = defs();
+        let remember_svc = all
+            .into_iter()
+            .find(|s| s.id == "remember")
+            .expect("remember skill service must exist");
+        assert!(matches!(
+            remember_svc.category,
+            crate::registry::Category::Skill
+        ));
+        assert!(
+            remember_svc.fields.is_empty(),
+            "remember skill should not require setup fields/secrets"
+        );
+    }
+
+    #[test]
+    fn update_config_skill_is_present_and_secretless() {
+        let all = defs();
+        let update_config_svc = all
+            .into_iter()
+            .find(|s| s.id == "update-config")
+            .expect("update-config skill service must exist");
+        assert!(matches!(
+            update_config_svc.category,
+            crate::registry::Category::Skill
+        ));
+        assert!(
+            update_config_svc.fields.is_empty(),
+            "update-config skill should not require setup fields/secrets"
+        );
+    }
 }
