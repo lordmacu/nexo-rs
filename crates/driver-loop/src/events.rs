@@ -3,6 +3,7 @@
 //! `agent.driver.{decision,acceptance,budget.exhausted,escalate}`.
 
 use async_trait::async_trait;
+use nexo_driver_types::CompactTrigger;
 use nexo_driver_types::{
     AcceptanceVerdict, AttemptResult, BudgetAxis, BudgetUsage, Decision, Goal, GoalId,
 };
@@ -11,6 +12,17 @@ use serde::{Deserialize, Serialize};
 use crate::error::DriverError;
 use crate::orchestrator::GoalOutcome;
 use crate::replay::ReplayDecision;
+
+/// Why extractMemories skipped a turn.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtractSkipReason {
+    Disabled,
+    Throttled,
+    InProgress,
+    CircuitBreakerOpen,
+    MainAgentWrote,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -52,12 +64,44 @@ pub enum DriverEvent {
         decision: ReplayDecision,
         error_message: String,
     },
-    /// Phase 67.9 — orchestrator scheduled a `/compact` turn.
+    /// Phase 67.9 + 77.2 — orchestrator scheduled a `/compact` turn.
     CompactRequested {
         goal_id: GoalId,
         turn_index: u32,
         focus: String,
         token_pressure: f64,
+        /// Phase 77.2 — token estimate before compaction.
+        before_tokens: u64,
+        /// Phase 77.2 — session age in minutes when trigger fired.
+        age_minutes: u64,
+        /// Phase 77.2 — what caused the trigger.
+        trigger: CompactTrigger,
+    },
+    /// Phase 77.2 — compaction completed. Emitted on the turn after the
+    /// compact turn, once `after_tokens` is known.
+    CompactCompleted {
+        goal_id: GoalId,
+        turn_index: u32,
+        after_tokens: u64,
+    },
+    /// Phase 77.3 — compact summary persisted to long-term memory.
+    CompactSummaryStored {
+        goal_id: GoalId,
+        turn_index: u32,
+        before_tokens: u64,
+        after_tokens: u64,
+    },
+    /// Phase 77.5 — memory extraction completed.
+    ExtractMemoriesCompleted {
+        goal_id: GoalId,
+        turn_index: u32,
+        memories_saved: u32,
+        duration_ms: u64,
+    },
+    /// Phase 77.5 — memory extraction skipped (disabled, throttled, etc.).
+    ExtractMemoriesSkipped {
+        goal_id: GoalId,
+        reason: ExtractSkipReason,
     },
     /// Phase 67.C.1 — periodic mid-run progress beacon. Fires every
     /// `progress_every_turns` after an `AttemptCompleted`, so chat
@@ -85,6 +129,10 @@ impl DriverEvent {
             DriverEvent::Escalate { .. } => "agent.driver.escalate",
             DriverEvent::ReplayDecision { .. } => "agent.driver.replay",
             DriverEvent::CompactRequested { .. } => "agent.driver.compact",
+            DriverEvent::CompactCompleted { .. } => "agent.driver.compact.completed",
+            DriverEvent::CompactSummaryStored { .. } => "agent.driver.compact.summary_stored",
+            DriverEvent::ExtractMemoriesCompleted { .. } => "agent.driver.extract_memories.completed",
+            DriverEvent::ExtractMemoriesSkipped { .. } => "agent.driver.extract_memories.skipped",
             DriverEvent::Progress { .. } => "agent.driver.progress",
         }
     }

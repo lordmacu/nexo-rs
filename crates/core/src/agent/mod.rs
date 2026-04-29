@@ -73,6 +73,9 @@ pub mod workspace_git;
 pub use agent::Agent;
 pub use agents_directory::{AgentInfo, AgentsDirectory};
 pub use behavior::AgentBehavior;
+pub use nexo_driver_types::{
+    AutoCompactBreaker, CompactContext, CompactPolicy, CompactTrigger, DefaultCompactPolicy,
+};
 pub use binding_validate::{
     collect_binding_errors, collect_binding_errors_with_providers, validate_agent, validate_agents,
     validate_agents_with_providers, BindingValidationError, KnownProviders, KnownTools,

@@ -16,10 +16,10 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use nexo_driver_claude::{MemoryBindingStore, SessionBindingStore, SqliteBindingStore};
+use nexo_driver_types::DefaultCompactPolicy;
 use nexo_driver_loop::{
-    AcceptanceEvaluator, BindingStoreKind, DeciderConfig, DefaultAcceptanceEvaluator,
-    DefaultCompactPolicy, DriverConfig, DriverOrchestrator, GitWorktreeMode, NoopEventSink,
-    WorkspaceManager,
+    AcceptanceEvaluator, BindingStoreKind, DeciderConfig, DefaultAcceptanceEvaluator, DriverConfig,
+    DriverOrchestrator, GitWorktreeMode, NoopEventSink, WorkspaceManager,
 };
 use nexo_driver_permission::{AllowAllDecider, DenyAllDecider, PermissionDecider};
 use nexo_driver_types::Goal;
@@ -313,13 +313,20 @@ async fn build_orchestrator(cfg: &DriverConfig, no_events: bool) -> Result<Drive
     }
     let acceptance: Arc<dyn AcceptanceEvaluator> = Arc::new(acceptance);
 
-    let compact_policy: Arc<dyn nexo_driver_loop::CompactPolicy> = Arc::new(DefaultCompactPolicy {
-        enabled: cfg.compact_policy.enabled,
-        threshold: cfg.compact_policy.threshold,
-        min_turns_between_compacts: cfg.compact_policy.min_turns_between_compacts,
-    });
+    let compact_policy: Arc<dyn nexo_driver_types::CompactPolicy> =
+        Arc::new(DefaultCompactPolicy {
+            enabled: cfg.compact_policy.enabled,
+            threshold: cfg.compact_policy.threshold,
+            min_turns_between: cfg.compact_policy.min_turns_between_compacts,
+            max_consecutive_failures: cfg
+                .compact_policy
+                .auto
+                .as_ref()
+                .map(|a| a.max_consecutive_failures)
+                .unwrap_or(3),
+        });
 
-    let orch = DriverOrchestrator::builder()
+    let mut orch_builder = DriverOrchestrator::builder()
         .claude_config(cfg.claude.clone())
         .binding_store(binding_store)
         .acceptance(acceptance)
@@ -329,8 +336,10 @@ async fn build_orchestrator(cfg: &DriverConfig, no_events: bool) -> Result<Drive
         .compact_policy(compact_policy)
         .compact_context_window(cfg.compact_policy.context_window)
         .bin_path(cfg.driver.bin_path.clone())
-        .socket_path(cfg.permission.socket.clone())
-        .build()
-        .await?;
+        .socket_path(cfg.permission.socket.clone());
+    if let Some(ref auto) = cfg.compact_policy.auto {
+        orch_builder = orch_builder.auto_config(auto.clone());
+    }
+    let orch = orch_builder.build().await?;
     Ok(orch)
 }

@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -42,6 +44,9 @@ pub struct Session {
     /// continue without losing the history that was folded away.
     /// Cleared only when the session is reset.
     pub compacted_summary: Option<String>,
+    /// Phase 77.6 — memory IDs already surfaced this session, so the
+    /// relevance scorer can skip them. Cleared on daemon restart.
+    already_surfaced: HashSet<Uuid>,
 }
 
 impl Session {
@@ -60,6 +65,7 @@ impl Session {
             last_access: now,
             max_history_turns,
             compacted_summary: None,
+            already_surfaced: HashSet::new(),
         }
     }
 
@@ -83,6 +89,21 @@ impl Session {
         if self.history.len() > self.max_history_turns {
             self.history.remove(0);
         }
+    }
+
+    /// Phase 77.6 — record that a memory was surfaced to the agent.
+    pub fn mark_surfaced(&mut self, memory_id: Uuid) {
+        self.already_surfaced.insert(memory_id);
+    }
+
+    /// Phase 77.6 — check whether a memory was already shown this session.
+    pub fn is_surfaced(&self, memory_id: &Uuid) -> bool {
+        self.already_surfaced.contains(memory_id)
+    }
+
+    /// Phase 77.6 — borrow the surfaced set for batch filtering.
+    pub fn surfaced_set(&self) -> &HashSet<Uuid> {
+        &self.already_surfaced
     }
 }
 
@@ -116,5 +137,32 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(2));
         session.push(Interaction::new(Role::User, "ping"));
         assert!(session.last_access > before);
+    }
+
+    #[test]
+    fn mark_and_check_surfaced() {
+        let mut session = Session::new("agent", 10);
+        let id = Uuid::new_v4();
+        assert!(!session.is_surfaced(&id));
+        session.mark_surfaced(id);
+        assert!(session.is_surfaced(&id));
+    }
+
+    #[test]
+    fn surfaced_set_is_empty_initially() {
+        let session = Session::new("agent", 10);
+        assert!(session.surfaced_set().is_empty());
+    }
+
+    #[test]
+    fn surfaced_set_tracks_multiple() {
+        let mut session = Session::new("agent", 10);
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        session.mark_surfaced(a);
+        session.mark_surfaced(b);
+        assert_eq!(session.surfaced_set().len(), 2);
+        assert!(session.is_surfaced(&a));
+        assert!(session.is_surfaced(&b));
     }
 }
