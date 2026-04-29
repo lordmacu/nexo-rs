@@ -773,6 +773,14 @@ async fn main() -> Result<()> {
         .context("failed to initialize broker")?;
     tracing::info!(kind = ?cfg.broker.broker.kind, url = %cfg.broker.broker.url, "broker ready");
 
+    // Phase 77.7 — secret guard for scanning memory writes.
+    // Secure by default: enabled=true, on_secret=Block, all rules active.
+    // TODO: read from memory.secret_guard YAML when config dep allows.
+    let secret_guard: Option<nexo_memory::SecretGuard> = {
+        let guard_cfg = nexo_memory::SecretGuardConfig::default();
+        Some(guard_cfg.build_guard())
+    };
+
     // Long-term memory -----------------------------------------------------
     let memory = match cfg.memory.long_term.backend.as_str() {
         "sqlite" => {
@@ -838,9 +846,15 @@ async fn main() -> Result<()> {
             let mem = LongTermMemory::open_with_vector(path, embedding_provider)
                 .await
                 .with_context(|| format!("failed to open long-term memory at {path}"))?;
+            let mem = if let Some(ref guard) = secret_guard {
+                mem.with_guard(guard.clone())
+            } else {
+                mem
+            };
             tracing::info!(
                 path = %path,
                 vector = mem.embedding_provider().is_some(),
+                secret_guard = secret_guard.is_some(),
                 "long-term memory ready"
             );
             Some(Arc::new(mem))
@@ -2637,6 +2651,11 @@ async fn main() -> Result<()> {
                         agent_cfg.workspace_git.author_email.clone(),
                     ) {
                         Ok(repo) => {
+                            let repo = if let Some(ref guard) = secret_guard {
+                                repo.with_guard(guard.clone())
+                            } else {
+                                repo
+                            };
                             tracing::info!(
                                 agent = %agent_id,
                                 root = %ws.display(),
@@ -3100,6 +3119,32 @@ async fn main() -> Result<()> {
                     },
                     lock_ttl_seconds: cfg_compaction.lock_ttl_seconds,
                     summarizer_model: cfg_compaction.summarizer_model.clone(),
+                    // Phase 77.2 autoCompact — from YAML auto section, or defaults.
+                    auto_token_pct: cfg_compaction
+                        .auto
+                        .as_ref()
+                        .map(|a| a.token_pct)
+                        .unwrap_or(0.80),
+                    auto_max_age_minutes: cfg_compaction
+                        .auto
+                        .as_ref()
+                        .map(|a| a.max_age_minutes)
+                        .unwrap_or(120),
+                    auto_buffer_tokens: cfg_compaction
+                        .auto
+                        .as_ref()
+                        .map(|a| a.buffer_tokens)
+                        .unwrap_or(13_000),
+                    auto_min_turns_between: cfg_compaction
+                        .auto
+                        .as_ref()
+                        .map(|a| a.min_turns_between)
+                        .unwrap_or(5),
+                    auto_max_consecutive_failures: cfg_compaction
+                        .auto
+                        .as_ref()
+                        .map(|a| a.max_consecutive_failures)
+                        .unwrap_or(3),
                 };
                 // Compactor reuses the same LLM client as the agent
                 // by default; operators can ship a dedicated lighter
@@ -3200,8 +3245,14 @@ async fn main() -> Result<()> {
                 const SWEEP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
                 let git_for_dream = agent_git.clone();
                 let dream_cancel = dream_shutdown.clone();
+                let guard_for_dream = secret_guard.clone();
                 let handle = tokio::spawn(async move {
                     let engine = DreamEngine::new(mem, workspace, dream_cfg);
+                    let engine = if let Some(ref guard) = guard_for_dream {
+                        engine.with_guard(guard.clone())
+                    } else {
+                        engine
+                    };
                     let mut first = true;
                     // Exponential backoff on consecutive failures to
                     // avoid log spam when the memory store or embedding
@@ -8429,6 +8480,12 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         Some(std::path::PathBuf::from(&primary.workspace))
     };
 
+    // Phase 77.7 — secret guard for mcp-server memory writes.
+    let mcp_secret_guard: Option<nexo_memory::SecretGuard> = {
+        let guard_cfg = nexo_memory::SecretGuardConfig::default();
+        Some(guard_cfg.build_guard())
+    };
+
     // Best-effort memory bootstrap for mcp-server mode: this subcommand
     // must remain tolerant when memory.yaml is absent/misconfigured.
     let mut memory_default_recall_mode = "keyword".to_string();
@@ -8447,7 +8504,14 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
                         .map(|s| s.path.as_str())
                         .unwrap_or("./data/memory.db");
                     match nexo_memory::LongTermMemory::open(path).await {
-                        Ok(mem) => Some(Arc::new(mem)),
+                        Ok(mem) => {
+                            let mem = if let Some(ref guard) = mcp_secret_guard {
+                                mem.with_guard(guard.clone())
+                            } else {
+                                mem
+                            };
+                            Some(Arc::new(mem))
+                        }
                         Err(e) => {
                             tracing::warn!(
                                 error = %e,
@@ -8679,7 +8743,14 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
                 };
                 match nexo_core::agent::MemoryGitRepo::open_or_init(&ws, author_name, author_email)
                 {
-                    Ok(g) => Some(Arc::new(g)),
+                    Ok(g) => {
+                        let g = if let Some(ref guard) = mcp_secret_guard {
+                            g.with_guard(guard.clone())
+                        } else {
+                            g
+                        };
+                        Some(Arc::new(g))
+                    }
                     Err(e) => {
                         tracing::warn!(error = %e, "mcp-server: workspace-git open failed; memory tools disabled");
                         None

@@ -37,6 +37,8 @@ pub struct MemoryGitRepo {
     /// libgit2 `Repository` is not `Sync`. Serialize access with a mutex so
     /// this struct is safe behind `Arc<..>` across threads.
     inner: Mutex<Repository>,
+    /// Phase 77.7 — secret guard for scanning staged content before commit.
+    guard: Option<nexo_memory::SecretGuard>,
 }
 impl MemoryGitRepo {
     /// Open an existing `.git` at `root`, or init a fresh repo plus
@@ -63,7 +65,15 @@ impl MemoryGitRepo {
             author_name,
             author_email,
             inner: Mutex::new(repo),
+            guard: None,
         })
+    }
+
+    /// Phase 77.7 — attach a secret guard for scanning staged content
+    /// before commit. On Block, the commit is aborted.
+    pub fn with_guard(mut self, guard: nexo_memory::SecretGuard) -> Self {
+        self.guard = Some(guard);
+        self
     }
     pub fn root(&self) -> &Path {
         &self.root
@@ -102,6 +112,59 @@ impl MemoryGitRepo {
         }
         if !oversized.is_empty() {
             index.write()?;
+        }
+        // Phase 77.7 — scan staged files for secrets before committing.
+        if let Some(ref guard) = self.guard {
+            if guard.is_enabled() {
+                let mut blocked: Vec<String> = Vec::new();
+                for entry in index.iter() {
+                    let rel = match std::str::from_utf8(&entry.path) {
+                        Ok(p) => p,
+                        Err(_) => continue,
+                    };
+                    let abs_path = self.root.join(rel);
+                    let content = match std::fs::read_to_string(&abs_path) {
+                        Ok(c) => c,
+                        Err(_) => continue, // binary or missing
+                    };
+                    if guard.has_secrets(&content) {
+                        match guard.on_secret() {
+                            nexo_memory::OnSecret::Warn => {
+                                let matches = guard.scan_for_display(&content);
+                                tracing::warn!(
+                                    target = "memory.secret.warned",
+                                    rule_ids = ?matches.iter().map(|m| m.rule_id).collect::<Vec<_>>(),
+                                    path = %rel,
+                                    workspace = %self.root.display(),
+                                    "workspace_git: secrets found in staged file (warn policy, proceeding)"
+                                );
+                            }
+                            _ => {
+                                // Block or Redact — both abort for git.
+                                // Redact can't safely modify git-tracked files
+                                // without destructive working-tree changes.
+                                let matches = guard.scan_for_display(&content);
+                                let labels: Vec<&str> = matches.iter().map(|m| m.label).collect();
+                                tracing::warn!(
+                                    target = "memory.secret.blocked",
+                                    rule_ids = ?matches.iter().map(|m| m.rule_id).collect::<Vec<_>>(),
+                                    path = %rel,
+                                    workspace = %self.root.display(),
+                                    "workspace_git: commit blocked by secret scanner"
+                                );
+                                blocked.push(format!("{} ({})", rel, labels.join(", ")));
+                            }
+                        }
+                    }
+                }
+                if !blocked.is_empty() {
+                    anyhow::bail!(
+                        "secret scan blocked git commit — {} file(s): {}",
+                        blocked.len(),
+                        blocked.join("; ")
+                    );
+                }
+            }
         }
         let tree_id = index.write_tree()?;
         let tree = repo.find_tree(tree_id)?;

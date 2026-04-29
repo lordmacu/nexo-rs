@@ -138,6 +138,9 @@ pub struct DreamEngine {
     memory: std::sync::Arc<LongTermMemory>,
     workspace: PathBuf,
     config: DreamingConfig,
+    /// Phase 77.7 — secret guard for scanning dream candidates
+    /// before writing to MEMORY.md. None = no scanning.
+    guard: Option<nexo_memory::SecretGuard>,
 }
 impl DreamEngine {
     pub fn new(
@@ -149,7 +152,15 @@ impl DreamEngine {
             memory,
             workspace: workspace.into(),
             config,
+            guard: None,
         }
+    }
+
+    /// Phase 77.7 — attach a secret guard for scanning content
+    /// before writing to MEMORY.md.
+    pub fn with_guard(mut self, guard: nexo_memory::SecretGuard) -> Self {
+        self.guard = Some(guard);
+        self
     }
     pub fn config(&self) -> &DreamingConfig {
         &self.config
@@ -304,7 +315,25 @@ impl DreamEngine {
                 cand.signals.unique_days
             ));
         }
-        file.write_all(block.as_bytes()).await?;
+        // Phase 77.7 — scan before writing to MEMORY.md.
+        let block_to_write = if let Some(ref guard) = self.guard {
+            match guard.check(&block) {
+                Ok(redacted) => redacted,
+                Err(e) => {
+                    tracing::warn!(
+                        target = "memory.secret.blocked",
+                        rule_ids = ?e.rule_ids,
+                        content_hash = %e.content_hash,
+                        workspace = %self.workspace.display(),
+                        "dreaming: MEMORY.md write blocked, skipping promoted content"
+                    );
+                    return Ok(()); // Block: skip write entirely
+                }
+            }
+        } else {
+            block
+        };
+        file.write_all(block_to_write.as_bytes()).await?;
         file.flush().await?;
         Ok(())
     }
