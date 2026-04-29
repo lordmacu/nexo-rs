@@ -47,6 +47,7 @@ tempfile     = "3"
 tokio-test = "0.4"
 wiremock   = "0.6"
 criterion  = { version = "0.5", features = ["async_tokio"] }
+tracing-subscriber = { workspace = true }
 
 [[bench]]
 name = "sse_parsers"

@@ -4082,7 +4082,7 @@ Done when:
 - `agent_turns_tail` tool (Phase 72) flags compacted turns
   with a `compacted=true` column.
 
-#### 77.4 — promptCacheBreakDetection   ⬜
+#### 77.4 — promptCacheBreakDetection   ✅
 
 In `crates/llm/src/anthropic.rs`, after every API response
 parse `usage.cache_read_input_tokens` and
@@ -4094,7 +4094,9 @@ can root-cause cache misses without staring at raw usage rows.
 Reference: `services/api/promptCacheBreakDetection.ts`.
 
 Done when:
-- Detection runs only on Anthropic provider (no-op elsewhere).
+- Generic `llm.cache_break` detection runs for any provider/model;
+  Anthropic additionally emits `anthropic.cache_break` with
+  beta-header drift hints.
 - Unit tests: synthetic cache-hit run vs. cache-break run
   produce the expected log lines.
 - Docs: `docs/src/llm/anthropic.md` documents the diagnostic.

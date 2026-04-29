@@ -14,10 +14,13 @@ use async_trait::async_trait;
 use chrono::Utc;
 use nexo_broker::{BrokerHandle, Event};
 use nexo_llm::{
-    collect_stream, Attachment, ChatMessage, ChatRequest, ChatRole, LlmClient, ResponseContent,
+    collect_stream, Attachment, CachePolicy, ChatMessage, ChatRequest, ChatRole, LlmClient,
+    ResponseContent,
 };
 use nexo_memory::EmailFollowupEntry;
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::sync::{Arc, Mutex};
 /// Decide whether a session is a private DM (main) or a shared surface.
 /// `MEMORY.md` loads only for `Main` — shared scopes strip it at load time.
 fn session_scope_for(msg: &InboundMessage) -> SessionScope {
@@ -27,6 +30,139 @@ fn session_scope_for(msg: &InboundMessage) -> SessionScope {
         return SessionScope::Shared;
     }
     SessionScope::Main
+}
+
+const MAX_TRACKED_CACHE_BREAK_SESSIONS: usize = 256;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CacheBreakRequestContext {
+    provider: String,
+    model: String,
+    system_hash: u64,
+}
+
+impl CacheBreakRequestContext {
+    fn from_request(provider: &str, model: &str, req: &ChatRequest) -> Self {
+        Self {
+            provider: provider.to_string(),
+            model: model.to_string(),
+            system_hash: prompt_shape_hash(req),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CacheBreakSnapshot {
+    req: CacheBreakRequestContext,
+    cache_read_input_tokens: u32,
+    cache_creation_input_tokens: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CacheBreakEvent {
+    previous_provider: String,
+    new_provider: String,
+    previous_model: String,
+    new_model: String,
+    previous_cache_read_input_tokens: u32,
+    cache_read_input_tokens: u32,
+    cache_creation_input_tokens: u32,
+    drop_pct: u32,
+    provider_changed: bool,
+    model_changed: bool,
+    system_prompt_changed: bool,
+    suspected_breaker: String,
+}
+
+#[derive(Debug, Default)]
+struct CacheBreakTracker {
+    by_session: HashMap<String, CacheBreakSnapshot>,
+}
+
+impl CacheBreakTracker {
+    fn observe(
+        &mut self,
+        session_id: &str,
+        current: CacheBreakSnapshot,
+    ) -> Option<CacheBreakEvent> {
+        if !self.by_session.contains_key(session_id)
+            && self.by_session.len() >= MAX_TRACKED_CACHE_BREAK_SESSIONS
+        {
+            if let Some(oldest_key) = self.by_session.keys().next().cloned() {
+                self.by_session.remove(&oldest_key);
+            }
+        }
+        let previous = self
+            .by_session
+            .insert(session_id.to_string(), current.clone())?;
+        let prev_read = previous.cache_read_input_tokens;
+        if prev_read == 0 {
+            return None;
+        }
+        // Generic cache-break trigger across providers/models:
+        // cache-read dropped by >50% turn-over-turn.
+        if u64::from(current.cache_read_input_tokens).saturating_mul(2) >= u64::from(prev_read) {
+            return None;
+        }
+        let provider_changed = previous.req.provider != current.req.provider;
+        let model_changed = previous.req.model != current.req.model;
+        let system_prompt_changed = previous.req.system_hash != current.req.system_hash;
+        let mut breakers: Vec<&str> = Vec::new();
+        if provider_changed {
+            breakers.push("provider_swap");
+        }
+        if model_changed {
+            breakers.push("model_swap");
+        }
+        if system_prompt_changed {
+            breakers.push("system_prompt_mutation");
+        }
+        let suspected_breaker = if breakers.is_empty() {
+            "unknown".to_string()
+        } else {
+            breakers.join(",")
+        };
+        let drop_pct = ((u64::from(prev_read.saturating_sub(current.cache_read_input_tokens))
+            * 100)
+            / u64::from(prev_read)) as u32;
+        Some(CacheBreakEvent {
+            previous_provider: previous.req.provider,
+            new_provider: current.req.provider,
+            previous_model: previous.req.model,
+            new_model: current.req.model,
+            previous_cache_read_input_tokens: prev_read,
+            cache_read_input_tokens: current.cache_read_input_tokens,
+            cache_creation_input_tokens: current.cache_creation_input_tokens,
+            drop_pct,
+            provider_changed,
+            model_changed,
+            system_prompt_changed,
+            suspected_breaker,
+        })
+    }
+}
+
+fn cache_policy_tag(policy: CachePolicy) -> u8 {
+    match policy {
+        CachePolicy::None => 0,
+        CachePolicy::Ephemeral5m => 1,
+        CachePolicy::Ephemeral1h => 2,
+    }
+}
+
+fn prompt_shape_hash(req: &ChatRequest) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    if let Some(system) = req.system_prompt.as_deref() {
+        "system_prompt".hash(&mut h);
+        system.hash(&mut h);
+    }
+    for block in &req.system_blocks {
+        "system_block".hash(&mut h);
+        block.label.hash(&mut h);
+        block.text.hash(&mut h);
+        cache_policy_tag(block.cache).hash(&mut h);
+    }
+    h.finish()
 }
 pub struct LlmAgentBehavior {
     llm: Arc<dyn LlmClient>,
@@ -68,6 +204,7 @@ pub struct LlmAgentBehavior {
     compactor: Option<Arc<super::compaction::LlmCompactor>>,
     compaction_store: Option<Arc<nexo_memory::CompactionStore>>,
     compaction_runtime: CompactionRuntime,
+    cache_break_tracker: Mutex<CacheBreakTracker>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -153,6 +290,49 @@ impl LlmAgentBehavior {
             compactor: None,
             compaction_store: None,
             compaction_runtime: CompactionRuntime::default(),
+            cache_break_tracker: Mutex::new(CacheBreakTracker::default()),
+        }
+    }
+
+    fn maybe_log_cache_break(
+        &self,
+        agent_id: &str,
+        session_id: &str,
+        req_ctx: CacheBreakRequestContext,
+        cache_read_input_tokens: u32,
+        cache_creation_input_tokens: u32,
+    ) {
+        let current = CacheBreakSnapshot {
+            req: req_ctx,
+            cache_read_input_tokens,
+            cache_creation_input_tokens,
+        };
+        let event = {
+            let mut tracker = match self.cache_break_tracker.lock() {
+                Ok(g) => g,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            tracker.observe(session_id, current)
+        };
+        if let Some(event) = event {
+            tracing::warn!(
+                target: "llm.cache_break",
+                agent_id = agent_id,
+                session_id = session_id,
+                previous_provider = %event.previous_provider,
+                new_provider = %event.new_provider,
+                previous_model = %event.previous_model,
+                new_model = %event.new_model,
+                previous_cache_read_input_tokens = event.previous_cache_read_input_tokens,
+                cache_read_input_tokens = event.cache_read_input_tokens,
+                cache_creation_input_tokens = event.cache_creation_input_tokens,
+                drop_pct = event.drop_pct,
+                provider_changed = event.provider_changed,
+                model_changed = event.model_changed,
+                system_prompt_changed = event.system_prompt_changed,
+                suspected_breaker = %event.suspected_breaker,
+                "llm.cache_break"
+            );
         }
     }
     /// Phase B — wire the online compactor. All three handles must be
@@ -1053,6 +1233,8 @@ impl LlmAgentBehavior {
             } else {
                 0
             };
+            let cache_break_req_ctx =
+                CacheBreakRequestContext::from_request(provider, model_label, &req);
             let started_at = std::time::Instant::now();
             // Phase 3 follow-up: consume the streaming API in the
             // main loop so provider-native SSE paths are exercised
@@ -1070,6 +1252,23 @@ impl LlmAgentBehavior {
             if let Some(cu) = response.cache_usage.as_ref() {
                 observe_cache_usage(&ctx.agent_id, provider, model_label, cu);
             }
+            let cache_read_input_tokens = response
+                .cache_usage
+                .as_ref()
+                .map(|u| u.cache_read_input_tokens)
+                .unwrap_or(0);
+            let cache_creation_input_tokens = response
+                .cache_usage
+                .as_ref()
+                .map(|u| u.cache_creation_input_tokens)
+                .unwrap_or(0);
+            self.maybe_log_cache_break(
+                &ctx.agent_id,
+                &msg.session_id.to_string(),
+                cache_break_req_ctx,
+                cache_read_input_tokens,
+                cache_creation_input_tokens,
+            );
             // Phase C — drift observation. Only meaningful when we
             // actually estimated and the provider actually reported a
             // total. `prompt_tokens` on Anthropic already folds cache
@@ -1749,5 +1948,67 @@ mod tests {
             }
         );
         assert!(sleep_signal_from_value(&serde_json::json!({"text": "normal"})).is_none());
+    }
+
+    fn req_for_cache_break(system: &str) -> ChatRequest {
+        let mut req = ChatRequest::new("claude-sonnet-4-5", vec![ChatMessage::user("hola")]);
+        req.system_prompt = Some(system.to_string());
+        req
+    }
+
+    #[test]
+    fn cache_break_tracker_hit_run_is_noop() {
+        let mut tracker = CacheBreakTracker::default();
+        let first = CacheBreakSnapshot {
+            req: CacheBreakRequestContext::from_request(
+                "anthropic",
+                "claude-sonnet-4-5",
+                &req_for_cache_break("stable"),
+            ),
+            cache_read_input_tokens: 8_000,
+            cache_creation_input_tokens: 0,
+        };
+        let second = CacheBreakSnapshot {
+            req: CacheBreakRequestContext::from_request(
+                "anthropic",
+                "claude-sonnet-4-5",
+                &req_for_cache_break("stable"),
+            ),
+            cache_read_input_tokens: 7_500,
+            cache_creation_input_tokens: 0,
+        };
+        assert!(tracker.observe("sess-1", first).is_none());
+        assert!(tracker.observe("sess-1", second).is_none());
+    }
+
+    #[test]
+    fn cache_break_tracker_break_run_flags_system_mutation() {
+        let mut tracker = CacheBreakTracker::default();
+        let first = CacheBreakSnapshot {
+            req: CacheBreakRequestContext::from_request(
+                "anthropic",
+                "claude-sonnet-4-5",
+                &req_for_cache_break("stable"),
+            ),
+            cache_read_input_tokens: 8_000,
+            cache_creation_input_tokens: 0,
+        };
+        let second = CacheBreakSnapshot {
+            req: CacheBreakRequestContext::from_request(
+                "anthropic",
+                "claude-sonnet-4-5",
+                &req_for_cache_break("mutated"),
+            ),
+            cache_read_input_tokens: 3_000,
+            cache_creation_input_tokens: 200,
+        };
+        assert!(tracker.observe("sess-1", first).is_none());
+        let ev = tracker
+            .observe("sess-1", second)
+            .expect("expected cache-break event");
+        assert!(ev.system_prompt_changed);
+        assert!(ev.suspected_breaker.contains("system_prompt_mutation"));
+        assert_eq!(ev.previous_cache_read_input_tokens, 8_000);
+        assert_eq!(ev.cache_read_input_tokens, 3_000);
     }
 }
