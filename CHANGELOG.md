@@ -10,6 +10,30 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- Phase 80.1 (MVP) — `crates/dream/` foundation crate for autoDream
+  fork-style memory consolidation. Verbatim port of leak
+  `claude-code-leak/src/services/autoDream/{autoDream.ts:1-324,
+  consolidationLock.ts:1-140, consolidationPrompt.ts:1-65}`. Mirrors
+  the leak's per-turn-hook design (not cron-based — design audit
+  caught and corrected). 8 modules + 49 unit tests verde:
+  `error`/`config`/`consolidation_lock` (PID+mtime lock with
+  symlink defense via canonicalize-at-construction, idempotent
+  rollback, `HOLDER_STALE=1h`, `is_pid_running` via `nix::sys::signal::kill`)/
+  `consolidation_prompt` (4-phase Orient→Gather→Consolidate→Prune
+  template, `ENTRYPOINT_NAME=MEMORY.md`, `MAX_ENTRYPOINT_LINES=200`)/
+  `dream_progress_watcher` (verbatim port of `makeDreamProgressWatcher`
+  with bidirectional turn+files collection through 80.18 store +
+  defense-in-depth escape detection)/`auto_dream` (`AutoDreamRunner`
+  control flow with 7 gates per leak, force bypass, lock acquire/rollback,
+  fork via `nexo_fork::DefaultForkSubagent` + `AutoMemFilter` (80.20),
+  `tracing::info!` events with leak field names sans `tengu_` prefix).
+  `RunOutcome` enum (Completed/Skipped/LockBlocked/Errored/TimedOut/
+  EscapeAudit) is a nexo extension over leak's `Promise<void>` for
+  CLI/LLM-tool feedback. Provider-agnostic via `Arc<dyn LlmClient>`
+  per memory rule `feedback_provider_agnostic.md`. Driver-loop
+  post-turn hook integration + `dream_now` LLM tool + `nexo agent
+  dream` CLI + buffer pattern in `dreaming.rs` (D-1 coexistence with
+  Phase 10.6 scoring) deferred as 80.1.b/c/d/e follow-ups.
 - Phase 80.18 — `crates/agent-registry::dream_run` audit-log store
   for forked memory-consolidation runs. Verbatim port of leak
   `claude-code-leak/src/tasks/DreamTask/DreamTask.ts:1-158`. Mirrors
@@ -127,6 +151,30 @@ and the project adheres to [Semantic Versioning](https://semver.org)
   attribution block (ADR 0009).
 - `README.md` rewritten with badges and deep links into the
   published documentation.
+- **M5 (partial — infra)** — `RuntimeCronToolExecutor.by_binding`
+  migrates from `Arc<HashMap>` (immutable post-construction) to
+  `Arc<arc_swap::ArcSwap<HashMap<...>>>`, enabling lock-free atomic
+  hot-swap of the per-binding context map via the new
+  `replace_bindings(new_map)` API. `resolve_binding` now returns
+  owned `Option<CronToolBindingContext>` (cheap clone — fields are
+  `Arc<_>` underneath); ArcSwap does not expose stable references
+  across swaps. In-flight cron firings retain their pre-swap
+  snapshot until completion. Two smoke tests cover the swap
+  mechanics. The actual config-reload post-hook wire that exercises
+  `replace_bindings` is deferred as **M5.b** in `FOLLOWUPS.md`
+  (~30-45 min: extract `build_cron_bindings_from_snapshots` free
+  fn + `CronRebuildDeps` + aggregate `tools_per_agent` /
+  `agent_snapshot_handles` maps + register post-hook via
+  `OnceCell` late-bind pattern, mirroring
+  `src/main.rs:3499-3508` Phase 79.10.b). Pattern validated
+  against claude-code-leak `src/utils/cronScheduler.ts:441-448`
+  (chokidar reload + inFlight Set) and OpenClaw
+  `research/src/cron/service/timer.ts:709,697` (forceReload
+  per-tick + long-job pitfall); we use ArcSwap which gives
+  lock-free swap structurally rather than imperatively.
+  Provider-agnostic — the executor + binding map are wire-level
+  cross-provider (Anthropic / MiniMax / OpenAI / Gemini /
+  DeepSeek / xAI / Mistral).
 - **M9** — Regression guard against silent renames in
   `mcp_server.expose_tools`. New
   `crates/core/tests/expose_tools_typo_regression_test.rs`
