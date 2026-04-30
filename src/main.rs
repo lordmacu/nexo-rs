@@ -1206,6 +1206,12 @@ async fn main() -> Result<()> {
     // registry instance.
     let channel_boot = nexo_mcp::channel_boot::ChannelBootContext::in_memory(broker.clone());
     let channel_shutdown = tokio_util::sync::CancellationToken::new();
+    // Phase 80.9.b.b — process-wide pending-permission map
+    // shared by the ChannelRelayDecider + every per-server
+    // permission-response pump.
+    let pending_permissions = std::sync::Arc::new(
+        nexo_mcp::channel_permission::PendingPermissionMap::new(),
+    );
     {
         // Spawn one bridge per process. Sink publishes
         // `ChannelInboundEvent` on a stable subject the agent
@@ -1939,7 +1945,14 @@ async fn main() -> Result<()> {
     // see the tool defs in their registry but the handlers
     // return a clean "AgentContext.dispatch is not set" error.
     let dispatch_ctx: Option<Arc<nexo_core::agent::dispatch_handlers::DispatchToolContext>> =
-        boot_dispatch_ctx_if_enabled(&broker, &cfg.agents.agents).await;
+        boot_dispatch_ctx_if_enabled(
+            &broker,
+            &cfg.agents.agents,
+            mcp_manager.clone(),
+            channel_boot.clone(),
+            pending_permissions.clone(),
+        )
+        .await;
 
     let mut runtimes: Vec<AgentRuntime> = Vec::with_capacity(cfg.agents.agents.len());
     // Phase 18 — collect each agent's reload channel so the coordinator
@@ -3548,6 +3561,20 @@ async fn main() -> Result<()> {
                                         client.as_ref(),
                                         channel_shutdown.clone(),
                                     );
+                            // Phase 80.9.b.b — spawn the
+                            // permission-response pump alongside
+                            // the channel inbound loop so any
+                            // structured `notifications/nexo/channel/permission`
+                            // event from this server resolves the
+                            // matching pending entry.
+                            if perm_cap {
+                                let _ = nexo_mcp::channel_permission::spawn_permission_response_pump(
+                                    client.clone(),
+                                    server_name.clone(),
+                                    pending_permissions.clone(),
+                                    channel_shutdown.clone(),
+                                );
+                            }
                             match handle {
                                 nexo_mcp::channel::ChannelInboundLoopHandle::Running {
                                     ..
@@ -4510,6 +4537,9 @@ async fn main() -> Result<()> {
 async fn boot_dispatch_ctx_if_enabled(
     _broker: &nexo_broker::AnyBroker,
     agents: &[nexo_config::AgentConfig],
+    mcp_manager: Option<Arc<nexo_mcp::McpRuntimeManager>>,
+    channel_boot: nexo_mcp::channel_boot::ChannelBootContext,
+    pending_permissions: Arc<nexo_mcp::channel_permission::PendingPermissionMap>,
 ) -> Option<Arc<nexo_core::agent::dispatch_handlers::DispatchToolContext>> {
     // Auto-detect: any agent (or any of its bindings) with
     // dispatch_capability=Full triggers the in-process driver.
@@ -4630,8 +4660,60 @@ async fn boot_dispatch_ctx_if_enabled(
     // standalone bin; here we keep the simpler AllowAll path so the
     // chat-side surface works without an extra LLM call. Operators
     // who want strict permission go via the standalone nexo-driver.
-    let decider: Arc<dyn nexo_driver_permission::PermissionDecider> =
+    let inner_decider: Arc<dyn nexo_driver_permission::PermissionDecider> =
         Arc::new(nexo_driver_permission::AllowAllDecider);
+
+    // Phase 80.9.b.b — wrap the decider in a ChannelRelayDecider when
+    // any agent has channels enabled AND any approved server can be
+    // reached as a permission-relay surface (the gate at registration
+    // time decides whether the server actually opted into the
+    // capability — here we only check that channels are configured at
+    // all). The decorator races the inner decider against any channel
+    // reply via tokio::select!; when no eligible servers register at
+    // runtime the decorator short-circuits to the inner decider.
+    let any_agent_has_channels = agents
+        .iter()
+        .any(|a| a.channels.as_ref().map(|c| c.enabled).unwrap_or(false));
+    let decider: Arc<dyn nexo_driver_permission::PermissionDecider> = if any_agent_has_channels {
+        let mgr_for_resolver = mcp_manager.clone();
+        let resolver: std::sync::Arc<
+            dyn Fn(&str) -> Option<std::sync::Arc<dyn nexo_mcp::McpClient>>
+                + Send
+                + Sync,
+        > = std::sync::Arc::new(move |server_name: &str| {
+            let mgr = mgr_for_resolver.as_ref()?;
+            // Block on the shared session lookup. Acceptable here:
+            // the resolver is invoked from the decider's emit_request
+            // path which already runs inside an async context, but
+            // `Fn(&str) -> Option<...>` is sync so we cannot await
+            // directly. The runtime tokio handle hops in via
+            // `tokio::runtime::Handle::current().block_on` — this
+            // is a slim MVP; a follow-up wraps the resolver in an
+            // async-friendly trait.
+            let rt = tokio::runtime::Handle::current().block_on(async {
+                mgr.get_or_create(uuid::Uuid::nil()).await
+            });
+            rt.clients()
+                .into_iter()
+                .find(|(name, _)| name == server_name)
+                .map(|(_, client)| client)
+        });
+        let dispatcher: std::sync::Arc<
+            dyn nexo_mcp::channel_permission::PermissionRelayDispatcher,
+        > = std::sync::Arc::new(
+            nexo_mcp::channel_permission::ClientResolverDispatcher::new(resolver),
+        );
+        let wrapped = nexo_driver_permission::channel_relay::ChannelRelayDecider::new(
+            ArcDeciderShim(inner_decider.clone()),
+            channel_boot.registry.clone(),
+            pending_permissions.clone(),
+            dispatcher,
+        );
+        tracing::info!("permission relay decorator wired (channels enabled on at least one agent)");
+        Arc::new(wrapped)
+    } else {
+        inner_decider
+    };
 
     // Driver workspace manager. When `workspace.git.enabled=true`,
     // each dispatched goal runs inside a fresh git worktree on a
@@ -11305,6 +11387,26 @@ async fn run_agent_discover(
 
 /// Load AppConfig from `--config=<path>` if provided, otherwise
 /// fall back to the global `config_dir` the CLI was invoked with.
+/// Phase 80.9.b.b — generic shim that lets `ChannelRelayDecider`
+/// wrap an `Arc<dyn PermissionDecider>`. The decorator's generic
+/// `D: PermissionDecider` doesn't accept `Arc<dyn ...>` directly
+/// because trait-object dispatch isn't a concrete type, so we
+/// route through a newtype that delegates to the inner Arc.
+struct ArcDeciderShim(Arc<dyn nexo_driver_permission::PermissionDecider>);
+
+#[async_trait::async_trait]
+impl nexo_driver_permission::PermissionDecider for ArcDeciderShim {
+    async fn decide(
+        &self,
+        request: nexo_driver_permission::types::PermissionRequest,
+    ) -> Result<
+        nexo_driver_permission::types::PermissionResponse,
+        nexo_driver_permission::PermissionError,
+    > {
+        self.0.decide(request).await
+    }
+}
+
 /// Phase 80.9 main.rs hookup — sink that forwards a
 /// [`nexo_mcp::channel_bridge::ChannelInboundEvent`] onto the
 /// existing intake lane. We publish on the broker subject

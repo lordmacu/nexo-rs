@@ -89,6 +89,7 @@
 - [Introduction](./mcp/introduction.md)
 - [Client (stdio / HTTP)](./mcp/client.md)
 - [Agent as MCP server](./mcp/server.md)
+- [Channels (Slack / Telegram / iMessage inbound)](./mcp/channels.md)
 - [HTTP+SSE transport](./extensions/mcp-server.md)
 - [Building an MCP server extension](./extensions/mcp-server-extension.md)
 
@@ -135,6 +136,7 @@
 - [Memdir scanner](./ops/memdir-scanner.md)
 - [Bash safety knobs](./ops/bash-safety.md)
 - [Capability toggles](./ops/capabilities.md)
+- [Channel doctor (MCP)](./ops/channel-doctor.md)
 - [Context optimization](./ops/context-optimization.md)
 - [Link understanding](./ops/link-understanding.md)
 - [Web search](./ops/web-search.md)

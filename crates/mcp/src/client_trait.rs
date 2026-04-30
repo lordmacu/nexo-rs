@@ -41,6 +41,22 @@ pub trait McpClient: Send + Sync {
 
     async fn shutdown(&self);
 
+    /// Phase 80.9.b — fire-and-forget JSON-RPC notification.
+    /// Default returns `Protocol` error so legacy impls don't have
+    /// to be touched. The stdio + HTTP impls override to push the
+    /// frame down their respective transports. Used by the channel
+    /// permission relay dispatcher to emit
+    /// `notifications/nexo/channel/permission_request`.
+    async fn send_notification(
+        &self,
+        _method: &str,
+        _params: Value,
+    ) -> Result<(), McpError> {
+        Err(McpError::Protocol(
+            "send_notification not supported by this client".into(),
+        ))
+    }
+
     /// Phase 12.5 — list data resources exposed by this server. Default
     /// returns `Protocol` error; stdio/http impls override when connected.
     async fn list_resources(&self) -> Result<Vec<McpResource>, McpError> {
