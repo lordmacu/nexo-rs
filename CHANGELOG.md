@@ -127,6 +127,25 @@ and the project adheres to [Semantic Versioning](https://semver.org)
   attribution block (ADR 0009).
 - `README.md` rewritten with badges and deep links into the
   published documentation.
+- **M9** — Regression guard against silent renames in
+  `mcp_server.expose_tools`. New
+  `crates/core/tests/expose_tools_typo_regression_test.rs`
+  maintains a hardcoded `KNOWN_CANONICAL_NAMES_SNAPSHOT` (33
+  entries baseline) bidirectionally synced with `EXPOSABLE_TOOLS`.
+  Three tests catch silent renames or removals (operator YAML
+  with old names would degrade to a `tracing::warn!` at
+  `src/main.rs:9261-9269` and silently drop), force snapshot
+  updates when the catalog grows, and sanity-check for
+  merge-conflict duplicates. Failure messages enumerate explicit
+  fix paths (restore catalog / drop snapshot / add deprecated
+  alias as M9.b follow-up). Provider-agnostic — `EXPOSABLE_TOOLS`
+  is the wire-spec MCP catalog, identical regardless of which
+  LLM client (Claude Desktop / Cursor / Continue / Cody / Aider)
+  or backing provider (Anthropic / MiniMax / OpenAI / Gemini /
+  DeepSeek / xAI / Mistral) drives the call. Pattern adopted
+  from OpenClaw `research/src/channels/ids.test.ts:48-50`
+  snapshot assertion; claude-code-leak `src/tools.ts:193-251`
+  has no equivalent guard, validating the value of adding one.
 - **M2** — MCP audit log `tools/call` rows now record the real
   `args_hash` (sha256 truncated to 16 lowercase hex chars / 64 bits)
   and `args_size_bytes` (JSON-serialized byte length) instead of the

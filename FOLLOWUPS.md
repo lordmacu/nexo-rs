@@ -206,10 +206,28 @@ do not get lost.
   6 tools above in their respective registration sites.
   Effort: 30 min.
 - **M9 — `expose_tools` typo path silent.**
-  `src/main.rs:9263-9266` warns on unknown name; no test
-  enumerates every canonical name to assert nothing dropped on
-  rename. Fix: catalog test in `crates/core/tests/expose_tools_bridge_test.rs`.
-  Effort: 30 min.
+  ✅ shipped 2026-04-30 (commit `895b99b`). New
+  `crates/core/tests/expose_tools_typo_regression_test.rs`
+  maintains a hardcoded `KNOWN_CANONICAL_NAMES_SNAPSHOT` (33
+  entries baseline) bidirectionally synced with `EXPOSABLE_TOOLS`.
+  Three tests:
+  * `every_snapshot_name_resolves_via_lookup` — silent renames /
+    removals fail loud with explicit fix paths.
+  * `every_catalog_name_in_snapshot` — new catalog entries force
+    snapshot update.
+  * `snapshot_has_no_duplicates` — merge-conflict sanity.
+  Pattern adopted from OpenClaw
+  `research/src/channels/ids.test.ts:48-50` snapshot assertion;
+  claude-code-leak `src/tools.ts:193-251` ships `getAllBaseTools()`
+  without a snapshot test, validating the value of adding one.
+  Provider-agnostic — `EXPOSABLE_TOOLS` is wire-spec MCP, indistinto
+  de LLM client / provider.
+  Limitación: regression guard CODE-side only. Operadores con YAML
+  legacy referencing old name siguen viendo el `tracing::warn!`
+  runtime al boot (`src/main.rs:9261-9269`). Follow-up **M9.b**
+  open: deprecated-alias mechanism (`pub static DEPRECATED_ALIASES:
+  &[(&str, &str)]` + `lookup_exposable` extended) preserves
+  back-compat through deprecation cycles.
 - **M10 — `MUTATING_TOOLS` lists `TeamCreate` / `TeamDelete`
   twice.** ✅ shipped 2026-04-30. Removed the first set of
   duplicates at `crates/core/src/plan_mode.rs:295-296`; the
