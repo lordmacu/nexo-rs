@@ -10176,7 +10176,16 @@ async fn start_http_transport(
         session_event_store,
     };
 
-    let handle = start_http_server(bridge.clone(), cfg, shutdown.clone()).await?;
+    // Phase M1 — HTTP transport can push
+    // `notifications/tools/list_changed` via
+    // `HttpServerHandle::notify_tools_list_changed()`, so this
+    // bridge clone advertises the capability to clients. Stdio
+    // bridge keeps the default `false` (no server→client push
+    // channel today). Both clones share the same `Arc<ArcSwap>`
+    // allowlist, so a future `swap_allowlist(...)` call (M1.b)
+    // is visible to both transports atomically.
+    let bridge_for_http = bridge.clone().with_list_changed_capability(true);
+    let handle = start_http_server(bridge_for_http, cfg, shutdown.clone()).await?;
     tracing::info!(addr = %handle.bind_addr, "mcp-server http transport ready");
     Ok(handle)
 }
