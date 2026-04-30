@@ -6,7 +6,7 @@ dependency. Unknown top-level fields survive untouched (forward-compat
 with newer nbformat).
 
 Lift from
-`claude-code-leak/src/tools/NotebookEditTool/NotebookEditTool.ts:30-489`.
+`upstream agent CLI`.
 
 ## Tool shape
 
@@ -27,7 +27,7 @@ Lift from
 | `delete`  | Remove the cell at `cell_id`. |
 
 `cell_id` resolution: literal `cells[i].id` match first; falls back
-to `cell-N` numeric index (matches the leak's `parseCellId`).
+to `cell-N` numeric index (matches the upstream `parseCellId`).
 Failure lists up to 10 available ids in the error message.
 
 ## Defensive behaviour
@@ -37,7 +37,7 @@ Failure lists up to 10 available ids in the error message.
 - **`.ipynb` extension required.** Other file types fall to
   `FileEdit`.
 - **Replace at end-of-cells auto-converts to insert.** Lift from
-  the leak (`NotebookEditTool.ts:372-377`). Requires `cell_type` in
+  the upstream CLI (`NotebookEditTool.ts:372-377`). Requires `cell_type` in
   that path.
 - **Bad writes leave the file untouched.** Validation runs before
   write; any error returns before `std::fs::write`.
@@ -64,11 +64,11 @@ Classified `FileEdit` (mutating) in
 
 ## Out of scope (deferred)
 
-- **Read-before-Edit guard.** The leak requires `Read` to have been
+- **Read-before-Edit guard.** the upstream CLI requires `Read` to have been
   called on the file in the same session before `NotebookEdit` is
   allowed. Nexo-rs does not have a shared file-state cache yet — the
   guard becomes useful when Phase 67 driver-loop adds one.
-- **Attribution / file-history tracking.** The leak's
+- **Attribution / file-history tracking.** The upstream
   `fileHistoryTrackEdit` records edits to a per-session ledger.
   Skipped — the workspace-git layer (Phase 10.9) covers the same
   use case.
@@ -78,8 +78,8 @@ Classified `FileEdit` (mutating) in
 ## References
 
 - **PRIMARY**:
-  `claude-code-leak/src/tools/NotebookEditTool/NotebookEditTool.ts:30-489`,
-  `claude-code-leak/src/utils/notebook.ts::parseCellId`.
+  `upstream agent CLI`,
+  `upstream agent CLI`.
 - **SECONDARY**: OpenClaw `research/` — no equivalent
   (`grep -rln "ipynb|jupyter|nbformat" research/src/` returns
   nothing).

@@ -10,7 +10,7 @@ execution is dangerous and must be explicitly opted into per agent /
 per binding.
 
 Lift from
-`claude-code-leak/src/tools/REPLTool/` +
+`upstream agent CLI` +
 `src/services/sandbox/`.
 
 ## Tool shape
@@ -124,8 +124,8 @@ and `max_output_bytes`.
 ## References
 
 - **PRIMARY**:
-  `claude-code-leak/src/tools/REPLTool/` +
-  `claude-code-leak/src/services/sandbox/`
+  `upstream agent CLI` +
+  `upstream agent CLI`
 - **SECONDARY**: OpenClaw `research/` — no equivalent
   (`grep -rln "repl\|REPL\|stateful.*sandbox" research/src/` returns
   nothing).

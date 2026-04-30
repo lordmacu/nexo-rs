@@ -155,6 +155,8 @@ fn two_binding_agent() -> AgentConfig {
                 proactive: None,
                 remote_triggers: None,
                 repl: None,
+                auto_approve: None,
+                allowed_channel_servers: Vec::new(),
                 lsp: None,
                 team: None,
                 config_tool: None,
@@ -171,6 +173,10 @@ fn two_binding_agent() -> AgentConfig {
         repl: Default::default(),
         auto_dream: None,
         assistant_mode: None,
+        away_summary: None,
+        brief: None,
+        channels: None,
+        auto_approve: false,
         extract_memories: None,
     }
 }
@@ -361,6 +367,10 @@ async fn agent_without_bindings_drops_inbound_events() {
         repl: Default::default(),
         auto_dream: None,
         assistant_mode: None,
+        away_summary: None,
+        brief: None,
+        channels: None,
+        auto_approve: false,
         extract_memories: None,
     };
     let (runtime, captures, broker) = spawn_runtime(cfg).await;

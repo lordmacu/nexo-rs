@@ -454,6 +454,10 @@ mod tests {
         repl: Default::default(),
             auto_dream: None,
             assistant_mode: None,
+            away_summary: None,
+            brief: None,
+            channels: None,
+            auto_approve: false,
             extract_memories: None,
         };
         AgentContext::new(

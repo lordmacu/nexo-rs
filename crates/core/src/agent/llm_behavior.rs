@@ -917,8 +917,18 @@ impl LlmAgentBehavior {
         // boot-immutable flag is on. Same prompt-cache rules as the
         // proactive/coordinator hints — the addendum is stable across
         // turns so the cache stays warm.
-        if ctx.assistant.should_append_addendum() {
+        let assistant_addendum_appended = ctx.assistant.should_append_addendum();
+        if assistant_addendum_appended {
             channel_meta_parts.push((*ctx.assistant.addendum).clone());
+        }
+        // Phase 80.8 — brief-mode "talking to the user" section.
+        // Skipped when the assistant-mode addendum already covers
+        // the same instruction (avoid duplicating the directive).
+        if let Some(section) = crate::agent::send_user_message_tool::brief_system_section(
+            ctx.config.brief.as_ref(),
+            assistant_addendum_appended,
+        ) {
+            channel_meta_parts.push(section.to_string());
         }
         let prompt_inputs = super::prompt_assembly::PromptInputs {
             workspace: workspace_section,

@@ -1,6 +1,10 @@
 pub mod agents;
 pub mod assistant;
+pub mod away_summary;
+pub mod brief;
 pub mod broker;
+pub mod channels;
+pub mod cron_jitter;
 pub mod config_tool;
 pub mod credentials;
 pub mod dream;

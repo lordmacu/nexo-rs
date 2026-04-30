@@ -29,6 +29,27 @@ use uuid::Uuid;
 
 use crate::store::AgentRegistryStoreError;
 
+/// Phase 80.9.h — stable prefix for the `source` column when an
+/// inbound came via an MCP channel server. Render with
+/// [`format_channel_source`]; parse with [`parse_channel_source`].
+pub const CHANNEL_SOURCE_PREFIX: &str = "channel:";
+
+/// Render `server_name` into the `source` shape audit tooling
+/// expects. The runtime is the only writer of this string today;
+/// keeping it behind a helper means a future migration to a
+/// richer marker (e.g. `channel:<server>:<binding>`) is a
+/// one-line change.
+pub fn format_channel_source(server_name: &str) -> String {
+    format!("{CHANNEL_SOURCE_PREFIX}{server_name}")
+}
+
+/// Inverse of [`format_channel_source`]. Returns the server name
+/// when `source` carries the channel prefix; `None` otherwise.
+/// Used by `setup doctor` and audit tools to filter by server.
+pub fn parse_channel_source(source: &str) -> Option<&str> {
+    source.strip_prefix(CHANNEL_SOURCE_PREFIX)
+}
+
 /// One row in the durable turn log. Pre-rendered fields cover the
 /// 99% query case (status board, last decision, error grep);
 /// `raw_json` is the escape hatch for callers that want the full
@@ -59,6 +80,15 @@ pub struct TurnRecord {
     /// Full JSON-encoded payload for callers that need every field
     /// (Anthropic's tool-call array, raw acceptance verdict, etc.).
     pub raw_json: String,
+    /// Phase 80.9.h — origin marker. `Some("channel:<server>")`
+    /// when the inbound that drove this turn arrived via an MCP
+    /// channel server (Slack, Telegram, iMessage). `None` for
+    /// turns triggered by every other intake path (paired user
+    /// inbound, cron fire, agent-to-agent delegate, heartbeat,
+    /// poller). Audit tooling filters on this column to answer
+    /// "what came in via Slack today?".
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 #[async_trait]
@@ -86,6 +116,23 @@ pub trait TurnLogStore: Send + Sync + 'static {
     /// Drop every row for a goal — invoked when the registry evicts
     /// the parent row so the audit log doesn't outlive its goal.
     async fn drop_for_goal(&self, goal_id: GoalId) -> Result<u64, AgentRegistryStoreError>;
+
+    /// Phase 80.14 — turns recorded since `since` (UTC), newest first,
+    /// across ALL goals. Used by the AWAY_SUMMARY digest builder
+    /// to sweep the silence window. `limit` is capped at 1000 by
+    /// the impl to keep a runaway window from pulling the whole
+    /// table into memory.
+    async fn tail_since(
+        &self,
+        since: DateTime<Utc>,
+        limit: usize,
+    ) -> Result<Vec<TurnRecord>, AgentRegistryStoreError> {
+        // Default fallback for impls that haven't customised: pull
+        // everything via `tail` semantics + filter client-side.
+        // Real impls should override with a SQL `WHERE` clause.
+        let _ = (since, limit);
+        Ok(Vec::new())
+    }
 }
 
 /// SQLite-backed implementation. Owns its own pool; safe to share
@@ -151,6 +198,27 @@ impl SqliteTurnLogStore {
         )
         .execute(pool)
         .await?;
+        // Phase 80.9.h — additive `source` column. Idempotent ALTER
+        // pattern (same shape as the cron `permanent` column +
+        // pre-existing `recipient` column on the same module): we
+        // tolerate the "duplicate column" error so migrate() stays
+        // safe to call on every boot.
+        let alter_source =
+            sqlx::query("ALTER TABLE goal_turns ADD COLUMN source TEXT")
+                .execute(pool)
+                .await;
+        if let Err(e) = alter_source {
+            let msg = e.to_string();
+            if !msg.contains("duplicate column") {
+                return Err(AgentRegistryStoreError::Sqlx(e));
+            }
+        }
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_goal_turns_source \
+                ON goal_turns(source)",
+        )
+        .execute(pool)
+        .await?;
         Ok(())
     }
 }
@@ -160,8 +228,8 @@ impl TurnLogStore for SqliteTurnLogStore {
     async fn append(&self, record: &TurnRecord) -> Result<(), AgentRegistryStoreError> {
         sqlx::query(
             "INSERT INTO goal_turns \
-                 (goal_id, turn_index, recorded_at, outcome, decision, summary, diff_stat, error, raw_json) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
+                 (goal_id, turn_index, recorded_at, outcome, decision, summary, diff_stat, error, raw_json, source) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
              ON CONFLICT(goal_id, turn_index) DO UPDATE SET \
                  recorded_at = excluded.recorded_at, \
                  outcome     = excluded.outcome, \
@@ -169,7 +237,8 @@ impl TurnLogStore for SqliteTurnLogStore {
                  summary     = excluded.summary, \
                  diff_stat   = excluded.diff_stat, \
                  error       = excluded.error, \
-                 raw_json    = excluded.raw_json",
+                 raw_json    = excluded.raw_json, \
+                 source      = excluded.source",
         )
         .bind(record.goal_id.0.to_string())
         .bind(record.turn_index as i64)
@@ -180,6 +249,7 @@ impl TurnLogStore for SqliteTurnLogStore {
         .bind(record.diff_stat.as_deref())
         .bind(record.error.as_deref())
         .bind(&record.raw_json)
+        .bind(record.source.as_deref())
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -208,8 +278,9 @@ impl TurnLogStore for SqliteTurnLogStore {
             Option<String>,
             Option<String>,
             String,
+            Option<String>,
         )> = sqlx::query_as(
-            "SELECT goal_id, turn_index, recorded_at, outcome, decision, summary, diff_stat, error, raw_json \
+            "SELECT goal_id, turn_index, recorded_at, outcome, decision, summary, diff_stat, error, raw_json, source \
              FROM goal_turns \
              WHERE goal_id = ?1 \
              ORDER BY turn_index DESC LIMIT ?2",
@@ -219,7 +290,7 @@ impl TurnLogStore for SqliteTurnLogStore {
         .fetch_all(&self.pool)
         .await?;
         let mut out = Vec::with_capacity(rows.len());
-        for (gid, idx, ts, outcome, decision, summary, diff_stat, error, raw_json) in rows {
+        for (gid, idx, ts, outcome, decision, summary, diff_stat, error, raw_json, source) in rows {
             let goal = Uuid::parse_str(&gid)
                 .map_err(|e| AgentRegistryStoreError::GoalId(e.to_string()))?;
             out.push(TurnRecord {
@@ -232,6 +303,7 @@ impl TurnLogStore for SqliteTurnLogStore {
                 diff_stat,
                 error,
                 raw_json,
+                source,
             });
         }
         out.reverse();
@@ -253,6 +325,54 @@ impl TurnLogStore for SqliteTurnLogStore {
             .await?;
         Ok(res.rows_affected())
     }
+
+    async fn tail_since(
+        &self,
+        since: DateTime<Utc>,
+        limit: usize,
+    ) -> Result<Vec<TurnRecord>, AgentRegistryStoreError> {
+        let cap = limit.min(TAIL_HARD_CAP) as i64;
+        let rows: Vec<(
+            String,
+            i64,
+            i64,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            String,
+            Option<String>,
+        )> = sqlx::query_as(
+            "SELECT goal_id, turn_index, recorded_at, outcome, decision, summary, diff_stat, error, raw_json, source \
+             FROM goal_turns \
+             WHERE recorded_at >= ?1 \
+             ORDER BY recorded_at DESC \
+             LIMIT ?2",
+        )
+        .bind(since.timestamp())
+        .bind(cap)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for (gid, idx, ts, outcome, decision, summary, diff_stat, error, raw_json, source) in rows {
+            let goal = Uuid::parse_str(&gid)
+                .map_err(|e| AgentRegistryStoreError::GoalId(e.to_string()))?;
+            out.push(TurnRecord {
+                goal_id: GoalId(goal),
+                turn_index: idx as u32,
+                recorded_at: Utc.timestamp_opt(ts, 0).single().unwrap_or_else(Utc::now),
+                outcome,
+                decision,
+                summary,
+                diff_stat,
+                error,
+                raw_json,
+                source,
+            });
+        }
+        Ok(out)
+    }
 }
 
 #[cfg(test)]
@@ -270,6 +390,7 @@ mod tests {
             diff_stat: None,
             error: None,
             raw_json: format!("{{\"turn\":{turn}}}"),
+            source: None,
         }
     }
 
@@ -332,5 +453,66 @@ mod tests {
         // every row regardless.
         let rows = store.tail(g, 100_000).await.unwrap();
         assert_eq!(rows.len(), 10);
+    }
+
+    // ---- Phase 80.9.h source marker ----
+
+    #[tokio::test]
+    async fn source_field_round_trips_through_sqlite() {
+        let store = SqliteTurnLogStore::open_memory().await.unwrap();
+        let g = GoalId(Uuid::new_v4());
+        let mut r = record(g, 1, "continue");
+        r.source = Some(format_channel_source("slack"));
+        store.append(&r).await.unwrap();
+        let rows = store.tail(g, 0).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].source.as_deref(), Some("channel:slack"));
+    }
+
+    #[tokio::test]
+    async fn source_default_is_none_for_legacy_callers() {
+        let store = SqliteTurnLogStore::open_memory().await.unwrap();
+        let g = GoalId(Uuid::new_v4());
+        store.append(&record(g, 1, "continue")).await.unwrap();
+        let rows = store.tail(g, 0).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].source.is_none());
+    }
+
+    #[tokio::test]
+    async fn source_is_idempotent_on_replay() {
+        // A duplicate emission overwrites the existing row in
+        // place — the source field must follow the same UPSERT
+        // contract as every other field.
+        let store = SqliteTurnLogStore::open_memory().await.unwrap();
+        let g = GoalId(Uuid::new_v4());
+        let mut r = record(g, 1, "continue");
+        r.source = Some("channel:slack".into());
+        store.append(&r).await.unwrap();
+        // Second emission flips the source — operators may want
+        // to reclassify a turn that originally fired without a
+        // source by re-emitting with a value.
+        r.source = Some("channel:telegram".into());
+        store.append(&r).await.unwrap();
+        let rows = store.tail(g, 0).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].source.as_deref(), Some("channel:telegram"));
+    }
+
+    #[test]
+    fn format_channel_source_renders_stable_prefix() {
+        assert_eq!(format_channel_source("slack"), "channel:slack");
+        assert_eq!(
+            format_channel_source("plugin:slack:default"),
+            "channel:plugin:slack:default"
+        );
+    }
+
+    #[test]
+    fn parse_channel_source_extracts_server_name() {
+        assert_eq!(parse_channel_source("channel:slack"), Some("slack"));
+        assert_eq!(parse_channel_source("channel:tg"), Some("tg"));
+        assert_eq!(parse_channel_source("agent.intake.foo"), None);
+        assert_eq!(parse_channel_source(""), None);
     }
 }

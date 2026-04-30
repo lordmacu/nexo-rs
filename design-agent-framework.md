@@ -976,7 +976,15 @@ volumes:
 3. Start with Phase 1: core + local broker + config loading
 4. Phase 3 MiniMax client early — needed to test agent loop end-to-end
 
+## Phase-specific design appendices
+
+- [Phase 80 — KAIROS port](design-kairos-port.md) — single source of
+  truth for sub-phases 80.1–80.21. Inventories every
+  `claude-code-leak/` file the port touches, decisions log
+  (D-1 .. D-10), and per-sub-phase citation checklist for
+  `/forge brainstorm` runs.
+
 ---
 
-*Document version: 1.1*
-*Updated: 2026-04-21*
+*Document version: 1.2*
+*Updated: 2026-04-30*

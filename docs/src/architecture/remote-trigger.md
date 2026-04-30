@@ -5,15 +5,15 @@
 NATS subject. Destinations live in the agent's YAML allowlist; the
 model passes only `name` + `payload`, never URLs or subjects.
 
-## Diff vs leak
+## Diff vs upstream
 
-The leak's `RemoteTriggerTool`
-(`claude-code-leak/src/tools/RemoteTriggerTool/RemoteTriggerTool.ts`)
+The upstream `RemoteTriggerTool`
+(`upstream agent CLI`)
 is a CRUD client for **claude.ai's hosted scheduled-agent API**
 (`/v1/code/triggers`). Different concept entirely — Anthropic uses
 "trigger" to mean "scheduled remote agent". Nexo-rs adopts the
 *name* and ships a generic outbound publisher per our PHASES.md
-spec. The two are conceptually unrelated; we cite the leak as
+spec. The two are conceptually unrelated; we cite the upstream CLI as
 naming reference only.
 
 ## Configuration
@@ -105,9 +105,9 @@ Classified `Outbound` (mutating) in
   name, result}` + `nexo_remote_trigger_latency_ms{name}` are
   spec'd but not emitted. Wire when the tool is in active use.
 
-## Diff vs leak (summary)
+## Diff vs upstream (summary)
 
-| Aspect | Leak | Nexo-rs |
+| Aspect | upstream | Nexo-rs |
 |--------|------|---------|
 | Purpose | claude.ai CCR scheduled-agent CRUD | Generic outbound publisher |
 | Auth | Anthropic OAuth | HMAC-SHA256 (operator-shared secret) |
@@ -117,7 +117,7 @@ Classified `Outbound` (mutating) in
 ## References
 
 - **PRIMARY**: PHASES.md::79.8 spec (own design).
-  `claude-code-leak/src/tools/RemoteTriggerTool/RemoteTriggerTool.ts:1-161`
+  `upstream agent CLI`
   cited for naming + dispatcher shape only — semantics differ.
 - **SECONDARY**: OpenClaw `research/` — no equivalent.
   Single-process TS reference uses plugin outbound paths

@@ -7,7 +7,7 @@ tool surface gets wide (40+ tools after Phase 13 + 77 + 79); the MVP
 shipped here lays the foundation.
 
 Lift from
-`claude-code-leak/src/tools/ToolSearchTool/ToolSearchTool.ts:21-302`
+`upstream agent CLI`
 (input schema, `select:` prefix, keyword search with `+token`
 required prefix, scoring weights for name parts vs description vs
 searchHint).
@@ -50,7 +50,7 @@ correct so the upgrade is a four-file change.
 
 ## Query forms
 
-Lifted verbatim from the leak:
+Lifted verbatim from the upstream CLI:
 
 ```
 select:Read,Edit,Grep      → fetch these exact tools by name (comma-separated)
@@ -62,7 +62,7 @@ Tokens prefixed with `+` are required: tools that don't match all
 required tokens are filtered out before scoring. Other tokens are
 optional but still contribute to the score.
 
-## Scoring (mirror of the leak)
+## Scoring (mirror of the upstream CLI)
 
 | Match site | Non-MCP score | MCP score |
 |------------|---------------|-----------|
@@ -106,8 +106,8 @@ also be auto-injected into that turn's available tool list.
 ## References
 
 - **PRIMARY**:
-  `claude-code-leak/src/tools/ToolSearchTool/ToolSearchTool.ts:21-302`,
-  `claude-code-leak/src/tools/ToolSearchTool/prompt.ts:27-51,62-108`
+  `upstream agent CLI`,
+  `upstream agent CLI,62-108`
   (`isDeferredTool`).
 - **SECONDARY**: OpenClaw `research/` — no equivalent. Single-process
   TS reference does not face the wide-surface MCP token cost that

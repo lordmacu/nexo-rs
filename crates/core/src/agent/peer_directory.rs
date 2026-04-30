@@ -57,6 +57,13 @@ impl PeerDirectory {
     pub fn is_empty(&self) -> bool {
         self.peers.is_empty()
     }
+
+    /// Phase 80.11 — slice accessor for tools that need the raw
+    /// peer list (e.g. `list_peers` LLM tool returns JSON, not the
+    /// markdown rendering used by the system prompt).
+    pub fn peers(&self) -> &[PeerSummary] {
+        &self.peers
+    }
 }
 
 #[cfg(test)]

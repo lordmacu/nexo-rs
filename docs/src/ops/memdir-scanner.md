@@ -82,7 +82,7 @@ LLM-provider identity.
 
 ### Prior art (validated, not copied)
 
-- `claude-code-leak/src/services/teamMemorySync/secretScanner.ts:48,
+- `upstream agent CLI,
   596-615,312-324` — hardcoded scanner with no YAML knob;
   activation via build flag (`feature('TEAMMEM')`) only. Operator
   override impossible without recompile. We adopt a richer

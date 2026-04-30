@@ -171,7 +171,7 @@ namespace filesystem paths and SQLite databases.
 The tenant id is **always** server-derived from the `Principal`. A
 tool **must never** read `tenant_id` from its own arguments — that
 would let a caller forge a tenant tag. Pattern ported from
-`claude-code-leak/src/services/teamMemorySync/index.ts:163-166`:
+`upstream agent CLI`:
 the client passes only `repo`, the `organizationId` is validated
 on the server side from the Bearer token. Nexo follows the same
 discipline.
@@ -228,7 +228,7 @@ mcp_server:
 6. No leading or trailing `_` or `-`.
 
 These rules are direct ports of
-`claude-code-leak/src/memdir/teamMemPaths.ts:22-64`
+`upstream agent CLI`
 (`sanitizePathKey`).
 
 ### Path scoping
@@ -240,7 +240,7 @@ use nexo_mcp::server::auth::{tenant_scoped_path, tenant_db_path};
 let p = tenant_scoped_path(&root, ctx.tenant(), "memory/notes.txt");
 
 // Reads — symlink-aware, ports
-// claude-code-leak/src/memdir/teamMemPaths.ts:228-256
+// upstream agent CLI
 // (validateTeamMemWritePath).
 let p = tenant_scoped_canonicalize(&root, ctx.tenant(), "memory/notes.txt")?;
 ```
@@ -282,7 +282,7 @@ in depth against future bugs.
 `<root>/tenants/<tenant>/state.sqlite3`. One DB per tenant is the
 strongest isolation `rusqlite` makes easy: a corrupted DB blasts
 exactly one tenant. The production reference at
-`claude-code-leak/src/services/teamMemorySync/index.ts` is
+`upstream agent CLI` is
 file-based + server-side scope enforcement; one-DB-per-tenant in
 nexo is a step beyond that, suited to the in-process MCP server
 shape.
@@ -314,7 +314,7 @@ the time until one token refills.
 
 The `Retry-After` header parsing pattern (seconds → milliseconds)
 is ported from
-`claude-code-leak/src/services/api/withRetry.ts:803-812
+`upstream agent CLI
 getRetryAfterMs`.
 
 ### Configuration
@@ -368,10 +368,10 @@ two eviction strategies running in parallel:
 
 This pattern is ported from OpenClaw
 `research/src/gateway/control-plane-rate-limit.ts:6-7,101-110`
-(10 k cap + 5-min stale-TTL pruner). The leak (Anthropic Claude
+(10 k cap + 5-min stale-TTL pruner). The upstream CLI (a prior CLI tool
 Code CLI) is **client-side only** and does not implement
 server-side rate-limiting itself; we port the wire shape from
-the leak and the eviction policy from OpenClaw.
+The upstream CLI and the eviction policy from OpenClaw.
 
 ### Early-warning log
 
@@ -380,7 +380,7 @@ When a bucket's utilization crosses `warn_threshold` (default
 and the current utilization. Useful as an "approaching saturation"
 signal so operators can pre-emptively raise a per-tool override
 before clients start hitting `-32099`. Pattern from
-`claude-code-leak/src/services/claudeAiLimits.ts:53-70
+`upstream agent CLI
 EARLY_WARNING_CONFIGS`, simplified to a single fixed threshold.
 
 ## Per-principal concurrency cap + per-call timeout (Phase 76.6)
@@ -508,8 +508,8 @@ hard cap LRU at insert time.
 * **`tokio::select!` cancellation** — Phase 76.2
   `dispatch.rs:201-205` (`biased; cancel; do_dispatch`).
 * **AbortSignal/AbortController equivalent** —
-  `claude-code-leak/src/Task.ts:39` and
-  `src/services/tools/toolExecution.ts:415-416`. The leak does
+  `upstream agent CLI` and
+  `src/services/tools/toolExecution.ts:415-416`. The upstream CLI does
   not implement server-side concurrency caps (it's a client),
   so only the cancellation propagation idea is portable.
 * **Anti-pattern (NOT ported)**: OpenClaw
@@ -591,8 +591,8 @@ sessions whose subscription set contains `uri` receive the event.
 
 ### Reference patterns
 
-* `claude-code-leak/src/services/mcp/useManageMCPConnections.ts:618-664`
-  — client-side consumption of `tools/list_changed`. The leak is
+* `upstream agent CLI`
+  — client-side consumption of `tools/list_changed`. The upstream CLI is
   client-side and does NOT implement server-side notifications;
   we port the wire shape and build the server-side broadcast
   ourselves on top of the existing
@@ -621,7 +621,7 @@ scratch.
   numeric value, including `0`) → replay everything above.
 * Unknown `Mcp-Session-Id` → HTTP **404** + JSON-RPC body
   `{"error":{"code":-32001,"message":"Session not found"}}`. This
-  matches the leaked Claude Code client's
+  matches the prior agent CLI client's
   `isMcpSessionExpiredError` contract — a permanent failure that
   the client must recover by re-`initialize`.
 
@@ -650,7 +650,7 @@ persist on disk. A client that reconnects with its old session-id
 gets the 404 + -32001 contract above and is expected to
 re-`initialize`. Full session reattach (rehydrating
 `HttpSession` entire) is parked as **76.8.b** until a real client
-asks for it — the leak's own client treats expired sessions as
+asks for it — the upstream client treats expired sessions as
 permanent failure, so the parity gap is intentional.
 
 ### Observability
@@ -663,9 +663,9 @@ follow-up — file an issue if you need them sooner.
 
 ### Reference patterns
 
-* `claude-code-leak/src/cli/transports/SSETransport.ts:159-266`
+* `upstream agent CLI`
   — wire format SSE `id:` + `Last-Event-ID` reconnect.
-* `claude-code-leak/src/services/mcp/client.ts:189-206` —
+* `upstream agent CLI` —
   HTTP 404 + JSON-RPC `-32001` permanent-failure contract.
 * `crates/agent-registry/src/turn_log.rs:64-89` — in-tree
   `TurnLogStore` pattern mirrored verbatim for the
@@ -699,7 +699,7 @@ following the in-tree pattern (`crates/web-search/src/telemetry.rs`,
 
 Tool labels are bounded by `MAX_DISTINCT_TOOLS = 256`. Beyond that,
 every new tool name collapses to `"other"`. Pattern ported from
-`claude-code-leak/src/services/analytics/datadog.ts:195-217`
+`upstream agent CLI`
 (`mcp__*` tools collapsed to `'mcp'`). Tenant labels are bounded
 by `TenantId::parse` (`[a-z0-9_-]{1,64}`) — even a misconfigured
 deployment can't blow up the metric.
@@ -741,7 +741,7 @@ from `livenessProbe`.
 ### Reference patterns
 
 * **Cardinality bounding** —
-  `claude-code-leak/src/services/analytics/datadog.ts:195-217`
+  `upstream agent CLI`
   (MCP tool collapsing) and `:281-299` (model-name normalisation).
   Direct port: 256-tool allowlist + `"other"` collapse.
 * **In-tree precedent** —

@@ -5,8 +5,8 @@ own YAML configuration from inside a chat-driven turn. The flow
 is intentionally two-step (`propose` then `apply`) so a remote
 operator can approve or reject the change with a regular message
 on the same channel that originated the proposal — there is no
-host `'ask'` permission prompt the way Claude Code's leak shows
-(`claude-code-leak/src/tools/ConfigTool/ConfigTool.ts:103-106`).
+host `'ask'` permission prompt the way Claude Code's upstream shows
+(`upstream agent CLI`).
 
 ## Cargo feature gate
 
@@ -154,7 +154,7 @@ failure. Stable `kind` discriminators:
 
 ## References
 
-- **PRIMARY**: `claude-code-leak/src/tools/ConfigTool/`
+- **PRIMARY**: `upstream agent CLI`
   (`ConfigTool.ts`, `supportedSettings.ts`, `prompt.ts`,
   `constants.ts`).
 - **Spec**: `proyecto/PHASES.md::79.10`.

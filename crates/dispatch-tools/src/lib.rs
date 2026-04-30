@@ -11,6 +11,7 @@
 pub mod admin;
 pub mod agent_control;
 pub mod agent_query;
+pub mod away_summary;
 pub mod chain;
 pub mod dispatch_followup;
 pub mod event_forwarder;
@@ -21,6 +22,7 @@ pub mod shutdown_drain;
 pub mod subjects;
 pub mod tool_names;
 
+pub use away_summary::{build_digest, try_compose_away_digest, AwaySummaryError};
 pub use shutdown_drain::{drain_running_goals, DrainReport};
 
 pub use admin::{

@@ -657,4 +657,62 @@ IOUs — features that landed in the daemon but have no UI yet.
   live session list per agent (runtime, cwd, spawned_at, output_len)
   with one-click kill per session. Feature-gated behind `repl-tool` —
   UI should grey out when the daemon lacks the feature.
+- [ ] **Assistant mode (Phase 80.15)** — per-binding `assistant_mode`
+  block toggle on Phase A3 agent-config tab with `enabled` checkbox +
+  `system_prompt_addendum` textarea (left blank shows the bundled
+  default greyed-out as placeholder) + `initial_team` multi-select
+  populated from the agent's `peers` directory. Boot-immutable flag
+  surfaces a "restart required" banner when toggled. Phase A4 runtime
+  dashboard shows an "Assistant mode active" badge per goal whose
+  binding has the flag on. Backend already exposes
+  `AgentConfig.assistant_mode: Option<AssistantConfig>` and
+  `AgentContext.assistant: ResolvedAssistant`.
+- [ ] **Auto-approve dial (Phase 80.17)** — per-binding `auto_approve`
+  toggle in Phase A3 with workspace-path display + curated-tools
+  preview (collapsible list showing every tool that auto-approves
+  vs always-asks under the current binding). Phase A9 audit tab
+  surfaces a per-turn "auto-approved tools" log line when 80.17.b.c
+  caller-side metadata population ships. `setup doctor` warn for
+  `assistant_mode + !auto_approve` misconfig (Phase 80.17.c) needs
+  to render as a banner on the agent-config tab when both checkboxes
+  disagree. Capability badge for `is_curated_auto_approve` decision
+  table + decorator state.
+- [ ] **Background sessions (Phase 80.10 + 80.16)** — Phase A4
+  dashboard tab shows per-agent goal list filtered by `SessionKind`
+  (chips: Interactive / Bg / Daemon / DaemonWorker) + status filter
+  (Running / Sleeping / Done / etc.) + sort by `started_at` desc.
+  Per-row drill-in mirrors `nexo agent attach <goal_id>` output
+  (kind, status, phase, started, ended, last_progress, last_diff,
+  turn N/M, last_event_at) with a "Live stream" placeholder
+  (greyed) until 80.16.b NATS subscribe lands. New "Spawn BG goal"
+  modal mirrors `nexo agent run --bg <prompt>`. New "Discover
+  detached" pane mirrors `nexo agent discover` for the always-on
+  view across reboots.
+- [ ] **AWAY_SUMMARY digest (Phase 80.14)** — per-binding
+  `away_summary` block on Phase A3 with `enabled` checkbox +
+  `threshold_hours` numeric input (default 4, max 720) +
+  `max_events` cap. Phase A9 audit tab shows the last digest text
+  per (channel, sender_id) pair when 80.14.c `last_seen_at`
+  pairing-store integration ships. Per-channel rendering preview
+  (markdown vs whatsapp/telegram-flattened) when 80.14.d ships.
+- [ ] **Multi-agent inbox (Phase 80.11 + 80.11.b)** — Phase A8
+  delegation visualiser tab gains an "Inbox" pane per goal: live
+  buffer count, oldest pending message timestamp, per-message
+  preview (from / sent_at / body snippet / correlation_id?). Drain
+  button (operator-side dev aid) clears the buffer. List/Send
+  tools show in the Phase A6 tool-registry view with their current
+  per-binding allow/deny status. Subject contract documented in
+  the API reference panel: `agent.inbox.<goal_id>` JSON
+  `InboxMessage` shape.
+- [ ] **AutoDream cluster (Phase 80.1)** — Phase A7 memory inspector
+  gains an "AutoDream" pane: status badge per binding (off / idle /
+  fork-running / cooling-down), last consolidation timestamp,
+  `dream_runs` audit table tail (mirrors `nexo agent dream tail`),
+  per-run drill-in (mirrors `nexo agent dream status <run_id>`),
+  manual "Force run" button mapping to `dream_now` LLM tool (gated
+  behind `NEXO_DREAM_NOW_ENABLED` capability badge — green when
+  armed, grey when not). Capabilities tab adds the `extension:
+  "dream"` row from `INVENTORY`. `nexo agent dream kill <run_id>`
+  per-row red button with "Are you sure?" confirm + memory-dir
+  override input.
 - [ ] (add lines as features land — see auto-memory rule)

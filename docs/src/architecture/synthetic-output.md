@@ -7,11 +7,11 @@ direct input for Phase 19/20 pollers, Phase 51 eval harness, and any
 future contract-shaped goal.
 
 Lift from
-`claude-code-leak/src/tools/SyntheticOutputTool/SyntheticOutputTool.ts:1-163`.
+`upstream agent CLI`.
 
-## Diff vs leak
+## Diff vs upstream
 
-The leak builds **one tool per schema** via
+The upstream CLI builds **one tool per schema** via
 `createSyntheticOutputTool(jsonSchema)` so the model's input *is* the
 schema. Nexo-rs runs as a daemon — building a fresh tool per call
 breaks tool-registry semantics. We ship a single tool whose input
@@ -27,7 +27,7 @@ carries BOTH the schema and the value:
 Pollers and eval harnesses inject the schema via prompt template;
 ad-hoc callers pass it inline. The `terminal_schema` follow-up
 (tracked in FOLLOWUPS.md) lets the runtime carry the schema and only
-the model's `value` flows on the wire — closer to the leak's
+the model's `value` flows on the wire — closer to the upstream
 single-input shape.
 
 ## Tool shape
@@ -72,7 +72,7 @@ broker, or external state. Safe to call while plan mode is on.
 ## References
 
 - **PRIMARY**:
-  `claude-code-leak/src/tools/SyntheticOutputTool/SyntheticOutputTool.ts:1-163`.
+  `upstream agent CLI`.
 - **SECONDARY**: OpenClaw `research/` — no equivalent. Single-process
   TS reference shapes its outputs via Zod parsing inline; no
   separate "force structured output" tool.

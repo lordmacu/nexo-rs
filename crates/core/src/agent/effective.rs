@@ -110,6 +110,22 @@ pub struct EffectiveBindingPolicy {
     /// was already declared on `InboundBinding::repl` but never consumed
     /// by the resolver before C1.
     pub repl: nexo_config::types::repl::ReplConfig,
+    /// Phase 80.17 — resolved auto-approve dial. `false` (default)
+    /// keeps the existing interactive-approval behaviour; `true`
+    /// enables auto-allow for the curated tool subset (read-only +
+    /// scoped writes + notifications + multi-agent coordination).
+    /// Destructive bash, writes outside `workspace_path`, ConfigTool,
+    /// REPL, remote_trigger, schedule_cron and unknown tools always
+    /// fall through to the interactive prompt regardless of this
+    /// flag. Composes with Phase 16 binding policy: the flag never
+    /// adds tools to the binding's surface, only skips approval for
+    /// tools already on the surface AND in the curated subset.
+    pub auto_approve: bool,
+    /// Phase 80.17 — canonical workspace path used by the auto-approve
+    /// dial to scope FileEdit / FileWrite. `None` disables the
+    /// workspace-bounded auto-allow path (those tools always ask).
+    /// Set at boot from `agent.workspace`.
+    pub workspace_path: Option<std::path::PathBuf>,
 }
 
 /// Per-agent / per-binding web-search policy. Mirrors the YAML shape
@@ -189,6 +205,15 @@ impl EffectiveBindingPolicy {
             team: resolve_team(agent, binding),
             config_tool: resolve_config_tool(agent, binding),
             repl: resolve_repl(agent, binding),
+            // Phase 80.17 — auto_approve resolves binding override > agent default.
+            auto_approve: binding
+                .and_then(|b| b.auto_approve)
+                .unwrap_or(agent.auto_approve),
+            workspace_path: if agent.workspace.is_empty() {
+                None
+            } else {
+                Some(std::path::PathBuf::from(&agent.workspace))
+            },
         }
     }
 
@@ -225,6 +250,13 @@ impl EffectiveBindingPolicy {
             team: agent.team.clone(),
             config_tool: agent.config_tool.clone(),
             repl: agent.repl.clone(),
+            // Phase 80.17 — agent-default for the unbound path.
+            auto_approve: agent.auto_approve,
+            workspace_path: if agent.workspace.is_empty() {
+                None
+            } else {
+                Some(std::path::PathBuf::from(&agent.workspace))
+            },
         }
     }
 
@@ -608,6 +640,10 @@ mod tests {
         repl: Default::default(),
             auto_dream: None,
             assistant_mode: None,
+            away_summary: None,
+            brief: None,
+            channels: None,
+            auto_approve: false,
             extract_memories: None,
         }
     }

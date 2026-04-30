@@ -6,11 +6,11 @@
 //! publish the response through the broker using the same outbound
 //! event shape as user-facing channel tools.
 //!
-//! Reference (PRIMARY):
+//! Related primitives:
 //!   * Phase 20 `agent_turn` poller (`crates/poller/src/builtins/agent_turn.rs:157-260`)
 //!     — same pattern: build messages, call `chat`, take response.
-//!   * `claude-code-leak/src/utils/cronTasks.ts` — sequential
-//!     fire loop the leak uses.
+//!   * Phase 79.7 [`CronRunner`](crate::cron_runner::CronRunner)
+//!     — sequential fire loop that calls into this dispatcher.
 //!
 //! Design choices:
 //!
@@ -528,6 +528,7 @@ mod tests {
             last_fired_at: None,
             failure_count: 0,
             paused: false,
+            permanent: false,
             recipient: None,
         }
     }

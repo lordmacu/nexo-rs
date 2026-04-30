@@ -577,6 +577,10 @@ mod tests {
         repl: Default::default(),
             auto_dream: None,
             assistant_mode: None,
+            away_summary: None,
+            brief: None,
+            channels: None,
+            auto_approve: false,
             extract_memories: None,
         };
         let ctx = Arc::new(AgentContext::new(
@@ -634,6 +638,20 @@ mod tests {
             _last_fired_at: i64,
         ) -> Result<u32, CronStoreError> {
             Ok(1)
+        }
+        async fn sweep_missed_entries(
+            &self,
+            _now_unix: i64,
+            _skew_ms: i64,
+        ) -> Result<usize, CronStoreError> {
+            Ok(0)
+        }
+        async fn sweep_expired_recurring(
+            &self,
+            _now_unix: i64,
+            _max_age_ms: i64,
+        ) -> Result<usize, CronStoreError> {
+            Ok(0)
         }
     }
 
@@ -892,6 +910,10 @@ mod tests {
         repl: Default::default(),
             auto_dream: None,
             assistant_mode: None,
+            away_summary: None,
+            brief: None,
+            channels: None,
+            auto_approve: false,
             extract_memories: None,
         };
         let actx = Arc::new(AgentContext::new(
@@ -1020,6 +1042,10 @@ mod tests {
         repl: Default::default(),
             auto_dream: None,
             assistant_mode: None,
+            away_summary: None,
+            brief: None,
+            channels: None,
+            auto_approve: false,
             extract_memories: None,
         };
         let actx = Arc::new(AgentContext::new(

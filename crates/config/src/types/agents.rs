@@ -266,6 +266,47 @@ pub struct AgentConfig {
     #[serde(default)]
     pub assistant_mode: Option<crate::types::assistant::AssistantConfig>,
 
+    /// Phase 80.14 — re-connection digest config. `None` keeps the
+    /// runtime quiet (default). `Some(cfg)` with `cfg.enabled = true`
+    /// opts into the AWAY_SUMMARY behaviour: on the first inbound
+    /// after `cfg.threshold_hours` of silence, the runtime composes
+    /// a short markdown digest summarising goals/aborts/failures
+    /// recorded in the Phase 72 turn-log during the silence window
+    /// and delivers it before processing the user's message.
+    #[serde(default)]
+    pub away_summary: Option<crate::types::away_summary::AwaySummaryConfig>,
+
+    /// Phase 80.9 — MCP channel routing. `None` keeps the legacy
+    /// behaviour (no inbound from MCP servers — channel
+    /// notifications fall through with `Skip`). `Some(cfg)` with
+    /// `cfg.enabled = true` arms the 5-step gate; per-binding
+    /// allowlists (`InboundBinding::allowed_channel_servers`) close
+    /// the loop for which servers a given binding will accept
+    /// notifications from. Hot-reloadable through Phase 18.
+    #[serde(default)]
+    pub channels: Option<crate::types::channels::ChannelsConfig>,
+
+    /// Phase 80.8 — brief-mode + `send_user_message` tool. `None`
+    /// keeps the legacy behaviour (no extra tool, no extra system
+    /// section). `Some(cfg)` with `cfg.enabled = true` registers
+    /// the tool for every binding of this agent and appends the
+    /// "talking to the user" section to the system prompt. When
+    /// `assistant_mode.enabled = true`, brief is implicitly active
+    /// even if `brief.enabled = false` — assistant mode already
+    /// hard-codes the same instruction.
+    #[serde(default)]
+    pub brief: Option<crate::types::brief::BriefConfig>,
+
+    /// Phase 80.17 — auto-approve dial for the curated tool subset.
+    /// `false` (default) keeps current interactive-approval behaviour;
+    /// `true` flips skipping the prompt for read-only / scoped-write
+    /// tools while destructive Bash + writes outside workspace +
+    /// ConfigTool + REPL + remote_trigger always ask. Composes with
+    /// Phase 16 binding policy — never adds tools to the surface.
+    /// Per-binding override available via `InboundBinding::auto_approve`.
+    #[serde(default)]
+    pub auto_approve: bool,
+
     /// Phase M4.a.b — post-turn LLM memory extraction. `None`
     /// keeps the legacy behaviour (no extraction). `Some(cfg)`
     /// with `cfg.enabled = true` opts the agent in; the boot
@@ -593,6 +634,20 @@ pub struct InboundBinding {
     /// struct for goals spawned from this binding.
     #[serde(default)]
     pub repl: Option<crate::types::repl::ReplConfig>,
+    /// Phase 80.17 — per-binding auto-approve dial override. `None`
+    /// (default) inherits the agent-level `auto_approve`.
+    /// `Some(true|false)` overrides for this binding.
+    #[serde(default)]
+    pub auto_approve: Option<bool>,
+
+    /// Phase 80.9 — per-binding channel-server session allowlist.
+    /// Empty (default) denies every channel registration for this
+    /// binding even when `agents.channels.enabled = true`. Names
+    /// must match the MCP server name advertised at runtime — for
+    /// plugin-served channels the convention is
+    /// `plugin:<plugin>:<server>`.
+    #[serde(default)]
+    pub allowed_channel_servers: Vec<String>,
     /// Phase 79.8 — per-binding override of `agents.remote_triggers`.
     /// `None` (default) inherits the agent-level allowlist; `Some(vec)`
     /// replaces it entirely for this binding.

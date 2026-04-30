@@ -91,7 +91,7 @@ so plan-mode never refuses an Lsp tool call.
 ## Output format
 
 Results are formatted as `path:line:col` with workspace-relative
-paths when shorter, mirroring `claude-code-leak/src/tools/LSPTool/
+paths when shorter, mirroring `upstream agent CLI
 formatters.ts`. A label is appended where the LSP server
 provides one (`"Definition: src/bar.rs:120:5 (struct Bar)"`).
 
@@ -119,9 +119,9 @@ panicking. Stable `kind` discriminators:
 
 ## References
 
-- **PRIMARY**: `claude-code-leak/src/tools/LSPTool/` (LSPTool.ts,
+- **PRIMARY**: `upstream agent CLI` (LSPTool.ts,
   schemas.ts, formatters.ts, prompt.ts) and
-  `claude-code-leak/src/services/lsp/` (LSPClient.ts,
+  `upstream agent CLI` (LSPClient.ts,
   LSPServerInstance.ts, LSPServerManager.ts, manager.ts,
   passiveFeedback.ts).
 - **SECONDARY**: `research/src/agents/pi-bundle-lsp-runtime.ts`

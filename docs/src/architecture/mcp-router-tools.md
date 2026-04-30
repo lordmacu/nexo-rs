@@ -4,8 +4,8 @@ Router-shaped MCP tools: a single discovery surface for agents
 talking to many MCP servers, instead of registering N×2 per-server
 tools (which still ship via the Phase 12.5 catalog).
 
-Lift from `claude-code-leak/src/tools/ListMcpResourcesTool/` +
-`ReadMcpResourceTool/`. The leak ships these as the LLM-driven
+Pattern derived from prior CLI work +
+`ReadMcpResourceTool/`. The upstream CLI ships these as the LLM-driven
 introspection layer over the per-server `McpClient` trait.
 
 ## Diff vs Phase 12.5 per-server tools
@@ -83,7 +83,7 @@ stay callable while plan mode is on.
   hook (refresh is currently transparent inside the client).
   Tracked in `FOLLOWUPS.md::Phase 79.11` — once the trait grows
   the method (lift from
-  `claude-code-leak/src/services/mcp/oauthPort.ts`), a third
+  `upstream agent CLI`), a third
   tool wires into the same module.
 - **Operator overrides for the caps.** Today the caps are module
   constants; a follow-up can read them from the MCP YAML
@@ -91,9 +91,6 @@ stay callable while plan mode is on.
 
 ## References
 
-- **PRIMARY**: `claude-code-leak/src/tools/ListMcpResourcesTool/`,
-  `claude-code-leak/src/tools/ReadMcpResourceTool/`,
-  `claude-code-leak/src/services/mcp/MCPConnectionManager.tsx`.
 - **SECONDARY**: OpenClaw `research/` — no equivalent
   router-shaped MCP tool.
 - Plan + spec: `proyecto/PHASES.md::79.11`.

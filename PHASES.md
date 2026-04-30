@@ -6087,6 +6087,2823 @@ is ≤ 1 day each because the underlying machinery
 (registry, dispatcher, audit log, hot-reload) already
 exists.
 
+### Phase 80 — KAIROS autonomous assistant mode parity   ⬜
+
+KAIROS is the leak's flagship "always-on" agent surface. It
+gates 8 distinct primitives behind GrowthBook flags and ties
+them together with `assistantModule` + `kairosEnabled` runtime
+state. Phase 77 / Phase 79 ported the *easy* halves
+(proactive ticks, Sleep, ScheduleCron MVP, RemoteTrigger,
+BriefTool spec). Phase 80 closes the remaining gaps so an
+agent can run as a forked daemon, wake on GitHub webhooks,
+push to mobile, consolidate memory while idle, and produce
+an "away digest" when the operator returns.
+
+This phase intentionally does NOT port: GrowthBook itself
+(use Phase 18 hot-reload + binding policy instead), UDS
+sockets (NATS subjects supersede), the cloud session-history
+API (Phase 72 turn log is local + offline + already shipped),
+the Anthropic-internal `tengu_*` flag namespace (we expose
+the same knobs through `agents.yaml` + per-binding override).
+
+Detailed surface analysis (with leak file + line + nexo
+file + LOC count) lives in
+`/home/familia/chat/proyecto/design-agent-framework.md`
+under the "Phase 80 KAIROS port" appendix added in 80.0.
+
+References (PRIMARY):
+- `claude-code-leak/src/services/autoDream/{autoDream,consolidationLock,consolidationPrompt,config}.ts`
+- `claude-code-leak/src/utils/{forkedAgent,cronScheduler,cronTasks,cronJitterConfig,concurrentSessions,conversationRecovery}.ts`
+- `claude-code-leak/src/tools/{BriefTool,ScheduleCronTool,SubscribePRTool,PushNotificationTool,SleepTool}/`
+- `claude-code-leak/src/services/mcp/channelNotification.ts`
+- `claude-code-leak/src/services/extractMemories/extractMemories.ts:171-222` (canUseTool whitelist)
+- `claude-code-leak/src/tasks/DreamTask/DreamTask.ts`
+- `claude-code-leak/src/main.tsx:559,685,1058-1088,1075,2197-2208,2518,2916,3035,3259-3340,3832-3845,4334,4612-4625` (KAIROS integration points)
+- `claude-code-leak/src/utils/messages/systemInit.ts:80-93` + `claude-code-leak/src/setup.ts:90-101` (UDS bootstrap shape — informs our NATS-subject contract, not a verbatim port)
+
+References (secondary — current nexo state):
+- `crates/core/src/agent/dreaming.rs` (515 LOC — scoring-based,
+  NOT fork-based; 80.1 keeps scoring as light-pass and adds
+  the fork as the deep pass)
+- `crates/core/src/cron_runner.rs` (639 LOC — already has
+  jitter_pct + retry; 80.2/80.3/80.4/80.5 add the 6-knob
+  hot-reload, deterministic per-task jitter, one-shot lead
+  semantics, `permanent` flag)
+- `crates/core/src/agent/cron_tool.rs` (626 LOC — MVP from
+  Phase 79.7; 80.4/80.5 wire the runtime firing path)
+- `crates/core/src/agent/sleep_tool.rs` (244 LOC — Phase 77.20)
+- `crates/driver-loop/src/proactive.rs` (66 LOC — Phase 77.20)
+- `crates/driver-loop/src/extract_memories.rs` (1103 LOC —
+  Phase 77.5; 80.20 reuses its tool-whitelist shape)
+- `crates/agent-registry/` (Phase 67 + 71 — adds 80.10 SessionKind
+  enum + 80.18 DreamRun row)
+- `crates/core/src/team_message_router.rs` (365 LOC — Phase 8;
+  80.11 adds an inbox subject contract on top)
+- `crates/poller/src/builtins/webhook_poll.rs` (poll-only;
+  80.12 adds the *receive* side as a sibling builtin)
+
+#### 80.0 — KAIROS surface inventory + design appendix   ✅
+
+Shipped — `proyecto/design-kairos-port.md` written end-to-end
+(7 sections, ~600 lines). Linked from
+`proyecto/design-agent-framework.md::Phase-specific design appendices`.
+
+The appendix is the single source of truth for 80.1–80.21:
+inventories every `claude-code-leak/` file each sub-phase
+touches with (a) leak path:line, (b) nexo equivalent path:LOC,
+(c) gap classification, (d) decisions log (D-1 .. D-10),
+(e) per-sub-phase brainstorm-citation checklist enforcing the
+UNBREAKABLE memory rule (every `/forge brainstorm` cites at
+least one path:line from the leak AND from `research/`, or
+explicitly states absence).
+
+Decisions captured in the appendix that re-shape downstream
+sub-phases:
+
+- **D-1**: keep `dreaming.rs` scoring sweep alongside the
+  forked /dream — scoring becomes the *light pass* per turn,
+  fork is the *deep pass* every ≥ 24 h.
+- **D-2**: NATS subjects (`agent.inbox.<goal_id>`) supersede
+  UDS_INBOX entirely — multi-host, persistence, fan-out.
+- **D-3**: no GrowthBook port — `tengu_*` flags map to
+  per-binding YAML + Phase 18 hot-reload + `setup doctor`.
+- **D-4**: `kairos_remote_control` is a dial *within* the
+  Phase 16 capability gate, NOT a bypass — gate stays
+  authoritative; mode only flips auto-approve dial inside
+  what gate already permits.
+- **D-7**: brief mode is a `SendUserMessage` gate, not a terse
+  toggle — re-spec of Phase 79.9.
+- **D-8**: forked subagent gains a `ForkAndForget` mode
+  alongside the existing `Sync` delegation — autoDream +
+  AWAY_SUMMARY use fire-and-forget.
+- **D-9**: `assistant_mode: true` implies a default bundle
+  (brief on, cron on, proactive on, auto-dream deep on,
+  team auto-spawn on) — but `kairos_remote_control` stays
+  off explicitly (D-4 hardening).
+- **D-10**: 80.7 (per-cwd scheduler lock) deferred until
+  Phase 32 multi-host orchestration.
+
+#### 80.1 — autoDream fork-style consolidation   ✅ MVP
+
+Shipped — `crates/dream/` foundation crate (~1200 LOC + 49 unit tests).
+Verbatim port of leak `services/autoDream/autoDream.ts:1-324` +
+`consolidationLock.ts:1-140` + `consolidationPrompt.ts:1-65`. Mirrors
+the leak's per-turn-hook design (NOT cron-based) per the spec audit.
+
+**Modules shipped**:
+
+- `error.rs` — typed `AutoDreamError` enum (`Io`, `LockBlocked`,
+  `Timeout`, `Fork`, `Audit`, `Config`).
+- `config.rs` — `AutoDreamConfig` with leak-faithful defaults
+  (`min_hours=24h`, `min_sessions=5`, `scan_interval=10min`,
+  `holder_stale=1h`); `fork_timeout=5min` is a nexo addition (leak
+  has no explicit fork timeout).
+- `consolidation_lock.rs` — `ConsolidationLock` PID/mtime lock
+  verbatim from leak `:1-140`. `mtime IS lastConsolidatedAt`,
+  `HOLDER_STALE_MS=1h`, idempotent rollback, symlink defense via
+  canonicalize-at-construction. `is_pid_running` via `nix::sys::signal::kill`.
+  `list_sessions_touched_since` mirrors leak `:118-124` (UUID stem
+  filter, exclude current).
+- `consolidation_prompt.rs` — `ConsolidationPromptBuilder` verbatim
+  port of leak `:10-65` 4-phase template (Orient → Gather →
+  Consolidate → Prune). Constants `ENTRYPOINT_NAME=MEMORY.md`,
+  `MAX_ENTRYPOINT_LINES=200`, `DIR_EXISTS_GUIDANCE` lifted from
+  leak's `memdir.ts:34,35,116`.
+- `dream_progress_watcher.rs` — `DreamProgressWatcher` impl
+  `nexo_fork::OnMessage`. Verbatim port of leak's
+  `makeDreamProgressWatcher` (`autoDream.ts:281-313`): per assistant
+  message extracts text + counts tool_uses + extracts FileEdit/FileWrite
+  `file_path` + canonicalize + appends to 80.18 `DreamRunStore` via
+  `append_turn` + `append_files_touched`. Defense-in-depth: paths
+  outside `memory_dir` recorded in `escapes` for post-fork audit
+  (nexo addition).
+- `auto_dream.rs` — `AutoDreamRunner` control flow. 7-gate sequence
+  (disabled / kairos_active / remote_mode / auto_memory / time / scan
+  throttle / sessions). Force path uses `priorMtime = lastAt` so
+  rollback no-op (leak `:174-179`). Lock acquire blocked branch
+  returns `RunOutcome::LockBlocked { holder_pid, mtime_secs }` (nexo
+  structured outcome — leak returns `Promise<void>`). Fork via
+  `nexo_fork::DefaultForkSubagent` with `AutoMemFilter` (80.20) +
+  `DreamProgressWatcher` + 80.18 audit row insert/update/finalize.
+  Post-fork escape audit returns `RunOutcome::EscapeAudit` if any
+  edit-path canonical is outside `memory_dir`. `tracing::info!`
+  events with leak field names (`hours_since`, `sessions_since`,
+  `cache_read`, `cache_created`, `output`, `sessions_reviewed`).
+
+**Three pillars verified**:
+
+- **Robusto**: 49 unit tests; defense-in-depth (80.20 whitelist +
+  per-call canonicalize + post-fork escape audit + lock); typed
+  errors; idempotent rollback (test cubre `rollback(0)` + double
+  call); symlink defense via canonicalize-at-construction; `Option<i64>`
+  distinguishes `Some(0)` from `None` for `prior_mtime_ms`; gate-7
+  ordering preserves leak's cheapest-first (one stat for time-gate
+  before listdir for sessions).
+- **Óptimo**: reuses 80.18 `DreamRunStore` + 80.19 `DefaultForkSubagent`
+  + 80.20 `AutoMemFilter` + leak prompt template — no logic
+  duplication; `Arc<ArcSwap<AutoDreamConfig>>` hot-reload friendly;
+  `AtomicI64` for `last_session_scan_at` lock-free; lock mtime IS
+  lastConsolidatedAt (one stat per turn, not separate state file);
+  PID liveness via `nix::sys::signal::kill(pid, None)` cheap syscall.
+- **Transversal**: `Arc<dyn LlmClient>` provider-neutral; `MockLlm` +
+  `MockFork` test fixtures unblock cross-provider testing without
+  Anthropic-specific assumptions; `fork_label: String` reusable for
+  AWAY_SUMMARY (80.14) + future eval (Phase 51).
+
+**Decisions taken** (validated by leak re-audit + spec amend):
+
+- **NO heartbeat lock during fork** — leak doesn't have one;
+  operator with `> 1h` forks tunes `holder_stale`. Drops 1 config
+  field + 1 test from spec.
+- **Per-turn hook, NOT cron** — leak `executeAutoDream` from
+  `stopHooks`. Mirror Phase 77.5 `extract_memories` integration
+  pattern in driver-loop (deferred to 80.1.b).
+- **Watcher BIDIRECTIONAL** — collects turns AND files via 80.18
+  store calls (verbatim leak `makeDreamProgressWatcher`).
+- **Verbatim `extra` block text** — leak `:216-221` substituted
+  with sessions list.
+- **`tracing::info!` with leak field names** — `auto_dream.fired`,
+  `auto_dream.completed`, `auto_dream.failed` targets; field names
+  preserved sans `tengu_` prefix.
+- **`RunOutcome` enum** — nexo addition for CLI/LLM-tool feedback.
+- **Buffer pattern `_pending_promotions.md`** — design specified;
+  implementation deferred to 80.1.e (D-1 coexistence with Phase
+  10.6 scoring sweep).
+
+**Files shipped**:
+
+- `crates/dream/Cargo.toml`, `crates/dream/README.md`,
+  `crates/dream/src/{lib,error,config,consolidation_lock,
+  consolidation_prompt,dream_progress_watcher,auto_dream}.rs` (8 files)
+- `Cargo.toml` workspace.members += `crates/dream`
+
+**Tests** (49 unit, all verde):
+- 2 — error display + From conversions
+- 5 — config defaults match leak + validation
+- 16 — consolidation_lock (read_last, try_acquire happy/blocked/dead-PID/stale,
+  rollback unlink/utimes/idempotent, record_consolidation, holder_info,
+  list_sessions filter + exclude current + non-UUID skip, missing dir, PID liveness)
+- 8 — consolidation_prompt (4 phases rendered, paths substituted,
+  entrypoint+max_lines, dir-exists guidance, extra block append/omit,
+  override max_lines, summary footer)
+- 7 — dream_progress_watcher (ignores user msgs, text-only turn,
+  tool_use count, FileEdit inside memdir, escape outside memdir,
+  ignores non-edit tools, dedupe paths)
+- 11 — auto_dream control flow (build_extra, 7 gate-skip variants,
+  force bypass, completed audit row, fork error rolls back, fork
+  timeout records killed, lock blocked structured outcome)
+
+**Follow-ups** (split as 80.1.b/c/d/e):
+
+- **80.1.b.b.b** — boot wiring helper ✅ **MVP** — shipped:
+  `crates/dream/src/boot.rs` (~270 LOC + 7 unit tests). Operator
+  calls `nexo_dream::boot::build_runner(BootDeps { ... })` once at
+  startup; helper validates config, mkdirs memory_dir + state_root
+  parent, opens `SqliteDreamRunStore` (shared `<state>/dream_runs.db`),
+  constructs `ConsolidationLock`, builds `AutoDreamRunner` via
+  `with_default_fork`. Returns `Ok(None)` when `enabled: false`
+  (orchestrator stays clean — no per-turn cost). Public path
+  helpers `default_memory_dir(workspace_root, agent_id)` +
+  `default_dream_db_path(state_root)` documented as Phase 10.6 +
+  80.18 conventions. Mirror leak `autoDream.ts:111-122`
+  `initAutoDream()` startup pattern. Provider-agnostic via
+  `Arc<dyn LlmClient>` + `Arc<dyn ToolDispatcher>` in `BootDeps`.
+  Module doc comment includes the 3-line main.rs hookup snippet
+  for operator-side application when their existing main.rs
+  pre-existing dirty state (`CronToolCallsConfig` + `Arc` import)
+  resolves. Tests verde: 1 path-helper composition + 6 build_runner
+  integration (returns None disabled, validates config, creates
+  default memory_dir, honors explicit override, creates state_root
+  parent, returns Some when enabled). nexo-dream cumulative: 55
+  tests verde (48 + 7).
+- **80.1.b.b** — `AgentConfig::auto_dream` field + workspace
+  fixture sweep ✅ **partial** — shipped: field added with
+  `#[serde(default)]` to `crates/config/src/types/agents.rs`;
+  47 struct-literal fixtures across 17 directories swept via
+  `perl -i -p0e` multi-line replace (anchor `repl: Default::default(),\n}`);
+  3 new YAML round-trip tests in `nexo-config::types::agents::auto_dream_yaml_tests`
+  (without/with/disabled). All affected crates verde:
+  nexo-config 153 tests, nexo-fork 66, nexo-dream 48,
+  nexo-driver-loop 104, nexo-driver-types 22, nexo-agent-registry 38,
+  nexo-core 671 unit + many integration. main.rs boot wiring + Phase 18
+  hot-reload propagation deferred as **80.1.b.b.b** follow-up — main.rs
+  is ~10K LOC with multiple AgentContext sites; needs investigative
+  audit + careful per-binding plumbing of `parent_ctx_template` /
+  `tool_dispatcher` / `dream_db_path`. The orchestrator integration
+  shipped in 80.1.b is functional standalone — operators can wire
+  programmatically; main.rs convenience layer is an enhancement.
+- **80.1.b** — driver-loop post-turn hook integration ✅ **MVP** —
+  shipped: `AutoDreamHook` trait + `AutoDreamOutcomeKind` enum +
+  `DreamContextLite` struct in `nexo-driver-types::auto_dream`
+  (places upstream of both nexo-driver-loop and nexo-dream to
+  break the would-be cycle). `DriverOrchestrator` gains
+  `auto_dream: Option<Arc<dyn AutoDreamHook>>` field + `.auto_dream(...)`
+  builder method + invocation site adjacent to Phase 77.5
+  (`crates/driver-loop/src/orchestrator.rs:728-756`). `nexo-dream`
+  provides `impl AutoDreamHook for AutoDreamRunner` with
+  `run_outcome_to_kind` mapping. `DriverEvent::AutoDreamOutcome
+  { goal_id, outcome_kind }` variant. `DreamContext` refactored
+  to drop `parent_ctx`+`last_chat_request`; `AutoDreamRunner::new`
+  now accepts operator-supplied `parent_ctx_template` +
+  `fork_system_prompt` + `fork_tools` + `fork_model` (mirror Phase
+  77.5 ExtractMemories shape; no parent prompt-cache share).
+  `AutoDreamConfig` moved to `nexo-config::types::dream` (avoids
+  dep cycle); nexo-dream re-exports + adds `validate()` helper.
+  Tests verde: nexo-dream 48, nexo-driver-types 1, nexo-driver-loop 104,
+  nexo-config 150+. AgentConfig field + main.rs boot wiring split as
+  **80.1.b.b** follow-up because adding `auto_dream` field to
+  `AgentConfig` breaks 30+ struct-literal test fixtures across
+  the workspace; needs a coordinated multi-crate sweep.
+- **80.1.c** — `dream_now` LLM tool ✅ **MVP** — shipped:
+  `crates/dream/src/tools.rs` (~250 LOC + 9 unit tests).
+  `DreamNowTool { runner: Arc<AutoDreamRunner>, transcript_dir: PathBuf }`
+  implements `ToolHandler::call(ctx, args)`: extracts optional
+  `args.reason: string` (defensive — empty / missing / non-string
+  collapse to `"no reason given"`), reads `ctx.session_id`
+  (errors if missing because forced runs need a goal anchor),
+  builds `DreamContext { goal_id, session_id, transcript_dir,
+  kairos_active: false, remote_mode: false }`, calls
+  `runner.run_forced(&ctx)` (bypasses kairos+remote+time+session
+  gates per `AutoDreamRunner::run_forced` — lock gate still
+  honored). `outcome_to_json` maps all 6 `RunOutcome` variants
+  to a structured JSON response (`status: "completed" | "skipped" |
+  "lock_blocked" | "errored" | "timed_out" | "escape_audit" |
+  "force_completed"`, plus `reason`, `audit_run_id`, `files_touched`,
+  `error_message` as applicable). `register_dream_now_tool(registry,
+  runner, transcript_dir)` boot helper registers the tool via
+  `register_arc`. `tool_def()` returns `ToolDef { name: "dream_now",
+  description, parameters: { type: "object", properties: { reason: {
+  type: "string", description: "Optional human-readable reason..." }},
+  additionalProperties: false } }`. **Capability gate entry deferred**
+  as 80.1.c.b — `crates/setup/src/capabilities.rs::INVENTORY` write
+  needs the gate-id to align with Phase 16's binding-policy schema
+  (gate is `dream_now` opt-in; default `deny` for non-`assistant_mode`
+  bindings); standalone tool registration shipped + provider-agnostic
+  contract verified (no Anthropic-specific types in public surface).
+  Mirror leak: forced consolidation pattern from
+  `claude-code-leak/src/services/autoDream/autoDream.ts:102-179`
+  (`runAutoDream` callable directly when manual trigger present),
+  Phase 77.20 Sleep tool shape (string param + JSON response).
+  3-line main.rs hookup snippet (build runner via 80.1.b.b.b helper,
+  call `register_dream_now_tool(&registry, runner, transcript_dir)`)
+  documented in module doc comment for operator-side application.
+  Tests verde: 9 inline (tool_def_shape, call_with_reason_returns_completed,
+  call_without_reason_uses_default, call_with_empty_reason_uses_default,
+  call_with_non_string_reason_uses_default, call_without_session_id_errors,
+  outcome_to_json_skipped_renders_gate, register_dream_now_tool_adds_to_registry,
+  outcome_to_json_lock_blocked_renders_holder_pid).
+  nexo-dream cumulative: 64 tests verde (55 + 9).
+- **80.1.c.b** — capability gate INVENTORY entry ✅ **MVP** —
+  shipped: `crates/setup/src/capabilities.rs::INVENTORY` appends
+  `CapabilityToggle { extension: "dream", env_var:
+  "NEXO_DREAM_NOW_ENABLED", kind: Boolean, risk: Medium, effect:
+  ..., hint: "export NEXO_DREAM_NOW_ENABLED=true" }` so
+  `nexo setup doctor capabilities` lists the host-level dream_now
+  gate. `crates/dream/src/tools.rs::register_dream_now_tool` now
+  reads the env via `is_dream_now_env_enabled()` (mirror of
+  `evaluate_one` Boolean coercion — `true`/`1`/`yes` truthy,
+  case-insensitive, trimmed) and short-circuits with
+  `tracing::info!("dream_now: host-level capability gate closed")`
+  when unset / falsy. Two-layer gate: (1) host env (this entry,
+  default deny) ∧ (2) Phase 16 per-binding `allowed_tools`
+  (verified existing schema accepts arbitrary tool names — no
+  schema change required). 7 nexo-setup capability tests verde
+  including `inventory_has_expected_entries` extended with 3 new
+  asserts (env var present, extension `"dream"`, risk `Medium`,
+  kind `Boolean`); 12 nexo-dream tools tests verde adding 4 new
+  (`register_dream_now_skips_when_env_disabled`,
+  `register_dream_now_skips_when_env_garbage`,
+  `register_dream_now_registers_for_truthy_variants` covering 6
+  truthy variants, `register_dream_now_skips_for_falsy_variants`
+  covering 6 falsy + edge variants). Pulled `anyhow` from dev-deps
+  to `[dependencies]` in `crates/dream/Cargo.toml` (pre-existing
+  drift — `tools.rs` lib code used `anyhow::Result` but workspace
+  build only worked when nexo-dream was compiled with dev-deps).
+  Provider-agnostic: env-var gate runs BEFORE LLM dispatch — works
+  under any `Arc<dyn LlmClient>` impl. Mirror leak
+  `claude-code-leak/src/services/autoDream/autoDream.ts:95-107`
+  composed-flag `isGateOpen` (we collapse to a single env var
+  because per-binding allow/deny lives in Phase 16). nexo-dream
+  cumulative: 67 tests verde (64 + 3 new + replaces existing
+  register_dream_now_tool_adds_to_registry which now sets the env
+  before calling).
+- **80.1.d** — `nexo agent dream {tail|status|kill}` CLI subcommand
+  ✅ **MVP** — shipped: `src/main.rs::Mode::AgentDream(AgentDreamSubcommand)`
+  + `enum AgentDreamSubcommand { Tail | Status | Kill }` + 4 parser
+  arms + dispatch arm + 3 async run fns + 1 helper. **Tail**: opens
+  `dream_runs.db?mode=ro` via `SqliteDreamRunStore::open`, calls
+  `tail(n)` or `tail_for_goal(goal, n)`, renders markdown table or
+  JSON. **Status**: parses uuid, calls `get(uuid)`, renders full
+  row + last 5 turns. **Kill**: parses uuid, fetches row, returns
+  early-noop when status already terminal (`Completed` / `Failed` /
+  `Killed` / `LostOnRestart`), warn-and-bail with exit 2 when row
+  is `Running` and `--force` is absent, otherwise calls
+  `update_status(Killed)` + `finalize(now())` and (when
+  `--memory-dir` provided) `ConsolidationLock::rollback(prior_mtime)`.
+  Path resolution 3-tier (`--db` > `NEXO_STATE_ROOT` env > XDG
+  default `~/.local/share/nexo/state/dream_runs.db`); YAML tier
+  intentionally absent for now since `agents.state_root` does not
+  exist as a config field (state_root flows into `BootDeps`
+  directly per 80.1.b.b.b). `DreamRunRow` gained `Serialize +
+  Deserialize` derives so the `--json` path can `serde_json::
+  to_string_pretty(&rows)` without an intermediate type. Workspace
+  Cargo.toml gained `nexo-dream` + `nexo-driver-types` + `dirs = "5"`
+  in `[dependencies]` and `tempfile = "3"` in `[dev-dependencies]`
+  (rust-analyzer-flagged drift left over from Phase 80.1.c —
+  M8.a CHANGELOG entry called this out as a binary-build blocker;
+  this entry resolves it). 11 inline tests in `src/main.rs::tests`:
+  `resolve_dream_db_path_override_wins`,
+  `resolve_dream_db_path_uses_env_when_no_override`,
+  `short_uuid_takes_first_eight_chars`,
+  `run_agent_dream_tail_empty_db_exits_zero`,
+  `run_agent_dream_tail_with_rows_renders`,
+  `run_agent_dream_tail_json_output`,
+  `run_agent_dream_status_not_found_errors`,
+  `run_agent_dream_status_returns_row`,
+  `run_agent_dream_status_invalid_uuid_errors`,
+  `run_agent_dream_kill_already_terminal_is_noop`,
+  `run_agent_dream_kill_running_with_force_flips_status`. All 11
+  verde. CLI smoke: `NEXO_STATE_ROOT=/tmp/nexo-test/state ./target/
+  debug/nexo agent dream tail` → "(no dream runs recorded yet — db
+  not found at /tmp/nexo-test/state/dream_runs.db)" exit 0;
+  `agent dream tail --json` → `[]` exit 0; `agent dream status
+  <bogus-uuid>` → exit 1 "dream_runs DB not found". Mirror leak
+  `claude-code-leak/src/components/tasks/BackgroundTasksDialog.tsx:281,315-317`
+  `DreamTask.kill(taskId, setAppState)` semantics, but as CLI
+  rather than Ink UI keyboard since nexo has no Ink-equivalent.
+  Provider-agnostic by construction (pure SQLite + filesystem;
+  zero LLM-provider touchpoints). Remaining 80.1.d.b (live abort
+  via NATS subject contract — needs Phase 80.11 inbox), 80.1.d.c
+  (`agent dream now` operator force trigger — needs daemon-runtime
+  tool dispatch plumbing), parser unit tests deferred (covered by
+  manual smoke + run-fn tests).
+- **80.1.e** — Coordination skip (scoring sweep ↔ fork-pass) ✅
+  **MVP** — shipped: **PIVOTED** del plan original "buffer pattern
+  `_pending_promotions.md`" al **SKIP pattern** alineado con leak
+  `extractMemories.ts:121-148` `hasMemoryWritesSince`. El buffer
+  original era complejidad inventada (drain ordering, secret guard
+  scoping sobre buffer, race en archivo de buffer); el leak resuelve
+  el race entre dos memory-writers haciendo SKIP, no buffer. Cero
+  archivos artifact en memory_dir, cero drain logic, cero serde
+  churn. Nuevo trait `nexo_driver_types::ConsolidationLockProbe`
+  (`crates/driver-types/src/consolidation_lock_probe.rs`, ~30 LOC
+  + 1 trait-object-safety test) sentado upstream de `nexo-dream` y
+  `nexo-core` (mismo cycle-break que 80.1.b `AutoDreamHook` y 80.1.g
+  `MemoryCheckpointer`). Método `is_live_holder(&self) -> bool` SYNC
+  (no async — es un stat + parse + kill(0), no surprise I/O); fail-
+  open documentado. Impl en `crates/dream/src/consolidation_lock.rs`
+  para `ConsolidationLock` (~15 LOC + 5 inline tests:
+  `probe_returns_false_when_lock_absent`,
+  `probe_returns_false_for_pid_zero` (rollback marker),
+  `probe_returns_true_for_live_pid` (usa `std::process::id()` para
+  evitar surpresas de PID 1 en sandbox), `probe_returns_false_for_dead_pid`
+  (PID 999999 fuera del pid_max típico),
+  `probe_returns_false_for_garbage_body`). Lectura del lock-file
+  con `std::fs::read_to_string`, parse del PID body, `is_pid_running`
+  reusing existing fn at `consolidation_lock.rs:217`. Cualquier I/O
+  o parse error → `false` (fail-open). En `nexo-core::agent::dreaming`,
+  `DreamReport` gana field `deferred_for_fork: bool` y `DreamEngine`
+  gana field `consolidation_probe: Option<Arc<dyn ConsolidationLockProbe>>`
+  + builder `with_consolidation_probe(probe)`. `run_sweep` chequea
+  el probe AL INICIO (después del log "dream sweep started", antes
+  de cualquier query a SQLite) — si `probe.is_live_holder() == true`,
+  retorna early con `DreamReport { deferred_for_fork: true,
+  candidates_considered: 0, promoted: vec![], skipped_already_promoted: 0,
+  ... }` y log info "dream sweep deferred — autoDream fork holds
+  consolidation lock". Sin probe → behaviour idéntico a pre-80.1.e
+  (preservación de compatibilidad backward). Trade-off documentado:
+  promociones del scoring sweep durante la ventana del fork se
+  difieren al siguiente turno — memorias hot siguen scoring high
+  next turn, costo es a lo sumo un turno de latencia, mucho menor
+  que la complejidad del buffer. 3 nuevos tests en
+  `nexo-core::agent::dreaming::tests`:
+  `run_sweep_proceeds_when_no_probe_configured` (probe `None` →
+  promotion normal),
+  `run_sweep_proceeds_when_probe_says_dead` (probe `Some` con
+  `MockProbe::new(false)` → promotion normal, `deferred_for_fork:
+  false`),
+  `run_sweep_skips_when_probe_says_live` (probe `Some` con
+  `MockProbe::new(true)` → `deferred_for_fork: true`, sin
+  candidates considered, sin MEMORY.md, SQLite ledger sin
+  promotion entry — verifica que NADA se escribió). Mock probe
+  con `AtomicBool` toggleable para tests deterministas. Tests
+  totales verde: nexo-driver-types 24 (23 + 1 nuevo), nexo-dream
+  consolidation_lock 5 nuevos (72 totales), nexo-core dreaming 8
+  (5 existing + 3 nuevos), 67+ nexo-dream tests siguen verde,
+  workspace build verde. Provider-agnostic: pure filesystem +
+  POSIX PID semantics; cero touchpoints LLM-provider; transversal
+  Anthropic / MiniMax / OpenAI / Gemini / DeepSeek / xAI / Mistral.
+  Defense-in-depth preservada: AutoMemFilter (Phase 80.20) ∧
+  ConsolidationLock ∧ secret guard de Phase 77.7 ∧ MAX_COMMIT_FILE_BYTES
+  + ahora también la coordination skip que evita race en MEMORY.md
+  writes. main.rs hookup para construir
+  `Arc::new(ConsolidationLock::new(memory_dir, holder_stale)) as Arc<dyn
+  ConsolidationLockProbe>` cuando `dreaming.enabled && auto_dream.is_some()`
+  documentado en doc-comment del builder — diferido hasta resolución
+  de dirty state pre-existente. Out of scope deferred: 80.1.e.b
+  (revivir buffer pattern si aparece evidencia de que el SKIP pierde
+  promotions importantes), 80.1.e.c (sweep-during-fork via parallel
+  write a archivo distinto). Mirror leak path:line directo:
+  `claude-code-leak/src/services/extractMemories/extractMemories.ts:121-148`
+  `hasMemoryWritesSince` SKIP pattern adaptado a lock-based variant.
+- **80.1.g** — wire git auto-commit a AutoDream fork-pass ✅ **MVP**
+  — shipped: nuevo trait `nexo_driver_types::MemoryCheckpointer`
+  (`crates/driver-types/src/memory_checkpoint.rs`, ~25 LOC + 1
+  trait-object-safety test) sentado upstream de `nexo-dream` y
+  `nexo-core` (mismo cycle-break que el `AutoDreamHook` de Phase
+  80.1.b). Adapter `MemoryGitCheckpointer { repo: Arc<MemoryGitRepo> }`
+  en `crates/core/src/agent/workspace_git.rs` (~25 LOC + 2 tests
+  `checkpointer_async_calls_commit_all` y
+  `checkpointer_returns_ok_on_clean_worktree`) envuelve el
+  `commit_all` blocking en `tokio::task::spawn_blocking`; orphan
+  rule de Rust forzó newtype porque `impl ForeignTrait for
+  Arc<Local>` no compila. `AutoDreamRunner` gana field
+  `git_checkpointer: Option<Arc<dyn MemoryCheckpointer>>` + builder
+  `with_git_checkpointer(ckpt)` + observability accessor
+  `has_git_checkpointer()`. `run` invoca el checkpointer DESPUÉS
+  de `audit.update_status(Completed) + finalize` y SOLO cuando
+  `progress.touched.is_empty() == false` (D-2 — empty touches no
+  generan commits vacíos; el audit row en `dream_runs.db` queda
+  como única fuente de verdad). Helper `build_checkpoint_body(run_id,
+  files)` formato `audit_run_id: <uuid>\n\n- path1\n- path2\n` para
+  `git log --grep auto_dream` cross-link al audit row. Failure del
+  checkpointer → `tracing::warn!` SIN downgrade del outcome
+  (forensics es bonus, no bloqueante). `BootDeps` gana field
+  `git_checkpointer: Option<Arc<dyn MemoryCheckpointer>>`,
+  `boot::build_runner` lo cablea con `with_git_checkpointer(ckpt)`
+  y emite `git_checkpoint_wired` en el log de boot. main.rs hookup
+  para construir `MemoryGitCheckpointer::new(Arc::clone(&agent_git))
+  as Arc<dyn MemoryCheckpointer>` queda documentado en doc-comment
+  de `auto_dream.rs::with_git_checkpointer` — diferido hasta que
+  el usuario resuelva su dirty state pre-existente con la hookup
+  de `nexo_dream::boot::build_runner` general. 4 nuevos tests en
+  `nexo-dream::auto_dream::tests`: `build_checkpoint_body_renders_run_id_and_paths`,
+  `build_checkpoint_body_renders_empty_file_list`,
+  `with_git_checkpointer_setter_round_trips`,
+  `checkpoint_skipped_when_files_touched_empty` (verifica el guard
+  `if !empty`),
+  `checkpoint_failure_does_not_downgrade_completed_outcome`
+  (verifica que `Err` del checkpointer no se propaga como Errored).
+  `RecordingCheckpointer` mock impl con `AtomicUsize` counter y
+  modo `failing()` para tests defensivos. Tests verde:
+  nexo-driver-types 1 nuevo (23 total), nexo-core 2 nuevos
+  (`workspace_git::tests::checkpointer_*`), nexo-dream 16 en
+  `auto_dream` (12 + 4 nuevos) + 4 en `boot` (todos con
+  `git_checkpointer: None` en mk_deps fixture). 67 tests nexo-dream
+  totales verde. Mirror leak: NO hay precedente de
+  `autoDream → git commit` en `claude-code-leak/` —
+  `memdir/paths.ts:14` usa git solo para localizar memory dir;
+  `memoryTypes.ts:187` documenta explícitamente que el leak NO
+  duplica info git en memoria. Phase 10.9 git-backed memory es
+  innovación nexo-específica; este sub-phase extiende esa parity
+  al fork-pass deep consolidation. **Provider-agnostic**: trait
+  permite cualquier checkpointer (git, S3, dual-write audit log);
+  zero touchpoints LLM-provider; pure infra layer. Defense-in-depth
+  preservada: AutoMemFilter (Phase 80.20 sandbox físico) ∧
+  ConsolidationLock ∧ secret guard de Phase 77.7 (transparent vía
+  `MemoryGitRepo::with_guard`) ∧ MAX_COMMIT_FILE_BYTES (1 MB) ∧
+  `Mutex<Repository>` serialización. Out of scope (deferred):
+  80.1.g.b commit on Killed con subject `KILLED` (revisar cuando
+  haya demanda), 80.1.d.d auto `git revert HEAD` en kill.
+- **80.1.f** — docs sweep autoDream cluster ✅ **MVP** — shipped:
+  extendido `docs/src/soul/dreaming.md` (no nueva página, single
+  point of truth para consolidation). 7 nuevas secciones append
+  ~370 LOC: (1) **Two-tier consolidation: light + deep** con tabla
+  comparativa (crate / cadence / cost / writes / failure mode /
+  coordination / mirror leak); (2) **Deep pass via fork** con 7
+  gates (kairos / remote / auto_memory / auto_dream / time / scan-
+  throttle / session) + ConsolidationLock semantics (mtime IS
+  lastConsolidatedAt + holder_stale 1h + canonicalize symlink
+  defense) + 4-phase prompt (Orient → Gather → Consolidate → Prune)
+  + AutoMemFilter restricciones (FileRead/Glob/Grep/REPL libres,
+  Bash via `is_read_only`, FileEdit/Write scoped a memory_dir) +
+  post-fork escape audit + MAX_TURNS=30 cap; (3) **Coordination:
+  skip pattern** explicando que cuando ambos pases están enabled,
+  el light pass chequea probe al inicio y defiere con
+  `deferred_for_fork: true` cuando lock held; trade-off documentado;
+  mirror leak `extractMemories.ts:121-148`; (4) **Audit trail** con
+  schema completa de `dream_runs` SQLite table (id / goal_id /
+  status / phase / sessions_reviewing / prior_mtime_ms /
+  files_touched JSON / turns JSON / started_at / ended_at /
+  fork_label / fork_run_id) + git commits con subject `auto_dream:
+  N file(s) consolidated` y body con `audit_run_id` + cross-link
+  example `git log --grep auto_dream | nexo agent dream status`;
+  (5) **Operator CLI** con 3 sub-comandos `tail|status|kill` +
+  4-5 ejemplos cada uno (incl. `--json`, `--goal`, `--n`, `--force`,
+  `--memory-dir`, `--db`) + 3-tier path resolution `--db > NEXO_STATE_ROOT
+  > XDG default`; (6) **LLM tool dream_now** con JSON tool shape
+  + JSON envelope output (6 outcomes: completed / skipped / lock_blocked
+  / errored / timed_out / escape_audit) + capability gate two-layer
+  (host env `NEXO_DREAM_NOW_ENABLED=true` ∧ Phase 16 `allowed_tools`
+  binding policy) + ejemplo de `nexo setup doctor capabilities`
+  output; (7) **Configuration** con yaml block ejemplo + boot log
+  output + asimetría documentada (auto_dream off no afecta light,
+  dreaming off no afecta deep). Sección final **See also** con
+  cross-links a Phase 10.9 / 18 / 77.7 / 80.18 / 80.20 + 5 leak
+  paths con line ranges (autoDream.ts / consolidationLock.ts /
+  consolidationPrompt.ts / extractMemories.ts / BackgroundTasksDialog.tsx).
+  `mdbook build docs` smoke verde — sin broken links. `docs/src/SUMMARY.md`
+  link `[Dreaming](./soul/dreaming.md)` ya existente, no requirió
+  cambio. Página final ~560 LOC (era 186, +370). admin-ui panel +
+  separate `concepts/kairos-mode.md` / `operations/cron-jitter.md`
+  pages quedan reservadas para 80.21 (broader Phase 80 docs sweep,
+  no cluster 80.1.x). OpenClaw
+  `research/docs/concepts/dreaming.md` proveyó plantilla estructural
+  (tabla phase model) sin copiar texto.
+  Provider-agnostic: zero LLM-provider en ejemplos; todo
+  el flow funciona bajo Anthropic / MiniMax / OpenAI / Gemini /
+  DeepSeek / xAI / Mistral. Cluster 80.1.x core ahora cerrado
+  (todas las sub-fases 80.1.x ✅ MVP except 80.1.d.b/c
+  follow-ups).
+
+Today `dreaming.rs` is a deterministic scoring sweep that
+promotes high-recall memories to `MEMORY.md`. KAIROS's
+autoDream is a *forked subagent* that grep-scans transcript
+JSONL files, reads the existing memory dir, rewrites
+top-level `*.md` files, and prunes the index. The two are
+complementary: the scoring sweep is the cheap "light pass"
+that runs every turn; the fork is the expensive "deep pass"
+that runs once per ≥24 h when ≥5 sessions accumulated.
+
+**Reference (PRIMARY)**: `claude-code-leak/src/services/autoDream/autoDream.ts:1-324`
++ `consolidationLock.ts:1-140`
++ `consolidationPrompt.ts:1-65`
++ `config.ts:1-22`
++ `claude-code-leak/src/utils/forkedAgent.ts` (`runForkedAgent`,
+  `createCacheSafeParams`, `skipTranscript:true` semantics).
+**Reference (secondary)**: extend `crates/core/src/agent/dreaming.rs`
+with a new `deep_pass_via_fork()` entry point; reuses
+`crates/memory/` write paths and the SQLite promotion ledger
+already there for idempotency.
+
+**Control flow** (mirror `autoDream.ts:isGateOpen` →
+`runAutoDream` → completion / failure):
+
+1. **Gates** (cheapest first):
+   `kairos_active == false` (KAIROS uses disk-skill `/dream`
+   instead — skip when KAIROS active to avoid double-fire)
+   ∧ `is_remote_mode() == false`
+   ∧ `is_auto_memory_enabled() == true`
+   ∧ `is_auto_dream_enabled()` (binding flag + `agents.yaml`
+   `dreaming.deep.enabled`).
+2. **Time gate**: `hours_since(read_last_consolidated_at()) ≥ min_hours` (default 24).
+3. **Scan throttle**: bail if `last_session_scan_at` was
+   `< 10 min ago` AND time gate passed (avoids re-stat
+   stamping on every turn — `autoDream.ts:55-58`).
+4. **Session gate**: `list_sessions_touched_since(last_at)`
+   excluding current → require ≥ `min_sessions` (default 5).
+5. **Lock acquire**: `try_acquire_consolidation_lock()`
+   returns prior mtime or `None` if blocked by live PID.
+6. **Fork**: spawn forked goal with cache-safe params +
+   `skip_transcript: true` + `can_use_tool` whitelist (80.20)
+   + `consolidation_prompt`.
+7. **Completion**: `complete_dream_task()`, append a system
+   message "Improved N memory files" if `files_touched.len() > 0`.
+8. **Failure**: if `abort_signal.is_aborted()` → user kill
+   path, lock already rolled back by `DreamTask::kill()`.
+   Else: `fail_dream_task()` + `rollback_consolidation_lock(prior_mtime)`.
+
+**ConsolidationLock** (Rust port of `consolidationLock.ts`):
+- File: `<memory_dir>/.consolidate-lock`
+- mtime IS `lastConsolidatedAt` (one stat per turn — cheap)
+- Body is the holder's PID
+- Stale if PID dead OR `now - mtime ≥ 1 h` (HOLDER_STALE_MS)
+- `try_acquire`: write PID, re-read, return prior mtime or
+  `None` if lost the race / blocked by live PID
+- `rollback(prior)`: if prior == 0 → `unlink`; else clear
+  body + `utimes(prior)`. Idempotent — `kill()` rolling back
+  twice is safe because second call sees mtime already at
+  prior
+
+**ConsolidationPrompt** (verbatim port of
+`consolidationPrompt.ts:10-65`'s 4-phase prompt — orient,
+gather, consolidate, prune; index ≤ 25 KB / `MAX_ENTRYPOINT_LINES`).
+Add `extra` block with read-only Bash constraint reminder
+(matches `autoDream.ts:216-221`).
+
+**Done criteria**:
+- New crate `crates/dream/` (or sub-module under `crates/core`)
+  with `auto_dream`, `consolidation_lock`, `consolidation_prompt`
+  modules
+- Lock file lives at `<auto_mem_path>/.consolidate-lock`
+- 4 unit tests: gate ordering, lock-mtime-is-last-consolidated,
+  rollback idempotent, scan throttle blocks repeat fires
+- 1 integration test: two parallel `try_acquire` calls →
+  exactly one wins, the other gets `None`
+- Hooked into `cron_runner` via a built-in entry that fires
+  every `min_hours / 4` (gate handles real cadence)
+
+#### 80.2 — Cron jitter 6-knob hot-reload config   ✅ MVP
+
+Shipped together with 80.3-80.6 as the cron jitter cluster.
+
+- `crates/config/src/types/cron_jitter.rs` — `CronJitterConfig`
+  with the six knobs (`enabled`, `recurring_frac`,
+  `recurring_cap_ms`, `one_shot_max_ms`, `one_shot_floor_ms`,
+  `one_shot_minute_mod`, plus the recurring auto-expiry
+  `recurring_max_age_ms`). `#[serde(default)]` keeps existing
+  YAML rolling forward; `validate()` rejects out-of-range knobs
+  at boot.
+- `from_legacy_pct(pct)` shim keeps `CronRunner::with_jitter_pct`
+  callers working without YAML changes — `pct/100.0` maps to
+  `recurring_frac`.
+- `CronRunner` now holds an `Arc<ArcSwap<CronJitterConfig>>` so a
+  Phase 18 reload swaps the config atomically and the running
+  tick observes the new value on the next read.
+- 8 unit tests on the schema + 1 test on the runner killswitch.
+
+
+
+Today `CronRunner::with_jitter_pct(pct)` is a single static
+percentage. KAIROS exposes 6 knobs through
+`tengu_kairos_cron_config` refreshed every 60 s with Zod
+validation. Operators need the same 6 levers as an incident
+shed-load tool.
+
+**Reference (PRIMARY)**: `claude-code-leak/src/utils/cronJitterConfig.ts:1-78`
+(the Zod schema + refresh interval) + `cronTasks.ts:286-333`
+(`CronJitterConfig` defaults).
+**Reference (secondary)**: `crates/core/src/cron_runner.rs:184`
+(`with_jitter_pct`) + `crates/config/src/types/` (add new
+`CronJitterYaml` block) + Phase 18 hot-reload watcher.
+
+**Knobs** (Rust port — `serde` validation, sane defaults):
+```rust
+pub struct CronJitterConfig {
+    pub recurring_frac: f32,        // [0.0, 1.0]
+    pub recurring_cap_ms: u64,      // ≤ 30 min
+    pub one_shot_max_ms: u64,       // ≤ 30 min
+    pub one_shot_floor_ms: u64,     // ≤ one_shot_max_ms
+    pub one_shot_minute_mod: u8,    // [1, 60]
+    pub recurring_max_age_ms: u64,  // ≤ 30 days
+}
+```
+Validation rejects whole config on any out-of-range value
+(falls back to defaults — defense-in-depth against a bad
+hot-reload).
+
+**Done criteria**:
+- `agents.yaml::cron.jitter` block accepts 6 knobs
+- ConfigReloadCoordinator pushes new config into `CronRunner`
+  via `ArcSwap<CronJitterConfig>` so the next tick reads the
+  refreshed value (no restart needed)
+- Bad config logs `WARN` and keeps prior config
+- 3 unit tests: defaults, valid override, invalid override
+  rejected wholesale
+
+#### 80.3 — Cron task-id-derived deterministic jitter   ✅ MVP
+
+`jitter_frac_from_entry_id(entry_id)` consumes the first 8 hex
+chars of the (UUID) entry id and maps them to `[0.0, 1.0)` via
+`u32::from_str_radix(...) / (u32::MAX as f64 + 1.0)`. Because the
+id is stable across retries, a flapping entry lands on the same
+offset within its window every time — operators reading
+`next_fire_at` for a given row see a stable target instead of
+chasing a moving timestamp.
+
+Edge cases covered: short id, non-hex id (returns `0.0`,
+collapses to "no jitter" rather than panic), id with separators.
+
+
+
+Today jitter is RNG-based (different per fire). Per
+`cronTasks.ts:381-398`, KAIROS derives the jitter fraction
+deterministically from the task-id:
+`jitterFrac(taskId) = parseInt(taskId.slice(0,8), 16) / 0x1_0000_0000`.
+This way a retry doesn't move the firing target — important
+when an operator is using cron jitter as a herd-shed
+mechanism.
+
+**Reference (PRIMARY)**: `claude-code-leak/src/utils/cronTasks.ts:381-398`.
+**Reference (secondary)**: `crates/core/src/cron_runner.rs::apply_jitter`
+(rewrite to take `entry_id: &str`).
+
+**Done criteria**:
+- `apply_jitter(next_fire, now, &entry.id, &cfg)` — signature
+  change ripple
+- Same `entry.id` always returns the same jitter for the same
+  `(next_fire, cfg)`
+- Property test: 1000 random entry-ids → uniform distribution
+  over `[0, recurring_cap_ms)`
+
+#### 80.4 — Cron one-shot vs recurring jitter modes   ✅ MVP
+
+Two pure helpers in `crates/core/src/cron_schedule.rs`:
+
+- `apply_recurring_jitter(next, following, from, entry_id, cfg)`
+  — forward jitter `t1 + min(frac * (t2 - t1), cap_ms)`. Clamps
+  to `from_unix + 1` when the offset would land in the past
+  (e.g. when the runner ticks while a fire is already due).
+- `apply_one_shot_lead(target, from, entry_id, cfg, target_minute)`
+  — backward lead `target - max(frac * max_ms, floor_ms)`, gated
+  by `target_minute % cfg.one_shot_minute_mod == 0`.
+  `one_shot_minute_mod = 0` is the documented "never jitter
+  one-shots" sentinel and short-circuits before the modulo.
+
+Both helpers no-op when `cfg.enabled == false` so the killswitch
+also dampens jitter-only behaviour.
+
+
+
+Per `cronTasks.ts:421-445`: recurring jobs use **forward**
+jitter `t1 + min(frac * (t2-t1), cap_ms)` (after natural fire
+time, jitter capped). One-shot jobs use **backward lead**:
+`max(t1 - lead, fromMs)` only if
+`t1.minute() % one_shot_minute_mod == 0` (default mod 30 →
+only :00 / :30 boundaries). Lead range:
+`[one_shot_floor_ms, one_shot_max_ms)`.
+
+**Reference (PRIMARY)**: `claude-code-leak/src/utils/cronTasks.ts:381-445`.
+**Reference (secondary)**: `crates/core/src/cron_runner.rs`
+(branch on `entry.recurring`).
+
+**Done criteria**:
+- Recurring path uses `min(frac * delta, cap)` forward
+- One-shot path: skip when minute % mod ≠ 0; otherwise
+  uniform lead in `[floor, max)` clamped to `entry.created_at`
+- Unit tests: pinned-date recurring (t2 == None) → no jitter;
+  one-shot at :15 → no jitter; one-shot at :30 → uniform lead
+
+#### 80.5 — Cron `permanent` flag + `recurringMaxAgeMs`   ✅ MVP
+
+- `CronEntry` gains a `permanent: bool` column with
+  `#[serde(default)]` (false). Idempotent
+  `ALTER TABLE ... ADD COLUMN permanent INTEGER NOT NULL DEFAULT 0`
+  on boot, mirroring the existing `recipient` / `model_provider`
+  migrations.
+- `CronStore::sweep_expired_recurring(now, max_age_ms)` deletes
+  recurring rows older than `max_age_ms` while exempting
+  `permanent: true`. Honours `max_age_ms == 0` as "auto-expiry
+  disabled" so the default config is a no-op.
+- One-shot rows are never auto-expired by this sweep — the retry
+  policy is the boundary that decides whether a one-shot is
+  abandoned.
+
+3 unit tests cover the recurring delete, permanent exemption,
+one-shot preservation; plus a column round-trip test through
+`SqliteCronStore`.
+
+
+
+Built-in cron tasks (assistant mode catch-up,
+morning-checkin, dream) need exemption from
+`recurring_max_age_ms` auto-expiry. KAIROS gates this with
+a `permanent: true` flag. Without it, an idle daemon's
+built-ins would silently disappear after 30 days.
+
+**Reference (PRIMARY)**: `claude-code-leak/src/utils/cronTasks.ts`
+(`permanent` field + auto-expiry sweep).
+**Reference (secondary)**: extend `nexo_core::cron::CronEntry`.
+
+**Done criteria**:
+- `CronEntry::permanent: bool` (defaults `false`)
+- Auto-expiry sweep (`prune_old_entries`) skips
+  `permanent: true` rows
+- Setup wizard registers built-ins with `permanent: true`
+- Unit test: 31-day-old `permanent=true` entry survives sweep
+
+#### 80.6 — Cron killswitch + missed-task surfacing   ✅ MVP
+
+- `CronRunner::tick_once` reads `cfg.enabled` at the top of each
+  tick. When `false` the loop short-circuits before
+  `due_at(...)` so paused entries stay durable in storage and
+  resume on the next `true` tick. `tracing::debug!` traces the
+  event for operator visibility.
+- `CronStore::sweep_missed_entries(now, skew_ms)` rewrites
+  `next_fire_at` to `i64::MAX` for every entry whose stored
+  `next_fire_at` is older than `now - skew_ms`. `permanent: true`
+  rows are exempt and `skew_ms == 0` is a no-op. Boot can call
+  this once (after migrations, before the first tick) so a
+  long-down daemon does not re-fire a stampede of "missed"
+  entries — the operator sees them in `cron list` and can resume
+  manually.
+- 3 unit tests on the sweep + 1 on the killswitch round-trip
+  (off → preserved → on → fires once).
+
+**Boot-side wire-up (deferred)**: the daemon entrypoint needs to
+call `store.sweep_missed_entries(...)` on startup with the
+operator-configured `skew_ms`. That hookup follows once the
+user-side dirty state on `src/main.rs` resolves — the helper is
+ready to call.
+
+
+
+Today CronRunner runs unconditionally as long as the daemon
+is up. KAIROS polls a kill-switch every tick
+(`isKilled?.()` + `tengu_kairos_cron` GrowthBook gate
+refreshed every 5 min). Flip-off stops in-flight schedulers
+mid-session, not just on next process boot. Plus, on initial
+load only, `findMissedTasks(tasks, now)` surfaces one-shots
+that should have fired while the daemon was offline; atomic
+`nextFireAt[id] = Infinity` prevents double-fire on the
+post-load tick.
+
+**Reference (PRIMARY)**: `claude-code-leak/src/utils/cronScheduler.ts:230-260`
+(killswitch poll inside `check()`) + `cronTasks.ts:193-227`
+(`findMissedTasks`).
+**Reference (secondary)**: `crates/core/src/cron_runner.rs::tick_once`.
+
+**Done criteria**:
+- `CronRunner` reads `enabled: bool` flag from
+  `Arc<RuntimeSnapshot>` each tick — `false` = no fires
+- Per-binding override `agents.<id>.cron.enabled: false`
+- On `CronRunner::run` start: scan store for one-shots
+  whose `next_fire < now - SAFETY_MARGIN`, surface via
+  `notify_origin` "[catch-up] N tasks missed while offline",
+  set `next_fire = i64::MAX` atomically
+- Integration test: 3 missed one-shots after a simulated
+  3-hour offline window → 1 catch-up notification, no
+  double-fire
+
+#### 80.7 — Cron scheduler per-cwd lock owner (multi-instance)   ⬜
+
+Today multiple `nexo` daemons sharing the same
+`agents.yaml` would double-fire cron entries. KAIROS uses a
+`.scheduler-lock` per cwd — only the lock owner runs
+`check()`, non-owners poll every 5 s for takeover. Less
+critical for single-daemon deployments but mandatory before
+we ship Phase 32 multi-host orchestration.
+
+**Reference (PRIMARY)**: `claude-code-leak/src/utils/cronScheduler.ts:406-436`
+(lock acquire / takeover / PID liveness).
+**Reference (secondary)**: extend `crates/core/src/cron_runner.rs`
+or factor into `crates/resilience/src/lock.rs` (advisory
+file lock — `fs2` crate already in deps).
+
+**Done criteria**:
+- Lock file at `<cron_store_dir>/.scheduler-lock` with PID
+  body
+- Non-owner polls 5 s; takes over when PID dead or stale
+  (mtime > 30 min)
+- Lock released on graceful shutdown (Phase 71 SIGTERM
+  drain hook)
+- Integration test: spawn 2 runners → only one fires, kill
+  the leader → the other takes over within 10 s
+
+**Note**: low-priority — flag as DEFERRED until Phase 32
+multi-host work needs it. Listed here for completeness.
+
+#### 80.8 — Brief mode + `send_user_message` tool (re-spec of 79.9)   ✅ MVP
+
+Brief mode tells the model that user-visible output flows through
+the new `send_user_message` tool, not free text. Free text remains
+visible in the detail view (no hide-filter yet — deferred 80.8.b),
+but the tool is registered and the system prompt nudges the model
+to route replies through it.
+
+- `crates/config/src/types/brief.rs` — `BriefConfig { enabled,
+  status_required, max_attachments }` with `#[serde(default)]`,
+  `validate()`, `from`-style helper `is_active_with_assistant_mode`.
+  6 schema tests verde (default / cap rejection / assistant-mode
+  short-circuit / explicit-enable / YAML round-trip).
+- `AgentConfig.brief: Option<BriefConfig>` field with
+  `#[serde(default)]`. 49+ workspace fixture sites swept.
+- `crates/core/src/agent/send_user_message_tool.rs` —
+  `SendUserMessageTool` (`name = "send_user_message"`) with 4
+  validation gates (message non-empty + size-cap, status enum,
+  attachment-count cap, attachment path/file/canon validation).
+  Output carries a `__nexo_send_user_message__` sentinel for
+  downstream renderers + `BriefStatus { Normal, Proactive }`
+  enum. `register_send_user_message_tool` is the boot helper.
+  Tool def adapts schema `required` to `cfg.status_required`.
+  16 tests verde (12 tool + 4 section gate).
+- System-prompt section: `BRIEF_SECTION` constant +
+  `brief_system_section(cfg, assistant_addendum_appended)` pure
+  helper. Wired into `llm_behavior.rs` immediately after the
+  Phase 80.15 assistant-mode addendum site, with the same
+  cache-friendly stable ordering. Section is *skipped* when the
+  assistant-mode addendum is already appended (avoid duplicating
+  the directive — assistant mode hard-codes the same instruction).
+
+**Robusto**: 4 ordered validation gates with typed errors; path
+canonicalize against the agent workspace; reject directories;
+hard 8 MiB body cap above the operator's `max_attachments` knob;
+absolute attachment paths handled distinctly from relative.
+**Óptimo**: stable system section (cache-warm), zero per-turn cost
+when brief disabled (`Option<BriefConfig>` short-circuits at the
+section gate AND the boot helper).
+**Transversal**: provider-agnostic — uses our `Tool` trait + JSON
+schema; no LlmClient assumptions.
+
+**Deferred follow-ups**:
+- **80.8.b** — channel-adapter hide-free-text filter. When brief
+  is on AND the adapter opts into `hide_free_text`, only
+  `send_user_message` calls render to the channel.
+- **80.8.c** — `/brief` CLI slash command for live toggling
+  through the setup wizard hook.
+- **80.8.d** — main.rs boot wiring of
+  `register_send_user_message_tool` per binding (waits on the
+  pre-existing dirty-state resolution upstream of this work).
+
+
+
+Phase 79.9 was opened as a "terse-mode toggle" but the leak's
+BriefTool is a *gating mechanism* on a `SendUserMessage`
+tool: when brief on, the agent's free-text output is hidden
+from the operator and only `SendUserMessage` calls render in
+the channel. Lets a long-running goal silence chatter and
+emit just checkpoints.
+
+**Reference (PRIMARY)**: `claude-code-leak/src/tools/BriefTool/BriefTool.ts:1-204`
++ `claude-code-leak/src/commands/brief.ts:1-130`.
+**Reference (secondary)**: extend `crates/core/src/agent/`
+with `brief_tool.rs` + `brief_state.rs`. Pairing channel
+adapters (Phase 26 WA/TG) consume `brief_only` flag.
+
+**Tool API** (Rust port):
+```rust
+SendUserMessage {
+    message: String,
+    attachments: Option<Vec<String>>,
+    status: BriefStatus,  // Normal | Proactive
+}
+```
+Returns `{ message, attachments?, sent_at: <ISO 8601> }`.
+
+**Activation** (`is_brief_enabled`):
+- `entitled` (build-time + binding-level `brief: enabled`)
+- AND `(kairos_active OR user_msg_opt_in)`
+- `user_msg_opt_in` set by: `--brief` CLI flag, `/brief`
+  slash command, `agents.<id>.brief.default_on: true`,
+  KAIROS daemon mode (`kairos_active == true`)
+- 5-minute live re-check interval (refresh `brief_config`
+  from binding policy via Phase 18 hot-reload)
+
+**/brief slash command**:
+- Toggle `brief_only` state on the active goal
+- Inject system reminder on next turn:
+  - On: "Use SendUserMessage tool for all user output —
+    plain text is hidden"
+  - Off: "SendUserMessage unavailable — reply with plain
+    text"
+
+**Channel adapter integration**:
+- WA + TG `PairingChannelAdapter` checks `brief_only`:
+  drops free-text messages, forwards `SendUserMessage`
+  payloads
+- Companion-tui (when shipped) renders a `[brief]` banner
+
+**Done criteria**:
+- New `crates/core/src/agent/brief_tool.rs` registers tool
+  with `is_enabled()` gating
+- `/brief` slash in companion-tui + `nexo agent brief
+  on|off|status <goal_id>` CLI
+- Phase 26 channel adapters honour `brief_only`
+- 6 unit tests: entitlement matrix, opt-in toggle, attachment
+  resolution, kairos-active forces brief, channel adapter
+  drop-vs-forward, refresh interval
+
+#### 80.9 — MCP channel routing + 5-step gate   ✅ MVP
+
+MCP channel servers become inbound surfaces — Slack bots,
+Telegram chats, iMessage relays. The runtime treats them as
+trusted user inputs, gated by a 5-step filter and routed via a
+NATS subject other processes can subscribe to. Outbound is
+already covered by Phase 12 MCP client.
+
+**Schema** (`crates/config/src/types/channels.rs`, ~250 LOC + 10
+tests verde): `ChannelsConfig { enabled, approved, max_content_chars }`
++ `ApprovedChannel { server, plugin_source }` + per-binding
+`InboundBinding.allowed_channel_servers`.
+
+**Gate** (`crates/mcp/src/channel.rs`, ~700 LOC + 39 tests verde):
+pure-fn `gate_channel_server` runs 5 ordered gates (capability,
+killswitch, session, marketplace, allowlist) with typed `SkipKind`
+reasons; `has_channel_capability` parses `experimental['nexo/channel']`
+truthiness; `wrap_channel_message` produces the `<channel
+source="...">...</channel>` XML with attribute-key whitelist +
+control-char escape. Inner content stays verbatim.
+
+**Inbound parsing**: `parse_channel_notification` →
+`ChannelInbound { server_name, content, meta, session_key }`.
+`ChannelParseError` thiserror-typed (UnexpectedMethod,
+MissingParams, MissingContent, InvalidMeta, EmptyServerName).
+Content cap + meta-key whitelist applied.
+
+**Session correlation**: `ChannelSessionKey::derive` picks the
+first known threading key (`thread_ts`, `chat_id`,
+`conversation_id`, `room_id`, `channel_id`, `thread_id`, `to`) so
+multi-thread channels route to consistent agent sessions.
+Deterministic across processes.
+
+**Cross-process routing**: `channel_inbox_subject(binding, server)`
+→ `mcp.channel.<binding>.<server>` (dot-stripped); wildcard
+`mcp.channel.>`. `ChannelDispatcher` async trait with
+`DispatchError`. `ChannelEnvelope { schema=1, binding_id, server_name,
+content, meta, session_key, rendered (XML), sent_at_ms,
+envelope_id }` — pre-renders the `<channel>` wrap so subscribers
+don't depend on this crate.
+
+**Per-process registry**: `ChannelRegistry`
+(`RwLock<BTreeMap<(binding,server), RegisteredChannel>>`) tracks
+active registrations; `SharedChannelRegistry = Arc<...>` typedef.
+
+**LLM-side introspection**
+(`crates/core/src/agent/channel_list_tool.rs`, ~140 LOC + 3 tests
+verde): `channel_list` tool returns
+`{ binding_id, count, servers: [ChannelSummary] }`. Read-only,
+auto-approve-friendly. `register_channel_list_tool` boot helper.
+
+**Defensive properties**: 5 ordered gates, each Skip with typed
+reason; XML attribute injection blocked at three layers
+(meta-key whitelist, value escape with control-chars + line
+breaks as numeric refs, source-attr escape); plugin-source
+mismatch surfaces a *distinct* `Marketplace` skip; content cap
+defends conversation context.
+
+**Counts**: 39 channel + 10 schema + 3 tool = **52 new tests
+verde**. Workspace: 397 nexo-mcp + 763 nexo-core + 193 nexo-config.
+
+**Deferred follow-ups**:
+
+- **80.9.b** ✅ MVP — permission relay protocol surface.
+  `crates/mcp/src/channel_permission.rs` (~620 LOC + 27 tests
+  verde) ships every wire frame + every primitive the
+  approval flow needs:
+  - `PERMISSION_REQUEST_METHOD`
+    (`notifications/nexo/channel/permission_request`) +
+    `PERMISSION_RESPONSE_METHOD`
+    (`notifications/nexo/channel/permission`) +
+    `PERMISSION_REQUEST_SCHEMA_VERSION = 1`.
+  - `PermissionBehavior { Allow, Deny }` enum with
+    `as_str()`, `parse(raw)` (case-insensitive),
+    `Serialize/Deserialize` round-trip.
+  - `PermissionRequestParams { schema, request_id, tool_name,
+    description, input_preview }` (outbound payload) +
+    `PermissionResponseParams { request_id, behavior }`
+    (inbound) + `PermissionResponse { request_id, behavior,
+    from_server }` (audit-shaped bundle the registrant
+    receives).
+  - `short_request_id(tool_use_id)` — FNV-1a hash + base-25
+    5-letter encode (alphabet a-z minus `l` to avoid the 1/I
+    confusable). Substring blocklist with re-hash on hit so
+    generated IDs never spell the obvious offensive
+    5-letter words. Verified against 2000 sampled inputs
+    in tests.
+  - `truncate_input_preview(value)` — JSON-serialise +
+    truncate to 200 chars with `…` suffix. `(unserializable)`
+    on serde failure.
+  - `parse_permission_reply(text)` — server-side helper
+    parsing `^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i`.
+    Lowercase prefix tolerated (phone autocorrect's
+    capitalisation), ID itself must be lowercase to keep
+    the alphabet's anti-confusable promise.
+  - `PendingPermissionMap` (`Mutex<HashMap<String,
+    oneshot::Sender>>`) — process-local rendezvous. `register`
+    returns the receiver; `resolve(response)` matches and
+    drops the sender (returns `false` when the receiver was
+    already dropped — that's the "lost the race to the
+    local prompt" case, not an error). `cancel(id)` releases
+    a pending entry without resolving. `len()` for telemetry.
+  - `parse_permission_response(method, params)` —
+    `ChannelParseError`-shaped error type
+    (`UnexpectedMethod` / `MissingParams` /
+    `MissingRequestId` / `InvalidBehavior`).
+  - `PermissionRelayDispatcher` async trait + thin
+    `McpPermissionRelayDispatcher<C>` impl. The seam where
+    the runtime asks a server to surface a prompt; the trait
+    keeps the approval flow testable against stubs.
+  - `ClientEvent::ChannelPermissionResponse { params }`
+    variant + `channel_permission_response_event(params)`
+    constructor. `client.rs` detects
+    `PERMISSION_RESPONSE_METHOD` and emits the typed event
+    with captured params (mirror of 80.9.c channel-message
+    detection).
+  - `events.rs` total: 4 new variants + 4 new tests verde.
+  - **Counts**: 450 nexo-mcp tests verde (was 421, +29 across
+    27 permission + 2 events).
+  - **Deferred 80.9.b.b** — the higher-level approval-flow
+    integration that races the channel reply against the
+    local prompt + writes the audit row. Lands in
+    `nexo-driver-permission` once it grows a pluggable
+    seam for "another approver might claim this." The
+    protocol surface above is complete and stable.
+- **80.9.c** ✅ MVP — live notification dispatch wiring at the
+  MCP client layer. `McpCapabilities.experimental: Value`
+  retains the raw block from `initialize` so
+  `has_channel_capability` can inspect it. New
+  `ClientEvent::ChannelMessage { params }` variant +
+  `channel_message_event(params)` constructor; `client.rs`
+  detects `CHANNEL_NOTIFICATION_METHOD` and emits the typed
+  event with captured params. `BrokerChannelDispatcher`
+  serialises `ChannelEnvelope` and publishes via `AnyBroker`
+  on `mcp.channel.<binding>.<server>`.
+  `ChannelInboundLoop` + `ChannelInboundLoopConfig` +
+  `ChannelInboundLoopHandle` drive the stream:
+  gate-once-on-spawn → register → consume `ChannelMessage`
+  events → `parse_channel_notification` →
+  `dispatcher.dispatch`. Survives parse errors + dispatch
+  failures + slow-consumer Lag; cleans up the registry on
+  cancel and on events-closed. 8 new tests verde (5 loop +
+  1 broker dispatcher + 2 events).
+- **80.9.d** ✅ MVP — agent-side bridge from
+  `mcp.channel.>` into the runtime as user inbound. New
+  `crates/mcp/src/channel_bridge.rs` (~390 LOC + 9 tests
+  verde) ships:
+  - `SessionRegistry` async trait + `InMemorySessionRegistry`
+    (`RwLock<BTreeMap<ChannelSessionKey, SessionEntry>>`)
+    with `resolve` (first-seen creates uuid, repeats refresh
+    timestamp), `gc_idle(max_idle_ms)` (`0` is no-op
+    sentinel), `len`, `snapshot`. Persistent SQLite-backed
+    impl deferred 80.9.d.b.
+  - `ChannelInboundEvent { binding_id, server_name,
+    session_id, session_key, content, meta, rendered,
+    envelope_id, sent_at_ms }` — typed payload the bridge
+    hands to the sink (no JSON re-parsing).
+  - `ChannelInboundSink` async trait + `SinkError` (Rejected
+    / Other). The caller decides which intake path the
+    message follows — typically synthesising an inbound on
+    `agent.intake.<binding_id>` so the existing pairing /
+    dispatch / rate-limit gates apply unchanged.
+  - `ChannelBridge` + `ChannelBridgeConfig` (broker, registry,
+    sink, subject defaults to `mcp.channel.>`,
+    `gc_interval_ms` default 5 min, `max_idle_ms` default
+    1 h). `spawn(cancel)` returns a `ChannelBridgeHandle`
+    with two join-handles: the consumer that drains the
+    broker subscription + an optional GC ticker. Both stop
+    cleanly on cancel.
+  - Threading: same `session_key` → same `session_id` across
+    messages and across processes; distinct keys (Slack
+    threads, Telegram chats) split into distinct sessions.
+  - Defensive: malformed envelopes are warn-logged + dropped
+    (not fatal); sink errors warn-log + continue (loop
+    survives); GC `0` skips eviction; subject filter narrows
+    subscription for tenancy isolation.
+  - 9 tests verde: registry first-seen / distinct keys / GC
+    eviction / GC zero noop; bridge resolves+delivers, logs
+    sink failures, threads distinct keys, narrows subject
+    filter, GC task runs.
+- **80.9.d.b** ✅ MVP — persistent SQLite `SessionRegistry`.
+  `crates/mcp/src/channel_session_store.rs` (~250 LOC + 9
+  tests verde) implements the same `SessionRegistry` trait
+  against SQLite so `session_key → session_uuid` survives
+  daemon restarts (Slack threads, Telegram chats, iMessage
+  conversations don't have to re-introduce themselves on
+  every reboot). Schema:
+  ```sql
+  CREATE TABLE IF NOT EXISTS mcp_channel_sessions (
+      key          TEXT PRIMARY KEY,
+      session_id   TEXT NOT NULL,
+      last_seen_ms INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_channel_sessions_last_seen
+      ON mcp_channel_sessions(last_seen_ms);
+  ```
+  Idempotent migration (`CREATE … IF NOT EXISTS`); WAL +
+  `synchronous=NORMAL` via the same `SqliteConnectOptions`
+  shape Phase 71/72 stores use. `resolve` is a single
+  UPSERT with `RETURNING` (SQLite ≥ 3.35) so first-seen and
+  refresh take one round-trip. `gc_idle(max_idle_ms)` is a
+  bulk DELETE; `0` and negative values are no-op sentinels.
+  `len()` for telemetry. `snapshot()` test helper for
+  assertions. Fail-safe semantics — UPSERT errors warn-log
+  and return an ephemeral uuid for the in-flight turn so
+  threading-this-turn is preserved even when persistence
+  is degraded.
+  9 tests verde: first-seen / distinct-keys / refresh /
+  GC eviction / GC zero-noop / GC negative-noop /
+  snapshot / **schema idempotent across reopens** (real
+  tempfile, not `:memory:`) / **concurrent-safe UPSERT**
+  (two parallel resolvers on the same key agree on one uuid).
+
+**80.9 outbound + boot helpers ✅ MVP**:
+`ApprovedChannel.outbound_tool_name: Option<String>` (default
+`Some("send_message")`) + `resolved_outbound_tool_name()`
+helper; `RegisteredChannel` snapshots the resolved value at
+register-time so a config reload mid-session doesn't change
+which tool an in-flight reply reaches.
+`crates/core/src/agent/channel_send_tool.rs` (~200 LOC + 4
+tests verde): `channel_send` routes
+`(server, content?, arguments?)` through
+`SessionMcpRuntime.call_tool` with 5 ordered gates (server
+present, registered for binding, arguments-shape, 64 KiB
+content cap, MCP runtime wired); content shortcut populates
+the argument's `text` key when the operator hasn't supplied
+an explicit `arguments` object.
+`crates/core/src/agent/channel_status_tool.rs` (~170 LOC +
+4 tests verde): `channel_status` diagnoses one server or
+every registered server; renders connection state + plugin
+source + resolved outbound name + permission-relay flag +
+registered-at timestamp.
+`crates/mcp/src/channel_boot.rs` (~200 LOC + 5 tests verde):
+`ChannelBootContext { broker, registry, session_registry,
+dispatcher }` ties the four shipped pieces into one value
+that main.rs constructs once.
+`ChannelBootContext::in_memory(broker)` is the default
+factory; `bridge_config(sink)` + `spawn_bridge(sink, cancel)`
+cover the per-process spawn site.
+`build_inbound_loop_config(...)` + `enumerate_targets(cfg,
+binding_allowlist)` cover the per-(binding, server) spawn.
+13 nexo-config channels tests verde (was 10, +3 around
+outbound-tool resolution + override validation). **Workspace
+counts**: 421 nexo-mcp, 771 nexo-core, 13 nexo-config
+channels.
+
+**main.rs hookup deferred** — every primitive is
+constructable today; main.rs needs to instantiate
+`ChannelBootContext::in_memory(broker)`, build a sink that
+publishes inbound on `agent.intake.<binding>`, call
+`spawn_bridge(sink, cancel)` once, then loop over
+`enumerate_targets(cfg, binding.allowed_channel_servers)`
+spawning a `ChannelInboundLoop` per server after the
+matching MCP handshake completes.
+
+- **80.9.e** ✅ MVP — operator CLI: `nexo channel list/doctor/test`.
+  Three new `Mode` variants (`ChannelList`, `ChannelDoctor`,
+  `ChannelTest`) + parser arms + dispatch + run fns
+  (`run_channel_list`, `run_channel_doctor`, `run_channel_test`).
+  All read-only against the YAML — no daemon required.
+  - `channel list [--config=<path>] [--json]` walks every agent
+    and surfaces `(enabled, approved_servers[], bindings[])` per
+    agent. `bindings` is filtered to those with a non-empty
+    `allowed_channel_servers` so cluttered YAML stays readable.
+  - `channel doctor [--config=<path>] [--binding=<id>] [--json]`
+    runs the static half of the gate against every
+    `(agent, binding, server)` triple. Capability is *assumed*
+    declared (the doctor cannot probe a live MCP server),
+    `plugin_source` is read from the approved entry, and
+    gates 2/3/5 run normally. Each row reports `WOULD REGISTER`
+    or a typed `SKIP { kind, reason }`. The doctor also
+    cross-checks `approved` entries that no binding lists and
+    surfaces them as `NOT BOUND` so an operator who configured
+    a server but forgot to bind it sees the gap immediately.
+  - `channel test <server> [--binding=<id>] [--content=...]
+    [--json]` synthesises a notification with sample
+    `chat_id`/`user` meta, runs `parse_channel_notification` +
+    `wrap_channel_message`, and prints the model-facing
+    `<channel source="...">...</channel>` block plus the derived
+    `session_key`. Cheap dry-run for tuning meta-key
+    whitelists or verifying content-cap behaviour.
+  - `load_app_config_for_channels(config_override, config_dir)`
+    helper — accepts a directory or single-file `--config`
+    override (walks up to parent for files), defaults to the
+    global `--config-dir`.
+  - Smoke tested locally; YAML without channels output renders
+    as `(no channel-using bindings found)` and `channel list`
+    surfaces `enabled: false` per agent without panicking.
+- **80.9.f** ✅ MVP — hot-reload re-evaluation.
+  `ChannelRegistry::reevaluate(&ReevaluateInputs)` walks
+  every active registration and re-runs the static half of
+  the gate against the operator's *current* config. Entries
+  that no longer pass — killswitch off, server removed from
+  `approved`, plugin_source pinned to a new value, binding
+  deleted — get unregistered. Returns a typed
+  `ReevaluateReport { kept, evicted: Vec<{binding,
+  server, kind, reason}> }` so observability + setup-doctor
+  can surface what changed.
+  - `ReevaluateInputs { by_binding: HashMap<String,
+    ReevaluateBinding>}` + `ReevaluateBinding { cfg,
+    allowed_servers }` — caller produces this from the
+    freshly-loaded YAML inside the Phase 18 post-reload
+    hook.
+  - `channel_boot::build_reevaluate_inputs(iter)` builder
+    helper accepting `(binding_id, Arc<ChannelsConfig>,
+    Vec<String>)` tuples.
+  - 6 tests verde: keeps-passing / evicts-on-killswitch-off /
+    evicts-when-removed-from-approved /
+    evicts-when-binding-disappears / evicts-on-plugin-source-mismatch /
+    partial-some-kept-some-evicted.
+  - 465 nexo-mcp tests verde (was 459, +6).
+- **80.9.g** — per-channel rate limits in `agents.tool_rate_limits`.
+- **80.9.h** ✅ MVP — Phase 72 turn-log marker
+  `source: "channel:<server>"` for audit. `TurnRecord.source:
+  Option<String>` field added with `#[serde(default)]` so older
+  callers / persisted JSON parse cleanly. SQLite migration is
+  the same idempotent `ALTER TABLE … ADD COLUMN` shape the
+  cron `permanent` column uses; "duplicate column" errors are
+  tolerated. New `idx_goal_turns_source` index keeps
+  per-server filtering cheap. INSERT + UPSERT on
+  `(goal_id, turn_index)` carry the column; both `tail` and
+  `tail_since` SELECTs include it. Pure-fn helpers
+  `format_channel_source(server)` /
+  `parse_channel_source(source)` keep the `channel:` prefix
+  stable across the codebase. 4 new tests verde
+  (round-trip / default-none-for-legacy / replay-idempotent /
+  prefix render+parse). Total nexo-agent-registry: 51 lib
+  tests verde.
+
+  The channel inbound sink populates the field at intake
+  time; every other intake path (paired user inbound, cron
+  fire, agent-to-agent delegate, heartbeat, poller) leaves
+  it `None` — `EventForwarder` documents this explicitly.
+- **80.9.i** — `channel_send` LLM tool (stable wrapper around
+  the server's outbound `send_message`).
+
+
+
+A KAIROS "channel" is an MCP server (Discord, Slack, SMS,
+etc.) that declares `capabilities.experimental['claude/channel']`.
+The server emits `notifications/claude/channel` for inbound
+user messages and we invoke its tool to send outbound. The
+inbound payload is wrapped in `<channel source="server-name">`
+XML when injected into the model context. Outbound permission
+flow is structured (no "yes CODE" string parsing) via
+`ChannelPermissionRequestParams`.
+
+**Reference (PRIMARY)**: `claude-code-leak/src/services/mcp/channelNotification.ts:1-316`.
+**Reference (secondary)**: extend `crates/mcp/` with channel
+capability + `crates/core/src/agent/` consumes the wrapper +
+Phase 26 pairing routes inbound through pairing gate.
+
+**7-step gate** (port verbatim — `channelNotification.ts:191-316`):
+1. **Capability**: server advertises `experimental.claude/channel`
+2. **Runtime gate**: per-binding `channels.enabled` (replaces
+   `tengu_harbor`)
+3. **Auth**: OAuth-only path (matches our subscription auth
+   gate from Phase 15.x)
+4. **Org policy**: `agents.<id>.channels.allowed_servers`
+   allowlist when binding has org-managed flag
+5. **Session allowlist**: CLI `--channels plugin:slack@anthropic
+   server:foo` parses into `RuntimeSnapshot::allowed_channels`
+6. **Plugin marketplace verification**: declared `marketplace`
+   matches installed source (matches Phase 31 plugin marketplace
+   work — gate via that or DEFER)
+7. **Allowlist final check**: `allowed_channel_plugins` setting
+   OR developer override (`NEXO_DANGEROUSLY_LOAD_DEV_CHANNELS=true`)
+
+**XML wrapping**:
+```xml
+<channel source="slack-prod" thread_id="C123" user="U456">
+  Body of the inbound message
+</channel>
+```
+Meta keys validated: `^[a-zA-Z_][a-zA-Z0-9_]*$` (anti
+attribute-injection). Unknown keys dropped, not errored.
+
+**Done criteria**:
+- `crates/mcp/src/channel.rs` — capability discovery + 7-step
+  gate
+- `crates/core/src/agent/context.rs` — inbound wrapping
+- `nexo --channels` CLI flag parses into binding override
+- 8 unit tests covering each gate step deny-path
+- 1 integration test: mock MCP server emits notification,
+  agent sees it wrapped, sends back via `SendUserMessage` →
+  server tool invoked
+
+#### 80.10 — Agent SessionKind + BG sessions   ✅ MVP
+
+**Shipped**: nuevo `SessionKind` enum en
+`crates/agent-registry/src/types.rs` con 4 variants
+(`Interactive` default / `Bg` / `Daemon` / `DaemonWorker`) +
+helpers `as_db_str` / `from_db_str` / `survives_restart` (true
+para Bg/Daemon/DaemonWorker, false Interactive). `AgentHandle`
+gana field `kind: SessionKind` con `#[serde(default)]` para
+backward-compat — rows persisted antes de 80.10 deserialise como
+`Interactive` automáticamente. Schema migration v5 idempotent
+via `add_column_if_missing("kind TEXT NOT NULL DEFAULT 'interactive'")`
++ index `idx_agent_registry_kind` para acelerar `list_by_kind`.
+UPSERT extendido con bind 11 (`kind = excluded.kind`); `row_to_handle`
+lee la columna como column-source-of-truth (column wins over
+JSON blob). Helpers nuevos en `SqliteAgentRegistryStore`:
+`list_by_kind(SessionKind)` para `nexo agent ps --kind=bg` y
+`reattach_running_kind_aware()` que flippa Running → LostOnRestart
+SOLO para `kind = 'interactive'` (Bg / Daemon / DaemonWorker
+keep Running). Workspace fixture sweep aplicó perl multi-line
+replace `s/^(\s*)plan_mode: None,$/$1plan_mode: None,\n$1kind:
+nexo_agent_registry::SessionKind::Interactive,/` a 14+ struct
+literals across `crates/{agent-registry,core,dispatch-tools}` +
+test files. CLI surface en `src/main.rs`: `Mode::AgentRun {
+prompt, bg, db, json }` + `Mode::AgentPs { kind, all, db, json }`
++ 2 parser arms + 2 dispatch arms + helper
+`resolve_agent_db_path` (3-tier mirror de Phase 80.1.d:
+`--db` > `NEXO_STATE_ROOT` env > XDG default
+`~/.local/share/nexo/state/agent_handles.db`).
+**`run_agent_run`** valida prompt non-empty, abre store, INSERT
+nuevo `AgentHandle` con `goal_id = Uuid::new_v4()`,
+`status = Running`, `phase_id = "cli-bg"|"cli-run"`,
+`kind = if bg { Bg } else { Interactive }`, prints goal_id +
+detach hint. **`run_agent_ps`** abre store, dispatcha
+`list_by_kind(parsed)` o `list()`, filtra Running unless `--all`,
+renders markdown table o JSON. 13 nuevos tests verde:
+nexo-agent-registry 8 (default-is-interactive / db round-trip
+all variants / from-db-str rejects unknown / survives-restart
+matrix / agent-handle serde-default-kind via field-strip /
+store-insert-with-kind round-trip / list-by-kind filters /
+reattach-kind-aware keeps Bg) + nexo-rs (bin) 5 (resolve-db
+override-wins / resolve-db env-fallback / run-rejects-empty /
+run-bg-inserts-bg / run-no-bg-inserts-interactive / ps-empty-db-
+friendly / ps-filters-by-kind / ps-rejects-invalid-kind). CLI
+smoke verified manually:
+`mkdir -p /tmp/nexo80-10/state && NEXO_STATE_ROOT=/tmp/nexo80-10/state
+./target/debug/nexo agent ps` → friendly message;
+`nexo agent run --bg "test goal here"` → goal_id printed;
+`nexo agent ps` → 1 row (Running/bg);
+`nexo agent ps --kind=interactive` → "(no rows match)".
+
+**Three-pillar audit**: robusto (13+ tests; migration `IF NOT
+EXISTS` idempotent; default Interactive keeps fixtures + Phase
+71 backward-compat verde; reattach kind-aware preserva
+semántica; ps query handles missing DB gracefully), óptimo
+(single new column, no separate table; reuses existing list +
+upsert paths; ps RO pool), transversal (provider-agnostic
+SQLite + CLI; cero LLM-provider touchpoints; works under any
+LlmClient impl).
+
+**Deferred follow-ups**:
+- **80.10.b** — `nexo agent attach <goal_id>` TTY re-attach
+  (= Phase 80.16 ya separado).
+- **80.10.c** — Daemon supervisor process for `Daemon` /
+  `DaemonWorker` kinds (separate process lifecycle).
+- **80.10.d** — `nexo agent kill <goal_id>` graceful abort
+  signal.
+- **80.10.e** — `nexo agent logs <goal_id>` re-stream.
+- **80.10.f** — Phase 77.17 schema-migration system integration
+  (versioned `user_version` bump for `kind` column).
+- **80.10.g** — Daemon-side pickup of queued goals: today the
+  CLI inserts the row but no daemon worker consumes it
+  automatically. Operator must run `nexo agent attach` (after
+  80.16) or invoke a future supervisor; for now the row sits
+  Running until manually transitioned. Document.
+
+**Original spec for follow-ups** (preserved):
+
+Today `agent_registry::AgentRunStatus` tracks lifecycle but
+not *kind*. KAIROS distinguishes `interactive | bg | daemon |
+daemon-worker` so `--continue` can skip live BG sessions
+(Phase 71 reattach has the right machinery but no kind
+discriminator). New `nexo agent run --bg` detached spawn
+mode + `nexo agent ps` listing.
+
+**Reference (PRIMARY)**: `claude-code-leak/src/utils/concurrentSessions.ts:1-204`
+(`SessionKind`, PID file, `registerSession`,
+`isBgSession`).
+**Reference (secondary)**: extend
+`crates/agent-registry/src/types.rs` with `SessionKind` enum;
+`crates/dispatch-tools/` adds `nexo agent ps` subcommand;
+`SqliteAgentRegistryStore` schema migration adds `kind`
+column.
+
+**Done criteria**:
+- `SessionKind` enum (`Interactive | Bg | Daemon | DaemonWorker`)
+  on `AgentHandle`
+- `nexo agent run --bg <prompt>` spawns detached goal,
+  prints goal-id, returns immediately
+- `nexo agent ps [--all] [--kind=bg]` lists running goals
+  with kind, channel, prompt-summary, age
+- `nexo agent attach <goal_id>` re-attaches a BG goal to
+  current TTY (uses Phase 67 NATS subjects for live output)
+- Phase 71 reattach honours `kind` — `Daemon` rows survive
+  reattach as `LostOnRestart`, `Bg` rows do too but emit
+  the catch-up `notify_origin` flagged with "background"
+- Schema migration v3 adds `kind`, `name`, `log_path` columns
+  (Phase 77.17 migration system)
+- 5 unit tests + 1 integration: spawn 3 BG goals, ps lists
+  all 3, attach to one, exit detaches without killing
+
+#### 80.11 — Agent inbox subject + ListPeers + SendToPeer   ✅ MVP
+
+**Shipped (publisher-only)**: nuevo `crates/core/src/agent/inbox.rs`
+con `inbox_subject(GoalId) -> String` helper que rinde
+`agent.inbox.<goal_id>` + struct `InboxMessage { from_agent_id,
+from_goal_id, to_agent_id, body, sent_at, correlation_id: Option<Uuid> }`
++ constants `INBOX_SUBJECT_PREFIX`, `MIN_BODY_CHARS=1`,
+`MAX_BODY_BYTES=64*1024`. 3 unit tests verde (subject format,
+serde round-trip, correlation_id-omitted-when-none).
+
+`crates/core/src/agent/list_peers_tool.rs` ships read-only
+`ListPeersTool` LLM tool (~80 LOC + 1 test) — returns JSON
+`{ peers: [{ agent_id, description, reachable }] }` excluding self,
+con reachability calculada via `EffectiveBindingPolicy.allowed_delegates`
+glob-matching pattern reusing peer_directory pattern. No-arg shape
+(`additionalProperties: false`).
+
+`crates/core/src/agent/send_to_peer_tool.rs` (~280 LOC + 11 tests
+verde) ships `SendToPeerTool { lookup: PeerGoalLookup }` con
+`PeerGoalLookup = Arc<dyn Fn(&str) -> Vec<GoalId> + ...>` injected
+closure que el operator wires a `nexo_agent_registry::AgentRegistry::list`
+filtered by Running goals — keeps tool free of agent-registry
+dep. Handler valida (1) `to` non-empty, (2) `to != self_agent_id`,
+(3) `message` non-empty, (4) body ≤ 64 KB, (5) verifica peer
+exists in `PeerDirectory` (fast-path "unknown agent_id"
+unreachable when not present), (6) lookup retorna live goal_ids
+(unreachable "no live goals" si vacío). Para cada live goal,
+publica `Event::new(inbox_subject(goal), source=agent_id, payload=msg)`
+via `ctx.broker.publish`; recolecta `delivered_to: Vec<goal_id>`
++ `unreachable_reasons: Vec<String>`. JSON output:
+`{ delivered_to: [...], unreachable_reasons: [...] }`. Sender
+goal_id viene de `ctx.session_id.map(GoalId).unwrap_or_else(GoalId::new)`
+para casos sin session activo (heartbeat path) — provenance
+preservada via `from_agent_id` igual.
+
+11 tests cubren `tool_def_shape`, `empty_to_errors`,
+`missing_to_errors`, `missing_message_errors`, `empty_message_errors`,
+`self_send_rejected`, `unknown_agent_id_returns_unreachable`,
+`no_live_goals_returns_unreachable`,
+`live_peer_publishes_and_returns_delivered`,
+`oversize_message_rejected`, `correlation_id_round_trips` (este
+último subscribe al inbox subject + verifica que el correlation_id
+arrive intact por el wire). Plus 1 list_peers tool_def shape test
++ 3 inbox subject/payload tests = **15 nuevos tests verde** total.
+
+`PeerDirectory.peers() -> &[PeerSummary]` accessor agregado
+porque el field interno era private — slice accessor para tools
+que necesitan la lista raw (vs el rendering markdown del system
+prompt). Backward-compat preserved.
+
+**Three-pillar audit**: robusto (15 tests; 6 validation gates en
+SendToPeer; defensive arg parsing; broker publish failure
+handling via unreachable_reasons; PeerDirectory existence check
+fast-path; race-safe — peer goal terminating between calls falls
+through unreachable not panic), óptimo (PeerDirectory cached at
+boot; AgentRegistry lookup via injected closure es in-memory;
+broker publish fire-and-forget zero blocking; for-loop O(N)
+sobre live goals es trivial), transversal (cero LLM-provider
+touchpoints; pure JSON tool surface; NATS subject contract
+trabaja igual local broker o cluster remoto).
+
+**Wiring point** (operator opts in cuando ready): caller-side
+debe registrar las 2 tools en el ToolRegistry del binding's
+agente con la closure `lookup` apuntando a `agent_registry::list`
+filtered por `agent_id` + Running. Sin esa registration las
+herramientas no aparecen en el LLM surface.
+
+**Deferred follow-ups**:
+- **80.11.b** — Receive side router + per-goal buffer + render
+  helper ✅ **MVP** — shipped: nuevo
+  `crates/core/src/agent/inbox_router.rs` (~280 LOC + 17 tests).
+  `InboxRouter<B: BrokerHandle>` mirrors el patrón de Phase 79.6
+  `TeamMessageRouter`: `Arc<Self>` con `dashmap::DashMap<GoalId,
+  Arc<InboxBuffer>>` + `spawn(cancel: CancellationToken) ->
+  JoinHandle` que subscribes a `agent.inbox.>` wildcard pattern
+  una sola vez por proceso. `dispatch_inbound(ev)` parses
+  `agent.inbox.<goal_id>` → buffer-on-demand semantics: si el
+  goal no está registrado, crea fresh buffer y queues el
+  mensaje (race-safe — peer puede send antes de que el consumer
+  goal arranque, sin perder mensaje); idempotent
+  `register(goal_id)` retorna existing buffer si ya existe (goal
+  resume safe). `InboxBuffer { queue: Mutex<VecDeque<InboxMessage>> }`
+  con `MAX_QUEUE = 64` cap + FIFO eviction (warn log cuando
+  evicta — long-idle goals no acumulan unbounded backlog).
+  `push(msg) -> bool` (true cuando evicted), `drain() -> Vec`
+  atomic empty-and-return preserva chronological order, `len()`
+  / `is_empty()` lectura para read tools como `agent_status`.
+  `parse_goal_from_subject(subject) -> Option<GoalId>` defensive
+  parser (rechaza unknown prefix + non-uuid suffix con debug
+  log, no panic). Pure-fn `render_peer_messages_block(messages:
+  &[InboxMessage]) -> Option<String>` returns None cuando empty
+  para que callers usen `if let Some(block) = render(...)`
+  inline en `channel_meta_parts.push(block)`; render shape:
+  ```
+  # PEER MESSAGES
+
+  <peer-message from="researcher" sent_at="2026-04-30T..." correlation_id="...">
+  body
+  </peer-message>
+  ```
+  Correlation_id attribute renderizado SOLO cuando Some (skip
+  attribute when None — minimal noise). Cancellation token
+  shutdown clean: spawn task observa `cancel.cancelled()` en
+  `tokio::select!` arm. Subscriber failures → `tracing::warn!`
+  + early return (matches `team_message_router` pattern;
+  inbox offline preferable to panic loop).
+
+  17 nuevos tests verde:
+  - `buffer_push_drain_round_trip` — basic FIFO semantics
+  - `buffer_drain_empty_returns_empty_vec`
+  - `buffer_evicts_oldest_at_cap` — push 64+1, verify eviction
+  - `parse_goal_from_subject_valid` / `_rejects_unknown_prefix`
+    / `_rejects_non_uuid_suffix` (3 tests defensive parser)
+  - `render_empty_returns_none`
+  - `render_single_message_includes_from_and_body` (no
+    correlation_id attribute when None)
+  - `render_with_correlation_id_includes_attribute`
+  - `render_preserves_chronological_order` (3 messages → asserts
+    body positions in output)
+  - `router_register_idempotent_returns_same_buffer` (push via
+    one Arc clone, drain via another → same buffer instance)
+  - `router_dispatch_inbound_pushes_to_buffer` (synthetic event
+    direct dispatch)
+  - `router_buffer_on_demand_for_unregistered_goal` (send →
+    register later → drain sees buffered msg)
+  - `router_drops_malformed_subject` / `_drops_malformed_payload`
+  - `router_forget_drops_buffer`
+  - `router_spawn_subscribes_and_routes_end_to_end` (full
+    pubsub via `AnyBroker::local()`: spawn router → publish →
+    sleep → drain buffer → assert message present → cancel)
+
+  **Three-pillar audit**: robusto (17 tests; bounded buffer cap
+  64; subscriber cancellation clean; malformed subject /
+  payload dropped with debug log; buffer-on-demand handles
+  fast-spawn race; concurrent register/dispatch safe via
+  dashmap; subscriber-failure log-and-exit pattern), óptimo
+  (single broker subscriber per process; dashmap O(1) lookup;
+  per-buffer Mutex held only for microsecond push/drain
+  windows; drain is single allocation), transversal (pure
+  NATS subject + JSON payload + in-memory VecDeque; cero
+  LLM-provider touchpoints; transversal Anthropic / MiniMax /
+  OpenAI / Gemini / DeepSeek / xAI / Mistral).
+
+  **Wiring point** (operator opts in cuando ready):
+  1. Boot: `let router = InboxRouter::new(broker.clone()); let
+     handle = router.spawn(cancel.clone());` (single per-process
+     spawn).
+  2. Per-goal startup: `let buf = router.register(goal_id);` —
+     stash on the goal's runtime context.
+  3. Per-turn loop: drain `buf` at turn start, render via
+     `render_peer_messages_block(&drained)`, push the
+     `Some(block)` to `channel_meta_parts` adjacent to existing
+     proactive / coordinator hints (Phase 80.15 pattern).
+  4. Goal terminal: `router.forget(goal_id);` releases the buffer.
+
+  **Deferred follow-ups**:
+  - **80.11.b.b** — Hook into `llm_behavior.rs` per-turn loop
+    drain + render injection (1-line snippet adjacent to
+    Phase 80.15 assistant addendum); blocked on dirty-state
+    pattern same as 80.15.g / 80.17.b.b / etc.
+  - **80.11.b.c** — main.rs router spawn + per-goal
+    register/forget on goal lifecycle hooks.
+- **80.11.c** — Broadcast `to: "*"` with cap (linear in team
+  size, expensive) + warning shape per upstream pattern.
+- **80.11.c** — Broadcast `to: "*"` with cap (linear in team
+  size, expensive) + warning shape per upstream pattern.
+- **80.11.d** — Cross-machine inbox via NATS cluster (works
+  automatically with NATS, doc requirement).
+- **80.11.e** — Bridge protocol responses (`shutdown_request` /
+  `plan_approval_request` JSON shapes) — niche.
+- **80.11.f** — main.rs tool registration wiring (1-line snippet
+  wrapping `AgentRegistry::list_by_kind` para el lookup).
+
+**Original spec for follow-ups** (preserved):
+
+KAIROS's `UDS_INBOX` is a Unix socket per session that lets
+sibling sessions message each other (`bridge://` scheme in
+`SendMessageTool`). NATS supersedes UDS, so we publish on
+`agent.inbox.<goal_id>` (already used by Phase 67 driver-loop)
+and add an LLM-facing tool + CLI command on top.
+
+**Reference (PRIMARY)**: `claude-code-leak/src/utils/concurrentSessions.ts:86`
+(`messagingSocketPath` PID-file field) +
+`claude-code-leak/src/tools/SendMessageTool/SendMessageTool.ts:586,631,658,685,742`
+(`bridge://` scheme branches).
+**Reference (secondary)**: extend
+`crates/core/src/team_message_router.rs` with a
+`peer_inbox(goal_id)` subject helper; new
+`crates/core/src/agent/list_peers_tool.rs` +
+`send_to_peer_tool.rs`.
+
+**Done criteria**:
+- `agent.inbox.<goal_id>` subject contract documented in
+  `docs/src/architecture/nats-subjects.md`
+- `ListPeers` LLM tool returns
+  `[{ goal_id, kind, channel, name, age_secs, prompt_summary }]`
+- `SendToPeer { goal_id, message, status }` LLM tool publishes
+  on the peer's inbox; returns `{ delivered_at, ack: true|false }`
+- `nexo agent peers` CLI (mirrors `claude peers`) — alias of
+  `nexo agent ps --me=false`
+- 4 unit tests covering each subject path
+
+#### 80.12 — Generic webhook receiver (provider-agnostic)   ✅ MVP
+
+**Shipped (verification + extraction primitives)**: nuevo crate
+`crates/webhook-receiver/` (~700 LOC + 33 tests verde) con
+primitivas pure-fn para verificación de firmas + extracción de
+event kind + render de NATS subject template. Operator
+configures `WebhookSourceConfig` per source via YAML; el crate
+ships los building blocks, el HTTP listener integration queda
+deferida (operator wires via `axum`, hyper, o el existing `:8080`
+health server).
+
+`WebhookSourceConfig` carga 5 campos: `id` (stable identifier),
+`path` (HTTP path), `signature: SignatureSpec` (algorithm +
+header + prefix + secret_env), `publish_to` (NATS subject
+template con `${event_kind}` substitution), `event_kind_from:
+EventKindSource` (header.NAME o body.json-path), opcional
+`body_cap_bytes` (default 1 MB). YAML schema con `serde(rename_all
+= "kebab-case")` para algorithm enum + `tag = "kind"` para
+EventKindSource — operator escribe natural YAML.
+
+Algoritmos soportados (decision table data-driven, fácil de
+extender): `HmacSha256`, `HmacSha1`, `RawToken`. Verificación
+constant-time via `subtle::ConstantTimeEq` para resistir timing
+attacks. Hex decoding defensive (garbage hex → InvalidSignature
+sin panic). Per-spec prefix stripping (e.g. `"sha256="` antes
+de hex-decode).
+
+Pure-fn primitivas exportadas:
+- `verify_signature(spec, secret, header_value, body) ->
+  Result<(), RejectReason>` — constant-time HMAC compare /
+  raw-token compare.
+- `extract_event_kind(source, headers, body) ->
+  Result<Option<String>, RejectReason>` — case-insensitive
+  header lookup o JSON dotted-path body navigation
+  (`json_get_dotted` recursivo, no unwraps).
+- `render_publish_topic(template, event_kind) -> String` —
+  template substitution, forward-compatible para variables
+  futuras.
+
+`WebhookHandler::handle(headers, body) -> Result<HandledEvent,
+RejectReason>` orquesta los 4 gates en orden:
+1. Body cap (rejects ANTES de cualquier HMAC compute para
+   defensa DoS).
+2. Signature header presente + secret env set + signature match.
+3. Event kind extracción (header lookup o body JSON path).
+4. Subject safety check (rechaza event_kind con `.`, `*`, `>`,
+   whitespace que romperían NATS subject parsing).
+
+Output: `HandledEvent { source_id, event_kind, topic, payload:
+serde_json::Value }`. Body normalmente parsea como JSON; bodies
+no-UTF-8 se envuelven como `{ "raw_base64": "..." }` — operator
+sigue viendo el contenido para post-mortem sin assumir JSON.
+
+`RejectReason` typed via `thiserror` con 7 variantes:
+`OversizedBody`, `MissingSignatureHeader`, `InvalidSignature`,
+`SecretMissing`, `MissingEventKind`, `InvalidBodyJson`,
+`InvalidEventKindForSubject`. Caller mapea a HTTP status (401
+para signature errors, 413 para oversize, 422 para missing
+event kind, 500 para secret-missing operator misconfig).
+
+`WebhookHandler::validate(config)` ejecuta boot-time invariants:
+id non-empty, path non-empty + starts with `/`, publish_to
+non-empty, signature.header non-empty, signature.secret_env
+non-empty, body_cap_bytes > 0 cuando set, event_kind_from
+header.name o body.path non-empty.
+
+33 unit tests verde cubren:
+- 4 validate tests (well-formed + 3 rejection arms)
+- 6 verify_signature tests (HMAC-SHA256 match/mismatch,
+  HMAC-SHA1 match, RawToken match/mismatch, garbage hex)
+- 5 extract_event_kind tests (header case-insensitive, header
+  missing returns None, body top-level, body nested,
+  body missing path returns None, body invalid JSON errors)
+- 2 render_publish_topic tests (with var, without var)
+- 3 is_event_kind_subject_safe tests (rejects dot, rejects
+  wildcards/whitespace/empty, accepts alphanumeric+dashes)
+- 6 handle integration tests (oversized body / missing sig
+  header / secret unset / invalid sig with secret set /
+  happy path with publish event / event kind con dot rejected)
+- 1 non-JSON body wrapping test (raw_base64 fallback)
+- 2 YAML round-trip tests (full config con header extraction +
+  body-path extraction shape)
+
+Workspace `Cargo.toml::members` añadida `crates/webhook-receiver`.
+Provider-agnostic por construcción: cero código GitHub-específico
+o de cualquier provider; nuevos providers añaden YAML entry sin
+cambio Rust.
+
+**Three-pillar audit**: robusto (33 tests; constant-time HMAC
+compare; body cap antes de HMAC defensa DoS; defensive hex
+decode + JSON parse; structured RejectReason no panic; subject
+safety check; YAML validation boot-time fail-fast), óptimo
+(pure-fn primitivas zero-alloc en hot path; single HMAC state
+allocation; Arc<WebhookSource> shareable; case-insensitive
+header lookup vía ASCII lower-case sin allocations significant),
+transversal (cero LLM-provider touchpoints; pure HTTP-receiver
+primitive; data-driven decision table extensible per nuevos
+providers via YAML).
+
+**Wiring point** (operator opts in cuando ready):
+1. Construct `let handler = WebhookHandler::new(config)` per
+   source en boot.
+2. HTTP listener (Axum/Hyper/health-server route): on
+   `POST /webhooks/<source_id>`, collect headers + body bytes
+   y llamar `handler.handle(&headers, body)`.
+3. Mapear `Result<HandledEvent, RejectReason>` a HTTP response
+   (200 para Ok, status apropiado para errores).
+4. En Ok branch: `broker.publish(handled.topic, Event::new(...))`
+   para que cualquier subscriber NATS consuma.
+
+**Deferred follow-ups**:
+- **80.12.b** — HTTP listener integration: route
+  `/webhooks/<source_id>` via existing `:8080` health server o
+  dedicated dispatch port (reuse `read_http_path` /
+  `write_http_response` helpers para no introducir axum/hyper
+  dep).
+- **80.12.c** — Tunnel registration para public URL (pairs con
+  `crates/tunnel/`).
+- **80.12.d** — INVENTORY entries para per-source secrets
+  (`WEBHOOK_<SOURCE_ID>_SECRET`) so `nexo setup doctor
+  capabilities` lists them.
+- **80.12.e** — Audit log per request (Phase 72-style) so
+  operators can replay.
+- **80.12.f** — Multi-source config validation at boot (reject
+  duplicate paths or duplicate ids).
+- **80.12.g** — Replay protection (idempotency tokens / nonce
+  window per source).
+- **80.12.h** — main.rs hookup (route + listener registration +
+  per-source handler map).
+
+**Original spec for follow-ups** (preserved):
+
+**Re-scoped 2026-04-30**: original "KAIROS_GITHUB_WEBHOOKS — github
+plugin + receiver" descopado por Cristian. Reemplazado por receiver
+genérico — sin lógica GitHub-específica, sin `github_subscribe` tool,
+sin event router de `pull_request|issue_comment|push|workflow_run`.
+Sólo infraestructura de "webhook entrante con verificación de firma",
+desacoplada de cualquier provider.
+
+The leak's `SubscribePRTool` is GitHub-specific (DCE'd body in leak).
+We ship the receiver primitive only — providers (GitHub/Stripe/Linear/
+Sentry/anything) wire on top via YAML config, no per-provider Rust
+code. Channels (Phase 6/26 + 80.9) and pollers (Phase 19) remain the
+primary inbound paths; webhooks complement when provider supports
+push semantics.
+
+**Reference (PRIMARY)**: `claude-code-leak/src/tools.ts:48`
+(`SubscribePRTool` gate — DCE'd, signature visible only).
+**Reference (secondary)**: existing `crates/tunnel/` for HTTP
+exposure; existing `crates/broker/` for fan-out via NATS subject;
+existing `crates/poller/` for downstream consumers.
+
+**Done criteria**:
+- New `crates/webhook-receiver/` exposes:
+  - HTTP receiver behind existing tunnel (Phase 26): `POST /webhooks/<source_id>`
+  - Per-source config block in `agents.yaml`:
+    ```yaml
+    webhook_receiver:
+      sources:
+        - id: my-github
+          path: /webhooks/github
+          signature:
+            algorithm: hmac-sha256
+            header: X-Hub-Signature-256
+            prefix: "sha256="
+            secret_env: GITHUB_WEBHOOK_SECRET
+          publish_to: webhook.github.${event_kind}  # NATS subject template
+          event_kind_from: header.X-GitHub-Event    # how to extract event_kind from request
+        - id: stripe-prod
+          path: /webhooks/stripe
+          signature:
+            algorithm: hmac-sha256
+            header: Stripe-Signature
+            prefix: ""
+            secret_env: STRIPE_WEBHOOK_SECRET
+          publish_to: webhook.stripe.${event_kind}
+          event_kind_from: body.type               # or `body.<json-path>`
+    ```
+  - Signature verifier supports HMAC-SHA256 + HMAC-SHA1 + raw-token
+    (config-driven; no provider-specific arms)
+  - Event-kind extraction supports `header.<Name>` or
+    `body.<json-path>` (config-driven)
+  - Verified payload published to NATS subject from `publish_to`
+    template (`${event_kind}` substituted)
+  - Body cap (default 1 MB) + per-source rate limit (Phase 76.5
+    pattern) + audit log (Phase 72 pattern, optional)
+- `crates/setup/src/capabilities.rs::INVENTORY` registers per-source
+  `WEBHOOK_<SOURCE_ID>_SECRET` env vars (operator-side gate visibility)
+- 4 unit tests: HMAC-SHA256 verify, HMAC-SHA1 verify, signature
+  mismatch → 401, missing signature header → 401, oversized body → 413,
+  event-kind extraction from header vs body
+- 1 integration test using mock HTTP request fixture
+
+**Out of scope (vs original)**:
+- ~~GitHub event router (`pull_request|issue_comment|push|workflow_run`)~~
+- ~~`github_subscribe` LLM tool~~
+- ~~`crates/plugins/github/`~~
+- Provider-specific subscriber YAML + prompt templates — these belong
+  in user config or downstream poller, NOT in the receiver crate
+
+**Effort revised**: ~1.5-2 d (was 3 d).
+
+#### 80.13 — KAIROS_PUSH_NOTIFICATION — APN/FCM/WebPush tool   ⬜
+
+KAIROS gates `PushNotificationTool` (DCE'd body, signature
+visible in `tools.ts:46`). Distinct from `notify_origin`:
+push is a one-way mobile alert when a goal completes or
+awaits user input; doesn't reuse the conversational channel.
+
+**Reference (PRIMARY)**: `claude-code-leak/src/tools.ts:45-50`
++ `BriefTool.ts:139` (alias `'PushNotification'` legacy).
+**Reference (secondary)**: new
+`crates/plugins/push/` with `PushProvider` trait + APN, FCM,
+WebPush impls; per-binding credentials via Phase 17
+nexo-auth.
+
+**Done criteria**:
+- `PushProvider` trait (`send(title, body, payload, recipient)`)
+- 3 impls: APN (token-based, p8 key), FCM (HTTP v1 with
+  service account JSON), WebPush (VAPID)
+- LLM tool `notify_push { title, body, payload?, recipient_id? }`
+  — `recipient_id` defaults to current binding's primary
+  registration
+- Config block per-binding:
+  ```yaml
+  push:
+    provider: apn|fcm|webpush
+    credentials_ref: secrets/push-prod.json
+    default_recipient: <device_id>
+  ```
+- `nexo agent push test --binding=<id>` CLI smoke
+- 4 unit tests (one per provider + tool wiring)
+
+#### 80.14 — AWAY_SUMMARY — re-connection digest   ✅ MVP
+
+**Shipped (template-based)**: nuevo
+`crates/config/src/types/away_summary.rs` (~120 LOC + 6 unit tests)
+con `AwaySummaryConfig { enabled, threshold_hours, max_events }` +
+`validate()` que rechaza threshold > 30 días y max_events == 0.
+`AgentConfig.away_summary: Option<AwaySummaryConfig>` con
+`#[serde(default)]` para backward-compat. Workspace fixture sweep
+agregó `away_summary: None` a 49+ struct literales después de
+`assistant_mode: None`. `TurnLogStore::tail_since(since, limit)`
+helper trait method (default impl returns empty para safety),
+override en `SqliteTurnLogStore` que ejecuta
+`SELECT ... WHERE recorded_at >= ?1 ORDER BY recorded_at DESC
+LIMIT ?2` (cap to TAIL_HARD_CAP=1000). Nuevo
+`crates/dispatch-tools/src/away_summary.rs` (~280 LOC + 11 tests
+verde) con: (1) `try_compose_away_digest(cfg, last_seen, now, log)
+-> Result<Option<String>, AwaySummaryError>` función pure-async
+con 4 gates ordenados (enabled / last_seen present / elapsed >=
+threshold / log non-empty); (2) `build_digest(events, elapsed,
+max_events) -> String` pure-fn renderer template-based markdown
+con counters de completed / aborted_cancelled / failed / other +
+truncation hint cuando hits max_events cap; (3) `AwaySummaryError`
+typed wrapper sobre `AgentRegistryStoreError`. Re-exports en
+`nexo-dispatch-tools::lib.rs`: `try_compose_away_digest`,
+`build_digest`, `AwaySummaryError`. Output ejemplo:
+
+```
+**While you were away** (last 6h0m):
+- 3 goal turn(s) recorded
+- 2 completed
+- 1 failed
+```
+
+11 tests cubren: disabled-returns-none, last-seen-none-returns-none
+(bootstrap path), elapsed-below-threshold-returns-none,
+negative-elapsed-returns-none (clock skew), empty-log-returns-none,
+populated-log-returns-digest (verifica markdown contains expected
+counters), digest-renders-completed-aborted-failed-counts (mixed
+outcomes), digest-caps-at-max-events (truncation suffix),
+digest-below-cap-no-truncation-suffix, digest-renders-minutes-
+correctly (2h30m format), populated-log-truncates-to-max-events
+(integration via mock log). Mock `MockLog` impl `TurnLogStore`
+permite scripted records sin SQLite real para tests deterministas.
+
+**Three-pillar audit**: robusto (11 tests; 4 gates ordenados
+cheapest-first; defensive parsing en config validate; fail-safe
+fallback impl en trait default; UTC throughout), óptimo (pure-fn
+template render zero-LLM-call; SQLite query indexed via WHERE
++ LIMIT; mock-based tests sin DB real), transversal (zero
+LLM-provider touchpoints — pure markdown template; works under
+Anthropic/MiniMax/OpenAI/Gemini/DeepSeek/xAI/Mistral igual).
+
+**Wiring point** (operator opts in cuando ready): inbound handler
+debe llamar `try_compose_away_digest(...)` antes de procesar el
+mensaje del usuario; si retorna `Some(digest)`, lo entrega via
+`notify_origin` (existing) y luego procesa el inbound. Operator
+mantiene `last_seen_at` per (channel, sender_id) en el storage de
+su elección — el helper acepta el timestamp como parameter, sin
+acoplar la implementación a `nexo-pairing` o tabla específica.
+
+**Deferred follow-ups**:
+- **80.14.b** — LLM-summarised version: forks subagent que toma
+  los events + builds 1-3 sentence summary natural (estilo
+  upstream pattern). Hoy MVP es template-based; LLM version
+  requiere fork-orchestration similar a Phase 80.1.
+- **80.14.c** — `last_seen_at` tracking en `nexo-pairing::PairingStore`
+  con SQLite migration (slim MVP delega a caller storage).
+- **80.14.d** — Per-channel-adapter delivery (whatsapp/telegram
+  render markdown distinto).
+- **80.14.e** — Time-of-day awareness ("don't ping at 3am").
+- **80.14.f** — Custom prompt template per agent (cuando 80.14.b
+  shippea).
+- **80.14.g** — main.rs inbound interceptor wire (1-line
+  invocation site, blocked on dirty-state pattern).
+
+**Original spec for follow-ups** (preserved):
+
+When a user comes back after a long gap, KAIROS gates an
+"away digest" generation. Leak's body is DCE'd
+(`AWAY_SUMMARY` flag only) — design from scratch using the
+extractMemories pattern.
+
+**Reference (PRIMARY)**: `claude-code-leak/src/main.tsx`
+search hits for `AWAY_SUMMARY` (DCE'd; only the integration
+point survives — verify in 80.0 inventory).
+**Reference (secondary)**: extend
+`crates/pairing/` with `last_seen_at` per (channel, account)
++ new `crates/core/src/agent/away_summary.rs`.
+
+**Done criteria**:
+- `pairing_store` schema gains `last_seen_at: i64` per
+  (channel, account_id)
+- On inbound message: compute `now - last_seen_at` —
+  if `> threshold` (default 1 h, configurable per binding):
+  spawn forked goal that summarises Goals completed /
+  aborted / `notify_origin`s fired / cron fires while away
+  via Phase 72 turn-log query
+- Digest delivered as a single message before the user's
+  inbound is processed (or skipped if empty)
+- Configurable threshold, max digest length (token-budget),
+  off by default
+- 3 unit tests + 1 integration: simulate 2 h offline → digest
+  emitted; 5 min offline → no digest
+
+#### 80.15 — Assistant module: kairos-active flag + system addendum + initial team   ✅ MVP
+
+**Shipped**: nuevo crate `nexo-assistant` (~150 LOC + 6 unit tests)
+exponiendo `AssistantConfig` + `ResolvedAssistant::resolve()` +
+`DEFAULT_ADDENDUM` const con texto proactivo provider-agnostic.
+`crates/config/src/types/assistant.rs` (~140 LOC + 7 unit tests)
+shippea el YAML schema con `enabled` + `system_prompt_addendum`
+optional + `initial_team: Vec<String>` + `validate()` que rechaza
+addendum vacío y team-names malformados (alphanum+`-`+`_` only).
+`AgentConfig.assistant_mode: Option<AssistantConfig>` con
+`#[serde(default)]` para backward compat. `AgentContext.assistant:
+ResolvedAssistant` field nuevo, default `disabled()` en el
+constructor — fixtures siguen compilando sin opt-in. Workspace
+sweep `perl -i -pe` añadió `assistant_mode: None` a 49 struct
+literals across `crates/{core,fork,dream}` + `src/main.rs` +
+`crates/core/tests/`. **System-prompt injection wired** en
+`crates/core/src/agent/llm_behavior.rs` después del proactive +
+coordinator hints: cuando `ctx.assistant.should_append_addendum()`
+(boot-immutable enabled ∧ non-empty addendum), el texto se push
+a `channel_meta_parts` con cache-friendly stable ordering
+(prompt-cache stays warm across turns). Tests verde:
+nexo-assistant 6, nexo-config types::assistant 7, nexo-core build
+green, workspace build green. **Three-pillar audit**: robusto
+(default-disabled, validate rejects empty/malformed, boot-immutable
+flag avoids mid-turn race, `Arc<String>` shared addendum no
+per-turn alloc, 13+ tests cover all gates), óptimo (resolved once
+at boot, single byte bool, `Arc<Vec>` shared team list, fixture
+sweep avoids per-call alloc), transversal (provider-agnostic
+default text — no Anthropic/OpenAI/Gemini/MiniMax/DeepSeek/xAI/
+Mistral phrasing — bool readable by any consumer, addendum is
+plain English nudge toward proactive posture).
+
+**Deferred to follow-ups**:
+- **80.15.b** — `initial_team` auto-spawn at boot (depends on
+  Phase 8 agent-to-agent + 80.10 BG sessions).
+- **80.15.c** — auto-flip `cron.enabled: true` default for
+  assistant bindings (depends on 80.6 killswitch).
+- **80.15.d** — auto-flip `brief: true` default (depends on 80.8
+  SendUserMessage tool).
+- **80.15.e** — activation-path telemetry / provenance.
+- **80.15.f** — `nexo setup doctor` per-binding `assistant_mode`
+  reporter row (low priority, polish).
+- **80.15.g** — `src/main.rs` boot wiring populating
+  `ctx.assistant = ResolvedAssistant::resolve(cfg.assistant_mode.as_ref())`
+  (1-line snippet documented in `crates/assistant/src/lib.rs`
+  doc-comment; deferred until user resolves their existing dirty
+  state per the 80.1.b.b.b / 80.1.c / 80.1.d / 80.1.e / 80.1.g
+  pattern).
+
+Until 80.15.g lands, the boolean stays `false` for every binding
+at runtime — the system-prompt addendum is invisible. The
+infrastructure ships ready; flipping the boot-side wiring on is
+a 1-line opt-in.
+
+**Original spec for follow-ups** (preserved for reference):
+
+KAIROS is gated by an `assistantModule` import + `kairosEnabled`
+runtime boolean computed at REPL startup. When active: a
+system-prompt addendum is appended, `assistantTeamContext`
+pre-seeds in-process teammates, `fullRemoteControl` is
+implied (80.17). nexo equivalent: per-binding
+`assistant_mode: true` flag drives the same set of effects.
+
+**Reference (PRIMARY)**: `claude-code-leak/src/main.tsx:1058-1088`
+(activation), `:1075` (gate computation),
+`:2206-2208` (system prompt addendum),
+`:3035` (teamContext precedence),
+`:2962, 3334` (initialState injection).
+**Reference (secondary)**: extend
+`crates/config/src/types/agents.rs` with
+`AgentBinding::assistant_mode` + `crates/core/src/agent/effective.rs`
+threads it into runtime + `crates/llm/src/prompt_assembly.rs`
+appends the addendum.
+
+**Done criteria**:
+- Binding YAML knob: `assistant_mode: true|false` (default `false`)
+- When `true`:
+  - System prompt addendum appended (text identical to leak's,
+    paraphrased to drop Anthropic-specific wording — confirm
+    in 80.0)
+  - Initial team auto-spawned per binding's `team:` block
+  - Brief mode (80.8) auto-on
+  - 80.6 cron killswitch defaults `enabled: true`
+- 3 unit tests (off path, on path, mid-session toggle via
+  hot-reload)
+
+#### 80.16 — `nexo agent attach` + `nexo agent discover`   ✅ MVP
+
+**Shipped (DB-only viewer)**: 2 nuevos `Mode::AgentAttach
+{ goal_id, db, json }` y `Mode::AgentDiscover
+{ include_interactive, db, json }` en `src/main.rs::Mode` + 2 parser
+arms (`agent attach <goal_id>` con UUID en posicional, `agent
+discover [--include-interactive]`) + 2 dispatch arms + 2 async run
+fns (~150 LOC total). **`run_agent_attach`** valida UUID upfront
+(exit 1 con clean error si bad shape), abre store via
+`resolve_agent_db_path`, fail si DB ausente, fetch handle via
+`store.get(GoalId(uuid))`, error "no agent handle found" si row no
+existe. Render markdown con campos: goal_id full / kind / status /
+phase_id / started_at / finished_at / last_progress_text /
+last_diff_stat / turn_index/max_turns / last_event_at. Hint final
+diferenciado: si `Running` → "Live event stream requires daemon
+connection (Phase 80.16.b follow-up)"; si terminal → "Goal is in
+terminal state X; no further updates expected". `--json` path
+serializa el handle completo via `serde_json::to_string_pretty`.
+**`run_agent_discover`** acepta flag `--include-interactive` que
+broadens kinds to all 4 variants (default sólo Bg/Daemon/DaemonWorker
+— el "qué tengo corriendo detached" del operador). Itera kinds via
+`store.list_by_kind` then `retain` Running, sort by `started_at`
+desc. Empty result imprime "(no detached / daemon goals running;
+pass --include-interactive to broaden)" con hint condicional.
+Renderiza tabla markdown con cols ID / Kind / Phase / Started /
+Last activity. **8 nuevos tests inline verde**:
+`run_agent_attach_rejects_invalid_uuid` (bad shape → "valid UUID"),
+`run_agent_attach_missing_db_errors` (--db pointing nowhere → "not
+found"), `run_agent_attach_handle_not_found_errors` (valid UUID
+not in DB → "no agent handle found"),
+`run_agent_attach_running_renders_snapshot` (seed Running Bg via
+`run_agent_run`, attach succeeds + JSON variant),
+`run_agent_discover_filters_to_bg_daemon` (seed 1 Interactive + 1
+Bg, assert default discover excludes Interactive via store query),
+`run_agent_discover_include_interactive_returns_all` (with flag,
+both render),
+`run_agent_discover_empty_db_friendly_message` (missing DB → exit 0
+with friendly + JSON variant),
+`run_agent_discover_no_matching_goals_renders_friendly` (seed only
+Interactive, default discover prints friendly hint). CLI smoke
+manual confirmed: `nexo agent discover` → tabla con bg row;
+`nexo agent attach <goal_id>` → markdown + Running hint;
+`nexo agent attach not-a-uuid` → exit 1 con "is not a valid UUID";
+`nexo agent attach <missing-uuid>` → exit 1 con "no agent handle
+found".
+
+**Three-pillar audit**: robusto (8 tests covering UUID parse / DB
+absent / handle absent / Running render / terminal render /
+discover empty / discover no-match / both --json paths; defensive
+flag composition; sort newest-first), óptimo (reuses
+`list_by_kind` + `get` from 80.10 store; pure RO pool; helpers
+`resolve_agent_db_path` + `short_uuid` shared with 80.1.d / 80.10),
+transversal (pure SQLite + CLI; cero LLM-provider touchpoints).
+
+**Deferred follow-ups**:
+- **80.16.b** — Live event streaming via NATS subscribe
+  (`agent.registry.snapshot.<goal_id>` + `agent.driver.>` filter
+  by goal_id payload). Requires `nexo-broker` connect from CLI
+  side; print events as they arrive; Ctrl-C detaches without
+  killing.
+- **80.16.c** — User input piping via `agent.inbox.<goal_id>`
+  (depends on Phase 80.11).
+- **80.16.d** — Interactive REPL UI for attach (TUI). Plain
+  stdout printing covers MVP today.
+
+**Original spec for follow-ups** (preserved):
+
+KAIROS preprocesses argv into `_pendingAssistantChat = { sessionId, discover }`
+so `claude assistant <uuid>` attaches a REPL to a running
+daemon, and `claude assistant` (no arg) opens a discovery
+view. CLI mirror: `nexo agent attach <goal_id>` + `nexo agent discover`.
+
+**Reference (PRIMARY)**: `claude-code-leak/src/main.tsx:559,685-694,3259-3340`.
+**Reference (secondary)**: extend
+`crates/dispatch-tools/` (CLI surface) with `attach` +
+`discover` subcommands; reuses Phase 67 NATS subjects for
+streaming output back to the attaching TTY.
+
+**Done criteria**:
+- `nexo agent attach <goal_id>` connects current stdin/stdout
+  to the live goal — typed lines route to `agent.inbox.<goal_id>`,
+  goal output streams back from `agent.events.<goal_id>`
+- `nexo agent discover` lists running goals with channel,
+  age, prompt-summary; default sort by age desc
+- Detach on Ctrl-C (matches isBgSession exit-path semantics)
+- Companion-tui pairing flow piggy-backs on the same subjects
+- 2 unit tests (subject shape, stream framing) + 1 manual
+  integration test (running daemon, attach via second
+  shell)
+
+#### 80.17 — `auto_approve` mode (curated auto-approve dial)   ✅ MVP
+
+**Renamed from `kairos_remote_control` to `auto_approve` per
+operator request — descriptive name, no codename attribution.**
+
+**Shipped (decision table)**: nuevo módulo
+`crates/driver-permission/src/auto_approve.rs` (~280 LOC + 27
+tests verde) con `pub fn is_curated_auto_approve(tool_name, args,
+auto_approve_on, workspace_path) -> bool`. Decision table cubre
+~25 entries:
+
+- **Always auto** (read-only / info gathering): `FileRead`, `Glob`,
+  `Grep`, `LSP`, `list_agents`, `agent_status`, `agent_turns_tail`,
+  `memory_history`, `dream_runs_tail`, `list_mcp_resources`,
+  `read_mcp_resource`, `WebFetch`, `WebSearch`, `list_followups`,
+  `list_peers`, `task_get`.
+- **Bash conditional**: pasa solo si `is_read_only` AND
+  `check_destructive_command.is_none()` AND `check_sed_in_place.is_none()`.
+  Defense-in-depth — Phase 77.8/77.9 destructive heuristics SIEMPRE
+  vetan (rm -rf, dd, mkfs, sed -i, etc).
+- **FileEdit/FileWrite conditional**: pasa solo si la ruta
+  canonicalizada (con fallback a parent.canonicalize() para archivos
+  nuevos) cae bajo `workspace_path`. Symlink-escape resistant.
+- **Notifications + memory + coordination**: `notify_origin`,
+  `notify_channel`, `notify_push`, `forge_memory_checkpoint`,
+  `dream_now`, `ask_user_question`, `delegate`, `team_create`,
+  `team_delete`, `send_to_peer`, `task_create`, `task_update`,
+  `task_stop`.
+- **NEVER auto**: `ConfigTool`, `config_self_edit`, `REPL`,
+  `remote_trigger`, `schedule_cron`. Aunque el dial esté on, estos
+  siempre piden interactivo.
+- **`mcp_*` / `ext_*` prefix**: default-ask (heterogéneo).
+- **Default arm `_ => false`**: tools nuevos requieren explicit
+  add al match para auto-aprobar.
+
+`AgentConfig.auto_approve: bool` con `#[serde(default)]` (default
+`false` = comportamiento actual sin cambios). Per-binding override
+`InboundBinding.auto_approve: Option<bool>` también con default.
+`EffectiveBindingPolicy` gana 2 fields: `auto_approve: bool`
+resuelto via override > agent default, y `workspace_path:
+Option<PathBuf>` derivado de `agent.workspace`. Workspace fixture
+sweep: 49 sites con `assistant_mode: None` + 14 sites con
+`repl: None` swept via 2 perl multi-line replaces para añadir
+`auto_approve: false` y `auto_approve: None` a struct literals
+respectivamente.
+
+**Tests verde**: 27 nuevos en `auto_approve::tests` cubriendo cada
+arm del match + variantes defensivas (disabled flag → all false /
+file_read auto / glob_grep_lsp auto / bash ls auto / bash rm-rf
+veta / bash sed-in-place veta / bash missing arg defensive /
+bash pipe with destructive vetoes / FileEdit inside workspace
+auto / FileEdit outside workspace veta / FileEdit no workspace
+config blocks / FileEdit new file uses parent canonicalize /
+FileEdit missing path arg / notify_origin auto / notify_push
+auto / dream_now auto / delegate auto / team_create auto /
+task_create auto / task_get auto read-only / ConfigTool never
+auto / REPL never auto / remote_trigger never auto / schedule_cron
+never auto / mcp_ prefix default ask / ext_ prefix default ask /
+unknown tool default ask). `cargo build --workspace` + `cargo
+test --bin nexo` verde post-change.
+
+**Three-pillar audit**: robusto (27 tests; default-deny match arm
+para tools nuevos; Phase 77.8/77.9 vetoes preservados; canonical-
+path symlink defense; defensive arg-missing → false; per-binding
+override resolution); óptimo (pure fn single-match zero-allocation
+hot path; reuses existing classifiers; helper canonical_starts_with
+private to module); transversal (cero LLM-provider touchpoints;
+pure decision over (name, args, policy); transversal Anthropic /
+MiniMax / OpenAI / Gemini / DeepSeek / xAI / Mistral).
+
+**Deferred follow-ups**:
+- **80.17.b** — Hook `is_curated_auto_approve` into the approval
+  gate ✅ **MVP** — shipped: `AutoApproveDecider<D>` decorator
+  envuelve cualquier `PermissionDecider` inner; lee
+  `auto_approve: bool` + `workspace_path: String` del campo
+  `request.metadata` (defensive `as_bool()` / `as_str()` —
+  missing/wrong-type → false → delegate); cuando
+  `is_curated_auto_approve` retorna true, short-circuita a
+  `AllowOnce { updated_input: None }` con rationale
+  `"auto_approve: curated subset (<tool_name>)"`; cuando false,
+  delega al inner decider preservando comportamiento normal.
+  Constants `META_AUTO_APPROVE = "auto_approve"` y
+  `META_WORKSPACE_PATH = "workspace_path"` exportadas para que
+  caller-side wiring use los mismos field names. 6 nuevos tests
+  en `decorator_tests` mod cubriendo: delegates-when-metadata-missing
+  (Inner DenyAll → Deny pasa), delegates-when-flag-false (auto_approve:
+  false → delega), short-circuits-for-curated-tool (auto_approve:
+  true + FileRead → AllowOnce sin tocar inner), delegates-for-
+  destructive-bash (auto_approve: true + `rm -rf` → helper rejects
+  → delega a Inner AllowAll), delegates-for-unknown-tool (default-
+  ask para nuevos tools), handles-string-in-bool-field-defensively
+  (`"true"` string → `as_bool()` returns None → false → delega).
+  Re-exports en `nexo-driver-permission::lib.rs`:
+  `AutoApproveDecider`, `META_AUTO_APPROVE`, `META_WORKSPACE_PATH`,
+  `is_curated_auto_approve` (último por completitud — 27 tests
+  inventory + 6 tests decorator = 33 tests verde totales en
+  módulo). Doc-comment del decorator incluye snippet de wiring
+  caller-side de 1-line para boot:
+  `let decider = AutoApproveDecider::new(inner)` + ejemplo de
+  metadata population from `EffectiveBindingPolicy`. Cero cambios
+  a `PermissionRequest` shape, cero changes a `mcp.rs` o `socket.rs`
+  o decider impls existentes. Caller-side metadata population
+  queda como **80.17.b.c** follow-up (siguiente sub-fase): el wire
+  que CONSTRUYE `PermissionRequest` (probablemente
+  `crates/driver-claude/` o el adapter MCP) debe insertar
+  `auto_approve` + `workspace_path` desde la
+  `EffectiveBindingPolicy` resuelta antes de invocar al decider.
+  Sin esa población, el flag siempre lee `false` desde metadata
+  y el decorator es transparent pass-through. Three-pillar audit:
+  **robusto** (6 tests; defensive metadata parsing; decorator
+  preserves inner behavior cuando flag off; rationale string con
+  tool name para audit trail), **óptimo** (zero allocations en
+  hot path cuando flag off; single helper invocation; metadata
+  read es trivial JSON access), **transversal** (decorator funciona
+  con cualquier PermissionDecider impl; cero LLM-provider
+  touchpoints; pure pre-decision filter). Operator wiring (boot-
+  time wrap) deferred as 80.17.b.b cuando el dirty state del user
+  resuelva.
+
+- **80.17.b.b** — main.rs wire: cuando el operador resuelva su
+  dirty state, wrap `AllowAllDecider` (or future LlmDecider) con
+  `AutoApproveDecider::new(Arc::clone(&inner))`. 1-line snippet
+  en doc-comment.
+
+- **80.17.b.c** — Caller-side metadata population: ensure que el
+  wire que CONSTRUYE `PermissionRequest` (probablemente en
+  `crates/driver-claude/` o adapter MCP) populate
+  `metadata.auto_approve` + `metadata.workspace_path` desde
+  `EffectiveBindingPolicy` antes de invocar al decider.
+- **80.17.c** — `nexo setup doctor` warn check:
+  `assistant_mode == true && auto_approve == false` ⇒ "agent will
+  hang on every tool call waiting for interactive approval".
+- **80.17.d** — Per-tool log line on AutoAllow path (audit trail
+  "what was auto-approved this turn"); routes to Phase 72 turn-log.
+- **80.17.e** — Operator runtime override `--no-auto-approve`
+  CLI flag forcing ask even when YAML says auto.
+- **80.17.f** — Customisable allowlist via YAML (operator
+  extends/restricts the curated subset).
+
+**Original spec for follow-ups** (preserved):
+
+`fullRemoteControl = remoteControl || getRemoteControlAtStartup() || kairosEnabled`
+(`main.tsx:2916`). When on, approval prompts are bypassed for
+a curated tool subset. Critical for unattended daemons. Must
+not bypass the Phase 16 capability gate — the gate is
+*authoritative*; `kairos_remote_control` only flips the
+auto-approve dial within whatever the gate already permits.
+
+**Reference (PRIMARY)**: `claude-code-leak/src/main.tsx:2916`.
+**Reference (secondary)**: extend
+`crates/config/src/types/agents.rs::BindingPolicy` with
+`kairos_remote_control: bool`; consumed in
+`crates/driver-permission/`.
+
+**Done criteria**:
+- New binding-policy field — default `false`
+- When `true` AND tool is in `auto_approve_tools` allowlist:
+  permission auto-approves; otherwise normal flow
+- `auto_approve_tools` defaults to: `Sleep`, `cron_*`,
+  `notify_*`, read-only `Bash`, `FileRead`, `Grep`, `Glob`
+- `nexo setup doctor` warns when `assistant_mode: true` AND
+  `kairos_remote_control: false` (likely misconfiguration)
+- 4 unit tests across the matrix (mode on / off × tool
+  in / out of allowlist)
+
+#### 80.18 — DreamTask audit-log row   ✅
+
+Shipped — `crates/agent-registry/src/dream_run.rs` (~860 LOC + 26
+unit tests). Verbatim port of leak `tasks/DreamTask/DreamTask.ts:1-158`.
+Mirrors Phase 72 turn-log pattern (`turn_log.rs:1-336`).
+
+**Public surface**:
+- `DreamRunStore` trait (10 async methods).
+- `SqliteDreamRunStore` impl with idempotent `migrate` (v4) + 3 indexes.
+- Types: `DreamRunRow`, `DreamRunStatus` (5 variants), `DreamPhase`
+  (2 variants), `DreamTurn { text, tool_use_count }`.
+- Constants: `MAX_TURNS=30` (from leak `:11-12`), `TAIL_HARD_CAP=1000`.
+
+**Three pillars verified**:
+- **Robusto**: 12 risks enumerated; idempotent `INSERT OR IGNORE` on
+  `(goal_id, started_at)`; transactional `append_turn` + `append_files_touched`
+  with `BEGIN`/`COMMIT`; MAX_TURNS server-side cap (test inserts 35,
+  asserts 30 retained); TAIL_HARD_CAP defends `tail(usize::MAX)`;
+  `Option<i64>` distinguishes `Some(0)` from `None` for
+  `prior_mtime_ms`; silent `Ok(())` on update of missing id;
+  `busy_timeout=5s` on `SqliteConnectOptions`; reattach atomic
+  single-UPDATE.
+- **Óptimo**: copy/paste pool config from Phase 72 (`WAL` + `synchronous=NORMAL`
+  + max_connections heuristic); JSON columns avoid 2 join tables;
+  shared `SqlitePool` interoperable with `TurnLogStore` /
+  `AgentRegistryStore`; 3 indexes (`goal_id`, `started_at`, `status`)
+  cover every query path.
+- **Transversal**: store has zero `LlmClient` coupling — `DreamTurn`
+  is plain text + count; `fork_label: String` flexible (supports
+  `auto_dream`, `away_summary`, future eval); admin-ui (TS) reads
+  same JSON shape.
+
+**Decisions taken**:
+- Crate placement `crates/agent-registry/src/dream_run.rs` (mirror
+  Phase 72) — NOT `crates/dream-store/`.
+- `fork_label: String` flexible — no enum variant churn.
+- `turns` JSON column inside the row — bounded by MAX_TURNS=30; no
+  separate `dream_turns` join table.
+- Phase 71 reattach extension to call `dream_run_store.reattach_running()`
+  is **80.18.b follow-up** — API ready here, integration in
+  `reattach.rs` deferred until 80.1 wires the store at boot.
+- Concurrent-writers test scoped to distinct rows (production
+  pattern — one fork = one writer per row); same-id contention
+  test removed because sqlx 0.8 returns SQLITE_BUSY on `BEGIN IMMEDIATE`
+  contention even with `busy_timeout` configured (known
+  sqlx-sqlite limitation; Phase 72 sidesteps the same way).
+
+**Files shipped**:
+- `crates/agent-registry/src/dream_run.rs` (NEW)
+- `crates/agent-registry/src/lib.rs` re-exports `DreamRunStore`,
+  `SqliteDreamRunStore`, types, `DREAM_MAX_TURNS`,
+  `DREAM_TAIL_HARD_CAP`.
+
+**Tests** (26 total, all green):
+- 2 — enum serde round-trip (`DreamRunStatus`, `DreamPhase`).
+- 1 — migrate idempotent across `open` calls + within same pool.
+- 6 — insert + get + tail (round-trip, idempotent UNIQUE constraint,
+  newest-first ordering, hard-cap clamp, isolation by goal_id, missing-id None).
+- 4 — update_status + update_phase + finalize (in-place modify,
+  silent on missing id, finalize sets ended_at without touching status).
+- 3 — append_files_touched (dedupe, empty no-op, all-duplicates no-op).
+- 3 — append_turn (skip empty no-op per leak `:87-92`, append when
+  text present, trim to MAX_TURNS=30 after 35 inserts).
+- 5 — reattach + drop (running→lost flip, idempotent re-run, goal-id
+  isolation, nonexistent goal returns 0, prior_mtime_zero distinguished
+  from None).
+- 2 — sequential cross-row writers don't interfere; migrate idempotent
+  across re-`open`.
+
+**Follow-ups** (`proyecto/FOLLOWUPS.md`):
+- 80.18.b — `crates/agent-registry/src/reattach.rs::reattach()`
+  extension to call `dream_run_store.reattach_running()` when
+  store wired at boot (~30 min plumbing).
+
+KAIROS's `DreamTask` state shape (`DreamTask.ts:25-41`):
+`{ type, status, phase, sessionsReviewing, filesTouched,
+turns(max 30), priorMtime, abortController }`. nexo equiv:
+extend `agent_registry::TurnLogStore` (Phase 72) with a
+typed `dream_run` row joined to `goal_id`, queryable via the
+same `agent_turns_tail` shape.
+
+**Reference (PRIMARY)**: `claude-code-leak/src/tasks/DreamTask/DreamTask.ts:25-130`.
+**Reference (secondary)**: extend
+`crates/agent-registry/` with `dream_runs` table
+(migration v4 — Phase 77.17 system).
+
+**Done criteria**:
+- New table:
+  ```sql
+  CREATE TABLE dream_runs (
+      id TEXT PRIMARY KEY,
+      goal_id TEXT NOT NULL,
+      status TEXT NOT NULL,    -- running|completed|failed|killed
+      phase TEXT NOT NULL,     -- starting|updating
+      sessions_reviewing INTEGER NOT NULL,
+      files_touched TEXT NOT NULL,  -- JSON array
+      prior_mtime INTEGER,
+      started_at INTEGER NOT NULL,
+      ended_at INTEGER
+  );
+  ```
+- `dream_runs_tail` LLM tool returns last N rows as a
+  markdown table
+- `dream.kill <run_id>` admin CLI sets abort signal +
+  rolls back consolidation lock
+- 3 unit tests
+
+#### 80.19 — Forked subagent infra (cache-safe + skip-transcript)   ✅
+
+Shipped — new crate `crates/fork/` (≈ 1450 LOC + 42 unit tests
+across 9 modules). Standalone in-process turn loop using
+`nexo_llm::LlmClient` directly — does NOT reuse Phase 67's
+heavyweight goal-flow `DriverOrchestrator` (that path spawns
+`claude` subprocesses and runs acceptance + workspace checks,
+which is the wrong primitive for fork-with-cache-share).
+
+**Spec amend (live)**: discovery during Step 1 audit revealed
+that `nexo_llm` does not expose `Message`/`ThinkingConfig` and
+that `DriverOrchestrator` is goal-flow heavyweight; spec was
+revised in chat to use real types — `ChatMessage` + `ToolDef` +
+`CacheUsage` from `nexo_llm::types`, and a standalone
+`turn_loop::run_turn_loop` instead of the orchestrator. Two
+TypeScript-only fields from the leak's `SubagentContextOverrides`
+(17 total) were dropped because Rust's `Arc<...>` already
+isolates by construction; only `agent_id` + `critical_system_reminder`
+remain in `ForkOverrides`.
+
+**Public surface**:
+- `CacheSafeParams::from_parent_request(&ChatRequest)` snapshots
+  the parent's last LLM request (system prompt, system blocks,
+  tools, model, message prefix). `cache_key_hash()` lets
+  Phase 77.4 cache-break detector compare parent vs fork.
+- `ForkSubagent` trait + `DefaultForkSubagent` impl.
+- `ForkParams` carries `mode: DelegateMode { Sync | ForkAndForget }`,
+  `tool_filter: Arc<dyn ToolFilter>`, `tool_dispatcher`,
+  `on_message`, `skip_transcript`, `timeout`, `external_abort`.
+- `ForkHandle` exposes `take_completion()` to extract the
+  completion future without breaking the `Drop` impl that
+  cancels the abort signal on abandoned handles.
+- `ForkResult { messages, total_usage, total_cache_usage,
+  final_text, turns_executed }`.
+- `OnMessage` trait + `NoopCollector` / `LoggingCollector` /
+  `ChainCollector` (panic-safe via `catch_unwind`).
+- `ToolFilter` trait + `AllowAllFilter` default; Phase 80.20
+  ships `AutoMemFilter` against the same trait.
+- `CacheSafeSlot` per-goal slot (caller-owned) for the
+  most-recent params, mirror of leak's
+  `lastCacheSafeParams` slot but per-goal not global static.
+
+**Cache-key invariant (CRITICAL — leak `forkedAgent.ts:522-525`)**:
+`fork_context_messages` MUST preserve incomplete `tool_use`
+blocks; filtering them strips paired `tool_result` rows and
+breaks Anthropic API + cache prefix. Test
+`from_parent_request_preserves_message_prefix_with_partial_tool_use`
+verifies bit-for-bit pass-through.
+
+**Telemetry**: span `fork.subagent` with run_id, parent_agent,
+fork_label, query_source, mode, skip_transcript, cache_key_hash.
+Inline `WARN` on `fork.cache_break_detected` target when first-turn
+cache hit ratio drops below 0.5 (Phase 77.4 heuristic).
+
+**Decisions taken**:
+- Crate `crates/fork/` separate from `delegation_tool.rs`
+  (D-8 in `proyecto/design-kairos-port.md`) — 80.19 ships the
+  primitive; `delegation_tool.rs` refactor to consume it is
+  a follow-up step, not part of 80.19.
+- `skip_transcript: true` does NOT register an `agent_handle`
+  row (fork invisible to `agent ps`); 80.10 SessionKind +
+  80.18 `dream_runs` provide consumer-specific audit.
+- Cross-process `NatsForkSubagent` deferred to Phase 32
+  multi-host orchestration.
+- `Drop for ForkHandle` cancels abort when `take_completion`
+  was never called — prevents leaked tokio tasks on abandoned
+  ForkAndForget handles.
+
+**Files shipped**:
+- `crates/fork/Cargo.toml`, `crates/fork/README.md`,
+  `crates/fork/src/{lib,error,delegate_mode,cache_safe,
+  overrides,tool_filter,turn_loop,on_message,fork_handle,
+  fork_subagent}.rs` (10 files)
+- `Cargo.toml` workspace.members += `crates/fork`
+- `docs/src/architecture/fork-subagent.md` registered in
+  `docs/src/SUMMARY.md` under `# Architecture`
+
+**Tests** (42 total, all green):
+- 4 — error + delegate_mode types
+- 9 — CacheSafeParams: preserves partial tool_use (the leak
+  invariant), cache_key_hash stability, hash invariance under
+  temperature drift, slot save/clear.
+- 4 — overrides: agent_id override, Arc-pointer preservation
+  for config + sessions.
+- 1 — AllowAllFilter accepts everything.
+- 7 — turn_loop: single text turn, tool_call → text round-trip,
+  abort + max_turns_zero edge cases, filter denial substitutes
+  the right body, critical_system_reminder injection,
+  CacheUsage aggregation across turns.
+- 3 — OnMessage: noop, chain fan-out, panic in inner collector
+  is caught.
+- 5 — fork_handle: take_completion + drop semantics, final-text
+  extraction edge cases.
+- 9 — fork_subagent end-to-end: Sync inline, ForkAndForget
+  returns immediately, timeout cancels loop, abort propagates,
+  skip_transcript, on_message, overrides, external_abort.
+
+**Follow-ups** (recorded in `proyecto/FOLLOWUPS.md` if needed):
+- 80.19.b: refactor `crates/core/src/agent/delegation_tool.rs`
+  to consume `nexo_fork::DefaultForkSubagent` with
+  `DelegateMode::Sync` so the existing sync delegation path
+  reuses the new isolation contract.
+- 80.10 follow-up: actual `agent_handles` row write when
+  `skip_transcript: false` — `DefaultForkSubagent` accepts
+  a registry but defers the row shape to 80.10's SessionKind.
+
+#### 80.20 — auto-mem `can_use_tool` whitelist for forked dream   ✅
+
+Shipped — `crates/fork/src/auto_mem_filter.rs` (~330 LOC + 24 unit
+tests) + `crates/driver-permission/src/bash_destructive.rs::is_read_only`
+(~120 LOC + 19 unit tests). Verbatim port of leak
+`extractMemories.ts:165-222` `createAutoMemCanUseTool`.
+
+**Public surface**:
+- `AutoMemFilter::new(memory_dir)` returns `Result<Self, AutoMemFilterError>`.
+  Canonicalize at construction (single syscall, óptimo); fail-fast on
+  missing dir.
+- `impl ToolFilter for AutoMemFilter` — allow-list per leak.
+- `tool_names` module — single source of truth for canonical nexo
+  tool name strings (`FileRead`, `FileEdit`, etc.).
+- `nexo_driver_permission::bash_destructive::is_read_only` —
+  composes Phase 77.8 (`check_destructive_command`) + Phase 77.9
+  (`check_sed_in_place`) + redirect/subshell/heredoc detection +
+  positive whitelist of ~45 read-only utilities.
+
+**Three pillars applied** (per memory `feedback_provider_agnostic.md`):
+
+- **Robusto**: 15 risks enumerated; 43 unit tests (15 risks × ≥1 test);
+  symlink defense via canonical resolve + `starts_with`; path traversal
+  caught by canonical resolve; conservative defaults (unknown command
+  → deny, missing dir → fail-fast, missing `file_path` → deny,
+  non-string args → deny); 4 layers of defense (whitelist + bash
+  classifier composition + path canonicalize + post-fork audit in 80.1).
+- **Óptimo**: `&'static [&str]` whitelist (zero alloc per call), single
+  canonicalize at construction, single source of truth for tool names
+  in `tool_names` module, reuses Phase 77.8/77.9 classifiers (no logic
+  duplication), `&'static MUTATING_MARKERS` substring scan O(n*m) with
+  small constants.
+- **Transversal**: operates on tool name + JSON args, no `LlmClient`
+  coupling; works under Anthropic/OpenAI/MiniMax/Gemini/DeepSeek; 3
+  explicit provider-shape tests (`flat_args_anthropic_shape`,
+  `extra_metadata_keys_ignored`, `nested_args_unsupported_explicit`)
+  document and verify the flat-args contract.
+
+**Decisions taken**:
+
+- Whitelist intentionally **excludes** `tee`/`awk`/`perl`/`python`/
+  `node`/`ruby` even though some uses are harmless — they can shell
+  out via `system(...)`. Conservative deny over false-allow.
+- `cmake` and other build tools are **not** in the whitelist; the
+  redirect-to-/dev/null pass does not flip the verdict.
+- Network egress (`curl`/`wget`/`scp`/`rsync`) is conservative-deny
+  even for GETs — the auto-dream context is editing memory files,
+  not browsing.
+- Path traversal `..` defended by canonical resolve before
+  `starts_with` (post-resolution comparison, not pre).
+- Symlink swap defended by canonicalize-at-construction (resolve
+  once) + canonicalize-per-call (resolve every `file_path`).
+- Filter expects flat top-level args; nested envelopes are denied
+  explicitly (the contract surfaces missing unwraps in provider
+  clients immediately).
+
+**Files shipped**:
+- `crates/fork/src/auto_mem_filter.rs` (NEW, 24 unit tests)
+- `crates/fork/src/lib.rs` re-exports `AutoMemFilter`,
+  `AutoMemFilterError`, `tool_names`
+- `crates/fork/Cargo.toml` adds `nexo-driver-permission` dep +
+  `tempfile` dev-dep
+- `crates/driver-permission/src/bash_destructive.rs::is_read_only`
+  + `MUTATING_MARKERS` + `READ_ONLY_COMMANDS` + 19 unit tests
+- `docs/src/architecture/fork-subagent.md` adds "AutoMemFilter
+  (Phase 80.20)" section
+
+**Tests** (43 new — 67 cumulative across crates/fork now):
+- 19 — `is_read_only`: simple cmds (ls, grep), pipes, redirects (file
+  vs /dev/null), destructive (rm), sed-in-place, subshells, heredoc,
+  process-substitution, compound `&&`/`||`/`;`, env-var prefix,
+  empty/whitespace, unknown command, sudo/su, curl/wget,
+  tee/awk-removed, idempotent.
+- 24 — `AutoMemFilter`: construction (existing dir, missing dir),
+  allow paths (REPL, FileRead/Grep/Glob, Bash read-only), deny paths
+  (Bash destructive, Bash subshell, Bash missing arg, unknown tool),
+  FileEdit/FileWrite (existing inside, new file inside, outside,
+  relative path, traversal escape, symlink escape, missing file_path,
+  non-string file_path, parent missing), denial messages (Bash, Edit,
+  generic), provider-shape transversality (3 tests).
+
+#### 80.21 — docs + admin-ui sync   ✅ MVP
+
+**Shipped (public docs sweep)**: 4 nuevas páginas en `docs/src/`
++ 1 sección reorganizada en `SUMMARY.md`:
+
+- `docs/src/agents/assistant-mode.md` (~250 LOC) — concept,
+  config quickstart, what changes when on (proactive addendum,
+  boot-immutable flag, pairing with auto_approve, always-on
+  lifecycle hooks), reading the flag from code, status table
+  per Phase 80 sub-phase, cross-refs.
+- `docs/src/agents/auto-approve.md` (~280 LOC) — what
+  auto-approves (read-only / Bash conditional / scoped writes /
+  notifications / coordination), what ALWAYS asks (ConfigTool /
+  REPL / remote_trigger / schedule_cron / unknown),
+  layered-gates ASCII diagram, YAML config, deferred
+  follow-ups (80.17.b.b/c/c), defense-in-depth.
+- `docs/src/agents/away-summary.md` (~180 LOC) — config table,
+  output shape with truncation, wiring snippet using
+  `try_compose_away_digest`, atomic-update pattern, defensive
+  edge cases, deferred follow-ups (80.14.b LLM-summarised /
+  80.14.c last_seen pairing-store / 80.14.d per-channel).
+- `docs/src/agents/multi-agent-coordination.md` (~250 LOC) —
+  subject contract `agent.inbox.<goal_id>`, `InboxMessage`
+  shape, `list_peers` shape, `send_to_peer` 6 validation gates,
+  per-goal fan-out, receive side router + buffer-on-demand
+  semantics + 64-msg cap + render shape, wiring snippet,
+  defense-in-depth, deferred follow-ups.
+- `docs/src/cli/agent-bg.md` (~280 LOC) — `SessionKind` table,
+  `agent run [--bg]`, `agent ps`, `agent discover`, `agent
+  attach`, 3-tier DB path resolution, kind-aware reattach,
+  deferred 80.10.b-g + 80.16.b/c.
+
+`docs/src/SUMMARY.md` reorganizado con nueva sección **Assistant
+mode** que agrupa los 4 conceptos + entry de `agent-bg.md` bajo
+**CLI**. `mdbook build docs` smoke verde — sin broken links,
+todos los cross-refs resuelven.
+
+**Shipped (admin-ui PHASES tech-debt sweep)**: 6 nuevas entradas
+en `admin-ui/PHASES.md::Tech-debt registry` — una por feature
+operator-visible:
+
+1. **Assistant mode (Phase 80.15)** — Phase A3 toggle +
+   addendum textarea + initial_team multi-select + boot-
+   immutable "restart required" banner + Phase A4 active-badge.
+2. **Auto-approve dial (Phase 80.17)** — Phase A3 toggle +
+   workspace-path display + curated-tools preview + Phase A9
+   audit log + setup-doctor banner.
+3. **Background sessions (Phase 80.10 + 80.16)** — Phase A4
+   dashboard tab con SessionKind chips + spawn-BG modal +
+   discover-detached pane + per-row drill-in con live-stream
+   placeholder.
+4. **AWAY_SUMMARY digest (Phase 80.14)** — Phase A3 config
+   block + Phase A9 last-digest viewer + per-channel rendering
+   preview.
+5. **Multi-agent inbox (Phase 80.11 + 80.11.b)** — Phase A8
+   delegation visualiser inbox pane con live buffer count +
+   per-message preview + drain button + tool registry status +
+   API reference for subject contract.
+6. **AutoDream cluster (Phase 80.1)** — Phase A7 memory
+   inspector AutoDream pane con status badge + audit table tail
+   + force-run button gated por `NEXO_DREAM_NOW_ENABLED` +
+   capabilities tab row + kill button.
+
+**Three-pillar audit**: robusto (cross-refs entre páginas; status
+tables per sub-phase para que operator vea qué está MVP vs
+deferred; defensive language sobre "operator hookup pending"
+donde aplica), óptimo (mdbook re-uses existing infrastructure;
+admin-ui tech-debt list es one-liner per feature, scope-bound),
+transversal (cero menciones a LLM-provider en docs nuevos —
+provider-agnostic posture; admin-ui entries describen knobs no
+prompts).
+
+Memory rule compliance: cero refs a `claude-code-leak/` en las
+5 nuevas páginas + 6 nuevas entradas tech-debt + SUMMARY.md.
+`grep` verificado.
+
+Standard close-out for any phase touching operator surface.
+
+**Done criteria**:
+- New page `docs/src/concepts/kairos-mode.md` registered in
+  `SUMMARY.md`: explains assistant_mode, brief mode, channels,
+  push, github webhooks, away summary, fork-style consolidation
+- `docs/src/operations/cron-jitter.md` documents the 6 knobs +
+  hot-reload + how to use as incident shed-load
+- `admin-ui/PHASES.md` Phase A-N entry: new "Assistant mode"
+  panel listing per-binding `assistant_mode`, `brief`,
+  `channels.allowed`, `push.provider`, `kairos_remote_control`,
+  `cron.enabled`
+- `crates/setup/src/capabilities.rs::INVENTORY` registers
+  any new env toggles introduced by 80.12 (`GITHUB_WEBHOOK_SECRET`)
+  + 80.13 push provider creds + 80.17
+  (`NEXO_KAIROS_REMOTE_CONTROL` if exposed as env override)
+- `proyecto/FOLLOWUPS.md` cleared of any 80.* deferred items
+  (or each item explicitly tracked there)
+- `mdbook build docs` passes locally
+- CHANGELOG.md entry
+
+---
+
+**Phase 80 effort estimate**: 80.1 (3-4 days, fork +
+locking is the hard part), 80.9 (2-3 days, channels gate is
+intricate), 80.12 (1.5-2 days, generic webhook receiver —
+re-scoped 2026-04-30 from "github webhook + plugin" to
+provider-agnostic receiver per Cristian's request, channels
++ pollers cover the rest of the inbound surface), 80.13
+(2 days per provider × 3 providers = 6 days, but APN+FCM
+are similar so realistic ~3 days), 80.14 (2 days), 80.15 +
+80.17 (1 day each), 80.10 (2 days incl. schema migration),
+80.19 (3 days), 80.21 (1 day docs). Everything else ≤ 1 day.
+Total ~ 23-28 dev-days for full parity (was 25-30, recortado
+~1d por re-scope de 80.12). 80.7 (per-cwd lock) flagged as DEFER until Phase 32
+multi-host orchestration arrives.
+
+### Phases 82 + 83 — Microapp framework
+
+The full planning for the microapp framework — Phase 82
+(multi-tenant SaaS extension enablement + control plane
+primitives) and Phase 83 (microapp framework foundation,
+SDK, templates, reference microapps) — has been **moved to
+its own document**: `proyecto/PHASES-microapps.md`.
+
+That file is the **source of truth** for any topic prefixed
+`82.x` or `83.x`. When `/forge brainstorm | spec | plan |
+ejecutar` is invoked on a microapp-related topic, read
+`PHASES-microapps.md` before consulting this legacy file.
+
+Status summary:
+
+| Phase | Name | Sub-phases | Status |
+|-------|------|-----------|--------|
+| 82 | Multi-tenant SaaS extension enablement + control plane | 12 | 0/12 |
+| 83 | Microapp framework foundation | 11 | 0/11 |
+
+Rationale: keeping the microapp framework planning in a
+dedicated file avoids polluting this 9 000-line legacy
+document, makes `/forge` context smaller, and clarifies
+ownership. The legacy file (`proyecto/PHASES.md`) carries
+Phases 1-81 only; everything microapp-related lives in
+`proyecto/PHASES-microapps.md`.
+
 ## How to add a new phase
 
 When a new major implementation phase is introduced:
