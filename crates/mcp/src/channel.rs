@@ -16,12 +16,13 @@
 use crate::client_trait::McpClient;
 use crate::events::ClientEvent;
 use nexo_broker::{AnyBroker, Event as BrokerEvent};
-use nexo_config::types::channels::ChannelsConfig;
+use nexo_config::types::channels::{ChannelRateLimit, ChannelsConfig};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
+use std::time::Instant;
+use tokio::sync::{broadcast, Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -843,8 +844,76 @@ pub enum ChannelInboundLoopHandle {
     },
 }
 
+// ---------------------------------------------------------------
+// Phase 80.9.g — token bucket rate limiter.
+// ---------------------------------------------------------------
+
+/// Token-bucket implementation for per-server inbound throttling.
+/// Uses a Mutex on a tiny state (tokens + last-refill timestamp);
+/// contention is bounded by the inbound rate which is operator-
+/// capped via `ChannelRateLimit`. Replenishment is lazy on each
+/// `try_acquire` call — no background task needed.
+#[derive(Debug)]
+pub struct TokenBucket {
+    capacity: f64,
+    rps: f64,
+    state: Mutex<TokenBucketState>,
+}
+
+#[derive(Debug)]
+struct TokenBucketState {
+    tokens: f64,
+    last_refill: Instant,
+}
+
+impl TokenBucket {
+    pub fn new(rate_limit: ChannelRateLimit) -> Self {
+        let capacity = rate_limit.burst as f64;
+        Self {
+            capacity,
+            rps: rate_limit.rps,
+            state: Mutex::new(TokenBucketState {
+                tokens: capacity,
+                last_refill: Instant::now(),
+            }),
+        }
+    }
+
+    /// Try to spend one token. Returns `true` on success;
+    /// `false` when the bucket is empty (caller should drop the
+    /// message with a warn).
+    pub async fn try_acquire(&self) -> bool {
+        let mut s = self.state.lock().await;
+        let now = Instant::now();
+        let elapsed = now.duration_since(s.last_refill).as_secs_f64();
+        s.tokens = (s.tokens + elapsed * self.rps).min(self.capacity);
+        s.last_refill = now;
+        if s.tokens >= 1.0 {
+            s.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Test helper — current token count after lazy refill.
+    #[cfg(test)]
+    pub async fn tokens(&self) -> f64 {
+        let mut s = self.state.lock().await;
+        let now = Instant::now();
+        let elapsed = now.duration_since(s.last_refill).as_secs_f64();
+        s.tokens = (s.tokens + elapsed * self.rps).min(self.capacity);
+        s.last_refill = now;
+        s.tokens
+    }
+}
+
 /// Drives a single MCP server's channel notifications: gate at
-/// startup → register → stream → parse → dispatch.
+/// startup → register → stream → parse → dispatch. Phase 80.9.g
+/// adds an optional [`TokenBucket`] consulted before each
+/// dispatch — when the bucket is empty the message is dropped
+/// with a structured warn rather than queued, so a noisy server
+/// can't blow up memory.
 pub struct ChannelInboundLoop {
     cfg: ChannelInboundLoopConfig,
 }
@@ -918,6 +987,22 @@ impl ChannelInboundLoop {
         let cfg_for_task = cfg.cfg.clone();
         let server_name = cfg.server_name.clone();
         let binding_id = cfg.binding_id.clone();
+        // Phase 80.9.g — pre-compute the per-server bucket once.
+        // `resolve_rate_limit` returns `None` when both per-server
+        // and default rate limits are absent / inactive; the loop
+        // then dispatches every message without throttling.
+        let bucket: Option<Arc<TokenBucket>> = cfg
+            .cfg
+            .resolve_rate_limit(&server_name)
+            .map(TokenBucket::new)
+            .map(Arc::new);
+        if bucket.is_some() {
+            tracing::debug!(
+                server = %server_name,
+                binding = %binding_id,
+                "channel inbound rate limit active"
+            );
+        }
 
         let join = tokio::spawn(async move {
             registry.register(registered).await;
@@ -942,6 +1027,16 @@ impl ChannelInboundLoop {
                     ev = events.recv() => {
                         match ev {
                             Ok(ClientEvent::ChannelMessage { params }) => {
+                                if let Some(b) = bucket.as_ref() {
+                                    if !b.try_acquire().await {
+                                        tracing::warn!(
+                                            server = %server_name,
+                                            binding = %binding_id,
+                                            "channel inbound dropped — rate limit exceeded"
+                                        );
+                                        continue;
+                                    }
+                                }
                                 Self::handle_message(
                                     &server_name,
                                     &binding_id,
@@ -1041,6 +1136,7 @@ mod tests {
             server: "slack".into(),
             plugin_source: None,
             outbound_tool_name: None,
+            rate_limit: None,
         }]);
         let allow = binding(&["slack"]);
         let out = gate_channel_server(&ChannelGateInputs {
@@ -1079,6 +1175,7 @@ mod tests {
             server: "slack".into(),
             plugin_source: None,
             outbound_tool_name: None,
+            rate_limit: None,
         }]);
         // binding does NOT include slack
         let allow = binding(&["telegram"]);
@@ -1100,7 +1197,8 @@ mod tests {
         let cfg = cfg_on(vec![ApprovedChannel {
             server: "slack".into(),
             plugin_source: Some("slack@anthropic".into()),
-            outbound_tool_name: None,        }]);
+            outbound_tool_name: None,
+            rate_limit: None,        }]);
         let allow = binding(&["slack"]);
         let out = gate_channel_server(&ChannelGateInputs {
             server_name: "slack",
@@ -1124,7 +1222,8 @@ mod tests {
         let cfg = cfg_on(vec![ApprovedChannel {
             server: "slack".into(),
             plugin_source: Some("slack@anthropic".into()),
-            outbound_tool_name: None,        }]);
+            outbound_tool_name: None,
+            rate_limit: None,        }]);
         let allow = binding(&["slack"]);
         let out = gate_channel_server(&ChannelGateInputs {
             server_name: "slack",
@@ -1145,6 +1244,7 @@ mod tests {
             server: "telegram".into(),
             plugin_source: None,
             outbound_tool_name: None,
+            rate_limit: None,
         }]);
         let allow = binding(&["slack"]); // session lets it through, but cfg.approved doesn't
         let out = gate_channel_server(&ChannelGateInputs {
@@ -1166,6 +1266,7 @@ mod tests {
             server: "slack".into(),
             plugin_source: None,
             outbound_tool_name: None,
+            rate_limit: None,
         }]);
         let allow = binding(&["slack"]);
         let out = gate_channel_server(&ChannelGateInputs {
@@ -1183,7 +1284,8 @@ mod tests {
         let cfg = cfg_on(vec![ApprovedChannel {
             server: "slack".into(),
             plugin_source: Some("slack@anthropic".into()),
-            outbound_tool_name: None,        }]);
+            outbound_tool_name: None,
+            rate_limit: None,        }]);
         let allow = binding(&["slack"]);
         let out = gate_channel_server(&ChannelGateInputs {
             server_name: "slack",
@@ -1615,6 +1717,7 @@ mod tests {
                 server: server.into(),
                 plugin_source: None,
                 outbound_tool_name: None,
+            rate_limit: None,
             }],
             ..Default::default()
         }
@@ -1826,6 +1929,142 @@ mod tests {
         let _ = tokio::time::timeout(std::time::Duration::from_millis(200), join).await;
     }
 
+    // ---- Phase 80.9.g token bucket ----
+
+    #[tokio::test]
+    async fn token_bucket_allows_burst_size_then_blocks() {
+        let b = TokenBucket::new(ChannelRateLimit { rps: 1.0, burst: 3 });
+        // First three acquires must succeed.
+        for _ in 0..3 {
+            assert!(b.try_acquire().await);
+        }
+        // Fourth blocks (no tokens left, no time elapsed).
+        assert!(!b.try_acquire().await);
+    }
+
+    #[tokio::test]
+    async fn token_bucket_refills_at_rps_rate() {
+        let b = TokenBucket::new(ChannelRateLimit {
+            rps: 100.0,
+            burst: 1,
+        });
+        // Drain once.
+        assert!(b.try_acquire().await);
+        assert!(!b.try_acquire().await);
+        // After ~12 ms at 100 rps we should have ~1.2 tokens
+        // available — more than enough for one acquire.
+        tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+        assert!(b.try_acquire().await);
+    }
+
+    #[tokio::test]
+    async fn token_bucket_refill_caps_at_capacity() {
+        let b = TokenBucket::new(ChannelRateLimit {
+            rps: 1000.0,
+            burst: 5,
+        });
+        // Drain.
+        for _ in 0..5 {
+            assert!(b.try_acquire().await);
+        }
+        // Sleep long enough to refill way past capacity if cap
+        // wasn't enforced.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        // Tokens should be capped at 5 (burst), not 50.
+        let count = b.tokens().await;
+        assert!(count <= 5.0 + 0.001, "expected ≤ burst cap, got {count}");
+    }
+
+    #[tokio::test]
+    async fn loop_drops_messages_when_bucket_empty() {
+        let dispatcher = Arc::new(CountingDispatcher::default());
+        let dispatcher_dyn: Arc<dyn ChannelDispatcher> = dispatcher.clone();
+        let registry: SharedChannelRegistry = Arc::new(ChannelRegistry::new());
+        let cfg = ChannelsConfig {
+            enabled: true,
+            approved: vec![ApprovedChannel {
+                server: "slack".into(),
+                plugin_source: None,
+                outbound_tool_name: None,
+                rate_limit: Some(ChannelRateLimit {
+                    rps: 0.001, // refill ~1 token per 1000s
+                    burst: 1,
+                }),
+            }],
+            ..Default::default()
+        };
+        let cfg_arc = Arc::new(cfg);
+        let allow_arc = Arc::new(vec!["slack".to_string()]);
+        let loop_cfg = ChannelInboundLoopConfig {
+            server_name: "slack".into(),
+            binding_id: "b".into(),
+            plugin_source: None,
+            cfg: cfg_arc,
+            binding_allowlist: allow_arc,
+            capability_declared: true,
+            permission_capability: false,
+            registry: registry.clone(),
+            dispatcher: dispatcher_dyn,
+        };
+        let (tx, rx) = broadcast::channel::<ClientEvent>(8);
+        let cancel = CancellationToken::new();
+        let handle = ChannelInboundLoop::new(loop_cfg).spawn_with_events(rx, cancel.clone());
+        let join = match handle {
+            ChannelInboundLoopHandle::Running { join } => join,
+            _ => panic!(),
+        };
+
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        // Send 3 messages quickly. With burst=1 and slow refill,
+        // only the first should land.
+        for _ in 0..3 {
+            tx.send(ClientEvent::ChannelMessage {
+                params: serde_json::json!({"content": "hi"}),
+            })
+            .unwrap();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let dispatched = dispatcher.dispatched.lock().await.clone();
+        assert_eq!(dispatched.len(), 1, "rate limit should have dropped 2");
+        cancel.cancel();
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(200), join).await;
+    }
+
+    #[tokio::test]
+    async fn loop_without_rate_limit_dispatches_all() {
+        let dispatcher = Arc::new(CountingDispatcher::default());
+        let dispatcher_dyn: Arc<dyn ChannelDispatcher> = dispatcher.clone();
+        let registry: SharedChannelRegistry = Arc::new(ChannelRegistry::new());
+        let loop_cfg = build_loop_config(
+            "slack",
+            "b",
+            cfg_active("slack"),
+            true,
+            dispatcher_dyn,
+            registry,
+        );
+        let (tx, rx) = broadcast::channel::<ClientEvent>(8);
+        let cancel = CancellationToken::new();
+        let handle = ChannelInboundLoop::new(loop_cfg).spawn_with_events(rx, cancel.clone());
+        let join = match handle {
+            ChannelInboundLoopHandle::Running { join } => join,
+            _ => panic!(),
+        };
+
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        for _ in 0..5 {
+            tx.send(ClientEvent::ChannelMessage {
+                params: serde_json::json!({"content": "x"}),
+            })
+            .unwrap();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        let dispatched = dispatcher.dispatched.lock().await.len();
+        assert_eq!(dispatched, 5, "no rate limit → all dispatch");
+        cancel.cancel();
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(200), join).await;
+    }
+
     // ---- Phase 80.9.f hot-reload re-evaluation ----
 
     fn reg(binding: &str, server: &str, plugin_source: Option<&str>) -> RegisteredChannel {
@@ -1865,6 +2104,7 @@ mod tests {
                 server: "slack".into(),
                 plugin_source: None,
                 outbound_tool_name: None,
+            rate_limit: None,
             }],
             ..Default::default()
         };
@@ -1885,6 +2125,7 @@ mod tests {
                 server: "slack".into(),
                 plugin_source: None,
                 outbound_tool_name: None,
+            rate_limit: None,
             }],
             ..Default::default()
         };
@@ -1905,6 +2146,7 @@ mod tests {
                 server: "telegram".into(),
                 plugin_source: None,
                 outbound_tool_name: None,
+            rate_limit: None,
             }],
             ..Default::default()
         };
@@ -1938,6 +2180,7 @@ mod tests {
                 server: "slack".into(),
                 plugin_source: Some("slack@evil".into()),
                 outbound_tool_name: None,
+            rate_limit: None,
             }],
             ..Default::default()
         };
@@ -1960,6 +2203,7 @@ mod tests {
                 server: "slack".into(),
                 plugin_source: None,
                 outbound_tool_name: None,
+            rate_limit: None,
             }],
             ..Default::default()
         };

@@ -24,15 +24,32 @@ pub const TOOL_NAME: &str = "channel_status";
 #[derive(Clone)]
 pub struct ChannelStatusTool {
     registry: SharedChannelRegistry,
-    binding_id: String,
+    /// Phase 80.9.j — `None` => resolve from `ctx.effective` at call time.
+    binding_id: Option<String>,
 }
 
 impl ChannelStatusTool {
     pub fn new(registry: SharedChannelRegistry, binding_id: impl Into<String>) -> Self {
         Self {
             registry,
-            binding_id: binding_id.into(),
+            binding_id: Some(binding_id.into()),
         }
+    }
+
+    /// Phase 80.9.j — dynamic-binding constructor.
+    pub fn new_dynamic(registry: SharedChannelRegistry) -> Self {
+        Self {
+            registry,
+            binding_id: None,
+        }
+    }
+
+    fn resolved_binding_id(&self, ctx: &AgentContext) -> String {
+        self.binding_id
+            .clone()
+            .unwrap_or_else(|| {
+                super::channel_list_tool::resolve_binding_id(ctx)
+            })
     }
 
     pub fn tool_def() -> ToolDef {
@@ -77,14 +94,15 @@ fn render_status(reg: &nexo_mcp::channel::RegisteredChannel) -> Value {
 
 #[async_trait]
 impl ToolHandler for ChannelStatusTool {
-    async fn call(&self, _ctx: &AgentContext, args: Value) -> Result<Value> {
+    async fn call(&self, ctx: &AgentContext, args: Value) -> Result<Value> {
+        let binding_id = self.resolved_binding_id(ctx);
         match args["server"].as_str() {
             Some(s) if !s.is_empty() => {
-                let entry = self.registry.get(&self.binding_id, s).await;
+                let entry = self.registry.get(&binding_id, s).await;
                 match entry {
                     Some(r) => Ok(render_status(&r)),
                     None => Ok(json!({
-                        "binding_id": self.binding_id,
+                        "binding_id": binding_id,
                         "server_name": s,
                         "registered": false,
                     })),
@@ -92,10 +110,10 @@ impl ToolHandler for ChannelStatusTool {
             }
             Some(_) => Err(anyhow!("channel_status: 'server' must be non-empty")),
             None => {
-                let entries = self.registry.list_for_binding(&self.binding_id).await;
+                let entries = self.registry.list_for_binding(&binding_id).await;
                 let rendered: Vec<Value> = entries.iter().map(render_status).collect();
                 Ok(json!({
-                    "binding_id": self.binding_id,
+                    "binding_id": binding_id,
                     "count": rendered.len(),
                     "servers": rendered,
                 }))

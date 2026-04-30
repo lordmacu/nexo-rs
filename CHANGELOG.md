@@ -101,6 +101,50 @@ and the project adheres to [Semantic Versioning](https://semver.org)
   - 8 new tests verde (5 loop + 1 broker dispatcher + 2
     events).
 
+- **Phase 80.9.g — Per-channel rate limit.** Token bucket
+  per `(binding, server)` consulted before each dispatch;
+  empty bucket drops the message with a structured
+  warn so a noisy MCP server can't flood the conversation.
+  - `ChannelRateLimit { rps: f64, burst: u32 }` schema with
+    `is_active()` + `validate(label)`. `0` on either field is
+    "no throttle". 1000 rps soft cap catches typo bugs
+    (rps vs rps-per-minute).
+  - `ChannelsConfig.default_rate_limit: Option<ChannelRateLimit>`
+    sets the global ceiling; `ApprovedChannel.rate_limit`
+    overrides per-server. `resolve_rate_limit(server)`
+    helper picks the effective value.
+  - `TokenBucket::new(rl)` + `try_acquire()` async helper
+    with lazy refill on each call — no background task. Bucket
+    state is `Mutex<{tokens: f64, last_refill: Instant}>`;
+    contention bounded by inbound rps.
+  - `ChannelInboundLoop` builds `Option<Arc<TokenBucket>>`
+    once at spawn from the resolved rate limit and consults
+    it before each dispatch.
+  - 5 runtime tests + 8 schema tests verde (burst-then-blocks /
+    refill-rate / cap-at-burst / drops-when-empty /
+    unrate-limited / negative / nan / excessive / override /
+    fallback / inactive / yaml-round-trip).
+
+- **Phase 80.9.j — Per-binding channel-tool granularity.**
+  Channel tools resolve `binding_id` from `ctx.effective`
+  at call time instead of being hard-wired to one binding.
+  - `ChannelListTool::new_dynamic(registry)` +
+    `ChannelSendTool::new_dynamic` +
+    `ChannelStatusTool::new_dynamic` constructors leave the
+    binding_id unset; `resolve_binding_id(ctx)` shared
+    helper produces `<plugin>:<instance>` from
+    `ctx.effective.binding_index`, falls back to
+    `ctx.agent_id` for paths without a binding match
+    (heartbeat, delegate receive, tests).
+  - `main.rs`: per-agent registration uses the dynamic
+    constructors; `ChannelInboundLoop` spawn site iterates
+    `agent_cfg.inbound_bindings` and keys each loop with
+    `binding_id = "<plugin>:<instance>"` — the registry view
+    each tool sees scopes to the active binding instead of
+    the agent.
+  - 2 new tests verde (static-binding-stored /
+    dynamic-binding-deferred).
+
 - **Phase 80.9 main.rs hookup — channels live end-to-end.**
   Closes the seam from "MCP server emits notification" to
   "agent receives `<channel>` user message". The four

@@ -7433,7 +7433,50 @@ user message" end-to-end. `src/main.rs` now wires:
     evicts-when-binding-disappears / evicts-on-plugin-source-mismatch /
     partial-some-kept-some-evicted.
   - 465 nexo-mcp tests verde (was 459, +6).
-- **80.9.g** — per-channel rate limits in `agents.tool_rate_limits`.
+- **80.9.g** ✅ MVP — per-channel rate limits.
+  `ChannelRateLimit { rps, burst }` schema with
+  `is_active()` + `validate(label)` (rejects negative rps,
+  NaN, soft cap of 1000 rps to catch typos like
+  `rps_per_minute`). `ChannelsConfig` gains
+  `default_rate_limit: Option<ChannelRateLimit>` and
+  `ApprovedChannel.rate_limit: Option<ChannelRateLimit>` —
+  per-server override wins, falls back to default, `None`
+  when both inactive (no throttling). `resolve_rate_limit`
+  helper picks the effective config; `validate()` propagates
+  the per-entry validation.
+
+  Token bucket implementation in
+  `crates/mcp/src/channel.rs`: `TokenBucket::new(rl)` +
+  `try_acquire()` with lazy refill on each call (no
+  background task; bucket state is `Mutex<{tokens,
+  last_refill}>`). `ChannelInboundLoop` builds an
+  `Option<Arc<TokenBucket>>` once at spawn from
+  `cfg.resolve_rate_limit(server_name)` and consults it
+  before each dispatch — empty bucket drops the message
+  with a structured warn (`"channel inbound dropped — rate
+  limit exceeded"`). 5 new tests verde (burst-then-blocks /
+  refills-at-rps / refill-caps-at-burst / drops-when-bucket-empty /
+  unrate-limited-dispatches-all). 8 schema tests verde
+  (active / negative-rps / nan / excessive / per-server-override /
+  default-fallback / inactive-returns-none / yaml-round-trip).
+  Workspace counts: 21 nexo-config channels, 109 nexo-mcp
+  channel + bridge + bucket = 130 channel tests verde across
+  schema + runtime.
+
+- **80.9.j** ✅ MVP — per-binding tool granularity.
+  Channel tools (`channel_list` / `channel_send` /
+  `channel_status`) gain a `new_dynamic(registry)`
+  constructor that resolves `binding_id` from
+  `ctx.effective` at call time, falling back to
+  `ctx.agent_id` when no binding context exists (heartbeat,
+  delegate receive, tests). `resolve_binding_id(ctx)` lives
+  in `channel_list_tool` and is shared by the other tools.
+  `main.rs` now uses the dynamic constructors AND spawns
+  one `ChannelInboundLoop` per `(binding, server)` triple
+  with `binding_id = "<plugin>:<instance>"` — the registry
+  view each tool sees scopes to the active binding instead
+  of the agent. 2 new tests verde (static-binding-stored /
+  dynamic-binding-resolution-deferred).
 - **80.9.h** ✅ MVP — Phase 72 turn-log marker
   `source: "channel:<server>"` for audit. `TurnRecord.source:
   Option<String>` field added with `#[serde(default)]` so older

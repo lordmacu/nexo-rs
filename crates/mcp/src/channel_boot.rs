@@ -188,16 +188,19 @@ mod tests {
                     server: "slack".into(),
                     plugin_source: None,
                     outbound_tool_name: None,
+            rate_limit: None,
                 },
                 ApprovedChannel {
                     server: "telegram".into(),
                     plugin_source: None,
                     outbound_tool_name: None,
+            rate_limit: None,
                 },
                 ApprovedChannel {
                     server: "imessage".into(),
                     plugin_source: None,
                     outbound_tool_name: None,
+            rate_limit: None,
                 },
             ],
             ..Default::default()

@@ -2562,34 +2562,40 @@ async fn main() -> Result<()> {
                 .iter()
                 .any(|b| !b.allowed_channel_servers.is_empty());
         if channels_in_play {
-            nexo_core::agent::channel_list_tool::register_channel_list_tool(
-                &tools,
-                channel_boot.registry.clone(),
-                agent_cfg.id.clone(),
-            );
-            // channel_send + channel_status share the same
-            // signature as `register_channel_list_tool`.
+            // Phase 80.9.j — dynamic-binding tools. The tools
+            // resolve the binding id from `ctx.effective` at
+            // call time so the same registration serves every
+            // binding for an agent. Per-binding registrations
+            // live in the channel registry under
+            // `<plugin>:<instance>` keys (see ChannelInboundLoop
+            // spawn site below).
+            {
+                use nexo_core::agent::channel_list_tool::ChannelListTool;
+                let def = ChannelListTool::tool_def();
+                let handler = std::sync::Arc::new(ChannelListTool::new_dynamic(
+                    channel_boot.registry.clone(),
+                ));
+                tools.register_arc(def, handler);
+            }
             {
                 use nexo_core::agent::channel_send_tool::ChannelSendTool;
                 let def = ChannelSendTool::tool_def();
-                let handler = std::sync::Arc::new(ChannelSendTool::new(
+                let handler = std::sync::Arc::new(ChannelSendTool::new_dynamic(
                     channel_boot.registry.clone(),
-                    agent_cfg.id.clone(),
                 ));
                 tools.register_arc(def, handler);
             }
             {
                 use nexo_core::agent::channel_status_tool::ChannelStatusTool;
                 let def = ChannelStatusTool::tool_def();
-                let handler = std::sync::Arc::new(ChannelStatusTool::new(
+                let handler = std::sync::Arc::new(ChannelStatusTool::new_dynamic(
                     channel_boot.registry.clone(),
-                    agent_cfg.id.clone(),
                 ));
                 tools.register_arc(def, handler);
             }
             tracing::info!(
                 agent = %agent_cfg.id,
-                "registered channel_* tools (channels surface in play)"
+                "registered channel_* tools (channels surface in play, per-binding resolution)"
             );
         }
         // Phase 67 — register the project-tracker / dispatch tool
@@ -3483,73 +3489,89 @@ async fn main() -> Result<()> {
                 "mcp tools registered"
             );
 
-            // Phase 80.9 main.rs hookup — spawn one
-            // ChannelInboundLoop per `(agent, server)` whose
-            // capability is declared AND any binding lists it in
-            // `allowed_channel_servers`. binding_id collapses to
-            // the agent_id for the slim MVP (per-binding
-            // granularity = follow-up). The loop runs the gate
-            // once at spawn, registers on success, and consumes
-            // every `ChannelMessage` event on the client's
-            // broadcast for the rest of the session.
+            // Phase 80.9 main.rs hookup + Phase 80.9.j —
+            // spawn one ChannelInboundLoop per `(binding,
+            // server)` triple. The binding_id matches what the
+            // dynamic-binding channel tools (channel_list /
+            // channel_send / channel_status) resolve from
+            // `ctx.effective` at call time, so the registry view
+            // each tool sees scopes to the active binding.
             if let Some(channels_cfg) = agent_cfg.channels.as_ref() {
                 if channels_cfg.enabled {
-                    let union_allowlist: std::collections::BTreeSet<String> = agent_cfg
-                        .inbound_bindings
-                        .iter()
-                        .flat_map(|b| b.allowed_channel_servers.iter().cloned())
-                        .collect();
-                    let allow_vec: Vec<String> = union_allowlist.iter().cloned().collect();
                     let cfg_arc = std::sync::Arc::new(channels_cfg.clone());
-                    let allow_arc = std::sync::Arc::new(allow_vec);
-                    for (server_name, client) in rt.clients() {
-                        if !union_allowlist.contains(&server_name) {
+                    let clients_snapshot = rt.clients();
+                    for binding in &agent_cfg.inbound_bindings {
+                        if binding.allowed_channel_servers.is_empty() {
                             continue;
                         }
-                        let cap_declared =
-                            nexo_mcp::channel::has_channel_capability(Some(
-                                &client.capabilities().experimental,
-                            ));
-                        let perm_cap = nexo_mcp::channel::has_channel_permission_capability(
-                            Some(&client.capabilities().experimental),
+                        let binding_id = format!(
+                            "{}:{}",
+                            binding.plugin,
+                            binding.instance.as_deref().unwrap_or("default")
                         );
-                        let plugin_source = channels_cfg
-                            .lookup_approved(&server_name)
-                            .and_then(|e| e.plugin_source.clone());
-                        let loop_cfg = nexo_mcp::channel_boot::build_inbound_loop_config(
-                            &channel_boot,
-                            server_name.clone(),
-                            agent_cfg.id.clone(),
-                            plugin_source,
-                            cfg_arc.clone(),
-                            allow_arc.clone(),
-                            cap_declared,
-                            perm_cap,
+                        let allow_arc = std::sync::Arc::new(
+                            binding.allowed_channel_servers.clone(),
                         );
-                        let handle = nexo_mcp::channel::ChannelInboundLoop::new(loop_cfg)
-                            .spawn_against_client(
-                                client.as_ref(),
-                                channel_shutdown.clone(),
-                            );
-                        match handle {
-                            nexo_mcp::channel::ChannelInboundLoopHandle::Running { .. } => {
-                                tracing::info!(
-                                    agent = %agent_cfg.id,
-                                    server = %server_name,
-                                    "channel inbound loop running"
-                                );
+                        for (server_name, client) in &clients_snapshot {
+                            if !binding
+                                .allowed_channel_servers
+                                .iter()
+                                .any(|s| s == server_name)
+                            {
+                                continue;
                             }
-                            nexo_mcp::channel::ChannelInboundLoopHandle::Skipped {
-                                kind,
-                                reason,
-                            } => {
-                                tracing::info!(
-                                    agent = %agent_cfg.id,
-                                    server = %server_name,
-                                    kind = kind.as_str(),
-                                    reason = %reason,
-                                    "channel inbound gate skip"
+                            let cap_declared =
+                                nexo_mcp::channel::has_channel_capability(Some(
+                                    &client.capabilities().experimental,
+                                ));
+                            let perm_cap =
+                                nexo_mcp::channel::has_channel_permission_capability(Some(
+                                    &client.capabilities().experimental,
+                                ));
+                            let plugin_source = channels_cfg
+                                .lookup_approved(server_name)
+                                .and_then(|e| e.plugin_source.clone());
+                            let loop_cfg =
+                                nexo_mcp::channel_boot::build_inbound_loop_config(
+                                    &channel_boot,
+                                    server_name.clone(),
+                                    binding_id.clone(),
+                                    plugin_source,
+                                    cfg_arc.clone(),
+                                    allow_arc.clone(),
+                                    cap_declared,
+                                    perm_cap,
                                 );
+                            let handle =
+                                nexo_mcp::channel::ChannelInboundLoop::new(loop_cfg)
+                                    .spawn_against_client(
+                                        client.as_ref(),
+                                        channel_shutdown.clone(),
+                                    );
+                            match handle {
+                                nexo_mcp::channel::ChannelInboundLoopHandle::Running {
+                                    ..
+                                } => {
+                                    tracing::info!(
+                                        agent = %agent_cfg.id,
+                                        binding = %binding_id,
+                                        server = %server_name,
+                                        "channel inbound loop running"
+                                    );
+                                }
+                                nexo_mcp::channel::ChannelInboundLoopHandle::Skipped {
+                                    kind,
+                                    reason,
+                                } => {
+                                    tracing::info!(
+                                        agent = %agent_cfg.id,
+                                        binding = %binding_id,
+                                        server = %server_name,
+                                        kind = kind.as_str(),
+                                        reason = %reason,
+                                        "channel inbound gate skip"
+                                    );
+                                }
                             }
                         }
                     }
