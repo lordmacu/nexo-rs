@@ -262,15 +262,30 @@ Scope:
   for one release of grace.
 - Reference manifest in `extensions/template-saas/` (delivered
   in 82.9) demonstrates reading the context.
+- **Phase 80.9 MCP channels integration**: when the inbound
+  arrived via an MCP channel server (slack / telegram / etc.
+  via `notifications/nexo/channel`), `BindingContext` carries
+  the MCP server name as a separate field so the extension
+  can distinguish "telegram-binding via MCP slack server"
+  from "telegram-binding via native Telegram plugin". Add
+  `mcp_channel_source: Option<String>` to `BindingContext`
+  alongside the existing `(channel, account_id, agent_id,
+  session_id, binding_id)` tuple. Match the `goal_turns.source
+  = "channel:slack"` audit column convention shipped with
+  Phase 80.9. `None` for non-MCP-channel inbounds.
 
 Done criteria:
 - `BindingContext` round-trips from inbound channel through
   Phase 17 resolver to JSON-RPC tool call payload.
+- MCP channel inbounds populate `mcp_channel_source` with
+  the server name (e.g., "slack"); native channel inbounds
+  leave it `None`.
 - Existing extensions continue to function without change.
-- 9+ unit tests + 1 integration test covering: fill from
+- 10+ unit tests + 1 integration test covering: fill from
   inbound binding, fill from delegation tool call, missing
   binding (None), serialization shape stability, all four
-  binding types (WA/TG/Email/web), Phase 17 isolation.
+  binding types (WA/TG/Email/web), Phase 17 isolation,
+  Phase 80.9 MCP channel source preservation.
 - Docs page on extension contract documents the new field.
 
 #### 82.2 — Webhook receiver wire-up (= existing 80.12.b)   ⬜
@@ -540,6 +555,17 @@ Scope:
   - `nexo/admin/llm_providers/{list, upsert, delete}` —
     manages provider registry; keys remain `${ENV_VAR}`
     references (operator owns the secret)
+  - `nexo/admin/channels/{list, approve, revoke, doctor}` —
+    **Phase 80.9 MCP channels CRUD**: list configured MCP
+    channel servers from `agents.yaml.<id>.channels.approved`,
+    approve a new MCP server (writes the entry via Phase 69
+    `yaml_patch`), revoke an existing one, run the static
+    half of `nexo channel doctor` against the current YAML
+    + return the gate verdict per (agent, binding, server)
+    triple. Distinct from `nexo/admin/credentials/*` because
+    MCP channels are MCP-server adapters (slack / telegram /
+    iMessage relay) declared in YAML, not Phase 17
+    credentials. Capability gate granular `channels_crud`.
   - `nexo/admin/reload` — explicit manual hot-reload trigger
 - Operator opt-in via
   `extensions.yaml.<id>.capabilities_grant: [agents_crud, ...]`.
@@ -591,6 +617,13 @@ Scope:
       TranscriptAppended {
           agent_id, session_id, sender_jid: Option<String>,
           role, body, sent_at, transcript_offset,
+          source: Option<String>,  // Phase 80.9 — matches
+                                   // goal_turns.source column,
+                                   // e.g., "channel:slack" for
+                                   // MCP-channel inbounds, None
+                                   // for native channel inbounds.
+                                   // Lets firehose subscribers
+                                   // filter by inbound origin.
       },
       BatchJobCompleted {
           agent_id, job_id, status, output_summary, finished_at,
@@ -763,6 +796,18 @@ Scope:
   enum ProcessingScope {
       Conversation {
           agent_id, channel, account_id, contact_id,
+          mcp_channel_source: Option<String>,
+                                  // Phase 80.9 — populated when
+                                  // the conversation arrived via
+                                  // an MCP channel server
+                                  // (e.g., "slack", "telegram")
+                                  // so operators can pause
+                                  // conversations sourced from
+                                  // a specific MCP server
+                                  // separately from native
+                                  // channel conversations on the
+                                  // same binding. None for
+                                  // native-channel inbounds.
       },                          // chat — V0 implementation
       AgentBinding {
           agent_id, channel, account_id,
@@ -1515,6 +1560,19 @@ Candidate microapps (operator picks):
   channels are out of UI scope for v1 but not architectural
   blockers; a v2 of this microapp can add tabs for them
   without core changes.
+
+  **Phase 80.9 MCP channels in v1**: the framework supports
+  MCP channel servers (slack / telegram / iMessage / custom
+  via `notifications/nexo/channel`) — these are
+  framework-supported and exposed via `nexo/admin/channels/*`
+  (82.10). However, the v1 agent-creator UI scope is
+  **WhatsApp-only** by explicit decision, so MCP channel
+  management does NOT appear in the v1 UI. A future v2 of
+  this microapp can add a dedicated "MCP Channels" page
+  showing the live `ChannelRegistry` + per-binding
+  allowlists — that work is purely UI, no core changes
+  needed since 80.9 already shipped the runtime + admin RPC
+  surface lands in 82.10.
 - `nps-surveyor` — sends NPS surveys post-conversation,
   captures response, stores per-tenant in local SQLite.
 - `faq-deflector` — Q&A bot trained on a markdown
