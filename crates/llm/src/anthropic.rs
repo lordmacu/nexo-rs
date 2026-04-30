@@ -379,8 +379,31 @@ impl AnthropicClient {
     ) -> Result<reqwest::Response, LlmError> {
         let status = response.status().as_u16();
         if status == 429 {
-            let retry_after_ms = parse_retry_after(response.headers()).unwrap_or(60_000);
-            return Err(LlmError::RateLimit { retry_after_ms });
+            let headers = response.headers().clone();
+            let retry_after_ms = parse_retry_after(&headers).unwrap_or(60_000);
+            let rate_limit_info =
+                crate::rate_limit_info::extract_rate_limit_info(
+                    &headers,
+                    crate::rate_limit_info::LlmProvider::Anthropic,
+                );
+            // Log human-readable quota message so operators see what
+            // limit was hit and when it resets — not just the delay.
+            if let Some(info) = &rate_limit_info {
+                if let Some(msg) = crate::rate_limit_info::format_rate_limit_message(info) {
+                    tracing::warn!(
+                        target: "anthropic",
+                        severity = ?msg.severity,
+                        retry_after_ms,
+                        plan_hint = msg.plan_hint,
+                        "{}",
+                        msg.text
+                    );
+                }
+            }
+            return Err(LlmError::RateLimit {
+                retry_after_ms,
+                rate_limit_info,
+            });
         }
         if status >= 500 {
             let body = read_body_lossy(response).await;

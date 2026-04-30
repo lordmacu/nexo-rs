@@ -43,6 +43,9 @@ pub mod proactive_hint;
 pub mod prompt_assembly;
 pub mod rate_limit;
 pub mod redaction;
+pub mod repl_registry;
+#[cfg(feature = "repl-tool")]
+pub mod repl_tool;
 pub mod registry;
 pub mod remote_trigger_tool;
 pub mod routing;
@@ -109,6 +112,9 @@ pub use peer_directory::{PeerDirectory, PeerSummary};
 pub use plugin::{Command, Plugin, Response};
 pub use rate_limit::{ToolRateLimitConfig, ToolRateLimiter, ToolRateLimitsConfig};
 pub use redaction::{RedactionReport, Redactor};
+pub use repl_registry::{ReplOutput, ReplRegistry, ReplSession};
+#[cfg(feature = "repl-tool")]
+pub use repl_tool::ReplTool;
 pub use registry::PluginRegistry;
 pub use routing::{AgentMessage, AgentPayload, AgentRouter};
 pub use runtime::AgentRuntime;

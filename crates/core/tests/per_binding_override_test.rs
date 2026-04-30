@@ -154,6 +154,7 @@ fn two_binding_agent() -> AgentConfig {
                 role: None,
                 proactive: None,
                 remote_triggers: None,
+                repl: None,
             },
         ],
         context_optimization: None,
@@ -164,6 +165,7 @@ fn two_binding_agent() -> AgentConfig {
         config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
         team: nexo_config::types::team::TeamPolicy::default(),
         proactive: Default::default(),
+        repl: Default::default(),
     }
 }
 
@@ -350,6 +352,7 @@ async fn agent_without_bindings_drops_inbound_events() {
         config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
         team: nexo_config::types::team::TeamPolicy::default(),
         proactive: Default::default(),
+        repl: Default::default(),
     };
     let (runtime, captures, broker) = spawn_runtime(cfg).await;
 

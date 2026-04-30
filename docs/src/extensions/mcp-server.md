@@ -831,8 +831,9 @@ then `200` for the rest of the process lifetime.
 
 ## Reverse-proxy guidance
 
-In production, terminate TLS in front of the agent. Example
-nginx snippet:
+In production, terminate TLS in front of the agent. Three recipes below.
+
+### Nginx
 
 ```nginx
 server {
@@ -850,8 +851,160 @@ server {
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
+
+    location /healthz {
+        proxy_pass http://127.0.0.1:7575;
+        proxy_http_version 1.1;
+    }
+
+    location /readyz {
+        proxy_pass http://127.0.0.1:7575;
+        proxy_http_version 1.1;
+    }
 }
 ```
+
+### Caddy (v2)
+
+Caddy auto-provisions Let's Encrypt certificates. Minimal
+`Caddyfile`:
+
+```caddyfile
+mcp.example.com {
+    reverse_proxy /mcp*     127.0.0.1:7575
+    reverse_proxy /healthz  127.0.0.1:7575
+    reverse_proxy /readyz   127.0.0.1:7575
+
+    # SSE needs these tuned:
+    @sse path /mcp
+    header @sse Cache-Control no-store
+    header @sse X-Accel-Buffering no
+}
+```
+
+### Traefik (v3)
+
+YAML static config snippet:
+
+```yaml
+entryPoints:
+  websecure:
+    address: ":443"
+    http:
+      tls:
+        certResolver: letsencrypt
+
+http:
+  routers:
+    mcp:
+      rule: "Host(`mcp.example.com`)"
+      entryPoints: ["websecure"]
+      service: mcp-backend
+      tls:
+        certResolver: letsencrypt
+
+  services:
+    mcp-backend:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:7575"
+```
+
+With Docker labels (Compose):
+
+```yaml
+services:
+  nexo-mcp:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mcp.rule=Host(`mcp.example.com`)"
+      - "traefik.http.routers.mcp.entrypoints=websecure"
+      - "traefik.http.routers.mcp.tls.certresolver=letsencrypt"
+      - "traefik.http.services.mcp.loadbalancer.server.port=7575"
+      # SSE: disable buffering on the MCP route
+      - "traefik.http.middlewares.mcp-sse.buffering.maxRequestBodyBytes=0"
+      - "traefik.http.routers.mcp.middlewares=mcp-sse"
+```
+
+### mTLS (mutual TLS)
+
+For in-VPC or zero-trust deployments where the MCP server must
+authenticate the client via certificate:
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name mcp.internal.example.com;
+
+    ssl_certificate     /etc/mcp/server.crt;
+    ssl_certificate_key /etc/mcp/server.key;
+    ssl_client_certificate /etc/mcp/client_ca.crt;
+    ssl_verify_client on;
+    ssl_verify_depth 2;
+
+    error_page 495 /_mtls_fail;
+    location /_mtls_fail {
+        internal;
+        return 400 "client certificate required\n";
+    }
+
+    location /mcp {
+        proxy_pass http://127.0.0.1:7575;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_read_timeout 1h;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Client-Cert-Subject $ssl_client_s_dn;
+    }
+}
+```
+
+Caddy mTLS:
+
+```caddyfile
+mcp.internal.example.com {
+    tls /etc/mcp/server.crt /etc/mcp/server.key {
+        client_auth {
+            mode require_and_verify
+            trusted_ca_cert_file /etc/mcp/client_ca.crt
+        }
+    }
+    reverse_proxy 127.0.0.1:7575
+}
+```
+
+> **Note:** mTLS provides transport-level authentication. When the
+> proxy enforces client certificates, the MCP server's application-layer
+> token/auth requirement can be relaxed (validate accepts `tls.client_ca_path`
+> as a substitute for `auth_token`).
+
+## In-process TLS (`server-tls` feature)
+
+For deployments that can't/won't run a reverse proxy, the crate ships
+an optional `server-tls` feature:
+
+```toml
+# Cargo.toml
+nexo-mcp = { version = "...", features = ["server-tls"] }
+```
+
+```yaml
+# config/mcp_server.yaml
+mcp_server:
+  enabled: true
+  http:
+    tls:
+      cert_path: /etc/mcp/server.crt
+      key_path: /etc/mcp/server.key
+      client_ca_path: /etc/mcp/client_ca.crt  # optional: enables mTLS
+```
+
+**Current status:** the YAML schema and config validation accept the
+`tls` block. The runtime in-process TLS listener is blocked on axum
+0.7's `serve()` which only accepts `TcpListener`; full support lands
+with the axum 0.8 upgrade (generic `Listener` trait). Today, use the
+reverse-proxy recipes above and leave the `tls` block empty.
 
 The agent's per-IP rate limiter trusts `X-Forwarded-For` only when
 the listener is bound to loopback (operator behind a proxy);
@@ -937,10 +1090,10 @@ cargo test -p nexo-mcp --features server-conformance \
 
 ## Coming in later sub-phases
 
-* **76.13** — TLS in-process (`rustls` behind `server-tls` feature)
-  and nginx/caddy/Traefik reverse-proxy recipes.
-* **76.14** — `nexo mcp-server` CLI ops: `inspect`, `bench`,
-  `tail-audit`.
+* **76.13** ✅ — TLS config schema + feature flag + nginx/caddy/Traefik/mTLS
+  reverse-proxy recipes. In-process TLS listener deferred to axum 0.8 upgrade.
+* **76.14** ✅ — `nexo mcp-server` CLI ops: `inspect`, `bench`,
+  `tail-audit`. All three subcommands wired and smoke-tested.
 
 Track the rollout in [`PHASES.md`](https://github.com/lordmacu/nexo-rs/blob/main/proyecto/PHASES.md)
 and the public surface diff in [`CLAUDE.md`](https://github.com/lordmacu/nexo-rs/blob/main/proyecto/CLAUDE.md).

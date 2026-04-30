@@ -85,6 +85,7 @@ impl AnthropicTokenCounter {
             // open promptly and the agent loop falls back to tiktoken.
             return Err(LlmError::RateLimit {
                 retry_after_ms: 30_000,
+                rate_limit_info: None,
             });
         }
         if status.is_server_error() {

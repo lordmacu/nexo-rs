@@ -418,6 +418,7 @@ mod tests {
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
             team: nexo_config::types::team::TeamPolicy::default(),
             proactive: Default::default(),
+        repl: Default::default(),
         }
     }
 

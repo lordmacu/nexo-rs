@@ -107,6 +107,56 @@ impl PlanApprovalRegistry {
     }
 }
 
+/// Parsed `[plan-mode]` command from an inbound chat message.
+/// Mirror of `crate::agent::approval_correlator::ApprovalCommand`
+/// for the plan-mode operator-approval surface.
+///
+/// Wire format (frozen):
+///   `[plan-mode] approve plan_id=<ULID>`
+///   `[plan-mode] reject  plan_id=<ULID> reason=<text>`
+///
+/// Reference: OpenClaw `research/src/gateway/exec-approval-ios-push.ts:55-89`
+/// (bracketed command grammar for operator-side approvals).
+#[derive(Debug, Clone, PartialEq)]
+pub enum PlanModeApprovalCommand {
+    Approve { plan_id: String },
+    Reject { plan_id: String, reason: Option<String> },
+}
+
+/// Parse a `[plan-mode] approve|reject plan_id=<id> [reason=<text>]`
+/// command from a trimmed inbound chat message body.
+///
+/// Grammar (frozen wire format):
+///   `^\s*\[plan-mode\]\s+(approve|reject)\s+plan_id=(?P<id>\S+)(?:\s+reason=(?P<reason>.*?))?\s*$`
+///
+/// The `[plan-mode]` prefix is a tag, not wrapping brackets — the
+/// entire message body is NOT enclosed in `[...]`. Extra text before
+/// or after the command causes a non-match.
+pub fn parse_plan_mode_approval(body: &str) -> Option<PlanModeApprovalCommand> {
+    use std::sync::OnceLock;
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(
+            r"^\s*\[plan-mode\]\s+(approve|reject)\s+plan_id=(\S+)(?:\s+reason=(.*?))?\s*$",
+        )
+        .expect("plan-mode-approval regex must compile")
+    });
+    let caps = re.captures(body.trim())?;
+    let verb = caps.get(1)?.as_str();
+    let id = caps.get(2)?.as_str().to_string();
+    match verb {
+        "approve" => Some(PlanModeApprovalCommand::Approve { plan_id: id }),
+        "reject" => {
+            let reason = caps.get(3).map(|m| m.as_str().trim().to_string());
+            Some(PlanModeApprovalCommand::Reject {
+                plan_id: id,
+                reason,
+            })
+        }
+        _ => None,
+    }
+}
+
 /// `EnterPlanMode` — read-only mid-turn mode toggle. The tool is
 /// classified `ReadOnly` in `nexo_core::plan_mode::READ_ONLY_TOOLS`
 /// so it stays callable even when plan mode is already on
@@ -512,6 +562,7 @@ mod tests {
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
             team: nexo_config::types::team::TeamPolicy::default(),
             proactive: Default::default(),
+        repl: Default::default(),
         };
         AgentContext::new(
             "a",
@@ -676,6 +727,7 @@ mod tests {
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
             team: nexo_config::types::team::TeamPolicy::default(),
             proactive: Default::default(),
+        repl: Default::default(),
         };
         AgentContext::new(
             "a",
@@ -812,5 +864,74 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("requires `reason`"), "got: {err}");
+    }
+
+    // --- parse_plan_mode_approval tests ---
+
+    #[test]
+    fn parse_approve_bare() {
+        let cmd = parse_plan_mode_approval("[plan-mode] approve plan_id=01J7HVK9MWXYZ").unwrap();
+        assert_eq!(
+            cmd,
+            PlanModeApprovalCommand::Approve {
+                plan_id: "01J7HVK9MWXYZ".into()
+            }
+        );
+    }
+
+    #[test]
+    fn parse_reject_with_reason() {
+        let cmd =
+            parse_plan_mode_approval("[plan-mode] reject plan_id=abc123 reason=needs more thought")
+                .unwrap();
+        assert_eq!(
+            cmd,
+            PlanModeApprovalCommand::Reject {
+                plan_id: "abc123".into(),
+                reason: Some("needs more thought".into()),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_reject_no_reason() {
+        let cmd = parse_plan_mode_approval("[plan-mode] reject plan_id=abc123").unwrap();
+        assert_eq!(
+            cmd,
+            PlanModeApprovalCommand::Reject {
+                plan_id: "abc123".into(),
+                reason: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_allows_leading_trailing_whitespace() {
+        let cmd = parse_plan_mode_approval("  [plan-mode] approve plan_id=foo  ").unwrap();
+        assert_eq!(
+            cmd,
+            PlanModeApprovalCommand::Approve {
+                plan_id: "foo".into()
+            }
+        );
+    }
+
+    #[test]
+    fn parse_rejects_extra_text() {
+        assert!(parse_plan_mode_approval("xx [plan-mode] approve plan_id=foo").is_none());
+        assert!(parse_plan_mode_approval("[plan-mode] approve plan_id=foo yy").is_none());
+    }
+
+    #[test]
+    fn parse_rejects_malformed() {
+        assert!(parse_plan_mode_approval("[plan-mode] plan_id=foo").is_none());
+        assert!(parse_plan_mode_approval("[plan-mode] approve").is_none());
+        assert!(parse_plan_mode_approval("not a command").is_none());
+        assert!(parse_plan_mode_approval("").is_none());
+    }
+
+    #[test]
+    fn parse_applies_to_empty_body() {
+        assert!(parse_plan_mode_approval("").is_none());
     }
 }

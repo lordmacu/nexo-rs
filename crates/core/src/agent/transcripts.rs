@@ -14,10 +14,12 @@
 //! are a *record*, not a source of truth. `SessionManager` still owns live
 //! history; transcripts are what dreaming (Phase 10.6) will later ingest.
 use chrono::{DateTime, Utc};
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
+use tokio::sync::Mutex as TokioMutex;
 use uuid::Uuid;
 
 use super::redaction::Redactor;
@@ -71,6 +73,10 @@ pub struct TranscriptWriter {
     agent_id: String,
     redactor: Arc<Redactor>,
     index: Option<Arc<TranscriptsIndex>>,
+    /// Per-session locks around the header-creation block so only one
+    /// writer writes the Session line, and every other writer waits
+    /// for the header to be flushed before opening in append mode.
+    header_locks: DashMap<PathBuf, Arc<TokioMutex<()>>>,
 }
 impl TranscriptWriter {
     pub fn new(root: impl Into<PathBuf>, agent_id: impl Into<String>) -> Self {
@@ -79,6 +85,7 @@ impl TranscriptWriter {
             agent_id: agent_id.into(),
             redactor: Arc::new(Redactor::disabled()),
             index: None,
+            header_locks: DashMap::new(),
         }
     }
     /// Wrap the writer with a redactor and/or FTS index. Both are
@@ -95,6 +102,7 @@ impl TranscriptWriter {
             agent_id: agent_id.into(),
             redactor,
             index,
+            header_locks: DashMap::new(),
         }
     }
     pub fn root(&self) -> &Path {
@@ -129,13 +137,19 @@ impl TranscriptWriter {
         tokio::fs::create_dir_all(&self.root).await?;
         let path = self.session_path(session_id);
 
-        // Atomic "write header iff first writer" using O_CREAT|O_EXCL.
-        // The naive `try_exists` check leaves a TOCTOU window where two
-        // concurrent appends both see `exists=false` and both write the
-        // header, leaving the file with duplicate Session lines. Here
-        // exactly one writer wins the create-exclusive open and writes
-        // the header; every other writer gets `AlreadyExists` and skips
-        // straight to the append path.
+        // Per-session mutex so only one writer enters the header-creation
+        // block. The winner writes the header and flushes; every other
+        // writer blocks until the header is committed, then skips to the
+        // append path. Without this lock, a writer that sees
+        // AlreadyExists can open the file in append mode before the
+        // winner's header hits disk, producing an entry-then-header file.
+        let lock = self
+            .header_locks
+            .entry(path.clone())
+            .or_insert_with(|| Arc::new(TokioMutex::new(())))
+            .clone();
+        let _guard = lock.lock().await;
+
         match tokio::fs::OpenOptions::new()
             .create_new(true)
             .write(true)
@@ -381,14 +395,6 @@ mod tests {
         Ok(())
     }
 
-    // Real race in `append_entry`: when 16 writers hit the same
-    // session concurrently, the writer that wins `create_new` is not
-    // guaranteed to flush the header before others open in `append`
-    // mode. Fixed-write-then-others is the desired order, but the
-    // file-system gives no guarantee of that interleave today. Tracked
-    // as `Phase 38.x — transcript header race` in `proyecto/PHASES.md`.
-    // Test passes on a single host but flakes under CI parallelism.
-    #[ignore = "concurrent header write race — see Phase 38.x"]
     #[tokio::test]
     async fn concurrent_first_appends_only_write_one_header() -> anyhow::Result<()> {
         let root = tmp_dir("race");

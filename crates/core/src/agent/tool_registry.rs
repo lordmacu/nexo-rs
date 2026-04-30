@@ -164,6 +164,65 @@ impl ToolRegistry {
     pub fn to_tool_defs(&self) -> Vec<ToolDef> {
         self.handlers.iter().map(|e| e.value().0.clone()).collect()
     }
+
+    /// Phase 79.2 — same as [`to_tool_defs`] but skips tools marked
+    /// [`ToolMeta::deferred`]. The filtered schemas are surfaced via
+    /// the system prompt instead (see [`deferred_tools_summary`]) so
+    /// the model still knows their names + descriptions and can load
+    /// a full schema with `ToolSearch(select:<name>)`.
+    pub fn to_tool_defs_non_deferred(&self) -> Vec<ToolDef> {
+        self.handlers
+            .iter()
+            .filter(|e| {
+                !self
+                    .meta
+                    .get(e.key())
+                    .map(|m| m.deferred)
+                    .unwrap_or(false)
+            })
+            .map(|e| e.value().0.clone())
+            .collect()
+    }
+
+    /// Phase 79.2 — compact text block listing every deferred tool
+    /// by name + description (capped at 120 chars). Returns `None`
+    /// when no tool is deferred so callers can skip the block.
+    pub fn deferred_tools_summary(&self) -> Option<String> {
+        let deferred: Vec<(String, String)> = self
+            .meta
+            .iter()
+            .filter(|e| e.value().deferred)
+            .filter_map(|e| {
+                let name = e.key().clone();
+                let desc = self
+                    .handlers
+                    .get(&name)
+                    .map(|h| h.0.description.clone())
+                    .unwrap_or_default();
+                Some((name, desc))
+            })
+            .collect();
+        if deferred.is_empty() {
+            return None;
+        }
+        let mut parts: Vec<String> = Vec::with_capacity(deferred.len() + 2);
+        parts.push(
+            "<deferred-tools>\n\
+             The following tools are available. Their full schemas are omitted to save tokens.\n\
+             Use ToolSearch(select:<name>) to load one when needed.\n"
+                .to_string(),
+        );
+        for (name, desc) in &deferred {
+            let desc = if desc.len() > 120 {
+                format!("{}…", &desc[..119])
+            } else {
+                desc.clone()
+            };
+            parts.push(format!("- {name}: {desc}"));
+        }
+        parts.push("</deferred-tools>".to_string());
+        Some(parts.join("\n"))
+    }
     /// All registered tool names — cheap because [`HandlerEntry`]
     /// already owns the name string. Phase 79.1 boot guard consumes
     /// this list to verify every tool is classified for plan-mode
@@ -475,5 +534,57 @@ mod tests {
         let reg = ToolRegistry::new();
         reg.register(mk_def("totally_unknown_tool"), Noop);
         reg.assert_plan_mode_classified();
+    }
+
+    #[test]
+    fn to_tool_defs_non_deferred_skips_deferred() {
+        let reg = ToolRegistry::new();
+        reg.register(mk_def("normal_a"), Noop);
+        reg.register(mk_def("normal_b"), Noop);
+        reg.register_with_meta(mk_def("deferred_x"), Noop, ToolMeta::deferred());
+        let defs = reg.to_tool_defs_non_deferred();
+        let mut names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(names, vec!["normal_a", "normal_b"]);
+    }
+
+    #[test]
+    fn to_tool_defs_non_deferred_empty_when_all_deferred() {
+        let reg = ToolRegistry::new();
+        reg.register_with_meta(mk_def("a"), Noop, ToolMeta::deferred());
+        reg.register_with_meta(mk_def("b"), Noop, ToolMeta::deferred());
+        assert!(reg.to_tool_defs_non_deferred().is_empty());
+    }
+
+    #[test]
+    fn deferred_tools_summary_returns_none_when_empty() {
+        let reg = ToolRegistry::new();
+        reg.register(mk_def("normal"), Noop);
+        assert!(reg.deferred_tools_summary().is_none());
+    }
+
+    #[test]
+    fn deferred_tools_summary_includes_deferred_names_and_descriptions() {
+        let reg = ToolRegistry::new();
+        reg.register_with_meta(
+            tagged_def("mcp_x", "Create issues on GitHub"),
+            Noop,
+            ToolMeta::deferred(),
+        );
+        reg.register_with_meta(
+            tagged_def("mcp_y", "Search Slack messages"),
+            Noop,
+            ToolMeta::deferred(),
+        );
+        // Normal tool should not appear.
+        reg.register(tagged_def("normal", "Just a normal tool"), Noop);
+        let summary = reg.deferred_tools_summary().unwrap();
+        assert!(summary.contains("<deferred-tools>"));
+        assert!(summary.contains("</deferred-tools>"));
+        assert!(summary.contains("mcp_x"));
+        assert!(summary.contains("Create issues on GitHub"));
+        assert!(summary.contains("mcp_y"));
+        assert!(summary.contains("Search Slack messages"));
+        assert!(!summary.contains("normal"));
     }
 }

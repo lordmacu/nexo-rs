@@ -321,14 +321,22 @@ async fn permission_prompt_deny_response_includes_message() {
     let resp = read_id(&mut reader, 2).await;
     let content = resp["result"]["content"].as_array().expect("content array");
     let text = content[0]["text"].as_str().expect("text content");
-    let parsed: Value = serde_json::from_str(text).expect("deny response is JSON");
+    // Phase 77.8 — text may carry bash security warnings prefix.
+    // Use structured_content for the machine-readable shape.
+    assert!(
+        text.contains("WARNING — bash security"),
+        "destructive Bash should carry warning; got {text}"
+    );
+    let parsed = resp["result"]["structuredContent"]
+        .as_object()
+        .expect("structured_content must be an object");
     assert_eq!(parsed["behavior"], "deny");
     assert!(
         parsed["message"].as_str().is_some(),
-        "deny must carry message; got {parsed}"
+        "deny must carry message; got {parsed:?}"
     );
     assert!(
-        parsed.get("updatedInput").is_none(),
+        !parsed.contains_key("updatedInput"),
         "deny must NOT include updatedInput (Zod's union picks the deny branch when message is set)"
     );
     shutdown(child, stdin).await;

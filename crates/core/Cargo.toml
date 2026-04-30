@@ -14,6 +14,10 @@ keywords      = { workspace = true }
 categories    = { workspace = true }
 [features]
 default = ["schema-validation"]
+# Phase 79.12 — stateful REPL tool (Python/Node/bash subprocesses
+# that persist across LLM turns). Off by default — code execution
+# is dangerous and must be explicitly opted into per-agent.
+repl-tool = []
 # Enables pre-handler JSON Schema validation of tool arguments.
 schema-validation = ["dep:jsonschema"]
 # Phase 79.10 — gated self-config tool. Off by default until

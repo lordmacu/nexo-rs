@@ -888,7 +888,13 @@ impl LlmAgentBehavior {
                 Some(channel_meta_parts.join("\n\n"))
             },
         };
-        let system_blocks = super::prompt_assembly::build_blocks(prompt_inputs);
+        let mut system_blocks = super::prompt_assembly::build_blocks(prompt_inputs);
+        // Phase 79.2 — inject a stub block listing deferred tools by name
+        // + description so the model can discover them via ToolSearch.
+        let registry_for_deferred = ctx.effective_tools.as_ref().unwrap_or(&self.tools);
+        if let Some(summary) = registry_for_deferred.deferred_tools_summary() {
+            system_blocks.push(nexo_llm::PromptBlock::plain("deferred_tools", summary));
+        }
         // Legacy flat string for providers that don't honor
         // `system_blocks` (and as a back-compat path when prompt_cache
         // is disabled). Cheap to build — `flatten_blocks` walks the
@@ -1143,10 +1149,10 @@ impl LlmAgentBehavior {
         // behaviors). Both paths produce the same visible surface;
         // the cached path skips the clone-per-turn.
         let tool_defs: Vec<_> = match ctx.effective_tools.as_ref() {
-            Some(pre) => pre.to_tool_defs(),
+            Some(pre) => pre.to_tool_defs_non_deferred(),
             None => self
                 .tools
-                .to_tool_defs()
+                .to_tool_defs_non_deferred()
                 .into_iter()
                 .filter(|d| effective_policy.tool_allowed(&d.name))
                 .collect(),

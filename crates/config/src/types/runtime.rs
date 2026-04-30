@@ -53,6 +53,11 @@ pub struct RuntimeCronConfig {
     /// Opt-in tool-call execution in cron LLM dispatcher.
     #[serde(default)]
     pub tool_calls: RuntimeCronToolCallsConfig,
+    /// ±% jitter applied to `next_fire_at` to avoid thundering-herd
+    /// when many entries share the same cron expression. `0` disables.
+    /// Lift from `claude-code-leak/src/utils/cronJitterConfig.ts`.
+    #[serde(default = "default_cron_jitter_pct")]
+    pub jitter_pct: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -141,6 +146,10 @@ fn default_cron_one_shot_max_backoff_secs() -> u64 {
 
 fn default_cron_tool_calls_max_iterations() -> usize {
     6
+}
+
+fn default_cron_jitter_pct() -> u32 {
+    10
 }
 
 #[cfg(test)]

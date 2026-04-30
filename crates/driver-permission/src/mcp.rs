@@ -13,6 +13,7 @@ use nexo_mcp::{McpContent, McpError, McpServerInfo, McpTool, McpToolResult};
 use serde_json::Value;
 
 use crate::adapter::outcome_to_claude_value;
+use crate::bash_destructive;
 use crate::cache::SessionCacheKey;
 use crate::decider::PermissionDecider;
 use crate::types::{PermissionOutcome, PermissionRequest};
@@ -135,15 +136,16 @@ impl<D: ?Sized + PermissionDecider> McpServerHandler for PermissionMcpServer<D> 
         // — Claude 2.1's permission schema rejects the response when
         // `updatedInput` is absent or non-object (see adapter.rs).
         let original_input = req.input.clone();
+        let tool_name = req.tool_name.clone();
+        let warnings = gather_bash_warnings(&tool_name, &original_input);
 
-        let cache_key = SessionCacheKey::from_request(&req.tool_name, &req.input);
+        let cache_key = SessionCacheKey::from_request(&tool_name, &req.input);
         if let Some(cached) = self.session_cache.get(&cache_key) {
-            return Ok(text_result(outcome_to_claude_value(
-                cached.value(),
-                &original_input,
-            )));
+            return Ok(text_result(
+                outcome_to_claude_value(cached.value(), &original_input),
+                warnings,
+            ));
         }
-
         let resp = tokio::time::timeout(self.decision_timeout, self.decider.decide(req))
             .await
             .map_err(|_| McpError::Protocol("decider timeout".into()))?
@@ -153,14 +155,14 @@ impl<D: ?Sized + PermissionDecider> McpServerHandler for PermissionMcpServer<D> 
             self.session_cache.insert(cache_key, resp.outcome.clone());
         }
 
-        Ok(text_result(outcome_to_claude_value(
-            &resp.outcome,
-            &original_input,
-        )))
+        Ok(text_result(
+            outcome_to_claude_value(&resp.outcome, &original_input),
+            warnings,
+        ))
     }
 }
 
-fn text_result(value: Value) -> McpToolResult {
+fn text_result(value: Value, warnings: Option<String>) -> McpToolResult {
     let is_error = matches!(value.get("behavior").and_then(Value::as_str), Some("deny"));
     // Phase 74.3 — emit BOTH the legacy text content (for clients
     // that still parse it) AND the structured form (for Claude
@@ -168,11 +170,43 @@ fn text_result(value: Value) -> McpToolResult {
     // tool's `outputSchema`). Same payload, two channels — costs
     // a clone but eliminates the "re-parse text as JSON" round-
     // trip that surfaced the Zod `updatedInput` flap in Phase 73.
+    //
+    // Phase 77.8 — prepend bash safety warnings to text content.
+    // Warnings never touch structured_content (strict Claude schema).
+    let text = if let Some(w) = warnings {
+        format!("{w}\n{value}")
+    } else {
+        value.to_string()
+    };
     McpToolResult {
-        content: vec![McpContent::Text {
-            text: value.to_string(),
-        }],
+        content: vec![McpContent::Text { text }],
         is_error,
         structured_content: Some(value),
+    }
+}
+
+/// Gather bash safety warnings for a tool call. Only inspects Bash
+/// commands; returns `None` for all other tools.
+fn gather_bash_warnings(tool_name: &str, input: &Value) -> Option<String> {
+    if tool_name != "Bash" {
+        return None;
+    }
+    let command = input.get("command")?.as_str()?;
+    let mut warnings: Vec<&str> = Vec::new();
+
+    if let Some(w) = bash_destructive::check_destructive_command(command) {
+        warnings.push(w);
+    }
+    if let Some(w) = bash_destructive::check_sed_in_place(command) {
+        warnings.push(w);
+    }
+
+    if warnings.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "WARNING — bash security:\n- {}",
+            warnings.join("\n- ")
+        ))
     }
 }

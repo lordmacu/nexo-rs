@@ -991,6 +991,7 @@ mod tests {
                 ..TeamPolicy::default()
             },
             proactive: Default::default(),
+        repl: Default::default(),
         }
     }
 

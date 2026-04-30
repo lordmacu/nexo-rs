@@ -71,7 +71,7 @@ enum Mode {
         json: bool,
     },
     ExtHelp,
-    McpServer,
+    McpServer(McpServerSubcommand),
     FlowList {
         json: bool,
     },
@@ -232,6 +232,23 @@ enum Mode {
         verbose: bool,
     },
     Help,
+}
+
+/// Phase 76.14 — subcommands for `nexo mcp-server`.
+///
+/// Without a subcommand, `nexo mcp-server` boots the MCP server
+/// (backward-compatible). With a subcommand, it runs a client-side
+/// operation against a local or remote MCP endpoint.
+#[derive(Debug, Clone)]
+enum McpServerSubcommand {
+    /// Default: run the MCP stdio/HTTP server.
+    Serve,
+    /// `inspect <url>` — list tools + resources of a remote server.
+    Inspect { url: String },
+    /// `bench <url> --tool <name> --rps <n>` — load test a tool.
+    Bench { url: String, tool: String, rps: u32 },
+    /// `tail-audit <db>` — read recent entries from a local audit SQLite DB.
+    TailAudit { db: String },
 }
 
 struct CliArgs {
@@ -467,7 +484,14 @@ async fn main() -> Result<()> {
         Mode::ExtDoctor { runtime, json } => {
             return run_ext_cli(&args.config_dir, ExtCmd::Doctor { runtime, json })
         }
-        Mode::McpServer => return run_mcp_server(&args.config_dir).await,
+        Mode::McpServer(ref sub) => match sub {
+            McpServerSubcommand::Serve => return run_mcp_server(&args.config_dir).await,
+            McpServerSubcommand::Inspect { url } => return run_mcp_inspect(url).await,
+            McpServerSubcommand::Bench { url, tool, rps } => {
+                return run_mcp_bench(url, tool, *rps).await
+            }
+            McpServerSubcommand::TailAudit { db } => return run_mcp_tail_audit(db).await,
+        },
         Mode::FlowHelp => return run_flow_help(),
         Mode::FlowList { json } => return run_flow_list(json).await,
         Mode::FlowShow { id, json } => return run_flow_show(&id, json).await,
@@ -1891,6 +1915,63 @@ async fn main() -> Result<()> {
         &reload_cell,
     );
 
+    // Phase 79.1 — process-shared plan-mode approval registry.
+    // Created once per process so the broker subscriber below can
+    // resolve pending ExitPlanMode approvals from inbound
+    // `[plan-mode] approve|reject plan_id=…` chat messages.
+    let plan_approval_registry = std::sync::Arc::new(
+        nexo_core::agent::plan_mode_tool::PlanApprovalRegistry::default(),
+    );
+    // Subscribe to inbound topics for plan-mode approval routing.
+    // Spawned in a fire-and-forget task; ends with the daemon shutdown.
+    {
+        let broker_clone = broker.clone();
+        let registry = std::sync::Arc::clone(&plan_approval_registry);
+        tokio::spawn(async move {
+            use nexo_broker::BrokerHandle;
+            let mut sub = match broker_clone.subscribe("plugin.inbound.>").await {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "[plan-mode] could not subscribe to plugin.inbound — approval parser offline"
+                    );
+                    return;
+                }
+            };
+            tracing::info!("[plan-mode] approval parser on plugin.inbound.> running");
+            while let Some(ev) = sub.next().await {
+                let body = ev
+                    .payload
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                if body.is_empty() {
+                    continue;
+                }
+                let cmd = match nexo_core::agent::plan_mode_tool::parse_plan_mode_approval(body) {
+                    Some(c) => c,
+                    None => continue,
+                };
+                let (plan_id, decision) = match cmd {
+                    nexo_core::agent::plan_mode_tool::PlanModeApprovalCommand::Approve { plan_id } => {
+                        (plan_id, nexo_core::agent::plan_mode_tool::PlanApprovalDecision::Approve)
+                    }
+                    nexo_core::agent::plan_mode_tool::PlanModeApprovalCommand::Reject { plan_id, reason } => {
+                        let reason = reason.unwrap_or_else(|| "rejected by operator".to_string());
+                        (plan_id, nexo_core::agent::plan_mode_tool::PlanApprovalDecision::Reject { reason })
+                    }
+                };
+                let resolved = registry.resolve(&plan_id, decision);
+                if resolved {
+                    tracing::info!(%plan_id, "[plan-mode] approval resolved via inbound message");
+                } else {
+                    tracing::debug!(%plan_id, "[plan-mode] no pending waiter for plan_id");
+                }
+            }
+        });
+    }
+
     // Phase 79.5 — boot the LSP manager once per process. Probes
     // rust-analyzer / pylsp / typescript-language-server / gopls
     // on PATH; missing binaries get a single warn line with the
@@ -2236,6 +2317,36 @@ async fn main() -> Result<()> {
                 nexo_core::agent::SleepTool::tool_def(),
                 nexo_core::agent::SleepTool,
             );
+        }
+
+        // Phase 79.12 — `Repl` tool (stateful Python/Node/bash subprocesses
+        // that persist across LLM turns). Feature-gated behind `repl-tool`.
+        #[cfg(feature = "repl-tool")]
+        {
+            let repl_enabled = agent_cfg.repl.enabled
+                || agent_cfg
+                    .inbound_bindings
+                    .iter()
+                    .filter_map(|b| b.repl.as_ref())
+                    .any(|r| r.enabled);
+            if repl_enabled {
+                let effective_repl = agent_cfg.repl.clone();
+                let repl_workspace = if agent_cfg.workspace.trim().is_empty() {
+                    String::from("./data/workspace")
+                } else {
+                    agent_cfg.workspace.clone()
+                };
+                let repl_registry = std::sync::Arc::new(
+                    nexo_core::agent::ReplRegistry::new(
+                        effective_repl.clone(),
+                        repl_workspace,
+                    ),
+                );
+                tools.register(
+                    nexo_core::agent::ReplTool::tool_def(),
+                    nexo_core::agent::ReplTool::new(repl_registry, effective_repl),
+                );
+            }
         }
 
         // Phase 79.13 — `NotebookEdit` for `.ipynb` cell-level edits.
@@ -3199,6 +3310,7 @@ async fn main() -> Result<()> {
             nexo_plugin_telegram::TelegramPairingAdapter::new(broker.clone()),
         ));
         runtime = runtime.with_pairing_adapters(pairing_registry);
+        runtime = runtime.with_plan_approval_registry(plan_approval_registry.clone());
         if let Some(ref dc) = dispatch_ctx {
             runtime = runtime.with_dispatch_ctx(Arc::clone(dc));
         }
@@ -3478,7 +3590,8 @@ async fn main() -> Result<()> {
                         as std::sync::Arc<dyn nexo_core::cron_schedule::CronStore>,
                     dispatcher,
                 )
-                .with_one_shot_retry_policy(one_shot_retry_policy),
+                .with_one_shot_retry_policy(one_shot_retry_policy)
+                .with_jitter_pct(cfg.runtime.cron.jitter_pct),
             );
             let cancel_for_runner = cron_runner_cancel.clone();
             tokio::spawn(async move { runner.run(cancel_for_runner).await });
@@ -5385,7 +5498,39 @@ fn parse_args() -> CliArgs {
             yes: positional.iter().any(|a| a == "--yes"),
             json: has_json_flag,
         },
-        [cmd] if cmd == "mcp-server" => Mode::McpServer,
+        // Phase 76.14 — mcp-server with optional subcommands
+        [cmd] if cmd == "mcp-server" => {
+            Mode::McpServer(McpServerSubcommand::Serve)
+        }
+        [cmd, sub, url] if cmd == "mcp-server" && sub == "inspect" => {
+            Mode::McpServer(McpServerSubcommand::Inspect {
+                url: url.clone(),
+            })
+        }
+        [cmd, sub, url] if cmd == "mcp-server" && sub == "bench" => {
+            let tool = positional
+                .iter()
+                .position(|a| a == "--tool")
+                .and_then(|i| positional.get(i + 1))
+                .cloned()
+                .unwrap_or_else(|| "echo".to_string());
+            let rps: u32 = positional
+                .iter()
+                .position(|a| a == "--rps")
+                .and_then(|i| positional.get(i + 1))
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(10);
+            Mode::McpServer(McpServerSubcommand::Bench {
+                url: url.clone(),
+                tool,
+                rps,
+            })
+        }
+        [cmd, sub, db] if cmd == "mcp-server" && sub == "tail-audit" => {
+            Mode::McpServer(McpServerSubcommand::TailAudit {
+                db: db.clone(),
+            })
+        }
         [cmd] if cmd == "flow" => Mode::FlowHelp,
         [cmd, sub] if cmd == "flow" && sub == "list" => Mode::FlowList {
             json: has_json_flag,
@@ -5534,7 +5679,10 @@ fn print_usage() {
         "  agent setup telegram-link [<agent>]    Pair an existing Telegram instance to an agent"
     );
     println!("  agent admin [--port <n>]               Launch the loopback admin web UI");
-    println!("  agent mcp-server                       Run as an MCP stdio server (expose tools)");
+    println!("  agent mcp-server                       Run as an MCP stdio/HTTP server (expose tools)");
+    println!("  agent mcp-server inspect <url>         List tools + resources of a remote MCP server");
+    println!("  agent mcp-server bench <url> --tool <n> --rps <n>  Load test a tool");
+    println!("  agent mcp-server tail-audit <db>        Read recent audit log entries");
     println!("  agent pollers list [--json]            List configured poller jobs");
     println!("  agent pollers show <id> [--json]       Show one poller job's config + last tick");
     println!("  agent pollers run <id>                 Force a single tick of a poller job");
@@ -9207,6 +9355,271 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
     }
 
     stdio_result.context("mcp-server loop failed")?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Phase 76.14 — `nexo mcp-server` CLI ops
+// ---------------------------------------------------------------------------
+
+/// `nexo mcp-server inspect <url>` — list tools and resources of a
+/// reachable MCP server.
+async fn run_mcp_inspect(url: &str) -> Result<()> {
+    use serde_json::Value;
+
+    let client = reqwest::Client::new();
+    let base = url.trim_end_matches('/');
+
+    tracing::info!(%url, "inspecting MCP server");
+
+    // 1. Initialize
+    let init_body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": { "name": "nexo-mcp-inspect", "version": "0.1" }
+        },
+        "id": 1
+    });
+    let resp = client
+        .post(format!("{base}/mcp"))
+        .header("content-type", "application/json")
+        .header("accept", "application/json")
+        .json(&init_body)
+        .send()
+        .await
+        .context("initialize request failed")?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("initialize returned {}: {body}", status.as_u16());
+    }
+    let session_id = resp
+        .headers()
+        .get("mcp-session-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+        .context("no mcp-session-id in initialize response")?;
+    let init_body: Value = resp.json().await.context("initialize JSON parse")?;
+    let server_name = init_body["result"]["serverInfo"]["name"]
+        .as_str()
+        .unwrap_or("unknown");
+    let server_version = init_body["result"]["serverInfo"]["version"]
+        .as_str()
+        .unwrap_or("?");
+
+    println!("# MCP Server: {server_name} v{server_version}");
+    println!("URL: {url}\n");
+
+    // 2. tools/list
+    let tools_body = serde_json::json!({
+        "jsonrpc": "2.0", "method": "tools/list", "id": 2
+    });
+    let tools_resp = client
+        .post(format!("{base}/mcp"))
+        .header("mcp-session-id", &session_id)
+        .json(&tools_body)
+        .send()
+        .await
+        .context("tools/list failed")?;
+    let tools: Value = tools_resp.json().await.context("tools/list JSON")?;
+    let tool_list = tools["result"]["tools"].as_array();
+
+    println!("## Tools ({})\n", tool_list.map(|t| t.len()).unwrap_or(0));
+    if let Some(tools) = tool_list {
+        for t in tools {
+            let name = t["name"].as_str().unwrap_or("?");
+            let desc = t["description"].as_str().unwrap_or("(no description)");
+            println!("- **`{name}`** — {desc}");
+        }
+    }
+
+    // 3. resources/list (best-effort)
+    let res_body = serde_json::json!({
+        "jsonrpc": "2.0", "method": "resources/list", "id": 3
+    });
+    match client
+        .post(format!("{base}/mcp"))
+        .header("mcp-session-id", &session_id)
+        .json(&res_body)
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => {
+            let res: Value = r.json().await.unwrap_or_default();
+            let resources = res["result"]["resources"].as_array();
+            println!("\n## Resources ({})\n", resources.map(|r| r.len()).unwrap_or(0));
+            if let Some(resources) = resources {
+                for r in resources {
+                    let uri = r["uri"].as_str().unwrap_or("?");
+                    let name = r["name"].as_str().unwrap_or(uri);
+                    println!("- **`{name}`** — `{uri}`");
+                }
+            }
+        }
+        _ => {
+            println!("\n## Resources\n\n(resources not supported by this server)\n");
+        }
+    }
+
+    Ok(())
+}
+
+/// `nexo mcp-server bench <url> --tool <name> --rps <n>` — load test.
+async fn run_mcp_bench(url: &str, tool: &str, rps: u32) -> Result<()> {
+    use std::time::Instant;
+
+    println!("# MCP Load Test\n");
+    println!("- URL: {url}");
+    println!("- Tool: `{tool}`");
+    println!("- Target RPS: {rps}\n");
+
+    if rps == 0 {
+        anyhow::bail!("--rps must be > 0");
+    }
+
+    let client = reqwest::Client::new();
+    let base = url.trim_end_matches('/');
+    let delay_ms = 1000 / rps as u64;
+    let total_requests = (rps * 5).max(10) as usize;
+
+    // Initialize.
+    let init_body = serde_json::json!({
+        "jsonrpc": "2.0", "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": { "name": "nexo-mcp-bench", "version": "0.1" }
+        },
+        "id": 1
+    });
+    let resp = client
+        .post(format!("{base}/mcp"))
+        .json(&init_body)
+        .send()
+        .await
+        .context("initialize failed")?;
+    let session_id = resp
+        .headers()
+        .get("mcp-session-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+        .context("no mcp-session-id in initialize response")?;
+    // Drain response body so the connection returns to the pool.
+    let _ = resp.bytes().await?;
+
+    let mut latencies_ms: Vec<u64> = Vec::with_capacity(total_requests);
+    let bench_start = Instant::now();
+    let mut seq = 2u64;
+
+    for i in 0..total_requests {
+        let call_start = Instant::now();
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "params": { "name": tool, "arguments": {} },
+            "id": seq
+        });
+        let result = client
+            .post(format!("{base}/mcp"))
+            .header("mcp-session-id", &session_id)
+            .json(&body)
+            .send()
+            .await;
+        let latency = call_start.elapsed().as_millis() as u64;
+        latencies_ms.push(latency);
+        seq += 1;
+
+        match result {
+            Ok(r) if r.status().is_success() => {
+                if i < 3 {
+                    println!("  #{i}: {latency}ms OK");
+                }
+            }
+            Ok(r) => {
+                println!("  #{i}: {latency}ms HTTP {}", r.status().as_u16());
+            }
+            Err(e) => {
+                println!("  #{i}: {latency}ms ERR {e}");
+            }
+        }
+
+        if i + 1 < total_requests {
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+        }
+    }
+
+    let total_elapsed = bench_start.elapsed();
+    latencies_ms.sort();
+    let p50 = latencies_ms[latencies_ms.len() / 2];
+    let p90 = latencies_ms[(latencies_ms.len() as f64 * 0.90) as usize];
+    let p99 = latencies_ms[(latencies_ms.len() as f64 * 0.99) as usize];
+
+    println!("\n## Results\n");
+    println!("| Metric | Value |");
+    println!("|--------|-------|");
+    println!("| Requests | {} |", latencies_ms.len());
+    println!("| Duration | {:.1}s |", total_elapsed.as_secs_f64());
+    println!("| p50 latency | {}ms |", p50);
+    println!("| p90 latency | {}ms |", p90);
+    println!("| p99 latency | {}ms |", p99);
+    println!(
+        "| Actual RPS | {:.1} |",
+        latencies_ms.len() as f64 / total_elapsed.as_secs_f64()
+    );
+
+    Ok(())
+}
+
+/// `nexo mcp-server tail-audit <db>` — read recent entries from
+/// a local audit log SQLite database.
+async fn run_mcp_tail_audit(db_path: &str) -> Result<()> {
+    use sqlx::Row;
+
+    let db_url = format!("sqlite:{db_path}?mode=ro");
+    let pool = sqlx::SqlitePool::connect(&db_url)
+        .await
+        .context("failed to open audit DB (read-only)")?;
+
+    let rows = sqlx::query(
+        "SELECT id, timestamp, tool_name, principal, duration_ms, is_error
+         FROM mcp_call_log
+         ORDER BY id DESC
+         LIMIT 100",
+    )
+    .fetch_all(&pool)
+    .await
+    .context("failed to query mcp_call_log")?;
+
+    if rows.is_empty() {
+        println!("# Audit Log: {db_path}\n");
+        println!("(empty — no calls recorded yet)\n");
+        pool.close().await;
+        return Ok(());
+    }
+
+    println!("# Audit Log: {db_path}\n");
+    println!("| ID | Timestamp | Tool | Principal | Latency | Error |");
+    println!("|----|-----------|------|-----------|---------|-------|");
+
+    for row in &rows {
+        let id: i64 = row.get("id");
+        let ts: String = row.get("timestamp");
+        let tool: String = row.get("tool_name");
+        let principal: String = row.get("principal");
+        let latency: i64 = row.get("duration_ms");
+        let is_error: bool = row.get("is_error");
+
+        println!(
+            "| {id} | {ts} | `{tool}` | {principal} | {latency}ms | {} |",
+            if is_error { "ERR" } else { "OK" }
+        );
+    }
+
+    println!("\n{} rows shown (last 100).\n", rows.len());
+    pool.close().await;
     Ok(())
 }
 

@@ -30,7 +30,13 @@ pub fn parse_retry_after_ms(
 #[derive(Debug, thiserror::Error)]
 pub enum LlmError {
     #[error("rate limited — retry after {retry_after_ms}ms")]
-    RateLimit { retry_after_ms: u64 },
+    RateLimit {
+        retry_after_ms: u64,
+        /// Structured rate-limit info extracted from provider headers.
+        /// `None` when the provider didn't return rate-limit headers
+        /// or extraction failed.
+        rate_limit_info: Option<crate::rate_limit_info::RateLimitInfo>,
+    },
 
     #[error("server error {status}: {body}")]
     ServerError { status: u16, body: String },
@@ -96,13 +102,35 @@ where
     loop {
         match f().await {
             Ok(v) => return Ok(v),
-            Err(LlmError::RateLimit { retry_after_ms }) => {
+            Err(LlmError::RateLimit {
+                retry_after_ms,
+                ref rate_limit_info,
+            }) => {
                 attempt += 1;
                 if attempt >= 5 {
-                    return Err(LlmError::RateLimit { retry_after_ms });
+                    return Err(LlmError::RateLimit {
+                        retry_after_ms,
+                        rate_limit_info: rate_limit_info.clone(),
+                    });
                 }
                 let wait = retry_after_ms.max(backoff_ms);
-                tracing::warn!(attempt, wait_ms = wait, "LLM rate limited — retrying");
+                // Enrich retry log with human-readable quota info when available.
+                if let Some(info) = rate_limit_info {
+                    if let Some(msg) = crate::rate_limit_info::format_rate_limit_message(info) {
+                        tracing::warn!(
+                            attempt,
+                            wait_ms = wait,
+                            severity = ?msg.severity,
+                            plan_hint = msg.plan_hint,
+                            "LLM rate limited — retrying: {}",
+                            msg.text
+                        );
+                    } else {
+                        tracing::warn!(attempt, wait_ms = wait, "LLM rate limited — retrying");
+                    }
+                } else {
+                    tracing::warn!(attempt, wait_ms = wait, "LLM rate limited — retrying");
+                }
                 tokio::time::sleep(Duration::from_millis(wait)).await;
                 backoff_ms = jittered_backoff(
                     config.initial_backoff_ms,

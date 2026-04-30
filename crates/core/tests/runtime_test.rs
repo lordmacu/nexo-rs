@@ -141,6 +141,7 @@ fn make_config(
         config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
         team: nexo_config::types::team::TeamPolicy::default(),
         proactive: Default::default(),
+        repl: Default::default(),
     }
 }
 
@@ -500,6 +501,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
             team: nexo_config::types::team::TeamPolicy::default(),
             proactive: Default::default(),
+        repl: Default::default(),
         },
         behavior_a,
     ));
@@ -554,6 +556,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
             team: nexo_config::types::team::TeamPolicy::default(),
             proactive: Default::default(),
+        repl: Default::default(),
         },
         behavior_b,
     ));
