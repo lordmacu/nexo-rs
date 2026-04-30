@@ -571,6 +571,67 @@ do not get lost.
   Phase 79.6 trio (`TeamCreate` / `TeamDelete` / `TeamSendMessage`)
   is now defined exactly once at `:312-316`. plan_mode tests
   green (70/70).
+- **advisory_hook — generic tool advisory extension point** ✅
+  shipped 2026-04-30. Generalizes `gather_bash_warnings`
+  (Phase 77.8-10 + C4.a-b) into an extensible registry. New
+  module `crates/driver-permission/src/advisor.rs` ships
+  `pub trait ToolAdvisor { fn id(&self); fn advise(&self,
+  tool_name, input) -> Option<String>; }` + `AdvisorRegistry`
+  (Vec<Arc<dyn ToolAdvisor>>) with `new()` / `with_default()` /
+  `register(...)` / `gather(...)` API. `gather` runs each advisor
+  in registration order with `std::panic::catch_unwind`
+  isolation (a buggy plugin cannot crash the permission flow —
+  panics get `tracing::warn!` + skipped, others continue) and
+  composes results into a unified `WARNING — tool advisories:\n
+  - [<id>] <line>\n- [<id>] <line>` block (multi-line advisor
+  output is split + each line re-prefixed). `BashSecurityAdvisor`
+  wraps the existing `gather_bash_warnings` free fn (now
+  `pub(crate)`) and strips the legacy `WARNING — bash security`
+  prefix so the registry can re-wrap. `PermissionMcpServer`
+  gains `advisors: Arc<AdvisorRegistry>` field (defaults to
+  `with_default()` so back-compat preserved at the call-shape
+  level — bash advisor pre-registered) plus
+  `with_advisors(Arc<AdvisorRegistry>)` builder for plugins to
+  override. Wire site at `mcp.rs::call_tool` swaps
+  `gather_bash_warnings(...)` for `self.advisors.gather(...)`.
+  6 inline tests in `advisor::tests` cover empty registry,
+  single advisor with `[id]` prefix, multi-advisor join,
+  silent advisor skip, panic isolation, and
+  BashSecurityAdvisor's legacy-prefix strip.
+  Plugin author surface example (informational —
+  `nexo-plugin-marketing` will ship its own when constructed):
+  ```rust
+  pub struct MarketingAdvisor;
+  impl ToolAdvisor for MarketingAdvisor {
+      fn id(&self) -> &str { "marketing" }
+      fn advise(&self, tool_name: &str, input: &Value) -> Option<String> {
+          if tool_name == "marketing_lead_route" {
+              let kind = input.pointer("/channel/kind")?.as_str()?;
+              if kind == "crm" {
+                  return Some("external API call to CRM (Hubspot); estimated cost $0.01".into());
+              }
+          }
+          None
+      }
+  }
+  ```
+  Output prefix changed from `WARNING — bash security` to
+  `WARNING — tool advisories` with per-line `[bash]` bracket —
+  operator dashboards / log parsers that match the exact old
+  string need updating (documented). All advisories stay
+  advisory-only — upstream LLM decider remains authoritative
+  allow/deny gate; plugins that want hard blocks integrate with
+  `nexo-core::plan_mode::MUTATING_TOOLS`. Provider-agnostic:
+  advisors operate on `(tool_name, input)`, no LLM-provider
+  assumption. **Open follow-ups**: `advisory_hook.b` async
+  trait variant for advisors that need DB/network lookup;
+  `advisory_hook.c` per-binding advisor allowlist/disable
+  granularity; `advisory_hook.d` Prometheus metrics. IRROMPIBLE
+  refs: claude-code-leak `bashSecurity.ts` single-tier-class
+  pattern (we generalize for plugins); `research/` no relevant
+  prior art. Tests:
+  `cargo test -p nexo-driver-permission --lib` → 170/170
+  (164 pre-existing + 6 new).
 
 **A7 — Minor / cosmetic (M-cosmetic)** — ⬜ open, batched.
 - `crates/mcp/src/server/http_transport.rs:533-535` —

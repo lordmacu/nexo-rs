@@ -41,6 +41,12 @@ pub struct PermissionMcpServer<D: ?Sized + PermissionDecider = dyn PermissionDec
     server_info: McpServerInfo,
     session_cache: DashMap<SessionCacheKey, PermissionOutcome>,
     decision_timeout: Duration,
+    /// Phase advisory_hook — composable advisory pipeline.
+    /// Defaults to `AdvisorRegistry::with_default()` so the legacy
+    /// `BashSecurityAdvisor` fires unchanged for back-compat.
+    /// Plugins (marketing / payment / CRM) can override via
+    /// [`with_advisors`](Self::with_advisors).
+    advisors: Arc<crate::advisor::AdvisorRegistry>,
 }
 
 impl<D: ?Sized + PermissionDecider> PermissionMcpServer<D> {
@@ -63,6 +69,7 @@ impl<D: ?Sized + PermissionDecider> PermissionMcpServer<D> {
             },
             session_cache: DashMap::new(),
             decision_timeout: DEFAULT_DECISION_TIMEOUT,
+            advisors: Arc::new(crate::advisor::AdvisorRegistry::with_default()),
         }
     }
 
@@ -73,6 +80,19 @@ impl<D: ?Sized + PermissionDecider> PermissionMcpServer<D> {
 
     pub fn decision_timeout(mut self, t: Duration) -> Self {
         self.decision_timeout = t;
+        self
+    }
+
+    /// Phase advisory_hook — replace the default advisor registry.
+    /// The caller takes full ownership of the advisor list — pass
+    /// `AdvisorRegistry::with_default()` to keep the bash advisor
+    /// pre-registered, or `AdvisorRegistry::new()` for a clean
+    /// slate.
+    pub fn with_advisors(
+        mut self,
+        advisors: Arc<crate::advisor::AdvisorRegistry>,
+    ) -> Self {
+        self.advisors = advisors;
         self
     }
 
@@ -153,7 +173,15 @@ impl<D: ?Sized + PermissionDecider> McpServerHandler for PermissionMcpServer<D> 
         // `updatedInput` is absent or non-object (see adapter.rs).
         let original_input = req.input.clone();
         let tool_name = req.tool_name.clone();
-        let warnings = gather_bash_warnings(&tool_name, &original_input);
+        // Phase advisory_hook — composable advisory pipeline.
+        // Default registry pre-registers `BashSecurityAdvisor` so
+        // bash-tier coverage is preserved; plugins can register
+        // additional advisors (marketing / payment / CRM) via
+        // `with_advisors`. Output prefix changed from
+        // "WARNING — bash security" to
+        // "WARNING — tool advisories" with per-line `[<id>]`
+        // bracket prefix.
+        let warnings = self.advisors.gather(&tool_name, &original_input);
 
         let cache_key = SessionCacheKey::from_request(&tool_name, &req.input);
         if let Some(cached) = self.session_cache.get(&cache_key) {
@@ -263,7 +291,7 @@ fn text_result(value: Value, warnings: Option<String>) -> McpToolResult {
 /// safety analysis. The only `sandbox` references in `research/`
 /// are Docker test fixtures (e.g.
 /// `research/src/docker-setup.e2e.test.ts`).
-fn gather_bash_warnings(tool_name: &str, input: &Value) -> Option<String> {
+pub(crate) fn gather_bash_warnings(tool_name: &str, input: &Value) -> Option<String> {
     let backend = sandbox_probe().backend();
     gather_bash_warnings_with_backend(tool_name, input, backend)
 }

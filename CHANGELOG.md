@@ -10,6 +10,212 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **advisory_hook — generic tool advisory extension point**
+  (FOLLOWUPS A6). Generalizes the bash-only
+  `gather_bash_warnings` pipeline (Phase 77.8-10 + C4.a-b) into
+  an extensible registry that any plugin (marketing / payment /
+  CRM / etc.) can hook into without touching
+  `nexo-driver-permission`. New module
+  `crates/driver-permission/src/advisor.rs`:
+  - `pub trait ToolAdvisor { fn id(&self) -> &str; fn advise(&self,
+    tool_name: &str, input: &Value) -> Option<String>; }` —
+    `Send + Sync + 'static` — sync trait so it stays dyn-safe
+    without `async-trait`. Implementations should be cheap
+    (heavy work behind an internal cache or async follow-up).
+  - `pub struct AdvisorRegistry` (Vec-backed, ordered, Default)
+    with `new()` (empty), `with_default()` (pre-registers
+    `BashSecurityAdvisor`), `register(Arc<dyn ToolAdvisor>)`,
+    and `gather(tool_name, input) -> Option<String>`. The
+    `gather` method runs every advisor with
+    `std::panic::catch_unwind(AssertUnwindSafe(...))` isolation
+    — a panicking advisor logs `tracing::warn!` and is skipped;
+    other advisors run unaffected. Multi-line advisor output is
+    split on `\n` and each non-empty line gets its own
+    `[<id>]` bracket prefix.
+  - `pub struct BashSecurityAdvisor` wraps the existing
+    `crate::mcp::gather_bash_warnings` (now `pub(crate)`) and
+    strips the legacy `WARNING — bash security:\n- ` prefix so
+    the registry can re-wrap with the unified header. Multi-tier
+    bash output is preserved — each tier line gets its own
+    `[bash]` prefix in the unified block.
+  
+  `PermissionMcpServer` (`crates/driver-permission/src/mcp.rs`)
+  gains an `advisors: Arc<AdvisorRegistry>` field initialized to
+  `AdvisorRegistry::with_default()` in `new()` so the back-compat
+  default is "bash advisor fires" — operators existing pre-this
+  slice see no behavior loss at the call-shape level. New builder
+  `pub fn with_advisors(self, Arc<AdvisorRegistry>) -> Self` lets
+  plugin-aware boot wire pass a registry with extra advisors
+  registered. Wire site at `call_tool` swaps the previous
+  `gather_bash_warnings(&tool_name, &original_input)` direct call
+  for `self.advisors.gather(&tool_name, &original_input)`.
+  
+  **Output prefix change**: was
+  `WARNING — bash security:\n- <tier line>\n- <tier line>`,
+  now `WARNING — tool advisories:\n- [bash] <tier line>\n- [bash]
+  <tier line>` (multiple advisors interleave by registration
+  order). Operator dashboards or log parsers that match the
+  exact old string need updating — the unified format is more
+  consumable for LLM context but is a textual breaking change.
+  All other behaviors (advisory-only, no block, decider
+  authoritative) are unchanged.
+  
+  6 inline tests in `advisor::tests`:
+  `advisor_registry_empty_returns_none`,
+  `advisor_registry_single_includes_id_prefix`,
+  `advisor_registry_multiple_joins_lines`,
+  `advisor_registry_skips_silent_advisors`,
+  `advisor_registry_isolates_panicking_advisor`,
+  `bash_security_advisor_strips_legacy_prefix`.
+  
+  Plugin author surface (informational example —
+  `nexo-plugin-marketing` ships its own concrete advisor when
+  constructed):
+  ```rust
+  pub struct MarketingAdvisor;
+  impl ToolAdvisor for MarketingAdvisor {
+      fn id(&self) -> &str { "marketing" }
+      fn advise(&self, tool_name: &str, input: &Value) -> Option<String> {
+          if tool_name == "marketing_lead_route" {
+              let kind = input.pointer("/channel/kind")?.as_str()?;
+              if kind == "crm" {
+                  return Some("external API call to CRM (Hubspot); estimated cost $0.01".into());
+              }
+          }
+          None
+      }
+  }
+  
+  let mut registry = AdvisorRegistry::with_default();
+  registry.register(Arc::new(MarketingAdvisor));
+  let server = PermissionMcpServer::new(decider).with_advisors(Arc::new(registry));
+  ```
+  
+  Provider-agnostic: advisors operate on `(tool_name, input)`,
+  no LLM-provider assumption — works under Anthropic / MiniMax
+  / OpenAI / Gemini / DeepSeek / xAI / Mistral. All advisories
+  remain advisory-only; the upstream LLM decider is the
+  authoritative allow/deny gate. Plugins that want hard
+  blocks integrate with `nexo-core::plan_mode::MUTATING_TOOLS`
+  (existing surface).
+  
+  IRROMPIBLE refs: claude-code-leak
+  `src/tools/BashTool/bashSecurity.ts` (single-tier-class
+  pattern this generalizes — leak hardcodes bash; the registry
+  composes the bash advisor with arbitrary plugin advisors).
+  `research/` no relevant prior art (channel-side scope, no
+  permission advisory layer concept).
+  
+  Open follow-ups: `advisory_hook.b` (async `ToolAdvisor`
+  variant for DB/network lookups), `advisory_hook.c` (per-binding
+  advisor allowlist/disable granularity), `advisory_hook.d`
+  (Prometheus metrics `nexo_advisor_runs_total`).
+  
+  Tests: `cargo test -p nexo-driver-permission --lib`
+  → 170/170 (164 pre-existing + 6 new).
+- Phase 80.17.b (MVP) — `AutoApproveDecider<D>` decorator that hooks
+  the curated auto-approve dial (Phase 80.17) into the existing
+  `PermissionDecider` chain. Decorator wraps any inner decider,
+  reads `auto_approve: bool` + `workspace_path: String` from the
+  request's `metadata: serde_json::Map` (defensive parsing —
+  missing fields, wrong-type values, non-canonicalisable paths
+  all collapse to `false` → delegate to inner). When
+  `is_curated_auto_approve(tool_name, input, on, ws)` returns
+  `true`, short-circuits to `PermissionOutcome::AllowOnce
+  { updated_input: None }` with rationale
+  `"auto_approve: curated subset (<tool_name>)"`. When `false`,
+  delegates to the inner decider with the original request
+  unchanged. Public constants exported for caller-side metadata
+  population: `META_AUTO_APPROVE = "auto_approve"`,
+  `META_WORKSPACE_PATH = "workspace_path"`. `AutoApproveDecider::new(
+  inner: Arc<D>)` accepts any `Arc<D: PermissionDecider + ?Sized>`
+  so existing decorators (rate limiter, audit log, etc.) compose
+  freely. Six decorator tests in `auto_approve::decorator_tests`:
+  `delegates_when_metadata_missing` (no `auto_approve` field →
+  inner DenyAll fires Deny), `delegates_when_flag_false`
+  (`auto_approve: false` → delegates),
+  `short_circuits_for_curated_tool` (`auto_approve: true` +
+  FileRead → AllowOnce, inner DenyAll never invoked),
+  `delegates_for_destructive_bash` (`auto_approve: true` +
+  `Bash rm -rf` → helper rejects → inner AllowAll fires AllowOnce
+  with its own rationale, proving the path went through inner),
+  `delegates_for_unknown_tool` (default-ask for new tool names),
+  `handles_string_in_bool_field_defensively` (`"true"` string →
+  `as_bool()` returns None → flag treated as false → delegate).
+  Re-exports from `nexo-driver-permission::lib.rs`:
+  `AutoApproveDecider`, `META_AUTO_APPROVE`, `META_WORKSPACE_PATH`,
+  `is_curated_auto_approve`. Module total: 33 unit tests verde
+  (27 from Phase 80.17 inventory + 6 new decorator tests).
+  `cargo build --workspace` + `cargo test -p nexo-driver-permission
+  --lib auto_approve` both verde post-change. Doc-comment on the
+  decorator includes the boot-time wiring snippet
+  (`let decider = AutoApproveDecider::new(inner)`) plus an example
+  of caller-side `metadata` population from the resolved
+  `EffectiveBindingPolicy`. Zero changes to `PermissionRequest`
+  shape, zero changes to existing decider implementations,
+  zero changes to `mcp.rs` / `socket.rs` / `permission_mcp` bin
+  — operator opts in by wrapping their existing decider at boot.
+  **Deferred follow-ups**: 80.17.b.b — main.rs wire wrapping the
+  active decider with `AutoApproveDecider::new(...)` (1-line
+  snippet, blocked on the same dirty-state pattern as
+  Phase 80.1.b.b.b / 80.1.c / 80.10 / 80.15 / 80.16); 80.17.b.c —
+  caller-side metadata population: the wire that constructs
+  `PermissionRequest` (in `crates/driver-claude/` or the adapter
+  layer) must insert `metadata.auto_approve` and
+  `metadata.workspace_path` from the resolved
+  `EffectiveBindingPolicy` before invoking the decider. Without
+  the population step, the flag always reads `false` from
+  metadata and the decorator becomes a transparent pass-through
+  — wired up but inert until 80.17.b.c. Three-pillar audit:
+  **robusto** — 6 decorator tests + 27 inventory tests = 33
+  total cover every match arm + defensive parsing + delegation
+  semantics; rationale string carries tool_name for audit trail;
+  inner-decider behaviour preserved when flag off; **óptimo** —
+  zero allocations on the hot path when flag off (just delegate);
+  single helper invocation; metadata reads are trivial JSON
+  access via existing serde APIs; **transversal** — decorator
+  is generic over any `PermissionDecider` impl, zero
+  LLM-provider touchpoints, transversal Anthropic / MiniMax /
+  OpenAI / Gemini / DeepSeek / xAI / Mistral.
+- Phase 80.17 (MVP) — `auto_approve` mode (curated auto-approve dial
+  for the proactive-agent workflow). Operator opt-in via per-binding
+  YAML flag. New module `crates/driver-permission/src/auto_approve.rs`
+  (~280 LOC + 27 tests) exposes `is_curated_auto_approve(tool_name,
+  args, auto_approve_on, workspace_path) -> bool` decision table:
+  read-only / info-gathering tools always auto when the dial is on
+  (FileRead, Glob, Grep, LSP, list_agents, agent_status, WebSearch,
+  list_peers, task_get, etc.); Bash conditional on
+  `is_read_only ∧ !destructive ∧ !sed_in_place` (Phase 77.8/77.9
+  vetoes ALWAYS apply); FileEdit/Write conditional on canonical
+  path under `workspace_path` with symlink-escape defense + parent-
+  canonicalize fallback for new files; notifications + memory +
+  multi-agent coordination always auto (notify_origin/push/channel,
+  dream_now, delegate, team_create, task_create); ConfigTool / REPL
+  / remote_trigger / schedule_cron NEVER auto; mcp_/ext_ prefix
+  default-ask; default arm `_ => false`. `AgentConfig.auto_approve:
+  bool` and `InboundBinding.auto_approve: Option<bool>` with
+  `#[serde(default)]`. `EffectiveBindingPolicy` gains
+  `auto_approve: bool` (resolved via override > agent default) and
+  `workspace_path: Option<PathBuf>` (derived from `agent.workspace`).
+  Workspace fixture sweep: 49 `AgentConfig` literals + 14
+  `InboundBinding` literals via 2 perl multi-line replaces. 27
+  unit tests verde covering every match arm + defensive edges
+  (disabled flag, missing args, bash with destructive in pipe,
+  symlink escape, new-file canonicalize). `cargo build --workspace`
+  + `cargo test --bin nexo` verde. **Deferred follow-ups**:
+  80.17.b hook the helper into the approval gate at
+  `crates/driver-permission/src/mcp.rs` decision site (today the
+  fn ships standalone, gate hookup pending); 80.17.c `nexo setup
+  doctor` warn for `assistant_mode + !auto_approve` misconfig;
+  80.17.d audit log on AutoAllow path (Phase 72 turn-log); 80.17.e
+  CLI `--no-auto-approve` runtime override; 80.17.f customisable
+  allowlist via YAML. Three-pillar audit: **robusto** — 27 tests,
+  default-deny for new tools, Phase 77.8/77.9 vetoes preserved,
+  symlink-escape defense, per-binding override; **óptimo** — pure
+  fn, single match, zero hot-path allocs, reuses existing
+  classifiers; **transversal** — zero LLM-provider touchpoints,
+  works under Anthropic / MiniMax / OpenAI / Gemini / DeepSeek /
+  xAI / Mistral.
 - **M1.b — SIGHUP reload trigger for `nexo mcp-server`
   `expose_tools`** (FOLLOWUPS A6.M1.b). M1.a shipped the
   capability + ArcSwap allowlist surface but no caller hot-swapped
