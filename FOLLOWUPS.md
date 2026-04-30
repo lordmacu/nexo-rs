@@ -37,18 +37,59 @@ Phase 18 promise broken until shipped: every Phase 79 tool
 registers once at boot in `src/main.rs:2042-2705`; only one
 post-hook exists today (`PairingGate` flush at `:3492`, Phase 70.7).
 
-**A3 — C3 capabilities.rs::INVENTORY drift** — ⬜ open. CLAUDE.md
-mandates registering every dangerous env-driven toggle.
-`crates/setup/src/capabilities.rs:90-171` ends at
-`EMAIL_INSECURE_TLS`. Missing entries:
-- `NEXO_CLAUDE_CLI_VERSION` (`crates/llm/src/anthropic_auth.rs:63`)
-- `config-self-edit` Cargo feature surface
-  (`src/main.rs:2589-2680`)
-- any future `NEXO_REPL_*` / `NEXO_LSP_*` / `NEXO_PROACTIVE_*`
-  (none ship today, but the pattern needs to be established).
-Without entries, `agent doctor capabilities` is silently
-incomplete and the future admin-ui Capabilities tab will lie.
-Effort: 30 min once toggles are inventoried.
+**A3 — C3 capabilities.rs::INVENTORY drift** — ✅ shipped 2026-04-30
+(commits `5d5c6a7`, `4f8aced`, `91ebb19`). 3 entries added (one of
+each category — env Boolean, env Boolean low-risk, Cargo feature)
+plus a regex-based drift-prevention test that surfaced 13
+previously-undocumented env reads (all classified as benign — see
+the commit body for the breakdown).
+Scope shipped:
+- `ToggleKind::CargoFeature(&'static str)` variant added to support
+  compile-time gates alongside runtime env-var toggles. Limitation
+  documented: the `cfg!(feature = "X")` check evaluates against
+  `nexo-setup`'s flag state, so any new feature must propagate to
+  `crates/setup/Cargo.toml::[features]` (workspace pattern, already
+  followed by `config-self-edit`).
+- `evaluate_one` short-circuits for `CargoFeature`; `render_tty`
+  shows "enabled (compiled-in)".
+- 3 INVENTORY entries:
+  * `CHAT_AUTH_SKIP_PERM_CHECK` (auth, High) — bypass file-perm
+    gauntlet on secrets dir. Provider-agnostic.
+  * `NEXO_CLAUDE_CLI_VERSION` (llm-anthropic, Low) — Anthropic
+    OAuth Bearer CLI version stamp override. Provider-specific.
+  * `config-self-edit` Cargo feature (core, Critical) — gates the
+    self-config-editing ConfigTool. Provider-agnostic.
+- Module doc-comment expanded with provider-agnostic clause naming
+  the expected `extension` values for every LLM provider (Anthropic,
+  MiniMax, OpenAI, Gemini, DeepSeek, xAI, Mistral, future) plus
+  `core` / `auth` / `plugin-*`.
+- Drift test `inventory_covers_known_dangerous_envs` walks
+  `crates/**/*.rs` regex-matching `env::var("UPPER_NAME")` literals
+  and asserts each is classified.
+- `NON_DANGEROUS_ENV_ALLOWLIST` structured by category with explicit
+  classification rule (version pin / cache / routing → allowlist;
+  insecure-tls / skip-ratelimit / allow-write → INVENTORY; credential
+  lookup → allowlist), reserved-for-future-providers section.
+Limitations + follow-ups:
+- `is_cargo_feature_enabled` requires a hard-coded match arm per
+  feature. A missing arm falls through to `_ => false` — partially
+  detected by `inventory_cargo_features_have_arms` but not fully.
+  Cultural mitigation: dev who adds an INVENTORY CargoFeature entry
+  also adds the arm.
+- CI grep workflow that fails PRs introducing unclassified env reads
+  is **deferred** as opt-in follow-up. The unit test cumple la
+  función localmente.
+- Auto-doc generation (Markdown table from INVENTORY) deferred.
+References (validation, not copy):
+- claude-code-leak `src/utils/envUtils.ts:32-47` — `isEnvTruthy`
+  helpers without master registry, ~160 scattered `CLAUDE_*` vars.
+- claude-code-leak `src/commands/doctor/` — UI-hardcoded surface,
+  not generated from a registry.
+- research/ `src/agents/auth-profiles/doctor.ts:15-42` —
+  auth-only doctor, no toggle enumeration.
+Implementation 100% Rust idiomatic: `cfg!`, const slice with
+`&'static str`, `walkdir + regex` (workspace deps), no YAML registry
+(per the module's source-of-truth-is-code design from inception).
 
 **A4 — C4 Orphaned safety modules (Phase 77.9 / 77.10 / 77.11)** —
 ⬜ open, security-relevant. Three modules ship + test but no

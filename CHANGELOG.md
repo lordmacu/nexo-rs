@@ -10,6 +10,48 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- Phase 80.20 — `crates/fork::AutoMemFilter` tool whitelist for
+  forked memory-consolidation work. Verbatim port of leak
+  `claude-code-leak/src/services/extractMemories/extractMemories.ts:165-222`
+  (`createAutoMemCanUseTool`). Allows `REPL` (cache-key parity per
+  leak `:171-180`), `FileRead`/`Glob`/`Grep` (read-only), `Bash` only
+  when `nexo_driver_permission::is_read_only(command)` returns true,
+  `FileEdit`/`FileWrite` only when `file_path` (post-canonicalize)
+  starts with the filter's `memory_dir`. Path canonicalize at
+  construction + per-call defeats symlink swaps and `..` traversal.
+  New helper `nexo_driver_permission::bash_destructive::is_read_only`
+  composes Phase 77.8/77.9 classifiers + a positive whitelist of ~45
+  read-only utilities; intentionally drops `tee`/`awk`/`perl`/`python`/
+  `node`/`ruby` from the whitelist because they can shell out via
+  `system(...)`. Provider-agnostic — operates on tool name + JSON
+  args; expects flat top-level args (provider clients unwrap nested
+  envelopes before dispatch). 24 new unit tests in `auto_mem_filter`
+  + 19 new in `bash_destructive::is_read_only`. Decisions D-1+R3 in
+  `proyecto/design-kairos-port.md` (conservative whitelist, fail-fast
+  on missing dir, defense-in-depth via post-fork audit in 80.1).
+  Consumed by Phase 80.1 autoDream + 80.14 AWAY_SUMMARY + future
+  Phase 51 eval harness.
+- Phase 80.19 — `crates/fork/` fork-with-cache-share subagent
+  infrastructure (KAIROS port). Standalone in-process turn loop
+  using `nexo_llm::LlmClient` directly (NOT Phase 67's heavyweight
+  `DriverOrchestrator`, which spawns `claude` subprocesses).
+  `CacheSafeParams::from_parent_request(&ChatRequest)` snapshots
+  parent prompt + tools + model + message prefix; preserves any
+  incomplete `tool_use` blocks bit-for-bit (leak invariant
+  `forkedAgent.ts:522-525`). `DelegateMode::{Sync,ForkAndForget}`,
+  `ForkHandle::take_completion()` + `Drop`-cancels-abort prevents
+  leaked tokio tasks on abandoned ForkAndForget handles. `OnMessage`
+  trait with `NoopCollector` / `LoggingCollector` / panic-safe
+  `ChainCollector`. `ToolFilter` trait + `AllowAllFilter` default
+  (Phase 80.20 ships `AutoMemFilter`). `tracing` span
+  `fork.subagent` with run_id + cache_key_hash + mode; inline
+  `WARN fork.cache_break_detected` when first-turn cache hit ratio
+  drops below 0.5 (Phase 77.4 heuristic). 42 unit tests pass on
+  `cargo test -p nexo-fork`. Decisions D-8 in
+  `proyecto/design-kairos-port.md`. Consumed by Phase 80.1
+  autoDream + 80.14 AWAY_SUMMARY + future Phase 51 eval harness.
+  Refactor of `delegation_tool.rs` to consume the new infra is
+  follow-up 80.19.b (out of scope for 80.19 itself).
 - Phase 27.1 — `cargo-dist` baseline. `dist-workspace.toml` declares
   the cross-target matrix (`x86_64-unknown-linux-gnu` host fallback +
   `x86_64`/`aarch64-unknown-linux-musl` + `x86_64`/`aarch64-apple-darwin`
@@ -68,6 +110,27 @@ and the project adheres to [Semantic Versioning](https://semver.org)
   attribution block (ADR 0009).
 - `README.md` rewritten with badges and deep links into the
   published documentation.
+- **C3** — `crates/setup/src/capabilities.rs::INVENTORY` extended
+  from 9 → 12 entries closing the audit drift. New entries:
+  `CHAT_AUTH_SKIP_PERM_CHECK` (auth-wide file-perm-gauntlet bypass,
+  High), `NEXO_CLAUDE_CLI_VERSION` (Anthropic OAuth Bearer CLI
+  version stamp override, Low), and `config-self-edit` Cargo feature
+  (gates the self-config-editing ConfigTool, Critical). New
+  `ToggleKind::CargoFeature(&'static str)` variant supports
+  compile-time gates alongside runtime env-var toggles. Module
+  doc-comment expanded with provider-agnostic clause: every LLM
+  provider (Anthropic, MiniMax, OpenAI, Gemini, DeepSeek, xAI,
+  Mistral, future) gets its own entries when it introduces a
+  dangerous toggle (insecure-tls, skip-ratelimit, allow-write); the
+  `extension` field already accepted any identifier. New regex-based
+  drift-prevention test (`inventory_covers_known_dangerous_envs`)
+  walks `crates/**/*.rs` and fails when an `env::var("X")` literal
+  is neither in INVENTORY nor in `NON_DANGEROUS_ENV_ALLOWLIST` —
+  surfaced 13 previously-unclassified env reads (all benign,
+  classified into the allowlist with category comments). Implementation
+  100% Rust (`cfg!`, const slice, `walkdir + regex` dev-deps); the TS
+  references (claude-code-leak `envUtils.ts` + `commands/doctor/`,
+  OpenClaw `auth-profiles/doctor.ts`) guided pattern, not code.
 - **C2** — Hot-reload now picks up per-binding policy overrides for
   `lsp.languages` / `lsp.idle_teardown_secs`, `team.max_*` /
   `team.worktree_per_member`, `repl.allowed_runtimes`, and the
