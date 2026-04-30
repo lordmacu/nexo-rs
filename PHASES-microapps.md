@@ -20,7 +20,7 @@ covers Phases 1-81; everything microapp-related lives here.
 | Phase | Name | Sub-phases | Status |
 |-------|------|-----------|--------|
 | 82 | Multi-tenant SaaS extension enablement + control plane | 12 | 0/12 |
-| 83 | Microapp framework foundation | 11 | 0/11 |
+| 83 | Microapp framework foundation | 12 | 0/12 |
 
 ## Why a separate file
 
@@ -946,6 +946,113 @@ Done criteria:
 - `crates/setup/src/capabilities.rs::INVENTORY` updated
   for any new env toggles introduced by 82.x or 83.x.
 
+#### 83.12 — Meta-microapp React UI reference scaffold   ⬜
+
+Reusable pattern for any microapp that ships its own
+graphical interface. Backend hosting is covered by 82.12
+(`[capabilities.http_server]` + boot supervisor + token
+auth between core and microapp). 83.12 covers the
+**browser-side** of the stack: how the React app
+authenticates with the microapp's own backend, how the
+backend serves the SPA, and how live updates from the
+transcripts firehose stream into the UI.
+
+This subphase produces a single, opinionated reference
+scaffold that any future microapp with a UI can clone or
+study. It is NOT a fixed framework — operators are free
+to use any frontend stack — but having one canonical
+scaffold removes the "what auth flow / SPA serving /
+WebSocket pattern do I use?" decision overhead.
+
+Scope:
+- Browser → backend auth flow:
+  - HttpOnly + Secure + SameSite=Strict cookie carrying
+    the same token that core injects via `token_env`
+    (Phase 82.12).
+  - Login page that POSTs `Authorization: Bearer <token>`
+    once, backend sets the cookie, browser keeps it.
+  - Token rotation via `nexo/notify/token_rotated` (Phase
+    82.12) clears the cookie and forces re-login.
+- SPA serving convention in axum (or equivalent backend
+  framework):
+  - Static `dist/` served from `/` with gzip + brotli
+    compression.
+  - Fallback for SPA routes: any unmatched `GET /*` returns
+    `index.html` (so React Router deep-links work).
+  - `/api/*` reserved for the microapp's REST endpoints.
+  - `/ws/*` reserved for WebSocket subscriptions.
+- TypeScript types generated from admin RPC schemas:
+  - `nexo_admin_types.ts` auto-generated at microapp build
+    time using `serde_typescript` (or equivalent) from the
+    Rust admin payload structs.
+  - React UI imports `BindingContext`, `InboundMsgRef`,
+    `HookDecision`, etc. from the generated module.
+- Reference React app shipped in
+  `extensions/template-microapp-rust-with-ui/frontend/`:
+  - `pages/agents.tsx` — list + create + edit + delete
+  - `pages/agent_detail.tsx` — persona config inspector +
+    conversation viewer
+  - `pages/channels.tsx` — list credentials + register
+    new + revoke
+  - `pages/pairings.tsx` — start pairing + QR display +
+    live status (subscribed to
+    `nexo/notify/pairing_status_changed`)
+  - `pages/llm_keys.tsx` — list providers + upsert + delete
+  - `pages/audit.tsx` — tail of `microapp_admin_audit`
+    rows
+- WebSocket subscriber pattern:
+  - One WS connection from React per browser tab.
+  - Backend multiplexes: subscribes to NATS firehose
+    (`nexo/notify/transcript_appended`) and forwards
+    relevant frames to the WS clients.
+  - Client-side reconnect with exponential backoff.
+- QR display for pairing flow:
+  - Backend converts QR payload (from Phase 26 pairing
+    `qr_payload` bytes) into a base64-encoded PNG via the
+    `qrcode` crate.
+  - React renders inline `<img src="data:image/png;base64,...">`.
+- Build pipeline + Cargo integration:
+  - `frontend/` has its own `package.json`, `vite.config.ts`,
+    `tsconfig.json`.
+  - `npm run build` produces `frontend/dist/`.
+  - Backend `build.rs` checks for `dist/` and refuses to
+    compile in release mode if missing (so we never ship a
+    backend without its UI).
+  - Bundle: `dist/` is `include_bytes!` into the binary OR
+    served from `state_dir/ui/` (operator-configurable).
+
+Done criteria:
+- Reference scaffold builds end-to-end:
+  `npm run build && cargo build --release` produces a
+  single binary that, when launched by nexo, serves a
+  working React UI on the configured port.
+- Auth flow works: browser logs in once, cookie persists,
+  token rotation invalidates the session.
+- Live updates work: a tool call to `marketing_register_lead`
+  on agent X causes the conversation viewer in the UI to
+  show the new message within 1 s of the transcript
+  append.
+- QR pairing works: clicking "Link WhatsApp" in the UI
+  triggers `nexo/admin/pairing/start`, the QR appears in
+  the modal, status updates to "linked" via WebSocket
+  when the user scans.
+- 8+ unit tests on the backend SPA-serving + cookie auth
+  middleware.
+- 4+ playwright/cypress tests on the React app covering
+  login, agents-CRUD, pairings, conversations.
+- README documents how operators clone the scaffold and
+  swap the React app for their own frontend stack.
+
+Out of scope:
+- Multi-operator auth (sharing the UI between several
+  human operators with different roles). Single-operator
+  trust model only — token-based local-only.
+- Cloud-hosted variants (the UI is loopback-only by
+  default; external bind requires explicit operator
+  opt-in via 82.12's `allow_external_bind`).
+- Marketplace-style microapp UI launcher that aggregates
+  multiple microapp UIs in one tab.
+
 ---
 
 **Phase 83 effort estimate**: 83.1 (1.5 days), 83.2 (1-1.5
@@ -955,13 +1062,18 @@ expanded surface covering admin client + firehose consumer
 day contract doc), 83.7 (2 days for 3 templates since most
 logic is in the SDK), 83.8 (4-5 days reference microapp),
 83.9 (1-2 days cutover), 83.10 (1-4 days second microapp,
-upper bound if `agent-creator` is the validation case),
-83.11 (1.5 days docs + admin-ui). Total ~20-27 dev-days.
+upper bound if `agent-creator` is the validation case —
+note that 83.12 absorbs most of the React UI work that was
+previously implicit in 83.10's upper bound), 83.11 (1.5
+days docs + admin-ui), 83.12 (2-3 days React UI reference
+scaffold). Total ~22-30 dev-days.
 
 **Critical path**: 83.1 + 83.2 + 83.3 (core primitives) →
 83.4 + 83.5 (libraries) → 83.6 + 83.7 (contract + templates)
-→ 83.8 (reference microapp) → 83.9 (cutover) + 83.10
-(second validation) → 83.11 (docs).
+→ 83.12 (React UI scaffold) → 83.8 (reference microapp) →
+83.9 (cutover) + 83.10 (second validation) → 83.11 (docs).
+83.12 sits between 83.7 and 83.8/83.10 because the agent-
+creator validation in 83.10 reuses the scaffold.
 
 **Dependencies on Phase 82**: 83.3 hook interceptor reuses
 patterns from 82.1 BindingContext; 83.4 SDK wraps Phase
@@ -994,10 +1106,11 @@ agent-creator meta-microapp as the first product:
 8. **83.4** microapp-sdk-rust (with all wrappers) —
    3-4 days
 9. **83.6** contract doc — 1 day
-10. **83.10** build agent-creator microapp as the
-    validation case — 3-4 days
+10. **83.12** React UI reference scaffold — 2-3 days
+11. **83.10** build agent-creator microapp as the
+    validation case (reuses 83.12 scaffold) — 2-3 days
 
-Total: ~18-23 dev-days for the agent-creator meta-microapp
+Total: ~20-25 dev-days for the agent-creator meta-microapp
 fully working with React UI, conversation viewer, and
 admin-driven CRUD of agents/credentials/pairing/LLM keys.
 
