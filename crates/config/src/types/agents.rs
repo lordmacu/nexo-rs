@@ -441,6 +441,20 @@ pub struct InboundBinding {
     /// replaces it entirely for this binding.
     #[serde(default)]
     pub remote_triggers: Option<Vec<crate::types::remote_triggers::RemoteTriggerEntry>>,
+    /// Phase 79.5 — per-binding LSP policy override. `None` (default)
+    /// inherits the agent-level `lsp` block. When present, replaces the
+    /// whole struct for goals spawned from this binding (operator must
+    /// write the full `LspPolicy` if they only want to flip one field).
+    #[serde(default)]
+    pub lsp: Option<crate::types::lsp::LspPolicy>,
+    /// Phase 79.6 — per-binding team policy override. `None` (default)
+    /// inherits the agent-level `team` block. Replace-whole semantics.
+    #[serde(default)]
+    pub team: Option<crate::types::team::TeamPolicy>,
+    /// Phase 79.10 — per-binding config-tool policy override. `None`
+    /// (default) inherits the agent-level `config_tool` block. Replace-whole.
+    #[serde(default)]
+    pub config_tool: Option<crate::types::config_tool::ConfigToolPolicy>,
 }
 
 /// Per-binding override for the sender rate limit.

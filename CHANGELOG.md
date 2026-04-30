@@ -68,6 +68,23 @@ and the project adheres to [Semantic Versioning](https://semver.org)
   attribution block (ADR 0009).
 - `README.md` rewritten with badges and deep links into the
   published documentation.
+- **C1** — `EffectiveBindingPolicy` now resolves four additional
+  per-binding overrides (`lsp`, `team`, `config_tool`, `repl`) using
+  the same replace-whole strategy as `proactive` / `remote_triggers`.
+  **Behavioural change**: configs that already declared
+  `inbound_bindings[].repl: { ... }` will start applying it — the
+  override field had been declared in Phase 79.12 but the resolver
+  was missing, silently inheriting the agent-level value. Three new
+  optional fields (`lsp`, `team`, `config_tool`) added to
+  `InboundBinding`; defaults inherit, so pre-existing YAML is
+  unaffected. `binding_validate::has_any_override` extended to
+  count the seven previously-uncounted overrides
+  (`plan_mode` / `role` / `proactive` / `repl` / `lsp` / `team` /
+  `config_tool`); this fixes the misleading `binding without
+  overrides` warning. The actual consumption of the new resolved
+  fields by tool-registration paths in `src/main.rs` remains
+  pinned to boot — runtime hot-reload of these policies is
+  tracked under C2.
 
 ### Deprecated
 

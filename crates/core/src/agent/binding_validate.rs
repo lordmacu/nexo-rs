@@ -477,6 +477,13 @@ fn has_any_override(b: &nexo_config::InboundBinding) -> bool {
         || !b.pairing_policy.is_null()
         || b.dispatch_policy.is_some()
         || b.remote_triggers.is_some()
+        || b.plan_mode.is_some()
+        || b.role.is_some()
+        || b.proactive.is_some()
+        || b.repl.is_some()
+        || b.lsp.is_some()
+        || b.team.is_some()
+        || b.config_tool.is_some()
         || !matches!(
             b.sender_rate_limit,
             nexo_config::SenderRateLimitOverride::Keyword(
@@ -862,5 +869,47 @@ mod tests {
         let tg = vec![tg_instance("ana_tg")];
         let tools = KnownTools::new(["whatsapp_send_message", "weather"]);
         validate_agent(&a, &tg, &tools).expect("happy path must pass");
+    }
+
+    // ---- C1: has_any_override coverage for newly-tracked overrides ----
+
+    #[test]
+    fn has_any_override_returns_false_for_bare_binding() {
+        let b = InboundBinding {
+            plugin: "telegram".into(),
+            ..Default::default()
+        };
+        assert!(
+            !has_any_override(&b),
+            "a bare binding (only `plugin` set) must not be flagged as having overrides"
+        );
+    }
+
+    #[test]
+    fn has_any_override_returns_true_for_each_new_override() {
+        // Sanity: covers the seven overrides whose declaration on
+        // `InboundBinding` predates being counted by `has_any_override`
+        // (Phase 70.2 fixed the first batch; C1 finishes the job).
+        type Case = (&'static str, fn(&mut InboundBinding));
+        let cases: Vec<Case> = vec![
+            ("plan_mode", |b| b.plan_mode = Some(Default::default())),
+            ("role", |b| b.role = Some("worker".into())),
+            ("proactive", |b| b.proactive = Some(Default::default())),
+            ("repl", |b| b.repl = Some(Default::default())),
+            ("lsp", |b| b.lsp = Some(Default::default())),
+            ("team", |b| b.team = Some(Default::default())),
+            ("config_tool", |b| b.config_tool = Some(Default::default())),
+        ];
+        for (name, mutate) in cases {
+            let mut b = InboundBinding {
+                plugin: "telegram".into(),
+                ..Default::default()
+            };
+            mutate(&mut b);
+            assert!(
+                has_any_override(&b),
+                "expected has_any_override == true after setting `{name}`"
+            );
+        }
     }
 }
