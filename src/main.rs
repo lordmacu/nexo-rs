@@ -2017,6 +2017,13 @@ async fn main() -> Result<()> {
         let agent_id = agent_cfg.id.clone();
         let dream_yaml = agent_cfg.dreaming.clone();
         let workspace_for_dream = agent_cfg.workspace.clone();
+        // C2 — boot-time policy resolution. `from_agent_defaults` mirrors
+        // agent-level fields into the resolved struct; per-binding
+        // override pickup happens at handler call time via
+        // `ctx.effective_policy()` (which the runtime intake fills from
+        // `RuntimeSnapshot::policy_for(binding_idx)` per inbound event).
+        let effective_boot =
+            nexo_core::agent::effective::EffectiveBindingPolicy::from_agent_defaults(&agent_cfg);
         let llm = llm_registry
             .build(&cfg.llm, &agent_cfg.model)
             .with_context(|| format!("failed to build LLM client for agent {agent_id}"))?;
@@ -2330,7 +2337,7 @@ async fn main() -> Result<()> {
                     .filter_map(|b| b.repl.as_ref())
                     .any(|r| r.enabled);
             if repl_enabled {
-                let effective_repl = agent_cfg.repl.clone();
+                let effective_repl = effective_boot.repl.clone();
                 let repl_workspace = if agent_cfg.workspace.trim().is_empty() {
                     String::from("./data/workspace")
                 } else {
@@ -2471,8 +2478,8 @@ async fn main() -> Result<()> {
         // empty means "all discovered". Workspace_root falls back
         // to the daemon's `lsp_workspace` (first agent's
         // workspace) when the agent itself doesn't declare one.
-        if agent_cfg.lsp.enabled {
-            let allowed: Vec<nexo_lsp::LspLanguage> = agent_cfg
+        if effective_boot.lsp.enabled {
+            let allowed: Vec<nexo_lsp::LspLanguage> = effective_boot
                 .lsp
                 .languages
                 .iter()
@@ -2504,7 +2511,7 @@ async fn main() -> Result<()> {
             tools.register(def, lsp_tool);
             tracing::info!(
                 agent = %agent_id,
-                languages = ?agent_cfg.lsp.languages,
+                languages = ?effective_boot.lsp.languages,
                 "registered Lsp tool"
             );
         }
@@ -2514,13 +2521,13 @@ async fn main() -> Result<()> {
         // successfully. The lead's `current_goal_id` placeholder
         // here is the agent_id — Phase 67 driver-loop overrides it
         // per-goal when team-aware spawn lands in 79.6.b.
-        if agent_cfg.team.enabled {
+        if effective_boot.team.enabled {
             if let Some(store) = team_store.as_ref() {
                 let team_tools_inner = nexo_core::agent::team_tools::TeamTools::new(
                     std::sync::Arc::clone(store) as std::sync::Arc<dyn nexo_team_store::TeamStore>,
                     std::sync::Arc::clone(&team_router),
                     broker.clone(),
-                    agent_cfg.team.clone(),
+                    effective_boot.team.clone(),
                     agent_id.clone(),
                     agent_id.clone(),
                 );
@@ -2554,8 +2561,8 @@ async fn main() -> Result<()> {
                 );
                 tracing::info!(
                     agent = %agent_id,
-                    max_members = agent_cfg.team.effective_max_members(),
-                    max_concurrent = agent_cfg.team.effective_max_concurrent(),
+                    max_members = effective_boot.team.effective_max_members(),
+                    max_concurrent = effective_boot.team.effective_max_concurrent(),
                     "[team] registered 5 Team* tools"
                 );
             } else {
@@ -2588,7 +2595,7 @@ async fn main() -> Result<()> {
         // = true`. The hard ship-control is the Cargo feature, the
         // soft per-agent gate is the YAML knob.
         #[cfg(feature = "config-self-edit")]
-        if agent_cfg.config_tool.self_edit {
+        if effective_boot.config_tool.self_edit {
             if let (Some(store), Some(correlator), Some(reload), Some(agents_yaml)) = (
                 config_changes_store.as_ref(),
                 config_correlator.as_ref(),
@@ -2640,8 +2647,8 @@ async fn main() -> Result<()> {
                 let cfg_tool = ConfigTool {
                     agent_id: agent_id.clone(),
                     binding_id: binding_id.clone(),
-                    allowed_paths: agent_cfg.config_tool.allowed_paths.clone(),
-                    approval_timeout_secs: agent_cfg.config_tool.approval_timeout_secs,
+                    allowed_paths: effective_boot.config_tool.allowed_paths.clone(),
+                    approval_timeout_secs: effective_boot.config_tool.approval_timeout_secs,
                     proposals_dir,
                     actor_origin,
                     applier,
@@ -2672,7 +2679,7 @@ async fn main() -> Result<()> {
                 tracing::info!(
                     agent = %agent_id,
                     binding = %binding_id,
-                    allowed_paths = ?agent_cfg.config_tool.allowed_paths,
+                    allowed_paths = ?effective_boot.config_tool.allowed_paths,
                     "[config] registered Config tool (gated)"
                 );
             } else {
@@ -8529,6 +8536,11 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
     let primary = boot.agents.agents.first().ok_or_else(|| {
         anyhow::anyhow!("agents.yaml has no agents; cannot derive identity for mcp-server")
     })?;
+    // C2 — same boot-time policy resolver used by `nexo run`. Mirrors
+    // agent-level fields; per-binding overrides are picked up at handler
+    // call time via `ctx.effective_policy()`.
+    let effective_primary =
+        nexo_core::agent::effective::EffectiveBindingPolicy::from_agent_defaults(primary);
     // Keep mcp-server behavior aligned with the same per-agent policy surface
     // used by `nexo run` (web_search/link/team/lsp/etc.).
     let agent_cfg = Arc::new(primary.clone());
@@ -9022,7 +9034,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
             boot_ctx_enriched.config_secret_redactor = Some(redactor);
             boot_ctx_enriched.config_approval_correlator = Some(correlator);
             boot_ctx_enriched.config_reload_trigger = Some(reload);
-            boot_ctx_enriched.config_tool_policy = Some(primary.config_tool.clone());
+            boot_ctx_enriched.config_tool_policy = Some(effective_primary.config_tool.clone());
             boot_ctx_enriched.config_proposals_dir = Some(proposals_dir);
         }
 
@@ -9182,7 +9194,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
                 BootResult::SkippedDenied {
                     reason: "config-requires-auth-token",
                 }
-            } else if entry.name == "Config" && !primary.config_tool.self_edit {
+            } else if entry.name == "Config" && !effective_primary.config_tool.self_edit {
                 tracing::error!(
                     agent = %primary.id,
                     "mcp-server: Config tool refuses to register because `agents.{}.config_tool.self_edit = false`. \
@@ -9192,7 +9204,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
                 BootResult::SkippedDenied {
                     reason: "config-self-edit-policy-disabled",
                 }
-            } else if entry.name == "Config" && primary.config_tool.allowed_paths.is_empty() {
+            } else if entry.name == "Config" && effective_primary.config_tool.allowed_paths.is_empty() {
                 tracing::error!(
                     agent = %primary.id,
                     "mcp-server: Config tool refuses to register because `agents.{}.config_tool.allowed_paths` is empty. \
