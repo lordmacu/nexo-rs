@@ -113,7 +113,8 @@
 
 # Assistant mode
 
-- [Overview](./agents/assistant-mode.md)
+- [Autonomous agent — capabilities overview](./agents/autonomous-overview.md)
+- [Assistant mode (system addendum)](./agents/assistant-mode.md)
 - [Auto-approve dial](./agents/auto-approve.md)
 - [AWAY_SUMMARY digest](./agents/away-summary.md)
 - [Multi-agent coordination](./agents/multi-agent-coordination.md)
