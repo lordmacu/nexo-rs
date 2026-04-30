@@ -16,6 +16,10 @@ use crate::adapter::outcome_to_claude_value;
 use crate::bash_destructive;
 use crate::cache::SessionCacheKey;
 use crate::decider::PermissionDecider;
+use crate::path_extractor::{
+    classify_command, extract_paths, filter_out_flags, parse_command_args,
+};
+use crate::sed_validator::sed_command_is_allowed;
 use crate::types::{PermissionOutcome, PermissionRequest};
 
 const DEFAULT_DECISION_TIMEOUT: Duration = Duration::from_secs(30);
@@ -187,18 +191,94 @@ fn text_result(value: Value, warnings: Option<String>) -> McpToolResult {
 
 /// Gather bash safety warnings for a tool call. Only inspects Bash
 /// commands; returns `None` for all other tools.
+///
+/// Composes four advisory tiers, mirroring the upstream Claude Code
+/// permission UI prompt (see refs below). All tiers are advisory:
+/// the final allow/deny decision rides on the upstream LLM decider —
+/// `gather_bash_warnings` only enriches the prompt context.
+///
+/// Tiers, in order:
+/// 1. **Destructive command** — known-bad shapes (`rm -rf /`, etc.).
+/// 2. **Sed in-place shallow** — flags `-i` / `-i.bak` patterns.
+/// 3. **Sed deep validator** — gated on first token == `sed`. Calls
+///    `sed_validator::sed_command_is_allowed(cmd, allow_file_writes=false)`;
+///    fires when result is `false`. Catches `e` (exec) / `w` (file-write)
+///    flags + dangerous patterns the shallow check misses.
+/// 4. **Path extractor** — when first token classifies as a
+///    `PathCommand`, list up to 10 paths the command touches with
+///    the matching action verb, so the upstream decider can reason
+///    about workspace vs. system paths without re-parsing.
+///
+/// Scope: only the first clause is inspected. Pipes / `&&` chains
+/// past the first command are out of scope here — the destructive
+/// check above already covers downstream `rm` / `dd` / etc.
+///
+/// Provider-agnostic: operates on the bash command string; no LLM
+/// provider assumption — same warnings emitted whether the upstream
+/// decider is Anthropic, MiniMax, OpenAI, Gemini, DeepSeek, xAI, or
+/// Mistral.
+///
+/// IRROMPIBLE refs (claude-code-leak):
+/// - `src/tools/BashTool/bashSecurity.ts` — composes the tiers in
+///   the upstream permission UI prompt.
+/// - `src/tools/BashTool/sedValidation.ts:247-301` — exact source
+///   pattern for `sed_command_is_allowed`.
+/// - `src/tools/BashTool/pathValidation.ts:27-509` — command-aware
+///   path extraction (`classify_command` / `filter_out_flags` /
+///   `extract_paths`).
+///
+/// IRROMPIBLE refs (research/): no significant prior art —
+/// OpenClaw is channel-side and does not implement bash command
+/// safety analysis.
 fn gather_bash_warnings(tool_name: &str, input: &Value) -> Option<String> {
     if tool_name != "Bash" {
         return None;
     }
     let command = input.get("command")?.as_str()?;
-    let mut warnings: Vec<&str> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
 
     if let Some(w) = bash_destructive::check_destructive_command(command) {
-        warnings.push(w);
+        warnings.push(w.to_string());
     }
     if let Some(w) = bash_destructive::check_sed_in_place(command) {
-        warnings.push(w);
+        warnings.push(w.to_string());
+    }
+
+    // Tier 3 — sed deep validator. Gate on first token == "sed"
+    // because `sed_command_is_allowed` returns false for any
+    // non-sed input (it expects to find sed expressions to
+    // validate). Scope: first clause only — pipes / `&&` chains
+    // past the first `sed` are out of scope here, the destructive
+    // check above already covers `rm` / `dd` / etc downstream.
+    let tokens = parse_command_args(command);
+    let first = tokens.first().map(String::as_str).unwrap_or("");
+    if first == "sed" && !sed_command_is_allowed(command, false) {
+        warnings.push(
+            "sed expression outside the safe allowlist (line-printing or simple substitution); review for `e` (exec) or `w` (file-write) flags".to_string(),
+        );
+    }
+
+    // Tier 4 — path extractor. Surface which paths the command
+    // touches so the upstream LLM decider can reason about
+    // workspace vs. system paths without re-parsing the command.
+    if let Some(cmd) = classify_command(first) {
+        let filtered: Vec<String> = filter_out_flags(&tokens[1..]);
+        let paths = extract_paths(cmd, &filtered);
+        if !paths.is_empty() {
+            const MAX_LISTED: usize = 10;
+            let listed: Vec<&str> = paths.iter().take(MAX_LISTED).map(String::as_str).collect();
+            let suffix = if paths.len() > MAX_LISTED {
+                format!(" ({} more)", paths.len() - MAX_LISTED)
+            } else {
+                String::new()
+            };
+            warnings.push(format!(
+                "{} the following paths: [{}]{}",
+                cmd.action_verb(),
+                listed.join(", "),
+                suffix
+            ));
+        }
     }
 
     if warnings.is_empty() {
@@ -208,5 +288,57 @@ fn gather_bash_warnings(tool_name: &str, input: &Value) -> Option<String> {
             "WARNING — bash security:\n- {}",
             warnings.join("\n- ")
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn gather_bash_warnings_skips_non_bash() {
+        let input = json!({ "command": "rm -rf /" });
+        assert!(gather_bash_warnings("FileEdit", &input).is_none());
+    }
+
+    #[test]
+    fn gather_bash_warnings_returns_none_for_simple_sed() {
+        // `sed -n '1,5p' f.txt` is a line-printing command — allowed
+        // by `sed_command_is_allowed` and not destructive nor in-place.
+        let input = json!({ "command": "sed -n '1,5p' f.txt" });
+        let out = gather_bash_warnings("Bash", &input);
+        // Path wire still fires (sed is a classified PathCommand);
+        // sed deep wire must NOT fire.
+        let text = out.unwrap_or_default();
+        assert!(
+            !text.contains("outside the safe allowlist"),
+            "simple sed should not trigger the deep validator: got {text:?}",
+        );
+    }
+
+    #[test]
+    fn gather_bash_warnings_flags_complex_sed() {
+        // `e` flag executes shell — outside allowlist.
+        let input = json!({ "command": "sed 's/foo/bar/e' file.txt" });
+        let out = gather_bash_warnings("Bash", &input).expect("warning expected");
+        assert!(
+            out.contains("outside the safe allowlist"),
+            "expected sed deep warning, got {out:?}",
+        );
+    }
+
+    #[test]
+    fn gather_bash_warnings_lists_paths_for_classified_commands() {
+        let input = json!({ "command": "cat /etc/passwd /etc/shadow" });
+        let out = gather_bash_warnings("Bash", &input).expect("warning expected");
+        assert!(
+            out.contains("the following paths:"),
+            "expected path-list warning, got {out:?}",
+        );
+        assert!(
+            out.contains("/etc/passwd") && out.contains("/etc/shadow"),
+            "both paths should be listed: {out:?}",
+        );
     }
 }

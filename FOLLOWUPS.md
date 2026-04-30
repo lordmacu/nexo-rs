@@ -92,31 +92,47 @@ Implementation 100% Rust idiomatic: `cfg!`, const slice with
 (per the module's source-of-truth-is-code design from inception).
 
 **A4 — C4 Orphaned safety modules (Phase 77.9 / 77.10 / 77.11)** —
-⬜ open, security-relevant. Three modules ship + test but no
-production caller:
-- `crates/driver-permission/src/sed_validator.rs` (696 LOC, 21
-  tests) + `path_extractor.rs` (564 LOC, 12 tests) — only
-  `bash_destructive::check_sed_in_place` reaches the decider
-  (`mcp.rs:200`); the richer allowlist/denylist is dead code.
-- `crates/driver-permission/src/should_use_sandbox.rs` (401 LOC,
-  20 tests) — zero callers outside `#[cfg(test)]`. Sandbox
-  decision is computed and discarded.
-- `crates/llm/src/rate_limit_info.rs` (762 LOC, 12 tests) —
-  builds `RateLimitMessage { text, severity, plan_hint }`; no
-  `LlmError::QuotaExceeded` variant exists, so the structured
-  output never reaches `setup doctor` / `notify_origin` /
-  admin-ui. Output collapses to `tracing::warn!` at
-  `anthropic.rs:391-405` and `retry.rs:118-126`.
-Action plan:
-1. Wire `sed_validator` + `path_extractor` into
-   `crates/driver-permission/src/decider.rs` (replace the
-   bash-destructive-only call site with the full pipeline).
-2. Wire `should_use_sandbox` into the same decider; gate via
-   a `runtime.bash_safety.sandbox` config field.
-3. Add `LlmError::QuotaExceeded { retry_after, plan_hint }`,
-   plumb it from `anthropic.rs::classify_response` through
-   `retry.rs` and surface in `setup doctor` + `notify_origin`.
-Effort: ~1 day total. Security/UX impact high.
+🟡 partially shipped. Slice C4.a done; C4.b/C4.c remain open.
+
+**A4.a — sed_validator + path_extractor wire** — ✅ shipped
+2026-04-30 (C4.a). `gather_bash_warnings` (`crates/driver-permission/
+src/mcp.rs:190-260`) now composes 4 advisory tiers:
+1. destructive command, 2. sed in-place shallow,
+3. **sed deep validator** (gated on first token == `sed`,
+calls `sed_validator::sed_command_is_allowed(cmd, false)`,
+catches `e` (exec) / `w` (file-write) flags), 4. **path
+extractor** (lists up to 10 paths the command touches with
+the matching `PathCommand::action_verb()`). All tiers stay
+advisory — final allow/deny rides on the upstream LLM
+decider, which is now provider-agnostic across Anthropic /
+MiniMax / OpenAI / Gemini / DeepSeek / xAI / Mistral.
+4 inline tests in `mcp::tests` cover the wire (skip-non-bash,
+simple-sed-no-fp, complex-sed-flagged, path-list).
+Doc-comment on `gather_bash_warnings` documents the 4-tier
+composition with IRROMPIBLE refs to claude-code-leak
+`bashSecurity.ts`/`sedValidation.ts:247-301`/
+`pathValidation.ts:27-509`.
+
+**A4.b — should_use_sandbox heuristic wire** — ⬜ open.
+`crates/driver-permission/src/should_use_sandbox.rs` (401 LOC,
+20 tests) still has zero callers outside `#[cfg(test)]`.
+Plan: gate via a `runtime.bash_safety.sandbox` config field;
+emit a 5th tier in `gather_bash_warnings` when the heuristic
+recommends sandbox AND the binding's policy disagrees.
+
+**A4.c — rate_limit_info → LlmError::QuotaExceeded** — ⬜ open.
+`crates/llm/src/rate_limit_info.rs` (762 LOC, 12 tests) builds
+`RateLimitMessage { text, severity, plan_hint }`; no
+`LlmError::QuotaExceeded` variant exists, so the structured
+output never reaches `setup doctor` / `notify_origin` /
+admin-ui. Output collapses to `tracing::warn!` at
+`anthropic.rs:391-405` and `retry.rs:118-126`. Plan: add
+`LlmError::QuotaExceeded { retry_after, plan_hint }` (provider-
+agnostic shape — applies to MiniMax 429s, OpenAI quota errors,
+Gemini RESOURCE_EXHAUSTED, etc.), plumb through `retry.rs`,
+surface in `setup doctor` + `notify_origin`.
+
+Remaining effort: ~half day total (C4.b + C4.c).
 
 **A5 — C5 SecretGuardConfig YAML never read** — ✅ shipped 2026-04-30
 (commits `32d74f2`, `56053cf`, `b6cea87`). Operators now control the
