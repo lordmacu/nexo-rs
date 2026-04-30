@@ -577,6 +577,10 @@ impl<H: McpServerHandler + 'static> Dispatcher<H> {
                 let started = std::time::Instant::now();
                 let name_owned = name.to_string();
                 let dispatch_ctx = ctx.clone();
+                // M2 — clone before move so the audit-row build below
+                // can read `args` for `compute_args_metrics`. Cheap on
+                // small payloads; capped at `args_hash_max_bytes`.
+                let args_for_audit = args.clone();
                 let handler_fut = guarded(
                     handler.call_tool_streaming_with_context(name, args, progress, &dispatch_ctx),
                     "tools/call",
@@ -694,6 +698,18 @@ impl<H: McpServerHandler + 'static> Dispatcher<H> {
                         ),
                         _ => (None, None, None),
                     };
+                    // M2 — sha256 truncated to 16 hex chars + JSON-serialized
+                    // size, gated by `AuditLogConfig` knobs (redact_args,
+                    // per_tool_redact_args, args_hash_max_bytes). See
+                    // `crate::server::audit_log::hash` for decision tree.
+                    // Provider-agnostic — operates on the wire `Value`.
+                    let (args_hash, args_size_bytes) =
+                        crate::server::audit_log::compute_args_metrics(
+                            &args_for_audit,
+                            writer.config(),
+                            &metrics_tool,
+                        );
+
                     let row = crate::server::audit_log::AuditRow {
                         call_id: uuid::Uuid::new_v4().to_string(),
                         request_id: ctx.correlation_id.clone(),
@@ -703,8 +719,13 @@ impl<H: McpServerHandler + 'static> Dispatcher<H> {
                         auth_method,
                         method: "tools/call".to_string(),
                         tool_name: Some(metrics_tool.clone()),
-                        args_hash: None, // Phase 76.11 follow-up: hash params.arguments
-                        args_size_bytes: 0,
+                        args_hash,
+                        // SQLite schema is `INTEGER` → mapped to i64 in
+                        // `AuditRow`. JSON byte sizes are non-negative
+                        // and capped by `args_hash_max_bytes` (≤ 16 MiB
+                        // hard ceiling), so the `as i64` coercion is
+                        // total in practice.
+                        args_size_bytes: args_size_bytes as i64,
                         started_at_ms: started_ms,
                         completed_at_ms: Some(now_ms),
                         duration_ms: Some(started_total.elapsed().as_millis() as i64),
