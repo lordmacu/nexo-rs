@@ -10,6 +10,77 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **C4.a — sed_validator + path_extractor wire into
+  `gather_bash_warnings`** (FOLLOWUPS A4.a). Two orphaned safety
+  modules under `crates/driver-permission/` (`sed_validator.rs`
+  696 LOC + 21 tests, `path_extractor.rs` 564 LOC + 12 tests)
+  shipped during Phase 77.9 but only `bash_destructive::
+  check_sed_in_place` reached the production permission decider
+  through `mcp.rs::gather_bash_warnings` — the richer
+  allowlist/denylist + command-aware path extraction were dead
+  code. Fix extends `gather_bash_warnings` (`crates/driver-
+  permission/src/mcp.rs:190-260`) to compose 4 advisory tiers in
+  order: 1. destructive-command (existing), 2. sed-in-place
+  shallow (existing), 3. **sed deep validator** — gated on first
+  parsed token == `sed` (because `sed_command_is_allowed` returns
+  `false` for any non-sed input), calls
+  `sed_command_is_allowed(cmd, allow_file_writes=false)`, fires
+  warning "sed expression outside the safe allowlist
+  (line-printing or simple substitution); review for `e` (exec)
+  or `w` (file-write) flags" when result is `false`, 4. **path
+  extractor** — when first token classifies as a `PathCommand`
+  via `classify_command()`, runs `parse_command_args` →
+  `filter_out_flags` → `extract_paths(cmd, &filtered)` to surface
+  paths the command touches, lists up to `MAX_LISTED=10` entries
+  with `(N more)` suffix when over cap, prefixes with the command's
+  `action_verb()` (e.g. "concatenate files from"). All tiers stay
+  advisory — final allow/deny remains with the upstream LLM
+  decider, preserved 100% provider-agnostic across Anthropic /
+  MiniMax / OpenAI / Gemini / DeepSeek / xAI / Mistral (operates
+  on the bash command string only, no LLM provider assumption).
+  Buffer changed `Vec<&str>` → `Vec<String>` because new warnings
+  are owned format strings; existing warnings clone via
+  `to_string()` (only allocates on the rare warning-present path).
+  Scope: only the first clause inspected — pipes / `&&` chains
+  past the first command stay covered by the existing destructive
+  check downstream. 4 inline tests in `mcp::tests`:
+  `gather_bash_warnings_skips_non_bash` (FileEdit returns None),
+  `gather_bash_warnings_returns_none_for_simple_sed`
+  (`sed -n '1,5p' f.txt` is line-printing, deep validator must
+  not fire), `gather_bash_warnings_flags_complex_sed`
+  (`sed 's/foo/bar/e' file.txt` with the `e` exec flag triggers
+  the deep warning), `gather_bash_warnings_lists_paths_for_classified_commands`
+  (`cat /etc/passwd /etc/shadow` lists both paths via the path
+  wire). Doc-comment on `gather_bash_warnings` documents the
+  4-tier composition + scope + provider-agnostic guarantee +
+  IRROMPIBLE refs to claude-code-leak `bashSecurity.ts` (composes
+  the tiers in upstream UI prompt), `sedValidation.ts:247-301`
+  (exact source pattern for `sed_command_is_allowed`),
+  `pathValidation.ts:27-509` (command-aware path extraction).
+  C4.b (sandbox heuristic wire) and C4.c (rate-limit
+  `LlmError::QuotaExceeded` variant) remain open in FOLLOWUPS A4.
+- Phase 80.1.b.b.b (MVP) — `nexo_dream::boot::build_runner` helper
+  + `BootDeps` struct + `default_memory_dir` /
+  `default_dream_db_path` path helpers (`crates/dream/src/boot.rs`,
+  ~270 LOC + 7 unit tests). Operator calls `build_runner(deps)` once
+  at startup; helper validates config, mkdirs memory_dir + state_root
+  parent, opens `SqliteDreamRunStore` (shared
+  `<state_root>/dream_runs.db`), constructs `ConsolidationLock`,
+  builds `AutoDreamRunner` via `with_default_fork`. Returns
+  `Ok(None)` when `config.enabled = false` (orchestrator stays
+  clean — no per-turn cost). Mirrors leak `autoDream.ts:111-122`
+  `initAutoDream()` startup pattern + Phase 77.5
+  `ExtractMemories` boot construction shape. Provider-agnostic
+  `BootDeps` carries `Arc<dyn LlmClient>` + `Arc<dyn ToolDispatcher>`
+  trait objects — works under any provider impl per memory rule
+  `feedback_provider_agnostic.md`. Module doc comment includes the
+  3-line main.rs hookup snippet (`if let Some(ad_cfg) = ... let
+  runner = build_runner(deps).await?; orchestrator_builder.auto_dream(runner)`)
+  for operator-side application — main.rs change deferred until
+  user resolves their pre-existing dirty state
+  (`CronToolCallsConfig` + `Arc` import); the helper is fully
+  testable + isolable in `nexo-dream` regardless of binary build
+  state. nexo-dream cumulative: 55 unit tests verde (48 + 7).
 - Phase 80.1.b.b (partial) — `AgentConfig::auto_dream:
   Option<AutoDreamConfig>` field with `#[serde(default)]` for
   backward-compat. 47 struct-literal test fixtures across 17
