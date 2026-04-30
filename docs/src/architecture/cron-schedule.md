@@ -7,7 +7,7 @@ only) — this is the only path where the model itself mutates the
 schedule.
 
 Lift from
-`claude-code-leak/src/tools/ScheduleCronTool/CronCreateTool.ts:1-157`
+`upstream agent CLI`
 (5-field cron schema, recurring + durable flags, 50-entry cap).
 OpenClaw `research/src/cron/schedule.ts` provides the parallel
 naming convention — we use Rust's `cron = "0.12"` crate (already a
@@ -36,7 +36,7 @@ transitive workspace dep).
   accepted (passthrough).
 - 60-second minimum interval — sub-minute schedules refuse with
   a clear message.
-- Cap 50 entries per binding (lift from leak).
+- Cap 50 entries per binding (lift from upstream).
 - Origin-tagged binding namespace: entries from a `whatsapp:ops`
   goal stay isolated from `telegram:bot` entries. `binding_id`
   resolves from inbound origin (`plugin:instance`) with `agent_id`
@@ -198,7 +198,7 @@ fires are ≥ 60 seconds apart. Sub-minute expressions like `*/30 * *
 ## References
 
 - **PRIMARY**:
-  `claude-code-leak/src/tools/ScheduleCronTool/CronCreateTool.ts:1-157`
+  `upstream agent CLI`
   (schema, validation, 50-entry cap), plus the sibling
   `CronListTool.ts` / `CronDeleteTool.ts` / `CronPauseTool.ts` /
   `CronResumeTool.ts`.

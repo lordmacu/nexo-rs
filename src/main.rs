@@ -110,6 +110,43 @@ enum Mode {
         db: Option<PathBuf>,
         json: bool,
     },
+    /// Phase 80.9.e — `nexo channel list [--config=<path>] [--json]`.
+    /// Static dump of every operator-approved channel + every binding's
+    /// `allowed_channel_servers`. Pure read of the YAML — no daemon
+    /// required.
+    ChannelList {
+        config: Option<PathBuf>,
+        json: bool,
+    },
+    /// Phase 80.9.e — `nexo channel doctor [--config=<path>] [--binding=<id>]
+    /// [--json]`. For every approved server in `agents.channels.approved`
+    /// and every binding's `allowed_channel_servers`, run the static
+    /// half of the gate (1 = capability is *assumed* declared since the
+    /// doctor cannot probe a live MCP server, 2 = killswitch, 3 =
+    /// session allowlist, 5 = approved allowlist) and report each
+    /// outcome. Gate 4 (plugin source) is reported as "static-only —
+    /// runtime stamp not available" because the plugin source is set
+    /// by the runtime at MCP register-time. Useful to surface a typo
+    /// in the YAML before it manifests as silent inbound silence.
+    ChannelDoctor {
+        config: Option<PathBuf>,
+        binding: Option<String>,
+        json: bool,
+    },
+    /// Phase 80.9.e — `nexo channel test <server> [--binding=<id>]
+    /// [--content=...] [--config=<path>] [--json]`. Synthesises a
+    /// `notifications/nexo/channel` payload for `server`, runs it
+    /// through the parser + the XML wrap helper, and prints the
+    /// rendered `<channel>` block as the model would see it. Cheap
+    /// dry-run for operators tuning meta-key whitelists or content
+    /// caps.
+    ChannelTest {
+        server: String,
+        binding: Option<String>,
+        content: Option<String>,
+        config: Option<PathBuf>,
+        json: bool,
+    },
     FlowList {
         json: bool,
     },
@@ -819,6 +856,39 @@ async fn main() -> Result<()> {
             json,
         } => {
             return run_agent_discover(include_interactive, db.as_deref(), json).await;
+        }
+        Mode::ChannelList { config, json } => {
+            return run_channel_list(config.as_deref(), json, &args.config_dir).await;
+        }
+        Mode::ChannelDoctor {
+            config,
+            binding,
+            json,
+        } => {
+            return run_channel_doctor(
+                config.as_deref(),
+                binding.as_deref(),
+                json,
+                &args.config_dir,
+            )
+            .await;
+        }
+        Mode::ChannelTest {
+            server,
+            binding,
+            content,
+            config,
+            json,
+        } => {
+            return run_channel_test(
+                &server,
+                binding.as_deref(),
+                content.as_deref(),
+                config.as_deref(),
+                json,
+                &args.config_dir,
+            )
+            .await;
         }
         Mode::FlowHelp => return run_flow_help(),
         Mode::FlowList { json } => return run_flow_list(json).await,
@@ -6207,6 +6277,27 @@ fn parse_args() -> CliArgs {
             db: parse_kv_flag(&positional, "--db").map(PathBuf::from),
             json: has_json_flag,
         },
+        // Phase 80.9.e — `nexo channel list [--config=<path>] [--json]`.
+        [cmd, sub] if cmd == "channel" && sub == "list" => Mode::ChannelList {
+            config: parse_kv_flag(&positional, "--config").map(PathBuf::from),
+            json: has_json_flag,
+        },
+        // Phase 80.9.e — `nexo channel doctor [--config=<path>]
+        // [--binding=<id>] [--json]`.
+        [cmd, sub] if cmd == "channel" && sub == "doctor" => Mode::ChannelDoctor {
+            config: parse_kv_flag(&positional, "--config").map(PathBuf::from),
+            binding: parse_kv_flag(&positional, "--binding"),
+            json: has_json_flag,
+        },
+        // Phase 80.9.e — `nexo channel test <server> [--binding=<id>]
+        // [--content=...] [--config=<path>] [--json]`.
+        [cmd, sub, server] if cmd == "channel" && sub == "test" => Mode::ChannelTest {
+            server: server.clone(),
+            binding: parse_kv_flag(&positional, "--binding"),
+            content: parse_kv_flag(&positional, "--content"),
+            config: parse_kv_flag(&positional, "--config").map(PathBuf::from),
+            json: has_json_flag,
+        },
         [cmd] if cmd == "flow" => Mode::FlowHelp,
         [cmd, sub] if cmd == "flow" && sub == "list" => Mode::FlowList {
             json: has_json_flag,
@@ -11033,6 +11124,356 @@ async fn run_agent_discover(
     Ok(())
 }
 
+// ----------------------------------------------------------------
+// Phase 80.9.e — `nexo channel list/doctor/test` operator CLI.
+// Static helpers that read the YAML and exercise the gate +
+// XML wrap helper without needing a daemon up.
+// ----------------------------------------------------------------
+
+/// Load AppConfig from `--config=<path>` if provided, otherwise
+/// fall back to the global `config_dir` the CLI was invoked with.
+fn load_app_config_for_channels(
+    config_override: Option<&std::path::Path>,
+    config_dir: &std::path::Path,
+) -> Result<AppConfig> {
+    if let Some(p) = config_override {
+        // `--config` points to a single file or to a directory.
+        // AppConfig::load expects a directory. If the operator
+        // passed a file, walk up to its parent.
+        let dir = if p.is_file() {
+            p.parent()
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+        } else {
+            p.to_path_buf()
+        };
+        AppConfig::load(&dir).with_context(|| format!("loading config from {}", dir.display()))
+    } else {
+        AppConfig::load(config_dir)
+            .with_context(|| format!("loading config from {}", config_dir.display()))
+    }
+}
+
+#[derive(serde::Serialize)]
+struct ChannelListRow<'a> {
+    agent_id: &'a str,
+    enabled: bool,
+    approved_servers: Vec<&'a str>,
+    bindings: Vec<ChannelListBindingRow<'a>>,
+}
+
+#[derive(serde::Serialize)]
+struct ChannelListBindingRow<'a> {
+    binding_id: String,
+    allowed_channel_servers: &'a Vec<String>,
+}
+
+async fn run_channel_list(
+    config_override: Option<&std::path::Path>,
+    json: bool,
+    config_dir: &std::path::Path,
+) -> Result<()> {
+    let app = load_app_config_for_channels(config_override, config_dir)?;
+    let mut rows: Vec<ChannelListRow> = Vec::new();
+    for agent in &app.agents.agents {
+        let cfg = agent
+            .channels
+            .as_ref();
+        let approved: Vec<&str> = cfg
+            .map(|c| c.approved.iter().map(|e| e.server.as_str()).collect())
+            .unwrap_or_default();
+        let enabled = cfg.map(|c| c.enabled).unwrap_or(false);
+        let bindings: Vec<ChannelListBindingRow> = agent
+            .inbound_bindings
+            .iter()
+            .filter(|b| !b.allowed_channel_servers.is_empty())
+            .map(|b| ChannelListBindingRow {
+                binding_id: format!(
+                    "{}:{}",
+                    b.plugin,
+                    b.instance.as_deref().unwrap_or("default")
+                ),
+                allowed_channel_servers: &b.allowed_channel_servers,
+            })
+            .collect();
+        rows.push(ChannelListRow {
+            agent_id: &agent.id,
+            enabled,
+            approved_servers: approved,
+            bindings,
+        });
+    }
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+        return Ok(());
+    }
+    if rows.is_empty() {
+        println!("(no agents configured)");
+        return Ok(());
+    }
+    for row in &rows {
+        let state = if row.enabled { "ENABLED" } else { "disabled" };
+        println!(
+            "## agent {} — channels.{} ({} approved)",
+            row.agent_id,
+            state,
+            row.approved_servers.len()
+        );
+        if row.approved_servers.is_empty() {
+            println!("  (no approved servers)");
+        } else {
+            for s in &row.approved_servers {
+                println!("  approved: {s}");
+            }
+        }
+        if row.bindings.is_empty() {
+            println!("  (no binding has allowed_channel_servers)");
+        } else {
+            for b in &row.bindings {
+                println!(
+                    "  binding {}: {} server(s) — {}",
+                    b.binding_id,
+                    b.allowed_channel_servers.len(),
+                    b.allowed_channel_servers.join(", ")
+                );
+            }
+        }
+        println!();
+    }
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct ChannelDoctorRow {
+    agent_id: String,
+    binding_id: String,
+    server: String,
+    outcome: String,
+    skip_kind: Option<&'static str>,
+    reason: String,
+}
+
+async fn run_channel_doctor(
+    config_override: Option<&std::path::Path>,
+    binding_filter: Option<&str>,
+    json: bool,
+    config_dir: &std::path::Path,
+) -> Result<()> {
+    use nexo_mcp::channel::{
+        gate_channel_server, ChannelGateInputs, ChannelGateOutcome,
+    };
+
+    let app = load_app_config_for_channels(config_override, config_dir)?;
+    let mut rows: Vec<ChannelDoctorRow> = Vec::new();
+    for agent in &app.agents.agents {
+        let Some(cfg) = agent.channels.as_ref() else {
+            continue;
+        };
+        for binding in &agent.inbound_bindings {
+            let bid = format!(
+                "{}:{}",
+                binding.plugin,
+                binding.instance.as_deref().unwrap_or("default")
+            );
+            if let Some(filter) = binding_filter {
+                if filter != bid {
+                    continue;
+                }
+            }
+            // Walk every server the binding declares — this surfaces
+            // the case where a binding lists a server but the agent
+            // didn't add it to `approved` (gate 5 catches it).
+            for server in &binding.allowed_channel_servers {
+                // The doctor cannot probe a live MCP server, so it
+                // assumes the capability is declared. This is the
+                // "if the runtime is honest, would the gate pass?"
+                // shape — operators reading the output know that
+                // the only failure they can hit at runtime is
+                // gate 1 (capability) and gate 4 (plugin source
+                // mismatch when the runtime stamps an unexpected
+                // source).
+                let inputs = ChannelGateInputs {
+                    server_name: server,
+                    capability_declared: true,
+                    plugin_source: cfg
+                        .lookup_approved(server)
+                        .and_then(|e| e.plugin_source.as_deref()),
+                    cfg,
+                    binding_allowlist: &binding.allowed_channel_servers,
+                };
+                let (outcome_label, skip_kind, reason) = match gate_channel_server(&inputs) {
+                    ChannelGateOutcome::Register => (
+                        "WOULD REGISTER".to_string(),
+                        None,
+                        "all static gates pass; live runtime must declare the capability"
+                            .to_string(),
+                    ),
+                    ChannelGateOutcome::Skip { kind, reason } => {
+                        ("SKIP".to_string(), Some(kind.as_str()), reason)
+                    }
+                };
+                rows.push(ChannelDoctorRow {
+                    agent_id: agent.id.clone(),
+                    binding_id: bid.clone(),
+                    server: server.clone(),
+                    outcome: outcome_label,
+                    skip_kind,
+                    reason,
+                });
+            }
+            // Cross-check approved entries — a server in `approved`
+            // that no binding lists is fine but worth surfacing.
+            for entry in &cfg.approved {
+                let already = binding
+                    .allowed_channel_servers
+                    .iter()
+                    .any(|s| s == &entry.server);
+                if !already {
+                    rows.push(ChannelDoctorRow {
+                        agent_id: agent.id.clone(),
+                        binding_id: bid.clone(),
+                        server: entry.server.clone(),
+                        outcome: "NOT BOUND".to_string(),
+                        skip_kind: Some("session"),
+                        reason: format!(
+                            "approved server {} is not in this binding's allowed_channel_servers",
+                            entry.server
+                        ),
+                    });
+                }
+            }
+        }
+    }
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+        return Ok(());
+    }
+    if rows.is_empty() {
+        println!(
+            "(no channel-using bindings found{})",
+            binding_filter
+                .map(|f| format!(" — filter='{}'", f))
+                .unwrap_or_default()
+        );
+        return Ok(());
+    }
+    println!("| Agent | Binding | Server | Outcome | Skip | Reason |");
+    println!("|-------|---------|--------|---------|------|--------|");
+    for r in &rows {
+        println!(
+            "| {} | {} | {} | {} | {} | {} |",
+            r.agent_id,
+            r.binding_id,
+            r.server,
+            r.outcome,
+            r.skip_kind.unwrap_or("-"),
+            r.reason
+        );
+    }
+    println!("\n{} row(s).\n", rows.len());
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct ChannelTestOutput {
+    server: String,
+    binding_id: Option<String>,
+    parsed_content: String,
+    rendered_xml: String,
+    truncated: bool,
+    session_key: String,
+}
+
+async fn run_channel_test(
+    server: &str,
+    binding_filter: Option<&str>,
+    content_override: Option<&str>,
+    config_override: Option<&std::path::Path>,
+    json: bool,
+    config_dir: &std::path::Path,
+) -> Result<()> {
+    use nexo_mcp::channel::{parse_channel_notification, CHANNEL_NOTIFICATION_METHOD};
+
+    let app = load_app_config_for_channels(config_override, config_dir)?;
+
+    // Find the first agent whose `channels.approved` contains
+    // `server` — the doctor walks bindings, but `test` is
+    // server-centric so we just need an agent owning the entry.
+    let cfg = app
+        .agents
+        .agents
+        .iter()
+        .find_map(|a| {
+            a.channels
+                .as_ref()
+                .filter(|c| c.lookup_approved(server).is_some())
+                .map(|c| (a.id.clone(), c.clone()))
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "channel test: no agent has '{}' in channels.approved",
+                server
+            )
+        })?;
+    let (_agent_id, channels_cfg) = cfg;
+
+    let body = content_override
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("hello from {server} — channel test payload"));
+    let params = serde_json::json!({
+        "content": body,
+        "meta": {
+            "chat_id": "C_TEST",
+            "user": "operator"
+        }
+    });
+    let inbound = parse_channel_notification(
+        server,
+        CHANNEL_NOTIFICATION_METHOD,
+        &params,
+        Some(&channels_cfg),
+    )
+    .map_err(|e| anyhow::anyhow!("channel test: parse failed: {e}"))?;
+
+    let pairs: Vec<(String, String)> = inbound
+        .meta
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    let rendered = nexo_mcp::channel::wrap_channel_message(
+        &inbound.server_name,
+        &inbound.content,
+        Some(&pairs),
+    );
+
+    let truncated = inbound.content.len() < body.len();
+    let out = ChannelTestOutput {
+        server: server.to_string(),
+        binding_id: binding_filter.map(str::to_string),
+        parsed_content: inbound.content.clone(),
+        rendered_xml: rendered,
+        truncated,
+        session_key: inbound.session_key.0.clone(),
+    };
+    if json {
+        println!("{}", serde_json::to_string_pretty(&out)?);
+    } else {
+        println!("# Channel test — server={}\n", server);
+        if let Some(b) = &out.binding_id {
+            println!("(binding filter requested: {b})\n");
+        }
+        if out.truncated {
+            println!("[content truncated by max_content_chars]");
+        }
+        println!("session_key: {}\n", out.session_key);
+        println!("--- rendered XML (model-facing) ---");
+        println!("{}", out.rendered_xml);
+    }
+    Ok(())
+}
+
 async fn start_mcp_autonomous_worker(
     config_dir: &std::path::Path,
     primary: &nexo_config::types::agents::AgentConfig,
@@ -12988,6 +13429,8 @@ mcp_server:
             auto_dream: None,
             assistant_mode: None,
             away_summary: None,
+            brief: None,
+            channels: None,
             auto_approve: false,
             extract_memories: None,
         };

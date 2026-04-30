@@ -26,16 +26,14 @@
 //! 3. Sleep `tick_interval` and repeat. `cancel` stops the loop
 //!    cleanly.
 //!
-//! Reference (PRIMARY):
-//!   * `claude-code-leak/src/utils/cronTasks.ts` — the leak's
-//!     scheduling tick is structurally similar (poll → fire →
-//!     advance), though the leak runs in a single-process Node
-//!     event loop.
-//!
-//! Reference (secondary):
+//! Related primitives:
 //!   * Phase 20 `agent_turn` poller (`crates/poller/src/builtins/agent_turn.rs`)
 //!     — similar dispatch shape (`LlmRegistry::build` → `chat` →
 //!     optional outbound publish).
+//!   * Phase 80.2-80.6 jitter knobs live in
+//!     [`nexo_config::types::cron_jitter::CronJitterConfig`] and are
+//!     hot-reloaded through the Phase 18 `ArcSwap` snapshot — the
+//!     runner reads them every tick.
 //!
 //! Runtime status:
 //!   * `LlmCronDispatcher` is the production path (model-routed chat,
@@ -43,15 +41,20 @@
 //!   * `LoggingCronDispatcher` remains as a safe fallback so cron
 //!     fires stay observable under degraded boot wiring.
 
-use crate::cron_schedule::{apply_jitter, next_fire_after, CronEntry, CronStore};
+use crate::cron_schedule::{
+    apply_one_shot_lead, apply_recurring_jitter, next_fire_after, CronEntry, CronStore,
+};
+use arc_swap::ArcSwap;
 use async_trait::async_trait;
+use chrono::{TimeZone, Timelike, Utc};
+use nexo_config::types::cron_jitter::CronJitterConfig;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 /// Default tick interval. Lower = lower latency between
-/// `next_fire_at` and actual fire; higher = less DB load. 5s is
-/// the leak's pace and a sane default.
+/// `next_fire_at` and actual fire; higher = less DB load. 5 s is
+/// a sane default that keeps the busy-loop cost negligible.
 pub const DEFAULT_TICK_INTERVAL_SECS: u64 = 5;
 
 /// Retry policy for one-shot cron entries when dispatch fails.
@@ -157,7 +160,11 @@ pub struct CronRunner {
     dispatcher: Arc<dyn CronDispatcher>,
     tick_interval: Duration,
     one_shot_retry: OneShotRetryPolicy,
-    jitter_pct: u32,
+    /// Hot-reloaded jitter + killswitch config. Phase 80.2-80.6.
+    /// Wrapped in `Arc<ArcSwap<_>>` so a Phase 18 reload swaps the
+    /// inner value atomically and the running tick observes the
+    /// new config on the next read.
+    jitter_cfg: Arc<ArcSwap<CronJitterConfig>>,
 }
 
 impl CronRunner {
@@ -167,7 +174,7 @@ impl CronRunner {
             dispatcher,
             tick_interval: Duration::from_secs(DEFAULT_TICK_INTERVAL_SECS),
             one_shot_retry: OneShotRetryPolicy::default(),
-            jitter_pct: 0,
+            jitter_cfg: Arc::new(ArcSwap::from_pointee(CronJitterConfig::default())),
         }
     }
 
@@ -181,14 +188,34 @@ impl CronRunner {
         self
     }
 
+    /// Backward-compat shim — `pct` (0..=100) maps to a fresh
+    /// [`CronJitterConfig`] with `recurring_frac = pct / 100.0`.
+    /// New callers should pass a hot-reloaded
+    /// `Arc<ArcSwap<CronJitterConfig>>` via [`Self::with_jitter_cfg`].
     pub fn with_jitter_pct(mut self, pct: u32) -> Self {
-        self.jitter_pct = pct;
+        let cfg = CronJitterConfig::from_legacy_pct(pct);
+        self.jitter_cfg = Arc::new(ArcSwap::from_pointee(cfg));
+        self
+    }
+
+    /// Wire a hot-reloaded jitter config (Phase 80.2-80.6).
+    pub fn with_jitter_cfg(mut self, cfg: Arc<ArcSwap<CronJitterConfig>>) -> Self {
+        self.jitter_cfg = cfg;
         self
     }
 
     /// Run a single tick at `now_unix` and advance state. Returns
     /// one outcome per entry that was due. Test-friendly.
     pub async fn tick_once(&self, now_unix: i64) -> Vec<FireOutcome> {
+        // Phase 80.6 killswitch — observed every tick, hot-reloadable.
+        // When `enabled` flips to `false` the runner stops dispatching;
+        // entries stay in storage and resume on the next `true` tick.
+        let cfg = self.jitter_cfg.load_full();
+        if !cfg.enabled {
+            tracing::debug!("[cron] killswitch off — skipping tick");
+            return Vec::new();
+        }
+
         let due = match self.store.due_at(now_unix).await {
             Ok(due) => due,
             Err(e) => {
@@ -215,8 +242,15 @@ impl CronRunner {
             if entry.recurring {
                 match next_fire_after(&entry.cron_expr, now_unix) {
                     Ok(new_next) => {
-                        let new_next =
-                            apply_jitter(new_next, now_unix, self.jitter_pct);
+                        let following =
+                            next_fire_after(&entry.cron_expr, new_next).unwrap_or(new_next);
+                        let new_next = apply_recurring_jitter(
+                            new_next,
+                            following,
+                            now_unix,
+                            &entry.id,
+                            &cfg,
+                        );
                         if let Err(e) = self
                             .store
                             .advance_after_fire(&entry.id, new_next, now_unix)
@@ -259,8 +293,22 @@ impl CronRunner {
                     let next_attempt = entry.failure_count.saturating_add(1);
                     if entry.failure_count < self.one_shot_retry.max_retries {
                         let delay = self.one_shot_retry.retry_delay_secs(next_attempt);
-                        let retry_at =
-                            apply_jitter(now_unix.saturating_add(delay as i64), now_unix, self.jitter_pct);
+                        let target = now_unix.saturating_add(delay as i64);
+                        // Derive `target_minute` from the candidate
+                        // wallclock so `one_shot_minute_mod` gates
+                        // jitter the same way as a fresh schedule.
+                        let target_minute = Utc
+                            .timestamp_opt(target, 0)
+                            .single()
+                            .map(|dt| dt.minute())
+                            .unwrap_or(0);
+                        let retry_at = apply_one_shot_lead(
+                            target,
+                            now_unix,
+                            &entry.id,
+                            &cfg,
+                            target_minute,
+                        );
                         match self
                             .store
                             .schedule_one_shot_retry(&entry.id, retry_at, now_unix)
@@ -632,8 +680,43 @@ mod tests {
             last_fired_at: None,
             failure_count: 0,
             paused: false,
+            permanent: false,
             recipient: None,
         };
         assert!(LoggingCronDispatcher.fire(&entry).await.is_ok());
+    }
+
+    // ----- Phase 80.6 killswitch -----
+
+    #[tokio::test]
+    async fn killswitch_off_skips_dispatch_and_keeps_entry() {
+        use arc_swap::ArcSwap;
+        use nexo_config::types::cron_jitter::CronJitterConfig;
+
+        let (store, id) = populated_store(true, "*/5 * * * *").await;
+        let dispatcher = FakeDispatcher::new();
+
+        let cfg = Arc::new(ArcSwap::from_pointee(CronJitterConfig {
+            enabled: false,
+            ..CronJitterConfig::default()
+        }));
+        let runner =
+            CronRunner::new(store.clone(), dispatcher.clone()).with_jitter_cfg(cfg.clone());
+
+        let outcomes = runner.tick_once(1_700_000_500).await;
+        assert!(outcomes.is_empty(), "killswitch off must short-circuit tick");
+        assert!(
+            dispatcher.captured().is_empty(),
+            "dispatcher must not fire while killswitch off"
+        );
+        // Entry preserved unchanged in storage.
+        let stored = store.get(&id).await.unwrap();
+        assert_eq!(stored.last_fired_at, None);
+
+        // Flip back on — entry must fire on the next tick.
+        cfg.store(Arc::new(CronJitterConfig::default()));
+        let outcomes = runner.tick_once(1_700_000_500).await;
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(dispatcher.captured().len(), 1);
     }
 }

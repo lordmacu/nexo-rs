@@ -40,6 +40,7 @@
 - [ConfigTool gated self-config (Phase 79.10)](./architecture/config-tool.md)
 - [Team tools (Phase 79.6)](./architecture/team-tools.md)
 - [MCP server exposable catalog (Phase 79.M)](./architecture/mcp-server-exposable.md)
+- [Fork subagent infra (Phase 80.19)](./architecture/fork-subagent.md)
 
 # Configuration
 
@@ -109,10 +110,18 @@
 - [MEMORY.md](./soul/memory.md)
 - [Dreaming](./soul/dreaming.md)
 
+# Assistant mode
+
+- [Overview](./agents/assistant-mode.md)
+- [Auto-approve dial](./agents/auto-approve.md)
+- [AWAY_SUMMARY digest](./agents/away-summary.md)
+- [Multi-agent coordination](./agents/multi-agent-coordination.md)
+
 # CLI
 
 - [Reference](./cli/reference.md)
 - [Migrations CLI (status)](./cli/migrations.md)
+- [Background agents (`agent run --bg` / ps / attach)](./cli/agent-bg.md)
 
 # Operations
 

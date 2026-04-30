@@ -66,6 +66,10 @@ async fn memory_recall_records_events_for_every_hit() -> anyhow::Result<()> {
         repl: Default::default(),
         auto_dream: None,
         assistant_mode: None,
+        away_summary: None,
+        brief: None,
+        channels: None,
+        auto_approve: false,
         extract_memories: None,
     });
     let broker = AnyBroker::local();

@@ -225,8 +225,8 @@ What an MCP client **cannot** do, even with all locks open:
 
 ## References
 
-- **PRIMARIO**: `claude-code-leak/src/Tool.ts:395-449`,
-  `claude-code-leak/src/services/mcp/channelAllowlist.ts:1-80`.
+- **PRIMARIO**: `upstream agent CLI`,
+  `upstream agent CLI`.
 - **SECUNDARIO**: `research/docs/cli/mcp.md:30-120`
   (`openclaw mcp serve` curated catalog).
 - **Spec**: `proyecto/PHASES.md::79.M`.

@@ -72,7 +72,7 @@ Fields that **require a restart** (logged as `warn` during reload):
   update for `rust-analyzer`).
 
 The "boolean enable flips" + "subsystem actor lifecycle"
-limitations match prior art: `claude-code-leak/src/services/mcp/
+limitations match prior art: `upstream agent CLI
 useManageMCPConnections.ts:624` does invalidate-and-refetch
 without killing the MCP child stdio process; OpenClaw
 `research/src/plugins/services.ts:33-78` boots plugin services

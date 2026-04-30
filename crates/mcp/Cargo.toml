@@ -30,6 +30,7 @@ parking_lot = "0.12"
 nexo-resilience = { version = "0.1.1", path = "../resilience" }
 nexo-extensions = { version = "0.1.1", path = "../extensions" }
 nexo-config = { version = "0.1.1", path = "../config" }
+nexo-broker = { version = "0.1.1", path = "../broker" }
 nexo-llm = { version = "0.1.1", path = "../llm" }
 chrono           = { workspace = true }
 uuid             = { workspace = true }

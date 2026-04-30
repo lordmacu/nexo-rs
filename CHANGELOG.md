@@ -10,6 +10,450 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 80.9 — MCP channel routing + 5-step gate.** MCP
+  servers can now act as inbound surfaces (Slack bots, Telegram
+  chats, iMessage relays) — they declare a capability, push
+  user messages via `notifications/nexo/channel`, and the
+  runtime routes the content into the agent's conversation as
+  a wrapped `<channel source="...">...</channel>` user input.
+  The gate is the trust boundary: a server only registers when
+  it survives 5 ordered checks.
+  - Schema (`crates/config/src/types/channels.rs`, ~250 LOC,
+    10 tests verde): `ChannelsConfig { enabled, approved,
+    max_content_chars }` + `ApprovedChannel { server,
+    plugin_source }`. Per-binding `InboundBinding.
+    allowed_channel_servers` closes the loop.
+  - Gate (`crates/mcp/src/channel.rs`, ~700 LOC, 39 tests
+    verde): pure-fn `gate_channel_server` with typed `SkipKind`
+    (`Capability` / `Disabled` / `Session` / `Marketplace` /
+    `Allowlist`). `has_channel_capability(experimental)` parses
+    `experimental['nexo/channel']` truthiness across object /
+    bool / non-empty string / array shapes.
+    `wrap_channel_message(server, content, meta)` produces the
+    XML wrapper with three injection-defence layers:
+    identifier-shape meta-key whitelist (`[A-Za-z_][A-Za-z0-9_]*`),
+    XML attribute-value escape (control chars + line breaks
+    rendered as numeric refs), separate source-attr escape.
+    Inner content stays verbatim — the model has to read the
+    user's text as-is.
+  - Notification parsing: `parse_channel_notification` →
+    `ChannelInbound { server_name, content, meta, session_key }`,
+    `ChannelParseError` thiserror-typed.
+  - Session correlation: `ChannelSessionKey::derive` picks
+    the first known threading meta key (`thread_ts`,
+    `chat_id`, `conversation_id`, `room_id`, `channel_id`,
+    `thread_id`, `to`) and renders `server|key=value`.
+    Deterministic across processes — process A's dispatcher
+    and process B's registry agree.
+  - Cross-process routing: `channel_inbox_subject(binding,
+    server)` → `mcp.channel.<binding>.<server>` (dots
+    replaced); wildcard `mcp.channel.>`. `ChannelDispatcher`
+    async trait + `DispatchError`. `ChannelEnvelope { schema=1,
+    binding_id, server_name, content, meta, session_key,
+    rendered (XML pre-render), sent_at_ms, envelope_id (Uuid) }`.
+  - Per-process registry: `ChannelRegistry` backed by
+    `RwLock<BTreeMap<(binding, server), RegisteredChannel>>`
+    with `register/unregister/get/list_for_binding/list_all/
+    count` + `SharedChannelRegistry = Arc<...>` typedef.
+  - LLM tool (`crates/core/src/agent/channel_list_tool.rs`,
+    ~140 LOC, 3 tests verde): `channel_list` returns
+    `{ binding_id, count, servers: [ChannelSummary] }`.
+    Read-only, auto-approve-friendly. `register_channel_list_tool`
+    boot helper.
+  - Counts: 52 new tests verde (39 channel + 10 schema + 3
+    tool). Workspace totals: 397 nexo-mcp + 763 nexo-core +
+    193 nexo-config.
+  - Deferred 80.9.b permission relay (capability + outbound
+    method already reserved), 80.9.e operator CLI, 80.9.f
+    hot-reload integration, 80.9.g per-channel rate limits,
+    80.9.h turn-log audit marker, 80.9.i `channel_send` LLM
+    wrapper.
+
+- **Phase 80.9.c — Live MCP-client channel wire.**
+  Closes the seam from "MCP server emits notification" to
+  "envelope lands on `mcp.channel.<binding>.<server>` NATS
+  subject" without any operator-side wiring beyond the
+  existing 80.9 config.
+  - `McpCapabilities.experimental: Value` retains the raw
+    `experimental` block from the MCP `initialize` response
+    so `has_channel_capability` can inspect it. Older
+    servers that don't emit `experimental` parse cleanly
+    (default `Value::Null`).
+  - `ClientEvent::ChannelMessage { params }` variant +
+    `channel_message_event(params)` constructor so the
+    typed event dispatch carries the user-visible payload.
+    `method_to_event` keeps its payload-free shape for
+    every other variant.
+  - `client.rs:750-787` detects
+    `CHANNEL_NOTIFICATION_METHOD` (`notifications/nexo/channel`)
+    and emits the typed event with captured params.
+  - `BrokerChannelDispatcher` impl of `ChannelDispatcher`
+    that serialises `ChannelEnvelope` and publishes through
+    `AnyBroker` on `mcp.channel.<binding>.<server>`.
+    Configurable source tag for audit-log distinction.
+  - `ChannelInboundLoop` + `ChannelInboundLoopConfig` +
+    `ChannelInboundLoopHandle` drive the per-server pump:
+    one-shot gate at spawn → register → consume
+    `ChannelMessage` events → `parse_channel_notification`
+    → `dispatcher.dispatch`. Survives parse errors +
+    dispatch failures + slow-consumer `Lag`; cleans up the
+    registry on cancel and on events-closed.
+  - 8 new tests verde (5 loop + 1 broker dispatcher + 2
+    events).
+
+- **Phase 80.9.f — Channel hot-reload re-evaluation.**
+  YAML edits flow into the registry on the next Phase 18
+  reload — operators don't have to restart the daemon to
+  flip `channels.enabled` or drop a server from `approved`.
+  - `ChannelRegistry::reevaluate(&ReevaluateInputs)` walks
+    every active registration and re-runs the static half
+    of the gate against the operator's current config.
+    Entries that no longer pass get unregistered with a
+    typed `SkipKind` reason.
+  - `ReevaluateInputs { by_binding }` +
+    `ReevaluateBinding { cfg, allowed_servers }` —
+    snapshot caller builds from the freshly-loaded YAML.
+    Missing bindings count as deletions.
+  - `ReevaluateReport { kept, evicted }` exposes the
+    delta so `setup doctor` and audit logs can surface
+    what changed on the reload.
+  - `channel_boot::build_reevaluate_inputs(iter)` builder
+    helper accepting flat `(binding_id, Arc<ChannelsConfig>,
+    Vec<String>)` tuples.
+  - 6 new tests verde: keeps-passing /
+    killswitch-evict / removed-from-approved-evict /
+    binding-disappears-evict / plugin-source-mismatch-evict /
+    partial-some-kept-some-evicted.
+  - 465 nexo-mcp tests verde (was 459, +6).
+  - **Caller wiring deferred**: the Phase 18 reload
+    coordinator post-hook still has to call
+    `registry.reevaluate(...)` after each successful
+    reload — that's a one-line addition once the upstream
+    main.rs hookup lands.
+
+- **Phase 80.9.h — Channel turn-log audit marker.**
+  Audit tooling can now answer "what came in via Slack
+  today?" with a single SQL filter. `TurnRecord.source:
+  Option<String>` carries `"channel:<server>"` when the
+  inbound that drove the turn arrived via an MCP channel
+  server; `None` for every other intake path.
+  - `crates/agent-registry/src/turn_log.rs`:
+    - `TurnRecord.source` field with `#[serde(default)]`
+      so legacy JSON / older callers parse cleanly.
+    - Idempotent `ALTER TABLE goal_turns ADD COLUMN
+      source TEXT` migration; "duplicate column" errors are
+      tolerated. New `idx_goal_turns_source` index keeps
+      per-server filtering cheap.
+    - INSERT + UPSERT on `(goal_id, turn_index)` carry the
+      column; both `tail` and `tail_since` SELECTs include
+      it.
+    - Pure-fn helpers `format_channel_source(server)` and
+      `parse_channel_source(source)` keep the `channel:`
+      prefix stable across the codebase.
+  - `crates/dispatch-tools/src/event_forwarder.rs` builder
+    documents that the forwarder always emits `source:
+    None`; the channel inbound sink is the only writer of
+    a non-`None` value.
+  - 4 new tests verde (round-trip / default-none / replay
+    idempotency / prefix render + parse). Total
+    nexo-agent-registry: 51 lib tests verde.
+
+- **Phase 80.9.d.b — Persistent SQLite SessionRegistry.**
+  `session_key → session_uuid` mapping now survives daemon
+  restarts. Slack threads, Telegram chats, iMessage
+  conversations no longer have to re-introduce themselves
+  on every reboot.
+  - `crates/mcp/src/channel_session_store.rs` (~250 LOC + 9
+    tests verde): `SqliteSessionRegistry` impl of
+    `SessionRegistry` trait. Schema
+    `mcp_channel_sessions(key PRIMARY KEY, session_id,
+    last_seen_ms)` + `last_seen` index, idempotent
+    `CREATE … IF NOT EXISTS`, WAL + `synchronous=NORMAL`
+    matching Phase 71/72 stores.
+  - `resolve` is a single `UPSERT … RETURNING` (SQLite ≥
+    3.35) — first-seen and refresh take one round-trip.
+    Concurrent-safe verified by a parallel-resolve test.
+  - `gc_idle(max_idle_ms)` is a bulk `DELETE` keyed on
+    `last_seen_ms < cutoff`; `0` and negative values are
+    no-op sentinels.
+  - Fail-safe: UPSERT errors warn-log + return an ephemeral
+    uuid for the in-flight turn so threading-this-turn is
+    preserved even when persistence is degraded.
+  - 9 tests verde including schema-idempotent-across-reopens
+    (real tempfile, not `:memory:`) and concurrent-UPSERT
+    determinism.
+  - 459 nexo-mcp tests verde (was 450, +9 sqlite store).
+
+- **Phase 80.9.b — Channel permission relay protocol.**
+  An MCP channel server can now act as a *second* approval
+  surface for tool prompts. The runtime emits
+  `notifications/nexo/channel/permission_request` to the
+  server; the user replies on the underlying platform; the
+  server parses the reply and emits
+  `notifications/nexo/channel/permission` with
+  `{request_id, behavior}`. The runtime races that response
+  against the local approval prompt — first to claim wins.
+  - `crates/mcp/src/channel_permission.rs` (~620 LOC + 27
+    tests verde):
+    - Wire constants (`PERMISSION_REQUEST_METHOD`,
+      `PERMISSION_RESPONSE_METHOD`, schema version).
+    - `PermissionBehavior { Allow, Deny }` + serde round-trip
+      + `parse(raw)` case-insensitive.
+    - `PermissionRequestParams` (outbound) +
+      `PermissionResponseParams` (inbound) +
+      `PermissionResponse` (audit bundle with `from_server`).
+    - `short_request_id(tool_use_id)` — FNV-1a + base-25
+      5-letter ID, alphabet a-z minus `l`, substring
+      blocklist with re-hash on hit (verified against 2000
+      sampled inputs).
+    - `truncate_input_preview(value)` — JSON-serialise +
+      200-char cap with `…` suffix.
+    - `parse_permission_reply(text)` server-side helper —
+      lowercase prefix tolerated, ID itself must be
+      lowercase to preserve the anti-confusable alphabet.
+    - `PendingPermissionMap` — process-local rendezvous
+      (`Mutex<HashMap<id, oneshot::Sender>>`); `register`,
+      `resolve`, `cancel`, `len`. Race-tolerant: `resolve`
+      after a dropped receiver returns `false` (lost the
+      race) without erroring.
+    - `parse_permission_response` with typed
+      `PermissionParseError`.
+    - `PermissionRelayDispatcher` async trait +
+      `McpPermissionRelayDispatcher<C>` adapter scaffold.
+  - `ClientEvent::ChannelPermissionResponse { params }`
+    variant + `channel_permission_response_event(params)`
+    constructor. `client.rs:750-787` detects
+    `PERMISSION_RESPONSE_METHOD` and emits the typed event
+    (mirror of 80.9.c channel-message detection).
+  - 450 nexo-mcp tests verde (was 421, +29 across 27
+    permission + 2 events).
+  - **Deferred 80.9.b.b**: higher-level approval-flow
+    integration that races the channel reply against the
+    local prompt + writes the audit row. Lands in
+    `nexo-driver-permission` once it grows a pluggable
+    "another approver might claim this" seam. The protocol
+    surface shipped here is complete and stable.
+
+- **Phase 80.9.e — Channel operator CLI.** Three new
+  `nexo` subcommands for channel debuggability without a
+  daemon up:
+  - `nexo channel list [--config=<path>] [--json]` walks
+    every agent and surfaces enabled-state + approved-servers
+    + per-binding `allowed_channel_servers`. JSON output is
+    machine-readable; markdown output is structured per
+    agent.
+  - `nexo channel doctor [--config=<path>] [--binding=<id>]
+    [--json]` runs the static half of the 5-step gate
+    against every `(agent, binding, server)` triple.
+    Capability is *assumed* declared (the doctor can't
+    probe a live MCP server); gates 2/3/5 run normally.
+    Each row reports `WOULD REGISTER` or a typed
+    `SKIP { kind, reason }`. Cross-checks approved entries
+    that no binding lists and surfaces them as `NOT BOUND`.
+  - `nexo channel test <server> [--binding=<id>]
+    [--content=...] [--json]` synthesises a sample
+    `notifications/nexo/channel` payload, runs the parser
+    + the XML wrap helper, and prints the model-facing
+    `<channel>` block plus the derived `session_key`.
+  - `load_app_config_for_channels` helper — accepts a
+    directory or single-file `--config` override (walks up
+    to parent for files), defaults to `--config-dir`.
+  - Smoke-tested locally on a YAML without channels — output
+    renders cleanly as "no channel-using bindings found"
+    and `channel list` surfaces `enabled: false` per agent
+    without panicking.
+
+- **Phase 80.9 outbound + boot helpers.** Closes the loop from
+  "envelope on `mcp.channel.>`" to "agent has vocabulary to
+  reply" with three new pieces:
+  - `ApprovedChannel.outbound_tool_name: Option<String>` (default
+    `Some("send_message")`) + `resolved_outbound_tool_name()`
+    helper; `validate()` rejects empty overrides.
+  - `RegisteredChannel.outbound_tool_name` snapshots the resolved
+    value at register-time so an in-flight reply still hits the
+    tool the operator approved when they flipped the config.
+  - `crates/core/src/agent/channel_send_tool.rs` (~200 LOC + 4
+    tests verde): `channel_send` LLM tool routes
+    `(server, content?, arguments?)` through
+    `SessionMcpRuntime.call_tool` against the resolved outbound
+    tool. 5 ordered gates (server present, registered for binding,
+    arguments-shape, 64 KiB content cap, MCP runtime wired).
+    `content` shortcut populates the argument's `text` key when
+    the operator hasn't supplied an explicit `arguments` object.
+  - `crates/core/src/agent/channel_status_tool.rs` (~170 LOC + 4
+    tests verde): `channel_status` LLM tool diagnoses one server
+    or every registered server; renders connection state +
+    plugin source + resolved outbound name + permission-relay
+    flag + registered-at timestamp.
+  - `crates/mcp/src/channel_boot.rs` (~200 LOC + 5 tests verde):
+    `ChannelBootContext { broker, registry, session_registry,
+    dispatcher }` ties the four shipped pieces (registry,
+    session-key map, dispatcher, bridge) into a single value
+    main.rs constructs once.
+    `ChannelBootContext::in_memory(broker)` is the default
+    factory; `bridge_config(sink)` and `spawn_bridge(sink,
+    cancel)` cover the per-process spawn site.
+    `build_inbound_loop_config(...)` + `enumerate_targets(cfg,
+    binding_allowlist)` cover the per-(binding, server) spawn.
+    The helpers are pure / construction-time so the caller owns
+    cancellation tokens + spawn timing — no implicit task
+    scheduling.
+  - 13 channels schema tests verde (was 10, +3 around
+    outbound-tool resolution + override validation).
+  - **Workspace counts**: 421 nexo-mcp (was 416, +5 boot
+    helper); 771 nexo-core (was 760, +8 across `channel_send`
+    and `channel_status`); 13 nexo-config channels.
+
+- **Phase 80.9.d — Agent-side channel bridge.**
+  The consumer side of the channel pipeline. Subscribes to
+  `mcp.channel.>`, resolves each envelope's
+  `ChannelSessionKey` into a stable agent session uuid, and
+  delegates injection into the agent runtime to a
+  caller-provided sink. The split keeps "transport" and
+  "delivery" testable in isolation and lets every deployment
+  path reuse the same primitives.
+  - `crates/mcp/src/channel_bridge.rs` (~390 LOC + 9 tests
+    verde):
+    - `SessionRegistry` async trait — `resolve` (first-seen
+      creates uuid, repeats refresh timestamp), `gc_idle`
+      (with `0` as no-op sentinel), `len`. Persistent
+      SQLite-backed impl deferred 80.9.d.b.
+    - `InMemorySessionRegistry` —
+      `RwLock<BTreeMap<ChannelSessionKey, SessionEntry>>`,
+      determinstic iteration for tests + GC sweeps.
+    - `ChannelInboundEvent` — typed payload (binding_id,
+      server_name, session_id, session_key, content, meta,
+      rendered XML, envelope_id, sent_at_ms) so the sink
+      doesn't re-parse JSON.
+    - `ChannelInboundSink` async trait + `SinkError`
+      (`Rejected` / `Other`). Caller decides which intake
+      path runs; typical wiring synthesises an inbound on
+      `agent.intake.<binding_id>` so the existing pairing /
+      dispatch / rate-limit gates apply unchanged.
+    - `ChannelBridge` + `ChannelBridgeConfig` (broker,
+      registry, sink, subject defaults to
+      `mcp.channel.>`, `gc_interval_ms` default 5 min,
+      `max_idle_ms` default 1 h). `spawn(cancel)` returns a
+      `ChannelBridgeHandle` with two join-handles: the
+      consumer that drains the broker subscription + an
+      optional GC ticker. Both stop cleanly on cancel.
+    - Threading: same `session_key` → same `session_id`
+      across messages; distinct keys (Slack threads,
+      Telegram chats) split into distinct sessions.
+    - Defensive: malformed envelopes warn-logged + dropped
+      (not fatal); sink errors warn-log + continue (bridge
+      survives); GC `0` skips eviction; subject filter
+      narrows subscription for tenancy isolation.
+  - 9 tests verde (registry first-seen / distinct keys / GC
+    eviction / GC zero noop; bridge resolves+delivers, logs
+    sink failures, threads distinct keys, narrows subject
+    filter, GC task runs).
+  - **Counts**: 416 nexo-mcp lib tests verde
+    (was 397, +19 across 80.9.c and 80.9.d).
+  - **Deferred 80.9.d.b**: persistent SQLite
+    `SessionRegistry` implementation so the
+    `session_key → session_uuid` map survives daemon
+    restarts. **Deferred main.rs hookup**: instantiating one
+    `ChannelInboundLoop` per `(binding, server)` after the
+    MCP handshake + spawning a single `ChannelBridge` per
+    process.
+
+- **Phase 80.8 — Brief mode + `send_user_message` tool.** New
+  user-visible-output channel for autonomous agents. Free-text
+  output remains available for the detail view, but the tool
+  becomes the primary surface the user actually reads. Pairs
+  with Phase 80.15 assistant mode and Phase 80.17 auto-approve
+  to make the autonomous-agent UX coherent.
+  - `crates/config/src/types/brief.rs` — `BriefConfig {
+    enabled, status_required, max_attachments }` with
+    `#[serde(default)]` everywhere, hard cap of 64 attachments
+    enforced by `validate()`, `is_active_with_assistant_mode`
+    helper that short-circuits on Phase 80.15.
+  - `AgentConfig.brief: Option<BriefConfig>` field, 49+
+    workspace fixture sites swept.
+  - `crates/core/src/agent/send_user_message_tool.rs`
+    (~330 LOC + 16 tests verde) ships the
+    `SendUserMessageTool` (`name = "send_user_message"`).
+    Output JSON carries the `__nexo_send_user_message__`
+    sentinel + `sent_at` ISO timestamp + resolved attachment
+    metadata. The tool def's required-fields list adapts to
+    `cfg.status_required` so operators can pilot brief mode
+    on models that aren't yet trained on the proactive flow.
+    Four ordered validation gates: message non-empty + 8 MiB
+    cap, status enum (`normal` or `proactive`), attachment
+    count vs `cfg.max_attachments`, attachment path
+    canonicalize + reject directories.
+  - `BRIEF_SECTION` constant + `brief_system_section(cfg,
+    assistant_addendum_appended)` pure helper wired into
+    `llm_behavior.rs` immediately after the Phase 80.15
+    assistant-mode addendum site. The section is *skipped*
+    when the assistant-mode addendum is already appended —
+    that addendum hard-codes the same instruction, so
+    duplicating it would only inflate the system prompt.
+  - 22 new tests verde (6 on the schema + 12 on the tool +
+    4 on the section gate). nexo-core lib total: 760 verde.
+  - **Deferred follow-ups**: 80.8.b channel-adapter
+    hide-free-text filter, 80.8.c `/brief` slash command for
+    live toggling, 80.8.d main.rs boot wiring of
+    `register_send_user_message_tool` per binding.
+
+- **Phase 80.2-80.6 — Cron jitter cluster (6-knob hot-reload
+  config + deterministic per-entry jitter + recurring/one-shot
+  modes + `permanent` flag + killswitch + missed-task sweep).**
+  Replaces the single static `with_jitter_pct(pct)` knob with
+  six cooperating levers operators can flip per incident
+  without restarting the daemon.
+  - `crates/config/src/types/cron_jitter.rs` —
+    `CronJitterConfig { enabled, recurring_frac, recurring_cap_ms,
+    one_shot_max_ms, one_shot_floor_ms, one_shot_minute_mod,
+    recurring_max_age_ms }`. Every field has `#[serde(default)]`
+    so existing YAML rolls forward; `validate()` rejects
+    out-of-range values at boot. `from_legacy_pct(pct)` shim
+    keeps the original `with_jitter_pct` signature working.
+  - `CronRunner` now holds an
+    `Arc<ArcSwap<CronJitterConfig>>` so the Phase 18 reload
+    coordinator can swap the inner value atomically; the
+    running tick observes the new config on the next read.
+  - New pure helpers in `crates/core/src/cron_schedule.rs`:
+    - `jitter_frac_from_entry_id(id)` — UUID hex prefix to
+      `[0.0, 1.0)`, deterministic across retries, `0.0` fallback
+      when the id is short or non-hex (no panic).
+    - `apply_recurring_jitter(next, following, from, id, cfg)`
+      — forward `t1 + min(frac * (t2 - t1), cap_ms)`, clamps to
+      `from + 1` to never schedule into the past.
+    - `apply_one_shot_lead(target, from, id, cfg, target_minute)`
+      — backward lead `target - max(frac * max_ms, floor_ms)`,
+      gated by `target_minute % cfg.one_shot_minute_mod == 0`.
+      `one_shot_minute_mod = 0` is the documented "never jitter
+      one-shots" sentinel.
+  - `CronEntry` gains a `permanent: bool` column with
+    `#[serde(default)]` (false). Idempotent
+    `ALTER TABLE ... ADD COLUMN permanent INTEGER NOT NULL DEFAULT 0`
+    runs on every boot, mirroring the existing `recipient` /
+    `model_provider` migrations.
+  - `CronStore` trait gains two sweep helpers:
+    - `sweep_missed_entries(now, skew_ms)` — boot-time
+      quarantine. Rewrites `next_fire_at = i64::MAX` for every
+      entry whose stored `next_fire_at` is older than
+      `now - skew_ms`. Operator sees them in `cron list` and can
+      resume manually, instead of seeing a stampede on the next
+      tick. `permanent: true` exempt.
+    - `sweep_expired_recurring(now, max_age_ms)` — auto-expire
+      recurring rows older than `max_age_ms`. `permanent: true`
+      exempt; one-shots untouched (their retry policy is the
+      boundary). `max_age_ms == 0` is the no-op default.
+  - `CronRunner::tick_once` reads `cfg.enabled` at the top of
+    every tick. When `false` the loop short-circuits before
+    `due_at(...)` so paused entries stay durable in storage and
+    resume on the next `true` tick.
+  - 17 new unit tests verde (8 on the schema + 8 on the jitter
+    helpers / sweep helpers + 1 killswitch round-trip on the
+    runner). Total cron-side test suite: 80 verde.
+  - **Deferred follow-up 80.6.b**: the boot helper invocation
+    of `sweep_missed_entries` from `src/main.rs` waits on a
+    pre-existing dirty-state resolution; the helper is callable
+    today with the operator-configured `skew_ms`.
+
 - **Phase 81.2 — `NexoPlugin` trait + `PluginInitContext`**
   (lifecycle contract for native Rust plugins). New module
   `crates/core/src/agent/plugin_host.rs` (~470 LOC + 8 tests

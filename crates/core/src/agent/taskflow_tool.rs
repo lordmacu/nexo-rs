@@ -396,6 +396,10 @@ mod tests {
         repl: Default::default(),
             auto_dream: None,
             assistant_mode: None,
+            away_summary: None,
+            brief: None,
+            channels: None,
+            auto_approve: false,
             extract_memories: None,
         });
         let sessions = StdArc::new(SessionManager::new(Duration::from_secs(60), 20));
@@ -599,6 +603,10 @@ mod tests {
         repl: Default::default(),
             auto_dream: None,
             assistant_mode: None,
+            away_summary: None,
+            brief: None,
+            channels: None,
+            auto_approve: false,
             extract_memories: None,
         });
         let sessions = StdArc::new(SessionManager::new(Duration::from_secs(60), 20));

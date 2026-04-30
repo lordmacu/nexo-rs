@@ -754,6 +754,48 @@ async fn reader_task(
                                     crate::logging::emit_log_notification(&name, params);
                                     continue;
                                 }
+                                // Phase 80.9.c — channel notifications
+                                // carry user-visible content; capture
+                                // params so the inbound loop can run
+                                // the gate + parser without
+                                // re-fetching the JSON-RPC frame.
+                                if method == crate::channel::CHANNEL_NOTIFICATION_METHOD {
+                                    let params = raw
+                                        .get("params")
+                                        .cloned()
+                                        .unwrap_or(serde_json::Value::Null);
+                                    tracing::debug!(
+                                        mcp = %name,
+                                        method = %method,
+                                        "channel notification received"
+                                    );
+                                    let _ = events_tx.send(
+                                        crate::events::channel_message_event(params),
+                                    );
+                                    continue;
+                                }
+                                // Phase 80.9.b — permission relay reply
+                                // from a channel server. Same shape as
+                                // the channel notification: capture
+                                // params verbatim so the pending-map
+                                // resolver can match without rereading
+                                // the frame.
+                                if method == crate::channel_permission::PERMISSION_RESPONSE_METHOD
+                                {
+                                    let params = raw
+                                        .get("params")
+                                        .cloned()
+                                        .unwrap_or(serde_json::Value::Null);
+                                    tracing::debug!(
+                                        mcp = %name,
+                                        method = %method,
+                                        "channel permission response received"
+                                    );
+                                    let _ = events_tx.send(
+                                        crate::events::channel_permission_response_event(params),
+                                    );
+                                    continue;
+                                }
                                 let event = method_to_event(&method);
                                 tracing::debug!(mcp=%name, method=%method, "server notification");
                                 let _ = events_tx.send(event);

@@ -197,13 +197,13 @@ These are deliberately out of scope to keep the skeleton small:
 
 ## Reference patterns mined for this template
 
-- `claude-code-leak/src/entrypoints/mcp.ts:35-78` — minimal stdio
-  MCP server in the leaked Claude Code source. The leak uses
+- `upstream agent CLI` — minimal stdio
+  MCP server in the prior agent CLI source. The upstream CLI uses
   imperative `setRequestHandler(SchemaName, async (req) => …)`
   per spec method; we collapse that into one
   `McpServerBuilder::tool(impl Tool)` chain.
-- `claude-code-leak/src/utils/computerUse/mcpServer.ts:60-78` —
-  the leak's factory pattern returning a configured `Server`. Our
+- `upstream agent CLI` —
+  the upstream factory pattern returning a configured `Server`. Our
   `build_handler` closure plays the same role per transport.
 - `crates/mcp/src/bin/mock_mcp_server.rs` — exhaustive in-tree
   reference for protocol corner cases (initialize, paginate,

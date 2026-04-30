@@ -8,11 +8,11 @@ is short-circuited at the dispatcher with a structured
 operator approves (or rejects) the plan via the pairing channel, and
 plan mode flips back to off so the agent can implement.
 
-The feature ports two leaked Claude Code tools
+The feature ports two prior agent CLI tools
 (`EnterPlanModeTool` + `ExitPlanModeV2Tool`) with three deliberate
-diffs from the leak:
+diffs from the upstream CLI:
 
-| Decision | Leak | nexo-rs (Phase 79.1) |
+| Decision | upstream | nexo-rs (Phase 79.1) |
 |----------|------|---------------------|
 | Approval channel | Local TUI dialog; `KAIROS_CHANNELS` flag DISABLES plan mode under chat channels | Pairing-friendly: every approval flows through the chat channel itself via `[plan-mode] approve\|reject plan_id=…` |
 | Refusal payload | Free-form string from `validateInput` | Structured `PlanModeRefusal { tool_name, tool_kind, hint, entered_at, entered_reason }` |
@@ -69,7 +69,7 @@ Zero parameters except an optional `reason: string`. Returns
 
 Hard guard: rejects with `PermissionDenied` when called from a
 sub-agent / cron / poller / heartbeat-spawned goal. Lift from
-`claude-code-leak/src/tools/EnterPlanModeTool/EnterPlanModeTool.ts:78-80`,
+`upstream agent CLI`,
 refined with OpenClaw
 `research/src/acp/session-interaction-mode.ts:4-15` — only
 chat-rooted goals qualify because only they have a path to deliver
@@ -183,9 +183,9 @@ Tracked in `proyecto/FOLLOWUPS.md::Phase 79.1`:
 
 ## References
 
-- **PRIMARY**: `claude-code-leak/src/tools/EnterPlanModeTool/`,
-  `claude-code-leak/src/tools/ExitPlanModeTool/`,
-  `claude-code-leak/src/utils/permissions/permissionSetup.ts:1458-1489`
+- **PRIMARY**: `upstream agent CLI`,
+  `upstream agent CLI`,
+  `upstream agent CLI`
   (`prepareContextForPlanMode`).
 - **SECONDARY**:
   `research/src/acp/session-interaction-mode.ts:4-15`

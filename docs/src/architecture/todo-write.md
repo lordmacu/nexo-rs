@@ -7,7 +7,7 @@ next planning cycle starts fresh.
 
 The tool is always callable — including while plan mode is on, since
 it never touches workspace, broker, or external state. Lift from
-`claude-code-leak/src/tools/TodoWriteTool/TodoWriteTool.ts:31-115`.
+`upstream agent CLI`.
 
 ## Diff vs Phase 14 TaskFlow
 
@@ -35,7 +35,7 @@ it never touches workspace, broker, or external state. Lift from
 ```
 
 Every item must carry both `content` (imperative) and `activeForm`
-(present continuous) — the leak shows `activeForm` is what dashboards
+(present continuous) — the upstream CLI shows `activeForm` is what dashboards
 render while the item is in_progress, so they get a natural progress
 string without grammar fixup. Snake-case `active_form` is also
 accepted for consistency with the rest of nexo-rs.
@@ -44,7 +44,7 @@ accepted for consistency with the rest of nexo-rs.
 
 ## Bounds
 
-- Max 50 items per goal (defensive — the leak does not enforce one;
+- Max 50 items per goal (defensive — the upstream CLI does not enforce one;
   nexo-rs adds the cap so a runaway model cannot grow the list
   unbounded).
 - Max 200 UTF-8 bytes per `content` and `active_form` field.
@@ -70,16 +70,13 @@ just cleared the stored list.
 
 The tool description ships the canonical "use proactively for 3+
 step tasks" guidance lifted from
-`claude-code-leak/src/tools/TodoWriteTool/prompt.ts`. In short:
+`upstream agent CLI`. In short:
 multi-step coding tasks → seed a list, mark exactly one item
 `in_progress`, mark it `completed` the moment it finishes (don't
 batch), tear the list down once everything is done.
 
 ## References
 
-- **PRIMARY**: `claude-code-leak/src/tools/TodoWriteTool/TodoWriteTool.ts:31-115`
-  + `claude-code-leak/src/utils/todo/types.ts:1-19`
-  + `claude-code-leak/src/tools/TodoWriteTool/prompt.ts` (guidance).
 - **SECONDARY**: OpenClaw `research/` — no equivalent
   (`grep -rln "todo" research/src/` returns only unrelated cron /
   delivery files).

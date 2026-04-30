@@ -3,6 +3,11 @@
 //! 12.1 ships the stdio transport. Later sub-phases add HTTP/SSE (12.2),
 //! tool catalog (12.3), session-scoped runtime (12.4), and more.
 
+pub mod channel;
+pub mod channel_boot;
+pub mod channel_bridge;
+pub mod channel_permission;
+pub mod channel_session_store;
 pub mod client;
 pub mod client_trait;
 pub mod config;

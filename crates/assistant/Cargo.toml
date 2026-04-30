@@ -1,0 +1,21 @@
+[package]
+name        = "nexo-assistant"
+description = "Phase 80.15 — per-binding assistant-mode runtime"
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+homepage      = { workspace = true }
+documentation = { workspace = true }
+
+[lints]
+workspace = true
+
+[dependencies]
+nexo-config = { version = "0.1.1", path = "../config" }
+serde       = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+serde_yaml  = { workspace = true }

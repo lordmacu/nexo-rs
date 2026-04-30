@@ -1,0 +1,46 @@
+[package]
+name        = "nexo-dream"
+description = "Phase 80.1 — autoDream fork-style memory consolidation (KAIROS port)"
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+homepage      = { workspace = true }
+documentation = { workspace = true }
+readme        = "README.md"
+
+[lints]
+workspace = true
+
+[dependencies]
+nexo-core             = { version = "0.1.1", path = "../core" }
+nexo-config           = { version = "0.1.1", path = "../config" }
+nexo-llm              = { version = "0.1.1", path = "../llm" }
+nexo-fork             = { version = "0.1.1", path = "../fork" }
+nexo-agent-registry   = { version = "0.1.1", path = "../agent-registry" }
+nexo-memory           = { version = "0.1.2", path = "../memory" }
+nexo-driver-types     = { version = "0.1.1", path = "../driver-types" }
+anyhow                = { workspace = true }
+arc-swap              = { workspace = true }
+async-trait           = { workspace = true }
+chrono                = { workspace = true }
+humantime-serde       = { workspace = true }
+nix                   = { version = "0.27", features = ["signal"] }
+filetime              = "0.2"
+serde                 = { workspace = true, features = ["derive"] }
+serde_json            = { workspace = true }
+thiserror             = { workspace = true }
+tokio                 = { workspace = true }
+tokio-util            = { workspace = true }
+tracing               = { workspace = true }
+uuid                  = { workspace = true }
+
+[dev-dependencies]
+tempfile              = "3"
+anyhow                = { workspace = true }
+futures               = { workspace = true }
+filetime              = "0.2"
+nexo-broker           = { version = "0.1.1", path = "../broker" }
+nexo-config           = { version = "0.1.1", path = "../config" }

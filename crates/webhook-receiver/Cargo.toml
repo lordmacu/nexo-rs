@@ -1,0 +1,28 @@
+[package]
+name        = "nexo-webhook-receiver"
+description = "Phase 80.12 — generic per-source webhook verification + event extraction primitives"
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+homepage      = { workspace = true }
+documentation = { workspace = true }
+
+[lints]
+workspace = true
+
+[dependencies]
+serde       = { workspace = true, features = ["derive"] }
+serde_json  = { workspace = true }
+thiserror   = { workspace = true }
+bytes       = { workspace = true }
+hex         = { workspace = true }
+sha2        = { workspace = true }
+sha1        = "0.10"
+hmac        = "0.12"
+subtle      = "2"
+
+[dev-dependencies]
+serde_yaml  = { workspace = true }

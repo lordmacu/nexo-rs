@@ -336,6 +336,7 @@ mod tests {
                 None
             },
             raw_json: "{}".into(),
+            source: None,
         }
     }
 

@@ -361,6 +361,13 @@ fn build_turn_record(
         diff_stat,
         error,
         raw_json,
+        // Phase 80.9.h — `source` is set by the channel inbound
+        // path before this builder runs (the channel sink
+        // populates it via `with_source` style helper). The
+        // forwarder never knows the inbound origin directly, so
+        // it always emits `None` — the default-empty contract
+        // matches what audit tools expect.
+        source: None,
     }
 }
 

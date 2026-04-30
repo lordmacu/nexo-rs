@@ -62,6 +62,10 @@ fn agent_with_inline_google(id: &str) -> AgentConfig {
         repl: Default::default(),
         auto_dream: None,
         assistant_mode: None,
+        away_summary: None,
+        brief: None,
+        channels: None,
+        auto_approve: false,
         extract_memories: None,
     }
 }

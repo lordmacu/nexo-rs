@@ -19,7 +19,14 @@ pub struct McpServerInfo {
 /// Server-declared capabilities flattened to booleans. The upstream spec has
 /// nested objects with `listChanged` / `subscribe` flags; 12.1 only cares
 /// whether a feature is present at all.
-#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+///
+/// Phase 80.9.c — `experimental` is now retained verbatim (instead of
+/// being dropped on parse) so callers can run
+/// [`crate::channel::has_channel_capability`] against the raw
+/// JSON. Older servers that don't emit `experimental` parse cleanly:
+/// the field defaults to `Value::Null` and the helper short-circuits
+/// to `false`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct McpCapabilities {
     #[serde(default, deserialize_with = "de_feature_flag")]
     pub tools: bool,
@@ -29,6 +36,13 @@ pub struct McpCapabilities {
     pub prompts: bool,
     #[serde(default, deserialize_with = "de_feature_flag")]
     pub logging: bool,
+    /// Raw `experimental` block as emitted by the server. The MCP
+    /// spec lets vendors stash non-standard capabilities in here —
+    /// we keep the entire JSON value so future features (channels,
+    /// channel/permission, etc.) can detect their key without
+    /// schema migrations on this struct.
+    #[serde(default)]
+    pub experimental: serde_json::Value,
 }
 
 fn de_feature_flag<'de, D>(deserializer: D) -> Result<bool, D::Error>
@@ -324,6 +338,35 @@ mod tests {
         assert!(c.resources);
         assert!(c.logging);
         assert!(!c.prompts);
+    }
+
+    #[test]
+    fn capabilities_retain_experimental_block_verbatim() {
+        let j = serde_json::json!({
+            "tools": {"listChanged": true},
+            "experimental": {
+                "nexo/channel": {},
+                "nexo/channel/permission": true
+            }
+        });
+        let c: McpCapabilities = serde_json::from_value(j).unwrap();
+        assert!(c.tools);
+        // experimental is preserved as-is, not flattened.
+        assert!(c.experimental.is_object());
+        assert!(crate::channel::has_channel_capability(Some(&c.experimental)));
+        assert!(crate::channel::has_channel_permission_capability(Some(
+            &c.experimental
+        )));
+    }
+
+    #[test]
+    fn capabilities_default_experimental_is_null() {
+        // Older servers that don't emit `experimental` must still
+        // parse cleanly — `Value::Null` is the safe default.
+        let j = serde_json::json!({"tools": {}});
+        let c: McpCapabilities = serde_json::from_value(j).unwrap();
+        assert!(c.experimental.is_null());
+        assert!(!crate::channel::has_channel_capability(Some(&c.experimental)));
     }
 
     #[test]

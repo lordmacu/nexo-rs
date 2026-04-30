@@ -79,8 +79,7 @@ CREATE TABLE team_events (
 );
 ```
 
-`team_id` is the sanitised name (lowercase + non-alnum → `-`,
-matching `claude-code-leak/src/utils/swarm/teamHelpers.ts:100-102`).
+`team_id` is the sanitised name (lowercase + non-alnum → `-`).
 Composite PK on `(team_id, name)` enforces unique member names
 within a team. `deleted_at IS NOT NULL` ⇒ soft-deleted.
 
@@ -164,8 +163,7 @@ never raise above the constants.
 - `BlockedByActiveMembers { names: [...] }` — `TeamDelete`
   while members are still `Running`.
 - `TeammateCannotSpawnTeammate` — caller's `AgentContext`
-  has `team_member_name = Some(...)`. Mirrors the leak's
-  `claude-code-leak/src/tools/AgentTool/prompt.ts:279-282`.
+  has `team_member_name = Some(...)`. Single-level fan-out only.
 - `Wire` — missing required arg or malformed shape.
 
 ## Plan-mode behaviour
@@ -203,8 +201,4 @@ never raise above the constants.
 
 ## References
 
-- **PRIMARY**: `claude-code-leak/src/tools/TeamCreateTool/`,
-  `claude-code-leak/src/tools/TeamDeleteTool/`,
-  `claude-code-leak/src/tools/SendMessageTool/`,
-  `claude-code-leak/src/utils/swarm/{teamHelpers.ts,constants.ts}`.
 - **Spec**: `proyecto/PHASES.md::79.6`.
