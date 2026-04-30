@@ -828,10 +828,12 @@ async fn main() -> Result<()> {
     tracing::info!(kind = ?cfg.broker.broker.kind, url = %cfg.broker.broker.url, "broker ready");
 
     // Phase 77.7 — secret guard for scanning memory writes.
-    // Secure by default: enabled=true, on_secret=Block, all rules active.
-    // TODO: read from memory.secret_guard YAML when config dep allows.
+    // C5 — wired via `memory.secret_guard` YAML key. Default secure
+    // config applies when the key is omitted; explicit override
+    // failures fail boot loud so a YAML typo is never silent.
     let secret_guard: Option<nexo_memory::SecretGuard> = {
-        let guard_cfg = nexo_memory::SecretGuardConfig::default();
+        let guard_cfg = build_secret_guard_config_from_yaml(&cfg.memory.secret_guard)
+            .context("invalid memory.secret_guard config")?;
         Some(guard_cfg.build_guard())
     };
 
@@ -4389,6 +4391,64 @@ async fn boot_dispatch_ctx_if_enabled(
 }
 
 /// Resolve the secrets directory for credential loaders. Convention is
+/// C5 — adapter from the `nexo-config` wire-shape to the canonical
+/// `nexo-memory` domain type. Lives here (not in either crate)
+/// because `main.rs` is the only module that holds both deps —
+/// `nexo-config` and `nexo-memory` cannot reference each other due
+/// to the `nexo-llm -> nexo-config -> nexo-memory -> nexo-llm` cycle.
+///
+/// Validation:
+///   * `on_secret` must be one of `block` / `redact` / `warn`
+///     (snake_case wire). Invalid values fail boot with a clear
+///     error so a YAML typo is loud, not silent.
+///   * `rules` accepts the literal string `"all"` or a YAML list
+///     of kebab-case rule IDs. Other shapes fail boot.
+fn build_secret_guard_config_from_yaml(
+    src: &nexo_config::types::memory::SecretGuardYamlConfig,
+) -> Result<nexo_memory::SecretGuardConfig> {
+    use nexo_memory::secret_config::RuleSelection;
+    use nexo_memory::secret_scanner::OnSecret;
+
+    let on_secret = match src.on_secret.as_str() {
+        "block" => OnSecret::Block,
+        "redact" => OnSecret::Redact,
+        "warn" => OnSecret::Warn,
+        other => {
+            anyhow::bail!(
+                "memory.secret_guard.on_secret = `{other}`; valid values are \
+                 `block` | `redact` | `warn`"
+            );
+        }
+    };
+
+    let rules = match &src.rules {
+        serde_yaml::Value::String(s) if s == "all" => RuleSelection::All,
+        serde_yaml::Value::Sequence(seq) => {
+            let mut ids = Vec::with_capacity(seq.len());
+            for v in seq {
+                match v {
+                    serde_yaml::Value::String(id) => ids.push(id.clone()),
+                    other => anyhow::bail!(
+                        "memory.secret_guard.rules entries must be strings; got {other:?}"
+                    ),
+                }
+            }
+            RuleSelection::List(ids)
+        }
+        other => anyhow::bail!(
+            "memory.secret_guard.rules must be the string `\"all\"` or a list of \
+             rule IDs; got {other:?}"
+        ),
+    };
+
+    Ok(nexo_memory::SecretGuardConfig {
+        enabled: src.enabled,
+        on_secret,
+        rules,
+        exclude_rules: src.exclude_rules.clone(),
+    })
+}
+
 /// `<config_dir>/../secrets`; override with `NEXO_SECRETS_DIR` for
 /// Docker (`/run/secrets`) or non-standard layouts.
 fn secrets_dir_for(config_dir: &std::path::Path) -> std::path::PathBuf {
@@ -8660,15 +8720,20 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         Some(std::path::PathBuf::from(&primary.workspace))
     };
 
-    // Phase 77.7 — secret guard for mcp-server memory writes.
-    let mcp_secret_guard: Option<nexo_memory::SecretGuard> = {
+    // Best-effort memory bootstrap for mcp-server mode: this subcommand
+    // must remain tolerant when memory.yaml is absent/misconfigured.
+    //
+    // C5 — `memory.secret_guard` is read from the same load. When
+    // memory.yaml is absent/invalid we fall back to the secure
+    // default (enabled=true, on_secret=Block, all rules active).
+    let mut memory_default_recall_mode = "keyword".to_string();
+    let mut mcp_secret_guard: Option<nexo_memory::SecretGuard> = {
+        // Default secure: applied when memory.yaml absent / unreadable
+        // OR when present but with no `secret_guard` override (the
+        // wire shape's `Default::default()` already mirrors secure).
         let guard_cfg = nexo_memory::SecretGuardConfig::default();
         Some(guard_cfg.build_guard())
     };
-
-    // Best-effort memory bootstrap for mcp-server mode: this subcommand
-    // must remain tolerant when memory.yaml is absent/misconfigured.
-    let mut memory_default_recall_mode = "keyword".to_string();
     let long_term_memory: Option<Arc<nexo_memory::LongTermMemory>> =
         match nexo_config::load_optional::<nexo_config::types::MemoryConfig>(
             config_dir,
@@ -8676,6 +8741,12 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         ) {
             Ok(Some(mem_cfg)) => {
                 memory_default_recall_mode = mem_cfg.vector.default_recall_mode.clone();
+                // C5 — wire the operator-supplied secret_guard policy
+                // when present. Boot fails loud on a YAML typo
+                // (invalid `on_secret`, malformed `rules`).
+                let guard_cfg = build_secret_guard_config_from_yaml(&mem_cfg.secret_guard)
+                    .context("invalid memory.secret_guard config in memory.yaml")?;
+                mcp_secret_guard = Some(guard_cfg.build_guard());
                 if mem_cfg.long_term.backend == "sqlite" {
                     let path = mem_cfg
                         .long_term
