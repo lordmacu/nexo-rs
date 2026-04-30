@@ -157,19 +157,76 @@ re-validation, and admin-ui surface (Phase A8). Effort:
 (`stripAllLeadingEnvVars` + `stripSafeWrappers`) which only
 matters once `excluded_commands` exists.
 
-**A4.c — rate_limit_info → LlmError::QuotaExceeded** — ⬜ open.
-`crates/llm/src/rate_limit_info.rs` (762 LOC, 12 tests) builds
-`RateLimitMessage { text, severity, plan_hint }`; no
-`LlmError::QuotaExceeded` variant exists, so the structured
-output never reaches `setup doctor` / `notify_origin` /
-admin-ui. Output collapses to `tracing::warn!` at
-`anthropic.rs:391-405` and `retry.rs:118-126`. Plan: add
-`LlmError::QuotaExceeded { retry_after, plan_hint }` (provider-
-agnostic shape — applies to MiniMax 429s, OpenAI quota errors,
-Gemini RESOURCE_EXHAUSTED, etc.), plumb through `retry.rs`,
-surface in `setup doctor` + `notify_origin`.
+**A4.c — rate_limit_info → LlmError::QuotaExceeded** — ✅ shipped
+2026-04-30. `crates/llm/src/retry.rs` gained
+`LlmError::QuotaExceeded { retry_after_ms, severity, message,
+plan_hint, provider, window }` plus the `pub fn
+classify_429_error(retry_after_ms, info)` helper that promotes
+429s to `QuotaExceeded` when `RateLimitInfo.status == Rejected`
+AND `format_rate_limit_message` produces a message; otherwise
+returns the legacy `LlmError::RateLimit { retry_after_ms,
+rate_limit_info }`. Promotion fires the `record_quota_event`
+side-effect into a process-wide `static LAST_QUOTA:
+OnceLock<DashMap<LlmProvider, QuotaEvent>>` so
+`last_quota_events_all()` reads cleanly from
+`setup doctor`. `with_retry` short-circuits on
+`QuotaExceeded` (no retry, propagate immediately) — leak's
+3-tier 429 model from `services/api/errors.ts:465-548` mapped
+to our advisory pipeline. Wired in 4 provider sites:
+- `anthropic.rs:381` — already extracted Anthropic info,
+  swap to helper.
+- `openai_compat.rs:81` — wire `extract_openai_compat_headers`
+  (covers OpenAI / xAI / DeepSeek / Mistral via shared
+  `x-ratelimit-*` shape).
+- `gemini.rs:95` — wire `extract_gemini_headers`.
+- `minimax.rs:228` chat path + `:280` finish path — wire
+  `extract_openai_compat_headers` (MiniMax speaks OpenAI-compat).
+`setup doctor` renders an "LLM quota" section iterating
+`last_quota_events_all()`, marking each event with severity
+icon + age in minutes + plan_hint when present. 9 tests added:
+5 in `retry.rs::tests`
+(`quota_exceeded_promoted_when_status_rejected`,
+`rate_limit_kept_when_status_allowed_warning`,
+`rate_limit_kept_when_no_info`,
+`with_retry_does_not_retry_quota_exceeded`,
+`quota_exceeded_display_includes_provider_label`) and 4 in
+`rate_limit_info.rs::tests`
+(`record_quota_event_is_visible_via_last_quota_event_for`,
+`last_quota_events_all_returns_one_per_provider`,
+`extract_openai_compat_headers_promotes_to_quota_exceeded`,
+`extract_gemini_headers_promotes_to_quota_exceeded`).
+`LlmProvider` gained `Hash` derive so it can key the cache
+DashMap. Provider-agnostic across Anthropic / OpenAI / Gemini
+/ MiniMax / Generic (xAI / DeepSeek / Mistral compat-mode).
+IRROMPIBLE refs in doc-comment: leak `services/api/errors.ts:465-548`
+(3-tier 429 classification), `services/rateLimitMessages.ts:45-104`
+(`getRateLimitMessage` ported as `format_rate_limit_message`).
+Tests: `cargo test -p nexo-llm --lib` → 167/167 (158 existing +
+9 new).
 
-Remaining effort: ~half day total (C4.b + C4.c).
+**C4.c.b — notify_origin wire from agent runtime** — ⬜ open.
+The catch site for `LlmError::QuotaExceeded` in
+`crates/core/src/agent/llm_behavior.rs` should fire
+`notify_origin` with the `message + plan_hint` payload so
+operators see the quota-exceeded event in their pairing channel
+(WhatsApp / Telegram / etc.) without needing to run `setup
+doctor`. Needs a `HookDispatcher` handle threaded into the
+catch path; bigger surgery. Defer: shipping the variant +
+cache + setup-doctor surface (this slice) covers 2 of 3 audit
+asks; notify_origin is the third.
+
+**C4.c.c — admin-ui A8 quota panel + Prometheus metric** —
+⬜ open. `nexo_llm::rate_limit_info::last_quota_events_all`
+already provides the data shape; admin-ui Phase A8 reads it
+and renders a per-provider widget. Prometheus gauge
+`nexo_llm_quota_exceeded_total{provider="anthropic"}` lands
+alongside Phase 9.2 metrics.
+
+**C4.c.d — Anthropic-specific entitlement-reject hint** —
+⬜ open. Leak `errors.ts:540-548` carves out
+`Extra usage is required for long context` and prints a
+model-switch suggestion. Defer until a multi-provider
+entitlement-reject case appears (today only Anthropic).
 
 **A5 — C5 SecretGuardConfig YAML never read** — ✅ shipped 2026-04-30
 (commits `32d74f2`, `56053cf`, `b6cea87`). Operators now control the

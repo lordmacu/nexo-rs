@@ -400,10 +400,10 @@ impl AnthropicClient {
                     );
                 }
             }
-            return Err(LlmError::RateLimit {
+            return Err(crate::retry::classify_429_error(
                 retry_after_ms,
                 rate_limit_info,
-            });
+            ));
         }
         if status >= 500 {
             let body = read_body_lossy(response).await;

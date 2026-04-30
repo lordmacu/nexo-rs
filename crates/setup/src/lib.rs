@@ -504,6 +504,39 @@ pub fn run_telegram_link(config_dir: &Path, agent_id: Option<&str>) -> Result<()
     }
 }
 
+/// Phase C4.c — render the latest LLM quota events per provider.
+/// Reads the process-wide cache from
+/// `nexo_llm::rate_limit_info::last_quota_events_all`. In a fresh
+/// `setup doctor` invocation the cache is empty (no LLM calls have
+/// happened in this process); we still render a "no recent events"
+/// line so operators discover the surface and so the renderer is
+/// exercised for a future runtime-attached doctor variant.
+fn print_llm_quota_section() {
+    use nexo_llm::rate_limit_info::{last_quota_events_all, RateLimitSeverity};
+
+    println!("\n--- LLM quota ---");
+    let events = last_quota_events_all();
+    if events.is_empty() {
+        println!("  no recent quota events");
+        return;
+    }
+    let now = chrono::Utc::now();
+    for ev in events {
+        let age_min = (now - ev.at).num_minutes().max(0);
+        let icon = match ev.severity {
+            RateLimitSeverity::Error => "!",
+            RateLimitSeverity::Warning => ".",
+        };
+        println!(
+            "  [{icon}] {:?} ({} min ago): {}",
+            ev.provider, age_min, ev.message
+        );
+        if let Some(hint) = ev.plan_hint {
+            println!("      hint: {hint}");
+        }
+    }
+}
+
 /// Non-interactive audit — exits with non-zero when any required field
 /// is missing OR the credential gauntlet reports errors. Async since
 /// Phase 70.6 added a sqlx-backed pairing-store check; callers from
@@ -533,6 +566,16 @@ pub async fn run_doctor(config_dir: &Path) -> Result<()> {
     // status; this is informational.
     let pairing_findings = pairing_check::audit(config_dir).await;
     pairing_check::print(&pairing_findings);
+
+    // Phase C4.c — surface the most recent LLM quota rejections per
+    // provider. Reads the process-wide cache populated by
+    // `nexo_llm::retry::classify_429_error`. In `setup doctor`
+    // invocations the cache is always empty (fresh process) — but
+    // the section is rendered anyway so operators learn the surface
+    // exists, and so future flows that pre-warm the cache (e.g. a
+    // runtime-side `nexo doctor` that talks to the daemon) get a
+    // ready-to-use renderer.
+    print_llm_quota_section();
 
     let cred_errors = cred_summary.as_ref().map(|s| s.errors.len()).unwrap_or(0);
     if missing.is_empty() && cred_errors == 0 {
