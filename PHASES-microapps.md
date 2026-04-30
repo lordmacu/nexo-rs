@@ -165,6 +165,34 @@ Across every Phase 82 + 83 sub-phase:
    against at least 4 distinct microapp shapes
    (conversational, batch, event-driven, heartbeat-driven)
    before merge.
+6. **Use-case agnostic by construction**: core primitives in
+   82.x and SDK libraries in 83.x must support multiple agent
+   shapes — chat, batch, event-driven, heartbeat, image
+   generation, voice, custom — not just chat. Concrete rules
+   that flow from this guarantee:
+   - **Schemas use enum-typed scopes / kinds** that are
+     extensible additively. New variants added later are
+     non-breaking. Example: `ProcessingScope` (82.13) starts
+     with `Conversation { ... }` for chat and grows
+     `BatchQueue { ... }` / `EventStream { ... }` / `Custom
+     { ... }` as new microapp shapes need them.
+   - **Naming avoids chat-coupled terminology** in core types
+     where a more general term works: `processing scope` not
+     `conversation`, `intervention action` not `operator
+     reply`, `agent event` not `transcript`, `summary` not
+     `question`. Chat semantics live at the channel / binding
+     layer, not at the framework primitive layer.
+   - **Chat-specific helpers are OPT-IN extensions**, not part
+     of the core contract. Example: 83.13 (WhatsApp-Web React
+     component library) is explicitly opt-in. A microapp that
+     processes batch jobs or webhook events imports the
+     framework SDK without ever touching 83.13.
+   - **A non-chat microapp must compile and ship** using only
+     82.x + 83.x core primitives, without ever importing a
+     chat-coupled helper. This is the litmus test for whether
+     a primitive belongs in core (yes) or in a chat-specific
+     opt-in module (then it belongs in 83.13 or a sibling
+     opt-in lib, not in core).
 
 ---
 
@@ -521,58 +549,118 @@ Done criteria:
 - Capability declaration in `plugin.toml` validated at boot;
   declared but not granted → boot warn.
 
-#### 82.11 — Transcripts admin RPC + `nexo/notify/transcript_appended` firehose   ⬜
+#### 82.11 — Agent event firehose + admin RPC (transcript-shaped events as one variant)   ⬜
 
-Cross-app primitive. Microapps with conversation views
-(meta-microapp's chat viewer, analytics-microapp's funnel,
-audit/compliance microapp, training-data-extractor) need
-access to transcripts. Today transcripts live in
-`data/transcripts/<agent>/*.jsonl` filesystem with no
-programmatic surface.
+Cross-app primitive. Microapps need a programmatic surface to
+**stream and query agent activity** — but agent activity is
+NOT only transcripts. Chat agents produce transcript events;
+batch agents produce job-completion events; image generators
+produce output-produced events; webhook routers produce
+event-processed records. The firehose treats all of these as
+discriminated variants of the same `AgentEventKind` enum and
+lets microapps subscribe to the kinds they care about.
+
+Use-case agnostic by construction (Cross-cutting #6). Chat is
+ONE variant — `TranscriptAppended` — among N. Today only that
+variant is emitted, but the schema is enum-typed so future
+variants are non-breaking additive changes.
+
+Used by any microapp consuming agent activity: meta-microapp
+chat viewer, analytics-microapp funnel, audit / compliance
+microapp, training-data-extractor, batch-job dashboard,
+image-gen output gallery, webhook event log.
 
 Scope:
-- Admin RPC for backfill (idempotent):
-  - `nexo/admin/transcripts/list_contacts { agent_id, since? }`
-    → `[{ phone_number, display_name, session_id,
-    first_seen, last_seen, message_count }]`
-  - `nexo/admin/transcripts/read_session { agent_id,
-    session_id, since?, limit? }` → `[{ role, body, sent_at,
-    transcript_offset }]`
-  - `nexo/admin/transcripts/search { agent_id, query, limit }`
-    → `[{ snippet, session_id, sent_at }]` (uses
-    Phase 10.7 FTS5 index)
+- Discriminated event kind enum:
+  ```rust
+  #[serde(tag = "kind")]
+  enum AgentEventKind {
+      TranscriptAppended {
+          agent_id, session_id, sender_jid: Option<String>,
+          role, body, sent_at, transcript_offset,
+      },
+      BatchJobCompleted {
+          agent_id, job_id, status, output_summary, finished_at,
+      },
+      BatchJobFailed {
+          agent_id, job_id, error_summary, failed_at,
+      },
+      EventProcessed {
+          agent_id, subject, event_summary, processed_at,
+      },
+      OutputProduced {
+          agent_id, output_kind, summary, produced_at,
+          output_ref: Option<String>,
+      },
+      Custom {
+          agent_id, kind: String, payload: Value,
+      },
+  }
+  ```
 - Live firehose via JSON-RPC notification (no `id`, no
   response):
-  - `nexo/notify/transcript_appended { agent_id,
-    session_id, sender_jid?, role, body, sent_at,
-    transcript_offset }`
-  - Emitted on every transcript append AFTER the redactor
-    (Phase 10.4) runs — PII redacted before exposure
-- Backfill model: progressive — default `last_seen_at >
-  now - 30d`, `max_messages_per_session = 500`. Microapps
-  needing more invoke `read_session` with explicit `since`.
-- Capability gates:
-  - `transcripts_subscribe` — to receive the live firehose
-  - `transcripts_read` — to invoke admin RPC backfill
-- Audit log: `microapp_admin_audit` row per pull — counts of
-  contacts / messages / agent_id queried.
-- Outbound flag: `messages` table mirrored by microapps
-  carries `is_proactive: bool` distinguishing tick/drip from
-  reply-to-inbound (auto-mapped when 82.3 outbound dispatch
-  ships).
-- INVENTORY toggle: `NEXO_MICROAPP_TRANSCRIPTS_ENABLED`.
+  - `nexo/notify/agent_event { kind: "TranscriptAppended" |
+    "BatchJobCompleted" | ..., ...event-specific fields }`
+  - Emitted on every agent event AFTER the redactor (Phase
+    10.4) runs for variants that carry PII — defense-in-
+    depth.
+  - V0 emits ONLY `TranscriptAppended` (chat). Other variants
+    are reserved enum slots; emitted when batch / event-
+    driven / image-gen agents land in future work.
+- Admin RPC for backfill (idempotent), all parameterised by
+  optional `kind?` filter:
+  - `nexo/admin/agent_events/list { agent_id, kind?, scope?,
+    since?, limit? }` — `scope` is loosely typed
+    (`session_id` for transcripts, `job_id` for batch,
+    `subject` for events).
+  - `nexo/admin/agent_events/read { agent_id, scope, kind?,
+    since?, limit? }` — fetch sequence of events for one
+    scope.
+  - `nexo/admin/agent_events/search { agent_id, query, kind?,
+    limit? }` — full-text via Phase 10.7 FTS5 (transcripts
+    today; future kinds may add their own indexes).
+- Backfill model: progressive — default `since = now - 30d`,
+  `max_per_scope = 500`. Microapps needing more invoke `read`
+  with explicit `since`.
+- Capability gates (granular per kind):
+  - `transcripts_subscribe` — receive only `TranscriptAppended`
+    notifications (chat microapps). **Default for backward
+    compat with the original 82.11 design** — a microapp that
+    declared this capability before generalisation keeps
+    receiving only chat events.
+  - `transcripts_read` — invoke admin RPC for transcript
+    queries.
+  - `batch_events_subscribe` — receive only batch-related
+    kinds (future, when batch agents land).
+  - `output_events_subscribe` — receive only `OutputProduced`
+    (image-gen / voice / file-producing agents).
+  - `agent_events_subscribe_all` — receive every kind. Strong
+    capability, used by audit / compliance microapps that
+    need full visibility.
+- Audit log: `microapp_admin_audit` row per RPC pull and per
+  notification subscription — counts of events streamed per
+  kind per microapp.
+- INVENTORY toggle: `NEXO_MICROAPP_AGENT_EVENTS_ENABLED`
+  (replaces the originally proposed
+  `NEXO_MICROAPP_TRANSCRIPTS_ENABLED`).
 
 Done criteria:
 - Microapp with `transcripts_subscribe` receives
-  `nexo/notify/transcript_appended` for each new message
-  (already redacted).
-- Microapp with `transcripts_read` can call list_contacts /
-  read_session / search.
-- Without capability → error -32004.
-- Defense-in-depth: even with capability, the redactor
-  (Phase 10.4) runs first; raw PII is never exposed.
+  `nexo/notify/agent_event { kind: "TranscriptAppended", ...
+  }` for each new transcript append (already redacted).
+- Microapp with `agent_events_subscribe_all` receives every
+  emitted variant.
+- Without any subscribe capability → error -32004.
+- Defense-in-depth: redactor (Phase 10.4) runs before
+  emission for all PII-carrying variants. Raw PII never
+  exposed.
+- Schema is forward-compatible: adding a new
+  `AgentEventKind` variant is non-breaking for microapps
+  using strict-mode JSON parsers (the discriminator is the
+  `kind` field; unknown kinds are filterable).
 - 8+ unit tests + 1 integration test (mock microapp consumes
-  firehose + verifies redaction passthrough).
+  firehose, verifies redaction passthrough, verifies kind
+  filter).
 
 #### 82.12 — Plugin.toml `[capabilities.http_server]` + bind 127.0.0.1 + token auth + boot supervisor   ⬜
 
@@ -630,92 +718,186 @@ Done criteria:
 - INVENTORY toggle: `NEXO_MICROAPP_HTTP_SERVERS_ENABLED`
   global killswitch.
 
-#### 82.13 — Operator chat takeover (per-conversation pause + manual reply + resume)   ⬜
+#### 82.13 — Agent processing pause + operator intervention (chat-takeover is one variant)   ⬜
 
-Cross-app primitive. Operators sometimes need to step into a
-single conversation to handle questions the agent cannot answer
-or scenarios where a human voice is required. Today nexo runs
-every inbound through the agent — there is no way to suspend
-agent processing for one chat while keeping all other chats
-active.
+Cross-app primitive. Operators sometimes need to suspend the
+agent's autonomous processing for a specific scope and step in
+manually. For chat agents this looks like "pause this
+conversation, type a human reply, resume". For batch agents
+this looks like "skip this job, override its output".
+For event-driven agents it looks like "stop processing this
+NATS subject, inject a manual event". The framework primitive
+generalises across all of these via enum-typed scopes and
+intervention actions.
 
-Used by any conversational microapp (sales / marketing / support
-/ legal / medical / education / e-commerce) where human-handoff
-per conversation is part of the workflow.
+Use-case agnostic by construction (Cross-cutting #6). Chat-
+takeover is ONE scope variant — `Conversation` — and ONE
+action variant — `Reply` — among N. V0 implements only the
+chat-takeover combination; future variants are additive enum
+slots that ship when the relevant agent shapes (batch, event-
+driven, image-gen, etc.) land.
+
+Used by any microapp where human intervention per scope is
+part of the workflow: chat agents (sales / support / legal /
+medical), batch processors (override or skip jobs),
+event-driven routers (manual event injection), image
+generators (override output before publish), voice
+transcribers (manual correction).
 
 Scope:
-- Per-conversation control state stored in the session manager:
+- Generic processing scope enum:
   ```rust
-  enum ConversationControlState {
-      AgentActive,         // default — agent processes inbounds
+  enum ProcessingScope {
+      Conversation {
+          agent_id, channel, account_id, contact_id,
+      },                          // chat — V0 implementation
+      AgentBinding {
+          agent_id, channel, account_id,
+      },                          // pause whole channel binding
+      Agent {
+          agent_id,
+      },                          // pause whole agent
+      EventStream {
+          agent_id,
+          subject_pattern: String,
+      },                          // pause subset of NATS events
+      BatchQueue {
+          agent_id,
+          queue_name: String,
+      },                          // pause batch processing queue
+      Custom {
+          agent_id,
+          scope_kind: String,
+          scope_id: String,
+      },                          // extension hook for new shapes
+  }
+  ```
+- Generic intervention action enum:
+  ```rust
+  enum InterventionAction {
+      Reply {
+          channel, account_id, to, body,
+          msg_kind: "text"|"template"|"media",
+          attachments: Vec<...>,
+          reply_to_msg_id: Option<String>,
+      },                          // chat — V0 implementation
+      SkipItem {
+          item_id, reason,
+      },                          // batch / queue
+      OverrideOutput {
+          value: Value,
+      },                          // any agent producing output
+      InjectInput {
+          content: Value,
+      },                          // batch / event injection
+      Custom {
+          kind: String,
+          payload: Value,
+      },                          // extension hook
+  }
+  ```
+- Generic processing control state:
+  ```rust
+  enum ProcessingControlState {
+      AgentActive,
       PausedByOperator {
+          scope: ProcessingScope,
           paused_at,
           operator_token_hash,
           reason: Option<String>,
       },
   }
   ```
-  Indexed by `(agent_id, channel, account_id, contact_id)` tuple.
   Persisted in SQLite (idempotent migration via Phase 77.17).
-- Inbound dispatch checks state:
-  - `AgentActive` → normal flow (binding match → agent turn)
-  - `PausedByOperator` → message logged to transcript with
-    `role: "user"` flag but NO agent turn fired. Messages
-    accumulate, do not get lost, do not trigger agent
-    processing.
-- New admin RPC methods (extend 82.10):
-  - `nexo/admin/conversations/pause { agent_id, channel,
-    account_id, contact_id, reason? }` → state to
-    PausedByOperator.
-  - `nexo/admin/conversations/resume { agent_id, channel,
-    account_id, contact_id }` → state to AgentActive. On
-    next inbound, agent turn fires with full context
-    including operator's manual replies marked clearly +
-    system prompt addendum: *"Operator was active from <X>
-    to <Y>. Their replies are tagged `<operator>...</operator>`
-    in the transcript. Continue the conversation."*
-  - `nexo/admin/conversations/operator_reply { agent_id,
-    channel, account_id, to, body, msg_kind?,
-    attachments? }` → publishes via Phase 26 reply adapter;
-    transcript entry tagged `role: "operator"` with
-    `operator_token_hash`.
-  - `nexo/admin/conversations/state { agent_id, channel,
-    account_id, contact_id }` → returns current state.
-- New capability gate: `operator_takeover` (subset of admin
-  capabilities — declared granularly per microapp).
+  Storage layer indexes on `scope` discriminant.
+- Inbound / event / job dispatch checks state:
+  - `AgentActive` → normal flow (chat: binding → turn;
+    batch: queue → job; event: subject → handler).
+  - `PausedByOperator { scope: Conversation, ... }` → inbound
+    logged via 82.11 firehose with `kind: TranscriptAppended,
+    role: "user"` but NO agent turn fired.
+  - `PausedByOperator { scope: BatchQueue, ... }` → batch
+    items queued, not picked up. (Future implementation.)
+  - `PausedByOperator { scope: EventStream, ... }` → events
+    dropped or queued per subject_pattern. (Future.)
+- Admin RPC methods (extend 82.10):
+  - `nexo/admin/processing/pause { scope: ProcessingScope,
+    reason? }` → set `PausedByOperator`.
+  - `nexo/admin/processing/resume { scope: ProcessingScope }`
+    → set `AgentActive`. For chat: next inbound triggers
+    agent turn with full context including operator
+    interventions marked + system prompt addendum: *"Operator
+    was active from <X> to <Y>. Their interventions are
+    tagged `<operator>...</operator>` in the transcript.
+    Continue from there."*
+  - `nexo/admin/processing/intervention { scope:
+    ProcessingScope, action: InterventionAction }` → publish
+    intervention. For chat `Reply` action: routes via
+    Phase 26 reply adapter; transcript entry tagged with the
+    new `role: "Operator"` variant + `operator_token_hash`.
+    For batch / event variants: future.
+  - `nexo/admin/processing/state { scope: ProcessingScope }`
+    → returns current `ProcessingControlState`.
+- New capability gate: `operator_intervention` (subset of
+  admin capabilities — declared granularly per microapp).
+  Sub-gates per scope kind possible later
+  (`operator_intervention_conversation`,
+  `operator_intervention_batch`, etc.) but v0 starts with
+  one combined gate.
 - Notification firehose:
-  `nexo/notify/conversation_state_changed { agent_id,
-  channel, account_id, contact_id, state,
-  by_operator_token_hash?, at }`
-- Transcript schema extension: `role` enum gains `Operator`
-  variant (in addition to existing `User` / `Assistant` /
-  `Tool`).
+  `nexo/notify/processing_state_changed { scope:
+  ProcessingScope, state, by_operator_token_hash?, at }`
+  via 82.11's `agent_event` firehose with new variant
+  `ProcessingStateChanged` (or as a dedicated notification —
+  decide in spec).
+- 82.11 schema extension: `AgentEventKind` gains a `role:
+  "Operator"` valid value for `TranscriptAppended` (for
+  chat scope's `Reply` action); future variants of action
+  emit their own event kinds.
 - Race-condition safety:
-  - pause + resume idempotent (last-write-wins, audit logged)
-  - operator_reply rejected (-32004 `not_paused`) if state
-    is not `PausedByOperator`
-  - concurrent pause from two operators: idempotent, latest
-    token hash wins
-- Auto-resolve hook for 82.14: pausing a conversation with a
-  pending escalation auto-resolves the escalation to
-  `OperatorTakeover`.
+  - pause + resume idempotent (last-write-wins, audit
+    logged).
+  - intervention rejected (-32004 `not_paused`) if state
+    is not `PausedByOperator` for the matching scope.
+  - concurrent pause from two operators on the same scope:
+    idempotent, latest token hash wins.
+- Auto-resolve hook for 82.14: pausing a scope with a
+  pending escalation that targets the same scope auto-
+  resolves the escalation to `OperatorTakeover`.
 
 Done criteria:
-- pause/resume cycle works end-to-end: operator pauses →
-  contact's next inbounds logged but agent silent → operator
-  types reply → reply lands in WhatsApp marked correctly →
-  operator resumes → next contact inbound triggers agent turn
-  with full context.
+- V0 (chat-takeover): pause/resume cycle works end-to-end
+  for `ProcessingScope::Conversation` + `InterventionAction::
+  Reply`. Operator pauses → contact's next inbounds logged
+  via 82.11 firehose `kind: TranscriptAppended, role: User`
+  but agent silent → operator types reply → reply lands in
+  WhatsApp via Phase 26 reply adapter marked `role: Operator`
+  → operator resumes → next contact inbound triggers agent
+  turn with full context.
 - Agent receives operator's reply in its system prompt
   context, knows it was human (visible via `<operator>` tags
   in transcript).
 - Agent does not "double-respond" to a message the operator
   already replied to.
-- Per-conversation isolation: pausing chat A does not affect
-  chat B (same agent, different contacts).
-- Audit log row per pause / resume / operator_reply.
-- Transcripts persist `role: "operator"` correctly.
-- 8+ unit tests + 1 e2e test simulating full takeover flow.
+- Per-scope isolation: pausing scope A does not affect scope
+  B (same agent, different contacts; or same agent,
+  different queue; etc.).
+- Audit log row per pause / resume / intervention with
+  `scope` discriminant.
+- 82.11 transcripts persist `role: "Operator"` correctly for
+  chat scope.
+- 10+ unit tests including: chat happy path; missing scope
+  variants reject cleanly with `not_implemented` error; enum
+  forward-compat (adding a Custom variant doesn't break
+  existing chat flow); concurrent pause idempotency.
+- 1 e2e test simulating full chat-takeover flow.
+
+V1+ scope (additive, NOT v0):
+- `ProcessingScope::BatchQueue` + `InterventionAction::SkipItem`
+  / `OverrideOutput`.
+- `ProcessingScope::EventStream` + `InterventionAction::
+  InjectInput`.
+- `ProcessingScope::Agent` (whole-agent pause for maintenance).
 
 Out of scope:
 - Multi-operator conflict UI (which operator owns the
@@ -724,75 +906,123 @@ Out of scope:
 - Auto-resume timeout (could be future enhancement).
 - Operator-to-operator handoff between humans.
 
-#### 82.14 — Agent escalation: tool + notification + badge state   ⬜
+#### 82.14 — Agent attention request: `escalate_to_human` tool + state + notification (chat-question is one example)   ⬜
 
-Cross-app primitive. Agents sometimes encounter questions
-outside their preloaded knowledge (tarifario, skill, persona
-context). Today they fall back to natural-language deferral
-("el asesor te lo confirma") — invisible to operators, no flag
-raised. This subphase adds an explicit escalation channel:
-agent calls a tool, core flags the conversation, operator UI
-surfaces a badge, human follows up.
+Cross-app primitive. Agents sometimes encounter work items
+they cannot complete autonomously and need human attention.
+For chat agents this is "customer asked something I cannot
+answer". For batch agents this is "I found 47 invalid records
+I cannot resolve". For image generators this is "policy
+check failed, need a moderator". For event-driven agents this
+is "unknown event kind, need engineering". Today the only
+recourse is natural-language deferral, which is invisible to
+operators. This subphase adds an explicit "ask for help"
+channel via a built-in tool that flags the work item, raises a
+firehose event, and surfaces a badge in operator UI.
 
-Used by any agent with bounded knowledge (sales / support /
-marketing / specialist / domain-expert agents).
+Use-case agnostic by construction (Cross-cutting #6). The
+tool name `escalate_to_human` and the escalation state are
+agent-shape-neutral. Chat is ONE consumer; batch / image /
+event / voice agents consume the same primitive.
+
+Used by any agent with bounded autonomy (sales / support /
+marketing / batch / image-gen / event-router / specialist
+domain-expert agents).
 
 Scope:
 - New built-in tool `escalate_to_human` (provider-agnostic,
-  registered in core ToolRegistry):
+  use-case agnostic, registered in core ToolRegistry):
   ```json
   {
     "name": "escalate_to_human",
-    "description": "Flag this conversation for human operator follow-up when you cannot answer the customer's question with your preloaded knowledge.",
+    "description": "Flag this work item for human attention when you cannot complete it autonomously. Used by any agent shape — chat, batch, event-driven, image-gen — to surface 'I need help here'.",
     "input_schema": {
       "type": "object",
-      "required": ["question", "reason"],
+      "required": ["summary", "reason"],
       "properties": {
-        "question": {"type": "string", "maxLength": 500},
-        "reason": {"type": "string",
-                   "enum": ["out_of_scope", "missing_data",
-                            "needs_human_judgment",
-                            "complaint", "other"]},
-        "urgency": {"type": "string",
-                    "enum": ["low", "normal", "high"],
-                    "default": "normal"},
-        "extra_context": {"type": "string", "maxLength": 1000}
+        "summary": {
+          "type": "string", "maxLength": 500,
+          "description": "Brief description of why human attention is needed. Free-form prose."
+        },
+        "reason": {
+          "type": "string",
+          "enum": ["out_of_scope", "missing_data",
+                   "needs_human_judgment", "complaint",
+                   "error", "ambiguity", "policy_violation",
+                   "other"]
+        },
+        "urgency": {
+          "type": "string",
+          "enum": ["low", "normal", "high"],
+          "default": "normal"
+        },
+        "context": {
+          "type": "object",
+          "description": "Free-form key-value map carrying additional context. Examples: chat agent emits `{question: '...', customer_phone: '...'}`; batch agent emits `{job_id: '...', invalid_rows: 47}`; image-gen emits `{prompt: '...', policy: 'nudity'}`."
+        }
       }
     }
   }
   ```
-- Per-conversation escalation state:
+  Schema deliberately uses generic `summary` (not
+  `question`) and generic `context: object` (not
+  `extra_context: string`) so non-chat agents can populate
+  meaningfully.
+- Per-scope escalation state (uses same `ProcessingScope`
+  enum from 82.13):
   ```rust
   enum EscalationState {
       None,
       Pending {
-          question, reason, urgency, requested_at,
-          extra_context: Option<String>,
+          scope: ProcessingScope,        // chat conversation, batch job, etc.
+          summary, reason, urgency,
+          context: Map<String, Value>,
+          requested_at,
       },
-      Resolved { resolved_at, by: ResolvedBy },
+      Resolved {
+          resolved_at,
+          by: ResolvedBy,
+      },
   }
   enum ResolvedBy {
       OperatorTakeover,                  // 82.13 pause auto-resolves
       OperatorDismissed { reason: String },
-      AgentResolved,                     // rare — agent later found answer
+      AgentResolved,                     // rare — agent later resolved itself
   }
   ```
   Persisted in SQLite alongside 82.13's pause state.
-- Tool dispatch sets state to `Pending` and emits firehose
-  event:
-  `nexo/notify/escalation_requested { agent_id, channel,
-  account_id, contact_id, question, reason, urgency,
-  extra_context?, requested_at }`
+  Indexed on `scope` discriminant.
+- Tool dispatch reads the agent's current `BindingContext`
+  (82.1) plus its current scope context (chat: contact_id;
+  batch: current job_id; etc.) to derive the
+  `ProcessingScope` automatically. Agent does not need to
+  pass scope manually — framework does it from the dispatch
+  context.
+- Tool sets state to `Pending` and emits firehose event via
+  82.11's `agent_event` notification with new variant:
+  ```rust
+  AgentEventKind::EscalationRequested {
+      agent_id, scope: ProcessingScope, summary, reason,
+      urgency, context, requested_at,
+  }
+  AgentEventKind::EscalationResolved {
+      agent_id, scope: ProcessingScope, resolved_at, by,
+  }
+  ```
 - New admin RPC methods (extend 82.10):
-  - `nexo/admin/conversations/escalations/list { filter?:
-    pending|resolved|all, agent_id?, limit? }`
-  - `nexo/admin/conversations/escalations/resolve {
-    agent_id, channel, account_id, contact_id, by:
-    "dismissed"|"takeover", dismiss_reason? }`
-- Auto-resolve trigger: when 82.13's `pause` is invoked on a
-  conversation with pending escalation, the escalation
-  auto-resolves with `ResolvedBy::OperatorTakeover` + emits
-  `nexo/notify/escalation_resolved`.
+  - `nexo/admin/escalations/list { filter?:
+    pending|resolved|all, agent_id?, scope_kind?, limit? }`
+    — `scope_kind` filters by `Conversation` |
+    `BatchQueue` | etc.
+  - `nexo/admin/escalations/resolve { scope:
+    ProcessingScope, by: "dismissed"|"takeover",
+    dismiss_reason? }` — note `scope` parameter, not
+    chat-specific tuple.
+- Auto-resolve trigger: when 82.13's `processing/pause` is
+  invoked on a scope with a pending escalation matching the
+  same scope, the escalation auto-resolves with
+  `ResolvedBy::OperatorTakeover` + emits
+  `EscalationResolved` event.
 - De-duplication: if `escalation_state == Pending` already,
   the agent's `escalate_to_human` call is a no-op (returns
   ok with `already_pending` flag, does not double-notify).
@@ -800,31 +1030,58 @@ Scope:
   prevent agent loops; further calls rejected with rate-limit
   error.
 - Default behaviour post-escalation:
-  - Agent continues responding with deferral language.
-  - Conversation NOT auto-paused (operator can manually
-    pause via 82.13 if takeover needed).
+  - Agent continues processing other items normally
+    (deferral for chat = generic prose; for batch = mark
+    item as `flagged_for_review`; for image-gen = continue
+    queue).
+  - Scope NOT auto-paused (operator can manually pause via
+    82.13 if takeover needed).
   - Configurable per agent: `escalation_auto_pause: bool`
-    (default `false`). When `true`, agent auto-pauses after
-    escalating; useful for legal / medical / sensitive bots.
-- New capability gate: `escalation_subscribe` (subset of
-  admin) for microapps that want the firehose.
+    (default `false`). When `true`, the agent's current
+    scope auto-pauses after escalating. Useful for legal /
+    medical / policy-sensitive agents.
+- De-duplication: if `escalation_state == Pending` already
+  for the same scope, the agent's `escalate_to_human` call
+  is a no-op (returns ok with `already_pending` flag, does
+  not double-notify).
+- Throttle: max 3 escalations per scope per hour to prevent
+  agent loops; further calls rejected with rate-limit error.
+- New capability gate: `escalations_subscribe` (subset of
+  admin) for microapps that want the firehose. Sub-gates
+  later possible per `scope_kind`.
 - INVENTORY env toggle: `NEXO_AGENT_ESCALATION_ENABLED`
   global killswitch.
 
 Done criteria:
-- Agent calls `escalate_to_human(question, reason)` → state
-  becomes `Pending` → notification fires.
-- Microapp with `escalation_subscribe` receives notification →
-  React UI shows badge on chat.
-- Operator triggers 82.13 pause + operator_reply →
-  escalation auto-resolves to `OperatorTakeover`.
+- Chat agent calls `escalate_to_human(summary, reason)` with
+  context auto-populated → state becomes `Pending` for the
+  conversation scope → 82.11 firehose emits
+  `EscalationRequested` variant.
+- Batch agent (future) calls same tool with `context: {
+  job_id, error_count }` → state becomes `Pending` for
+  `ProcessingScope::BatchQueue` scope → same firehose,
+  different scope.
+- Microapp with `escalations_subscribe` receives
+  notification → UI surface (chat: badge on conversation;
+  batch: badge on job; etc.) updates.
+- Operator triggers 82.13 `processing/pause` for the
+  matching scope + `intervention` action → escalation
+  auto-resolves to `OperatorTakeover`.
 - Operator dismisses without takeover → escalation resolves
   to `OperatorDismissed`.
 - Agent re-calls `escalate_to_human` while `Pending` →
   no-op, single notification only.
-- Throttle: 4th call within an hour → rate-limit error.
-- Restart: pending escalations persist (state in SQLite).
-- 8+ unit tests + 1 e2e test.
+- Throttle: 4th call within an hour for the same scope →
+  rate-limit error.
+- Restart: pending escalations persist (state in SQLite),
+  across all scope variants.
+- Schema is forward-compatible: `context: object` takes
+  arbitrary structured data per agent shape; the framework
+  does not interpret it, microapps do.
+- 10+ unit tests including: chat happy path; non-chat scope
+  escalation (mock); throttle hit; auto-resolve via 82.13
+  pause; restart preservation.
+- 1 e2e test simulating chat-flavour escalation flow.
 - Audit log row per escalation request + resolve.
 
 Out of scope for v0:
@@ -1024,9 +1281,27 @@ Scope:
 - `OutboundDispatcher` wrapper for `nexo/dispatch`
   (depends on Phase 82.3).
 - `AdminClient` wrapper for `nexo/admin/*` (depends on
-  Phase 82.10).
-- `TranscriptFirehose` consumer for
-  `nexo/notify/transcript_appended` (depends on 82.11).
+  Phase 82.10) — covers all admin domains (agents,
+  credentials, pairing, llm_providers, processing,
+  escalations, agent_events).
+- `AgentEventFirehose` consumer for `nexo/notify/agent_event`
+  (depends on 82.11) — typed `AgentEventKind` discriminator,
+  per-kind filter, kind-aware deserialization. Replaces the
+  earlier `TranscriptFirehose` naming so the SDK is
+  use-case agnostic; `TranscriptAppended` is one variant
+  the consumer handles, alongside future variants
+  (`BatchJobCompleted`, `OutputProduced`,
+  `EscalationRequested`, `ProcessingStateChanged`, etc.).
+- `ProcessingControlClient` wrapper for 82.13's
+  `nexo/admin/processing/*` — generic over
+  `ProcessingScope` + `InterventionAction` enums; chat
+  microapps use `ProcessingScope::Conversation` +
+  `InterventionAction::Reply`, batch microapps use future
+  variants without API changes.
+- `EscalationClient` wrapper for 82.14's
+  `nexo/admin/escalations/*` — accepts arbitrary
+  `ProcessingScope` + free-form `context: serde_json::Value`
+  in the request payload.
 - `HttpServerHelper` for the `[capabilities.http_server]`
   pattern (depends on 82.12).
 - `ToolHandler` trait that microapp tools implement.
@@ -1385,25 +1660,51 @@ Out of scope:
 - Marketplace-style microapp UI launcher that aggregates
   multiple microapp UIs in one tab.
 
-#### 83.13 — `microapp-ui-react` reusable component library (WhatsApp Web-inspired)   ⬜
+#### 83.13 — `microapp-ui-react` reusable component library (WhatsApp Web-inspired) — OPT-IN chat helper, NOT core   ⬜
 
-Reusable visual layer above the 83.12 React UI infrastructure.
-Where 83.12 covers auth + SPA serving + admin client +
-WebSocket + build pipeline (the plumbing that lets a microapp
-ship its own React UI), 83.13 ships the **components themselves**
-— a WhatsApp Web-inspired layout with state-aware components
-that consume the 82.10 + 82.11 + 82.13 + 82.14 schemas.
+**Explicitly opt-in chat-specific helper.** Per Cross-cutting
+guarantee #6 (use-case agnostic by construction), 83.13 is NOT
+part of the core framework contract. Microapps that do not
+have a conversational UI (batch dashboards, image-gen
+galleries, webhook event logs, audit viewers) **must** be
+able to ship their React UI using only 83.12 infrastructure +
+their own components, without ever importing from 83.13.
 
-Used by any microapp with a conversational UI: meta-microapp,
-support-deflect operator dashboard, marketing-saas lead inbox,
-ventas-etb leads viewer, and any future microapp with a chat
-interface.
+Reusable **chat-flavoured** visual layer above the 83.12 React
+UI infrastructure. Where 83.12 covers auth + SPA serving +
+admin client + WebSocket + build pipeline (the plumbing that
+lets a microapp ship its own React UI of any shape), 83.13
+ships **chat-specific components** — a WhatsApp Web-inspired
+layout consuming the chat-flavoured slices of the 82.x schemas
+(`ProcessingScope::Conversation`, `InterventionAction::Reply`,
+`AgentEventKind::TranscriptAppended`).
 
-The WhatsApp Web layout is chosen for operator familiarity —
-operators interact with the UI for hours per day, and reusing
-a mental model they already have reduces cognitive load and
-training overhead. WhatsApp is the dominant inbound channel for
-the v1 framework, so the visual analogy is direct.
+Used by any microapp with a conversational UI: meta-microapp
+chat viewer, support-deflect operator dashboard,
+marketing-saas lead inbox, ventas-etb leads viewer, and any
+future microapp with a chat interface.
+
+Sibling future opt-in libs that 83.13 does NOT preclude
+(future Phase 84+ candidates):
+- `microapp-ui-batch-dashboard-react` — for batch agent
+  microapps (job grid + status timeline).
+- `microapp-ui-event-log-react` — for event-driven router
+  microapps (event stream viewer).
+- `microapp-ui-output-gallery-react` — for image-gen / voice
+  output viewing.
+- `microapp-ui-audit-viewer-react` — for compliance / audit
+  microapps.
+
+Each future lib is its own opt-in package, mirroring 83.13's
+pattern but consuming different schema slices. None of them
+become "core" — core remains the framework primitives in 82.x.
+
+The WhatsApp Web layout is chosen for operator familiarity in
+the chat use case — operators interact with chat UIs for hours
+per day, and reusing a mental model they already have reduces
+cognitive load and training overhead. WhatsApp is the dominant
+inbound channel for the v1 chat-flavoured microapps, so the
+visual analogy is direct.
 
 Scope:
 - TypeScript package published as `@nexo/microapp-ui-react`
