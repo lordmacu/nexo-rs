@@ -570,18 +570,45 @@ Implementation 100% Rust:
 `ArcSwap<RuntimeSnapshot>` swap, tokio mpsc reload channel,
 `From` traits for cross-crate adapters.
 
-H-3.b (M5 fold-in deferred). **`cron_tool_bindings` registry
-captured at boot** — `src/main.rs:1766,3088` builds a `HashMap<
-String, CronToolBindingContext>` where `CronToolBindingContext.ctx`
-holds an `AgentContext` whose `effective` was resolved at boot.
-The `RuntimeCronToolExecutor` (`main.rs:3565`) uses this captured
-ctx when a cron entry fires through the tier-0 dispatcher path
-(separate from the per-agent runtime). Reload does NOT rebuild
-this map; cron tier-0 dispatch sees stale policy until daemon
-restart. Fix shape: post-hook in `ConfigReloadCoordinator` that
-walks `cron_tool_bindings` and rebuilds each entry's ctx from the
-new snapshot (analogue of PairingGate flush at `src/main.rs:3492`).
-Effort: ~1 hr. Cross-link to **M5** in the audit backlog.
+H-3.b (M5 — partial). **`cron_tool_bindings` registry captured at
+boot** — partial fix shipped 2026-04-30 (commit `64136cf`).
+`RuntimeCronToolExecutor.by_binding` migrated from
+`Arc<HashMap>` to `Arc<arc_swap::ArcSwap<HashMap<...>>>` enabling
+lock-free atomic hot-swap via the new `replace_bindings(new_map)`
+API. `resolve_binding` now returns owned `Option<CronToolBindingContext>`
+(cheap clone). 2 smoke tests cover the swap mechanics:
+`cron_executor_replace_bindings_atomically_swaps_map`,
+`cron_executor_replace_bindings_with_empty_map_clears_all`.
+
+**M5.b — wire the post-hook** ⬜ open. The ArcSwap infra is in
+place; what remains is the rebuild closure registration:
+1. Extract `build_cron_bindings_from_snapshots(snapshots, deps) ->
+   HashMap<String, CronToolBindingContext>` free function from
+   the inline `register_cron_binding` closure at
+   `src/main.rs:3049-3157`. Single source of truth for boot path
+   and post-hook.
+2. Define `struct CronRebuildDeps` bundling the ~10 Arcs the
+   rebuild needs (broker, sessions, memory, peer_directory,
+   credentials, web_search_router, link_extractor, dispatch_ctx,
+   `tools_per_agent: Arc<HashMap<agent_id, Arc<ToolRegistry>>>`,
+   cron_tool_call_cfg).
+3. Aggregate `tools_per_agent` + `agent_snapshot_handles:
+   Arc<HashMap<agent_id, Arc<ArcSwap<RuntimeSnapshot>>>>` during
+   the agent loop.
+4. Use the `Arc<OnceCell<Arc<RuntimeCronToolExecutor>>>` pattern
+   (mirror `reload_cell` Phase 79.10.b at `:3499-3508`) to
+   late-bind the executor into the post-hook closure registered
+   before `reload_coord.start()`.
+Effort: ~30-45 min on top of the shipped infra. Cross-link to
+**M5** in the audit backlog.
+
+References (validation, not copy):
+- claude-code-leak `src/utils/cronScheduler.ts:441-448` —
+  chokidar-on-file-change rebuild + `:170,251,335-336,356`
+  `inFlight` Set with pitfall.
+- research/ `src/cron/service/timer.ts:709,697` —
+  forceReload-per-tick + long-job pitfall. We rebuild on reload
+  only.
 
 H-3.c (M11 — full ConfigTool config-pull) — ⬜ open. ConfigTool
 struct (`crates/core/src/agent/config_tool.rs:164-189`) captures
