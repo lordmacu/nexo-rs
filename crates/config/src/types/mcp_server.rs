@@ -68,6 +68,27 @@ pub struct McpServerConfig {
     /// Phase 76.1 — optional HTTP+SSE transport. Stdio is unaffected.
     #[serde(default)]
     pub http: Option<HttpTransportConfigYaml>,
+    /// Phase M1.b.c — daemon-embed mode. When `enabled`,
+    /// `Mode::Run` (daemon) starts an MCP HTTP server in-process
+    /// alongside the agent runtime, exposing the primary agent's
+    /// tools over the same `mcp_server.http` transport. The
+    /// `ConfigReloadCoordinator` post-hook automatically swaps
+    /// the allowlist + emits `notifications/tools/list_changed`
+    /// on every Phase 18 reload — no SIGHUP required. Eliminates
+    /// the need to run `nexo mcp-server` as a separate process.
+    /// Boot-immutable: toggling `enabled` requires a daemon
+    /// restart.
+    #[serde(default)]
+    pub daemon_embed: McpServerDaemonEmbedConfig,
+}
+
+/// Phase M1.b.c — daemon-embed configuration block.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct McpServerDaemonEmbedConfig {
+    /// Master switch. Default `false` preserves pre-shipped
+    /// behavior (operators run `nexo mcp-server` standalone).
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -540,6 +561,7 @@ impl Default for McpServerConfig {
             allow_config_tool: false,
             autonomous_worker: McpAutonomousWorkerConfig::default(),
             http: None,
+            daemon_embed: McpServerDaemonEmbedConfig::default(),
         }
     }
 }

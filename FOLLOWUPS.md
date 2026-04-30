@@ -296,7 +296,67 @@ do not get lost.
   notifications mid-session (no bidir transport channel today).
   5 inline tests cover capability defaults, builder flip,
   swap visibility, clone propagation, proxy filter
-  invariance. **Slice M1.b — trigger** ✅ shipped 2026-04-30
+  invariance. **Slice M1.b.c — daemon-embed MCP HTTP server**
+  ✅ shipped 2026-04-30. `Mode::Run` (daemon) now optionally
+  starts an MCP HTTP server in-process alongside the agent
+  runtime, exposing the primary agent's tools (mirror of
+  `nexo mcp-server` standalone). `crates/config/src/types/
+  mcp_server.rs` gains `McpServerDaemonEmbedConfig { enabled:
+  bool }` + `McpServerConfig.daemon_embed` field with
+  `#[serde(default, deny_unknown_fields)]` (back-compat
+  preserved — default false → no MCP server in daemon).
+  `src/main.rs::Mode::Run` adds `compute_allowlist_from_mcp_server_cfg`
+  helper + boot wire just before `reload_coord.start(...)`:
+  captures primary agent id+config pre-loop (since the loop
+  consumes `cfg.agents.agents`), looks up the primary's
+  `Arc<ToolRegistry>` from `tools_per_agent`, builds
+  `AgentContext` + `ToolRegistryBridge` with M1.a's
+  `with_list_changed_capability(true)`, validates `http.enabled`
+  + bails on inconsistent config, calls `start_http_transport`
+  to bring up the HTTP server, then registers a reload-coord
+  post-hook that re-reads `mcp_server.expose_tools` from disk,
+  atomically swaps the bridge allowlist via
+  `swap_allowlist(new)`, and emits
+  `notify_tools_list_changed()` so connected Claude Desktop /
+  Cursor clients refresh tool list automatically on every
+  Phase 18 reload — **no SIGHUP required**. `mcp_embed_handle`
+  drained on shutdown with 5s timeout. SIGHUP refactored to
+  sync (helper was async-but-not-actually); 3 existing helper
+  tests adapted from `#[tokio::test]` to `#[test]`. 3 new
+  inline tests for `compute_allowlist_from_mcp_server_cfg`:
+  `compute_allowlist_returns_set_from_expose_tools`,
+  `compute_allowlist_returns_none_for_empty`,
+  `compute_allowlist_dedupes_via_hashset`. Doc-comment cites
+  `nexo mcp-server` standalone as architectural mirror; same
+  primary-agent-only behavior. **Operator UX**:
+  ```yaml
+  mcp_server:
+    daemon_embed:
+      enabled: true
+    http:
+      enabled: true
+      bind: 127.0.0.1:8765
+      auth: { kind: static_token, token_env: NEXO_MCP_TOKEN }
+    expose_tools: [Read, Edit, marketing_lead_route]
+  ```
+  Boot `nexo run`, MCP server live alongside agents. Edit
+  `expose_tools`, file watcher fires reload coord, post-hook
+  swaps + notifies, clients refresh — zero downtime, zero
+  SIGHUP. **Open follow-ups**: M1.b.c.b (per-agent endpoint
+  `/mcp/agent_x` for multi-tenant routing), M1.b.c.c
+  (multi-agent union endpoint with collision detection),
+  M1.b.c.d (hot-swap primary agent identity mid-run — today
+  bridge held for daemon life). Conflict path: running
+  `nexo` daemon with embed + `nexo mcp-server` standalone
+  with same port → second bind fails OS-level with
+  EADDRINUSE; pick one path. Provider-agnostic across
+  Anthropic / MiniMax / OpenAI / Gemini / DeepSeek / xAI /
+  Mistral. Tests: `cargo test --bin nexo compute_allowlist`
+  → 3/3, `cargo test --bin nexo reload_expose_tools` → 3/3,
+  `cargo test -p nexo-config --lib` → 169/169,
+  `cargo build --bin nexo` verde.
+
+  **Slice M1.b — trigger** ✅ shipped 2026-04-30
   (SIGHUP MVP). `nexo-mcp` exposes new `pub struct
   HttpNotifyHandle { sessions: Arc<HttpSessionManager> }` (Clone)
   via `HttpServerHandle::notifier(&self) -> HttpNotifyHandle` so

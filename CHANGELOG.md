@@ -10,6 +10,211 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **M1.b.c — daemon-embed MCP HTTP server** (FOLLOWUPS A6.M1).
+  `Mode::Run` (daemon) now optionally starts an MCP HTTP server
+  in-process alongside the agent runtime, exposing the primary
+  agent's tools — mirror of `nexo mcp-server` standalone behavior
+  but inside the daemon process so operators don't need a second
+  process. New `crates/config/src/types/mcp_server.rs::
+  McpServerDaemonEmbedConfig { enabled: bool }` + `McpServerConfig
+  .daemon_embed` field with `#[serde(default, deny_unknown_fields)]`
+  — back-compat preserved (default false → no MCP server in
+  daemon). `src/main.rs` boot wire just before
+  `reload_coord.start(...)`: captures primary agent id+config
+  pre-loop (since the loop consumes `cfg.agents.agents`), looks up
+  the primary's `Arc<ToolRegistry>` from the existing
+  `tools_per_agent` map, builds an `AgentContext` +
+  `ToolRegistryBridge::new(...).with_list_changed_capability(true)`,
+  validates `mcp_server.http.enabled` + bails with clear error on
+  inconsistent config, calls `start_http_transport` to bring up
+  the HTTP server, then registers a `ConfigReloadCoordinator`
+  post-hook that re-reads `mcp_server.expose_tools` from disk,
+  atomically swaps the bridge allowlist via
+  `swap_allowlist(new)`, and emits
+  `notify_tools_list_changed()` so connected Claude Desktop /
+  Cursor clients refresh tool list automatically on every Phase
+  18 reload — **no SIGHUP required, no daemon restart**. The
+  `mcp_embed_handle` is drained on shutdown with a 5s timeout so
+  SSE consumers see a clean disconnect.
+  
+  Sub-cleanup: `reload_expose_tools` helper (M1.b) refactored
+  from `async fn` to `fn` since its body was synchronous
+  (`AppConfig::load_for_mcp_server` is sync). The SIGHUP caller
+  in `run_mcp_server` drops the `.await`. 3 existing helper
+  tests adapted from `#[tokio::test]` to `#[test]`. New helper
+  `compute_allowlist_from_mcp_server_cfg` derives the
+  `ToolRegistryBridge` allowlist from an in-memory
+  `McpServerConfig` (used by the daemon-embed boot wire where the
+  config is already loaded; complements `reload_expose_tools`
+  which re-reads the YAML on reload).
+  
+  3 new inline tests:
+  `compute_allowlist_returns_set_from_expose_tools`,
+  `compute_allowlist_returns_none_for_empty`,
+  `compute_allowlist_dedupes_via_hashset`.
+  
+  **Operator UX** (single config block now drives both
+  standalone and daemon-embed paths):
+  ```yaml
+  mcp_server:
+    daemon_embed:
+      enabled: true
+    http:
+      enabled: true
+      bind: 127.0.0.1:8765
+      auth:
+        kind: static_token
+        token_env: NEXO_MCP_TOKEN
+    expose_tools: [Read, Edit, marketing_lead_route]
+  ```
+  Boot `nexo run`, MCP server live alongside agents on
+  `127.0.0.1:8765`. Edit `mcp_server.yaml`, Phase 18 file watcher
+  detects the change → reload-coord fires → post-hook swaps
+  allowlist + emits notification → connected clients refresh.
+  Zero downtime, zero SIGHUP, zero daemon restart.
+  
+  **Conflict path**: running `nexo` daemon with embed AND
+  `nexo mcp-server` standalone with the same port fails on the
+  second `bind` with `EADDRINUSE`; operator picks one path. The
+  `mcp_server.*` config block is shared between both so there is
+  no duplicate config to maintain.
+  
+  Open follow-ups: **M1.b.c.b** (per-agent endpoint
+  `/mcp/agent_x` for multi-tenant routing across the daemon's N
+  agents), **M1.b.c.c** (multi-agent union endpoint with
+  tool-name collision detection), **M1.b.c.d** (hot-swap primary
+  agent identity mid-run — today the bridge is held for the
+  daemon's life; changing `agents[0]` requires a restart). Slices
+  M1.c (stdio notification pump) and M1.b.b (cross-platform file
+  watcher for `nexo mcp-server` standalone Windows path) remain
+  open — the daemon-embed path on Linux/macOS now handles the
+  cross-platform case automatically because Phase 18's file
+  watcher is already cross-platform via the `notify` crate.
+  
+  IRROMPIBLE refs: `src/main.rs::run_mcp_server` (`:9173-9180`)
+  is the architectural mirror — same primary-agent capture +
+  bridge construction shape. claude-code-leak no relevant prior
+  art (CLI single-process, no daemon mode); `research/` no
+  relevant prior art (channel-side, no MCP server embedding).
+  
+  Provider-agnostic: protocol-MCP layer, no LLM-provider
+  assumption — works under Anthropic / MiniMax / OpenAI / Gemini
+  / DeepSeek / xAI / Mistral. The advisor pipeline (advisory_hook,
+  shipped earlier today) composes seamlessly with the daemon-embed
+  bridge — plugins can register their `ToolAdvisor` impl and the
+  daemon's MCP server surfaces the advisory output to connected
+  clients.
+  
+  Tests: `cargo test --bin nexo compute_allowlist` → 3/3,
+  `cargo test --bin nexo reload_expose_tools` → 3/3,
+  `cargo test -p nexo-config --lib` → 169/169,
+  `cargo build --bin nexo` verde.
+- Phase 80.14 (MVP) — AWAY_SUMMARY re-connection digest. Per-binding
+  YAML opt-in. When the user sends a message after a configurable
+  threshold of silence (default 4h), the runtime composes a short
+  markdown digest summarising goals + aborts + failures recorded
+  in the Phase 72 turn-log during the silence window and the
+  operator-side handler delivers it before processing the user's
+  message. Slim MVP is **template-based** — no LLM call — so the
+  feature ships with zero per-fire token cost; the LLM-summarised
+  variant lands as 80.14.b. New
+  `crates/config/src/types/away_summary.rs` (~120 LOC + 6 unit
+  tests) ships `AwaySummaryConfig { enabled: bool,
+  threshold_hours: u64, max_events: usize }` with `#[serde(default)]`
+  on every field, `Default` impl that returns disabled + 4h
+  threshold + 50 max events, `validate()` that rejects
+  `threshold_hours > 30 days` (likely operator confusion) and
+  `max_events == 0` (would render an empty digest), and
+  `threshold() -> Duration` convenience accessor.
+  `AgentConfig.away_summary: Option<AwaySummaryConfig>` field
+  with `#[serde(default)]` for backward-compat; bindings without
+  the block keep current behaviour. Workspace fixture sweep
+  applied `perl -i -pe 's/^(\s*)assistant_mode: None,$/$1assistant_mode:
+  None,\n$1away_summary: None,/'` to 49+ struct literals across
+  the same crates touched by Phase 80.10/80.15/80.17 sweeps.
+  `nexo_agent_registry::TurnLogStore::tail_since(since: DateTime<Utc>,
+  limit: usize) -> Result<Vec<TurnRecord>, ...>` new trait method
+  with a default impl that returns `Vec::new()` (safety fallback
+  for impls that haven't customised); `SqliteTurnLogStore`
+  overrides with a real `WHERE recorded_at >= ?1 ORDER BY
+  recorded_at DESC LIMIT ?2` query capped by `TAIL_HARD_CAP=1000`.
+  New module `crates/dispatch-tools/src/away_summary.rs` (~280
+  LOC + 11 tests verde) exposes `pub async fn
+  try_compose_away_digest(cfg: &AwaySummaryConfig, last_seen:
+  Option<DateTime<Utc>>, now: DateTime<Utc>, log: &dyn
+  TurnLogStore) -> Result<Option<String>, AwaySummaryError>` —
+  composition fn that walks 4 gates cheapest-first: (1)
+  `cfg.enabled` (opt-in), (2) `last_seen.is_some()` (None
+  bootstraps without firing — caller updates last_seen WITHOUT
+  burning the threshold), (3) `(now - last_seen).to_std() >=
+  cfg.threshold()` (negative elapsed from clock skew → no fire),
+  (4) `log.tail_since(last_seen, max_events)` non-empty (empty
+  digest is not worth sending). When all four pass, calls
+  `build_digest(events, elapsed, max_events)` and returns
+  `Some(markdown)`. Pure-fn `pub fn build_digest(events:
+  &[TurnRecord], elapsed: Duration, max_events: usize) -> String`
+  renders heading `**While you were away** (last <h>h<m>m):` plus
+  bullet list of counters: `<N> goal turn(s) recorded` /
+  `<N> completed` (matches `outcome.contains("completed") ||
+  outcome == "done"`) / `<N> aborted/cancelled` (matches
+  "aborted" or "cancelled") / `<N> failed` / `<N> in progress /
+  other` (saturating subtraction), with truncation suffix
+  `(showing the most recent <max>; older events may exist)` when
+  `events.len() == max_events`. `AwaySummaryError` typed wrapper
+  via `thiserror` over `AgentRegistryStoreError`. Re-exports from
+  `nexo-dispatch-tools::lib.rs`: `try_compose_away_digest`,
+  `build_digest`, `AwaySummaryError`. 11 unit tests in
+  `away_summary::tests`: `disabled_returns_none` (cfg.enabled
+  false → None even with events present), `last_seen_none_returns_none`
+  (bootstrap path), `elapsed_below_threshold_returns_none` (2h
+  with 4h threshold → None), `negative_elapsed_returns_none`
+  (clock skew when `last_seen` is in the future relative to `now`
+  → None), `empty_log_returns_none` (gates pass but log empty →
+  None), `populated_log_returns_digest` (3 events: 2 done + 1
+  failed → Some markdown contains expected counters),
+  `digest_renders_completed_aborted_failed_counts` (mixed 6-event
+  set covers all counter arms including "running" → "in progress
+  / other"), `digest_caps_at_max_events` (50 events with cap=50
+  → truncation suffix appears), `digest_below_cap_no_truncation_suffix`
+  (10 events with cap=50 → no suffix), `digest_renders_minutes_correctly`
+  (2h30m elapsed → string contains "2h30m"),
+  `populated_log_truncates_to_max_events` (5 events with
+  max_events=3 → digest renders 3 + truncation suffix). Mock
+  `MockLog` impl `TurnLogStore` returns scripted records
+  deterministically without SQLite. `cargo build --workspace`
+  + `cargo test -p nexo-config --lib types::away_summary` (6
+  verde) + `cargo test -p nexo-dispatch-tools --lib away_summary`
+  (11 verde) all green. Provider-agnostic by construction —
+  pure markdown template + SQLite filesystem; zero LLM-provider
+  touchpoints; transversal across Anthropic / MiniMax / OpenAI /
+  Gemini / DeepSeek / xAI / Mistral. Wiring point: operator's
+  inbound handler invokes `try_compose_away_digest(...)` before
+  processing the user's message; if `Some(digest)` returns,
+  delivers via `notify_origin` then processes the inbound; in
+  both cases atomically updates `last_seen_at = now` afterward
+  (caller manages storage — this slim MVP doesn't couple to
+  `nexo-pairing` or any specific table). **Deferred follow-ups**:
+  80.14.b — LLM-summarised digest forks a subagent over the
+  events list (richer 1-3 sentence prose vs today's bullet
+  template); 80.14.c — `last_seen_at` tracking in
+  `nexo-pairing::PairingStore` with a SQLite migration so
+  operators don't roll their own; 80.14.d — per-channel-adapter
+  rendering (whatsapp / telegram render markdown differently);
+  80.14.e — time-of-day awareness ("don't ping at 3am unless
+  awake_hours covers"); 80.14.f — custom prompt template per
+  agent (relevant once 80.14.b ships); 80.14.g — main.rs inbound
+  interceptor wire (1-line invocation site, blocked on dirty-state
+  pattern). Three-pillar audit: **robusto** — 11 tests + 6
+  config tests cover every gate path + defensive edges
+  (negative elapsed / empty log / disabled / bootstrap / cap
+  truncation); fail-safe trait default impl returns empty for
+  uncustomised stores; UTC throughout to avoid TZ confusion;
+  **óptimo** — pure-fn template render with zero LLM call;
+  SQLite query bounded by `WHERE recorded_at >= ? LIMIT ?`
+  (indexed) and capped by `TAIL_HARD_CAP=1000`; mock-based tests
+  avoid SQLite spin-up; **transversal** — zero LLM-provider
+  touchpoints, pure markdown text, delivery via existing
+  `notify_origin` is provider-agnostic.
 - **advisory_hook — generic tool advisory extension point**
   (FOLLOWUPS A6). Generalizes the bash-only
   `gather_bash_warnings` pipeline (Phase 77.8-10 + C4.a-b) into
