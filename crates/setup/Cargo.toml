@@ -25,6 +25,7 @@ nexo-config = { version = "0.1.1", path = "../config" }
 nexo-plugin-email = { version = "0.1.1", path = "../plugins/email" }
 nexo-core = { version = "0.1.1", path = "../core" }
 nexo-auth = { version = "0.1.1", path = "../auth" }
+nexo-llm = { version = "0.1.1", path = "../llm" }
 anyhow       = { workspace = true }
 serde        = { workspace = true }
 serde_json   = { workspace = true }

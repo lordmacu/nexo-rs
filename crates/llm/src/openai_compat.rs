@@ -79,11 +79,15 @@ impl OpenAiClient {
     ) -> Result<reqwest::Response, LlmError> {
         let status = response.status().as_u16();
         if status == 429 {
-            let retry_after_ms = parse_retry_after_ms(response.headers(), "retry-after", 30_000);
-            return Err(LlmError::RateLimit {
-                retry_after_ms,
-                rate_limit_info: None,
-            });
+            let headers = response.headers().clone();
+            let retry_after_ms = parse_retry_after_ms(&headers, "retry-after", 30_000);
+            // Phase C4.c — extract OpenAI-compat headers to
+            // promote `Rejected` quotas to `LlmError::QuotaExceeded`.
+            // `extract_openai_compat_headers` covers OpenAI / xAI /
+            // DeepSeek / Mistral via the shared `x-ratelimit-*`
+            // shape.
+            let info = crate::rate_limit_info::extract_openai_compat_headers(&headers);
+            return Err(crate::retry::classify_429_error(retry_after_ms, info));
         }
         if status >= 500 {
             let body = response.text().await.unwrap_or_default();

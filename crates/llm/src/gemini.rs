@@ -93,11 +93,13 @@ impl GeminiClient {
     ) -> Result<reqwest::Response, LlmError> {
         let status = response.status().as_u16();
         if status == 429 {
-            let retry_after_ms = parse_retry_after(response.headers()).unwrap_or(30_000);
-            return Err(LlmError::RateLimit {
-                retry_after_ms,
-                rate_limit_info: None,
-            });
+            let headers = response.headers().clone();
+            let retry_after_ms = parse_retry_after(&headers).unwrap_or(30_000);
+            // Phase C4.c — extract Gemini headers to promote
+            // `Rejected` quotas (RESOURCE_EXHAUSTED) to
+            // `LlmError::QuotaExceeded`.
+            let info = crate::rate_limit_info::extract_gemini_headers(&headers);
+            return Err(crate::retry::classify_429_error(retry_after_ms, info));
         }
         if status >= 500 {
             let body = response.text().await.unwrap_or_default();

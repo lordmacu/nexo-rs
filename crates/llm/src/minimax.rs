@@ -226,11 +226,13 @@ impl MiniMaxClient {
 
         let status = resp.status().as_u16();
         if status == 429 {
-            let retry_after_ms = parse_retry_after_ms(resp.headers(), "retry-after", 30_000);
-            return Err(LlmError::RateLimit {
-                retry_after_ms,
-                rate_limit_info: None,
-            });
+            let headers = resp.headers().clone();
+            let retry_after_ms = parse_retry_after_ms(&headers, "retry-after", 30_000);
+            // Phase C4.c — MiniMax speaks OpenAI-compat headers
+            // shape; reuse `extract_openai_compat_headers` for
+            // the Rejected→QuotaExceeded promotion path.
+            let info = crate::rate_limit_info::extract_openai_compat_headers(&headers);
+            return Err(crate::retry::classify_429_error(retry_after_ms, info));
         }
         if status >= 500 {
             let body = resp.text().await.unwrap_or_default();
@@ -278,11 +280,13 @@ impl MiniMaxClient {
     async fn finish(&self, response: reqwest::Response) -> Result<ChatResponse, LlmError> {
         let status = response.status().as_u16();
         if status == 429 {
-            let retry_after_ms = parse_retry_after_ms(response.headers(), "retry-after", 30_000);
-            return Err(LlmError::RateLimit {
-                retry_after_ms,
-                rate_limit_info: None,
-            });
+            let headers = response.headers().clone();
+            let retry_after_ms = parse_retry_after_ms(&headers, "retry-after", 30_000);
+            // Phase C4.c — MiniMax speaks OpenAI-compat headers
+            // shape; reuse `extract_openai_compat_headers` for
+            // the Rejected→QuotaExceeded promotion path.
+            let info = crate::rate_limit_info::extract_openai_compat_headers(&headers);
+            return Err(crate::retry::classify_429_error(retry_after_ms, info));
         }
         if status >= 500 {
             let body = response.text().await.unwrap_or_default();

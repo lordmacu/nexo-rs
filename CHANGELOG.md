@@ -10,6 +10,232 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **C4.c — `LlmError::QuotaExceeded` provider-agnostic + 4-provider
+  plumb + last-quota cache + `setup doctor` surface** (FOLLOWUPS
+  A4.c). Phase 77.11 shipped `rate_limit_info` (762 LOC, 12 tests)
+  with `RateLimitInfo` + `format_rate_limit_message` returning
+  `RateLimitMessage { text, severity, plan_hint }` — but the
+  structured output collapsed to `tracing::warn!` at
+  `anthropic.rs:391-405` and `retry.rs:118-126`, never reaching
+  `setup doctor` / `notify_origin` / admin-ui (audit M-priority).
+  Plus, hard 429s with `RateLimitInfo.status == Rejected` were
+  retried 5× before failing — wasteful when the quota is hard. Fix
+  introduces `LlmError::QuotaExceeded { retry_after_ms, severity,
+  message, plan_hint, provider, window }` distinct from the
+  existing `LlmError::RateLimit` (transient burst, retry-able).
+  Public helper `pub fn classify_429_error(retry_after_ms,
+  info: Option<RateLimitInfo>) -> LlmError` is the single source
+  of truth for the 429 → variant decision: when
+  `info.status == Some(Rejected)` AND
+  `format_rate_limit_message(&info)` produces a message →
+  `QuotaExceeded` AND a `record_quota_event` side-effect lands in
+  the process-wide `static LAST_QUOTA: OnceLock<DashMap<LlmProvider,
+  QuotaEvent>>` so the most recent rejection per provider survives
+  for `setup doctor` to render. Otherwise (no info, AllowedWarning,
+  Allowed) → `RateLimit` (retry transient bursts). `with_retry`
+  short-circuits `QuotaExceeded` (no retry, no backoff). Wired in
+  4 provider classify_response sites: `anthropic.rs:381`,
+  `openai_compat.rs:81` (covers OpenAI / xAI / DeepSeek / Mistral
+  via shared `x-ratelimit-*`), `gemini.rs:95`, and `minimax.rs:228`
+  chat path + `:280` finish path (MiniMax speaks OpenAI-compat).
+  `LlmProvider` gained `Hash` derive so it can key the cache
+  `DashMap`. `setup doctor` renders a new "LLM quota" section
+  iterating `last_quota_events_all()`: `[!]` icon for `Error`
+  severity, `[.]` for `Warning`, age in minutes since `at`,
+  message + optional `plan_hint` indented. Empty cache renders
+  "no recent quota events". `nexo-setup` gained `nexo-llm` as
+  a direct dep. 9 inline tests covering promotion + cache +
+  extractor flow + `with_retry` no-retry guard. Test-only
+  `pub fn clear_last_quota()` isolates state. 100%
+  provider-agnostic across Anthropic / OpenAI / Gemini / MiniMax /
+  Generic (xAI / DeepSeek / Mistral). Doc-comment cites
+  IRROMPIBLE refs to claude-code-leak
+  `services/api/errors.ts:465-548` (3-tier 429 classification)
+  and `services/rateLimitMessages.ts:45-104`
+  (`getRateLimitMessage`). `research/` no relevant prior art.
+  C4.c.b (notify_origin wire), C4.c.c (admin-ui A8 panel +
+  Prometheus metric), C4.c.d (Anthropic entitlement-reject hint)
+  remain open in FOLLOWUPS A4.c. Tests:
+  `cargo test -p nexo-llm --lib` → 167/167 (158 existing + 9 new).
+- Phase 80.1.e (MVP) — coordination skip entre scoring sweep y
+  autoDream fork-pass via consolidation-lock probe. **PIVOTED** del
+  plan original "buffer pattern `_pending_promotions.md`" al
+  **SKIP pattern** alineado con leak
+  `claude-code-leak/src/services/extractMemories/extractMemories.ts:121-148`
+  `hasMemoryWritesSince`. El buffer original era complejidad
+  inventada que el leak NO tiene — cuando un memory-writer está
+  activo, el otro defiere entirely. Mutually exclusive per turn.
+  Nuevo trait `nexo_driver_types::ConsolidationLockProbe`
+  (`crates/driver-types/src/consolidation_lock_probe.rs`, ~30 LOC
+  + 1 trait-object-safety test) sentado upstream de `nexo-dream` y
+  `nexo-core` (mismo cycle-break que Phase 80.1.b `AutoDreamHook`
+  y Phase 80.1.g `MemoryCheckpointer` patterns). Método
+  `is_live_holder(&self) -> bool` SYNC — un real impl es solo un
+  `stat()` + parse + `kill(0)`, no surprise async I/O. Doc-comment
+  del trait documenta fail-open semantics: cualquier I/O / parse
+  error → retornar `false` sin panic. Impl en
+  `crates/dream/src/consolidation_lock.rs` para `ConsolidationLock`
+  reusing existing `is_pid_running` (`:217`): lee el lock-file con
+  `std::fs::read_to_string`, parsea PID body — `Ok(0)` (rollback
+  marker) → false, `Ok(pid > 0)` → `is_pid_running(pid)`,
+  `Err(_)` → false. 5 probe tests verde:
+  `probe_returns_false_when_lock_absent` (sin lock file en
+  memory_dir), `probe_returns_false_for_pid_zero` (cuando rollback
+  ya rewrote a `"0"`), `probe_returns_true_for_live_pid` (usa
+  `std::process::id()` para evitar surprises de PID 1 en sandbox),
+  `probe_returns_false_for_dead_pid` (PID 999999 fuera del pid_max
+  típico de Linux), `probe_returns_false_for_garbage_body` (body
+  `"not-a-pid"`). En `nexo-core::agent::dreaming`, `DreamReport`
+  gana field `deferred_for_fork: bool` y `DreamEngine` gana field
+  `consolidation_probe: Option<Arc<dyn ConsolidationLockProbe>>` +
+  builder `with_consolidation_probe(probe)`. `run_sweep` chequea
+  el probe AL INICIO (después del log "dream sweep started", antes
+  de cualquier query a SQLite o filesystem), y si
+  `probe.is_live_holder() == true` retorna early con
+  `DreamReport { deferred_for_fork: true, candidates_considered: 0,
+  promoted: vec![], skipped_already_promoted: 0, started_at,
+  finished_at, agent_id }` y log info `"dream sweep deferred —
+  autoDream fork holds consolidation lock"`. Sin probe (`None`
+  campo) → behaviour idéntico a pre-80.1.e — backward compatible.
+  Trade-off documentado en doc-comment del builder: promociones
+  del scoring sweep durante la ventana del fork se difieren al
+  siguiente turno; memorias hot siguen scoring high next turn,
+  costo es a lo sumo un turno de latencia, mucho menor que la
+  complejidad del buffer (drain ordering, secret-guard scoping
+  sobre buffer drain, race en archivo de buffer mismo, edge cases
+  de partial drain). 3 nuevos tests en
+  `nexo-core::agent::dreaming::tests`:
+  `run_sweep_proceeds_when_no_probe_configured` (probe `None` —
+  promotion normal con `deferred_for_fork: false`),
+  `run_sweep_proceeds_when_probe_says_dead` (probe `Some` con
+  `MockProbe::new(false)` — promotion normal),
+  `run_sweep_skips_when_probe_says_live` (probe `Some` con
+  `MockProbe::new(true)` — `deferred_for_fork: true`, NO
+  candidates considered, NO `MEMORY.md` written, SQLite ledger
+  sin promotion entry, verifica que el sweep no tocó nada). Mock
+  probe usa `AtomicBool` toggleable para tests deterministas
+  inmutables. Defense-in-depth preservada: AutoMemFilter (Phase
+  80.20) + ConsolidationLock acquire/rollback + secret guard
+  Phase 77.7 + MAX_COMMIT_FILE_BYTES + AHORA TAMBIÉN coordination
+  skip que evita race directo en `MEMORY.md` writes entre los
+  dos passes. main.rs hookup queda documentado en doc-comment del
+  builder con snippet 1-line: cuando el agent tiene
+  `dreaming.enabled && auto_dream.is_some()`, construir
+  `Arc::new(ConsolidationLock::new(memory_dir, holder_stale)?) as
+  Arc<dyn ConsolidationLockProbe>` y pasar a
+  `DreamEngine::with_consolidation_probe(probe)`. Diferido hasta
+  resolución de dirty state pre-existente del usuario (mismo
+  pattern que 80.1.b.b.b / 80.1.c / 80.1.d / 80.1.g main.rs
+  hookups). Provider-agnostic por construcción: pure filesystem
+  + POSIX PID semantics; cero touchpoints LLM-provider; transversal
+  Anthropic / MiniMax / OpenAI / Gemini / DeepSeek / xAI / Mistral.
+  Tests totales verde: nexo-driver-types 24 (23 + 1 nuevo),
+  nexo-dream 72 (67 + 5 probe), nexo-core dreaming 8 (5 + 3 nuevos
+  con MockProbe). Workspace build verde. Out of scope (deferred):
+  80.1.e.b (revivir buffer pattern si aparece evidencia de que el
+  SKIP pierde promotions importantes — por ahora hipotético; SKIP
+  + re-evaluation next turn cubre los casos esperados), 80.1.e.c
+  (sweep-during-fork via parallel write a archivo distinto como
+  `MEMORY-pending.md`). `research/` (OpenClaw) carries no relevant
+  prior art — single-process Node app sin two-tier consolidation;
+  **absence noted** per IRROMPIBLE rule.
+- Phase 80.1.g (MVP) — wire git auto-commit a AutoDream fork-pass.
+  Closes the Phase 10.9 forensics gap on the deep-pass consolidation:
+  before this slice, the scoring-sweep dreaming (`crates/core/src/agent/
+  dreaming.rs`) auto-committed via `MemoryGitRepo::commit_all` at
+  `src/main.rs:3640-3665` but the fork-style autoDream
+  (`crates/dream/`) reescribía archivos en `memory_dir` directamente
+  sin pasar por git — perdiendo `git blame` / `git revert` / secret
+  guard de Phase 77.7 sobre los writes del fork. Nuevo trait
+  `nexo_driver_types::MemoryCheckpointer` (`crates/driver-types/src/
+  memory_checkpoint.rs`, ~25 LOC + 1 trait-object-safety test)
+  upstream de `nexo-dream` y `nexo-core` (mismo cycle-break que el
+  `AutoDreamHook` de Phase 80.1.b). Adapter `MemoryGitCheckpointer
+  { repo: Arc<MemoryGitRepo> }` en `crates/core/src/agent/
+  workspace_git.rs` (~25 LOC + 2 inline tests
+  `checkpointer_async_calls_commit_all` y
+  `checkpointer_returns_ok_on_clean_worktree`) envuelve el
+  `commit_all` blocking en `tokio::task::spawn_blocking` porque
+  `git2::Repository` es sync-only. Newtype obligatorio por Rust
+  orphan rule — `impl ForeignTrait for Arc<Local>` no compila.
+  `AutoDreamRunner` gana field `git_checkpointer: Option<Arc<dyn
+  MemoryCheckpointer>>` + builder `with_git_checkpointer(ckpt)` +
+  observability accessor `has_git_checkpointer()`. El `run` invoca
+  el checkpointer **DESPUÉS** de `audit.update_status(Completed) +
+  finalize` (audit row primero — fuente de verdad — git commit
+  segundo, bonus forensics) y **SOLO** cuando
+  `progress.touched.is_empty() == false` (decisión D-2: empty
+  touches no generan commits vacíos; el audit row en
+  `dream_runs.db` ya captura la pasada). Helper
+  `build_checkpoint_body(run_id, files)` rinde format
+  `audit_run_id: <uuid>\n\n- path1\n- path2\n` para que `git log
+  --grep auto_dream` cross-linkee al audit row vía el run_id.
+  Subject template: `auto_dream: <N> file(s) consolidated`.
+  Failure del checkpointer → `tracing::warn!(target:
+  "auto_dream.checkpoint", run_id, error, "memory checkpoint
+  failed; audit row preserved")` SIN downgrade del outcome — el
+  fork ya escribió el memory_dir y el audit row está correcto, un
+  commit fallido es solo forensics perdida; misma semántica que
+  el scoring sweep en `:3656-3663`. `BootDeps` gana field
+  `git_checkpointer: Option<Arc<dyn MemoryCheckpointer>>`,
+  `nexo_dream::boot::build_runner` lo cablea con
+  `with_git_checkpointer(ckpt)` y emite
+  `git_checkpoint_wired = bool` en el log de boot para
+  observabilidad operacional. main.rs hookup para construir
+  `MemoryGitCheckpointer::new(Arc::clone(&agent_git)) as Arc<dyn
+  MemoryCheckpointer>` queda documentado en doc-comment del
+  builder — diferido hasta que el usuario resuelva su dirty
+  state pre-existente con la hookup general de
+  `nexo_dream::boot::build_runner`. 4 nuevos tests en
+  `nexo-dream::auto_dream::tests`:
+  `build_checkpoint_body_renders_run_id_and_paths` (run_id en
+  primera línea + bullet por path),
+  `build_checkpoint_body_renders_empty_file_list` (run_id sin
+  bullets),
+  `with_git_checkpointer_setter_round_trips`
+  (`has_git_checkpointer` antes false, después true),
+  `checkpoint_skipped_when_files_touched_empty` (verifica el
+  guard `if !empty` con `RecordingCheckpointer` mock que cuenta
+  llamadas — assert `count == 0` con MockFork::ok que produce
+  empty progress.touched; valida la decisión D-2),
+  `checkpoint_failure_does_not_downgrade_completed_outcome`
+  (mock `RecordingCheckpointer::failing` retorna `Err` — verifica
+  que el outcome NO termina en `Errored`). `RecordingCheckpointer`
+  mock impl con `AtomicUsize` counter + `StdMutex<Vec<(subject,
+  body)>>` log + flag `failing()` para tests defensivos.
+  Defense-in-depth preservada: AutoMemFilter (Phase 80.20 sandbox
+  físico) ∧ ConsolidationLock ∧ secret guard de Phase 77.7
+  (transparent vía `MemoryGitRepo::with_guard` que rechaza
+  commits con secretos detectados) ∧ MAX_COMMIT_FILE_BYTES (1 MB
+  cap, archivos grandes loggeados pero no fatales) ∧
+  `Mutex<Repository>` serialización con otros callers
+  (session-close commit, scoring-sweep commit). Provider-agnostic
+  por construcción: el trait permite cualquier checkpointer
+  (git, S3 backup, dual-write audit log); cero touchpoints
+  LLM-provider; pure infra layer transversal a Anthropic /
+  MiniMax / OpenAI / Gemini / DeepSeek / xAI / Mistral. Tests
+  totales verde: nexo-driver-types 23 (22 + 1 nuevo), nexo-core
+  workspace_git tests +2 (2 nuevos), nexo-dream auto_dream 16
+  (12 + 4 nuevos), boot 7 (todos con `git_checkpointer: None`
+  en `mk_deps` fixture), 67 nexo-dream tests totales. Mirror
+  reference: NO hay precedente en `claude-code-leak/` —
+  `memdir/paths.ts:14` usa `findCanonicalGitRoot` solo para
+  localizar el memory dir (path discovery, no commit);
+  `memoryTypes.ts:187` documenta explícitamente la postura del
+  leak: "Git history, recent changes, or who-changed-what —
+  `git log` / `git blame` are authoritative" — el leak NO
+  duplica info git en memoria. Phase 10.9 git-backed memory
+  (existing nexo) + 80.1.g (este sub-fase) son innovación
+  nexo-específica que extiende esa parity al fork-pass deep
+  consolidation. `research/` (OpenClaw) carries no relevant
+  prior art — single-process Node app expects user to manage
+  git themselves. Out of scope (deferred): 80.1.g.b commit on
+  Killed con subject `auto_dream KILLED: <N> file(s) partial`
+  (revisar cuando haya demanda — operador puede usar
+  `forge_memory_checkpoint` manual mientras), 80.1.d.d auto
+  `git revert HEAD` opcional en `nexo agent dream kill --revert`
+  (no urgente — `ConsolidationLock::rollback` ya cubre el "no
+  re-fire" path).
 - **C4.b — sandbox 5th tier in `gather_bash_warnings`** (FOLLOWUPS
   A4.b advisory MVP). The Phase 77.10 `should_use_sandbox` module
   (`crates/driver-permission/src/should_use_sandbox.rs`, 401 LOC +
