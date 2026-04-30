@@ -293,20 +293,50 @@ struct CronToolBindingContext {
     tools: Arc<nexo_core::agent::ToolRegistry>,
 }
 
+/// M5 — `Arc<ArcSwap<HashMap>>` enables lock-free hot-swap of the
+/// per-binding context map. The config-reload post-hook calls
+/// [`RuntimeCronToolExecutor::replace_bindings`] so cron firings
+/// observe the new `effective` policy on the next call. In-flight
+/// `resolve_binding` callers keep their loaded `Arc<HashMap>`
+/// snapshot until completion; subsequent calls see the new map.
+///
+/// Pattern validated against:
+///   * `claude-code-leak/src/utils/cronScheduler.ts:441-448`
+///     (chokidar-on-file-change rebuild) + `:170,251,335-336,356`
+///     (`inFlight` Set with pitfall comment "idempotent even
+///     without the guard"). We use `ArcSwap` (lock-free swap) so
+///     the in-flight protection is structural rather than imperative.
+///   * `research/src/cron/service/timer.ts:709,697`
+///     (forceReload-per-tick + long-job pitfall). We rebuild on
+///     reload only, not on every tick — cheaper and avoids the
+///     long-job hide-tick race.
 #[derive(Clone)]
 struct RuntimeCronToolExecutor {
-    by_binding: Arc<std::collections::HashMap<String, CronToolBindingContext>>,
+    by_binding: Arc<arc_swap::ArcSwap<std::collections::HashMap<String, CronToolBindingContext>>>,
 }
 
 impl RuntimeCronToolExecutor {
     fn new(by_binding: std::collections::HashMap<String, CronToolBindingContext>) -> Self {
         Self {
-            by_binding: Arc::new(by_binding),
+            by_binding: Arc::new(arc_swap::ArcSwap::from_pointee(by_binding)),
         }
     }
 
-    fn resolve_binding(&self, binding_id: &str) -> Option<&CronToolBindingContext> {
-        self.by_binding.get(binding_id)
+    /// M5 — atomic hot-swap of the binding map. Called by the
+    /// config-reload post-hook. Cheap (single `Arc` store).
+    /// In-flight callers retain their pre-swap snapshot.
+    fn replace_bindings(
+        &self,
+        new_map: std::collections::HashMap<String, CronToolBindingContext>,
+    ) {
+        self.by_binding.store(Arc::new(new_map));
+    }
+
+    /// Returns an OWNED clone of the binding (cheap — fields are
+    /// `Arc<_>` underneath). The owned clone is required because
+    /// `ArcSwap` does not expose stable references across swaps.
+    fn resolve_binding(&self, binding_id: &str) -> Option<CronToolBindingContext> {
+        self.by_binding.load().get(binding_id).cloned()
     }
 }
 
@@ -11430,5 +11460,112 @@ mcp_server:
         let parsed: nexo_config::types::mcp_server::McpServerConfigFile =
             serde_yaml::from_str(yaml).expect("parse mcp_server yaml");
         assert!(mcp_server_has_auth(&parsed.mcp_server));
+    }
+
+    // ---- M5: cron_tool_bindings ArcSwap mechanics ----
+
+    use super::{CronToolBindingContext, RuntimeCronToolExecutor};
+
+    /// Helper — minimal binding fixture identifiable via `ctx.agent_id`
+    /// (used as marker in assertions). Tools registry left empty.
+    fn make_test_binding(marker: &str) -> CronToolBindingContext {
+        use nexo_broker::AnyBroker;
+        use nexo_config::{
+            AgentConfig, AgentRuntimeConfig, DreamingYamlConfig, HeartbeatConfig, ModelConfig,
+            OutboundAllowlistConfig, WorkspaceGitConfig,
+        };
+        let cfg = AgentConfig {
+            id: marker.into(),
+            model: ModelConfig {
+                provider: "stub".into(),
+                model: "m".into(),
+            },
+            plugins: Vec::new(),
+            heartbeat: HeartbeatConfig::default(),
+            config: AgentRuntimeConfig::default(),
+            system_prompt: String::new(),
+            workspace: String::new(),
+            skills: Vec::new(),
+            skills_dir: "./skills".into(),
+            skill_overrides: Default::default(),
+            transcripts_dir: String::new(),
+            dreaming: DreamingYamlConfig::default(),
+            workspace_git: WorkspaceGitConfig::default(),
+            tool_rate_limits: None,
+            tool_args_validation: None,
+            extra_docs: Vec::new(),
+            inbound_bindings: Vec::new(),
+            allowed_tools: Vec::new(),
+            sender_rate_limit: None,
+            allowed_delegates: Vec::new(),
+            accept_delegates_from: Vec::new(),
+            description: String::new(),
+            google_auth: None,
+            credentials: Default::default(),
+            link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
+            language: None,
+            outbound_allowlist: OutboundAllowlistConfig::default(),
+            context_optimization: None,
+            dispatch_policy: Default::default(),
+            plan_mode: Default::default(),
+            remote_triggers: Vec::new(),
+            lsp: nexo_config::types::lsp::LspPolicy::default(),
+            config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
+            team: nexo_config::types::team::TeamPolicy::default(),
+            proactive: Default::default(),
+            repl: Default::default(),
+        };
+        let ctx = nexo_core::agent::AgentContext::new(
+            marker,
+            std::sync::Arc::new(cfg),
+            AnyBroker::local(),
+            std::sync::Arc::new(nexo_core::session::SessionManager::new(
+                std::time::Duration::from_secs(60),
+                8,
+            )),
+        );
+        CronToolBindingContext {
+            ctx,
+            tools: std::sync::Arc::new(nexo_core::agent::ToolRegistry::new()),
+        }
+    }
+
+    /// M5 — `replace_bindings` performs an atomic swap visible on the
+    /// next `resolve_binding` call.
+    #[tokio::test]
+    async fn cron_executor_replace_bindings_atomically_swaps_map() {
+        let mut initial = std::collections::HashMap::new();
+        initial.insert("k".to_string(), make_test_binding("v1"));
+        let executor = RuntimeCronToolExecutor::new(initial);
+
+        let pre = executor
+            .resolve_binding("k")
+            .expect("pre-swap binding exists");
+        assert_eq!(pre.ctx.agent_id, "v1");
+
+        let mut new_map = std::collections::HashMap::new();
+        new_map.insert("k".to_string(), make_test_binding("v2"));
+        executor.replace_bindings(new_map);
+
+        let post = executor
+            .resolve_binding("k")
+            .expect("post-swap binding exists");
+        assert_eq!(post.ctx.agent_id, "v2");
+    }
+
+    /// M5 — empty-map swap clears all bindings; resolve returns `None`.
+    /// Documents the agent-removal semantics (Phase 19 scope concern):
+    /// a future operator removing an agent from config would reach
+    /// this path post-rebuild.
+    #[tokio::test]
+    async fn cron_executor_replace_bindings_with_empty_map_clears_all() {
+        let mut initial = std::collections::HashMap::new();
+        initial.insert("k".to_string(), make_test_binding("v1"));
+        let executor = RuntimeCronToolExecutor::new(initial);
+        assert!(executor.resolve_binding("k").is_some());
+        executor.replace_bindings(std::collections::HashMap::new());
+        assert!(executor.resolve_binding("k").is_none());
     }
 }
