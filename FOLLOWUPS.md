@@ -118,18 +118,53 @@ Action plan:
    `retry.rs` and surface in `setup doctor` + `notify_origin`.
 Effort: ~1 day total. Security/UX impact high.
 
-**A5 — C5 SecretGuardConfig YAML never read** — ⬜ open. Schema
-fully defined at `crates/memory/src/secret_config.rs:79-130`
-(`Block` / `Redact` / `Warn` modes, per-rule excludes), but
-`src/main.rs:802` and `:8632` carry
-`// TODO: read from memory.secret_guard YAML when config dep
-allows.` and unconditionally build `SecretGuardConfig::default()`.
-Operator can't toggle the secret-handling mode or exclude
-specific rules. Action: add `memory.secret_guard` to
-`crates/config/src/types/memory.rs`, plumb to
-`RuntimeConfig`, replace both `default()` call sites. Effort:
-~2 hr including config dep wiring. Blocks operator override of
-the Phase 77.7 secret scanner default behaviour.
+**A5 — C5 SecretGuardConfig YAML never read** — ✅ shipped 2026-04-30
+(commits `32d74f2`, `56053cf`, `b6cea87`). Operators now control the
+secret-scanner via `memory.secret_guard` in `config/memory.yaml`
+(4 knobs: `enabled`, `on_secret: block|redact|warn`, `rules: "all" |
+[rule_id...]`, `exclude_rules: [rule_id...]`). Schema lived in
+`crates/memory/src/secret_config.rs` since Phase 77.7.
+
+**Pivot from spec**: a direct `nexo-config -> nexo-memory` dep
+would form a cycle (`nexo-llm -> nexo-config -> nexo-memory ->
+nexo-llm`). Fix uses a wire-shape struct (`SecretGuardYamlConfig`)
+in `crates/config/src/types/memory.rs` that mirrors the canonical
+`nexo_memory::SecretGuardConfig` schema 1:1; the conversion lives
+in `src/main.rs::build_secret_guard_config_from_yaml` (binary holds
+both deps). Doc-comment on the wire-shape struct explicitly flags
+the dual-write contract: when the schema changes, update BOTH
+files.
+
+Sites covered:
+- `src/main.rs:837-845` (daemon path) — direct read from `cfg`.
+- `src/main.rs:8723-8753` (mcp-server path) — restructured: the
+  secret guard now reads from the same `mem_cfg` that the rest of
+  the mcp-server bootstrap loads via `load_optional`. Default
+  applies when memory.yaml is absent or the `secret_guard` key is
+  omitted (best-effort tolerance preserved).
+- 2 round-trip tests in `crates/config/tests/load_test.rs` cover
+  default-secure (omitted key) + warn-with-excludes (override).
+- `docs/src/ops/memdir-scanner.md` extended with full
+  Configuration section + table + provider-agnostic clause + IRROMPIBLE
+  prior-art citations.
+
+Provider-agnostic — `exclude_rules` operates on rule IDs (kebab-case
+like `github-pat`, `aws-access-token`, `openai-api-key`), not on
+providers. Scanner covers Anthropic / MiniMax / OpenAI / Gemini /
+DeepSeek / xAI / Mistral with the same regex set.
+
+References (validation, not copy):
+- claude-code-leak `src/services/teamMemorySync/secretScanner.ts:48,
+  596-615,312-324` — hardcoded, no YAML knob. We do better.
+- research/ `src/config/zod-schema.ts` — OpenClaw 2-value enums.
+  We extended to 3 (block/redact/warn).
+
+**Limitation**: schema duplication between `nexo-config` (wire
+shape) and `nexo-memory` (domain). Acceptable cost for breaking
+the dep cycle; doc-comment + the dual-test arrangement
+(secret_config.rs unit tests + load_test.rs integration tests)
+catch drift. Migration to a shared `nexo-config-types` crate
+would eliminate this — deferred as A5.b.
 
 **A6 — Major findings (M1–M10)** — ⬜ open, batched here so they
 do not get lost.
