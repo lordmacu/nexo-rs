@@ -22,18 +22,62 @@ use super::AgentContext;
 
 pub const TOOL_NAME: &str = "channel_list";
 
+/// Phase 80.9.j — resolve the binding id from the agent context.
+/// Returns the active binding's `<plugin>:<instance>` when
+/// `ctx.effective.binding_index` points to a valid entry; falls
+/// back to the agent id for paths without a binding match
+/// (heartbeat, delegate receive, tests). Pure-fn so tools can
+/// share the same lookup without duplicating logic.
+pub fn resolve_binding_id(ctx: &AgentContext) -> String {
+    if let Some(eff) = ctx.effective.as_ref() {
+        if let Some(idx) = eff.binding_index {
+            if let Some(b) = ctx.config.inbound_bindings.get(idx) {
+                return format!(
+                    "{}:{}",
+                    b.plugin,
+                    b.instance.as_deref().unwrap_or("default")
+                );
+            }
+        }
+    }
+    ctx.agent_id.clone()
+}
+
 #[derive(Clone)]
 pub struct ChannelListTool {
     registry: SharedChannelRegistry,
-    binding_id: String,
+    /// Phase 80.9.j — when `Some`, force this binding id (used by
+    /// callers that own a specific binding context). When `None`
+    /// the tool resolves from `ctx` at call time.
+    binding_id: Option<String>,
 }
 
 impl ChannelListTool {
+    /// Static-binding constructor used by callers that already
+    /// know which binding their tool surface scopes to.
     pub fn new(registry: SharedChannelRegistry, binding_id: impl Into<String>) -> Self {
         Self {
             registry,
-            binding_id: binding_id.into(),
+            binding_id: Some(binding_id.into()),
         }
+    }
+
+    /// Phase 80.9.j — dynamic-binding constructor. The tool reads
+    /// `ctx.effective` at call time so the same registration
+    /// serves every binding for an agent. Operators that want
+    /// agent-scoped registration (the slim MVP shipped at
+    /// 80.9 main.rs hookup) can keep using `new(registry, agent_id)`.
+    pub fn new_dynamic(registry: SharedChannelRegistry) -> Self {
+        Self {
+            registry,
+            binding_id: None,
+        }
+    }
+
+    fn resolved_binding_id(&self, ctx: &AgentContext) -> String {
+        self.binding_id
+            .clone()
+            .unwrap_or_else(|| resolve_binding_id(ctx))
     }
 
     pub fn tool_def() -> ToolDef {
@@ -58,11 +102,12 @@ impl ChannelListTool {
 
 #[async_trait]
 impl ToolHandler for ChannelListTool {
-    async fn call(&self, _ctx: &AgentContext, _args: Value) -> Result<Value> {
-        let entries = self.registry.list_for_binding(&self.binding_id).await;
+    async fn call(&self, ctx: &AgentContext, _args: Value) -> Result<Value> {
+        let binding_id = self.resolved_binding_id(ctx);
+        let entries = self.registry.list_for_binding(&binding_id).await;
         let summaries: Vec<ChannelSummary> = entries.iter().map(Into::into).collect();
         Ok(json!({
-            "binding_id": self.binding_id,
+            "binding_id": binding_id,
             "count": summaries.len(),
             "servers": summaries
         }))
@@ -127,5 +172,22 @@ mod tests {
         assert_eq!(def.name, TOOL_NAME);
         // No `required` array → empty input is valid.
         assert!(def.parameters["properties"].as_object().unwrap().is_empty());
+    }
+
+    // ---- Phase 80.9.j resolver ----
+
+    #[tokio::test]
+    async fn dynamic_constructor_uses_static_when_set() {
+        let reg: SharedChannelRegistry = Arc::new(ChannelRegistry::new());
+        let tool = ChannelListTool::new(reg, "wp:default");
+        // Without a real ctx we just assert the field was stored.
+        assert_eq!(tool.binding_id.as_deref(), Some("wp:default"));
+    }
+
+    #[tokio::test]
+    async fn dynamic_constructor_unset_static_means_resolve_at_call_time() {
+        let reg: SharedChannelRegistry = Arc::new(ChannelRegistry::new());
+        let tool = ChannelListTool::new_dynamic(reg);
+        assert!(tool.binding_id.is_none());
     }
 }

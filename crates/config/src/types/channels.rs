@@ -29,6 +29,45 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Phase 80.9.g — token-bucket rate limit applied to channel
+/// notifications before they enter the bridge. `rps` is the
+/// average refill rate (tokens/second); `burst` is the bucket
+/// capacity (max sustained burst before throttling kicks in).
+/// `0` on either field disables the limit and is equivalent to
+/// the field being absent at the call site.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+pub struct ChannelRateLimit {
+    pub rps: f64,
+    pub burst: u32,
+}
+
+impl ChannelRateLimit {
+    /// `true` when the limit has any meaningful effect. `rps == 0`
+    /// or `burst == 0` collapses to "no rate limit".
+    pub fn is_active(&self) -> bool {
+        self.rps > 0.0 && self.burst > 0
+    }
+
+    pub fn validate(&self, label: &str) -> Result<(), String> {
+        if !self.rps.is_finite() || self.rps < 0.0 {
+            return Err(format!(
+                "{label}.rps must be a non-negative finite float, got {}",
+                self.rps
+            ));
+        }
+        // Soft cap — 1000 rps per server is plenty even for the
+        // chattiest server. Anything above is almost certainly a
+        // typo (rps vs rps_per_minute).
+        if self.rps > 1000.0 {
+            return Err(format!(
+                "{label}.rps {} exceeds soft cap of 1000",
+                self.rps
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct ChannelsConfig {
     /// Master killswitch. `false` (default) makes every channel
@@ -54,6 +93,14 @@ pub struct ChannelsConfig {
     /// conversation context).
     #[serde(default = "default_max_content_chars")]
     pub max_content_chars: u32,
+
+    /// Phase 80.9.g — default rate limit applied to every server
+    /// that doesn't ship its own `rate_limit`. `None` (default)
+    /// keeps the runtime unthrottled per-server. Use this to set
+    /// a global ceiling for the whole channels surface; per-server
+    /// `ApprovedChannel.rate_limit` overrides on top.
+    #[serde(default)]
+    pub default_rate_limit: Option<ChannelRateLimit>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -82,6 +129,12 @@ pub struct ApprovedChannel {
     /// `slack_send`, `chat.postMessage`).
     #[serde(default = "default_outbound_tool_name_opt")]
     pub outbound_tool_name: Option<String>,
+
+    /// Phase 80.9.g — per-server rate limit override.
+    /// `None` (default) inherits `ChannelsConfig.default_rate_limit`;
+    /// `Some(cfg)` replaces it for this server.
+    #[serde(default)]
+    pub rate_limit: Option<ChannelRateLimit>,
 }
 
 /// Default outbound tool name. Hard-coded so the
@@ -113,6 +166,7 @@ impl Default for ChannelsConfig {
             enabled: false,
             approved: Vec::new(),
             max_content_chars: default_max_content_chars(),
+            default_rate_limit: None,
         }
     }
 }
@@ -148,8 +202,25 @@ impl ChannelsConfig {
                     ));
                 }
             }
+            if let Some(rl) = entry.rate_limit.as_ref() {
+                rl.validate(&format!("channels.approved[server={}].rate_limit", entry.server))?;
+            }
+        }
+        if let Some(rl) = self.default_rate_limit.as_ref() {
+            rl.validate("channels.default_rate_limit")?;
         }
         Ok(())
+    }
+
+    /// Phase 80.9.g — resolve the rate limit for `server`. Per-server
+    /// override wins; falls back to `default_rate_limit`; `None`
+    /// when neither is set or both collapse to inactive.
+    pub fn resolve_rate_limit(&self, server: &str) -> Option<ChannelRateLimit> {
+        let from_entry = self
+            .lookup_approved(server)
+            .and_then(|e| e.rate_limit);
+        let chosen = from_entry.or(self.default_rate_limit);
+        chosen.filter(|rl| rl.is_active())
     }
 
     /// Convenience used by gate-5: returns the matching approved
@@ -212,6 +283,7 @@ mod tests {
                 server: String::new(),
                 plugin_source: None,
                 outbound_tool_name: None,
+            rate_limit: None,
             }],
             ..Default::default()
         };
@@ -225,6 +297,7 @@ mod tests {
                 server: "slack".into(),
                 plugin_source: Some(String::new()),
                 outbound_tool_name: None,
+            rate_limit: None,
             }],
             ..Default::default()
         };
@@ -238,6 +311,7 @@ mod tests {
                 server: "slack".into(),
                 plugin_source: None,
                 outbound_tool_name: Some(String::new()),
+            rate_limit: None,
             }],
             ..Default::default()
         };
@@ -250,6 +324,7 @@ mod tests {
             server: "slack".into(),
             plugin_source: None,
             outbound_tool_name: None,
+            rate_limit: None,
         };
         assert_eq!(
             entry.resolved_outbound_tool_name(),
@@ -263,6 +338,7 @@ mod tests {
             server: "slack".into(),
             plugin_source: None,
             outbound_tool_name: Some("chat.postMessage".into()),
+            rate_limit: None,
         };
         assert_eq!(entry.resolved_outbound_tool_name(), "chat.postMessage");
     }
@@ -273,7 +349,8 @@ mod tests {
             approved: vec![ApprovedChannel {
                 server: "slack".into(),
                 plugin_source: Some("slack@anthropic".into()),
-                outbound_tool_name: None,            }],
+                outbound_tool_name: None,
+            rate_limit: None,            }],
             ..Default::default()
         };
         let got = c.lookup_approved("slack").unwrap();
@@ -321,6 +398,119 @@ approved:
         assert_eq!(parsed.approved.len(), 2);
         assert_eq!(parsed.approved[0].plugin_source.as_deref(), Some("slack@anthropic"));
         assert!(parsed.approved[1].plugin_source.is_none());
+        parsed.validate().unwrap();
+    }
+
+    // ---- Phase 80.9.g rate-limit ----
+
+    #[test]
+    fn rate_limit_is_active_only_with_positive_rps_and_burst() {
+        assert!(ChannelRateLimit { rps: 1.0, burst: 5 }.is_active());
+        assert!(!ChannelRateLimit { rps: 0.0, burst: 5 }.is_active());
+        assert!(!ChannelRateLimit { rps: 1.0, burst: 0 }.is_active());
+    }
+
+    #[test]
+    fn rate_limit_validate_rejects_negative_rps() {
+        let rl = ChannelRateLimit {
+            rps: -1.0,
+            burst: 1,
+        };
+        assert!(rl.validate("test").is_err());
+    }
+
+    #[test]
+    fn rate_limit_validate_rejects_excessive_rps() {
+        let rl = ChannelRateLimit {
+            rps: 9999.0,
+            burst: 10,
+        };
+        let err = rl.validate("channels.default_rate_limit").unwrap_err();
+        assert!(err.contains("soft cap"));
+    }
+
+    #[test]
+    fn rate_limit_validate_rejects_nan() {
+        let rl = ChannelRateLimit {
+            rps: f64::NAN,
+            burst: 1,
+        };
+        assert!(rl.validate("test").is_err());
+    }
+
+    #[test]
+    fn resolve_rate_limit_per_server_override_wins() {
+        let c = ChannelsConfig {
+            enabled: true,
+            default_rate_limit: Some(ChannelRateLimit { rps: 1.0, burst: 1 }),
+            approved: vec![ApprovedChannel {
+                server: "slack".into(),
+                plugin_source: None,
+                outbound_tool_name: None,
+                rate_limit: Some(ChannelRateLimit { rps: 5.0, burst: 10 }),
+            }],
+            ..Default::default()
+        };
+        let resolved = c.resolve_rate_limit("slack").unwrap();
+        assert_eq!(resolved.rps, 5.0);
+        assert_eq!(resolved.burst, 10);
+    }
+
+    #[test]
+    fn resolve_rate_limit_falls_back_to_default() {
+        let c = ChannelsConfig {
+            enabled: true,
+            default_rate_limit: Some(ChannelRateLimit { rps: 2.0, burst: 4 }),
+            approved: vec![ApprovedChannel {
+                server: "slack".into(),
+                plugin_source: None,
+                outbound_tool_name: None,
+                rate_limit: None,
+            }],
+            ..Default::default()
+        };
+        let resolved = c.resolve_rate_limit("slack").unwrap();
+        assert_eq!(resolved.rps, 2.0);
+        assert_eq!(resolved.burst, 4);
+    }
+
+    #[test]
+    fn resolve_rate_limit_returns_none_when_inactive() {
+        let c = ChannelsConfig {
+            enabled: true,
+            default_rate_limit: Some(ChannelRateLimit { rps: 0.0, burst: 0 }),
+            approved: vec![ApprovedChannel {
+                server: "slack".into(),
+                plugin_source: None,
+                outbound_tool_name: None,
+                rate_limit: None,
+            }],
+            ..Default::default()
+        };
+        assert!(c.resolve_rate_limit("slack").is_none());
+    }
+
+    #[test]
+    fn yaml_round_trip_with_rate_limits() {
+        let yaml = "\
+enabled: true
+max_content_chars: 8000
+default_rate_limit:
+  rps: 5.0
+  burst: 20
+approved:
+  - server: slack
+    rate_limit:
+      rps: 10.0
+      burst: 50
+";
+        let parsed: ChannelsConfig = serde_yaml::from_str(yaml).unwrap();
+        let dr = parsed.default_rate_limit.unwrap();
+        assert_eq!(dr.rps, 5.0);
+        assert_eq!(dr.burst, 20);
+        let entry_rl = parsed.approved[0].rate_limit.unwrap();
+        assert_eq!(entry_rl.rps, 10.0);
+        assert_eq!(entry_rl.burst, 50);
         parsed.validate().unwrap();
     }
 

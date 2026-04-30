@@ -38,15 +38,32 @@ pub const MAX_CONTENT_BYTES: usize = 64 * 1024;
 #[derive(Clone)]
 pub struct ChannelSendTool {
     registry: SharedChannelRegistry,
-    binding_id: String,
+    /// Phase 80.9.j — `None` => resolve from `ctx.effective` at call time.
+    binding_id: Option<String>,
 }
 
 impl ChannelSendTool {
     pub fn new(registry: SharedChannelRegistry, binding_id: impl Into<String>) -> Self {
         Self {
             registry,
-            binding_id: binding_id.into(),
+            binding_id: Some(binding_id.into()),
         }
+    }
+
+    /// Phase 80.9.j — dynamic-binding constructor.
+    pub fn new_dynamic(registry: SharedChannelRegistry) -> Self {
+        Self {
+            registry,
+            binding_id: None,
+        }
+    }
+
+    fn resolved_binding_id(&self, ctx: &AgentContext) -> String {
+        self.binding_id
+            .clone()
+            .unwrap_or_else(|| {
+                super::channel_list_tool::resolve_binding_id(ctx)
+            })
     }
 
     pub fn tool_def() -> ToolDef {
@@ -106,16 +123,17 @@ impl ToolHandler for ChannelSendTool {
         }
 
         // ---- Gate 2: server is registered ----
+        let binding_id = self.resolved_binding_id(ctx);
         let registered = self
             .registry
-            .get(&self.binding_id, server)
+            .get(&binding_id, server)
             .await
             .ok_or_else(|| {
                 anyhow!(
                     "channel_send: server '{}' is not registered for binding '{}' \
                      (run channel_list to see what's available)",
                     server,
-                    self.binding_id
+                    binding_id
                 )
             })?;
 
