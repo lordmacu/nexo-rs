@@ -227,7 +227,10 @@ impl MiniMaxClient {
         let status = resp.status().as_u16();
         if status == 429 {
             let retry_after_ms = parse_retry_after_ms(resp.headers(), "retry-after", 30_000);
-            return Err(LlmError::RateLimit { retry_after_ms });
+            return Err(LlmError::RateLimit {
+                retry_after_ms,
+                rate_limit_info: None,
+            });
         }
         if status >= 500 {
             let body = resp.text().await.unwrap_or_default();
@@ -276,7 +279,10 @@ impl MiniMaxClient {
         let status = response.status().as_u16();
         if status == 429 {
             let retry_after_ms = parse_retry_after_ms(response.headers(), "retry-after", 30_000);
-            return Err(LlmError::RateLimit { retry_after_ms });
+            return Err(LlmError::RateLimit {
+                retry_after_ms,
+                rate_limit_info: None,
+            });
         }
         if status >= 500 {
             let body = response.text().await.unwrap_or_default();

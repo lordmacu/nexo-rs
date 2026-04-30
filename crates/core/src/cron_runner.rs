@@ -43,7 +43,7 @@
 //!   * `LoggingCronDispatcher` remains as a safe fallback so cron
 //!     fires stay observable under degraded boot wiring.
 
-use crate::cron_schedule::{next_fire_after, CronEntry, CronStore};
+use crate::cron_schedule::{apply_jitter, next_fire_after, CronEntry, CronStore};
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::Duration;
@@ -157,6 +157,7 @@ pub struct CronRunner {
     dispatcher: Arc<dyn CronDispatcher>,
     tick_interval: Duration,
     one_shot_retry: OneShotRetryPolicy,
+    jitter_pct: u32,
 }
 
 impl CronRunner {
@@ -166,6 +167,7 @@ impl CronRunner {
             dispatcher,
             tick_interval: Duration::from_secs(DEFAULT_TICK_INTERVAL_SECS),
             one_shot_retry: OneShotRetryPolicy::default(),
+            jitter_pct: 0,
         }
     }
 
@@ -176,6 +178,11 @@ impl CronRunner {
 
     pub fn with_one_shot_retry_policy(mut self, policy: OneShotRetryPolicy) -> Self {
         self.one_shot_retry = policy;
+        self
+    }
+
+    pub fn with_jitter_pct(mut self, pct: u32) -> Self {
+        self.jitter_pct = pct;
         self
     }
 
@@ -208,6 +215,8 @@ impl CronRunner {
             if entry.recurring {
                 match next_fire_after(&entry.cron_expr, now_unix) {
                     Ok(new_next) => {
+                        let new_next =
+                            apply_jitter(new_next, now_unix, self.jitter_pct);
                         if let Err(e) = self
                             .store
                             .advance_after_fire(&entry.id, new_next, now_unix)
@@ -250,7 +259,8 @@ impl CronRunner {
                     let next_attempt = entry.failure_count.saturating_add(1);
                     if entry.failure_count < self.one_shot_retry.max_retries {
                         let delay = self.one_shot_retry.retry_delay_secs(next_attempt);
-                        let retry_at = now_unix.saturating_add(delay as i64);
+                        let retry_at =
+                            apply_jitter(now_unix.saturating_add(delay as i64), now_unix, self.jitter_pct);
                         match self
                             .store
                             .schedule_one_shot_retry(&entry.id, retry_at, now_unix)

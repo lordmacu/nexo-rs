@@ -33,6 +33,7 @@
 - [SyntheticOutput typed-output (Phase 79.3)](./architecture/synthetic-output.md)
 - [NotebookEdit Jupyter cells (Phase 79.13)](./architecture/notebook-edit.md)
 - [RemoteTrigger outbound publisher (Phase 79.8)](./architecture/remote-trigger.md)
+- [REPL stateful sandbox (Phase 79.12)](./architecture/repl.md)
 - [LSP tool (Phase 79.5)](./architecture/lsp.md)
 - [Cron schedule tools (Phase 79.7)](./architecture/cron-schedule.md)
 - [MCP router tools (Phase 79.11)](./architecture/mcp-router-tools.md)

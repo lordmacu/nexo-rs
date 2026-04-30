@@ -93,6 +93,10 @@ default = []
 # (the YamlPatchApplier + DenylistChecker bridge structs main.rs
 # instantiates per agent).
 config-self-edit = ["nexo-core/config-self-edit", "nexo-setup/config-self-edit"]
+# Phase 79.12 — stateful REPL tool (Python/Node/bash subprocesses
+# that persist across LLM turns). Off by default — code execution
+# is dangerous and must be explicitly opted into per-agent.
+repl-tool = ["nexo-core/repl-tool"]
 
 [build-dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
@@ -211,6 +215,7 @@ nexo-lsp = { version = "0.1.1", path = "crates/lsp" }
 nexo-mcp = { version = "0.1.1", path = "crates/mcp" }
 nexo-memory = { version = "0.1.2", path = "crates/memory" }
 nexo-taskflow = { version = "0.1.1", path = "crates/taskflow" }
+sqlx               = { workspace = true }
 nexo-web-search = { version = "0.1.1", path = "crates/web-search" }
 nexo-pairing = { version = "0.1.2", path = "crates/pairing" }
 nexo-agent-registry    = { version = "0.1.1", path = "crates/agent-registry" }

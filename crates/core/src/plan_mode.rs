@@ -303,6 +303,8 @@ pub const MUTATING_TOOLS: &[&str] = &[
     "start_followup",
     "cancel_followup",
     "RemoteTrigger",
+    // Phase 79.12 — REPL can exec arbitrary code (similar risk to Bash).
+    "Repl",
     // Config self-edit (79.10) — only `apply` op is mutating; the gate
     // resolves the op at call time. `Config` as a name is listed here
     // so an unclassified registration fails the boot assert.
@@ -372,7 +374,7 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
 pub fn classify_tool(tool_name: &str) -> Option<ToolKind> {
     if MUTATING_TOOLS.contains(&tool_name) {
         return Some(match tool_name {
-            "Bash" => ToolKind::Bash,
+            "Bash" | "Repl" => ToolKind::Bash,
             "FileWrite" | "FileEdit" | "NotebookEdit" => ToolKind::FileEdit,
             "delegate_to" | "TeamCreate" | "TeamDelete" | "TeamSendMessage" => ToolKind::Delegate,
             "program_phase" | "dispatch_followup" => ToolKind::Dispatch,

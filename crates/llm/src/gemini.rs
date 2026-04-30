@@ -94,7 +94,10 @@ impl GeminiClient {
         let status = response.status().as_u16();
         if status == 429 {
             let retry_after_ms = parse_retry_after(response.headers()).unwrap_or(30_000);
-            return Err(LlmError::RateLimit { retry_after_ms });
+            return Err(LlmError::RateLimit {
+                retry_after_ms,
+                rate_limit_info: None,
+            });
         }
         if status >= 500 {
             let body = response.text().await.unwrap_or_default();

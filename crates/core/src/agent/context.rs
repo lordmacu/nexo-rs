@@ -88,6 +88,10 @@ pub struct AgentContext {
     /// dispatch tools off — handlers return a friendly error so
     /// the LLM doesn't pretend they worked.
     pub dispatch: Option<Arc<super::dispatch_handlers::DispatchToolContext>>,
+    /// Phase 79.12 — REPL session registry. `Some` when `repl-tool`
+    /// feature is enabled AND the binding config has `repl.enabled`.
+    /// Holds persistent Python/Node/bash subprocesses.
+    pub repl_registry: Option<Arc<super::repl_registry::ReplRegistry>>,
     /// B3 — sender's pairing-trust bit, set by intake after the
     /// pairing gate runs (Phase 26). Defaults to `false` so any
     /// path that forgets to thread it through fails closed under
@@ -192,6 +196,7 @@ impl AgentContext {
             inbox: Arc::new(RwLock::new(Vec::new())),
             proactive_enabled: false,
             binding_role: None,
+            repl_registry: None,
         }
     }
 
@@ -398,6 +403,7 @@ mod plan_mode_tests {
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
             team: nexo_config::types::team::TeamPolicy::default(),
             proactive: Default::default(),
+        repl: Default::default(),
         };
         AgentContext::new(
             "a",

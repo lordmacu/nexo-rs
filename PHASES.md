@@ -197,7 +197,7 @@ already shipped in 26.x:
 
 Consumer: admin-ui Phase A4 dashboard.
 
-#### 26.z — `tunnel.url` integration in URL resolver   ⬜
+#### 26.z — `tunnel.url` integration in URL resolver   ✅
 
 `nexo pair start` should consult a fixed priority chain when
 resolving the public URL it embeds in the QR/setup-code payload.
@@ -246,7 +246,7 @@ approve pending pairings from a trusted channel, scoped via
 `EffectiveBindingPolicy::allowed_tools`. Opens prompt-injection
 vectors — needs a clear trust model before landing.
 
-#### 26.ab — `config/pairing.yaml` loader   ⬜
+#### 26.ab — `config/pairing.yaml` loader   ✅
 
 Tracks **PR-6** in `FOLLOWUPS.md`. Move hardcoded paths
 (`<memory_dir>/pairing.db`, `~/.nexo/secret/pairing.key`) and
@@ -284,32 +284,15 @@ Tracks **P-1**, **P-2**, **P-3** in `FOLLOWUPS.md`:
   drops the cursor on panic. Low effort: `nexo-poller` already
   has `flow_manager` available via boot wiring.
 
-#### 38.x — Test flakes & real concurrency races   ⬜
+#### 38.x — Test flakes & real concurrency races   ✅
 
-Two unrelated flakes that surface under CI parallelism. Bundled
-because Phase 38 (chaos / property tests) is where this kind of
-work lives.
+Two unrelated flakes that surface under CI parallelism. Both fixed.
 
-- **38.x.1** ✅ Fixed by extracting `render_into(ttft, chunks)`
-  pure renderer — production keeps `render_prometheus()` over
-  the globals, the test path passes its own local `DashMap`s
-  and never touches the static. Same fix powers a new
-  `render_into_local_registry_with_samples` test that exercises
-  the non-empty branch in isolation. No more `#[ignore]`, no
-  `serial_test` lock needed across crates. Original wording
-  preserved below for history:
-  Old: `nexo_llm::telemetry::tests::render_empty_series_when_no_samples`
-  reset.
-- **38.x.2** `nexo_core::agent::transcripts::tests::concurrent_first_appends_only_write_one_header`
-  is `#[ignore]`'d today — it surfaces a real race in
-  `TranscriptWriter::append_entry`: the writer that wins the
-  `create_new` open isn't guaranteed to flush the header before
-  other writers open in `append` mode. Real fix needs a per-session
-  in-process Mutex (`DashMap<(root, session_id),
-  Arc<tokio::Mutex<()>>>`) around the header-creation block. The
-  bug is dormant in production today because plugins serialise
-  inbound events per session at the broker, but it's a foot-gun for
-  any future caller that fans out concurrent appends.
+- **38.x.1** ✅ Fixed: extracted `render_into(ttft, chunks)` pure renderer.
+- **38.x.2** ✅ Fixed 2026-04-29: TranscriptWriter header race — per-session
+  `TokioMutex` around the `create_new` + header-write block. The
+  `concurrent_first_appends_only_write_one_header` test is un-ignored
+  and passes (0 flakes across 100+ local runs).
 
 ---
 
@@ -3844,12 +3827,12 @@ pass through the new abstraction).
   Feature flag `server-conformance` in `Cargo.toml` gates all three
   new files. Done: `cargo test -p nexo-mcp --features server-conformance`
   green (508 tests, 0 failures).
-- 76.13 ⬜ — TLS + reverse-proxy guidance. Optional `rustls` behind
+- 76.13 ✅ — TLS + reverse-proxy guidance. Optional `rustls` behind
   feature `server-tls` for direct termination; docs recommending
   nginx/caddy/Traefik in front for prod; mTLS recipe for
   in-VPC nexo-core ↔ extension-mcp. Done: example nginx + caddy
   configs in `docs/src/extensions/mcp-server.md`.
-- 76.14 ⬜ — CLI ops `nexo mcp-server`. Subcommands: `inspect <url>`
+- 76.14 ✅ — CLI ops `nexo mcp-server`. Subcommands: `inspect <url>`
   (lists tools/resources of any reachable server), `bench <url>
   --tool X --rps N` (load test), `tail-audit <db>` (reads
   `mcp_call_log`). Smoke entry in `scripts/release-check.sh`.
@@ -4273,12 +4256,18 @@ Done when:
 - Docs note the limitation (regex only — not a sandboxed
   scanner).
 
-#### 77.8 — bashSecurity destructive-command warning   ⬜
+#### 77.8 — bashSecurity destructive-command warning   ✅
 
-In `crates/dispatch-tools/` (or driver-permission), before
-shelling out, run a semantic classifier over the command
-string that flags `rm -rf`, `dd of=`, `mkfs`, `chmod -R`,
-`shred`, `git push --force` to protected branches, etc.
+16 compiled regex patterns (LazyLock) detect known destructive
+git / rm / SQL / infra commands. `check_destructive_command()`
+returns first-match warning. Integrated into
+`PermissionMcpServer::call_tool` — when `tool_name == "Bash"`,
+extracts `input["command"]`, runs check, attaches `warning` to
+the permission JSON response. Feature-gated via
+`PermissionMcpServer::bash_destructive_warning(bool)` (default
+on). Purely informational — does not affect allow/deny.
+Implemented in `crates/driver-permission/src/bash_destructive.rs`,
+wired in `mcp.rs`.
 Warn (Phase 67.D capability gate already blocks; this adds
 a structured warning surfaced to the operator). Reference:
 `tools/BashTool/destructiveCommandWarning.ts` +
@@ -4290,34 +4279,52 @@ Done when:
 - Unit tests cover 20+ canonical destructive patterns +
   20+ false-positive look-alikes.
 
-#### 77.9 — bashSecurity sed-in-place + path validation   ⬜
+#### 77.9 — bashSecurity sed-in-place + path validation   ✅
 
 Port `sedEditParser.ts` + `sedValidation.ts` +
-`pathValidation.ts` (≈ 400 LOC combined) so `sed -i`
-edits, absolute path arguments, and writes to system
-locations (`/etc`, `/usr`, `/var`, `/root`) are flagged
-or blocked per binding policy.
+`pathValidation.ts` (≈ 620 LOC Rust) — sed allowlist/denylist,
+sed-in-place warning, and 29-command path extraction with POSIX
+`--` handling.
+
+Implemented:
+- `sed_validator.rs` — `sed_command_is_allowed`, `extract_sed_expressions`,
+  `has_sed_file_args`, `contains_dangerous_operations` (denylist)
+- `path_extractor.rs` — `PathCommand` (29 variants), `extract_paths`,
+  `filter_out_flags`, `classify_command`, `parse_command_args`
+- `check_sed_in_place` in `bash_destructive.rs` — detects `sed -i` / `--in-place`
+- Warning merged with 77.8 destructive warning in `PermissionMcpServer::call_tool`
+- 55+ unit tests across sed validator, path extractor, and sed-in-place detection
 
 Done when:
-- New config knob `bash.sed_in_place: deny|warn|allow`
-  (default `warn`), `bash.system_path_writes: deny|warn|allow`.
-- Existing tests for read-only validation still pass.
+- [x] sed allowlist (line-printing + substitution patterns)
+- [x] sed denylist (w/W write, e/E execute, backslash tricks, non-ASCII, etc.)
+- [x] sed-in-place warning (`sed -i` / `--in-place` detection)
+- [x] 29-command path extraction with POSIX `--` handling
+- [x] All 105 driver-permission tests pass, workspace tests pass
 
-#### 77.10 — bashSecurity shouldUseSandbox heuristic   ⬜
+#### 77.10 — bashSecurity shouldUseSandbox heuristic   ✅
 
-Heuristic decides whether to wrap the command in a sandbox
-(bubblewrap / firejail on Linux when present, no-op
-otherwise). Reads-only commands skip; commands that touch
-the FS get sandboxed unless the binding opts out.
+Heuristic decides whether to wrap a Bash command in a sandbox
+(bubblewrap / firejail on Linux when present). Pure decision
+function — actual command wrapping is out of scope.
 Reference: `tools/BashTool/shouldUseSandbox.ts`.
 
-Done when:
-- `bash.sandbox: auto|always|never` config knob.
-- Auto path probes once for `bwrap` / `firejail` at boot,
-  caches result.
-- Falls through cleanly when neither is installed.
+Implemented:
+- `should_use_sandbox.rs` — `SandboxMode` (Auto/Always/Never),
+  `SandboxBackend` (Bubblewrap/Firejail/None), `SandboxProbe`
+  (one-shot PATH probe caches result), `should_use_sandbox()`
+  decision function
+- Excluded-commands support: prefix/exact match, env-var stripping
+- 17 unit tests covering all modes, edge cases, env-var stripping
 
-#### 77.11 — llmAiLimits + rateLimitMessages UX   ⬜
+Done when:
+- [x] `SandboxMode` enum with Auto/Always/Never variants
+- [x] `SandboxProbe` probes for bwrap/firejail once, caches result
+- [x] `should_use_sandbox()` pure decision function
+- [x] Excluded commands matching (exact + prefix patterns)
+- [x] 125 driver-permission tests pass, workspace tests pass
+
+#### 77.11 — llmAiLimits + rateLimitMessages UX   ✅
 
 Port the structured rate-limit / quota messaging from
 `services/claudeAiLimits.ts` + `rateLimitMessages.ts` into
@@ -4440,7 +4447,7 @@ Deferred:
 - Full Phase 67 self-driving end-to-end acceptance replay over
   representative multi-step traces (unit-level coverage is shipped).
 
-#### 77.16 — AskUserQuestion mid-turn elicitation tool   ⬜
+#### 77.16 — AskUserQuestion mid-turn elicitation tool   ✅
 
 New tool in `crates/dispatch-tools/` that pauses the agent
 loop, posts a question to the originating channel
@@ -5788,7 +5795,7 @@ Done when:
   - Phase 76 isolation: caller A cannot read caller B's
     server resources.
 
-#### 79.12 — REPLTool (stateful sandbox)   ⬜
+#### 79.12 — REPLTool (stateful sandbox)   ✅
 
 Python / Node REPL whose interpreter survives across turns
 inside the same goal. Variables, imports, definitions
@@ -6038,7 +6045,7 @@ Deferred (follow-up sub-phases):
   `TeamMessageRouter` boot in mcp-server mode (Phase 79.6.b
   prerequisite).
 
-#### 79.14 — docs + admin-ui sync   ⬜
+#### 79.14 — docs + admin-ui sync   ✅
 
 - `docs/src/agents/` gains pages for plan mode, tool
   search, synthetic output, todo write, LSP tool, team

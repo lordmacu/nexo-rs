@@ -177,4 +177,22 @@ if [[ ${termux_count} -eq 0 ]]; then
     echo "[release-check] WARN: no Termux .deb found (${EXPECTED_TERMUX_DEB_GLOB}); skipping"
 fi
 
+# 6. Phase 76.14 — mcp-server CLI subcommands smoke (host binary only,
+# no server running — validate help output and argument parsing).
+echo "[release-check] mcp-server CLI smoke"
+mcp_help="$("${BINARY}" mcp-server --help 2>&1 || true)"
+if echo "${mcp_help}" | grep -q "inspect"; then
+    echo "[release-check] mcp-server inspect subcommand present"
+else
+    echo "[release-check] FAIL: mcp-server inspect subcommand not found" >&2
+    exit 1
+fi
+# tail-audit without a valid DB should fail with a clear sqlite error, not panic.
+tail_output="$("${BINARY}" mcp-server tail-audit /nonexistent/mcp_audit.db 2>&1 || true)"
+if echo "${tail_output}" | grep -qi "fail\|error\|denied\|no such"; then
+    echo "[release-check] mcp-server tail-audit graceful on missing DB"
+else
+    echo "[release-check] WARN: mcp-server tail-audit unexpected output: ${tail_output}"
+fi
+
 echo "[release-check] PASS — ${#present[@]} tarball(s) + ${termux_count} Termux deb(s) validated"

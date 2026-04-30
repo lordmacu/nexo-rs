@@ -52,10 +52,14 @@ Historical detailed notes that were previously written in Spanish are preserved 
   HTTP mcp-server is the real motivator — track under Phase 18
   coordinator extensions.
 
-**79.M.completion** — MCP `completion/complete` returns empty
-values for every request. Dispatcher recognises the method (no 404),
-but no provider-side completion logic. Useful follow-up: tools with
-declared enums populate a static `values` list automatically.
+~~**79.M.completion** — MCP `completion/complete` returns empty
+values for every request.~~ ✅ 2026-04-30
+`completion/complete` now walks the target tool's `input_schema`,
+extracts the `enum` array from the requested argument, and returns
+populated `values`. `total` + `hasMore` fields added per MCP spec.
+4 unit tests cover enum extraction, missing tool, no-enum arg, and
+missing property. Graceful degradation: any parse failure returns
+empty `[]` rather than an error.
 
 **79.M.followup-autonomous** — `nexo mcp-server` cannot run
 autonomous wait/retry loops by itself.
@@ -1076,14 +1080,14 @@ Open:
     `entered_reason: AutoDestructive { tripped_check }` and
     flips state to On in the same step. Hard dep on Phase
     77.8 destructive-command warning shipping first.
-  - **Pairing parser for `[plan-mode] approve|reject plan_id=…`.**
-    ⬜ Pending. Today the operator must call the
-    `plan_mode_resolve` tool directly from another agent
-    session or CLI; the pairing-side parser that watches
-    inbound chat messages for the canonical strings and
-    forwards to `PlanApprovalRegistry::resolve` is not yet
-    wired. Same shape as OpenClaw's
-    `[trust]` / `[command]` parsers in `pi-tools.before-tool-call.ts`.
+  - **Pairing parser for `[plan-mode] approve|reject plan_id=…`.** ✅ 2026-04-30
+    `parse_plan_mode_approval()` regex-based parser in `plan_mode_tool.rs`
+    extracts `PlanModeApprovalCommand::{Approve|Reject}` from inbound
+    chat messages. Process-shared `PlanApprovalRegistry` injected via
+    `AgentRuntime::with_plan_approval_registry()` into all goal contexts.
+    Broker subscriber in `main.rs` routes parsed `[plan-mode]` commands
+    to `registry.resolve()`. 7 unit tests cover approve/reject/no-reason/
+    whitespace/malformed/extra-text/empty-body.
   - **Notify_origin actual delivery (not just tracing).** ⬜
     Pending. The canonical `[plan-mode]` notify lines emit
     via `tracing::info!` today; production deployments need
@@ -1103,35 +1107,22 @@ Open:
 
 ## Phase 79.2 — ToolSearch follow-ups
 
-  - **LLM provider filtering of deferred schemas.** ⬜ Pending.
-    `ToolRegistry::register_with_meta` records `ToolMeta.deferred`,
-    and `ToolSearch` consumes the meta map for discovery. The four
-    LLM provider clients (`crates/llm/src/{anthropic,minimax,gemini,
-    openai_compat}.rs`) still emit the full schema for every
-    registered tool. Production wiring should:
-    1. Filter deferred tools out of the request body's `tools`
-       array.
-    2. Inject a stub block in the system prompt (e.g.
-       `<available-deferred-tools>` à la
-       `claude-code-leak/src/tools/ToolSearchTool/prompt.ts:30-42`)
-       so the model sees the names + descriptions.
-    3. Keep `ToolSearch` itself non-deferred (else the model has
-       no path to load anything).
-    Direct token savings only kick in once this is wired —
-    measure with `nexo_llm_input_tokens` before/after.
-  - **MCP catalog auto-marks imported tools as deferred.** ⬜
-    Pending. The leak treats every MCP-imported tool as
-    `shouldDefer: true` (`ToolSearchTool/prompt.ts:65-68`). Port:
-    `crates/core/src/agent/mcp_catalog.rs::register_into` calls
-    `register_with_meta(def, handler, ToolMeta::deferred())` for
-    every imported MCP tool, with `search_hint = first 80 chars of
-    description` for keyword ranking.
-  - **Per-turn rate limit on `ToolSearch` itself.** ⬜ Pending.
-    Spec called for max 5 calls / turn so a runaway model can't
-    pathologically explode the surface. Today the tool has no
-    counter — pair with the existing per-tool rate limiter
-    (`tool_rate_limits`) at registration time so operators can
-    tune.
+  - ~~**LLM provider filtering of deferred schemas.**~~ ✅ 2026-04-30
+    `ToolRegistry` gained `to_tool_defs_non_deferred()` and
+    `deferred_tools_summary()`. `llm_behavior.rs::run_turn` now
+    filters deferred tools from `req.tools` and appends a
+    `<deferred-tools>` stub block to `system_blocks` so the model
+    sees names + descriptions without paying for full schemas.
+    `ToolSearch` stays non-deferred (registered via plain
+    `register()`, not `register_with_meta()`).
+  - ~~**MCP catalog auto-marks imported tools as deferred.**~~ ✅ already shipped
+    (verified `mcp_catalog.rs:240-257` — `register_into` calls
+    `registry.set_meta(&prefixed, ToolMeta::deferred())` for every
+    inserted MCP tool).
+  - ~~**Per-turn rate limit on `ToolSearch` itself.**~~ ✅ already shipped
+    `ToolSearchRateLimiter` (sliding window, keyed by agent_id, default
+    5 calls/min) lives in `tool_search_tool.rs:54-88`. Follow-ups entry
+    was stale.
   - **Result format `<functions>` block parity with leak.** ⬜
     Pending. Current MVP returns matches as a JSON object with
     `name`/`description`/`parameters` per match. The leak instead
@@ -1199,10 +1190,14 @@ Open:
     bool` per binding (default `true` only for `coordinator` /
     `proactive` roles). Wire when 77.18 coordinator role
     lands.
-  - **Jitter on firing.** ⬜ Pending. To avoid thundering
-    herd when many goals schedule at the same `every:1h`,
-    apply ±10 % jitter to `next_fire_at`. Lift from the leak's
-    `cronJitterConfig.ts`.
+  - ~~**Jitter on firing.**~~ ✅ 2026-04-30
+    `RuntimeCronConfig.jitter_pct` (default 10). `CronRunner`
+    applies `apply_jitter()` on recurring advance + one-shot retry
+    timestamps. Zero-jitter by default in tests (deterministic).
+    Plumbed from `runtime.yaml` → `CronRunner::with_jitter_pct()`.
+    `apply_jitter()` already existed, ported from
+    `claude-code-leak/src/utils/cronJitterConfig.ts` — wiring was
+    the only missing piece.
   - ~~**`cron_pause` / `cron_resume` tools.**~~ ✅ shipped 2026-04-28.
     The `paused` column is now operator-reachable through tools:
     `cron_pause {id}` sets `paused=true` and `cron_resume {id}`

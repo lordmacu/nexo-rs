@@ -5,10 +5,14 @@
 //! wiring lands in 67.4.
 
 pub mod adapter;
+pub mod bash_destructive;
 pub mod cache;
 pub mod decider;
 pub mod error;
 pub mod mcp;
+pub mod path_extractor;
+pub mod sed_validator;
+pub mod should_use_sandbox;
 #[cfg(unix)]
 pub mod socket;
 pub mod types;

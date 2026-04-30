@@ -649,4 +649,12 @@ IOUs — features that landed in the daemon but have no UI yet.
   - **`EMAIL_INSECURE_TLS` capability badge** pulled from
     `setup::capabilities::INVENTORY` (registered 48.10) — warns
     red when armed in prod.
+- [ ] **REPL stateful sandbox (Phase 79.12)** — per-agent `repl` config toggle
+  (`enabled`, `allowed_runtimes`, `max_sessions`, `timeout_secs`,
+  `max_output_bytes`) with per-binding override. Phase A3 "Brain" tab
+  needs the toggle + runtime allowlist multi-select + session cap editor
+  + per-binding override row in the matrix. Phase A4 dashboard needs
+  live session list per agent (runtime, cwd, spawned_at, output_len)
+  with one-click kill per session. Feature-gated behind `repl-tool` —
+  UI should grey out when the daemon lacks the feature.
 - [ ] (add lines as features land — see auto-memory rule)

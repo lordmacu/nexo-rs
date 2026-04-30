@@ -59,6 +59,7 @@ fn agent_with_inline_google(id: &str) -> AgentConfig {
         config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
         team: nexo_config::types::team::TeamPolicy::default(),
         proactive: Default::default(),
+        repl: Default::default(),
     }
 }
 

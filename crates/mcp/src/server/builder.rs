@@ -135,6 +135,7 @@ struct RegisteredTool {
     name: String,
     description: String,
     schema: Value,
+    #[allow(dead_code)] // surfaces in Phase 79.2 ToolSearch
     deferred: bool,
     #[allow(dead_code)] // surfaces in Phase 79.2 ToolSearch
     search_hint: Option<String>,
@@ -271,9 +272,6 @@ impl crate::server::McpServerHandler for BuiltHandler {
         // Stable order so list_tools is byte-identical between
         // calls — clients that diff schemas appreciate this.
         out.sort_by(|a, b| a.name.cmp(&b.name));
-        // Surface `deferred` flag via the side-channel only when
-        // some tool opts in (most won't).
-        let _has_deferred = self.tools.values().any(|t| t.deferred);
         Ok(out)
     }
 

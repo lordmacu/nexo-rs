@@ -30,11 +30,39 @@ use tokio_util::sync::CancellationToken;
 use crate::errors::McpError;
 use crate::protocol::{is_supported_protocol_version, PROTOCOL_VERSION};
 use crate::server::McpServerHandler;
+use crate::McpTool;
 
 /// Shared, cheaply-clonable JSON-RPC dispatcher. Clones share state
 /// via `Arc` so multiple in-flight requests (HTTP, 76.1) can use the
 /// same handler concurrently without re-instantiating it. The
 /// `Clone` impl is hand-written so it does NOT impose `H: Clone` —
+/// Walk the tool's `input_schema` to find the `enum` values for
+/// `argument_name`, if any. Returns `None` for missing/absent
+/// enums or any parse failure — the MCP spec treats empty as
+/// "no suggestions available."
+fn extract_completion_values(tools: &[McpTool], params: &Value) -> Option<Vec<String>> {
+    let tool_name = params
+        .get("ref")
+        .and_then(|r| r.get("name"))
+        .and_then(|v| v.as_str())?;
+    let arg_name = params
+        .get("argument")
+        .and_then(|a| a.get("name"))
+        .and_then(|v| v.as_str())?;
+    let tool = tools.iter().find(|t| t.name == tool_name)?;
+    let props = tool.input_schema.get("properties")?;
+    let prop = props.get(arg_name)?;
+    let enm = prop.get("enum")?.as_array()?;
+    Some(
+        enm.iter()
+            .filter_map(|v| match v {
+                Value::String(s) => Some(s.clone()),
+                _ => Some(v.to_string()),
+            })
+            .collect(),
+    )
+}
+
 /// only the `Arc` is bumped.
 pub struct Dispatcher<H: McpServerHandler + 'static> {
     inner: Arc<DispatcherInner<H>>,
@@ -387,8 +415,20 @@ impl<H: McpServerHandler + 'static> Dispatcher<H> {
             "shutdown" => DispatchOutcome::ReplyAndShutdown(Value::Null),
             "completion/complete" => {
                 tracing::debug!("mcp completion/complete");
+                let values = match handler.list_tools().await {
+                    Ok(tools) => extract_completion_values(&tools, &params)
+                        .unwrap_or_default(),
+                    Err(e) => {
+                        tracing::debug!(error = %e, "completion/complete list_tools failed");
+                        Vec::new()
+                    }
+                };
                 DispatchOutcome::Reply(serde_json::json!({
-                    "completion": { "values": [] }
+                    "completion": {
+                        "values": values,
+                        "total": values.len(),
+                        "hasMore": false
+                    }
                 }))
             }
             "tools/list" => {
@@ -952,5 +992,73 @@ mod tests {
     fn extract_auth_token_missing() {
         let v = serde_json::json!({});
         assert_eq!(extract_auth_token(&v), None);
+    }
+
+    #[test]
+    fn completion_extracts_enum_values() {
+        let tools = vec![McpTool {
+            name: "my_tool".into(),
+            description: Some("desc".into()),
+            input_schema: serde_json::json!({
+                "properties": {
+                    "op": { "enum": ["read", "write", "delete"] }
+                }
+            }),
+            output_schema: None,
+        }];
+        let params = serde_json::json!({
+            "ref": { "type": "ref/tool", "name": "my_tool" },
+            "argument": { "name": "op" }
+        });
+        let values = extract_completion_values(&tools, &params);
+        assert_eq!(values, Some(vec!["read".into(), "write".into(), "delete".into()]));
+    }
+
+    #[test]
+    fn completion_returns_none_for_unknown_tool() {
+        let tools: Vec<McpTool> = vec![];
+        let params = serde_json::json!({
+            "ref": { "type": "ref/tool", "name": "missing" },
+            "argument": { "name": "x" }
+        });
+        assert_eq!(extract_completion_values(&tools, &params), None);
+    }
+
+    #[test]
+    fn completion_returns_none_when_no_enum() {
+        let tools = vec![McpTool {
+            name: "t".into(),
+            description: None,
+            input_schema: serde_json::json!({
+                "properties": {
+                    "text": { "type": "string" }
+                }
+            }),
+            output_schema: None,
+        }];
+        let params = serde_json::json!({
+            "ref": { "type": "ref/tool", "name": "t" },
+            "argument": { "name": "text" }
+        });
+        assert_eq!(extract_completion_values(&tools, &params), None);
+    }
+
+    #[test]
+    fn completion_returns_none_for_missing_arg() {
+        let tools = vec![McpTool {
+            name: "t".into(),
+            description: None,
+            input_schema: serde_json::json!({
+                "properties": {
+                    "op": { "enum": ["a"] }
+                }
+            }),
+            output_schema: None,
+        }];
+        let params = serde_json::json!({
+            "ref": { "type": "ref/tool", "name": "t" },
+            "argument": { "name": "missing_prop" }
+        });
+        assert_eq!(extract_completion_values(&tools, &params), None);
     }
 }

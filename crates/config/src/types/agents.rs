@@ -245,6 +245,11 @@ pub struct AgentConfig {
     /// interval via `Sleep { duration_ms }`.
     #[serde(default)]
     pub proactive: crate::types::proactive::ProactiveConfig,
+    /// Phase 79.12 — stateful REPL tool config. When `enabled: true` the
+    /// `Repl` tool is registered for this agent, allowing persistent
+    /// Python/Node/bash subprocesses across turns.
+    #[serde(default)]
+    pub repl: crate::types::repl::ReplConfig,
 }
 
 /// Tri-state dispatch capability. The same enum is used for the
@@ -426,6 +431,11 @@ pub struct InboundBinding {
     /// struct for goals spawned from this binding.
     #[serde(default)]
     pub proactive: Option<crate::types::proactive::ProactiveConfig>,
+    /// Phase 79.12 — per-binding REPL config override. `None` inherits
+    /// the agent-level `repl` block. When present, replaces the whole
+    /// struct for goals spawned from this binding.
+    #[serde(default)]
+    pub repl: Option<crate::types::repl::ReplConfig>,
     /// Phase 79.8 — per-binding override of `agents.remote_triggers`.
     /// `None` (default) inherits the agent-level allowlist; `Some(vec)`
     /// replaces it entirely for this binding.

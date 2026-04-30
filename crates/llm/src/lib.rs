@@ -8,6 +8,7 @@ pub mod minimax_auth;
 pub mod openai_compat;
 pub mod prompt_block;
 pub mod quota_tracker;
+pub mod rate_limit_info;
 pub mod rate_limiter;
 pub mod registry;
 pub mod retry;
@@ -25,6 +26,11 @@ pub use minimax::MiniMaxClient;
 pub use openai_compat::OpenAiClient;
 pub use prompt_block::{flatten_blocks, CachePolicy, PromptBlock};
 pub use quota_tracker::QuotaTracker;
+pub use rate_limit_info::{
+    extract_rate_limit_info, format_rate_limit_message, format_using_overage,
+    LlmProvider as RateLimitProvider, QuotaStatus, RateLimitInfo, RateLimitMessage,
+    RateLimitSeverity, RateLimitWindow,
+};
 pub use rate_limiter::RateLimiter;
 pub use registry::{LlmProviderFactory, LlmRegistry, MiniMaxFactory, OpenAiFactory};
 pub use retry::{parse_retry_after_ms, with_retry, LlmError};

@@ -115,6 +115,12 @@ pub struct AgentRuntime {
     /// when the in-process orchestrator + agent-registry are
     /// available.
     dispatch_ctx: Option<Arc<super::dispatch_handlers::DispatchToolContext>>,
+    /// Phase 79.1 — process-shared plan-mode approval registry.
+    /// Defaults to a fresh instance per runtime so tests stay
+    /// isolated; main.rs overrides with a single shared instance
+    /// so the broker subscriber can resolve pending approvals from
+    /// inbound `[plan-mode]` chat messages.
+    plan_approval_registry: Arc<super::plan_mode_tool::PlanApprovalRegistry>,
     /// Legacy cache — still owned by the runtime for back-compat with
     /// any test construction path. Hot-reload reads the per-snapshot
     /// `tool_cache` instead; see [`RuntimeSnapshot::tool_cache`].
@@ -185,6 +191,7 @@ impl AgentRuntime {
             pairing_gate: None,
             pairing_adapters: nexo_pairing::PairingAdapterRegistry::new(),
             dispatch_ctx: None,
+            plan_approval_registry: Arc::new(super::plan_mode_tool::PlanApprovalRegistry::default()),
             tool_cache: Arc::new(super::tool_registry_cache::ToolRegistryCache::new()),
             reload_tx,
             reload_rx: Arc::new(Mutex::new(Some(reload_rx))),
@@ -247,6 +254,17 @@ impl AgentRuntime {
         ctx: Arc<super::dispatch_handlers::DispatchToolContext>,
     ) -> Self {
         self.dispatch_ctx = Some(ctx);
+        self
+    }
+    /// Phase 79.1 — install a process-shared plan-mode approval
+    /// registry. Production wiring creates one per process and passes
+    /// it here so the broker subscriber can resolve pending approvals
+    /// from inbound `[plan-mode]` chat messages.
+    pub fn with_plan_approval_registry(
+        mut self,
+        registry: Arc<super::plan_mode_tool::PlanApprovalRegistry>,
+    ) -> Self {
+        self.plan_approval_registry = registry;
         self
     }
     pub fn with_peers(mut self, peers: Arc<PeerDirectory>) -> Self {
@@ -347,6 +365,7 @@ impl AgentRuntime {
         let snapshot_ref = Arc::clone(&self.snapshot);
         let tool_base = self.tool_base.clone();
         let _tool_cache = Arc::clone(&self.tool_cache);
+        let plan_approval_registry = Arc::clone(&self.plan_approval_registry);
         let shutdown = self.shutdown.clone();
         let tasks = Arc::clone(&self.tasks);
         let shutdown2 = shutdown.clone();
@@ -385,6 +404,7 @@ impl AgentRuntime {
                 ctx = ctx.with_dispatch(Arc::clone(dc));
             }
             ctx = ctx.with_router(Arc::clone(&router));
+            ctx = ctx.with_plan_approval_registry(plan_approval_registry.clone());
             ctx = ctx.with_context_optimization(snapshot.load().context_optimization);
             loop {
                 tokio::select! {
@@ -739,6 +759,7 @@ impl AgentRuntime {
                                 Arc::clone(&sessions),
                             );
                             ctx = ctx.with_effective(Arc::clone(&effective_for_session));
+                            ctx = ctx.with_plan_approval_registry(plan_approval_registry.clone());
                             ctx = ctx.with_context_optimization(snap.context_optimization);
                             if let Some(tools) = effective_tools_for_session.clone() {
                                 ctx = ctx.with_effective_tools(tools);
