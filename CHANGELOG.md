@@ -68,6 +68,28 @@ and the project adheres to [Semantic Versioning](https://semver.org)
   attribution block (ADR 0009).
 - `README.md` rewritten with badges and deep links into the
   published documentation.
+- **C2** — Hot-reload now picks up per-binding policy overrides for
+  `lsp.languages` / `lsp.idle_teardown_secs`, `team.max_*` /
+  `team.worktree_per_member`, `repl.allowed_runtimes`, and the
+  C1-added inheritance for the four resolved fields. Tool handlers
+  (`LspTool`, `ReplTool`, `TeamCreateTool`/`TeamDeleteTool`/
+  `TeamSendMessageTool`/`TeamListTool`/`TeamStatusTool`) read
+  policy from `ctx.effective_policy().<x>` per call instead of
+  capturing it at `Tool::new`. Reload semantics: a snapshot swap
+  via `ConfigReloadCoordinator` is observed on the very next
+  intake event without restart. **Boolean enable flips** (e.g.
+  `lsp.enabled: false → true`) still require restart — see
+  `docs/src/ops/hot-reload.md::What's reloaded` for the full
+  matrix. Subsystem actor lifecycle (LspManager child processes,
+  ReplRegistry subprocess pool, TeamMessageRouter broker subs)
+  is unchanged across reload, matching the prior-art pattern
+  from claude-code-leak's MCP `useManageMCPConnections` invalidate-
+  and-refetch. Implementation is 100% Rust idiomatic
+  (`Arc<EffectiveBindingPolicy>` lookups, `ArcSwap<RuntimeSnapshot>`
+  swap, `From` trait adapters); the TS references guided the
+  pattern, not the code. Two follow-ups tracked in `FOLLOWUPS.md`:
+  H-3.b (M5 — `cron_tool_bindings` registry captured at boot) and
+  H-3.c (M11 — full ConfigTool config-pull at handler entry).
 - **C1** — `EffectiveBindingPolicy` now resolves four additional
   per-binding overrides (`lsp`, `team`, `config_tool`, `repl`) using
   the same replace-whole strategy as `proactive` / `remote_triggers`.
