@@ -9,6 +9,7 @@ pub mod advisor;
 pub mod auto_approve;
 pub mod bash_destructive;
 pub mod cache;
+pub mod channel_relay;
 
 pub use auto_approve::{
     is_curated_auto_approve, AutoApproveDecider, META_AUTO_APPROVE, META_WORKSPACE_PATH,

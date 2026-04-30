@@ -7339,14 +7339,43 @@ outbound-tool resolution + override validation). **Workspace
 counts**: 421 nexo-mcp, 771 nexo-core, 13 nexo-config
 channels.
 
-**main.rs hookup deferred** — every primitive is
-constructable today; main.rs needs to instantiate
-`ChannelBootContext::in_memory(broker)`, build a sink that
-publishes inbound on `agent.intake.<binding>`, call
-`spawn_bridge(sink, cancel)` once, then loop over
-`enumerate_targets(cfg, binding.allowed_channel_servers)`
-spawning a `ChannelInboundLoop` per server after the
-matching MCP handshake completes.
+**main.rs hookup ✅ MVP** — closed the seam from "MCP
+server emits notification" to "agent receives `<channel>`
+user message" end-to-end. `src/main.rs` now wires:
+
+- `ChannelBootContext::in_memory(broker)` once at boot
+  right after the broker is ready. Holds the shared
+  `ChannelRegistry` + `InMemorySessionRegistry` +
+  `BrokerChannelDispatcher`.
+- `IntakeChannelSink` (concrete impl of
+  `nexo_mcp::channel_bridge::ChannelInboundSink`):
+  serialises each `ChannelInboundEvent` into a JSON
+  envelope and publishes on `agent.channel.inbound` so
+  the existing intake task picks it up under the same
+  pairing / dispatch / rate-limit gates as every other
+  channel inbound. Provider-agnostic.
+- `channel_boot.spawn_bridge(sink, channel_shutdown)` —
+  one consumer task + one GC ticker per process. Both
+  stop cleanly on the shared cancellation token. Bridge
+  spawn failures warn-log but never block the daemon.
+- Per-agent: when `agent_cfg.channels` is `Some(cfg)` AND
+  any binding has a non-empty
+  `allowed_channel_servers`, register `channel_list` +
+  `channel_send` + `channel_status` tools agent-scoped
+  (per-binding granularity is the 80.9.j follow-up).
+- Per-agent post-MCP: walk `rt.clients()` and spawn a
+  `ChannelInboundLoop` per `(server, binding=agent_id)`
+  when the union of binding allowlists contains the
+  server. The loop reads
+  `client.capabilities().experimental` to detect the
+  `nexo/channel` capability flags, runs the one-shot
+  gate, and either registers + consumes
+  `ChannelMessage` events or surfaces a typed
+  `Skipped { kind, reason }` log.
+- Smoke tested locally: `nexo channel list --json` and
+  `nexo channel doctor` work cleanly against the
+  current channels-off YAML; no panics, no missing
+  fields, daemon boot path compiles workspace-wide.
 
 - **80.9.e** ✅ MVP — operator CLI: `nexo channel list/doctor/test`.
   Three new `Mode` variants (`ChannelList`, `ChannelDoctor`,

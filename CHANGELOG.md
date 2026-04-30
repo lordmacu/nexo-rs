@@ -101,6 +101,46 @@ and the project adheres to [Semantic Versioning](https://semver.org)
   - 8 new tests verde (5 loop + 1 broker dispatcher + 2
     events).
 
+- **Phase 80.9 main.rs hookup — channels live end-to-end.**
+  Closes the seam from "MCP server emits notification" to
+  "agent receives `<channel>` user message". The four
+  pieces shipped:
+  - `ChannelBootContext::in_memory(broker)` instantiated
+    once at boot right after the broker is ready. Holds the
+    shared `ChannelRegistry` + `InMemorySessionRegistry` +
+    `BrokerChannelDispatcher`.
+  - `IntakeChannelSink` impl of
+    `nexo_mcp::channel_bridge::ChannelInboundSink`: serialises
+    each `ChannelInboundEvent` into a JSON envelope and
+    publishes on `agent.channel.inbound` so the existing
+    intake task picks it up under the same pairing /
+    dispatch / rate-limit gates as every other channel
+    inbound (WhatsApp, Telegram, email).
+  - `channel_boot.spawn_bridge(sink, channel_shutdown)`
+    spawns one consumer + one GC ticker per process. Both
+    stop cleanly on the shared cancellation token. Boot
+    failures warn-log but never block the daemon.
+  - Per-agent: when `agent_cfg.channels` is `Some(cfg)` AND
+    any binding has a non-empty
+    `allowed_channel_servers`, register `channel_list` +
+    `channel_send` + `channel_status` tools agent-scoped
+    (per-binding granularity is the 80.9.j follow-up).
+  - Per-agent post-MCP: walk `rt.clients()` and spawn a
+    `ChannelInboundLoop` per `(server, binding=agent_id)`
+    when the union of binding allowlists contains the
+    server. The loop reads
+    `client.capabilities().experimental` to detect the
+    `nexo/channel` (and optional
+    `nexo/channel/permission`) capability flags, runs the
+    one-shot gate, and either registers + consumes
+    `ChannelMessage` events or surfaces a typed
+    `Skipped { kind, reason }` log.
+  - CLI smoke verde: `nexo channel list --json` enumerates
+    every agent (channels off by default surfaces clean
+    output); `nexo channel doctor` reports
+    "(no channel-using bindings found)" against an empty
+    config without panicking.
+
 - **Phase 80.9.f — Channel hot-reload re-evaluation.**
   YAML edits flow into the registry on the next Phase 18
   reload — operators don't have to restart the daemon to

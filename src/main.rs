@@ -1195,6 +1195,39 @@ async fn main() -> Result<()> {
         .context("failed to initialize broker")?;
     tracing::info!(kind = ?cfg.broker.broker.kind, url = %cfg.broker.broker.url, "broker ready");
 
+    // Phase 80.9 — channel boot context. Holds the shared
+    // `ChannelRegistry` + `SessionRegistry` + `BrokerChannelDispatcher`
+    // so the per-(binding,server) inbound loops + the bridge spawn
+    // below all see the same handles. Persistent SessionRegistry
+    // (Phase 80.9.d.b) is opted into when an operator sets
+    // `agents.<id>.channels.session_store_path` — for now we ship
+    // the in-memory default so threading is preserved within a
+    // process. Hot-reload re-evaluation hooks against this single
+    // registry instance.
+    let channel_boot = nexo_mcp::channel_boot::ChannelBootContext::in_memory(broker.clone());
+    let channel_shutdown = tokio_util::sync::CancellationToken::new();
+    {
+        // Spawn one bridge per process. Sink publishes
+        // `ChannelInboundEvent` on a stable subject the agent
+        // runtime intake subscribes to (`agent.channel.inbound`)
+        // — keeps channel inbound on the same lane as every other
+        // user-message intake so pairing / dispatch policy / rate
+        // limit gates all apply uniformly.
+        let sink: std::sync::Arc<dyn nexo_mcp::channel_bridge::ChannelInboundSink> =
+            std::sync::Arc::new(IntakeChannelSink::new(broker.clone()));
+        match channel_boot
+            .spawn_bridge(sink, channel_shutdown.clone())
+            .await
+        {
+            Ok(_handle) => {
+                tracing::info!("channel bridge spawned");
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "channel bridge spawn failed — channels disabled this run");
+            }
+        }
+    }
+
     // Phase 77.7 — secret guard for scanning memory writes.
     // C5 — wired via `memory.secret_guard` YAML key. Default secure
     // config applies when the key is omitted; explicit override
@@ -2514,6 +2547,51 @@ async fn main() -> Result<()> {
 
         let tools = Arc::new(ToolRegistry::new());
         tools.register(DelegationTool::tool_def(), DelegationTool);
+        // Phase 80.9 — channel tools when ANY of this agent's
+        // bindings has `allowed_channel_servers` non-empty AND
+        // the operator's `agents.channels` block is configured.
+        // Tools key against `agent_cfg.id` so the registry view
+        // is agent-scoped — multi-binding granularity is the
+        // 80.9.j follow-up. `channel_list` + `channel_status`
+        // are read-only; `channel_send` is gated by the per-tool
+        // approval flow + the channel registry's
+        // `RegisteredChannel.outbound_tool_name` lookup.
+        let channels_in_play = agent_cfg.channels.is_some()
+            && agent_cfg
+                .inbound_bindings
+                .iter()
+                .any(|b| !b.allowed_channel_servers.is_empty());
+        if channels_in_play {
+            nexo_core::agent::channel_list_tool::register_channel_list_tool(
+                &tools,
+                channel_boot.registry.clone(),
+                agent_cfg.id.clone(),
+            );
+            // channel_send + channel_status share the same
+            // signature as `register_channel_list_tool`.
+            {
+                use nexo_core::agent::channel_send_tool::ChannelSendTool;
+                let def = ChannelSendTool::tool_def();
+                let handler = std::sync::Arc::new(ChannelSendTool::new(
+                    channel_boot.registry.clone(),
+                    agent_cfg.id.clone(),
+                ));
+                tools.register_arc(def, handler);
+            }
+            {
+                use nexo_core::agent::channel_status_tool::ChannelStatusTool;
+                let def = ChannelStatusTool::tool_def();
+                let handler = std::sync::Arc::new(ChannelStatusTool::new(
+                    channel_boot.registry.clone(),
+                    agent_cfg.id.clone(),
+                ));
+                tools.register_arc(def, handler);
+            }
+            tracing::info!(
+                agent = %agent_cfg.id,
+                "registered channel_* tools (channels surface in play)"
+            );
+        }
         // Phase 67 — register the project-tracker / dispatch tool
         // surface (program_phase, list_agents, agent_status, …).
         // The handlers return a friendly error when
@@ -3404,6 +3482,79 @@ async fn main() -> Result<()> {
                 mcp_overrides = mcp_overrides.len(),
                 "mcp tools registered"
             );
+
+            // Phase 80.9 main.rs hookup — spawn one
+            // ChannelInboundLoop per `(agent, server)` whose
+            // capability is declared AND any binding lists it in
+            // `allowed_channel_servers`. binding_id collapses to
+            // the agent_id for the slim MVP (per-binding
+            // granularity = follow-up). The loop runs the gate
+            // once at spawn, registers on success, and consumes
+            // every `ChannelMessage` event on the client's
+            // broadcast for the rest of the session.
+            if let Some(channels_cfg) = agent_cfg.channels.as_ref() {
+                if channels_cfg.enabled {
+                    let union_allowlist: std::collections::BTreeSet<String> = agent_cfg
+                        .inbound_bindings
+                        .iter()
+                        .flat_map(|b| b.allowed_channel_servers.iter().cloned())
+                        .collect();
+                    let allow_vec: Vec<String> = union_allowlist.iter().cloned().collect();
+                    let cfg_arc = std::sync::Arc::new(channels_cfg.clone());
+                    let allow_arc = std::sync::Arc::new(allow_vec);
+                    for (server_name, client) in rt.clients() {
+                        if !union_allowlist.contains(&server_name) {
+                            continue;
+                        }
+                        let cap_declared =
+                            nexo_mcp::channel::has_channel_capability(Some(
+                                &client.capabilities().experimental,
+                            ));
+                        let perm_cap = nexo_mcp::channel::has_channel_permission_capability(
+                            Some(&client.capabilities().experimental),
+                        );
+                        let plugin_source = channels_cfg
+                            .lookup_approved(&server_name)
+                            .and_then(|e| e.plugin_source.clone());
+                        let loop_cfg = nexo_mcp::channel_boot::build_inbound_loop_config(
+                            &channel_boot,
+                            server_name.clone(),
+                            agent_cfg.id.clone(),
+                            plugin_source,
+                            cfg_arc.clone(),
+                            allow_arc.clone(),
+                            cap_declared,
+                            perm_cap,
+                        );
+                        let handle = nexo_mcp::channel::ChannelInboundLoop::new(loop_cfg)
+                            .spawn_against_client(
+                                client.as_ref(),
+                                channel_shutdown.clone(),
+                            );
+                        match handle {
+                            nexo_mcp::channel::ChannelInboundLoopHandle::Running { .. } => {
+                                tracing::info!(
+                                    agent = %agent_cfg.id,
+                                    server = %server_name,
+                                    "channel inbound loop running"
+                                );
+                            }
+                            nexo_mcp::channel::ChannelInboundLoopHandle::Skipped {
+                                kind,
+                                reason,
+                            } => {
+                                tracing::info!(
+                                    agent = %agent_cfg.id,
+                                    server = %server_name,
+                                    kind = kind.as_str(),
+                                    reason = %reason,
+                                    "channel inbound gate skip"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
 
             // Phase 12.8 — hot-reload: when a server pushes
             // `notifications/tools/list_changed`, drop its prefix from the
@@ -11132,6 +11283,68 @@ async fn run_agent_discover(
 
 /// Load AppConfig from `--config=<path>` if provided, otherwise
 /// fall back to the global `config_dir` the CLI was invoked with.
+/// Phase 80.9 main.rs hookup — sink that forwards a
+/// [`nexo_mcp::channel_bridge::ChannelInboundEvent`] onto the
+/// existing intake lane. We publish on the broker subject
+/// `agent.channel.inbound` carrying a JSON envelope; the
+/// runtime's intake task subscribes there and re-enters the
+/// pairing / dispatch / rate-limit gates the same way it does
+/// for any other inbound channel (WhatsApp, Telegram, email).
+///
+/// Provider-agnostic: this sink doesn't know how to talk to any
+/// specific channel platform — it only converts the bridge's
+/// typed event into a broker message, leaving routing decisions
+/// to the existing intake layer.
+struct IntakeChannelSink {
+    broker: AnyBroker,
+}
+
+impl IntakeChannelSink {
+    pub fn new(broker: AnyBroker) -> Self {
+        Self { broker }
+    }
+}
+
+#[async_trait::async_trait]
+impl nexo_mcp::channel_bridge::ChannelInboundSink for IntakeChannelSink {
+    async fn deliver(
+        &self,
+        event: nexo_mcp::channel_bridge::ChannelInboundEvent,
+    ) -> Result<(), nexo_mcp::channel_bridge::SinkError> {
+        // Stable subject — `agent.channel.inbound`. The intake
+        // task can also subscribe to a wildcard
+        // `mcp.channel.>` directly, but routing through the
+        // intake subject keeps every gate uniform across channel
+        // sources.
+        let topic = "agent.channel.inbound";
+        let payload = match serde_json::to_value(&serde_json::json!({
+            "binding_id": event.binding_id,
+            "server_name": event.server_name,
+            "session_id": event.session_id,
+            "session_key": event.session_key,
+            "content": event.content,
+            "meta": event.meta,
+            "rendered": event.rendered,
+            "envelope_id": event.envelope_id,
+            "sent_at_ms": event.sent_at_ms,
+        })) {
+            Ok(v) => v,
+            Err(e) => {
+                return Err(nexo_mcp::channel_bridge::SinkError::Other(format!(
+                    "serialise: {e}"
+                )));
+            }
+        };
+        let evt =
+            nexo_broker::Event::new(topic.to_string(), "mcp.channel.intake".to_string(), payload);
+        nexo_broker::handle::BrokerHandle::publish(&self.broker, topic, evt)
+            .await
+            .map_err(|e| {
+                nexo_mcp::channel_bridge::SinkError::Other(format!("broker publish: {e}"))
+            })
+    }
+}
+
 fn load_app_config_for_channels(
     config_override: Option<&std::path::Path>,
     config_dir: &std::path::Path,
