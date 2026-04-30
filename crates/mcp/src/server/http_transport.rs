@@ -92,6 +92,36 @@ impl HttpServerHandle {
         });
         self.sessions.notify_resource_updated(uri, body)
     }
+
+    /// Phase M1.b — produce a clone-able lightweight notifier that
+    /// can be moved into a tokio task (e.g. SIGHUP reload handler)
+    /// without owning the `JoinHandle`. The notifier shares the
+    /// session manager `Arc` with the running server, so a
+    /// `notify_tools_list_changed()` call goes to every live SSE
+    /// consumer.
+    pub fn notifier(&self) -> HttpNotifyHandle {
+        HttpNotifyHandle {
+            sessions: Arc::clone(&self.sessions),
+        }
+    }
+}
+
+/// Phase M1.b — clone-able lightweight notifier. Detached from the
+/// `JoinHandle`, safe to move into long-lived background tasks.
+#[derive(Clone)]
+pub struct HttpNotifyHandle {
+    sessions: Arc<HttpSessionManager>,
+}
+
+impl HttpNotifyHandle {
+    /// Mirror of `HttpServerHandle::notify_tools_list_changed`.
+    pub fn notify_tools_list_changed(&self) -> usize {
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/tools/list_changed",
+        });
+        self.sessions.broadcast_to_all(body)
+    }
 }
 
 /// Shared state inside axum handlers. Cheap to clone (everything

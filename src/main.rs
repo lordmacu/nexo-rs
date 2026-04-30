@@ -94,6 +94,22 @@ enum Mode {
         db: Option<PathBuf>,
         json: bool,
     },
+    /// Phase 80.16 — `nexo agent attach <goal_id>`. Read-only viewer
+    /// of a goal's latest persisted snapshot. Live event streaming
+    /// via NATS lands in 80.16.b.
+    AgentAttach {
+        goal_id: String,
+        db: Option<PathBuf>,
+        json: bool,
+    },
+    /// Phase 80.16 — `nexo agent discover [--include-interactive]`.
+    /// List Running goals filtered to BG / Daemon / DaemonWorker
+    /// kinds. With `--include-interactive`, include all kinds.
+    AgentDiscover {
+        include_interactive: bool,
+        db: Option<PathBuf>,
+        json: bool,
+    },
     FlowList {
         json: bool,
     },
@@ -789,6 +805,20 @@ async fn main() -> Result<()> {
             json,
         } => {
             return run_agent_ps(kind.as_deref(), all, db.as_deref(), json).await;
+        }
+        Mode::AgentAttach {
+            goal_id,
+            db,
+            json,
+        } => {
+            return run_agent_attach(&goal_id, db.as_deref(), json).await;
+        }
+        Mode::AgentDiscover {
+            include_interactive,
+            db,
+            json,
+        } => {
+            return run_agent_discover(include_interactive, db.as_deref(), json).await;
         }
         Mode::FlowHelp => return run_flow_help(),
         Mode::FlowList { json } => return run_flow_list(json).await,
@@ -6040,6 +6070,23 @@ fn parse_args() -> CliArgs {
                 json: has_json_flag,
             }
         }
+        // Phase 80.16 — `nexo agent attach <goal_id> [--db=...] [--json]`.
+        [cmd, sub, goal_id] if cmd == "agent" && sub == "attach" => {
+            Mode::AgentAttach {
+                goal_id: goal_id.clone(),
+                db: parse_kv_flag(&positional, "--db").map(PathBuf::from),
+                json: has_json_flag,
+            }
+        }
+        // Phase 80.16 — `nexo agent discover [--include-interactive]
+        // [--db=...] [--json]`.
+        [cmd, sub] if cmd == "agent" && sub == "discover" => Mode::AgentDiscover {
+            include_interactive: positional
+                .iter()
+                .any(|a| a == "--include-interactive"),
+            db: parse_kv_flag(&positional, "--db").map(PathBuf::from),
+            json: has_json_flag,
+        },
         [cmd] if cmd == "flow" => Mode::FlowHelp,
         [cmd, sub] if cmd == "flow" && sub == "list" => Mode::FlowList {
             json: has_json_flag,
@@ -9011,6 +9058,41 @@ fn mcp_server_has_auth(cfg: &nexo_config::types::mcp_server::McpServerConfig) ->
     }
 }
 
+/// Phase M1.b — re-read `mcp_server.expose_tools` from the YAML
+/// directory and compute the new allowlist set.
+///
+/// Returns:
+/// - `Ok(None)` when the allowlist is empty (no filter; everything
+///   non-proxy is exposed) — matches `ToolRegistryBridge`'s
+///   `swap_allowlist(None)` semantics.
+/// - `Ok(Some(set))` when the operator listed explicit tool names.
+/// - `Err(e)` on parse / IO failure. Caller absorbs the error and
+///   keeps the previous (last-known-good) allowlist active.
+///
+/// Provider-agnostic: protocol-MCP, no LLM-provider assumption.
+///
+/// IRROMPIBLE refs:
+/// - claude-code-leak `services/mcp/useManageMCPConnections.ts:618-665`
+///   — consumer-side: clients only register the
+///   `tools/list_changed` notification listener when the server
+///   advertises `capabilities.tools.listChanged: true` (already
+///   wired in M1.a `with_list_changed_capability`).
+/// - claude-code-leak `:721-723` — multiple notifications safe;
+///   client-side debounce within the existing 200 ms session
+///   window.
+/// - `research/`: no relevant prior art (OpenClaw is channel-side,
+///   no MCP server hot-reload concept).
+async fn reload_expose_tools(
+    config_dir: &std::path::Path,
+) -> Result<Option<std::collections::HashSet<String>>> {
+    let cfg = nexo_config::AppConfig::load_for_mcp_server(config_dir)?;
+    let server_cfg = cfg.mcp_server.unwrap_or_default();
+    if server_cfg.expose_tools.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(server_cfg.expose_tools.iter().cloned().collect()))
+}
+
 async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
     use nexo_core::agent::self_report::WhoAmITool;
     use nexo_core::agent::tool_registry::ToolRegistry;
@@ -9866,6 +9948,75 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
         None
     };
 
+    // Phase M1.b — SIGHUP reload trigger. Operator runs
+    // `kill -HUP $(pidof nexo)` after editing
+    // `mcp_server.expose_tools` in YAML; the handler re-reads the
+    // allowlist, atomically swaps it into the bridge (visible to
+    // both stdio + HTTP clones — they share the inner ArcSwap from
+    // M1.a) and emits `notifications/tools/list_changed` so
+    // connected HTTP/SSE clients refresh without reconnect. SIGHUP
+    // chosen over a file watcher to ship MVP without a new dep —
+    // file-watcher / `ConfigReloadCoordinator` integration deferred
+    // to M1.b.b.
+    //
+    // The bridge is `Clone` (M1.a `with_list_changed_capability` +
+    // ArcSwap-shared allowlist); we clone here BEFORE
+    // `run_stdio_server_with_auth` consumes the original.
+    // `HttpNotifyHandle` is the lightweight `Clone` notifier from
+    // `nexo-mcp`'s M1.b addition — detached from the JoinHandle so
+    // safe to move into the background task.
+    #[cfg(unix)]
+    {
+        let bridge_for_sig = bridge.clone();
+        let notifier_for_sig: Option<nexo_mcp::HttpNotifyHandle> =
+            http_handle.as_ref().map(|h| h.notifier());
+        let cfg_dir_for_sig = config_dir.to_path_buf();
+        let shutdown_for_sig = shutdown.clone();
+        tokio::spawn(async move {
+            let mut sighup = match tokio::signal::unix::signal(
+                tokio::signal::unix::SignalKind::hangup(),
+            ) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!(error = %e, "[mcp-server] could not install SIGHUP handler");
+                    return;
+                }
+            };
+            loop {
+                tokio::select! {
+                    _ = shutdown_for_sig.cancelled() => break,
+                    signal = sighup.recv() => {
+                        if signal.is_none() { break; }
+                        tracing::info!("[mcp-server] SIGHUP received; reloading expose_tools");
+                        match reload_expose_tools(&cfg_dir_for_sig).await {
+                            Ok(new_allow) => {
+                                let new_count = new_allow.as_ref().map(|s| s.len()).unwrap_or(0);
+                                bridge_for_sig.swap_allowlist(new_allow);
+                                let sessions = notifier_for_sig
+                                    .as_ref()
+                                    .map(|n| n.notify_tools_list_changed())
+                                    .unwrap_or(0);
+                                tracing::info!(
+                                    sessions,
+                                    new_count,
+                                    "[mcp-server] expose_tools reloaded; tools/list_changed emitted"
+                                );
+                            }
+                            Err(e) => tracing::warn!(
+                                error = %e,
+                                "[mcp-server] SIGHUP reload failed; old allowlist preserved"
+                            ),
+                        }
+                    }
+                }
+            }
+        });
+    }
+    #[cfg(not(unix))]
+    tracing::info!(
+        "[mcp-server] SIGHUP handler not installed (non-Unix); restart for expose_tools changes"
+    );
+
     let stdio_result = run_stdio_server_with_auth(bridge, shutdown.clone(), auth_token).await;
 
     // Drain HTTP transport before propagating stdio result.
@@ -10428,6 +10579,323 @@ async fn run_agent_dream_kill(
 fn short_uuid(id: &uuid::Uuid) -> String {
     let s = id.to_string();
     s.chars().take(8).collect()
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Phase 80.10 — `nexo agent run` / `nexo agent ps` operator CLI
+//
+// Slim MVP: `run --bg` inserts a goal-handle row with kind=Bg + status=Running
+// and prints the goal_id immediately so the operator can detach. Full
+// goal execution under the daemon supervisor is a follow-up; for the
+// MVP, the row is queued and the local daemon (or a future detached
+// worker) picks it up. `ps` reads the same store read-only so an
+// operator can list goals even when the daemon is down.
+// ─────────────────────────────────────────────────────────────────────
+
+/// 3-tier path resolution for `agent_handles` SQLite store. Mirror of
+/// `resolve_dream_db_path` for the Phase 80.10 surface — operators
+/// configure either explicitly via `--db`, or via `NEXO_STATE_ROOT`
+/// env, or accept the XDG default.
+fn resolve_agent_db_path(override_path: Option<&std::path::Path>) -> Result<PathBuf> {
+    if let Some(p) = override_path {
+        return Ok(p.to_path_buf());
+    }
+    if let Ok(state_root) = std::env::var("NEXO_STATE_ROOT") {
+        return Ok(std::path::Path::new(&state_root).join("agent_handles.db"));
+    }
+    let xdg = dirs::data_local_dir()
+        .ok_or_else(|| anyhow::anyhow!("no XDG data dir; pass --db <path>"))?;
+    Ok(xdg.join("nexo/state/agent_handles.db"))
+}
+
+/// `nexo agent run [--bg] <prompt>` — insert a new goal-handle row.
+async fn run_agent_run(
+    prompt: String,
+    bg: bool,
+    db_override: Option<&std::path::Path>,
+    json: bool,
+) -> Result<()> {
+    use chrono::Utc;
+    use nexo_agent_registry::{
+        AgentHandle, AgentRegistryStore, AgentRunStatus, AgentSnapshot, SessionKind,
+        SqliteAgentRegistryStore,
+    };
+    use nexo_driver_types::GoalId;
+    use uuid::Uuid;
+
+    if prompt.trim().is_empty() {
+        anyhow::bail!("usage: nexo agent run [--bg] <prompt> (prompt cannot be empty)");
+    }
+    let db = resolve_agent_db_path(db_override)?;
+    if let Some(parent) = db.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    let store = SqliteAgentRegistryStore::open(&db.to_string_lossy())
+        .await
+        .with_context(|| format!("failed to open agent_handles DB at {}", db.display()))?;
+
+    let goal_id = GoalId(Uuid::new_v4());
+    let kind = if bg { SessionKind::Bg } else { SessionKind::Interactive };
+    let handle = AgentHandle {
+        goal_id,
+        phase_id: format!("cli-{}", if bg { "bg" } else { "run" }),
+        status: AgentRunStatus::Running,
+        origin: None,
+        dispatcher: None,
+        started_at: Utc::now(),
+        finished_at: None,
+        snapshot: AgentSnapshot::default(),
+        plan_mode: None,
+        kind,
+    };
+    store
+        .upsert(&handle)
+        .await
+        .with_context(|| "failed to write agent_handles row".to_string())?;
+
+    if json {
+        let v = serde_json::json!({
+            "goal_id": goal_id.0.to_string(),
+            "kind": kind.as_db_str(),
+            "prompt": prompt,
+            "status": "running",
+            "queued": true,
+        });
+        println!("{}", serde_json::to_string_pretty(&v)?);
+    } else {
+        println!("[agent-run] goal_id={}", goal_id.0);
+        println!("[agent-run] kind={}", kind.as_db_str());
+        println!("[agent-run] status=running (queued for daemon pickup)");
+        println!("[agent-run] prompt: {prompt}");
+        if bg {
+            println!(
+                "[agent-run] detached — re-attach later with `nexo agent attach {}` (Phase 80.16)",
+                goal_id.0
+            );
+        }
+    }
+    Ok(())
+}
+
+/// `nexo agent ps [--all] [--kind=...] [--json]` — list agent handles.
+async fn run_agent_ps(
+    kind_filter: Option<&str>,
+    all: bool,
+    db_override: Option<&std::path::Path>,
+    json: bool,
+) -> Result<()> {
+    use nexo_agent_registry::{
+        AgentRegistryStore, AgentRunStatus, SessionKind, SqliteAgentRegistryStore,
+    };
+
+    let db = resolve_agent_db_path(db_override)?;
+    if !db.exists() {
+        if json {
+            println!("[]");
+        } else {
+            println!(
+                "(no agent runs recorded yet — db not found at {})",
+                db.display()
+            );
+        }
+        return Ok(());
+    }
+    let store = SqliteAgentRegistryStore::open(&db.to_string_lossy())
+        .await
+        .with_context(|| format!("failed to open agent_handles DB at {}", db.display()))?;
+
+    let mut rows = if let Some(k) = kind_filter {
+        let parsed = SessionKind::from_db_str(k)
+            .with_context(|| format!("--kind `{k}` is not a valid SessionKind"))?;
+        store.list_by_kind(parsed).await?
+    } else {
+        store.list().await?
+    };
+
+    if !all {
+        rows.retain(|h| h.status == AgentRunStatus::Running);
+    }
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+        return Ok(());
+    }
+    println!("# Agent runs (db: {})\n", db.display());
+    if rows.is_empty() {
+        println!("(no rows match)\n");
+        return Ok(());
+    }
+    println!("| ID | Kind | Status | Phase | Started | Ended |");
+    println!("|----|------|--------|-------|---------|-------|");
+    for r in &rows {
+        let id_short = short_uuid(&r.goal_id.0);
+        let ended = r
+            .finished_at
+            .map(|t| t.format("%Y-%m-%dT%H:%M:%S").to_string())
+            .unwrap_or_else(|| "-".to_string());
+        println!(
+            "| {} | {} | {:?} | {} | {} | {} |",
+            id_short,
+            r.kind.as_db_str(),
+            r.status,
+            r.phase_id,
+            r.started_at.format("%Y-%m-%dT%H:%M:%S"),
+            ended,
+        );
+    }
+    println!("\n{} rows shown.\n", rows.len());
+    Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Phase 80.16 — `nexo agent attach` / `nexo agent discover`
+//
+// Slim MVP: both subcommands are RO viewers over the local
+// `agent_handles` SQLite store. Live event streaming via NATS lands
+// in 80.16.b; user input piping needs Phase 80.11's
+// `agent.inbox.<goal_id>` subject contract.
+// ─────────────────────────────────────────────────────────────────────
+
+/// `nexo agent attach <goal_id>` — read-only viewer of the goal's
+/// latest persisted snapshot. Errors cleanly when the UUID is bad
+/// or the handle is absent; renders different output for terminal
+/// vs Running goals.
+async fn run_agent_attach(
+    goal_id: &str,
+    db_override: Option<&std::path::Path>,
+    json: bool,
+) -> Result<()> {
+    use nexo_agent_registry::{AgentRegistryStore, AgentRunStatus, SqliteAgentRegistryStore};
+    use nexo_driver_types::GoalId;
+    use uuid::Uuid;
+
+    let uuid = Uuid::parse_str(goal_id)
+        .with_context(|| format!("`{goal_id}` is not a valid UUID"))?;
+    let db = resolve_agent_db_path(db_override)?;
+    if !db.exists() {
+        anyhow::bail!("agent_handles DB not found at {}", db.display());
+    }
+    let store = SqliteAgentRegistryStore::open(&db.to_string_lossy())
+        .await
+        .with_context(|| format!("failed to open agent_handles DB at {}", db.display()))?;
+    let handle = store
+        .get(GoalId(uuid))
+        .await
+        .with_context(|| "failed to fetch agent handle".to_string())?
+        .ok_or_else(|| anyhow::anyhow!("no agent handle found for `{goal_id}`"))?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&handle)?);
+        return Ok(());
+    }
+
+    println!("# Agent Goal {}\n", handle.goal_id.0);
+    println!("- **kind**: {}", handle.kind.as_db_str());
+    println!("- **status**: {:?}", handle.status);
+    println!("- **phase_id**: {}", handle.phase_id);
+    println!("- **started_at**: {}", handle.started_at);
+    if let Some(ended) = handle.finished_at {
+        println!("- **finished_at**: {ended}");
+    }
+    if let Some(text) = &handle.snapshot.last_progress_text {
+        println!("\n## Last progress\n{text}");
+    }
+    if let Some(diff) = &handle.snapshot.last_diff_stat {
+        println!("\n## Last diff\n```\n{diff}\n```");
+    }
+    println!(
+        "\n- **turn_index**: {}/{}",
+        handle.snapshot.turn_index, handle.snapshot.max_turns
+    );
+    println!("- **last_event_at**: {}", handle.snapshot.last_event_at);
+
+    if handle.status == AgentRunStatus::Running {
+        println!(
+            "\n[attach] Live event stream requires daemon connection \
+             — re-run with NATS available (Phase 80.16.b follow-up)."
+        );
+    } else if handle.status.is_terminal() {
+        println!(
+            "\n[attach] Goal is in terminal state {:?}; no further \
+             updates expected.",
+            handle.status
+        );
+    }
+    Ok(())
+}
+
+/// `nexo agent discover [--include-interactive]` — list Running
+/// goals filtered to BG / Daemon / DaemonWorker by default. With
+/// `--include-interactive`, returns all kinds.
+async fn run_agent_discover(
+    include_interactive: bool,
+    db_override: Option<&std::path::Path>,
+    json: bool,
+) -> Result<()> {
+    use nexo_agent_registry::{AgentRunStatus, SessionKind, SqliteAgentRegistryStore};
+
+    let db = resolve_agent_db_path(db_override)?;
+    if !db.exists() {
+        if json {
+            println!("[]");
+        } else {
+            println!(
+                "(no agent runs recorded yet — db not found at {})",
+                db.display()
+            );
+        }
+        return Ok(());
+    }
+    let store = SqliteAgentRegistryStore::open(&db.to_string_lossy())
+        .await
+        .with_context(|| format!("failed to open agent_handles DB at {}", db.display()))?;
+
+    let kinds: Vec<SessionKind> = if include_interactive {
+        vec![
+            SessionKind::Interactive,
+            SessionKind::Bg,
+            SessionKind::Daemon,
+            SessionKind::DaemonWorker,
+        ]
+    } else {
+        vec![SessionKind::Bg, SessionKind::Daemon, SessionKind::DaemonWorker]
+    };
+
+    let mut all = Vec::new();
+    for k in kinds {
+        all.extend(store.list_by_kind(k).await?);
+    }
+    all.retain(|h| h.status == AgentRunStatus::Running);
+    all.sort_by_key(|h| std::cmp::Reverse(h.started_at));
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&all)?);
+        return Ok(());
+    }
+    if all.is_empty() {
+        let hint = if include_interactive {
+            ""
+        } else {
+            "; pass --include-interactive to broaden"
+        };
+        println!("(no detached / daemon goals running{hint})");
+        return Ok(());
+    }
+    println!("# Discoverable goals (db: {})\n", db.display());
+    println!("| ID | Kind | Phase | Started | Last activity |");
+    println!("|----|------|-------|---------|---------------|");
+    for h in &all {
+        println!(
+            "| {} | {} | {} | {} | {} |",
+            short_uuid(&h.goal_id.0),
+            h.kind.as_db_str(),
+            h.phase_id,
+            h.started_at.format("%Y-%m-%dT%H:%M:%S"),
+            h.snapshot.last_event_at.format("%Y-%m-%dT%H:%M:%S"),
+        );
+    }
+    println!("\n{} goal(s).\n", all.len());
+    Ok(())
 }
 
 async fn start_mcp_autonomous_worker(
@@ -12109,8 +12577,58 @@ fn truncate(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        has_restricted_delegate_allowlist, mcp_server_has_auth, route_cron_subcommand, Mode,
+        has_restricted_delegate_allowlist, mcp_server_has_auth, reload_expose_tools,
+        route_cron_subcommand, Mode,
     };
+
+    fn write_minimal_agents_yaml(dir: &std::path::Path) {
+        // Minimal but valid agents.yaml — `load_for_mcp_server`
+        // requires it.
+        let yaml = "agents:\n  - id: probe\n    model:\n      provider: anthropic\n      model: claude-sonnet-4-5\n";
+        std::fs::write(dir.join("agents.yaml"), yaml).unwrap();
+    }
+
+    #[tokio::test]
+    async fn reload_expose_tools_returns_set_from_yaml() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_minimal_agents_yaml(tmp.path());
+        std::fs::write(
+            tmp.path().join("mcp_server.yaml"),
+            "mcp_server:\n  expose_tools: [Read, Edit]\n",
+        )
+        .unwrap();
+        let result = reload_expose_tools(tmp.path()).await.unwrap();
+        let set = result.expect("non-empty list returns Some");
+        assert_eq!(set.len(), 2);
+        assert!(set.contains("Read"));
+        assert!(set.contains("Edit"));
+    }
+
+    #[tokio::test]
+    async fn reload_expose_tools_returns_none_for_empty_list() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_minimal_agents_yaml(tmp.path());
+        std::fs::write(
+            tmp.path().join("mcp_server.yaml"),
+            "mcp_server:\n  expose_tools: []\n",
+        )
+        .unwrap();
+        let result = reload_expose_tools(tmp.path()).await.unwrap();
+        assert!(result.is_none(), "empty list yields None (no filter)");
+    }
+
+    #[tokio::test]
+    async fn reload_expose_tools_propagates_yaml_parse_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_minimal_agents_yaml(tmp.path());
+        std::fs::write(
+            tmp.path().join("mcp_server.yaml"),
+            "mcp_server:\n  expose_tools: [\n  not closing — invalid yaml\n",
+        )
+        .unwrap();
+        let result = reload_expose_tools(tmp.path()).await;
+        assert!(result.is_err(), "malformed yaml must surface as Err");
+    }
 
     /// Phase 27.1 — verify the four `NEXO_BUILD_*` env stamps are
     /// non-empty at compile time. The actual stdout-capture form
@@ -12302,6 +12820,7 @@ mcp_server:
             repl: Default::default(),
             auto_dream: None,
             assistant_mode: None,
+            auto_approve: false,
             extract_memories: None,
         };
         let ctx = nexo_core::agent::AgentContext::new(
@@ -12548,5 +13067,269 @@ mcp_server:
         let after = store.get(id).await.unwrap().unwrap();
         assert_eq!(after.status, DreamRunStatus::Killed);
         assert!(after.ended_at.is_some());
+    }
+
+    // ── Phase 80.10 — `nexo agent run` / `agent ps` CLI tests ──
+
+    use super::{resolve_agent_db_path, run_agent_ps, run_agent_run};
+    use nexo_agent_registry::SessionKind;
+
+    #[test]
+    fn resolve_agent_db_path_override_wins() {
+        let _g = DREAM_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("NEXO_STATE_ROOT", "/should-not-win");
+        let custom = PathBuf::from("/custom/agents.db");
+        let resolved = resolve_agent_db_path(Some(&custom)).unwrap();
+        assert_eq!(resolved, custom);
+        std::env::remove_var("NEXO_STATE_ROOT");
+    }
+
+    #[test]
+    fn resolve_agent_db_path_uses_env_when_no_override() {
+        let _g = DREAM_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("NEXO_STATE_ROOT", "/state");
+        let resolved = resolve_agent_db_path(None).unwrap();
+        assert_eq!(resolved, PathBuf::from("/state/agent_handles.db"));
+        std::env::remove_var("NEXO_STATE_ROOT");
+    }
+
+    #[tokio::test]
+    async fn run_agent_run_rejects_empty_prompt() {
+        let _g = DREAM_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("agents.db");
+        let err = run_agent_run("   ".to_string(), false, Some(&db), false)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("cannot be empty"));
+    }
+
+    #[tokio::test]
+    async fn run_agent_run_bg_inserts_handle_with_kind_bg() {
+        use nexo_agent_registry::{AgentRegistryStore, AgentRunStatus, SqliteAgentRegistryStore};
+        let _g = DREAM_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("agents.db");
+        run_agent_run("ship the release".to_string(), true, Some(&db), false)
+            .await
+            .unwrap();
+        let store = SqliteAgentRegistryStore::open(db.to_str().unwrap())
+            .await
+            .unwrap();
+        let rows = store.list().await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].kind, SessionKind::Bg);
+        assert_eq!(rows[0].status, AgentRunStatus::Running);
+        assert_eq!(rows[0].phase_id, "cli-bg");
+    }
+
+    #[tokio::test]
+    async fn run_agent_run_no_bg_inserts_handle_with_kind_interactive() {
+        use nexo_agent_registry::{AgentRegistryStore, SqliteAgentRegistryStore};
+        let _g = DREAM_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("agents.db");
+        run_agent_run("hi".to_string(), false, Some(&db), false)
+            .await
+            .unwrap();
+        let store = SqliteAgentRegistryStore::open(db.to_str().unwrap())
+            .await
+            .unwrap();
+        let rows = store.list().await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].kind, SessionKind::Interactive);
+        assert_eq!(rows[0].phase_id, "cli-run");
+    }
+
+    #[tokio::test]
+    async fn run_agent_ps_empty_db_friendly_message() {
+        let _g = DREAM_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("agents.db");
+        // DB doesn't exist — must return Ok with friendly message.
+        run_agent_ps(None, false, Some(&missing), false)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_agent_ps_filters_by_kind() {
+        let _g = DREAM_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("agents.db");
+        run_agent_run("a".into(), true, Some(&db), false)
+            .await
+            .unwrap();
+        run_agent_run("b".into(), false, Some(&db), false)
+            .await
+            .unwrap();
+        // Just exercise the path; output is to stdout.
+        run_agent_ps(Some("bg"), true, Some(&db), false).await.unwrap();
+        run_agent_ps(Some("interactive"), true, Some(&db), false)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_agent_ps_rejects_invalid_kind() {
+        let _g = DREAM_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("agents.db");
+        run_agent_run("seed".into(), false, Some(&db), false)
+            .await
+            .unwrap();
+        let err = run_agent_ps(Some("nope"), true, Some(&db), false)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("nope"));
+    }
+
+    // ── Phase 80.16 — `agent attach` / `agent discover` CLI tests ──
+
+    use super::{run_agent_attach, run_agent_discover};
+
+    #[tokio::test]
+    async fn run_agent_attach_rejects_invalid_uuid() {
+        let _g = DREAM_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("agents.db");
+        // Seed something so the DB exists.
+        run_agent_run("seed".into(), false, Some(&db), false)
+            .await
+            .unwrap();
+        let err = run_agent_attach("not-a-uuid", Some(&db), false)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("valid UUID"));
+    }
+
+    #[tokio::test]
+    async fn run_agent_attach_missing_db_errors() {
+        let _g = DREAM_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("agents.db");
+        let err = run_agent_attach(
+            "00000000-0000-0000-0000-000000000000",
+            Some(&missing),
+            false,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn run_agent_attach_handle_not_found_errors() {
+        let _g = DREAM_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("agents.db");
+        run_agent_run("seed".into(), false, Some(&db), false)
+            .await
+            .unwrap();
+        let err = run_agent_attach(
+            "11111111-1111-1111-1111-111111111111",
+            Some(&db),
+            false,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("no agent handle found"));
+    }
+
+    #[tokio::test]
+    async fn run_agent_attach_running_renders_snapshot() {
+        use nexo_agent_registry::{AgentRegistryStore, SqliteAgentRegistryStore};
+        let _g = DREAM_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("agents.db");
+        run_agent_run("test".into(), true, Some(&db), false)
+            .await
+            .unwrap();
+        let store = SqliteAgentRegistryStore::open(db.to_str().unwrap())
+            .await
+            .unwrap();
+        let rows = store.list().await.unwrap();
+        assert_eq!(rows.len(), 1);
+        let id = rows[0].goal_id.0.to_string();
+        run_agent_attach(&id, Some(&db), false).await.unwrap();
+        // JSON path
+        run_agent_attach(&id, Some(&db), true).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_agent_discover_filters_to_bg_daemon() {
+        use nexo_agent_registry::{AgentRegistryStore, AgentRunStatus, SqliteAgentRegistryStore};
+        let _g = DREAM_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("agents.db");
+        // Seed: 1 Interactive + 1 Bg, both Running.
+        run_agent_run("inter".into(), false, Some(&db), false)
+            .await
+            .unwrap();
+        run_agent_run("bg".into(), true, Some(&db), false)
+            .await
+            .unwrap();
+        // Verify discover excludes Interactive by default (we can't
+        // capture stdout cleanly here; assert the underlying store
+        // shape matches expectation by querying separately).
+        let store = SqliteAgentRegistryStore::open(db.to_str().unwrap())
+            .await
+            .unwrap();
+        let all = store.list().await.unwrap();
+        assert_eq!(all.len(), 2);
+        let bgs = store
+            .list_by_kind(nexo_agent_registry::SessionKind::Bg)
+            .await
+            .unwrap();
+        let bgs_running: Vec<_> = bgs
+            .iter()
+            .filter(|h| h.status == AgentRunStatus::Running)
+            .collect();
+        assert_eq!(bgs_running.len(), 1);
+        // Run the fn to exercise the rendering path.
+        run_agent_discover(false, Some(&db), false).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_agent_discover_include_interactive_returns_all() {
+        let _g = DREAM_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("agents.db");
+        run_agent_run("inter".into(), false, Some(&db), false)
+            .await
+            .unwrap();
+        run_agent_run("bg".into(), true, Some(&db), false)
+            .await
+            .unwrap();
+        // No assertion on stdout; just verify the code path runs.
+        run_agent_discover(true, Some(&db), false).await.unwrap();
+        run_agent_discover(true, Some(&db), true).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_agent_discover_empty_db_friendly_message() {
+        let _g = DREAM_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("agents.db");
+        run_agent_discover(false, Some(&missing), false)
+            .await
+            .unwrap();
+        run_agent_discover(false, Some(&missing), true)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_agent_discover_no_matching_goals_renders_friendly() {
+        let _g = DREAM_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("agents.db");
+        // Seed only Interactive — discover without --include-interactive
+        // should print the "(no detached / daemon goals running...)"
+        // friendly message.
+        run_agent_run("only_interactive".into(), false, Some(&db), false)
+            .await
+            .unwrap();
+        run_agent_discover(false, Some(&db), false).await.unwrap();
     }
 }
