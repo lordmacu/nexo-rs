@@ -18,6 +18,191 @@ Historical detailed notes that were previously written in Spanish are preserved 
 
 ## Open items
 
+### Audit 2026-04-30 — Phase 76/77/79 backlog
+
+Source: `proyecto/AUDIT-2026-04-30.md` (audit of commits
+`7619fee..96c53fb`, ~22 commits, ~+18 K LOC). Workspace compiles
+clean (`cargo check --workspace --all-features` → 0). Three
+recurring patterns of gap surfaced — ordered here by severity.
+
+**A1 — C1 EffectiveBindingPolicy extension** — ✅ shipped 2026-04-30
+(commit `d1f7641`). Tracked in detail under `H-2` in the Hardening
+section below. The struct now resolves `lsp` / `team` /
+`config_tool` / `repl` per binding; consumers in `src/main.rs`
+still read agent-level (blocked by A2).
+
+**A2 — C2 Hot-reload rebuild of per-binding tool registrations** —
+⬜ open (depends on A1). Tracked under `H-3` in Hardening below.
+Phase 18 promise broken until shipped: every Phase 79 tool
+registers once at boot in `src/main.rs:2042-2705`; only one
+post-hook exists today (`PairingGate` flush at `:3492`, Phase 70.7).
+
+**A3 — C3 capabilities.rs::INVENTORY drift** — ⬜ open. CLAUDE.md
+mandates registering every dangerous env-driven toggle.
+`crates/setup/src/capabilities.rs:90-171` ends at
+`EMAIL_INSECURE_TLS`. Missing entries:
+- `NEXO_CLAUDE_CLI_VERSION` (`crates/llm/src/anthropic_auth.rs:63`)
+- `config-self-edit` Cargo feature surface
+  (`src/main.rs:2589-2680`)
+- any future `NEXO_REPL_*` / `NEXO_LSP_*` / `NEXO_PROACTIVE_*`
+  (none ship today, but the pattern needs to be established).
+Without entries, `agent doctor capabilities` is silently
+incomplete and the future admin-ui Capabilities tab will lie.
+Effort: 30 min once toggles are inventoried.
+
+**A4 — C4 Orphaned safety modules (Phase 77.9 / 77.10 / 77.11)** —
+⬜ open, security-relevant. Three modules ship + test but no
+production caller:
+- `crates/driver-permission/src/sed_validator.rs` (696 LOC, 21
+  tests) + `path_extractor.rs` (564 LOC, 12 tests) — only
+  `bash_destructive::check_sed_in_place` reaches the decider
+  (`mcp.rs:200`); the richer allowlist/denylist is dead code.
+- `crates/driver-permission/src/should_use_sandbox.rs` (401 LOC,
+  20 tests) — zero callers outside `#[cfg(test)]`. Sandbox
+  decision is computed and discarded.
+- `crates/llm/src/rate_limit_info.rs` (762 LOC, 12 tests) —
+  builds `RateLimitMessage { text, severity, plan_hint }`; no
+  `LlmError::QuotaExceeded` variant exists, so the structured
+  output never reaches `setup doctor` / `notify_origin` /
+  admin-ui. Output collapses to `tracing::warn!` at
+  `anthropic.rs:391-405` and `retry.rs:118-126`.
+Action plan:
+1. Wire `sed_validator` + `path_extractor` into
+   `crates/driver-permission/src/decider.rs` (replace the
+   bash-destructive-only call site with the full pipeline).
+2. Wire `should_use_sandbox` into the same decider; gate via
+   a `runtime.bash_safety.sandbox` config field.
+3. Add `LlmError::QuotaExceeded { retry_after, plan_hint }`,
+   plumb it from `anthropic.rs::classify_response` through
+   `retry.rs` and surface in `setup doctor` + `notify_origin`.
+Effort: ~1 day total. Security/UX impact high.
+
+**A5 — C5 SecretGuardConfig YAML never read** — ⬜ open. Schema
+fully defined at `crates/memory/src/secret_config.rs:79-130`
+(`Block` / `Redact` / `Warn` modes, per-rule excludes), but
+`src/main.rs:802` and `:8632` carry
+`// TODO: read from memory.secret_guard YAML when config dep
+allows.` and unconditionally build `SecretGuardConfig::default()`.
+Operator can't toggle the secret-handling mode or exclude
+specific rules. Action: add `memory.secret_guard` to
+`crates/config/src/types/memory.rs`, plumb to
+`RuntimeConfig`, replace both `default()` call sites. Effort:
+~2 hr including config dep wiring. Blocks operator override of
+the Phase 77.7 secret scanner default behaviour.
+
+**A6 — Major findings (M1–M10)** — ⬜ open, batched here so they
+do not get lost.
+- **M1 — `tools/list_changed` advertised disabled.**
+  `crates/core/src/agent/mcp_server_bridge/bridge.rs:253-258`
+  declares `"tools": { "listChanged": false }`. Even if hot-reload
+  fired the call, clients ignore it. Already tracked as **79.M.h**
+  in this file; cross-reference here. Net: hot-reload of
+  `mcp_server.expose_tools` requires process restart.
+- **M2 — MCP audit `args_size_bytes` + `args_hash` always 0/None.**
+  `crates/mcp/src/server/dispatch.rs:706-707` hard-codes both
+  fields; `audit_log/sqlite_store.rs:71` schema column always 0.
+  Code comment admits the deferral. Fix: sha256 of params +
+  `serde_json::to_vec(&args).len()`. Effort: 30 min.
+- **M3 — `proactive` ⊕ `coordinator` mutual exclusion not enforced.**
+  ✅ shipped 2026-04-30. `BindingValidationError::CoordinatorWithProactive`
+  now fires from `validate_agent()` (`binding_validate.rs:407-433`)
+  when `role = "coordinator"` and the resolved `proactive.enabled`
+  (binding override or agent default) is `true`. 4 unit tests
+  cover the agent-level + binding-override paths plus the two
+  happy paths.
+- **M4 — `extractMemories` + `autoCompact` only run inside
+  `driver-loop`.** Both wired in
+  `crates/driver-loop/src/{extract_memories,orchestrator}.rs`.
+  Agents going through the regular `AgentRuntime` path never
+  get them. Fix: factor a shared post-turn service or boot the
+  same hooks in both paths. Effort: ~half day.
+- **M5 — `cron_tool_bindings` frozen at boot.**
+  `src/main.rs:3052-3128` captures `Arc::clone(&effective)` once.
+  Reload changing `allowed_tools` / `dispatch_policy` for an
+  agent → cron firings keep the OLD policy. Fix: post-hook flush
+  analogous to PairingGate (`:3492`). Effort: ~1 hr. **Folds
+  naturally into A2 (C2)**.
+- **M6 — `PostCompactCleanup` is a stub + `CompactSummaryStore::
+  forget()` is no-op.** `crates/driver-loop/src/post_compact_cleanup.rs:38-48`
+  only ticks the extract counter. Leak's `postCompactCleanup.ts`
+  resets MicroCompactState turn counter, surfaced-memory caches,
+  `compactWarningState`. `compact_store.rs:68-74` `forget()` is a
+  TODO. Effort: ~1 hr to mirror leak.
+- **M7 — REPL semantically diverges from leak (Phase 79.12).**
+  Leak `claude-code-leak/src/tools/REPL/primitiveTools.ts:21-39`
+  makes REPL a VM hosting FileRead/FileWrite/FileEdit/Glob/Grep/
+  Bash/NotebookEdit/Agent. Our `repl_registry.rs:59-90` is a
+  subprocess pool for python/node/bash. No sandbox isolation,
+  no nsjail/firejail/bwrap, `repl_tool.rs` itself has zero unit
+  tests. **Decision required**: (a) re-spec as our own
+  "Sandbox shell" tool and stop claiming leak parity, or
+  (b) commit to porting the VM model. Default recommendation:
+  (a) — bash + per-language Bash variants is enough for our
+  use cases.
+- **M8 — Phase 79.2 deferred-schema only used by MCP catalog.**
+  `crates/core/src/agent/tool_search_tool.rs:30-37` itself
+  flags this. Leak defers TodoWrite, LSP, TeamCreate,
+  RemoteTrigger, NotebookEdit, REPL by default. Infrastructure
+  is built and tested. Fix: mark `ToolMeta::deferred()` on the
+  6 tools above in their respective registration sites.
+  Effort: 30 min.
+- **M9 — `expose_tools` typo path silent.**
+  `src/main.rs:9263-9266` warns on unknown name; no test
+  enumerates every canonical name to assert nothing dropped on
+  rename. Fix: catalog test in `crates/core/tests/expose_tools_bridge_test.rs`.
+  Effort: 30 min.
+- **M10 — `MUTATING_TOOLS` lists `TeamCreate` / `TeamDelete`
+  twice.** ✅ shipped 2026-04-30. Removed the first set of
+  duplicates at `crates/core/src/plan_mode.rs:295-296`; the
+  Phase 79.6 trio (`TeamCreate` / `TeamDelete` / `TeamSendMessage`)
+  is now defined exactly once at `:312-316`. plan_mode tests
+  green (70/70).
+
+**A7 — Minor / cosmetic (M-cosmetic)** — ⬜ open, batched.
+- `crates/mcp/src/server/http_transport.rs:533-535` —
+  `Box::leak` on retry-after header per 429. Slow leak (one
+  allocation per rate-limit hit); use `Cow<'static, str>` or
+  cache.
+- `crates/mcp/src/server/event_store/sqlite_store.rs:195-203` —
+  `purge_oldest_for_session` is a 3-bind correlated subselect;
+  quadratic on the documented 10k cap; only 10-row test
+  coverage. Rewrite to single DELETE + LIMIT after measuring.
+- No test exists for `BearerJwt` mid-flight JWKS `kid`
+  rotation or flapping endpoint.
+- No real-provider-swap (Anthropic → MiniMax) round-trip test
+  for cache-break cross-provider tracker
+  (`crates/core/src/agent/llm_behavior.rs:78-145`).
+- No property test on `extractMemories` JSON parser for
+  malformed-LLM output (`crates/driver-loop/src/extract_memories.rs`).
+- Migrations chain test (`crates/config/src/migrations.rs`)
+  only on synthetic fixture; needs v0→v11 on a production-shape
+  YAML.
+- `Sleep` tool not in `EXPOSABLE_TOOLS`
+  (`crates/config/src/types/mcp_exposable.rs:73-308`); operator
+  enabling proactive can't expose Sleep over MCP.
+
+**A8 — Doc / admin-ui drift** — ⬜ open. CLAUDE.md mandates
+admin-ui/PHASES.md + docs/ in same commit; backfill needed.
+- `admin-ui/PHASES.md` missing trackers for: 79.4 TodoWrite,
+  79.5 LSP, 79.6 Team*, 79.7 Cron, 79.8 RemoteTrigger,
+  79.10 ConfigTool, 79.11 MCP router, 79.13 NotebookEdit.
+  Phase 77.18 + 77.20 listed `[ ]` even though code shipped.
+- `docs/src/SUMMARY.md` missing pages: 77.1-77.3 compact tiers
+  (page exists, not registered prominently), 77.4 cache-break
+  diagnostics, 77.5 extractMemories, 77.7 secret-guard, 77.16
+  AskUserQuestion, separate Sleep tool primer.
+- CLAUDE.md table line "(MVP — Lsp/Team*/Config wiring deferred
+  to 79.M.b/c/d)" stale — `mcp_server_bridge/dispatch.rs:371-499`
+  shows them all wired. Update the parenthetical.
+
+**A9 — Out-of-band hygiene** — ⬜ open.
+- Recent commits include `Co-Authored-By: Claude Opus 4.7`
+  trailers (e.g. `8ed115c`, `80bcac9`). User memory prohibits
+  this. Don't rewrite history; remove from any commit template
+  or future workflow.
+- `7619fee chore: sync all local changes` is a 130-file mass
+  commit hard to audit. Future practice: split.
+
 ### Autonomous mode hardening (audit 2026-04-28)
 - No open items.
 
