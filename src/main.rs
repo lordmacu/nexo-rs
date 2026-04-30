@@ -2361,6 +2361,12 @@ async fn main() -> Result<()> {
         Arc<arc_swap::ArcSwap<nexo_core::RuntimeSnapshot>>,
     > = std::collections::HashMap::new();
 
+    // Phase M1.b.c — clone primary's id + config before the
+    // agent loop consumes `cfg.agents.agents` so the daemon-embed
+    // MCP wire can construct an AgentContext for the primary
+    // after the loop.
+    let primary_for_mcp_embed: Option<(String, nexo_config::AgentConfig)> =
+        cfg.agents.agents.first().map(|a| (a.id.clone(), a.clone()));
     for agent_cfg in cfg.agents.agents {
         let agent_id = agent_cfg.id.clone();
         let dream_yaml = agent_cfg.dreaming.clone();
@@ -3894,6 +3900,107 @@ async fn main() -> Result<()> {
             }))
             .await;
     }
+    // Phase M1.b.c — daemon-embed MCP HTTP server. Opt-in via
+    // `mcp_server.daemon_embed.enabled: true` + `mcp_server.http
+    // .enabled: true`. Reuses the primary agent's tool registry
+    // (mirrors `nexo mcp-server` standalone behavior) and
+    // registers a reload-coord post-hook that swaps the
+    // allowlist + emits `notifications/tools/list_changed` on
+    // every Phase 18 reload — automatic, no SIGHUP needed.
+    // Returned handle survives until the daemon's main shutdown
+    // sequence drains it.
+    let mcp_embed_handle: Option<nexo_mcp::HttpServerHandle> = match cfg
+        .mcp_server
+        .as_ref()
+        .filter(|s| s.daemon_embed.enabled)
+    {
+        Some(server_cfg) => {
+            let (primary_id, primary_cfg) =
+                primary_for_mcp_embed.clone().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "mcp_server.daemon_embed enabled but agents.yaml has no agents"
+                    )
+                })?;
+            let primary_tools = tools_per_agent.get(&primary_id).cloned().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "mcp_server.daemon_embed: primary agent `{}` not in tools_per_agent map",
+                    primary_id
+                )
+            })?;
+            let primary_cfg_arc = Arc::new(primary_cfg);
+            let primary_ctx = nexo_core::agent::AgentContext::new(
+                primary_id.clone(),
+                primary_cfg_arc,
+                broker.clone(),
+                Arc::clone(&sessions),
+            );
+            let allowlist = compute_allowlist_from_mcp_server_cfg(server_cfg);
+            let server_info = nexo_mcp::McpServerInfo {
+                name: server_cfg
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| primary_id.clone()),
+                version: env!("CARGO_PKG_VERSION").into(),
+            };
+            let bridge = nexo_core::agent::ToolRegistryBridge::new(
+                server_info,
+                primary_tools,
+                primary_ctx,
+                allowlist,
+                server_cfg.expose_proxies,
+            )
+            .with_list_changed_capability(true);
+
+            let http_yaml = server_cfg.http.as_ref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "mcp_server.daemon_embed enabled requires mcp_server.http config"
+                )
+            })?;
+            if !http_yaml.enabled {
+                anyhow::bail!(
+                    "mcp_server.daemon_embed enabled but mcp_server.http.enabled = false"
+                );
+            }
+            let handle = start_http_transport(&bridge, http_yaml, &watcher_shutdown).await?;
+            tracing::info!(
+                agent = %primary_id,
+                addr = %handle.bind_addr,
+                "[mcp-embed] daemon MCP server ready"
+            );
+
+            // Reload-coord post-hook: on every Phase 18 reload,
+            // re-read `mcp_server.expose_tools` from disk + atomic
+            // swap_allowlist + notify so connected clients refresh
+            // tool list without reconnect.
+            let bridge_for_hook = bridge.clone();
+            let notifier = handle.notifier();
+            let cfg_dir_for_hook = config_dir.clone();
+            reload_coord
+                .register_post_hook(Box::new(move || {
+                    match reload_expose_tools(&cfg_dir_for_hook) {
+                        Ok(new_allow) => {
+                            let new_count = new_allow.as_ref().map(|s| s.len()).unwrap_or(0);
+                            bridge_for_hook.swap_allowlist(new_allow);
+                            let sessions = notifier.notify_tools_list_changed();
+                            tracing::info!(
+                                sessions,
+                                new_count,
+                                "[mcp-embed] reload: tools/list_changed emitted"
+                            );
+                        }
+                        Err(e) => tracing::warn!(
+                            error = %e,
+                            "[mcp-embed] reload allowlist re-read failed; old allowlist preserved"
+                        ),
+                    }
+                }))
+                .await;
+
+            Some(handle)
+        }
+        _ => None,
+    };
+
     if let Err(e) = Arc::clone(&reload_coord)
         .start(broker.clone(), cfg.runtime.reload.clone())
         .await
@@ -4027,6 +4134,19 @@ async fn main() -> Result<()> {
     shutdown_signal().await;
     tracing::info!("shutdown signal received — stopping");
     cron_runner_cancel.cancel();
+    // Phase M1.b.c — graceful drain of the daemon-embed MCP HTTP
+    // server. `watcher_shutdown.cancel()` (below) signals the
+    // server to drain; we await its `join` with a 5s budget so
+    // SSE consumers see a clean disconnect. No-op when
+    // `daemon_embed.enabled = false`.
+    if let Some(handle) = mcp_embed_handle {
+        watcher_shutdown.cancel();
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            handle.join,
+        )
+        .await;
+    }
     // Phase 79.6 — drop the team router subscriber. Active teams
     // keep their soft-deleted state; force-kill of in-flight
     // teammate goals is delegated to the existing
@@ -9082,15 +9202,30 @@ fn mcp_server_has_auth(cfg: &nexo_config::types::mcp_server::McpServerConfig) ->
 ///   window.
 /// - `research/`: no relevant prior art (OpenClaw is channel-side,
 ///   no MCP server hot-reload concept).
-async fn reload_expose_tools(
+fn reload_expose_tools(
     config_dir: &std::path::Path,
 ) -> Result<Option<std::collections::HashSet<String>>> {
     let cfg = nexo_config::AppConfig::load_for_mcp_server(config_dir)?;
     let server_cfg = cfg.mcp_server.unwrap_or_default();
-    if server_cfg.expose_tools.is_empty() {
-        return Ok(None);
+    Ok(compute_allowlist_from_mcp_server_cfg(&server_cfg))
+}
+
+/// Phase M1.b.c — derive the `ToolRegistryBridge` allowlist from
+/// an in-memory `McpServerConfig`. Empty `expose_tools` returns
+/// `None` (no filter, expose all non-proxy tools); non-empty
+/// returns `Some(HashSet)` (HashSet collapses duplicates by
+/// construction). Used by the daemon-embed boot wire (Mode::Run)
+/// where the config is already loaded, complementing the
+/// `reload_expose_tools` path that re-reads the YAML on
+/// SIGHUP / Phase 18 reload.
+fn compute_allowlist_from_mcp_server_cfg(
+    cfg: &nexo_config::types::mcp_server::McpServerConfig,
+) -> Option<std::collections::HashSet<String>> {
+    if cfg.expose_tools.is_empty() {
+        None
+    } else {
+        Some(cfg.expose_tools.iter().cloned().collect())
     }
-    Ok(Some(server_cfg.expose_tools.iter().cloned().collect()))
 }
 
 async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
@@ -9988,7 +10123,7 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
                     signal = sighup.recv() => {
                         if signal.is_none() { break; }
                         tracing::info!("[mcp-server] SIGHUP received; reloading expose_tools");
-                        match reload_expose_tools(&cfg_dir_for_sig).await {
+                        match reload_expose_tools(&cfg_dir_for_sig) {
                             Ok(new_allow) => {
                                 let new_count = new_allow.as_ref().map(|s| s.len()).unwrap_or(0);
                                 bridge_for_sig.swap_allowlist(new_allow);
@@ -12588,8 +12723,8 @@ mod tests {
         std::fs::write(dir.join("agents.yaml"), yaml).unwrap();
     }
 
-    #[tokio::test]
-    async fn reload_expose_tools_returns_set_from_yaml() {
+    #[test]
+    fn reload_expose_tools_returns_set_from_yaml() {
         let tmp = tempfile::tempdir().unwrap();
         write_minimal_agents_yaml(tmp.path());
         std::fs::write(
@@ -12597,15 +12732,15 @@ mod tests {
             "mcp_server:\n  expose_tools: [Read, Edit]\n",
         )
         .unwrap();
-        let result = reload_expose_tools(tmp.path()).await.unwrap();
+        let result = reload_expose_tools(tmp.path()).unwrap();
         let set = result.expect("non-empty list returns Some");
         assert_eq!(set.len(), 2);
         assert!(set.contains("Read"));
         assert!(set.contains("Edit"));
     }
 
-    #[tokio::test]
-    async fn reload_expose_tools_returns_none_for_empty_list() {
+    #[test]
+    fn reload_expose_tools_returns_none_for_empty_list() {
         let tmp = tempfile::tempdir().unwrap();
         write_minimal_agents_yaml(tmp.path());
         std::fs::write(
@@ -12613,12 +12748,12 @@ mod tests {
             "mcp_server:\n  expose_tools: []\n",
         )
         .unwrap();
-        let result = reload_expose_tools(tmp.path()).await.unwrap();
+        let result = reload_expose_tools(tmp.path()).unwrap();
         assert!(result.is_none(), "empty list yields None (no filter)");
     }
 
-    #[tokio::test]
-    async fn reload_expose_tools_propagates_yaml_parse_errors() {
+    #[test]
+    fn reload_expose_tools_propagates_yaml_parse_errors() {
         let tmp = tempfile::tempdir().unwrap();
         write_minimal_agents_yaml(tmp.path());
         std::fs::write(
@@ -12626,8 +12761,40 @@ mod tests {
             "mcp_server:\n  expose_tools: [\n  not closing — invalid yaml\n",
         )
         .unwrap();
-        let result = reload_expose_tools(tmp.path()).await;
+        let result = reload_expose_tools(tmp.path());
         assert!(result.is_err(), "malformed yaml must surface as Err");
+    }
+
+    // ── Phase M1.b.c — compute_allowlist_from_mcp_server_cfg ──
+
+    #[test]
+    fn compute_allowlist_returns_set_from_expose_tools() {
+        use super::compute_allowlist_from_mcp_server_cfg;
+        let mut cfg = nexo_config::types::mcp_server::McpServerConfig::default();
+        cfg.expose_tools = vec!["Read".into(), "Edit".into(), "marketing_lead_classify".into()];
+        let allow = compute_allowlist_from_mcp_server_cfg(&cfg).expect("non-empty -> Some");
+        assert_eq!(allow.len(), 3);
+        assert!(allow.contains("Read"));
+        assert!(allow.contains("marketing_lead_classify"));
+    }
+
+    #[test]
+    fn compute_allowlist_returns_none_for_empty() {
+        use super::compute_allowlist_from_mcp_server_cfg;
+        let cfg = nexo_config::types::mcp_server::McpServerConfig::default();
+        assert!(
+            compute_allowlist_from_mcp_server_cfg(&cfg).is_none(),
+            "empty expose_tools yields None (no filter)"
+        );
+    }
+
+    #[test]
+    fn compute_allowlist_dedupes_via_hashset() {
+        use super::compute_allowlist_from_mcp_server_cfg;
+        let mut cfg = nexo_config::types::mcp_server::McpServerConfig::default();
+        cfg.expose_tools = vec!["Read".into(), "Read".into(), "Edit".into()];
+        let allow = compute_allowlist_from_mcp_server_cfg(&cfg).unwrap();
+        assert_eq!(allow.len(), 2, "duplicates collapsed by HashSet");
     }
 
     /// Phase 27.1 — verify the four `NEXO_BUILD_*` env stamps are
@@ -12820,6 +12987,7 @@ mcp_server:
             repl: Default::default(),
             auto_dream: None,
             assistant_mode: None,
+            away_summary: None,
             auto_approve: false,
             extract_memories: None,
         };
