@@ -99,6 +99,13 @@ pub enum BindingValidationError {
         index: usize,
         role: String,
     },
+
+    #[error(
+        "agent '{agent}' binding[{index}]: role='coordinator' is incompatible with \
+         proactive ticking (coordinators delegate to workers and must not run their \
+         own tick loop). Either drop the role or disable proactive on this binding."
+    )]
+    CoordinatorWithProactive { agent: String, index: usize },
 }
 
 /// Known-tools catalogue used by [`validate_agents`]. An empty set turns
@@ -402,6 +409,33 @@ fn validate_agent_into(
                 agent: agent.id.clone(),
                 index: idx,
                 role: role.to_string(),
+            });
+        }
+    }
+
+    // 4.c — Phase 77.20 / audit M3 — role='coordinator' is mutually
+    // exclusive with proactive ticking. Coordinators delegate work to
+    // workers and must not run their own tick loop; combining them
+    // produces a daemon that wakes itself spuriously and burns model
+    // budget on no-op turns. The check fires when the coordinator
+    // role is set AND the binding (or the inherited agent default)
+    // resolves to `proactive.enabled = true`.
+    for (idx, b) in agent.inbound_bindings.iter().enumerate() {
+        let Some(role) = b.role.as_deref() else {
+            continue;
+        };
+        if role.trim().to_ascii_lowercase() != "coordinator" {
+            continue;
+        }
+        let proactive_enabled = b
+            .proactive
+            .as_ref()
+            .map(|p| p.enabled)
+            .unwrap_or(agent.proactive.enabled);
+        if proactive_enabled {
+            errors.push(BindingValidationError::CoordinatorWithProactive {
+                agent: agent.id.clone(),
+                index: idx,
             });
         }
     }
@@ -869,6 +903,70 @@ mod tests {
         let tg = vec![tg_instance("ana_tg")];
         let tools = KnownTools::new(["whatsapp_send_message", "weather"]);
         validate_agent(&a, &tg, &tools).expect("happy path must pass");
+    }
+
+    // ---- Audit M3: coordinator ⊕ proactive mutual exclusion ----
+
+    #[test]
+    fn coordinator_role_with_agent_proactive_enabled_rejected() {
+        let mut a = agent("ana", "./skills");
+        a.proactive.enabled = true;
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "telegram".into(),
+            role: Some("coordinator".into()),
+            ..Default::default()
+        });
+        let err = validate_agent(&a, &[], &KnownTools::default()).unwrap_err();
+        assert!(
+            matches!(err, BindingValidationError::CoordinatorWithProactive { .. }),
+            "expected CoordinatorWithProactive, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn coordinator_role_with_binding_proactive_override_rejected() {
+        let mut a = agent("ana", "./skills");
+        a.proactive.enabled = false;
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "telegram".into(),
+            role: Some("coordinator".into()),
+            proactive: Some(nexo_config::types::proactive::ProactiveConfig {
+                enabled: true,
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let err = validate_agent(&a, &[], &KnownTools::default()).unwrap_err();
+        assert!(matches!(
+            err,
+            BindingValidationError::CoordinatorWithProactive { .. }
+        ));
+    }
+
+    #[test]
+    fn coordinator_role_without_proactive_passes() {
+        let mut a = agent("ana", "./skills");
+        a.proactive.enabled = false;
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "telegram".into(),
+            role: Some("coordinator".into()),
+            ..Default::default()
+        });
+        validate_agent(&a, &[], &KnownTools::default())
+            .expect("coordinator without proactive must pass");
+    }
+
+    #[test]
+    fn proactive_role_with_proactive_enabled_passes() {
+        let mut a = agent("ana", "./skills");
+        a.proactive.enabled = true;
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "telegram".into(),
+            role: Some("proactive".into()),
+            ..Default::default()
+        });
+        validate_agent(&a, &[], &KnownTools::default())
+            .expect("role=proactive + proactive.enabled is the canonical happy path");
     }
 
     // ---- C1: has_any_override coverage for newly-tracked overrides ----

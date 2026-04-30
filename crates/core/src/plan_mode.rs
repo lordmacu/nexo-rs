@@ -292,8 +292,6 @@ pub const MUTATING_TOOLS: &[&str] = &[
     "program_phase",
     "delegate_to",
     "dispatch_followup",
-    "TeamCreate",
-    "TeamDelete",
     // Schedulers + remote.
     "ScheduleCron",
     "cron_create",
