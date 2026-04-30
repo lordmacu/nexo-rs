@@ -151,6 +151,32 @@ and the project adheres to [Semantic Versioning](https://semver.org)
   attribution block (ADR 0009).
 - `README.md` rewritten with badges and deep links into the
   published documentation.
+- **C5** — Operators can now configure the secret-scanner via
+  `memory.secret_guard` in `config/memory.yaml`. The 4 knobs
+  (`enabled`, `on_secret: block|redact|warn`, `rules: "all" |
+  [rule_id...]`, `exclude_rules: [rule_id...]`) replace the two
+  hardcoded `SecretGuardConfig::default()` call sites in
+  `src/main.rs` (daemon + mcp-server boot). Schema lived in
+  `crates/memory/src/secret_config.rs` since Phase 77.7; C5
+  finishes the wire. **Pivot from initial spec**: a direct
+  `nexo-config -> nexo-memory` dep would form a cycle
+  (`nexo-llm -> nexo-config -> nexo-memory -> nexo-llm`). Fix
+  uses a wire-shape struct (`SecretGuardYamlConfig`) in
+  `crates/config/src/types/memory.rs` that mirrors the canonical
+  schema 1:1; the conversion lives in
+  `src/main.rs::build_secret_guard_config_from_yaml` (binary
+  holds both deps). Doc-comment flags the dual-write contract.
+  Default applies when YAML omits the key — back-compat 100%.
+  Invalid `on_secret` or malformed `rules` fail boot loud — never
+  silent. Provider-agnostic — `exclude_rules` operates on rule
+  IDs (kebab-case), not providers; scanner covers Anthropic /
+  MiniMax / OpenAI / Gemini / DeepSeek / xAI / Mistral with the
+  same regex set. Pattern adopted from OpenClaw's enum-mode YAML
+  knob (`research/src/config/zod-schema.ts`); claude-code-leak
+  `src/services/teamMemorySync/secretScanner.ts:48` ships
+  hardcoded with no operator override, validating the value of
+  adding one. Schema duplication tracked as A5.b deferred
+  follow-up (migration to a shared types crate).
 - **M5 (partial — infra)** — `RuntimeCronToolExecutor.by_binding`
   migrates from `Arc<HashMap>` (immutable post-construction) to
   `Arc<arc_swap::ArcSwap<HashMap<...>>>`, enabling lock-free atomic
