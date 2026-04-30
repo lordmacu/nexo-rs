@@ -20,7 +20,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 use tracing::{debug, info, warn};
 
-use nexo_driver_types::{ExtractMemoriesConfig, GoalId};
+use nexo_driver_types::{ExtractMemoriesConfig, GoalId, MemoryExtractor};
 
 use crate::events::{DriverEvent, ExtractSkipReason};
 use crate::extract_memories_prompt::build_extract_prompt;
@@ -760,6 +760,36 @@ impl ExtractMemoriesLlm for NoopExtractMemoriesLlm {
             .unwrap()
             .take()
             .ok_or_else(|| "NoopExtractMemoriesLlm: no canned response set".to_string())
+    }
+}
+
+// ── Phase M4 — MemoryExtractor trait impl ────────────────────────
+
+/// `nexo-core::agent::LlmAgentBehavior` holds an
+/// `Arc<dyn MemoryExtractor>` to fire post-turn extraction for
+/// every regular agent (event-driven inbound, pollers, heartbeat,
+/// marketing plugin). The same `Arc<ExtractMemories>` is shared
+/// with the driver-loop orchestrator when an agent participates
+/// in both engines, so cadence + in-progress mutex + circuit
+/// breaker stay coherent across paths.
+///
+/// See `crates/driver-types/src/memory_extractor.rs` for the
+/// trait + IRROMPIBLE refs.
+impl MemoryExtractor for ExtractMemories {
+    fn tick(&self) {
+        ExtractMemories::tick(self);
+    }
+
+    fn extract(
+        self: Arc<Self>,
+        goal_id: GoalId,
+        turn_index: u32,
+        messages_text: String,
+        memory_dir: PathBuf,
+    ) {
+        // Inherent `extract` takes `&Arc<Self>`; trait method
+        // receives `Arc<Self>` by value, so re-borrow the Arc.
+        ExtractMemories::extract(&self, goal_id, turn_index, messages_text, memory_dir);
     }
 }
 
