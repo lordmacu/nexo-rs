@@ -10,6 +10,465 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.1 — `nexo-plugin-manifest` crate** (foundation for
+  plug-and-play plugin system). New crate
+  `crates/plugin-manifest/` (~860 LOC + 25 tests verde) defines
+  the TOML schema + 4-tier defensive validator that every
+  native Rust nexo plugin must ship as `nexo-plugin.toml`.
+  Schema covers 14 sub-sections (`[plugin]` core +
+  `capabilities`/`tools`/`advisors`/`agents`/`channels`/`skills`/
+  `config`/`requires`/`capability_gates`/`ui`/`contracts`/`meta`)
+  + 3 enums (`Capability` 10 variants, `GateKind` 3, `GateRisk`
+  4). Public API: `PluginManifest::{from_str, from_path,
+  validate, id, version}`. Validator collects ALL errors (no
+  bail-on-first) into `Vec<ManifestError>` so operators see the
+  full diagnostic in one pass. Validation tiers: **syntactic**
+  via `toml::from_str` + `#[serde(deny_unknown_fields)]`
+  everywhere (rejects unknown fields forward-compat); **field-
+  level** via id regex `^[a-z][a-z0-9_]{0,31}$`, semver
+  parsing, path security (rejects `..` traversal + absolute
+  paths); **cross-field** via tool namespace policy (every
+  tool name MUST start with `<plugin.id>_`), `deferred ⊆
+  expose`, capability impl confirmation, duplicate gate
+  env_var detection; **runtime** via
+  `min_nexo_version.matches(current_nexo_version)` so plugins
+  built for future daemon versions reject cleanly.
+  `ManifestError` enum 13 variants, all thiserror-typed,
+  Display messages carry operator-actionable hints
+  (e.g. *"Rename to `marketing_<descriptive>`"*). Reference
+  manifest `examples/marketing-example.toml` documenta cada
+  sección con comments per-block; loaded + validated by
+  `example_marketing_manifest_validates` test as drift guard.
+  Distinct from the existing `crates/extensions/<n>/plugin.toml`
+  (Phase 11.1, subprocess tool extensions) — different filename
+  (`nexo-plugin.toml`), different concept (native Rust plugins
+  link into the daemon shipping full mini-applications: agents
+  + tools + skills + channels + advisors + capability gates).
+  Future sub-phases consume this foundation: 81.2 `NexoPlugin`
+  trait + lifecycle, 81.5 `PluginRegistry` discovery, 81.9
+  `Mode::Run` registry sweep replacing per-plugin boot wire.
+  Operator UX for plugin authors: drop `nexo-plugin.toml` in
+  the plugin's crate root with desired sections; future
+  registry walks the workspace + user dir, parses manifests,
+  validates, and wires plugins automatically — zero
+  `src/main.rs` edits needed once 81.9 ships. Provider-agnostic
+  by construction: schema makes no LLM-provider assumption;
+  plugins declare requirements via `[plugin.requires]`. IRROMPIBLE
+  refs: claude-code-leak `src/tools/*` (absence — leak hardcodes
+  every tool, no plugin manifest concept); `research/src/plugins/
+  manifest-types.ts:1-20` (`PluginConfigUiHint` mirrored as
+  [`UiHint`]); `manifest.ts:17` (`PLUGIN_MANIFEST_FILENAME`
+  precedent — OpenClaw uses `openclaw.plugin.json` JSON5; we
+  use TOML idiomatic Rust); `manifest.ts:54-60`
+  (`PluginManifestActivation` capability enum mirrored as
+  [`Capability`]); `extensions/firecrawl/openclaw.plugin.json`
+  (example with `providerAuthEnvVars`/`uiHints`/`contracts`);
+  internal `crates/extensions/src/manifest.rs:108-132` (Phase
+  11.1 distinct concept). Tests:
+  `cargo test -p nexo-plugin-manifest --lib` → 25/25,
+  `cargo build -p nexo-plugin-manifest` verde.
+- Phase 80.12 (MVP) — generic webhook receiver primitives. New crate
+  `crates/webhook-receiver/` (~700 LOC + 33 tests verde). Provider-
+  agnostic by construction: zero GitHub-specific (or any other
+  provider-specific) Rust code; new providers add a YAML config
+  entry, no code change. `WebhookSourceConfig` carries 5 fields:
+  `id` (stable identifier for log correlation + capability gate
+  naming), `path` (HTTP path the listener exposes), `signature:
+  SignatureSpec` (algorithm + header name + optional prefix +
+  secret env var), `publish_to` (NATS subject template with
+  `${event_kind}` substitution), `event_kind_from: EventKindSource`
+  (header lookup or JSON body dotted path), optional
+  `body_cap_bytes` (default 1 MB). YAML uses `serde(rename_all =
+  "kebab-case")` for the algorithm enum and `tag = "kind"` for
+  EventKindSource so operators write natural YAML
+  (`algorithm: hmac-sha256`, `kind: header` / `kind: body`).
+  Algorithms supported: `HmacSha256`, `HmacSha1`, `RawToken`
+  (constant-time string compare for providers that just share a
+  secret token rather than a real signature). All verifications
+  use `subtle::ConstantTimeEq` to resist timing attacks; hex
+  decoding is defensive (garbage hex → `InvalidSignature` without
+  panic); per-spec prefix stripping (e.g. `"sha256="` removed
+  before hex-decode). Pure-fn primitives exported:
+  `verify_signature(spec, secret, header_value, body) ->
+  Result<(), RejectReason>` does the constant-time HMAC compare
+  or raw-token compare; `extract_event_kind(source, headers,
+  body) -> Result<Option<String>, RejectReason>` does
+  case-insensitive header lookup or JSON dotted-path body
+  navigation via the private `json_get_dotted` helper (recursive
+  `Value::get` walk, no unwraps); `render_publish_topic(template,
+  event_kind) -> String` substitutes `${event_kind}` and is
+  forward-compatible with future template variables.
+  `WebhookHandler::handle(headers, body) -> Result<HandledEvent,
+  RejectReason>` orchestrates 4 gates in order: (1) body cap
+  rejects BEFORE any HMAC compute as DoS defense; (2) signature
+  header presence + secret env presence + signature match; (3)
+  event-kind extraction (header lookup or body JSON path); (4)
+  subject-safety check — rejects event_kind values containing
+  `.`, `*`, `>`, or whitespace which would break NATS subject
+  parsing. Output is `HandledEvent { source_id, event_kind,
+  topic: String, payload: serde_json::Value }`. Body normally
+  parses as JSON; non-UTF-8 bodies wrap as `{ "raw_base64":
+  "..." }` — operator still sees the content for post-mortem
+  without assuming JSON. `RejectReason` is `thiserror`-typed
+  with 7 variants: `OversizedBody`, `MissingSignatureHeader`,
+  `InvalidSignature`, `SecretMissing`, `MissingEventKind`,
+  `InvalidBodyJson`, `InvalidEventKindForSubject`. Caller maps
+  to HTTP status (401 for signature errors, 413 for oversize,
+  422 for missing event kind, 500 for secret-missing operator
+  misconfig). `WebhookHandler::validate(&config)` runs boot-time
+  invariants: id non-empty, path non-empty + starts with `/`,
+  publish_to non-empty, signature.header non-empty,
+  signature.secret_env non-empty, body_cap_bytes > 0 when set,
+  event_kind_from header.name or body.path non-empty. Workspace
+  `Cargo.toml::members` adds `crates/webhook-receiver`. 33 unit
+  tests verde cover: 4 validate (well-formed + 3 rejection
+  arms), 6 verify_signature (HMAC-SHA256 match/mismatch,
+  HMAC-SHA1 match, RawToken match/mismatch, garbage hex), 5
+  extract_event_kind (header case-insensitive, header missing
+  → None, body top-level, body nested, body invalid JSON
+  errors, body missing path → None), 2 render_publish_topic, 3
+  is_event_kind_subject_safe (rejects dot / wildcards / whitespace
+  / empty, accepts alphanumeric+dashes), 6 handle integration
+  (oversized body, missing sig header, secret unset, invalid
+  sig with secret set, happy path with NATS topic + JSON
+  payload, event kind containing dot rejected by subject
+  safety), 1 non-JSON body wrapping (raw_base64 fallback), 2
+  YAML round-trip (full config with header extraction + body-
+  path extraction shape). HTTP listener integration deferred
+  to 80.12.b — the operator wires the route via the existing
+  `:8080` health server (`read_http_path` / `write_http_response`
+  helpers in `src/main.rs` already handle the raw TcpListener
+  pattern) or extends with axum/hyper, depending on their
+  preference. The crate stays HTTP-framework-agnostic so neither
+  choice is forced. Provider-agnostic by construction: zero
+  LLM-provider touchpoints, decision table data-driven via
+  YAML, transversal across Anthropic / MiniMax / OpenAI /
+  Gemini / DeepSeek / xAI / Mistral. **Wiring point** (operator
+  opts in when ready): construct `let handler =
+  WebhookHandler::new(config)` per source at boot; in the
+  HTTP listener route handler, collect headers + body bytes
+  and call `handler.handle(&headers, body)`; map
+  `Result<HandledEvent, RejectReason>` to HTTP response (200
+  for Ok, appropriate status for each error variant); on Ok,
+  call `broker.publish(handled.topic, Event::new(handled.topic,
+  handled.source_id, handled.payload)).await` so any
+  downstream subscriber consumes the event. **Deferred
+  follow-ups**: 80.12.b — HTTP listener integration routing
+  `/webhooks/<source_id>` via the existing `:8080` health
+  server or a dedicated dispatch port (reuse `read_http_path`
+  / `write_http_response` helpers — no axum/hyper dep
+  required); 80.12.c — tunnel registration for the public URL
+  (pairs with `crates/tunnel/`); 80.12.d — INVENTORY entries
+  for per-source secrets (`WEBHOOK_<SOURCE_ID>_SECRET`) so
+  `nexo setup doctor capabilities` lists them; 80.12.e — audit
+  log per request (Phase 72-style) so operators can replay;
+  80.12.f — multi-source config validation at boot (reject
+  duplicate paths or duplicate ids); 80.12.g — replay
+  protection (idempotency tokens / nonce window per source);
+  80.12.h — main.rs hookup (route + listener registration +
+  per-source handler map). Three-pillar audit: **robusto** —
+  33 tests cover every path; constant-time HMAC compare via
+  `subtle::ConstantTimeEq`; body cap before HMAC compute as
+  DoS defense; defensive hex decode + JSON parse never panic;
+  structured `RejectReason` enum makes caller error mapping
+  exhaustive; subject-safety check prevents NATS pollution;
+  YAML validation at boot fails fast on operator typos;
+  **óptimo** — pure-fn primitives are zero-alloc on the hot
+  path; single HMAC state allocation per request; case-
+  insensitive header lookup via ASCII lower-case comparison
+  without per-call allocation; `Arc<WebhookSourceConfig>`
+  shareable across handler clones; **transversal** — zero
+  LLM-provider touchpoints, decision table fully data-driven
+  via YAML, transversal Anthropic / MiniMax / OpenAI / Gemini
+  / DeepSeek / xAI / Mistral.
+- Phase 80.21 (MVP) — public docs + admin-ui tech-debt sweep for the
+  full Phase 80 KAIROS-style cluster (assistant mode, auto-approve
+  dial, AWAY_SUMMARY, multi-agent coordination, BG sessions). 5 new
+  mdBook pages under `docs/src/`: `agents/assistant-mode.md` (~250
+  LOC) covering the per-binding flag + addendum + boot-immutable
+  semantics + cross-feature lifecycle hooks + per-sub-phase status
+  table; `agents/auto-approve.md` (~280 LOC) covering the curated
+  decision table + always-asks list + layered-gates ASCII diagram +
+  YAML config + defense-in-depth checklist; `agents/away-summary.md`
+  (~180 LOC) covering config table + output shape with truncation +
+  wiring snippet using `try_compose_away_digest` + atomic-update
+  pattern + defensive edges; `agents/multi-agent-coordination.md`
+  (~250 LOC) covering the `agent.inbox.<goal_id>` subject contract +
+  `InboxMessage` shape + `list_peers` / `send_to_peer` tool shapes +
+  6 validation gates + per-goal fan-out + receive side router +
+  buffer-on-demand semantics + render shape + wiring snippet;
+  `cli/agent-bg.md` (~280 LOC) covering `SessionKind` enum table +
+  `agent run [--bg]` + `agent ps` + `agent discover` + `agent
+  attach` + 3-tier DB path resolution (`--db` > `NEXO_STATE_ROOT`
+  > XDG default) + kind-aware reattach semantics. `docs/src/SUMMARY.md`
+  reorganised with a new top-level **Assistant mode** section
+  grouping the four concept pages plus an entry under **CLI** for
+  `agent-bg.md`. `mdbook build docs` smoke verde — every cross-ref
+  resolves, no broken links. Each page maintains the project's
+  no-leak-attribution posture: zero mentions of upstream codenames
+  or paths in committed text. Status tables per page list every
+  sub-phase as ✅ MVP or ⬜ deferred so operators see exactly what
+  ships vs what's blocked on follow-up wiring (main.rs hookups,
+  caller-side metadata population, daemon-side BG-goal pickup).
+  Six new tech-debt registry entries in `admin-ui/PHASES.md`
+  defining the operator UI surface for each cluster feature: (1)
+  assistant_mode toggle + addendum textarea + initial_team multi-
+  select + boot-immutable "restart required" banner on Phase A3
+  agent-config tab + Phase A4 active-badge per goal; (2) auto_approve
+  per-binding toggle with workspace-path display + curated-tools
+  preview + Phase A9 audit log + setup-doctor banner for
+  `assistant_mode + !auto_approve` misconfig; (3) BG sessions
+  Phase A4 dashboard tab with SessionKind chips + spawn-BG modal +
+  discover-detached pane + per-row drill-in with live-stream
+  placeholder; (4) AWAY_SUMMARY config block on Phase A3 + Phase
+  A9 last-digest viewer + per-channel rendering preview; (5)
+  multi-agent inbox pane on Phase A8 delegation visualiser with
+  live buffer count + per-message preview + drain button + tool
+  registry status + API reference for the subject contract; (6)
+  AutoDream cluster pane on Phase A7 memory inspector with status
+  badge + `dream_runs` audit table tail + force-run button gated
+  by `NEXO_DREAM_NOW_ENABLED` capability + kill button. Three-pillar
+  audit: **robusto** — cross-refs between every page so operators
+  navigate by use-case not by sub-phase number; per-page status
+  tables surface deferred follow-ups inline so operators don't
+  have to dig PHASES.md to know what's wired vs not; defensive
+  language ("operator hookup pending", "blocked on dirty-state",
+  "until the daemon-side pickup lands") wherever the slim MVP
+  stops short of end-to-end; **óptimo** — mdbook reuses the
+  existing infrastructure (no new build steps, no new
+  preprocessors); admin-ui tech-debt entries are one-liner-per-
+  feature scope-bound, no over-specification of UI shape; **transversal**
+  — zero LLM-provider mentions in docs (every example provider-
+  agnostic); admin-ui entries describe operator knobs not LLM
+  prompts so the UI surface stays provider-agnostic too. Cluster
+  KAIROS-style docs now complete; Phase 80 progress 18/22 sub-phases
+  with full operator-visible documentation for every shipped
+  feature. Pending sub-phases (cron jitter 80.2-80.6 + brief
+  mode 80.8 + MCP channels 80.9 + generic webhook receiver
+  80.12) will land their own doc pages when shipped.
+- Phase 80.11.b (MVP) — receive side for the agent inbox: router +
+  per-goal FIFO buffer + render helper. Closes the Send→Receive
+  loop opened by Phase 80.11 (publisher half). New module
+  `crates/core/src/agent/inbox_router.rs` (~280 LOC + 17 tests
+  verde). `InboxRouter<B: BrokerHandle + ?Sized + 'static>`
+  mirrors the Phase 79.6 `TeamMessageRouter` pattern: single
+  broker subscriber on `agent.inbox.>` wildcard pattern (one
+  subscription per process, not per-goal — efficient under
+  fan-out) + `dashmap::DashMap<GoalId, Arc<InboxBuffer>>` for
+  in-memory routing. Spawn API:
+  `pub fn spawn(self: &Arc<Self>, cancel: CancellationToken) ->
+  JoinHandle<()>` runs the subscribe loop with
+  `tokio::select! { _ = cancel.cancelled() => break, next =
+  sub.next() => match next { Some(ev) => self.dispatch_inbound(ev),
+  None => break } }`. `dispatch_inbound(ev)` parses the subject
+  suffix as a UUID via the private `parse_goal_from_subject`
+  helper (defensive: rejects unknown prefix or non-UUID suffix
+  with a debug log instead of panicking), decodes the payload
+  as `InboxMessage` (malformed → drop with debug log), looks up
+  or creates the buffer via `dashmap::Entry::or_insert_with`,
+  pushes the message. The "or creates" leg implements
+  buffer-on-demand semantics: a peer can fire a message at a
+  goal that hasn't `register()`'d yet, the message queues in a
+  fresh buffer, and the goal sees it when it eventually
+  registers — race-safe under fast-spawn-then-immediate-send.
+  `InboxBuffer { queue: Mutex<VecDeque<InboxMessage>> }` with
+  `pub const MAX_QUEUE: usize = 64`: `push(msg) -> bool` returns
+  `true` when an eviction happened (FIFO `pop_front` when the
+  queue is at cap, plus a `tracing::warn!` line so long-idle
+  goals surface in logs); `drain() -> Vec<InboxMessage>`
+  atomically empties the queue and returns its contents in
+  chronological order (oldest first); `len()` / `is_empty()`
+  for read tools. Mutex held only for the microsecond push /
+  drain windows. Idempotent `register(goal_id) -> Arc<InboxBuffer>`
+  returns the existing buffer when the goal already has one
+  (goal resume safe — re-registration on restart preserves any
+  buffered messages). `forget(goal_id)` removes the entry on
+  goal terminal state. `buffer_count()` for ops audit. Pure-fn
+  `pub fn render_peer_messages_block(messages: &[InboxMessage])
+  -> Option<String>` returns `None` when the slice is empty so
+  callers can `if let Some(block) = render(...)` inline; when
+  non-empty, returns markdown:
+  ```
+  # PEER MESSAGES
+
+  <peer-message from="researcher" sent_at="2026-04-30T12:00:00+00:00"[ correlation_id="<uuid>"]>
+  body
+  </peer-message>
+  ```
+  `correlation_id` attribute is rendered ONLY when `Some` —
+  attribute is omitted when `None` to keep the prompt minimal.
+  Cancellation is clean: dropping the supplied `CancellationToken`
+  causes the subscribe loop to break and the spawned task to
+  exit. Subscriber failures log a `tracing::warn!` and return
+  early (mirrors `team_message_router::spawn` pattern — inbox
+  offline preferable to a panic loop). 17 unit tests verde:
+  `buffer_push_drain_round_trip` (basic FIFO),
+  `buffer_drain_empty_returns_empty_vec`,
+  `buffer_evicts_oldest_at_cap` (push 64+1 → eviction; oldest
+  gone, newest present), `parse_goal_from_subject_valid`,
+  `parse_goal_from_subject_rejects_unknown_prefix`
+  (`team.broadcast.foo` → None), `parse_goal_from_subject_rejects_non_uuid_suffix`
+  (`agent.inbox.not-a-uuid` → None), `render_empty_returns_none`,
+  `render_single_message_includes_from_and_body` (asserts no
+  `correlation_id` attribute when None),
+  `render_with_correlation_id_includes_attribute`,
+  `render_preserves_chronological_order` (3-message slice →
+  body positions in output increasing),
+  `router_register_idempotent_returns_same_buffer` (push via
+  Arc clone, drain via another Arc clone, same buffer
+  instance), `router_dispatch_inbound_pushes_to_buffer`
+  (synthetic event → direct `dispatch_inbound` call),
+  `router_buffer_on_demand_for_unregistered_goal` (send before
+  register → register later → drain sees buffered message),
+  `router_drops_malformed_subject` (no panic on garbage
+  subject), `router_drops_malformed_payload` (garbage JSON
+  body), `router_forget_drops_buffer`, and
+  `router_spawn_subscribes_and_routes_end_to_end` (full
+  end-to-end via `AnyBroker::local()` pubsub: spawn router →
+  publish to `agent.inbox.<goal_id>` → sleep 100ms for the
+  loop → drain buffer → assert message present → cancel).
+  Re-export through `crates/core/src/agent/mod.rs` (`pub mod
+  inbox_router;`). `cargo build --workspace` + `cargo test
+  -p nexo-core --lib agent::inbox_router` all green. **Wiring
+  point** for the operator (deferred 80.11.b.b/c sub-phases):
+  (1) at boot, `let router = InboxRouter::new(broker.clone());
+  let _handle = router.spawn(cancel.clone());` — single
+  per-process spawn covers every goal; (2) at goal startup,
+  `let buf = router.register(goal_id);` and stash on the
+  goal's runtime context; (3) in the per-turn loop adjacent
+  to Phase 80.15's assistant addendum push site,
+  `let drained = buf.drain(); if let Some(block) =
+  render_peer_messages_block(&drained) { channel_meta_parts.push(block); }`;
+  (4) at goal terminal, `router.forget(goal_id);` releases the
+  buffer. **Deferred follow-ups**: 80.11.b.b — hook the drain +
+  render into `llm_behavior.rs` per-turn loop adjacent to
+  Phase 80.15 assistant addendum push site (1-line snippet,
+  blocked on dirty-state pattern); 80.11.b.c — main.rs router
+  spawn + per-goal `register` / `forget` on goal lifecycle
+  hooks. Three-pillar audit: **robusto** — 17 tests cover
+  every branch + race scenarios (buffer-on-demand,
+  re-registration, eviction, malformed input both at subject
+  and payload layers, end-to-end pubsub); MAX_QUEUE cap with
+  FIFO eviction prevents memory bloat for long-idle goals;
+  cancellation token shutdown clean; subscriber-failure
+  log-and-exit avoids panic loop; **óptimo** — single broker
+  subscriber per process, dashmap O(1) lookup, per-buffer
+  Mutex held only for microsecond windows, drain is a single
+  allocation, queue starts at capacity 8 and grows by VecDeque
+  doubling; **transversal** — pure NATS subject + JSON payload
+  + in-memory VecDeque, zero LLM-provider touchpoints,
+  transversal across Anthropic / MiniMax / OpenAI / Gemini /
+  DeepSeek / xAI / Mistral.
+- Phase 80.11 (MVP) — agent inbox subject contract +
+  `list_peers` / `send_to_peer` LLM tools (publisher-only slim
+  MVP). Multi-agent in-process coordination via per-goal NATS
+  subject `agent.inbox.<goal_id>`. New module
+  `crates/core/src/agent/inbox.rs` ships
+  `inbox_subject(GoalId) -> String` helper rendering
+  `agent.inbox.<uuid>`, `InboxMessage { from_agent_id,
+  from_goal_id, to_agent_id, body, sent_at, correlation_id:
+  Option<Uuid> }` with `Serialize + Deserialize` so the wire
+  format is JSON over NATS uniformly across local broker +
+  remote cluster, plus constants `INBOX_SUBJECT_PREFIX =
+  "agent.inbox"` / `MIN_BODY_CHARS = 1` / `MAX_BODY_BYTES =
+  64 * 1024`. `correlation_id` is skipped from the wire when
+  None via `#[serde(skip_serializing_if = "Option::is_none")]`
+  so request/response patterns can reuse the channel. New
+  `ListPeersTool` (`crates/core/src/agent/list_peers_tool.rs`,
+  ~80 LOC + 1 test) returns `{ peers: [{ agent_id, description,
+  reachable }] }` JSON, excludes self, computes `reachable` per
+  entry by glob-matching against
+  `EffectiveBindingPolicy::allowed_delegates` (empty list ⇒ all
+  reachable, trailing-`*` prefix match, exact otherwise — same
+  semantics as Phase 16 + the existing
+  `peer_directory::render_for` markdown path). `PeerDirectory`
+  gains a `pub fn peers(&self) -> &[PeerSummary]` slice
+  accessor (the underlying field was private; markdown rendering
+  via `render_for` keeps the existing system-prompt path
+  intact, the new accessor exposes the raw list to tools that
+  return JSON). When `ctx.peers` is `None`, returns `{ peers:
+  [], note: "this agent has no PeerDirectory configured" }`.
+  New `SendToPeerTool { lookup: PeerGoalLookup }`
+  (`crates/core/src/agent/send_to_peer_tool.rs`, ~280 LOC + 11
+  tests) where `pub type PeerGoalLookup = Arc<dyn Fn(&str) ->
+  Vec<GoalId> + Send + Sync + 'static>` is a caller-injected
+  closure — operator wires it to `nexo_agent_registry::AgentRegistry::list`
+  filtered by `agent_id` + Running status, keeping the tool free
+  of an agent-registry dependency. Tool def declares
+  `to: string`, `message: string` (1-65536 chars), optional
+  `correlation_id: string` (UUID), `additionalProperties:
+  false`, `required: ["to", "message"]`. Handler walks 6
+  validation gates: (1) `to` present + non-empty after trim,
+  (2) `to != ctx.agent_id` (self-sends rejected), (3) `message`
+  present + non-empty, (4) body ≤ MAX_BODY_BYTES (oversize
+  rejected with explicit limit in error message), (5) `to`
+  must exist in `PeerDirectory` (fast-path "unknown agent_id"
+  unreachable when not — fail-fast before broker round-trip),
+  (6) `lookup(to)` must return at least one live goal id
+  (empty → "no live goals" unreachable). When all 6 pass,
+  iterates live goals, builds an `InboxMessage` per goal with
+  `from_goal_id = ctx.session_id.map(GoalId).unwrap_or_else(GoalId::new)`
+  (best-effort; provenance preserved via `from_agent_id`),
+  publishes via `ctx.broker.publish(inbox_subject(goal),
+  Event::new(...))`, accumulates `delivered_to: Vec<String>` and
+  `unreachable_reasons: Vec<String>` so per-goal fan-out is
+  fault-tolerant — one bad goal doesn't block others.
+  Returns `{ delivered_to: [...], unreachable_reasons: [...] }`.
+  11 send_to_peer tests cover every gate + happy path:
+  `tool_def_shape`, `empty_to_errors`, `missing_to_errors`,
+  `missing_message_errors`, `empty_message_errors`,
+  `self_send_rejected`, `unknown_agent_id_returns_unreachable`,
+  `no_live_goals_returns_unreachable`,
+  `live_peer_publishes_and_returns_delivered`,
+  `oversize_message_rejected` (body > 64 KB),
+  `correlation_id_round_trips` (subscribes to the inbox subject,
+  fires send with explicit `correlation_id`, asserts the wire
+  payload deserialises to the same UUID — proves the
+  Some-correlation-id path serialises and the receiver can
+  recover it intact). Test fixture mirrors the
+  `extension_tool::tests::test_ctx` pattern (full
+  `AgentConfig` field set), uses `AnyBroker::local()` +
+  `SessionManager::new(60s, 20)` so broker round-trip works
+  in-memory without external NATS. 3 inbox tests
+  (`subject_format_uses_prefix_dot_uuid`,
+  `message_serde_round_trip`, `correlation_id_omitted_when_none`)
+  + 1 list_peers test (`tool_def_shape`) round out the cluster
+  → **15 new tests verde**. Re-exports plumbed through
+  `crates/core/src/agent/mod.rs`: `inbox`, `list_peers_tool`,
+  `send_to_peer_tool`. `cargo build --workspace` + `cargo test
+  -p nexo-core --lib agent::inbox agent::list_peers_tool
+  agent::send_to_peer_tool` all green. **Deferred follow-ups**:
+  80.11.b — receive side: subscriber on `agent.inbox.<goal_id>`,
+  per-goal FIFO buffer, injection as `<peer-message
+  from="agent_id">...</peer-message>` system block at next turn
+  start (requires runtime hook in the per-turn loop, similar to
+  Phase 77.16 AskUserQuestion injection pattern; without it,
+  sent messages publish to the broker but no subscriber consumes
+  them — operator can wire a NATS consumer manually);
+  80.11.c — broadcast `to: "*"` with cap (linear in team size,
+  marked expensive); 80.11.d — cross-machine inbox via NATS
+  cluster (works automatically with NATS, documents the
+  operator's broker config requirement); 80.11.e — bridge
+  protocol responses (`shutdown_request` /
+  `plan_approval_request` JSON shapes — niche, defer);
+  80.11.f — main.rs tool registration wire (1-line snippet
+  wrapping `AgentRegistry::list_by_kind` as the lookup closure,
+  blocked on the dirty-state pattern). Three-pillar audit:
+  **robusto** — 15 tests cover every gate + happy path +
+  correlation_id wire round-trip; defensive arg parsing
+  (`as_str().trim()` + is_empty); broker publish failure
+  handling per-goal via `unreachable_reasons` so partial
+  failures don't cancel the whole call; PeerDirectory existence
+  fast-path avoids broker round-trip on typos; race-safe — peer
+  goal terminating between `list_peers` and `send_to_peer` falls
+  through unreachable not panic; **óptimo** — `PeerDirectory`
+  is cached at boot, lookup closure resolves in-memory via
+  dashmap, broker publish is fire-and-forget, for-loop over
+  live goals is O(N) trivially; **transversal** — zero
+  LLM-provider touchpoints, pure JSON tool surface, NATS
+  subject contract is provider-agnostic and works uniformly
+  under Anthropic / MiniMax / OpenAI / Gemini / DeepSeek / xAI
+  / Mistral.
 - **M1.b.c — daemon-embed MCP HTTP server** (FOLLOWUPS A6.M1).
   `Mode::Run` (daemon) now optionally starts an MCP HTTP server
   in-process alongside the agent runtime, exposing the primary

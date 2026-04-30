@@ -2914,6 +2914,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexo-assistant"
+version = "0.1.1"
+dependencies = [
+ "nexo-config",
+ "serde",
+ "serde_yaml",
+]
+
+[[package]]
 name = "nexo-auth"
 version = "0.1.1"
 dependencies = [
@@ -3007,6 +3016,7 @@ dependencies = [
  "jsonschema",
  "lru",
  "nexo-agent-registry",
+ "nexo-assistant",
  "nexo-auth",
  "nexo-broker",
  "nexo-config",
@@ -3073,6 +3083,36 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "nexo-dream"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "async-trait",
+ "chrono",
+ "filetime",
+ "futures",
+ "humantime-serde",
+ "nexo-agent-registry",
+ "nexo-broker",
+ "nexo-config",
+ "nexo-core",
+ "nexo-driver-types",
+ "nexo-fork",
+ "nexo-llm",
+ "nexo-memory",
+ "nix",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "tracing",
  "uuid",
 ]
 
@@ -3200,6 +3240,30 @@ dependencies = [
  "uuid",
  "walkdir",
  "wiremock",
+]
+
+[[package]]
+name = "nexo-fork"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures",
+ "nexo-agent-registry",
+ "nexo-broker",
+ "nexo-config",
+ "nexo-core",
+ "nexo-driver-permission",
+ "nexo-driver-types",
+ "nexo-llm",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -3458,6 +3522,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexo-plugin-manifest"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "regex",
+ "semver",
+ "serde",
+ "thiserror 1.0.69",
+ "toml",
+]
+
+[[package]]
 name = "nexo-plugin-telegram"
 version = "0.1.1"
 dependencies = [
@@ -3610,10 +3686,12 @@ name = "nexo-rs"
 version = "0.1.1"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "async-nats",
  "async-trait",
  "base64 0.22.1",
  "chrono",
+ "dirs",
  "futures",
  "humantime",
  "nexo-agent-registry",
@@ -3622,9 +3700,11 @@ dependencies = [
  "nexo-config",
  "nexo-core",
  "nexo-dispatch-tools",
+ "nexo-dream",
  "nexo-driver-claude",
  "nexo-driver-loop",
  "nexo-driver-permission",
+ "nexo-driver-types",
  "nexo-extensions",
  "nexo-llm",
  "nexo-lsp",
@@ -3634,6 +3714,7 @@ dependencies = [
  "nexo-plugin-browser",
  "nexo-plugin-email",
  "nexo-plugin-google",
+ "nexo-plugin-manifest",
  "nexo-plugin-telegram",
  "nexo-plugin-whatsapp",
  "nexo-poller",
@@ -3653,6 +3734,7 @@ dependencies = [
  "serde_yaml",
  "sha2",
  "sqlx",
+ "tempfile",
  "tokio",
  "tokio-tungstenite 0.21.0",
  "tokio-util",
@@ -3675,11 +3757,13 @@ dependencies = [
  "nexo-auth",
  "nexo-config",
  "nexo-core",
+ "nexo-llm",
  "nexo-pairing",
  "nexo-plugin-email",
  "nexo-plugin-google",
  "nexo-plugin-whatsapp",
  "rand 0.8.6",
+ "regex",
  "reqwest",
  "secrecy",
  "serde",
@@ -3691,6 +3775,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+ "walkdir",
 ]
 
 [[package]]
@@ -3766,6 +3851,33 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "nexo-webhook-receiver"
+version = "0.1.1"
+dependencies = [
+ "bytes",
+ "hex",
+ "hmac",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha1",
+ "sha2",
+ "subtle",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "nix"
+version = "0.27.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2eb04e9c688eff1c89d72b407f168cf79bb9e867a9d3323ed6c01519eb9cc053"
+dependencies = [
+ "bitflags 2.11.1",
+ "cfg-if",
+ "libc",
 ]
 
 [[package]]
@@ -5190,6 +5302,10 @@ name = "semver"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
+dependencies = [
+ "serde",
+ "serde_core",
+]
 
 [[package]]
 name = "serde"

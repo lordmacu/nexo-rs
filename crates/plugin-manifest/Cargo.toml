@@ -1,0 +1,24 @@
+[package]
+name = "nexo-plugin-manifest"
+description = "TOML manifest schema + 4-tier validator for native Rust nexo plugins (Phase 81.1)."
+version = "0.1.0"
+edition = { workspace = true }
+rust-version = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+documentation = { workspace = true }
+keywords = { workspace = true }
+categories = { workspace = true }
+
+[lints]
+workspace = true
+
+[dependencies]
+serde     = { workspace = true, features = ["derive"] }
+toml      = "0.8"
+semver    = { workspace = true, features = ["serde"] }
+regex     = { workspace = true }
+thiserror = { workspace = true }
+anyhow    = { workspace = true }
