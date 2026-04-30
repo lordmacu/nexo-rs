@@ -43,6 +43,18 @@ pub enum ToggleKind {
     Boolean,
     /// Comma-separated list. `≥1` non-empty entry = enabled.
     Allowlist,
+    /// Compile-time Cargo feature. The associated string is the
+    /// feature name as declared in `Cargo.toml::[features]`.
+    ///
+    /// **Limitation**: `cfg!(feature = "X")` is evaluated when this
+    /// crate (`nexo-setup`) is compiled, not when the binary that
+    /// invoked `agent doctor` was compiled. The feature MUST be
+    /// declared in `crates/setup/Cargo.toml::[features]` and
+    /// propagated from any consumer that wants it visible here
+    /// (the workspace pattern: `nexo-rs/X = ["nexo-setup/X", ...]`).
+    /// Otherwise the entry always evaluates to `Disabled` regardless
+    /// of the binary's real flag set.
+    CargoFeature(&'static str),
 }
 
 impl ToggleKind {
@@ -50,6 +62,15 @@ impl ToggleKind {
         match self {
             ToggleKind::Boolean => "boolean",
             ToggleKind::Allowlist => "allowlist",
+            ToggleKind::CargoFeature(_) => "cargo_feature",
+        }
+    }
+
+    /// Feature-flag name for `CargoFeature` variants; `None` otherwise.
+    pub fn feature_name(self) -> Option<&'static str> {
+        match self {
+            ToggleKind::CargoFeature(name) => Some(name),
+            _ => None,
         }
     }
 }
@@ -179,6 +200,23 @@ pub fn evaluate_all() -> Vec<ToggleStatus> {
 }
 
 pub fn evaluate_one(toggle: CapabilityToggle) -> ToggleStatus {
+    // C3 — `CargoFeature` variant short-circuits the env-var read; no
+    // env var exists for compile-time gates. Other variants continue
+    // to read `toggle.env_var`.
+    if let ToggleKind::CargoFeature(name) = toggle.kind {
+        let enabled = is_cargo_feature_enabled(name);
+        return ToggleStatus {
+            toggle,
+            state: if enabled {
+                State::Enabled
+            } else {
+                State::Disabled
+            },
+            raw_value: Some(if enabled { "on" } else { "off" }.to_string()),
+            items_count: None,
+        };
+    }
+
     let raw = std::env::var(toggle.env_var).ok();
     let (state, items_count) = match toggle.kind {
         ToggleKind::Boolean => {
@@ -217,12 +255,32 @@ pub fn evaluate_one(toggle: CapabilityToggle) -> ToggleStatus {
                 Some(count),
             )
         }
+        // Unreachable — handled by the `if let` above.
+        ToggleKind::CargoFeature(_) => unreachable!(),
     };
     ToggleStatus {
         toggle,
         state,
         raw_value: raw,
         items_count,
+    }
+}
+
+/// C3 — compile-time feature check. The `cfg!` macro requires a
+/// literal argument so we cannot dispatch on `name` at runtime; this
+/// fn hard-codes the propagated feature set.
+///
+/// **Invariant**: every `ToggleKind::CargoFeature("X")` entry in
+/// [`INVENTORY`] MUST have a matching arm here AND a corresponding
+/// `[features]` entry in `crates/setup/Cargo.toml` propagated from
+/// the workspace root (`Cargo.toml::[features]::X = ["nexo-setup/X",
+/// ...]`). Missing arm → entry always reports `Disabled`. The drift
+/// test `inventory_cargo_features_have_arms` exercises every variant
+/// to surface the gap at test time.
+fn is_cargo_feature_enabled(name: &str) -> bool {
+    match name {
+        "config-self-edit" => cfg!(feature = "config-self-edit"),
+        _ => false,
     }
 }
 
@@ -243,6 +301,7 @@ pub fn render_tty(statuses: &[ToggleStatus]) -> String {
                     }
                 ),
                 ToggleKind::Boolean => "enabled".to_string(),
+                ToggleKind::CargoFeature(_) => "enabled (compiled-in)".to_string(),
             },
             State::Disabled => "disabled".to_string(),
         };
