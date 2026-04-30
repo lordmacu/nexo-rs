@@ -10,6 +10,107 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **M1.a — `tools/listChanged` capability + hot-swap allowlist**
+  (FOLLOWUPS A6.M1). `ToolRegistryBridge` (`crates/core/src/agent/
+  mcp_server_bridge/bridge.rs:85-200`) hard-coded
+  `"tools": { "listChanged": false }` since Phase 12.6 even though
+  Phase 76.7 shipped `HttpServerHandle::notify_tools_list_changed()`
+  — clients connected over HTTP/SSE never registered the
+  notification handler (per leak `useManageMCPConnections.ts:618-665`
+  the consumer side only listens when the server advertises
+  `capabilities.tools.listChanged: true`), so any future
+  hot-reload of `mcp_server.expose_tools` would have been a no-op
+  on connected clients. Fix migrates the bridge in two parts:
+  1) `allowlist: Option<HashSet<String>>` →
+  `allowlist: Arc<ArcSwap<Option<Arc<HashSet<String>>>>>` so an
+  external caller can atomically replace the filter via
+  `swap_allowlist(new)` without reconstructing the bridge —
+  `is_allowed()` reads via `arc_swap::Guard`, in-flight calls
+  finish against the previous snapshot, all `Clone`d bridges
+  share the same `Arc<ArcSwap>` so a single swap is visible
+  across stdio + HTTP transports atomically;
+  2) `list_changed_capability: bool` field (default `false`) +
+  `with_list_changed_capability(on)` builder, read by
+  `capabilities()` instead of the hard-coded `false`.
+  `start_http_transport` (`src/main.rs:10100-10183`) clones the
+  bridge with `with_list_changed_capability(true)` before passing
+  it to `start_http_server`, because the HTTP transport CAN push
+  `notifications/tools/list_changed` (Phase 76.7 SSE broadcast).
+  Stdio path keeps the default `false` because there is no
+  server→client push channel today (no bidir transport mid-session;
+  defer to slice M1.c). 5 inline tests in `bridge::tests`:
+  `capability_defaults_to_false` (sanity),
+  `with_list_changed_capability_flips_capability` (builder
+  semantics + resources/prompts stay false — M1 only touches
+  tools), `swap_allowlist_visible_immediately` (Some({A}) →
+  Some({B}) → None all observable on next list_tools call),
+  `swap_allowlist_propagates_through_clone` (`Arc<ArcSwap>`
+  shared-state invariant — swap on original, clone observes new
+  set), `proxy_tools_filtered_regardless_of_swap` (the hard-coded
+  `ext_*`/`mcp_*` proxy filter survives any swap because
+  open-relay defense lives ABOVE the allowlist gate). Doc-comment
+  on the struct documents the cap+emit coupling rule (advertise
+  true ⇒ caller MUST emit, advertise false ⇒ no point emitting)
+  with IRROMPIBLE refs to claude-code-leak `useManageMCPConnections.ts:618-665`
+  (consumer-side handler registration) and `:628-633`
+  (invalidate-then-fetch refresh pattern). Provider-agnostic:
+  MCP capability negotiation is protocol-level and transversal
+  to Anthropic / MiniMax / OpenAI / Gemini / DeepSeek / xAI /
+  Mistral. Slice M1.b (trigger that calls `swap_allowlist` +
+  `notify_tools_list_changed()` on config change) and slice M1.c
+  (stdio server→client notification pump so stdio path can also
+  cap=true) remain open in FOLLOWUPS A6.M1. Tests:
+  `cargo test -p nexo-core --lib agent::mcp_server_bridge::bridge::tests`
+  → 17/17 (12 existing + 5 new).
+- Phase 80.1.c (MVP) — `dream_now` LLM tool
+  (`crates/dream/src/tools.rs`, ~250 LOC + 9 unit tests). Forces a
+  memory-consolidation pass on demand from inside an LLM turn —
+  bypasses the kairos / remote / time / session gates while still
+  honoring the PID-mtime `.consolidate-lock` (only one fork at a
+  time). `DreamNowTool { runner: Arc<AutoDreamRunner>,
+  transcript_dir: PathBuf }` implements `ToolHandler::call(ctx,
+  args)`: extracts optional `args.reason: string` (defensive —
+  empty / missing / non-string all collapse to `"no reason given"`
+  so a malformed call from any provider stays well-typed), reads
+  `ctx.session_id` and **errors out when missing** because forced
+  runs need a goal anchor for the `DreamRunStore` audit row, then
+  builds `DreamContext { goal_id, session_id, transcript_dir,
+  kairos_active: false, remote_mode: false }` and calls
+  `runner.run_forced(&ctx).await`. `outcome_to_json` maps all six
+  `RunOutcome` variants to a structured JSON envelope:
+  `{ status: "completed" | "skipped" | "lock_blocked" | "errored"
+  | "timed_out" | "escape_audit", reason: string, audit_run_id?:
+  uuid, files_touched?: [string], holder_pid?: u32, error_message?:
+  string }` — same surface across Anthropic / MiniMax / OpenAI /
+  Gemini / DeepSeek / xAI / Mistral so the contract is provider-
+  agnostic per memory rule `feedback_provider_agnostic.md`.
+  `tool_def()` returns `ToolDef { name: "dream_now", description:
+  "Force a memory consolidation pass now (bypasses time/session
+  gates; lock gate honored).", parameters: { type: "object",
+  properties: { reason: { type: "string", description: "Optional
+  human-readable reason recorded in the audit row." }},
+  additionalProperties: false } }`. `register_dream_now_tool(
+  registry, runner, transcript_dir)` boot helper registers via
+  `register_arc` for operator-side wiring. Module doc comment
+  includes the 3-line main.rs hookup snippet (`let runner =
+  build_runner(BootDeps { ... }).await?; if let Some(runner) =
+  runner { register_dream_now_tool(&tool_registry, runner,
+  transcript_dir); }`) for application after the user resolves
+  their pre-existing main.rs dirty state. Tests verde: 9 inline
+  (`tool_def_shape`, `call_with_reason_returns_completed`,
+  `call_without_reason_uses_default`, `call_with_empty_reason_uses_default`,
+  `call_with_non_string_reason_uses_default`, `call_without_session_id_errors`,
+  `outcome_to_json_skipped_renders_gate`, `register_dream_now_tool_adds_to_registry`,
+  `outcome_to_json_lock_blocked_renders_holder_pid`).
+  nexo-dream cumulative: 64 tests verde (55 + 9). Capability-gate
+  INVENTORY entry under `crates/setup/src/capabilities.rs` deferred
+  as 80.1.c.b — gate id is `dream_now`, default deny outside
+  `assistant_mode: true` bindings, alignment with Phase 16 binding-
+  policy schema needed before write. Mirror leak: forced
+  consolidation pattern from `claude-code-leak/src/services/autoDream/
+  autoDream.ts:102-179` (`runAutoDream` callable directly when the
+  manual trigger fires) + Phase 77.20 Sleep tool shape (single
+  optional string arg + structured JSON response).
 - **C4.a — sed_validator + path_extractor wire into
   `gather_bash_warnings`** (FOLLOWUPS A4.a). Two orphaned safety
   modules under `crates/driver-permission/` (`sed_validator.rs`

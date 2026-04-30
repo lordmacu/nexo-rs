@@ -184,12 +184,42 @@ would eliminate this — deferred as A5.b.
 
 **A6 — Major findings (M1–M10)** — ⬜ open, batched here so they
 do not get lost.
-- **M1 — `tools/list_changed` advertised disabled.**
-  `crates/core/src/agent/mcp_server_bridge/bridge.rs:253-258`
-  declares `"tools": { "listChanged": false }`. Even if hot-reload
-  fired the call, clients ignore it. Already tracked as **79.M.h**
-  in this file; cross-reference here. Net: hot-reload of
-  `mcp_server.expose_tools` requires process restart.
+- **M1 — `tools/list_changed` advertised disabled.** 🟡 partial.
+  Slice **M1.a — capability + hot-swap allowlist** ✅ shipped
+  2026-04-30 (commit `dba4156`'s successor for M1). Bridge struct
+  (`crates/core/src/agent/mcp_server_bridge/bridge.rs:85-200`)
+  now holds `allowlist: Arc<ArcSwap<Option<Arc<HashSet<String>>>>>`
+  (hot-swap via `swap_allowlist(new)` — atomic, all clones
+  observe the new set immediately because they share the
+  `Arc<ArcSwap>`) and `list_changed_capability: bool` (default
+  `false`; opt-in via `with_list_changed_capability(true)`).
+  `capabilities()` reads the flag instead of hard-coding `false`.
+  HTTP path (`src/main.rs::start_http_transport`) clones the
+  bridge with cap=true so HTTP clients register the
+  `tools/list_changed` notification handler per leak
+  `useManageMCPConnections.ts:618-665`. Stdio path keeps
+  cap=false because stdio cannot push server→client
+  notifications mid-session (no bidir transport channel today).
+  5 inline tests cover capability defaults, builder flip,
+  swap visibility, clone propagation, proxy filter
+  invariance. **Slice M1.b — trigger ⬜** open: needs a caller
+  that observes `mcp_server.expose_tools` config changes (file
+  watcher / SIGHUP / daemon `ConfigReloadCoordinator` wire when
+  the daemon hosts the bridge in-process, see Phase 79.M.h)
+  and invokes `bridge.swap_allowlist(...)` followed by
+  `http_handle.notify_tools_list_changed()`. Trivial bridge
+  surface ready — caller is the missing piece. **Slice M1.c —
+  stdio notification pump ⬜** open: would let stdio path also
+  flip cap=true; needs an `mpsc::Sender<Value>` injected into
+  `run_with_io_auth` so external code can push notification
+  frames into the stdout writer. Defer until M1.b lands and
+  measures whether stdio operators actually need it (most
+  stdio deploys are single-process per tool invocation).
+  Provider-agnostic across Anthropic / MiniMax / OpenAI /
+  Gemini / DeepSeek / xAI / Mistral — protocol-MCP, no LLM
+  provider assumption. Already tracked as **79.M.h** in this
+  file; cross-reference still applies for daemon in-process
+  hot-reload wire.
 - **M2 — MCP audit `args_size_bytes` + `args_hash` always 0/None.**
   ✅ shipped 2026-04-30 (commits `9417423`, `279e2ce`, `0191ea9`).
   Discovery surfaced that the infra was already in place
