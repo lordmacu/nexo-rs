@@ -1965,8 +1965,12 @@ async fn main() -> Result<()> {
         .first()
         .map(|a| (a.id.clone(), a.model.clone()));
     let cron_tool_call_cfg = cfg.runtime.cron.tool_calls.clone();
-    let mut cron_tool_bindings: std::collections::HashMap<String, CronToolBindingContext> =
-        std::collections::HashMap::new();
+    // M5.b — `cron_tool_bindings` is now built post-loop via
+    // `build_cron_bindings_from_snapshots` (single source of truth
+    // shared with the config-reload post-hook). The pre-M5.b
+    // `let mut cron_tool_bindings = HashMap::new()` declaration is
+    // removed; the map flows directly from the build call to the
+    // executor constructor.
     let mut legacy_cron_binding_models: std::collections::HashMap<
         String,
         nexo_config::types::agents::ModelConfig,
@@ -2214,6 +2218,20 @@ async fn main() -> Result<()> {
         prewarm = ?lsp_prewarm,
         "[lsp] manager booted"
     );
+
+    // M5.b — aggregated maps for cron post-hook reload.
+    // `tools_per_agent` captures each per-agent ToolRegistry Arc;
+    // `agent_snapshot_handles` captures each runtime's snapshot
+    // ArcSwap so the post-hook can re-read the current effective
+    // policy after a reload swap.
+    let mut tools_per_agent: std::collections::HashMap<
+        String,
+        Arc<nexo_core::agent::ToolRegistry>,
+    > = std::collections::HashMap::new();
+    let mut agent_snapshot_handles: std::collections::HashMap<
+        String,
+        Arc<arc_swap::ArcSwap<nexo_core::RuntimeSnapshot>>,
+    > = std::collections::HashMap::new();
 
     for agent_cfg in cfg.agents.agents {
         let agent_id = agent_cfg.id.clone();
@@ -3247,86 +3265,11 @@ async fn main() -> Result<()> {
             )?;
         }
 
-        if cron_tool_call_cfg.enabled {
-            let mut register_cron_binding =
-                |binding_key: String,
-                 effective: Arc<nexo_core::agent::EffectiveBindingPolicy>,
-                 inbound_origin: Option<(String, String, String)>| {
-                    let filtered = tools.filtered_clone(&effective.allowed_tools);
-                    filtered.apply_dispatch_capability(&effective.dispatch_policy, false);
-                    if !cron_tool_call_cfg.allowlist.is_empty() {
-                        filtered.retain_matching(&cron_tool_call_cfg.allowlist);
-                    }
-                    let filtered = Arc::new(filtered);
-                    let mut cron_ctx = nexo_core::agent::AgentContext::new(
-                        agent_id.clone(),
-                        Arc::new(agent_cfg.clone()),
-                        broker.clone(),
-                        Arc::clone(&sessions),
-                    )
-                    .with_effective(Arc::clone(&effective))
-                    .with_effective_tools(Arc::clone(&filtered));
-                    if let Some(mem) = memory.as_ref() {
-                        cron_ctx = cron_ctx.with_memory(Arc::clone(mem));
-                    }
-                    cron_ctx = cron_ctx.with_peers(Arc::clone(&peer_directory));
-                    if let Some(bundle) = credentials.as_ref() {
-                        cron_ctx = cron_ctx.with_credentials(Arc::clone(&bundle.resolver));
-                        cron_ctx = cron_ctx.with_breakers(Arc::clone(&bundle.breakers));
-                    }
-                    if let Some(router) = web_search_router.as_ref() {
-                        cron_ctx = cron_ctx.with_web_search_router(Arc::clone(router));
-                    }
-                    cron_ctx = cron_ctx.with_link_extractor(Arc::clone(&link_extractor));
-                    if let Some(dc) = dispatch_ctx.as_ref() {
-                        cron_ctx = cron_ctx.with_dispatch(Arc::clone(dc));
-                    }
-                    if let Some((plugin, instance, sender)) = inbound_origin {
-                        cron_ctx = cron_ctx.with_inbound_origin(plugin, instance, sender);
-                    }
-                    let existing = cron_tool_bindings.insert(
-                        binding_key.clone(),
-                        CronToolBindingContext {
-                            ctx: cron_ctx,
-                            tools: filtered,
-                        },
-                    );
-                    if existing.is_some() {
-                        tracing::warn!(
-                            binding_id = %binding_key,
-                            agent = %agent_id,
-                            "cron tool context duplicated binding key; latest entry wins"
-                        );
-                    }
-                };
-
-            // Legacy/unbound fallback key used by cron rows created
-            // outside a concrete inbound binding.
-            register_cron_binding(
-                agent_id.clone(),
-                Arc::new(nexo_core::agent::EffectiveBindingPolicy::from_agent_defaults(&agent_cfg)),
-                None,
-            );
-            for (idx, binding) in agent_cfg.inbound_bindings.iter().enumerate() {
-                let instance = binding
-                    .instance
-                    .as_deref()
-                    .filter(|s| !s.trim().is_empty())
-                    .unwrap_or("default");
-                let binding_id = format!("{}:{instance}", binding.plugin);
-                register_cron_binding(
-                    binding_id,
-                    Arc::new(nexo_core::agent::EffectiveBindingPolicy::resolve(
-                        &agent_cfg, idx,
-                    )),
-                    Some((
-                        binding.plugin.clone(),
-                        instance.to_string(),
-                        "cron".to_string(),
-                    )),
-                );
-            }
-        }
+        // M5.b — cron binding contexts are now built in a single
+        // `build_cron_bindings_from_snapshots` call AFTER the agent
+        // loop ends, using the aggregated `tools_per_agent` +
+        // `agent_snapshot_handles` maps. The same fn is called by
+        // the config-reload post-hook (single source of truth).
 
         let mut behavior = LlmAgentBehavior::new(llm, Arc::clone(&tools))
             .with_hooks(Arc::clone(&hooks))
@@ -3513,6 +3456,13 @@ async fn main() -> Result<()> {
         if let Some(ref dc) = dispatch_ctx {
             runtime = runtime.with_dispatch_ctx(Arc::clone(dc));
         }
+        // M5.b — capture maps before `runtime.start()` consumes self.
+        // `tools_per_agent` carries the per-agent registry the cron
+        // post-hook needs to filter against the new effective policy.
+        // `agent_snapshot_handles` carries the `Arc<ArcSwap<...>>` the
+        // post-hook calls `load_full()` on to read the new snapshot.
+        tools_per_agent.insert(agent_id.clone(), Arc::clone(&tools));
+        agent_snapshot_handles.insert(agent_id.clone(), runtime.snapshot_handle());
         runtime
             .start()
             .await
@@ -3667,6 +3617,28 @@ async fn main() -> Result<()> {
         }
     }
 
+    // M5.b — wrap aggregated cron-rebuild maps + build deps struct
+    // for the post-hook + initial boot-time cron binding build.
+    let tools_per_agent = Arc::new(tools_per_agent);
+    let agent_snapshot_handles = Arc::new(agent_snapshot_handles);
+    let cron_rebuild_deps = CronRebuildDeps {
+        broker: broker.clone(),
+        sessions: Arc::clone(&sessions),
+        memory: memory.clone(),
+        peer_directory: Arc::clone(&peer_directory),
+        credentials: credentials.clone(),
+        web_search_router: web_search_router.clone(),
+        link_extractor: Arc::clone(&link_extractor),
+        dispatch_ctx: dispatch_ctx.clone(),
+        tools_per_agent: Arc::clone(&tools_per_agent),
+        cron_tool_call_cfg: cron_tool_call_cfg.clone(),
+    };
+    // M5.b — late-bind cell holding the cron executor. Empty until
+    // the cron block (`if cron_tool_call_cfg.enabled`) constructs the
+    // executor; the post-hook below early-returns if cell is empty.
+    let cron_executor_cell: Arc<tokio::sync::OnceCell<Arc<RuntimeCronToolExecutor>>> =
+        Arc::new(tokio::sync::OnceCell::new());
+
     // Phase 18 — wire the hot-reload coordinator. It owns its own
     // CancellationToken tied to `watcher_shutdown` so the watcher +
     // broker subscriber exit alongside the extensions watcher on
@@ -3689,6 +3661,34 @@ async fn main() -> Result<()> {
         let gate = Arc::clone(&pairing_gate);
         reload_coord
             .register_post_hook(Box::new(move || gate.flush_cache()))
+            .await;
+    }
+    // M5.b — cron config-reload post-hook. Rebuilds the per-binding
+    // context map from the new snapshots and atomically swaps it
+    // into the `RuntimeCronToolExecutor` so cron firings observe
+    // the new effective policy on the very next call. Empty-cell
+    // case (reload triggered before executor constructed) is a
+    // graceful no-op with `tracing::debug!`.
+    {
+        let cell = Arc::clone(&cron_executor_cell);
+        let snapshots = Arc::clone(&agent_snapshot_handles);
+        let deps = cron_rebuild_deps.clone();
+        reload_coord
+            .register_post_hook(Box::new(move || {
+                let Some(executor) = cell.get() else {
+                    tracing::debug!(
+                        "[cron] post-hook fired before executor built; skipping"
+                    );
+                    return;
+                };
+                let new_map = build_cron_bindings_from_snapshots(&snapshots, &deps);
+                let count = new_map.len();
+                executor.replace_bindings(new_map);
+                tracing::info!(
+                    bindings = count,
+                    "[cron] post-hook rebuilt cron_tool_bindings from new snapshot"
+                );
+            }))
             .await;
     }
     if let Err(e) = Arc::clone(&reload_coord)
@@ -3755,19 +3755,28 @@ async fn main() -> Result<()> {
                 )
                 .with_publisher(publisher);
                 if cron_tool_call_cfg.enabled {
+                    // M5.b — single source of truth: boot path uses
+                    // the same `build_cron_bindings_from_snapshots`
+                    // fn the config-reload post-hook calls.
+                    let cron_tool_bindings = build_cron_bindings_from_snapshots(
+                        &agent_snapshot_handles,
+                        &cron_rebuild_deps,
+                    );
                     if cron_tool_bindings.is_empty() {
                         tracing::warn!(
                             "[cron] runtime.cron.tool_calls.enabled=true but no cron tool contexts were built; tool-call execution remains off"
                         );
                     } else {
-                        d = d.with_tool_executor(
-                            std::sync::Arc::new(RuntimeCronToolExecutor::new(
-                                cron_tool_bindings.clone(),
-                            )),
-                            cron_tool_call_cfg.max_iterations,
-                        );
+                        let bindings_count = cron_tool_bindings.len();
+                        let executor = std::sync::Arc::new(RuntimeCronToolExecutor::new(
+                            cron_tool_bindings,
+                        ));
+                        // M5.b — late-bind into the post-hook cell so
+                        // subsequent reloads can `replace_bindings`.
+                        let _ = cron_executor_cell.set(Arc::clone(&executor));
+                        d = d.with_tool_executor(executor, cron_tool_call_cfg.max_iterations);
                         tracing::info!(
-                            bindings = cron_tool_bindings.len(),
+                            bindings = bindings_count,
                             max_iterations = cron_tool_call_cfg.max_iterations,
                             allowlist = ?cron_tool_call_cfg.allowlist,
                             "[cron] tool-call execution enabled"
