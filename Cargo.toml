@@ -43,6 +43,9 @@ members = [
     "crates/team-store",
     "crates/fork",
     "crates/dream",
+    "crates/assistant",
+    "crates/plugin-manifest",
+    "crates/webhook-receiver",
     # Phase 76.15 — MCP server skeleton extension. Member because
     # we want CI / `cargo build --workspace` to keep it green; it
     # depends on `nexo-mcp` via in-tree path dep. Operators copy
@@ -223,10 +226,14 @@ nexo-web-search = { version = "0.1.1", path = "crates/web-search" }
 nexo-pairing = { version = "0.1.2", path = "crates/pairing" }
 nexo-agent-registry    = { version = "0.1.1", path = "crates/agent-registry" }
 nexo-dispatch-tools    = { version = "0.1.1", path = "crates/dispatch-tools" }
+nexo-dream             = { version = "0.1.1", path = "crates/dream" }
 nexo-driver-claude     = { version = "0.1.1", path = "crates/driver-claude" }
 nexo-driver-loop       = { version = "0.1.1", path = "crates/driver-loop" }
 nexo-driver-permission = { version = "0.1.1", path = "crates/driver-permission" }
+nexo-driver-types      = { version = "0.1.1", path = "crates/driver-types" }
+nexo-plugin-manifest   = { version = "0.1.0", path = "crates/plugin-manifest" }
 nexo-project-tracker   = { version = "0.1.1", path = "crates/project-tracker" }
+dirs                   = "5"
 tokio-tungstenite   = { workspace = true }
 tokio-util          = { workspace = true }
 tracing             = { workspace = true }
@@ -239,6 +246,9 @@ serde_yaml          = { workspace = true }
 chrono              = { workspace = true }
 humantime           = { workspace = true }
 async-trait         = { workspace = true }
+
+[dev-dependencies]
+tempfile            = "3"
 
 # The profile that 'dist' will build with
 [profile.dist]

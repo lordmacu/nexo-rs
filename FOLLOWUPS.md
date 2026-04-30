@@ -18,6 +18,47 @@ Historical detailed notes that were previously written in Spanish are preserved 
 
 ## Open items
 
+### Phase 81 — Plug-and-Play Plugin System
+
+**Goal**: convertir el modelo "Rust crate + boot wire en main.rs"
+en plug-and-play real. Operator drops crate → daemon registry
+descubre + wirea + corre. Cero edición de `src/main.rs`, cero
+coordinación de archivos cross-cutting.
+
+- **81.1 ✅ shipped 2026-04-30** — `nexo-plugin-manifest` crate.
+  Foundation. TOML schema + 4-tier defensive validator + 25
+  tests verde. `crates/plugin-manifest/` ~860 LOC. Reference
+  manifest `examples/marketing-example.toml` documenta cada
+  sección. Operator authors plugins escriben `nexo-plugin.toml`
+  declarativo; futuras sub-fases consumen este schema.
+- **81.2 ⬜** `NexoPlugin` trait + lifecycle (`init`/`shutdown`)
+  + `PluginInitContext` con handles a ToolRegistry +
+  AdvisorRegistry + HookRegistry + Broker + LlmRegistry +
+  ConfigDir + ReloadCoord.
+- **81.3 ⬜** Tool namespace runtime enforcement at boot.
+- **81.4 ⬜** Plugin-scoped config dir loader
+  (`config/plugins/<id>/*.yaml` auto-read).
+- **81.5 ⬜** `PluginRegistry::discover` walks
+  `crates/plugins/*` + user dir reading manifests.
+- **81.6 ⬜** Plugin-side agent registration (manifest
+  `agents.contributes_dir` merged with existing `agents.d`).
+- **81.7 ⬜** Plugin-side `skills_dir` contribution.
+- **81.8 ⬜** `ChannelAdapter` trait extension point para nuevos
+  channel kinds (SMS, Discord, custom webhook).
+- **81.9 ⬜** `Mode::Run` registry sweep — reduce ~500 LOC boot
+  wire a ~30 LOC iteration. Critical milestone.
+- **81.10 ⬜** Plugin hot-load via Phase 18 reload coord.
+- **81.11 ⬜** Plugin doctor + capability inventory integration.
+- **81.12 ⬜** Existing-plugin migration
+  (whatsapp/telegram/email/browser → `NexoPlugin` impls).
+- **81.13 ⬜** Reference plugin template
+  (`nexo plugin new <name>` CLI) + docs +
+  `crates/plugins/sales-agent/` reference example.
+
+Critical path: 81.1 → 81.2 → 81.5 → 81.9 (~3 días). Después
+de 81.9 plugin model is fully operational; 81.10-81.13 son
+polish + ergonomics.
+
 ### Audit 2026-04-30 — Phase 76/77/79 backlog
 
 Source: `proyecto/AUDIT-2026-04-30.md` (audit of commits

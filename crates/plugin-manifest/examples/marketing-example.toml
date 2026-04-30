@@ -1,0 +1,85 @@
+# Phase 81.1 — reference manifest demonstrating every supported
+# section. A real plugin only fills in the sections it needs.
+#
+# Naming convention: this file lives at `<plugin-crate>/nexo-plugin.toml`
+# at the plugin's crate root (alongside `Cargo.toml`).
+
+[plugin]
+id = "marketing"
+version = "0.1.0"
+name = "Marketing Lead Pipeline"
+description = "Lead intake, classification, routing, follow-up scheduling."
+min_nexo_version = ">=0.1.0"
+enabled_by_default = false
+
+# Declarative tags — the validator confirms each declared
+# capability has a corresponding non-empty section.
+[plugin.capabilities]
+provides = ["tools", "advisors", "skills"]
+
+# Tools the plugin's `NexoPlugin::init` registers. Every name
+# MUST start with `<plugin.id>_` (namespace policy).
+[plugin.tools]
+expose = [
+    "marketing_lead_classify",
+    "marketing_lead_score",
+    "marketing_lead_get",
+    "marketing_lead_route",
+]
+# Subset to mark `ToolMeta::deferred()` so they only surface via
+# `ToolSearch` (M8.a precedent).
+deferred = ["marketing_lead_get"]
+
+# `ToolAdvisor` impls the plugin registers (advisory_hook).
+[plugin.advisors]
+register = ["MarketingAdvisor"]
+
+# Plugin-shipped skills. Loader merges into `SkillLoader` so any
+# agent can declare them in its `skills` list.
+[plugin.skills]
+contributes_dir = "skills"
+
+# Plugin's own config namespace. Loader auto-reads
+# `config/plugins/<id>/*.yaml` at boot. Optional JSONSchema for
+# operator-config validation defers to 81.4.
+[plugin.config]
+hot_reload = true
+
+# Operator-set requirements. Boot doctor warns on missing.
+[plugin.requires]
+env = ["MARKETING_API_KEY"]
+nexo_capabilities = ["broker", "memory"]
+
+# Capability gates contributed to nexo-setup's INVENTORY so
+# `nexo setup doctor capabilities` lists them.
+[[plugin.capability_gates.gate]]
+extension = "marketing"
+env_var = "MARKETING_AUTO_SEND"
+kind = "Boolean"
+risk = "High"
+effect = "Allow auto-send of marketing emails without operator review."
+hint = "export MARKETING_AUTO_SEND=true"
+
+# Admin-UI hints (mirror OpenClaw's `uiHints`).
+[plugin.ui.fields."marketing.classifier.model"]
+label = "Classifier Model"
+help = "LLM model used for lead classification."
+advanced = true
+
+[plugin.ui.fields."marketing.api_key"]
+label = "API Key"
+help = "Marketing system API token."
+sensitive = true
+placeholder = "mk-..."
+
+# Inter-plugin contracts (declarative — topological wire defers
+# to 81.5).
+[plugin.contracts]
+provides = ["lead_dispatch"]
+consumes = []
+
+[plugin.meta]
+author = "Cristian Garcia"
+license = "MIT"
+homepage = "https://nexo.dev/plugins/marketing"
+repository = "https://github.com/lordmacu/nexo-rs"
