@@ -3,7 +3,7 @@
 //! in-process so a Claude turn that re-reads the same file doesn't
 //! pay a decider round-trip per call.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -20,7 +20,19 @@ use crate::path_extractor::{
     classify_command, extract_paths, filter_out_flags, parse_command_args,
 };
 use crate::sed_validator::sed_command_is_allowed;
+use crate::should_use_sandbox::{
+    should_use_sandbox, SandboxBackend, SandboxMode, SandboxProbe,
+};
 use crate::types::{PermissionOutcome, PermissionRequest};
+
+/// Phase C4.b — process-wide sandbox probe. Lazy-initialised on
+/// the first call to `gather_bash_warnings`; runs `which bwrap`
+/// + `which firejail` once and caches the detected backend.
+static SANDBOX_PROBE: OnceLock<SandboxProbe> = OnceLock::new();
+
+fn sandbox_probe() -> &'static SandboxProbe {
+    SANDBOX_PROBE.get_or_init(SandboxProbe::new)
+}
 
 const DEFAULT_DECISION_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -208,15 +220,25 @@ fn text_result(value: Value, warnings: Option<String>) -> McpToolResult {
 ///    `PathCommand`, list up to 10 paths the command touches with
 ///    the matching action verb, so the upstream decider can reason
 ///    about workspace vs. system paths without re-parsing.
+/// 5. **Sandbox advisory (C4.b)** — fires only when at least one
+///    prior tier already flagged the command AND the
+///    process-wide `SandboxProbe` detected a `bwrap` or
+///    `firejail` backend on `PATH`. The coupling to risk keeps
+///    the advisory signal-strong: a no-warning command on a
+///    sandbox-equipped host stays silent. MVP hard-codes
+///    `SandboxMode::Auto`, empty excluded list, and
+///    `dangerously_disable_sandbox: false`; YAML config schema
+///    (`runtime.bash_safety.sandbox.{mode, excluded_commands,
+///    dangerously_disable}`) defers to slice C4.b.b.
 ///
 /// Scope: only the first clause is inspected. Pipes / `&&` chains
 /// past the first command are out of scope here — the destructive
 /// check above already covers downstream `rm` / `dd` / etc.
 ///
-/// Provider-agnostic: operates on the bash command string; no LLM
-/// provider assumption — same warnings emitted whether the upstream
-/// decider is Anthropic, MiniMax, OpenAI, Gemini, DeepSeek, xAI, or
-/// Mistral.
+/// Provider-agnostic: operates on the bash command string + PATH;
+/// no LLM provider assumption — same warnings emitted whether the
+/// upstream decider is Anthropic, MiniMax, OpenAI, Gemini,
+/// DeepSeek, xAI, or Mistral.
 ///
 /// IRROMPIBLE refs (claude-code-leak):
 /// - `src/tools/BashTool/bashSecurity.ts` — composes the tiers in
@@ -226,11 +248,36 @@ fn text_result(value: Value, warnings: Option<String>) -> McpToolResult {
 /// - `src/tools/BashTool/pathValidation.ts:27-509` — command-aware
 ///   path extraction (`classify_command` / `filter_out_flags` /
 ///   `extract_paths`).
+/// - `src/tools/BashTool/shouldUseSandbox.ts:130-153` — pure
+///   decision shape that backs the tier-5 helper. Leak's
+///   wrapper actually wraps the command in `bwrap`/`firejail`
+///   before exec; we stay advisory because our decider is the
+///   upstream LLM, not the bash exec path.
+/// - `src/tools/BashTool/shouldUseSandbox.ts:55-58` — disclaimer:
+///   `excludedCommands` is "a user-facing convenience feature,
+///   not a security boundary". We mirror that intent; the LLM
+///   decider remains the authoritative gate.
 ///
 /// IRROMPIBLE refs (research/): no significant prior art —
 /// OpenClaw is channel-side and does not implement bash command
-/// safety analysis.
+/// safety analysis. The only `sandbox` references in `research/`
+/// are Docker test fixtures (e.g.
+/// `research/src/docker-setup.e2e.test.ts`).
 fn gather_bash_warnings(tool_name: &str, input: &Value) -> Option<String> {
+    let backend = sandbox_probe().backend();
+    gather_bash_warnings_with_backend(tool_name, input, backend)
+}
+
+/// Internal core — accepts an explicit `SandboxBackend` so tests
+/// can inject `Bubblewrap` / `Firejail` / `None` deterministically
+/// without hitting `which` on the test host. Production calls
+/// flow through the public `gather_bash_warnings` wrapper that
+/// resolves the static `SANDBOX_PROBE`.
+fn gather_bash_warnings_with_backend(
+    tool_name: &str,
+    input: &Value,
+    sandbox_backend: SandboxBackend,
+) -> Option<String> {
     if tool_name != "Bash" {
         return None;
     }
@@ -279,6 +326,35 @@ fn gather_bash_warnings(tool_name: &str, input: &Value) -> Option<String> {
                 suffix
             ));
         }
+    }
+
+    // Tier 5 — sandbox advisory (C4.b). Coupled to risk: only
+    // fires when at least one prior tier flagged the command
+    // (`!warnings.is_empty()`) AND a sandbox backend is on
+    // PATH. Without coupling the advisory would fire on every
+    // Bash command on a sandbox-equipped host because
+    // `should_use_sandbox(_, Auto, Some_backend, false, [])`
+    // is not command-aware. MVP hard-codes mode/excludes/
+    // disable to ship advisory infra without YAML schema work
+    // (see C4.b.b for the operator-config follow-up).
+    if !warnings.is_empty()
+        && sandbox_backend != SandboxBackend::None
+        && should_use_sandbox(
+            Some(command),
+            SandboxMode::Auto,
+            sandbox_backend,
+            false,
+            &[],
+        )
+    {
+        let backend_name = match sandbox_backend {
+            SandboxBackend::Bubblewrap => "bwrap",
+            SandboxBackend::Firejail => "firejail",
+            SandboxBackend::None => unreachable!(),
+        };
+        warnings.push(format!(
+            "sandbox backend available ({backend_name}); consider wrapping risky commands above before execution"
+        ));
     }
 
     if warnings.is_empty() {
@@ -339,6 +415,47 @@ mod tests {
         assert!(
             out.contains("/etc/passwd") && out.contains("/etc/shadow"),
             "both paths should be listed: {out:?}",
+        );
+    }
+
+    // ── Phase C4.b — sandbox 5th tier ──
+
+    #[test]
+    fn gather_bash_warnings_appends_sandbox_advisory_when_risky_and_backend_available() {
+        // Risky command (destructive tier 1 fires) + injected
+        // Bubblewrap backend → tier 5 should advise sandbox.
+        let input = json!({ "command": "rm -rf /tmp/x" });
+        let out = gather_bash_warnings_with_backend("Bash", &input, SandboxBackend::Bubblewrap)
+            .expect("risky command + backend should produce warnings");
+        assert!(
+            out.contains("sandbox backend available (bwrap)"),
+            "expected bwrap advisory, got {out:?}",
+        );
+    }
+
+    #[test]
+    fn gather_bash_warnings_skips_sandbox_when_no_backend() {
+        // Same risky command but backend = None → tier 5 stays
+        // silent. Other tiers still fire (so result is Some).
+        let input = json!({ "command": "rm -rf /tmp/x" });
+        let out = gather_bash_warnings_with_backend("Bash", &input, SandboxBackend::None)
+            .expect("risky command should still produce non-sandbox warnings");
+        assert!(
+            !out.contains("sandbox backend available"),
+            "tier 5 must not fire without a backend: {out:?}",
+        );
+    }
+
+    #[test]
+    fn gather_bash_warnings_skips_sandbox_when_no_other_warnings() {
+        // Risk-free command + backend present → no prior warning
+        // → tier 5 stays silent → overall result is None.
+        let input = json!({ "command": "echo hi" });
+        let out =
+            gather_bash_warnings_with_backend("Bash", &input, SandboxBackend::Firejail);
+        assert!(
+            out.is_none(),
+            "echo with backend should yield no warnings: got {out:?}",
         );
     }
 }

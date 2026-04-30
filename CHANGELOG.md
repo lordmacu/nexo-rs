@@ -10,6 +10,167 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **C4.b — sandbox 5th tier in `gather_bash_warnings`** (FOLLOWUPS
+  A4.b advisory MVP). The Phase 77.10 `should_use_sandbox` module
+  (`crates/driver-permission/src/should_use_sandbox.rs`, 401 LOC +
+  20 tests) had zero production callers outside `#[cfg(test)]`
+  since shipping — the audit ("computed and discarded"). Fix wires
+  the heuristic as a 5th advisory tier in `gather_bash_warnings`
+  (`crates/driver-permission/src/mcp.rs`) coupled to risk: fires
+  only when (1) at least one prior tier (destructive, sed-shallow,
+  sed-deep, path-extractor) already flagged the command AND (2)
+  `SandboxProbe` detected `bwrap` or `firejail` on PATH. The
+  coupling is intentional — leak's
+  `should_use_sandbox(_, Auto, Some_backend, false, [])` returns
+  `true` for ANY command (not command-aware), so firing alone
+  would emit advisory on every Bash call on a sandbox-equipped
+  host. Coupling to existing warnings keeps the
+  signal-to-noise ratio high: a no-warning command on a
+  sandbox-equipped host stays silent. Probe is process-wide via
+  `static SANDBOX_PROBE: std::sync::OnceLock<SandboxProbe>` —
+  runs `which bwrap` + `which firejail` once on first call and
+  caches the detected backend, prefers bwrap when both present.
+  Refactor split: public `gather_bash_warnings(tool_name, input)`
+  resolves the static probe and delegates to internal
+  `gather_bash_warnings_with_backend(tool_name, input,
+  sandbox_backend: SandboxBackend)` which accepts the backend
+  explicitly so tests inject `SandboxBackend::Bubblewrap` /
+  `Firejail` / `None` deterministically without hitting `which`
+  on the test host (same testability pattern as M2's
+  `compute_args_metrics`). MVP hard-codes `SandboxMode::Auto`,
+  empty `excluded_commands`, `dangerously_disable_sandbox: false`
+  — YAML config schema (`runtime.bash_safety.sandbox.{mode,
+  excluded_commands, dangerously_disable}` + per-binding
+  override + Phase 18 hot-reload re-validation + admin-ui Phase
+  A8 surface) defers to slice C4.b.b along with the leak's
+  fixed-point `stripAllLeadingEnvVars` + `stripSafeWrappers`
+  normalization (only relevant once excluded_commands exists).
+  Warning shape: `"sandbox backend available ({bwrap|firejail});
+  consider wrapping risky commands above before execution"`. All
+  tiers stay advisory — final allow/deny remains with the
+  upstream LLM decider. 3 inline tests in `mcp::tests`:
+  `gather_bash_warnings_appends_sandbox_advisory_when_risky_and_backend_available`
+  (`rm -rf /tmp/x` + injected `Bubblewrap` → fires "sandbox
+  backend available (bwrap)"),
+  `gather_bash_warnings_skips_sandbox_when_no_backend`
+  (same risky command + injected `None` → tier 5 silent, other
+  tiers still fire),
+  `gather_bash_warnings_skips_sandbox_when_no_other_warnings`
+  (`echo hi` + injected `Firejail` → result `None` because
+  `!warnings.is_empty()` gate denies tier 5). Doc-comment now
+  documents 5 tiers + risk-coupling rationale + scope note +
+  IRROMPIBLE refs to claude-code-leak
+  `shouldUseSandbox.ts:130-153` (pure decision shape backing
+  the helper — leak's wrapper actually wraps the command in
+  `bwrap`/`firejail` before exec; we stay advisory because our
+  decider is the upstream LLM, not the bash exec path) and
+  `:55-58` (`excludedCommands` is "not a security boundary"
+  disclaimer). `research/` carries no relevant prior art —
+  OpenClaw is channel-side and the only `sandbox` references
+  are Docker test fixtures (`docker-setup.e2e.test.ts:52`).
+  Provider-agnostic: probe + decision operate on command string
+  + PATH; LLM provider does not enter the decision. Transversal
+  Anthropic / MiniMax / OpenAI / Gemini / DeepSeek / xAI /
+  Mistral. Slice C4.b.b (YAML config) and the L1 follow-up
+  (real `bwrap`/`firejail` wrapping at exec time) remain open.
+  Tests: `cargo test -p nexo-driver-permission --lib
+  gather_bash_warnings` → 7/7 (4 from C4.a + 3 new).
+- Phase 80.1.d (MVP) — `nexo agent dream {tail|status|kill}` operator
+  CLI for the autoDream audit log + manual abort. Adds
+  `Mode::AgentDream(AgentDreamSubcommand)` (next to `Mode::McpServer`
+  precedent at `src/main.rs:74`) and `enum AgentDreamSubcommand
+  { Tail | Status | Kill }`. Four parser arms (bare `agent dream`
+  defaults to tail, plus `agent dream tail|status|kill` verbs)
+  use the existing hand-rolled positional matcher with the
+  `parse_kv_flag` helper at `src/main.rs:5667` for `--goal`,
+  `--n`, `--db`, `--memory-dir` kv pairs (also accepts `--json`
+  via the global `has_json_flag` and `--force` as a positional
+  bool). Three async run fns ship adjacent to
+  `run_mcp_tail_audit:9963`. **`run_agent_dream_tail`** opens
+  `dream_runs.db` via `SqliteDreamRunStore::open` and dispatches
+  to `tail(n)` (no goal filter) or `tail_for_goal(GoalId(uuid),
+  n)` when `--goal=<uuid>` is set, then renders either a markdown
+  table (TTY default) or `serde_json::to_string_pretty(&rows)`
+  (`--json`). Empty / missing-DB case returns `Ok(())` with a
+  friendly "(no dream runs recorded yet — db not found at ...)"
+  message rather than erroring — operators inspecting before the
+  daemon ever ran with auto_dream-enabled bindings should not see
+  a stack trace. **`run_agent_dream_status`** validates the uuid
+  upfront (`uuid::Uuid::parse_str` with anyhow context),
+  `store.get(uuid)` → renders full row (id, goal_id, status,
+  phase, sessions, fork_label, started_at, optional ended_at,
+  optional prior_mtime_ms, files_touched list, last 5 turns
+  summary). **`run_agent_dream_kill`** parses uuid, fetches the
+  row, returns early-noop when status is already terminal
+  (`Completed` / `Failed` / `Killed` / `LostOnRestart`),
+  warn-and-`std::process::exit(2)` when row is `Running` and
+  `--force` is absent (preventing accidental aborts), otherwise
+  calls `update_status(Killed)` + `finalize(now())` + (when
+  `--memory-dir <path>` is supplied AND `prior_mtime_ms.is_some()`)
+  `ConsolidationLock::new(memory_dir, 1h_holder_stale).rollback(prior)`
+  to rewind the consolidation-lock mtime so the next non-force
+  turn sees the lock as if no consolidation had fired. Helper
+  `resolve_dream_db_path(override)` implements 3-tier resolution:
+  (1) `--db <path>` explicit override, (2) `NEXO_STATE_ROOT` env
+  → `<state_root>/dream_runs.db` via
+  `nexo_dream::default_dream_db_path`, (3) XDG default
+  `dirs::data_local_dir() / "nexo/state/dream_runs.db"`. The YAML
+  tier is intentionally absent — `agents.state_root` is not a
+  config field today (state_root flows into `BootDeps` directly
+  per Phase 80.1.b.b.b documentation), so the CLI uses the
+  env-or-default fallback to stay aligned with the daemon's
+  discovery path once main.rs hookup ships. `DreamRunRow` (in
+  `crates/agent-registry/src/dream_run.rs:135`) gained
+  `Serialize + Deserialize` derives so the `--json` output path
+  serialises directly without an intermediate type. Workspace
+  `Cargo.toml` gained `nexo-dream = { path = "crates/dream" }`,
+  `nexo-driver-types = { path = "crates/driver-types" }`,
+  `dirs = "5"` in `[dependencies]` and `tempfile = "3"` in a new
+  `[dev-dependencies]` section — these resolve the
+  rust-analyzer-flagged drift left over from Phase 80.1.c that
+  the M8.a CHANGELOG entry called out as a binary-build blocker
+  ("dream surface dirty state"); both blockers are now resolved.
+  11 inline tests in `src/main.rs::tests`:
+  `resolve_dream_db_path_override_wins` (override beats env beats
+  XDG), `resolve_dream_db_path_uses_env_when_no_override`
+  (env → expected path), `short_uuid_takes_first_eight_chars`
+  (compact-id helper), `run_agent_dream_tail_empty_db_exits_zero`
+  (missing DB → friendly message + Ok), `run_agent_dream_tail_with_rows_renders`
+  (seed 1 row → markdown render), `run_agent_dream_tail_json_output`
+  (seed 1 Running row → `--json` path), `run_agent_dream_status_not_found_errors`
+  (bogus uuid lookup → `not found` error), `run_agent_dream_status_returns_row`
+  (real uuid lookup → render), `run_agent_dream_status_invalid_uuid_errors`
+  (`"not-a-uuid"` → `not a valid UUID` error), `run_agent_dream_kill_already_terminal_is_noop`
+  (Completed row → noop, no `--force` needed),
+  `run_agent_dream_kill_running_with_force_flips_status`
+  (Running row + `--force` → status flips to `Killed` and
+  `ended_at` populated, verified post-kill via second
+  `store.get`). Static `DREAM_ENV_LOCK: Mutex<()>` serialises
+  env-var manipulation across the parallel-running `#[tokio::test]`
+  suite. CLI smoke: `mkdir -p /tmp/nexo-test/state &&
+  NEXO_STATE_ROOT=/tmp/nexo-test/state ./target/debug/nexo
+  agent dream tail` → "(no dream runs recorded yet — db not
+  found at /tmp/nexo-test/state/dream_runs.db)" exit 0;
+  `agent dream tail --json` → `[]` exit 0; `agent dream status
+  7a3b2f00-deaf-cafe-beef-001122334455` → exit 1 "Error:
+  dream_runs DB not found at /tmp/nexo-test/state/dream_runs.db".
+  Provider-agnostic by construction — pure SQLite + filesystem
+  primitives, zero LLM-provider touchpoints; works under any
+  `Arc<dyn LlmClient>` impl across Anthropic / MiniMax / OpenAI /
+  Gemini / DeepSeek / xAI / Mistral. Mirror leak
+  `claude-code-leak/src/components/tasks/BackgroundTasksDialog.tsx:281,315-317`
+  `DreamTask.kill(taskId, setAppState)` semantics — leak does
+  this through the Ink BackgroundTasksDialog keyboard ('x' key);
+  we ship as CLI subcommand because nexo has no Ink-equivalent
+  yet (Phase 80.16 attach/discover would parallel). Remaining
+  follow-ups: 80.1.d.b (live NATS abort signal — `agent.dream.abort.<run_id>`
+  subject contract needs Phase 80.11 inbox primitive), 80.1.d.c
+  (`agent dream now <agent_id> [--reason "..."]` operator force
+  trigger — needs daemon-runtime tool dispatch plumbing to
+  invoke `dream_now` out-of-band), parser unit tests deferred
+  (covered by manual smoke + 11 run-fn integration tests; the
+  hand-rolled positional parser is hard to unit-test without
+  env-arg manipulation).
 - **M8.a — built-in deferred tools sweep** (FOLLOWUPS A6.M8). Phase
   79.2 shipped the deferred-schema infrastructure
   (`ToolMeta::deferred()` + `to_tool_defs_non_deferred()` +
