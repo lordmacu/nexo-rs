@@ -351,3 +351,79 @@ migrations:
     assert!(agents_raw.contains("schema_version: 11"));
     assert!(agents_raw.contains("agents:"));
 }
+
+// ---- C5: memory.secret_guard YAML round-trip ----
+
+/// C5 — when `memory.secret_guard` is omitted from YAML, the
+/// secure default applies (enabled=true, on_secret=block,
+/// rules="all", exclude_rules=[]). Validates back-compat: pre-C5
+/// memory.yaml configs keep working with no observable change.
+#[test]
+fn memory_secret_guard_omitted_uses_default_secure() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    write_fixtures(dir.path());
+    let cfg = AppConfig::load(dir.path()).expect("should load");
+
+    let sg = &cfg.memory.secret_guard;
+    assert!(
+        sg.enabled,
+        "default `enabled` must be true (secure-by-default)"
+    );
+    assert_eq!(
+        sg.on_secret, "block",
+        "default `on_secret` must be `block` (secure-by-default)"
+    );
+    assert_eq!(
+        sg.rules,
+        serde_yaml::Value::String("all".into()),
+        "default `rules` must be the string `\"all\"`"
+    );
+    assert!(
+        sg.exclude_rules.is_empty(),
+        "default `exclude_rules` must be empty"
+    );
+}
+
+/// C5 — explicit override: `on_secret: warn` + per-rule excludes
+/// flow through the YAML parse to `MemoryConfig.secret_guard`.
+/// The downstream conversion to `nexo_memory::SecretGuardConfig`
+/// is exercised by main.rs (see
+/// `build_secret_guard_config_from_yaml`) and by the unit tests in
+/// `crates/memory/src/secret_config.rs`.
+#[test]
+fn memory_secret_guard_warn_with_excludes_parses() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    write_fixtures(dir.path());
+
+    // Overwrite memory.yaml from the fixture with a secret_guard
+    // override block.
+    write_file(
+        dir.path(),
+        "memory.yaml",
+        r#"
+short_term:
+  max_history_turns: 50
+  session_ttl: "24h"
+long_term:
+  backend: "sqlite"
+  sqlite:
+    path: "./data/memory.db"
+secret_guard:
+  enabled: true
+  on_secret: warn
+  rules: all
+  exclude_rules:
+    - github-pat
+    - openai-api-key
+"#,
+    );
+    let cfg = AppConfig::load(dir.path()).expect("should load");
+    let sg = &cfg.memory.secret_guard;
+    assert_eq!(sg.on_secret, "warn");
+    assert_eq!(
+        sg.exclude_rules,
+        vec!["github-pat".to_string(), "openai-api-key".to_string()]
+    );
+}
