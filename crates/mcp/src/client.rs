@@ -320,6 +320,23 @@ impl StdioMcpClient {
         }
     }
 
+    /// Phase 80.9.b — fire-and-forget notification with arbitrary
+    /// method + params. Used by the channel permission relay
+    /// dispatcher to emit `notifications/nexo/channel/permission_request`.
+    /// Errors when the underlying child has exited.
+    pub async fn send_notification(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<(), McpError> {
+        let line = protocol::encode_notification(method, params).map_err(McpError::Encode)?;
+        if self.outbox_tx.send(line).await.is_err() {
+            self.breaker.on_failure();
+            return Err(McpError::ChildExited);
+        }
+        Ok(())
+    }
+
     pub async fn list_tools(&self) -> Result<Vec<McpTool>, McpError> {
         let mut out: Vec<McpTool> = Vec::new();
         let mut cursor: Option<String> = None;
@@ -612,6 +629,13 @@ impl crate::client_trait::McpClient for StdioMcpClient {
         arguments: serde_json::Value,
     ) -> Result<crate::types::McpToolResult, crate::errors::McpError> {
         StdioMcpClient::call_tool(self, name, arguments).await
+    }
+    async fn send_notification(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<(), crate::errors::McpError> {
+        StdioMcpClient::send_notification(self, method, params).await
     }
     async fn call_tool_with_meta(
         &self,

@@ -452,14 +452,111 @@ impl<C: McpClient + 'static> PermissionRelayDispatcher for McpPermissionRelayDis
     ) -> Result<(), DispatchError> {
         let payload = serde_json::to_value(params)
             .map_err(|e| DispatchError::Serialise(e.to_string()))?;
-        // McpClient does not expose `send_notification` directly
-        // today (the trait is request/response shaped). 80.9.b.b
-        // adds the outbound seam — for now we surface the
-        // serialise step so the trait signature is stable and
-        // upstream can plug in `client.notify(method, payload)`
-        // when it lands.
-        let _ = (&self.client, payload);
-        Ok(())
+        self.client
+            .send_notification(PERMISSION_REQUEST_METHOD, payload)
+            .await
+            .map_err(|e| DispatchError::Client(e.to_string()))
+    }
+}
+
+/// Phase 80.9.b.b — dispatcher that fans out to every connected
+/// MCP client by name. The runtime exposes a `SessionMcpRuntime`
+/// snapshot of `(name, Arc<dyn McpClient>)` pairs; this dispatcher
+/// looks up `server_name` against that snapshot and forwards via
+/// the client's `send_notification`. Snapshot is captured by a
+/// caller-supplied closure so the dispatcher stays agnostic about
+/// where the client list lives.
+pub struct ClientResolverDispatcher {
+    resolver: Arc<dyn Fn(&str) -> Option<Arc<dyn McpClient>> + Send + Sync>,
+}
+
+impl ClientResolverDispatcher {
+    pub fn new(
+        resolver: Arc<dyn Fn(&str) -> Option<Arc<dyn McpClient>> + Send + Sync>,
+    ) -> Self {
+        Self { resolver }
+    }
+}
+
+/// Phase 80.9.b.b — spawn a task that subscribes to the supplied
+/// `McpClient`'s event broadcast, parses every
+/// `ChannelPermissionResponse` event, and resolves the matching
+/// pending entry in [`PendingPermissionMap`]. Returns the spawned
+/// task handle so the caller controls shutdown via the cancel
+/// token.
+///
+/// The task tolerates lag (broadcast `RecvError::Lagged`) and
+/// continues; closes only when the broadcast channel terminates
+/// or the cancel token fires. Malformed payloads warn-log and
+/// drop without affecting other in-flight requests.
+pub fn spawn_permission_response_pump(
+    client: Arc<dyn McpClient>,
+    server_name: String,
+    pending: Arc<PendingPermissionMap>,
+    cancel: tokio_util::sync::CancellationToken,
+) -> tokio::task::JoinHandle<()> {
+    let mut events = client.subscribe_events();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => return,
+                ev = events.recv() => {
+                    use crate::events::ClientEvent;
+                    match ev {
+                        Ok(ClientEvent::ChannelPermissionResponse { params }) => {
+                            let parsed = parse_permission_response(
+                                PERMISSION_RESPONSE_METHOD,
+                                &params,
+                            );
+                            match parsed {
+                                Ok(payload) => {
+                                    let resp = PermissionResponse {
+                                        request_id: payload.request_id,
+                                        behavior: payload.behavior,
+                                        from_server: server_name.clone(),
+                                    };
+                                    if let Err(e) = pending.resolve(resp).await {
+                                        tracing::debug!(
+                                            server = %server_name,
+                                            error = %e,
+                                            "permission response: no matching pending entry (race lost or already resolved)"
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        server = %server_name,
+                                        error = %e,
+                                        "permission response: malformed payload"
+                                    );
+                                }
+                            }
+                        }
+                        Ok(_) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                    }
+                }
+            }
+        }
+    })
+}
+
+#[async_trait::async_trait]
+impl PermissionRelayDispatcher for ClientResolverDispatcher {
+    async fn emit_request(
+        &self,
+        server_name: &str,
+        params: &PermissionRequestParams,
+    ) -> Result<(), DispatchError> {
+        let client = (self.resolver)(server_name)
+            .ok_or_else(|| DispatchError::UnknownServer(server_name.to_string()))?;
+        let payload = serde_json::to_value(params)
+            .map_err(|e| DispatchError::Serialise(e.to_string()))?;
+        client
+            .send_notification(PERMISSION_REQUEST_METHOD, payload)
+            .await
+            .map_err(|e| DispatchError::Client(e.to_string()))
     }
 }
 
