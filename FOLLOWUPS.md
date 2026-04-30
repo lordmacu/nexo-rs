@@ -438,26 +438,83 @@ for `lsp` / `team` / `config_tool` / `repl`)** — ✅ shipped 2026-04-30.
   overrides will start applying — `grep -rn "repl:" config/` is
   empty in this repo so no config in the tree is affected.
 
-H-3. **C2 — Hot-reload rebuild of per-binding tool registrations** —
-⬜ open. Blocks the Phase 18 promise that hot-reload picks up every
-binding-config change. Today the per-agent boot loop in
-`src/main.rs:2042-2705` registers tools once and never re-runs.
-Toggling `lsp.enabled` / `team.enabled` / `proactive.enabled` /
-`repl.enabled` / `config_tool.self_edit` / growing
-`remote_triggers` requires a daemon restart. Work:
-1. Add a `rebuild_per_agent_tools()` callable that re-runs the
-   relevant registration arms over the new `RuntimeSnapshot`.
-2. Register one `ConfigReloadCoordinator::register_post_hook` per
-   subsystem (cron-store flush, REPL registry, LSP manager,
-   TeamMessageRouter cache) — analogue of the `PairingGate`
-   flush at `src/main.rs:3492` (Phase 70.7).
-3. Refactor 10 sites in `main.rs` to read from
-   `EffectiveBindingPolicy` instead of `agent_cfg.<x>` (full list
-   in audit C2).
-- Pitfall to design around (claude-code-leak
-  `src/utils/settings/changeDetector.ts:8-11`): N-way thrashing
-  if N subsystems each subscribe — debounce / coalesce at the
-  coordinator, not at each post-hook.
+H-3. **C2 — Hot-reload pickup via config-pull at handler entry** —
+✅ shipped 2026-04-30 (commits `df857fe`, `4649e99`, `23ef4ed`,
+`9baa380`). Tool handlers now read `ctx.effective_policy().<x>` per
+call instead of capturing policy at `Tool::new`. Closes the
+C1 → C2 loop: per-binding YAML overrides (lsp / team / repl /
+config_tool) added by C1 are now observed on the next intake event
+without restart.
+Scope shipped:
+- 10 sitios `agent_cfg.<x>` → `effective_boot.<x>` en `src/main.rs`
+  (boot-time reads consolidated through
+  `EffectiveBindingPolicy::from_agent_defaults`).
+- `LspTool` migrated: drops `policy: ExecutePolicy` field; handler
+  reads `ctx.effective_policy().lsp` and converts via private
+  adapter `execute_policy_from(&LspPolicy) -> ExecutePolicy`. 3
+  new tests.
+- `ReplTool` migrated: drops dead `config: ReplConfig` field; new
+  per-call allowlist guard reads
+  `ctx.effective_policy().repl.allowed_runtimes` before delegating
+  to `ReplRegistry`. 2 new tests.
+- `TeamTools` migrated: drops `policy: TeamPolicy` field; 5 handlers
+  (`TeamCreate` / `TeamDelete` / `TeamSendMessage` / `TeamList` /
+  `TeamStatus`) read `policy_for(ctx)` per call. 2 new C2 tests +
+  19 existing tests refactored.
+- `cron_tool` (`CronCreateTool`) was already config-pull
+  (`crates/core/src/agent/cron_tool.rs:111`); confirmed
+  C2-compliant, no change.
+- `RemoteTriggerTool` was already config-pull
+  (`crates/core/src/agent/remote_trigger_tool.rs:226`); confirmed,
+  no change.
+Limitations documented in `docs/src/ops/hot-reload.md`:
+- Boolean enable flips (`lsp.enabled`, `team.enabled`,
+  `repl.enabled`, `config_tool.self_edit`, `proactive.enabled`)
+  still require restart — `Arc<ToolRegistry>` (`tool_base`) is
+  immutable post-boot.
+- Subsystem actor lifecycle (LspManager child processes,
+  ReplRegistry subprocess pool, TeamMessageRouter broker subs)
+  unchanged across reload — matches claude-code-leak
+  `src/services/mcp/useManageMCPConnections.ts:624` (invalidate-
+  and-refetch, no actor teardown) and OpenClaw
+  `research/src/plugins/services.ts:33-78` (services boot-once).
+- Mid-session sessions in `runtime.rs:752 session_txs.entry().or_insert_with`
+  retain captured ctx until end. NEW sessions/events post-reload
+  see new policy. Phase 18 invariant.
+References (validation, not copy):
+- claude-code-leak `src/tools/BashTool/shouldUseSandbox.ts:53` —
+  re-read settings per-call (config-pull pattern).
+- claude-code-leak `src/services/mcp/useManageMCPConnections.ts:624` —
+  invalidate-and-refetch, no kill.
+- research/ `src/agents/channel-tools.ts:95-112` — config-pull
+  per turn factory pattern.
+Implementation 100% Rust:
+`Arc<EffectiveBindingPolicy>` lookup via `AgentContext`,
+`ArcSwap<RuntimeSnapshot>` swap, tokio mpsc reload channel,
+`From` traits for cross-crate adapters.
+
+H-3.b (M5 fold-in deferred). **`cron_tool_bindings` registry
+captured at boot** — `src/main.rs:1766,3088` builds a `HashMap<
+String, CronToolBindingContext>` where `CronToolBindingContext.ctx`
+holds an `AgentContext` whose `effective` was resolved at boot.
+The `RuntimeCronToolExecutor` (`main.rs:3565`) uses this captured
+ctx when a cron entry fires through the tier-0 dispatcher path
+(separate from the per-agent runtime). Reload does NOT rebuild
+this map; cron tier-0 dispatch sees stale policy until daemon
+restart. Fix shape: post-hook in `ConfigReloadCoordinator` that
+walks `cron_tool_bindings` and rebuilds each entry's ctx from the
+new snapshot (analogue of PairingGate flush at `src/main.rs:3492`).
+Effort: ~1 hr. Cross-link to **M5** in the audit backlog.
+
+H-3.c (M11 — full ConfigTool config-pull) — ⬜ open. ConfigTool
+struct (`crates/core/src/agent/config_tool.rs:164-189`) captures
+`allowed_paths` + `approval_timeout_secs` at construction. The 7
+read sites (`config_tool.rs:515,584,624,1024,1027,...`) use
+`self.<field>` instead of pulling from
+`ctx.effective_policy().config_tool` per call. Same refactor
+shape as the four C2 tools just shipped, but the file is 1500+
+LOC and the call sites are deeper in the propose/apply state
+machine — deferred for focused review. Effort: ~2 hr.
 
 ### Phase 21 — Link understanding
 

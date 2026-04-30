@@ -39,6 +39,14 @@ The fields that apply live without a restart:
 | `sender_rate_limit` | same | Per-binding token bucket |
 | `allowed_delegates` | same | Delegation ACL |
 | `providers.<name>.api_key` | `llm.yaml` | Rotated via a fresh `LlmClient` on next turn |
+| `lsp.languages`, `lsp.idle_teardown_secs`, `lsp.prewarm` (agent + binding) | `agents.d/*.yaml` | LSP tool reads policy per call (C2) |
+| `team.max_members`, `team.max_concurrent`, `team.idle_timeout_secs`, `team.worktree_per_member` (agent + binding) | same | Team* tools read policy per call (C2) |
+| `config_tool.allowed_paths`, `config_tool.approval_timeout_secs` | same | Read on the next ConfigTool call (M11 follow-up promotes the rest) |
+| `repl.allowed_runtimes` (agent + binding) | same | ReplTool gates spawn on the per-call allowlist (C2) |
+| `remote_triggers` (agent + binding) | same | RemoteTriggerTool reads allowlist per call |
+| `cron_*` model fields | same | CronCreateTool reads `effective.model` per call |
+| `proactive.tick_interval_secs`, `proactive.jitter_pct`, `proactive.max_idle_secs` | same | Proactive driver reads on the next tick |
+| All Phase 16 binding overrides (`allowed_tools`, `outbound_allowlist`, `skills`, `model.model`, `system_prompt_extra`, `sender_rate_limit`, `allowed_delegates`, `language`, `link_understanding`, `web_search`, `pairing_policy`, `dispatch_policy`, `remote_triggers`, `proactive`, `repl`, `lsp`, `team`, `config_tool`) | `agents.d/*.yaml`, `inbound_bindings[].<field>` | Resolved fresh per snapshot build; consumed at handler entry via `ctx.effective_policy()` |
 
 Fields that **require a restart** (logged as `warn` during reload):
 
@@ -48,6 +56,27 @@ Fields that **require a restart** (logged as `warn` during reload):
 - `model.provider` (binding-level provider must match agent provider —
   the `LlmClient` is wired once per agent)
 - `broker.yaml`, `memory.yaml`, `mcp.yaml`, `extensions.yaml`
+- **Boolean enable flips**: `lsp.enabled`, `team.enabled`,
+  `repl.enabled`, `config_tool.self_edit`, `proactive.enabled`
+  (any per-binding override of these). Flipping `false → true`
+  requires registering the tool in the per-agent `tool_base`
+  (immutable post-boot — `Arc<ToolRegistry>`); flipping
+  `true → false` would leave a registered-but-refused tool that
+  the LLM still sees in its catalogue. The handler refuses with a
+  `<feature>Disabled` error in the second case, but operators
+  should restart for clean semantics.
+- **Subsystem actor lifecycle**: `LspManager` child processes,
+  `ReplRegistry` subprocess pool, `TeamMessageRouter` broker
+  subscriptions stay alive across reloads. Operator restart is
+  required to recycle child processes (e.g. after a toolchain
+  update for `rust-analyzer`).
+
+The "boolean enable flips" + "subsystem actor lifecycle"
+limitations match prior art: `claude-code-leak/src/services/mcp/
+useManageMCPConnections.ts:624` does invalidate-and-refetch
+without killing the MCP child stdio process; OpenClaw
+`research/src/plugins/services.ts:33-78` boots plugin services
+once per process and keeps them resident across config changes.
 
 Adding or removing an agent also requires a restart in this release;
 see [limitations](#limitations).
