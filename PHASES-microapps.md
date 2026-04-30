@@ -19,8 +19,8 @@ covers Phases 1-81; everything microapp-related lives here.
 
 | Phase | Name | Sub-phases | Status |
 |-------|------|-----------|--------|
-| 82 | Multi-tenant SaaS extension enablement + control plane | 12 | 0/12 |
-| 83 | Microapp framework foundation | 12 | 0/12 |
+| 82 | Multi-tenant SaaS extension enablement + control plane | 14 | 0/14 |
+| 83 | Microapp framework foundation | 13 | 0/13 |
 
 ## Why a separate file
 
@@ -525,6 +525,213 @@ Done criteria:
 - INVENTORY toggle: `NEXO_MICROAPP_HTTP_SERVERS_ENABLED`
   global killswitch.
 
+#### 82.13 — Operator chat takeover (per-conversation pause + manual reply + resume)   ⬜
+
+Cross-app primitive. Operators sometimes need to step into a
+single conversation to handle questions the agent cannot answer
+or scenarios where a human voice is required. Today nexo runs
+every inbound through the agent — there is no way to suspend
+agent processing for one chat while keeping all other chats
+active.
+
+Used by any conversational microapp (sales / marketing / support
+/ legal / medical / education / e-commerce) where human-handoff
+per conversation is part of the workflow.
+
+Scope:
+- Per-conversation control state stored in the session manager:
+  ```rust
+  enum ConversationControlState {
+      AgentActive,         // default — agent processes inbounds
+      PausedByOperator {
+          paused_at,
+          operator_token_hash,
+          reason: Option<String>,
+      },
+  }
+  ```
+  Indexed by `(agent_id, channel, account_id, contact_id)` tuple.
+  Persisted in SQLite (idempotent migration via Phase 77.17).
+- Inbound dispatch checks state:
+  - `AgentActive` → normal flow (binding match → agent turn)
+  - `PausedByOperator` → message logged to transcript with
+    `role: "user"` flag but NO agent turn fired. Messages
+    accumulate, do not get lost, do not trigger agent
+    processing.
+- New admin RPC methods (extend 82.10):
+  - `nexo/admin/conversations/pause { agent_id, channel,
+    account_id, contact_id, reason? }` → state to
+    PausedByOperator.
+  - `nexo/admin/conversations/resume { agent_id, channel,
+    account_id, contact_id }` → state to AgentActive. On
+    next inbound, agent turn fires with full context
+    including operator's manual replies marked clearly +
+    system prompt addendum: *"Operator was active from <X>
+    to <Y>. Their replies are tagged `<operator>...</operator>`
+    in the transcript. Continue the conversation."*
+  - `nexo/admin/conversations/operator_reply { agent_id,
+    channel, account_id, to, body, msg_kind?,
+    attachments? }` → publishes via Phase 26 reply adapter;
+    transcript entry tagged `role: "operator"` with
+    `operator_token_hash`.
+  - `nexo/admin/conversations/state { agent_id, channel,
+    account_id, contact_id }` → returns current state.
+- New capability gate: `operator_takeover` (subset of admin
+  capabilities — declared granularly per microapp).
+- Notification firehose:
+  `nexo/notify/conversation_state_changed { agent_id,
+  channel, account_id, contact_id, state,
+  by_operator_token_hash?, at }`
+- Transcript schema extension: `role` enum gains `Operator`
+  variant (in addition to existing `User` / `Assistant` /
+  `Tool`).
+- Race-condition safety:
+  - pause + resume idempotent (last-write-wins, audit logged)
+  - operator_reply rejected (-32004 `not_paused`) if state
+    is not `PausedByOperator`
+  - concurrent pause from two operators: idempotent, latest
+    token hash wins
+- Auto-resolve hook for 82.14: pausing a conversation with a
+  pending escalation auto-resolves the escalation to
+  `OperatorTakeover`.
+
+Done criteria:
+- pause/resume cycle works end-to-end: operator pauses →
+  contact's next inbounds logged but agent silent → operator
+  types reply → reply lands in WhatsApp marked correctly →
+  operator resumes → next contact inbound triggers agent turn
+  with full context.
+- Agent receives operator's reply in its system prompt
+  context, knows it was human (visible via `<operator>` tags
+  in transcript).
+- Agent does not "double-respond" to a message the operator
+  already replied to.
+- Per-conversation isolation: pausing chat A does not affect
+  chat B (same agent, different contacts).
+- Audit log row per pause / resume / operator_reply.
+- Transcripts persist `role: "operator"` correctly.
+- 8+ unit tests + 1 e2e test simulating full takeover flow.
+
+Out of scope:
+- Multi-operator conflict UI (which operator owns the
+  takeover; v0 first-come-first-serve).
+- Operator typing indicators visible to the contact.
+- Auto-resume timeout (could be future enhancement).
+- Operator-to-operator handoff between humans.
+
+#### 82.14 — Agent escalation: tool + notification + badge state   ⬜
+
+Cross-app primitive. Agents sometimes encounter questions
+outside their preloaded knowledge (tarifario, skill, persona
+context). Today they fall back to natural-language deferral
+("el asesor te lo confirma") — invisible to operators, no flag
+raised. This subphase adds an explicit escalation channel:
+agent calls a tool, core flags the conversation, operator UI
+surfaces a badge, human follows up.
+
+Used by any agent with bounded knowledge (sales / support /
+marketing / specialist / domain-expert agents).
+
+Scope:
+- New built-in tool `escalate_to_human` (provider-agnostic,
+  registered in core ToolRegistry):
+  ```json
+  {
+    "name": "escalate_to_human",
+    "description": "Flag this conversation for human operator follow-up when you cannot answer the customer's question with your preloaded knowledge.",
+    "input_schema": {
+      "type": "object",
+      "required": ["question", "reason"],
+      "properties": {
+        "question": {"type": "string", "maxLength": 500},
+        "reason": {"type": "string",
+                   "enum": ["out_of_scope", "missing_data",
+                            "needs_human_judgment",
+                            "complaint", "other"]},
+        "urgency": {"type": "string",
+                    "enum": ["low", "normal", "high"],
+                    "default": "normal"},
+        "extra_context": {"type": "string", "maxLength": 1000}
+      }
+    }
+  }
+  ```
+- Per-conversation escalation state:
+  ```rust
+  enum EscalationState {
+      None,
+      Pending {
+          question, reason, urgency, requested_at,
+          extra_context: Option<String>,
+      },
+      Resolved { resolved_at, by: ResolvedBy },
+  }
+  enum ResolvedBy {
+      OperatorTakeover,                  // 82.13 pause auto-resolves
+      OperatorDismissed { reason: String },
+      AgentResolved,                     // rare — agent later found answer
+  }
+  ```
+  Persisted in SQLite alongside 82.13's pause state.
+- Tool dispatch sets state to `Pending` and emits firehose
+  event:
+  `nexo/notify/escalation_requested { agent_id, channel,
+  account_id, contact_id, question, reason, urgency,
+  extra_context?, requested_at }`
+- New admin RPC methods (extend 82.10):
+  - `nexo/admin/conversations/escalations/list { filter?:
+    pending|resolved|all, agent_id?, limit? }`
+  - `nexo/admin/conversations/escalations/resolve {
+    agent_id, channel, account_id, contact_id, by:
+    "dismissed"|"takeover", dismiss_reason? }`
+- Auto-resolve trigger: when 82.13's `pause` is invoked on a
+  conversation with pending escalation, the escalation
+  auto-resolves with `ResolvedBy::OperatorTakeover` + emits
+  `nexo/notify/escalation_resolved`.
+- De-duplication: if `escalation_state == Pending` already,
+  the agent's `escalate_to_human` call is a no-op (returns
+  ok with `already_pending` flag, does not double-notify).
+- Throttle: max 3 escalations per conversation per hour to
+  prevent agent loops; further calls rejected with rate-limit
+  error.
+- Default behaviour post-escalation:
+  - Agent continues responding with deferral language.
+  - Conversation NOT auto-paused (operator can manually
+    pause via 82.13 if takeover needed).
+  - Configurable per agent: `escalation_auto_pause: bool`
+    (default `false`). When `true`, agent auto-pauses after
+    escalating; useful for legal / medical / sensitive bots.
+- New capability gate: `escalation_subscribe` (subset of
+  admin) for microapps that want the firehose.
+- INVENTORY env toggle: `NEXO_AGENT_ESCALATION_ENABLED`
+  global killswitch.
+
+Done criteria:
+- Agent calls `escalate_to_human(question, reason)` → state
+  becomes `Pending` → notification fires.
+- Microapp with `escalation_subscribe` receives notification →
+  React UI shows badge on chat.
+- Operator triggers 82.13 pause + operator_reply →
+  escalation auto-resolves to `OperatorTakeover`.
+- Operator dismisses without takeover → escalation resolves
+  to `OperatorDismissed`.
+- Agent re-calls `escalate_to_human` while `Pending` →
+  no-op, single notification only.
+- Throttle: 4th call within an hour → rate-limit error.
+- Restart: pending escalations persist (state in SQLite).
+- 8+ unit tests + 1 e2e test.
+- Audit log row per escalation request + resolve.
+
+Out of scope for v0:
+- Auto-categorisation of escalations by secondary LLM
+  (clustering of `missing_data` reasons into reusable
+  categories).
+- Priority queue / SLA tracking.
+- Round-robin assignment to multiple operators.
+- Metrics: escalation rate per agent / per reason.
+- Auto-train: resolved escalations feeding back into the
+  agent's knowledge base.
+
 ---
 
 **Phase 82 effort estimate**: 82.1 (1.5 days, BindingContext
@@ -539,8 +746,11 @@ formalisation + docs), 82.7 (1 day extending Phase 16),
 + docs), 82.10 (3-4 days admin RPC + granular gates +
 domain methods + audit), 82.11 (2 days transcripts admin
 RPC + firehose + redactor passthrough), 82.12 (1.5 days
-HTTP server convention + supervisor + token auth). Total
-~17-23 dev-days.
+HTTP server convention + supervisor + token auth), 82.13
+(2-3 days operator takeover state + admin RPC + transcript
+role:Operator + system-prompt addendum on resume), 82.14
+(2 days escalate_to_human tool + state + notification +
+admin RPC + auto-resolve hook). Total ~21-28 dev-days.
 
 **MVP slice for first meta-microapp v0**: 82.1 + 82.5 +
 82.6 + 82.10 + 82.11 + 82.12 = ~10-13 dev-days. With
@@ -1053,27 +1263,134 @@ Out of scope:
 - Marketplace-style microapp UI launcher that aggregates
   multiple microapp UIs in one tab.
 
+#### 83.13 — `microapp-ui-react` reusable component library (WhatsApp Web-inspired)   ⬜
+
+Reusable visual layer above the 83.12 React UI infrastructure.
+Where 83.12 covers auth + SPA serving + admin client +
+WebSocket + build pipeline (the plumbing that lets a microapp
+ship its own React UI), 83.13 ships the **components themselves**
+— a WhatsApp Web-inspired layout with state-aware components
+that consume the 82.10 + 82.11 + 82.13 + 82.14 schemas.
+
+Used by any microapp with a conversational UI: meta-microapp,
+support-deflect operator dashboard, marketing-saas lead inbox,
+ventas-etb leads viewer, and any future microapp with a chat
+interface.
+
+The WhatsApp Web layout is chosen for operator familiarity —
+operators interact with the UI for hours per day, and reusing
+a mental model they already have reduces cognitive load and
+training overhead. WhatsApp is the dominant inbound channel for
+the v1 framework, so the visual analogy is direct.
+
+Scope:
+- TypeScript package published as `@nexo/microapp-ui-react`
+  (shipped under `crates/microapp-sdk-react/` mirroring
+  `crates/microapp-sdk-rust/`).
+- 3-column WhatsApp Web layout:
+  - Left: chat list with search + filters + state badges
+  - Centre: conversation thread with composer
+  - Right: contact details panel with actions
+- Core components (12+):
+  - `<ChatList>` — sidebar list with search + filters.
+  - `<ChatItem>` — individual chat preview with badges
+    (escalation 🔴/🟡/🔵 by urgency, paused ⏸, unread
+    count ✓).
+  - `<ChatHeader>` — top of conversation: avatar + name +
+    state text (`paused` / `escalation pending` / `active`).
+  - `<MessageThread>` — scrollable area with bubbles +
+    auto-scroll; loads paginated history via 82.11 admin
+    RPC.
+  - `<MessageBubble>` — role-aware styling:
+    - `role: user` → left aligned, light grey.
+    - `role: assistant` → right aligned, light green.
+    - `role: operator` → right aligned, dark green + 👤
+      tag (Phase 82.13 transcript role).
+    - `role: tool` → centred, monospace.
+  - `<MessageComposer>` — textarea + send + attachment +
+    emoji picker; disabled when agent active without pause,
+    enabled after 82.13 pause.
+  - `<ContactSidebar>` — right panel with metadata +
+    action buttons: `Pause` / `Resume` / `Escalate` / `Take
+    over` / `Dismiss escalation`.
+  - `<EscalationBanner>` — banner at top when escalation is
+    `Pending`; clicking opens `<EscalationModal>`.
+  - `<PauseBanner>` — banner when conversation paused, shows
+    "Paused by operator at HH:MM".
+  - `<EscalationModal>` — modal with question + reason +
+    extra_context + `Take over` / `Dismiss` actions.
+  - `<QrPairingModal>` — modal with QR for linking
+    WhatsApp/etc + live status (subscribed to
+    `nexo/notify/pairing_status_changed`).
+  - `<TokenSwapToast>` — toast notification when token
+    rotates (Phase 82.12 `nexo/notify/token_rotated`).
+- Theme system:
+  - WhatsApp green primary `#25D366` by default.
+  - CSS variables: `--color-primary`,
+    `--color-bubble-user`, `--color-bubble-agent`,
+    `--color-bubble-operator`, `--color-bg`, etc.
+  - Dark mode via CSS var switch.
+  - Themeable per microapp without recompiling the library.
+- Storybook docs:
+  - Each component with isolated story.
+  - Variants: paused chat, escalated chat, dark mode, etc.
+  - Live demos without backend.
+- Build artifact:
+  - ESM + CJS exports.
+  - TypeScript declarations bundled.
+  - Tree-shakable per-component import.
+
+Done criteria:
+- 12+ core components implemented with TypeScript types
+  derived from 82.10 / 82.11 / 82.13 / 82.14 schemas.
+- Storybook published with stories for each component and
+  each visual state.
+- 15+ component tests (Vitest + Testing Library).
+- 4+ E2E tests (Playwright) covering: load chat history,
+  send message, pause/resume cycle, escalation flow.
+- Theme system with CSS vars + dark mode functional.
+- Packaged as TS package with `package.json` exporting
+  named components.
+- README with quick-start: "import + use, override theme
+  via CSS vars".
+- Reusable: 83.10 (agent-creator validation) and 83.8
+  (ventas-etb) both import the lib in their respective
+  React apps; ~3-5 days of UI work saved per future
+  microapp.
+
+Out of scope for v0:
+- Voice messages UI (record button + waveform).
+- Video calls.
+- Stickers / GIFs.
+- Message reactions.
+- Visual read receipts (blue ticks per WhatsApp).
+- i18n / RTL languages (CSS prep ready, content
+  translation operator-side).
+
 ---
 
 **Phase 83 effort estimate**: 83.1 (1.5 days), 83.2 (1-1.5
 days), 83.3 (1.5-2 days), 83.4 (3-4 days SDK, +1d for the
 expanded surface covering admin client + firehose consumer
-+ HTTP helper), 83.5 (2-3 days compliance lib), 83.6 (1
-day contract doc), 83.7 (2 days for 3 templates since most
-logic is in the SDK), 83.8 (4-5 days reference microapp),
-83.9 (1-2 days cutover), 83.10 (1-4 days second microapp,
-upper bound if `agent-creator` is the validation case —
-note that 83.12 absorbs most of the React UI work that was
-previously implicit in 83.10's upper bound), 83.11 (1.5
-days docs + admin-ui), 83.12 (2-3 days React UI reference
-scaffold). Total ~22-30 dev-days.
++ HTTP helper + 82.13/82.14 wrappers), 83.5 (2-3 days
+compliance lib), 83.6 (1 day contract doc), 83.7 (2 days for
+3 templates since most logic is in the SDK), 83.8 (4-5 days
+reference microapp), 83.9 (1-2 days cutover), 83.10 (1-3
+days second microapp; upper bound if `agent-creator` is the
+validation case — note that 83.12 + 83.13 absorb most of the
+React UI work that was previously implicit in 83.10's upper
+bound), 83.11 (1.5 days docs + admin-ui), 83.12 (2-3 days
+React UI infrastructure scaffold), 83.13 (2 days WhatsApp-
+Web-inspired component library + Storybook + theme system).
+Total ~24-32 dev-days.
 
 **Critical path**: 83.1 + 83.2 + 83.3 (core primitives) →
 83.4 + 83.5 (libraries) → 83.6 + 83.7 (contract + templates)
-→ 83.12 (React UI scaffold) → 83.8 (reference microapp) →
-83.9 (cutover) + 83.10 (second validation) → 83.11 (docs).
-83.12 sits between 83.7 and 83.8/83.10 because the agent-
-creator validation in 83.10 reuses the scaffold.
+→ 83.12 (React UI infrastructure) → 83.13 (component lib) →
+83.8 (reference microapp) → 83.9 (cutover) + 83.10 (second
+validation) → 83.11 (docs). 83.12 + 83.13 sit between 83.7
+and 83.8/83.10 because the agent-creator validation in 83.10
+reuses the scaffold + the component library.
 
 **Dependencies on Phase 82**: 83.3 hook interceptor reuses
 patterns from 82.1 BindingContext; 83.4 SDK wraps Phase
@@ -1100,19 +1417,27 @@ agent-creator meta-microapp as the first product:
 3. **82.6** state_root convention — 0.5 day
 4. **82.10** admin RPC + capabilities + domain methods —
    3-4 days
-5. **82.11** transcripts firehose — 2 days
-6. **82.12** HTTP server pattern — 1.5 days
-7. **83.1** per-agent extension config — 1.5 days
-8. **83.4** microapp-sdk-rust (with all wrappers) —
-   3-4 days
-9. **83.6** contract doc — 1 day
-10. **83.12** React UI reference scaffold — 2-3 days
-11. **83.10** build agent-creator microapp as the
-    validation case (reuses 83.12 scaffold) — 2-3 days
+5. **82.13** operator chat takeover (pause + resume +
+   operator_reply, depends on 82.10) — 2-3 days
+6. **82.14** agent escalation tool + state + notification
+   (depends on 82.10; auto-resolves via 82.13) — 2 days
+7. **82.11** transcripts firehose — 2 days
+8. **82.12** HTTP server pattern — 1.5 days
+9. **83.1** per-agent extension config — 1.5 days
+10. **83.4** microapp-sdk-rust (with all wrappers
+    including 82.13 / 82.14 clients) — 3-4 days
+11. **83.6** contract doc — 1 day
+12. **83.12** React UI infrastructure scaffold — 2-3 days
+13. **83.13** WhatsApp Web-inspired component library
+    (depends on 83.12) — 2 days
+14. **83.10** build agent-creator microapp as the
+    validation case (reuses 83.12 + 83.13) — 1-3 days
 
-Total: ~20-25 dev-days for the agent-creator meta-microapp
-fully working with React UI, conversation viewer, and
-admin-driven CRUD of agents/credentials/pairing/LLM keys.
+Total: ~26-32 dev-days for the agent-creator meta-microapp
+fully working with React UI (chat-list / conversation /
+contact panel), live transcript view, escalation badges,
+operator takeover with manual reply, and admin-driven CRUD
+of agents/credentials/pairing/LLM keys.
 
 The marketing-saas-v0 path can be interleaved later via
 82.2 + 82.3 + 82.4 + 82.7 + 82.8 + 82.9 (~7-9 dev-days
