@@ -782,3 +782,188 @@ mod tests {
         }
     }
 }
+
+/// C3 — Drift-prevention tests. Walks the workspace and asserts
+/// that every `env::var("UPPER_NAME")` literal is either tracked in
+/// [`INVENTORY`] (because it gates dangerous behaviour) or in
+/// [`drift_tests::NON_DANGEROUS_ENV_ALLOWLIST`] (because it is a
+/// path / version pin / identity router / credential).
+///
+/// Adding a new env-driven toggle without classifying it fails the
+/// test with an explicit list of offenders, so the operator-facing
+/// `agent doctor capabilities` surface stays in sync with reality.
+#[cfg(test)]
+mod drift_tests {
+    use super::*;
+    use std::collections::HashSet;
+    use std::path::Path;
+
+    /// Env vars that appear in `env::var("X")` reads but are NOT
+    /// dangerous toggles by the [`module-level threshold`](super):
+    /// **dangerous = data destruction OR security bypass OR
+    /// irreversible side effect**.
+    ///
+    /// Classified by category. When a NEW LLM provider lands and
+    /// needs entries, follow this pattern:
+    ///   - version pin / API version stamp        → allowlist (here)
+    ///   - cache / context-cache feature flag     → allowlist (here)
+    ///   - org / project / region / group routing → allowlist (here)
+    ///   - timeout / max-tokens override          → allowlist (here)
+    ///   - "insecure-tls" / "skip-ratelimit" flag → INVENTORY (high risk)
+    ///   - "allow-write" / "allow-purge" flag     → INVENTORY (critical)
+    ///   - credential lookup (`*_API_KEY`)        → allowlist (here)
+    ///     because credentials are handled by the secret scanner +
+    ///     audit log, not as toggles.
+    pub(super) const NON_DANGEROUS_ENV_ALLOWLIST: &[&str] = &[
+        // System vars (provider-agnostic).
+        "HOME",
+        "PATH",
+        "USER",
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        // Terminal display behaviour.
+        "CLICOLOR",
+        "CLICOLOR_FORCE",
+        // Path / dev overrides.
+        "NEXO_HOME",
+        "NEXO_SECRETS_DIR",
+        "NEXO_DRIVER_BIN",
+        "NEXO_DRIVER_CONFIG",
+        "NEXO_DRIVER_WORKSPACE_ROOT",
+        "NEXO_PROJECT_ROOT",
+        "CONFIG_SECRETS_DIR",
+        "TELEGRAM_MEDIA_DIR",
+        "CLOUDFLARED_BINARY",
+        // Plugin endpoint / identity overrides (non-destructive).
+        "CDP_URL",     // browser plugin: Chrome DevTools URL.
+        "NATS_URL",    // broker URL pin.
+        // Test / mock infra (gated by `#[cfg(test)]` in practice; the
+        // scanner is regex-only so it picks them up regardless).
+        "MOCK_MODE",
+        "MOCK_CANCELLED_LOG",
+        "MOCK_SAMPLING_LOG",
+        "MOCK_SETLEVEL_LOG",
+        "DELEGATE_TARGET",     // delegation_e2e_test fixture.
+        "WA_LIVE_PEER_JID",    // WhatsApp live integration test.
+        "WA_LIVE_SESSION_DIR", // WhatsApp live integration test.
+        // ---- LLM provider tuning (non-destructive) ----
+        // Anthropic
+        "ANTHROPIC_VERSION",
+        "ANTHROPIC_CACHE_BETA",
+        "ANTHROPIC_CACHE_LONG_TTL_BETA",
+        // MiniMax
+        "MINIMAX_GROUP_ID",
+        // ---- Reserved for future providers (DeepSeek / xAI /
+        // Mistral / OpenAI / Gemini): when the first env read for
+        // any of them lands the drift test fails, the dev classifies
+        // (allowlist vs INVENTORY) and adds here with rationale.
+        //
+        // ---- Credentials (resolved via `${ENV_VAR}` substitution
+        // in YAML; the secret_scanner + audit log handle these,
+        // not the toggle inventory) ----
+        "ANTHROPIC_API_KEY",
+        "MINIMAX_API_KEY",
+        "OPENAI_API_KEY",
+        "GEMINI_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "XAI_API_KEY",
+        "MISTRAL_API_KEY",
+    ];
+
+    /// Walks `crates/**/*.rs` regex-matching every
+    /// `env::var("UPPER_NAME")` literal and asserts each found name
+    /// is either in [`INVENTORY`] or in
+    /// [`NON_DANGEROUS_ENV_ALLOWLIST`]. Fails with a sorted list of
+    /// offenders so the operator knows exactly what to classify.
+    ///
+    /// **Limitation**: regex-based detection misses indirect reads
+    /// (`let v = "FOO"; env::var(v)`). Almost zero such cases in
+    /// this codebase by convention. Switch to `syn` AST if a real
+    /// case appears.
+    #[test]
+    fn inventory_covers_known_dangerous_envs() {
+        let inventory_names: HashSet<&str> = INVENTORY
+            .iter()
+            .filter(|t| !matches!(t.kind, ToggleKind::CargoFeature(_)))
+            .map(|t| t.env_var)
+            .collect();
+        let allowlist: HashSet<&str> = NON_DANGEROUS_ENV_ALLOWLIST.iter().copied().collect();
+
+        let workspace_root = workspace_root();
+        let mut found: HashSet<String> = HashSet::new();
+        scan_rust_files(&workspace_root.join("crates"), &mut found);
+
+        let mut offenders: Vec<String> = found
+            .into_iter()
+            .filter(|name| !inventory_names.contains(name.as_str()))
+            .filter(|name| !allowlist.contains(name.as_str()))
+            .collect();
+        offenders.sort();
+
+        assert!(
+            offenders.is_empty(),
+            "env vars read from code but neither in INVENTORY nor in \
+             NON_DANGEROUS_ENV_ALLOWLIST: {:?}.\n\nFix: either add a \
+             `CapabilityToggle` entry to `INVENTORY` (if dangerous) \
+             or append to `NON_DANGEROUS_ENV_ALLOWLIST` with a \
+             comment explaining why it is benign.",
+            offenders
+        );
+    }
+
+    /// Every `ToggleKind::CargoFeature("X")` entry in INVENTORY is
+    /// exercised through [`is_cargo_feature_enabled`] to confirm the
+    /// branch returns without panic. This catches the case where
+    /// someone adds an INVENTORY entry but forgets to wire the
+    /// `cfg!` arm — partial detection only (a missing arm falls
+    /// through to `_ => false`, which the test cannot distinguish
+    /// from a feature genuinely off).
+    #[test]
+    fn inventory_cargo_features_have_arms() {
+        for toggle in INVENTORY {
+            if let ToggleKind::CargoFeature(name) = toggle.kind {
+                let _ = is_cargo_feature_enabled(name);
+            }
+        }
+    }
+
+    fn workspace_root() -> std::path::PathBuf {
+        // `CARGO_MANIFEST_DIR` for `nexo-setup` resolves to
+        // `<workspace>/crates/setup`. Climb two parents to land at
+        // the workspace root.
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("crates/setup parent (= crates/) must exist")
+            .parent()
+            .expect("crates/ parent (= workspace root) must exist")
+            .to_path_buf()
+    }
+
+    fn scan_rust_files(root: &Path, found: &mut HashSet<String>) {
+        let re = regex::Regex::new(r#"env::var\("([A-Z][A-Z0-9_]+)""#).unwrap();
+        for entry in walkdir::WalkDir::new(root)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(Result::ok)
+        {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            if entry.path().extension().is_none_or(|e| e != "rs") {
+                continue;
+            }
+            // Skip this very file — the scanner regex literal +
+            // panic-message format string contain `env::var("UPPER_NAME")`
+            // shapes that would otherwise self-trigger.
+            if entry.path().ends_with("setup/src/capabilities.rs") {
+                continue;
+            }
+            if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                for cap in re.captures_iter(&content) {
+                    found.insert(cap[1].to_string());
+                }
+            }
+        }
+    }
+}

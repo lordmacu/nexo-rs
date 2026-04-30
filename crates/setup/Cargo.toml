@@ -47,3 +47,9 @@ indicatif    = "0.17"
 nexo-plugin-whatsapp = { version = "0.1.1", path = "../plugins/whatsapp" }
 nexo-plugin-google = { version = "0.1.1", path = "../plugins/google" }
 nexo-pairing = { version = "0.1.2", path = "../pairing" }
+
+[dev-dependencies]
+# C3 — drift-prevention test for `INVENTORY` walks the workspace
+# crates dir scanning for `env::var("X")` literals.
+walkdir = "2"
+regex = "1"
