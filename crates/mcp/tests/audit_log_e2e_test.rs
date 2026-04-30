@@ -187,3 +187,99 @@ async fn no_writer_no_panic() {
         .await;
     assert!(matches!(outcome, DispatchOutcome::Reply(_)));
 }
+
+// ---- M2: args_hash + args_size_bytes wire ----
+
+/// Default config (`redact_args: true`) → row carries the
+/// 16-char sha256 truncated hash + the JSON-serialized byte size.
+/// Provider-agnostic — args is plain `serde_json::Value` from the
+/// MCP wire envelope, no LLM-specific shape.
+#[tokio::test]
+async fn tools_call_audit_row_records_args_hash_and_size() {
+    let store: Arc<dyn AuditLogStore> = Arc::new(MemoryAuditLogStore::new());
+    let mut cfg = nexo_mcp::server::audit_log::AuditLogConfig::default();
+    cfg.flush_interval_ms = 20;
+    cfg.flush_batch_size = 1;
+    let writer = AuditWriter::spawn(cfg, Arc::clone(&store)).unwrap();
+    let d = Dispatcher::with_full_stack(
+        ToggleHandler,
+        None,
+        None,
+        None,
+        None,
+        Some(Arc::clone(&writer)),
+    );
+
+    let payload = serde_json::json!({"name":"toggle","arguments":{"mode":"ok"}});
+    let outcome = d
+        .dispatch("tools/call", payload, &ctx_for("acme"))
+        .await;
+    assert!(matches!(outcome, DispatchOutcome::Reply(_)));
+
+    writer.drain(Duration::from_secs(2)).await;
+    let rows = store.tail(&AuditFilter::default(), 10).await.unwrap();
+    assert_eq!(rows.len(), 1);
+    let row = &rows[0];
+
+    // args_hash must be present and exactly 16 lowercase hex chars.
+    let hash = row.args_hash.as_deref().expect("args_hash must be Some");
+    assert_eq!(hash.len(), 16, "expected 16 chars, got `{hash}`");
+    assert!(
+        hash.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+        "expected lowercase hex, got `{hash}`"
+    );
+
+    // size must reflect the actual JSON byte length of `arguments`
+    // (the inner `{"mode":"ok"}` blob, not the outer envelope).
+    // serde_json::to_vec(&json!({"mode":"ok"})).len() == 13.
+    assert_eq!(
+        row.args_size_bytes, 13,
+        "expected 13 bytes for {{\"mode\":\"ok\"}}, got {}",
+        row.args_size_bytes
+    );
+}
+
+/// Operator opt-in (`redact_args: false`) → no hash recorded
+/// (raw args expected to live in the operator's debug log instead);
+/// size still recorded.
+#[tokio::test]
+async fn tools_call_audit_row_skips_hash_when_redact_args_false() {
+    let store: Arc<dyn AuditLogStore> = Arc::new(MemoryAuditLogStore::new());
+    let mut cfg = nexo_mcp::server::audit_log::AuditLogConfig::default();
+    cfg.flush_interval_ms = 20;
+    cfg.flush_batch_size = 1;
+    cfg.redact_args = false; // opt out of hashing.
+    let writer = AuditWriter::spawn(cfg, Arc::clone(&store)).unwrap();
+    let d = Dispatcher::with_full_stack(
+        ToggleHandler,
+        None,
+        None,
+        None,
+        None,
+        Some(Arc::clone(&writer)),
+    );
+
+    let outcome = d
+        .dispatch(
+            "tools/call",
+            serde_json::json!({"name":"toggle","arguments":{"mode":"ok"}}),
+            &ctx_for("acme"),
+        )
+        .await;
+    assert!(matches!(outcome, DispatchOutcome::Reply(_)));
+
+    writer.drain(Duration::from_secs(2)).await;
+    let rows = store.tail(&AuditFilter::default(), 10).await.unwrap();
+    assert_eq!(rows.len(), 1);
+    let row = &rows[0];
+
+    assert!(
+        row.args_hash.is_none(),
+        "redact_args=false → no hash; got {:?}",
+        row.args_hash
+    );
+    assert!(
+        row.args_size_bytes > 0,
+        "size still recorded regardless of redact_args"
+    );
+}
