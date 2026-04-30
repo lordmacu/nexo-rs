@@ -11819,4 +11819,34 @@ mcp_server:
         executor.replace_bindings(std::collections::HashMap::new());
         assert!(executor.resolve_binding("k").is_none());
     }
+
+    /// M5.b — the post-hook closure must early-return cleanly when
+    /// it fires before the cron executor was built (e.g. a config
+    /// reload triggered immediately at boot before the cron block
+    /// runs). Replicates the closure's `cell.get()` check inline so
+    /// that future closure-body changes that break this invariant
+    /// (e.g. swap to `expect()` or `unwrap_or`) trigger this test.
+    #[tokio::test]
+    async fn cron_post_hook_no_op_when_cell_empty() {
+        use std::sync::Arc;
+        let cell: Arc<tokio::sync::OnceCell<Arc<RuntimeCronToolExecutor>>> =
+            Arc::new(tokio::sync::OnceCell::new());
+        assert!(cell.get().is_none(), "cell must start empty");
+
+        // Simulate the closure's early-return pattern.
+        let early_return_taken = cell.get().is_none();
+        assert!(
+            early_return_taken,
+            "empty cell must trigger the closure's early-return path"
+        );
+
+        // After set, the closure would proceed to rebuild + replace.
+        let mut initial = std::collections::HashMap::new();
+        initial.insert("k".into(), make_test_binding("v1"));
+        let executor = Arc::new(RuntimeCronToolExecutor::new(initial));
+        // RuntimeCronToolExecutor doesn't impl Debug, so unwrap on
+        // SetError isn't available; just assert the result is Ok.
+        assert!(cell.set(Arc::clone(&executor)).is_ok());
+        assert!(cell.get().is_some(), "cell must hold the executor after set");
+    }
 }

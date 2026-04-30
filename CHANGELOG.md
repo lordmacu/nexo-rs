@@ -10,6 +10,44 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- Phase 80.1.b.b (partial) — `AgentConfig::auto_dream:
+  Option<AutoDreamConfig>` field with `#[serde(default)]` for
+  backward-compat. 47 struct-literal test fixtures across 17
+  directories swept via `perl -i -p0e` multi-line replace
+  (anchor `repl: Default::default(),\n}`). 3 new YAML round-trip
+  tests in `nexo-config` covering: missing block (None), present
+  with `enabled: true`, present with `enabled: false`. Affected
+  crates verde: nexo-config 153, nexo-fork 66, nexo-dream 48,
+  nexo-driver-loop 104, nexo-driver-types 22, nexo-agent-registry
+  38, nexo-core 671. main.rs boot wiring (~10K LOC binary; needs
+  per-binding `parent_ctx_template` + `tool_dispatcher` plumbing
+  audit) + Phase 18 hot-reload propagation hook deferred as
+  80.1.b.b.b follow-up. The 80.1.b orchestrator integration is
+  functional standalone — operators can wire AutoDreamRunner
+  programmatically right now.
+- Phase 80.1.b (MVP) — `nexo-driver-loop` orchestrator gains
+  `auto_dream: Option<Arc<dyn AutoDreamHook>>` field + `.auto_dream(...)`
+  builder + post-turn invocation site adjacent to Phase 77.5
+  `extract_memories`. Mirrors leak `autoDream.ts:316-324` `executeAutoDream`
+  invoked from `stopHooks`. New types in `nexo-driver-types::auto_dream`
+  (`AutoDreamHook` trait + `AutoDreamOutcomeKind` enum +
+  `DreamContextLite` struct) — placed upstream of nexo-driver-loop and
+  nexo-dream to break the would-be `nexo-core ↔ nexo-dream` cycle.
+  `nexo-dream` provides `impl AutoDreamHook for AutoDreamRunner` with
+  `RunOutcome → AutoDreamOutcomeKind` lossy mapping (full row stays in
+  80.18 `dream_runs`). `DreamContext` refactored: drops `parent_ctx`
+  + `last_chat_request`, replaced by operator-supplied
+  `parent_ctx_template` + `fork_system_prompt` + `fork_tools` +
+  `fork_model` at `AutoDreamRunner::new` (mirror Phase 77.5 shape;
+  no parent prompt-cache share). `AutoDreamConfig` moved to
+  `nexo-config::types::dream` (cycle-free); `nexo-dream::config`
+  re-exports + adds `validate()` helper. New `DriverEvent::AutoDreamOutcome
+  { goal_id, outcome_kind }` event variant. Tests verde across
+  nexo-config (150+), nexo-driver-types (1 new outcome_kind serde
+  round-trip), nexo-dream (48), nexo-driver-loop (104+). main.rs boot
+  wiring + `AgentConfig::auto_dream` field deferred to 80.1.b.b
+  follow-up (adding the field breaks 30+ struct-literal fixtures
+  across the workspace; needs coordinated sweep).
 - Phase 80.1 (MVP) — `crates/dream/` foundation crate for autoDream
   fork-style memory consolidation. Verbatim port of leak
   `claude-code-leak/src/services/autoDream/{autoDream.ts:1-324,
@@ -177,6 +215,37 @@ and the project adheres to [Semantic Versioning](https://semver.org)
   hardcoded with no operator override, validating the value of
   adding one. Schema duplication tracked as A5.b deferred
   follow-up (migration to a shared types crate).
+- **M5.b** — Cron config-reload post-hook reactivates the
+  `replace_bindings` API shipped in M5 step 1. New free function
+  `build_cron_bindings_from_snapshots` (with `compute_binding_key`
+  and `compute_inbound_origin` helpers) is the single source of
+  truth used by both boot path and the post-hook. Aggregated
+  `tools_per_agent: Arc<HashMap<agent_id, Arc<ToolRegistry>>>` and
+  `agent_snapshot_handles: Arc<HashMap<agent_id, Arc<ArcSwap<RuntimeSnapshot>>>>`
+  populated during the boot agent loop carry the per-agent state
+  the post-hook needs to read fresh effective policy after each
+  reload. `Arc<tokio::sync::OnceCell<Arc<RuntimeCronToolExecutor>>>`
+  late-bind pattern (mirror of the Phase 79.10.b reload_cell at
+  `src/main.rs:1923-1925`) handles the boot-time race where a
+  reload could fire before the cron executor is built (no-op with
+  `tracing::debug!`). Closes the C2 follow-up (FOLLOWUPS H-3.b):
+  per-binding policy changes (`team.max_*`, `lsp.languages`,
+  `repl.allowed_runtimes`, `config_tool.allowed_paths`, etc.) now
+  apply to cron firings on the very next call after reload,
+  without daemon restart. The `dead_code` warning on
+  `replace_bindings` from M5 step 1 is resolved. Provider-agnostic
+  — `effective.model` carries whatever provider the new snapshot
+  resolved (Anthropic / MiniMax / OpenAI / Gemini / DeepSeek / xAI
+  / Mistral); the rebuild function never branches on provider.
+  Pattern validated against claude-code-leak
+  `src/utils/cronScheduler.ts:441-448` (chokidar reload) + OpenClaw
+  `research/src/cron/service/timer.ts:709` (forceReload per-tick);
+  ArcSwap gives lock-free swap structurally rather than
+  imperatively. Limitation: agent add/remove still requires daemon
+  restart (Phase 19 scope — `tools_per_agent` and
+  `agent_snapshot_handles` are populated during boot and never
+  extended). Full integration test with a real
+  `ConfigReloadCoordinator::reload()` deferred as M5.c.
 - **M5 (partial — infra)** — `RuntimeCronToolExecutor.by_binding`
   migrates from `Arc<HashMap>` (immutable post-construction) to
   `Arc<arc_swap::ArcSwap<HashMap<...>>>`, enabling lock-free atomic

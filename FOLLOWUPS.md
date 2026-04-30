@@ -605,37 +605,54 @@ Implementation 100% Rust:
 `ArcSwap<RuntimeSnapshot>` swap, tokio mpsc reload channel,
 `From` traits for cross-crate adapters.
 
-H-3.b (M5 — partial). **`cron_tool_bindings` registry captured at
-boot** — partial fix shipped 2026-04-30 (commit `64136cf`).
-`RuntimeCronToolExecutor.by_binding` migrated from
-`Arc<HashMap>` to `Arc<arc_swap::ArcSwap<HashMap<...>>>` enabling
-lock-free atomic hot-swap via the new `replace_bindings(new_map)`
-API. `resolve_binding` now returns owned `Option<CronToolBindingContext>`
-(cheap clone). 2 smoke tests cover the swap mechanics:
-`cron_executor_replace_bindings_atomically_swaps_map`,
-`cron_executor_replace_bindings_with_empty_map_clears_all`.
+H-3.b (M5 + M5.b). **`cron_tool_bindings` registry hot-reload** —
+✅ shipped 2026-04-30 fully complete.
 
-**M5.b — wire the post-hook** ⬜ open. The ArcSwap infra is in
-place; what remains is the rebuild closure registration:
-1. Extract `build_cron_bindings_from_snapshots(snapshots, deps) ->
-   HashMap<String, CronToolBindingContext>` free function from
-   the inline `register_cron_binding` closure at
-   `src/main.rs:3049-3157`. Single source of truth for boot path
-   and post-hook.
-2. Define `struct CronRebuildDeps` bundling the ~10 Arcs the
-   rebuild needs (broker, sessions, memory, peer_directory,
-   credentials, web_search_router, link_extractor, dispatch_ctx,
-   `tools_per_agent: Arc<HashMap<agent_id, Arc<ToolRegistry>>>`,
-   cron_tool_call_cfg).
-3. Aggregate `tools_per_agent` + `agent_snapshot_handles:
-   Arc<HashMap<agent_id, Arc<ArcSwap<RuntimeSnapshot>>>>` during
-   the agent loop.
-4. Use the `Arc<OnceCell<Arc<RuntimeCronToolExecutor>>>` pattern
-   (mirror `reload_cell` Phase 79.10.b at `:3499-3508`) to
-   late-bind the executor into the post-hook closure registered
-   before `reload_coord.start()`.
-Effort: ~30-45 min on top of the shipped infra. Cross-link to
-**M5** in the audit backlog.
+**M5 (commit `64136cf`)** — ArcSwap infrastructure:
+`RuntimeCronToolExecutor.by_binding` migrated from `Arc<HashMap>`
+to `Arc<arc_swap::ArcSwap<HashMap<...>>>` enabling lock-free
+atomic hot-swap via the new `replace_bindings(new_map)` API.
+`resolve_binding` returns owned `Option<CronToolBindingContext>`.
+
+**M5.b (commits `7a640e7`, `fcaca59`, plus pending docs commit)**
+— post-hook wire activates the `replace_bindings` API:
+1. Extracted `build_cron_bindings_from_snapshots(snapshots, deps)
+   -> HashMap<String, CronToolBindingContext>` free function in
+   `src/main.rs` plus `compute_binding_key` + `compute_inbound_origin`
+   helpers. Replaces the inline `register_cron_binding` closure
+   verbatim (semantic-preserving refactor).
+2. New `CronRebuildDeps` struct (Clone) bundles the 10 Arcs/handles
+   the rebuild fn consumes.
+3. `tools_per_agent: Arc<HashMap<agent_id, Arc<ToolRegistry>>>` and
+   `agent_snapshot_handles: Arc<HashMap<agent_id, Arc<ArcSwap<RuntimeSnapshot>>>>`
+   aggregated during the boot agent loop. `runtime.snapshot_handle()`
+   is `&self -> Arc<...>` (does not consume), called BEFORE
+   `runtime.start().await` which moves `self`.
+4. `Arc<tokio::sync::OnceCell<Arc<RuntimeCronToolExecutor>>>` cell
+   declared near the reload coordinator wire (mirror Phase 79.10.b
+   reload_cell pattern at `:1923-1925`). Late-bind via `.set()` at
+   the executor construction site so subsequent reloads can call
+   `replace_bindings` via the post-hook.
+5. Post-hook registered before `reload_coord.start()`. Empty-cell
+   case (reload triggered before executor built) is graceful no-op
+   with `tracing::debug!`.
+6. 3 smoke tests in `src/main.rs::tests`:
+   `cron_executor_replace_bindings_atomically_swaps_map` (M5),
+   `cron_executor_replace_bindings_with_empty_map_clears_all` (M5),
+   `cron_post_hook_no_op_when_cell_empty` (M5.b).
+
+Net result: per-binding policy changes (`team.max_*`,
+`lsp.languages`, `repl.allowed_runtimes`,
+`config_tool.allowed_paths`, etc.) now apply to cron firings on
+the next call after reload, without daemon restart. The
+`dead_code` warning on `replace_bindings` from M5 step 1 is
+resolved.
+
+**Limitation**: agent add/remove during runtime still requires
+daemon restart (Phase 19 scope; `tools_per_agent` and
+`agent_snapshot_handles` are populated during the boot agent loop
+and never extended). Documented in
+`build_cron_bindings_from_snapshots` doc-comment.
 
 References (validation, not copy):
 - claude-code-leak `src/utils/cronScheduler.ts:441-448` —
@@ -643,7 +660,13 @@ References (validation, not copy):
   `inFlight` Set with pitfall.
 - research/ `src/cron/service/timer.ts:709,697` —
   forceReload-per-tick + long-job pitfall. We rebuild on reload
-  only.
+  only because ArcSwap gives lock-free swap structurally.
+
+**M5.c — full integration test** ⬜ open. The smoke test covers
+the empty-cell early-return; full integration with a real
+`ConfigReloadCoordinator::reload()` (broker fixture + config
+dir manipulation + assertion that `replace_bindings` was called
+with the expected map) is deferred. ~45 min.
 
 H-3.c (M11 — full ConfigTool config-pull) — ⬜ open. ConfigTool
 struct (`crates/core/src/agent/config_tool.rs:164-189`) captures
