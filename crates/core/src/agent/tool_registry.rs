@@ -587,4 +587,63 @@ mod tests {
         assert!(summary.contains("Search Slack messages"));
         assert!(!summary.contains("normal"));
     }
+
+    // ── Phase M8 — built-in deferred tools sweep ──
+
+    #[test]
+    fn mark_built_in_deferred_excludes_listed_tools() {
+        use super::super::built_in_deferred::mark_built_in_deferred;
+        let reg = ToolRegistry::new();
+        // Register 3 tools that ARE in BUILT_IN_DEFERRED_TOOLS plus
+        // one that is not.
+        reg.register(mk_def("TodoWrite"), Noop);
+        reg.register(mk_def("Lsp"), Noop);
+        reg.register(mk_def("Repl"), Noop);
+        reg.register(mk_def("FileRead"), Noop); // not in the list
+
+        mark_built_in_deferred(&reg);
+
+        let defs = reg.to_tool_defs_non_deferred();
+        let mut names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(names, vec!["FileRead"]);
+        // Three names show up in the deferred side-channel.
+        let deferred: Vec<String> = reg
+            .deferred_tools()
+            .into_iter()
+            .map(|(n, _)| n)
+            .collect();
+        for expected in &["TodoWrite", "Lsp", "Repl"] {
+            assert!(
+                deferred.iter().any(|n| n == expected),
+                "expected {expected} to appear in deferred_tools(): got {deferred:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn mark_built_in_deferred_skips_absent_tools() {
+        use super::super::built_in_deferred::mark_built_in_deferred;
+        let reg = ToolRegistry::new();
+        // No tools registered. Sweep must not panic; it writes
+        // side-channel meta even without handlers (acceptable —
+        // `to_tool_defs_non_deferred` returns empty regardless
+        // because there are no handlers).
+        mark_built_in_deferred(&reg);
+        assert!(reg.to_tool_defs_non_deferred().is_empty());
+    }
+
+    #[test]
+    fn mark_built_in_deferred_propagates_search_hints() {
+        use super::super::built_in_deferred::mark_built_in_deferred;
+        let reg = ToolRegistry::new();
+        reg.register(mk_def("TodoWrite"), Noop);
+        mark_built_in_deferred(&reg);
+        let meta = reg.meta("TodoWrite").expect("TodoWrite meta present");
+        assert!(meta.deferred);
+        assert_eq!(
+            meta.search_hint.as_deref(),
+            Some("todo, tasks, in-progress checklist"),
+        );
+    }
 }

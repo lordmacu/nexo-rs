@@ -280,12 +280,60 @@ do not get lost.
   (a) — bash + per-language Bash variants is enough for our
   use cases.
 - **M8 — Phase 79.2 deferred-schema only used by MCP catalog.**
-  `crates/core/src/agent/tool_search_tool.rs:30-37` itself
-  flags this. Leak defers TodoWrite, LSP, TeamCreate,
-  RemoteTrigger, NotebookEdit, REPL by default. Infrastructure
-  is built and tested. Fix: mark `ToolMeta::deferred()` on the
-  6 tools above in their respective registration sites.
-  Effort: 30 min.
+  ✅ shipped 2026-04-30 (M8.a slice). New module
+  `crates/core/src/agent/built_in_deferred.rs` ships
+  `BUILT_IN_DEFERRED_TOOLS: &[(&'static str, &'static str)]` —
+  12 canonical `(name, search_hint)` entries for built-in tools
+  that match leak's `shouldDefer: true` precedent: `TodoWrite`
+  (per leak `TodoWriteTool.ts:51`), `NotebookEdit`
+  (`NotebookEditTool.ts:94`), `RemoteTrigger`
+  (`RemoteTriggerTool.ts:50`), `Lsp` (`LSPTool.ts:136`),
+  `TeamCreate` (`TeamCreateTool.ts:78`), `TeamDelete`
+  (`TeamDeleteTool.ts:36`), `TeamSendMessage` (per
+  `SendMessageTool.ts:533` precedent), `TeamList` + `TeamStatus`
+  (per `TaskListTool.ts:52` list/status precedent), `Repl`
+  (local decision — verbose schema, rare use), `ListMcpResources`
+  (`ListMcpResourcesTool.ts:50`), `ReadMcpResource`
+  (`ReadMcpResourceTool.ts:59`). `pub fn
+  mark_built_in_deferred(&ToolRegistry)` helper applies
+  `ToolMeta::deferred_with_hint(...)` via `set_meta` (idempotent
+  vs gated tools — entries not registered in this boot are
+  silently skipped because `set_meta` only writes the
+  side-channel meta). Single sweep call wired in
+  `src/main.rs:3293-3303` after all `tools.register(...)` calls
+  + after MCP registration + before binding validation, so the
+  registry is fully assembled when the meta lands. 3 inline
+  tests in `tool_registry::tests`:
+  `mark_built_in_deferred_excludes_listed_tools`,
+  `mark_built_in_deferred_skips_absent_tools`,
+  `mark_built_in_deferred_propagates_search_hints`. Doc-comment
+  on the module documents the cap+emit coupling rule + 9
+  IRROMPIBLE refs to leak (`Tool.ts:438-449` shouldDefer/alwaysLoad
+  semantics, `tools/ToolSearchTool/prompt.ts:62-108` decision
+  tree, `services/api/claude.ts:1136-1253` token-budget rationale,
+  per-tool `shouldDefer:` sites). Provider-agnostic across
+  Anthropic / MiniMax / OpenAI / Gemini / DeepSeek / xAI /
+  Mistral — deferral lives at the `ToolRegistry` layer, not in
+  any provider shim. Tests:
+  `cargo test -p nexo-core --lib agent::tool_registry::tests`
+  → 19/19 (16 existing + 3 new). Note: binary build
+  (`cargo build --bin nexo`) blocked by pre-existing dirty
+  state from Phase 80.1.d (`nexo_dream` crate not in `Cargo.toml`,
+  `DreamRunRow` lacks `Serialize`, `GoalId::as_uuid` removed) —
+  M8 changes themselves are isolated, only nexo-core lib +
+  `src/main.rs` single-line wire. **Slice M8.b ⬜** open:
+  defer plan-mode tools (`EnterPlanMode` / `ExitPlanMode`)
+  after re-evaluating mid-turn UX. **Slice M8.c ⬜** open:
+  defer 5 cron tools (`CronCreate/List/Delete/Pause/Resume`)
+  after Phase 80.2-80.6 cron jitter knobs settle.
+  **Slice M8.d ⬜** open: defer `WebSearch` / `WebFetch` after
+  Phase 21/25 surface stabilizes. **Provider-shim filtering wire
+  ⬜** open: 4 LLM provider shims (anthropic / minimax / gemini /
+  openai-compat) still emit the full schema today; the savings
+  land when a follow-up wires them to consult
+  `ToolRegistry::deferred_tools()`. M8.a ships the registry-side
+  marking; the actual token-budget win lands when shims consume
+  it (Phase 79.2 follow-up).
 - **M9 — `expose_tools` typo path silent.**
   ✅ shipped 2026-04-30 (commit `895b99b`). New
   `crates/core/tests/expose_tools_typo_regression_test.rs`

@@ -10,6 +10,139 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **M8.a — built-in deferred tools sweep** (FOLLOWUPS A6.M8). Phase
+  79.2 shipped the deferred-schema infrastructure
+  (`ToolMeta::deferred()` + `to_tool_defs_non_deferred()` +
+  `deferred_tools_summary()`) but only `mcp_catalog.rs:253-257`
+  consumed it (auto-deferring `mcp__*` tools at registration). The
+  six leak-defaulted built-ins (`TodoWrite`, `NotebookEdit`,
+  `RemoteTrigger`, `Lsp`, `TeamCreate/Delete/SendMessage`, `Repl`)
+  registered without a meta, so the LLM request body still carried
+  their full JSONSchemas every turn — the `ToolSearch` token-budget
+  win was partial. Fix introduces
+  `crates/core/src/agent/built_in_deferred.rs` with
+  `BUILT_IN_DEFERRED_TOOLS: &[(&'static str, &'static str)]` —
+  canonical 12-entry `(name, search_hint)` slice covering the 6
+  audit-listed tools plus `TeamList` / `TeamStatus` (per leak
+  `TaskListTool.ts:52` list/status precedent) and `ListMcpResources`
+  / `ReadMcpResource` (per leak `ListMcpResourcesTool.ts:50` /
+  `ReadMcpResourceTool.ts:59`, mirroring the `mcp_catalog.rs:253`
+  symmetry for unprefixed router tools). `pub fn
+  mark_built_in_deferred(registry: &ToolRegistry)` iterates the
+  slice and calls `registry.set_meta(name,
+  ToolMeta::deferred_with_hint(hint))`. Idempotent in two senses:
+  (1) tools not registered in this boot (gated off via
+  `agent.team.enabled = false`, `agent.lsp.enabled = false`,
+  `agent.repl.runtimes = []`, etc.) are silently skipped because
+  `set_meta` only writes the side-channel meta map and doesn't
+  require a handler; (2) calling N times has the same effect as
+  calling once — last write wins, all writes carry identical
+  content. Single sweep call wired in `src/main.rs:3293-3303` after
+  ALL tool registrations (including MCP via
+  `register_session_tools_with_overrides`) and BEFORE the second-
+  pass binding validation, so the registry is fully assembled when
+  the meta lands. The leak's `name == TOOL_SEARCH_TOOL_NAME` carve-
+  out is implicitly preserved — `ToolSearch` itself is never in
+  `BUILT_IN_DEFERRED_TOOLS`, and `mcp_catalog.rs` never marks it
+  either. Module doc-comment ports the cap+emit coupling rule plus
+  9 IRROMPIBLE refs to claude-code-leak: `Tool.ts:438-449`
+  (`shouldDefer` / `alwaysLoad` semantics),
+  `tools/ToolSearchTool/prompt.ts:62-108` (`isDeferredTool`
+  decision tree), `services/api/claude.ts:1136-1253` (token-budget
+  rationale + `<available-deferred-tools>` synthetic block format),
+  and 7 per-tool `shouldDefer: true` sites (TodoWriteTool:51,
+  NotebookEditTool:94, RemoteTriggerTool:50, LSPTool:136,
+  TeamCreateTool:78, TeamDeleteTool:36, TaskListTool:52,
+  SendMessageTool:533, ListMcpResourcesTool:50,
+  ReadMcpResourceTool:59); `research/` carries no relevant prior
+  art (channel-side, no `ToolSearch` concept). 3 inline tests in
+  `tool_registry::tests`:
+  `mark_built_in_deferred_excludes_listed_tools` (registers 3
+  in-list + 1 not-in-list, asserts `to_tool_defs_non_deferred()`
+  returns only the not-in-list, asserts the 3 appear in
+  `deferred_tools()`),
+  `mark_built_in_deferred_skips_absent_tools` (empty registry +
+  sweep doesn't panic),
+  `mark_built_in_deferred_propagates_search_hints` (verifies
+  `meta("TodoWrite").search_hint == Some("todo, tasks,
+  in-progress checklist")` after sweep). Provider-agnostic:
+  deferral filtering happens at the `ToolRegistry` layer that every
+  provider shim — Anthropic, MiniMax, OpenAI, Gemini, DeepSeek,
+  xAI, Mistral — consumes uniformly via
+  `to_tool_defs_non_deferred()`. Switching providers does NOT
+  change which tools are deferred. Slices remain open: M8.b
+  (plan-mode tools), M8.c (5 cron tools), M8.d (`WebSearch` /
+  `WebFetch`), and the Phase 79.2 follow-up wire that teaches the
+  4 LLM provider shims to actually consume
+  `to_tool_defs_non_deferred()` instead of `to_tool_defs()` in the
+  request body — M8.a ships the registry-side marking; the
+  per-turn token win lands when shims consume it.
+  Tests: `cargo test -p nexo-core --lib agent::tool_registry::tests`
+  → 19/19 (16 existing + 3 new). Note: binary build
+  (`cargo build --bin nexo`) is blocked by pre-existing dirty state
+  from Phase 80.1.d (`nexo_dream` crate not in `Cargo.toml`,
+  `DreamRunRow` lacks `Serialize`, `GoalId::as_uuid` removed) — the
+  M8 changes themselves are isolated to `crates/core/` (new module
+  + 1 re-export + 3 tests) plus a single-line wire in `src/main.rs`,
+  none of which touch the dream surface.
+- Phase 80.1.c.b (MVP) — `dream_now` capability gate INVENTORY
+  entry. `crates/setup/src/capabilities.rs::INVENTORY` (line 280
+  region) appends `CapabilityToggle { extension: "dream", env_var:
+  "NEXO_DREAM_NOW_ENABLED", kind: ToggleKind::Boolean, risk:
+  Risk::Medium, effect: "Allow the LLM to force a memory-
+  consolidation pass via the `dream_now` tool. Bypasses time /
+  session / kairos / remote gates but honors
+  `<memory_dir>/.consolidate-lock` (one fork at a time). Each
+  call spawns a forked subagent up to 30 turns with FileEdit /
+  FileWrite scoped to <memory_dir> and Bash limited to read-only
+  commands. Cost: thousands of tokens per fire.", hint: "export
+  NEXO_DREAM_NOW_ENABLED=true" }` so `nexo setup doctor
+  capabilities` lists the host-level dream_now gate beside the
+  other dangerous toggles. `crates/dream/src/tools.rs::register_dream_now_tool`
+  now short-circuits when the env is unset / falsy: a private
+  `is_dream_now_env_enabled()` mirrors `nexo-setup::capabilities::
+  evaluate_one` Boolean coercion (truthy = `true` / `1` / `yes`,
+  case-insensitive, trimmed; anything else = false) and the public
+  `register_dream_now_tool` early-returns with `tracing::info!(
+  target: "nexo_dream::tools", env_var, "dream_now: host-level
+  capability gate closed; tool not registered")`. Comment block
+  documents drift invariant — the 7-line coercion is duplicated
+  in `nexo-dream` instead of pulling `nexo-setup` (with its plugin
+  / auth / google / whatsapp transitive deps) into the dream
+  crate; both copies share the identical truthy set so the host
+  doctor + the registration guard stay coherent. Two-layer gate
+  composes cleanly: (1) `NEXO_DREAM_NOW_ENABLED` host env (this
+  entry, default deny) ∧ (2) Phase 16 per-binding `allowed_tools`
+  (verified existing `Vec<String>` schema in `crates/config/src/
+  types/agents.rs:138` admits `dream_now` without schema change).
+  Pulled `anyhow` from `[dev-dependencies]` to `[dependencies]`
+  in `crates/dream/Cargo.toml` fixing pre-existing drift —
+  `tools.rs` lib code used `anyhow::Result` as the
+  `ToolHandler::call` return shape but only `cargo test
+  -p nexo-dream` worked because dev-deps inflate the available
+  crate set; `cargo build --workspace` exposed the missing
+  declaration. Tests verde: nexo-setup 7 capability tests
+  including `inventory_has_expected_entries` extended with 3 new
+  asserts (env var presence, extension `"dream"`, risk `Medium`,
+  kind `Boolean`); nexo-dream 12 tools tests adding 4 new
+  (`register_dream_now_skips_when_env_disabled` for unset env,
+  `register_dream_now_skips_when_env_garbage` for non-truthy
+  string `"maybe"`, `register_dream_now_registers_for_truthy_variants`
+  iterating 6 truthy variants `["true", "TRUE", "True", "1",
+  "yes", "YES"]` per existing `boolean_true_variants_are_enabled`
+  parity, `register_dream_now_skips_for_falsy_variants` iterating
+  6 falsy + edge variants `["false", "FALSE", "0", "no", "",
+  "garbage"]`). Tests use a `static ENV_LOCK: Mutex<()>` +
+  `EnvGuard<'a>` RAII helper (sets / unsets `NEXO_DREAM_NOW_ENABLED`
+  with cleanup at drop) so concurrent `cargo test` runs don't race
+  on process-wide env state. Provider-agnostic: env-var gate runs
+  BEFORE LLM dispatch so the registration short-circuits regardless
+  of which provider drives it (Anthropic / MiniMax / OpenAI /
+  Gemini / DeepSeek / xAI / Mistral). Mirror leak
+  `claude-code-leak/src/services/autoDream/autoDream.ts:95-107`
+  composed-flag `isGateOpen()` pattern (we collapse the multi-flag
+  composition to a single env var because the per-binding
+  allow/deny already lives in Phase 16).
 - **M1.a — `tools/listChanged` capability + hot-swap allowlist**
   (FOLLOWUPS A6.M1). `ToolRegistryBridge` (`crates/core/src/agent/
   mcp_server_bridge/bridge.rs:85-200`) hard-coded
