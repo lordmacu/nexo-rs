@@ -126,6 +126,7 @@ mod tests {
             finished_at: finished,
             snapshot: AgentSnapshot::default(),
             plan_mode: None,
+            kind: nexo_agent_registry::SessionKind::Interactive,
         }
     }
 

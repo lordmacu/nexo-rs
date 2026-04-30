@@ -386,17 +386,50 @@ do not get lost.
   + impl — same tests),
   `cargo test -p nexo-core --lib agent::llm_behavior::tests`
   → 9/9 (6 existing + 3 new).
-  **Slice M4.a.b — boot wire ⬜** open. Construction in
-  `src/main.rs` requires (1) `ExtractMemoriesConfig` field
-  added to `AgentConfig` schema in `crates/config/src/types/
-  agents.rs`, (2) an `ExtractMemoriesLlm` adapter wrapping
-  `Arc<dyn LlmClient>` (3-line struct + `impl ExtractMemoriesLlm`),
-  (3) per-agent `memory_dir` resolution. Defer until operator-
-  facing config schema lands. Marketing plugin scope: when
-  M4.a.b ships, the marketing agent (event-driven, regular
-  AgentRuntime) automatically gets memory persistence for
-  leads — "juan@x.com mostró interés en plan Pro" survives
-  across turns/sessions. **Slice M4.b — autoCompact in regular
+  **Slice M4.a.b — boot wire** ✅ shipped 2026-04-30.
+  `crates/config/src/types/agents.rs` gained
+  `extract_memories: Option<ExtractMemoriesYamlConfig>` —
+  wire-shape struct mirroring `nexo_driver_types::
+  ExtractMemoriesConfig` 1:1. Wire-shape pattern (precedent:
+  `SecretGuardYamlConfig` from C5) avoids the cycle that
+  `nexo-config -> nexo-driver-types` would create
+  (`nexo-driver-types` already depends on `nexo-config`).
+  `crates/driver-loop/src/extract_memories.rs` ships
+  `LlmClientAdapter { llm: Arc<dyn LlmClient>, model: String }`
+  with `impl ExtractMemoriesLlm`. The adapter packages the
+  prompt + transcript into `ChatRequest`, calls the upstream
+  LLM, and pulls the first `ResponseContent::Text` block;
+  `ResponseContent::ToolCalls` returns a clear error.
+  `src/main.rs` gained `resolve_extract_memory_dir(agent_cfg)`
+  helper (workspace-derived when set, else
+  `<state_root>/<agent_id>/memory/`) and the agent-loop boot
+  wire just after `let llm = ...`: when
+  `agent_cfg.extract_memories.is_some_and(|c| c.enabled)`, the
+  loop converts the YAML to `ExtractMemoriesConfig`,
+  constructs `LlmClientAdapter` + `Arc<ExtractMemories>`, and
+  injects via `LlmAgentBehavior::with_memory_extractor` after
+  `mkdir -p` of the dir (warn-and-continue on dir create
+  failure). 2 inline driver-loop tests
+  (`llm_client_adapter_chat_round_trips`,
+  `llm_client_adapter_errors_on_tool_call_response`) and 3
+  config tests (`agent_config_yaml_without_extract_memories_parses`,
+  `agent_config_yaml_with_extract_memories_parses`,
+  `extract_memories_default_disables`). 50-fixture sweep added
+  `extract_memories: None,` after `assistant_mode: None,` in
+  every existing `AgentConfig { ... }` literal — same
+  mechanical pattern used for the Phase 80.15 `assistant_mode`
+  sweep. Provider-agnostic: adapter operates on
+  `Arc<dyn LlmClient>` so behaviour is identical across
+  Anthropic / MiniMax / OpenAI / Gemini / DeepSeek / xAI /
+  Mistral. Marketing plugin path now ready: opt-in via
+  `extract_memories: { enabled: true }` in `agents.yaml`,
+  agent processes inbound emails → reply → post-turn extract
+  fires → memory persists in `<workspace>/memory/<auto>.md`.
+  Tests: `cargo test -p nexo-config --lib` 163/163,
+  `cargo test -p nexo-driver-loop --lib` 106/106 (104
+  existing + 2 new),
+  `cargo test -p nexo-core --lib` 687/687 (sweep clean),
+  `cargo build --bin nexo` verde. **Slice M4.b — autoCompact in regular
   AgentRuntime ⬜** open. Bigger surgery: requires session-
   history-replace flow + LlmCompactor wire dentro del turn
   loop. Effort: ~half day. **Slice M4.c — per-session turn

@@ -433,6 +433,7 @@ mod tests {
             finished_at: None,
             snapshot: AgentSnapshot::default(),
             plan_mode: None,
+            kind: nexo_agent_registry::SessionKind::Interactive,
         }
     }
 

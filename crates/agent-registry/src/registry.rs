@@ -347,6 +347,7 @@ impl AgentRegistry {
             finished_at: meta.finished_at,
             snapshot: snap,
             plan_mode: None,
+            kind: crate::SessionKind::Interactive,
         })
     }
 
@@ -446,6 +447,7 @@ impl AgentRegistry {
                     finished_at: meta.finished_at,
                     snapshot: snap,
                     plan_mode: None,
+                    kind: crate::SessionKind::Interactive,
                 };
                 AgentSummary::from_handle(&h)
             })
@@ -480,6 +482,7 @@ impl AgentRegistry {
                     finished_at: meta.finished_at,
                     snapshot: snap,
                     plan_mode: None,
+                    kind: crate::SessionKind::Interactive,
                 }
             })
             .collect()

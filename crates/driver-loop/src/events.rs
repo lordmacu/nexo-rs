@@ -5,7 +5,8 @@
 use async_trait::async_trait;
 use nexo_driver_types::CompactTrigger;
 use nexo_driver_types::{
-    AcceptanceVerdict, AttemptResult, BudgetAxis, BudgetUsage, Decision, Goal, GoalId,
+    AcceptanceVerdict, AttemptResult, AutoDreamOutcomeKind, BudgetAxis, BudgetUsage, Decision,
+    Goal, GoalId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -23,6 +24,12 @@ pub enum ExtractSkipReason {
     CircuitBreakerOpen,
     MainAgentWrote,
 }
+
+// Phase 80.1.b — `AutoDreamOutcomeKind` lives in `nexo-driver-types`
+// (re-exported here as the events.rs natural home). The trait
+// `AutoDreamHook` likewise — see `nexo_driver_types::auto_dream`.
+// Conversion `RunOutcome → AutoDreamOutcomeKind` lives in `nexo-dream`
+// inside the `impl AutoDreamHook for AutoDreamRunner` body.
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -103,6 +110,14 @@ pub enum DriverEvent {
         goal_id: GoalId,
         reason: ExtractSkipReason,
     },
+    /// Phase 80.1.b — autoDream consolidation pass outcome. Emitted
+    /// per turn when the runner is wired. Detailed run state lives
+    /// in `dream_runs` (Phase 80.18) — this event is the lightweight
+    /// signal for admin-ui / chat hooks.
+    AutoDreamOutcome {
+        goal_id: GoalId,
+        outcome_kind: AutoDreamOutcomeKind,
+    },
     /// Phase 67.C.1 — periodic mid-run progress beacon. Fires every
     /// `progress_every_turns` after an `AttemptCompleted`, so chat
     /// hooks (`on: progress`) and admin-ui can show 'still going'
@@ -133,6 +148,7 @@ impl DriverEvent {
             DriverEvent::CompactSummaryStored { .. } => "agent.driver.compact.summary_stored",
             DriverEvent::ExtractMemoriesCompleted { .. } => "agent.driver.extract_memories.completed",
             DriverEvent::ExtractMemoriesSkipped { .. } => "agent.driver.extract_memories.skipped",
+            DriverEvent::AutoDreamOutcome { .. } => "agent.driver.auto_dream",
             DriverEvent::Progress { .. } => "agent.driver.progress",
         }
     }

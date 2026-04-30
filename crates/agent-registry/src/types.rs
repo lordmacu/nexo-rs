@@ -8,6 +8,8 @@ use nexo_driver_types::{AcceptanceVerdict, BudgetUsage, GoalId};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::store::AgentRegistryStoreError;
+
 /// State of a tracked agent / goal.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -112,6 +114,65 @@ impl Default for AgentSnapshot {
     }
 }
 
+/// Phase 80.10 — provenance + lifecycle posture for a goal handle.
+///
+/// Distinguishes how a goal was spawned and how it should survive
+/// a daemon restart. Phase 71's reattach hook is kind-aware in
+/// 80.10: `Bg` / `Daemon` / `DaemonWorker` rows that were `Running`
+/// before the daemon died keep `Running` on boot (because the
+/// operator expects them to survive); `Interactive` rows flip to
+/// `LostOnRestart` (because the user is gone).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionKind {
+    /// User-driven REPL turn or chat-channel inbound. Default.
+    #[default]
+    Interactive,
+    /// Operator spawned a detached goal via `nexo agent run --bg`.
+    Bg,
+    /// Persistent supervised goal — e.g. an `assistant_mode`
+    /// binding's always-on agent loop.
+    Daemon,
+    /// Worker goal spawned BY a `Daemon` goal — short-lived
+    /// sub-agent. Treated like `Bg` for reattach.
+    DaemonWorker,
+}
+
+impl SessionKind {
+    /// Stable on-disk representation. Stored in the
+    /// `agent_handles.kind` column.
+    pub fn as_db_str(self) -> &'static str {
+        match self {
+            Self::Interactive => "interactive",
+            Self::Bg => "bg",
+            Self::Daemon => "daemon",
+            Self::DaemonWorker => "daemon_worker",
+        }
+    }
+
+    /// Parse from on-disk representation. Unknown values produce a
+    /// typed decode error — operators that accidentally hand-edit
+    /// the DB get a clean message rather than a silent fallback.
+    pub fn from_db_str(s: &str) -> Result<Self, AgentRegistryStoreError> {
+        match s {
+            "interactive" => Ok(Self::Interactive),
+            "bg" => Ok(Self::Bg),
+            "daemon" => Ok(Self::Daemon),
+            "daemon_worker" => Ok(Self::DaemonWorker),
+            other => Err(AgentRegistryStoreError::Sqlx(sqlx::Error::Decode(
+                format!("unknown SessionKind '{other}'").into(),
+            ))),
+        }
+    }
+
+    /// `true` when reattach should preserve a `Running` row across
+    /// a daemon restart. `Bg` / `Daemon` / `DaemonWorker` keep
+    /// going; `Interactive` expires.
+    pub fn survives_restart(self) -> bool {
+        matches!(self, Self::Bg | Self::Daemon | Self::DaemonWorker)
+    }
+}
+
 /// One row of the registry — lifecycle + identity + snapshot.
 /// `JoinHandle` is held internally by the registry, not exposed
 /// here; consumers only see the persistable shape.
@@ -134,6 +195,12 @@ pub struct AgentHandle {
     /// `handle_json`.
     #[serde(default)]
     pub plan_mode: Option<String>,
+    /// Phase 80.10 — how this goal was spawned. Default
+    /// `Interactive` for backward compatibility with rows persisted
+    /// before 80.10. Drives reattach behaviour and operator listing
+    /// filters (`nexo agent ps --kind=...`).
+    #[serde(default)]
+    pub kind: SessionKind,
 }
 
 impl AgentHandle {

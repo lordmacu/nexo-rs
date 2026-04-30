@@ -527,6 +527,7 @@ pub async fn program_phase_dispatch(
             ..AgentSnapshot::default()
         },
         plan_mode: None,
+        kind: nexo_agent_registry::SessionKind::Interactive,
     };
     let outcome = registry
         .admit(handle, caps.queue_when_full)

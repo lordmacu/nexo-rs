@@ -763,6 +763,76 @@ impl ExtractMemoriesLlm for NoopExtractMemoriesLlm {
     }
 }
 
+// ── Phase M4.a.b — LlmClient adapter ─────────────────────────────
+
+/// Adapt a generic `Arc<dyn LlmClient>` into the narrow
+/// [`ExtractMemoriesLlm`] surface so the boot loop can construct
+/// an [`ExtractMemories`] from any provider's concrete client.
+///
+/// The adapter packages the system prompt + serialized
+/// transcript into a `ChatRequest`, calls the upstream LLM, and
+/// pulls the first `ResponseContent::Text` block out. The trait's
+/// `max_tokens` argument lands on `ChatRequest::max_tokens` so
+/// the extractor's per-call cap reaches the provider — important
+/// when the conversation is long and the extract prompt itself
+/// already consumed a lot of input tokens.
+///
+/// Provider-agnostic: the adapter has no Anthropic / MiniMax /
+/// OpenAI / Gemini / DeepSeek / xAI / Mistral specifics. Switch
+/// the underlying `LlmClient` impl at agent boot and the same
+/// extract behaviour runs unchanged.
+///
+/// IRROMPIBLE refs:
+/// - claude-code-leak `services/extractMemories/extractMemories.ts`
+///   — the leak's per-turn extractor calls the model directly
+///   inside `runExtraction`. Splitting via `LlmClientAdapter`
+///   keeps the trait surface narrow and lets the driver-loop
+///   crate stay decoupled from the binary's `LlmAgentBehavior`
+///   call sites.
+/// - `research/` — no relevant prior art (channel-side scope,
+///   no extract-memories concept).
+pub struct LlmClientAdapter {
+    llm: Arc<dyn nexo_llm::LlmClient>,
+    model: String,
+}
+
+impl LlmClientAdapter {
+    pub fn new(llm: Arc<dyn nexo_llm::LlmClient>, model: impl Into<String>) -> Self {
+        Self {
+            llm,
+            model: model.into(),
+        }
+    }
+}
+
+#[async_trait]
+impl ExtractMemoriesLlm for LlmClientAdapter {
+    async fn chat(
+        &self,
+        system_prompt: &str,
+        user_messages: &str,
+        max_tokens: u32,
+    ) -> Result<String, String> {
+        let mut req = nexo_llm::ChatRequest::new(
+            self.model.clone(),
+            vec![nexo_llm::ChatMessage::user(user_messages.to_string())],
+        );
+        req.system_prompt = Some(system_prompt.to_string());
+        req.max_tokens = max_tokens;
+        let resp = self
+            .llm
+            .chat(req)
+            .await
+            .map_err(|e| format!("LlmClientAdapter chat error: {e}"))?;
+        match resp.content {
+            nexo_llm::ResponseContent::Text(text) => Ok(text),
+            nexo_llm::ResponseContent::ToolCalls(_) => {
+                Err("LlmClientAdapter: response is tool_calls, expected text".into())
+            }
+        }
+    }
+}
+
 // ── Phase M4 — MemoryExtractor trait impl ────────────────────────
 
 /// `nexo-core::agent::LlmAgentBehavior` holds an
@@ -1129,5 +1199,90 @@ Arguments: {"file_path": "/home/user/.claude/projects/test/memory/foo.md", "cont
     fn resolve_memory_path_accepts_normal_path_phase77_7() {
         let result = resolve_memory_path(Path::new("/mem"), "notes.md").unwrap();
         assert_eq!(result, Path::new("/mem/notes.md"));
+    }
+
+    // ── Phase M4.a.b — LlmClientAdapter ──
+
+    #[tokio::test]
+    async fn llm_client_adapter_chat_round_trips() {
+        use nexo_llm::{
+            ChatRequest, ChatResponse, FinishReason, ResponseContent, TokenUsage,
+        };
+        use std::sync::Mutex;
+
+        struct MockLlm {
+            captured: Mutex<Option<ChatRequest>>,
+        }
+        #[async_trait]
+        impl nexo_llm::LlmClient for MockLlm {
+            async fn chat(&self, req: ChatRequest) -> anyhow::Result<ChatResponse> {
+                *self.captured.lock().unwrap() = Some(req);
+                Ok(ChatResponse {
+                    content: ResponseContent::Text("extracted-content".into()),
+                    usage: TokenUsage::default(),
+                    finish_reason: FinishReason::Stop,
+                    cache_usage: None,
+                })
+            }
+            fn model_id(&self) -> &str {
+                "mock-model"
+            }
+        }
+
+        let mock = Arc::new(MockLlm {
+            captured: Mutex::new(None),
+        });
+        let adapter = LlmClientAdapter::new(
+            Arc::clone(&mock) as Arc<dyn nexo_llm::LlmClient>,
+            "test-model",
+        );
+        let result = adapter
+            .chat("system prompt", "user msg", 1024)
+            .await
+            .unwrap();
+        assert_eq!(result, "extracted-content");
+
+        let captured = mock.captured.lock().unwrap().take().unwrap();
+        assert_eq!(captured.model, "test-model");
+        assert_eq!(captured.system_prompt.as_deref(), Some("system prompt"));
+        assert_eq!(captured.max_tokens, 1024);
+        assert_eq!(captured.messages.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn llm_client_adapter_errors_on_tool_call_response() {
+        use nexo_llm::{
+            ChatRequest, ChatResponse, FinishReason, ResponseContent, TokenUsage, ToolCall,
+        };
+
+        struct ToolCallLlm;
+        #[async_trait]
+        impl nexo_llm::LlmClient for ToolCallLlm {
+            async fn chat(&self, _req: ChatRequest) -> anyhow::Result<ChatResponse> {
+                Ok(ChatResponse {
+                    content: ResponseContent::ToolCalls(vec![ToolCall {
+                        id: "id".into(),
+                        name: "noop".into(),
+                        arguments: serde_json::json!({}),
+                    }]),
+                    usage: TokenUsage::default(),
+                    finish_reason: FinishReason::ToolUse,
+                    cache_usage: None,
+                })
+            }
+            fn model_id(&self) -> &str {
+                "mock-tool"
+            }
+        }
+
+        let adapter = LlmClientAdapter::new(
+            Arc::new(ToolCallLlm) as Arc<dyn nexo_llm::LlmClient>,
+            "tool-model",
+        );
+        let err = adapter
+            .chat("sys", "user", 256)
+            .await
+            .expect_err("tool_calls response must surface an error");
+        assert!(err.contains("tool_calls"));
     }
 }

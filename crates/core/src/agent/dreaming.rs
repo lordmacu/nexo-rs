@@ -133,6 +133,12 @@ pub struct DreamReport {
     pub candidates_considered: usize,
     pub promoted: Vec<DreamCandidate>,
     pub skipped_already_promoted: usize,
+    /// Phase 80.1.e — `true` when the scoring sweep deferred because
+    /// an autoDream fork-pass was holding the consolidation lock.
+    /// Empty `promoted` + zero `candidates_considered` /
+    /// `skipped_already_promoted` when set. SKIP pattern mirror of
+    /// leak `extractMemories.ts:121-148` `hasMemoryWritesSince`.
+    pub deferred_for_fork: bool,
 }
 pub struct DreamEngine {
     memory: std::sync::Arc<LongTermMemory>,
@@ -141,6 +147,13 @@ pub struct DreamEngine {
     /// Phase 77.7 — secret guard for scanning dream candidates
     /// before writing to MEMORY.md. None = no scanning.
     guard: Option<nexo_memory::SecretGuard>,
+    /// Phase 80.1.e — optional consolidation-lock probe. When `Some`
+    /// and `is_live_holder() == true`, `run_sweep` defers (returns
+    /// `DreamReport { deferred_for_fork: true, .. }` without touching
+    /// memory). Built at boot when the binding has both `dreaming`
+    /// AND `auto_dream` enabled.
+    consolidation_probe:
+        Option<std::sync::Arc<dyn nexo_driver_types::ConsolidationLockProbe>>,
 }
 impl DreamEngine {
     pub fn new(
@@ -153,6 +166,7 @@ impl DreamEngine {
             workspace: workspace.into(),
             config,
             guard: None,
+            consolidation_probe: None,
         }
     }
 
@@ -160,6 +174,28 @@ impl DreamEngine {
     /// before writing to MEMORY.md.
     pub fn with_guard(mut self, guard: nexo_memory::SecretGuard) -> Self {
         self.guard = Some(guard);
+        self
+    }
+
+    /// Phase 80.1.e — wire a consolidation-lock probe. When set and
+    /// the probe reports a live holder, `run_sweep` returns early
+    /// with `deferred_for_fork: true`. The autoDream fork-pass
+    /// rewrites memory_dir as part of its own work — running the
+    /// scoring sweep concurrently would race on `MEMORY.md` writes.
+    /// SKIP pattern mirror of leak
+    /// `extractMemories.ts:121-148`.
+    ///
+    /// **Wiring**: at boot, when an agent has both `dreaming.enabled`
+    /// AND `auto_dream.is_some()`, construct
+    /// `nexo_dream::ConsolidationLock::new(memory_dir, holder_stale)`
+    /// and pass `Arc::new(lock) as Arc<dyn ConsolidationLockProbe>`
+    /// here. Bindings without both enabled stay with `None` →
+    /// no probe, no skip arm, original behaviour preserved.
+    pub fn with_consolidation_probe(
+        mut self,
+        probe: std::sync::Arc<dyn nexo_driver_types::ConsolidationLockProbe>,
+    ) -> Self {
+        self.consolidation_probe = Some(probe);
         self
     }
     pub fn config(&self) -> &DreamingConfig {
@@ -178,6 +214,31 @@ impl DreamEngine {
             workspace = %self.workspace.display(),
             "dream sweep started"
         );
+        // Phase 80.1.e — coordination skip. If a live PID is holding
+        // the autoDream consolidation lock, defer this sweep entirely
+        // (mirror leak `extractMemories.ts:121-148` SKIP pattern).
+        // The fork-pass will rewrite memory_dir as part of its own
+        // work; running the scoring sweep concurrently would race on
+        // MEMORY.md writes. Probe is None when the binding doesn't
+        // have both passes enabled — original behaviour preserved.
+        if let Some(probe) = &self.consolidation_probe {
+            if probe.is_live_holder() {
+                tracing::info!(
+                    agent_id = %agent_id,
+                    "dream sweep deferred — autoDream fork holds consolidation lock"
+                );
+                let finished_at = Utc::now();
+                return Ok(DreamReport {
+                    started_at,
+                    finished_at,
+                    agent_id: agent_id.to_string(),
+                    candidates_considered: 0,
+                    promoted: Vec::new(),
+                    skipped_already_promoted: 0,
+                    deferred_for_fork: true,
+                });
+            }
+        }
         // ── Light: gather every memory with at least one recall event ──────
         let recalled = self.memory.recalled_memories(agent_id).await?;
         let candidates_considered = recalled.len();
@@ -255,6 +316,7 @@ impl DreamEngine {
             candidates_considered,
             promoted,
             skipped_already_promoted,
+            deferred_for_fork: false,
         };
         // ── REM: diary entry (human-readable) ─────────────────────────────
         if let Err(e) = self.append_to_dreams_md(&report).await {
@@ -509,6 +571,93 @@ mod tests {
         let report = engine.run_sweep("kate").await?;
         assert_eq!(report.candidates_considered, 5);
         assert_eq!(report.promoted.len(), 2, "cap honored");
+        tokio::fs::remove_dir_all(&ws).await.ok();
+        Ok(())
+    }
+
+    // ── Phase 80.1.e — consolidation-lock skip arm ──
+
+    use std::sync::atomic::{AtomicBool, Ordering as StdOrdering};
+
+    /// Toggleable mock probe — flip via `live.store(true|false)`.
+    struct MockProbe {
+        live: AtomicBool,
+    }
+    impl MockProbe {
+        fn new(initial: bool) -> std::sync::Arc<Self> {
+            std::sync::Arc::new(Self {
+                live: AtomicBool::new(initial),
+            })
+        }
+    }
+    impl nexo_driver_types::ConsolidationLockProbe for MockProbe {
+        fn is_live_holder(&self) -> bool {
+            self.live.load(StdOrdering::SeqCst)
+        }
+    }
+
+    #[tokio::test]
+    async fn run_sweep_proceeds_when_no_probe_configured() -> anyhow::Result<()> {
+        // Probe is None — no skip, behaviour identical to pre-80.1.e.
+        let ws = tmp_ws("probe-none");
+        let mem = seed_db().await;
+        let strong = mem.remember("kate", "user likes dark mode", &[]).await?;
+        mem.record_recall_event("kate", strong, "dark", 1.0).await?;
+        mem.record_recall_event("kate", strong, "dark mode", 1.0)
+            .await?;
+        mem.record_recall_event("kate", strong, "preferences", 1.0)
+            .await?;
+        let engine = mk_engine(&ws, DreamingConfig::default(), mem);
+        let report = engine.run_sweep("kate").await?;
+        assert!(!report.deferred_for_fork);
+        assert_eq!(report.promoted.len(), 1);
+        tokio::fs::remove_dir_all(&ws).await.ok();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn run_sweep_proceeds_when_probe_says_dead() -> anyhow::Result<()> {
+        // Probe present but reports no live holder → normal sweep.
+        let ws = tmp_ws("probe-dead");
+        let mem = seed_db().await;
+        let strong = mem.remember("kate", "user likes dark mode", &[]).await?;
+        mem.record_recall_event("kate", strong, "dark", 1.0).await?;
+        mem.record_recall_event("kate", strong, "dark mode", 1.0)
+            .await?;
+        mem.record_recall_event("kate", strong, "preferences", 1.0)
+            .await?;
+        let engine = mk_engine(&ws, DreamingConfig::default(), mem)
+            .with_consolidation_probe(MockProbe::new(false));
+        let report = engine.run_sweep("kate").await?;
+        assert!(!report.deferred_for_fork);
+        assert_eq!(report.promoted.len(), 1);
+        tokio::fs::remove_dir_all(&ws).await.ok();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn run_sweep_skips_when_probe_says_live() -> anyhow::Result<()> {
+        // Probe reports live holder → defer entirely. No promotions,
+        // no MEMORY.md write, no DB writes.
+        let ws = tmp_ws("probe-live");
+        let mem = seed_db().await;
+        let strong = mem.remember("kate", "user likes dark mode", &[]).await?;
+        mem.record_recall_event("kate", strong, "dark", 1.0).await?;
+        mem.record_recall_event("kate", strong, "dark mode", 1.0)
+            .await?;
+        mem.record_recall_event("kate", strong, "preferences", 1.0)
+            .await?;
+        let engine = mk_engine(&ws, DreamingConfig::default(), mem.clone())
+            .with_consolidation_probe(MockProbe::new(true));
+        let report = engine.run_sweep("kate").await?;
+        assert!(report.deferred_for_fork, "must defer when probe says live");
+        assert_eq!(report.candidates_considered, 0);
+        assert_eq!(report.promoted.len(), 0);
+        assert_eq!(report.skipped_already_promoted, 0);
+        // No MEMORY.md should have been created.
+        assert!(!ws.join("MEMORY.md").exists());
+        // SQLite ledger must NOT have a promotion for this memory.
+        assert!(!mem.is_promoted(strong).await.unwrap_or(true));
         tokio::fs::remove_dir_all(&ws).await.ok();
         Ok(())
     }

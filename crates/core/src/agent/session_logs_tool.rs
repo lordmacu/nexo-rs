@@ -462,6 +462,9 @@ mod tests {
             team: nexo_config::types::team::TeamPolicy::default(),
             proactive: Default::default(),
         repl: Default::default(),
+            auto_dream: None,
+            assistant_mode: None,
+            extract_memories: None,
         });
         let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
         let sid = Uuid::new_v4();
@@ -670,6 +673,9 @@ mod tests {
             team: nexo_config::types::team::TeamPolicy::default(),
             proactive: Default::default(),
         repl: Default::default(),
+            auto_dream: None,
+            assistant_mode: None,
+            extract_memories: None,
         });
         let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
         let ctx = AgentContext::new("kate", cfg, broker, sessions);

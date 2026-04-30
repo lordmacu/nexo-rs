@@ -328,6 +328,43 @@ fn split_subject_body(message: &str) -> (String, String) {
         None => (message.trim().to_string(), String::new()),
     }
 }
+
+/// Phase 80.1.g — adapter wrapping `Arc<MemoryGitRepo>` as a
+/// `MemoryCheckpointer` so nexo-dream's `AutoDreamRunner` can record
+/// fork-pass output as a git commit on a successful Completed run.
+///
+/// Newtype is required by Rust's orphan rule (`impl ForeignTrait for
+/// Arc<Local>` is not allowed); this wrapper is local-on-local.
+///
+/// Wraps the blocking `commit_all` call in `tokio::task::spawn_blocking`
+/// because `git2::Repository` operations are sync-only. The
+/// `MemoryGitRepo` internal `Mutex<Repository>` already serialises
+/// concurrent callers from other code paths (e.g. session-close
+/// commit, scoring-sweep commit).
+pub struct MemoryGitCheckpointer {
+    repo: std::sync::Arc<MemoryGitRepo>,
+}
+
+impl MemoryGitCheckpointer {
+    pub fn new(repo: std::sync::Arc<MemoryGitRepo>) -> Self {
+        Self { repo }
+    }
+}
+
+#[async_trait::async_trait]
+impl nexo_driver_types::MemoryCheckpointer for MemoryGitCheckpointer {
+    async fn checkpoint(&self, subject: String, body: String) -> Result<(), String> {
+        let repo = std::sync::Arc::clone(&self.repo);
+        tokio::task::spawn_blocking(move || {
+            repo.commit_all(&subject, &body)
+                .map(|_oid| ())
+                .map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| format!("spawn_blocking join: {e}"))?
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -407,6 +444,47 @@ mod tests {
         assert!(
             diff.contains("-first"),
             "diff should show deletions: {diff}"
+        );
+    }
+
+    // ── Phase 80.1.g — MemoryGitCheckpointer adapter ──
+
+    #[tokio::test]
+    async fn checkpointer_async_calls_commit_all() {
+        use nexo_driver_types::MemoryCheckpointer;
+
+        let td = TempDir::new().unwrap();
+        let repo = std::sync::Arc::new(repo_in(&td));
+        let ckpt = MemoryGitCheckpointer::new(repo.clone());
+
+        std::fs::write(td.path().join("MEMORY.md"), "hello\n").unwrap();
+        ckpt.checkpoint("auto_dream: 1 file(s) consolidated".into(), "body".into())
+            .await
+            .unwrap();
+
+        let log = repo.log(10).unwrap();
+        // initial commit + ours = 2 entries.
+        assert_eq!(log.len(), 2);
+        assert_eq!(log[0].subject, "auto_dream: 1 file(s) consolidated");
+        assert_eq!(log[0].body, "body");
+    }
+
+    #[tokio::test]
+    async fn checkpointer_returns_ok_on_clean_worktree() {
+        // commit_all returns Ok(None) when nothing changed; the
+        // adapter collapses that to Ok(()) — no error, no commit.
+        use nexo_driver_types::MemoryCheckpointer;
+
+        let td = TempDir::new().unwrap();
+        let repo = std::sync::Arc::new(repo_in(&td));
+        let ckpt = MemoryGitCheckpointer::new(repo.clone());
+
+        let log_before = repo.log(10).unwrap().len();
+        ckpt.checkpoint("noop".into(), "".into()).await.unwrap();
+        let log_after = repo.log(10).unwrap().len();
+        assert_eq!(
+            log_before, log_after,
+            "clean worktree should not add a commit"
         );
     }
 }

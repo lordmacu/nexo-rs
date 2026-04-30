@@ -145,6 +145,16 @@ pub struct AgentContext {
     /// or `None`). Stored here so `llm_behavior` can inject the coordinator
     /// hint without re-reading the binding config on every turn.
     pub binding_role: Option<String>,
+    /// Phase 80.15 — boot-resolved assistant-mode view. Read by
+    /// downstream consumers (driver-loop tick generator, cron default
+    /// flip, brief mode auto-on, dream-context kairos signal,
+    /// remote-control auto-tier in Phase 80.17). The `enabled` flag
+    /// is boot-immutable; the addendum text inside it can be
+    /// hot-reloaded through the Phase 18 path. `Default::default()`
+    /// is the zero-cost disabled view — fixtures and bootstrap
+    /// contexts can rely on it without opting in.
+    #[doc(hidden)]
+    pub assistant: nexo_assistant::ResolvedAssistant,
 }
 
 /// One inbound team message attached to a goal's `AgentContext.inbox`.
@@ -196,6 +206,7 @@ impl AgentContext {
             inbox: Arc::new(RwLock::new(Vec::new())),
             proactive_enabled: false,
             binding_role: None,
+            assistant: nexo_assistant::ResolvedAssistant::disabled(),
             repl_registry: None,
         }
     }
@@ -404,6 +415,9 @@ mod plan_mode_tests {
             team: nexo_config::types::team::TeamPolicy::default(),
             proactive: Default::default(),
         repl: Default::default(),
+            auto_dream: None,
+            assistant_mode: None,
+            extract_memories: None,
         };
         AgentContext::new(
             "a",

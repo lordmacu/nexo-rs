@@ -9,6 +9,7 @@
 //! 67.B.3 adds the cap / queue / live event subscriber. 67.B.4 wires
 //! reattach + log buffer.
 
+pub mod dream_run;
 pub mod log_buffer;
 pub mod reattach;
 pub mod registry;
@@ -16,6 +17,10 @@ pub mod store;
 pub mod turn_log;
 pub mod types;
 
+pub use dream_run::{
+    DreamPhase, DreamRunRow, DreamRunStatus, DreamRunStore, DreamTurn, SqliteDreamRunStore,
+    MAX_TURNS as DREAM_MAX_TURNS, TAIL_HARD_CAP as DREAM_TAIL_HARD_CAP,
+};
 pub use log_buffer::{LogBuffer, LogLine};
 pub use reattach::{reattach, ReattachOptions, ReattachOutcome};
 pub use registry::{AdmitOutcome, AgentRegistry};
@@ -25,5 +30,5 @@ pub use store::{
 pub use turn_log::{SqliteTurnLogStore, TurnLogStore, TurnRecord};
 pub use types::{
     AgentHandle, AgentRunStatus, AgentSleepState, AgentSnapshot, AgentSummary, AskPendingState,
-    RegistryError,
+    RegistryError, SessionKind,
 };

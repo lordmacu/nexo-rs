@@ -1006,6 +1006,9 @@ mod tests {
             team,
             proactive: Default::default(),
             repl: Default::default(),
+            auto_dream: None,
+            assistant_mode: None,
+            extract_memories: None,
         }
     }
 

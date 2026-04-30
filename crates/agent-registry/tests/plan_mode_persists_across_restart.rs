@@ -41,6 +41,7 @@ fn running_with_plan_mode(plan_mode: Option<String>) -> AgentHandle {
         finished_at: None,
         snapshot: AgentSnapshot::default(),
         plan_mode,
+        kind: nexo_agent_registry::SessionKind::Interactive,
     }
 }
 
