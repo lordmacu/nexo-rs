@@ -521,15 +521,18 @@ Scope:
   - `nexo/admin/credentials/{list, register, revoke}` —
     wraps Phase 17 stores per channel. **Many-to-many by
     design**: `register` accepts `agent_ids: Vec<String>`
-    (1 channel instance can serve N agents — e.g., shared
+    (1 channel instance can serve N agents — e.g., a shared
     WhatsApp business line answered by both `ana` and
     `carlos`); the agent's `inbound_bindings` accepts a list
     of `{plugin, instance}` tuples (1 agent can answer N
     channel instances — e.g., `ana` on `whatsapp:personal` +
-    `whatsapp:business` + `telegram:ana_bot`). Operator can
+    `whatsapp:business` + `whatsapp:ventas`). Operator can
     edit the assignment in either direction via
     `credentials/register` (rebind from credential side) or
-    `agents/upsert` (rebind from agent side).
+    `agents/upsert` (rebind from agent side). Framework is
+    channel-agnostic; v1 meta-microapp UI scope is
+    **WhatsApp-only** — Telegram / email / other channels
+    are framework-supported but out of UI scope for v1.
   - `nexo/admin/pairing/{start, status, cancel}` — wraps
     Phase 26 pairing CLI logic; emits
     `nexo/notify/pairing_status_changed { challenge_id,
@@ -1497,16 +1500,21 @@ Candidate microapps (operator picks):
   full Phase 82.10/82.11/82.12 stack: admin RPC, transcript
   firehose, HTTP server hosting). This is the most
   ambitious candidate; arguably the strongest validation.
-  **Multi-channel-instance support**: the UI must surface
-  the many-to-many assignment between channel credentials
-  (multiple WhatsApp numbers, Telegram bots, email accounts)
-  and agents — 1 WA number can serve N agents and 1 agent
-  can answer N channel instances. The `Channels` page lists
-  all credentials with their agent assignments + add/remove
-  rows; the `Agent detail` page lists the agent's
-  `inbound_bindings` with toggles to attach/detach existing
-  credentials. Both directions hit `nexo/admin/credentials/*`
-  and `nexo/admin/agents/upsert` from 82.10.
+  **Multi-WhatsApp-instance support (v1 scope is
+  WhatsApp-only)**: the UI must surface the many-to-many
+  assignment between WhatsApp credentials (multiple
+  WhatsApp numbers) and agents — 1 WA number can serve N
+  agents and 1 agent can answer N WA numbers. The
+  `WhatsApp Numbers` page lists all WA credentials with
+  their agent assignments + add/remove rows; the `Agent
+  detail` page lists the agent's `inbound_bindings` with
+  toggles to attach/detach existing WA numbers. Both
+  directions hit `nexo/admin/credentials/*` and
+  `nexo/admin/agents/upsert` from 82.10. The framework
+  itself is channel-agnostic — Telegram / email / future
+  channels are out of UI scope for v1 but not architectural
+  blockers; a v2 of this microapp can add tabs for them
+  without core changes.
 - `nps-surveyor` — sends NPS surveys post-conversation,
   captures response, stores per-tenant in local SQLite.
 - `faq-deflector` — Q&A bot trained on a markdown
