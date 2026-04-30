@@ -17,9 +17,11 @@ use nexo_llm::{
     collect_stream, Attachment, CachePolicy, ChatMessage, ChatRequest, ChatRole, LlmClient,
     ResponseContent,
 };
+use nexo_driver_types::{GoalId, MemoryExtractor};
 use nexo_memory::EmailFollowupEntry;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 /// Decide whether a session is a private DM (main) or a shared surface.
 /// `MEMORY.md` loads only for `Main` — shared scopes strip it at load time.
@@ -208,6 +210,20 @@ pub struct LlmAgentBehavior {
     compaction_failures: std::sync::atomic::AtomicU32,
     compaction_last_turn: std::sync::Mutex<Option<u32>>,
     cache_break_tracker: Mutex<CacheBreakTracker>,
+    /// Phase M4 — post-turn memory-extraction hook. When set,
+    /// every successful `run_turn` ticks the extractor and (when
+    /// `memory_dir` is also set + `reply_text` is `Some`) fires
+    /// `extract(...)` against the conversation transcript.
+    /// `Arc<dyn MemoryExtractor>` is provider-agnostic — the
+    /// concrete `ExtractMemories` impl from `nexo-driver-loop` is
+    /// the one we ship today, but any impl works.
+    memory_extractor: Option<Arc<dyn MemoryExtractor>>,
+    /// Phase M4 — destination root for extracted memories. Set
+    /// together with `memory_extractor` via
+    /// `with_memory_extractor`. `None` keeps `tick()` firing
+    /// (cadence stays sane) but skips the actual `extract`
+    /// call so we never write outside an explicit dir.
+    memory_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -312,7 +328,29 @@ impl LlmAgentBehavior {
             compaction_failures: std::sync::atomic::AtomicU32::new(0),
             compaction_last_turn: std::sync::Mutex::new(None),
             cache_break_tracker: Mutex::new(CacheBreakTracker::default()),
+            memory_extractor: None,
+            memory_dir: None,
         }
+    }
+
+    /// Phase M4 — wire post-turn memory extraction. When set,
+    /// every successful `run_turn` ticks the extractor and fires
+    /// extraction against `memory_dir`. Mirrors driver-loop's
+    /// per-turn wire (`orchestrator.rs:702-726`); both engines
+    /// share the same `Arc<ExtractMemories>` so cadence + circuit
+    /// breaker + in-progress mutex stay coherent across paths.
+    ///
+    /// Provider-agnostic: `Arc<dyn MemoryExtractor>` keeps any
+    /// concrete impl pluggable (today `ExtractMemories` from
+    /// `nexo-driver-loop`).
+    pub fn with_memory_extractor(
+        mut self,
+        extractor: Arc<dyn MemoryExtractor>,
+        memory_dir: PathBuf,
+    ) -> Self {
+        self.memory_extractor = Some(extractor);
+        self.memory_dir = Some(memory_dir);
+        self
     }
 
     fn maybe_log_cache_break(
@@ -1650,6 +1688,26 @@ impl LlmAgentBehavior {
             sleep_requested = sleep_signal.is_some(),
             "agent turn finished"
         );
+
+        // Phase M4 — post-turn memory extraction. Mirrors driver-loop's
+        // wire at `orchestrator.rs:702-726`; both engines share the
+        // same `Arc<dyn MemoryExtractor>` so cadence + circuit breaker
+        // + in-progress mutex stay coherent across paths. `tick()`
+        // runs every turn (cadence stays sane even when extract gates
+        // skip); `extract(...)` only fires when `memory_dir` is set
+        // AND `reply_text` carries the assistant turn text. Provider-
+        // agnostic — the trait operates on transcript text, no LLM
+        // provider assumption. `turn_index = 0` is an MVP sentinel
+        // (regular AgentRuntime does not yet track per-session turn
+        // counters; defer M4.c).
+        if let Some(extractor) = &self.memory_extractor {
+            extractor.tick();
+            if let (Some(dir), Some(text)) = (&self.memory_dir, reply_text.as_ref()) {
+                let goal_id = GoalId(msg.session_id);
+                Arc::clone(extractor).extract(goal_id, 0, text.clone(), dir.clone());
+            }
+        }
+
         if let Some(sleep) = sleep_signal {
             Ok(RunTurnOutcome::Sleep {
                 duration_ms: sleep.duration_ms,
@@ -2053,6 +2111,109 @@ mod tests {
         };
         assert!(tracker.observe("sess-1", first).is_none());
         assert!(tracker.observe("sess-1", second).is_none());
+    }
+
+    // ── Phase M4 — MemoryExtractor wire ──
+
+    /// Minimal mock that records `tick` + `extract` calls so
+    /// tests can assert the post-turn wire fired.
+    struct MockExtractor {
+        tick_count: std::sync::atomic::AtomicU32,
+        extract_count: std::sync::atomic::AtomicU32,
+        last_extract: std::sync::Mutex<Option<(GoalId, u32, String, std::path::PathBuf)>>,
+    }
+
+    impl Default for MockExtractor {
+        fn default() -> Self {
+            Self {
+                tick_count: std::sync::atomic::AtomicU32::new(0),
+                extract_count: std::sync::atomic::AtomicU32::new(0),
+                last_extract: std::sync::Mutex::new(None),
+            }
+        }
+    }
+
+    impl MemoryExtractor for MockExtractor {
+        fn tick(&self) {
+            self.tick_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+
+        fn extract(
+            self: Arc<Self>,
+            goal_id: GoalId,
+            turn_index: u32,
+            messages_text: String,
+            memory_dir: std::path::PathBuf,
+        ) {
+            self.extract_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            *self.last_extract.lock().unwrap() = Some((goal_id, turn_index, messages_text, memory_dir));
+        }
+    }
+
+    fn dummy_behavior() -> LlmAgentBehavior {
+        struct DummyClient;
+        #[async_trait]
+        impl LlmClient for DummyClient {
+            async fn chat(
+                &self,
+                _req: ChatRequest,
+            ) -> anyhow::Result<nexo_llm::ChatResponse> {
+                anyhow::bail!("dummy client — unused in M4 tests")
+            }
+            fn model_id(&self) -> &str {
+                "dummy"
+            }
+        }
+        let llm: Arc<dyn LlmClient> = Arc::new(DummyClient);
+        let tools = Arc::new(crate::agent::ToolRegistry::default());
+        LlmAgentBehavior::new(llm, tools)
+    }
+
+    #[test]
+    fn with_memory_extractor_populates_both_fields() {
+        let mock: Arc<dyn MemoryExtractor> = Arc::new(MockExtractor::default());
+        let dir = std::path::PathBuf::from("/tmp/nexo-test/memory");
+        let b = dummy_behavior().with_memory_extractor(Arc::clone(&mock), dir.clone());
+        assert!(b.memory_extractor.is_some());
+        assert_eq!(b.memory_dir.as_deref(), Some(dir.as_path()));
+    }
+
+    #[test]
+    fn default_behavior_has_no_memory_extractor() {
+        let b = dummy_behavior();
+        assert!(b.memory_extractor.is_none());
+        assert!(b.memory_dir.is_none());
+    }
+
+    #[test]
+    fn memory_extractor_records_tick_and_extract_calls() {
+        // Simulate the post-turn wire by calling tick + extract
+        // directly. Verifies the trait Arc<dyn> dispatch path
+        // compiles AND the side effects land where the wire
+        // expects them.
+        let mock = Arc::new(MockExtractor::default());
+        let extractor: Arc<dyn MemoryExtractor> = Arc::clone(&mock) as Arc<dyn MemoryExtractor>;
+        extractor.tick();
+        Arc::clone(&extractor).extract(
+            GoalId(uuid::Uuid::nil()),
+            0,
+            "transcript".into(),
+            std::path::PathBuf::from("/tmp/nexo-test/memory"),
+        );
+        assert_eq!(
+            mock.tick_count.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        assert_eq!(
+            mock.extract_count
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        let last = mock.last_extract.lock().unwrap().clone().unwrap();
+        assert_eq!(last.1, 0);
+        assert_eq!(last.2, "transcript");
     }
 
     #[test]

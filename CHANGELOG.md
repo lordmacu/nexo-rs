@@ -10,6 +10,131 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **M4.a — `MemoryExtractor` trait + `LlmAgentBehavior` post-turn
+  wire** (FOLLOWUPS A6.M4). Phase 77.5 shipped `ExtractMemories`
+  (`crates/driver-loop/src/extract_memories.rs`, ~600 LOC + 21
+  tests) with full gate logic — but the post-turn wire lived only
+  in driver-loop's orchestrator at `:702-726`. Agents going
+  through the regular `LlmAgentBehavior` path (event-driven
+  inbound, pollers, heartbeat, marketing-style plugins) never
+  extracted memories; lead/conversation memory was lost across
+  reloads. Fix introduces `nexo_driver_types::MemoryExtractor`
+  (`crates/driver-types/src/memory_extractor.rs`) — a 2-method
+  trait (`tick`, `extract`) declared upstream of both `nexo-core`
+  and `nexo-driver-loop` so they hold `Arc<dyn MemoryExtractor>`
+  without depending on each other (mirrors `AutoDreamHook`
+  cycle-break from Phase 80.1.b). `nexo-driver-loop` ships
+  `impl MemoryExtractor for ExtractMemories` re-using the inherent
+  methods. `LlmAgentBehavior` gains `memory_extractor:
+  Option<Arc<dyn MemoryExtractor>>` + `memory_dir:
+  Option<PathBuf>` fields plus `with_memory_extractor(extractor,
+  dir)` builder. Post-turn hook (just before
+  `Ok(RunTurnOutcome::Reply(reply_text))`) calls `extractor.tick()`
+  unconditionally (cadence stays sane even when gates skip) and
+  `Arc::clone(extractor).extract(GoalId(session_id), 0, text,
+  dir)` only when both `memory_dir` is `Some` AND `reply_text` is
+  `Some` — defensive: no writes outside an explicit dir, no
+  extraction without an assistant turn. `turn_index = 0` is an
+  MVP sentinel (the consumer uses `turn_index` only for telemetry,
+  not control flow). Provider-agnostic by construction —
+  `Arc<dyn MemoryExtractor>` keeps any concrete impl pluggable;
+  the `ExtractMemoriesLlm` upstream is itself a narrow wrapper
+  around `Arc<dyn LlmClient>`, so behavior is identical across
+  Anthropic / MiniMax / OpenAI / Gemini / DeepSeek / xAI /
+  Mistral. 3 inline tests in `llm_behavior::tests`:
+  `with_memory_extractor_populates_both_fields` (builder
+  semantics), `default_behavior_has_no_memory_extractor` (default
+  sanity), `memory_extractor_records_tick_and_extract_calls`
+  (`Arc::clone + extract(...)` dyn dispatch + side effects). Trait
+  doc-comment cites IRROMPIBLE refs to claude-code-leak
+  `services/extractMemories/extractMemories.ts:121-148`
+  (`hasMemoryWritesSince`) and `QueryEngine.ts` (leak's
+  single-turn-engine extract trigger our two engines now share via
+  the trait); `research/` no relevant prior art. Slice **M4.a.b**
+  (boot wire — `ExtractMemoriesConfig` in `AgentConfig` schema +
+  `ExtractMemoriesLlm` adapter + per-agent `memory_dir`
+  resolution), **M4.b** (autoCompact in regular AgentRuntime), and
+  **M4.c** (per-session turn counter) remain open in FOLLOWUPS
+  A6.M4. Marketing plugin scope: once M4.a.b lands, the marketing
+  agent (event-driven, regular AgentRuntime) automatically gets
+  memory persistence for leads — e.g. "juan@x.com mostró interés
+  en plan Pro" survives across turns / sessions / daemon
+  restarts. Tests: `cargo test -p nexo-driver-types` verde,
+  `cargo test -p nexo-driver-loop --lib` verde (21 ExtractMemories
+  tests preserved), `cargo test -p nexo-core --lib
+  agent::llm_behavior::tests` → 9/9 (6 existing + 3 new).
+- Phase 80.1.f (MVP) — docs sweep cubriendo el cluster 80.1.x
+  autoDream. Extendido `docs/src/soul/dreaming.md` (single point
+  of truth para consolidation, no nueva página) con 7 nuevas
+  secciones ~370 LOC: (1) **Two-tier consolidation: light + deep**
+  con tabla comparativa de 7 dimensiones (crate / cadence / cost /
+  writes / failure mode / coordination / reference) — operadores
+  ven de un vistazo la diferencia entre el scoring sweep (Phase
+  10.6 era) y el deep fork-pass (Phase 80.1). (2) **Deep pass via
+  fork** con sub-secciones para los 7 gates ordenados por costo
+  (kairos / remote / auto_memory / auto_dream / time / scan-
+  throttle / session) + ConsolidationLock semantics (mtime IS
+  lastConsolidatedAt + holder_stale 1h + canonicalize symlink
+  defense + try_acquire/rollback semantics) + 4-phase consolidation
+  prompt (Orient → Gather → Consolidate → Prune) con apuntador a
+  `crates/dream/src/consolidation_prompt.rs` para la plantilla
+  completa + AutoMemFilter restrictions (FileRead/Glob/Grep/REPL
+  unrestricted, Bash via `is_read_only`, FileEdit/Write scoped a
+  memory_dir) + post-fork escape audit + MAX_TURNS=30 server-side
+  cap. (3) **Coordination: skip pattern** explicando que cuando
+  ambos pases están enabled, el light pass chequea el probe al
+  inicio de `run_sweep` y defiere con `deferred_for_fork: true`
+  cuando lock held por live PID; trade-off documentado (un turno
+  de latencia para promotions diferidas, recoverables porque
+  memorias hot scorean igual de high). (4) **Audit trail** con
+  schema completa de la tabla `dream_runs` SQLite (Phase 80.18) —
+  12 columnas (id / goal_id / status / phase / sessions_reviewing
+  / prior_mtime_ms / files_touched JSON / turns JSON / started_at
+  / ended_at / fork_label / fork_run_id) + defenses (MAX_TURNS=30
+  cap, TAIL_HARD_CAP=1000, idempotent insert) + git commits con
+  subject `auto_dream: N file(s) consolidated` y body con
+  `audit_run_id: <uuid>` para cross-link al SQLite row +
+  ejemplo `git log --grep auto_dream | nexo agent dream status`.
+  (5) **Operator CLI** con 3 sub-comandos `tail|status|kill` y
+  4-5 ejemplos cada uno (`--json` para scripting con jq, `--goal`
+  para filtrar por goal_id, `--n` para tamaño de página, `--force`
+  para abortar Running, `--memory-dir` para lock rollback, `--db`
+  para override de path) + sección de DB path resolution 3-tier
+  (`--db` > `NEXO_STATE_ROOT` env > XDG default
+  `~/.local/share/nexo/state/dream_runs.db`) — el tier YAML está
+  intencionalmente ausente porque `agents.state_root` no existe
+  como config field hoy. (6) **LLM tool `dream_now`** con JSON
+  tool shape completo + JSON envelope output documentando las 6
+  outcomes (`completed` / `skipped` / `lock_blocked` / `errored` /
+  `timed_out` / `escape_audit`) + capability gate two-layer
+  documentado: host-level `NEXO_DREAM_NOW_ENABLED=true` env var
+  (Phase 80.1.c.b — sin esta var, registration short-circuits
+  con `tracing::info!`) ∧ Phase 16 binding policy `allowed_tools`
+  array — ambos deben permitir; ejemplo de output esperado en
+  `nexo setup doctor capabilities`. (7) **Configuration** con
+  yaml block ejemplo bajo `agents.<id>.auto_dream` mostrando todos
+  los knobs (`enabled` / `min_hours` / `min_sessions` /
+  `scan_interval` / `holder_stale` / `fork_timeout` / `memory_dir`)
+  + boot logging output esperado (`auto_dream runner registered
+  git_checkpoint_wired=true`) + asimetría documentada (auto_dream
+  off no afecta light pass; dreaming off no afecta deep pass —
+  bindings independientes). Sección final **See also** con
+  cross-links a Phase 10.9 git-backed memory + Phase 18 hot-reload
+  + Phase 77.7 secret guard + Phase 80.18 audit row + Phase 80.20
+  AutoMemFilter — todos apuntan a paths de crates locales, sin
+  referencias externas. `mdbook build docs` smoke verde — sin
+  broken links, página final ~560 LOC (era 186, +370). admin-ui
+  panel + páginas separadas tipo `concepts/kairos-mode.md` /
+  `operations/cron-jitter.md` quedan reservadas para Phase 80.21
+  (broader docs sweep + admin-ui sync, no cluster 80.1.x).
+  Provider-agnostic por construcción: cero LLM-provider mencionado
+  en ejemplos; todo el flow funciona bajo Anthropic / MiniMax /
+  OpenAI / Gemini / DeepSeek / xAI / Mistral. Cluster 80.1.x core
+  ahora cerrado: 80.1 / 80.1.b / 80.1.b.b / 80.1.b.b.b / 80.1.c /
+  80.1.c.b / 80.1.d / 80.1.e / 80.1.f / 80.1.g — todos ✅ MVP;
+  remain follow-ups 80.1.d.b (live NATS abort, needs 80.11) y
+  80.1.d.c (`agent dream now` operator force, needs daemon
+  plumbing).
 - **C4.c — `LlmError::QuotaExceeded` provider-agnostic + 4-provider
   plumb + last-quota cache + `setup doctor` surface** (FOLLOWUPS
   A4.c). Phase 77.11 shipped `rate_limit_info` (762 LOC, 12 tests)

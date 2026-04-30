@@ -345,11 +345,64 @@ do not get lost.
   cover the agent-level + binding-override paths plus the two
   happy paths.
 - **M4 — `extractMemories` + `autoCompact` only run inside
-  `driver-loop`.** Both wired in
-  `crates/driver-loop/src/{extract_memories,orchestrator}.rs`.
-  Agents going through the regular `AgentRuntime` path never
-  get them. Fix: factor a shared post-turn service or boot the
-  same hooks in both paths. Effort: ~half day.
+  `driver-loop`.** 🟡 partial. Slice **M4.a — extractMemories
+  shared service** ✅ shipped 2026-04-30. New trait
+  `nexo_driver_types::MemoryExtractor` (`crates/driver-types/
+  src/memory_extractor.rs`) with `tick(&self)` + `extract(
+  self: Arc<Self>, goal_id, turn_index, messages_text,
+  memory_dir)`. Mirrors `AutoDreamHook` (Phase 80.1.b) cycle-
+  break pattern: declared upstream of both `nexo-core` and
+  `nexo-driver-loop` so they hold `Arc<dyn MemoryExtractor>`
+  without depending on each other. `nexo-driver-loop` ships
+  `impl MemoryExtractor for ExtractMemories` re-using the
+  inherent `tick` + `extract` methods. `LlmAgentBehavior`
+  (`crates/core/src/agent/llm_behavior.rs`) gains
+  `memory_extractor: Option<Arc<dyn MemoryExtractor>>` +
+  `memory_dir: Option<PathBuf>` + builder
+  `pub fn with_memory_extractor(mut self, extractor, dir)
+  -> Self`. Post-turn hook (just before
+  `Ok(RunTurnOutcome::Reply(reply_text))` at `:1707`) calls
+  `extractor.tick()` always; calls `extract(GoalId(session_id),
+  0, text, dir)` only when both `memory_dir` is Some AND
+  `reply_text` is Some — defensive: no writes outside an
+  explicit dir, no extraction without an assistant turn.
+  `turn_index = 0` is an MVP sentinel (regular AgentRuntime
+  doesn't track per-session turn counters; defer to M4.c).
+  3 inline tests in `agent::llm_behavior::tests`:
+  `with_memory_extractor_populates_both_fields`,
+  `default_behavior_has_no_memory_extractor`,
+  `memory_extractor_records_tick_and_extract_calls`. Provider-
+  agnostic: `Arc<dyn MemoryExtractor>` keeps any concrete impl
+  pluggable (today `ExtractMemories` from `nexo-driver-loop`,
+  carrying `Arc<dyn LlmClient>` upstream — works under
+  Anthropic / MiniMax / OpenAI / Gemini / DeepSeek / xAI /
+  Mistral). IRROMPIBLE refs in trait doc-comment to
+  claude-code-leak `services/extractMemories/extractMemories.ts:121-148`
+  (`hasMemoryWritesSince` cadence semantics) and `QueryEngine.ts`
+  (single-turn-engine extract trigger our two engines now share
+  via the trait). `research/` no relevant prior art.
+  Cumulative tests: `cargo test -p nexo-driver-types` verde,
+  `cargo test -p nexo-driver-loop --lib` verde (21 ExtractMemories
+  + impl — same tests),
+  `cargo test -p nexo-core --lib agent::llm_behavior::tests`
+  → 9/9 (6 existing + 3 new).
+  **Slice M4.a.b — boot wire ⬜** open. Construction in
+  `src/main.rs` requires (1) `ExtractMemoriesConfig` field
+  added to `AgentConfig` schema in `crates/config/src/types/
+  agents.rs`, (2) an `ExtractMemoriesLlm` adapter wrapping
+  `Arc<dyn LlmClient>` (3-line struct + `impl ExtractMemoriesLlm`),
+  (3) per-agent `memory_dir` resolution. Defer until operator-
+  facing config schema lands. Marketing plugin scope: when
+  M4.a.b ships, the marketing agent (event-driven, regular
+  AgentRuntime) automatically gets memory persistence for
+  leads — "juan@x.com mostró interés en plan Pro" survives
+  across turns/sessions. **Slice M4.b — autoCompact in regular
+  AgentRuntime ⬜** open. Bigger surgery: requires session-
+  history-replace flow + LlmCompactor wire dentro del turn
+  loop. Effort: ~half day. **Slice M4.c — per-session turn
+  counter ⬜** open. Replaces `turn_index = 0` sentinel with
+  real per-session count. Trivial once `Session` carries the
+  counter (most likely already does — verify).
 - **M5 — `cron_tool_bindings` frozen at boot.**
   `src/main.rs:3052-3128` captures `Arc::clone(&effective)` once.
   Reload changing `allowed_tools` / `dispatch_policy` for an
