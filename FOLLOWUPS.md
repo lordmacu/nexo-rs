@@ -113,12 +113,49 @@ composition with IRROMPIBLE refs to claude-code-leak
 `bashSecurity.ts`/`sedValidation.ts:247-301`/
 `pathValidation.ts:27-509`.
 
-**A4.b — should_use_sandbox heuristic wire** — ⬜ open.
-`crates/driver-permission/src/should_use_sandbox.rs` (401 LOC,
-20 tests) still has zero callers outside `#[cfg(test)]`.
-Plan: gate via a `runtime.bash_safety.sandbox` config field;
-emit a 5th tier in `gather_bash_warnings` when the heuristic
-recommends sandbox AND the binding's policy disagrees.
+**A4.b — should_use_sandbox heuristic wire** — ✅ shipped
+2026-04-30 (advisory MVP). `gather_bash_warnings`
+(`crates/driver-permission/src/mcp.rs:204-360`) gained a 5th
+tier coupled to risk: fires only when at least one prior tier
+(destructive / sed-shallow / sed-deep / path-extractor) already
+flagged the command AND `SandboxProbe` detected `bwrap` or
+`firejail` on PATH. Probe is process-wide via
+`static SANDBOX_PROBE: OnceLock<SandboxProbe>` — runs `which
+bwrap` + `which firejail` once per process and caches the
+backend. Coupling to risk is intentional: leak's
+`should_use_sandbox(_, Auto, Some_backend, false, [])` returns
+`true` for ANY command, so firing alone would emit advisory on
+every Bash call on a sandbox-equipped host. Coupling to
+existing warnings keeps the signal-to-noise ratio high.
+Refactor split: `pub gather_bash_warnings(tn, i)` resolves the
+static probe and delegates to internal
+`gather_bash_warnings_with_backend(tn, i, sandbox_backend)`
+which accepts the backend explicitly so tests inject
+`SandboxBackend::Bubblewrap` / `Firejail` / `None`
+deterministically without hitting `which` on the test host.
+3 inline tests:
+`gather_bash_warnings_appends_sandbox_advisory_when_risky_and_backend_available`,
+`gather_bash_warnings_skips_sandbox_when_no_backend`,
+`gather_bash_warnings_skips_sandbox_when_no_other_warnings`.
+Doc-comment now lists 5 tiers + IRROMPIBLE refs to
+claude-code-leak `shouldUseSandbox.ts:130-153` (pure decision
+shape) and `:55-58` (`excludedCommands` is "not a security
+boundary" disclaimer). Provider-agnostic: probe + decision
+operate on command string + PATH, no LLM provider touchpoint.
+Tests: `cargo test -p nexo-driver-permission --lib
+gather_bash_warnings` → 7/7 (4 from C4.a + 3 new).
+
+**C4.b.b — YAML config schema** — ⬜ open. `runtime.bash_safety.
+sandbox.{mode, excluded_commands, dangerously_disable}` config
+fields + per-binding override + plumb into the helper. MVP
+hard-codes `Mode::Auto` / empty excluded list / `disable=false`
+so operators today get advisory whenever bwrap/firejail is
+installed and no granular control. Adding the schema needs
+defensive validation (mode enum tag), Phase 18 hot-reload
+re-validation, and admin-ui surface (Phase A8). Effort:
+~half day. Defers also fixed-point env/wrapper stripping
+(`stripAllLeadingEnvVars` + `stripSafeWrappers`) which only
+matters once `excluded_commands` exists.
 
 **A4.c — rate_limit_info → LlmError::QuotaExceeded** — ⬜ open.
 `crates/llm/src/rate_limit_info.rs` (762 LOC, 12 tests) builds
