@@ -2337,7 +2337,12 @@ async fn main() -> Result<()> {
                     .filter_map(|b| b.repl.as_ref())
                     .any(|r| r.enabled);
             if repl_enabled {
-                let effective_repl = effective_boot.repl.clone();
+                // C2 — `ReplRegistry` still captures the agent-level
+                // ReplConfig (subsystem-actor-level: timeout_secs,
+                // max_sessions, max_output_bytes are boot-frozen per
+                // C2 scope). The per-call `allowed_runtimes` allowlist
+                // override lives in `ReplTool::call` via
+                // `ctx.effective_policy().repl`.
                 let repl_workspace = if agent_cfg.workspace.trim().is_empty() {
                     String::from("./data/workspace")
                 } else {
@@ -2345,13 +2350,13 @@ async fn main() -> Result<()> {
                 };
                 let repl_registry = std::sync::Arc::new(
                     nexo_core::agent::ReplRegistry::new(
-                        effective_repl.clone(),
+                        effective_boot.repl.clone(),
                         repl_workspace,
                     ),
                 );
                 tools.register(
                     nexo_core::agent::ReplTool::tool_def(),
-                    nexo_core::agent::ReplTool::new(repl_registry, effective_repl),
+                    nexo_core::agent::ReplTool::new(repl_registry),
                 );
             }
         }
