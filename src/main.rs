@@ -375,6 +375,176 @@ impl nexo_core::llm_cron_dispatcher::CronToolExecutor for RuntimeCronToolExecuto
     }
 }
 
+/// M5.b — bundles the Arcs and shared deps that
+/// [`build_cron_bindings_from_snapshots`] needs to reconstruct the
+/// per-binding context map. Cheap clone (every field is `Arc<_>`,
+/// `Option<Arc<_>>`, or owned config). Captured by the
+/// config-reload post-hook closure once per process.
+///
+/// Provider-agnostic — the cron tier-0 dispatcher fires LLM calls
+/// for any provider (Anthropic / MiniMax / OpenAI / Gemini /
+/// DeepSeek / xAI / Mistral); the rebuild copies whichever
+/// `effective.model` the new snapshot resolved without branching
+/// on provider.
+#[derive(Clone)]
+struct CronRebuildDeps {
+    broker: nexo_broker::AnyBroker,
+    sessions: Arc<nexo_core::session::SessionManager>,
+    memory: Option<Arc<nexo_memory::LongTermMemory>>,
+    peer_directory: Arc<nexo_core::agent::PeerDirectory>,
+    credentials: Option<Arc<nexo_auth::CredentialsBundle>>,
+    web_search_router: Option<Arc<nexo_web_search::WebSearchRouter>>,
+    link_extractor: Arc<nexo_core::link_understanding::LinkExtractor>,
+    dispatch_ctx: Option<Arc<nexo_core::agent::dispatch_handlers::DispatchToolContext>>,
+    tools_per_agent: Arc<std::collections::HashMap<String, Arc<nexo_core::agent::ToolRegistry>>>,
+    cron_tool_call_cfg: nexo_config::types::runtime::RuntimeCronToolCallsConfig,
+}
+
+/// M5.b — re-walks per-agent snapshot handles and builds the
+/// `binding_id → CronToolBindingContext` map. Used by the boot
+/// path (initial population, called once after the agent loop
+/// ends) and the config-reload post-hook (rebuild on snapshot
+/// swap). Single source of truth — preserves bit-for-bit
+/// semantics with the inline closure it replaces.
+///
+/// Pattern validated against:
+///   * `claude-code-leak/src/utils/cronScheduler.ts:441-448`
+///     (chokidar-on-file-change rebuild — we use snapshot
+///     handles instead of file mtime, but the rebuild shape is
+///     analogous).
+///   * `research/src/cron/service/timer.ts:709`
+///     (`forceReload: true` per-tick — we rebuild on reload
+///     only, since ArcSwap gives us cheap atomic swaps).
+///
+/// Limitation: agent add/remove during runtime is Phase 19 scope.
+/// `tools_per_agent` and `agent_snapshot_handles` are populated
+/// during the boot agent loop and never extended; reload picks up
+/// policy changes for EXISTING agents only.
+fn build_cron_bindings_from_snapshots(
+    snapshots: &std::collections::HashMap<
+        String,
+        Arc<arc_swap::ArcSwap<nexo_core::RuntimeSnapshot>>,
+    >,
+    deps: &CronRebuildDeps,
+) -> std::collections::HashMap<String, CronToolBindingContext> {
+    let mut by_binding: std::collections::HashMap<String, CronToolBindingContext> =
+        std::collections::HashMap::new();
+    for (agent_id, snapshot_handle) in snapshots {
+        let snap = snapshot_handle.load_full();
+        let agent_cfg = Arc::clone(&snap.nexo_config);
+        let Some(tools) = deps.tools_per_agent.get(agent_id).cloned() else {
+            tracing::debug!(
+                agent = %agent_id,
+                "build_cron_bindings_from_snapshots: agent missing from tools_per_agent; skipping"
+            );
+            continue;
+        };
+
+        // Iterate legacy/unbound first (binding_idx = None), then
+        // each real binding (binding_idx = Some(i)). Mirrors the
+        // pre-M5.b boot ordering.
+        let binding_indexes: Vec<Option<usize>> = if agent_cfg.inbound_bindings.is_empty() {
+            vec![None]
+        } else {
+            std::iter::once(None)
+                .chain((0..agent_cfg.inbound_bindings.len()).map(Some))
+                .collect()
+        };
+        for binding_idx in binding_indexes {
+            let Some(effective) = snap.policy_for(binding_idx) else {
+                continue;
+            };
+            let binding_key = compute_binding_key(&agent_cfg, binding_idx);
+            let inbound_origin = compute_inbound_origin(&agent_cfg, binding_idx);
+
+            let filtered = tools.filtered_clone(&effective.allowed_tools);
+            filtered.apply_dispatch_capability(&effective.dispatch_policy, false);
+            if !deps.cron_tool_call_cfg.allowlist.is_empty() {
+                filtered.retain_matching(&deps.cron_tool_call_cfg.allowlist);
+            }
+            let filtered = Arc::new(filtered);
+
+            let mut cron_ctx = nexo_core::agent::AgentContext::new(
+                agent_id.clone(),
+                Arc::clone(&agent_cfg),
+                deps.broker.clone(),
+                Arc::clone(&deps.sessions),
+            )
+            .with_effective(Arc::clone(&effective))
+            .with_effective_tools(Arc::clone(&filtered));
+            if let Some(mem) = deps.memory.as_ref() {
+                cron_ctx = cron_ctx.with_memory(Arc::clone(mem));
+            }
+            cron_ctx = cron_ctx.with_peers(Arc::clone(&deps.peer_directory));
+            if let Some(bundle) = deps.credentials.as_ref() {
+                cron_ctx = cron_ctx.with_credentials(Arc::clone(&bundle.resolver));
+                cron_ctx = cron_ctx.with_breakers(Arc::clone(&bundle.breakers));
+            }
+            if let Some(router) = deps.web_search_router.as_ref() {
+                cron_ctx = cron_ctx.with_web_search_router(Arc::clone(router));
+            }
+            cron_ctx = cron_ctx.with_link_extractor(Arc::clone(&deps.link_extractor));
+            if let Some(dc) = deps.dispatch_ctx.as_ref() {
+                cron_ctx = cron_ctx.with_dispatch(Arc::clone(dc));
+            }
+            if let Some((plugin, instance, sender)) = inbound_origin {
+                cron_ctx = cron_ctx.with_inbound_origin(plugin, instance, sender);
+            }
+
+            if by_binding
+                .insert(
+                    binding_key.clone(),
+                    CronToolBindingContext {
+                        ctx: cron_ctx,
+                        tools: Arc::clone(&filtered),
+                    },
+                )
+                .is_some()
+            {
+                tracing::warn!(
+                    binding_id = %binding_key,
+                    agent = %agent_id,
+                    "cron tool context duplicated binding key; latest entry wins"
+                );
+            }
+        }
+    }
+    by_binding
+}
+
+fn compute_binding_key(agent_cfg: &nexo_config::AgentConfig, idx: Option<usize>) -> String {
+    match idx {
+        None => agent_cfg.id.clone(),
+        Some(i) => {
+            let b = &agent_cfg.inbound_bindings[i];
+            let instance = b
+                .instance
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or("default");
+            format!("{}:{instance}", b.plugin)
+        }
+    }
+}
+
+fn compute_inbound_origin(
+    agent_cfg: &nexo_config::AgentConfig,
+    idx: Option<usize>,
+) -> Option<(String, String, String)> {
+    match idx {
+        None => None,
+        Some(i) => {
+            let b = &agent_cfg.inbound_bindings[i];
+            let instance = b
+                .instance
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or("default");
+            Some((b.plugin.clone(), instance.to_string(), "cron".into()))
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 enum LogFormat {
     Pretty,
@@ -11587,6 +11757,7 @@ mcp_server:
             team: nexo_config::types::team::TeamPolicy::default(),
             proactive: Default::default(),
             repl: Default::default(),
+            auto_dream: None,
         };
         let ctx = nexo_core::agent::AgentContext::new(
             marker,
