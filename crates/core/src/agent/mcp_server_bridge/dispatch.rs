@@ -369,39 +369,19 @@ fn boot_always(name: &str, ctx: &McpServerBootContext) -> BootResult {
         ),
 
         // --- 79.M.b — Lsp ---
+        // C2 — `LspTool::new` no longer takes `policy`; the handler
+        // pulls the per-call `LspPolicy` from `ctx.effective_policy()`
+        // so a hot-reload of `lsp.languages` is observed on the next
+        // call without re-registration.
         "Lsp" => match ctx.lsp_manager.as_ref() {
             Some(mgr) => {
                 use crate::agent::lsp_tool::LspTool;
-                use nexo_lsp::ExecutePolicy;
-                let allowed_languages: Vec<nexo_lsp::LspLanguage> = ctx
-                    .agent_context
-                    .config
-                    .lsp
-                    .languages
-                    .iter()
-                    .map(|w| match w {
-                        nexo_config::types::lsp::LspLanguageWire::Rust => {
-                            nexo_lsp::LspLanguage::Rust
-                        }
-                        nexo_config::types::lsp::LspLanguageWire::Python => {
-                            nexo_lsp::LspLanguage::Python
-                        }
-                        nexo_config::types::lsp::LspLanguageWire::TypeScript => {
-                            nexo_lsp::LspLanguage::TypeScript
-                        }
-                        nexo_config::types::lsp::LspLanguageWire::Go => nexo_lsp::LspLanguage::Go,
-                    })
-                    .collect();
                 let workspace_root = if ctx.agent_context.config.workspace.is_empty() {
                     std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
                 } else {
                     std::path::PathBuf::from(&ctx.agent_context.config.workspace)
                 };
-                let tool = LspTool::new(
-                    Arc::clone(mgr),
-                    ExecutePolicy { allowed_languages },
-                    workspace_root,
-                );
+                let tool = LspTool::new(Arc::clone(mgr), workspace_root);
                 BootResult::Registered(LspTool::tool_def_static(), Arc::new(tool))
             }
             None => BootResult::SkippedInfraMissing {

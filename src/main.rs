@@ -2479,24 +2479,11 @@ async fn main() -> Result<()> {
         // to the daemon's `lsp_workspace` (first agent's
         // workspace) when the agent itself doesn't declare one.
         if effective_boot.lsp.enabled {
-            let allowed: Vec<nexo_lsp::LspLanguage> = effective_boot
-                .lsp
-                .languages
-                .iter()
-                .map(|w| match w {
-                    nexo_config::types::lsp::LspLanguageWire::Rust => nexo_lsp::LspLanguage::Rust,
-                    nexo_config::types::lsp::LspLanguageWire::Python => {
-                        nexo_lsp::LspLanguage::Python
-                    }
-                    nexo_config::types::lsp::LspLanguageWire::TypeScript => {
-                        nexo_lsp::LspLanguage::TypeScript
-                    }
-                    nexo_config::types::lsp::LspLanguageWire::Go => nexo_lsp::LspLanguage::Go,
-                })
-                .collect();
-            let policy = nexo_lsp::ExecutePolicy {
-                allowed_languages: allowed,
-            };
+            // C2 — `policy` is no longer captured at boot. The handler
+            // reads `ctx.effective_policy().lsp` per call and converts
+            // it to `ExecutePolicy` via the private adapter, so a
+            // hot-reload that flips `lsp.languages` is observed on the
+            // next intake event without re-registration.
             let agent_workspace: std::path::PathBuf = if agent_cfg.workspace.trim().is_empty() {
                 lsp_workspace.clone()
             } else {
@@ -2504,7 +2491,6 @@ async fn main() -> Result<()> {
             };
             let lsp_tool = nexo_core::agent::lsp_tool::LspTool::new(
                 std::sync::Arc::clone(&lsp_manager),
-                policy,
                 agent_workspace,
             );
             let def = lsp_tool.tool_def().await;
