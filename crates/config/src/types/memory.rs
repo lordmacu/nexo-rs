@@ -7,6 +7,69 @@ pub struct MemoryConfig {
     pub long_term: LongTermConfig,
     #[serde(default)]
     pub vector: VectorConfig,
+    /// C5 — Secret-scanner policy (provider-agnostic). When the YAML
+    /// key is omitted, the secure default applies (`enabled: true,
+    /// on_secret: block, rules: all, exclude_rules: []`).
+    ///
+    /// **Wire-shape duplication note**: the canonical types
+    /// (`nexo_memory::SecretGuardConfig`, `OnSecret`, `RuleSelection`)
+    /// live in `nexo-memory`. Because `nexo-memory` depends on
+    /// `nexo-llm` which depends on `nexo-config`, a direct
+    /// `nexo-config -> nexo-memory` dep would form a cycle. The
+    /// wire-shape struct below mirrors the schema 1:1 and is
+    /// converted to the domain type via a `From` impl that lives
+    /// in `src/main.rs` (which holds both deps). When updating the
+    /// schema, change BOTH this struct AND `secret_config.rs`.
+    #[serde(default)]
+    pub secret_guard: SecretGuardYamlConfig,
+}
+
+/// Wire-shape clone of `nexo_memory::SecretGuardConfig`. See doc on
+/// [`MemoryConfig::secret_guard`] for the cycle-break rationale.
+///
+/// Provider-agnostic — the scanner detects API keys for every
+/// supported LLM provider (Anthropic, MiniMax, OpenAI, Gemini,
+/// DeepSeek, xAI, Mistral) using the same regex set; `exclude_rules`
+/// operates on rule IDs (kebab-case like `github-pat`,
+/// `aws-access-token`, `openai-api-key`), not on providers.
+///
+/// Prior art (validated, not copied):
+///   * `claude-code-leak/src/services/teamMemorySync/secretScanner.ts:48,596-615,312-324`
+///     — hardcoded scanner with no YAML knob; activation via build
+///     flag (`feature('TEAMMEM')`) only. We adopt a richer
+///     operator-facing config rather than the hardcoded model.
+///   * `research/src/config/zod-schema.ts` — OpenClaw uses 2-value
+///     enums (`redactSensitive: off|tools`, `mode: enforce|warn`).
+///     We extend to 3 (`block|redact|warn`) for richer behaviour.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SecretGuardYamlConfig {
+    /// Master switch. When `false`, every check is a no-op.
+    pub enabled: bool,
+    /// Policy for handling detected secrets: `block` | `redact` | `warn`.
+    /// Wire as a string here; main.rs converts to
+    /// `nexo_memory::secret_scanner::OnSecret` and validates.
+    pub on_secret: String,
+    /// Rule selection. Either the string `"all"` or a YAML list of
+    /// rule IDs (kebab-case strings). `serde_yaml::Value` lets us
+    /// accept both shapes; main.rs branches on the variant.
+    pub rules: serde_yaml::Value,
+    /// Rule IDs to skip (false positives). kebab-case, e.g.
+    /// `["github-pat", "openai-api-key"]`.
+    pub exclude_rules: Vec<String>,
+}
+
+impl Default for SecretGuardYamlConfig {
+    fn default() -> Self {
+        // Mirrors the secure default of
+        // `nexo_memory::SecretGuardConfig::default()`.
+        Self {
+            enabled: true,
+            on_secret: "block".into(),
+            rules: serde_yaml::Value::String("all".into()),
+            exclude_rules: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
