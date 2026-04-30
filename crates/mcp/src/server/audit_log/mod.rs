@@ -27,12 +27,14 @@
 //!   and audit trail (76.11) speak identical labels.
 
 pub mod config;
+mod hash;
 pub mod sqlite_store;
 pub mod store;
 pub mod types;
 pub mod writer;
 
 pub use config::AuditLogConfig;
+pub(crate) use hash::{args_hash_truncated, compute_args_metrics};
 pub use sqlite_store::SqliteAuditLogStore;
 pub use store::{AuditError, AuditLogStore, MemoryAuditLogStore};
 pub use types::{AuditFilter, AuditOutcome, AuditRow};
