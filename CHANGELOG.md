@@ -10,6 +10,269 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **M1.b — SIGHUP reload trigger for `nexo mcp-server`
+  `expose_tools`** (FOLLOWUPS A6.M1.b). M1.a shipped the
+  capability + ArcSwap allowlist surface but no caller hot-swapped
+  it; adding/removing tools from `mcp_server.expose_tools` required
+  a daemon restart for connected Claude Desktop / Cursor clients
+  to see the change. Fix wires a SIGHUP-driven reload trigger
+  inside the standalone `nexo mcp-server` subcommand. New
+  `nexo-mcp` public surface: `pub struct HttpNotifyHandle`
+  (`#[derive(Clone)]`) returned by
+  `HttpServerHandle::notifier(&self)` — a lightweight clone-able
+  notifier detached from the `JoinHandle` so it can be moved into
+  long-lived background tasks safely.
+  `HttpNotifyHandle::notify_tools_list_changed()` mirrors the
+  existing handle method. New `src/main.rs::reload_expose_tools(config_dir)
+  -> Result<Option<HashSet<String>>>` helper: re-reads
+  `mcp_server.expose_tools` via `AppConfig::load_for_mcp_server`;
+  empty list → `Ok(None)` (no filter, expose all non-proxy
+  tools), non-empty → `Ok(Some(set))`, parse / IO error → `Err`
+  (caller absorbs and keeps the previous last-known-good
+  allowlist). `run_mcp_server` gained a `#[cfg(unix)]` SIGHUP
+  handler tokio task that loops on
+  `tokio::signal::unix::SignalKind::hangup()` selected against
+  `shutdown.cancelled()` for clean exit. On every SIGHUP: log
+  receive → re-read YAML → atomic swap-then-notify
+  (`bridge.swap_allowlist(new)` first, then
+  `notifier.notify_tools_list_changed()` second — reverse order
+  races) → log success with sessions reached + new tool count.
+  The bridge is `Clone` (M1.a) and shares the inner
+  `Arc<ArcSwap>` between stdio + HTTP clones, so a single swap
+  is observable across both transports atomically. Non-Unix
+  build path logs warn-once and skips the handler — Windows
+  operators restart for `expose_tools` changes (defer
+  cross-platform file watcher to slice M1.b.b). Burst SIGHUPs
+  yield multiple swaps + multiple notifications; clients
+  debounce within the existing 200 ms session window per leak
+  `useManageMCPConnections.ts:721-723`. Operator UX:
+  `kill -HUP $(pidof nexo)` after editing `mcp_server.yaml` —
+  connected clients refresh tool list without reconnect. 3
+  inline tests in `src/main.rs::tests`:
+  `reload_expose_tools_returns_set_from_yaml`,
+  `reload_expose_tools_returns_none_for_empty_list`,
+  `reload_expose_tools_propagates_yaml_parse_errors`.
+  Doc-comment cites IRROMPIBLE refs to claude-code-leak
+  `useManageMCPConnections.ts:618-665` (consumer-side handler
+  registration) and `:721-723` (debounce). `research/` carries
+  no relevant prior art (channel-side scope, no MCP server
+  hot-reload concept). Slice **M1.b.b** (file watcher +
+  `ConfigReloadCoordinator` integration when daemon `Mode::Run`
+  exposes the bridge in-process) and slice **M1.c** (stdio
+  notification pump for stdio-mode clients) remain open in
+  FOLLOWUPS A6.M1. Provider-agnostic: protocol-MCP layer, no
+  LLM-provider assumption — works under Anthropic / MiniMax /
+  OpenAI / Gemini / DeepSeek / xAI / Mistral. Tests:
+  `cargo test --bin nexo reload_expose_tools` → 3/3,
+  `cargo build --bin nexo` verde, `cargo build -p nexo-mcp` verde.
+- Phase 80.16 (MVP) — `nexo agent attach <goal_id>` + `nexo agent
+  discover` operator CLI for the BG-sessions / KAIROS workflow.
+  DB-only viewer slim MVP; live NATS event streaming + user input
+  piping deferred as named follow-ups (80.16.b / 80.16.c /
+  80.16.d). Adds `Mode::AgentAttach { goal_id, db, json }` +
+  `Mode::AgentDiscover { include_interactive, db, json }` enum
+  variants + 2 parser arms (the attach arm matches `[cmd, sub,
+  goal_id]` slice with UUID in the trailing positional; discover
+  matches bare `[cmd, sub]` and reads the optional flag from the
+  positional list) + 2 dispatch arms + 2 async run fns
+  (`run_agent_attach`, `run_agent_discover`, ~150 LOC together).
+  **`run_agent_attach`** validates the UUID upfront via
+  `Uuid::parse_str` (clean exit-1 error "is not a valid UUID"),
+  resolves the DB path through the existing
+  `resolve_agent_db_path` helper (3-tier `--db` > `NEXO_STATE_ROOT`
+  env > XDG default — same as 80.1.d / 80.10), bails when the DB
+  file is absent ("agent_handles DB not found at ..."), opens the
+  store, fetches the handle via `store.get(GoalId(uuid))`, errors
+  "no agent handle found for `<uuid>`" with anyhow context when
+  the row doesn't exist. Markdown render covers all relevant
+  fields: full goal_id / kind (via `as_db_str`) / `Debug` of
+  status / phase_id / started_at / optional finished_at /
+  optional last_progress_text in a code block / optional
+  last_diff_stat in a fenced block / `turn_index/max_turns` /
+  last_event_at. Final hint is status-aware: when status ==
+  `Running`, prints "Live event stream requires daemon connection
+  — re-run with NATS available (Phase 80.16.b follow-up)" so the
+  operator knows the next step; when terminal (`is_terminal()`),
+  prints "Goal is in terminal state {status:?}; no further
+  updates expected" so post-mortem inspection has the right
+  framing. `--json` path serialises the entire `AgentHandle` via
+  `serde_json::to_string_pretty` (works because Phase 80.10 added
+  `Serialize + Deserialize` to `SessionKind` and the field has
+  `#[serde(default)]`). **`run_agent_discover`** accepts an
+  `--include-interactive` flag that broadens the kinds-filter
+  from default `[Bg, Daemon, DaemonWorker]` to all four variants
+  including `Interactive` — the default answers the operator's
+  "what is running detached?" question, and the broadened mode
+  is the diagnostic alternative. Iterates kinds via
+  `store.list_by_kind`, applies `retain(|h| h.status == Running)`,
+  sorts `started_at` descending. Empty result emits a friendly
+  message with conditional hint ("(no detached / daemon goals
+  running; pass --include-interactive to broaden)" when default;
+  no hint when broadened). Renders markdown table with cols:
+  short-uuid (8 chars) / kind / phase_id / started_at /
+  last_event_at — operator gets activity freshness at a glance.
+  Missing-DB path mirrors `agent ps` UX: friendly stdout message
+  + exit 0, JSON variant returns `[]`. 8 new inline tests in
+  `src/main.rs::tests`:
+  `run_agent_attach_rejects_invalid_uuid` (bad shape → anyhow
+  context "valid UUID"),
+  `run_agent_attach_missing_db_errors` (`--db /missing` → "not
+  found"),
+  `run_agent_attach_handle_not_found_errors` (valid UUID but row
+  absent → "no agent handle found"),
+  `run_agent_attach_running_renders_snapshot` (seeds Running Bg
+  via `run_agent_run`, then exercises both markdown and `--json`
+  render paths),
+  `run_agent_discover_filters_to_bg_daemon` (seeds 1 Interactive
+  + 1 Bg, asserts the underlying store query semantics + runs
+  the fn for code-path coverage),
+  `run_agent_discover_include_interactive_returns_all` (flag set,
+  both markdown and JSON paths run),
+  `run_agent_discover_empty_db_friendly_message` (DB missing,
+  both render paths exit 0),
+  `run_agent_discover_no_matching_goals_renders_friendly` (only
+  Interactive seeded, default discover hits the no-match
+  friendly branch). All 8 verde alongside the existing 13 from
+  Phase 80.10 (= 21 total cli tests in `src/main.rs::tests`).
+  CLI smoke confirmed manually: `NEXO_STATE_ROOT=... nexo agent
+  discover` → markdown table when 1+ Bg row present;
+  `nexo agent discover --include-interactive` → broader table;
+  `nexo agent attach <real-uuid>` → markdown render + Running
+  hint; `nexo agent attach not-a-uuid` → exit 1 "is not a valid
+  UUID"; `nexo agent attach <fake-uuid>` → exit 1 "no agent
+  handle found". `cargo build --bin nexo` + `cargo build
+  --workspace` both verde post-change. Imports trimmed of
+  unused `AgentRegistryStore` from `run_agent_discover` (only
+  the inherent `list_by_kind` is called, not the trait method).
+  Provider-agnostic by construction — pure SQLite + CLI; cero
+  LLM-provider touchpoints; works under any `Arc<dyn LlmClient>`
+  impl. **Deferred follow-ups**:
+  - **80.16.b** — Live event streaming via NATS subscribe
+    (`agent.registry.snapshot.<goal_id>` + `agent.driver.>`
+    filtered by goal_id payload). Requires `nexo-broker` connect
+    from CLI side; events stream to stdout; Ctrl-C detaches
+    without killing the goal. Phase 67's existing per-goal
+    snapshot subject is the natural feed.
+  - **80.16.c** — User input piping via `agent.inbox.<goal_id>`
+    subject (depends on Phase 80.11 — the inbox subject contract
+    + `ListPeers` / `SendToPeer` LLM tools).
+  - **80.16.d** — Interactive REPL UI / TUI for attach. Plain
+    stdout printing covers the MVP today; richer terminal
+    rendering comes when there's demand.
+  Three-pillar audit: **robusto** — 8 tests covering UUID
+  parse / DB absent / handle absent / Running render / terminal
+  render / discover empty / discover no-match / both --json
+  paths; defensive flag composition; sort newest-first invariant
+  on discover output; **óptimo** — reuses 80.10 store helpers
+  (`list_by_kind` + `get`) and shared CLI utilities
+  (`resolve_agent_db_path` + `short_uuid`); pure RO pool; zero
+  new infrastructure; **transversal** — pure SQLite + CLI; no
+  LLM-specific phrasing; transversal across Anthropic /
+  MiniMax / OpenAI / Gemini / DeepSeek / xAI / Mistral.
+- Phase 80.10 (MVP) — `SessionKind` provenance enum + `nexo agent run`
+  / `nexo agent ps` operator CLI. New `pub enum SessionKind` in
+  `crates/agent-registry/src/types.rs` with 4 variants —
+  `Interactive` (default; user-driven REPL turn or chat-channel
+  inbound), `Bg` (operator-detached goal via `nexo agent run --bg`),
+  `Daemon` (persistent supervised goal — assistant_mode binding's
+  always-on agent loop), `DaemonWorker` (sub-agent spawned BY a
+  Daemon). Helpers: `as_db_str` / `from_db_str` (typed decode error
+  for unknown values so hand-edited DBs surface a clean message),
+  `survives_restart` returns `true` for Bg / Daemon / DaemonWorker
+  (these keep `Running` across daemon restart) and `false` for
+  Interactive (flips to `LostOnRestart`). `AgentHandle` gains
+  `pub kind: SessionKind` field with `#[serde(default)]` so rows
+  persisted before 80.10 deserialise as `Interactive` automatically.
+  Schema migration v5 ships via the existing
+  `add_column_if_missing` helper at `migrate()` —
+  `kind TEXT NOT NULL DEFAULT 'interactive'` is idempotent (the
+  helper swallows "duplicate column" errors so re-opening the DB
+  is safe). New index `idx_agent_registry_kind` for
+  `list_by_kind` queries. UPSERT extended with bind 11
+  (`kind = excluded.kind`); `row_to_handle` reads the column as
+  source-of-truth (column wins over the JSON blob copy — same
+  pattern Phase 79.1 plan_mode uses). New helpers on
+  `SqliteAgentRegistryStore`: `list_by_kind(SessionKind)` for the
+  CLI ps filter, and `reattach_running_kind_aware()` which flips
+  Running → LostOnRestart **only** for `kind = 'interactive'` —
+  Bg / Daemon / DaemonWorker rows keep Running because the
+  operator expects them to survive across daemon restarts.
+  Workspace fixture sweep applied
+  `perl -i -pe 's/^(\s*)plan_mode: None,$/$1plan_mode: None,\n$1kind:
+  nexo_agent_registry::SessionKind::Interactive,/'` to 14+ struct
+  literals across `crates/{agent-registry,core,dispatch-tools}`
+  (registry / dispatch_handlers / dispatch_followup / program_phase
+  / shutdown_drain / admin / agent_control / event_forwarder
+  + 4 test files); manually fixed `plan_mode_persists_across_restart.rs`
+  test helper. CLI surface in `src/main.rs`:
+  `Mode::AgentRun { prompt: String, bg: bool, db: Option<PathBuf>,
+  json: bool }` + `Mode::AgentPs { kind: Option<String>, all: bool,
+  db: Option<PathBuf>, json: bool }` + 2 parser arms (the `agent run`
+  arm uses `[cmd, sub, ..]` slice pattern + filters `--flag` tokens
+  out so operators can pass spaces without quoting:
+  `nexo agent run --bg ship the release`) + 2 dispatch arms +
+  helper `resolve_agent_db_path` mirroring Phase 80.1.d's 3-tier
+  resolution (`--db` explicit > `NEXO_STATE_ROOT` env >
+  `dirs::data_local_dir() / "nexo/state/agent_handles.db"`).
+  **`run_agent_run`** validates prompt non-empty, opens the store
+  RW (creates parent dir + DB on first call), inserts a new
+  `AgentHandle { goal_id: Uuid::new_v4(), phase_id: "cli-bg" |
+  "cli-run", status: Running, snapshot: default(), plan_mode: None,
+  kind: if bg { Bg } else { Interactive } }`, prints the goal_id +
+  detach hint pointing at Phase 80.16 attach. **`run_agent_ps`**
+  opens the store RO (returns friendly "(no agent runs recorded
+  yet — db not found at ...)" message + exit 0 when DB absent —
+  same UX pattern as Phase 80.1.d dream tail), dispatches to
+  `list_by_kind(parsed_kind)` when `--kind=...` is supplied or
+  `list()` otherwise, applies `Running` filter unless `--all`,
+  renders markdown table or JSON. 13 new tests verde:
+  nexo-agent-registry 8 (`session_kind_default_is_interactive` /
+  `session_kind_db_round_trip_all_variants` /
+  `session_kind_from_db_str_rejects_unknown` /
+  `session_kind_survives_restart_only_for_bg_daemon` /
+  `agent_handle_serde_default_kind` field-strip round-trip /
+  `store_insert_with_kind_round_trips` /
+  `list_by_kind_filters_correctly` seeds 3 kinds + asserts filter
+  returns 1 / `reattach_running_kind_aware_keeps_bg` seeds Running
+  Bg + Running Interactive then asserts only Interactive flips to
+  LostOnRestart) + nexo-rs bin 5
+  (`resolve_agent_db_path_override_wins` /
+  `resolve_agent_db_path_uses_env_when_no_override` /
+  `run_agent_run_rejects_empty_prompt` /
+  `run_agent_run_bg_inserts_handle_with_kind_bg` /
+  `run_agent_run_no_bg_inserts_handle_with_kind_interactive` /
+  `run_agent_ps_empty_db_friendly_message` /
+  `run_agent_ps_filters_by_kind` /
+  `run_agent_ps_rejects_invalid_kind`). CLI smoke confirmed
+  manually: bare `nexo agent ps` against missing DB →
+  "(no agent runs recorded yet)" exit 0; `nexo agent run --bg
+  "test goal here"` → goal_id printed + queued status; `nexo agent
+  ps` after → 1 row Running/bg; `nexo agent ps --kind=interactive`
+  → "(no rows match)". Provider-agnostic by construction — pure
+  SQLite + CLI; zero LLM-provider touchpoints; works under any
+  `Arc<dyn LlmClient>` impl. **Deferred follow-ups** (each split
+  out as a named sub-phase for clarity): 80.10.b — `nexo agent
+  attach <goal_id>` TTY re-attach (= Phase 80.16); 80.10.c —
+  daemon supervisor process for `Daemon` / `DaemonWorker` kinds
+  (separate process lifecycle distinct from the interactive
+  daemon); 80.10.d — `nexo agent kill <goal_id>` graceful abort
+  signal; 80.10.e — `nexo agent logs <goal_id>` re-stream goal
+  output without attaching; 80.10.f — Phase 77.17
+  schema-migration system integration (versioned `user_version`
+  bump for the new `kind` column); 80.10.g — daemon-side pickup
+  of queued goals (today the CLI inserts the row but no daemon
+  worker consumes it automatically; rows sit `Running` until
+  manually transitioned via attach + future supervisor or
+  explicit `agent dream kill`-style admin commands). Three-pillar
+  audit: **robusto** — 13+ tests, migration idempotent, default
+  `Interactive` keeps fixtures + Phase 71 backward-compat,
+  reattach kind-aware preserves expected semantics, ps gracefully
+  handles missing DB; **óptimo** — single new column, no separate
+  table, reuses existing list / upsert paths, ps RO pool, spawn
+  zero overhead vs current; **transversal** — provider-agnostic
+  SQLite + CLI, no LLM-specific phrasing, transversal across
+  Anthropic / MiniMax / OpenAI / Gemini / DeepSeek / xAI /
+  Mistral.
 - **M4.a.b — `extract_memories` schema field + `LlmClientAdapter` +
   per-agent boot wire** (FOLLOWUPS A6.M4). The trait + post-turn
   hook shipped in M4.a, but no operator-facing way to enable it

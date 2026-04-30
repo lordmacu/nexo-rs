@@ -36,7 +36,7 @@ pub use server::{
 };
 // Phase 76.1 — HTTP transport top-level re-exports.
 pub use server::http_config::HttpTransportConfig;
-pub use server::http_transport::{start_http_server, HttpServerHandle};
+pub use server::http_transport::{start_http_server, HttpNotifyHandle, HttpServerHandle};
 pub use session::{RuntimeCallError, SessionMcpRuntime};
 pub use types::{
     McpAnnotations, McpCapabilities, McpClientInfo, McpContent, McpPrompt, McpPromptArgument,

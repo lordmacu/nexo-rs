@@ -296,13 +296,41 @@ do not get lost.
   notifications mid-session (no bidir transport channel today).
   5 inline tests cover capability defaults, builder flip,
   swap visibility, clone propagation, proxy filter
-  invariance. **Slice M1.b — trigger ⬜** open: needs a caller
-  that observes `mcp_server.expose_tools` config changes (file
-  watcher / SIGHUP / daemon `ConfigReloadCoordinator` wire when
-  the daemon hosts the bridge in-process, see Phase 79.M.h)
-  and invokes `bridge.swap_allowlist(...)` followed by
-  `http_handle.notify_tools_list_changed()`. Trivial bridge
-  surface ready — caller is the missing piece. **Slice M1.c —
+  invariance. **Slice M1.b — trigger** ✅ shipped 2026-04-30
+  (SIGHUP MVP). `nexo-mcp` exposes new `pub struct
+  HttpNotifyHandle { sessions: Arc<HttpSessionManager> }` (Clone)
+  via `HttpServerHandle::notifier(&self) -> HttpNotifyHandle` so
+  background tasks can call `notify_tools_list_changed()`
+  without owning the `JoinHandle`. `src/main.rs::run_mcp_server`
+  gained `reload_expose_tools(config_dir) -> Result<Option<HashSet>>`
+  (re-reads `mcp_server.expose_tools` via
+  `AppConfig::load_for_mcp_server`; empty list → `Ok(None)`,
+  non-empty → `Ok(Some(set))`, parse error → `Err`) plus a
+  `#[cfg(unix)]` SIGHUP handler tokio task that loops on
+  `tokio::signal::unix::SignalKind::hangup()` + selects against
+  `shutdown.cancelled()` for clean exit. On every SIGHUP: re-read
+  YAML, `bridge.swap_allowlist(new)` (atomic, visible to all
+  bridge clones via M1.a's `Arc<ArcSwap>`), then
+  `notifier.notify_tools_list_changed()` if HTTP transport up.
+  Operator UX: `kill -HUP $(pidof nexo)` after editing
+  `mcp_server.yaml` → connected Claude Desktop / Cursor refresh
+  tool list without reconnect. Atomic swap-then-notify order
+  prevents the race where clients refetch before swap completes.
+  YAML parse failure → log warn, last-known-good allowlist
+  preserved (no broken state). Burst SIGHUPs — multiple swaps +
+  notifications, client-side debounces 200 ms (per leak
+  `useManageMCPConnections.ts:721-723`). Non-Unix path logs
+  warn-once + skip (Windows operators restart for changes).
+  3 inline helper tests
+  (`reload_expose_tools_returns_set_from_yaml`,
+  `reload_expose_tools_returns_none_for_empty_list`,
+  `reload_expose_tools_propagates_yaml_parse_errors`). Tests:
+  `cargo test --bin nexo reload_expose_tools` → 3/3,
+  `cargo build --bin nexo` verde. **Slice M1.b.b ⬜** open:
+  cross-platform file watcher (`notify` crate) +
+  `ConfigReloadCoordinator` integration when the daemon `Mode::Run`
+  also exposes the MCP server in-process (today only standalone
+  `nexo mcp-server` subcommand has the bridge). **Slice M1.c —
   stdio notification pump ⬜** open: would let stdio path also
   flip cap=true; needs an `mpsc::Sender<Value>` injected into
   `run_with_io_auth` so external code can push notification
