@@ -1,12 +1,57 @@
-//! Inventory + reporter for write/reveal env-toggles exposed by the
-//! bundled extensions. Powers `agent doctor capabilities` so an
-//! operator can see at a glance which dangerous capabilities are
-//! currently armed in their shell environment.
+//! Inventory + reporter for write/reveal env-toggles + Cargo
+//! feature gates exposed by the bundled extensions and the core
+//! framework. Powers `agent doctor capabilities` so an operator can
+//! see at a glance which dangerous capabilities are currently armed
+//! in their shell environment (or compiled into the binary).
 //!
 //! The list is hardcoded here on purpose: each entry tracks an env
 //! var that lives in some extension's source code, and the source of
 //! truth is the code itself. A YAML registry would diverge from
 //! reality the moment someone renamed a constant.
+//!
+//! ## Provider-agnostic by design
+//!
+//! `extension: &'static str` accepts any identifier — `"core"`,
+//! `"auth"`, `"plugin-email"`, `"llm-anthropic"`, `"llm-minimax"`,
+//! `"llm-openai"`, `"llm-gemini"`, `"llm-deepseek"`, `"llm-xai"`,
+//! `"llm-mistral"`, etc. There is no assumption of a single LLM
+//! provider; every provider that introduces a dangerous toggle
+//! (insecure-tls, skip-ratelimit, allow-write) gets its own entry.
+//!
+//! Threshold for inclusion: **dangerous = data destruction OR
+//! security bypass OR irreversible side effect**. Things that do
+//! NOT qualify and live in [`drift_tests::NON_DANGEROUS_ENV_ALLOWLIST`]
+//! instead:
+//! - System / path overrides (HOME, PATH, NEXO_HOME, *_DIR).
+//! - LLM provider tuning: API version pins (`ANTHROPIC_VERSION`),
+//!   cache feature betas (`*_CACHE_BETA`), identity / region routing
+//!   (`MINIMAX_GROUP_ID`, hypothetical `OPENAI_ORG_ID`,
+//!   `GEMINI_LOCATION`).
+//! - Credentials (`ANTHROPIC_API_KEY`, `MINIMAX_API_KEY`,
+//!   `OPENAI_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, etc.).
+//!   Resolved through `${ENV_VAR}` substitution in YAML; the secret
+//!   scanner + audit log cover these.
+//!
+//! ## Drift prevention
+//!
+//! [`drift_tests::inventory_covers_known_dangerous_envs`] walks every
+//! `crates/**/*.rs` source file and asserts every `env::var("X")`
+//! literal is either in INVENTORY or in NON_DANGEROUS_ENV_ALLOWLIST.
+//! Adding a new env-driven toggle without classifying it fails the
+//! test with an explicit list of offenders, so the operator-facing
+//! surface stays in sync with reality.
+//!
+//! ## Prior art (validated, not copied)
+//!
+//! - `claude-code-leak/src/utils/envUtils.ts:32-47` — `isEnvTruthy()`
+//!   helpers but no master registry; ~160 scattered `CLAUDE_*` env
+//!   vars without a single source of truth. We do better.
+//! - `claude-code-leak/src/commands/doctor/` — `/doctor` surfaces
+//!   env vars hardcoded in UI, not generated from a registry. We
+//!   generate from INVENTORY.
+//! - `research/src/agents/auth-profiles/doctor.ts:15-42` —
+//!   `formatAuthDoctorHint()` scoped to OAuth migration only; no
+//!   enumeration of dangerous toggles. We fill that gap.
 
 use serde_json::{json, Value};
 
@@ -188,6 +233,61 @@ const INVENTORY: &[CapabilityToggle] = &[
         risk: Risk::High,
         effect: "Skip IMAP TLS certificate verification (dev / fake servers only). In production this opens MITM attack vectors.",
         hint: "export EMAIL_INSECURE_TLS=1",
+    },
+    // C3 — auth-wide bypass of the file-permission gauntlet on the
+    // secrets directory. Provider-agnostic (applies regardless of
+    // which LLM provider's credentials live under `secrets/`).
+    CapabilityToggle {
+        extension: "auth",
+        env_var: "CHAT_AUTH_SKIP_PERM_CHECK",
+        kind: ToggleKind::Boolean,
+        risk: Risk::High,
+        effect: "Skip the file-permission check on the secrets \
+                 directory at boot. Permissive perms (group / world \
+                 readable) on credential files stop being a startup \
+                 error. Dev / CI use only — production runs leak \
+                 secrets to anyone with shell access on the host.",
+        hint: "export CHAT_AUTH_SKIP_PERM_CHECK=1",
+    },
+    // C3 — Anthropic OAuth Bearer CLI version stamp override. Low
+    // risk (auth metadata, no data destruction) but listed for ops
+    // visibility — operators troubleshooting auth want to see if
+    // this is set. Provider-specific (Anthropic only); other LLM
+    // providers get their own entries when they introduce similar
+    // gates.
+    CapabilityToggle {
+        extension: "llm-anthropic",
+        env_var: "NEXO_CLAUDE_CLI_VERSION",
+        kind: ToggleKind::Boolean,
+        risk: Risk::Low,
+        effect: "Override the spoofed `claude-cli` User-Agent / \
+                 version header on Anthropic OAuth Bearer requests \
+                 (default `2.1.75`). Affects acceptance gating for \
+                 Opus / Sonnet 4.x — pin to a specific version when \
+                 Anthropic bumps their accepted set. No effect on \
+                 API-key (non-OAuth) Anthropic paths or on other \
+                 LLM providers (MiniMax / OpenAI / Gemini / DeepSeek \
+                 / xAI / Mistral).",
+        hint: "export NEXO_CLAUDE_CLI_VERSION=2.2.0",
+    },
+    // C3 — Cargo feature gate for the self-config-editing tool.
+    // Critical: the agent can read + propose + apply edits to its
+    // own agents.yaml when this feature is compiled in AND
+    // `agents.<id>.config_tool.self_edit = true` AND
+    // `mcp_server.auth_token_env` is configured (Phase 79.M.c
+    // hardening). Provider-agnostic — gates the same ConfigTool
+    // regardless of which LLM provider drives it.
+    CapabilityToggle {
+        extension: "core",
+        env_var: "cfg(feature = \"config-self-edit\")",
+        kind: ToggleKind::CargoFeature("config-self-edit"),
+        risk: Risk::Critical,
+        effect: "Compiles the `Config` tool so an LLM can read + \
+                 propose + apply edits to its own agents.yaml. Hard \
+                 ship-control: a binary built without this feature \
+                 has zero ability to self-edit YAML even if the \
+                 per-agent YAML knob is set.",
+        hint: "cargo build --features config-self-edit",
     },
 ];
 
