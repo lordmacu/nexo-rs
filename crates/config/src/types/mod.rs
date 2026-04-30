@@ -1,7 +1,9 @@
 pub mod agents;
+pub mod assistant;
 pub mod broker;
 pub mod config_tool;
 pub mod credentials;
+pub mod dream;
 pub mod extensions;
 pub mod llm;
 pub mod lsp;
@@ -25,6 +27,7 @@ pub use agents::*;
 pub use broker::*;
 pub use config_tool::*;
 pub use credentials::*;
+pub use dream::*;
 pub use extensions::*;
 pub use llm::*;
 pub use lsp::*;

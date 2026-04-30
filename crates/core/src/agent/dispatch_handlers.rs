@@ -573,6 +573,7 @@ impl nexo_dispatch_tools::DispatchPhaseChainer for AuditChainer {
                 ..AgentSnapshot::default()
             },
             plan_mode: None,
+            kind: nexo_agent_registry::SessionKind::Interactive,
         };
         // B24 — admit with enqueue=false so audits don't queue
         // behind main dispatch; if the audit_cap check above
@@ -1419,6 +1420,9 @@ mod tests {
             team: nexo_config::types::team::TeamPolicy::default(),
             proactive: Default::default(),
         repl: Default::default(),
+            auto_dream: None,
+            assistant_mode: None,
+            extract_memories: None,
         })
     }
 

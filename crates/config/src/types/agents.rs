@@ -250,6 +250,163 @@ pub struct AgentConfig {
     /// Python/Node/bash subprocesses across turns.
     #[serde(default)]
     pub repl: crate::types::repl::ReplConfig,
+    /// Phase 80.1 — autoDream consolidation config. `None` disables
+    /// the post-turn fork. When `Some(cfg)` AND `cfg.enabled = true`,
+    /// the runner fires from the driver-loop per-turn hook
+    /// (Phase 80.1.b).
+    #[serde(default)]
+    pub auto_dream: Option<crate::types::dream::AutoDreamConfig>,
+
+    /// Phase 80.15 — per-binding assistant-mode toggle. `None` keeps
+    /// the pre-80.15 behaviour (no system-prompt addendum, no
+    /// initial-team spawn). `Some(cfg)` opt-ins to the proactive
+    /// posture when `cfg.enabled = true`. Boot-immutable flag —
+    /// toggling enabled requires a daemon restart; the addendum
+    /// content itself is hot-reloadable through Phase 18.
+    #[serde(default)]
+    pub assistant_mode: Option<crate::types::assistant::AssistantConfig>,
+
+    /// Phase M4.a.b — post-turn LLM memory extraction. `None`
+    /// keeps the legacy behaviour (no extraction). `Some(cfg)`
+    /// with `cfg.enabled = true` opts the agent in; the boot
+    /// loop constructs `ExtractMemories` + `LlmClientAdapter`
+    /// (defined in `nexo-driver-loop`) and wires them into
+    /// `LlmAgentBehavior` via `with_memory_extractor` so every
+    /// regular turn fires post-turn extraction. Boot-immutable
+    /// today — toggling `enabled` requires a daemon restart
+    /// (defer hot-reload to follow-up). Wire-shape struct is
+    /// duplicated here (mirror of the
+    /// `nexo_driver_types::ExtractMemoriesConfig` schema) to
+    /// avoid creating a `nexo-config -> nexo-driver-types`
+    /// edge that would cycle through the existing
+    /// `nexo-driver-types -> nexo-config` dep — same precedent
+    /// as `SecretGuardYamlConfig` in `crates/config/src/types/
+    /// memory.rs`. Conversion happens in `src/main.rs`
+    /// (`build_extract_memories_config_from_yaml`).
+    #[serde(default)]
+    pub extract_memories: Option<ExtractMemoriesYamlConfig>,
+}
+
+/// Phase M4.a.b — wire-shape mirror of
+/// `nexo_driver_types::ExtractMemoriesConfig`. Adding
+/// `nexo-driver-types` to `nexo-config`'s dep tree would create
+/// a cycle (`nexo-driver-types` already depends on
+/// `nexo-config`). Mirror the schema 1:1 here; `src/main.rs`
+/// converts to the canonical type at boot. Same dual-write
+/// contract as `SecretGuardYamlConfig`: when one struct
+/// changes, update the other.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ExtractMemoriesYamlConfig {
+    /// Master switch. Default false — opt-in.
+    pub enabled: bool,
+    /// Run extraction every N eligible turns (1 = every turn).
+    pub turns_throttle: u32,
+    /// Hard cap on LLM turns per extraction.
+    pub max_turns: u32,
+    /// Consecutive failures that trip the circuit breaker
+    /// (0 = disabled).
+    pub max_consecutive_failures: u32,
+}
+
+impl Default for ExtractMemoriesYamlConfig {
+    fn default() -> Self {
+        // Mirrors `nexo_driver_types::ExtractMemoriesConfig::default`.
+        Self {
+            enabled: false,
+            turns_throttle: 1,
+            max_turns: 5,
+            max_consecutive_failures: 3,
+        }
+    }
+}
+
+#[cfg(test)]
+mod auto_dream_yaml_tests {
+    use super::*;
+
+    fn minimal_yaml() -> &'static str {
+        // Most fields default via `#[serde(default)]` — only id +
+        // model are strictly required.
+        r#"id: test_agent
+model:
+  provider: anthropic
+  model: claude-opus-4-7
+"#
+    }
+
+    /// Phase 80.1.b.b — YAML lacking `auto_dream` block must
+    /// deserialize to `auto_dream: None` (`#[serde(default)]`
+    /// backward-compat).
+    #[test]
+    fn agent_config_yaml_without_auto_dream_parses() {
+        let cfg: AgentConfig = serde_yaml::from_str(minimal_yaml()).unwrap();
+        assert!(cfg.auto_dream.is_none());
+    }
+
+    /// Phase 80.1.b.b — YAML with explicit `auto_dream` block
+    /// populates the field correctly. humantime_serde parses the
+    /// `min_hours: 25h` literal.
+    #[test]
+    fn agent_config_yaml_with_auto_dream_parses() {
+        let yaml = format!(
+            "{}auto_dream:\n  enabled: true\n  min_hours: 25h\n  min_sessions: 7\n",
+            minimal_yaml()
+        );
+        let cfg: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let ad = cfg.auto_dream.expect("auto_dream block should populate field");
+        assert!(ad.enabled);
+        assert_eq!(ad.min_hours, std::time::Duration::from_secs(25 * 3600));
+        assert_eq!(ad.min_sessions, 7);
+    }
+
+    /// Phase 80.1.b.b — explicit `enabled: false` is distinguishable
+    /// from absent block (Some(cfg) with cfg.enabled=false vs None).
+    #[test]
+    fn agent_config_yaml_with_auto_dream_disabled_explicit() {
+        let yaml = format!(
+            "{}auto_dream:\n  enabled: false\n",
+            minimal_yaml()
+        );
+        let cfg: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let ad = cfg.auto_dream.expect("auto_dream block present");
+        assert!(!ad.enabled);
+    }
+
+    // ── Phase M4.a.b — extract_memories YAML ──
+
+    #[test]
+    fn agent_config_yaml_without_extract_memories_parses() {
+        let cfg: AgentConfig = serde_yaml::from_str(minimal_yaml()).unwrap();
+        assert!(cfg.extract_memories.is_none());
+    }
+
+    #[test]
+    fn agent_config_yaml_with_extract_memories_parses() {
+        let yaml = format!(
+            "{}extract_memories:\n  enabled: true\n  turns_throttle: 2\n  max_turns: 5\n  max_consecutive_failures: 3\n",
+            minimal_yaml()
+        );
+        let cfg: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let em = cfg
+            .extract_memories
+            .expect("extract_memories block should populate field");
+        assert!(em.enabled);
+        assert_eq!(em.turns_throttle, 2);
+        assert_eq!(em.max_turns, 5);
+        assert_eq!(em.max_consecutive_failures, 3);
+    }
+
+    #[test]
+    fn extract_memories_default_disables() {
+        // Bare `extract_memories: {}` yields enabled=false defaults.
+        let yaml = format!("{}extract_memories: {{}}\n", minimal_yaml());
+        let cfg: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        let em = cfg.extract_memories.expect("block present");
+        assert!(!em.enabled);
+        assert_eq!(em.turns_throttle, 1);
+        assert_eq!(em.max_turns, 5);
+    }
 }
 
 /// Tri-state dispatch capability. The same enum is used for the

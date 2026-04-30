@@ -10,6 +10,167 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **M4.a.b — `extract_memories` schema field + `LlmClientAdapter` +
+  per-agent boot wire** (FOLLOWUPS A6.M4). The trait + post-turn
+  hook shipped in M4.a, but no operator-facing way to enable it
+  existed: `AgentConfig` had no field, no adapter wrapped
+  `Arc<dyn LlmClient>` into the narrow `ExtractMemoriesLlm`
+  surface, and `src/main.rs` did not construct the extractor.
+  Fix introduces all three.
+  - **Schema**: `crates/config/src/types/agents.rs` gains
+    `extract_memories: Option<ExtractMemoriesYamlConfig>` with
+    `#[serde(default)]`. The YAML struct is a 1:1 mirror of
+    `nexo_driver_types::ExtractMemoriesConfig` (4 fields:
+    `enabled`, `turns_throttle`, `max_turns`,
+    `max_consecutive_failures`) — wire-shape duplication is
+    deliberate to avoid creating a `nexo-config ->
+    nexo-driver-types` edge that would cycle through the existing
+    `nexo-driver-types -> nexo-config` dep. Same precedent as
+    `SecretGuardYamlConfig` shipped in slice C5. Conversion
+    happens at boot in `src/main.rs`.
+  - **Adapter**: `crates/driver-loop/src/extract_memories.rs`
+    gains `pub struct LlmClientAdapter { llm: Arc<dyn LlmClient>,
+    model: String }` with `impl ExtractMemoriesLlm`. The adapter
+    packages `(system_prompt, user_messages, max_tokens)` into
+    `ChatRequest::new(model, [ChatMessage::user(...)])` with
+    `system_prompt` + `max_tokens` set, calls
+    `self.llm.chat(req).await`, pattern-matches
+    `ResponseContent::Text(s) => Ok(s)` and
+    `ResponseContent::ToolCalls(_) => Err(...)`. Provider-agnostic
+    — no Anthropic / MiniMax / OpenAI / Gemini / DeepSeek / xAI /
+    Mistral specifics; switching the underlying `LlmClient`
+    swaps the provider transparently.
+  - **Helper**: `src/main.rs::resolve_extract_memory_dir`
+    resolves the per-agent memory destination —
+    `<workspace>/memory/` when `agent_cfg.workspace` is non-empty,
+    else `<state_root>/<agent_id>/memory/` so multi-agent
+    deployments stay isolated.
+  - **Boot wire**: agent-loop in `src/main.rs` gains a block just
+    after `let llm = llm_registry.build(...)` that converts
+    `ExtractMemoriesYamlConfig` to the canonical
+    `ExtractMemoriesConfig`, constructs `LlmClientAdapter` +
+    `Arc<ExtractMemories>` when enabled, and stores
+    `Option<Arc<dyn MemoryExtractor>>` in scope. After the
+    `let mut behavior = LlmAgentBehavior::new(...)` line, a
+    follow-up block calls `resolve_extract_memory_dir` +
+    `std::fs::create_dir_all` (warn-and-continue on failure) and
+    invokes `behavior.with_memory_extractor(...)`. Total wire
+    additions: ~50 LOC + the helper.
+  - **Sweep**: 50-fixture sweep added `extract_memories: None,`
+    after every `assistant_mode: None,` in every existing
+    `AgentConfig { ... }` literal — same mechanical perl pattern
+    used for the Phase 80.15 `assistant_mode` sweep.
+  - **Tests**: 2 new in `nexo-driver-loop`
+    (`llm_client_adapter_chat_round_trips` verifies the
+    `ChatRequest` shape and `Text` extraction;
+    `llm_client_adapter_errors_on_tool_call_response` verifies
+    the `ToolCalls` error path), 3 new in `nexo-config`
+    (`agent_config_yaml_without_extract_memories_parses`,
+    `agent_config_yaml_with_extract_memories_parses`,
+    `extract_memories_default_disables`).
+  - **Marketing plugin path now ready**: opt-in via
+    `extract_memories: { enabled: true }` in `agents.yaml`. The
+    agent processes inbound emails → reply → post-turn extract
+    fires → memory persists in `<workspace>/memory/<auto>.md`.
+    Re-engagement queries find the memory via the existing
+    `who_am_i` / `what_do_i_know` skills. Lead memory survives
+    daemon restart via the on-disk markdown files.
+  - **IRROMPIBLE refs**: claude-code-leak
+    `services/extractMemories/extractMemories.ts` (the leak's
+    extractor calls the model directly inside `runExtraction`;
+    splitting via `LlmClientAdapter` keeps the trait surface
+    narrow). `research/` no relevant prior art (channel-side
+    scope, no extract-memories concept).
+  - **Open follow-ups**: M4.b (autoCompact in regular
+    AgentRuntime), M4.c (per-session turn counter to replace
+    the `turn_index = 0` sentinel), per-binding override (defer
+    until binding-level extract policy is requested).
+  - Tests: `cargo test -p nexo-config --lib` → 163/163,
+    `cargo test -p nexo-driver-loop --lib llm_client_adapter`
+    → 2/2, `cargo test -p nexo-core --lib` → 687/687 (sweep
+    clean), `cargo build --bin nexo` verde.
+- Phase 80.15 (MVP) — per-binding `assistant_mode` toggle: behavioural
+  flag that flips proactive-agent posture for an agent's binding via
+  YAML opt-in. New crate `nexo-assistant` (`crates/assistant/`,
+  ~150 LOC + 6 unit tests) exposes `AssistantConfig` (re-exported
+  from `nexo-config`) + `ResolvedAssistant::resolve(Option<&cfg>)` +
+  `DEFAULT_ADDENDUM` const. The default addendum is plain English
+  "you are running in assistant mode; default posture is proactive;
+  use cron + channels + teammates; surface only what the user needs;
+  stay quiet otherwise" — provider-agnostic, no LLM-specific
+  phrasing. `crates/config/src/types/assistant.rs` (~140 LOC + 7
+  unit tests) ships the YAML schema with three fields:
+  `enabled: bool` (default false), `system_prompt_addendum:
+  Option<String>` (None → use bundled default; empty string is
+  rejected by `validate()`), `initial_team: Vec<String>` (validated
+  for shape — alphanumeric + `-` + `_` only; actual spawn lands in
+  80.15.b follow-up). `AgentConfig.assistant_mode: Option<AssistantConfig>`
+  field added with `#[serde(default)]` so existing YAMLs without the
+  block keep parsing. Workspace fixture sweep applied
+  `perl -i -pe 's/^(\s*)auto_dream: None,$/$1auto_dream: None,\n$1assistant_mode: None,/'`
+  to 49 struct literals across `crates/{core,fork,dream}` +
+  `src/main.rs` + `crates/core/tests/` (single file `agents.rs`
+  itself remained — that's the field declaration, not a struct
+  literal). `AgentContext` gains
+  `assistant: nexo_assistant::ResolvedAssistant` field; the
+  `::new` constructor body initialises it to `disabled()` so all
+  callers (`AgentContext::new` is invoked at 4 sites in
+  `src/main.rs`) keep working without per-call changes. Toggling
+  the flag at runtime requires a daemon restart (the boolean is
+  boot-immutable to avoid mid-turn races); the addendum text
+  itself is hot-reloadable through the existing Phase 18 path.
+  `Arc<String>` for the addendum + `Arc<Vec<String>>` for the
+  initial-team list mean cloning the resolved view into per-turn
+  contexts is cheap. **System-prompt injection** wired in
+  `crates/core/src/agent/llm_behavior.rs` adjacent to the existing
+  proactive + coordinator hints (`channel_meta_parts.push(...)`
+  pattern): when `ctx.assistant.should_append_addendum()` returns
+  true (boot-immutable enabled flag ∧ non-empty addendum), the
+  addendum text gets pushed into `channel_meta_parts` with stable
+  cross-turn ordering so the LLM provider's prompt cache stays
+  warm. Phase 16 binding policy already accepts arbitrary
+  per-binding YAML so no schema-migration was needed.
+  `nexo-core/Cargo.toml` gained `nexo-assistant` as a dep.
+  Workspace `Cargo.toml::members` includes the new crate.
+  Tests verde: nexo-assistant 6 (disabled-when-none /
+  disabled-when-enabled-false / uses-default-when-no-override /
+  honors-override / initial-team-passes-through / default-is-disabled),
+  nexo-config types::assistant 7 (default / reject empty addendum /
+  reject whitespace-only / reject bad team name / accept good
+  names / yaml round-trip disabled / yaml round-trip full),
+  workspace `cargo build --workspace` + `cargo build --workspace
+  --tests` both verde. **Deferred follow-ups** (split out as named
+  sub-phases for clarity):
+  - **80.15.b** — `initial_team` auto-spawn at boot (needs Phase
+    8 agent-to-agent + 80.10 BG sessions).
+  - **80.15.c** — auto-flip `cron.enabled: true` default for
+    assistant bindings (needs 80.6 killswitch).
+  - **80.15.d** — auto-flip `brief: true` default (needs 80.8
+    SendUserMessage tool).
+  - **80.15.e** — activation-path telemetry / provenance field.
+  - **80.15.f** — `nexo setup doctor` per-binding `assistant_mode`
+    reporter row (polish).
+  - **80.15.g** — `src/main.rs` boot wiring populating
+    `ctx.assistant = ResolvedAssistant::resolve(cfg.assistant_mode.as_ref())`
+    on every per-binding `AgentContext` build site (1-line
+    snippet in 4 places; deferred until pre-existing dirty state
+    resolves per the 80.1.b.b.b / 80.1.c / 80.1.d / 80.1.e /
+    80.1.g pattern). Until 80.15.g lands, the boolean stays
+    `false` for every binding at runtime — the system-prompt
+    addendum stays invisible regardless of YAML. Operator can
+    test by mutating `ctx.assistant` in their main.rs hookup.
+
+  Three-pillar audit: **robusto** — default-disabled, `validate()`
+  rejects malformed input, boot-immutable flag avoids mid-turn
+  race, `Arc<String>` shared addendum (no per-turn alloc), 13+
+  tests cover all gates including yaml round-trip; **óptimo** —
+  addendum resolved once at boot, single-byte bool in
+  `AgentContext`, no per-turn cost when disabled, Arc-shared
+  references; **transversal** — provider-agnostic default text,
+  bool readable by any consumer (driver-loop, cron, brief, dream
+  context, remote-control auto-tier in 80.17), addendum is plain
+  English nudge with no Anthropic / OpenAI / Gemini / MiniMax /
+  DeepSeek / xAI / Mistral specific phrasing.
 - **M4.a — `MemoryExtractor` trait + `LlmAgentBehavior` post-turn
   wire** (FOLLOWUPS A6.M4). Phase 77.5 shipped `ExtractMemories`
   (`crates/driver-loop/src/extract_memories.rs`, ~600 LOC + 21

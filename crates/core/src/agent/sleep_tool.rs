@@ -190,6 +190,9 @@ mod tests {
             team: nexo_config::types::team::TeamPolicy::default(),
             proactive: Default::default(),
         repl: Default::default(),
+            auto_dream: None,
+            assistant_mode: None,
+            extract_memories: None,
         });
         let broker = AnyBroker::local();
         let sessions = Arc::new(SessionManager::new(Duration::from_secs(30), 4));

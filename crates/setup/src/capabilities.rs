@@ -289,6 +289,30 @@ const INVENTORY: &[CapabilityToggle] = &[
                  per-agent YAML knob is set.",
         hint: "cargo build --features config-self-edit",
     },
+    // Phase 80.1.c.b — dream_now LLM tool host-level gate. Per-binding
+    // granularity stays in Phase 16 binding policy (`allowed_tools`).
+    // Provider-agnostic: gates registration before LLM dispatch, so the
+    // env-var read short-circuits regardless of which provider drives
+    // the tool (Anthropic / MiniMax / OpenAI / Gemini / DeepSeek / xAI
+    // / Mistral). Mirror leak `claude-code-leak/src/services/autoDream/
+    // autoDream.ts:95-107` `isGateOpen` composed-flag pattern (we
+    // collapse it to a single env var because the per-binding allow/deny
+    // already lives in Phase 16).
+    CapabilityToggle {
+        extension: "dream",
+        env_var: "NEXO_DREAM_NOW_ENABLED",
+        kind: ToggleKind::Boolean,
+        risk: Risk::Medium,
+        effect: "Allow the LLM to force a memory-consolidation pass \
+                 via the `dream_now` tool. Bypasses time / session / \
+                 kairos / remote gates but honors \
+                 `<memory_dir>/.consolidate-lock` (one fork at a time). \
+                 Each call spawns a forked subagent (up to 30 turns) \
+                 with FileEdit / FileWrite scoped to <memory_dir> and \
+                 Bash limited to read-only commands. Cost: thousands \
+                 of tokens per fire.",
+        hint: "export NEXO_DREAM_NOW_ENABLED=true",
+    },
 ];
 
 pub fn inventory() -> &'static [CapabilityToggle] {
@@ -688,13 +712,22 @@ mod tests {
     fn inventory_has_expected_entries() {
         let inv = inventory();
         assert!(
-            inv.len() >= 7,
+            inv.len() >= 14,
             "inventory should not shrink unintentionally"
         );
         let env_vars: Vec<&str> = inv.iter().map(|t| t.env_var).collect();
         assert!(env_vars.contains(&"OP_ALLOW_REVEAL"));
         assert!(env_vars.contains(&"OP_INJECT_COMMAND_ALLOWLIST"));
         assert!(env_vars.contains(&"CLOUDFLARE_ALLOW_WRITES"));
+        // Phase 80.1.c.b — dream_now host-level gate.
+        assert!(env_vars.contains(&"NEXO_DREAM_NOW_ENABLED"));
+        let dream_entry = inv
+            .iter()
+            .find(|t| t.env_var == "NEXO_DREAM_NOW_ENABLED")
+            .expect("dream_now entry present");
+        assert_eq!(dream_entry.extension, "dream");
+        assert_eq!(dream_entry.risk, Risk::Medium);
+        assert!(matches!(dream_entry.kind, ToggleKind::Boolean));
     }
 
     #[test]

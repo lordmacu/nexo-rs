@@ -177,6 +177,9 @@ mod tests {
             team: nexo_config::types::team::TeamPolicy::default(),
             proactive: Default::default(),
         repl: Default::default(),
+            auto_dream: None,
+            assistant_mode: None,
+            extract_memories: None,
         };
         AgentContext::new(
             "test-agent",

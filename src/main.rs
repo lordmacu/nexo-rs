@@ -74,6 +74,26 @@ enum Mode {
     McpServer(McpServerSubcommand),
     /// Phase 80.1.d — `nexo agent dream {tail|status|kill}`.
     AgentDream(AgentDreamSubcommand),
+    /// Phase 80.10 — `nexo agent run [--bg] <prompt>`. Spawn a goal
+    /// against the local agent registry. With `--bg`, the row is
+    /// inserted with `kind = Bg` and the command returns the goal_id
+    /// immediately so the operator can detach. Without `--bg`, the
+    /// row is `kind = Interactive` (default).
+    AgentRun {
+        prompt: String,
+        bg: bool,
+        db: Option<PathBuf>,
+        json: bool,
+    },
+    /// Phase 80.10 — `nexo agent ps [--all] [--kind=...] [--json]`.
+    /// Read the local `agent_handles` SQLite store and render running
+    /// goals. RO pool — works without a daemon up.
+    AgentPs {
+        kind: Option<String>,
+        all: bool,
+        db: Option<PathBuf>,
+        json: bool,
+    },
     FlowList {
         json: bool,
     },
@@ -754,6 +774,22 @@ async fn main() -> Result<()> {
                 .await;
             }
         },
+        Mode::AgentRun {
+            prompt,
+            bg,
+            db,
+            json,
+        } => {
+            return run_agent_run(prompt, bg, db.as_deref(), json).await;
+        }
+        Mode::AgentPs {
+            kind,
+            all,
+            db,
+            json,
+        } => {
+            return run_agent_ps(kind.as_deref(), all, db.as_deref(), json).await;
+        }
         Mode::FlowHelp => return run_flow_help(),
         Mode::FlowList { json } => return run_flow_list(json).await,
         Mode::FlowShow { id, json } => return run_flow_show(&id, json).await,
@@ -2310,6 +2346,49 @@ async fn main() -> Result<()> {
             .build(&cfg.llm, &agent_cfg.model)
             .with_context(|| format!("failed to build LLM client for agent {agent_id}"))?;
 
+        // Phase M4.a.b — construct per-agent ExtractMemories when
+        // the YAML opted in. Wire-shape `ExtractMemoriesYamlConfig`
+        // mirrors `nexo_driver_types::ExtractMemoriesConfig` 1:1; we
+        // convert here. The same `Arc<ExtractMemories>` will be
+        // shared with the driver-loop orchestrator if a future
+        // Phase 67 self-driving wire is added — single instance per
+        // agent keeps cadence + circuit breaker + in-progress mutex
+        // coherent.
+        let memory_extractor: Option<Arc<dyn nexo_driver_types::MemoryExtractor>> = match agent_cfg
+            .extract_memories
+            .as_ref()
+            .filter(|c| c.enabled)
+        {
+            Some(yaml_cfg) => {
+                let cfg_concrete = nexo_driver_types::ExtractMemoriesConfig {
+                    enabled: yaml_cfg.enabled,
+                    turns_throttle: yaml_cfg.turns_throttle,
+                    max_turns: yaml_cfg.max_turns,
+                    max_consecutive_failures: yaml_cfg.max_consecutive_failures,
+                };
+                let adapter = Arc::new(
+                    nexo_driver_loop::extract_memories::LlmClientAdapter::new(
+                        Arc::clone(&llm),
+                        agent_cfg.model.model.clone(),
+                    ),
+                );
+                let extract = Arc::new(
+                    nexo_driver_loop::extract_memories::ExtractMemories::new(
+                        cfg_concrete,
+                        adapter,
+                    ),
+                );
+                tracing::info!(
+                    agent = %agent_id,
+                    throttle = yaml_cfg.turns_throttle,
+                    max_turns = yaml_cfg.max_turns,
+                    "[memory] extract_memories enabled"
+                );
+                Some(extract as Arc<dyn nexo_driver_types::MemoryExtractor>)
+            }
+            _ => None,
+        };
+
         // Validate heartbeat interval eagerly even though the runtime is
         // pending Phase 7 — better to fail at startup than silently ignore.
         if agent_cfg.heartbeat.enabled {
@@ -3346,6 +3425,28 @@ async fn main() -> Result<()> {
         let mut behavior = LlmAgentBehavior::new(llm, Arc::clone(&tools))
             .with_hooks(Arc::clone(&hooks))
             .with_tool_policy(tool_policy_registry.for_agent(&agent_id));
+
+        // Phase M4.a.b — wire post-turn memory extraction. Constructed
+        // earlier in the loop from the optional `extract_memories` YAML
+        // block. `tick()` runs every regular turn; `extract(...)` only
+        // fires when the gate cadence passes AND `reply_text` is
+        // present. Memory dir is per-agent — workspace-derived when set,
+        // else `<state_root>/<agent_id>/memory/`. Boot best-effort
+        // creates the dir; runtime extract failures absorb via the
+        // built-in circuit breaker.
+        if let Some(extract) = memory_extractor.as_ref() {
+            let dir = resolve_extract_memory_dir(&agent_cfg);
+            if let Err(e) = std::fs::create_dir_all(&dir) {
+                tracing::warn!(
+                    agent = %agent_id,
+                    dir = %dir.display(),
+                    error = %e,
+                    "[memory] failed to create memory_dir; extract may fail at write"
+                );
+            }
+            behavior = behavior.with_memory_extractor(Arc::clone(extract), dir);
+        }
+
         if let Some(rl_cfg) = agent_cfg.tool_rate_limits.clone() {
             let rl_core = nexo_core::agent::ToolRateLimitsConfig {
                 patterns: rl_cfg
@@ -5909,6 +6010,35 @@ fn parse_args() -> CliArgs {
                 memory_dir: parse_kv_flag(&positional, "--memory-dir").map(PathBuf::from),
                 db: parse_kv_flag(&positional, "--db").map(PathBuf::from),
             })
+        }
+        // Phase 80.10 — `nexo agent ps [--kind=...] [--all] [--json]`.
+        [cmd, sub] if cmd == "agent" && sub == "ps" => Mode::AgentPs {
+            kind: parse_kv_flag(&positional, "--kind"),
+            all: positional.iter().any(|a| a == "--all"),
+            db: parse_kv_flag(&positional, "--db").map(PathBuf::from),
+            json: has_json_flag,
+        },
+        // Phase 80.10 — `nexo agent run [--bg] <prompt...>`. Concatenates
+        // remaining positional words (filtered of `--flag` tokens) into
+        // the prompt so operators can pass spaces without quoting:
+        //   `nexo agent run --bg ship the release`
+        [cmd, sub, ..] if cmd == "agent" && sub == "run" => {
+            let bg = positional
+                .iter()
+                .any(|a| a == "--bg" || a == "--background");
+            let words: Vec<String> = positional
+                .iter()
+                .skip(2) // skip "agent" + "run"
+                .filter(|a| !a.starts_with("--"))
+                .cloned()
+                .collect();
+            let prompt = words.join(" ");
+            Mode::AgentRun {
+                prompt,
+                bg,
+                db: parse_kv_flag(&positional, "--db").map(PathBuf::from),
+                json: has_json_flag,
+            }
         }
         [cmd] if cmd == "flow" => Mode::FlowHelp,
         [cmd, sub] if cmd == "flow" && sub == "list" => Mode::FlowList {
@@ -10037,6 +10167,21 @@ async fn run_mcp_tail_audit(db_path: &str) -> Result<()> {
 /// (state_root flows into `BootDeps` directly per Phase 80.1.b.b.b), so
 /// the CLI uses the env-or-default fallback to stay aligned with the
 /// daemon's discovery path once main.rs hookup ships.
+/// Phase M4.a.b — resolve the per-agent destination for extracted
+/// memories. Prefers the agent's explicit workspace when set
+/// (`<workspace>/memory/`); falls back to
+/// `<state_root>/<agent_id>/memory/` so multi-agent deployments
+/// stay isolated. Caller is responsible for `create_dir_all`.
+fn resolve_extract_memory_dir(agent_cfg: &nexo_config::AgentConfig) -> std::path::PathBuf {
+    if !agent_cfg.workspace.trim().is_empty() {
+        std::path::PathBuf::from(&agent_cfg.workspace).join("memory")
+    } else {
+        nexo_project_tracker::state::nexo_state_dir()
+            .join(&agent_cfg.id)
+            .join("memory")
+    }
+}
+
 fn resolve_dream_db_path(override_path: Option<&std::path::Path>) -> Result<PathBuf> {
     if let Some(p) = override_path {
         return Ok(p.to_path_buf());
@@ -12156,6 +12301,8 @@ mcp_server:
             proactive: Default::default(),
             repl: Default::default(),
             auto_dream: None,
+            assistant_mode: None,
+            extract_memories: None,
         };
         let ctx = nexo_core::agent::AgentContext::new(
             marker,
@@ -12237,5 +12384,169 @@ mcp_server:
         // SetError isn't available; just assert the result is Ok.
         assert!(cell.set(Arc::clone(&executor)).is_ok());
         assert!(cell.get().is_some(), "cell must hold the executor after set");
+    }
+
+    // ── Phase 80.1.d — `nexo agent dream` CLI tests ──
+
+    use super::{
+        resolve_dream_db_path, run_agent_dream_kill, run_agent_dream_status,
+        run_agent_dream_tail, short_uuid,
+    };
+    use chrono::Utc;
+    use nexo_agent_registry::{
+        DreamPhase, DreamRunRow, DreamRunStatus, DreamRunStore, SqliteDreamRunStore,
+    };
+    use nexo_driver_types::GoalId;
+    use std::path::PathBuf;
+    use std::sync::Mutex;
+    use uuid::Uuid;
+
+    /// Env var lock — `resolve_dream_db_path` reads `NEXO_STATE_ROOT`.
+    static DREAM_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn mk_row(status: DreamRunStatus, phase: DreamPhase) -> DreamRunRow {
+        DreamRunRow {
+            id: Uuid::new_v4(),
+            goal_id: GoalId(Uuid::new_v4()),
+            status,
+            phase,
+            sessions_reviewing: 5,
+            prior_mtime_ms: Some(1_700_000_000_000),
+            files_touched: vec![PathBuf::from("/tmp/foo.md")],
+            turns: vec![],
+            started_at: Utc::now(),
+            ended_at: None,
+            fork_label: "auto_dream".to_string(),
+            fork_run_id: None,
+        }
+    }
+
+    async fn mk_db_with_rows(rows: &[DreamRunRow]) -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("dream_runs.db");
+        let store = SqliteDreamRunStore::open(db_path.to_str().unwrap())
+            .await
+            .unwrap();
+        for r in rows {
+            store.insert(r).await.unwrap();
+        }
+        (tmp, db_path)
+    }
+
+    #[test]
+    fn resolve_dream_db_path_override_wins() {
+        let _g = DREAM_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("NEXO_STATE_ROOT", "/should-not-win");
+        let custom = PathBuf::from("/custom/db.sqlite");
+        let resolved = resolve_dream_db_path(Some(&custom)).unwrap();
+        assert_eq!(resolved, custom);
+        std::env::remove_var("NEXO_STATE_ROOT");
+    }
+
+    #[test]
+    fn resolve_dream_db_path_uses_env_when_no_override() {
+        let _g = DREAM_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("NEXO_STATE_ROOT", "/state");
+        let resolved = resolve_dream_db_path(None).unwrap();
+        assert_eq!(resolved, PathBuf::from("/state/dream_runs.db"));
+        std::env::remove_var("NEXO_STATE_ROOT");
+    }
+
+    #[test]
+    fn short_uuid_takes_first_eight_chars() {
+        let u = Uuid::parse_str("7a3b2f00-deaf-cafe-beef-001122334455").unwrap();
+        assert_eq!(short_uuid(&u), "7a3b2f00");
+    }
+
+    #[tokio::test]
+    async fn run_agent_dream_tail_empty_db_exits_zero() {
+        let _g = DREAM_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let missing_db = tmp.path().join("dream_runs.db");
+        // DB doesn't exist on disk yet — fn must return Ok without erroring.
+        run_agent_dream_tail(None, 20, Some(&missing_db), false)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_agent_dream_tail_with_rows_renders() {
+        let _g = DREAM_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let row = mk_row(DreamRunStatus::Completed, DreamPhase::Updating);
+        let (_tmp, db_path) = mk_db_with_rows(&[row.clone()]).await;
+        run_agent_dream_tail(None, 10, Some(&db_path), false)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_agent_dream_tail_json_output() {
+        let _g = DREAM_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let row = mk_row(DreamRunStatus::Running, DreamPhase::Starting);
+        let (_tmp, db_path) = mk_db_with_rows(&[row.clone()]).await;
+        run_agent_dream_tail(None, 10, Some(&db_path), true)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_agent_dream_status_not_found_errors() {
+        let _g = DREAM_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let row = mk_row(DreamRunStatus::Completed, DreamPhase::Updating);
+        let (_tmp, db_path) = mk_db_with_rows(&[row]).await;
+        let bogus = Uuid::new_v4().to_string();
+        let err = run_agent_dream_status(&bogus, Some(&db_path), false)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn run_agent_dream_status_returns_row() {
+        let _g = DREAM_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let row = mk_row(DreamRunStatus::Completed, DreamPhase::Updating);
+        let id = row.id.to_string();
+        let (_tmp, db_path) = mk_db_with_rows(&[row]).await;
+        run_agent_dream_status(&id, Some(&db_path), false)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_agent_dream_status_invalid_uuid_errors() {
+        let err = run_agent_dream_status("not-a-uuid", None, false)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("not a valid UUID"));
+    }
+
+    #[tokio::test]
+    async fn run_agent_dream_kill_already_terminal_is_noop() {
+        let _g = DREAM_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let row = mk_row(DreamRunStatus::Completed, DreamPhase::Updating);
+        let id = row.id.to_string();
+        let (_tmp, db_path) = mk_db_with_rows(&[row]).await;
+        // No `--force` needed because already terminal — must be Ok.
+        run_agent_dream_kill(&id, false, None, Some(&db_path))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_agent_dream_kill_running_with_force_flips_status() {
+        let _g = DREAM_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let row = mk_row(DreamRunStatus::Running, DreamPhase::Starting);
+        let id = row.id;
+        let (_tmp, db_path) = mk_db_with_rows(&[row]).await;
+        run_agent_dream_kill(&id.to_string(), true, None, Some(&db_path))
+            .await
+            .unwrap();
+        // Verify the row was actually flipped.
+        let store = SqliteDreamRunStore::open(db_path.to_str().unwrap())
+            .await
+            .unwrap();
+        let after = store.get(id).await.unwrap().unwrap();
+        assert_eq!(after.status, DreamRunStatus::Killed);
+        assert!(after.ended_at.is_some());
     }
 }

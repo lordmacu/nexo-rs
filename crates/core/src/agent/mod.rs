@@ -142,4 +142,4 @@ pub use web_search_tool::WebSearchTool;
 pub use workspace::{
     AgentIdentity, DailyNote, LoadLimits, SessionScope, WorkspaceBundle, WorkspaceLoader,
 };
-pub use workspace_git::{CommitSummary, MemoryGitRepo};
+pub use workspace_git::{CommitSummary, MemoryGitCheckpointer, MemoryGitRepo};

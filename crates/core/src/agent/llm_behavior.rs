@@ -912,6 +912,14 @@ impl LlmAgentBehavior {
         {
             channel_meta_parts.push(hint.to_string());
         }
+        // Phase 80.15 — assistant-mode addendum. Append the resolved
+        // text (operator override or bundled default) when the
+        // boot-immutable flag is on. Same prompt-cache rules as the
+        // proactive/coordinator hints — the addendum is stable across
+        // turns so the cache stays warm.
+        if ctx.assistant.should_append_addendum() {
+            channel_meta_parts.push((*ctx.assistant.addendum).clone());
+        }
         let prompt_inputs = super::prompt_assembly::PromptInputs {
             workspace: workspace_section,
             skills: skills_section,

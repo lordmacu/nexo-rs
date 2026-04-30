@@ -441,6 +441,7 @@ mod tests {
                 ..AgentSnapshot::default()
             },
             plan_mode: None,
+            kind: nexo_agent_registry::SessionKind::Interactive,
         };
         reg.admit(h, true).await.unwrap();
         reg.set_max_turns(id, max_turns);

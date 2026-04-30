@@ -30,6 +30,7 @@ fn handle(
         finished_at,
         snapshot: AgentSnapshot::default(),
         plan_mode: None,
+        kind: nexo_agent_registry::SessionKind::Interactive,
     }
 }
 

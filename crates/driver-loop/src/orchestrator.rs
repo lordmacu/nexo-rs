@@ -10,9 +10,10 @@ use nexo_config::types::llm::AutoCompactionConfig;
 use nexo_driver_claude::SessionBindingStore;
 use nexo_driver_permission::PermissionDecider;
 use nexo_driver_types::{
-    AcceptanceVerdict, AttemptOutcome, AttemptParams, AutoCompactBreaker, BudgetGuards, BudgetUsage,
-    CancellationToken, CompactContext, CompactPolicy, CompactSummary, CompactSummaryStore,
-    DefaultCompactPolicy, Goal, GoalId,
+    AcceptanceVerdict, AttemptOutcome, AttemptParams, AutoCompactBreaker, AutoDreamHook,
+    AutoDreamOutcomeKind, BudgetGuards, BudgetUsage, CancellationToken, CompactContext,
+    CompactPolicy, CompactSummary, CompactSummaryStore, DefaultCompactPolicy, DreamContextLite,
+    Goal, GoalId,
 };
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken as TokioCancel;
@@ -93,6 +94,9 @@ pub struct DriverOrchestrator {
     extract_memories: Option<Arc<ExtractMemories>>,
     /// Phase 77.5 — root directory for persistent memory files.
     memory_dir: Option<PathBuf>,
+    /// Phase 80.1.b — post-turn autoDream consolidation hook.
+    /// `None` disables; runner is owned by `nexo-dream` impl.
+    auto_dream: Option<Arc<dyn AutoDreamHook>>,
     bin_path: PathBuf,
     socket_path: PathBuf,
     /// Owns the spawned socket server; cancelling kills it.
@@ -116,6 +120,8 @@ pub struct DriverOrchestratorBuilder {
     compact_store: Option<Arc<dyn CompactSummaryStore>>,
     extract_memories: Option<Arc<ExtractMemories>>,
     memory_dir: Option<PathBuf>,
+    /// Phase 80.1.b — post-turn autoDream hook.
+    auto_dream: Option<Arc<dyn AutoDreamHook>>,
     progress_every_turns: u32,
     bin_path: Option<PathBuf>,
     socket_path: Option<PathBuf>,
@@ -187,6 +193,12 @@ impl DriverOrchestratorBuilder {
         self.memory_dir = Some(p.into());
         self
     }
+    /// Phase 80.1.b — wire the autoDream post-turn hook. `None`
+    /// disables. Mirror Phase 77.5 `extract_memories` builder.
+    pub fn auto_dream(mut self, hook: Arc<dyn AutoDreamHook>) -> Self {
+        self.auto_dream = Some(hook);
+        self
+    }
     pub fn progress_every_turns(mut self, n: u32) -> Self {
         self.progress_every_turns = n;
         self
@@ -249,6 +261,7 @@ impl DriverOrchestratorBuilder {
             compact_store,
             extract_memories: self.extract_memories,
             memory_dir: self.memory_dir,
+            auto_dream: self.auto_dream,
             progress_every_turns,
             pause_signals: Arc::new(DashMap::new()),
             cancel_tokens: Arc::new(DashMap::new()),
@@ -710,6 +723,36 @@ impl DriverOrchestrator {
                             .await;
                     }
                 }
+            }
+
+            // Phase 80.1.b — post-turn autoDream consolidation. Mirrors
+            // leak's stopHooks invocation (`autoDream.ts:316-324`).
+            // Per-turn cost when enabled: one stat (lock mtime) — gates
+            // fail cheap when cadence not yet due. Errors absorbed via
+            // `let _ = ...` so a runner failure NEVER breaks the
+            // driver-loop turn.
+            if let Some(ref ad) = self.auto_dream {
+                let transcript_dir = self
+                    .workspace_manager
+                    .root()
+                    .join(".transcripts")
+                    .join(goal_id.0.to_string());
+                let dream_ctx = DreamContextLite {
+                    goal_id,
+                    session_id: goal_id.0.to_string(),
+                    transcript_dir,
+                    kairos_active: false, // Phase 80.15 future
+                    remote_mode: false,
+                };
+                let outcome_kind: AutoDreamOutcomeKind =
+                    ad.check_and_run(&dream_ctx).await;
+                let _ = self
+                    .event_sink
+                    .publish(DriverEvent::AutoDreamOutcome {
+                        goal_id,
+                        outcome_kind,
+                    })
+                    .await;
             }
 
             // Phase 67.9 + 77.2 — opportunistic /compact: if pressure

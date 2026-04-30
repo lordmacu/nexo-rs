@@ -64,6 +64,9 @@ async fn memory_recall_records_events_for_every_hit() -> anyhow::Result<()> {
         team: nexo_config::types::team::TeamPolicy::default(),
         proactive: Default::default(),
         repl: Default::default(),
+        auto_dream: None,
+        assistant_mode: None,
+        extract_memories: None,
     });
     let broker = AnyBroker::local();
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));

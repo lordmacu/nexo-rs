@@ -36,6 +36,7 @@ fn handle_with(
             ..AgentSnapshot::default()
         },
         plan_mode: None,
+        kind: nexo_agent_registry::SessionKind::Interactive,
     }
 }
 

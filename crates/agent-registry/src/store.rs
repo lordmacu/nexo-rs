@@ -183,6 +183,18 @@ impl SqliteAgentRegistryStore {
         add_column_if_missing(pool, "sleep_wake_at INTEGER").await?;
         add_column_if_missing(pool, "sleep_duration_ms INTEGER").await?;
         add_column_if_missing(pool, "sleep_reason TEXT").await?;
+        // Phase 80.10 — provenance posture column. Default
+        // 'interactive' applies to all pre-80.10 rows during the
+        // ALTER pass; new rows write through `kind = ?` in the
+        // upsert path. Idempotent: `add_column_if_missing` swallows
+        // "duplicate column" errors so re-opening the DB is safe.
+        add_column_if_missing(pool, "kind TEXT NOT NULL DEFAULT 'interactive'").await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_agent_registry_kind \
+                 ON agent_registry(kind)",
+        )
+        .execute(pool)
+        .await?;
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_agent_registry_sleep_wake_at \
                  ON agent_registry(sleep_wake_at)",
@@ -269,6 +281,13 @@ fn row_to_handle(row: &sqlx::sqlite::SqliteRow) -> Result<AgentHandle, AgentRegi
         }
         _ => None,
     };
+    // Phase 80.10 — kind column wins over the handle_json copy. Falls
+    // back to `Interactive` when the column is missing (rows persisted
+    // before the migration ran) or when the JSON blob lacks the field.
+    let kind_str: Option<String> = row.try_get("kind").unwrap_or(None);
+    if let Some(s) = kind_str {
+        handle.kind = crate::types::SessionKind::from_db_str(&s)?;
+    }
     Ok(handle)
 }
 
@@ -279,8 +298,8 @@ impl AgentRegistryStore for SqliteAgentRegistryStore {
             .map_err(|e| AgentRegistryStoreError::Json(e.to_string()))?;
         let sleep = handle.snapshot.sleep.as_ref();
         sqlx::query(
-            "INSERT INTO agent_registry (goal_id, phase_id, status, started_at, finished_at, handle_json, plan_mode, sleep_wake_at, sleep_duration_ms, sleep_reason) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
+            "INSERT INTO agent_registry (goal_id, phase_id, status, started_at, finished_at, handle_json, plan_mode, sleep_wake_at, sleep_duration_ms, sleep_reason, kind) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) \
              ON CONFLICT(goal_id) DO UPDATE SET \
                  phase_id     = excluded.phase_id, \
                  status       = excluded.status, \
@@ -289,7 +308,8 @@ impl AgentRegistryStore for SqliteAgentRegistryStore {
                  plan_mode    = excluded.plan_mode, \
                  sleep_wake_at = excluded.sleep_wake_at, \
                  sleep_duration_ms = excluded.sleep_duration_ms, \
-                 sleep_reason = excluded.sleep_reason",
+                 sleep_reason = excluded.sleep_reason, \
+                 kind         = excluded.kind",
         )
         .bind(handle.goal_id.0.to_string())
         .bind(&handle.phase_id)
@@ -301,6 +321,7 @@ impl AgentRegistryStore for SqliteAgentRegistryStore {
         .bind(sleep.map(|s| unix(s.wake_at)))
         .bind(sleep.map(|s| s.duration_ms as i64))
         .bind(sleep.map(|s| s.reason.as_str()))
+        .bind(handle.kind.as_db_str())
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -308,7 +329,7 @@ impl AgentRegistryStore for SqliteAgentRegistryStore {
 
     async fn get(&self, goal_id: GoalId) -> Result<Option<AgentHandle>, AgentRegistryStoreError> {
         let row = sqlx::query(
-            "SELECT goal_id, phase_id, status, started_at, finished_at, handle_json, plan_mode, sleep_wake_at, sleep_duration_ms, sleep_reason \
+            "SELECT goal_id, phase_id, status, started_at, finished_at, handle_json, plan_mode, sleep_wake_at, sleep_duration_ms, sleep_reason, kind \
              FROM agent_registry WHERE goal_id = ?1 LIMIT 1",
         )
         .bind(goal_id.0.to_string())
@@ -319,7 +340,7 @@ impl AgentRegistryStore for SqliteAgentRegistryStore {
 
     async fn list(&self) -> Result<Vec<AgentHandle>, AgentRegistryStoreError> {
         let rows = sqlx::query(
-            "SELECT goal_id, phase_id, status, started_at, finished_at, handle_json, plan_mode, sleep_wake_at, sleep_duration_ms, sleep_reason \
+            "SELECT goal_id, phase_id, status, started_at, finished_at, handle_json, plan_mode, sleep_wake_at, sleep_duration_ms, sleep_reason, kind \
              FROM agent_registry ORDER BY started_at DESC",
         )
         .fetch_all(&self.pool)
@@ -336,7 +357,7 @@ impl AgentRegistryStore for SqliteAgentRegistryStore {
         status: AgentRunStatus,
     ) -> Result<Vec<AgentHandle>, AgentRegistryStoreError> {
         let rows = sqlx::query(
-            "SELECT goal_id, phase_id, status, started_at, finished_at, handle_json, plan_mode, sleep_wake_at, sleep_duration_ms, sleep_reason \
+            "SELECT goal_id, phase_id, status, started_at, finished_at, handle_json, plan_mode, sleep_wake_at, sleep_duration_ms, sleep_reason, kind \
              FROM agent_registry WHERE status = ?1 ORDER BY started_at DESC",
         )
         .bind(status.as_str())
@@ -374,6 +395,48 @@ impl AgentRegistryStore for SqliteAgentRegistryStore {
     }
 }
 
+impl SqliteAgentRegistryStore {
+    /// Phase 80.10 — list handles filtered by `SessionKind`. Newest
+    /// first by `started_at`. Used by `nexo agent ps --kind=...`.
+    pub async fn list_by_kind(
+        &self,
+        kind: crate::types::SessionKind,
+    ) -> Result<Vec<AgentHandle>, AgentRegistryStoreError> {
+        let rows = sqlx::query(
+            "SELECT goal_id, phase_id, status, started_at, finished_at, handle_json, plan_mode, sleep_wake_at, sleep_duration_ms, sleep_reason, kind \
+             FROM agent_registry WHERE kind = ?1 ORDER BY started_at DESC",
+        )
+        .bind(kind.as_db_str())
+        .fetch_all(&self.pool)
+        .await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in &rows {
+            out.push(row_to_handle(r)?);
+        }
+        Ok(out)
+    }
+
+    /// Phase 80.10 — kind-aware reattach. Flips `Running` rows to
+    /// `LostOnRestart` only for `kind == 'interactive'` — the user is
+    /// gone, no caller waiting. Bg / Daemon / DaemonWorker rows keep
+    /// `Running` because the operator expects them to survive across
+    /// daemon restarts. Returns the count of rows flipped.
+    pub async fn reattach_running_kind_aware(
+        &self,
+    ) -> Result<u64, AgentRegistryStoreError> {
+        let now = unix(Utc::now());
+        let res = sqlx::query(
+            "UPDATE agent_registry \
+                SET status = 'lost_on_restart', finished_at = ?1 \
+              WHERE status = 'running' AND kind = 'interactive'",
+        )
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(res.rows_affected())
+    }
+}
+
 // `Path` import is used by future helpers; keep the dep silenced.
 const _: fn() = || {
     let _: &Path = Path::new("/");
@@ -397,6 +460,7 @@ mod plan_mode_persistence_tests {
             finished_at: None,
             snapshot: AgentSnapshot::default(),
             plan_mode,
+            kind: crate::types::SessionKind::Interactive,
         }
     }
 
@@ -450,5 +514,118 @@ mod plan_mode_persistence_tests {
             .unwrap();
         h = store.get(h.goal_id).await.unwrap().unwrap();
         assert_eq!(h.plan_mode.as_deref(), Some("\"hotpatched\""));
+    }
+
+    // ── Phase 80.10 — SessionKind ──
+
+    fn handle_with_kind(kind: crate::types::SessionKind) -> AgentHandle {
+        let mut h = handle_with_plan_mode(None);
+        h.kind = kind;
+        h
+    }
+
+    #[test]
+    fn session_kind_default_is_interactive() {
+        assert_eq!(
+            crate::types::SessionKind::default(),
+            crate::types::SessionKind::Interactive
+        );
+    }
+
+    #[test]
+    fn session_kind_db_round_trip_all_variants() {
+        use crate::types::SessionKind;
+        for k in [
+            SessionKind::Interactive,
+            SessionKind::Bg,
+            SessionKind::Daemon,
+            SessionKind::DaemonWorker,
+        ] {
+            assert_eq!(SessionKind::from_db_str(k.as_db_str()).unwrap(), k);
+        }
+    }
+
+    #[test]
+    fn session_kind_from_db_str_rejects_unknown() {
+        let err = crate::types::SessionKind::from_db_str("garbage").unwrap_err();
+        assert!(err.to_string().contains("garbage"));
+    }
+
+    #[test]
+    fn session_kind_survives_restart_only_for_bg_daemon() {
+        use crate::types::SessionKind;
+        assert!(!SessionKind::Interactive.survives_restart());
+        assert!(SessionKind::Bg.survives_restart());
+        assert!(SessionKind::Daemon.survives_restart());
+        assert!(SessionKind::DaemonWorker.survives_restart());
+    }
+
+    #[test]
+    fn agent_handle_serde_default_kind() {
+        // Round-trip through serde with the field removed: deserialise
+        // must yield Interactive via #[serde(default)].
+        let mut h = handle_with_kind(crate::types::SessionKind::Bg);
+        let mut json: serde_json::Value =
+            serde_json::to_value(&h).unwrap();
+        // Strip the `kind` field to simulate a pre-80.10 persisted blob.
+        json.as_object_mut().unwrap().remove("kind");
+        let parsed: AgentHandle = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.kind, crate::types::SessionKind::Interactive);
+        // Sanity: helper handle itself round-trips with kind preserved.
+        h.kind = crate::types::SessionKind::Daemon;
+        let s = serde_json::to_string(&h).unwrap();
+        let back: AgentHandle = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.kind, crate::types::SessionKind::Daemon);
+    }
+
+    #[tokio::test]
+    async fn store_insert_with_kind_round_trips() {
+        let store = SqliteAgentRegistryStore::open_memory().await.unwrap();
+        let h = handle_with_kind(crate::types::SessionKind::Bg);
+        store.upsert(&h).await.unwrap();
+        let fetched = store.get(h.goal_id).await.unwrap().unwrap();
+        assert_eq!(fetched.kind, crate::types::SessionKind::Bg);
+    }
+
+    #[tokio::test]
+    async fn list_by_kind_filters_correctly() {
+        let store = SqliteAgentRegistryStore::open_memory().await.unwrap();
+        store
+            .upsert(&handle_with_kind(crate::types::SessionKind::Interactive))
+            .await
+            .unwrap();
+        store
+            .upsert(&handle_with_kind(crate::types::SessionKind::Bg))
+            .await
+            .unwrap();
+        store
+            .upsert(&handle_with_kind(crate::types::SessionKind::Daemon))
+            .await
+            .unwrap();
+        let bg = store
+            .list_by_kind(crate::types::SessionKind::Bg)
+            .await
+            .unwrap();
+        assert_eq!(bg.len(), 1);
+        assert_eq!(bg[0].kind, crate::types::SessionKind::Bg);
+    }
+
+    #[tokio::test]
+    async fn reattach_running_kind_aware_keeps_bg() {
+        use crate::types::SessionKind;
+        let store = SqliteAgentRegistryStore::open_memory().await.unwrap();
+        let bg = handle_with_kind(SessionKind::Bg);
+        let interactive = handle_with_kind(SessionKind::Interactive);
+        let bg_id = bg.goal_id;
+        let inter_id = interactive.goal_id;
+        store.upsert(&bg).await.unwrap();
+        store.upsert(&interactive).await.unwrap();
+        let flipped = store.reattach_running_kind_aware().await.unwrap();
+        assert_eq!(flipped, 1, "only the interactive row should flip");
+        let bg_after = store.get(bg_id).await.unwrap().unwrap();
+        assert_eq!(bg_after.status, AgentRunStatus::Running);
+        let inter_after = store.get(inter_id).await.unwrap().unwrap();
+        assert_eq!(inter_after.status, AgentRunStatus::LostOnRestart);
+        assert!(inter_after.finished_at.is_some());
     }
 }
