@@ -72,6 +72,8 @@ enum Mode {
     },
     ExtHelp,
     McpServer(McpServerSubcommand),
+    /// Phase 80.1.d — `nexo agent dream {tail|status|kill}`.
+    AgentDream(AgentDreamSubcommand),
     FlowList {
         json: bool,
     },
@@ -249,6 +251,39 @@ enum McpServerSubcommand {
     Bench { url: String, tool: String, rps: u32 },
     /// `tail-audit <db>` — read recent entries from a local audit SQLite DB.
     TailAudit { db: String },
+}
+
+/// Phase 80.1.d — `nexo agent dream {tail|status|kill}` operator CLI
+/// for the autoDream audit log + manual control. Read paths open the
+/// SQLite DB read-only without a daemon. Kill writes the row to
+/// `Aborted`, finalises `ended_at = now()`, and rewinds the
+/// consolidation lock via `ConsolidationLock::rollback(prior_mtime)`
+/// when a `--memory-dir` is provided. Mirror leak
+/// `claude-code-leak/src/components/tasks/BackgroundTasksDialog.tsx:281,315-317`
+/// `DreamTask.kill(taskId, setAppState)` semantics, but as CLI rather
+/// than Ink UI keyboard since nexo has no Ink-equivalent yet.
+#[derive(Debug, Clone)]
+enum AgentDreamSubcommand {
+    /// `agent dream tail [--goal=<uuid>] [--n=20] [--db=<path>] [--json]`
+    Tail {
+        goal_id: Option<String>,
+        n: usize,
+        db: Option<PathBuf>,
+        json: bool,
+    },
+    /// `agent dream status <run_id> [--db=<path>] [--json]`
+    Status {
+        run_id: String,
+        db: Option<PathBuf>,
+        json: bool,
+    },
+    /// `agent dream kill <run_id> [--force] [--memory-dir=<path>] [--db=<path>]`
+    Kill {
+        run_id: String,
+        force: bool,
+        memory_dir: Option<PathBuf>,
+        db: Option<PathBuf>,
+    },
 }
 
 struct CliArgs {
@@ -691,6 +726,33 @@ async fn main() -> Result<()> {
                 return run_mcp_bench(url, tool, *rps).await
             }
             McpServerSubcommand::TailAudit { db } => return run_mcp_tail_audit(db).await,
+        },
+        Mode::AgentDream(ref sub) => match sub {
+            AgentDreamSubcommand::Tail {
+                goal_id,
+                n,
+                db,
+                json,
+            } => {
+                return run_agent_dream_tail(goal_id.as_deref(), *n, db.as_deref(), *json).await;
+            }
+            AgentDreamSubcommand::Status { run_id, db, json } => {
+                return run_agent_dream_status(run_id, db.as_deref(), *json).await;
+            }
+            AgentDreamSubcommand::Kill {
+                run_id,
+                force,
+                memory_dir,
+                db,
+            } => {
+                return run_agent_dream_kill(
+                    run_id,
+                    *force,
+                    memory_dir.as_deref(),
+                    db.as_deref(),
+                )
+                .await;
+            }
         },
         Mode::FlowHelp => return run_flow_help(),
         Mode::FlowList { json } => return run_flow_list(json).await,
@@ -3227,6 +3289,16 @@ async fn main() -> Result<()> {
             });
             tracing::debug!(agent = %agent_id, "mcp hot-reload wired");
         }
+
+        // Phase M8 — mark built-in tools deferred per leak's
+        // `shouldDefer: true` convention. Idempotent vs gated tools
+        // (entries not registered in this boot are silently
+        // skipped). Excludes the deferred subset from the LLM
+        // request body (`to_tool_defs_non_deferred()`) — full
+        // schemas land via `ToolSearch(select:<name>)`. See
+        // `nexo_core::agent::built_in_deferred` for the canonical
+        // list + IRROMPIBLE refs.
+        nexo_core::agent::mark_built_in_deferred(&tools);
 
         // Apply the agent-level tool allowlist ONLY for legacy agents
         // (no inbound_bindings). With bindings present, each binding
@@ -5795,6 +5867,47 @@ fn parse_args() -> CliArgs {
         [cmd, sub, db] if cmd == "mcp-server" && sub == "tail-audit" => {
             Mode::McpServer(McpServerSubcommand::TailAudit {
                 db: db.clone(),
+            })
+        }
+        // Phase 80.1.d — `nexo agent dream {tail|status|kill}`.
+        // Flag parsing inlined per project convention (no clap).
+        [cmd, sub] if cmd == "agent" && sub == "dream" => {
+            Mode::AgentDream(AgentDreamSubcommand::Tail {
+                goal_id: parse_kv_flag(&positional, "--goal"),
+                n: parse_kv_flag(&positional, "--n")
+                    .and_then(|v: String| v.parse().ok())
+                    .unwrap_or(20),
+                db: parse_kv_flag(&positional, "--db").map(PathBuf::from),
+                json: has_json_flag,
+            })
+        }
+        [cmd, sub, verb] if cmd == "agent" && sub == "dream" && verb == "tail" => {
+            Mode::AgentDream(AgentDreamSubcommand::Tail {
+                goal_id: parse_kv_flag(&positional, "--goal"),
+                n: parse_kv_flag(&positional, "--n")
+                    .and_then(|v: String| v.parse().ok())
+                    .unwrap_or(20),
+                db: parse_kv_flag(&positional, "--db").map(PathBuf::from),
+                json: has_json_flag,
+            })
+        }
+        [cmd, sub, verb, run_id]
+            if cmd == "agent" && sub == "dream" && verb == "status" =>
+        {
+            Mode::AgentDream(AgentDreamSubcommand::Status {
+                run_id: run_id.clone(),
+                db: parse_kv_flag(&positional, "--db").map(PathBuf::from),
+                json: has_json_flag,
+            })
+        }
+        [cmd, sub, verb, run_id]
+            if cmd == "agent" && sub == "dream" && verb == "kill" =>
+        {
+            Mode::AgentDream(AgentDreamSubcommand::Kill {
+                run_id: run_id.clone(),
+                force: positional.iter().any(|a| a == "--force"),
+                memory_dir: parse_kv_flag(&positional, "--memory-dir").map(PathBuf::from),
+                db: parse_kv_flag(&positional, "--db").map(PathBuf::from),
             })
         }
         [cmd] if cmd == "flow" => Mode::FlowHelp,
@@ -9903,6 +10016,273 @@ async fn run_mcp_tail_audit(db_path: &str) -> Result<()> {
     println!("\n{} rows shown (last 100).\n", rows.len());
     pool.close().await;
     Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Phase 80.1.d — `nexo agent dream` operator CLI
+//
+// Mirror leak `claude-code-leak/src/components/tasks/BackgroundTasksDialog
+// .tsx:281,315-317` `DreamTask.kill(taskId, setAppState)` semantics: row
+// status flip + lock rollback + (deferred) abort signal. Daemon is NOT
+// required for any sub-command — the read paths open the SQLite DB
+// read-only and the kill path opens it read-write while reading the lock
+// file directly. Provider-agnostic by construction (LLM provider never
+// touches this surface).
+// ─────────────────────────────────────────────────────────────────────
+
+/// Phase 80.1.d — 3-tier dream-runs DB path resolution. `--db` wins over
+/// `NEXO_STATE_ROOT` env wins over the XDG-default
+/// `~/.local/share/nexo/state/dream_runs.db`. The YAML tier is intentionally
+/// absent for now — `agents.state_root` does not exist as a config field
+/// (state_root flows into `BootDeps` directly per Phase 80.1.b.b.b), so
+/// the CLI uses the env-or-default fallback to stay aligned with the
+/// daemon's discovery path once main.rs hookup ships.
+fn resolve_dream_db_path(override_path: Option<&std::path::Path>) -> Result<PathBuf> {
+    if let Some(p) = override_path {
+        return Ok(p.to_path_buf());
+    }
+    if let Ok(state_root) = std::env::var("NEXO_STATE_ROOT") {
+        return Ok(nexo_dream::default_dream_db_path(std::path::Path::new(
+            &state_root,
+        )));
+    }
+    let xdg = dirs::data_local_dir()
+        .ok_or_else(|| anyhow::anyhow!("no XDG data dir; pass --db <path>"))?;
+    Ok(xdg.join("nexo/state/dream_runs.db"))
+}
+
+/// Tail dream runs newest-first. Optional goal filter; `n` clamped server-side.
+async fn run_agent_dream_tail(
+    goal_id: Option<&str>,
+    n: usize,
+    db_override: Option<&std::path::Path>,
+    json: bool,
+) -> Result<()> {
+    use nexo_agent_registry::{DreamRunStore, SqliteDreamRunStore};
+    use nexo_driver_types::GoalId;
+
+    let db = resolve_dream_db_path(db_override)?;
+    if !db.exists() {
+        if json {
+            println!("[]");
+        } else {
+            println!("(no dream runs recorded yet — db not found at {})", db.display());
+        }
+        return Ok(());
+    }
+
+    let store = SqliteDreamRunStore::open(&db.to_string_lossy())
+        .await
+        .with_context(|| format!("failed to open dream_runs DB at {}", db.display()))?;
+
+    let rows = match goal_id {
+        Some(g) => {
+            let uuid = uuid::Uuid::parse_str(g)
+                .with_context(|| format!("--goal `{g}` is not a valid UUID"))?;
+            store.tail_for_goal(GoalId(uuid), n).await
+        }
+        None => store.tail(n).await,
+    }
+    .with_context(|| "failed to tail dream_runs".to_string())?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+        return Ok(());
+    }
+
+    println!("# Dream Runs (db: {})\n", db.display());
+    if rows.is_empty() {
+        println!("(no runs)\n");
+        return Ok(());
+    }
+    println!("| ID | Goal | Status | Phase | Sessions | Files | Started | Ended | Label |");
+    println!("|----|------|--------|-------|----------|-------|---------|-------|-------|");
+    for r in &rows {
+        let id_short = short_uuid(&r.id);
+        let goal_short = short_uuid(&r.goal_id.0);
+        let ended = r
+            .ended_at
+            .map(|t| t.format("%Y-%m-%dT%H:%M:%S").to_string())
+            .unwrap_or_else(|| "-".to_string());
+        println!(
+            "| {} | {} | {:?} | {:?} | {} | {} | {} | {} | {} |",
+            id_short,
+            goal_short,
+            r.status,
+            r.phase,
+            r.sessions_reviewing,
+            r.files_touched.len(),
+            r.started_at.format("%Y-%m-%dT%H:%M:%S"),
+            ended,
+            r.fork_label,
+        );
+    }
+    println!("\n{} rows shown (last {n}).\n", rows.len());
+    Ok(())
+}
+
+/// Show a single dream run's full row + last turns.
+async fn run_agent_dream_status(
+    run_id: &str,
+    db_override: Option<&std::path::Path>,
+    json: bool,
+) -> Result<()> {
+    use nexo_agent_registry::{DreamRunStore, SqliteDreamRunStore};
+
+    let uuid = uuid::Uuid::parse_str(run_id)
+        .with_context(|| format!("`{run_id}` is not a valid UUID"))?;
+
+    let db = resolve_dream_db_path(db_override)?;
+    if !db.exists() {
+        anyhow::bail!("dream_runs DB not found at {}", db.display());
+    }
+    let store = SqliteDreamRunStore::open(&db.to_string_lossy())
+        .await
+        .with_context(|| format!("failed to open dream_runs DB at {}", db.display()))?;
+
+    let row = store
+        .get(uuid)
+        .await
+        .with_context(|| "failed to fetch dream run".to_string())?
+        .ok_or_else(|| anyhow::anyhow!("run `{run_id}` not found"))?;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&row)?);
+        return Ok(());
+    }
+
+    println!("# Dream Run {}\n", row.id);
+    println!("- **goal_id**: {}", row.goal_id.0);
+    println!("- **status**: {:?}", row.status);
+    println!("- **phase**: {:?}", row.phase);
+    println!("- **sessions_reviewing**: {}", row.sessions_reviewing);
+    println!("- **fork_label**: {}", row.fork_label);
+    println!("- **started_at**: {}", row.started_at);
+    if let Some(ended) = row.ended_at {
+        println!("- **ended_at**: {ended}");
+    }
+    if let Some(prior) = row.prior_mtime_ms {
+        println!("- **prior_mtime_ms**: {prior}");
+    }
+    if !row.files_touched.is_empty() {
+        println!("\n## Files touched ({}):", row.files_touched.len());
+        for p in &row.files_touched {
+            println!("- {}", p.display());
+        }
+    }
+    if !row.turns.is_empty() {
+        println!("\n## Last {} turns:", row.turns.len());
+        for (i, t) in row.turns.iter().enumerate().take(5) {
+            println!(
+                "{}. text_len={} tool_use_count={}",
+                i + 1,
+                t.text.len(),
+                t.tool_use_count,
+            );
+        }
+    }
+    println!();
+    Ok(())
+}
+
+/// Kill a running dream run: flip status to `Aborted`, finalise, optionally
+/// rollback the consolidation lock when the operator passes `--memory-dir`.
+async fn run_agent_dream_kill(
+    run_id: &str,
+    force: bool,
+    memory_dir_override: Option<&std::path::Path>,
+    db_override: Option<&std::path::Path>,
+) -> Result<()> {
+    use nexo_agent_registry::{DreamRunStatus, DreamRunStore, SqliteDreamRunStore};
+    use nexo_dream::ConsolidationLock;
+
+    let uuid = uuid::Uuid::parse_str(run_id)
+        .with_context(|| format!("`{run_id}` is not a valid UUID"))?;
+
+    let db = resolve_dream_db_path(db_override)?;
+    if !db.exists() {
+        anyhow::bail!("dream_runs DB not found at {}", db.display());
+    }
+    let store = SqliteDreamRunStore::open(&db.to_string_lossy())
+        .await
+        .with_context(|| format!("failed to open dream_runs DB at {}", db.display()))?;
+
+    let row = store
+        .get(uuid)
+        .await
+        .with_context(|| "failed to fetch dream run".to_string())?
+        .ok_or_else(|| anyhow::anyhow!("run `{run_id}` not found"))?;
+
+    let already_terminal = matches!(
+        row.status,
+        DreamRunStatus::Completed
+            | DreamRunStatus::Failed
+            | DreamRunStatus::Killed
+            | DreamRunStatus::LostOnRestart
+    );
+    if already_terminal {
+        println!(
+            "[dream-kill] run_id={} already in terminal state {:?}; nothing to do",
+            row.id, row.status
+        );
+        return Ok(());
+    }
+
+    if matches!(row.status, DreamRunStatus::Running) && !force {
+        eprintln!(
+            "[dream-kill] run_id={} is still Running. Pass --force to abort.",
+            row.id
+        );
+        std::process::exit(2);
+    }
+
+    store
+        .update_status(uuid, DreamRunStatus::Killed)
+        .await
+        .with_context(|| "failed to flip status to Aborted".to_string())?;
+    store
+        .finalize(uuid, chrono::Utc::now())
+        .await
+        .with_context(|| "failed to finalise dream run".to_string())?;
+    println!(
+        "[dream-kill] run_id={} status was {:?}, transitioning to Killed",
+        row.id, row.status
+    );
+
+    match (memory_dir_override, row.prior_mtime_ms) {
+        (Some(md), Some(prior)) => {
+            // Holder-stale = 1h matches AutoDreamConfig default; we don't
+            // need a real config here because rollback is purely a file op.
+            let lock = ConsolidationLock::new(md, std::time::Duration::from_secs(3600))
+                .with_context(|| "failed to construct ConsolidationLock for rollback")?;
+            lock.rollback(prior).await;
+            println!(
+                "[dream-kill] lock rollback: prior_mtime={prior} → memory_dir={}",
+                md.display()
+            );
+        }
+        (Some(_), None) => {
+            println!(
+                "[dream-kill] no prior_mtime recorded for this run; lock rollback skipped"
+            );
+        }
+        (None, Some(_)) => {
+            println!(
+                "[dream-kill] WARN: status flipped but lock not rolled back. \
+                 Pass --memory-dir <path> next time to rewind the consolidation lock."
+            );
+        }
+        (None, None) => {}
+    }
+    println!("[dream-kill] done");
+    Ok(())
+}
+
+/// Phase 80.1.d helper — render only the first 8 hex chars of a UUID
+/// for compact tabular output, mirroring leak's "shortId" UI helper.
+fn short_uuid(id: &uuid::Uuid) -> String {
+    let s = id.to_string();
+    s.chars().take(8).collect()
 }
 
 async fn start_mcp_autonomous_worker(

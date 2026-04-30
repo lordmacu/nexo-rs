@@ -7,6 +7,7 @@ pub mod agents_directory;
 pub mod approval_correlator;
 pub mod behavior;
 pub mod binding_validate;
+pub mod built_in_deferred;
 pub mod compaction;
 pub mod config_changes_tail_tool;
 #[cfg(feature = "config-self-edit")]
@@ -76,6 +77,7 @@ pub mod workspace_git;
 pub use agent::Agent;
 pub use agents_directory::{AgentInfo, AgentsDirectory};
 pub use behavior::AgentBehavior;
+pub use built_in_deferred::{mark_built_in_deferred, BUILT_IN_DEFERRED_TOOLS};
 pub use nexo_driver_types::{
     AutoCompactBreaker, CompactContext, CompactPolicy, CompactTrigger, DefaultCompactPolicy,
 };
