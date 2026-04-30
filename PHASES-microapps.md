@@ -20,7 +20,7 @@ covers Phases 1-81; everything microapp-related lives here.
 | Phase | Name | Sub-phases | Status |
 |-------|------|-----------|--------|
 | 82 | Multi-tenant SaaS extension enablement + control plane | 14 | 0/14 |
-| 83 | Microapp framework foundation | 13 | 0/13 |
+| 83 | Microapp framework foundation | 14 | 0/14 |
 
 ## Why a separate file
 
@@ -36,6 +36,111 @@ dedicated document:
 - Future-friendly: when the framework expands into
   Phase 84 (e.g., marketplace, multi-host, etc.), it lands
   here too without polluting `PHASES.md`.
+
+## Repo topology
+
+The microapp framework lives in this monorepo (`nexo-rs/`).
+Reference microapps that exercise the framework also live here
+(under `extensions/`). **Operator-owned microapps that are
+products** live in **separate git repositories** with their own
+release cadence and history.
+
+**In-tree (this repo)**:
+
+- `crates/core/`, `crates/microapp-sdk-rust/`,
+  `crates/microapp-sdk-react/`, `crates/compliance-primitives/`,
+  `crates/webhook-receiver/` — framework + reusable libraries
+- `extensions/template-microapp-{rust,python,typescript,rust-with-ui}/`
+  — reusable scaffolds (Phase 83.7, 83.12, 83.13)
+- `extensions/template-saas/` — SaaS reference (Phase 82.9)
+- `extensions/ventas-etb/` — sales reference microapp
+  (Phase 83.8). Lives in-tree because it ports the
+  pre-existing `ana` agent owned by this project.
+
+**Out-of-tree (operator-owned repos)**:
+
+- `agent-creator-microapp/` (Phase 83.10 validation case) —
+  meta-microapp with React UI for managing agents, channels,
+  LLM keys, conversations. Iterates independently of nexo
+  releases.
+- Future operator microapps: same pattern. Each gets its own
+  git repo, its own release cadence, its own customers /
+  internal users.
+
+**Dependency strategy** (see "Development methodology" below
+for the migration timeline):
+
+- **Target (post Phase 83.14)**: `agent-creator/Cargo.toml`
+  declares `nexo-microapp-sdk-rust = "^0.2"` consuming the
+  published crate from crates.io. Frontend declares
+  `"@nexo/microapp-ui-react": "^0.1"` from npm. **No
+  filesystem coupling between repos.**
+- **Bridge (during Phase 82+83 active development)**: path
+  dependency `nexo-microapp-sdk-rust = { path = "../nexo-rs/crates/microapp-sdk-rust" }`
+  is acceptable because the SDK API churns rapidly. Same for
+  the React lib via `"file:../nexo-rs/crates/microapp-sdk-react"`.
+
+**Change-routing rule**:
+
+- Bug or feature in **framework primitives, SDK libraries, or
+  reference microapps (template-*, ventas-etb)** → this repo
+  (`nexo-rs/`).
+- Bug or feature in an **operator-owned microapp**
+  (agent-creator and future siblings) → that microapp's own
+  repo. Bumps the SDK dependency only when the framework drops
+  a new release that fixes / adds something it needs.
+
+## Development methodology
+
+The microapp framework is built with a **discovery-driven core
+development** loop, not a waterfall. Phase 82 + 83 sub-phases
+listed in this file are the **starting point**, not the
+ceiling — gaps surface as we use the framework on real
+microapps and feed back into new sub-phases.
+
+The expected flow:
+
+```
+agent-creator dev (~/projects/agent-creator-microapp/)
+   ↓ (encounters a gap: missing primitive, friction, or pattern
+      that should be reusable across microapps)
+   ↓
+back to nexo-rs/ → extend the framework primitive, add a new
+                   sub-phase if needed, ship the change
+   ↓ (commit lands in nexo-rs/)
+   ↓
+back to agent-creator/ → consume the new primitive, validate it
+                          against the real use case
+   ↓ (commit lands in agent-creator/)
+   ↓
+... loop continues until the microapp is production-ready and
+    the framework has absorbed the lessons learned ...
+```
+
+**Each repo trackea its own git history**. Cross-repo coupling
+exists only at the dependency edge (Cargo.toml + package.json),
+not at the source-control edge.
+
+**Sub-phase counts are NOT frozen**. Concrete evidence: this file
+already grew from 9 sub-phases (Phase 82) at the initial draft
+to 14 after a few hours of design conversation, because real
+use cases (meta-microapp UI, operator takeover, agent escalation,
+WhatsApp-Web-inspired components) surfaced gaps that justified
+new sub-phases. Expect the same dynamic during ejecutar — new
+sub-phases get appended as the agent-creator microapp matures.
+
+**Order of execution is NOT strictly linear**. The roadmap below
+suggests a critical path, but during ejecutar the work may
+bounce between primitives (nexo-rs) and microapp (agent-creator)
+as gaps emerge. This is intentional — building both in parallel
+is what catches design mistakes early.
+
+**Migration trigger from path-dep to published crates**: once
+83.4 (microapp-sdk-rust) and 83.13 (microapp-ui-react) ship a
+stable 0.1.0, run 83.14 to publish them and migrate
+agent-creator from path/file dependencies to versioned published
+ones. This is the official transition from "framework in
+gestation" to "framework consumable by third parties".
 
 ## Cross-cutting guarantees
 
@@ -1092,6 +1197,16 @@ Build a small second microapp in ~1 day using the templates
 truly reusable and surface any gaps the ventas-etb design
 did not.
 
+**Out-of-tree by default**: the second microapp lives in a
+**separate git repository** owned by the operator (e.g.,
+`~/projects/agent-creator-microapp/`), NOT under
+`extensions/` of this monorepo. It depends on the SDK +
+React component library via path / git / crates.io
+dependency. This sub-phase covers scaffolding the repo,
+verifying end-to-end that the framework primitives work
+from outside the nexo monorepo, and documenting the
+out-of-tree workflow.
+
 Candidate microapps (operator picks):
 - `agent-creator` — meta-microapp with React UI (uses the
   full Phase 82.10/82.11/82.12 stack: admin RPC, transcript
@@ -1108,15 +1223,22 @@ Candidate microapps (operator picks):
   channel.
 
 Done criteria:
+- Microapp lives in its own git repository, not under
+  `extensions/` of this monorepo.
 - Microapp authored start-to-finish in ≤ 1 dev-day (or
-  ≤ 3-4 dev-days if the candidate is `agent-creator`
-  given the React UI scope).
+  ≤ 3 dev-days if the candidate is `agent-creator` given
+  the React UI scope, since 83.12 + 83.13 absorb most of
+  the UI work).
 - Uses ≥ 3 of the framework primitives (SDK helpers,
   compliance, hooks, persona config, admin RPC,
-  transcripts firehose, HTTP server hosting).
+  transcripts firehose, HTTP server hosting, takeover,
+  escalation).
+- Cargo.toml + package.json declare the SDK as a path-dep
+  during development; after 83.14 ships, migrate to
+  versioned published deps.
 - A retrospective lists every gap or rough edge that
-  authoring surfaced — those become Phase 83 v2 candidates
-  or post-Phase-83 follow-ups.
+  authoring surfaced — those become new sub-phases (Phase
+  82+83 grows organically) or post-Phase-83 follow-ups.
 
 #### 83.11 — Docs + admin-ui sync   ⬜
 
@@ -1367,6 +1489,76 @@ Out of scope for v0:
 - i18n / RTL languages (CSS prep ready, content
   translation operator-side).
 
+#### 83.14 — Publish SDK crates + npm package   ⬜
+
+Migration milestone from path-dep development workflow to
+published artifacts. Triggered when the SDK API stabilises
+post 83.4 + 83.13 ejecutar — the framework drops a 0.1.0
+release and out-of-tree consumers (agent-creator and future
+operator-owned microapps) switch from path / file
+dependencies to versioned published ones.
+
+Until 83.14 ships, out-of-tree microapps use:
+```toml
+nexo-microapp-sdk-rust = { path = "../nexo-rs/crates/microapp-sdk-rust" }
+```
+```json
+"@nexo/microapp-ui-react": "file:../nexo-rs/crates/microapp-sdk-react"
+```
+
+After 83.14 ships:
+```toml
+nexo-microapp-sdk-rust = "0.1"
+nexo-compliance-primitives = "0.1"
+```
+```json
+"@nexo/microapp-ui-react": "^0.1.0"
+```
+
+Scope:
+- Cargo workspace metadata for `microapp-sdk-rust`,
+  `compliance-primitives`, and any other framework crates
+  marked publishable: `license`, `description`, `readme`,
+  `repository`, `keywords`, `categories` fields complete.
+- release-plz integration: per-crate CHANGELOG.md, per-crate
+  semver bump on PR, auto-publish on tag (the existing
+  Phase 27.x pipeline picks them up once metadata is
+  complete).
+- npm package for `@nexo/microapp-ui-react` shipped under
+  `crates/microapp-sdk-react/`:
+  - `package.json` with `name`, `version`, `main`, `types`,
+    `exports`, `repository`, `license`.
+  - GitHub Actions workflow with `NPM_TOKEN` secret that
+    publishes on tag.
+  - Versioning sincronizada con la lib Rust (same major /
+    minor; patch independent OK).
+- Migrate `agent-creator-microapp/` (and any other
+  out-of-tree consumer) Cargo.toml + frontend/package.json
+  from path / file deps to versioned published deps.
+- Update SDK README with versioning policy: semver,
+  deprecation cadence (1 release of grace), breaking-change
+  comms via CHANGELOG.
+
+Done criteria:
+- `cargo publish -p nexo-microapp-sdk-rust` succeeds on a
+  clean checkout (no path deps in published artifact).
+- `cargo publish -p nexo-compliance-primitives` succeeds.
+- `npm publish` for `@nexo/microapp-ui-react` succeeds.
+- `agent-creator-microapp` builds against published versions
+  ONLY (zero path/git deps in its `Cargo.toml` +
+  `package.json`).
+- Operator clone of `agent-creator-microapp` does NOT need
+  the `nexo-rs` source tree to compile.
+- Versioning policy documented in SDK READMEs.
+- 1 dev-day total.
+
+Out of scope:
+- Pre-1.0 stability guarantee (still 0.x — breaking changes
+  allowed with bump).
+- Auto-changelog generation beyond what release-plz already
+  handles.
+- Mirror to private registries (operator concern).
+
 ---
 
 **Phase 83 effort estimate**: 83.1 (1.5 days), 83.2 (1-1.5
@@ -1381,15 +1573,18 @@ validation case — note that 83.12 + 83.13 absorb most of the
 React UI work that was previously implicit in 83.10's upper
 bound), 83.11 (1.5 days docs + admin-ui), 83.12 (2-3 days
 React UI infrastructure scaffold), 83.13 (2 days WhatsApp-
-Web-inspired component library + Storybook + theme system).
-Total ~24-32 dev-days.
+Web-inspired component library + Storybook + theme system),
+83.14 (1 day publish SDK crates + npm package + migrate
+out-of-tree consumers from path-dep to versioned). Total
+~25-33 dev-days.
 
 **Critical path**: 83.1 + 83.2 + 83.3 (core primitives) →
 83.4 + 83.5 (libraries) → 83.6 + 83.7 (contract + templates)
 → 83.12 (React UI infrastructure) → 83.13 (component lib) →
 83.8 (reference microapp) → 83.9 (cutover) + 83.10 (second
-validation) → 83.11 (docs). 83.12 + 83.13 sit between 83.7
-and 83.8/83.10 because the agent-creator validation in 83.10
+validation) → 83.14 (publish + migrate) → 83.11 (docs).
+83.12 + 83.13 sit between 83.7 and 83.8/83.10 because the
+agent-creator validation in 83.10
 reuses the scaffold + the component library.
 
 **Dependencies on Phase 82**: 83.3 hook interceptor reuses
@@ -1430,14 +1625,20 @@ agent-creator meta-microapp as the first product:
 12. **83.12** React UI infrastructure scaffold — 2-3 days
 13. **83.13** WhatsApp Web-inspired component library
     (depends on 83.12) — 2 days
-14. **83.10** build agent-creator microapp as the
-    validation case (reuses 83.12 + 83.13) — 1-3 days
+14. **83.10** build `agent-creator` in its **own git
+    repository** (not under `extensions/`); consume the
+    framework via path-deps during dev — 1-3 days
+15. **83.14** publish SDK crates + npm package; migrate
+    `agent-creator` from path-deps to versioned published
+    deps — 1 day
 
-Total: ~26-32 dev-days for the agent-creator meta-microapp
+Total: ~27-33 dev-days for the agent-creator meta-microapp
 fully working with React UI (chat-list / conversation /
 contact panel), live transcript view, escalation badges,
 operator takeover with manual reply, and admin-driven CRUD
-of agents/credentials/pairing/LLM keys.
+of agents/credentials/pairing/LLM keys, plus published SDK
+artifacts so future operator microapps consume the framework
+from crates.io / npm without filesystem coupling to nexo-rs.
 
 The marketing-saas-v0 path can be interleaved later via
 82.2 + 82.3 + 82.4 + 82.7 + 82.8 + 82.9 (~7-9 dev-days
