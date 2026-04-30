@@ -19,6 +19,10 @@
 //! | `sender_rate_limit`   | `Inherit` / `Disable` / `Config(cfg)` keyword  |
 //! | `allowed_delegates`   | replace                                        |
 //! | `remote_triggers`     | replace                                        |
+//! | `lsp`                 | replace (whole `LspPolicy`)                    |
+//! | `team`                | replace (whole `TeamPolicy`)                   |
+//! | `config_tool`         | replace (whole `ConfigToolPolicy`)             |
+//! | `repl`                | replace (whole `ReplConfig`)                   |
 //!
 //! Bindings without overrides resolve to exactly the agent-level values, so
 //! pre-binding YAML keeps working unchanged.
@@ -91,6 +95,21 @@ pub struct EffectiveBindingPolicy {
     pub proactive: ProactiveConfig,
     /// Optional binding role tag (`coordinator`, `worker`, `proactive`).
     pub role: Option<String>,
+    /// Phase 79.5 — resolved LSP policy. Per-binding override replaces
+    /// the agent-level `lsp` block; binding `None` inherits.
+    pub lsp: nexo_config::types::lsp::LspPolicy,
+    /// Phase 79.6 — resolved team policy. Per-binding override replaces
+    /// the agent-level `team` block.
+    pub team: nexo_config::types::team::TeamPolicy,
+    /// Phase 79.10 — resolved config-tool policy (gates self-edit,
+    /// allowed_paths, approval_timeout). Per-binding override replaces
+    /// the agent-level `config_tool` block.
+    pub config_tool: nexo_config::types::config_tool::ConfigToolPolicy,
+    /// Phase 79.12 — resolved REPL config. Per-binding override replaces
+    /// the agent-level `repl` block. Closes a latent bug: the override
+    /// was already declared on `InboundBinding::repl` but never consumed
+    /// by the resolver before C1.
+    pub repl: nexo_config::types::repl::ReplConfig,
 }
 
 /// Per-agent / per-binding web-search policy. Mirrors the YAML shape
@@ -166,6 +185,10 @@ impl EffectiveBindingPolicy {
             dispatch_policy: resolve_dispatch_policy(agent, binding),
             proactive: resolve_proactive(agent, binding),
             role: binding.and_then(|b| b.role.clone()),
+            lsp: resolve_lsp(agent, binding),
+            team: resolve_team(agent, binding),
+            config_tool: resolve_config_tool(agent, binding),
+            repl: resolve_repl(agent, binding),
         }
     }
 
@@ -198,6 +221,10 @@ impl EffectiveBindingPolicy {
             dispatch_policy: agent.dispatch_policy.clone(),
             proactive: agent.proactive.clone(),
             role: None,
+            lsp: agent.lsp.clone(),
+            team: agent.team.clone(),
+            config_tool: agent.config_tool.clone(),
+            repl: agent.repl.clone(),
         }
     }
 
@@ -478,6 +505,42 @@ fn resolve_proactive(agent: &AgentConfig, binding: Option<&InboundBinding>) -> P
     binding
         .and_then(|b| b.proactive.clone())
         .unwrap_or_else(|| agent.proactive.clone())
+}
+
+fn resolve_lsp(
+    agent: &AgentConfig,
+    binding: Option<&InboundBinding>,
+) -> nexo_config::types::lsp::LspPolicy {
+    binding
+        .and_then(|b| b.lsp.clone())
+        .unwrap_or_else(|| agent.lsp.clone())
+}
+
+fn resolve_team(
+    agent: &AgentConfig,
+    binding: Option<&InboundBinding>,
+) -> nexo_config::types::team::TeamPolicy {
+    binding
+        .and_then(|b| b.team.clone())
+        .unwrap_or_else(|| agent.team.clone())
+}
+
+fn resolve_config_tool(
+    agent: &AgentConfig,
+    binding: Option<&InboundBinding>,
+) -> nexo_config::types::config_tool::ConfigToolPolicy {
+    binding
+        .and_then(|b| b.config_tool.clone())
+        .unwrap_or_else(|| agent.config_tool.clone())
+}
+
+fn resolve_repl(
+    agent: &AgentConfig,
+    binding: Option<&InboundBinding>,
+) -> nexo_config::types::repl::ReplConfig {
+    binding
+        .and_then(|b| b.repl.clone())
+        .unwrap_or_else(|| agent.repl.clone())
 }
 
 fn resolve_language(agent: &AgentConfig, binding: Option<&InboundBinding>) -> Option<String> {
@@ -953,6 +1016,210 @@ mod tests {
 
         assert!(eff.proactive.enabled);
         assert_eq!(eff.proactive.tick_interval_secs, 900);
+    }
+
+    // ---- C1: lsp / team / config_tool / repl per-binding override ---------
+
+    #[test]
+    fn lsp_binding_override_wins_over_agent_default() {
+        use nexo_config::types::lsp::{LspLanguageWire, LspPolicy};
+        let mut a = sample_agent();
+        a.lsp = LspPolicy {
+            enabled: false,
+            languages: vec![LspLanguageWire::Rust],
+            prewarm: Vec::new(),
+            idle_teardown_secs: 60,
+        };
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "telegram".into(),
+            lsp: Some(LspPolicy {
+                enabled: true,
+                languages: vec![LspLanguageWire::Rust, LspLanguageWire::TypeScript],
+                prewarm: Vec::new(),
+                idle_teardown_secs: 300,
+            }),
+            ..Default::default()
+        });
+
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+
+        assert!(eff.lsp.enabled);
+        assert_eq!(
+            eff.lsp.languages,
+            vec![LspLanguageWire::Rust, LspLanguageWire::TypeScript]
+        );
+        assert_eq!(eff.lsp.idle_teardown_secs, 300);
+    }
+
+    #[test]
+    fn lsp_inherits_agent_default_when_binding_omits_field() {
+        use nexo_config::types::lsp::{LspLanguageWire, LspPolicy};
+        let mut a = sample_agent();
+        a.lsp = LspPolicy {
+            enabled: true,
+            languages: vec![LspLanguageWire::Python],
+            prewarm: Vec::new(),
+            idle_teardown_secs: 120,
+        };
+        a.inbound_bindings.push(legacy_binding());
+
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+
+        assert!(eff.lsp.enabled);
+        assert_eq!(eff.lsp.languages, vec![LspLanguageWire::Python]);
+        assert_eq!(eff.lsp.idle_teardown_secs, 120);
+    }
+
+    #[test]
+    fn team_binding_override_wins_over_agent_default() {
+        use nexo_config::types::team::TeamPolicy;
+        let mut a = sample_agent();
+        a.team = TeamPolicy {
+            enabled: false,
+            max_members: 4,
+            max_concurrent: 2,
+            idle_timeout_secs: 600,
+            worktree_per_member: false,
+        };
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "telegram".into(),
+            team: Some(TeamPolicy {
+                enabled: true,
+                max_members: 16,
+                max_concurrent: 8,
+                idle_timeout_secs: 1200,
+                worktree_per_member: true,
+            }),
+            ..Default::default()
+        });
+
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+
+        assert!(eff.team.enabled);
+        assert_eq!(eff.team.max_members, 16);
+        assert_eq!(eff.team.max_concurrent, 8);
+        assert!(eff.team.worktree_per_member);
+    }
+
+    #[test]
+    fn team_inherits_agent_default_when_binding_omits_field() {
+        use nexo_config::types::team::TeamPolicy;
+        let mut a = sample_agent();
+        a.team = TeamPolicy {
+            enabled: true,
+            max_members: 6,
+            max_concurrent: 3,
+            idle_timeout_secs: 900,
+            worktree_per_member: false,
+        };
+        a.inbound_bindings.push(legacy_binding());
+
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+
+        assert!(eff.team.enabled);
+        assert_eq!(eff.team.max_members, 6);
+        assert_eq!(eff.team.max_concurrent, 3);
+    }
+
+    #[test]
+    fn config_tool_binding_override_wins_over_agent_default() {
+        use nexo_config::types::config_tool::ConfigToolPolicy;
+        let mut a = sample_agent();
+        a.config_tool = ConfigToolPolicy {
+            self_edit: true,
+            allowed_paths: vec!["agents.*".into()],
+            approval_timeout_secs: 600,
+        };
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "telegram".into(),
+            config_tool: Some(ConfigToolPolicy {
+                self_edit: false,
+                allowed_paths: Vec::new(),
+                approval_timeout_secs: 60,
+            }),
+            ..Default::default()
+        });
+
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+
+        assert!(!eff.config_tool.self_edit);
+        assert!(eff.config_tool.allowed_paths.is_empty());
+        assert_eq!(eff.config_tool.approval_timeout_secs, 60);
+    }
+
+    #[test]
+    fn config_tool_inherits_agent_default_when_binding_omits_field() {
+        use nexo_config::types::config_tool::ConfigToolPolicy;
+        let mut a = sample_agent();
+        a.config_tool = ConfigToolPolicy {
+            self_edit: true,
+            allowed_paths: vec!["runtime.*".into()],
+            approval_timeout_secs: 300,
+        };
+        a.inbound_bindings.push(legacy_binding());
+
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+
+        assert!(eff.config_tool.self_edit);
+        assert_eq!(eff.config_tool.allowed_paths, vec!["runtime.*".to_string()]);
+        assert_eq!(eff.config_tool.approval_timeout_secs, 300);
+    }
+
+    /// C1 closes a latent bug: `InboundBinding::repl` was already declared
+    /// (Phase 79.12) but `EffectiveBindingPolicy` never consumed it. This
+    /// test would have failed pre-C1.
+    #[test]
+    fn repl_binding_override_wins_over_agent_default() {
+        use nexo_config::types::repl::ReplConfig;
+        let mut a = sample_agent();
+        a.repl = ReplConfig {
+            enabled: false,
+            allowed_runtimes: vec!["python".into()],
+            max_sessions: 2,
+            timeout_secs: 30,
+            max_output_bytes: 64_000,
+        };
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "telegram".into(),
+            repl: Some(ReplConfig {
+                enabled: true,
+                allowed_runtimes: vec!["python".into(), "node".into()],
+                max_sessions: 8,
+                timeout_secs: 120,
+                max_output_bytes: 256_000,
+            }),
+            ..Default::default()
+        });
+
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+
+        assert!(eff.repl.enabled);
+        assert_eq!(eff.repl.max_sessions, 8);
+        assert_eq!(eff.repl.timeout_secs, 120);
+        assert_eq!(
+            eff.repl.allowed_runtimes,
+            vec!["python".to_string(), "node".to_string()]
+        );
+    }
+
+    #[test]
+    fn repl_inherits_agent_default_when_binding_omits_field() {
+        use nexo_config::types::repl::ReplConfig;
+        let mut a = sample_agent();
+        a.repl = ReplConfig {
+            enabled: true,
+            allowed_runtimes: vec!["python".into()],
+            max_sessions: 4,
+            timeout_secs: 60,
+            max_output_bytes: 128_000,
+        };
+        a.inbound_bindings.push(legacy_binding());
+
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+
+        assert!(eff.repl.enabled);
+        assert_eq!(eff.repl.max_sessions, 4);
+        assert_eq!(eff.repl.timeout_secs, 60);
     }
 
     #[test]

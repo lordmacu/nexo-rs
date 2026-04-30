@@ -226,6 +226,54 @@ H-1. ~~**CircuitBreaker missing on Telegram + Google plugins**~~  ✅ 2026-04-26
   setups holding multiple instances get isolated breakers, so a
   single bad token doesn't cascade across tenants.
 
+H-2. **C1 — `EffectiveBindingPolicy` extension (per-binding override
+for `lsp` / `team` / `config_tool` / `repl`)** — ✅ shipped 2026-04-30.
+- Surfaced by audit `proyecto/proyecto/AUDIT-2026-04-30.md`.
+  `EffectiveBindingPolicy` (`crates/core/src/agent/effective.rs:38`)
+  now carries 4 additional resolved fields plus 4 mirror resolvers
+  (`resolve_lsp` / `resolve_team` / `resolve_config_tool` /
+  `resolve_repl`). `InboundBinding` (`crates/config/src/types/agents.rs`)
+  gains 3 new optional override fields (`lsp` / `team` /
+  `config_tool`); `repl` was already declared (Phase 79.12) but
+  silently inherited because the resolver was missing — closed.
+  10 new tests in `effective.rs::tests` (8 golden) and
+  `binding_validate.rs::tests` (2 covering 7 sub-cases).
+- `binding_validate::has_any_override` extended from 12 to 19
+  conditions so the "binding without overrides" warning stops
+  lying for `plan_mode` / `role` / `proactive` / `repl` / `lsp` /
+  `team` / `config_tool`.
+- **Boot-time only** — the new resolved fields are not yet read by
+  the per-agent boot loop in `src/main.rs:2326-2680` (which still
+  calls `agent_cfg.lsp` / `agent_cfg.team` / `agent_cfg.config_tool`
+  / `agent_cfg.repl` directly). That refactor + `ConfigReloadCoordinator`
+  post-hooks for `LspManager` / `TeamMessageRouter` /
+  `ReplRegistry` / cron-tool bindings is **C2** — see below.
+- No YAML breakage: defaults `None` → inherit. The single
+  observable runtime change is that `inbound_bindings[].repl`
+  overrides will start applying — `grep -rn "repl:" config/` is
+  empty in this repo so no config in the tree is affected.
+
+H-3. **C2 — Hot-reload rebuild of per-binding tool registrations** —
+⬜ open. Blocks the Phase 18 promise that hot-reload picks up every
+binding-config change. Today the per-agent boot loop in
+`src/main.rs:2042-2705` registers tools once and never re-runs.
+Toggling `lsp.enabled` / `team.enabled` / `proactive.enabled` /
+`repl.enabled` / `config_tool.self_edit` / growing
+`remote_triggers` requires a daemon restart. Work:
+1. Add a `rebuild_per_agent_tools()` callable that re-runs the
+   relevant registration arms over the new `RuntimeSnapshot`.
+2. Register one `ConfigReloadCoordinator::register_post_hook` per
+   subsystem (cron-store flush, REPL registry, LSP manager,
+   TeamMessageRouter cache) — analogue of the `PairingGate`
+   flush at `src/main.rs:3492` (Phase 70.7).
+3. Refactor 10 sites in `main.rs` to read from
+   `EffectiveBindingPolicy` instead of `agent_cfg.<x>` (full list
+   in audit C2).
+- Pitfall to design around (claude-code-leak
+  `src/utils/settings/changeDetector.ts:8-11`): N-way thrashing
+  if N subsystems each subscribe — debounce / coalesce at the
+  coordinator, not at each post-hook.
+
 ### Phase 21 — Link understanding
 
 L-1. ~~**Telemetry counters for link fetches**~~  ✅ shipped
