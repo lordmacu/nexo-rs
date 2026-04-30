@@ -47,6 +47,7 @@ dashmap     = { workspace = true }
 humantime   = { workspace = true }
 anyhow      = { workspace = true }
 thiserror   = { workspace = true }
+nexo-assistant = { version = "0.1.1", path = "../assistant" }
 nexo-config = { version = "0.1.1", path = "../config" }
 nexo-broker = { version = "0.1.1", path = "../broker" }
 nexo-team-store = { version = "0.1.1", path = "../team-store" }
@@ -67,6 +68,8 @@ nexo-agent-registry = { version = "0.1.1", path = "../agent-registry" }
 nexo-driver-claude  = { version = "0.1.1", path = "../driver-claude" }
 nexo-driver-loop    = { version = "0.1.1", path = "../driver-loop" }
 nexo-driver-types   = { version = "0.1.1", path = "../driver-types" }
+nexo-driver-permission = { version = "0.1.1", path = "../driver-permission" }
+nexo-plugin-manifest = { version = "0.1.0", path = "../plugin-manifest" }
 nexo-project-tracker = { version = "0.1.1", path = "../project-tracker" }
 futures         = { workspace = true }
 arc-swap        = { workspace = true }

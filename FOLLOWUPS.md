@@ -31,10 +31,22 @@ coordinación de archivos cross-cutting.
   manifest `examples/marketing-example.toml` documenta cada
   sección. Operator authors plugins escriben `nexo-plugin.toml`
   declarativo; futuras sub-fases consumen este schema.
-- **81.2 ⬜** `NexoPlugin` trait + lifecycle (`init`/`shutdown`)
-  + `PluginInitContext` con handles a ToolRegistry +
-  AdvisorRegistry + HookRegistry + Broker + LlmRegistry +
-  ConfigDir + ReloadCoord.
+- **81.2 ✅ shipped 2026-04-30** — `NexoPlugin` async trait +
+  `PluginInitContext` + lifecycle errors en
+  `nexo-core::agent::plugin_host`. ~470 LOC + 8 tests verde.
+  Trait: `manifest()` + `init(ctx)` + `shutdown()` (default Ok).
+  Context exposes 11 handles: ToolRegistry,
+  Arc<RwLock<AdvisorRegistry>>, HookRegistry, AnyBroker,
+  LlmRegistry, ConfigReloadCoordinator, SessionManager,
+  Option<Arc<LongTermMemory>>, config_dir/state_root paths,
+  CancellationToken. Helpers `plugin_config_dir(id)` +
+  `plugin_state_dir(id)`. `PluginInitError` 5 variants +
+  `PluginShutdownError` 2 variants thiserror-typed.
+  `DEFAULT_PLUGIN_SHUTDOWN_TIMEOUT = 5s`. Compile-time dyn-safety
+  via `static _OBJECT_SAFE_CHECK: OnceLock<Arc<dyn NexoPlugin>>`.
+  Distinct del existing Channel `Plugin` trait. Provider-
+  agnostic. `nexo-core` Cargo.toml ganó `nexo-plugin-manifest`
+  + `nexo-driver-permission` deps.
 - **81.3 ⬜** Tool namespace runtime enforcement at boot.
 - **81.4 ⬜** Plugin-scoped config dir loader
   (`config/plugins/<id>/*.yaml` auto-read).

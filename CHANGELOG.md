@@ -10,6 +10,70 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.2 — `NexoPlugin` trait + `PluginInitContext`**
+  (lifecycle contract for native Rust plugins). New module
+  `crates/core/src/agent/plugin_host.rs` (~470 LOC + 8 tests
+  verde) defines the async trait every Rust plugin implements
+  to participate in the plug-and-play system. Trait: `manifest()`
+  returns the parsed `PluginManifest` (Phase 81.1), `init(ctx)`
+  is called once at boot to register tools/advisors/hooks,
+  `shutdown()` defaults to Ok and is overridden only when the
+  plugin owns persistent state. `PluginInitContext<'a>` bundles
+  11 handles plugins need: `Arc<ToolRegistry>` for tool
+  registration, `Arc<RwLock<AdvisorRegistry>>` for advisory_hook
+  composition (RwLock so multiple plugins can register without
+  contention), `Arc<HookRegistry>` for per-message extension
+  hooks (Phase 11.6), `AnyBroker` for NATS pub/sub,
+  `Arc<LlmRegistry>` for provider-agnostic LLM client builds,
+  `Arc<ConfigReloadCoordinator>` for Phase 18 hot-reload
+  post-hooks, `Arc<SessionManager>`,
+  `Option<Arc<LongTermMemory>>`, `&Path` config_dir + state_root,
+  `CancellationToken` for shutdown signal. Helpers
+  `plugin_config_dir(id)` and `plugin_state_dir(id)` resolve
+  `<root>/plugins/<id>/` paths so every plugin uses the same
+  layout. `PluginInitError` enum 5 variants thiserror-typed
+  (`MissingNexoCapability`, `UnregisteredTool`, `Config`,
+  `ToolRegistration`, `Other`) — every variant carries
+  `plugin_id: String` so registry logs identify the source
+  without re-querying manifest. `PluginShutdownError` 2 variants
+  (`Timeout`, `Other`). `DEFAULT_PLUGIN_SHUTDOWN_TIMEOUT =
+  Duration::from_secs(5)` const used by Phase 81.5/81.10
+  registry to wrap plugin shutdown calls in
+  `tokio::time::timeout`. Compile-time dyn-safety guarantee via
+  `static _OBJECT_SAFE_CHECK: OnceLock<Arc<dyn NexoPlugin>>` —
+  if the trait gains an associated type or generic method that
+  prevents `dyn NexoPlugin`, the build refuses. Re-exported in
+  `crates/core/src/agent/mod.rs` as `NexoPlugin`,
+  `PluginInitContext`, `PluginInitError`, `PluginShutdownError`,
+  `DEFAULT_PLUGIN_SHUTDOWN_TIMEOUT`. **Distinct from existing
+  `crate::agent::plugin::Plugin`** (Channel I/O trait for
+  browser/wa/tg/email): different file (`plugin_host.rs` vs
+  `plugin.rs`), different trait name (`NexoPlugin` vs
+  `Plugin`), different concept (boot-time lifecycle vs runtime
+  channel I/O). `nexo-core` Cargo.toml gained two deps:
+  `nexo-plugin-manifest` (workspace, for `PluginManifest` type)
+  and `nexo-driver-permission` (for `AdvisorRegistry`; was
+  previously dev-only). 8 inline tests cover trait dyn-safety
+  compile-time check, manifest exposure, init outcome dispatch,
+  shutdown default vs override, `tokio::time::timeout` wrap
+  pattern, error Display actionable messages, path helpers,
+  default timeout const value. Provider-agnostic by construction
+  — trait + context have no LLM-specific surface; plugins build
+  providers via `ctx.llm_registry.build(...)`. IRROMPIBLE refs in
+  module doc-comment: claude-code-leak `src/tools/*` (absence —
+  leak hardcodes every tool, no plugin trait); `research/src/
+  plugins/runtime/types-channel.ts:56-71` (`register/dispose`
+  pattern adapted via Rust Drop); `research/src/plugins/
+  activation-context.ts:27-44` (`PluginActivationInputs`
+  metadata pattern); internal precedent
+  `crates/core/src/agent/plugin.rs` (Channel `Plugin` trait,
+  distinct concept). Phase 81 sub-phase counter advances 1/13 →
+  2/13. Future sub-phases consume this trait: 81.3 namespace
+  runtime enforcement, 81.5 `PluginRegistry::discover` (critical
+  path), 81.9 `Mode::Run` registry sweep replacing per-plugin
+  boot wire. Tests:
+  `cargo test -p nexo-core --lib agent::plugin_host` → 8/8,
+  `cargo build -p nexo-core` verde.
 - **Phase 81.1 — `nexo-plugin-manifest` crate** (foundation for
   plug-and-play plugin system). New crate
   `crates/plugin-manifest/` (~860 LOC + 25 tests verde) defines

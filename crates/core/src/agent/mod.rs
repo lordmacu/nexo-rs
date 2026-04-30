@@ -23,6 +23,9 @@ pub mod extension_tool;
 pub mod followup_tool;
 pub mod heartbeat_tool;
 pub mod hook_registry;
+pub mod inbox;
+pub mod inbox_router;
+pub mod list_peers_tool;
 pub mod llm_behavior;
 pub mod lsp_tool;
 pub mod mcp_catalog;
@@ -40,6 +43,7 @@ pub mod notebook_edit_tool;
 pub mod peer_directory;
 pub mod plan_mode_tool;
 pub mod plugin;
+pub mod plugin_host;
 pub mod proactive_hint;
 pub mod prompt_assembly;
 pub mod rate_limit;
@@ -53,6 +57,7 @@ pub mod routing;
 pub mod runtime;
 pub mod schema_validator;
 pub mod self_report;
+pub mod send_to_peer_tool;
 pub mod sender_rate_limit;
 pub mod session_logs_tool;
 pub mod skills;
@@ -112,6 +117,10 @@ pub use mock_plugin::MockPlugin;
 pub use noop::NoOpAgent;
 pub use peer_directory::{PeerDirectory, PeerSummary};
 pub use plugin::{Command, Plugin, Response};
+pub use plugin_host::{
+    NexoPlugin, PluginInitContext, PluginInitError, PluginShutdownError,
+    DEFAULT_PLUGIN_SHUTDOWN_TIMEOUT,
+};
 pub use rate_limit::{ToolRateLimitConfig, ToolRateLimiter, ToolRateLimitsConfig};
 pub use redaction::{RedactionReport, Redactor};
 pub use repl_registry::{ReplOutput, ReplRegistry, ReplSession};
