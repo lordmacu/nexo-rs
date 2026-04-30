@@ -16,15 +16,35 @@
 use super::context::AgentContext;
 use super::tool_registry::ToolHandler;
 use async_trait::async_trait;
+use nexo_config::types::lsp::{LspLanguageWire, LspPolicy};
 use nexo_llm::ToolDef;
-use nexo_lsp::{ExecutePolicy, LspManager, LspRequest};
+use nexo_lsp::{ExecutePolicy, LspLanguage, LspManager, LspRequest};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// C2 — convert a per-binding [`LspPolicy`] into the launcher-side
+/// [`ExecutePolicy`]. Lives here (not in `nexo-lsp`) so the LSP crate
+/// stays free of a `nexo-config` dep — the boundary the leak's
+/// `claude-code-leak/src/services/lsp/manager.ts:100-110` keeps clean
+/// by going through a typed adapter layer.
+fn execute_policy_from(policy: &LspPolicy) -> ExecutePolicy {
+    ExecutePolicy {
+        allowed_languages: policy.languages.iter().map(map_language).collect(),
+    }
+}
+
+fn map_language(wire: &LspLanguageWire) -> LspLanguage {
+    match wire {
+        LspLanguageWire::Rust => LspLanguage::Rust,
+        LspLanguageWire::Python => LspLanguage::Python,
+        LspLanguageWire::TypeScript => LspLanguage::TypeScript,
+        LspLanguageWire::Go => LspLanguage::Go,
+    }
+}
+
 pub struct LspTool {
     manager: Arc<LspManager>,
-    policy: ExecutePolicy,
     workspace_root: PathBuf,
     /// Set true when the originating tool call comes from a Phase
     /// 19/20 synthetic poller. The MVP wires `false` everywhere
@@ -35,10 +55,14 @@ pub struct LspTool {
 }
 
 impl LspTool {
-    pub fn new(manager: Arc<LspManager>, policy: ExecutePolicy, workspace_root: PathBuf) -> Self {
+    /// C2 — `policy` is no longer captured at construction. Each call
+    /// reads the per-binding `LspPolicy` from `ctx.effective_policy()`
+    /// and converts it via [`execute_policy_from`], so a hot-reload
+    /// that changes `lsp.languages` is observed on the next intake
+    /// event without re-registration.
+    pub fn new(manager: Arc<LspManager>, workspace_root: PathBuf) -> Self {
         Self {
             manager,
-            policy,
             workspace_root,
             treat_origin_as_synthetic: false,
         }
@@ -142,7 +166,7 @@ impl LspTool {
 
 #[async_trait]
 impl ToolHandler for LspTool {
-    async fn call(&self, _ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
+    async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
         let req = match parse_request(&args) {
             Ok(r) => r,
             Err(e) => {
@@ -153,11 +177,15 @@ impl ToolHandler for LspTool {
                 }))
             }
         };
+        // C2 — pull policy from the per-call effective policy so a hot
+        // reload that swaps `lsp.languages` (or per-binding override)
+        // is observed on the very next intake event.
+        let policy = execute_policy_from(&ctx.effective_policy().lsp);
         match self
             .manager
             .execute(
                 req,
-                &self.policy,
+                &policy,
                 &self.workspace_root,
                 self.treat_origin_as_synthetic,
             )
@@ -247,11 +275,7 @@ mod tests {
     #[tokio::test]
     async fn tool_def_empty_caps_describes_all_kinds_with_warmup_note() {
         let manager = manager_for_tests();
-        let tool = LspTool::new(
-            manager.clone(),
-            ExecutePolicy::default(),
-            std::path::PathBuf::from("/tmp"),
-        );
+        let tool = LspTool::new(manager.clone(), std::path::PathBuf::from("/tmp"));
         let def = tool.tool_def().await;
         assert_eq!(def.name, "Lsp");
         assert!(def.description.contains("go_to_def"));
@@ -260,6 +284,60 @@ mod tests {
         assert!(def.description.contains("1-based"));
         assert!(def.description.contains("No servers are warm yet"));
         manager.shutdown().await;
+    }
+
+    // ---- C2: per-call policy pull from EffectiveBindingPolicy ----
+
+    #[test]
+    fn execute_policy_from_empty_languages_is_unrestricted() {
+        let policy = LspPolicy::default();
+        let exec = execute_policy_from(&policy);
+        assert!(exec.allowed_languages.is_empty());
+        // `permits` says yes for everything when allowlist is empty.
+        for lang in [
+            LspLanguage::Rust,
+            LspLanguage::Python,
+            LspLanguage::TypeScript,
+            LspLanguage::Go,
+        ] {
+            assert!(exec.permits(lang), "empty allowlist should permit {lang:?}");
+        }
+    }
+
+    #[test]
+    fn execute_policy_from_languages_filters_per_binding() {
+        let policy = LspPolicy {
+            enabled: true,
+            languages: vec![LspLanguageWire::Rust, LspLanguageWire::TypeScript],
+            ..LspPolicy::default()
+        };
+        let exec = execute_policy_from(&policy);
+        assert!(exec.permits(LspLanguage::Rust));
+        assert!(exec.permits(LspLanguage::TypeScript));
+        assert!(!exec.permits(LspLanguage::Python));
+        assert!(!exec.permits(LspLanguage::Go));
+    }
+
+    #[test]
+    fn execute_policy_from_picks_up_languages_change_via_new_policy() {
+        // Simulates the reload pickup: same tool struct, different
+        // `LspPolicy` per call, different `ExecutePolicy` produced.
+        let p1 = LspPolicy {
+            enabled: true,
+            languages: vec![LspLanguageWire::Rust],
+            ..LspPolicy::default()
+        };
+        let p2 = LspPolicy {
+            enabled: true,
+            languages: vec![LspLanguageWire::Rust, LspLanguageWire::Python],
+            ..LspPolicy::default()
+        };
+        let e1 = execute_policy_from(&p1);
+        let e2 = execute_policy_from(&p2);
+        assert!(e1.permits(LspLanguage::Rust));
+        assert!(!e1.permits(LspLanguage::Python));
+        assert!(e2.permits(LspLanguage::Rust));
+        assert!(e2.permits(LspLanguage::Python));
     }
 
     #[tokio::test]
