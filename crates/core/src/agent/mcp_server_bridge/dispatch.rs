@@ -403,7 +403,6 @@ fn boot_always(name: &str, ctx: &McpServerBootContext) -> BootResult {
                     Arc::clone(s),
                     router,
                     ctx.broker.clone(),
-                    ctx.agent_context.config.team.clone(),
                     ctx.agent_id.clone(),
                     ctx.agent_id.clone(),
                 );
@@ -422,7 +421,6 @@ fn boot_always(name: &str, ctx: &McpServerBootContext) -> BootResult {
                     Arc::clone(s),
                     router,
                     ctx.broker.clone(),
-                    ctx.agent_context.config.team.clone(),
                     ctx.agent_id.clone(),
                     ctx.agent_id.clone(),
                 );
@@ -450,7 +448,6 @@ fn boot_always(name: &str, ctx: &McpServerBootContext) -> BootResult {
                     Arc::clone(s),
                     router,
                     ctx.broker.clone(),
-                    ctx.agent_context.config.team.clone(),
                     ctx.agent_id.clone(),
                     ctx.agent_id.clone(),
                 );
@@ -472,7 +469,6 @@ fn boot_always(name: &str, ctx: &McpServerBootContext) -> BootResult {
                     Arc::clone(s),
                     router,
                     ctx.broker.clone(),
-                    ctx.agent_context.config.team.clone(),
                     ctx.agent_id.clone(),
                     ctx.agent_id.clone(),
                 );
@@ -494,7 +490,6 @@ fn boot_always(name: &str, ctx: &McpServerBootContext) -> BootResult {
                     Arc::clone(s),
                     router,
                     ctx.broker.clone(),
-                    ctx.agent_context.config.team.clone(),
                     ctx.agent_id.clone(),
                     ctx.agent_id.clone(),
                 );

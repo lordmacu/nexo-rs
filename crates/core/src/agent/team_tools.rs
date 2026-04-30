@@ -33,14 +33,20 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 /// Shared inner the five `Team*Tool` structs hold via `Arc`.
-/// Handlers in step 9 will read from `store`, publish to
-/// `router`, enforce caps via `policy`, and stamp audit rows
-/// with `agent_id` + `current_goal_id`.
+/// Handlers read from `store`, publish to `router`, and stamp audit
+/// rows with `agent_id` + `current_goal_id`.
+///
+/// C2 — `policy` is no longer captured at construction. Each handler
+/// reads the per-call [`TeamPolicy`] from `ctx.effective_policy().team`
+/// via [`TeamTools::policy_for`] so a hot-reload of `team.max_*` (or
+/// per-binding override) is observed on the next intake event without
+/// re-registration. Mirrors the pattern in
+/// `claude-code-leak/src/services/mcp/useManageMCPConnections.ts:624`
+/// (invalidate-and-refetch, no actor teardown).
 pub struct TeamTools {
     pub store: Arc<dyn TeamStore>,
     pub router: Arc<TeamMessageRouter<AnyBroker>>,
     pub broker: AnyBroker,
-    pub policy: TeamPolicy,
     pub agent_id: String,
     /// The lead's own goal_id at construction. When this agent
     /// runs *as a teammate* (delegated by another team's lead),
@@ -57,7 +63,6 @@ impl TeamTools {
         store: Arc<dyn TeamStore>,
         router: Arc<TeamMessageRouter<AnyBroker>>,
         broker: AnyBroker,
-        policy: TeamPolicy,
         agent_id: impl Into<String>,
         current_goal_id: impl Into<String>,
     ) -> Arc<Self> {
@@ -65,10 +70,17 @@ impl TeamTools {
             store,
             router,
             broker,
-            policy,
             agent_id: agent_id.into(),
             current_goal_id: current_goal_id.into(),
         })
+    }
+
+    /// Return the per-call team policy resolved from the effective
+    /// binding policy. Cheap clone — `TeamPolicy` is six primitive
+    /// fields. Single source of truth so handlers stay consistent
+    /// across hot-reload.
+    pub(super) fn policy_for(&self, ctx: &super::context::AgentContext) -> TeamPolicy {
+        ctx.effective_policy().team.clone()
     }
 }
 
@@ -335,7 +347,12 @@ impl ToolHandler for TeamCreateTool {
                 "teammates cannot spawn other teams",
             ));
         }
-        if !self.inner.policy.tool_enabled() {
+        // C2 — pull policy from the per-call effective binding
+        // policy. Cheap clone (six primitives). Hot-reload pickup
+        // semantics: a snapshot swap that flips `team.enabled` /
+        // `team.max_*` is observed on the next intake event.
+        let team_policy = self.inner.policy_for(ctx);
+        if !team_policy.tool_enabled() {
             return Ok(err(
                 "TeamingDisabled",
                 "team feature not enabled for this agent",
@@ -354,7 +371,7 @@ impl ToolHandler for TeamCreateTool {
             .get("agent_type")
             .and_then(|v| v.as_str())
             .map(str::to_string);
-        let worktree_default = self.inner.policy.worktree_per_member;
+        let worktree_default = team_policy.worktree_per_member;
         let worktree_per_member = args
             .get("worktree_per_member")
             .and_then(|v| v.as_bool())
@@ -377,7 +394,7 @@ impl ToolHandler for TeamCreateTool {
             .count_active_for_agent(&self.inner.agent_id)
             .await
             .map_err(|e| anyhow::anyhow!("count_active_for_agent: {e}"))?;
-        let cap = self.inner.policy.effective_max_concurrent() as usize;
+        let cap = team_policy.effective_max_concurrent() as usize;
         if active_count >= cap {
             tracing::warn!(
                 target: "team::cap_exceeded",
@@ -492,7 +509,7 @@ impl ToolHandler for TeamDeleteTool {
                 "only the team lead can delete the team (you are running as a teammate)",
             ));
         }
-        if !self.inner.policy.tool_enabled() {
+        if !self.inner.policy_for(ctx).tool_enabled() {
             return Ok(err("TeamingDisabled", "team feature not enabled"));
         }
         let team_id_raw = match args.get("team_id").and_then(|v| v.as_str()) {
@@ -588,7 +605,7 @@ impl ToolHandler for TeamDeleteTool {
 #[async_trait]
 impl ToolHandler for TeamSendMessageTool {
     async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
-        if !self.inner.policy.tool_enabled() {
+        if !self.inner.policy_for(ctx).tool_enabled() {
             return Ok(err("TeamingDisabled", "team feature not enabled"));
         }
         let team_id_raw = match args.get("team_id").and_then(|v| v.as_str()) {
@@ -756,8 +773,8 @@ impl ToolHandler for TeamSendMessageTool {
 
 #[async_trait]
 impl ToolHandler for TeamListTool {
-    async fn call(&self, _ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
-        if !self.inner.policy.tool_enabled() {
+    async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
+        if !self.inner.policy_for(ctx).tool_enabled() {
             return Ok(err("TeamingDisabled", "team feature not enabled"));
         }
         let active_only = args
@@ -795,7 +812,7 @@ impl ToolHandler for TeamListTool {
 #[async_trait]
 impl ToolHandler for TeamStatusTool {
     async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
-        if !self.inner.policy.tool_enabled() {
+        if !self.inner.policy_for(ctx).tool_enabled() {
             return Ok(err("TeamingDisabled", "team feature not enabled"));
         }
         let team_id_raw = match args.get("team_id").and_then(|v| v.as_str()) {
@@ -946,7 +963,7 @@ mod tests {
     use nexo_team_store::SqliteTeamStore;
     use std::sync::Arc;
 
-    fn agent_cfg() -> AgentConfig {
+    fn agent_cfg_with_team(team: TeamPolicy) -> AgentConfig {
         AgentConfig {
             id: "cody".into(),
             model: ModelConfig {
@@ -986,13 +1003,30 @@ mod tests {
             remote_triggers: Vec::new(),
             lsp: nexo_config::types::lsp::LspPolicy::default(),
             config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
-            team: TeamPolicy {
-                enabled: true,
-                ..TeamPolicy::default()
-            },
+            team,
             proactive: Default::default(),
-        repl: Default::default(),
+            repl: Default::default(),
         }
+    }
+
+    fn agent_cfg() -> AgentConfig {
+        agent_cfg_with_team(TeamPolicy {
+            enabled: true,
+            ..TeamPolicy::default()
+        })
+    }
+
+    /// C2 — build a ctx whose `effective_policy().team` returns the
+    /// given policy. Tests that want to exercise handler-side policy
+    /// gating use this helper; tests that just need a "team enabled"
+    /// ctx use [`ctx_lead`].
+    async fn ctx_lead_with_policy(policy: TeamPolicy) -> AgentContext {
+        AgentContext::new(
+            "cody",
+            Arc::new(agent_cfg_with_team(policy)),
+            AnyBroker::local(),
+            Arc::new(SessionManager::new(std::time::Duration::from_secs(60), 8)),
+        )
     }
 
     async fn ctx_lead() -> AgentContext {
@@ -1008,7 +1042,9 @@ mod tests {
         ctx_lead().await.with_team("feature-x", "researcher")
     }
 
-    async fn build_inner(policy: TeamPolicy, agent_id: &str) -> Arc<TeamTools> {
+    /// C2 — `policy` argument removed; handlers pull from
+    /// `ctx.effective_policy().team`. Tests pass policy via ctx.
+    async fn build_inner(agent_id: &str) -> Arc<TeamTools> {
         let broker = Arc::new(AnyBroker::local());
         let store: Arc<dyn TeamStore> = Arc::new(SqliteTeamStore::open_in_memory().await.unwrap());
         let router = TeamMessageRouter::new(broker.clone());
@@ -1017,22 +1053,21 @@ mod tests {
         // Detach broker from Arc<AnyBroker> back to AnyBroker (it's
         // Clone) so TeamTools holds its own copy + the router holds
         // the Arc.
-        TeamTools::new(
-            store,
-            router,
-            (*broker).clone(),
-            policy,
-            agent_id,
-            "lead-goal-1",
-        )
+        TeamTools::new(store, router, (*broker).clone(), agent_id, "lead-goal-1")
     }
 
     #[tokio::test]
     async fn team_create_rejects_when_capability_disabled() {
-        let inner = build_inner(TeamPolicy::default(), "cody").await;
+        // C2 — `enabled` lives on the ctx's effective policy, not on
+        // `TeamTools` anymore. Use `ctx_lead_with_policy` to get a
+        // ctx that resolves `team.enabled = false`.
+        let inner = build_inner("cody").await;
         let tool = TeamCreateTool::new(inner);
         let res = tool
-            .call(&ctx_lead().await, json!({ "team_name": "feature-x" }))
+            .call(
+                &ctx_lead_with_policy(TeamPolicy::default()).await,
+                json!({ "team_name": "feature-x" }),
+            )
             .await
             .unwrap();
         assert_eq!(res["ok"], false);
@@ -1041,14 +1076,7 @@ mod tests {
 
     #[tokio::test]
     async fn team_create_returns_team_id_and_lead_member() {
-        let inner = build_inner(
-            TeamPolicy {
-                enabled: true,
-                ..TeamPolicy::default()
-            },
-            "cody",
-        )
-        .await;
+        let inner = build_inner("cody").await;
         let tool = TeamCreateTool::new(inner.clone());
         let res = tool
             .call(
@@ -1076,14 +1104,7 @@ mod tests {
 
     #[tokio::test]
     async fn team_create_rejects_collision() {
-        let inner = build_inner(
-            TeamPolicy {
-                enabled: true,
-                ..TeamPolicy::default()
-            },
-            "cody",
-        )
-        .await;
+        let inner = build_inner("cody").await;
         let tool = TeamCreateTool::new(inner);
         let _ = tool
             .call(&ctx_lead().await, json!({ "team_name": "feature-x" }))
@@ -1100,22 +1121,23 @@ mod tests {
 
     #[tokio::test]
     async fn team_create_rejects_when_at_max_concurrent() {
-        let inner = build_inner(
-            TeamPolicy {
-                enabled: true,
-                max_concurrent: 1,
-                ..TeamPolicy::default()
-            },
-            "cody",
-        )
+        // C2 — `max_concurrent` lives on ctx.effective_policy().team
+        // now. Build a ctx with the cap = 1, drive both calls through
+        // it.
+        let inner = build_inner("cody").await;
+        let ctx = ctx_lead_with_policy(TeamPolicy {
+            enabled: true,
+            max_concurrent: 1,
+            ..TeamPolicy::default()
+        })
         .await;
         let tool = TeamCreateTool::new(inner);
         let _ = tool
-            .call(&ctx_lead().await, json!({ "team_name": "first" }))
+            .call(&ctx, json!({ "team_name": "first" }))
             .await
             .unwrap();
         let res = tool
-            .call(&ctx_lead().await, json!({ "team_name": "second" }))
+            .call(&ctx, json!({ "team_name": "second" }))
             .await
             .unwrap();
         assert_eq!(res["ok"], false);
@@ -1125,14 +1147,7 @@ mod tests {
 
     #[tokio::test]
     async fn team_create_refuses_from_teammate_context() {
-        let inner = build_inner(
-            TeamPolicy {
-                enabled: true,
-                ..TeamPolicy::default()
-            },
-            "cody",
-        )
-        .await;
+        let inner = build_inner("cody").await;
         let tool = TeamCreateTool::new(inner);
         let res = tool
             .call(&ctx_teammate().await, json!({ "team_name": "nested" }))
@@ -1146,29 +1161,18 @@ mod tests {
     async fn team_delete_only_lead_can_invoke() {
         // Create the team as `cody`, then try to delete from a
         // different-agent inner.
-        let inner_lead = build_inner(
-            TeamPolicy {
-                enabled: true,
-                ..TeamPolicy::default()
-            },
-            "cody",
-        )
-        .await;
+        let inner_lead = build_inner("cody").await;
         TeamCreateTool::new(inner_lead.clone())
             .call(&ctx_lead().await, json!({ "team_name": "feature-x" }))
             .await
             .unwrap();
 
         // Build a SECOND inner pointing at the same store with a
-        // different agent_id.
+        // different agent_id. C2 — policy comes from ctx.
         let inner_other = TeamTools::new(
             Arc::clone(&inner_lead.store),
             Arc::clone(&inner_lead.router),
             inner_lead.broker.clone(),
-            TeamPolicy {
-                enabled: true,
-                ..TeamPolicy::default()
-            },
             "other-agent",
             "other-goal",
         );
@@ -1190,14 +1194,7 @@ mod tests {
 
     #[tokio::test]
     async fn team_delete_blocks_when_running_members() {
-        let inner = build_inner(
-            TeamPolicy {
-                enabled: true,
-                ..TeamPolicy::default()
-            },
-            "cody",
-        )
-        .await;
+        let inner = build_inner("cody").await;
         TeamCreateTool::new(inner.clone())
             .call(&ctx_lead().await, json!({ "team_name": "feature-x" }))
             .await
@@ -1232,14 +1229,7 @@ mod tests {
 
     #[tokio::test]
     async fn team_delete_soft_deletes_and_records_event() {
-        let inner = build_inner(
-            TeamPolicy {
-                enabled: true,
-                ..TeamPolicy::default()
-            },
-            "cody",
-        )
-        .await;
+        let inner = build_inner("cody").await;
         TeamCreateTool::new(inner.clone())
             .call(&ctx_lead().await, json!({ "team_name": "feature-x" }))
             .await
@@ -1264,14 +1254,7 @@ mod tests {
 
     #[tokio::test]
     async fn team_send_message_rejects_oversized_body() {
-        let inner = build_inner(
-            TeamPolicy {
-                enabled: true,
-                ..TeamPolicy::default()
-            },
-            "cody",
-        )
-        .await;
+        let inner = build_inner("cody").await;
         TeamCreateTool::new(inner.clone())
             .call(&ctx_lead().await, json!({ "team_name": "feature-x" }))
             .await
@@ -1294,14 +1277,7 @@ mod tests {
 
     #[tokio::test]
     async fn team_send_message_broadcast_requires_lead() {
-        let inner = build_inner(
-            TeamPolicy {
-                enabled: true,
-                ..TeamPolicy::default()
-            },
-            "cody",
-        )
-        .await;
+        let inner = build_inner("cody").await;
         TeamCreateTool::new(inner.clone())
             .call(&ctx_lead().await, json!({ "team_name": "feature-x" }))
             .await
@@ -1341,14 +1317,7 @@ mod tests {
 
     #[tokio::test]
     async fn team_send_message_dm_publishes_and_records() {
-        let inner = build_inner(
-            TeamPolicy {
-                enabled: true,
-                ..TeamPolicy::default()
-            },
-            "cody",
-        )
-        .await;
+        let inner = build_inner("cody").await;
         TeamCreateTool::new(inner.clone())
             .call(&ctx_lead().await, json!({ "team_name": "feature-x" }))
             .await
@@ -1380,14 +1349,7 @@ mod tests {
 
     #[tokio::test]
     async fn team_list_filters_active_only() {
-        let inner = build_inner(
-            TeamPolicy {
-                enabled: true,
-                ..TeamPolicy::default()
-            },
-            "cody",
-        )
-        .await;
+        let inner = build_inner("cody").await;
         TeamCreateTool::new(inner.clone())
             .call(&ctx_lead().await, json!({ "team_name": "a" }))
             .await
@@ -1418,29 +1380,18 @@ mod tests {
 
     #[tokio::test]
     async fn team_status_rejects_non_member() {
-        let inner_lead = build_inner(
-            TeamPolicy {
-                enabled: true,
-                ..TeamPolicy::default()
-            },
-            "cody",
-        )
-        .await;
+        let inner_lead = build_inner("cody").await;
         TeamCreateTool::new(inner_lead.clone())
             .call(&ctx_lead().await, json!({ "team_name": "feature-x" }))
             .await
             .unwrap();
 
         // Build a fresh inner pointing at the same store but a
-        // different agent.
+        // different agent. C2 — policy comes from ctx.
         let inner_other = TeamTools::new(
             Arc::clone(&inner_lead.store),
             Arc::clone(&inner_lead.router),
             inner_lead.broker.clone(),
-            TeamPolicy {
-                enabled: true,
-                ..TeamPolicy::default()
-            },
             "stranger",
             "g",
         );
@@ -1462,14 +1413,7 @@ mod tests {
 
     #[tokio::test]
     async fn team_status_returns_members_and_summary_for_lead() {
-        let inner = build_inner(
-            TeamPolicy {
-                enabled: true,
-                ..TeamPolicy::default()
-            },
-            "cody",
-        )
-        .await;
+        let inner = build_inner("cody").await;
         TeamCreateTool::new(inner.clone())
             .call(&ctx_lead().await, json!({ "team_name": "feature-x" }))
             .await
@@ -1484,5 +1428,83 @@ mod tests {
         // Only the lead so far.
         assert_eq!(members.len(), 1);
         assert_eq!(members[0]["name"], "team-lead");
+    }
+
+    // ---- C2: per-call policy pull from EffectiveBindingPolicy ----
+
+    /// Same shared `Arc<TeamTools>` driven through TWO ctxs with
+    /// DIFFERENT `team.max_concurrent` values produces different
+    /// outcomes — proves the handler reads policy fresh per call,
+    /// not from a captured field. This is the reload-pickup proof
+    /// at the unit level (integration test in `hot_reload_test.rs`
+    /// drives the same path through `ConfigReloadCoordinator`).
+    #[tokio::test]
+    async fn team_create_policy_pulled_per_call_from_ctx() {
+        let inner = build_inner("cody").await;
+        let tool = TeamCreateTool::new(inner);
+
+        // First ctx: cap=1. First call succeeds, second fails.
+        let ctx_cap1 = ctx_lead_with_policy(TeamPolicy {
+            enabled: true,
+            max_concurrent: 1,
+            ..TeamPolicy::default()
+        })
+        .await;
+        let r1 = tool
+            .call(&ctx_cap1, json!({ "team_name": "first" }))
+            .await
+            .unwrap();
+        assert_eq!(r1["ok"], true);
+        let r2 = tool
+            .call(&ctx_cap1, json!({ "team_name": "second" }))
+            .await
+            .unwrap();
+        assert_eq!(r2["ok"], false);
+        assert_eq!(r2["kind"], "ConcurrentCapExceeded");
+
+        // SAME tool instance — but a NEW ctx with cap=8 (mirrors a
+        // hot-reload widening the cap). The next call now succeeds.
+        let ctx_cap8 = ctx_lead_with_policy(TeamPolicy {
+            enabled: true,
+            max_concurrent: 8,
+            ..TeamPolicy::default()
+        })
+        .await;
+        let r3 = tool
+            .call(&ctx_cap8, json!({ "team_name": "third" }))
+            .await
+            .unwrap();
+        assert_eq!(r3["ok"], true, "after cap widened the call must succeed");
+    }
+
+    /// `team.enabled = false → true` on a hot-reload is observed by
+    /// the same tool instance via the new ctx. This is the
+    /// behaviour-equivalent of leak's
+    /// `claude-code-leak/src/services/mcp/useManageMCPConnections.ts:624`
+    /// (invalidate-and-refetch — no actor restart).
+    #[tokio::test]
+    async fn team_enabled_flip_picked_up_via_new_ctx() {
+        let inner = build_inner("cody").await;
+        let tool = TeamCreateTool::new(inner);
+
+        // Pre-reload: disabled.
+        let ctx_off = ctx_lead_with_policy(TeamPolicy::default()).await;
+        let r1 = tool
+            .call(&ctx_off, json!({ "team_name": "early" }))
+            .await
+            .unwrap();
+        assert_eq!(r1["kind"], "TeamingDisabled");
+
+        // Post-reload: enabled. Same tool, new ctx.
+        let ctx_on = ctx_lead_with_policy(TeamPolicy {
+            enabled: true,
+            ..TeamPolicy::default()
+        })
+        .await;
+        let r2 = tool
+            .call(&ctx_on, json!({ "team_name": "post-reload" }))
+            .await
+            .unwrap();
+        assert_eq!(r2["ok"], true);
     }
 }

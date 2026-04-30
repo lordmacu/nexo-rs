@@ -2518,7 +2518,6 @@ async fn main() -> Result<()> {
                     std::sync::Arc::clone(store) as std::sync::Arc<dyn nexo_team_store::TeamStore>,
                     std::sync::Arc::clone(&team_router),
                     broker.clone(),
-                    effective_boot.team.clone(),
                     agent_id.clone(),
                     agent_id.clone(),
                 );
