@@ -10,6 +10,23 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- Phase 80.18 — `crates/agent-registry::dream_run` audit-log store
+  for forked memory-consolidation runs. Verbatim port of leak
+  `claude-code-leak/src/tasks/DreamTask/DreamTask.ts:1-158`. Mirrors
+  Phase 72 turn-log pattern: `DreamRunStore` trait + `SqliteDreamRunStore`
+  impl, schema migration v4 idempotent + 3 indexes, MAX_TURNS=30
+  server-side cap, TAIL_HARD_CAP=1000 defends `tail(usize::MAX)`,
+  JSON columns for `files_touched` + `turns` avoid join tables.
+  `Option<i64>` for `prior_mtime_ms` distinguishes `Some(0)` (no prior
+  consolidation file marker for autoDream) from `None` (non-lock-holding
+  forks like AWAY_SUMMARY 80.14). `fork_label: String` flexible —
+  supports autoDream + AWAY_SUMMARY + future Phase 51 eval forks.
+  Provider-agnostic: `DreamTurn { text, tool_use_count }` plain Rust,
+  no `LlmClient` coupling. 26 unit tests including idempotent insert
+  on (goal_id, started_at), trim cap proof (insert 35 → final 30),
+  reattach `Running → LostOnRestart` flip, drop_for_goal isolation,
+  prior_mtime zero-vs-none round-trip. Phase 71 reattach integration
+  deferred to 80.18.b follow-up.
 - Phase 80.20 — `crates/fork::AutoMemFilter` tool whitelist for
   forked memory-consolidation work. Verbatim port of leak
   `claude-code-leak/src/services/extractMemories/extractMemories.ts:165-222`
@@ -110,6 +127,25 @@ and the project adheres to [Semantic Versioning](https://semver.org)
   attribution block (ADR 0009).
 - `README.md` rewritten with badges and deep links into the
   published documentation.
+- **M2** — MCP audit log `tools/call` rows now record the real
+  `args_hash` (sha256 truncated to 16 lowercase hex chars / 64 bits)
+  and `args_size_bytes` (JSON-serialized byte length) instead of the
+  placeholder `None`/`0`. Honors the existing
+  `audit_log.redact_args` (default `true`),
+  `audit_log.per_tool_redact_args` (per-tool override wins over
+  global), and `audit_log.args_hash_max_bytes` (default 1 MiB, hard
+  ceiling 16 MiB) knobs — none of those YAML keys change. New
+  internal module `crates/mcp/src/server/audit_log/hash.rs` exposes
+  the helpers as `pub(crate)`. `SELECT args_hash, COUNT(*) FROM
+  mcp_call_audit GROUP BY args_hash` correlation queries now return
+  real data; the SQLite schema is unchanged. Provider-agnostic —
+  operates on the MCP wire envelope, identical regardless of which
+  LLM client (Claude Desktop / Cursor / Continue / Cody / Aider) or
+  backing provider (Anthropic / MiniMax / OpenAI / Gemini /
+  DeepSeek / xAI / Mistral) drives the call. Truncation length
+  matches the prior-art pattern in claude-code-leak
+  (`src/services/mcp/utils.ts:157-168` `hashMcpConfig` + 4 other
+  sites all `slice(0, 16)`).
 - **C3** — `crates/setup/src/capabilities.rs::INVENTORY` extended
   from 9 → 12 entries closing the audit drift. New entries:
   `CHAT_AUTH_SKIP_PERM_CHECK` (auth-wide file-perm-gauntlet bypass,

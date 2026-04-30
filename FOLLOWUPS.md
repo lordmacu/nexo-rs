@@ -140,10 +140,28 @@ do not get lost.
   in this file; cross-reference here. Net: hot-reload of
   `mcp_server.expose_tools` requires process restart.
 - **M2 — MCP audit `args_size_bytes` + `args_hash` always 0/None.**
-  `crates/mcp/src/server/dispatch.rs:706-707` hard-codes both
-  fields; `audit_log/sqlite_store.rs:71` schema column always 0.
-  Code comment admits the deferral. Fix: sha256 of params +
-  `serde_json::to_vec(&args).len()`. Effort: 30 min.
+  ✅ shipped 2026-04-30 (commits `9417423`, `279e2ce`, `0191ea9`).
+  Discovery surfaced that the infra was already in place
+  (`AuditLogConfig::{redact_args, per_tool_redact_args,
+  args_hash_max_bytes}` schema validated, SQLite columns mapped) —
+  only the compute at `dispatch.rs:706-707` was missing. New
+  `audit_log/hash.rs` module exposes
+  `args_hash_truncated(&[u8]) -> String` (sha256 → 16 lowercase hex
+  chars / 64 bits, manual hex format avoids `hex` crate dep on
+  `mcp`) and `compute_args_metrics(&Value, &AuditLogConfig, &str)
+  -> (Option<String>, u64)` (single-serialize, applies all 3 config
+  knobs). Truncation length matches prior art (claude-code-leak
+  `hashMcpConfig`, `pasteStore`, `fileOperationAnalytics`,
+  `fileHistory`, `pluginTelemetry` — all `slice(0, 16)`).
+  Provider-agnostic — operates on the MCP wire envelope, regardless
+  of which LLM client (Claude Desktop / Cursor / Continue / Cody /
+  Aider) or backing provider (Anthropic / MiniMax / OpenAI / Gemini
+  / DeepSeek / xAI / Mistral) drives the call. Tests: 9 unit (8
+  planned + 1 provider-agnostic regression that exercises 4
+  provider-shaped JSON envelopes) + 2 integration in
+  `audit_log_e2e_test.rs` (happy path + `redact_args=false`
+  opt-out). cargo test -p nexo-mcp green (358 lib + 5 audit e2e).
+  SQLite schema unchanged — back-compat 100%.
 - **M3 — `proactive` ⊕ `coordinator` mutual exclusion not enforced.**
   ✅ shipped 2026-04-30. `BindingValidationError::CoordinatorWithProactive`
   now fires from `validate_agent()` (`binding_validate.rs:407-433`)
