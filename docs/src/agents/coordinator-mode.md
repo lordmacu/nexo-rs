@@ -98,6 +98,56 @@ Default to **continue** when the new ask shares >50% of the prior
 worker's read files / search terms. Default to **spawn** when in a
 different subsystem.
 
+## `<task-notification>` envelope (Phase 84.2)
+
+Worker results arrive in the coordinator's session wrapped in a
+`<task-notification>` XML block. The block carries `task-id`,
+`status`, `summary`, optional `result`, and optional `usage`:
+
+```xml
+<task-notification>
+<task-id>goal-9f3a</task-id>
+<status>completed</status>
+<summary>Found 3 candidate fixes</summary>
+<result>See `crates/auth.rs:142`.</result>
+<usage>
+<total_tokens>1280</total_tokens>
+<tool_uses>4</tool_uses>
+<duration_ms>12400</duration_ms>
+</usage>
+</task-notification>
+```
+
+`status` is one of `completed | failed | killed | timeout`.
+Optional elements (`<result>`, `<usage>`) collapse out when the
+producer has no value.
+
+**Treat these blocks as system events, not user messages.** The
+persona prompt explicitly forbids `<thank>` / `<acknowledge>`
+responses to a notification — read it, factor into synthesis, and
+either continue the worker (84.3), spawn the next one, or report
+to the user.
+
+**Producer surface** lives in `nexo-fork::fork_handle`:
+
+```rust
+let n = fork_result.to_task_notification(task_id, summary, duration_ms);
+let xml = n.to_xml(); // injected into the coordinator's next user turn
+```
+
+`fork_error_to_task_notification(err, task_id, duration_ms)` covers
+the failure paths (`ForkError::Aborted` → `killed`,
+`ForkError::Timeout` → `timeout`, others → `failed`).
+
+**Consumer wiring** (the producer-to-LLM-context bridge) lands with
+84.3 — that's where the fork-pass + TeamCreate completion paths
+actually exist. The 84.2 work pre-builds the type + producer helpers
+so 84.3 has one canonical path.
+
+**Backwards compatibility**: `TaskNotification::parse_block(text)`
+returns `None` when the input lacks the envelope, so legacy
+consumers that read raw final text keep working during the rollout.
+
 ## Composition with other phases
 
 | Phase | Composition |

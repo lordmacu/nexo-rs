@@ -1954,6 +1954,25 @@ admin RPC + http_server bootstrap into main.rs (single
 shared boot-order refactor — folded with 82.10.h.b /
 82.11 / 82.12 / 82.13 / 82.14 deferreds).
 
+### Phase 84.2 — task-notification consumer wire-up
+
+Phase 84.2 shipped the `TaskNotification` type (driver-types) +
+`ForkResult::to_task_notification` / `fork_error_to_task_notification`
+producer helpers (fork). The piece deferred:
+
+- **Consumer wire-up** — the bridge from a fork outcome to the
+  coordinator's session as a rendered `<task-notification>` block
+  in the next user turn. The fork-pass + TeamCreate exit paths
+  do not exist as standalone code today; they emerge naturally
+  inside Phase 84.3 (`SendMessageToWorker` continuation tool +
+  related fork-as-tool wrapping). Until 84.3 lands, no consumer
+  needs the producer helpers — the type is staged, the producers
+  are tested, the consumer wires up alongside the tool that needs
+  it.
+
+Target phase: 84.3 (folded into the SendMessageToWorker
+implementation).
+
 ### Phase 82.9 — reference template + admin-ui follow-ups
 
 Phase 82.9 shipped the multi-tenant SaaS walkthrough doc

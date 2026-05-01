@@ -9312,7 +9312,7 @@ agent's existing system prompt only when
   one-turn goal, assert the coordinator block appears in the
   rendered system prompt.
 
-#### 84.2 — `<task-notification>` envelope for worker results   ⬜
+#### 84.2 — `<task-notification>` envelope for worker results   ✅  (shipped 2026-05-01)
 
 When a forked subagent (`nexo-fork`) or a TeamCreate worker
 completes, the coordinator receives the result. Today the result is
