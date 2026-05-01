@@ -16,10 +16,12 @@
 
 pub mod broker_dispatcher;
 pub mod rate_limit;
+pub mod reload;
 pub mod router;
 pub mod server;
 
 pub use broker_dispatcher::BrokerWebhookDispatcher;
 pub use rate_limit::{ClientBucketKey, ClientBucketMap, TokenBucket};
+pub use reload::{reevaluate, EvictedSource, EvictionReason, ReevaluateReport};
 pub use router::{build_router, RouterState, WebhookRouterError};
 pub use server::{spawn_server, WebhookServerHandle};
