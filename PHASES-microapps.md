@@ -763,18 +763,47 @@ microapp-developer reference with wire shape, layered grant
 model, all 18 endpoints, many-to-many credentials flow, async
 pairing diagram, INVENTORY toggles, SDK example.
 
-**Deferred to 82.10.h follow-up (NOT scope-drop):**
-- SQLite-backed `AdminAuditWriter` impl + retention sweep at
-  boot. Migration entry in `crates/memory/migrations/`.
-- `nexo microapp admin audit tail [--microapp-id ID] [--limit N]
-  [--method M]` CLI subcommand reading the SQLite audit table.
-- Production wiring in `src/main.rs` constructing the
-  YamlPatcher / LlmYamlPatcher / CredentialStore /
-  PairingChallengeStore adapters and feeding them to
-  `AdminRpcDispatcher::with_*_domain` builders. Without this,
-  microapps receive `Internal: <domain> not configured` errors.
-  The framework + SDK are ready; main.rs wire-up is the last
-  mile.
+#### 82.10.h — SQLite audit + production adapters   ✅  (shipped 2026-05-01)
+
+Three steps shipped, two deferred to 82.10.h.b:
+
+- **82.10.h.1** — `SqliteAdminAuditWriter` (`crates/core/src/agent/admin_rpc/audit_sqlite.rs`).
+  Idempotent inline DDL + WAL + 2 indices on `(microapp_id,
+  started_at_ms DESC)` and `(method, started_at_ms DESC)`.
+  Boot-time `sweep_retention(retention_days, max_rows)` enforces
+  age + cap limits via `NEXO_MICROAPP_ADMIN_AUDIT_RETENTION_DAYS`
+  / `_MAX_ROWS` toggles.
+- **82.10.h.2** — library-level `tail(&AuditTailFilter)` query +
+  `format_rows_as_table` / `format_rows_as_json` helpers. CLI
+  subcommand wire-up deferred to 82.10.h.b alongside the rest of
+  main.rs work.
+- **82.10.h.3** — three production adapters in
+  `nexo_setup::admin_adapters`: `AgentsYamlPatcher` (wraps
+  `yaml_patch` for `agents.yaml`), `LlmYamlPatcherFs` (mapping-
+  style helpers for `llm.yaml.providers.<id>`),
+  `FilesystemCredentialStore` (atomic writes under
+  `secrets/<channel>/[<instance>/]payload.json`). 5 new helpers in
+  `crate::yaml_patch` (`remove_agent_block`, 4× LLM provider
+  helpers).
+
+**Tests:** 15 audit + 7 yaml_patch helpers + 12 adapters =
+**34 verde**.
+
+**Deferred to 82.10.h.b (blocked on main.rs):**
+- `PairingChallengeStore` adapter — needs a fresh SQLite schema
+  for the QR challenge state machine (existing
+  `crates/pairing::session_store` only tracks post-pairing
+  session tokens).
+- `PairingNotifier` adapter — needs main.rs stdio writer
+  integration to publish `nexo/notify/pairing_status_changed`
+  on the same JSON-RPC stdout the dispatcher reads from.
+- `nexo microapp admin audit tail` CLI subcommand wire-up.
+- main.rs glue: `app:`-prefix routing, per-microapp dispatcher
+  instantiation, capability boot validation, audit-writer
+  selection (`SqliteAdminAuditWriter::open` vs in-memory).
+  Today blocked because the parallel `nexo-fork` workstream has
+  main.rs in a non-buildable state; 82.10.h.b unblocks once
+  main.rs builds clean.
 
 **Deferred to 82.10.i (out-of-scope follow-up):**
 - Interactive operator approval (`ask` behavior). v1 is binary
