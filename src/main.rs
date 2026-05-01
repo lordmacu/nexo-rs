@@ -1302,12 +1302,51 @@ async fn main() -> Result<()> {
     } else {
         std::path::PathBuf::from(&snapshot_yaml.sqlite_root)
     };
+    // MS-2.b — `ClosureResolver` that maps each agent's id to its
+    // real workspace memdir + a shared SQLite dir. Agents whose id
+    // is not in the map fall back to the YAML defaults (so a fresh
+    // agent created mid-run does not 404 the snapshotter).
+    let memdir_map: std::collections::HashMap<String, std::path::PathBuf> = cfg
+        .agents
+        .agents
+        .iter()
+        .filter_map(|a| {
+            if a.workspace.is_empty() {
+                None
+            } else {
+                Some((a.id.clone(), std::path::PathBuf::from(&a.workspace)))
+            }
+        })
+        .collect();
+    let memdir_map = Arc::new(memdir_map);
+    let path_resolver: Arc<dyn nexo_memory_snapshot::PathResolver> = {
+        let memdir_default = memdir_root_path.clone();
+        let sqlite_dir = sqlite_root_path.clone();
+        let memdir_map_for_memdir = memdir_map.clone();
+        let sqlite_dir_for_sqlite = sqlite_dir.clone();
+        Arc::new(nexo_memory_snapshot::ClosureResolver::new(
+            move |agent_id: &str, _tenant: &str| -> std::path::PathBuf {
+                memdir_map_for_memdir
+                    .get(agent_id)
+                    .cloned()
+                    .unwrap_or_else(|| memdir_default.join(agent_id))
+            },
+            // SQLite is global per-deployment today (every agent
+            // shares `cfg.memory.long_term.sqlite.path`'s parent
+            // dir). MS-2.b stays consistent with that until the
+            // long-term store goes per-agent.
+            move |_agent_id: &str, _tenant: &str| -> std::path::PathBuf {
+                sqlite_dir_for_sqlite.clone()
+            },
+        ))
+    };
     let memory_snapshotter: Option<Arc<dyn nexo_memory_snapshot::MemorySnapshotter>> =
         if snapshot_yaml.enabled {
             let s = nexo_memory_snapshot::local_fs::LocalFsSnapshotter::builder()
                 .state_root(memory_snapshot_state_root.clone())
                 .memdir_root(memdir_root_path.clone())
                 .sqlite_root(sqlite_root_path.clone())
+                .path_resolver(path_resolver.clone())
                 .lock_timeout(std::time::Duration::from_secs(
                     snapshot_yaml.lock_timeout_secs.max(1),
                 ))
