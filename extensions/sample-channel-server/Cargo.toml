@@ -1,0 +1,23 @@
+[package]
+name = "sample-channel-server"
+description = "Sample MCP channel server for Nexo (Phase 80.9 fixture)."
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["Cristian Garcia <informacion@cristiangarcia.co>"]
+publish = false
+
+[[bin]]
+name = "sample-channel-server"
+path = "src/main.rs"
+
+[dependencies]
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"
+tokio       = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "io-util", "time", "signal", "sync"] }
+tracing     = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow      = "1"
+
+[package.metadata.dist]
+dist = false
