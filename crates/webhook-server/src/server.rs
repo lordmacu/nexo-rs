@@ -14,9 +14,16 @@ use tokio_util::sync::CancellationToken;
 
 use crate::router::RouterState;
 
+/// Live server handle. Cancelling the token passed to
+/// [`spawn_server`] triggers graceful shutdown; `join` resolves
+/// when the listener finishes draining.
 pub struct WebhookServerHandle {
+    /// Actual bound address (resolved after `bind`; useful when
+    /// the operator passed `0.0.0.0:0` for an ephemeral port).
     pub bind_addr: SocketAddr,
+    /// Snapshot of which sources are mounted on the live router.
     pub router_state: Arc<RouterState>,
+    /// JoinHandle of the background `axum::serve` task.
     pub join: tokio::task::JoinHandle<()>,
 }
 

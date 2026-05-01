@@ -39,18 +39,28 @@ use tower_http::limit::RequestBodyLimitLayer;
 
 use crate::rate_limit::{ClientBucketKey, ClientBucketMap};
 
+/// Reasons [`build_router`] can fail.
+///
+/// `#[non_exhaustive]` — operator-facing diagnostic, future
+/// build-time errors land as semver-minor.
+#[non_exhaustive]
 #[derive(Debug, Error)]
 pub enum WebhookRouterError {
+    /// Invalid config (duplicate ids, reserved bind port, etc.).
     #[error("config invalid: {0}")]
     Config(#[from] WebhookConfigError),
+    /// Caller passed an enabled config with zero declared sources.
     #[error("no sources configured (router would expose no routes)")]
     NoSources,
 }
 
 /// Per-source runtime state.
 pub struct SourceState {
+    /// Webhook source identifier (`WebhookSourceConfig.id`).
     pub source_id: String,
+    /// HTTP path the route is mounted at.
     pub path: String,
+    /// Phase 80.12 verifier shared with the request handler.
     pub handler: Arc<WebhookHandler>,
     /// `None` when `concurrency_cap == 0` — semaphore acquisition
     /// skipped (unbounded).
@@ -58,18 +68,23 @@ pub struct SourceState {
     /// `None` when neither global nor per-source rate limit is
     /// active.
     pub rate_limit: Option<Arc<ClientBucketMap>>,
+    /// Pre-rendered NATS subject template (with `${event_kind}`).
     pub publish_to: String,
 }
 
-/// Captured router state — useful for `reevaluate` (Step 7) and
-/// for tests asserting which sources are mounted.
+/// Captured router state — used by [`crate::reevaluate`] to
+/// compute the kept/added/evicted delta on hot-reload.
 pub struct RouterState {
+    /// Source id → mounted state, for cheap lookup.
     pub sources: HashMap<String, Arc<SourceState>>,
+    /// CIDRs trusted to forward `X-Forwarded-For`.
     pub trusted_proxies: Vec<ipnetwork::IpNetwork>,
+    /// Whether to honour `X-Real-IP` when XFF chain is empty.
     pub allow_realip_fallback: bool,
 }
 
 impl RouterState {
+    /// Sorted list of mounted source ids.
     pub fn source_ids(&self) -> Vec<String> {
         let mut ids: Vec<String> = self.sources.keys().cloned().collect();
         ids.sort();
