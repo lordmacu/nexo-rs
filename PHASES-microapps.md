@@ -683,7 +683,36 @@ behaviour, audit marker format, hot-reload caveats.
   cooldown after N consecutive `rate_limit` hits (mirrors the
   upstream CLI auth-profiles cooldown pattern).
 
-#### 82.8 — Multi-tenant audit log filter   ⬜
+#### 82.8 — Multi-tenant audit log filter   ✅  (shipped 2026-05-01)
+
+Single atomic step:
+- `goal_turns.account_id` column added via idempotent ALTER
+  (same pattern as the 80.9.h `source` migration). Index on
+  `(account_id, recorded_at DESC)` for tenant-scoped tail
+  queries.
+- `TurnRecord.account_id: Option<String>` field threaded
+  through the insert UPSERT + every `SELECT`/tuple in
+  `SqliteTurnLogStore`. Legacy callers (event_forwarder,
+  away_summary, agent_query tests) default to `None`.
+- New `SqliteTurnLogStore::tail_for_account(account_id,
+  since, limit)`. Filters strictly by `account_id = ?`;
+  legacy `NULL` rows are excluded so operator/admin tails
+  remain the only path that sees them. Cross-tenant probes
+  return an empty list (no error) — defense in depth
+  against existence oracles.
+
+**Tests:** 5 new (round-trip, idempotent on replay,
+tenant filter, unknown tenant returns empty, legacy NULL
+rows excluded from tenant view but visible operator-side).
+14 turn_log total verde.
+
+**Deferred:**
+- BindingContext (Phase 82.1) → `account_id` plumbing in
+  `event_forwarder` so live writes carry the tenant id.
+  Today the field is store-correct but the writer always
+  emits `None`. Same boot-order refactor as the rest of
+  82.x's deferreds; folded with main.rs operator wire-up.
+
 
 Phase 72 turn-level audit log already records every tool call.
 Tenants need to query *only their own* turns for billing or

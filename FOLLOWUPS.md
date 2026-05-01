@@ -1954,6 +1954,22 @@ admin RPC + http_server bootstrap into main.rs (single
 shared boot-order refactor — folded with 82.10.h.b /
 82.11 / 82.12 / 82.13 / 82.14 deferreds).
 
+### Phase 82.8 — multi-tenant audit follow-up
+
+Phase 82.8 shipped the schema + filter; one piece is
+deferred:
+
+- **`event_forwarder.rs::AttemptResult → TurnRecord`
+  builder threads `account_id`** from the active
+  `BindingContext` (Phase 82.1). Today the writer hard-codes
+  `account_id: None`, so live writes don't populate the
+  column. Persistence layer is correct (`tail_for_account`
+  returns matching rows; `tail` returns everything for
+  operator scope), but until the forwarder threads the
+  value, multi-tenant SaaS callers see empty tenant tails on
+  fresh data. Same boot-order refactor as the rest of 82.x's
+  deferreds — folded with main.rs operator wire-up.
+
 ## Resolved (recent highlights)
 
 - 2026-04-28 — MCP denied-tool override now supports `Heartbeat`

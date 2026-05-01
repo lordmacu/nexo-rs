@@ -368,6 +368,12 @@ fn build_turn_record(
         // it always emits `None` — the default-empty contract
         // matches what audit tools expect.
         source: None,
+        // Phase 82.8 — same default-None pattern as `source`.
+        // The channel inbound path populates `account_id` from
+        // BindingContext (Phase 82.1) via the same with_*
+        // helper before persistence; the forwarder doesn't
+        // know the binding directly.
+        account_id: None,
     }
 }
 
