@@ -19,6 +19,8 @@ serde_json = { workspace = true }
 anyhow     = { workspace = true }
 thiserror  = { workspace = true }
 humantime-serde = "1"
+ipnetwork  = { workspace = true }
+nexo-webhook-receiver = { path = "../webhook-receiver" }
 
 [dev-dependencies]
 tempfile = "3"
