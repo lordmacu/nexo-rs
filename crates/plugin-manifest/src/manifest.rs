@@ -100,6 +100,47 @@ pub struct PluginSection {
 pub struct Capabilities {
     #[serde(default)]
     pub provides: Vec<Capability>,
+    /// Phase 82.10 — admin RPC capabilities this microapp needs
+    /// from the daemon. Layered grant model: required/optional
+    /// declared here; operator decides which to grant via
+    /// `extensions.yaml.<id>.capabilities_grant`.
+    #[serde(default)]
+    pub admin: AdminCapabilities,
+}
+
+/// Phase 82.10 — admin RPC capability declaration.
+///
+/// Two-tier semantics:
+/// - `required`: boot fails if operator did not grant. The
+///   microapp cannot run without these (e.g. agent-creator
+///   needs `agents_crud` to do its job).
+/// - `optional`: boot OK if not granted. Runtime calls to
+///   these methods return `-32004 capability_not_granted`. The
+///   microapp branches gracefully (e.g. hide an LLM key editor
+///   tab when `llm_keys_crud` is missing).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct AdminCapabilities {
+    /// Capabilities the microapp cannot run without. Operator
+    /// must grant all of these or boot fails with
+    /// `CapabilityBootError::RequiredNotGranted`.
+    #[serde(default)]
+    pub required: Vec<String>,
+    /// Capabilities the microapp can run without. Boot warns if
+    /// declared but not granted; runtime calls return -32004.
+    #[serde(default)]
+    pub optional: Vec<String>,
+}
+
+impl AdminCapabilities {
+    /// All declared capabilities (required ∪ optional).
+    pub fn declared(&self) -> std::collections::HashSet<String> {
+        self.required
+            .iter()
+            .chain(self.optional.iter())
+            .cloned()
+            .collect()
+    }
 }
 
 /// Closed enum of what a plugin can declaratively contribute.
