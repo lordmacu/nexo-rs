@@ -17,13 +17,18 @@ use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex as TokioMutex;
 use uuid::Uuid;
 
+use super::agent_events::{AgentEventEmitter, NoopAgentEventEmitter};
 use super::redaction::Redactor;
 use super::transcripts_index::TranscriptsIndex;
+use nexo_tool_meta::admin::agent_events::{
+    AgentEventKind, TranscriptRole as WireTranscriptRole,
+};
 pub const TRANSCRIPT_VERSION: u32 = 1;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -73,10 +78,22 @@ pub struct TranscriptWriter {
     agent_id: String,
     redactor: Arc<Redactor>,
     index: Option<Arc<TranscriptsIndex>>,
+    /// Phase 82.11 — optional firehose emitter. Called after
+    /// the redactor runs (defense-in-depth: emitted body matches
+    /// the persisted body). Default is
+    /// [`NoopAgentEventEmitter`] so existing callers stay
+    /// byte-identical until they opt in via [`Self::with_emitter`].
+    event_emitter: Arc<dyn AgentEventEmitter>,
     /// Per-session locks around the header-creation block so only one
     /// writer writes the Session line, and every other writer waits
     /// for the header to be flushed before opening in append mode.
     header_locks: DashMap<PathBuf, Arc<TokioMutex<()>>>,
+    /// Phase 82.11 — per-session monotonic counter handed to the
+    /// firehose as `seq`. Counts only `TranscriptLine::Entry`
+    /// records — must stay in lockstep with `TranscriptReaderFs`'s
+    /// entry-only enumeration so backfill `agent_events/read` and
+    /// the live notification stream agree on `seq`.
+    entry_seq: DashMap<Uuid, Arc<AtomicU64>>,
 }
 impl TranscriptWriter {
     pub fn new(root: impl Into<PathBuf>, agent_id: impl Into<String>) -> Self {
@@ -85,7 +102,9 @@ impl TranscriptWriter {
             agent_id: agent_id.into(),
             redactor: Arc::new(Redactor::disabled()),
             index: None,
+            event_emitter: Arc::new(NoopAgentEventEmitter),
             header_locks: DashMap::new(),
+            entry_seq: DashMap::new(),
         }
     }
     /// Wrap the writer with a redactor and/or FTS index. Both are
@@ -102,8 +121,18 @@ impl TranscriptWriter {
             agent_id: agent_id.into(),
             redactor,
             index,
+            event_emitter: Arc::new(NoopAgentEventEmitter),
             header_locks: DashMap::new(),
+            entry_seq: DashMap::new(),
         }
+    }
+
+    /// Phase 82.11 — install a firehose emitter. Replaces the
+    /// default `NoopAgentEventEmitter`. Call AFTER `with_extras`
+    /// (or use the standalone factory from boot wiring).
+    pub fn with_emitter(mut self, emitter: Arc<dyn AgentEventEmitter>) -> Self {
+        self.event_emitter = emitter;
+        self
     }
     pub fn root(&self) -> &Path {
         &self.root
@@ -205,6 +234,34 @@ impl TranscriptWriter {
                 );
             }
         }
+
+        // Phase 82.11 — fire the firehose AFTER both JSONL +
+        // FTS persistence so subscribers never see a frame the
+        // backfill RPC can't return. `seq` is per-session +
+        // entry-only so it matches `TranscriptReaderFs`'s
+        // entry-only enumeration. Default emitter is
+        // `NoopAgentEventEmitter` → zero-cost when no firehose
+        // is wired.
+        let seq = self
+            .entry_seq
+            .entry(session_id)
+            .or_insert_with(|| Arc::new(AtomicU64::new(0)))
+            .fetch_add(1, Ordering::Relaxed);
+        let event = AgentEventKind::TranscriptAppended {
+            agent_id: self.agent_id.clone(),
+            session_id,
+            seq,
+            role: map_wire_role(entry.role),
+            body: entry.content.clone(),
+            sent_at_ms: entry.timestamp.timestamp_millis() as u64,
+            sender_id: entry.sender_id.clone(),
+            source_plugin: if entry.source_plugin.is_empty() {
+                "internal".into()
+            } else {
+                entry.source_plugin.clone()
+            },
+        };
+        self.event_emitter.emit(event).await;
         Ok(())
     }
     /// Read every line of a session transcript back into memory. Unknown
@@ -235,6 +292,18 @@ impl TranscriptWriter {
         Ok(out)
     }
 }
+/// Phase 82.11 — bridge `TranscriptRole` (core) ↔ wire role
+/// enum used by the firehose. Inline because the enum is tiny
+/// and the call is on the hot path.
+fn map_wire_role(r: TranscriptRole) -> WireTranscriptRole {
+    match r {
+        TranscriptRole::User => WireTranscriptRole::User,
+        TranscriptRole::Assistant => WireTranscriptRole::Assistant,
+        TranscriptRole::Tool => WireTranscriptRole::Tool,
+        TranscriptRole::System => WireTranscriptRole::System,
+    }
+}
+
 async fn write_jsonl<T: Serialize>(file: &mut tokio::fs::File, value: &T) -> anyhow::Result<()> {
     let mut bytes = serde_json::to_vec(value)?;
     bytes.push(b'\n');
@@ -363,6 +432,52 @@ mod tests {
         let writer = TranscriptWriter::new(&root, "kate");
         let lines = writer.read_session(Uuid::new_v4()).await?;
         assert!(lines.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn append_emits_firehose_event_with_redacted_body() -> anyhow::Result<()> {
+        use crate::agent::agent_events::BroadcastAgentEventEmitter;
+        use nexo_config::types::transcripts::RedactionConfig;
+        use nexo_tool_meta::admin::agent_events::AgentEventKind;
+
+        let root = tmp_dir("emit_redacted");
+        let cfg = RedactionConfig {
+            enabled: true,
+            use_builtins: true,
+            extra_patterns: Vec::new(),
+        };
+        let redactor = Arc::new(Redactor::from_config(&cfg)?);
+        let emitter = Arc::new(BroadcastAgentEventEmitter::new());
+        let mut rx = emitter.subscribe();
+        let writer = TranscriptWriter::with_extras(&root, "kate", redactor, None)
+            .with_emitter(emitter.clone());
+
+        let session_id = Uuid::new_v4();
+        writer
+            .append_entry(
+                session_id,
+                user_entry("leak sk-abcdefghijklmnopqrstuvwx0123 here", "wa"),
+            )
+            .await?;
+        writer
+            .append_entry(session_id, user_entry("second message", "wa"))
+            .await?;
+
+        let first = rx.recv().await?;
+        let second = rx.recv().await?;
+        match (&first, &second) {
+            (
+                AgentEventKind::TranscriptAppended { seq: 0, body: b1, .. },
+                AgentEventKind::TranscriptAppended { seq: 1, body: b2, .. },
+            ) => {
+                assert!(b1.contains("[REDACTED:"), "first body redacted: {b1}");
+                assert!(!b1.contains("sk-abcdef"), "raw secret leaked: {b1}");
+                assert_eq!(b2, "second message");
+            }
+            other => panic!("unexpected events: {other:?}"),
+        }
+        tokio::fs::remove_dir_all(&root).await.ok();
         Ok(())
     }
 
