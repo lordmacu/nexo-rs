@@ -348,6 +348,16 @@ the moment Phase 76 lands.
 - [ ] Concept-tag cloud
 - [ ] Dreaming sweep history with per-run promote list
 - [ ] Manual checkpoint button (`forge_memory_checkpoint`)
+- [ ] **Snapshot panel** — list bundles per agent, label, size, age,
+  encrypted/redacted flags. Trigger snapshot button (calls
+  `MemorySnapshotter::snapshot` via admin RPC). Restore button with
+  double-confirm + dry-run preview. Verify button surfaces the three
+  integrity booleans (manifest_ok, bundle_sha256_ok, per_artifact_ok).
+  Diff viewer between any two bundles (git/sqlite/state summaries).
+  Retention status: bundles kept vs deleted last sweep, orphan
+  staging cleanup count. Live tail of
+  `nexo.memory.snapshot.<agent>.{created,restored,deleted,gc}`
+  events. Backed by Phase 36.2 (`nexo-memory-snapshot` crate).
 
 ---
 

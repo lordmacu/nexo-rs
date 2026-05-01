@@ -427,3 +427,114 @@ secret_guard:
         vec!["github-pat".to_string(), "openai-api-key".to_string()]
     );
 }
+
+// ---- Phase 36.2: memory.snapshot YAML round-trip ----
+
+#[test]
+fn memory_snapshot_omitted_uses_defaults() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    write_fixtures(dir.path());
+    let cfg = AppConfig::load(dir.path()).expect("should load");
+
+    let snap = &cfg.memory.snapshot;
+    assert!(snap.enabled, "default `enabled` is true");
+    assert_eq!(snap.lock_timeout_secs, 60);
+    assert!(snap.auto_pre_restore);
+    assert!(!snap.auto_pre_dream);
+    assert!(snap.redact_secrets_default);
+    assert_eq!(snap.retention.keep_count, 30);
+    assert_eq!(snap.retention.max_age_days, 90);
+    assert_eq!(snap.retention.gc_interval_secs, 3600);
+    assert!(!snap.encryption.enabled);
+    assert!(snap.events.mutation_publish_enabled);
+    assert_eq!(snap.events.lifecycle_subject_prefix, "nexo.memory.snapshot");
+    assert_eq!(snap.events.mutation_subject_prefix, "nexo.memory.mutated");
+    assert!(snap.root.is_empty(), "default empty root falls back to nexo_state_dir() at boot");
+    assert!(snap.memdir_root.is_empty());
+    assert!(snap.sqlite_root.is_empty());
+}
+
+#[test]
+fn memory_snapshot_full_block_parses() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    write_fixtures(dir.path());
+    write_file(
+        dir.path(),
+        "memory.yaml",
+        r#"
+short_term:
+  max_history_turns: 50
+  session_ttl: "24h"
+long_term:
+  backend: "sqlite"
+  sqlite:
+    path: "./data/memory.db"
+snapshot:
+  enabled: true
+  root: /var/lib/nexo
+  auto_pre_dream: true
+  auto_pre_restore: true
+  auto_pre_mutating_tool: true
+  lock_timeout_secs: 30
+  redact_secrets_default: false
+  encryption:
+    enabled: true
+    recipients:
+      - age1abc
+    identity_path: /etc/nexo/snapshot.key
+  retention:
+    keep_count: 5
+    max_age_days: 7
+    gc_interval_secs: 600
+  events:
+    mutation_subject_prefix: "x.memory.mutated"
+    lifecycle_subject_prefix: "x.memory.snapshot"
+    mutation_publish_enabled: false
+  memdir_root: /var/lib/nexo/memdir
+  sqlite_root: /var/lib/nexo/sqlite
+"#,
+    );
+    let cfg = AppConfig::load(dir.path()).expect("should load");
+    let snap = &cfg.memory.snapshot;
+    assert_eq!(snap.lock_timeout_secs, 30);
+    assert!(snap.auto_pre_dream);
+    assert_eq!(snap.root, "/var/lib/nexo");
+    assert_eq!(snap.memdir_root, "/var/lib/nexo/memdir");
+    assert_eq!(snap.sqlite_root, "/var/lib/nexo/sqlite");
+    assert!(snap.encryption.enabled);
+    assert_eq!(snap.encryption.recipients, vec!["age1abc".to_string()]);
+    assert_eq!(snap.retention.keep_count, 5);
+    assert_eq!(snap.retention.max_age_days, 7);
+    assert_eq!(snap.events.mutation_subject_prefix, "x.memory.mutated");
+    assert!(!snap.events.mutation_publish_enabled);
+}
+
+#[test]
+fn memory_snapshot_unknown_field_rejected() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    write_fixtures(dir.path());
+    write_file(
+        dir.path(),
+        "memory.yaml",
+        r#"
+short_term:
+  max_history_turns: 50
+  session_ttl: "24h"
+long_term:
+  backend: "sqlite"
+  sqlite:
+    path: "./data/memory.db"
+snapshot:
+  enabled: true
+  bogus_field: 1
+"#,
+    );
+    let result = AppConfig::load(dir.path());
+    assert!(
+        result.is_err(),
+        "deny_unknown_fields must reject `bogus_field`"
+    );
+}

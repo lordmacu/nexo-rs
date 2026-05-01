@@ -18,6 +18,76 @@ Historical detailed notes that were previously written in Spanish are preserved 
 
 ## Open items
 
+### Phase 36.2 — Agent memory snapshots (deferred items)
+
+The `nexo-memory-snapshot` crate is feature-complete and operational.
+Three deferred items track follow-up commits — each is isolated and
+does not block production use of the feature.
+
+- **MS-1 — Mutation hook fire-site sweep + boot publisher wire** ⬜
+  - `LongTermMemory::remember_typed` + `forget` already fire
+    `MemoryMutationHook` (3 tests in `long_term_test.rs`). The
+    remaining writers follow the exact same pattern:
+    - `crates/memory/src/vector.rs` — vector insert / delete
+    - `crates/memory/src/concepts.rs` — concept tag write paths
+    - `crates/memory/src/compactions.rs` — `compactions_v1` insert,
+      lock acquire / release
+    - `crates/core/src/agent/workspace_git.rs::commit_all` — git
+      commit emit `Git` scope `Update`
+  - Boot wire requires init-order shuffle in `src/main.rs::Mode::Run`:
+    today the snapshotter is built ~line 2186 (after
+    `flow_manager`); `LongTermMemory::open_with_vector` runs ~line
+    1396 and never sees the hook. Move the snapshotter +
+    `MemoryMutationPublisher` construction above line 1396 (or
+    refactor LongTermMemory to accept an `Arc<dyn MemoryMutationHook>`
+    via a fluent setter applied post-open). The `MemoryMutationPublisher`
+    bridge already exists in
+    `crates/memory-snapshot/src/dream_adapter.rs`; main.rs only
+    needs a tiny `EventPublisher` impl that wraps `AnyBroker`.
+  - Effort: ~half day. Risk: low — pattern is mechanical, each
+    fire site individually testable.
+
+- **MS-2 — Per-agent memdir / sqlite path discovery** ⬜
+  - Today `LocalFsSnapshotter` accepts global `memdir_root` and
+    `sqlite_root` from YAML. Multi-tenant SaaS (Phase 82) wants
+    per-agent paths so each agent's `MemoryGitRepo` (which lives
+    at `agent_cfg.workspace`) is the source of truth for that
+    agent's memdir, and per-agent SQLite paths come from the
+    agent registry.
+  - Design: introduce `pub trait PathResolver: Send + Sync` with
+    `fn memdir(&self, agent_id: &str, tenant: &str) -> PathBuf`
+    + `fn sqlite_dir(&self, agent_id: &str, tenant: &str) -> PathBuf`.
+    `LocalFsSnapshotterBuilder::with_path_resolver(Arc<dyn PathResolver>)`
+    overrides the static roots. Default impl uses the YAML
+    `memdir_root` / `sqlite_root` per Phase 36.2.
+  - Boot wire injects a `PathResolver` that consults the agent
+    registry for the workspace path.
+  - Effort: ~1 day. Risk: medium — touches the snapshotter
+    builder + every snapshot/restore call site that resolves
+    paths. New tests for cross-tenant isolation + bad agent_id
+    fallback.
+
+- **MS-3 — `BootDeps` consumer in `Mode::Run` for AutoDreamRunner** ⬜
+  - `nexo_dream::boot::BootDeps` already accepts
+    `pre_dream_snapshot: Option<Arc<dyn PreDreamSnapshotHook>>` +
+    `pre_dream_tenant: String`, and `build_runner` threads them
+    via `with_pre_dream_snapshot` / `with_pre_dream_tenant`. The
+    binary has not yet wired `build_runner` into `Mode::Run` (the
+    doc-comment in `crates/dream/src/boot.rs:18-37` is the
+    intended hookup but is not implemented yet — it is part of
+    Phase 80.1.b.b.b backlog, not Phase 36.2).
+  - When that consumer lands, attach the snapshot adapter via:
+    ```rust
+    pre_dream_snapshot: snapshot_yaml.auto_pre_dream
+        .then(|| memory_snapshotter.clone()
+            .map(|s| nexo_memory_snapshot::PreDreamSnapshotAdapter::new(s)
+                .into_arc()))
+        .flatten(),
+    pre_dream_tenant: "default".into(),
+    ```
+  - Effort: half day on the dream side, but the parent
+    `BootDeps` consumer commit owns the full surgery.
+
 ### Phase 81 — Plug-and-Play Plugin System
 
 **Goal**: convertir el modelo "Rust crate + boot wire en main.rs"

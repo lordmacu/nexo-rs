@@ -116,6 +116,7 @@ const KNOWN_CANONICAL_NAMES_SNAPSHOT: &[&str] = &[
     // Memory (Phase 5 / 10)
     "forge_memory_checkpoint",
     "memory_history",
+    "memory_snapshot",
     // TaskFlow (Phase 14)
     "taskflow",
     // Followup tools (Phase 14 follow-up)

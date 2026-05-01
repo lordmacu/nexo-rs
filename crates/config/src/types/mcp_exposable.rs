@@ -188,6 +188,14 @@ pub static EXPOSABLE_TOOLS: &[ExposableToolEntry] = &[
         boot_kind: BootKind::Always,
         feature_gate: None,
     },
+    // Memory snapshot — write-only point-in-time capture. Restore is
+    // intentionally not exposed; it lives in the operator CLI.
+    ExposableToolEntry {
+        name: "memory_snapshot",
+        tier: SecurityTier::ReadWrite,
+        boot_kind: BootKind::Always,
+        feature_gate: None,
+    },
     // --- 79.M.A — taskflow (cross-session persistent task graph) ---
     ExposableToolEntry {
         name: "taskflow",

@@ -1479,6 +1479,174 @@ README has a "performance" section that isn't aspirational.
 Shell bridge + operator doc shipped. Runtime subcommands +
 versioned migrations + encrypted output deferred to follow-ups.
 
+Shipped (36.2 — `nexo-memory-snapshot` crate, agent memory snapshot/restore):
+- New crate `crates/memory-snapshot/` — atomic point-in-time bundle of an agent's
+  full memory: git memdir + 4 SQLite stores (long_term, vector, concepts,
+  compactions) + extractor cursor + last dream-run row, packaged as
+  `tar.zst` (or `.tar.zst.age`) with manifest seal + sibling whole-file
+  SHA-256.
+- Trait surface: `MemorySnapshotter` (snapshot/restore/list/diff/verify/
+  delete/export). Default impl `LocalFsSnapshotter` with per-agent
+  `tokio::sync::Mutex` lock map + `DashMap` keying.
+- SQLite backup via `VACUUM INTO` (online, atomic, WAL-safe; zero extra
+  deps on top of the workspace's `sqlx`).
+- Git memdir captured directly as `.git/**` tar entries; `git_capture`
+  reads HEAD via `git2`, drops a `pre-restore-<id>` tag before each
+  restore so prior state is reachable from `git reflog`.
+- Optional redaction layer (`DefaultRedactionPolicy`) covering
+  Anthropic / OpenAI / AWS / GitHub / Slack / bearer / JWT shapes,
+  applied to `memory_files/**` + `state/**` before sealing.
+- Optional `age` encryption behind Cargo feature `snapshot-encryption`;
+  manifest stays inside the encrypted body but the per-artifact hashes
+  commit to it; sibling `.sha256` always covers the bytes on disk.
+- Restore flow: verify → optional `auto-pre-snapshot` (label
+  `auto:pre-restore-<orig>`) → atomic SQLite swap with `.pre-restore.bak`
+  siblings → memdir replace with `<memdir>-pre-restore-<id>/` backup →
+  state-provider replay. `--dry-run` builds the report without mutating.
+- `RetentionWorker` background task: `keep_count` + `max_age_days`
+  pruning that obeys the "never delete the last snapshot" floor, plus
+  startup + per-tick orphan staging cleanup
+  (`.staging-*` and `.restore-staging-*` left behind by SIGKILL).
+- NATS event wiring: `nexo.memory.snapshot.<agent>.{created,restored,
+  deleted,gc}` lifecycle subjects + `nexo.memory.mutated.<agent>` for
+  per-write mutation events. `EventPublisher` trait + `NoopPublisher`
+  default — broker bridge is plugged at boot.
+- Per-tenant scope: `<state_root>/tenants/<tenant>/snapshots/<agent>/`
+  with lexical path validators. Cross-tenant restore refused before any
+  disk mutation.
+- `MemorySnapshotConfig` lives in two parallel forms:
+  `nexo_memory_snapshot::config::MemorySnapshotConfig` is the
+  runtime API; `nexo_config::types::memory::SnapshotYamlConfig`
+  (with sub-blocks `SnapshotEncryptionYamlConfig`,
+  `SnapshotRetentionYamlConfig`, `SnapshotEventsYamlConfig`) is the
+  wire shape. Same cycle-break pattern Phase 77.7 used for
+  `SecretGuardYamlConfig`. Boot wire in `src/main.rs` reads
+  `cfg.memory.snapshot` directly: `enabled` toggles the subsystem,
+  `root` / `memdir_root` / `sqlite_root` override the on-disk
+  layout, `lock_timeout_secs` flows into the builder,
+  `retention.{keep_count,max_age_days,gc_interval_secs}` flows
+  into `RetentionWorker`, `redact_secrets_default` flows into the
+  per-agent `MemorySnapshotTool::with_redact_secrets_default`. 3
+  YAML round-trip tests in `crates/config/tests/load_test.rs`
+  guard the schema (default omission, full block, unknown-field
+  rejection).
+- `crates/setup/src/capabilities.rs::INVENTORY` registers
+  `NEXO_MEMORY_RESTORE_ALLOW` (extension `memory-snapshot`, Critical,
+  Boolean) so the doctor surfaces it and operators must opt in to
+  enable `nexo memory restore`.
+- Prometheus metrics: `nexo_memory_snapshot_total{agent,tenant,outcome}`,
+  `_restore_total`, `_gc_total`, `_bytes_total`, `_duration_ms` histogram
+  (8 buckets 50ms→60s) with 256-label cardinality cap. Pattern aligns
+  with `nexo-llm`/`nexo-web-search`/`nexo-mcp` telemetry.
+- 141 unit tests green (134 default + 7 with `snapshot-encryption`),
+  plus 28 trait-suite tests under `nexo-driver-types`, 5 LLM-tool
+  tests under `nexo-core`, 3 expose-tools regression guards, and 2
+  end-to-end tests in
+  `crates/memory-snapshot/tests/e2e_pre_dream_test.rs` that drive
+  the `PreDreamSnapshotAdapter` against a real `LocalFsSnapshotter`
+  through the full snapshot → verify → mutate → restore chain.
+- Operator guide: `docs/src/ops/memory-snapshot.md` (registered in
+  `SUMMARY.md`).
+- `crates/driver-types/src/pre_dream_snapshot.rs` introduces a
+  `PreDreamSnapshotHook` trait. `crates/dream/src/auto_dream.rs`
+  gains `with_pre_dream_snapshot` + `with_pre_dream_tenant` builders
+  and fires the hook between the dream-run audit insert and the
+  fork dispatch. Failure logs `tracing::warn!` and the dream
+  proceeds — operators who want a hard gate enforce it at the boot
+  wire by omitting the hook.
+- `crates/memory-snapshot/src/dream_adapter.rs` ships
+  `PreDreamSnapshotAdapter`, the boot-time bridge that turns any
+  `Arc<dyn MemorySnapshotter>` into a `PreDreamSnapshotHook` ready
+  to plug into `AutoDreamRunner`.
+- `crates/driver-types/src/memory_mutation.rs` introduces
+  `MemoryMutationHook`, `MemoryMutationScope`, `MemoryMutationOp`.
+- `crates/memory/src/long_term.rs::LongTermMemory` now carries an
+  optional `Arc<dyn MemoryMutationHook>` (set via
+  `with_mutation_hook`) and a tenant string (set via
+  `with_tenant`). `remember_typed` fires `Insert`, `forget` fires
+  `Delete` (after capturing the row's `agent_id` pre-DELETE so the
+  event payload is correct). Best-effort: hook failure cannot
+  poison the writer's transaction, and an absent hook short-circuits
+  silently. 3 new integration tests in
+  `crates/memory/tests/long_term_test.rs` cover happy path,
+  no-hook tolerance, and missing-id non-event.
+- Fire-site wiring of the remaining writers
+  (`vector`/`concepts`/`compactions` SQLite stores, plus
+  `crates/core/src/agent/workspace_git.rs` git memdir commits)
+  follows the same pattern: optional field + builder + best-effort
+  invocation post-transaction. Boot wire in `Mode::Run` requires a
+  small init-order shuffle so the snapshotter (and its
+  publisher-bridge) exists before `LongTermMemory::open_with_vector`
+  is called — tracked separately so the surgery stays isolated.
+- `MemoryMutationPublisher` in `dream_adapter.rs` bridges the
+  driver-types hook to `EventPublisher`, so a single boot wire
+  exposes every memory write on the
+  `nexo.memory.mutated.<agent_id>` NATS subject.
+- `admin-ui/PHASES.md::Phase A7` now lists the snapshot panel
+  responsibilities (list + trigger + restore + verify + diff +
+  retention status + lifecycle event tail).
+- `crates/core/src/agent/memory_snapshot_tool.rs` ships the
+  `memory_snapshot` LLM tool (write-only, deferred schema). Args
+  `{label?, redact_secrets?}`; returns `{snapshot_id, bundle_path,
+  bundle_size_bytes, bundle_sha256, created_at_ms,
+  redactions_applied, encrypted}`. `created_by="tool"` on every
+  call so audit can distinguish operator vs LLM-driven snapshots.
+  Restore is intentionally not exposed — operator-only via the
+  CLI to keep prompt-injection out of destructive rollback paths.
+- `crates/core/src/plan_mode.rs::MUTATING_TOOLS` and
+  `crates/config/src/types/mcp_exposable.rs::EXPOSABLE_TOOLS` both
+  register `memory_snapshot`. `expose_tools_typo_regression_test`
+  bumped accordingly so a future rename fails loud.
+- `src/main.rs` ships the full `nexo memory <sub>` operator surface:
+  `Mode::Memory(MemorySubcommand)` with seven verbs —
+  `snapshot`, `restore`, `list`, `diff`, `export`, `delete`,
+  `verify` — wired via `route_memory_subcommand` (cron/pair-style
+  routing so kv-flag values do not shift positional arity). Each
+  handler constructs a fresh `LocalFsSnapshotter` from
+  `--state-root` (+ optional `--memdir-root` / `--sqlite-root`)
+  and exits when the action completes. No daemon contact required.
+  `verify` exits with code 2 when any integrity check fails;
+  `restore` is gated on `NEXO_MEMORY_RESTORE_ALLOW=true` (capability
+  inventory entry) and refuses without it; `delete` requires
+  `--yes` so a typo cannot drop a bundle. End-to-end smoke
+  validated against `/tmp` fixture: `snapshot` → bundle on disk,
+  `list` shows it, `verify` reports clean, all exit codes match.
+- `Cargo.toml` (root) gains feature pass-through
+  `snapshot-encryption = ["nexo-memory-snapshot/snapshot-encryption"]`
+  so operators can opt in encryption with one binary flag.
+
+Boot wire (Mode::Run) — shipped in 36.2:
+- `src/main.rs` builds a single `Arc<dyn MemorySnapshotter>` from
+  `nexo_state_dir()` near the daemon's other shared globals
+  (next to `flow_manager`). The same instance flows into every
+  per-agent tool registry — operator CLI snapshots and LLM-tool
+  snapshots land in the same per-agent dir.
+- `RetentionWorker` spawned with the daemon's `dream_shutdown`
+  cancellation token. Initial sweep + periodic sweep run with
+  default config (keep=30, max_age=90d, gc_interval=1h). Orphan
+  `.staging-*` and `.restore-staging-*` dirs left by SIGKILL are
+  deleted on the first tick after boot.
+- Per-agent tool registry registers `MemorySnapshotTool` alongside
+  `MemoryHistoryTool` / `MemoryCheckpointTool`. Per-binding gating
+  still flows through `EffectiveBindingPolicy::allowed_tools` +
+  plan-mode (the tool sits in `MUTATING_TOOLS`).
+- `nexo_dream::boot::BootDeps` extended with
+  `pre_dream_snapshot: Option<Arc<dyn PreDreamSnapshotHook>>` +
+  `pre_dream_tenant: String` so when the binary's `BootDeps`
+  consumer lands, attaching the `PreDreamSnapshotAdapter` is one
+  field assignment. `build_runner` already threads the hook
+  through `with_pre_dream_snapshot` / `with_pre_dream_tenant`.
+- LLM tool `memory_snapshot` (write-only) under `crates/core/src/agent/`,
+  registered in `MUTATING_TOOLS` + `EXPOSABLE_TOOLS`.
+- Fire-site wiring of `MemoryMutationHook` inside
+  `crates/memory/{long_term,vector,concepts,compactions}.rs` and
+  `crates/core/src/agent/workspace_git.rs` so every write actually
+  drives the hook (the trait + adapter already exist).
+- Migration of `MemorySnapshotConfig` into `nexo-config::types::memory`
+  with schema bump v11 → v12.
+- e2e test that exercises dream → auto-pre-snapshot → restore in a
+  single in-process run.
+
 Shipped (36.1):
 - `scripts/nexo-backup.sh` — hot backup script. Uses
   `sqlite3 .backup` (online-backup mechanism, captures a

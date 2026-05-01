@@ -116,6 +116,17 @@ pub struct LongTermMemory {
     pool: SqlitePool,
     embedding: Option<Arc<dyn EmbeddingProvider>>,
     guard: Option<SecretGuard>,
+    /// Phase 36.2 — optional mutation observer. Fires once per write
+    /// (insert / update / delete) so the snapshot subsystem (or any
+    /// other audit consumer) can stream every memory mutation onto
+    /// the `nexo.memory.mutated.<agent_id>` NATS subject. Absent by
+    /// default; boot wire injects a real impl when
+    /// `memory.snapshot.events.mutation_publish_enabled = true`.
+    mutation_hook: Option<Arc<dyn nexo_driver_types::MemoryMutationHook>>,
+    /// Tenant string passed to the mutation hook. Defaults to
+    /// `"default"` for single-tenant deployments; SaaS deployments
+    /// wire the per-binding tenant via `with_tenant`.
+    tenant: String,
 }
 
 impl LongTermMemory {
@@ -154,6 +165,8 @@ impl LongTermMemory {
             pool,
             embedding,
             guard: None,
+            mutation_hook: None,
+            tenant: "default".into(),
         };
         store.migrate().await?;
         if let Some(provider) = &store.embedding {
@@ -170,6 +183,26 @@ impl LongTermMemory {
     /// before every INSERT and applies the guard's policy (Block / Redact / Warn).
     pub fn with_guard(mut self, guard: SecretGuard) -> Self {
         self.guard = Some(guard);
+        self
+    }
+
+    /// Phase 36.2 — attach a mutation observer. Fires best-effort on
+    /// every successful `remember_typed` / `forget` write. Hook
+    /// failure must never poison the writer's transaction (the trait
+    /// contract enforces this — `on_mutation` returns `()`).
+    pub fn with_mutation_hook(
+        mut self,
+        hook: Arc<dyn nexo_driver_types::MemoryMutationHook>,
+    ) -> Self {
+        self.mutation_hook = Some(hook);
+        self
+    }
+
+    /// Override the tenant string passed to the mutation hook.
+    /// Default is `"default"` so single-tenant deployments do not
+    /// need to set anything.
+    pub fn with_tenant(mut self, tenant: impl Into<String>) -> Self {
+        self.tenant = tenant.into();
         self
     }
 
@@ -463,6 +496,20 @@ impl LongTermMemory {
             .await?;
 
         tx.commit().await?;
+
+        // Phase 36.2 — best-effort mutation event. Fires after the
+        // SQLite commit succeeds so subscribers never observe a
+        // rolled-back row.
+        if let Some(hook) = &self.mutation_hook {
+            hook.on_mutation(
+                agent_id,
+                &self.tenant,
+                nexo_driver_types::MemoryMutationScope::SqliteLongTerm,
+                nexo_driver_types::MemoryMutationOp::Insert,
+                &id_str,
+            )
+            .await;
+        }
 
         // Phase 5.4 — best-effort embedding: vector path is additive, FTS
         // already covers recall.
@@ -905,6 +952,15 @@ impl LongTermMemory {
         let id_str = id.to_string();
         let mut tx = self.pool.begin().await?;
 
+        // Capture agent_id pre-DELETE so the mutation event (fired
+        // post-commit) carries it. `None` means the row was already
+        // gone — DELETE returns 0 rows and we skip the event.
+        let agent_id: Option<(String,)> =
+            sqlx::query_as("SELECT agent_id FROM memories WHERE id = ?")
+                .bind(&id_str)
+                .fetch_optional(&mut *tx)
+                .await?;
+
         let rows = sqlx::query("DELETE FROM memories WHERE id = ?")
             .bind(&id_str)
             .execute(&mut *tx)
@@ -946,6 +1002,21 @@ impl LongTermMemory {
             .await?;
 
         tx.commit().await?;
+
+        // Phase 36.2 — best-effort mutation event after commit.
+        if rows > 0 {
+            if let (Some(hook), Some((agent_id,))) = (&self.mutation_hook, agent_id) {
+                hook.on_mutation(
+                    &agent_id,
+                    &self.tenant,
+                    nexo_driver_types::MemoryMutationScope::SqliteLongTerm,
+                    nexo_driver_types::MemoryMutationOp::Delete,
+                    &id_str,
+                )
+                .await;
+            }
+        }
+
         Ok(rows > 0)
     }
 

@@ -10,6 +10,71 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 36.2 — Agent memory snapshots (`nexo-memory-snapshot`
+  crate, AGENT_MEMORY_SNAPSHOT feature).** Atomic point-in-time
+  bundle of an agent's full memory state — git memdir + four
+  SQLite stores (long_term / vector / concepts / compactions) +
+  extractor cursor + last dream-run row — packaged as a
+  `tar.zst` (or `.tar.zst.age`) archive sealed with two
+  independent SHA-256 checks (per-artifact manifest seal +
+  whole-file sibling). Designed for rollback after a corrupt
+  dream, forensic audit, portable export between hosts, and
+  pre-restore safety nets in autonomous mode.
+  - **Trait surface**: `MemorySnapshotter` (snapshot / restore /
+    list / diff / verify / delete / export). Default impl
+    `LocalFsSnapshotter` with a per-agent `tokio::sync::Mutex`
+    lock map, atomic `<id>.tar.zst.partial` → final rename, and
+    auto-pre-snapshot on every restore so the operation is
+    reversible.
+  - **Codec**: `tar` + `zstd` (level 19) for the bundle body,
+    SQLite via `VACUUM INTO` (online, atomic, WAL-safe — no extra
+    deps on top of `sqlx`), git memdir captured as raw `.git/**`
+    tar entries. Optional age encryption behind Cargo feature
+    `snapshot-encryption`; manifest stays plaintext so integrity
+    is verifiable without the identity.
+  - **Operator CLI**: `nexo memory {snapshot, restore, list, diff,
+    export, verify, delete}`. Each subcommand is standalone.
+    `verify` exits with code 2 on any integrity failure; `restore`
+    is gated on `NEXO_MEMORY_RESTORE_ALLOW=true` (capability
+    inventory entry registered as `Critical, Boolean`).
+  - **LLM tool**: `memory_snapshot` (write-only, deferred schema
+    per Phase 79.2) registered in `MUTATING_TOOLS` and
+    `EXPOSABLE_TOOLS`. Restore is intentionally **not** exposed
+    as a tool — destructive surface stays operator-only.
+  - **Boot wire**: `src/main.rs::Mode::Run` reads
+    `cfg.memory.snapshot` directly, builds a single
+    `Arc<dyn MemorySnapshotter>` shared across every agent's tool
+    registry, and spawns `RetentionWorker` with the daemon's
+    shutdown token (initial sweep + periodic GC + orphan staging
+    cleanup left by SIGKILL).
+  - **YAML config**: `nexo_config::types::memory::SnapshotYamlConfig`
+    (with sub-blocks for encryption / retention / events / memdir
+    / sqlite roots) ships as a wire-shape mirror of the in-crate
+    `MemorySnapshotConfig` (cycle-break pattern Phase 77.7
+    introduced for SecretGuard).
+  - **Adapters**: `PreDreamSnapshotAdapter` bridges the
+    snapshotter to `nexo_driver_types::PreDreamSnapshotHook` for
+    `AutoDreamRunner::with_pre_dream_snapshot`;
+    `MemoryMutationPublisher` bridges `EventPublisher` to
+    `nexo_driver_types::MemoryMutationHook` so memory writes
+    stream onto `nexo.memory.mutated.<agent_id>` NATS subject.
+    `crates/memory/src/long_term.rs::LongTermMemory` has the
+    first fire-site wired (`remember_typed` → `Insert`,
+    `forget` → `Delete`).
+  - **Metrics**: `nexo_memory_snapshot_total{agent,tenant,outcome}`,
+    `_restore_total`, `_gc_total`, `_bytes_total`, `_duration_ms`
+    histogram (8 buckets 50ms→60s) with 256-label cardinality
+    cap, stitched into the runtime's `/metrics` aggregator.
+  - **Documentation**: `docs/src/ops/memory-snapshot.md` covers
+    bundle layout, CLI surface, YAML config, threat model,
+    retention semantics, and restore mechanics.
+    `admin-ui/PHASES.md::Phase A7` extended with the
+    snapshot-panel checklist.
+  - **Coverage**: 364 tests across the feature graph
+    (143 `nexo-memory-snapshot`, 105 `nexo-memory`, 28
+    `nexo-driver-types`, 8 `nexo-core`, 3 `nexo-config`, 77
+    `nexo-dream`).
+
 - **Phase 80.9 — MCP channel routing + 5-step gate.** MCP
   servers can now act as inbound surfaces (Slack bots, Telegram
   chats, iMessage relays) — they declare a capability, push

@@ -163,6 +163,20 @@ pub struct AutoDreamRunner {
     /// captures the run regardless).
     git_checkpointer:
         Option<Arc<dyn nexo_driver_types::MemoryCheckpointer>>,
+    /// Optional pre-dream snapshot sink. When wired, the runner
+    /// captures a point-in-time bundle of the agent's memory before
+    /// the fork-pass mutates anything, so a corrupt dream can be
+    /// rolled back via `nexo memory restore`. Failures log a
+    /// `tracing::warn!` and the dream proceeds without the anchor —
+    /// operators who want a hard gate enforce that at the boot wire,
+    /// not here.
+    pre_dream_snapshot:
+        Option<Arc<dyn nexo_driver_types::PreDreamSnapshotHook>>,
+    /// Tenant scope passed to the pre-dream snapshot hook. Defaults
+    /// to `"default"` for single-tenant deployments; multi-tenant
+    /// SaaS wires the per-binding tenant at boot via
+    /// `with_pre_dream_tenant`.
+    pre_dream_tenant: String,
 }
 
 impl AutoDreamRunner {
@@ -204,6 +218,8 @@ impl AutoDreamRunner {
             fork_tools,
             fork_model,
             git_checkpointer: None,
+            pre_dream_snapshot: None,
+            pre_dream_tenant: "default".into(),
         })
     }
 
@@ -228,6 +244,32 @@ impl AutoDreamRunner {
     ) -> Self {
         self.git_checkpointer = Some(ckpt);
         self
+    }
+
+    /// Wire a pre-dream snapshot sink. The runner fires the hook
+    /// after the dream-run audit row is inserted but before the fork
+    /// pass dispatches, so the bundle captures the live state the
+    /// fork is about to mutate. Failure of the hook logs a
+    /// `tracing::warn!` and the dream proceeds.
+    pub fn with_pre_dream_snapshot(
+        mut self,
+        hook: Arc<dyn nexo_driver_types::PreDreamSnapshotHook>,
+    ) -> Self {
+        self.pre_dream_snapshot = Some(hook);
+        self
+    }
+
+    /// Override the tenant string passed to the pre-dream snapshot
+    /// hook. Default is `"default"` so single-tenant deployments do
+    /// not need to set anything.
+    pub fn with_pre_dream_tenant(mut self, tenant: impl Into<String>) -> Self {
+        self.pre_dream_tenant = tenant.into();
+        self
+    }
+
+    /// Read-only accessor for boot logs / tests.
+    pub fn has_pre_dream_snapshot(&self) -> bool {
+        self.pre_dream_snapshot.is_some()
     }
 
     /// Phase 80.1.g — observability accessor for boot logs / tests.
@@ -426,6 +468,30 @@ impl AutoDreamRunner {
                 error = %e,
                 "insert dream_run row failed — proceeding best-effort"
             );
+        }
+
+        // Pre-dream snapshot hook. Best-effort: a failed snapshot
+        // logs a warn and the dream proceeds without the rollback
+        // anchor. Operators who want a hard gate enforce that at the
+        // boot wire (omit `with_pre_dream_snapshot` until the snapshot
+        // backend is healthy).
+        if let Some(hook) = &self.pre_dream_snapshot {
+            let agent_id = self.parent_ctx_template.agent_id.clone();
+            if let Err(e) = hook
+                .snapshot_before_dream(
+                    &agent_id,
+                    &self.pre_dream_tenant,
+                    &run_id.to_string(),
+                )
+                .await
+            {
+                warn!(
+                    target: "auto_dream.pre_snapshot",
+                    error = %e,
+                    run_id = %run_id,
+                    "pre-dream snapshot failed; dream proceeds without rollback anchor"
+                );
+            }
         }
 
         // Tool whitelist (80.20).
