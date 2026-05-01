@@ -14,6 +14,7 @@ use async_trait::async_trait;
 use crate::error::SnapshotError;
 use crate::id::{AgentId, SnapshotId};
 use crate::meta::{RestoreReport, SnapshotDiff, SnapshotMeta, VerifyReport};
+use crate::path_resolver::{DefaultPathResolver, PathResolver};
 use crate::request::{RestoreRequest, SnapshotRequest};
 use crate::snapshotter::MemorySnapshotter;
 use crate::state_capture::{NoopStateProvider, StateProvider};
@@ -38,6 +39,11 @@ pub struct LocalFsSnapshotter {
     /// convention as the memory crate.
     sqlite_root: PathBuf,
     state_provider: Arc<dyn StateProvider>,
+    /// Strategy for `(agent_id, tenant) → (memdir, sqlite_dir)`.
+    /// Defaults to a `DefaultPathResolver` over `memdir_root` /
+    /// `sqlite_root`; boot wire injects a richer resolver for
+    /// multi-tenant SaaS deployments.
+    path_resolver: Arc<dyn PathResolver>,
     locks: AgentLockMap,
     lock_timeout: Duration,
 }
@@ -80,6 +86,10 @@ impl LocalFsSnapshotter {
     pub(crate) fn lock_timeout(&self) -> Duration {
         self.lock_timeout
     }
+
+    pub(crate) fn path_resolver(&self) -> &Arc<dyn PathResolver> {
+        &self.path_resolver
+    }
 }
 
 #[derive(Default)]
@@ -89,6 +99,7 @@ pub struct LocalFsSnapshotterBuilder {
     sqlite_root: Option<PathBuf>,
     state_provider: Option<Arc<dyn StateProvider>>,
     lock_timeout: Option<Duration>,
+    path_resolver: Option<Arc<dyn PathResolver>>,
 }
 
 impl LocalFsSnapshotterBuilder {
@@ -117,6 +128,15 @@ impl LocalFsSnapshotterBuilder {
         self
     }
 
+    /// Inject a `PathResolver` so the snapshotter resolves per-agent
+    /// memdir / sqlite paths through the operator-supplied strategy.
+    /// When omitted, falls back to a `DefaultPathResolver` over
+    /// `memdir_root` / `sqlite_root`.
+    pub fn path_resolver(mut self, resolver: Arc<dyn PathResolver>) -> Self {
+        self.path_resolver = Some(resolver);
+        self
+    }
+
     pub fn build(self) -> Result<LocalFsSnapshotter, SnapshotError> {
         let state_root = self.state_root.ok_or_else(|| {
             SnapshotError::RestoreRefused("LocalFsSnapshotter requires state_root".into())
@@ -127,11 +147,18 @@ impl LocalFsSnapshotterBuilder {
             .state_provider
             .unwrap_or_else(|| Arc::new(NoopStateProvider) as Arc<dyn StateProvider>);
         let lock_timeout = self.lock_timeout.unwrap_or(DEFAULT_LOCK_TIMEOUT);
+        let path_resolver = self.path_resolver.unwrap_or_else(|| {
+            Arc::new(DefaultPathResolver::new(
+                memdir_root.clone(),
+                sqlite_root.clone(),
+            )) as Arc<dyn PathResolver>
+        });
         Ok(LocalFsSnapshotter {
             state_root,
             memdir_root,
             sqlite_root,
             state_provider,
+            path_resolver,
             locks: AgentLockMap::new(),
             lock_timeout,
         })

@@ -102,8 +102,8 @@ async fn build_bundle(
     staging_dir: &Path,
 ) -> Result<SnapshotMeta, SnapshotError> {
     let encrypted = req.encrypt.is_some();
-    let memdir = s.memdir_root().join(agent_id);
-    let sqlite_dir = s.sqlite_root().join(agent_id);
+    let memdir = s.path_resolver().memdir(agent_id, tenant);
+    let sqlite_dir = s.path_resolver().sqlite_dir(agent_id, tenant);
 
     let git_meta = read_head_meta_or_placeholder(&memdir);
 

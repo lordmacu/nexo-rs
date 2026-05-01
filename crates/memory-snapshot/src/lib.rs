@@ -38,6 +38,7 @@ pub mod manifest;
 pub mod memdir;
 pub mod meta;
 pub mod metrics;
+pub mod path_resolver;
 pub mod redaction;
 pub mod request;
 pub mod retention;
@@ -64,6 +65,7 @@ pub use events::{
     LIFECYCLE_SUBJECT_PREFIX, MUTATION_SUBJECT_PREFIX,
 };
 pub use dream_adapter::{MemoryMutationPublisher, PreDreamSnapshotAdapter};
+pub use path_resolver::{ClosureResolver, DefaultPathResolver, PathResolver};
 pub use redaction::{DefaultRedactionPolicy, RedactionPolicy, RedactionPass};
 pub use request::{DecryptionIdentity, EncryptionKey, RestoreRequest, SnapshotRequest};
 pub use retention::{RetentionConfig, RetentionTickReport, RetentionWorker};
