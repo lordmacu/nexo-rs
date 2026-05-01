@@ -2055,7 +2055,7 @@ Done criteria:
   source.
 - Examples for 3 languages embedded inline.
 
-#### 83.7 — Microapp template (Rust only)   ⬜
+#### 83.7 — Microapp template (Rust only)   ✅  (shipped 2026-05-01)
 
 > **Curation 2026-05-01**: scope reduced from 3 stacks
 > (Rust + Python + TypeScript) to **Rust only**. The microapp
