@@ -1804,6 +1804,61 @@ async fn main() -> Result<()> {
         pollers_runner.as_ref().map(Arc::clone),
         config_dir.clone(),
     ));
+
+    // Phase 82.2 — webhook receiver. Validate the snapshot, build
+    // the dispatcher + axum router, spawn under a dedicated
+    // CancellationToken. Validation failure is non-fatal: we log
+    // the error and skip the server (daemon continues). Hot-reload
+    // re-evaluation lands as a Phase 18 post-hook in a follow-up
+    // commit (see FOLLOWUPS.md `82.2.b`).
+    let webhook_shutdown = tokio_util::sync::CancellationToken::new();
+    let _webhook_handle: Option<tokio::task::JoinHandle<()>> = if let Some(wcfg) =
+        cfg.webhook_receiver.as_ref().filter(|w| w.enabled)
+    {
+        match wcfg.validate() {
+            Err(e) => {
+                tracing::error!(error = %e, "webhook_receiver disabled: invalid config");
+                None
+            }
+            Ok(()) => {
+                let dispatcher = Arc::new(
+                    nexo_webhook_server::BrokerWebhookDispatcher::new(broker.clone()),
+                );
+                match nexo_webhook_server::build_router(wcfg, dispatcher) {
+                    Err(e) => {
+                        tracing::error!(error = %e, "webhook_receiver disabled: router build failed");
+                        None
+                    }
+                    Ok((router, state)) => {
+                        match nexo_webhook_server::spawn_server(
+                            wcfg.bind,
+                            router,
+                            state,
+                            webhook_shutdown.clone(),
+                        )
+                        .await
+                        {
+                            Err(e) => {
+                                tracing::error!(error = %e, "webhook_receiver disabled: bind failed");
+                                None
+                            }
+                            Ok(handle) => {
+                                tracing::info!(
+                                    bind = %handle.bind_addr,
+                                    sources = handle.router_state.sources.len(),
+                                    "webhook receiver online"
+                                );
+                                Some(handle.join)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        tracing::debug!("webhook_receiver disabled (config absent or enabled=false)");
+        None
+    };
     // Phase 21 — single shared link extractor (HTTP client + LRU cache).
     // Per-binding config gates whether each turn actually fetches; the
     // extractor itself is cheap to keep around always.

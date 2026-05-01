@@ -239,6 +239,8 @@ nexo-driver-permission = { version = "0.1.1", path = "crates/driver-permission" 
 nexo-driver-types      = { version = "0.1.1", path = "crates/driver-types" }
 nexo-plugin-manifest   = { version = "0.1.0", path = "crates/plugin-manifest" }
 nexo-project-tracker   = { version = "0.1.1", path = "crates/project-tracker" }
+nexo-webhook-receiver  = { version = "0.1.1", path = "crates/webhook-receiver" }
+nexo-webhook-server    = { version = "0.1.1", path = "crates/webhook-server" }
 dirs                   = "5"
 tokio-tungstenite   = { workspace = true }
 tokio-util          = { workspace = true }
