@@ -6463,6 +6463,38 @@ the leak's per-turn-hook design (NOT cron-based) per the spec audit.
 
 **Follow-ups** (split as 80.1.b/c/d/e):
 
+- **80.1.b.b.b.c per-goal_id multi-runner dispatch** ✅ **MVP** —
+  `DriverOrchestrator::auto_dream` field swapped from
+  `Mutex<Option<Arc<dyn AutoDreamHook>>>` to
+  `Mutex<HashMap<String, Arc<dyn AutoDreamHook>>>` keyed by owning
+  `agent_id`. Per-turn dispatcher reads the routing key from
+  `goal.metadata["agent_id"]` (the canonical convention; populated
+  via `Goal::with_agent_id` / read via `Goal::agent_id`) and looks
+  it up in the map. New API surface: `register_auto_dream`
+  (returns the displaced hook, if any), `unregister_auto_dream`,
+  `auto_dream_agents` (sorted ids — stable for assertions),
+  `has_auto_dream`. `DreamContext.agent_id` field added so
+  downstream runners receive the routing key already resolved.
+  Backward compat shim: `set_auto_dream(Option<...>)` from
+  Phase 80.1.b.b.b.b stays available behind `#[deprecated]` and
+  routes to the sentinel `"_default"` key (warn-once via
+  `OnceLock`). Builder `.auto_dream(hook)` likewise registers
+  under `"_default"`. Boot wire in `src/main.rs::Mode::Run` now
+  iterates every active runner and registers each under its
+  `agent_id`; single `tracing::info!` summary lists
+  `agents = N, registered = [...]`. Empty agent_id with non-empty
+  map → warn (the goal didn't declare its owner); unknown
+  agent_id → debug (multi-tenant SaaS legitimately carries stale
+  metadata). Verification: 5 integration tests in
+  `tests/orchestrator_auto_dream_registry_test.rs` — register
+  returns prev / overwrite returns prev / unregister returns
+  prev-or-none / sorted keys / set_auto_dream compat shim routes
+  to `"_default"`. 4 unit tests in `goal::tests` cover the
+  `with_agent_id` / `agent_id()` helpers (presence, missing,
+  wrong-shape, empty-string). Hot-reload integration with the
+  Phase 18 reload loop, lifecycle event for admin-ui, and
+  Prometheus gauge for `auto_dream_agents.len()` are deferred
+  follow-ups.
 - **80.1.b.b.b.b orchestrator runtime-attach** ✅ **MVP** —
   `DriverOrchestrator::auto_dream` field now wraps
   `Mutex<Option<Arc<dyn AutoDreamHook>>>` (was a plain `Option`).

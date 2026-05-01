@@ -100,21 +100,32 @@ does not block production use of the feature.
   routing within the orchestrator stays open as
   `80.1.b.b.b.c` (per-goal_id dispatch).
 
-- **80.1.b.b.b.c — per-goal_id multi-runner dispatch** ⬜
-  - Today the orchestrator hosts a single `Arc<dyn AutoDreamHook>`.
-    With multiple agents that have `auto_dream.enabled = true`,
-    only the first attaches; the rest log a warn with their
-    skipped agent ids and remain reachable via `dream_now` only.
-  - For SaaS deployments with N autonomous agents, the
-    orchestrator needs to dispatch the per-turn hook against
-    the runner whose `goal_id` matches the active turn.
-    Either: (a) replace the single hook with a
-    `HashMap<AgentId, Arc<dyn AutoDreamHook>>` and route via
-    the `goal_id`'s agent; or (b) fan out to every registered
-    runner and let each runner's gate (kairos / time / lock)
-    short-circuit.
-  - Effort: ~1 day of design + implementation. Test fixture
-    needs 2+ agents with auto_dream enabled.
+- **80.1.b.b.b.c — per-goal_id multi-runner dispatch** ✅
+  **shipped** — `DriverOrchestrator::auto_dream` swapped to
+  `Mutex<HashMap<String, Arc<dyn AutoDreamHook>>>` keyed by owning
+  `agent_id` (option (a) from the original brainstorm).
+  `Goal::with_agent_id` / `Goal::agent_id` helpers establish
+  `metadata["agent_id"]` as the canonical routing-key convention
+  so no breaking schema change to `Goal` was needed.
+  `DreamContext.agent_id` field added so runners receive the
+  resolved key. Per-turn dispatcher reads the key from goal
+  metadata, looks it up, dispatches the matching runner. New API:
+  `register_auto_dream` (returns displaced hook),
+  `unregister_auto_dream`, `auto_dream_agents` (sorted),
+  `has_auto_dream`. Boot wire in `src/main.rs::Mode::Run` now
+  iterates every active runner and registers it under its
+  `agent_id`. Compat shim `set_auto_dream(Option<...>)` retained
+  behind `#[deprecated]`, routes to sentinel `"_default"` key
+  with warn-once. Coverage: 5 integration tests in
+  `crates/driver-loop/tests/orchestrator_auto_dream_registry_test.rs`
+  plus 4 unit tests in `Goal::with_agent_id` / `agent_id()`.
+  - Open follow-ups now de-scoped from this rollout:
+    - Hot-reload propagation when an agent's `auto_dream.enabled`
+      flips at runtime (Phase 18 reload loop should call
+      `register_auto_dream` / `unregister_auto_dream`).
+    - Lifecycle event for admin-ui so the operator can observe
+      registered runners without scraping logs.
+    - Prometheus gauge for `auto_dream_agents.len()`.
 
 - _(closed)_ MS-3 placeholder removed — see `5fe2cc0`
   - `nexo_dream::boot::BootDeps` already accepts
