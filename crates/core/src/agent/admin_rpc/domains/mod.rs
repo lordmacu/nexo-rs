@@ -11,6 +11,7 @@
 //! Domains are registered with the [`super::AdminRpcDispatcher`]
 //! at boot.
 
+pub mod agent_events;
 pub mod agents;
 pub mod channels;
 pub mod credentials;
