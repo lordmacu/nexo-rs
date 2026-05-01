@@ -119,6 +119,14 @@ pub enum EventSubscriberConfigError {
     /// Empty `id`.
     #[error("event_subscriber binding has empty `id`")]
     EmptyId,
+    /// `id` contains a NATS-reserved character (`.`, `*`, `>`,
+    /// whitespace) — would mis-parse the
+    /// `plugin.inbound.event.<id>` republish topic.
+    #[error("event_subscriber `id` `{id}` contains illegal character (`.`, `*`, `>`, whitespace not allowed)")]
+    InvalidIdChar {
+        /// The rejected id value.
+        id: String,
+    },
     /// Empty `subject_pattern`.
     #[error("event_subscriber `{id}` has empty `subject_pattern`")]
     EmptySubjectPattern {
@@ -159,6 +167,15 @@ impl EventSubscriberBinding {
     pub fn validate(&self) -> Result<(), EventSubscriberConfigError> {
         if self.id.trim().is_empty() {
             return Err(EventSubscriberConfigError::EmptyId);
+        }
+        if self
+            .id
+            .chars()
+            .any(|c| c == '.' || c == '*' || c == '>' || c.is_whitespace())
+        {
+            return Err(EventSubscriberConfigError::InvalidIdChar {
+                id: self.id.clone(),
+            });
         }
         if self.subject_pattern.trim().is_empty() {
             return Err(EventSubscriberConfigError::EmptySubjectPattern {
@@ -246,6 +263,17 @@ mod tests {
             mk("", "x").validate(),
             Err(EventSubscriberConfigError::EmptyId)
         );
+    }
+
+    #[test]
+    fn id_with_reserved_chars_rejected() {
+        for bad in ["github.main", "x*", "x>y", "with space"] {
+            let result = mk(bad, "x.>").validate();
+            assert!(
+                matches!(result, Err(EventSubscriberConfigError::InvalidIdChar { .. })),
+                "id `{bad}` should be rejected, got {result:?}"
+            );
+        }
     }
 
     #[test]
