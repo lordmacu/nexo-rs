@@ -80,6 +80,7 @@ fn fixture_agent_ctx() -> Arc<AgentContext> {
         channels: None,
         auto_approve: false,
         extract_memories: None,
+            event_subscribers: Vec::new(),
     };
     Arc::new(AgentContext::new(
         "exposable-test",

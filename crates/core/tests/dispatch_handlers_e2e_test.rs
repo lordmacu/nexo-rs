@@ -125,6 +125,7 @@ fn empty_config(dispatch_full: bool) -> Arc<AgentConfig> {
         channels: None,
         auto_approve: false,
         extract_memories: None,
+            event_subscribers: Vec::new(),
     })
 }
 

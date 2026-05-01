@@ -71,6 +71,7 @@ async fn memory_recall_records_events_for_every_hit() -> anyhow::Result<()> {
         channels: None,
         auto_approve: false,
         extract_memories: None,
+            event_subscribers: Vec::new(),
     });
     let broker = AnyBroker::local();
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));

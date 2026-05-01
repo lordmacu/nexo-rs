@@ -25,6 +25,7 @@ pub mod repl;
 pub mod runtime;
 pub mod taskflow;
 pub mod team;
+pub mod event_subscriber;
 pub mod transcripts;
 pub mod webhook_receiver;
 
@@ -50,5 +51,6 @@ pub use repl::*;
 pub use runtime::*;
 pub use taskflow::*;
 pub use team::*;
+pub use event_subscriber::*;
 pub use transcripts::*;
 pub use webhook_receiver::*;
