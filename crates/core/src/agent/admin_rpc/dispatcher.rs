@@ -29,6 +29,7 @@ use super::audit::{
 use super::capabilities::CapabilitySet;
 use super::domains::agents::YamlPatcher;
 use super::domains::credentials::CredentialStore;
+use super::domains::pairing::{PairingChallengeStore, PairingNotifier};
 
 /// Reload signal callback — invoked by domain handlers after
 /// successful yaml mutations to trigger Phase 18 hot-reload.
@@ -141,6 +142,13 @@ pub struct AdminRpcDispatcher {
     /// Phase 82.10.d — credential filesystem store. `None`
     /// disables `nexo/admin/credentials/*`.
     credential_store: Option<Arc<dyn CredentialStore>>,
+    /// Phase 82.10.e — pairing challenge store. `None` disables
+    /// `nexo/admin/pairing/*`.
+    pairing_store: Option<Arc<dyn PairingChallengeStore>>,
+    /// Phase 82.10.e — push channel for
+    /// `nexo/notify/pairing_status_changed`. `None` = best-effort
+    /// (poll only, notifications dropped).
+    pairing_notifier: Option<Arc<dyn PairingNotifier>>,
 }
 
 impl std::fmt::Debug for AdminRpcDispatcher {
@@ -169,6 +177,8 @@ impl AdminRpcDispatcher {
             agents_yaml: None,
             reload_signal: None,
             credential_store: None,
+            pairing_store: None,
+            pairing_notifier: None,
         }
     }
 
@@ -207,6 +217,19 @@ impl AdminRpcDispatcher {
         self
     }
 
+    /// Phase 82.10.e — install the pairing domain. `notifier`
+    /// is optional; `None` keeps polling functional but skips
+    /// `nexo/notify/pairing_status_changed` pushes.
+    pub fn with_pairing_domain(
+        mut self,
+        store: Arc<dyn PairingChallengeStore>,
+        notifier: Option<Arc<dyn PairingNotifier>>,
+    ) -> Self {
+        self.pairing_store = Some(store);
+        self.pairing_notifier = notifier;
+        self
+    }
+
     /// Capability required for each method. Method routing also
     /// happens here — `None` = unknown method.
     fn required_capability(method: &str) -> Option<&'static str> {
@@ -219,7 +242,10 @@ impl AdminRpcDispatcher {
             "nexo/admin/credentials/list"
             | "nexo/admin/credentials/register"
             | "nexo/admin/credentials/revoke" => Some("credentials_crud"),
-            // Other domains registered in 82.10.e-f.
+            "nexo/admin/pairing/start"
+            | "nexo/admin/pairing/status"
+            | "nexo/admin/pairing/cancel" => Some("pairing_initiate"),
+            // Remaining domains land in 82.10.f.
             _ => None,
         }
     }
@@ -377,6 +403,28 @@ impl AdminRpcDispatcher {
                     )),
                 }
             }
+            "nexo/admin/pairing/start" => match &self.pairing_store {
+                Some(store) => super::domains::pairing::start(store.as_ref(), params),
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "pairing domain not configured".into(),
+                )),
+            },
+            "nexo/admin/pairing/status" => match &self.pairing_store {
+                Some(store) => super::domains::pairing::status(store.as_ref(), params),
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "pairing domain not configured".into(),
+                )),
+            },
+            "nexo/admin/pairing/cancel" => match &self.pairing_store {
+                Some(store) => super::domains::pairing::cancel(
+                    store.as_ref(),
+                    self.pairing_notifier.as_deref(),
+                    params,
+                ),
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "pairing domain not configured".into(),
+                )),
+            },
             // unreachable — `required_capability` already filtered
             // unknown methods before we got here. Defensive.
             other => AdminRpcResult::err(AdminRpcError::MethodNotFound(format!(
