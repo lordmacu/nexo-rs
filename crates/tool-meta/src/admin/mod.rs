@@ -11,3 +11,4 @@
 //! `llm_providers`, `channels` (82.10.d-f).
 
 pub mod agents;
+pub mod credentials;

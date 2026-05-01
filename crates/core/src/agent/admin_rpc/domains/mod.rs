@@ -12,3 +12,4 @@
 //! at boot.
 
 pub mod agents;
+pub mod credentials;

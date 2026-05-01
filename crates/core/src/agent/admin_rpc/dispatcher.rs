@@ -28,6 +28,7 @@ use super::audit::{
 };
 use super::capabilities::CapabilitySet;
 use super::domains::agents::YamlPatcher;
+use super::domains::credentials::CredentialStore;
 
 /// Reload signal callback — invoked by domain handlers after
 /// successful yaml mutations to trigger Phase 18 hot-reload.
@@ -137,6 +138,9 @@ pub struct AdminRpcDispatcher {
     /// successful yaml mutations. `None` = no-op (for early-boot
     /// tests).
     reload_signal: Option<ReloadSignal>,
+    /// Phase 82.10.d — credential filesystem store. `None`
+    /// disables `nexo/admin/credentials/*`.
+    credential_store: Option<Arc<dyn CredentialStore>>,
 }
 
 impl std::fmt::Debug for AdminRpcDispatcher {
@@ -164,6 +168,7 @@ impl AdminRpcDispatcher {
             audit: Arc::new(InMemoryAuditWriter::new()),
             agents_yaml: None,
             reload_signal: None,
+            credential_store: None,
         }
     }
 
@@ -194,6 +199,14 @@ impl AdminRpcDispatcher {
         self
     }
 
+    /// Phase 82.10.d — install the credentials domain. Reuses
+    /// the agents-domain `YamlPatcher` + `ReloadSignal` (must be
+    /// installed first via `with_agents_domain`).
+    pub fn with_credentials_domain(mut self, store: Arc<dyn CredentialStore>) -> Self {
+        self.credential_store = Some(store);
+        self
+    }
+
     /// Capability required for each method. Method routing also
     /// happens here — `None` = unknown method.
     fn required_capability(method: &str) -> Option<&'static str> {
@@ -203,7 +216,10 @@ impl AdminRpcDispatcher {
             | "nexo/admin/agents/get"
             | "nexo/admin/agents/upsert"
             | "nexo/admin/agents/delete" => Some("agents_crud"),
-            // Other domains registered in 82.10.d-f.
+            "nexo/admin/credentials/list"
+            | "nexo/admin/credentials/register"
+            | "nexo/admin/credentials/revoke" => Some("credentials_crud"),
+            // Other domains registered in 82.10.e-f.
             _ => None,
         }
     }
@@ -319,6 +335,48 @@ impl AdminRpcDispatcher {
                     "agents domain not configured".into(),
                 )),
             },
+            "nexo/admin/credentials/list" => {
+                match (&self.credential_store, &self.agents_yaml) {
+                    (Some(store), Some(yaml)) => {
+                        super::domains::credentials::list(store.as_ref(), yaml.as_ref(), params)
+                    }
+                    _ => AdminRpcResult::err(AdminRpcError::Internal(
+                        "credentials domain not configured".into(),
+                    )),
+                }
+            }
+            "nexo/admin/credentials/register" => {
+                match (&self.credential_store, &self.agents_yaml, &self.reload_signal) {
+                    (Some(store), Some(yaml), Some(reload)) => {
+                        let trigger = reload.clone();
+                        super::domains::credentials::register(
+                            store.as_ref(),
+                            yaml.as_ref(),
+                            params,
+                            &move || trigger(),
+                        )
+                    }
+                    _ => AdminRpcResult::err(AdminRpcError::Internal(
+                        "credentials domain not configured".into(),
+                    )),
+                }
+            }
+            "nexo/admin/credentials/revoke" => {
+                match (&self.credential_store, &self.agents_yaml, &self.reload_signal) {
+                    (Some(store), Some(yaml), Some(reload)) => {
+                        let trigger = reload.clone();
+                        super::domains::credentials::revoke(
+                            store.as_ref(),
+                            yaml.as_ref(),
+                            params,
+                            &move || trigger(),
+                        )
+                    }
+                    _ => AdminRpcResult::err(AdminRpcError::Internal(
+                        "credentials domain not configured".into(),
+                    )),
+                }
+            }
             // unreachable — `required_capability` already filtered
             // unknown methods before we got here. Defensive.
             other => AdminRpcResult::err(AdminRpcError::MethodNotFound(format!(
