@@ -1073,6 +1073,27 @@ impl DriverOrchestrator {
                             );
                             continue;
                         }
+                        ReplayDecision::CompactAndRetry => {
+                            // Phase 85.1 — reactive 413 recovery: bump
+                            // `consecutive_413`, undo the turn bump,
+                            // let the proactive compact path fire on
+                            // the retry loop. The full integration
+                            // (force `Trigger::Reactive413` without
+                            // consulting the proactive estimator)
+                            // lands in 85.1.b alongside provider 413
+                            // detection.
+                            usage.consecutive_413 = usage.consecutive_413.saturating_add(1);
+                            total_turns = total_turns.saturating_sub(1);
+                            usage.turns = total_turns;
+                            prior_failures.clear();
+                            tracing::info!(
+                                target: "driver-loop",
+                                goal_id = ?goal_id,
+                                consecutive_413 = usage.consecutive_413,
+                                "phase85.1: CompactAndRetry — looping",
+                            );
+                            continue;
+                        }
                         ReplayDecision::Escalate { reason } => {
                             let _ = self
                                 .event_sink
