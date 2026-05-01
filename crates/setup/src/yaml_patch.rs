@@ -1852,3 +1852,300 @@ agents:
         assert_eq!(after, Value::String("en".into()));
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Phase 82.10.h.3 helpers — whole-block agent removal + llm.yaml
+// `providers.<id>` mapping helpers, consumed by the admin RPC
+// production adapters in `crate::admin_adapters`.
+// ─────────────────────────────────────────────────────────────────────
+
+/// Drop the entire `agents.yaml.<agent_id>` block. Idempotent — if
+/// the id is absent the file is left untouched and `Ok(false)` is
+/// returned. Atomic via the same temp+rename path as `upsert`.
+pub fn remove_agent_block(path: &Path, agent_id: &str) -> Result<bool> {
+    let _guard = YAML_UPSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    if !path.exists() {
+        return Ok(false);
+    }
+    let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    if text.trim().is_empty() {
+        return Ok(false);
+    }
+    let mut root: Value =
+        serde_yaml::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
+
+    let removed = {
+        let agents = match root.get_mut("agents").and_then(Value::as_sequence_mut) {
+            Some(s) => s,
+            None => return Ok(false),
+        };
+        let before = agents.len();
+        agents.retain(|it| it.get("id").and_then(Value::as_str) != Some(agent_id));
+        before != agents.len()
+    };
+    if removed {
+        write_atomic(path, &root)?;
+    }
+    Ok(removed)
+}
+
+/// List every `providers.<id>` key in `llm.yaml` source order.
+/// Returns an empty vec when the file is absent or has no
+/// `providers` mapping.
+pub fn list_llm_provider_ids(path: &Path) -> Result<Vec<String>> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    if text.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let root: Value =
+        serde_yaml::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
+    let providers = match root.get("providers").and_then(Value::as_mapping) {
+        Some(m) => m,
+        None => return Ok(Vec::new()),
+    };
+    Ok(providers
+        .keys()
+        .filter_map(|k| k.as_str().map(String::from))
+        .collect())
+}
+
+/// Read a dotted field under `providers.<provider_id>.*`. Mirrors
+/// `read_agent_field` but for the mapping-keyed `llm.yaml` shape.
+pub fn read_llm_provider_field(
+    path: &Path,
+    provider_id: &str,
+    dotted: &str,
+) -> Result<Option<Value>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    if text.trim().is_empty() {
+        return Ok(None);
+    }
+    let root: Value =
+        serde_yaml::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
+    let provider = match root
+        .get("providers")
+        .and_then(|p| p.get(provider_id))
+    {
+        Some(p) => p,
+        None => return Ok(None),
+    };
+    let mut cur: &Value = provider;
+    for segment in dotted.split('.') {
+        match cur.get(segment) {
+            Some(next) => cur = next,
+            None => return Ok(None),
+        }
+    }
+    Ok(Some(cur.clone()))
+}
+
+/// Upsert a dotted field under `providers.<provider_id>.*`. Creates
+/// the provider mapping (and `providers:` itself) when absent.
+pub fn upsert_llm_provider_field(
+    path: &Path,
+    provider_id: &str,
+    dotted: &str,
+    value: Value,
+) -> Result<()> {
+    let _guard = YAML_UPSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let mut root: Value = if path.exists() {
+        let text =
+            fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+        if text.trim().is_empty() {
+            Value::Mapping(Mapping::new())
+        } else {
+            serde_yaml::from_str(&text)
+                .with_context(|| format!("parse {}", path.display()))?
+        }
+    } else {
+        Value::Mapping(Mapping::new())
+    };
+
+    if !root.is_mapping() {
+        anyhow::bail!("{} root is not a mapping", path.display());
+    }
+    {
+        let root_map = root.as_mapping_mut().unwrap();
+        let providers_key = Value::String("providers".into());
+        if !root_map.contains_key(&providers_key) {
+            root_map.insert(providers_key.clone(), Value::Mapping(Mapping::new()));
+        }
+        let providers = root_map
+            .get_mut(&providers_key)
+            .and_then(Value::as_mapping_mut)
+            .ok_or_else(|| anyhow::anyhow!("`providers:` is not a mapping in {}", path.display()))?;
+        let provider_key = Value::String(provider_id.into());
+        if !providers.contains_key(&provider_key) {
+            providers.insert(provider_key.clone(), Value::Mapping(Mapping::new()));
+        }
+        let provider = providers
+            .get_mut(&provider_key)
+            .ok_or_else(|| anyhow::anyhow!("provider `{provider_id}` lookup failed"))?;
+        let parts: Vec<&str> = dotted.split('.').collect();
+        if parts.is_empty() {
+            anyhow::bail!("empty dotted path");
+        }
+        set_path(provider, &parts, value)?;
+    }
+    write_atomic(path, &root)
+}
+
+/// Drop the entire `providers.<provider_id>` mapping. Idempotent —
+/// returns `Ok(false)` when the id is already absent.
+pub fn remove_llm_provider(path: &Path, provider_id: &str) -> Result<bool> {
+    let _guard = YAML_UPSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    if !path.exists() {
+        return Ok(false);
+    }
+    let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    if text.trim().is_empty() {
+        return Ok(false);
+    }
+    let mut root: Value =
+        serde_yaml::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
+    let removed = {
+        let providers = match root
+            .get_mut("providers")
+            .and_then(Value::as_mapping_mut)
+        {
+            Some(m) => m,
+            None => return Ok(false),
+        };
+        providers
+            .remove(&Value::String(provider_id.into()))
+            .is_some()
+    };
+    if removed {
+        write_atomic(path, &root)?;
+    }
+    Ok(removed)
+}
+
+#[cfg(test)]
+mod admin_adapter_helper_tests {
+    use super::*;
+
+    fn write_yaml(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
+        let p = dir.join(name);
+        fs::write(&p, body).unwrap();
+        p
+    }
+
+    #[test]
+    fn remove_agent_block_drops_matching_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_yaml(
+            dir.path(),
+            "agents.yaml",
+            "agents:\n  - id: ana\n    model:\n      provider: minimax\n  - id: bob\n    model:\n      provider: anthropic\n",
+        );
+        let removed = remove_agent_block(&path, "ana").unwrap();
+        assert!(removed);
+        let ids = list_agent_ids(&path).unwrap();
+        assert_eq!(ids, vec!["bob".to_string()]);
+    }
+
+    #[test]
+    fn remove_agent_block_unknown_id_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_yaml(
+            dir.path(),
+            "agents.yaml",
+            "agents:\n  - id: ana\n    model:\n      provider: minimax\n",
+        );
+        let removed = remove_agent_block(&path, "ghost").unwrap();
+        assert!(!removed);
+        assert_eq!(list_agent_ids(&path).unwrap(), vec!["ana".to_string()]);
+    }
+
+    #[test]
+    fn list_llm_provider_ids_returns_mapping_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_yaml(
+            dir.path(),
+            "llm.yaml",
+            "providers:\n  minimax:\n    base_url: https://x\n  anthropic:\n    base_url: https://y\n",
+        );
+        let mut ids = list_llm_provider_ids(&path).unwrap();
+        ids.sort();
+        assert_eq!(ids, vec!["anthropic".to_string(), "minimax".into()]);
+    }
+
+    #[test]
+    fn read_and_upsert_llm_provider_field_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_yaml(
+            dir.path(),
+            "llm.yaml",
+            "providers:\n  minimax:\n    base_url: https://api.minimax.io\n",
+        );
+        let v = read_llm_provider_field(&path, "minimax", "base_url")
+            .unwrap()
+            .unwrap();
+        assert_eq!(v.as_str(), Some("https://api.minimax.io"));
+
+        upsert_llm_provider_field(
+            &path,
+            "minimax",
+            "api_key_env",
+            Value::String("MINIMAX_API_KEY".into()),
+        )
+        .unwrap();
+        let env = read_llm_provider_field(&path, "minimax", "api_key_env")
+            .unwrap()
+            .unwrap();
+        assert_eq!(env.as_str(), Some("MINIMAX_API_KEY"));
+    }
+
+    #[test]
+    fn upsert_llm_provider_field_creates_missing_provider_block() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("llm.yaml");
+        upsert_llm_provider_field(
+            &path,
+            "newp",
+            "base_url",
+            Value::String("https://new".into()),
+        )
+        .unwrap();
+        let v = read_llm_provider_field(&path, "newp", "base_url")
+            .unwrap()
+            .unwrap();
+        assert_eq!(v.as_str(), Some("https://new"));
+    }
+
+    #[test]
+    fn remove_llm_provider_drops_block() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_yaml(
+            dir.path(),
+            "llm.yaml",
+            "providers:\n  retired:\n    base_url: https://x\n  active:\n    base_url: https://y\n",
+        );
+        let removed = remove_llm_provider(&path, "retired").unwrap();
+        assert!(removed);
+        let ids = list_llm_provider_ids(&path).unwrap();
+        assert_eq!(ids, vec!["active".to_string()]);
+    }
+
+    #[test]
+    fn remove_llm_provider_unknown_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_yaml(
+            dir.path(),
+            "llm.yaml",
+            "providers:\n  active:\n    base_url: https://y\n",
+        );
+        assert!(!remove_llm_provider(&path, "ghost").unwrap());
+        assert_eq!(
+            list_llm_provider_ids(&path).unwrap(),
+            vec!["active".to_string()]
+        );
+    }
+}
