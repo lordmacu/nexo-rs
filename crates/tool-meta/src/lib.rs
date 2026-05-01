@@ -7,3 +7,7 @@
 //! data shapes a downstream consumer needs to read what nexo emits.
 //!
 //! See the modules below for the concrete types.
+
+pub mod binding;
+
+pub use binding::{binding_id_render, BindingContext};
