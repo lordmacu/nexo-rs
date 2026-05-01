@@ -13,7 +13,7 @@ tracker**.
 | 81 | Plug-and-play plugin system | 2/13 | 🔄 |
 | 82 | Multi-tenant SaaS extension enablement | 6/14 | 🔄 |
 | 83 | Microapp framework foundation | 1/14 | 🔄 |
-| 84 | Coordinator agent persona + worker continuation | 0/5 | ⬜ |
+| 84 | Coordinator agent persona + worker continuation | 0/5 | ⭐ **PRIORITY — next pickup** (brainstorm + spec + plan approved; ready for `/forge ejecutar 84.1`) |
 
 - **Detail per sub-phase** → [`PHASES.md`](PHASES.md)
 - **Open follow-ups** (deferred items, deferreds against closed phases) → [`FOLLOWUPS.md`](FOLLOWUPS.md)
