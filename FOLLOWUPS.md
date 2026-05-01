@@ -1954,6 +1954,39 @@ admin RPC + http_server bootstrap into main.rs (single
 shared boot-order refactor — folded with 82.10.h.b /
 82.11 / 82.12 / 82.13 / 82.14 deferreds).
 
+### Phase 87.1 — JudgeBackend wire-up + budget axis + telemetry
+
+Phase 87.1 shipped `AcceptanceCriterion::LlmJudge` variant +
+`LlmJudgeEvaluator` + `JudgeBackend` trait + 11 unit tests
+covering pass/fail/malformed/timeout + criterion routing. Four
+pieces deferred to 87.1.b:
+
+- **Production `JudgeBackend` impl**: dispatch via
+  `nexo-fork::DefaultForkSubagent` with the judge persona prompt
+  loaded as a Markdown asset (`crates/driver-loop/src/evaluators/llm_judge_prompt.md`,
+  `include_str!`). Today the trait is wired only to scripted
+  test backends.
+- **Budget guard axis**: add `BudgetGuards.max_judge_calls_per_goal`
+  (default 5) + `BudgetUsage.judge_calls` counter +
+  `BudgetAxis::JudgeCalls` so a runaway judge loop is bounded.
+  Skipped from 87.1 because it requires touching every
+  `BudgetGuards { ... }` literal site (same disruption as the
+  85.1 `consecutive_413` change). Bundle with the next budget
+  axis sweep.
+- **Integration test**: `crates/driver-loop/tests/` worker emits
+  diff → criterion = LlmJudge → mocked judge returns pass → goal
+  accepted. Repeat with judge returning fail → orchestrator
+  emits `AcceptanceFailure` per Phase 67/68 contract. Today the
+  default evaluator's LlmJudge arm returns an explicit "not yet
+  wired" failure so the criterion isn't silently passed.
+- **Telemetry**: counter `acceptance_llm_judge_total{verdict}`
+  + histogram `acceptance_llm_judge_latency_seconds`. Lands with
+  the production backend so the metric reflects real fork
+  dispatches.
+
+Target phase: 87.1.b (folded with the next fork-as-tool wiring
+sweep that Phase 84.3 also depends on).
+
 ### Phase 86.1 — fire-site wiring + integration test + docs page
 
 Phase 86.1 shipped the type surface in `crates/memory/src/metrics.rs`

@@ -9743,7 +9743,7 @@ mined**:
   Podman, Docker, Firecracker, even in-process for dev) without
   changing the agent code.
 
-#### 87.1 — `LlmJudgeEvaluator` AcceptanceEvaluator impl   ⬜ AFTER-PHASE-84
+#### 87.1 — `LlmJudgeEvaluator` AcceptanceEvaluator impl   ✅  (shipped 2026-05-01 — backend wire-up + budget axis deferred)
 
 > **Curation 2026-05-01**: reprioritized. Ships **after Phase 84
 > coordinator** is live. The verifier pattern only earns its weight

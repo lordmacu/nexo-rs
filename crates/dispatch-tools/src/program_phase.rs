@@ -281,6 +281,9 @@ pub fn build_goal_prompt_with_followups(
                 AcceptanceCriterion::Custom { name, .. } => {
                     let _ = writeln!(p, "- custom verifier: `{name}`");
                 }
+                AcceptanceCriterion::LlmJudge { criterion_text } => {
+                    let _ = writeln!(p, "- llm judge: {criterion_text}");
+                }
             }
         }
     }
