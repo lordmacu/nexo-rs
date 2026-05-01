@@ -1,0 +1,44 @@
+[package]
+name        = "nexo-webhook-server"
+description = "Phase 82.2 — axum-based HTTP server hosting webhook routes with 5-gate defense pipeline."
+version       = { workspace = true }
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+homepage      = { workspace = true }
+documentation = { workspace = true }
+
+[lints]
+workspace = true
+
+[dependencies]
+serde       = { workspace = true, features = ["derive"] }
+serde_json  = { workspace = true }
+thiserror   = { workspace = true }
+bytes       = { workspace = true }
+async-trait = { workspace = true }
+tokio       = { workspace = true }
+tokio-util  = { workspace = true }
+tracing     = { workspace = true }
+uuid        = { workspace = true }
+chrono      = { workspace = true }
+ipnetwork   = { workspace = true }
+axum        = { version = "0.7", features = ["macros", "tokio"] }
+tower       = { version = "0.5", features = ["limit", "util"] }
+tower-http  = { version = "0.5", features = ["limit", "timeout", "trace"] }
+arc-swap    = "1"
+nexo-broker            = { path = "../broker" }
+nexo-config            = { path = "../config" }
+nexo-webhook-receiver  = { path = "../webhook-receiver" }
+
+[dev-dependencies]
+serde_yaml  = { workspace = true }
+tokio       = { workspace = true, features = ["macros", "rt-multi-thread"] }
+reqwest     = { workspace = true }
+hyper       = "1"
+http-body-util = "0.1"
+hmac        = "0.12"
+sha2        = { workspace = true }
+hex         = { workspace = true }

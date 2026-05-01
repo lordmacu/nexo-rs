@@ -46,6 +46,7 @@ members = [
     "crates/assistant",
     "crates/plugin-manifest",
     "crates/webhook-receiver",
+    "crates/webhook-server",
     # Phase 76.15 — MCP server skeleton extension. Member because
     # we want CI / `cargo build --workspace` to keep it green; it
     # depends on `nexo-mcp` via in-tree path dep. Operators copy
