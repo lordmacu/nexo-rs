@@ -2,6 +2,7 @@ pub mod compactions;
 pub mod concepts;
 pub mod embedding;
 pub mod long_term;
+pub mod metrics;
 pub mod relevance;
 pub mod secret_config;
 pub mod secret_scanner;

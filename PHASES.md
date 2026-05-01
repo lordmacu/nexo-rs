@@ -9610,7 +9610,7 @@ mined**:
   debug` CLI subcommand means it's scriptable + audit-loggable
   through the existing CLI surface.
 
-#### 86.1 — Local memory-shape metrics (Prometheus)   ⬜
+#### 86.1 — Local memory-shape metrics (Prometheus)   ✅  (shipped 2026-05-01 — fire-site wiring deferred)
 
 Emit counters + histograms for memory recall + write activity
 to the Phase 28 metrics registry. Operator wires them into Grafana
