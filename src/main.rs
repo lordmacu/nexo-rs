@@ -1203,8 +1203,20 @@ async fn main() -> Result<()> {
     // Runs before anything that depends on extensions. Spawns stdio runtimes
     // (Phase 11.3) for each discovered candidate and keeps them alive for
     // the agent's lifetime. Tool-registry injection lands in 11.5.
+    // Phase 82.10.h.b.5 — admin RPC bootstrap. v1 ships the
+    // wire path plumbed end-to-end but feeds `None` here so
+    // existing flows are byte-identical. Operators that want
+    // admin RPC enabled construct `AdminRpcBootstrap` from
+    // their plugin manifests + reload_signal and pass it
+    // (single-line change). Defer wiring is intentional: the
+    // bootstrap needs the per-extension `[capabilities.admin]`
+    // declarations from each plugin.toml, which today are
+    // re-parsed inside `run_extension_discovery` rather than
+    // surfaced from a single source of truth — refactor lands
+    // alongside the operator wire-up follow-up.
+    let admin_bootstrap: Option<nexo_setup::admin_bootstrap::AdminRpcBootstrap> = None;
     let (extension_runtimes, ext_mcp_decls) =
-        run_extension_discovery(cfg.extensions.as_ref()).await;
+        run_extension_discovery(cfg.extensions.as_ref(), admin_bootstrap.as_ref()).await;
 
     // Phase 12.4+12.7 — MCP runtime manager. One per process; every agent
     // shares a sentinel session to avoid spawning duplicate MCP children.
@@ -5947,9 +5959,17 @@ fn build_mcp_sampling_provider(
 /// Never fatal: bad manifests or spawn failures produce diagnostics; the
 /// agent keeps starting. Returns runtimes that the caller must keep alive
 /// (drop → cascades SIGTERM to extension children).
+///
+/// Phase 82.10.h.b.5 — when `admin_bootstrap` is `Some`, each
+/// extension that declares `[capabilities.admin]` in its plugin.toml
+/// is spawned with the per-microapp `AdminRouter` wired into its
+/// `StdioSpawnOptions`. Post-spawn the bootstrap binds the live
+/// `outbox_sender()` so admin response frames flow back to the
+/// extension's stdin without a separate writer channel.
 #[allow(clippy::type_complexity)]
 async fn run_extension_discovery(
     cfg: Option<&nexo_config::ExtensionsConfig>,
+    admin_bootstrap: Option<&nexo_setup::admin_bootstrap::AdminRpcBootstrap>,
 ) -> (
     Vec<(
         Arc<nexo_extensions::StdioRuntime>,
@@ -6042,13 +6062,36 @@ async fn run_extension_discovery(
             );
             continue;
         }
-        match nexo_extensions::StdioRuntime::spawn(&c.manifest, c.root_dir.clone()).await {
+        // Phase 82.10.h.b.5 — when the operator wired
+        // `[capabilities.admin]` for this id, route the spawn
+        // through `spawn_with` so the per-microapp `AdminRouter`
+        // lands in the reader task. Plain `spawn` for the rest
+        // (zero overhead path).
+        let admin_opts = admin_bootstrap.and_then(|b| {
+            b.spawn_options_for(
+                &id,
+                nexo_extensions::StdioSpawnOptions {
+                    cwd: c.root_dir.clone(),
+                    ..Default::default()
+                },
+            )
+        });
+        let rt_result = match admin_opts {
+            Some(opts) => nexo_extensions::StdioRuntime::spawn_with(&c.manifest, opts).await,
+            None => {
+                nexo_extensions::StdioRuntime::spawn(&c.manifest, c.root_dir.clone()).await
+            }
+        };
+        match rt_result {
             Ok(rt) => {
                 tracing::info!(
                     ext = %id,
                     tools = rt.handshake().tools.len(),
                     "extension runtime ready",
                 );
+                if let Some(b) = admin_bootstrap {
+                    b.bind_writer(&id, rt.outbox_sender());
+                }
                 runtimes.push((Arc::new(rt), c));
             }
             Err(e) => {

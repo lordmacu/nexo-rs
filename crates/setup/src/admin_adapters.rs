@@ -27,13 +27,16 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
+use async_trait::async_trait;
 use nexo_core::agent::admin_rpc::domains::agents::YamlPatcher;
 use nexo_core::agent::admin_rpc::domains::credentials::CredentialStore;
 use nexo_core::agent::admin_rpc::domains::llm_providers::LlmYamlPatcher;
 use nexo_core::agent::admin_rpc::domains::pairing::{
     PairingChallengeStore, PairingNotifier, PAIRING_STATUS_NOTIFY_METHOD,
 };
+use nexo_core::agent::admin_rpc::AdminOutboundWriter;
 use nexo_tool_meta::admin::pairing::{PairingState, PairingStatus, PairingStatusData};
+use std::sync::OnceLock;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -636,6 +639,66 @@ impl PairingNotifier for StdioPairingNotifier {
                 error = %e,
                 "pairing notifier outbox full or closed; dropping notification frame",
             );
+        }
+    }
+}
+
+/// Phase 82.10.h.b.5 — `AdminOutboundWriter` whose backing
+/// `mpsc::Sender<String>` is bound after construction. Solves
+/// the chicken-and-egg between [`DispatcherAdminRouter`] (needs
+/// a writer at build time, which happens before the extension
+/// spawns) and [`StdioRuntime::outbox_sender`] (the writer's
+/// real `mpsc::Sender` is created inside spawn).
+///
+/// Boot wiring:
+/// 1. `let writer = Arc::new(DeferredAdminOutboundWriter::new());`
+/// 2. Build router with `writer.clone() as Arc<dyn ...>` and pass
+///    it to `StdioSpawnOptions::admin_router`.
+/// 3. Spawn the extension.
+/// 4. `writer.bind(runtime.outbox_sender());` — every queued
+///    response from this point on flows to the live stdin.
+///
+/// Frames `send`-ed before `bind` is called are dropped with a
+/// `warn` (the dispatcher already considers admin response
+/// delivery best-effort so this matches the `try_send`-on-full
+/// semantics microapps already see when the channel saturates).
+#[derive(Debug, Default)]
+pub struct DeferredAdminOutboundWriter {
+    sender: OnceLock<mpsc::Sender<String>>,
+}
+
+impl DeferredAdminOutboundWriter {
+    /// Build an unbound writer. Frames sent before [`bind`] is
+    /// called will be dropped + logged.
+    pub fn new() -> Self {
+        Self {
+            sender: OnceLock::new(),
+        }
+    }
+
+    /// Attach the live extension stdin sender. Idempotent — a
+    /// second call is a no-op (`OnceLock` semantics) so a
+    /// post-restart re-bind still works through the original
+    /// channel.
+    pub fn bind(&self, sender: mpsc::Sender<String>) {
+        let _ = self.sender.set(sender);
+    }
+}
+
+#[async_trait]
+impl AdminOutboundWriter for DeferredAdminOutboundWriter {
+    async fn send(&self, line: String) {
+        match self.sender.get() {
+            Some(s) => {
+                if let Err(e) = s.try_send(line) {
+                    tracing::warn!(error = %e, "admin response outbox full or closed; frame dropped");
+                }
+            }
+            None => {
+                tracing::warn!(
+                    "admin response sent before outbound writer was bound; frame dropped",
+                );
+            }
         }
     }
 }
