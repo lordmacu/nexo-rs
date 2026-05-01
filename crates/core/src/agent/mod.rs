@@ -18,6 +18,7 @@ pub mod delegation_tool;
 pub mod dispatch_handlers;
 pub mod dreaming;
 pub mod effective;
+pub mod event_subscriber;
 pub mod extension_hook;
 pub mod extension_tool;
 pub mod followup_tool;
