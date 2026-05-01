@@ -1833,28 +1833,33 @@ Done criteria:
   source.
 - Examples for 3 languages embedded inline.
 
-#### 83.7 — Microapp templates (Rust + Python + TypeScript)   ⬜
+#### 83.7 — Microapp template (Rust only)   ⬜
 
-Three template scaffolds under `extensions/`. Each ships a
-working hello-world microapp in its language.
+> **Curation 2026-05-01**: scope reduced from 3 stacks
+> (Rust + Python + TypeScript) to **Rust only**. The microapp
+> contract document (83.6) is the language-agnostic interface;
+> authors targeting Python/TS implement the JSON-RPC stdio loop
+> from the contract spec. Maintaining 3 reference stacks is
+> scope creep that ties nexo to ecosystems we do not control.
+
+One template scaffold under `extensions/`. Ships a working
+hello-world microapp in Rust.
 
 Scope:
 - `extensions/template-microapp-rust/` — depends on
   `microapp-sdk-rust`, ~150 LOC, 2 example tools, hook
   observer, README.
-- `extensions/template-microapp-python/` — `asyncio` +
-  `jsonrpc` library, Python 3.11+, ~200 LOC, README.
-- `extensions/template-microapp-typescript/` — Node 20+,
-  simple stdio JSON-RPC, ~250 LOC, README.
 
-Each template demonstrates: BindingContext parsing,
-persona config map, one tool with `_nexo_context` access,
-one hook observer, `nexo/dispatch` outbound call.
+Template demonstrates: BindingContext parsing, persona config
+map, one tool with `_nexo_context` access, one hook observer,
+`nexo/dispatch` outbound call.
 
 Done criteria:
-- Each template builds + runs the smoke test
+- Template builds + runs the smoke test
   (`initialize → tools/list → tools/call → shutdown`).
-- README explains the contract by reference to 83.6.
+- README explains the contract by reference to 83.6, including
+  a "porting to Python/TypeScript" section pointing back to the
+  contract document.
 
 #### 83.8 — `ventas-etb` reference microapp   ⬜
 
@@ -2381,6 +2386,127 @@ subprocess. No `NexoPlugin` trait work, no in-process
 plugin discovery, no in-process channel adapters, no
 in-process advisor registration. Those stay in Phase 81
 backlog.
+
+#### 83.15 — Microapp testing harness (mock daemon + SDK helper)   ⬜ NEW 2026-05-01
+
+> **Curation gap**: today a microapp author must spawn the real
+> `nexo` daemon to exercise their handlers — friction so high that
+> every author re-invents private mocks. This sub-phase ships the
+> harness that lets a microapp ship its own unit + integration
+> tests offline.
+
+Scope:
+- New module in `crates/microapp-sdk-rust/src/testing/` exposing:
+  - `MockDaemon` — async stub that owns an in-memory JSON-RPC
+    transport, drives `initialize → tools/list → tools/call →
+    shutdown` lifecycle, lets the test push synthetic
+    `agents/updated` / `hooks/<name>` notifications.
+  - `MockBindingContext` builder — `MockBindingContext::new()
+    .with_agent("ana").with_channel("whatsapp")
+    .with_extension_config(yaml!{ ... }).build()`.
+  - `MockAdminRpc` — programmable responses to
+    `nexo/admin/*` requests so microapps that consume admin
+    surfaces can assert their request shape + handle responses.
+- Public API surface gated behind a `testing` Cargo feature on
+  `microapp-sdk-rust` so production builds do not ship the
+  mocks.
+- Reference test in `extensions/template-microapp-rust/`
+  (Phase 83.7) demonstrates the harness end-to-end: 1 unit
+  test per tool + 1 integration test booting `MockDaemon` →
+  asserting full lifecycle.
+- 8 unit tests on the harness itself (covering each mock
+  surface's edge cases — disconnect mid-call, malformed
+  notification, capability denial).
+- Docs page `docs/src/microapps/testing.md` shows a 50-line
+  worked example.
+
+Done criteria:
+- `cargo test -p template-microapp-rust` exercises the harness
+  without spawning the daemon.
+- `agent-creator` migrates ≥ 1 of its handler tests to the
+  harness, removing private mock code as evidence the harness
+  covers a real use case.
+
+#### 83.16 — Microapp error → operator path   ⬜ NEW 2026-05-01
+
+> **Curation gap**: today an uncaught exception inside a
+> microapp handler stays in the microapp's stderr — operator
+> never knows unless they are tailing logs. Boot failures are
+> equally invisible. This sub-phase wires structured error
+> reporting back to the operator surface (admin-ui badge +
+> Prometheus counter + audit log entry).
+
+Scope:
+- New JSON-RPC notification `nexo/notify/microapp_error`
+  emitted by the daemon's stdio supervisor when the microapp:
+  1. Fails to complete `initialize` within the timeout, or
+  2. Returns a `tools/call` error with `data.unhandled = true`,
+     or
+  3. Exits with a non-zero code, or
+  4. Triggers an admin-RPC capability denial.
+- Notification payload: `{ microapp_id, kind:
+  init_timeout|handler_panic|exit|capability_denied,
+  correlation_id, occurred_at, summary,
+  stack_trace?: string }`.
+- Admin-ui consumer renders a per-microapp health badge that
+  flips red on the first error in the last 5 min and shows
+  the summary on hover.
+- Counter `microapp_errors_total{microapp_id, kind}` emitted
+  via Phase 28 metrics infra.
+- Audit log entry `nexo.audit.microapp_error{...}` published
+  on the broker so external observers (Phase 39 stable admin
+  API) see the same signal.
+- Operator-side rate limit: > 50 errors / 5 min → daemon
+  emits a single `MicroappBackoff` event and stops respawning
+  the microapp until operator clears the badge.
+
+Done criteria:
+- 4 unit tests covering the 4 error kinds.
+- 1 integration test: synthetic microapp returns a panic →
+  notification reaches the test admin-ui mock + counter
+  increments + audit row appears.
+- Reference doc `docs/src/microapps/error-handling.md` lists
+  the 4 kinds + payload shape + operator runbook.
+
+#### 83.17 — Microapp config schema validation at install   ⬜ NEW 2026-05-01
+
+> **Curation gap**: Phase 81.4 plans a plugin-scoped config
+> dir loader; today nothing validates the shape of the YAML
+> the microapp expects. A misconfigured config fails at
+> runtime with a cryptic error, often inside the microapp.
+> This sub-phase shifts validation to install time (or daemon
+> boot) so the operator gets immediate, actionable feedback.
+
+Scope:
+- Microapp ships a JSON Schema (or equivalent Rust
+  `schemars`-derived schema) alongside its `plugin.toml` at
+  `extensions/<id>/config.schema.json`.
+- Daemon `nexo extensions install <id>` (and equivalent boot
+  pre-flight) validates the operator-supplied
+  `extensions_config.<id>` against the schema before
+  spawning. Validation failures abort install with a structured
+  error: which field failed, expected vs got, JSON-pointer
+  to the bad value.
+- For Rust microapps using `microapp-sdk-rust`, a derive
+  macro `#[derive(MicroappConfig)]` auto-generates the schema
+  from the typed config struct so authors do not write JSON
+  Schema by hand.
+- Capability inventory: NO new env toggle (the validator runs
+  unconditionally at install / boot).
+- Operator override env `NEXO_MICROAPP_SKIP_SCHEMA=<microapp_id>`
+  bypasses validation for one-off debugging — gated behind the
+  existing `*_ALLOW_*` capability inventory entry pattern.
+- Reference: the agent-creator microapp ships its schema first,
+  validating the existing operator config it expects.
+
+Done criteria:
+- 5 unit tests on the validator (missing required field /
+  extra unknown field with `additionalProperties: false` /
+  type mismatch / valid config / override env honored).
+- 1 integration test: `nexo extensions install` fails clean
+  on a deliberately-bad config, succeeds on a corrected one.
+- Reference doc `docs/src/microapps/config-schema.md` covers
+  authoring a schema + the derive macro shortcut.
 
 ---
 

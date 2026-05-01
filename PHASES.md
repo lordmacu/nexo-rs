@@ -7206,7 +7206,12 @@ post-load tick.
   3-hour offline window → 1 catch-up notification, no
   double-fire
 
-#### 80.7 — Cron scheduler per-cwd lock owner (multi-instance)   ⬜
+#### 80.7 — Cron scheduler per-cwd lock owner (multi-instance)   ⬜ DEFER
+
+> **Curation 2026-05-01**: confirmed DEFER. Gated on Phase 32
+> multi-host orchestration becoming active. Single-daemon
+> deployments (today's primary case) do not need this — KAIROS
+> shipped without it for years.
 
 Today multiple `nexo` daemons sharing the same
 `agents.yaml` would double-fire cron entries. KAIROS uses a
@@ -8317,7 +8322,14 @@ existing `crates/poller/` for downstream consumers.
 
 **Effort revised**: ~1.5-2 d (was 3 d).
 
-#### 80.13 — KAIROS_PUSH_NOTIFICATION — APN/FCM/WebPush tool   ⬜
+#### 80.13 — KAIROS_PUSH_NOTIFICATION — APN/FCM/WebPush tool   ❌ DROPPED 2026-05-01
+
+> **Curation 2026-05-01**: dropped from active scope. Provider-
+> specific push channel (APN/FCM/WebPush) is out of alignment with
+> the connector-framework principle — microapps that need mobile
+> notify use the generic webhook receiver shipped in Phase 80.12.
+> Tracked here as design-pointer in case a future microapp demands
+> first-class push, but no longer counted in active sub-phase tally.
 
 KAIROS gates `PushNotificationTool` (DCE'd body, signature
 visible in `tools.ts:46`). Distinct from `notify_origin`:
@@ -9645,7 +9657,13 @@ tree)**:
 - `admin-ui/PHASES.md` "Memory observability" panel checkbox:
   surfaces the same metrics via the admin-ui dashboard backend.
 
-#### 86.2 — `nexo agent debug break-cache` CLI subcommand   ⬜
+#### 86.2 — `nexo agent debug break-cache` CLI subcommand   ❌ DROPPED 2026-05-01
+
+> **Curation 2026-05-01**: dropped. Debug-only tool for
+> framework-internal cache regression investigation. Microapps do
+> not consume this. The automatic detector shipped in Phase 77.4
+> already surfaces cache-break events; manual force-miss is rarely
+> needed and can be added ad-hoc when a real bug demands it.
 
 Operator-facing tool to force a prompt-cache miss on a binding's
 next turn. Use case: debugging cache regression in production
@@ -9725,7 +9743,13 @@ mined**:
   Podman, Docker, Firecracker, even in-process for dev) without
   changing the agent code.
 
-#### 87.1 — `LlmJudgeEvaluator` AcceptanceEvaluator impl   ⬜
+#### 87.1 — `LlmJudgeEvaluator` AcceptanceEvaluator impl   ⬜ AFTER-PHASE-84
+
+> **Curation 2026-05-01**: reprioritized. Ships **after Phase 84
+> coordinator** is live. The verifier pattern only earns its weight
+> when a coordinator persona invokes it as part of the
+> Research → Synthesis → Implementation → Verification workflow.
+> Without 84, this is a lonely evaluator looking for a caller.
 
 Concrete `AcceptanceEvaluator` that spawns a forked LLM judge to
 verify whether a worker's output satisfies an
