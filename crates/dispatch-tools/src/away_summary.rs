@@ -173,6 +173,7 @@ mod tests {
             error: None,
             raw_json: "{}".into(),
             source: None,
+            account_id: None,
         }
     }
 

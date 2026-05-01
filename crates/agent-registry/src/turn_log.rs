@@ -89,6 +89,15 @@ pub struct TurnRecord {
     /// "what came in via Slack today?".
     #[serde(default)]
     pub source: Option<String>,
+    /// Phase 82.8 — tenant scope. `Some(account_id)` when the
+    /// inbound carries one (Phase 82.1 `BindingContext`); legacy
+    /// rows + system-driven turns (heartbeat, cron, internal
+    /// delegate) stay `None`. Tenant-scoped tail queries filter
+    /// on this column; rows with `None` are returned only by
+    /// operator/admin-scoped tails to avoid an existence oracle
+    /// for cross-tenant probing.
+    #[serde(default)]
+    pub account_id: Option<String>,
 }
 
 #[async_trait]
@@ -219,6 +228,28 @@ impl SqliteTurnLogStore {
         )
         .execute(pool)
         .await?;
+
+        // Phase 82.8 — additive `account_id` column for
+        // multi-tenant audit isolation. Same idempotent
+        // ALTER pattern as `source` above so migrate() stays
+        // safe to call on every boot.
+        let alter_account =
+            sqlx::query("ALTER TABLE goal_turns ADD COLUMN account_id TEXT")
+                .execute(pool)
+                .await;
+        if let Err(e) = alter_account {
+            let msg = e.to_string();
+            if !msg.contains("duplicate column") {
+                return Err(AgentRegistryStoreError::Sqlx(e));
+            }
+        }
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_goal_turns_account_recorded \
+                ON goal_turns(account_id, recorded_at DESC)",
+        )
+        .execute(pool)
+        .await?;
+
         Ok(())
     }
 }
@@ -228,8 +259,8 @@ impl TurnLogStore for SqliteTurnLogStore {
     async fn append(&self, record: &TurnRecord) -> Result<(), AgentRegistryStoreError> {
         sqlx::query(
             "INSERT INTO goal_turns \
-                 (goal_id, turn_index, recorded_at, outcome, decision, summary, diff_stat, error, raw_json, source) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
+                 (goal_id, turn_index, recorded_at, outcome, decision, summary, diff_stat, error, raw_json, source, account_id) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) \
              ON CONFLICT(goal_id, turn_index) DO UPDATE SET \
                  recorded_at = excluded.recorded_at, \
                  outcome     = excluded.outcome, \
@@ -238,7 +269,8 @@ impl TurnLogStore for SqliteTurnLogStore {
                  diff_stat   = excluded.diff_stat, \
                  error       = excluded.error, \
                  raw_json    = excluded.raw_json, \
-                 source      = excluded.source",
+                 source      = excluded.source, \
+                 account_id  = excluded.account_id",
         )
         .bind(record.goal_id.0.to_string())
         .bind(record.turn_index as i64)
@@ -250,6 +282,7 @@ impl TurnLogStore for SqliteTurnLogStore {
         .bind(record.error.as_deref())
         .bind(&record.raw_json)
         .bind(record.source.as_deref())
+        .bind(record.account_id.as_deref())
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -279,8 +312,9 @@ impl TurnLogStore for SqliteTurnLogStore {
             Option<String>,
             String,
             Option<String>,
+            Option<String>,
         )> = sqlx::query_as(
-            "SELECT goal_id, turn_index, recorded_at, outcome, decision, summary, diff_stat, error, raw_json, source \
+            "SELECT goal_id, turn_index, recorded_at, outcome, decision, summary, diff_stat, error, raw_json, source, account_id \
              FROM goal_turns \
              WHERE goal_id = ?1 \
              ORDER BY turn_index DESC LIMIT ?2",
@@ -290,7 +324,7 @@ impl TurnLogStore for SqliteTurnLogStore {
         .fetch_all(&self.pool)
         .await?;
         let mut out = Vec::with_capacity(rows.len());
-        for (gid, idx, ts, outcome, decision, summary, diff_stat, error, raw_json, source) in rows {
+        for (gid, idx, ts, outcome, decision, summary, diff_stat, error, raw_json, source, account_id) in rows {
             let goal = Uuid::parse_str(&gid)
                 .map_err(|e| AgentRegistryStoreError::GoalId(e.to_string()))?;
             out.push(TurnRecord {
@@ -304,6 +338,7 @@ impl TurnLogStore for SqliteTurnLogStore {
                 error,
                 raw_json,
                 source,
+                account_id,
             });
         }
         out.reverse();
@@ -343,8 +378,9 @@ impl TurnLogStore for SqliteTurnLogStore {
             Option<String>,
             String,
             Option<String>,
+            Option<String>,
         )> = sqlx::query_as(
-            "SELECT goal_id, turn_index, recorded_at, outcome, decision, summary, diff_stat, error, raw_json, source \
+            "SELECT goal_id, turn_index, recorded_at, outcome, decision, summary, diff_stat, error, raw_json, source, account_id \
              FROM goal_turns \
              WHERE recorded_at >= ?1 \
              ORDER BY recorded_at DESC \
@@ -355,7 +391,7 @@ impl TurnLogStore for SqliteTurnLogStore {
         .fetch_all(&self.pool)
         .await?;
         let mut out = Vec::with_capacity(rows.len());
-        for (gid, idx, ts, outcome, decision, summary, diff_stat, error, raw_json, source) in rows {
+        for (gid, idx, ts, outcome, decision, summary, diff_stat, error, raw_json, source, account_id) in rows {
             let goal = Uuid::parse_str(&gid)
                 .map_err(|e| AgentRegistryStoreError::GoalId(e.to_string()))?;
             out.push(TurnRecord {
@@ -369,6 +405,75 @@ impl TurnLogStore for SqliteTurnLogStore {
                 error,
                 raw_json,
                 source,
+                account_id,
+            });
+        }
+        Ok(out)
+    }
+}
+
+/// Phase 82.8 — convenience extension over the trait. v0
+/// production adapter implements directly via SQL; mocks stay
+/// simple by using `tail_since` + a filter step. Lives outside
+/// the trait so the legacy in-memory store doesn't have to
+/// implement it.
+impl SqliteTurnLogStore {
+    /// Tenant-scoped tail. Returns rows whose `account_id`
+    /// matches `account_id` (legacy `NULL` rows are excluded).
+    /// `since` clamps the lower bound; `limit` caps at
+    /// `TAIL_HARD_CAP`. Ordered newest-first.
+    ///
+    /// Cross-tenant probing returns an empty list (NOT an
+    /// error) so the caller can't distinguish "no rows for my
+    /// account" from "account doesn't exist" — defense in
+    /// depth against existence oracles.
+    pub async fn tail_for_account(
+        &self,
+        account_id: &str,
+        since: DateTime<Utc>,
+        limit: usize,
+    ) -> Result<Vec<TurnRecord>, AgentRegistryStoreError> {
+        let cap = limit.min(TAIL_HARD_CAP) as i64;
+        let rows: Vec<(
+            String,
+            i64,
+            i64,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            String,
+            Option<String>,
+            Option<String>,
+        )> = sqlx::query_as(
+            "SELECT goal_id, turn_index, recorded_at, outcome, decision, summary, diff_stat, error, raw_json, source, account_id \
+             FROM goal_turns \
+             WHERE account_id = ?1 AND recorded_at >= ?2 \
+             ORDER BY recorded_at DESC \
+             LIMIT ?3",
+        )
+        .bind(account_id)
+        .bind(since.timestamp())
+        .bind(cap)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for (gid, idx, ts, outcome, decision, summary, diff_stat, error, raw_json, source, account_id) in rows {
+            let goal = Uuid::parse_str(&gid)
+                .map_err(|e| AgentRegistryStoreError::GoalId(e.to_string()))?;
+            out.push(TurnRecord {
+                goal_id: GoalId(goal),
+                turn_index: idx as u32,
+                recorded_at: Utc.timestamp_opt(ts, 0).single().unwrap_or_else(Utc::now),
+                outcome,
+                decision,
+                summary,
+                diff_stat,
+                error,
+                raw_json,
+                source,
+                account_id,
             });
         }
         Ok(out)
@@ -391,6 +496,7 @@ mod tests {
             error: None,
             raw_json: format!("{{\"turn\":{turn}}}"),
             source: None,
+            account_id: None,
         }
     }
 
@@ -514,5 +620,129 @@ mod tests {
         assert_eq!(parse_channel_source("channel:tg"), Some("tg"));
         assert_eq!(parse_channel_source("agent.intake.foo"), None);
         assert_eq!(parse_channel_source(""), None);
+    }
+
+    // ---- Phase 82.8 account_id multi-tenant filter ----
+
+    fn record_for_tenant(
+        goal: GoalId,
+        turn: u32,
+        outcome: &str,
+        account_id: Option<&str>,
+    ) -> TurnRecord {
+        let mut r = record(goal, turn, outcome);
+        r.account_id = account_id.map(String::from);
+        r
+    }
+
+    #[tokio::test]
+    async fn account_id_round_trips_through_sqlite() {
+        let store = SqliteTurnLogStore::open_memory().await.unwrap();
+        let g = GoalId(Uuid::new_v4());
+        store
+            .append(&record_for_tenant(g, 1, "continue", Some("tenant-a")))
+            .await
+            .unwrap();
+        let rows = store.tail(g, 0).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].account_id.as_deref(), Some("tenant-a"));
+    }
+
+    #[tokio::test]
+    async fn account_id_is_idempotent_on_replay() {
+        // Same (goal, turn) UPSERT must overwrite account_id
+        // alongside every other field — operators reclassifying
+        // a legacy NULL row via a re-emit should see the new
+        // value stick.
+        let store = SqliteTurnLogStore::open_memory().await.unwrap();
+        let g = GoalId(Uuid::new_v4());
+        store
+            .append(&record_for_tenant(g, 1, "continue", None))
+            .await
+            .unwrap();
+        store
+            .append(&record_for_tenant(g, 1, "continue", Some("tenant-z")))
+            .await
+            .unwrap();
+        let rows = store.tail(g, 0).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].account_id.as_deref(), Some("tenant-z"));
+    }
+
+    #[tokio::test]
+    async fn tail_for_account_returns_only_matching_tenant() {
+        let store = SqliteTurnLogStore::open_memory().await.unwrap();
+        let ga = GoalId(Uuid::new_v4());
+        let gb = GoalId(Uuid::new_v4());
+        store
+            .append(&record_for_tenant(ga, 1, "continue", Some("tenant-a")))
+            .await
+            .unwrap();
+        store
+            .append(&record_for_tenant(ga, 2, "done", Some("tenant-a")))
+            .await
+            .unwrap();
+        store
+            .append(&record_for_tenant(gb, 1, "continue", Some("tenant-b")))
+            .await
+            .unwrap();
+        let rows = store
+            .tail_for_account(
+                "tenant-a",
+                Utc.timestamp_opt(0, 0).unwrap(),
+                100,
+            )
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows
+            .iter()
+            .all(|r| r.account_id.as_deref() == Some("tenant-a")));
+    }
+
+    #[tokio::test]
+    async fn tail_for_account_returns_empty_for_unknown_tenant() {
+        // Defense-in-depth: cross-tenant probe must NOT
+        // distinguish "no rows" from "tenant doesn't exist" —
+        // both surface as an empty list (no existence oracle).
+        let store = SqliteTurnLogStore::open_memory().await.unwrap();
+        let g = GoalId(Uuid::new_v4());
+        store
+            .append(&record_for_tenant(g, 1, "continue", Some("tenant-a")))
+            .await
+            .unwrap();
+        let rows = store
+            .tail_for_account("ghost", Utc.timestamp_opt(0, 0).unwrap(), 100)
+            .await
+            .unwrap();
+        assert!(rows.is_empty());
+    }
+
+    #[tokio::test]
+    async fn tail_for_account_excludes_legacy_null_rows() {
+        // Rows without an account_id (legacy installs) MUST
+        // NOT leak into a tenant-scoped tail. Operator-scoped
+        // queries (`tail` / `tail_since`) keep returning them.
+        let store = SqliteTurnLogStore::open_memory().await.unwrap();
+        let g = GoalId(Uuid::new_v4());
+        store
+            .append(&record_for_tenant(g, 1, "continue", None))
+            .await
+            .unwrap();
+        store
+            .append(&record_for_tenant(g, 2, "continue", Some("tenant-a")))
+            .await
+            .unwrap();
+        let tenant_view = store
+            .tail_for_account(
+                "tenant-a",
+                Utc.timestamp_opt(0, 0).unwrap(),
+                100,
+            )
+            .await
+            .unwrap();
+        assert_eq!(tenant_view.len(), 1, "legacy NULL row excluded");
+        let operator_view = store.tail(g, 0).await.unwrap();
+        assert_eq!(operator_view.len(), 2, "operator still sees both");
     }
 }
