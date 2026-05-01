@@ -3647,6 +3647,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "dashmap 6.1.0",
  "hex",
  "libsqlite3-sys",
  "lru",

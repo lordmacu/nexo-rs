@@ -1954,6 +1954,37 @@ admin RPC + http_server bootstrap into main.rs (single
 shared boot-order refactor — folded with 82.10.h.b /
 82.11 / 82.12 / 82.13 / 82.14 deferreds).
 
+### Phase 86.1 — fire-site wiring + integration test + docs page
+
+Phase 86.1 shipped the type surface in `crates/memory/src/metrics.rs`
+(4 metric families + render_prometheus + 9 unit tests). Three
+pieces deferred to 86.1.b:
+
+- **Fire-site wiring**: emit calls in
+  - `crates/memory/src/long_term.rs::remember_typed` →
+    `record_write(agent_id, type)`.
+  - `crates/memory/src/long_term.rs::recall*` (every public recall
+    fn) → `record_recall(agent_id, scope, available, selected)`
+    + per-memory `record_age_at_recall(seconds)`.
+  - `crates/driver-loop/src/extract_memories.rs::store_extracted`
+    → `record_write_size(bytes)`.
+
+- **Integration test**: `crates/memory/tests/` write 5 memories of
+  mixed types → recall → assert all 4 metric families recorded
+  with expected label sets.
+
+- **Docs page**: `docs/src/operations/memory-observability.md` —
+  metric inventory + sample Grafana panel JSON for "memory
+  health" with selection-rate trend, write-volume by type, age
+  histogram.
+
+- **admin-ui sync**: "Memory observability" panel checkbox in
+  `admin-ui/PHASES.md` (folded with the broader admin-ui defer
+  pile).
+
+Target phase: 86.1.b (folded with the broader long_term recall
+sweep + Phase 28 metrics aggregator wire-up).
+
 ### Phase 85.2 — orchestrator + provider integration
 
 Phase 85.2 shipped the type surface (MicroCompactPolicy trait,

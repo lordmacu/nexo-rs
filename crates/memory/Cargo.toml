@@ -36,6 +36,7 @@ url          = "2"
 sqlite-vec   = { workspace = true }
 lru          = { workspace = true }
 libsqlite3-sys = { workspace = true, features = ["bundled"] }
+dashmap     = { workspace = true }
 
 [dev-dependencies]
 tempfile    = "3"
