@@ -485,7 +485,40 @@ impl AgentContext {
     pub fn with_effective(mut self, effective: Arc<EffectiveBindingPolicy>) -> Self {
         self.proactive_enabled = effective.proactive.enabled;
         self.binding_role = effective.role.clone();
+        // Phase 82.1 Step 4 — populate the BindingContext as a
+        // side effect of installing the policy. Every intake
+        // path that resolves an inbound to an `InboundBinding`
+        // funnels through `with_effective`, so this single call
+        // site is sufficient — no need to chase N intake-side
+        // call paths individually. Bindingless paths
+        // (delegation receive / heartbeat bootstrap / tests)
+        // never call `with_effective` and therefore keep
+        // `binding == None`. `mcp_channel_source` stays None
+        // here; it is layered on top by the channel-aware
+        // intake site that received the Phase 80.9 MCP-channel
+        // inbound (`with_mcp_channel_source` chained after).
+        self.binding = Some(BindingContext::from_effective(
+            &effective,
+            self.agent_id.clone(),
+            self.session_id,
+        ));
         self.effective = Some(effective);
+        self
+    }
+
+    /// Phase 82.1 Step 4 — layer the Phase 80.9 MCP channel
+    /// source on top of the BindingContext after
+    /// `with_effective` has run. No-op if `binding` is `None`
+    /// (paths without a binding match cannot have an
+    /// MCP-channel source — the source rides alongside an
+    /// already-matched binding, not as a substitute).
+    pub fn with_mcp_channel_source(
+        mut self,
+        source: impl Into<String>,
+    ) -> Self {
+        if let Some(b) = self.binding.as_mut() {
+            b.mcp_channel_source = Some(source.into());
+        }
         self
     }
     pub fn with_effective_tools(mut self, tools: Arc<ToolRegistry>) -> Self {
@@ -675,6 +708,68 @@ mod plan_mode_tests {
         });
         let same = c.clone();
         assert_eq!(same.inbox.read().await.len(), 1);
+    }
+
+    // -----------------------------------------------------------
+    // Phase 82.1 Step 4 — `with_effective` populates `binding`
+    // -----------------------------------------------------------
+
+    #[tokio::test]
+    async fn binding_is_none_before_with_effective() {
+        let c = ctx();
+        assert!(c.binding.is_none());
+    }
+
+    #[tokio::test]
+    async fn with_effective_populates_binding_from_policy() {
+        use nexo_config::types::agents::InboundBinding;
+
+        let mut a = (*ctx().config).clone();
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "whatsapp".into(),
+            instance: Some("personal".into()),
+            ..Default::default()
+        });
+        let policy = Arc::new(EffectiveBindingPolicy::resolve(&a, 0));
+
+        let c = ctx().with_effective(policy);
+        let b = c.binding.expect("binding populated by with_effective");
+        assert_eq!(b.agent_id, "a"); // ctx() helper uses agent id "a"
+        assert_eq!(b.channel.as_deref(), Some("whatsapp"));
+        assert_eq!(b.account_id.as_deref(), Some("personal"));
+        assert_eq!(b.binding_id.as_deref(), Some("whatsapp:personal"));
+        assert!(b.mcp_channel_source.is_none());
+    }
+
+    #[tokio::test]
+    async fn with_mcp_channel_source_layers_on_top_of_with_effective() {
+        use nexo_config::types::agents::InboundBinding;
+
+        let mut a = (*ctx().config).clone();
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "telegram".into(),
+            instance: Some("kate_tg".into()),
+            ..Default::default()
+        });
+        let policy = Arc::new(EffectiveBindingPolicy::resolve(&a, 0));
+
+        let c = ctx().with_effective(policy).with_mcp_channel_source("slack");
+        let b = c.binding.expect("binding populated");
+        // Native binding tuple from policy
+        assert_eq!(b.channel.as_deref(), Some("telegram"));
+        assert_eq!(b.account_id.as_deref(), Some("kate_tg"));
+        // Phase 80.9 source layered on top
+        assert_eq!(b.mcp_channel_source.as_deref(), Some("slack"));
+    }
+
+    #[tokio::test]
+    async fn with_mcp_channel_source_no_op_when_no_binding_match() {
+        // No `with_effective` called → binding stays None →
+        // `with_mcp_channel_source` is a no-op (mcp_channel_source
+        // rides alongside an already-matched binding, never as a
+        // substitute).
+        let c = ctx().with_mcp_channel_source("slack");
+        assert!(c.binding.is_none());
     }
 }
 
