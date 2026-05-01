@@ -18,6 +18,7 @@ pub mod audit_sqlite;
 pub mod capabilities;
 pub mod dispatcher;
 pub mod domains;
+pub mod router;
 
 pub use audit_sqlite::{
     format_rows_as_json, format_rows_as_table, AuditTailFilter, SqliteAdminAuditWriter,
@@ -32,3 +33,4 @@ pub use capabilities::{
     CapabilityBootReport, CapabilityBootWarn, CapabilitySet,
 };
 pub use dispatcher::{AdminRpcDispatcher, AdminRpcError, AdminRpcResult};
+pub use router::{AdminOutboundWriter, DispatcherAdminRouter};

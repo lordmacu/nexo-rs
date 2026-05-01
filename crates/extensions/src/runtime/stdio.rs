@@ -55,6 +55,13 @@ pub struct StdioSpawnOptions {
     pub max_backoff: Duration,
     pub env_blocklist_suffixes: Vec<String>,
     pub shutdown_grace: Duration,
+    /// Phase 82.10.h.b.3 — optional admin RPC router. When set,
+    /// frames whose `id` is a string starting with `app:` are
+    /// forwarded to the router instead of the pending-request map
+    /// (microapp-initiated admin requests). When unset, those
+    /// frames are dropped with a warn (microapp tried to call
+    /// admin without operator-side wire-up).
+    pub admin_router: Option<super::admin_router::SharedAdminRouter>,
 }
 
 impl Default for StdioSpawnOptions {
@@ -72,6 +79,7 @@ impl Default for StdioSpawnOptions {
                 .map(|s| s.to_string())
                 .collect(),
             shutdown_grace: Duration::from_secs(3),
+            admin_router: None,
         }
     }
 }
@@ -435,6 +443,7 @@ fn clone_opts(o: &StdioSpawnOptions) -> StdioSpawnOptions {
         max_backoff: o.max_backoff,
         env_blocklist_suffixes: o.env_blocklist_suffixes.clone(),
         shutdown_grace: o.shutdown_grace,
+        admin_router: o.admin_router.clone(),
     }
 }
 
@@ -693,6 +702,7 @@ async fn spawn_and_handshake(
         pending.clone(),
         shutdown.clone(),
         ext_id_reader,
+        opts.admin_router.clone(),
     ));
     let ext_id_stderr = extension_id.to_string();
     tokio::spawn(stderr_task(stderr, shutdown.clone(), ext_id_stderr));
@@ -745,11 +755,71 @@ async fn spawn_and_handshake(
     Ok((child, stdin, reader_handle, handshake))
 }
 
+/// Handle one decoded JSON-RPC line. Phase 82.10.h.b.3 split this
+/// out of [`reader_task`] so the dispatch logic is unit-testable
+/// without spinning up a `tokio::process::Child`. Three id shapes:
+/// numeric → existing `tools/call` response path via `pending`;
+/// `app:`-prefixed string → microapp-initiated admin frame routed
+/// through `admin_router`; anything else is logged + dropped.
+async fn process_inbound_line(
+    line: String,
+    extension_id: &str,
+    pending: &PendingMap,
+    admin_router: Option<&(dyn super::admin_router::AdminRouter + 'static)>,
+) {
+    let response = match wire::decode_response(&line) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(ext=%extension_id, error=%e, raw=%line, "invalid jsonrpc line");
+            return;
+        }
+    };
+    let Some(id_val) = response.id.as_ref() else {
+        tracing::debug!(ext=%extension_id, "notification ignored");
+        return;
+    };
+    if let Some(s) = id_val.as_str() {
+        if s.starts_with("app:") {
+            match admin_router {
+                Some(router) => {
+                    router.handle_frame(extension_id, line).await;
+                }
+                None => {
+                    tracing::warn!(
+                        ext=%extension_id,
+                        id=%s,
+                        "app:-prefixed admin frame received but no admin router registered; dropping",
+                    );
+                }
+            }
+            return;
+        }
+        tracing::warn!(ext=%extension_id, id=%s, "string id without app: prefix, dropping");
+        return;
+    }
+    let Some(id) = wire::extract_u64_id(id_val) else {
+        tracing::warn!(ext=%extension_id, "non-numeric id, dropping");
+        return;
+    };
+    if let Some((_, tx)) = pending.remove(&id) {
+        let payload = match (response.result, response.error) {
+            (Some(v), None) => Ok(v),
+            (None, Some(e)) => Err(e),
+            (Some(v), Some(_)) => Ok(v), // prefer result if both
+            (None, None) => Ok(serde_json::Value::Null),
+        };
+        let _ = tx.send(payload);
+    } else {
+        tracing::debug!(ext=%extension_id, id=%id, "late response, no pending entry");
+    }
+}
+
 async fn reader_task(
     stdout: ChildStdout,
     pending: Arc<PendingMap>,
     shutdown: CancellationToken,
     extension_id: String,
+    admin_router: Option<super::admin_router::SharedAdminRouter>,
 ) {
     let mut lines = BufReader::new(stdout).lines();
     loop {
@@ -758,32 +828,13 @@ async fn reader_task(
             maybe = lines.next_line() => {
                 match maybe {
                     Ok(Some(line)) => {
-                        let response = match wire::decode_response(&line) {
-                            Ok(r) => r,
-                            Err(e) => {
-                                tracing::warn!(ext=%extension_id, error=%e, raw=%line, "invalid jsonrpc line");
-                                continue;
-                            }
-                        };
-                        let Some(id_val) = response.id.as_ref() else {
-                            tracing::debug!(ext=%extension_id, "notification ignored");
-                            continue;
-                        };
-                        let Some(id) = wire::extract_u64_id(id_val) else {
-                            tracing::warn!(ext=%extension_id, "non-numeric id, dropping");
-                            continue;
-                        };
-                        if let Some((_, tx)) = pending.remove(&id) {
-                            let payload = match (response.result, response.error) {
-                                (Some(v), None) => Ok(v),
-                                (None, Some(e)) => Err(e),
-                                (Some(v), Some(_)) => Ok(v),   // prefer result if both
-                                (None, None) => Ok(serde_json::Value::Null),
-                            };
-                            let _ = tx.send(payload);
-                        } else {
-                            tracing::debug!(ext=%extension_id, id=%id, "late response, no pending entry");
-                        }
+                        process_inbound_line(
+                            line,
+                            &extension_id,
+                            pending.as_ref(),
+                            admin_router.as_deref(),
+                        )
+                        .await;
                     }
                     Ok(None) => {
                         tracing::info!(ext=%extension_id, "stdout closed");
@@ -987,5 +1038,99 @@ mod sanitize_tests {
     #[test]
     fn passes_typical() {
         assert_eq!(sanitize_reason("sigterm"), "sigterm");
+    }
+}
+
+#[cfg(test)]
+mod inbound_routing_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    use async_trait::async_trait;
+
+    #[derive(Debug, Default)]
+    struct CapturingRouter {
+        frames: Mutex<Vec<(String, String)>>,
+    }
+
+    #[async_trait]
+    impl super::super::admin_router::AdminRouter for CapturingRouter {
+        async fn handle_frame(&self, extension_id: &str, line: String) {
+            self.frames
+                .lock()
+                .unwrap()
+                .push((extension_id.to_string(), line));
+        }
+    }
+
+    fn pending_with_one() -> (
+        Arc<PendingMap>,
+        u64,
+        oneshot::Receiver<Result<serde_json::Value, RpcError>>,
+    ) {
+        let pending = Arc::new(PendingMap::new());
+        let (tx, rx) = oneshot::channel();
+        pending.insert(7, tx);
+        (pending, 7, rx)
+    }
+
+    #[tokio::test]
+    async fn numeric_id_resolves_pending_oneshot() {
+        let (pending, _id, rx) = pending_with_one();
+        process_inbound_line(
+            "{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"ok\":true}}".into(),
+            "ext-1",
+            pending.as_ref(),
+            None,
+        )
+        .await;
+        let payload = rx.await.unwrap().unwrap();
+        assert_eq!(payload["ok"], true);
+        assert!(pending.is_empty(), "pending entry consumed");
+    }
+
+    #[tokio::test]
+    async fn app_prefix_id_routes_to_admin_router_when_present() {
+        let pending = Arc::new(PendingMap::new());
+        let router = Arc::new(CapturingRouter::default());
+        process_inbound_line(
+            "{\"jsonrpc\":\"2.0\",\"id\":\"app:abc\",\"method\":\"nexo/admin/echo\"}".into(),
+            "agent-creator",
+            pending.as_ref(),
+            Some(router.as_ref()),
+        )
+        .await;
+        let frames = router.frames.lock().unwrap();
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].0, "agent-creator");
+        assert!(frames[0].1.contains("nexo/admin/echo"));
+    }
+
+    #[tokio::test]
+    async fn app_prefix_id_drops_silently_without_router() {
+        let pending = Arc::new(PendingMap::new());
+        process_inbound_line(
+            "{\"jsonrpc\":\"2.0\",\"id\":\"app:abc\",\"method\":\"nexo/admin/echo\"}".into(),
+            "agent-creator",
+            pending.as_ref(),
+            None,
+        )
+        .await;
+        // No panic + no pending side-effect.
+        assert!(pending.is_empty());
+    }
+
+    #[tokio::test]
+    async fn non_app_string_id_does_not_reach_router() {
+        let pending = Arc::new(PendingMap::new());
+        let router = Arc::new(CapturingRouter::default());
+        process_inbound_line(
+            "{\"jsonrpc\":\"2.0\",\"id\":\"weird-string\",\"result\":{}}".into(),
+            "ext-1",
+            pending.as_ref(),
+            Some(router.as_ref()),
+        )
+        .await;
+        assert!(router.frames.lock().unwrap().is_empty());
     }
 }
