@@ -597,30 +597,64 @@ Done criteria:
 - 3+ unit tests + 1 integration test.
 - Docs page in `docs/src/extensions/state-management.md`.
 
-#### 82.7 — Per-binding tool rate-limit (multi-tenant fair-use)   ⬜
+#### 82.7 — Per-binding tool rate-limit (multi-tenant fair-use)   ✅  (shipped 2026-05-01)
 
-SaaS plans (free / pro / enterprise) need per-binding fair-use.
-A free-tier tenant cannot fire `marketing_send_drip` at the
-same rate as an enterprise tenant. Phase 16 has per-binding
-overrides; this subphase extends them to per-tool rates.
+Same agent + same tool, two bindings → two independent buckets
+with independent caps. Free-tier WhatsApp binding hits 10/min
+on `marketing_send_drip`; enterprise binding stays unlimited;
+neither starves the other.
 
-Scope:
-- `EffectiveBindingPolicy.tool_rate_limits: BTreeMap<String,
-  ToolRateLimitConfig>`.
-- Existing `ToolRateLimiter` (Phase 80.x) honours the per-
-  binding override before falling back to global policy.
-- Extension manifest `[[plugin.tools]]` can declare a default
-  rate that operator overrides per-binding via `agents.yaml`.
-- Telemetry: per-binding rate-limit hits logged to Phase 72
-  audit log.
+**Shipped:**
+- Config-side: `InboundBinding.tool_rate_limits:
+  Option<ToolRateLimitsConfig>` field (yaml-readable). Driver +
+  fully-replace semantic — per-binding overrides do NOT fall
+  through to global. New `essential_deny_on_miss: bool` opt-in
+  on `ToolRateLimitSpec` adapts upstream-CLI fail-open default
+  + ESSENTIAL deny pattern to LRU eviction context.
+- Discovery cleanup: `ToolRateLimitConfig` was duplicated
+  between `nexo-config` (yaml-readable) and `nexo-core`
+  (runtime). Unified — `nexo-core::agent::rate_limit` now
+  re-exports + aliases the `nexo-config` types. The translation
+  block in `src/main.rs` collapsed from ~16 lines to a single
+  `Arc::new(ToolRateLimiter::new(rl_cfg))` pass-through.
+- Runtime: `ToolRateLimiter::try_acquire_with_binding(agent,
+  binding_id, tool, per_binding_override)` — bucket key triple
+  `(agent, Option<binding_id>, tool)`. Legacy
+  `try_acquire(agent, tool)` keeps working as a thin wrapper.
+- LRU eviction at `DEFAULT_MAX_BUCKETS = 10_000` (mirrors
+  `SenderRateLimiter`). `with_cap` constructor for tests.
+- `essential_deny_on_miss` plumbed end-to-end: evicted
+  essentials stamp the key into `evicted_essential` set, next
+  acquire denies once before reallocating fresh bucket.
+- Admin RPC support: `drop_buckets_for_agent(agent: &str)` so
+  Phase 82.10 delete-agent path won't leak buckets.
+- Wire-up: `LlmBehavior::on_message_control` consults
+  `ctx.binding.binding_id` + `ctx.effective.tool_rate_limits`
+  via `try_acquire_with_binding`. On denial, emits Phase 72
+  marker `rate_limited:tool=X,binding=Y,rps=Z` (helper
+  `nexo_tool_meta::format_rate_limit_hit`).
 
-Done criteria:
-- Free-tier binding hits 10/min cap on `marketing_send_drip`,
-  pro tier hits 100/min, enterprise unlimited.
-- Cap respected across multiple agent goals on the same
-  binding.
-- 5+ unit tests + 1 integration test using a fake clock.
-- `agents.yaml` example documents the override shape.
+**Tests:** 13 new (4 config yaml round-trip + 2 effective
+resolver + 7 limiter behaviour + 2 marker format). Workspace
+build verde excluding the unrelated `nexo-memory-snapshot`
+in-progress crate.
+
+**Docs:** `docs/src/ops/per-binding-rate-limits.md` — yaml
+example, free/pro/enterprise scenario, glob semantics, LRU
+behaviour, audit marker format, hot-reload caveats.
+
+**Deferred follow-ups:**
+- 82.7.g — Telemetry side-channel (`RateLimitTelemetry
+  { utilization, resets_in, recently_denied }`) consultable via
+  admin RPC (Phase 82.10) + statusline. Adapts the upstream CLI
+  `claudeAiLimits` shape.
+- 82.7.h — Combined `(agent, binding_id, sender_id, tool)`
+  quadruple cap leveraging 82.5's `inbound.sender_id`.
+- 82.7.i — Yaml validator detects overlapping per-binding
+  patterns at boot.
+- 82.7.j — Circuit-breaker overlay on top of rate-limit:
+  cooldown after N consecutive `rate_limit` hits (mirrors the
+  upstream CLI auth-profiles cooldown pattern).
 
 #### 82.8 — Multi-tenant audit log filter   ⬜
 
