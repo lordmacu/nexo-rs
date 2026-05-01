@@ -78,6 +78,21 @@ enum Mode {
     /// action completes. No daemon contact required.
     Memory(MemorySubcommand),
     McpServer(McpServerSubcommand),
+    /// Phase 82.10.h.b.4 — `nexo microapp admin audit tail [...]`.
+    /// Read-only operator query over the SQLite admin audit log
+    /// written by [`nexo_core::agent::admin_rpc::SqliteAdminAuditWriter`].
+    /// Maps every flag 1:1 to `AuditTailFilter`; default `--db`
+    /// resolves to `nexo_state_dir().join("admin_audit.db")`.
+    MicroappAuditTail {
+        microapp_id: Option<String>,
+        method: Option<String>,
+        result: Option<String>,
+        since_mins: Option<u64>,
+        since_ms: Option<u64>,
+        limit: usize,
+        format: String,
+        db: Option<PathBuf>,
+    },
     /// Phase 80.1.d — `nexo agent dream {tail|status|kill}`.
     AgentDream(AgentDreamSubcommand),
     /// Phase 80.10 — `nexo agent run [--bg] <prompt>`. Spawn a goal
@@ -871,6 +886,28 @@ async fn main() -> Result<()> {
             }
             McpServerSubcommand::TailAudit { db } => return run_mcp_tail_audit(db).await,
         },
+        Mode::MicroappAuditTail {
+            microapp_id,
+            method,
+            result,
+            since_mins,
+            since_ms,
+            limit,
+            format,
+            db,
+        } => {
+            return run_microapp_admin_audit_tail(
+                microapp_id,
+                method,
+                result,
+                since_mins,
+                since_ms,
+                limit,
+                format,
+                db,
+            )
+            .await;
+        }
         Mode::AgentDream(ref sub) => match sub {
             AgentDreamSubcommand::Tail {
                 goal_id,
@@ -6986,6 +7023,35 @@ fn parse_args() -> CliArgs {
         }
     }
 
+    // Phase 82.10.h.b.4 — `nexo microapp admin audit tail [...]`.
+    // Route by pos_no_flags prefix (not slice-arity match) since
+    // flag values like `/path/to.db` after `--db` survive the
+    // `--`-strip and would shift the slice arity off-by-one.
+    if pos_no_flags.first().map(|s| s.as_str()) == Some("microapp")
+        && pos_no_flags.get(1).map(|s| s.as_str()) == Some("admin")
+        && pos_no_flags.get(2).map(|s| s.as_str()) == Some("audit")
+        && pos_no_flags.get(3).map(|s| s.as_str()) == Some("tail")
+    {
+        return CliArgs {
+            config_dir,
+            mode: Mode::MicroappAuditTail {
+                microapp_id: parse_kv_flag(&positional, "--microapp-id"),
+                method: parse_kv_flag(&positional, "--method"),
+                result: parse_kv_flag(&positional, "--result"),
+                since_mins: parse_kv_flag(&positional, "--since-mins")
+                    .and_then(|v: String| v.parse().ok()),
+                since_ms: parse_kv_flag(&positional, "--since-ms")
+                    .and_then(|v: String| v.parse().ok()),
+                limit: parse_kv_flag(&positional, "--limit")
+                    .and_then(|v: String| v.parse().ok())
+                    .unwrap_or(50),
+                format: parse_kv_flag(&positional, "--format")
+                    .unwrap_or_else(|| "table".into()),
+                db: parse_kv_flag(&positional, "--db").map(PathBuf::from),
+            },
+        };
+    }
+
     if pos_no_flags.first().map(|s| s.as_str()) == Some("memory") {
         if let Some(mode) = route_memory_subcommand(&pos_no_flags, &positional, has_json_flag) {
             return CliArgs { config_dir, mode };
@@ -11884,6 +11950,83 @@ async fn run_mcp_tail_audit(db_path: &str) -> Result<()> {
 
     println!("\n{} rows shown (last 100).\n", rows.len());
     pool.close().await;
+    Ok(())
+}
+
+/// Phase 82.10.h.b.4 — `nexo microapp admin audit tail [...]`.
+///
+/// Read-only operator query over the SQLite admin audit log
+/// (`microapp_admin_audit` table). Maps every flag 1:1 to
+/// `AuditTailFilter` and renders rows via the format helpers
+/// already shipped in 82.10.h.2 (`format_rows_as_table` /
+/// `format_rows_as_json`). Default db resolves to
+/// `nexo_state_dir().join("admin_audit.db")` so daemons that
+/// boot with the default audit-writer location work without
+/// `--db`.
+#[allow(clippy::too_many_arguments)]
+async fn run_microapp_admin_audit_tail(
+    microapp_id: Option<String>,
+    method: Option<String>,
+    result: Option<String>,
+    since_mins: Option<u64>,
+    since_ms: Option<u64>,
+    limit: usize,
+    format: String,
+    db: Option<PathBuf>,
+) -> Result<()> {
+    use nexo_core::agent::admin_rpc::{
+        format_rows_as_json, format_rows_as_table, AdminAuditResult, AuditTailFilter,
+        SqliteAdminAuditWriter,
+    };
+
+    let db_path = db.unwrap_or_else(|| {
+        nexo_project_tracker::state::nexo_state_dir().join("admin_audit.db")
+    });
+    if !db_path.exists() {
+        anyhow::bail!(
+            "audit DB does not exist: {} (start the daemon with \
+             NEXO_MICROAPP_ADMIN_AUDIT_DB pointing here, or pass --db)",
+            db_path.display(),
+        );
+    }
+    let writer = SqliteAdminAuditWriter::open(&db_path)
+        .await
+        .with_context(|| format!("opening audit DB at {}", db_path.display()))?;
+
+    let now_ms = chrono::Utc::now().timestamp_millis() as u64;
+    let resolved_since_ms = match (since_ms, since_mins) {
+        (Some(ms), _) => Some(ms),
+        (None, Some(mins)) => Some(now_ms.saturating_sub(mins.saturating_mul(60_000))),
+        _ => None,
+    };
+
+    let result_enum = match result.as_deref() {
+        Some("ok") => Some(AdminAuditResult::Ok),
+        Some("error") => Some(AdminAuditResult::Error),
+        Some("denied") => Some(AdminAuditResult::Denied),
+        Some(other) => {
+            anyhow::bail!("--result must be one of ok|error|denied (got `{other}`)")
+        }
+        None => None,
+    };
+
+    let filter = AuditTailFilter {
+        microapp_id,
+        method,
+        result: result_enum,
+        since_ms: resolved_since_ms,
+        limit: limit.max(1),
+    };
+    let rows = writer
+        .tail(&filter)
+        .await
+        .context("query admin_audit table")?;
+
+    match format.as_str() {
+        "json" => println!("{}", format_rows_as_json(&rows)),
+        "table" => print!("{}", format_rows_as_table(&rows)),
+        other => anyhow::bail!("--format must be one of table|json (got `{other}`)"),
+    }
     Ok(())
 }
 
