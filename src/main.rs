@@ -3669,9 +3669,23 @@ async fn main() -> Result<()> {
                             } else {
                                 repo
                             };
+                            // Phase 36.2 (MS-1.b) — attach the
+                            // mutation hook so each successful
+                            // commit_all fires a Git/Update event
+                            // onto `nexo.memory.mutated.<agent>`.
+                            let repo = if let Some(ref hook) = memory_mutation_hook {
+                                repo.with_mutation_hook(
+                                    hook.clone(),
+                                    agent_id.clone(),
+                                    "default",
+                                )
+                            } else {
+                                repo
+                            };
                             tracing::info!(
                                 agent = %agent_id,
                                 root = %ws.display(),
+                                mutation_hook = memory_mutation_hook.is_some(),
                                 "workspace git ready"
                             );
                             Some(Arc::new(repo))
