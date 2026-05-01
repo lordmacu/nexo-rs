@@ -390,7 +390,50 @@ Done criteria:
 - 5+ unit tests + 1 integration test using a mock channel
   adapter.
 
-#### 82.4 — NATS event subject → agent turn binding   ⬜
+#### 82.4 — NATS event subject → agent turn binding   🔄  (foundations ✅, runtime task deferred)
+
+**Foundations shipped (82.4 MVP):**
+- `nexo-tool-meta::template` mustache-lite renderer
+  (`{{path.to.field}}` → JSON value, `<missing>` placeholder
+  for missing/null/non-leaf paths). 11 tests verde.
+- `nexo-tool-meta::event_source::EventSourceMeta` typed
+  wire-shape struct + `format_event_subscriber_source(id) ->
+  "event:<id>"` Phase 72 turn-log marker. 4 tests verde.
+- `BindingContext.event_source: Option<EventSourceMeta>`
+  field re-exported through `nexo-core`. Old microapps ignore
+  the additive key via serde tolerance.
+- `nexo-config::types::event_subscriber::EventSubscriberBinding`
+  schema + `SynthesisMode { Synthesize, Tick, Off }` +
+  `OverflowPolicy { DropOldest, DropNewest }` enums + 6-variant
+  `EventSubscriberConfigError` typed enum + `validate()` +
+  `check_event_subscribers_unique()` + `pattern_loops_to_inbound()`
+  defensive guard against `plugin.inbound.>` patterns. 10
+  schema tests verde.
+- `AgentConfig.event_subscribers: Vec<EventSubscriberBinding>`
+  field with `#[serde(default)]` and ~25-site workspace
+  sweep. Backward compat with every existing fixture.
+
+**Deferred to 82.4.b (runtime + e2e):**
+- `nexo-core::agent::event_subscriber` runtime task with
+  `tokio::sync::mpsc` bounded buffer + `Arc<Semaphore>`
+  concurrency cap + per-event template render + republish to
+  `plugin.inbound.event.<id>`.
+- 6 unit tests + 1 e2e test against a local broker.
+- `src/main.rs` boot supervisor wiring under shared
+  `event_subscribers_shutdown` `CancellationToken`.
+- Operator docs `docs/src/ops/events.md`.
+- admin-ui tech-debt entry.
+
+**Deferred to 82.4.c**: hot-reload `reevaluate` integration.
+**Deferred to 82.4.d**: operator CLI `nexo events list/test`.
+**Deferred to 82.4.e**: post-receipt JSON filter expressions.
+**Deferred to 82.4.f**: JetStream durable subscribers /
+replay-on-restart.
+
+The schema + types + helpers shipped here unblock anyone
+prototyping the runtime task: the wire shape is frozen, the
+validation rules are codified, and the `BindingContext`
+field is in place ready for the runtime to populate.
 
 Webhook events (82.2) land on NATS subjects but cannot today
 trigger an agent turn directly. Pollers (Phase 19/20) can be
