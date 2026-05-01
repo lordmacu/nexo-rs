@@ -675,6 +675,16 @@ pub struct InboundBinding {
     /// (default) inherits the agent-level `config_tool` block. Replace-whole.
     #[serde(default)]
     pub config_tool: Option<crate::types::config_tool::ConfigToolPolicy>,
+    /// Phase 82.7 — per-binding tool rate-limit overrides for
+    /// multi-tenant fair-use. Maps tool-name glob → spec.
+    /// `None` (default) inherits the global agent-level
+    /// `tool_rate_limits`. `Some(map)` FULLY REPLACES the global
+    /// decision for this binding (no fall-through to global
+    /// patterns). Reserved key `_default` matches anything not
+    /// caught by an explicit pattern. Empty `patterns: {}` =
+    /// explicit "no rate-limit applies on this binding".
+    #[serde(default)]
+    pub tool_rate_limits: Option<ToolRateLimitsConfig>,
 }
 
 /// Per-binding override for the sender rate limit.
@@ -972,5 +982,41 @@ patterns:
         assert!(drip.essential_deny_on_miss);
         let mem = cfg.patterns.get("memory_*").unwrap();
         assert!(!mem.essential_deny_on_miss);
+    }
+
+    /// Phase 82.7 — yaml round-trip with per-binding override.
+    /// Validates the field on `InboundBinding` deserialises and
+    /// the operator-friendly nested shape works.
+    #[test]
+    fn inbound_binding_with_tool_rate_limits_yaml() {
+        let yaml = r#"
+plugin: whatsapp
+instance: free_tier
+tool_rate_limits:
+  patterns:
+    marketing_send_drip:
+      rps: 0.167
+      burst: 10
+      essential_deny_on_miss: true
+    "memory_*":
+      rps: 1.0
+      burst: 5
+"#;
+        let b: InboundBinding = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(b.plugin, "whatsapp");
+        assert_eq!(b.instance.as_deref(), Some("free_tier"));
+        let map = b.tool_rate_limits.as_ref().expect("override present");
+        let drip = map.patterns.get("marketing_send_drip").unwrap();
+        assert!(drip.essential_deny_on_miss);
+        assert_eq!(drip.burst, 10);
+    }
+
+    /// `tool_rate_limits` defaults to `None` (inherit global) when
+    /// the operator omits the field.
+    #[test]
+    fn inbound_binding_default_tool_rate_limits_is_none() {
+        let yaml = "plugin: whatsapp\ninstance: enterprise\n";
+        let b: InboundBinding = serde_yaml::from_str(yaml).unwrap();
+        assert!(b.tool_rate_limits.is_none());
     }
 }

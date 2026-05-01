@@ -139,6 +139,16 @@ pub struct EffectiveBindingPolicy {
     /// binding declared no instance (single-account default)
     /// or for synthesised policies.
     pub account_id: Option<String>,
+    /// Phase 82.7 — resolved per-binding tool rate-limit
+    /// overrides. `None` (default) inherits the global
+    /// `AgentConfig.tool_rate_limits` (or unlimited if neither
+    /// is set). `Some(map)` FULLY REPLACES the global decision
+    /// for this binding — no fall-through to global patterns.
+    /// Operators wanting per-binding tighter caps with global
+    /// fallback must explicitly include the global patterns in
+    /// the binding map.
+    pub tool_rate_limits:
+        Option<nexo_config::types::agents::ToolRateLimitsConfig>,
 }
 
 impl EffectiveBindingPolicy {
@@ -248,6 +258,10 @@ impl EffectiveBindingPolicy {
             // `(channel, account_id, binding_id)` tuple downstream.
             channel: binding.map(|b| b.plugin.clone()),
             account_id: binding.and_then(|b| b.instance.clone()),
+            // Phase 82.7 — per-binding override fully replaces
+            // global; resolver returns the binding's map verbatim
+            // (or `None` to inherit global).
+            tool_rate_limits: binding.and_then(|b| b.tool_rate_limits.clone()),
         }
     }
 
@@ -298,6 +312,12 @@ impl EffectiveBindingPolicy {
             // account_id, binding_id)` tuple absent.
             channel: None,
             account_id: None,
+            // Phase 82.7 — synthesised paths inherit the global
+            // agent-level rate limits when present (or unlimited
+            // when absent). `None` here means "fall through to
+            // global", consistent with the bindingless legacy
+            // semantic.
+            tool_rate_limits: None,
         }
     }
 
@@ -1429,5 +1449,63 @@ mod tests {
         assert_eq!(p0.binding_id().as_deref(), Some("whatsapp:personal"));
         assert_eq!(p1.binding_id().as_deref(), Some("whatsapp:business"));
         assert_ne!(p0.binding_id(), p1.binding_id());
+    }
+
+    /// Phase 82.7 — `tool_rate_limits` from a per-binding override
+    /// resolves verbatim onto `EffectiveBindingPolicy`. `None` on
+    /// the binding inherits global (None too); `Some(map)` fully
+    /// replaces the global decision for this binding.
+    #[test]
+    fn tool_rate_limits_propagates_from_inbound_binding() {
+        use nexo_config::types::agents::{ToolRateLimitSpec, ToolRateLimitsConfig};
+        use std::collections::HashMap;
+
+        let mut a = sample_agent();
+        // Binding 0: free-tier with override on `marketing_*`.
+        let mut patterns = HashMap::new();
+        patterns.insert(
+            "marketing_*".into(),
+            ToolRateLimitSpec {
+                rps: 0.167,
+                burst: 10,
+                essential_deny_on_miss: true,
+            },
+        );
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "whatsapp".into(),
+            instance: Some("free_tier".into()),
+            tool_rate_limits: Some(ToolRateLimitsConfig { patterns }),
+            ..Default::default()
+        });
+        // Binding 1: enterprise — no override, inherits global.
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "whatsapp".into(),
+            instance: Some("enterprise".into()),
+            ..Default::default()
+        });
+
+        let p_free = EffectiveBindingPolicy::resolve(&a, 0);
+        let p_ent = EffectiveBindingPolicy::resolve(&a, 1);
+
+        let free_map = p_free.tool_rate_limits.as_ref().expect("override present");
+        let drip = free_map.patterns.get("marketing_*").expect("pattern present");
+        assert_eq!(drip.rps, 0.167);
+        assert_eq!(drip.burst, 10);
+        assert!(drip.essential_deny_on_miss);
+
+        assert!(
+            p_ent.tool_rate_limits.is_none(),
+            "binding without override inherits global (None)"
+        );
+    }
+
+    /// Phase 82.7 — bindingless paths (delegation / heartbeat /
+    /// tests) resolve to `tool_rate_limits = None`, falling
+    /// through to global agent-level limiter.
+    #[test]
+    fn from_agent_defaults_tool_rate_limits_is_none() {
+        let a = sample_agent();
+        let eff = EffectiveBindingPolicy::from_agent_defaults(&a);
+        assert!(eff.tool_rate_limits.is_none());
     }
 }

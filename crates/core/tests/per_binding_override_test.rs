@@ -160,6 +160,7 @@ fn two_binding_agent() -> AgentConfig {
                 lsp: None,
                 team: None,
                 config_tool: None,
+                tool_rate_limits: None,
             },
         ],
         context_optimization: None,
