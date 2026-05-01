@@ -1,17 +1,41 @@
 //! Shared fault-tolerance primitives.
 //!
-//! `CircuitBreaker` guards calls to flaky external dependencies (LLM APIs,
+//! [`CircuitBreaker`] guards calls to flaky external dependencies (LLM APIs,
 //! browser CDP, message broker). Three states — `Closed`, `Open`, `HalfOpen` —
 //! with exponential backoff and automatic probing.
+//!
+//! # Example
+//!
+//! ```
+//! use nexo_resilience::{CircuitBreaker, CircuitBreakerConfig};
+//!
+//! let cb = CircuitBreaker::new("github-api", CircuitBreakerConfig::default());
+//! assert!(cb.allow());
+//! cb.on_success();
+//! ```
+
+#![deny(missing_docs)]
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+/// Tunables for [`CircuitBreaker`]. Defaults match production
+/// posture for typical external API guards (5 failures → open,
+/// 2 successes → close, 10s initial backoff capped at 2 min).
+///
+/// Intentionally **not** `#[non_exhaustive]`: this struct is
+/// caller-populated and external callers must be able to build
+/// it via struct literal. Field additions are semver-major.
 #[derive(Debug, Clone)]
 pub struct CircuitBreakerConfig {
+    /// Consecutive failures while `Closed` before tripping `Open`.
     pub failure_threshold: u32,
+    /// Consecutive successes while `HalfOpen` before closing.
     pub success_threshold: u32,
+    /// First `Open` window after a clean → tripped transition.
     pub initial_backoff: Duration,
+    /// Cap on the doubled backoff after repeated `HalfOpen → Open`
+    /// failures. Stops runaway exponential growth.
     pub max_backoff: Duration,
 }
 
@@ -41,15 +65,34 @@ enum State {
     },
 }
 
+/// Outcome of a [`CircuitBreaker::call`] invocation. Either the
+/// breaker rejected the call without invoking the closure
+/// ([`CircuitError::Open`]) or the closure ran and returned its
+/// own typed error ([`CircuitError::Inner`]).
+///
+/// Intentionally **not** `#[non_exhaustive]`: this is a utility
+/// error wrapper that downstream callers pattern-match
+/// exhaustively. Adding a third variant is a deliberate semver
+/// signal that the breaker now has a new short-circuit reason
+/// callers must handle.
 #[derive(Debug, thiserror::Error)]
 pub enum CircuitError<E> {
+    /// The breaker is currently `Open`; the closure was not run.
+    /// The argument is the breaker's `name` for log correlation.
     #[error("circuit breaker `{0}` is open")]
     Open(String),
 
+    /// The closure executed and returned its own error.
     #[error(transparent)]
     Inner(E),
 }
 
+/// State machine guarding one external dependency.
+///
+/// Cheap to clone via `Arc`; methods are `&self` so a single
+/// instance can be shared across tasks. Internally synchronised
+/// via `Mutex`, with poison recovery — a panic elsewhere in the
+/// process can never leave the breaker permanently locked out.
 pub struct CircuitBreaker {
     name: String,
     config: CircuitBreakerConfig,
@@ -71,6 +114,7 @@ fn lock_state(m: &Mutex<State>) -> std::sync::MutexGuard<'_, State> {
 }
 
 impl CircuitBreaker {
+    /// Build a fresh breaker in `Closed` state.
     pub fn new(name: impl Into<String>, config: CircuitBreakerConfig) -> Self {
         Self {
             name: name.into(),
@@ -81,6 +125,7 @@ impl CircuitBreaker {
         }
     }
 
+    /// Operator-visible identifier used in tracing logs.
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -114,6 +159,8 @@ impl CircuitBreaker {
         }
     }
 
+    /// Record a successful call. While `HalfOpen`, transitions to
+    /// `Closed` after `success_threshold` consecutive successes.
     pub fn on_success(&self) {
         let mut state = lock_state(&self.state);
         match &mut *state {
@@ -138,6 +185,11 @@ impl CircuitBreaker {
         }
     }
 
+    /// Record a failed call. While `Closed`, increments the
+    /// failure counter and trips `Open` once the threshold is
+    /// reached. While `HalfOpen`, immediately reopens with a
+    /// doubled backoff. Calls while already `Open` extend the
+    /// backoff (defense against external floods after trip).
     pub fn on_failure(&self) {
         let mut state = lock_state(&self.state);
         match &*state {
