@@ -7,6 +7,7 @@ pub mod cli;
 pub mod discovery;
 pub mod manifest;
 pub mod runtime;
+pub mod state;
 pub mod watch;
 
 pub use discovery::{
@@ -21,6 +22,9 @@ pub use manifest::{
 pub use runtime::{
     is_valid_hook, CallError, HandshakeInfo, HookResponse, RpcError, RuntimeState, StartError,
     StdioRuntime, StdioSpawnOptions, ToolDescriptor, HOOK_NAMES,
+};
+pub use state::{
+    ensure_state_dir, extension_state_root, state_dir_for, EXTENSION_STATE_ROOT_ENV,
 };
 // Back-compat alias so call sites that imported the old constant keep
 // compiling. New code should use `agent_version()` to respect overrides.

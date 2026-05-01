@@ -574,7 +574,34 @@ delegation/heartbeat/internal-system shapes).
   `ctx.inbound().reply_to_msg_id` for native quote/reply
   threading when the runtime ships.
 
-#### 82.6 — Per-extension `state_root` convention + CLI   ⬜
+#### 82.6 — Per-extension `state_root` convention + CLI   ✅  (shipped 2026-05-01)
+
+Two atomic steps:
+- **82.6.1** — `nexo_extensions::state` module:
+  `state_dir_for(id)` (pure path), `ensure_state_dir(id)`
+  (idempotent mkdir), `extension_state_root()`,
+  `EXTENSION_STATE_ROOT_ENV` constant for the env passthrough.
+  Layout: `$NEXO_HOME/extensions/<id>/state/`. 4 unit tests
+  covering NEXO_HOME override, idempotent creation, pure path
+  computation, HOME fallback. Tests serialise via a
+  `Mutex` since `NEXO_HOME` is a process-global.
+- **82.6.2** — `nexo ext state-dir <id> [--ensure]` CLI
+  subcommand. `--ensure` flips to `ensure_state_dir`;
+  default is pure path print. Smoke-tested against
+  `NEXO_HOME=/tmp/...` — directory created on `--ensure`,
+  not created on the bare form.
+
+**Tests:** 4 unit + 1 manual smoke. mdbook +
+`docs/src/extensions/state-management.md` shipped with the
+backup procedure (`sqlite3 .backup`).
+
+**Deferred:**
+- `initialize` env block injection of
+  `NEXO_EXTENSION_STATE_ROOT` for the spawned extension's
+  process environment. Constant pinned today; the daemon-side
+  call lands in the same operator wire-up commit as the rest
+  of 82.x's deferreds.
+
 
 Extensions need a stable directory to put their SQLite
 databases, vault files, and per-tenant artifacts. The

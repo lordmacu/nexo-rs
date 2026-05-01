@@ -83,6 +83,7 @@
 - [CLI](./extensions/cli.md)
 - [Templates](./extensions/templates.md)
 - [1Password](./extensions/onepassword.md)
+- [State management](./extensions/state-management.md)
 
 # Microapps
 
