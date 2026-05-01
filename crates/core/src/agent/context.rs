@@ -374,6 +374,16 @@ impl AgentContext {
         self
     }
 
+    /// Phase 82.5 — install per-turn [`InboundMessageMeta`] on the
+    /// context. Producers (channel plugins, event-subscriber,
+    /// delegation, heartbeat) build the meta at the intake site and
+    /// the per-turn dispatch loop layers it on the cloned context
+    /// before invoking tools / hooks.
+    pub fn with_inbound_meta(mut self, meta: InboundMessageMeta) -> Self {
+        self.inbound = Some(meta);
+        self
+    }
+
     pub fn with_dispatch(mut self, d: Arc<super::dispatch_handlers::DispatchToolContext>) -> Self {
         self.dispatch = Some(d);
         self
