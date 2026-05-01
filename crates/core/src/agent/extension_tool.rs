@@ -92,10 +92,44 @@ impl ExtensionTool {
         }
     }
 }
-/// Inject `_meta = { agent_id, session_id }` into `args` when
-/// `passthrough` is true and `args` is a JSON object. No-op otherwise
-/// (non-object payloads pass through unchanged). Extracted as a pure
-/// function so it is unit-testable without a live runtime.
+/// Inject `_meta` into `args` when `passthrough` is true and
+/// `args` is a JSON object. No-op otherwise (non-object payloads
+/// pass through unchanged).
+///
+/// Phase 82.1 Step 5 — wire shape:
+/// ```jsonc
+/// {
+///   "...": "tool args as the LLM produced them",
+///   "_meta": {
+///     // Legacy fields kept for one release of grace so
+///     // extensions that read `_meta.agent_id` / `_meta.session_id`
+///     // directly keep working unchanged.
+///     "agent_id": "ana",
+///     "session_id": "550e8400-...",
+///     // New nested namespace. `BindingContext` serialises here
+///     // verbatim — extensions read e.g. `_meta.nexo.binding.channel`
+///     // to discover which channel + account_id triggered the call.
+///     "nexo": {
+///       "binding": {
+///         "agent_id": "ana",
+///         "session_id": "550e8400-...",
+///         "channel": "whatsapp",
+///         "account_id": "personal",
+///         "binding_id": "whatsapp:personal",
+///         "mcp_channel_source": "slack" // optional, Phase 80.9
+///       }
+///     }
+///   }
+/// }
+/// ```
+///
+/// Bindingless paths (delegation receive, heartbeat bootstrap,
+/// tests) emit only `agent_id` + `session_id` — the nested
+/// `binding` block is omitted because there's no
+/// `(channel, account_id, binding_id)` tuple to populate.
+///
+/// Extracted as a pure function so it is unit-testable without a
+/// live runtime.
 pub(crate) fn inject_context_meta(
     passthrough: bool,
     ctx: &AgentContext,
@@ -109,13 +143,30 @@ pub(crate) fn inject_context_meta(
     let mut args = args;
     match args.as_object_mut() {
         Some(obj) => {
-            obj.insert(
-                "_meta".into(),
-                serde_json::json!({
-                    "agent_id": ctx.agent_id,
-                    "session_id": ctx.session_id.map(|u| u.to_string()),
-                }),
+            // Legacy flat block (deprecated, removal in N+1
+            // release once consumers migrated).
+            let mut meta = serde_json::Map::new();
+            meta.insert("agent_id".into(), Value::String(ctx.agent_id.clone()));
+            meta.insert(
+                "session_id".into(),
+                ctx.session_id
+                    .map(|u| Value::String(u.to_string()))
+                    .unwrap_or(Value::Null),
             );
+
+            // Nested namespace — Phase 82.1 BindingContext.
+            // When the intake matched a binding,
+            // `ctx.binding` is `Some` and we serialise it
+            // under `_meta.nexo.binding`. When None, no
+            // `nexo` block is emitted (rather than emitting
+            // `nexo: { binding: null }`); keeps the wire
+            // compact for bindingless paths.
+            if let Some(binding) = &ctx.binding {
+                let nexo = serde_json::json!({ "binding": binding });
+                meta.insert("nexo".into(), nexo);
+            }
+
+            obj.insert("_meta".into(), Value::Object(meta));
         }
         None => tracing::debug!(
             ext = %plugin_id,
@@ -311,5 +362,98 @@ mod tests {
         assert_ne!(a, b);
         assert_eq!(a.len(), 64);
         assert_eq!(b.len(), 64);
+    }
+
+    // ----------------------------------------------------------
+    // Phase 82.1 Step 5 — dual-write `_meta.nexo.binding`
+    // ----------------------------------------------------------
+
+    use crate::agent::context::BindingContext;
+
+    #[tokio::test]
+    async fn step5_inject_meta_with_binding_writes_nested_namespace() {
+        let mut ctx = test_ctx("ana", Some(Uuid::nil()));
+        ctx.binding = Some(BindingContext {
+            agent_id: "ana".into(),
+            session_id: Some(Uuid::nil()),
+            channel: Some("whatsapp".into()),
+            account_id: Some("personal".into()),
+            binding_id: Some("whatsapp:personal".into()),
+            mcp_channel_source: None,
+        });
+        let args = serde_json::json!({"to": "+5491100", "body": "hi"});
+        let out = inject_context_meta(true, &ctx, args, "ventas-etb", "etb_register_lead");
+
+        // Original args preserved.
+        assert_eq!(out["to"], "+5491100");
+        assert_eq!(out["body"], "hi");
+
+        // Legacy flat block intact (dual-write — backward compat).
+        assert_eq!(out["_meta"]["agent_id"], "ana");
+        assert!(out["_meta"]["session_id"].is_string());
+
+        // New nested binding block.
+        let binding = &out["_meta"]["nexo"]["binding"];
+        assert_eq!(binding["agent_id"], "ana");
+        assert_eq!(binding["channel"], "whatsapp");
+        assert_eq!(binding["account_id"], "personal");
+        assert_eq!(binding["binding_id"], "whatsapp:personal");
+        // mcp_channel_source absent because field is None and serde
+        // skips serializing.
+        assert!(binding.get("mcp_channel_source").is_none());
+    }
+
+    #[tokio::test]
+    async fn step5_inject_meta_with_mcp_channel_source_emits_field() {
+        let mut ctx = test_ctx("ana", Some(Uuid::nil()));
+        ctx.binding = Some(BindingContext {
+            agent_id: "ana".into(),
+            session_id: Some(Uuid::nil()),
+            channel: Some("telegram".into()),
+            account_id: Some("kate_tg".into()),
+            binding_id: Some("telegram:kate_tg".into()),
+            mcp_channel_source: Some("slack".into()),
+        });
+        let out =
+            inject_context_meta(true, &ctx, serde_json::json!({}), "marketing", "send_drip");
+        let binding = &out["_meta"]["nexo"]["binding"];
+        assert_eq!(binding["mcp_channel_source"], "slack");
+    }
+
+    #[tokio::test]
+    async fn step5_inject_meta_without_binding_omits_nexo_block() {
+        // Bindingless path (delegation receive, heartbeat
+        // bootstrap, tests). Legacy flat block still emitted;
+        // nested `nexo` block omitted to keep the wire compact.
+        let ctx = test_ctx("delegation", None);
+        let out =
+            inject_context_meta(true, &ctx, serde_json::json!({}), "anything", "method");
+        assert_eq!(out["_meta"]["agent_id"], "delegation");
+        assert!(out["_meta"]["session_id"].is_null());
+        assert!(out["_meta"].get("nexo").is_none());
+    }
+
+    #[tokio::test]
+    async fn step5_inject_meta_passthrough_off_still_works() {
+        let mut ctx = test_ctx("ana", Some(Uuid::nil()));
+        ctx.binding = Some(BindingContext::agent_only("ana"));
+        let args = serde_json::json!({"x": 1});
+        // Even with binding populated, passthrough off → no-op.
+        let out = inject_context_meta(false, &ctx, args.clone(), "p", "t");
+        assert_eq!(out, args);
+        assert!(out.get("_meta").is_none());
+    }
+
+    #[tokio::test]
+    async fn step5_inject_meta_legacy_consumer_keeps_working() {
+        // Defense for backward-compat: a legacy extension that
+        // ONLY reads `_meta.agent_id` (does not know about
+        // `_meta.nexo.binding`) keeps working unchanged.
+        let mut ctx = test_ctx("carlos", Some(Uuid::nil()));
+        ctx.binding = Some(BindingContext::agent_only("carlos"));
+        let out = inject_context_meta(true, &ctx, serde_json::json!({}), "p", "t");
+        // Legacy reader reads top-level `_meta.agent_id` — must still
+        // work even though we layered `_meta.nexo.binding` underneath.
+        assert_eq!(out["_meta"]["agent_id"], "carlos");
     }
 }
