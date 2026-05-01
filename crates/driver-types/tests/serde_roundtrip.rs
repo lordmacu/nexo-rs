@@ -22,6 +22,7 @@ fn budget() -> BudgetGuards {
         max_tokens: 250_000,
         max_consecutive_denies: 5,
         max_consecutive_errors: 5,
+            max_consecutive_413: 2,
     }
 }
 
@@ -57,6 +58,7 @@ fn roundtrip_budget_usage() {
         tokens: 12_345,
         consecutive_denies: 1,
         consecutive_errors: 0,
+        consecutive_413: 0,
     };
     assert_eq!(rt(&u), u);
 }

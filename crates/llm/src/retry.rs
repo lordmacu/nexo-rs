@@ -81,6 +81,30 @@ pub enum LlmError {
     #[error("server error {status}: {body}")]
     ServerError { status: u16, body: String },
 
+    /// Phase 85.1 — provider rejected the prompt as too long
+    /// (`413 prompt_too_long` for Anthropic; equivalent
+    /// `context_length_exceeded` / `payload_too_large` for other
+    /// providers). Distinct from `ServerError { status: 413 }`
+    /// because the orchestrator's replay policy treats this
+    /// specifically: classify as `CompactAndRetry`, force one
+    /// compact pass, retry the same turn once. Generic 413 (e.g.
+    /// upload limit on a non-LLM endpoint) keeps falling through
+    /// to `ServerError`.
+    ///
+    /// `tokens_used` and `tokens_limit` are the provider-reported
+    /// values when extractable; `None` when the provider error
+    /// body did not include them. The orchestrator falls back to
+    /// the local estimate when both are `None`.
+    #[error(
+        "prompt too long: {} / {}",
+        tokens_used.map(|n| n.to_string()).unwrap_or_else(|| "?".into()),
+        tokens_limit.map(|n| n.to_string()).unwrap_or_else(|| "?".into())
+    )]
+    PromptTooLong {
+        tokens_used: Option<u64>,
+        tokens_limit: Option<u64>,
+    },
+
     /// Credential rejected by the provider (401 invalid_grant, expired
     /// setup-token, wrong API key). Never retried — the operator must
     /// re-authenticate. Not counted as a circuit-breaker failure

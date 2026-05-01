@@ -554,6 +554,7 @@ impl nexo_dispatch_tools::DispatchPhaseChainer for AuditChainer {
                 max_tokens: 500_000,
                 max_consecutive_denies: 3,
                 max_consecutive_errors: 5,
+            max_consecutive_413: 2,
             },
             workspace: parent_worktree,
             metadata: serde_json::Map::new(),

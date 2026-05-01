@@ -434,6 +434,7 @@ impl DriverOrchestrator {
                 max_tokens: u64::MAX,
                 max_consecutive_denies: u32::MAX,
                 max_consecutive_errors: u32::MAX,
+            max_consecutive_413: 2,
             });
         if new_max > entry.value().max_turns {
             entry.value_mut().max_turns = new_max;

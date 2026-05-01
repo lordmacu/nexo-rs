@@ -122,6 +122,7 @@ fn default_budget() -> BudgetGuards {
         max_tokens: 2_000_000,
         max_consecutive_denies: 3,
         max_consecutive_errors: 5,
+            max_consecutive_413: 2,
     }
 }
 

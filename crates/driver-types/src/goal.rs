@@ -86,6 +86,7 @@ mod tests {
                 max_tokens: 1_000,
                 max_consecutive_denies: 3,
                 max_consecutive_errors: 3,
+                max_consecutive_413: 2,
             },
             workspace: None,
             metadata: serde_json::Map::new(),
@@ -141,10 +142,23 @@ pub struct BudgetGuards {
     /// from 67.0–67.7 deserialise with the helper-default of 5.
     #[serde(default = "default_max_consecutive_errors")]
     pub max_consecutive_errors: u32,
+    /// Phase 85.1 — cap on consecutive `PromptTooLong` (413) replay
+    /// decisions. Defends against an infinite reactive-compact
+    /// loop when even a maximum compact pass still does not fit
+    /// the prompt under the provider's limit. `0` disables the
+    /// axis. `#[serde(default = "default_max_consecutive_413")]`
+    /// so payloads from pre-85.1 deserialise with the helper
+    /// default of 2.
+    #[serde(default = "default_max_consecutive_413")]
+    pub max_consecutive_413: u32,
 }
 
 fn default_max_consecutive_errors() -> u32 {
     5
+}
+
+fn default_max_consecutive_413() -> u32 {
+    2
 }
 
 impl BudgetGuards {
@@ -162,6 +176,10 @@ impl BudgetGuards {
             && usage.consecutive_errors >= self.max_consecutive_errors
         {
             Some(BudgetAxis::ConsecutiveErrors)
+        } else if self.max_consecutive_413 > 0
+            && usage.consecutive_413 >= self.max_consecutive_413
+        {
+            Some(BudgetAxis::Consecutive413)
         } else {
             None
         }
@@ -181,6 +199,13 @@ pub struct BudgetUsage {
     /// backward-compat with 67.0–67.7 payloads.
     #[serde(default)]
     pub consecutive_errors: u32,
+    /// Phase 85.1 — count of consecutive `PromptTooLong` reactive
+    /// retries. Reset by any successful (`Done` / `NeedsRetry`) turn
+    /// since one successful run proves the compact pass fit the
+    /// prompt under the limit. `#[serde(default)]` for backward-
+    /// compat with pre-85.1 payloads.
+    #[serde(default)]
+    pub consecutive_413: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -192,4 +217,9 @@ pub enum BudgetAxis {
     ConsecutiveDenies,
     /// Phase 67.8.
     ConsecutiveErrors,
+    /// Phase 85.1 — consecutive `PromptTooLong` (413) reactive
+    /// retries exceeded `max_consecutive_413`. Goal aborts with
+    /// this axis when even a maximum compact pass cannot fit the
+    /// prompt under the provider's limit.
+    Consecutive413,
 }
