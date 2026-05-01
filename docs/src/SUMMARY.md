@@ -84,6 +84,10 @@
 - [Templates](./extensions/templates.md)
 - [1Password](./extensions/onepassword.md)
 
+# Microapps
+
+- [Building microapps in Rust](./microapps/rust.md)
+
 # MCP
 
 - [Introduction](./mcp/introduction.md)
