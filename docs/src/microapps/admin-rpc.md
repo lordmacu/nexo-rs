@@ -306,13 +306,62 @@ agent). `serde_yaml::Value` ↔ `serde_json::Value` conversion
 happens inside the adapter, so trait callers stay JSON-typed
 (matching what microapps see on the wire).
 
-**Pairing** (challenge store + notifier) and **main.rs glue**
-(stdio routing for the `app:` prefix, per-microapp dispatcher
-instantiation, boot validation wire) are deferred to 82.10.h.b.
-The pairing challenge store needs a fresh SQLite schema for the
-QR state machine; the notifier needs main.rs stdio integration to
-publish `nexo/notify/pairing_status_changed` frames on the same
-JSON-RPC stdout the dispatcher reads from.
+### Bootstrap helper (Phase 82.10.h.b.5)
+
+`nexo_setup::admin_bootstrap::AdminRpcBootstrap::build` wraps the
+full wire path so operators don't hand-thread every adapter into
+the dispatcher:
+
+```rust
+use nexo_setup::admin_bootstrap::{AdminBootstrapInputs, AdminRpcBootstrap};
+
+let bootstrap = AdminRpcBootstrap::build(AdminBootstrapInputs {
+    config_dir: &config_dir,
+    secrets_root: &secrets_root,
+    audit_db: std::env::var_os("NEXO_MICROAPP_ADMIN_AUDIT_DB")
+        .as_ref()
+        .map(std::path::Path::new),
+    extensions_cfg: &extensions_cfg,
+    admin_capabilities: &per_extension_admin_caps,
+    reload_signal,
+})
+.await?;
+```
+
+`build` returns `Ok(None)` when no microapp declares
+`[capabilities.admin]` so the daemon pays zero overhead in the
+common case. When it returns `Some(bootstrap)`, the spawn loop
+threads the per-microapp `AdminRouter` through
+`StdioSpawnOptions::admin_router` and post-spawn binds the live
+outbound writer:
+
+```rust
+let opts = bootstrap
+    .spawn_options_for(&extension_id, default_opts)
+    .unwrap_or(default_opts);
+let runtime = StdioRuntime::spawn_with(&manifest, opts).await?;
+bootstrap.bind_writer(&extension_id, runtime.outbox_sender());
+```
+
+A periodic 30 s task prunes the in-memory pairing store.
+
+### In-memory pairing challenge store (Phase 82.10.h.b.1)
+
+`InMemoryPairingChallengeStore` is a `DashMap<Uuid, …>` + TTL
+adapter — same pattern as OpenClaw's `activeLogins` map.
+`read_challenge` lazily flips entries past their TTL to
+`PairingState::Expired` with an operator-readable
+`data.error`, so polls converge to the terminal state without
+waiting for the prune cadence. Daemon restart drops in-flight
+challenges (the WhatsApp QR client-side expires in ~30 s
+anyway, so a SQLite-backed store would be wasted work).
+
+### Pairing notifier (deferred)
+
+`StdioPairingNotifier` ships as a building block but is **not
+yet wired** into `AdminRpcBootstrap`. Microapps fall back to
+polling `pairing/status` until a follow-up exposes a separate
+notification queue independent of the response writer.
 
 ## Limitations
 

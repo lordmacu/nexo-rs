@@ -789,21 +789,52 @@ Three steps shipped, two deferred to 82.10.h.b:
 **Tests:** 15 audit + 7 yaml_patch helpers + 12 adapters =
 **34 verde**.
 
-**Deferred to 82.10.h.b (blocked on main.rs):**
-- `PairingChallengeStore` adapter — needs a fresh SQLite schema
-  for the QR challenge state machine (existing
-  `crates/pairing::session_store` only tracks post-pairing
-  session tokens).
-- `PairingNotifier` adapter — needs main.rs stdio writer
-  integration to publish `nexo/notify/pairing_status_changed`
-  on the same JSON-RPC stdout the dispatcher reads from.
-- `nexo microapp admin audit tail` CLI subcommand wire-up.
-- main.rs glue: `app:`-prefix routing, per-microapp dispatcher
-  instantiation, capability boot validation, audit-writer
-  selection (`SqliteAdminAuditWriter::open` vs in-memory).
-  Today blocked because the parallel `nexo-fork` workstream has
-  main.rs in a non-buildable state; 82.10.h.b unblocks once
-  main.rs builds clean.
+#### 82.10.h.b — pairing adapters + main.rs wire path + audit-tail CLI   ✅  (shipped 2026-05-01)
+
+Five steps shipped:
+- **82.10.h.b.1** — `InMemoryPairingChallengeStore` (DashMap +
+  TTL, mirrors OpenClaw QR-login pattern). 6 tests.
+- **82.10.h.b.2** — `StdioPairingNotifier` + reusable
+  `json_rpc_notification(method, params)` helper. 3 tests.
+- **82.10.h.b.3** — `AdminRouter` trait in `nexo-extensions`
+  + `DispatcherAdminRouter` impl in `nexo-core` +
+  `reader_task` `app:`-prefix routing in
+  `nexo_extensions::runtime::stdio` (id is now matched by
+  shape: numeric → existing pending map, `app:*` → router,
+  other strings → warn-drop). Inner branch extracted to
+  `process_inbound_line` for direct unit-testing.
+  4 + 4 = 8 tests.
+- **82.10.h.b.4** — `nexo microapp admin audit tail` CLI
+  subcommand. Maps every flag 1:1 to `AuditTailFilter`,
+  default `--db` resolves to
+  `nexo_state_dir().join("admin_audit.db")`. 3 integration
+  tests via `Command::new(env!("CARGO_BIN_EXE_nexo"))`.
+- **82.10.h.b.5** — `nexo_setup::admin_bootstrap` module +
+  `StdioRuntime::outbox_sender()` accessor +
+  `DeferredAdminOutboundWriter` (OnceLock-backed). main.rs
+  `run_extension_discovery` accepts an
+  `Option<&AdminRpcBootstrap>` and threads the per-microapp
+  router through `StdioSpawnOptions::admin_router`,
+  post-spawn binding the deferred writer to
+  `runtime.outbox_sender()`. Caller passes `None` for now —
+  activating admin RPC is a one-line operator change once
+  the manifest source-of-truth refactor lands. 3 bootstrap
+  unit tests.
+
+**Tests:** 6 + 3 + 8 + 3 + 3 = **23 verde**.
+
+**Deferred (still pending):**
+- Pairing notifier wire-up — the notifier is built but not
+  fed into the dispatcher because the chicken-and-egg between
+  `outbox_tx` (created inside `spawn_with`) and the
+  pre-spawn `with_pairing_domain(_, Some(notifier))` call
+  needs a separate notification queue. v1 microapps poll
+  `pairing/status` instead.
+- main.rs operator wire-up — passing `Some(&bootstrap)`
+  instead of `None` to `run_extension_discovery`. Needs a
+  refactor to surface per-extension `[capabilities.admin]`
+  declarations from a single source of truth (today re-parsed
+  inside discovery).
 
 **Deferred to 82.10.i (out-of-scope follow-up):**
 - Interactive operator approval (`ask` behavior). v1 is binary
