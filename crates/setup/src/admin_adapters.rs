@@ -28,11 +28,18 @@ use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use async_trait::async_trait;
+use nexo_core::agent::admin_rpc::domains::agent_events::TranscriptReader;
 use nexo_core::agent::admin_rpc::domains::agents::YamlPatcher;
 use nexo_core::agent::admin_rpc::domains::credentials::CredentialStore;
 use nexo_core::agent::admin_rpc::domains::llm_providers::LlmYamlPatcher;
 use nexo_core::agent::admin_rpc::domains::pairing::{
     PairingChallengeStore, PairingNotifier, PAIRING_STATUS_NOTIFY_METHOD,
+};
+use nexo_core::agent::transcripts::{TranscriptLine, TranscriptWriter};
+use nexo_core::agent::transcripts_index::TranscriptsIndex;
+use nexo_tool_meta::admin::agent_events::{
+    AgentEventKind, AgentEventsListFilter, AgentEventsReadParams, AgentEventsSearchParams,
+    SearchHit, TranscriptRole as WireTranscriptRole,
 };
 use nexo_core::agent::admin_rpc::AdminOutboundWriter;
 use nexo_tool_meta::admin::pairing::{PairingState, PairingStatus, PairingStatusData};
@@ -717,6 +724,229 @@ pub fn json_rpc_notification(method: &str, params: serde_json::Value) -> String 
     serde_json::to_string(&frame).unwrap_or_else(|_| "{}".into())
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Phase 82.11.3 — production `TranscriptReader` adapter wrapping the
+// existing `TranscriptWriter` (JSONL files) + `TranscriptsIndex`
+// (SQLite FTS5). Both subsystems are already alive in the daemon —
+// the adapter is purely a wire-shape mapper.
+// ─────────────────────────────────────────────────────────────────────
+
+/// `TranscriptReader` impl backed by the on-disk transcript root +
+/// the FTS5 index. Constructed once per agent at boot. The
+/// `agent_id` filter on `list/read/search` calls is enforced
+/// against the writer's own `agent_id` (defensive — adapters
+/// reject calls scoped to a different agent).
+pub struct TranscriptReaderFs {
+    writer: Arc<TranscriptWriter>,
+    /// Optional FTS5 index. `None` disables search (returns
+    /// `Internal: search index not configured`); list + read
+    /// still work over the JSONL files.
+    index: Option<Arc<TranscriptsIndex>>,
+    /// Owner agent — fixed at construction. Calls scoped to a
+    /// different `agent_id` return empty results.
+    agent_id: String,
+}
+
+impl std::fmt::Debug for TranscriptReaderFs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TranscriptReaderFs")
+            .field("agent_id", &self.agent_id)
+            .field("index", &self.index.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+impl TranscriptReaderFs {
+    /// Build an adapter pinned to one agent. Pass the same
+    /// `TranscriptWriter` the daemon already uses for appends so
+    /// reader + writer share the per-session header lock and the
+    /// same redactor (the firehose downstream emits the
+    /// already-redacted body).
+    pub fn new(
+        writer: Arc<TranscriptWriter>,
+        index: Option<Arc<TranscriptsIndex>>,
+        agent_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            writer,
+            index,
+            agent_id: agent_id.into(),
+        }
+    }
+}
+
+#[async_trait]
+impl TranscriptReader for TranscriptReaderFs {
+    async fn list_recent_events(
+        &self,
+        filter: &AgentEventsListFilter,
+    ) -> anyhow::Result<Vec<AgentEventKind>> {
+        if filter.agent_id != self.agent_id {
+            return Ok(Vec::new());
+        }
+        let root = self.writer.root().to_path_buf();
+        if !root.exists() {
+            return Ok(Vec::new());
+        }
+        let mut entries = match tokio::fs::read_dir(&root).await {
+            Ok(rd) => rd,
+            Err(_) => return Ok(Vec::new()),
+        };
+        let mut paths: Vec<std::path::PathBuf> = Vec::new();
+        while let Some(entry) = entries.next_entry().await? {
+            let p = entry.path();
+            if p.extension().and_then(|s| s.to_str()) == Some("jsonl") {
+                paths.push(p);
+            }
+        }
+        // Most-recently-modified first so newest events surface
+        // even before parsing each file.
+        paths.sort_by_key(|p| {
+            std::fs::metadata(p)
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+        });
+        paths.reverse();
+
+        let since_ms = filter.since_ms.unwrap_or(0);
+        let mut out: Vec<AgentEventKind> = Vec::new();
+        for path in paths {
+            let stem = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or_default();
+            let Ok(session_id) = uuid::Uuid::parse_str(stem) else {
+                continue;
+            };
+            let lines = self
+                .writer
+                .read_session(session_id)
+                .await
+                .unwrap_or_default();
+            for (seq_idx, line) in lines.iter().enumerate() {
+                let TranscriptLine::Entry(e) = line else {
+                    continue;
+                };
+                let ts_ms = e.timestamp.timestamp_millis() as u64;
+                if ts_ms < since_ms {
+                    continue;
+                }
+                out.push(AgentEventKind::TranscriptAppended {
+                    agent_id: self.agent_id.clone(),
+                    session_id,
+                    seq: seq_idx as u64,
+                    role: map_role(e.role),
+                    body: e.content.clone(),
+                    sent_at_ms: ts_ms,
+                    sender_id: e.sender_id.clone(),
+                    source_plugin: if e.source_plugin.is_empty() {
+                        "internal".into()
+                    } else {
+                        e.source_plugin.clone()
+                    },
+                });
+            }
+        }
+        // Newest-first global ordering across sessions.
+        out.sort_by_key(|e| match e {
+            AgentEventKind::TranscriptAppended { sent_at_ms, .. } => {
+                std::cmp::Reverse(*sent_at_ms)
+            }
+            _ => std::cmp::Reverse(0u64),
+        });
+        out.truncate(filter.limit);
+        Ok(out)
+    }
+
+    async fn read_session_events(
+        &self,
+        params: &AgentEventsReadParams,
+    ) -> anyhow::Result<Vec<AgentEventKind>> {
+        if params.agent_id != self.agent_id {
+            return Ok(Vec::new());
+        }
+        let lines = self
+            .writer
+            .read_session(params.session_id)
+            .await
+            .unwrap_or_default();
+        let after = params.since_seq.unwrap_or(u64::MAX);
+        let want_all = params.since_seq.is_none();
+        let mut out: Vec<AgentEventKind> = Vec::new();
+        for (seq_idx, line) in lines.iter().enumerate() {
+            let TranscriptLine::Entry(e) = line else {
+                continue;
+            };
+            let seq = seq_idx as u64;
+            if !want_all && seq <= after {
+                continue;
+            }
+            out.push(AgentEventKind::TranscriptAppended {
+                agent_id: self.agent_id.clone(),
+                session_id: params.session_id,
+                seq,
+                role: map_role(e.role),
+                body: e.content.clone(),
+                sent_at_ms: e.timestamp.timestamp_millis() as u64,
+                sender_id: e.sender_id.clone(),
+                source_plugin: if e.source_plugin.is_empty() {
+                    "internal".into()
+                } else {
+                    e.source_plugin.clone()
+                },
+            });
+            if out.len() >= params.limit {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    async fn search_events(
+        &self,
+        params: &AgentEventsSearchParams,
+    ) -> anyhow::Result<Vec<SearchHit>> {
+        if params.agent_id != self.agent_id {
+            return Ok(Vec::new());
+        }
+        let Some(index) = self.index.as_ref() else {
+            anyhow::bail!("transcripts FTS index not configured");
+        };
+        let hits = index
+            .search(&self.agent_id, &params.query, params.limit)
+            .await?;
+        Ok(hits
+            .into_iter()
+            .map(|h| SearchHit {
+                session_id: h.session_id,
+                timestamp_ms: (h.timestamp_unix as u64).saturating_mul(1000),
+                role: parse_wire_role(&h.role),
+                source_plugin: h.source_plugin,
+                snippet: h.snippet,
+            })
+            .collect())
+    }
+}
+
+fn map_role(r: nexo_core::agent::transcripts::TranscriptRole) -> WireTranscriptRole {
+    use nexo_core::agent::transcripts::TranscriptRole as Core;
+    match r {
+        Core::User => WireTranscriptRole::User,
+        Core::Assistant => WireTranscriptRole::Assistant,
+        Core::Tool => WireTranscriptRole::Tool,
+        Core::System => WireTranscriptRole::System,
+    }
+}
+
+fn parse_wire_role(s: &str) -> WireTranscriptRole {
+    match s {
+        "user" => WireTranscriptRole::User,
+        "assistant" => WireTranscriptRole::Assistant,
+        "tool" => WireTranscriptRole::Tool,
+        _ => WireTranscriptRole::System,
+    }
+}
+
 #[cfg(test)]
 mod pairing_store_tests {
     use super::*;
@@ -849,5 +1079,169 @@ mod pairing_store_tests {
         assert_eq!(removed, 1);
         assert_eq!(store.len(), 1);
         assert!(store.read_challenge(alive).unwrap().is_some());
+    }
+}
+
+#[cfg(test)]
+mod transcript_reader_tests {
+    use super::*;
+    use chrono::Utc;
+    use nexo_core::agent::transcripts::{
+        TranscriptEntry, TranscriptRole as CoreRole, TranscriptWriter,
+    };
+    use uuid::Uuid;
+
+    fn user_entry(text: &str) -> TranscriptEntry {
+        TranscriptEntry {
+            timestamp: Utc::now(),
+            role: CoreRole::User,
+            content: text.into(),
+            message_id: None,
+            source_plugin: "whatsapp".into(),
+            sender_id: Some("wa.55".into()),
+        }
+    }
+
+    async fn seeded_writer(
+        dir: &std::path::Path,
+        agent: &str,
+        sessions: &[(Uuid, &[&str])],
+    ) -> Arc<TranscriptWriter> {
+        let writer = Arc::new(TranscriptWriter::new(dir, agent));
+        for (sid, msgs) in sessions {
+            for body in *msgs {
+                writer
+                    .append_entry(*sid, user_entry(body))
+                    .await
+                    .expect("append");
+            }
+        }
+        writer
+    }
+
+    #[tokio::test]
+    async fn list_recent_events_projects_jsonl_into_wire_events() {
+        let tmp = tempfile::tempdir().unwrap();
+        let s1 = Uuid::new_v4();
+        let s2 = Uuid::new_v4();
+        let writer = seeded_writer(
+            tmp.path(),
+            "ana",
+            &[(s1, &["hi", "hola"]), (s2, &["yo"])],
+        )
+        .await;
+        let reader = TranscriptReaderFs::new(writer, None, "ana");
+        let events = reader
+            .list_recent_events(&AgentEventsListFilter {
+                agent_id: "ana".into(),
+                limit: 50,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        // 3 entries across 2 sessions.
+        assert_eq!(events.len(), 3);
+        // Each entry maps to TranscriptAppended with the right
+        // source_plugin echoed.
+        for e in &events {
+            match e {
+                AgentEventKind::TranscriptAppended {
+                    source_plugin,
+                    role,
+                    sender_id,
+                    ..
+                } => {
+                    assert_eq!(source_plugin, "whatsapp");
+                    assert_eq!(*role, WireTranscriptRole::User);
+                    assert_eq!(sender_id.as_deref(), Some("wa.55"));
+                }
+                _ => panic!("expected TranscriptAppended"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn list_recent_events_returns_empty_for_other_agent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let writer = seeded_writer(tmp.path(), "ana", &[(Uuid::new_v4(), &["x"])]).await;
+        let reader = TranscriptReaderFs::new(writer, None, "ana");
+        let events = reader
+            .list_recent_events(&AgentEventsListFilter {
+                agent_id: "bob".into(),
+                limit: 10,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn read_session_events_filters_by_since_seq_and_caps_limit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sid = Uuid::new_v4();
+        let writer =
+            seeded_writer(tmp.path(), "ana", &[(sid, &["a", "b", "c", "d"])]).await;
+        let reader = TranscriptReaderFs::new(writer, None, "ana");
+
+        // Caller wants entries strictly AFTER seq=0 (so b, c, d
+        // — but the file also stores a SessionHeader line so the
+        // first entry in raw lines is at logical seq=1).
+        // Run without since_seq first to learn the seq of the
+        // first entry, then filter.
+        let all = reader
+            .read_session_events(&AgentEventsReadParams {
+                agent_id: "ana".into(),
+                session_id: sid,
+                since_seq: None,
+                limit: 50,
+            })
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 4);
+        let first_seq = match &all[0] {
+            AgentEventKind::TranscriptAppended { seq, .. } => *seq,
+            _ => panic!(),
+        };
+        let after_first = reader
+            .read_session_events(&AgentEventsReadParams {
+                agent_id: "ana".into(),
+                session_id: sid,
+                since_seq: Some(first_seq),
+                limit: 50,
+            })
+            .await
+            .unwrap();
+        assert_eq!(after_first.len(), 3);
+
+        // Limit cap.
+        let capped = reader
+            .read_session_events(&AgentEventsReadParams {
+                agent_id: "ana".into(),
+                session_id: sid,
+                since_seq: None,
+                limit: 2,
+            })
+            .await
+            .unwrap();
+        assert_eq!(capped.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn search_events_returns_internal_when_index_is_unset() {
+        let tmp = tempfile::tempdir().unwrap();
+        let writer = seeded_writer(tmp.path(), "ana", &[]).await;
+        let reader = TranscriptReaderFs::new(writer, None, "ana");
+        let err = reader
+            .search_events(&AgentEventsSearchParams {
+                agent_id: "ana".into(),
+                query: "foo".into(),
+                kind: None,
+                limit: 10,
+            })
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("FTS index"), "got: {msg}");
     }
 }
