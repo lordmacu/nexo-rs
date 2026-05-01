@@ -4066,6 +4066,7 @@ name = "nexo-setup"
 version = "0.1.1"
 dependencies = [
  "anyhow",
+ "async-trait",
  "base64 0.22.1",
  "chrono",
  "console",
@@ -4076,10 +4077,12 @@ dependencies = [
  "nexo-auth",
  "nexo-config",
  "nexo-core",
+ "nexo-extensions",
  "nexo-llm",
  "nexo-pairing",
  "nexo-plugin-email",
  "nexo-plugin-google",
+ "nexo-plugin-manifest",
  "nexo-plugin-whatsapp",
  "nexo-tool-meta",
  "rand 0.8.6",

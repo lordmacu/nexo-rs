@@ -84,6 +84,7 @@
 - [Templates](./extensions/templates.md)
 - [1Password](./extensions/onepassword.md)
 - [State management](./extensions/state-management.md)
+- [Multi-tenant SaaS walkthrough](./extensions/multi-tenant-saas.md)
 
 # Microapps
 
