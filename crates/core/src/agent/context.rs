@@ -167,6 +167,109 @@ pub struct DmMessage {
     pub correlation_id: Option<String>,
     pub received_at: i64,
 }
+
+/// Phase 82.1 — binding context propagated to tool calls so
+/// extensions and MCP servers can route per-(channel, account_id,
+/// agent_id) tuple without re-deriving it from each tool call's
+/// payload.
+///
+/// Serialised under `_meta.nexo.binding` in JSON-RPC `tools/call`
+/// (extensions ignore unknown fields) and as the `meta` block of
+/// MCP `call_tool_with_meta`.
+///
+/// `agent_id` is mandatory; the rest are `Option` because some
+/// dispatch paths (delegation receive, heartbeat bootstrap, tests)
+/// have no binding match — `None` is the correct state, not a
+/// sentinel string.
+///
+/// `mcp_channel_source` is populated when the inbound that
+/// triggered this turn arrived via a Phase 80.9 MCP channel
+/// server (e.g., `"slack"`, `"telegram"`). Lets a tool
+/// distinguish "telegram-binding answered via MCP slack server"
+/// from "telegram-binding answered via native Telegram plugin"
+/// while still seeing the same `(channel, account_id)` binding
+/// tuple. Matches the `goal_turns.source = "channel:slack"`
+/// audit column shipped with Phase 80.9.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BindingContext {
+    /// Stable agent identifier (`agents.yaml.<id>`).
+    pub agent_id: String,
+
+    /// Active session UUID. `None` outside an LLM turn (heartbeat
+    /// bootstrap, delegation receive, tests).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<Uuid>,
+
+    /// Channel name as declared in `InboundBinding.plugin`
+    /// (`"whatsapp"`, `"telegram"`, `"email"`, `"web"`, …).
+    /// `None` for contexts without a binding match.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel: Option<String>,
+
+    /// Account / instance discriminator from
+    /// `InboundBinding.instance`. `None` when the binding
+    /// declared no instance (single-account default).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+
+    /// Stable binding identifier rendered as
+    /// `<channel>:<account_id|"default">`. Survives
+    /// `agents.yaml` reloads (does NOT depend on the binding
+    /// vector index). `None` for bindingless contexts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub binding_id: Option<String>,
+
+    /// Phase 80.9 — MCP channel server name when the inbound
+    /// arrived via `notifications/nexo/channel`. `None` for
+    /// native-channel inbounds. Examples: `"slack"`,
+    /// `"telegram"`, `"imessage"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mcp_channel_source: Option<String>,
+}
+
+impl BindingContext {
+    // TODO Step 3 of Phase 82.1 plan — `from_effective(policy,
+    // agent_id, session_id)` lands once Step 2 extends
+    // `EffectiveBindingPolicy` with `channel: Option<String>` +
+    // `account_id: Option<String>` + a `binding_id()` helper.
+    // Keeping the symbol absent for Step 1 means the struct +
+    // its standalone helpers compile without a forward
+    // reference into the not-yet-extended policy.
+
+    /// Agent-only minimal context for paths that have neither
+    /// a binding match nor a session (e.g., bootstrap
+    /// validation, unit tests).
+    pub fn agent_only(agent_id: impl Into<String>) -> Self {
+        Self {
+            agent_id: agent_id.into(),
+            session_id: None,
+            channel: None,
+            account_id: None,
+            binding_id: None,
+            mcp_channel_source: None,
+        }
+    }
+
+    /// Render the stable binding id from `(channel, account_id)`.
+    /// Returns `<channel>:<account_id|"default">`. Used at the
+    /// `from_effective` call site and exposed for tests /
+    /// downstream consumers that need to compute the same id
+    /// without holding a policy reference.
+    pub fn render_binding_id(channel: &str, account_id: Option<&str>) -> String {
+        format!("{}:{}", channel, account_id.unwrap_or("default"))
+    }
+
+    /// Builder for the MCP channel source (Phase 80.9). Returns
+    /// `self` so it composes inline with `from_effective`.
+    #[must_use]
+    pub fn with_mcp_channel_source(
+        mut self,
+        source: impl Into<String>,
+    ) -> Self {
+        self.mcp_channel_source = Some(source.into());
+        self
+    }
+}
 impl AgentContext {
     pub fn new(
         agent_id: impl Into<String>,
@@ -523,5 +626,103 @@ mod plan_mode_tests {
         });
         let same = c.clone();
         assert_eq!(same.inbox.read().await.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod binding_context_tests {
+    //! Phase 82.1 Step 1 tests — `BindingContext` struct +
+    //! standalone helpers. `from_effective` (which closes the
+    //! loop with `EffectiveBindingPolicy`) lands at Step 3 once
+    //! Step 2 extends the policy struct.
+
+    use super::BindingContext;
+    use uuid::Uuid;
+
+    #[test]
+    fn agent_only_minimal_context_clears_binding_fields() {
+        let ctx = BindingContext::agent_only("ana");
+        assert_eq!(ctx.agent_id, "ana");
+        assert!(ctx.session_id.is_none());
+        assert!(ctx.channel.is_none());
+        assert!(ctx.account_id.is_none());
+        assert!(ctx.binding_id.is_none());
+        assert!(ctx.mcp_channel_source.is_none());
+    }
+
+    #[test]
+    fn render_binding_id_with_account_id_renders_channel_colon_account() {
+        assert_eq!(
+            BindingContext::render_binding_id("whatsapp", Some("personal")),
+            "whatsapp:personal"
+        );
+        assert_eq!(
+            BindingContext::render_binding_id("telegram", Some("kate_tg")),
+            "telegram:kate_tg"
+        );
+    }
+
+    #[test]
+    fn render_binding_id_without_account_id_uses_default_sentinel() {
+        assert_eq!(
+            BindingContext::render_binding_id("whatsapp", None),
+            "whatsapp:default"
+        );
+    }
+
+    #[test]
+    fn with_mcp_channel_source_sets_field_inline() {
+        let ctx = BindingContext::agent_only("ana").with_mcp_channel_source("slack");
+        assert_eq!(ctx.mcp_channel_source.as_deref(), Some("slack"));
+        assert_eq!(ctx.agent_id, "ana");
+    }
+
+    #[test]
+    fn binding_context_is_clone_eq_serializable() {
+        let ctx = BindingContext {
+            agent_id: "ana".into(),
+            session_id: Some(Uuid::nil()),
+            channel: Some("whatsapp".into()),
+            account_id: Some("personal".into()),
+            binding_id: Some("whatsapp:personal".into()),
+            mcp_channel_source: Some("slack".into()),
+        };
+        let cloned = ctx.clone();
+        assert_eq!(ctx, cloned);
+        let json = serde_json::to_value(&ctx).unwrap();
+        assert_eq!(json["agent_id"], "ana");
+        assert_eq!(json["channel"], "whatsapp");
+        assert_eq!(json["account_id"], "personal");
+        assert_eq!(json["binding_id"], "whatsapp:personal");
+        assert_eq!(json["mcp_channel_source"], "slack");
+    }
+
+    #[test]
+    fn binding_context_skips_serializing_none_fields() {
+        let ctx = BindingContext::agent_only("ana");
+        let json = serde_json::to_value(&ctx).unwrap();
+        let obj = json.as_object().expect("expected object");
+        assert!(obj.contains_key("agent_id"));
+        // None fields skipped per #[serde(skip_serializing_if = "Option::is_none")]
+        assert!(!obj.contains_key("session_id"));
+        assert!(!obj.contains_key("channel"));
+        assert!(!obj.contains_key("account_id"));
+        assert!(!obj.contains_key("binding_id"));
+        assert!(!obj.contains_key("mcp_channel_source"));
+    }
+
+    #[test]
+    fn binding_context_round_trips_through_serde() {
+        let ctx = BindingContext {
+            agent_id: "carlos".into(),
+            session_id: Some(Uuid::from_u128(42)),
+            channel: Some("whatsapp".into()),
+            account_id: Some("business".into()),
+            binding_id: Some("whatsapp:business".into()),
+            mcp_channel_source: None,
+        };
+        let json = serde_json::to_string(&ctx).unwrap();
+        let back: BindingContext = serde_json::from_str(&json).unwrap();
+        assert_eq!(ctx, back);
     }
 }
