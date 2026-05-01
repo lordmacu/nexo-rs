@@ -87,6 +87,7 @@
 # Microapps
 
 - [Building microapps in Rust](./microapps/rust.md)
+- [Admin RPC](./microapps/admin-rpc.md)
 
 # MCP
 

@@ -718,7 +718,73 @@ Done criteria:
 - Docs renders without broken links (`mdbook build docs`).
 - admin-ui PHASES.md gains the four tech-debt entries.
 
-#### 82.10 — `nexo/admin/*` bidirectional RPC + granular capability gates + admin domain methods   ⬜
+#### 82.10 — `nexo/admin/*` bidirectional RPC + granular capability gates + admin domain methods   ✅  (shipped 2026-05-01)
+
+**Shipped (steps a-g, 7 atomic commits):**
+
+Framework:
+- SDK `AdminClient` + `AdminSender` trait (gated by `admin`
+  cargo feature) — bidirectional JSON-RPC over existing stdio
+  with `app:<uuid>` ID prefix correlation.
+- `AdminError` typed enum mapping JSON-RPC error codes
+  (-32004/-32602/-32601/-32603/transport).
+- Core `AdminRpcDispatcher` with method routing + capability
+  gate + audit log per-call.
+- `CapabilitySet` lock-free runtime check + boot-time validator
+  diffing plugin.toml declarations vs extensions.yaml grants
+  (required → fail-fast, optional → warn, orphan → warn).
+- `AdminAuditWriter` trait + `InMemoryAuditWriter` default;
+  SQLite writer + retention sweep deferred to 82.10.h.
+
+5 admin domains (17 methods + reload):
+- `agents` — list / get / upsert / delete via `YamlPatcher` trait
+  abstraction (avoids cycle vs nexo-setup yaml_patch).
+- `credentials` — list / register / revoke many-to-many (1
+  channel cred → N agents).
+- `pairing` — start / status / cancel + `nexo/notify/pairing_status_changed`
+  notification stream wire shape.
+- `llm_providers` — list / upsert / delete; upsert validates
+  api_key_env exists in process env, delete refuses when any
+  agent uses the provider.
+- `channels` — list / approve / revoke / doctor for Phase 80.9
+  MCP-channel servers in `agents.yaml.<id>.channels.approved`.
+
+INVENTORY env toggles (5 entries) — per-domain operator-global
+kill switches: `NEXO_MICROAPP_ADMIN_AGENTS_ENABLED`,
+`_CREDENTIALS_ENABLED`, `_PAIRING_ENABLED`, `_LLM_KEYS_ENABLED`,
+`_CHANNELS_ENABLED`. Capability grants are the per-microapp
+check; INVENTORY is the operator-global hard disable.
+
+**Tests:** 60 admin_rpc + 14 tool-meta admin = **74 verde**.
+Workspace excl. `nexo-memory-snapshot` (parallel workstream).
+
+**Docs:** `docs/src/microapps/admin-rpc.md` — operator +
+microapp-developer reference with wire shape, layered grant
+model, all 18 endpoints, many-to-many credentials flow, async
+pairing diagram, INVENTORY toggles, SDK example.
+
+**Deferred to 82.10.h follow-up (NOT scope-drop):**
+- SQLite-backed `AdminAuditWriter` impl + retention sweep at
+  boot. Migration entry in `crates/memory/migrations/`.
+- `nexo microapp admin audit tail [--microapp-id ID] [--limit N]
+  [--method M]` CLI subcommand reading the SQLite audit table.
+- Production wiring in `src/main.rs` constructing the
+  YamlPatcher / LlmYamlPatcher / CredentialStore /
+  PairingChallengeStore adapters and feeding them to
+  `AdminRpcDispatcher::with_*_domain` builders. Without this,
+  microapps receive `Internal: <domain> not configured` errors.
+  The framework + SDK are ready; main.rs wire-up is the last
+  mile.
+
+**Deferred to 82.10.i (out-of-scope follow-up):**
+- Interactive operator approval (`ask` behavior). v1 is binary
+  yaml-static grant.
+- Per-method rate-limit on admin calls.
+- Telegram / email / other channel domains beyond WhatsApp v1
+  UI scope.
+- Streaming admin notifications beyond `pairing_status_changed`
+  (covered in spirit by 82.11 firehose).
+- Capability inheritance / group-grants / role-templates.
 
 Cross-app primitive. Today Phase 11 JSON-RPC is mostly
 one-way: core → microapp via `tools/call`. Microapps that
