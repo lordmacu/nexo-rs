@@ -45,6 +45,7 @@
 
 #![deny(missing_docs)]
 
+pub mod admin;
 pub mod binding;
 pub mod event_source;
 pub mod inbound;

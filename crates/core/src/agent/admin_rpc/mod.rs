@@ -16,6 +16,7 @@
 pub mod audit;
 pub mod capabilities;
 pub mod dispatcher;
+pub mod domains;
 
 pub use audit::{
     hash_params, now_epoch_ms, AdminAuditResult, AdminAuditRow, AdminAuditWriter,
