@@ -13,5 +13,7 @@
 //! block, preserving today's behaviour byte-for-byte.
 
 pub mod coordinator;
+pub mod worker;
 
 pub use coordinator::{coordinator_system_prompt, CoordinatorPromptCtx};
+pub use worker::{worker_system_prompt, WorkerPromptCtx};

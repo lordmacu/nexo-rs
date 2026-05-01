@@ -126,6 +126,7 @@
 - [AWAY_SUMMARY digest](./agents/away-summary.md)
 - [Multi-agent coordination](./agents/multi-agent-coordination.md)
 - [Coordinator mode (Phase 84)](./agents/coordinator-mode.md)
+- [Worker mode (Phase 84.4)](./agents/worker-mode.md)
 
 # CLI
 
