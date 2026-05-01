@@ -36,31 +36,28 @@ does not block production use of the feature.
   serialize or publish failure logs `tracing::warn!` and never
   poisons the writer's transaction.
 
-- **MS-1.b — Remaining fire sites (compactions / git / vector /
-  concepts)** ⬜
-  - `crates/memory/src/vector.rs` and
-    `crates/memory/src/concepts.rs` are pure helpers — actual
-    writes happen inside `LongTermMemory::remember_typed` /
-    `forget`, so they piggyback on MS-1's existing fire site
-    transactionally. Documented decision: `MemoryMutationScope::
+- **MS-1.b — Remaining fire sites**
+  ✅ **partial / vector + concepts + git shipped, compactions
+  open**.
+  - **vector + concepts**: shipped transactionally via the
+    `LongTermMemory` fire site (commit `208da43`). Actual writes
+    live inside `remember_typed` / `forget`, so a single
+    `SqliteLongTerm` event is logically correct. `MutationScope::
     SqliteVector` / `SqliteConcepts` variants stay reserved for
-    future standalone writers (e.g. a vector-only pipeline).
-  - `crates/memory/src/compactions.rs::CompactionStore` is global
-    per-deployment (one DB shared across every agent) and
-    doesn't carry an `agent_id` correlation token in its
-    method signatures. Wiring needs a schema decision: either
-    add `agent_id` to `CompactionRow` (breaking schema) or
-    pre-bind at `CompactionStore::with_agent_id` per-agent
-    (needs a per-agent store, big refactor). Defer until the
-    operator surface demands it.
-  - `crates/core/src/agent/workspace_git.rs::commit_all` is
-    sync but `MemoryMutationHook::on_mutation` is async. Needs
-    either a sibling `commit_all_async` that wraps in
-    `spawn_blocking` + fires the hook post-commit, or each
-    caller wraps a `tokio::spawn` themselves. Surgical, ~1
-    hour but adds an async dual to a sync function.
-  - Effort: ~2 hours combined. Risk: low — mechanical wire
-    once the design choice on `CompactionStore` is settled.
+    future standalone writers.
+  - **git**: shipped (commit `fabfd38`). `MemoryGitRepo::commit_all`
+    fires `Git/Update` events post-success via
+    `tokio::runtime::Handle::try_current().spawn(...)` — fire-
+    and-forget so the libgit2 thread is never blocked. Boot wire
+    attaches the hook to every per-agent repo. 2 unit tests
+    cover happy path + clean-tree no-event.
+  - **compactions** ⬜ — still open. `CompactionStore` is global
+    per-deployment and lacks an `agent_id` correlation token in
+    its method signatures. Wiring needs a schema decision:
+    either add `agent_id` to `CompactionRow` (breaking schema)
+    or move to a per-agent store (big refactor). Defer until the
+    operator surface demands compaction-event observability.
+  - Effort remaining: ~30 min once the schema decision lands.
 
 - **MS-2 — Per-agent memdir / sqlite path discovery**
   ✅ **shipped** (commit `e78d75f`). New `PathResolver` trait in
@@ -74,16 +71,14 @@ does not block production use of the feature.
   match what was used at snapshot time.
 
 - **MS-2.b — Inject a `ClosureResolver` from the agent registry
-  at boot** ⬜
-  - Today `src/main.rs::Mode::Run` constructs `LocalFsSnapshotter`
-    with the YAML defaults — every agent shares the same
-    `memdir_root/<agent_id>`. Real per-agent memdir lives at
-    `agent_cfg.workspace/.git/`. A boot-time `ClosureResolver`
-    that maps `agent_id → agent_cfg.workspace` (looked up from
-    the same `cfg.agents.agents` already iterated in the
-    per-agent tool registry loop) closes the loop.
-  - Effort: ~1 hour. Risk: low — pure boot-wire change, no new
-    types.
+  at boot**
+  ✅ **shipped** (commit `3ffc71d`). Boot wire builds a
+  `HashMap<agent_id, workspace_pathbuf>` from `cfg.agents.agents`
+  and feeds a `nexo_memory_snapshot::ClosureResolver` into the
+  snapshotter via `path_resolver(...)`. Agents not in the map
+  fall back to `<memdir_root>/<agent_id>` (preserves the
+  default behavior). SQLite stays globally shared — same as
+  before — until the long-term store goes per-agent.
 
 - **MS-3 — `BootDeps` consumer in `Mode::Run` for AutoDreamRunner** ⬜
   - `nexo_dream::boot::BootDeps` already accepts
