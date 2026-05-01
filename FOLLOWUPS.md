@@ -1954,6 +1954,30 @@ admin RPC + http_server bootstrap into main.rs (single
 shared boot-order refactor — folded with 82.10.h.b /
 82.11 / 82.12 / 82.13 / 82.14 deferreds).
 
+### Phase 82.9 — reference template + admin-ui follow-ups
+
+Phase 82.9 shipped the multi-tenant SaaS walkthrough doc
+(`docs/src/extensions/multi-tenant-saas.md`) connecting all
+Phase 82 primitives. Two pieces deferred:
+
+- **`extensions/template-saas/` in-tree scaffold** — the
+  out-of-tree `agent-creator` microapp (Phase 83.10) is the
+  working SaaS reference today, so an in-tree template would
+  duplicate maintenance. Re-evaluate once 83.x microapp work
+  starts: either promote `agent-creator` to in-tree at
+  `extensions/template-saas/`, or strip the scaffold to a
+  minimal `plugin.toml + JSON-RPC stub` and let the doc
+  walkthrough point at `agent-creator` for the full shape.
+
+- **`admin-ui/PHASES.md` tech-debt entries** — webhook
+  receiver panel, per-binding rate-limit panel, per-tenant
+  audit filter, BindingContext-aware tool inspector. Defer
+  until the next admin-ui repo touch (no admin-ui work
+  scheduled in current Phase 82/83).
+
+Target phase: 82.9.b (admin-ui sync) — fold with admin-ui
+sweep when a panel needs to ship.
+
 ### Phase 82.8 — multi-tenant audit follow-up
 
 Phase 82.8 shipped the schema + filter; one piece is

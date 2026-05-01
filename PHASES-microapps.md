@@ -739,40 +739,23 @@ Done criteria:
   oracle).
 - 4+ unit tests + 1 integration test verifying isolation.
 
-#### 82.9 — Reference template + docs   ⬜
+#### 82.9 — Reference template + docs   ✅  (shipped 2026-05-01)
 
-A new SaaS-shaped extension template + docs page so operators
-can clone-and-adapt the marketing scaffold without reverse-
-engineering 82.1–82.8.
+**Shipped:** `docs/src/extensions/multi-tenant-saas.md` — Phase 82
+walkthrough connecting all primitives (BindingContext, webhook
+receiver, NATS event subscribers, tool rate-limits, state dir,
+multi-tenant audit filter, admin RPC, firehose, HTTP server,
+operator takeover, escalations). Linked from SUMMARY.md.
 
-Scope:
-- `extensions/template-saas/` with: `plugin.toml` (declares
-  multiple tools, MCP servers for HubSpot/Calendly/PostgreSQL,
-  webhook source declarations), `Cargo.toml`, `src/main.rs`
-  with JSON-RPC loop reading `BindingContext`, `migrations/`
-  for tenants/leads/credentials/opt_outs/throttling,
-  `src/tenants.rs` with isolation guard, `src/dispatcher.rs`
-  using `nexo/dispatch` (82.3), `src/scheduler.rs` for drips,
-  `README.md` + `config.example.yaml`.
-- New docs page `docs/src/extensions/multi-tenant-saas.md`
-  with end-to-end walkthrough: tenant onboarding flow, channel
-  binding, credential vault pattern, drip scheduler,
-  compliance hooks, audit queries.
-- `admin-ui/PHASES.md` tech-debt entries: webhook receiver
-  panel, per-binding rate limit panel, per-tenant audit
-  filter, BindingContext-aware tool inspector.
-- `crates/setup/src/capabilities.rs::INVENTORY` registers
-  webhook receiver bind env + any new env toggles introduced
-  by 82.x.
+INVENTORY for new env toggles (82.10/82.11/82.12) was registered
+in their respective sub-phase commits.
 
-Done criteria:
-- `cargo build -p template-saas` passes.
-- `nexo extension install ./template-saas` smoke-tests
-  end-to-end (initialize → tools/list → simulated tool call
-  with BindingContext → simulated nexo/dispatch → simulated
-  webhook event).
-- Docs renders without broken links (`mdbook build docs`).
-- admin-ui PHASES.md gains the four tech-debt entries.
+**Deferred** (logged in FOLLOWUPS.md):
+- `extensions/template-saas/` repo scaffold — out-of-tree
+  `agent-creator` (Phase 83.10) is the working reference;
+  in-tree scaffold lands when 83.x microapp build starts.
+- `admin-ui/PHASES.md` tech-debt entries — defer until
+  admin-ui repo touch.
 
 #### 82.10 — `nexo/admin/*` bidirectional RPC + granular capability gates + admin domain methods   ✅  (shipped 2026-05-01)
 
