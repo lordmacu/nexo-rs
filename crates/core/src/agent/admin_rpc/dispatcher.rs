@@ -27,6 +27,7 @@ use super::audit::{
     InMemoryAuditWriter,
 };
 use super::capabilities::CapabilitySet;
+use super::domains::agent_events::TranscriptReader;
 use super::domains::agents::YamlPatcher;
 use super::domains::credentials::CredentialStore;
 use super::domains::llm_providers::LlmYamlPatcher;
@@ -153,6 +154,9 @@ pub struct AdminRpcDispatcher {
     /// Phase 82.10.f — `llm.yaml` mutator. `None` disables
     /// `nexo/admin/llm_providers/*`.
     llm_yaml: Option<Arc<dyn LlmYamlPatcher>>,
+    /// Phase 82.11 — transcripts read surface. `None` disables
+    /// `nexo/admin/agent_events/*`.
+    transcript_reader: Option<Arc<dyn TranscriptReader>>,
 }
 
 impl std::fmt::Debug for AdminRpcDispatcher {
@@ -184,6 +188,7 @@ impl AdminRpcDispatcher {
             pairing_store: None,
             pairing_notifier: None,
             llm_yaml: None,
+            transcript_reader: None,
         }
     }
 
@@ -243,6 +248,17 @@ impl AdminRpcDispatcher {
         self
     }
 
+    /// Phase 82.11 — install the agent_events domain. Production
+    /// passes a `TranscriptReader` adapter wrapping
+    /// `TranscriptWriter` + `TranscriptsIndex`.
+    pub fn with_agent_events_domain(
+        mut self,
+        reader: Arc<dyn TranscriptReader>,
+    ) -> Self {
+        self.transcript_reader = Some(reader);
+        self
+    }
+
     /// Phase 82.10.f — install the channels domain. Reuses the
     /// agents-domain `YamlPatcher` + `ReloadSignal` (channels
     /// live in `agents.yaml.<id>.channels.approved`).
@@ -276,6 +292,14 @@ impl AdminRpcDispatcher {
             | "nexo/admin/channels/approve"
             | "nexo/admin/channels/revoke"
             | "nexo/admin/channels/doctor" => Some("channels_crud"),
+            // Phase 82.11 — agent events backfill domain. The
+            // live notification stream uses the
+            // `transcripts_subscribe` / `agent_events_subscribe_all`
+            // capabilities checked at boot wire-up; the RPC
+            // surface only needs `transcripts_read`.
+            "nexo/admin/agent_events/list"
+            | "nexo/admin/agent_events/read"
+            | "nexo/admin/agent_events/search" => Some("transcripts_read"),
             // `reload` requires any granted CRUD capability — operators
             // who can mutate yaml can also force-trigger the reload.
             // Resolution falls through to `agents_crud` since it's the
@@ -532,6 +556,30 @@ impl AdminRpcDispatcher {
                 Some(yaml) => super::domains::channels::doctor(yaml.as_ref(), params),
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "channels domain not configured".into(),
+                )),
+            },
+            "nexo/admin/agent_events/list" => match &self.transcript_reader {
+                Some(reader) => {
+                    super::domains::agent_events::list(reader.as_ref(), params).await
+                }
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "agent_events domain not configured".into(),
+                )),
+            },
+            "nexo/admin/agent_events/read" => match &self.transcript_reader {
+                Some(reader) => {
+                    super::domains::agent_events::read(reader.as_ref(), params).await
+                }
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "agent_events domain not configured".into(),
+                )),
+            },
+            "nexo/admin/agent_events/search" => match &self.transcript_reader {
+                Some(reader) => {
+                    super::domains::agent_events::search(reader.as_ref(), params).await
+                }
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "agent_events domain not configured".into(),
                 )),
             },
             "nexo/admin/reload" => match &self.reload_signal {
