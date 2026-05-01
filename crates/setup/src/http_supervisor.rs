@@ -209,6 +209,27 @@ pub fn validate_bind_policy(
 /// Convenience type alias used by boot wiring.
 pub type SharedHttpSupervisor = Arc<HttpServerSupervisor>;
 
+/// Phase 82.12 — sha256-hex digest of a bearer token,
+/// truncated to the first 16 chars. Used in
+/// `nexo/notify/token_rotated.old_hash` so microapps verify
+/// the rotation message matches the token they hold without
+/// the daemon putting the cleartext old token on the wire.
+///
+/// 16 hex chars = 8 bytes = 64-bit collision space — easily
+/// strong enough to discriminate operator rotations (an
+/// attacker forging a notification needs the daemon's stdio
+/// channel anyway, which is more direct than birthday attacks
+/// on a truncated hash).
+pub fn token_hash(token: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(token.as_bytes());
+    let mut s = String::with_capacity(16);
+    for byte in digest.iter().take(8) {
+        s.push_str(&format!("{byte:02x}"));
+    }
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -325,5 +346,15 @@ mod tests {
         let err = validate_bind_policy(&c, false).unwrap_err();
         assert_eq!(err, "0.0.0.0");
         assert!(validate_bind_policy(&c, true).is_ok());
+    }
+
+    #[test]
+    fn token_hash_is_stable_and_truncated() {
+        let h = token_hash("hunter2");
+        assert_eq!(h.len(), 16, "16 hex chars = 8 bytes");
+        // Stable across calls.
+        assert_eq!(h, token_hash("hunter2"));
+        // Different inputs → different hashes.
+        assert_ne!(token_hash("hunter2"), token_hash("hunter3"));
     }
 }
