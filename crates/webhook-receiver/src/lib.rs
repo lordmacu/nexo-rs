@@ -18,6 +18,10 @@
 //! body field is supported. New providers add a YAML entry, no
 //! Rust code change.
 
+pub mod client_ip;
+
+pub use client_ip::{extract_x_forwarded_for_chain, resolve_request_client_ip, ProxyHeaders};
+
 use std::collections::HashMap;
 
 use bytes::Bytes;
