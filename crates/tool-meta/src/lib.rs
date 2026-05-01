@@ -10,6 +10,8 @@
 
 pub mod binding;
 pub mod meta;
+pub mod webhook;
 
 pub use binding::{binding_id_render, BindingContext};
 pub use meta::{build_meta_value, parse_binding_from_meta, BINDING_KEY, META_KEY, NEXO_NAMESPACE};
+pub use webhook::{format_webhook_source, WebhookEnvelope, ENVELOPE_SCHEMA_VERSION};
