@@ -72,7 +72,18 @@ const CONTINUE_VS_SPAWN: &str = "\
 | Worker is still in_progress and you want to nudge it | **Send to peer** (`SendToPeer`) — peer-to-peer messaging, NOT continuation |
 | A worker has gone silent past its budget | `TaskStop` then decide spawn-vs-continue based on partial output |
 
-Default to **continue** when the new ask shares >50% of the prior worker's read files / search terms. Default to **spawn** when the new ask is in a different subsystem.";
+Default to **continue** when the new ask shares >50% of the prior worker's read files / search terms. Default to **spawn** when the new ask is in a different subsystem.
+
+**Worked example.** A worker `w-research` finishes investigating
+`crates/auth.rs` and reports `<task-notification status=\"completed\">`
+with a summary of three candidate fixes. The user now asks about a
+related token-expiry edge case in the same file. **Continue** —
+`SendMessageToWorker { worker_id: \"w-research\", message: \"Also check
+the boundary case where expires_at == now — should the comparison be
+< or <= ? Same file, look at line 142.\" }`. The worker re-enters its
+loaded context (already has the file open) and answers without
+re-reading. If instead the user asks about `crates/db.rs`, **spawn
+fresh** with `TeamCreate` — different subsystem, no overlap.";
 
 const SYNTHESIS_DISCIPLINE: &str = "\
 ## Synthesis discipline

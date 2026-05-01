@@ -1954,6 +1954,41 @@ admin RPC + http_server bootstrap into main.rs (single
 shared boot-order refactor — folded with 82.10.h.b /
 82.11 / 82.12 / 82.13 / 82.14 deferreds).
 
+### Phase 84.3 — fork-as-tool spawn pipeline + transcript resume
+
+Phase 84.3 shipped the `WorkerRegistry` trait + `InMemoryWorkerRegistry`
++ `SendMessageToWorkerTool` with all four spec error scenarios
+covered (24 tests). Deferred:
+
+- **Producer side: fork-as-tool spawn pipeline** — the coordinator-
+  side wrapper that turns a `TeamCreate` (or analogous) tool call
+  into a forked subagent run, registers it as `Running` in the
+  WorkerRegistry, and on exit upserts the snapshot with
+  `Completed`/`Terminated` plus the message-count from the fork's
+  final `messages` vec. Without this, the registry is never
+  populated by real usage; today only test code calls `upsert`.
+
+- **Consumer side: transcript resume execution** — when
+  `SendMessageToWorker` returns `Continued`, the actual work of
+  loading the worker's prior `messages`, appending the operator-
+  supplied `message` as a new user turn, running another fork-loop
+  turn, and emitting the resulting `<task-notification>` (via
+  `ForkResult::to_task_notification` from 84.2) into the
+  coordinator's session. The success path's `pipeline_pending:
+  true` flag exists so a coordinator can verify the request was
+  accepted while this consumer is still under construction.
+
+- **Integration test**: spawn → notification → continue → resumed
+  session sees prior tool calls in transcript. Spec calls out
+  this as a 84.3 done criterion; today the producer + consumer
+  pipeline doesn't exist as a single end-to-end path, so the
+  integration test lands when both halves above ship.
+
+Target phase: 84.6 (or wherever fork-as-tool wraps `TeamCreate`).
+Folds with the broader fork-spawn-pipeline that emerges around the
+worker-persona sub-phase (84.4) when the worker is no longer just
+a peer-broker entity.
+
 ### Phase 84.2 — task-notification consumer wire-up
 
 Phase 84.2 shipped the `TaskNotification` type (driver-types) +
