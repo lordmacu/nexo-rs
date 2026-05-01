@@ -26,9 +26,21 @@ What's inside:
 - **`BindingContext`** — `(channel, account_id, agent_id,
   session_id, binding_id, mcp_channel_source)` tuple stamped on
   every tool call. Read it from `params._meta.nexo.binding`.
-- **`build_meta_value` / `parse_binding_from_meta`** — the
-  inverse pair around the dual-write `_meta` payload. The
-  daemon emits, the microapp parses.
+  Stable across turns within a binding.
+- **`InboundMessageMeta`** — per-turn metadata about the
+  message that triggered the agent turn (kind, sender_id,
+  msg_id, inbound_ts, reply_to_msg_id, has_media,
+  origin_session_id). Read it from `params._meta.nexo.inbound`.
+  Provider-agnostic shape; same for whatsapp / future channels /
+  webhook / event-subscriber / delegation / heartbeat.
+- **`InboundKind`** — 3-way discriminator
+  (`external_user` / `internal_system` / `inter_session`)
+  surfacing the origin of the turn so microapps can branch
+  handlers without re-deriving from sender presence alone.
+- **`build_meta_value` / `parse_binding_from_meta` /
+  `parse_inbound_from_meta`** — the inverse trio around the
+  dual-write `_meta` payload. The daemon emits, the microapp
+  parses.
 - **`WebhookEnvelope`** — typed JSON envelope the daemon
   publishes to NATS after every accepted webhook request.
 - **`format_webhook_source`** — Phase 72 turn-log marker
@@ -37,7 +49,10 @@ What's inside:
 Round-trip example:
 
 ```rust
-use nexo_tool_meta::{parse_binding_from_meta, BindingContext};
+use nexo_tool_meta::{
+    parse_binding_from_meta, parse_inbound_from_meta,
+    BindingContext, InboundKind,
+};
 
 // Inside a JSON-RPC `tools/call` handler.
 fn handle_call(args: &serde_json::Value) {
@@ -46,16 +61,83 @@ fn handle_call(args: &serde_json::Value) {
         // Route the work to the right tenant.
         match binding.channel.as_deref() {
             Some("whatsapp") => { /* WA-specific */ }
-            Some("telegram") => { /* TG-specific */ }
-            _ => { /* default */ }
+            _ => { /* future channels */ }
         }
     } else {
         // Bindingless path: delegation receive, heartbeat
         // bootstrap, tests. Microapps that don't care still
         // see the legacy flat block at `meta["agent_id"]` etc.
     }
+
+    // Per-turn metadata: who sent what, when, replying to which
+    // earlier message, with media or not.
+    if let Some(inbound) = parse_inbound_from_meta(meta) {
+        match inbound.kind {
+            InboundKind::ExternalUser => {
+                // Real end-user — apply per-sender rate limits,
+                // anti-loop heuristics, etc.
+                let _sender = inbound.sender_id.as_deref();
+                let _msg_id = inbound.msg_id.as_deref();
+            }
+            InboundKind::InternalSystem => {
+                // Cron tick / scheduler / yaml-declared internal
+                // event — skip user-facing checks.
+            }
+            InboundKind::InterSession => {
+                // Peer-agent delegation — `origin_session_id`
+                // carries the calling peer's request token.
+                let _origin = inbound.origin_session_id;
+            }
+            _ => { /* future kinds */ }
+        }
+    }
 }
 ```
+
+### Wire layout
+
+Both buckets live as siblings under `_meta.nexo.*`:
+
+```json
+{
+  "_meta": {
+    "agent_id": "ana",
+    "session_id": "00000000-0000-0000-0000-000000000000",
+    "nexo": {
+      "binding": {
+        "agent_id": "ana",
+        "channel": "whatsapp",
+        "account_id": "personal",
+        "binding_id": "whatsapp:personal"
+      },
+      "inbound": {
+        "kind": "external_user",
+        "sender_id": "+5491100",
+        "msg_id": "wa.ABCD1234",
+        "inbound_ts": "2026-05-01T12:34:56Z",
+        "reply_to_msg_id": "wa.PREV0001",
+        "has_media": false
+      }
+    }
+  }
+}
+```
+
+Either bucket can be absent: `binding` is omitted on bindingless
+paths (delegation receive, heartbeat, tests), `inbound` is omitted
+when the producer didn't populate it (legacy paths predating
+Phase 82.5). A microapp must tolerate either being missing.
+
+### Producers
+
+| Path | `kind` | `sender_id` | `msg_id` | Source |
+|------|--------|-------------|----------|--------|
+| whatsapp inbound | `external_user` | E.164 phone | `wa.<id>` | core runtime intake |
+| event-subscriber | yaml-declared | JSONPath extract | event id | core runtime synthesizer |
+| webhook receiver | yaml-declared (via subscriber) | header/body extract | request id | webhook receiver → subscriber |
+| delegation receive | `inter_session` | None | None | core runtime route_sub |
+| proactive tick | `internal_system` | None | None | core runtime heartbeat_sub |
+| email-followup tick | `internal_system` | None | None | llm_behavior |
 
 ### `nexo-webhook-receiver`
 

@@ -516,33 +516,63 @@ Done criteria:
   buffer; overflow logged.
 - 4+ unit tests + 1 integration test.
 
-#### 82.5 — Inbound message metadata in `BindingContext`   ⬜
+#### 82.5 — Inbound message metadata in `_meta.nexo.inbound`   ✅  (shipped 2026-05-01)
 
-Tools need access to the original message metadata: `msg_id`
-for marking-read, `channel_msg_id` for reply-to/quote, and
-`attachment_urls` for media handling. Today the agent prompt
-sees the text but tool args don't auto-include metadata.
+Provider-agnostic per-turn metadata stamped as a peer of
+`_meta.nexo.binding` so microapps see who sent what, when,
+replying to which earlier message, with media or not — without
+having to re-derive it from each tool's payload.
 
-Scope:
-- Extend `BindingContext` (82.1) with `inbound_msg_ref:
-  Option<InboundMsgRef>`.
-- `InboundMsgRef { msg_id, channel_msg_id, sender_id,
-  received_at, attachment_urls: Vec<String>,
-  payload_json: Option<Value> }`.
-- Phase 26 reply adapters read `channel_msg_id` from outbound
-  ref to do native quote/reply where the channel supports
-  it.
-- Attachment URLs are signed/short-lived per Phase 6.5 media
-  rules.
+**Shape (`crates/tool-meta/src/inbound.rs`):**
+- `InboundKind` 3-way enum: `external_user | internal_system |
+  inter_session`.
+- `InboundMessageMeta { kind, sender_id, msg_id, inbound_ts,
+  reply_to_msg_id, has_media, origin_session_id }`. All fields
+  except `kind` optional. `#[non_exhaustive]` for forward-compat.
 
-Done criteria:
-- All four channel adapters (WA/TG/Email/web) populate
-  `inbound_msg_ref` correctly.
-- Quote/reply preserved in WA outbound when `reply_to_msg_id`
-  matches an `inbound_msg_ref.channel_msg_id`.
-- 5+ unit tests covering each channel + attachment round-trip
-  + JSON payload preservation for `event_subscriber` (82.4)
-  bindings.
+**Producers wired:**
+- WhatsApp inbound (provider-agnostic helper
+  `runtime::extract_inbound_meta` reads `from`/`msg_id`/
+  `timestamp`/`reply_to` from the flattened plugin payload —
+  same shape extends to telegram/email/future channels day-1).
+- Event-subscriber binding (yaml-declared
+  `inbound_kind: external_user | internal_system`, default
+  `external_user`). Synthesizer stamps it on the synthesised
+  payload; intake helper honors it.
+- Webhook receiver (transitive — publishes to operator-declared
+  topic, EventSubscriberBinding subscribes and republishes
+  through the same meta path).
+- Delegation receive (`InterSession`, `origin_session_id =
+  msg.correlation_id`).
+- Proactive ticks + email-followup ticks (`InternalSystem`).
+
+**Architecture detail:** AgentContext is per-session-stable, but
+inbound meta is per-turn. Solution: `InboundMessage` carries the
+meta as `Option<InboundMessageMeta>` (built at intake), and the
+per-turn dispatch loop layers it on the cloned `turn_ctx` via
+`AgentContext::with_inbound_meta` before invoking tools.
+`ctx.build_meta_value()` then stamps the *current* turn's meta on
+outgoing extension/MCP tool calls.
+
+**SDK integration (`nexo-microapp-sdk`):**
+`ToolCtx::inbound() -> Option<&InboundMessageMeta>` and
+`HookCtx::inbound()` accessors. Test harness gains
+`call_tool_with_inbound` / `call_tool_with_binding_and_inbound`.
+
+**Tests:** 11 unit tests in `nexo-tool-meta` (round-trip, strict
+unknown-kind reject, provider-agnostic id strings) + 4 SDK tests
++ 7 core runtime tests (helper extraction, kind override,
+delegation/heartbeat/internal-system shapes).
+
+**Deferred follow-ups:**
+- Telegram / email / browser / google plugin producers — framework
+  shape supports them; wire-up when a microapp future requires.
+- PII redact env var (`NEXO_PII_REDACT=full|tail4|none`) for
+  `sender_id` in tracing logs.
+- `chat_type` (private/group/channel) field — defer until demand.
+- 82.3.b synergy: `OutboundDispatcher::send_text` should read
+  `ctx.inbound().reply_to_msg_id` for native quote/reply
+  threading when the runtime ships.
 
 #### 82.6 — Per-extension `state_root` convention + CLI   ⬜
 
