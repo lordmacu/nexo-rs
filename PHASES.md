@@ -9352,7 +9352,7 @@ the coordinator's parser can match deterministically.
   rendered envelope; if `task-notification` parsing fails, the
   block is treated as plain text (no panic, no drop).
 
-#### 84.3 — `SendMessageToWorker` continuation LLM tool   ⬜
+#### 84.3 — `SendMessageToWorker` continuation LLM tool   ✅  (shipped 2026-05-01 — pipeline-pending)
 
 The coordinator needs to re-engage a finished worker with its
 loaded context (Section 5 of the coordinator persona). Today the

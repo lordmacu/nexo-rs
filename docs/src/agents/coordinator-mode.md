@@ -148,6 +148,56 @@ so 84.3 has one canonical path.
 returns `None` when the input lacks the envelope, so legacy
 consumers that read raw final text keep working during the rollout.
 
+## `SendMessageToWorker` continuation tool (Phase 84.3)
+
+The coordinator can re-engage a finished worker by appending a new
+user turn to its loaded session context. Distinct from
+`SendToPeer` (peer-to-peer messaging to a live agent) and
+`TeamCreate` (spawn fresh worker with empty context).
+
+```jsonc
+{
+  "tool": "SendMessageToWorker",
+  "args": {
+    "worker_id": "w-research",         // task-id from prior <task-notification>
+    "message": "Continue: investigate the token-expiry boundary at auth.rs:142"
+  }
+}
+```
+
+### Response shape
+
+| Outcome | `kind` | Notes |
+|---|---|---|
+| Worker exists, finished, this binding spawned it | `Continued` | Returns `worker_id`, `prior_status`, `messages_count`, `pipeline_pending: true` |
+| `worker_id` matches no registry entry in this binding | `UnknownWorker` | Same error returned for cross-binding probes (defense-in-depth — no existence oracle) |
+| Worker exists but is `Running` | `WorkerStillRunning` | Use `SendToPeer` for live peer messaging |
+| Message > 32 KiB | `MessageTooLarge` | Hard cap |
+| Binding has no resolved channel/account | `BindingUnresolved` | Synthesised policies (delegation, heartbeat) refuse cleanly |
+| Binding role isn't coordinator | `RoleRefused` | Defense-in-depth — even if `allowed_tools: ["*"]` |
+
+### Cross-binding isolation
+
+The registry keys workers by `(coordinator_binding_key, worker_id)`,
+where `coordinator_binding_key` comes from
+`EffectiveBindingPolicy.binding_id()` — the canonical
+`<channel>:<account_id|"default">` render. A worker registered
+under binding A is invisible to binding B; the lookup returns
+`Unknown`, not `WrongBinding`, so binding B can't enumerate
+binding A's worker ids.
+
+### Pipeline pending
+
+The 84.3 sub-phase ships the type, the registry, the tool, and
+all four spec error scenarios. The actual transcript-resume
+execution (loading the worker's prior `messages`, appending the
+new user turn, running another fork loop, emitting a fresh
+`<task-notification>` on completion) is deferred to the
+fork-as-tool spawn pipeline that lives outside this sub-phase.
+Today the success path returns `pipeline_pending: true` so a
+coordinator can verify the request was accepted; the resume
+itself wires up alongside the worker-spawn pipeline.
+
 ## Composition with other phases
 
 | Phase | Composition |
