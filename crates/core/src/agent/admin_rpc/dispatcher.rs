@@ -27,6 +27,13 @@ use super::audit::{
     InMemoryAuditWriter,
 };
 use super::capabilities::CapabilitySet;
+use super::domains::agents::YamlPatcher;
+
+/// Reload signal callback — invoked by domain handlers after
+/// successful yaml mutations to trigger Phase 18 hot-reload.
+/// Production wiring passes a closure that calls
+/// `ConfigReloadCoordinator::trigger_reload`.
+pub type ReloadSignal = Arc<dyn Fn() + Send + Sync>;
 
 /// Typed admin RPC errors returned to the SDK side, matching the
 /// JSON-RPC error code conventions documented in the spec.
@@ -117,19 +124,29 @@ impl AdminRpcResult {
 /// Routes `nexo/admin/<domain>/<method>` requests to handlers,
 /// consults [`CapabilitySet`] for the operator-granted capability
 /// before each call, writes one [`AdminAuditRow`] per dispatch.
-///
-/// Sub-phase scope:
-/// - **82.10.a**: shape + mock `nexo/admin/echo` route (no
-///   capability check).
-/// - **82.10.b** (now): `CapabilitySet` enforcement + audit log.
-///   Echo route gains a placeholder capability `_echo` for tests.
-/// - **82.10.c-f**: 5 domain handlers (agents / credentials /
-///   pairing / llm_providers / channels) registered against this
-///   same dispatcher.
-#[derive(Debug)]
+#[derive(Clone)]
 pub struct AdminRpcDispatcher {
     capabilities: Arc<CapabilitySet>,
     audit: Arc<dyn AdminAuditWriter>,
+    /// Phase 82.10.c — yaml mutation surface used by the
+    /// `agents` domain handlers. `None` = domain unavailable
+    /// (returns -32601 for `nexo/admin/agents/*`). Production
+    /// wiring constructs the adapter from `nexo_setup::yaml_patch`.
+    agents_yaml: Option<Arc<dyn YamlPatcher>>,
+    /// Phase 82.10.c — Phase 18 reload trigger called after
+    /// successful yaml mutations. `None` = no-op (for early-boot
+    /// tests).
+    reload_signal: Option<ReloadSignal>,
+}
+
+impl std::fmt::Debug for AdminRpcDispatcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AdminRpcDispatcher")
+            .field("audit", &self.audit)
+            .field("agents_yaml", &self.agents_yaml.is_some())
+            .field("reload_signal", &self.reload_signal.is_some())
+            .finish()
+    }
 }
 
 impl Default for AdminRpcDispatcher {
@@ -140,13 +157,13 @@ impl Default for AdminRpcDispatcher {
 
 impl AdminRpcDispatcher {
     /// Build a dispatcher with empty capability grants and an
-    /// in-memory audit writer. Production callers wire real
-    /// capabilities via [`Self::with_capabilities`] and the
-    /// SQLite writer via [`Self::with_audit_writer`] (82.10.g).
+    /// in-memory audit writer.
     pub fn new() -> Self {
         Self {
             capabilities: CapabilitySet::empty(),
             audit: Arc::new(InMemoryAuditWriter::new()),
+            agents_yaml: None,
+            reload_signal: None,
         }
     }
 
@@ -164,15 +181,29 @@ impl AdminRpcDispatcher {
         self
     }
 
-    /// Capability required for each method. `_echo` is the mock
-    /// route's placeholder. Domain methods land alongside their
-    /// handler registration in 82.10.c-f.
+    /// Phase 82.10.c — install the agents domain. Production
+    /// passes a `YamlPatcher` adapter wrapping
+    /// `nexo_setup::yaml_patch::*`.
+    pub fn with_agents_domain(
+        mut self,
+        yaml: Arc<dyn YamlPatcher>,
+        reload: ReloadSignal,
+    ) -> Self {
+        self.agents_yaml = Some(yaml);
+        self.reload_signal = Some(reload);
+        self
+    }
+
+    /// Capability required for each method. Method routing also
+    /// happens here — `None` = unknown method.
     fn required_capability(method: &str) -> Option<&'static str> {
         match method {
             "nexo/admin/echo" => Some("_echo"),
-            // Domain methods registered in 82.10.c-f. Until those
-            // ship, every other method returns method-not-found
-            // (no capability lookup).
+            "nexo/admin/agents/list"
+            | "nexo/admin/agents/get"
+            | "nexo/admin/agents/upsert"
+            | "nexo/admin/agents/delete" => Some("agents_crud"),
+            // Other domains registered in 82.10.d-f.
             _ => None,
         }
     }
@@ -246,8 +277,7 @@ impl AdminRpcDispatcher {
         result
     }
 
-    /// Method router. 82.10.b: only `nexo/admin/echo` registered.
-    /// 82.10.c-f extend this with the 5 domain dispatchers.
+    /// Method router.
     async fn call_handler(
         &self,
         microapp_id: &str,
@@ -259,6 +289,36 @@ impl AdminRpcDispatcher {
                 "echoed": params,
                 "microapp_id": microapp_id,
             })),
+            "nexo/admin/agents/list" => match &self.agents_yaml {
+                Some(yaml) => super::domains::agents::list(yaml.as_ref(), params),
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "agents domain not configured".into(),
+                )),
+            },
+            "nexo/admin/agents/get" => match &self.agents_yaml {
+                Some(yaml) => super::domains::agents::get(yaml.as_ref(), params),
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "agents domain not configured".into(),
+                )),
+            },
+            "nexo/admin/agents/upsert" => match (&self.agents_yaml, &self.reload_signal) {
+                (Some(yaml), Some(reload)) => {
+                    let trigger = reload.clone();
+                    super::domains::agents::upsert(yaml.as_ref(), params, &move || trigger())
+                }
+                _ => AdminRpcResult::err(AdminRpcError::Internal(
+                    "agents domain not configured".into(),
+                )),
+            },
+            "nexo/admin/agents/delete" => match (&self.agents_yaml, &self.reload_signal) {
+                (Some(yaml), Some(reload)) => {
+                    let trigger = reload.clone();
+                    super::domains::agents::delete(yaml.as_ref(), params, &move || trigger())
+                }
+                _ => AdminRpcResult::err(AdminRpcError::Internal(
+                    "agents domain not configured".into(),
+                )),
+            },
             // unreachable — `required_capability` already filtered
             // unknown methods before we got here. Defensive.
             other => AdminRpcResult::err(AdminRpcError::MethodNotFound(format!(
@@ -323,7 +383,7 @@ mod tests {
     async fn dispatch_unknown_method_returns_method_not_found() {
         let d = AdminRpcDispatcher::new();
         let result = d
-            .dispatch("agent-creator", "nexo/admin/agents/list", Value::Null)
+            .dispatch("agent-creator", "nexo/admin/totally_unknown", Value::Null)
             .await;
         let err = result.error.expect("error");
         assert!(matches!(err, AdminRpcError::MethodNotFound(_)));
