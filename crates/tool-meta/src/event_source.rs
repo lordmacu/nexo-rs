@@ -53,6 +53,29 @@ pub fn format_event_subscriber_source(source_id: &str) -> String {
     format!("event:{source_id}")
 }
 
+/// Phase 82.3 turn-log marker. Returns
+/// `"dispatch:<extension>:<channel>:<account_id>"` so the audit
+/// row distinguishes outbound publishes initiated by an extension
+/// from agent-initiated tool calls. Mirrors the `"event:..."` and
+/// `"webhook:..."` conventions.
+///
+/// # Example
+///
+/// ```
+/// use nexo_tool_meta::format_dispatch_source;
+/// assert_eq!(
+///     format_dispatch_source("marketing-saas", "whatsapp", "personal"),
+///     "dispatch:marketing-saas:whatsapp:personal"
+/// );
+/// ```
+pub fn format_dispatch_source(
+    extension_id: &str,
+    channel: &str,
+    account_id: &str,
+) -> String {
+    format!("dispatch:{extension_id}:{channel}:{account_id}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -102,5 +125,19 @@ mod tests {
             "event:github_main"
         );
         assert_eq!(format_event_subscriber_source(""), "event:");
+    }
+
+    #[test]
+    fn format_dispatch_marker_concatenates_three_segments() {
+        assert_eq!(
+            format_dispatch_source("marketing-saas", "whatsapp", "personal"),
+            "dispatch:marketing-saas:whatsapp:personal"
+        );
+    }
+
+    #[test]
+    fn format_dispatch_marker_handles_empty_segments() {
+        // Pass-through; sanitisation is the boot supervisor's job.
+        assert_eq!(format_dispatch_source("", "", ""), "dispatch:::");
     }
 }

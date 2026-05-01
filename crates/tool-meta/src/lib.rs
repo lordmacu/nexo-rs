@@ -47,7 +47,9 @@ pub mod template;
 pub mod webhook;
 
 pub use binding::{binding_id_render, BindingContext};
-pub use event_source::{format_event_subscriber_source, EventSourceMeta};
+pub use event_source::{
+    format_dispatch_source, format_event_subscriber_source, EventSourceMeta,
+};
 pub use meta::{build_meta_value, parse_binding_from_meta, BINDING_KEY, META_KEY, NEXO_NAMESPACE};
 pub use template::{render_template, MISSING_PLACEHOLDER};
 pub use webhook::{format_webhook_source, WebhookEnvelope, ENVELOPE_SCHEMA_VERSION};
