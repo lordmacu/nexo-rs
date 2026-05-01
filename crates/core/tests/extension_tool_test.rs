@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use nexo_broker::AnyBroker;
 use nexo_config::types::agents::{AgentConfig, AgentRuntimeConfig, HeartbeatConfig, ModelConfig};
-use nexo_core::agent::{AgentContext, ExtensionTool, ToolRegistry};
+use nexo_core::agent::{AgentContext, ExtensionTool, ToolHandler, ToolRegistry};
 use nexo_core::session::SessionManager;
 use nexo_extensions::{ExtensionManifest, StdioRuntime};
 use serde_json::json;
@@ -160,6 +160,101 @@ async fn extension_tool_registers_and_dispatches() {
         .expect("call ok");
     assert_eq!(result["echoed"]["x"], 1);
     assert_eq!(result["echoed"]["msg"], "hola");
+
+    rt.shutdown().await;
+}
+
+// ───────────────────────────────────────────────────────────────────
+// Phase 82.1 Step 8 — e2e BindingContext propagation
+// ───────────────────────────────────────────────────────────────────
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn extension_tool_passthrough_emits_nexo_binding_block() {
+    use nexo_core::agent::context::BindingContext;
+    use uuid::Uuid;
+
+    let manifest = manifest_for_echo();
+    let rt = StdioRuntime::spawn(&manifest, std::env::temp_dir())
+        .await
+        .expect("spawn");
+    let rt = Arc::new(rt);
+
+    // Build the ExtensionTool with passthrough ON — same wiring an
+    // operator gets via `[context] passthrough = true` in
+    // `plugin.toml` (Phase 11.5 follow-up).
+    let pid = manifest.id();
+    let desc = rt.handshake().tools[0].clone();
+    let handler = ExtensionTool::new(pid, desc.name.clone(), Arc::clone(&rt))
+        .with_context_passthrough(true);
+
+    // Simulate what the runtime intake does when an inbound message
+    // matches a Phase 17 binding: AgentContext gets a populated
+    // BindingContext carrying (channel, account_id, binding_id).
+    let broker = AnyBroker::local();
+    let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
+    let session = Uuid::nil();
+    let mut ctx = AgentContext::new("ana", agent_cfg(), broker, sessions).with_session_id(session);
+    ctx.binding = Some(BindingContext {
+        agent_id: "ana".into(),
+        session_id: Some(session),
+        channel: Some("whatsapp".into()),
+        account_id: Some("personal".into()),
+        binding_id: Some("whatsapp:personal".into()),
+        mcp_channel_source: None,
+    });
+
+    let result = handler
+        .call(&ctx, json!({"to": "+5491100", "body": "hola"}))
+        .await
+        .expect("call ok");
+
+    let echoed = &result["echoed"];
+
+    // Original args reach the extension untouched.
+    assert_eq!(echoed["to"], "+5491100");
+    assert_eq!(echoed["body"], "hola");
+
+    // Legacy flat block (backward-compat surface).
+    assert_eq!(echoed["_meta"]["agent_id"], "ana");
+    assert_eq!(echoed["_meta"]["session_id"], session.to_string());
+
+    // Nested binding block — Phase 82.1 contract.
+    let binding = &echoed["_meta"]["nexo"]["binding"];
+    assert_eq!(binding["agent_id"], "ana");
+    assert_eq!(binding["channel"], "whatsapp");
+    assert_eq!(binding["account_id"], "personal");
+    assert_eq!(binding["binding_id"], "whatsapp:personal");
+    assert!(binding.get("mcp_channel_source").is_none());
+
+    rt.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn extension_tool_passthrough_off_omits_meta_entirely() {
+    let manifest = manifest_for_echo();
+    let rt = StdioRuntime::spawn(&manifest, std::env::temp_dir())
+        .await
+        .expect("spawn");
+    let rt = Arc::new(rt);
+
+    // passthrough left at default (false) — no _meta should leak,
+    // even when the AgentContext does carry a binding.
+    let pid = manifest.id();
+    let desc = rt.handshake().tools[0].clone();
+    let handler = ExtensionTool::new(pid, desc.name.clone(), Arc::clone(&rt));
+
+    let broker = AnyBroker::local();
+    let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
+    let mut ctx = AgentContext::new("ana", agent_cfg(), broker, sessions);
+    ctx.binding = Some(nexo_core::agent::context::BindingContext::agent_only("ana"));
+
+    let result = handler.call(&ctx, json!({"x": 1})).await.expect("call ok");
+
+    assert_eq!(result["echoed"]["x"], 1);
+    // Defense for the deny-unknown-fields case described in the
+    // ExtensionContextConfig docstring: extensions with strict
+    // schemas must never see an unsolicited _meta key.
+    assert!(result["echoed"].get("_meta").is_none());
 
     rt.shutdown().await;
 }
