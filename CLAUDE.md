@@ -13,7 +13,7 @@ tracker**.
 | 81 | Plug-and-play plugin system | 2/13 | 🔄 (81.13 DEFER) |
 | 82 | Multi-tenant SaaS extension enablement | 15/15 | ✅ shipped 2026-05-01 (follow-ups in FOLLOWUPS.md) |
 | 83 | Microapp framework foundation | 1/17 | 🔄 (3 new sub-phases: 83.15 testing harness, 83.16 error→operator, 83.17 config schema validation) |
-| 84 | Coordinator agent persona + worker continuation | 4/5 | 🔄 (84.1-4 ✅; next: 84.5 docs sync + CHANGELOG) |
+| 84 | Coordinator agent persona + worker continuation | 5/5 | ✅ shipped 2026-05-01 (follow-ups in FOLLOWUPS.md) |
 | 85 | Compaction hardening: reactive recovery + cache-aware micro-compact | 0/2 | ⬜ |
 | 86 | Memory observability | 0/1 | ⬜ (86.2 ❌ DROPPED) |
 | 87 | LLM-as-judge verifier (+ container runtime DEFER) | 0/1 | ⬜ AFTER-PHASE-84 (87.2 DEFER until Phase 32 or 82 hardening) |

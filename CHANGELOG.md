@@ -10,6 +10,53 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 84.1 → 84.4 — Coordinator + Worker personas + worker
+  continuation primitives.** Closes the gap where `BindingRole`
+  (Phase 77.18) only restricted the tool surface but didn't
+  shape the agent's behavior. Four sub-phases shipped:
+  - **84.1**: `crates/core/src/agent/personas/coordinator.rs`
+    exposes `coordinator_system_prompt(CoordinatorPromptCtx)`.
+    `EffectiveBindingPolicy::resolve` prepends the persona block
+    when `BindingRole::Coordinator`. Order: persona → agent
+    prompt → optional `# CHANNEL ADDENDUM`. Sections cover role
+    declaration, curated tool list, `<task-notification>` envelope
+    handling, continue-vs-spawn decision matrix, synthesis
+    discipline, verification rigor, parallelism, optional
+    scratchpad (gated on `TodoWrite`), optional known-workers.
+  - **84.2**: `nexo-driver-types::TaskNotification` + `TaskStatus`
+    + `TaskUsage` with `to_xml()` / `parse_block()`. All five XML
+    entities escaped; `<result>` and `<usage>` collapse out when
+    None. `parse_block` returns `None` for plain text so legacy
+    callers keep working. `nexo-fork::fork_handle` gains
+    `ForkResult::to_task_notification` +
+    `fork_error_to_task_notification` so producer paths render
+    via one canonical helper.
+  - **84.3**: `WorkerRegistry` trait +
+    `InMemoryWorkerRegistry` keyed by
+    `(coordinator_binding_key, worker_id)`. `SendMessageToWorker`
+    coordinator-only LLM tool with all four spec error scenarios:
+    `Continued` (success), `UnknownWorker`, `WorkerStillRunning`,
+    cross-binding probe returns byte-identical `UnknownWorker`
+    (defense-in-depth — no existence oracle). Success path
+    returns `pipeline_pending: true` until the fork-as-tool
+    spawn pipeline ships (logged in FOLLOWUPS).
+  - **84.4**: `crates/core/src/agent/personas/worker.rs` with
+    sister `worker_system_prompt(WorkerPromptCtx)` builder.
+    Boot-path `apply_persona_prefix` dispatches on role
+    (Coordinator → coord, Worker → worker, Proactive/Unset →
+    no-op). Worker block emphasizes terse parseable output,
+    self-verification before reporting done, and explicit
+    "you don't have TeamCreate" reminder.
+
+  Coverage: 12 (84.1 — 7 builder + 5 wire) + 19 (84.2 — 11
+  envelope + 8 producer) + 24 (84.3 — 7 registry + 17 tool) +
+  9 (84.4 — 6 builder + 3 wire) = 64 net-new tests across
+  Phase 84.1-4. Docs: `docs/src/agents/coordinator-mode.md`
+  and `docs/src/agents/worker-mode.md`. Deferred follow-ups
+  (fork-as-tool spawn pipeline, transcript resume execution,
+  e2e integration test, admin-ui "Agent role" panel) tracked
+  in FOLLOWUPS.md under Phases 84.2/84.3.
+
 - **Phase 80.1.b.b.b.c — per-goal_id multi-runner auto_dream
   dispatch.** Closes the multi-tenant gap left open by Phase
   80.1.b.b.b.b: when N agents have `auto_dream.enabled = true`
