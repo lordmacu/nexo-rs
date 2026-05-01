@@ -129,6 +129,67 @@ pub struct ExtensionManifest {
     /// `status` tools, and ops tooling.
     #[serde(default)]
     pub requires: Requires,
+    /// Phase 82.3 — per-channel `account_id` allowlist the extension is
+    /// allowed to dispatch outbound to via `nexo/dispatch`. Empty (or
+    /// absent) means no outbound permitted; every dispatch request gets
+    /// `unauthorized_binding` rejected.
+    #[serde(default)]
+    pub outbound_bindings: OutboundBindings,
+}
+
+/// Phase 82.3 — outbound dispatch allowlist.
+///
+/// TOML shape:
+/// ```toml
+/// [outbound_bindings]
+/// whatsapp = ["personal", "business"]
+/// telegram = ["sales"]
+/// ```
+///
+/// Operator declares which `(channel, account_id)` pairs the extension
+/// is allowed to publish to. Defense-in-depth — the credentials gauntlet
+/// (Phase 17) still enforces per-channel auth, but this gate gives the
+/// extension a typed `unauthorized_binding` error before any broker
+/// activity.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(transparent)]
+pub struct OutboundBindings(pub std::collections::BTreeMap<String, Vec<String>>);
+
+impl OutboundBindings {
+    /// `true` when the `(channel, account_id)` pair appears in the
+    /// allowlist.
+    pub fn allows(&self, channel: &str, account_id: &str) -> bool {
+        self.0
+            .get(channel)
+            .map(|accounts| accounts.iter().any(|a| a == account_id))
+            .unwrap_or(false)
+    }
+
+    /// Number of declared channels (zero = no outbound permitted).
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// `true` when no channels are declared.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Reject channel/account_id pairs with empty strings — they would
+    /// produce a malformed `plugin.outbound..<empty>` topic.
+    pub fn validate(&self) -> Result<(), String> {
+        for (channel, accounts) in &self.0 {
+            if channel.trim().is_empty() {
+                return Err("outbound_bindings has empty channel name".into());
+            }
+            if accounts.iter().any(|a| a.trim().is_empty()) {
+                return Err(format!(
+                    "outbound_bindings.{channel} contains empty account_id"
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Per-extension context propagation knobs. Defaults to no injection so
@@ -598,6 +659,72 @@ command = "./ctx-ext"
         let m = ExtensionManifest::from_str(MINIMAL_STDIO).unwrap();
         assert!(m.requires.bins.is_empty());
         assert!(m.requires.env.is_empty());
+    }
+
+    #[test]
+    fn outbound_bindings_default_empty() {
+        let m = ExtensionManifest::from_str(MINIMAL_STDIO).unwrap();
+        assert!(m.outbound_bindings.is_empty());
+        assert!(!m.outbound_bindings.allows("whatsapp", "personal"));
+    }
+
+    #[test]
+    fn outbound_bindings_parses_single_channel() {
+        let src = r#"
+[plugin]
+id = "marketing"
+version = "0.1.0"
+
+[capabilities]
+tools = ["echo"]
+
+[transport]
+kind = "stdio"
+command = "./marketing"
+
+[outbound_bindings]
+whatsapp = ["personal"]
+"#;
+        let m = ExtensionManifest::from_str(src).unwrap();
+        assert!(m.outbound_bindings.allows("whatsapp", "personal"));
+        assert!(!m.outbound_bindings.allows("whatsapp", "business"));
+        assert!(!m.outbound_bindings.allows("telegram", "personal"));
+        assert_eq!(m.outbound_bindings.len(), 1);
+    }
+
+    #[test]
+    fn outbound_bindings_parses_multi_channel() {
+        let src = r#"
+[plugin]
+id = "marketing"
+version = "0.1.0"
+
+[capabilities]
+tools = ["echo"]
+
+[transport]
+kind = "stdio"
+command = "./marketing"
+
+[outbound_bindings]
+whatsapp = ["personal", "business"]
+telegram = ["sales"]
+"#;
+        let m = ExtensionManifest::from_str(src).unwrap();
+        assert!(m.outbound_bindings.allows("whatsapp", "personal"));
+        assert!(m.outbound_bindings.allows("whatsapp", "business"));
+        assert!(m.outbound_bindings.allows("telegram", "sales"));
+        assert!(!m.outbound_bindings.allows("email", "support"));
+        assert_eq!(m.outbound_bindings.len(), 2);
+        m.outbound_bindings.validate().unwrap();
+    }
+
+    #[test]
+    fn outbound_bindings_validate_rejects_empty_account() {
+        let mut bindings = std::collections::BTreeMap::new();
+        bindings.insert("whatsapp".to_string(), vec!["personal".into(), "".into()]);
+        let ob = super::OutboundBindings(bindings);
+        assert!(ob.validate().is_err());
     }
 
     #[test]
