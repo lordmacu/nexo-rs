@@ -11,7 +11,7 @@ tracker**.
 |-------|------|-----------|--------|
 | 80 | Autonomous assistant mode | 25/22 | 🔄 follow-ups open (80.7 DEFER, 80.13 ❌ DROPPED) |
 | 81 | Plug-and-play plugin system | 2/13 | 🔄 (81.13 DEFER) |
-| 82 | Multi-tenant SaaS extension enablement | 6/14 | 🔄 |
+| 82 | Multi-tenant SaaS extension enablement | 15/15 | ✅ shipped 2026-05-01 (follow-ups in FOLLOWUPS.md) |
 | 83 | Microapp framework foundation | 1/17 | 🔄 (3 new sub-phases: 83.15 testing harness, 83.16 error→operator, 83.17 config schema validation) |
 | 84 | Coordinator agent persona + worker continuation | 0/5 | ⭐ **PRIORITY — next pickup** (brainstorm + spec + plan approved; ready for `/forge ejecutar 84.1`) |
 | 85 | Compaction hardening: reactive recovery + cache-aware micro-compact | 0/2 | ⬜ |
