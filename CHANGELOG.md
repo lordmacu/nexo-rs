@@ -10,6 +10,38 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 80.1.b.b.b — AutoDreamRunner consumer wired in
+  `Mode::Run`.** Per-agent loop in `src/main.rs` constructs an
+  `AutoDreamRunner` for every agent with `auto_dream.enabled =
+  true`. Wires the full constellation:
+  `nexo_fork::AgentToolDispatcher` (new bridge between the
+  parent's `Arc<ToolRegistry>` and the fork loop's
+  `ToolDispatcher` trait), `parent_ctx_template`,
+  `MemoryGitCheckpointer`, and the **Phase 36.2 MS-3
+  `PreDreamSnapshotAdapter`** when
+  `memory.snapshot.auto_pre_dream = true`. Closes MS-3: every
+  fork pass now captures a rollback bundle before mutating
+  memdir.
+  - The `dream_now` LLM tool (Phase 80.1.c) registers per-agent
+    when `NEXO_DREAM_NOW_ENABLED=true` (capability inventory
+    entry, Phase 80.1.c.b) and `transcripts_dir` is non-empty.
+  - Per-agent tracing emit at boot:
+    `auto_dream_enabled`, `has_pre_dream_snapshot`,
+    `has_git_checkpointer`, `dream_now_registered`.
+  - `nexo_fork::AgentToolDispatcher` lives in `nexo-fork`
+    (cycle-clean — nexo-fork already depends on nexo-core).
+    Routes `tool_name → handler.call(...)` against a cloned
+    `AgentContext`. Failure modes mapped to `Err(String)`:
+    unknown tool / handler error / serialization error.
+  - Coverage: 6 new dispatcher tests in `nexo-fork`, 2 new
+    boot-pre-dream-snapshot tests in `nexo-dream`.
+  - Out of scope (Phase 80.1.b.b.b.b follow-up):
+    `DriverOrchestrator.builder().auto_dream(primary)` wire +
+    multi-runner routing — the builder lives inside
+    `boot_dispatch_ctx_if_enabled` which runs before the
+    per-agent loop, so the runner Vec isn't populated when the
+    orchestrator constructs. Refactor needed.
+
 - **Phase 36.2 — Agent memory snapshots (`nexo-memory-snapshot`
   crate, AGENT_MEMORY_SNAPSHOT feature).** Atomic point-in-time
   bundle of an agent's full memory state — git memdir + four

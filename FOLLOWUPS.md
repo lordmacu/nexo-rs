@@ -80,7 +80,32 @@ does not block production use of the feature.
   default behavior). SQLite stays globally shared — same as
   before — until the long-term store goes per-agent.
 
-- **MS-3 — `BootDeps` consumer in `Mode::Run` for AutoDreamRunner** ⬜
+- **MS-3 — `BootDeps` consumer in `Mode::Run` for AutoDreamRunner**
+  ✅ **shipped** (commit `5fe2cc0`). `src/main.rs::Mode::Run`
+  per-agent loop now constructs an `AutoDreamRunner` for every
+  agent with `auto_dream.enabled = true`, threading the
+  `PreDreamSnapshotAdapter` over the shared `Arc<dyn
+  MemorySnapshotter>` when `memory.snapshot.auto_pre_dream` is
+  on. The runner reports `has_pre_dream_snapshot()` true, the
+  fork pass fires the adapter via the
+  `nexo_driver_types::PreDreamSnapshotHook` contract, and the
+  resulting bundle lands at
+  `auto:pre-dream-<run_id>` per Phase 36.2.
+
+- **80.1.b.b.b.b — multi-runner orchestrator wire** ⬜
+  - Today the `DriverOrchestrator::builder().auto_dream(...)`
+    call site lives inside `boot_dispatch_ctx_if_enabled` which
+    runs BEFORE the per-agent loop, so `auto_dream_runners`
+    isn't populated when the orchestrator builds. Refactoring
+    options: (a) pre-walk `cfg.agents.agents` to build runners
+    before the dispatch boot call; or (b) defer-handle pattern
+    so the orchestrator subscribes after it's built.
+  - Multi-runner routing within the orchestrator (>1 agent
+    with auto_dream enabled) requires per-goal_id dispatch.
+    Current MVP picks the first runner only.
+  - Effort: ~1 day of investigation + refactor.
+
+- _(closed)_ MS-3 placeholder removed — see `5fe2cc0`
   - `nexo_dream::boot::BootDeps` already accepts
     `pre_dream_snapshot: Option<Arc<dyn PreDreamSnapshotHook>>` +
     `pre_dream_tenant: String`, and `build_runner` threads them

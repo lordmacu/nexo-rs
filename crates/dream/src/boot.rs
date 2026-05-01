@@ -470,4 +470,58 @@ mod tests {
         .unwrap();
         assert!(runner.is_some());
     }
+
+    /// Phase 80.1.b.b.b consumer / MS-3 close — when `BootDeps`
+    /// carries a `pre_dream_snapshot` adapter, the constructed
+    /// runner reports `has_pre_dream_snapshot() == true`. Without
+    /// the field, the runner stays without an anchor.
+    #[tokio::test]
+    async fn build_runner_attaches_pre_dream_snapshot_when_provided() {
+        use async_trait::async_trait;
+
+        struct StubHook;
+        #[async_trait]
+        impl nexo_driver_types::PreDreamSnapshotHook for StubHook {
+            async fn snapshot_before_dream(
+                &self,
+                _agent_id: &str,
+                _tenant: &str,
+                _run_id: &str,
+            ) -> Result<(), String> {
+                Ok(())
+            }
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let mut deps = mk_deps(
+            tmp.path().to_path_buf(),
+            tmp.path().to_path_buf(),
+            enabled_cfg(),
+        );
+        deps.pre_dream_snapshot = Some(Arc::new(StubHook));
+        deps.pre_dream_tenant = "acme".into();
+
+        let runner = build_runner(deps).await.unwrap().expect("runner present");
+        assert!(
+            runner.has_pre_dream_snapshot(),
+            "MS-3: runner must report the pre-dream snapshot adapter is wired"
+        );
+    }
+
+    #[tokio::test]
+    async fn build_runner_skips_pre_dream_snapshot_when_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let runner = build_runner(mk_deps(
+            tmp.path().to_path_buf(),
+            tmp.path().to_path_buf(),
+            enabled_cfg(),
+        ))
+        .await
+        .unwrap()
+        .expect("runner present");
+        assert!(
+            !runner.has_pre_dream_snapshot(),
+            "default `pre_dream_snapshot: None` must leave the runner without an adapter"
+        );
+    }
 }
