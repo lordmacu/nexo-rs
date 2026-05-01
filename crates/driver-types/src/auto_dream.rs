@@ -46,6 +46,13 @@ pub enum AutoDreamOutcomeKind {
 /// no parent prompt-cache share).
 #[derive(Debug, Clone)]
 pub struct DreamContext {
+    /// Phase 80.1.b.b.b.c — owning agent identifier. Populated by
+    /// the orchestrator's `run_turn` from
+    /// `goal.metadata["agent_id"]`. Routing key for the
+    /// multi-runner orchestrator: an empty string means the goal
+    /// did not declare its owning agent and the orchestrator skips
+    /// `auto_dream` dispatch with a warn.
+    pub agent_id: String,
     pub goal_id: GoalId,
     pub session_id: String,
     pub transcript_dir: PathBuf,

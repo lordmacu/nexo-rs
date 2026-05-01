@@ -10,6 +10,40 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 80.1.b.b.b.c — per-goal_id multi-runner auto_dream
+  dispatch.** Closes the multi-tenant gap left open by Phase
+  80.1.b.b.b.b: when N agents have `auto_dream.enabled = true`
+  the orchestrator now dispatches the per-turn hook against the
+  runner that owns the active goal, instead of the
+  first-non-None primary. `DriverOrchestrator::auto_dream`
+  swapped from `Mutex<Option<Arc<dyn AutoDreamHook>>>` to
+  `Mutex<HashMap<String, Arc<dyn AutoDreamHook>>>` keyed by
+  owning `agent_id`. Routing key flows via
+  `goal.metadata["agent_id"]`, populated at goal-construction
+  time using new `Goal::with_agent_id` /
+  `Goal::agent_id` helpers (no breaking schema change — the
+  metadata bag already existed). `DreamContext.agent_id` field
+  added so runners receive the resolved key alongside
+  `goal_id`. Public API: `register_auto_dream(agent_id, hook)`
+  (returns the displaced hook), `unregister_auto_dream`,
+  `auto_dream_agents` (sorted ids — stable for assertions),
+  `has_auto_dream`. Boot wire in `src/main.rs::Mode::Run` now
+  iterates every active runner and registers it under its
+  `agent_id`; single `tracing::info!` summary lists
+  `agents = N, registered = [...]`. Empty agent_id with
+  non-empty registry → warn (the goal didn't declare its
+  owner); unknown agent_id → debug (multi-tenant SaaS
+  legitimately carries stale metadata). Backward compat shim
+  `set_auto_dream(Option<...>)` from Phase 80.1.b.b.b.b retained
+  behind `#[deprecated]` and routes to the sentinel `"_default"`
+  key with warn-once via `OnceLock`. Verification: 5 integration
+  tests in `crates/driver-loop/tests/orchestrator_auto_dream_registry_test.rs`
+  plus 4 unit tests on the `with_agent_id` / `agent_id()`
+  helpers. Hot-reload propagation (Phase 18 reload loop calling
+  the new register/unregister APIs), lifecycle event for
+  admin-ui, and Prometheus gauge for `auto_dream_agents.len()`
+  remain open follow-ups.
+
 - **Phase 80.1.b.b.b.b — AutoDreamRunner now attaches to the
   orchestrator at runtime.** Fixes the structural gap that
   Phase 80.1.b.b.b consumer left open: the

@@ -4582,11 +4582,12 @@ async fn main() -> Result<()> {
         auto_dream_runners.push((agent_id.clone(), runner_opt));
     }
 
-    // Phase 80.1.b.b.b.b — runtime-attach the primary
-    // `AutoDreamRunner` to the dispatch orchestrator (built earlier
-    // inside `boot_dispatch_ctx_if_enabled`, before this per-agent
-    // loop populated the runner Vec). Multi-runner routing is a
-    // follow-up — MVP picks the first non-None runner.
+    // Phase 80.1.b.b.b.c — runtime-register every active
+    // `AutoDreamRunner` on the dispatch orchestrator under its
+    // owning `agent_id`. The orchestrator's per-turn dispatcher
+    // looks up `goal.metadata["agent_id"]` against this map, so a
+    // turn whose goal carries the agent id triggers the matching
+    // runner instead of a single hardcoded primary.
     {
         let active: Vec<(String, Arc<nexo_dream::auto_dream::AutoDreamRunner>)> =
             auto_dream_runners
@@ -4594,31 +4595,27 @@ async fn main() -> Result<()> {
                 .filter_map(|(id, r)| r.as_ref().map(|x| (id.clone(), x.clone())))
                 .collect();
         if !active.is_empty() {
-            let primary_id = active[0].0.clone();
-            if active.len() > 1 {
-                let skipped: Vec<&str> =
-                    active.iter().skip(1).map(|(id, _)| id.as_str()).collect();
-                tracing::warn!(
-                    target: "boot.auto_dream",
-                    primary = %primary_id,
-                    skipped = ?skipped,
-                    "multiple agents have auto_dream enabled; only the primary attaches to the orchestrator (multi-runner routing is a follow-up)"
-                );
-            }
             if let Some(dc) = dispatch_ctx.as_ref() {
-                let primary: Arc<dyn nexo_driver_types::AutoDreamHook> =
-                    active.into_iter().next().map(|(_, r)| r).unwrap();
-                dc.orchestrator.set_auto_dream(Some(primary));
+                let mut registered_count = 0_usize;
+                for (agent_id, runner) in active.iter() {
+                    let hook: Arc<dyn nexo_driver_types::AutoDreamHook> = runner.clone();
+                    dc.orchestrator
+                        .register_auto_dream(agent_id.clone(), hook);
+                    registered_count += 1;
+                }
                 tracing::info!(
                     target: "boot.auto_dream",
-                    primary = %primary_id,
-                    "auto_dream runner attached to orchestrator"
+                    agents = registered_count,
+                    registered = ?dc.orchestrator.auto_dream_agents(),
+                    "auto_dream runners registered on orchestrator"
                 );
             } else {
+                let agents: Vec<&str> =
+                    active.iter().map(|(id, _)| id.as_str()).collect();
                 tracing::info!(
                     target: "boot.auto_dream",
-                    primary = %primary_id,
-                    "auto_dream runner built but dispatch orchestrator is disabled (no agent has dispatch_capability=full); runner only reachable via dream_now LLM tool"
+                    agents = ?agents,
+                    "auto_dream runners built but dispatch orchestrator is disabled (no agent has dispatch_capability=full); runners only reachable via dream_now LLM tool"
                 );
             }
         }

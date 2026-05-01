@@ -94,17 +94,19 @@ pub struct DriverOrchestrator {
     extract_memories: Option<Arc<ExtractMemories>>,
     /// Phase 77.5 — root directory for persistent memory files.
     memory_dir: Option<PathBuf>,
-    /// Phase 80.1.b — post-turn autoDream consolidation hook.
-    /// `None` disables; runner is owned by `nexo-dream` impl.
-    /// Phase 80.1.b.b.b.b — wrapped in a `Mutex<Option<...>>` so
-    /// the boot wire can attach the runner AFTER the orchestrator
-    /// is constructed (the per-agent loop runs after the
-    /// orchestrator builder fires, by `boot_dispatch_ctx_if_enabled`
-    /// design). `arc_swap::ArcSwapOption` requires `T: Sized`, so
-    /// a stdlib mutex is the lowest-friction wrap for a `dyn`
-    /// trait object. Per-turn read cost = one uncontended lock
-    /// acquire.
-    auto_dream: std::sync::Mutex<Option<Arc<dyn AutoDreamHook>>>,
+    /// Phase 80.1.b — post-turn autoDream consolidation hooks.
+    /// Phase 80.1.b.b.b.c — multi-runner registry. Routing key
+    /// is the owning agent id (`goal.metadata["agent_id"]`).
+    /// Empty map = no auto_dream wired. Dispatch reads the agent
+    /// id from the active goal and looks up the hook here;
+    /// missing key = silent skip (debug log). HashMap chosen
+    /// over `arc_swap::ArcSwapOption` because the latter requires
+    /// `T: Sized` and `dyn AutoDreamHook` is unsized; per-turn
+    /// read cost = one uncontended lock acquire + an O(1) hash
+    /// lookup, negligible vs the rest of a turn.
+    auto_dream: std::sync::Mutex<
+        std::collections::HashMap<String, Arc<dyn AutoDreamHook>>,
+    >,
     bin_path: PathBuf,
     socket_path: PathBuf,
     /// Owns the spawned socket server; cancelling kills it.
@@ -269,7 +271,19 @@ impl DriverOrchestratorBuilder {
             compact_store,
             extract_memories: self.extract_memories,
             memory_dir: self.memory_dir,
-            auto_dream: std::sync::Mutex::new(self.auto_dream),
+            auto_dream: {
+                // Phase 80.1.b.b.b.c — preserve the
+                // `builder.auto_dream(hook).build()` shape by
+                // registering the legacy single hook under the
+                // sentinel `"_default"` key. New code calls
+                // `register_auto_dream(agent_id, hook)` directly.
+                let mut m: std::collections::HashMap<String, Arc<dyn AutoDreamHook>> =
+                    std::collections::HashMap::new();
+                if let Some(hook) = self.auto_dream {
+                    m.insert("_default".to_string(), hook);
+                }
+                std::sync::Mutex::new(m)
+            },
             progress_every_turns,
             pause_signals: Arc::new(DashMap::new()),
             cancel_tokens: Arc::new(DashMap::new()),
@@ -289,26 +303,86 @@ impl DriverOrchestrator {
         DriverOrchestratorBuilder::default()
     }
 
-    /// Phase 80.1.b.b.b.b — runtime-attach the autoDream hook.
-    /// Used when the boot wire constructs the orchestrator before
-    /// the per-agent runner loop runs (the standard order today,
-    /// see `boot_dispatch_ctx_if_enabled`). Pass `None` to detach.
-    /// Atomic + thread-safe: subsequent `run_turn` calls observe
-    /// the new value on their next mutex acquire.
-    pub fn set_auto_dream(&self, hook: Option<Arc<dyn AutoDreamHook>>) {
+    /// Phase 80.1.b.b.b.c — register a runner for `agent_id`.
+    /// Returns the previous runner under that key (if any) so
+    /// callers can take ownership of the displaced hook for
+    /// cleanup. Atomic + thread-safe: subsequent `run_turn` calls
+    /// for goals with that agent_id observe the new value on
+    /// their next mutex acquire.
+    pub fn register_auto_dream(
+        &self,
+        agent_id: String,
+        hook: Arc<dyn AutoDreamHook>,
+    ) -> Option<Arc<dyn AutoDreamHook>> {
         let mut guard = self
             .auto_dream
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        *guard = hook;
+        guard.insert(agent_id, hook)
     }
 
-    /// Read-only accessor used by tests + observability.
+    /// Phase 80.1.b.b.b.c — atomically remove the runner for
+    /// `agent_id`. Returns the removed hook if one was registered.
+    pub fn unregister_auto_dream(
+        &self,
+        agent_id: &str,
+    ) -> Option<Arc<dyn AutoDreamHook>> {
+        let mut guard = self
+            .auto_dream
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        guard.remove(agent_id)
+    }
+
+    /// Phase 80.1.b.b.b.c — sorted list of agent ids that
+    /// currently have a runner registered. Used by tests +
+    /// admin-ui observability; the sort makes assertions stable.
+    pub fn auto_dream_agents(&self) -> Vec<String> {
+        let guard = self
+            .auto_dream
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let mut ids: Vec<String> = guard.keys().cloned().collect();
+        ids.sort();
+        ids
+    }
+
+    /// `true` when at least one auto_dream runner is registered.
     pub fn has_auto_dream(&self) -> bool {
-        self.auto_dream
+        !self
+            .auto_dream
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .is_some()
+            .is_empty()
+    }
+
+    /// Phase 80.1.b.b.b.b compat shim. New code should call
+    /// [`register_auto_dream(agent_id, hook)`](Self::register_auto_dream)
+    /// for multi-runner routing. `Some(hook)` registers under the
+    /// sentinel `"_default"` key; `None` clears every registered
+    /// runner. Emits a deprecation warn once per process.
+    #[deprecated(
+        since = "0.1.2",
+        note = "use register_auto_dream(agent_id, hook) for multi-runner routing"
+    )]
+    pub fn set_auto_dream(&self, hook: Option<Arc<dyn AutoDreamHook>>) {
+        static WARNED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+        WARNED.get_or_init(|| {
+            tracing::warn!(
+                target: "auto_dream.deprecation",
+                "DriverOrchestrator::set_auto_dream is deprecated; use register_auto_dream(agent_id, hook) for per-agent routing"
+            );
+        });
+        let mut guard = self
+            .auto_dream
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        match hook {
+            Some(h) => {
+                guard.insert("_default".to_string(), h);
+            }
+            None => guard.clear(),
+        }
     }
 
     /// Phase 67.C.2 — request the goal's loop to hold before its
@@ -761,13 +835,43 @@ impl DriverOrchestrator {
             // fail cheap when cadence not yet due. Errors absorbed via
             // `let _ = ...` so a runner failure NEVER breaks the
             // driver-loop turn.
-            // Phase 80.1.b.b.b.b — clone the Arc out of the
-            // mutex so we drop the lock before awaiting the hook.
-            let ad_opt = self
-                .auto_dream
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .clone();
+            //
+            // Phase 80.1.b.b.b.c — multi-runner dispatch. Resolve
+            // agent_id from goal.metadata (canonical convention,
+            // see `Goal::with_agent_id`) and look up the runner
+            // for that agent in the orchestrator's HashMap. Empty
+            // agent_id with a non-empty registry → warn (operator
+            // forgot the convention); unknown agent_id → debug
+            // (multi-tenant deployments legitimately have stale
+            // metadata after agent removal).
+            let owning_agent_id = goal.agent_id().unwrap_or("").to_string();
+            let ad_opt: Option<Arc<dyn AutoDreamHook>> = {
+                let map = self
+                    .auto_dream
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner());
+                if owning_agent_id.is_empty() {
+                    if !map.is_empty() {
+                        tracing::warn!(
+                            target: "auto_dream.dispatch",
+                            goal_id = %goal_id.0,
+                            "auto_dream skipped: goal.metadata.agent_id is empty (use Goal::with_agent_id)"
+                        );
+                    }
+                    None
+                } else {
+                    let hook = map.get(&owning_agent_id).cloned();
+                    if hook.is_none() && !map.is_empty() {
+                        tracing::debug!(
+                            target: "auto_dream.dispatch",
+                            goal_id = %goal_id.0,
+                            agent_id = %owning_agent_id,
+                            "auto_dream skipped: no runner registered for this agent"
+                        );
+                    }
+                    hook
+                }
+            };
             if let Some(ad) = ad_opt {
                 let transcript_dir = self
                     .workspace_manager
@@ -775,6 +879,7 @@ impl DriverOrchestrator {
                     .join(".transcripts")
                     .join(goal_id.0.to_string());
                 let dream_ctx = DreamContextLite {
+                    agent_id: owning_agent_id.clone(),
                     goal_id,
                     session_id: goal_id.0.to_string(),
                     transcript_dir,
