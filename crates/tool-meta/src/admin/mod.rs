@@ -10,6 +10,7 @@
 //! `agents`; subsequent phases land `credentials`, `pairing`,
 //! `llm_providers`, `channels` (82.10.d-f).
 
+pub mod agent_events;
 pub mod agents;
 pub mod channels;
 pub mod credentials;
