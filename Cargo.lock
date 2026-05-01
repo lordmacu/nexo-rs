@@ -3737,6 +3737,7 @@ dependencies = [
  "nexo-setup",
  "nexo-taskflow",
  "nexo-team-store",
+ "nexo-tool-meta",
  "nexo-tunnel",
  "nexo-web-search",
  "nexo-webhook-receiver",
@@ -3826,6 +3827,16 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "nexo-tool-meta"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
  "uuid",
 ]
 
