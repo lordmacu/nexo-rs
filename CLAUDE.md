@@ -15,6 +15,7 @@ tracker**.
 | 83 | Microapp framework foundation | 1/14 | 🔄 |
 | 84 | Coordinator agent persona + worker continuation | 0/5 | ⭐ **PRIORITY — next pickup** (brainstorm + spec + plan approved; ready for `/forge ejecutar 84.1`) |
 | 85 | Compaction hardening: reactive recovery + cache-aware micro-compact | 0/2 | ⬜ |
+| 86 | Memory observability + cache debug affordance | 0/2 | ⬜ |
 
 - **Detail per sub-phase** → [`PHASES.md`](PHASES.md)
 - **Open follow-ups** (deferred items, deferreds against closed phases) → [`FOLLOWUPS.md`](FOLLOWUPS.md)

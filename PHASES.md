@@ -9578,6 +9578,115 @@ features evaluated and explicitly skipped:
   autonomous — operator observability already lives in admin-ui
   metrics.
 
+### Phase 86 — Memory observability + cache debug affordance   ⬜
+
+Two unrelated cache/memory affordances surfaced from prior-art
+review. They are bundled here because both are small, both deepen
+operator visibility, and both leverage the existing Phase 28
+metrics infrastructure.
+
+**What will make this better than the reference implementation we
+mined**:
+
+- The reference's memory-shape telemetry **phones home to an
+  upstream analytics endpoint**. Nexo deliberately routes the same
+  signals to **local Prometheus + admin-ui only** — zero outbound
+  network calls. Strictly better for a self-hosted framework: the
+  operator gets the diagnostic data, no third-party gets it.
+- The reference's cache-break command lives in the interactive TUI
+  prompt input. Nexo is a daemon — exposing it as a `nexo agent
+  debug` CLI subcommand means it's scriptable + audit-loggable
+  through the existing CLI surface.
+
+#### 86.1 — Local memory-shape metrics (Prometheus)   ⬜
+
+Emit counters + histograms for memory recall + write activity
+to the Phase 28 metrics registry. Operator wires them into Grafana
+panels via the existing scrape endpoint. No phone-home.
+
+**Reference shape (file:line — search the local research/leak
+tree)**:
+- `memdir/findRelevantMemories.ts:66` — feature gate +
+  `logMemoryRecallShape(memories[], selected[])` call. The
+  denominator (all available) vs. numerator (selected) is the
+  selection-rate signal.
+- `utils/sessionFileAccessHooks.ts:210` —
+  `logMemoryWriteShape(tool_name, input, filePath, scope)` write
+  side. The `scope` field maps to nexo's
+  `MutationScope::SqliteLongTerm` etc.
+
+**Done criteria**:
+- `crates/memory/src/long_term.rs::remember_typed` emits
+  `memory_write_total{agent_id, type}` counter where `type` ∈
+  `{user, feedback, project, reference}` per the Phase 77.5
+  taxonomy.
+- `crates/memory/src/long_term.rs::recall*` (every public recall
+  fn) emits `memory_recall_total{agent_id, scope}` counter +
+  `memory_recall_selected_ratio` gauge (selected / available;
+  recorded as ratio not raw counts so cardinality stays bounded).
+- `crates/driver-loop/src/extract_memories.rs::store_extracted`
+  emits `memory_write_size_bytes` histogram bucketed at 256 / 1k /
+  4k / 16k / 64k bytes.
+- `crates/memory/src/long_term.rs::recall*` emits
+  `memory_age_at_recall_seconds` histogram per recalled memory
+  (max age — captures long-tail retrieval).
+- All metrics gated by Phase 28's existing
+  `NEXO_METRICS_ENABLED` env (no new toggle, no new INVENTORY
+  entry).
+- 4 unit tests in `crates/memory/src/long_term.rs::tests` covering
+  one emit per fn (write, recall hit, recall miss, age histogram
+  bucket).
+- 1 integration test in `crates/memory/tests/`: write 5 memories
+  of mixed types → recall → assert all 4 metric families recorded
+  with expected label sets.
+- `docs/src/operations/memory-observability.md` page lists the new
+  metrics + a sample Grafana panel JSON for "memory health" with
+  selection-rate trend, write-volume by type, and age histogram.
+- `admin-ui/PHASES.md` "Memory observability" panel checkbox:
+  surfaces the same metrics via the admin-ui dashboard backend.
+
+#### 86.2 — `nexo agent debug break-cache` CLI subcommand   ⬜
+
+Operator-facing tool to force a prompt-cache miss on a binding's
+next turn. Use case: debugging cache regression in production
+when automatic detection (Phase 77.4) reports nothing but an
+operator suspects a stale cache hit. Audit-logged.
+
+**Reference shape (file:line)**:
+- `context.ts:131` — feature gate + ephemeral `systemPromptInjection`
+  string mechanism. The injection-into-system-prompt approach is
+  the pattern; the slash-command UX is irrelevant to a daemon.
+
+**Done criteria**:
+- New CLI subcommand `nexo agent debug break-cache --binding=<id>`
+  in `crates/cli` (or wherever the existing `nexo agent` subcommand
+  lives — likely `src/main.rs` `Mode::Agent`).
+- Subcommand sets a one-shot `[CACHE_BREAKER: <uuid>]` injection
+  on the named binding's next system-prompt assembly. Cleared
+  after consumption (idempotent — second call without a turn in
+  between overwrites the prior uuid).
+- Mechanism: extend `EffectiveBindingPolicy` with
+  `pending_cache_breaker: Option<String>` (transient, NOT
+  persisted; lives in the runtime cache only). Cleared on
+  consumption inside `resolve_prompt`.
+- Audit log entry `agent.debug.cache_breaker_set{binding, uuid,
+  operator_caller}` emitted on the broker so admin-ui +
+  Prometheus see who triggered the break.
+- 3 unit tests: subcommand wiring (parses flags), policy carries
+  the breaker into `resolve_prompt`, second turn after consumption
+  has no breaker.
+- 1 integration test under `crates/driver-loop/tests/`: simulate
+  the CLI flow → first turn's rendered system prompt contains
+  `[CACHE_BREAKER:`, second turn does not.
+- Capability inventory: NO new entry needed (operator-only CLI,
+  no env toggle, requires server-side admin auth via existing
+  `nexo agent` auth gate).
+
+**Phase 86 effort estimate**: 86.1 (~1 day, 4 metric families +
+6 tests + docs page), 86.2 (~0.5 day, transient policy field +
+1 CLI subcommand + audit log + 4 tests). Total ~1.5 dev-days.
+Uncorrelated — either ships first.
+
 ### Phases 82 + 83 — Microapp framework
 
 The full planning for the microapp framework — Phase 82
