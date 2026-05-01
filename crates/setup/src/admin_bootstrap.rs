@@ -24,20 +24,42 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use nexo_config::types::extensions::ExtensionsConfig;
+use nexo_core::agent::admin_rpc::domains::agent_events::TranscriptReader;
 use nexo_core::agent::admin_rpc::{
     validate_capabilities_at_boot, AdminAuditWriter, AdminCapabilityDecl, AdminRpcDispatcher,
     CapabilitySet, DispatcherAdminRouter, InMemoryAuditWriter, SqliteAdminAuditWriter,
 };
 use nexo_core::agent::admin_rpc::dispatcher::ReloadSignal;
+use nexo_core::agent::agent_events::{
+    AgentEventEmitter, BroadcastAgentEventEmitter, NoopAgentEventEmitter,
+};
 use nexo_extensions::runtime::admin_router::SharedAdminRouter;
 use nexo_extensions::runtime::stdio::StdioSpawnOptions;
 use nexo_plugin_manifest::manifest::AdminCapabilities;
+use nexo_tool_meta::admin::agent_events::{AgentEventKind, AGENT_EVENT_NOTIFY_METHOD};
+use tokio::sync::broadcast::error::RecvError;
 use tokio::task::JoinHandle;
 
 use crate::admin_adapters::{
-    AgentsYamlPatcher, DeferredAdminOutboundWriter, FilesystemCredentialStore,
-    InMemoryPairingChallengeStore, LlmYamlPatcherFs,
+    json_rpc_notification, AgentsYamlPatcher, DeferredAdminOutboundWriter,
+    FilesystemCredentialStore, InMemoryPairingChallengeStore, LlmYamlPatcherFs,
 };
+
+/// Capability that lets a microapp receive `TranscriptAppended`
+/// events.
+const CAP_TRANSCRIPTS_SUBSCRIBE: &str = "transcripts_subscribe";
+/// Capability that lets a microapp receive every emitted kind.
+const CAP_AGENT_EVENTS_SUBSCRIBE_ALL: &str = "agent_events_subscribe_all";
+/// INVENTORY env var that hard-disables the firehose + backfill
+/// subsystem regardless of grants.
+const ENV_AGENT_EVENTS_ENABLED: &str = "NEXO_MICROAPP_AGENT_EVENTS_ENABLED";
+
+fn agent_events_enabled() -> bool {
+    match std::env::var(ENV_AGENT_EVENTS_ENABLED) {
+        Ok(v) => !matches!(v.trim(), "0" | "false" | "FALSE" | "off" | "OFF" | ""),
+        Err(_) => true,
+    }
+}
 
 /// One bootstrapped microapp: the router that the spawn loop
 /// passes via `StdioSpawnOptions::admin_router`, plus the
@@ -53,6 +75,15 @@ pub struct AdminRpcBootstrap {
     wires: BTreeMap<String, PerMicroappWire>,
     /// Pairing prune task — aborted on drop.
     prune_handle: Option<JoinHandle<()>>,
+    /// Phase 82.11 — per-microapp firehose subscriber tasks.
+    /// Each task reads from the shared broadcast channel and
+    /// forwards filtered frames to the deferred writer for that
+    /// microapp. Aborted on bootstrap drop.
+    subscribe_handles: Vec<JoinHandle<()>>,
+    /// Live emitter — `Arc` so test code can assert subscriber
+    /// counts + spec callers can clone into the
+    /// `TranscriptWriter::with_emitter` builder.
+    event_emitter: Arc<dyn AgentEventEmitter>,
 }
 
 impl std::fmt::Debug for AdminRpcBootstrap {
@@ -67,6 +98,9 @@ impl std::fmt::Debug for AdminRpcBootstrap {
 impl Drop for AdminRpcBootstrap {
     fn drop(&mut self) {
         if let Some(h) = self.prune_handle.take() {
+            h.abort();
+        }
+        for h in self.subscribe_handles.drain(..) {
             h.abort();
         }
     }
@@ -100,7 +134,13 @@ pub struct AdminBootstrapInputs<'a> {
     /// Phase 18 reload signal — invoked by domain handlers
     /// after a successful yaml mutation.
     pub reload_signal: ReloadSignal,
+    /// Phase 82.11 — optional transcripts reader. When `Some`,
+    /// the agent_events admin domain (`list/read/search`) is
+    /// installed on every dispatcher. `None` skips the domain
+    /// (microapps see `-32601` for those methods).
+    pub transcript_reader: Option<Arc<dyn TranscriptReader>>,
 }
+
 
 impl AdminRpcBootstrap {
     /// Build every per-microapp wire. Returns `Ok(None)` when no
@@ -108,6 +148,25 @@ impl AdminRpcBootstrap {
     /// runs without any admin RPC plumbing (zero overhead).
     pub async fn build(
         inputs: AdminBootstrapInputs<'_>,
+    ) -> Result<Option<Self>, AdminBootstrapError> {
+        let firehose_on = agent_events_enabled();
+        Self::build_inner(inputs, firehose_on).await
+    }
+
+    /// Test-only entry point that overrides the
+    /// `NEXO_MICROAPP_AGENT_EVENTS_ENABLED` env-var read with an
+    /// explicit bool. Production paths use [`Self::build`].
+    #[doc(hidden)]
+    pub async fn build_with_firehose(
+        inputs: AdminBootstrapInputs<'_>,
+        firehose_on: bool,
+    ) -> Result<Option<Self>, AdminBootstrapError> {
+        Self::build_inner(inputs, firehose_on).await
+    }
+
+    async fn build_inner(
+        inputs: AdminBootstrapInputs<'_>,
+        firehose_on: bool,
     ) -> Result<Option<Self>, AdminBootstrapError> {
         // Filter to extensions that actually declare admin caps;
         // skip the rest entirely so a daemon with no admin-using
@@ -202,6 +261,32 @@ impl AdminRpcBootstrap {
             })
         };
 
+        // Phase 82.11 — broadcast emitter shared across every
+        // microapp wire. INVENTORY env (`NEXO_MICROAPP_AGENT_EVENTS_ENABLED`)
+        // forces a noop emitter so the boot path costs zero
+        // when the operator hard-disables the firehose. The
+        // backfill admin domain still installs (so a microapp
+        // with `transcripts_read` keeps querying past sessions)
+        // — only the live notification stream is silenced.
+        // `broadcast` is the concrete handle the boot subscribe
+        // path needs (calls `subscribe()` which is not on the
+        // trait); `event_emitter` is the trait handle handed to
+        // `TranscriptWriter::with_emitter`. Both wrap the same
+        // underlying broadcast when the firehose is on.
+        let broadcast: Option<Arc<BroadcastAgentEventEmitter>> = if firehose_on {
+            Some(Arc::new(BroadcastAgentEventEmitter::new()))
+        } else {
+            tracing::warn!(
+                "{} disabled — agent_event firehose silenced; backfill RPC still works",
+                ENV_AGENT_EVENTS_ENABLED,
+            );
+            None
+        };
+        let event_emitter: Arc<dyn AgentEventEmitter> = match broadcast.clone() {
+            Some(b) => b,
+            None => Arc::new(NoopAgentEventEmitter),
+        };
+
         // Build one (router, deferred writer) per declared microapp.
         // Pairing notifier is intentionally omitted for v1: the
         // notifier needs an extra wire from boot's `outbox_tx` to
@@ -211,10 +296,11 @@ impl AdminRpcBootstrap {
         // future follow-up exposes a separate notification queue
         // independent of the response writer.
         let mut wires = BTreeMap::new();
+        let mut subscribe_handles: Vec<JoinHandle<()>> = Vec::new();
         for (id, _decl) in &declared {
             let writer = Arc::new(DeferredAdminOutboundWriter::new());
 
-            let dispatcher = AdminRpcDispatcher::new()
+            let mut dispatcher = AdminRpcDispatcher::new()
                 .with_capabilities(capability_set.clone())
                 .with_audit_writer(audit.clone())
                 .with_agents_domain(agents_yaml.clone(), inputs.reload_signal.clone())
@@ -222,6 +308,37 @@ impl AdminRpcBootstrap {
                 .with_pairing_domain(pairing_store.clone(), None)
                 .with_llm_providers_domain(llm_yaml.clone())
                 .with_channels_domain();
+            if let Some(reader) = inputs.transcript_reader.clone() {
+                dispatcher = dispatcher.with_agent_events_domain(reader);
+            }
+
+            // Phase 82.11 — spawn a per-microapp subscriber when
+            // the operator granted `transcripts_subscribe` or
+            // `agent_events_subscribe_all`. v0 emits only
+            // `TranscriptAppended` so both caps subscribe to the
+            // same stream; the reserved `_subscribe_all` slot
+            // just takes the union of future kinds without any
+            // per-microapp re-config.
+            if let Some(b) = broadcast.as_ref() {
+                let granted = capability_set.granted_for(id);
+                let wants_transcripts = granted
+                    .map(|g| {
+                        g.contains(CAP_TRANSCRIPTS_SUBSCRIBE)
+                            || g.contains(CAP_AGENT_EVENTS_SUBSCRIBE_ALL)
+                    })
+                    .unwrap_or(false);
+                if wants_transcripts {
+                    let mut rx = b.subscribe();
+                    let writer_clone: Arc<DeferredAdminOutboundWriter> =
+                        writer.clone();
+                    let microapp_id = id.clone();
+                    let handle = tokio::spawn(async move {
+                        firehose_subscriber_loop(microapp_id, &mut rx, writer_clone)
+                            .await;
+                    });
+                    subscribe_handles.push(handle);
+                }
+            }
 
             let router = Arc::new(DispatcherAdminRouter::new(
                 Arc::new(dispatcher),
@@ -239,7 +356,19 @@ impl AdminRpcBootstrap {
         Ok(Some(Self {
             wires,
             prune_handle: Some(prune_handle),
+            subscribe_handles,
+            event_emitter,
         }))
+    }
+
+    /// Phase 82.11 — clone of the shared firehose emitter.
+    /// Boot wiring threads this into every `TranscriptWriter`
+    /// via `with_emitter` so appended entries reach the
+    /// broadcast bus. When the bootstrap was built with
+    /// `NEXO_MICROAPP_AGENT_EVENTS_ENABLED=0` this returns the
+    /// `NoopAgentEventEmitter` — writers stay correct + cheap.
+    pub fn event_emitter(&self) -> Arc<dyn AgentEventEmitter> {
+        self.event_emitter.clone()
     }
 
     /// Build the spawn options the extension host should use for
@@ -272,6 +401,14 @@ impl AdminRpcBootstrap {
         }
     }
 
+    /// Phase 82.11 — number of subscribe tasks the boot wired.
+    /// Equals the count of microapps whose grants include
+    /// `transcripts_subscribe` or `agent_events_subscribe_all`.
+    /// `0` when the firehose is INVENTORY-disabled.
+    pub fn subscribe_task_count(&self) -> usize {
+        self.subscribe_handles.len()
+    }
+
     /// `true` when at least one microapp has an admin wire.
     pub fn is_active(&self) -> bool {
         !self.wires.is_empty()
@@ -280,6 +417,43 @@ impl AdminRpcBootstrap {
     /// Microapp ids carrying an admin wire — for boot diagnostics.
     pub fn wired_ids(&self) -> Vec<String> {
         self.wires.keys().cloned().collect()
+    }
+}
+
+/// Per-microapp subscriber loop. Reads from the broadcast
+/// receiver, serializes each frame as a JSON-RPC notification
+/// (no `id`), and writes it through the deferred outbound
+/// writer. `Lagged(n)` events surface as a single `warn` log
+/// — microapps that miss frames re-issue
+/// `agent_events/read` with their last-seen `seq`.
+async fn firehose_subscriber_loop(
+    microapp_id: String,
+    rx: &mut tokio::sync::broadcast::Receiver<AgentEventKind>,
+    writer: Arc<DeferredAdminOutboundWriter>,
+) {
+    use nexo_core::agent::admin_rpc::AdminOutboundWriter;
+    loop {
+        match rx.recv().await {
+            Ok(event) => {
+                let params = serde_json::to_value(&event).unwrap_or_default();
+                let line = json_rpc_notification(AGENT_EVENT_NOTIFY_METHOD, params);
+                writer.send(line).await;
+            }
+            Err(RecvError::Lagged(n)) => {
+                tracing::warn!(
+                    microapp = %microapp_id,
+                    lagged = n,
+                    "agent_event subscriber lagged; microapp should re-issue agent_events/read",
+                );
+            }
+            Err(RecvError::Closed) => {
+                tracing::debug!(
+                    microapp = %microapp_id,
+                    "agent_event broadcast closed; subscriber exiting",
+                );
+                break;
+            }
+        }
     }
 }
 
@@ -327,6 +501,7 @@ mod tests {
             extensions_cfg: &cfg,
             admin_capabilities: &manifests,
             reload_signal: noop_reload(),
+            transcript_reader: None,
         })
         .await
         .unwrap();
@@ -349,6 +524,7 @@ mod tests {
             extensions_cfg: &cfg,
             admin_capabilities: &manifests,
             reload_signal: noop_reload(),
+            transcript_reader: None,
         })
         .await
         .unwrap_err();
@@ -372,6 +548,7 @@ mod tests {
             extensions_cfg: &cfg,
             admin_capabilities: &manifests,
             reload_signal: noop_reload(),
+            transcript_reader: None,
         })
         .await
         .unwrap()
@@ -387,5 +564,130 @@ mod tests {
         assert!(bootstrap
             .spawn_options_for("other", StdioSpawnOptions::default())
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn subscribe_task_spawned_for_microapp_with_transcripts_subscribe() {
+        let cfg = extensions_cfg_with_grant(
+            "agent-creator",
+            &["agents_crud", "transcripts_subscribe"],
+        );
+        let mut manifests = BTreeMap::new();
+        manifests.insert(
+            "agent-creator".into(),
+            admin_caps(&["agents_crud"], &["transcripts_subscribe"]),
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let bootstrap = AdminRpcBootstrap::build_with_firehose(
+            AdminBootstrapInputs {
+                config_dir: dir.path(),
+                secrets_root: dir.path(),
+                audit_db: None,
+                extensions_cfg: &cfg,
+                admin_capabilities: &manifests,
+                reload_signal: noop_reload(),
+                transcript_reader: None,
+            },
+            true,
+        )
+        .await
+        .unwrap()
+        .expect("admin wire built");
+        assert_eq!(
+            bootstrap.subscribe_task_count(),
+            1,
+            "one subscribe task for the granted microapp",
+        );
+    }
+
+    #[tokio::test]
+    async fn no_subscribe_task_without_subscribe_capability() {
+        let cfg = extensions_cfg_with_grant("agent-creator", &["agents_crud"]);
+        let mut manifests = BTreeMap::new();
+        manifests.insert(
+            "agent-creator".into(),
+            admin_caps(&["agents_crud"], &[]),
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let bootstrap = AdminRpcBootstrap::build_with_firehose(
+            AdminBootstrapInputs {
+                config_dir: dir.path(),
+                secrets_root: dir.path(),
+                audit_db: None,
+                extensions_cfg: &cfg,
+                admin_capabilities: &manifests,
+                reload_signal: noop_reload(),
+                transcript_reader: None,
+            },
+            true,
+        )
+        .await
+        .unwrap()
+        .expect("admin wire built");
+        assert_eq!(bootstrap.subscribe_task_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn agent_events_subscribe_all_also_spawns_task() {
+        let cfg = extensions_cfg_with_grant(
+            "audit-app",
+            &["agents_crud", "agent_events_subscribe_all"],
+        );
+        let mut manifests = BTreeMap::new();
+        manifests.insert(
+            "audit-app".into(),
+            admin_caps(&["agents_crud"], &["agent_events_subscribe_all"]),
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let bootstrap = AdminRpcBootstrap::build_with_firehose(
+            AdminBootstrapInputs {
+                config_dir: dir.path(),
+                secrets_root: dir.path(),
+                audit_db: None,
+                extensions_cfg: &cfg,
+                admin_capabilities: &manifests,
+                reload_signal: noop_reload(),
+                transcript_reader: None,
+            },
+            true,
+        )
+        .await
+        .unwrap()
+        .expect("admin wire built");
+        assert_eq!(bootstrap.subscribe_task_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn firehose_off_silences_subscribe_tasks_but_keeps_admin_rpc() {
+        let cfg = extensions_cfg_with_grant(
+            "agent-creator",
+            &["agents_crud", "transcripts_subscribe"],
+        );
+        let mut manifests = BTreeMap::new();
+        manifests.insert(
+            "agent-creator".into(),
+            admin_caps(&["agents_crud"], &["transcripts_subscribe"]),
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let bootstrap = AdminRpcBootstrap::build_with_firehose(
+            AdminBootstrapInputs {
+                config_dir: dir.path(),
+                secrets_root: dir.path(),
+                audit_db: None,
+                extensions_cfg: &cfg,
+                admin_capabilities: &manifests,
+                reload_signal: noop_reload(),
+                transcript_reader: None,
+            },
+            false,
+        )
+        .await
+        .unwrap()
+        .expect("admin wire built");
+        // INVENTORY toggle silences the firehose but the admin
+        // dispatcher (CRUD + agent_events backfill) is still
+        // wired — microapp keeps its router for direct calls.
+        assert_eq!(bootstrap.subscribe_task_count(), 0);
+        assert!(bootstrap.is_active());
     }
 }

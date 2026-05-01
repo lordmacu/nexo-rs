@@ -200,6 +200,20 @@ const INVENTORY: &[CapabilityToggle] = &[
         effect: "Enable `nexo/admin/channels/*` admin RPC domain (microapps can approve/revoke MCP-channel servers in agents.yaml).",
         hint: "export NEXO_MICROAPP_ADMIN_CHANNELS_ENABLED=0",
     },
+    // Phase 82.11 — agent event firehose + admin RPC backfill.
+    // Off → `nexo/admin/agent_events/*` returns -32601 AND the
+    // boot-side broadcast subscriber tasks are not spawned (zero
+    // overhead, zero PII surface). Operator-global kill switch
+    // independent of the per-microapp `transcripts_subscribe` /
+    // `agent_events_subscribe_all` capability grants.
+    CapabilityToggle {
+        extension: "core",
+        env_var: "NEXO_MICROAPP_AGENT_EVENTS_ENABLED",
+        kind: ToggleKind::Boolean,
+        risk: Risk::High,
+        effect: "Enable `nexo/admin/agent_events/*` backfill + `nexo/notify/agent_event` firehose. Off disables the whole subsystem (microapps see -32601 + receive no notifications) regardless of operator grants.",
+        hint: "export NEXO_MICROAPP_AGENT_EVENTS_ENABLED=0  # to disable",
+    },
     CapabilityToggle {
         extension: "onepassword",
         env_var: "OP_ALLOW_REVEAL",
