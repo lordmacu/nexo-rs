@@ -122,6 +122,20 @@ fn extract_envelope_id(payload: &Value) -> Option<Uuid> {
         .and_then(|s| Uuid::parse_str(s).ok())
 }
 
+/// Read `_nexo_event_source` from a re-published inbound payload
+/// and parse it into a typed [`nexo_tool_meta::EventSourceMeta`].
+///
+/// Called by the inbound resolver when matching topics on
+/// `plugin.inbound.event.*`. Returns `None` for payloads without
+/// the field (legacy / native-channel inbounds) or when the field
+/// fails to deserialise (shape mismatch — log + skip).
+pub fn extract_nexo_event_source(
+    payload: &Value,
+) -> Option<nexo_tool_meta::EventSourceMeta> {
+    let raw = payload.as_object()?.get(EVENT_SOURCE_PAYLOAD_FIELD)?;
+    serde_json::from_value(raw.clone()).ok()
+}
+
 /// One subscription task. Cheap to clone (everything inside is
 /// `Arc`-shared); the runtime holds a single `Arc<EventSubscriber>`
 /// and passes it into [`run_event_subscriber`].
@@ -316,5 +330,31 @@ mod skeleton_tests {
             payload[EVENT_SOURCE_PAYLOAD_FIELD]["envelope_id"],
             envelope_id.to_string()
         );
+    }
+
+    #[test]
+    fn extract_nexo_event_source_happy_path() {
+        let binding = mk_binding("github", "webhook.>");
+        let mut binding_t = binding.clone();
+        binding_t.inbound_template = Some("x".into());
+        let event = mk_event("webhook.github.x", serde_json::json!({}));
+        let payload = build_synthesised_payload(&binding_t, &event).unwrap();
+        let meta = extract_nexo_event_source(&payload).unwrap();
+        assert_eq!(meta.subject, "webhook.github.x");
+        assert_eq!(meta.synthesis_mode, "synthesize");
+    }
+
+    #[test]
+    fn extract_nexo_event_source_returns_none_when_missing() {
+        let payload = serde_json::json!({"kind": "message", "from": "x"});
+        assert!(extract_nexo_event_source(&payload).is_none());
+    }
+
+    #[test]
+    fn extract_nexo_event_source_returns_none_for_malformed_shape() {
+        let payload = serde_json::json!({
+            EVENT_SOURCE_PAYLOAD_FIELD: "not-an-object"
+        });
+        assert!(extract_nexo_event_source(&payload).is_none());
     }
 }
