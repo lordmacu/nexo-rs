@@ -271,8 +271,14 @@ async-trait         = { workspace = true }
 [dev-dependencies]
 tempfile            = "3"
 nexo-core           = { path = "crates/core" }
+nexo-config         = { path = "crates/config" }
+nexo-setup          = { path = "crates/setup" }
+nexo-plugin-manifest = { path = "crates/plugin-manifest" }
 tokio               = { workspace = true, features = ["macros", "rt-multi-thread"] }
 serde_json          = { workspace = true }
+serde_yaml          = { workspace = true }
+chrono              = { workspace = true }
+uuid                = { workspace = true }
 
 # The profile that 'dist' will build with
 [profile.dist]

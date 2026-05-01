@@ -922,7 +922,61 @@ Done criteria:
 - Capability declaration in `plugin.toml` validated at boot;
   declared but not granted → boot warn.
 
-#### 82.11 — Agent event firehose + admin RPC (transcript-shaped events as one variant)   ⬜
+#### 82.11 — Agent event firehose + admin RPC (transcript-shaped events as one variant)   ✅  (shipped 2026-05-01)
+
+Six steps shipped:
+- **82.11.1** — `nexo_tool_meta::admin::agent_events` wire
+  shapes (`AgentEventKind` enum `#[non_exhaustive]` with
+  `TranscriptAppended` variant, list/read/search params +
+  responses, `AGENT_EVENT_NOTIFY_METHOD` constant). 4 tests.
+- **82.11.2** — `agent_events` admin domain handlers in
+  `nexo-core` + `TranscriptReader` async trait + capability
+  routing (`transcripts_read`) + `with_agent_events_domain`
+  builder. 7 tests.
+- **82.11.3** — `TranscriptReaderFs` adapter in
+  `nexo-setup::admin_adapters` wrapping `TranscriptWriter` +
+  `TranscriptsIndex`. Entry-only `seq` enumeration so
+  backfill + live agree on values. 4 tests.
+- **82.11.4** — `nexo_core::agent::agent_events` (new module):
+  `AgentEventEmitter` trait + `BroadcastAgentEventEmitter`
+  (`tokio::sync::broadcast`, default cap 256) +
+  `NoopAgentEventEmitter`. `TranscriptWriter` gains
+  `event_emitter` field + `with_emitter` builder; emit hook
+  in `append_entry` post-redaction tracks per-session
+  monotonic `seq` via `DashMap<Uuid, AtomicU64>`. 5 tests.
+- **82.11.5** — INVENTORY env toggle
+  `NEXO_MICROAPP_AGENT_EVENTS_ENABLED` (default `1`).
+  `AdminRpcBootstrap` gains `transcript_reader` input field +
+  `event_emitter()` accessor + per-microapp subscribe loop
+  (`firehose_subscriber_loop`) that drains the broadcast and
+  forwards filtered frames as `nexo/notify/agent_event`
+  through the deferred outbound writer.
+  `transcripts_subscribe` / `agent_events_subscribe_all`
+  capabilities gate which microapps spawn a subscribe task.
+  `RecvError::Lagged` → single `warn` + re-sync; microapps
+  that miss frames re-issue `agent_events/read`. 4 tests.
+- **82.11.6** — integration test (`tests/agent_events_firehose.rs`)
+  spawns a real bootstrap + `TranscriptWriter` with redactor,
+  appends a PII-bearing entry, asserts the microapp's
+  outbound queue receives a JSON-RPC notification with
+  `kind=transcript_appended` + redacted body + monotonic
+  `seq`. Second test asserts a microapp without
+  `transcripts_subscribe` receives nothing. 2 tests.
+
+**Tests:** 4 + 7 + 4 + 5 + 4 + 2 = **26 verde**.
+
+**Deferred (still pending):**
+- Pairing notifier wire — same chicken-and-egg as 82.10.h.b;
+  carried forward in FOLLOWUPS.md.
+- Operator wire-up `None → Some(&bootstrap)` in main.rs —
+  same as 82.10.h.b deferred.
+- `BroadcastAgentEventEmitter` is in-process; future
+  multi-host deployments will need a NATS bridge variant
+  behind the same `AgentEventEmitter` trait.
+
+---
+
+#### 82.11 — original scope notes (kept for context)
 
 Cross-app primitive. Microapps need a programmatic surface to
 **stream and query agent activity** — but agent activity is

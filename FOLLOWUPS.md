@@ -1822,6 +1822,41 @@ Both deferreds are NOT scope-drops; the building blocks are
 fully in place. Target phase: 82.10.h.c (or fold into the next
 82.x phase that touches main.rs boot order).
 
+### Phase 82.11 — agent event firehose follow-ups
+
+Phase 82.11 shipped the full pipeline (wire shapes + handlers
++ adapter + emitter + bootstrap subscribe wire + integration
+test). Three follow-ups stayed deferred:
+
+- **Operator wire-up: `transcript_reader: Some(...)` and the
+  `event_emitter()` swap in `src/main.rs`.** The bootstrap
+  field + accessor exist; `run_extension_discovery` already
+  threads `AdminRpcBootstrap` through. Activating the firehose
+  end-to-end needs three lines in `main()`: build a
+  `TranscriptReaderFs` per agent, hand it to
+  `AdminBootstrapInputs::transcript_reader`, and call
+  `TranscriptWriter::with_emitter(bootstrap.event_emitter())`
+  at writer construction. Same boot-order refactor as the
+  82.10.h.b operator wire-up — folded into that follow-up
+  rather than duplicated here.
+- **NATS bridge variant of `AgentEventEmitter` for multi-host
+  deployments.** v0 is in-process broadcast — perfect for a
+  single-daemon install; multi-host topologies need a NATS
+  subject so a microapp running on a different node hears
+  events from every daemon. Trait is in place; the new impl
+  drops in alongside `BroadcastAgentEventEmitter` without
+  touching the writer hook.
+- **Future kinds beyond `TranscriptAppended`.** `AgentEventKind`
+  is `#[non_exhaustive]` so adding `BatchJobCompleted` /
+  `OutputProduced` / `Custom` is a non-breaking additive
+  change. Each new kind needs (a) the variant in tool-meta,
+  (b) the emit site in whatever subsystem produces it, and (c)
+  optionally an FTS index for `agent_events/search` filtering.
+
+Target phase: 82.10.h.c (folded with 82.10.h.b's main.rs
+wire-up) for the operator wire-up; future phases for the NATS
+bridge + new kinds.
+
 ## Resolved (recent highlights)
 
 - 2026-04-28 — MCP denied-tool override now supports `Heartbeat`

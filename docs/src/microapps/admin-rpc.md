@@ -363,6 +363,86 @@ yet wired** into `AdminRpcBootstrap`. Microapps fall back to
 polling `pairing/status` until a follow-up exposes a separate
 notification queue independent of the response writer.
 
+## Agent events firehose (Phase 82.11)
+
+`agent_events` is the cross-app surface microapps use to stream
+and query agent activity. v0 emits one variant —
+`TranscriptAppended` — but the wire shape is a
+discriminated `#[non_exhaustive]` enum so future kinds (batch
+job completion, image-gen output, custom) land non-breaking.
+
+### Backfill RPC (`nexo/admin/agent_events/*`)
+
+- `nexo/admin/agent_events/list { agent_id, kind?, since_ms?,
+  limit? }` — newest-first window query, default
+  `since_ms = now - 30d`, `limit = 500` clamped to 1000.
+- `nexo/admin/agent_events/read { agent_id, session_id,
+  since_seq?, limit? }` — one-scope ascending tail, exclusive
+  `since_seq` (a microapp that received `seq=4` live re-issues
+  `read` with `since_seq=4` and gets seq=5,6,7,…). Unknown
+  scope returns `events: []`, NOT `-32601`.
+- `nexo/admin/agent_events/search { agent_id, query, kind?,
+  limit? }` — FTS5 query over the redacted body. Backed by the
+  existing `transcripts_fts` virtual table.
+
+All three require capability `transcripts_read`.
+
+### Live notifications (`nexo/notify/agent_event`)
+
+JSON-RPC notification frame, no `id`:
+
+```json
+{"jsonrpc":"2.0","method":"nexo/notify/agent_event",
+ "params":{"kind":"transcript_appended","agent_id":"ana",
+           "session_id":"…","seq":7,"role":"user",
+           "body":"[REDACTED:phone] hola","sent_at_ms":…,
+           "sender_id":"wa.55","source_plugin":"whatsapp"}}
+```
+
+Body is **always already-redacted** at emit time — the hook
+fires inside `TranscriptWriter::append_entry` AFTER the
+redactor (Phase 10.4) replaces secrets with
+`[REDACTED:label]`. Defense-in-depth: a microapp without
+`transcripts_read` cannot recover the raw body either.
+
+### Subscribe semantics
+
+There is no explicit `subscribe` RPC — `AdminRpcBootstrap`
+inspects the operator's grant matrix at boot:
+
+- Microapp granted `transcripts_subscribe` → receives every
+  `TranscriptAppended` frame.
+- Microapp granted `agent_events_subscribe_all` → receives
+  every kind. Reserved for audit / compliance microapps that
+  need full visibility (v0 emits only `TranscriptAppended` so
+  the two caps are equivalent today; the slot future-proofs
+  for batch / output kinds).
+- Microapp without either cap → receives no frames; backfill
+  RPC still gated on `transcripts_read`.
+
+`seq` discipline: per-`session_id` monotonic counter that
+advances by 1 per `TranscriptAppended` frame. Live + backfill
+agree on `seq` values, so a microapp that misses live frames
+(broadcast lag, transient stdin block) re-issues
+`agent_events/read` with `since_seq = last_seen` to resync.
+
+### INVENTORY toggle
+
+`NEXO_MICROAPP_AGENT_EVENTS_ENABLED` (default `1`). Off →
+broadcast emitter is replaced with a no-op AND no subscribe
+tasks spawn. Backfill RPC continues to work (so a microapp
+with `transcripts_read` keeps querying past sessions). Useful
+for hardened deployments that want only on-demand history.
+
+### Lag handling
+
+`tokio::sync::broadcast` channel with default capacity 256.
+Subscribers that fall behind get `RecvError::Lagged(n)` —
+boot wires this as a single `warn` log and the receiver
+re-syncs to the next surviving frame. Microapps that need
+gap-free history call `agent_events/read` from
+`last_seen_seq`.
+
 ## Limitations
 
 - **Bidirectional flow over single stdio**: `app:` ID prefix
