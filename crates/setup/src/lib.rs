@@ -20,6 +20,7 @@
 //!
 //! See `src/services/` for the exhaustive service catalog.
 
+pub mod admin_adapters;
 pub mod agent_wizard;
 pub mod capabilities;
 #[cfg(feature = "config-self-edit")]
