@@ -1,12 +1,44 @@
 //! Wire-shape types shared between the Nexo agent runtime and any
 //! third-party microapp that consumes its events.
 //!
-//! Provider-agnostic by construction: no transport layer (no `axum`,
-//! no `tokio`), no broker, no agent runtime. Pulling this crate in
-//! is a four-dependency, sub-second compile and exposes only the
-//! data shapes a downstream consumer needs to read what nexo emits.
+//! Provider-agnostic by construction: no transport layer (no
+//! `axum`, no `tokio`), no broker, no agent runtime. Pulling this
+//! crate in is a four-dependency, sub-second compile and exposes
+//! only the data shapes a downstream consumer needs to read what
+//! the daemon emits.
 //!
-//! See the modules below for the concrete types.
+//! # What lives here
+//!
+//! - [`BindingContext`] — identifies the inbound binding a tool
+//!   call originated from. Microapps read it from
+//!   `params._meta.nexo.binding`.
+//! - [`build_meta_value`] / [`parse_binding_from_meta`] — the
+//!   inverse pair around the dual-write `_meta` payload.
+//! - [`WebhookEnvelope`] — JSON envelope nexo publishes to NATS
+//!   after every accepted webhook request.
+//! - [`format_webhook_source`] — Phase 72 turn-log marker
+//!   helper.
+//!
+//! # Round-trip example
+//!
+//! ```
+//! use nexo_tool_meta::{build_meta_value, parse_binding_from_meta, BindingContext};
+//! use uuid::Uuid;
+//!
+//! // Daemon side: build the `_meta` payload for a tool call.
+//! let mut binding = BindingContext::agent_only("ana");
+//! binding.channel = Some("whatsapp".into());
+//! binding.account_id = Some("personal".into());
+//! binding.binding_id = Some("whatsapp:personal".into());
+//! let meta = build_meta_value("ana", Some(Uuid::nil()), Some(&binding));
+//!
+//! // Microapp side: extract the binding back.
+//! let parsed = parse_binding_from_meta(&meta).unwrap();
+//! assert_eq!(parsed.channel.as_deref(), Some("whatsapp"));
+//! assert_eq!(parsed.binding_id.as_deref(), Some("whatsapp:personal"));
+//! ```
+
+#![deny(missing_docs)]
 
 pub mod binding;
 pub mod meta;
