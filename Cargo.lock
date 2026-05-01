@@ -3870,7 +3870,9 @@ dependencies = [
 name = "nexo-webhook-receiver"
 version = "0.1.1"
 dependencies = [
+ "async-trait",
  "bytes",
+ "chrono",
  "hex",
  "hmac",
  "ipnetwork",
@@ -3881,6 +3883,9 @@ dependencies = [
  "sha2",
  "subtle",
  "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

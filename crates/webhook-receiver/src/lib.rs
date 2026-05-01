@@ -19,8 +19,13 @@
 //! Rust code change.
 
 pub mod client_ip;
+pub mod dispatcher;
 
 pub use client_ip::{extract_x_forwarded_for_chain, resolve_request_client_ip, ProxyHeaders};
+pub use dispatcher::{
+    filter_forward_headers, format_webhook_source, DispatchError, RecordingWebhookDispatcher,
+    WebhookDispatcher, WebhookEnvelope, FORWARD_HEADERS,
+};
 
 use std::collections::HashMap;
 

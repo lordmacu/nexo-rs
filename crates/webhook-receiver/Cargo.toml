@@ -24,6 +24,12 @@ sha1        = "0.10"
 hmac        = "0.12"
 subtle      = "2"
 ipnetwork   = { workspace = true }
+async-trait = { workspace = true }
+tokio       = { workspace = true }
+tracing     = { workspace = true }
+uuid        = { workspace = true }
+chrono      = { workspace = true }
 
 [dev-dependencies]
 serde_yaml  = { workspace = true }
+tokio       = { workspace = true, features = ["macros", "rt-multi-thread"] }
