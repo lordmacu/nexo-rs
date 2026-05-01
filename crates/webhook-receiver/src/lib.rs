@@ -3,20 +3,25 @@
 //! Provider-agnostic: operator configures sources in YAML with HTTP
 //! path + signature spec + event-kind extraction + NATS publish
 //! template. The crate ships pure-fn primitives (verify signature,
-//! extract event kind, render publish topic) plus a `WebhookHandler`
-//! that orchestrates the three. The actual HTTP listener integration
-//! is left to the operator (route via the existing `:8080` health
-//! server or extend with `axum`); that's the deferred 80.12.b
-//! follow-up.
+//! extract event kind, render publish topic) plus a [`WebhookHandler`]
+//! that orchestrates the three.
 //!
 //! # Provider-agnostic
 //!
 //! No GitHub-specific (or any other provider-specific) code. The
-//! decision table is data-driven via `WebhookSourceConfig`: any
+//! decision table is data-driven via [`WebhookSourceConfig`]: any
 //! provider that signs payloads with HMAC-SHA256 / HMAC-SHA1 / a
 //! raw shared token AND exposes the event kind in a header or JSON
 //! body field is supported. New providers add a YAML entry, no
 //! Rust code change.
+//!
+//! [`WebhookEnvelope`] — the JSON envelope downstream NATS
+//! consumers parse — lives in `nexo-tool-meta` so a third-party
+//! microapp can `cargo add nexo-tool-meta` and consume the
+//! envelope without depending on this crate. Re-exported here for
+//! backward compat.
+
+#![deny(missing_docs)]
 
 pub mod client_ip;
 pub mod dispatcher;
@@ -73,6 +78,12 @@ pub struct WebhookSourceConfig {
     pub body_cap_bytes: Option<usize>,
 }
 
+/// Signature verification spec — declares how the source signs
+/// requests so the handler can compute the expected signature
+/// and constant-time compare.
+///
+/// Caller-populated config (loaded from operator YAML);
+/// intentionally **not** `#[non_exhaustive]`.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct SignatureSpec {
     /// Algorithm: `hmac-sha256`, `hmac-sha1`, or `raw-token`.
@@ -93,10 +104,13 @@ pub struct SignatureSpec {
     pub secret_env: String,
 }
 
+/// Cryptographic algorithm a source uses to sign requests.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum SignatureAlgorithm {
+    /// HMAC-SHA256 — the de-facto standard (GitHub, Stripe, Slack).
     HmacSha256,
+    /// HMAC-SHA1 — legacy providers; weaker collision resistance.
     HmacSha1,
     /// Raw shared token: `header == secret_env_value`. Constant-time
     /// compare. Some providers (older or simpler) use this rather
@@ -104,36 +118,85 @@ pub enum SignatureAlgorithm {
     RawToken,
 }
 
+/// Where in the inbound request the handler finds the event kind.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum EventKindSource {
     /// Read the event kind from a header (e.g. `X-GitHub-Event`).
-    Header { name: String },
+    Header {
+        /// Header name to read (case-insensitive).
+        name: String,
+    },
     /// Read the event kind from a JSON body field via dotted path
     /// (e.g. `type` for top-level, `data.type` for nested).
-    Body { path: String },
+    Body {
+        /// Dotted JSON path of the field to read.
+        path: String,
+    },
 }
 
 /// Reasons a webhook request can be rejected. Caller maps to HTTP
 /// status: 401 for signature errors, 413 for oversized body, 422
 /// for missing event kind, 500 for secret-missing (operator
 /// misconfig).
+///
+/// Operator-facing diagnostic — `#[non_exhaustive]` so future
+/// reject reasons (e.g. payload schema mismatch) can land as
+/// semver-minor without breaking downstream pattern matches.
+#[non_exhaustive]
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum RejectReason {
+    /// Body length exceeds the configured cap. Caller maps to 413.
     #[error("body exceeds cap of {cap} bytes (got {got})")]
-    OversizedBody { got: usize, cap: usize },
+    OversizedBody {
+        /// Actual body length received.
+        got: usize,
+        /// Configured cap.
+        cap: usize,
+    },
+    /// The configured signature header is missing from the request.
+    /// Caller maps to 401.
     #[error("signature header `{header}` is missing")]
-    MissingSignatureHeader { header: String },
+    MissingSignatureHeader {
+        /// Header name that was expected.
+        header: String,
+    },
+    /// HMAC compare failed; the request was not authentic. Caller
+    /// maps to 401.
     #[error("signature does not match (algorithm: {algorithm:?})")]
-    InvalidSignature { algorithm: SignatureAlgorithm },
+    InvalidSignature {
+        /// Algorithm that was used (echoed in the error).
+        algorithm: SignatureAlgorithm,
+    },
+    /// The configured `secret_env` env var is unset on the
+    /// daemon's process. Caller maps to 500 (operator misconfig).
     #[error("secret env var `{var}` is unset")]
-    SecretMissing { var: String },
+    SecretMissing {
+        /// Env var name that was expected.
+        var: String,
+    },
+    /// The configured event-kind extractor returned no value.
+    /// Caller maps to 422.
     #[error("could not extract event kind from {origin}")]
-    MissingEventKind { origin: String },
+    MissingEventKind {
+        /// Human-readable origin of the extractor (header or
+        /// JSON-path) for log correlation.
+        origin: String,
+    },
+    /// The body claimed to be JSON but failed to parse. Caller
+    /// maps to 422.
     #[error("body is not valid JSON (required for body-path event-kind extraction): {detail}")]
-    InvalidBodyJson { detail: String },
+    InvalidBodyJson {
+        /// Underlying serde error message.
+        detail: String,
+    },
+    /// Event kind contains characters illegal as a NATS subject
+    /// segment (`.`, `*`, `>`, whitespace). Caller maps to 422.
     #[error("event kind `{kind}` contains characters illegal for NATS subjects (`.`, `*`, `>`, whitespace)")]
-    InvalidEventKindForSubject { kind: String },
+    InvalidEventKindForSubject {
+        /// The rejected event kind value.
+        kind: String,
+    },
 }
 
 /// The successful output of [`WebhookHandler::handle`]. Caller
@@ -141,9 +204,15 @@ pub enum RejectReason {
 /// source_id, payload))`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HandledEvent {
+    /// Operator-assigned source identifier (matches
+    /// `WebhookSourceConfig.id`).
     pub source_id: String,
+    /// Event kind extracted from the inbound request.
     pub event_kind: String,
+    /// Rendered NATS subject.
     pub topic: String,
+    /// Inbound body, parsed as JSON. Non-JSON bodies are wrapped
+    /// upstream as `{ "raw_base64": "..." }`.
     pub payload: serde_json::Value,
 }
 
@@ -295,6 +364,7 @@ impl WebhookHandler {
         Self { config }
     }
 
+    /// Borrow the source config the handler was built from.
     pub fn config(&self) -> &WebhookSourceConfig {
         &self.config
     }

@@ -35,8 +35,9 @@ pub const FORWARD_HEADERS: &[&str] = &[
     "user-agent",
 ];
 
-/// Build a [`WebhookEnvelope`] from a Phase 80.12 [`HandledEvent`]
-/// plus the wire-level metadata the HTTP handler observed.
+/// Build a [`WebhookEnvelope`] from a Phase 80.12
+/// [`HandledEvent`](crate::HandledEvent) plus the wire-level
+/// metadata the HTTP handler observed.
 ///
 /// Lives here (not on `WebhookEnvelope` itself) because
 /// [`WebhookEnvelope`] is `#[non_exhaustive]` in `nexo-tool-meta`
