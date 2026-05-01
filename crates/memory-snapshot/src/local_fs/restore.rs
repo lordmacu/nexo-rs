@@ -204,8 +204,8 @@ async fn apply_restore(
         )));
     }
 
-    let memdir = s.memdir_root().join(agent_id);
-    let sqlite_dir = s.sqlite_root().join(agent_id);
+    let memdir = s.path_resolver().memdir(agent_id, &manifest.tenant);
+    let sqlite_dir = s.path_resolver().sqlite_dir(agent_id, &manifest.tenant);
 
     // Plan: which artifacts will move where. Used both to populate
     // the dry-run report and to drive the real swap.
