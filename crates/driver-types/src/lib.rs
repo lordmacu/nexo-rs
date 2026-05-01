@@ -19,6 +19,7 @@ pub mod memory_extractor;
 pub mod memory_mutation;
 pub mod pre_dream_snapshot;
 pub mod support;
+pub mod task_notification;
 
 pub use acceptance::{AcceptanceCriterion, AcceptanceFailure, AcceptanceVerdict};
 pub use attempt::{
@@ -41,3 +42,4 @@ pub use memory_extractor::MemoryExtractor;
 pub use memory_mutation::{MemoryMutationHook, MemoryMutationOp, MemoryMutationScope};
 pub use pre_dream_snapshot::PreDreamSnapshotHook;
 pub use support::{HarnessRuntime, Support, SupportContext};
+pub use task_notification::{TaskNotification, TaskStatus, TaskUsage};
