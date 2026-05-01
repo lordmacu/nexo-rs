@@ -19,7 +19,9 @@ pub mod capabilities;
 pub mod dispatcher;
 pub mod domains;
 
-pub use audit_sqlite::SqliteAdminAuditWriter;
+pub use audit_sqlite::{
+    format_rows_as_json, format_rows_as_table, AuditTailFilter, SqliteAdminAuditWriter,
+};
 
 pub use audit::{
     hash_params, now_epoch_ms, AdminAuditResult, AdminAuditRow, AdminAuditWriter,
