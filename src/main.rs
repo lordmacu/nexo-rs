@@ -71,6 +71,14 @@ enum Mode {
         json: bool,
     },
     ExtHelp,
+    /// Phase 82.6 — `nexo ext state-dir <id>` prints the
+    /// canonical state directory for `<id>` resolved against
+    /// the current `NEXO_HOME` (created if absent). Operators
+    /// pipe the output into `cd`, `sqlite3 .backup`, etc.
+    ExtStateDir {
+        id: String,
+        ensure: bool,
+    },
     /// `nexo memory <sub>` — operator surface for the snapshot
     /// subsystem (Phase 36.2). Every subcommand is standalone: it
     /// constructs a fresh `LocalFsSnapshotter` from `--state-root` (+
@@ -876,6 +884,9 @@ async fn main() -> Result<()> {
         }
         Mode::ExtDoctor { runtime, json } => {
             return run_ext_cli(&args.config_dir, ExtCmd::Doctor { runtime, json })
+        }
+        Mode::ExtStateDir { id, ensure } => {
+            return run_ext_state_dir(&id, ensure);
         }
         Mode::Memory(ref sub) => return dispatch_memory_subcommand(sub).await,
         Mode::McpServer(ref sub) => match sub {
@@ -7144,6 +7155,10 @@ fn parse_args() -> CliArgs {
             yes: positional.iter().any(|a| a == "--yes"),
             json: has_json_flag,
         },
+        [cmd, sub, id] if cmd == "ext" && sub == "state-dir" => Mode::ExtStateDir {
+            id: id.clone(),
+            ensure: positional.iter().any(|a| a == "--ensure"),
+        },
         // Phase 76.14 — mcp-server with optional subcommands
         [cmd] if cmd == "mcp-server" => {
             Mode::McpServer(McpServerSubcommand::Serve)
@@ -11948,6 +11963,23 @@ async fn run_mcp_bench(url: &str, tool: &str, rps: u32) -> Result<()> {
 
 /// `nexo mcp-server tail-audit <db>` — read recent entries from
 /// a local audit log SQLite database.
+/// Phase 82.6 — `nexo ext state-dir <id> [--ensure]`. Prints
+/// the canonical state directory for one extension. With
+/// `--ensure`, creates the dir on disk first (idempotent).
+fn run_ext_state_dir(id: &str, ensure: bool) -> Result<()> {
+    if id.is_empty() {
+        anyhow::bail!("extension id is required");
+    }
+    let path = if ensure {
+        nexo_extensions::ensure_state_dir(id)
+            .with_context(|| format!("create state dir for `{id}`"))?
+    } else {
+        nexo_extensions::state_dir_for(id)
+    };
+    println!("{}", path.display());
+    Ok(())
+}
+
 async fn run_mcp_tail_audit(db_path: &str) -> Result<()> {
     use sqlx::Row;
 

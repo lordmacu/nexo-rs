@@ -1942,6 +1942,18 @@ Target phase: 82.14.b (built-in tool + firehose event
 variants + throttle) and 82.14.c (durable store), folded
 with the next main.rs operator wire-up commit.
 
+### Phase 82.6 — state_root env injection follow-up
+
+Phase 82.6 shipped the path helper + CLI but the daemon
+doesn't yet stamp `NEXO_EXTENSION_STATE_ROOT` onto the
+spawned extension's process environment.
+`EXTENSION_STATE_ROOT_ENV` constant pinned in
+`nexo_extensions::state`; the actual `Command::env(...)`
+call lives next to whatever Phase 82 follow-up wires the
+admin RPC + http_server bootstrap into main.rs (single
+shared boot-order refactor — folded with 82.10.h.b /
+82.11 / 82.12 / 82.13 / 82.14 deferreds).
+
 ## Resolved (recent highlights)
 
 - 2026-04-28 — MCP denied-tool override now supports `Heartbeat`
