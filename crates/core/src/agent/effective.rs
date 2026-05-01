@@ -126,6 +126,38 @@ pub struct EffectiveBindingPolicy {
     /// workspace-bounded auto-allow path (those tools always ask).
     /// Set at boot from `agent.workspace`.
     pub workspace_path: Option<std::path::PathBuf>,
+    /// Phase 82.1 Step 2 — channel name copied from
+    /// `InboundBinding.plugin` (`"whatsapp"` / `"telegram"` /
+    /// `"email"` / `"web"` / …) when the runtime resolved the
+    /// inbound to a concrete binding. `None` for synthesised
+    /// policies (delegation receive, heartbeat, tests). Feeds
+    /// the `BindingContext` propagated to tool calls so
+    /// extensions and MCP servers can route per-channel.
+    pub channel: Option<String>,
+    /// Phase 82.1 Step 2 — account / instance discriminator
+    /// copied from `InboundBinding.instance`. `None` when the
+    /// binding declared no instance (single-account default)
+    /// or for synthesised policies.
+    pub account_id: Option<String>,
+}
+
+impl EffectiveBindingPolicy {
+    /// Phase 82.1 Step 2 — render the stable
+    /// `<channel>:<account_id|"default">` binding identifier.
+    /// Returns `None` when the policy has no channel match
+    /// (synthesised — delegation / heartbeat / tests).
+    ///
+    /// Reusable across tests and downstream consumers (the
+    /// `BindingContext::from_effective` constructor lands in
+    /// Step 3 and calls this helper).
+    pub fn binding_id(&self) -> Option<String> {
+        self.channel.as_deref().map(|ch| {
+            super::context::BindingContext::render_binding_id(
+                ch,
+                self.account_id.as_deref(),
+            )
+        })
+    }
 }
 
 /// Per-agent / per-binding web-search policy. Mirrors the YAML shape
@@ -214,6 +246,11 @@ impl EffectiveBindingPolicy {
             } else {
                 Some(std::path::PathBuf::from(&agent.workspace))
             },
+            // Phase 82.1 Step 2 — copy from the matched binding so
+            // `BindingContext::from_effective` can populate the
+            // `(channel, account_id, binding_id)` tuple downstream.
+            channel: binding.map(|b| b.plugin.clone()),
+            account_id: binding.and_then(|b| b.instance.clone()),
         }
     }
 
@@ -257,6 +294,13 @@ impl EffectiveBindingPolicy {
             } else {
                 Some(std::path::PathBuf::from(&agent.workspace))
             },
+            // Phase 82.1 Step 2 — synthesised policies have no
+            // binding match; both fields stay None so the
+            // `BindingContext` produced for delegation /
+            // heartbeat / test paths keeps the `(channel,
+            // account_id, binding_id)` tuple absent.
+            channel: None,
+            account_id: None,
         }
     }
 
@@ -1299,5 +1343,93 @@ mod tests {
         });
         let eff = EffectiveBindingPolicy::resolve(&a, 0);
         assert_eq!(eff.allowed_tools, vec!["file_read".to_string()]);
+    }
+
+    // -- Phase 82.1 Step 2 — channel + account_id + binding_id() ---
+
+    #[test]
+    fn step2_resolve_populates_channel_from_binding_plugin() {
+        let mut a = sample_agent();
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "whatsapp".into(),
+            instance: Some("personal".into()),
+            ..Default::default()
+        });
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+        assert_eq!(eff.channel.as_deref(), Some("whatsapp"));
+        assert_eq!(eff.account_id.as_deref(), Some("personal"));
+    }
+
+    #[test]
+    fn step2_resolve_with_no_instance_keeps_account_id_none() {
+        let mut a = sample_agent();
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "telegram".into(),
+            instance: None,
+            ..Default::default()
+        });
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+        assert_eq!(eff.channel.as_deref(), Some("telegram"));
+        assert!(eff.account_id.is_none());
+    }
+
+    #[test]
+    fn step2_from_agent_defaults_leaves_channel_and_account_none() {
+        let a = sample_agent();
+        let eff = EffectiveBindingPolicy::from_agent_defaults(&a);
+        assert!(eff.channel.is_none());
+        assert!(eff.account_id.is_none());
+        assert!(eff.binding_index.is_none());
+    }
+
+    #[test]
+    fn step2_binding_id_renders_when_channel_present() {
+        let mut a = sample_agent();
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "whatsapp".into(),
+            instance: Some("business".into()),
+            ..Default::default()
+        });
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+        assert_eq!(eff.binding_id().as_deref(), Some("whatsapp:business"));
+    }
+
+    #[test]
+    fn step2_binding_id_uses_default_sentinel_when_account_absent() {
+        let mut a = sample_agent();
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "whatsapp".into(),
+            instance: None,
+            ..Default::default()
+        });
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+        assert_eq!(eff.binding_id().as_deref(), Some("whatsapp:default"));
+    }
+
+    #[test]
+    fn step2_binding_id_returns_none_when_synthesised_policy() {
+        let a = sample_agent();
+        let eff = EffectiveBindingPolicy::from_agent_defaults(&a);
+        assert!(eff.binding_id().is_none());
+    }
+
+    #[test]
+    fn step2_binding_id_distinct_per_instance() {
+        let mut a = sample_agent();
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "whatsapp".into(),
+            instance: Some("personal".into()),
+            ..Default::default()
+        });
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "whatsapp".into(),
+            instance: Some("business".into()),
+            ..Default::default()
+        });
+        let p0 = EffectiveBindingPolicy::resolve(&a, 0);
+        let p1 = EffectiveBindingPolicy::resolve(&a, 1);
+        assert_eq!(p0.binding_id().as_deref(), Some("whatsapp:personal"));
+        assert_eq!(p1.binding_id().as_deref(), Some("whatsapp:business"));
+        assert_ne!(p0.binding_id(), p1.binding_id());
     }
 }
