@@ -16,6 +16,7 @@ tracker**.
 | 84 | Coordinator agent persona + worker continuation | 0/5 | ⭐ **PRIORITY — next pickup** (brainstorm + spec + plan approved; ready for `/forge ejecutar 84.1`) |
 | 85 | Compaction hardening: reactive recovery + cache-aware micro-compact | 0/2 | ⬜ |
 | 86 | Memory observability + cache debug affordance | 0/2 | ⬜ |
+| 87 | LLM-as-judge verifier + container runtime dispatcher | 0/2 | ⬜ (87.2 DEFER until Phase 32 or 82 demands harder isolation) |
 
 - **Detail per sub-phase** → [`PHASES.md`](PHASES.md)
 - **Open follow-ups** (deferred items, deferreds against closed phases) → [`FOLLOWUPS.md`](FOLLOWUPS.md)

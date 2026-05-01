@@ -9687,6 +9687,141 @@ operator suspects a stale cache hit. Audit-logged.
 1 CLI subcommand + audit log + 4 tests). Total ~1.5 dev-days.
 Uncorrelated — either ships first.
 
+### Phase 87 — LLM-as-judge verifier + container runtime dispatcher   ⬜
+
+Two affordances surfaced from prior-art review of the
+verification + execution-isolation surface. Bundled because both
+are second-order operator concerns (quality gates and isolation)
+that build on top of already-shipped foundations:
+
+- 87.1 builds on Phase 67/68 `AcceptanceEvaluator` (already shipped)
+  by adding a concrete LLM-driven impl. Pairs naturally with
+  Phase 84 (coordinator persona) where the coordinator's
+  "verification rigor" section instructs spawning a fresh worker
+  with no implementation context.
+- 87.2 builds on Phase 67.4 `WorkspaceManager` (git-worktree
+  isolation, already shipped) by adding a stronger isolation
+  boundary — the entire agent runtime dispatched into a container
+  rather than just the worktree. **Defer flagged**: this sub-phase
+  is gated on either Phase 32 (multi-host orchestration) or Phase
+  82 (multi-tenant SaaS) demanding harder isolation than worktree
+  alone provides. Listed here for completeness so the leak
+  reference does not get lost.
+
+**What will make this better than the reference implementation we
+mined**:
+
+- Reference's verifier couples LLM orchestration to the verdict
+  gate (the verifier is hardcoded as an LLM agent spawned via the
+  same AgentTool used for workers). Nexo's
+  `AcceptanceEvaluator` trait is provider-agnostic: a verifier can
+  be a shell test, a file-presence check, a typecheck run, OR an
+  LLM. 87.1 ships the LLM impl as **one of N possible
+  evaluators**, not the only path. Operators chain evaluators
+  per-goal.
+- Reference's `environment-runner` is a single CLI entrypoint
+  forking a container. Nexo's `RuntimeDispatcher` trait will let
+  operators plug in different isolation backends (rootless
+  Podman, Docker, Firecracker, even in-process for dev) without
+  changing the agent code.
+
+#### 87.1 — `LlmJudgeEvaluator` AcceptanceEvaluator impl   ⬜
+
+Concrete `AcceptanceEvaluator` that spawns a forked LLM judge to
+verify whether a worker's output satisfies an
+`AcceptanceCriterion`. Distinct from the existing acceptance.rs
+shell evaluator: this one calls the model.
+
+**Reference shape (file:line — search the local research/leak
+tree)**:
+- `tools/AgentTool/built-in/verificationAgent.ts:134` — feature
+  gate + verifier-spawn entrypoint. Useful for symbol naming +
+  understanding when the reference triggers the verifier (after
+  3+ edits, per inline heuristic in the reference). Nexo will not
+  reuse the 3-edits heuristic — trigger is operator-declared per
+  `AcceptanceCriterion`.
+
+**Done criteria**:
+- New crate-internal module `crates/driver-loop/src/evaluators/llm_judge.rs`
+  with `LlmJudgeEvaluator { llm: Arc<dyn LlmClient>, system_prompt: String }`
+  implementing `AcceptanceEvaluator`.
+- The judge prompt is a separate Markdown asset
+  (`crates/driver-loop/src/evaluators/llm_judge_prompt.md`,
+  `include_str!`) describing the judge persona: "you receive
+  (criterion, worker_output, transcript_summary), reply JSON
+  `{verdict: pass|fail, reasons: [string]}`. No tool calls."
+- Cache-safe: judge runs in a forked subagent reusing the parent
+  system prompt prefix per Phase 80.19 invariant. Lives behind
+  `nexo-fork`'s existing dispatcher.
+- New `AcceptanceCriterion::LlmJudge { criterion_text: String }`
+  variant that the orchestrator routes to `LlmJudgeEvaluator`.
+- Budget guard: `BudgetGuards.max_judge_calls_per_goal: u32`
+  (default 5) prevents a runaway judge loop. Exhaustion → goal
+  proceeds with last verdict + warn log.
+- 5 unit tests in `evaluators/llm_judge.rs`: pass verdict / fail
+  verdict / malformed JSON response (treat as fail + log) /
+  judge timeout (treat as fail) / criterion routing.
+- 1 integration test under `crates/driver-loop/tests/`: worker
+  emits diff → criterion = LlmJudge ("the diff must add a null
+  check at validate.ts:42") → mocked judge returns pass → goal
+  accepted. Repeat with judge returning fail → orchestrator
+  emits `AcceptanceFailure` per Phase 67/68 contract.
+- Telemetry: counter `acceptance_llm_judge_total{verdict}` +
+  histogram `acceptance_llm_judge_latency_seconds`.
+
+#### 87.2 — Container runtime dispatcher (BYOC)   ⬜ DEFER
+
+**Status**: defer-flagged. Implement when **either** Phase 32
+multi-host orchestration **or** Phase 82 multi-tenant SaaS
+hardening demands isolation stronger than the existing
+`WorkspaceManager` git-worktree boundary. Until then this
+sub-phase carries the design pointer so the prior-art reference
+is not lost.
+
+**Reference shape (file:line)**:
+- `entrypoints/cli.tsx:226` — feature gate + the
+  `environment-runner` CLI entrypoint that forks the container
+  process. Useful for naming + understanding the headless-runner
+  shape; nexo will trait-abstract instead of one CLI per backend.
+
+**Done criteria** (frozen at design-pointer level until activated):
+- New trait `RuntimeDispatcher` in `crates/driver-types` with
+  `dispatch(goal: Goal, deps: BootDeps) -> Result<DispatchHandle>`.
+  Default impl `InProcessDispatcher` runs today's flow.
+  Pluggable: `PodmanDispatcher`, `DockerDispatcher`,
+  `FirecrackerDispatcher` as separate crates / features.
+- New CLI subcommand `nexo agent runtime <list|set|test>` exposes
+  the active dispatcher for ops.
+- Per-tenant dispatch policy reads
+  `agents.<id>.runtime: in_process | podman | docker | firecracker`
+  with sane default `in_process`.
+- Resource limits per dispatcher: cpu_quota, mem_limit,
+  net_policy (`none|loopback|allowlist`), tmpfs sizes.
+- Goal lifecycle wired through dispatcher: pause/resume/cancel
+  events forwarded into the container; SIGTERM grace +
+  forced-kill timeout per Phase 71.
+- Capability inventory entries for each backend's `*_ALLOW_*`
+  env toggles.
+- Effort estimate frozen at **~6-8 dev-days** for the first
+  dispatcher impl (Podman recommended — rootless, no daemon),
+  +2-3 dev-days per additional backend.
+
+**Phase 87 effort estimate**: 87.1 (~2 days, judge prompt + impl
++ criterion routing + 5 unit + 1 integration test). 87.2 deferred,
+estimate frozen above. Total active scope ~2 dev-days for 87.1
+alone.
+
+**Out of scope (skipped in this rollout)** — one prior-art
+verification feature evaluated and explicitly skipped:
+
+- **`anti_distillation: ['fake_tools']`** in
+  `services/api/claude.ts:303-312` — provider-side defense
+  against model distillation (injects fake tool schemas to
+  poison competitors training on Claude outputs). Nexo is a
+  consumer of the model, not a provider — there is nothing to
+  protect against distillation here, and fake-tool injection
+  would only confuse our own agent. Permanent skip.
+
 ### Phases 82 + 83 — Microapp framework
 
 The full planning for the microapp framework — Phase 82
