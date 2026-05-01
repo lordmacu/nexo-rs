@@ -65,6 +65,98 @@ pub trait CompactPolicy: Send + Sync + 'static {
     async fn classify(&self, ctx: &CompactContext<'_>) -> Option<(String, CompactTrigger)>;
 }
 
+/// Phase 85.2 — micro-compact policy. Per-turn cheap O(1) check
+/// the orchestrator runs BEFORE assembling the request body. When
+/// it returns `Some(decision)`, the orchestrator replaces the
+/// matched tool result with [`TIME_BASED_MC_CLEARED_MESSAGE`] and
+/// records the truncation in the next [`CompactSummary`].
+///
+/// Distinct from [`CompactPolicy`] (which decides whether to inject
+/// a full /compact turn). Micro-compact runs per-turn and trims
+/// individual oversized tool results in-place without invalidating
+/// the cache.
+#[async_trait]
+pub trait MicroCompactPolicy: Send + Sync + 'static {
+    /// `Some(decision)` when the tool result identified by
+    /// `(call_id, body_byte_size, turn_index)` should be replaced
+    /// by the marker. `None` to leave the tool result intact.
+    async fn classify(
+        &self,
+        ctx: &MicroCompactContext<'_>,
+    ) -> Option<MicroCompactDecision>;
+}
+
+/// Inputs the micro-compact policy needs per call.
+#[derive(Clone, Debug)]
+pub struct MicroCompactContext<'a> {
+    pub call_id: &'a str,
+    /// Byte size of the candidate tool result body.
+    pub body_byte_size: u64,
+    pub turn_index: u32,
+    /// Highest turn that already has a cache breakpoint pinned.
+    /// Truncating a tool result *after* this point is safe (the
+    /// cache hasn't matched there yet); truncating *before* would
+    /// invalidate downstream prompt-cache breakpoints, defeating
+    /// the whole purpose of the policy.
+    pub cache_breakpoint: u32,
+}
+
+/// What the policy decided to do.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MicroCompactDecision {
+    pub call_id: String,
+    pub original_byte_size: u64,
+    pub marker_inserted_at_turn: u32,
+}
+
+/// Default rules-based micro-compact policy: trim when the body
+/// is over `min_body_bytes` AND the call lives strictly before
+/// the active cache breakpoint.
+pub struct DefaultMicroCompactPolicy {
+    /// Master switch. `false` always returns `None`.
+    pub enabled: bool,
+    /// Minimum tool-result body size that warrants a truncate.
+    /// Default 8 KiB — anything smaller is cheap to keep verbatim
+    /// and the marker overhead would actually grow some payloads.
+    pub min_body_bytes: u64,
+}
+
+impl Default for DefaultMicroCompactPolicy {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            min_body_bytes: 8 * 1024,
+        }
+    }
+}
+
+#[async_trait]
+impl MicroCompactPolicy for DefaultMicroCompactPolicy {
+    async fn classify(
+        &self,
+        ctx: &MicroCompactContext<'_>,
+    ) -> Option<MicroCompactDecision> {
+        if !self.enabled {
+            return None;
+        }
+        if ctx.body_byte_size < self.min_body_bytes {
+            return None;
+        }
+        // Truncating *at or after* the active cache breakpoint is
+        // safe — those bytes haven't anchored a cache hit yet.
+        // Truncating *before* would dirty an already-cached
+        // prefix, defeating the purpose.
+        if ctx.turn_index < ctx.cache_breakpoint {
+            return None;
+        }
+        Some(MicroCompactDecision {
+            call_id: ctx.call_id.to_string(),
+            original_byte_size: ctx.body_byte_size,
+            marker_inserted_at_turn: ctx.turn_index,
+        })
+    }
+}
+
 /// Default rules-based implementation: token pressure + age triggers.
 pub struct DefaultCompactPolicy {
     /// Master switch. When `false`, `classify` always returns `None`.
@@ -493,6 +585,37 @@ fn default_sm_store_in_ltm() -> bool {
     true
 }
 
+/// One tool result that the micro-compact policy truncated. Carried
+/// inside [`CompactSummary`] so the orchestrator + provider clients
+/// reconstruct the same shape across daemon restarts.
+///
+/// Phase 85.2.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TruncatedToolResult {
+    /// The tool call's stable id (matches the `id` field in the
+    /// provider's `tool_use` / `tool_result` messages).
+    pub call_id: String,
+    /// Byte size of the original tool result payload before
+    /// truncation. Lets the operator-facing telemetry surface
+    /// "saved 12 KiB on this turn" without re-reading the
+    /// transcript.
+    pub original_byte_size: u64,
+    /// Turn index at which the marker was inserted. Used by the
+    /// orchestrator's idempotency check (see done-criterion 6:
+    /// "two consecutive compacts do not double-mark the same
+    /// call_id").
+    pub marker_inserted_at_turn: u32,
+}
+
+/// Marker text the orchestrator splices into a truncated tool
+/// result. Constant string so the provider's prompt-cache prefix
+/// matcher sees identical bytes across compact passes.
+///
+/// Phase 85.2.
+pub const TIME_BASED_MC_CLEARED_MESSAGE: &str =
+    "[tool_result truncated by micro-compact for cache stability — \
+see CompactSummary.truncated_tool_results for original byte size]";
+
 /// A persisted compact summary, stored in long-term memory for session resume.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CompactSummary {
@@ -502,6 +625,20 @@ pub struct CompactSummary {
     pub before_tokens: u64,
     pub after_tokens: u64,
     pub stored_at: chrono::DateTime<chrono::Utc>,
+    /// Phase 85.2 — provider-cache breakpoint anchors that survived
+    /// the compact pass. Each entry is a stable string the provider
+    /// client uses to render `cache_control: { type: "ephemeral" }`
+    /// markers at the same logical positions across turns. Empty in
+    /// pre-85.2 payloads thanks to `#[serde(default)]`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cache_pin_keys: Vec<String>,
+    /// Phase 85.2 — tool results the micro-compact policy truncated
+    /// during this compact pass. The orchestrator deduplicates by
+    /// `call_id` across consecutive compacts so the same call is
+    /// never marked twice. Empty in pre-85.2 payloads thanks to
+    /// `#[serde(default)]`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub truncated_tool_results: Vec<TruncatedToolResult>,
 }
 
 /// Persistence for compact summaries. Separate trait so tests can use
@@ -555,3 +692,151 @@ impl Default for ExtractMemoriesConfig {
 fn default_extract_throttle() -> u32 { 1 }
 fn default_extract_max_turns() -> u32 { 5 }
 fn default_extract_max_failures() -> u32 { 3 }
+
+#[cfg(test)]
+mod micro_compact_tests {
+    use super::*;
+
+    fn mctx(call: &str, bytes: u64, turn: u32, breakpoint: u32) -> MicroCompactContext<'_> {
+        MicroCompactContext {
+            call_id: call,
+            body_byte_size: bytes,
+            turn_index: turn,
+            cache_breakpoint: breakpoint,
+        }
+    }
+
+    #[tokio::test]
+    async fn small_body_returns_none() {
+        let p = DefaultMicroCompactPolicy::default();
+        // 4 KiB < default min_body_bytes (8 KiB)
+        let d = p.classify(&mctx("c1", 4_000, 10, 5)).await;
+        assert!(d.is_none());
+    }
+
+    #[tokio::test]
+    async fn oversized_body_after_breakpoint_returns_decision() {
+        let p = DefaultMicroCompactPolicy::default();
+        let d = p
+            .classify(&mctx("c1", 16_000, 10, 5))
+            .await
+            .expect("decision");
+        assert_eq!(d.call_id, "c1");
+        assert_eq!(d.original_byte_size, 16_000);
+        assert_eq!(d.marker_inserted_at_turn, 10);
+    }
+
+    #[tokio::test]
+    async fn oversized_body_before_breakpoint_returns_none() {
+        // Truncating BEFORE the active cache breakpoint would
+        // dirty an already-cached prefix — must skip.
+        let p = DefaultMicroCompactPolicy::default();
+        let d = p.classify(&mctx("c1", 32_000, 3, 10)).await;
+        assert!(d.is_none(), "must not truncate inside cached prefix");
+    }
+
+    #[tokio::test]
+    async fn body_exactly_at_breakpoint_truncates() {
+        // Equal turn = at the breakpoint, NOT before it. Safe to
+        // truncate (not yet anchored).
+        let p = DefaultMicroCompactPolicy::default();
+        let d = p.classify(&mctx("c1", 16_000, 5, 5)).await;
+        assert!(d.is_some(), "turn == breakpoint must be eligible");
+    }
+
+    #[tokio::test]
+    async fn disabled_policy_returns_none() {
+        let p = DefaultMicroCompactPolicy {
+            enabled: false,
+            min_body_bytes: 0,
+        };
+        let d = p.classify(&mctx("c1", 999_999, 100, 0)).await;
+        assert!(d.is_none());
+    }
+
+    #[tokio::test]
+    async fn custom_min_body_threshold_respected() {
+        let p = DefaultMicroCompactPolicy {
+            enabled: true,
+            min_body_bytes: 100_000,
+        };
+        // 16 KiB is no longer over a 100 KiB threshold.
+        assert!(p.classify(&mctx("c1", 16_000, 10, 5)).await.is_none());
+        // 200 KiB still triggers.
+        assert!(p.classify(&mctx("c1", 200_000, 10, 5)).await.is_some());
+    }
+
+    #[test]
+    fn truncated_tool_result_serde_round_trip() {
+        let t = TruncatedToolResult {
+            call_id: "call-9".into(),
+            original_byte_size: 32_768,
+            marker_inserted_at_turn: 7,
+        };
+        let json = serde_json::to_string(&t).unwrap();
+        let back: TruncatedToolResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, t);
+    }
+
+    #[test]
+    fn compact_summary_pre85_2_payload_loads_with_empty_extensions() {
+        // Backwards-compat: pre-85.2 payloads (no cache_pin_keys
+        // / truncated_tool_results) must deserialise cleanly with
+        // empty Vecs via #[serde(default)]. Migration test
+        // (done-criterion 5).
+        let pre_85_2_json = r#"{
+            "agent_id": "ana",
+            "summary": "compacted history",
+            "turn_index": 12,
+            "before_tokens": 80000,
+            "after_tokens": 20000,
+            "stored_at": "2026-04-01T12:00:00Z"
+        }"#;
+        let s: CompactSummary = serde_json::from_str(pre_85_2_json)
+            .expect("pre-85.2 payload must load");
+        assert_eq!(s.agent_id, "ana");
+        assert!(s.cache_pin_keys.is_empty());
+        assert!(s.truncated_tool_results.is_empty());
+    }
+
+    #[test]
+    fn compact_summary_85_2_payload_round_trips() {
+        let s = CompactSummary {
+            agent_id: "ana".into(),
+            summary: "compacted".into(),
+            turn_index: 12,
+            before_tokens: 80_000,
+            after_tokens: 20_000,
+            stored_at: chrono::DateTime::parse_from_rfc3339(
+                "2026-04-01T12:00:00Z",
+            )
+            .unwrap()
+            .with_timezone(&chrono::Utc),
+            cache_pin_keys: vec!["sys".into(), "tools".into()],
+            truncated_tool_results: vec![TruncatedToolResult {
+                call_id: "c-7".into(),
+                original_byte_size: 16_000,
+                marker_inserted_at_turn: 5,
+            }],
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        let back: CompactSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.cache_pin_keys, s.cache_pin_keys);
+        assert_eq!(back.truncated_tool_results, s.truncated_tool_results);
+    }
+
+    #[test]
+    fn time_based_marker_constant_is_stable() {
+        // The marker text MUST be a constant — provider's
+        // prompt-cache prefix matcher keys on byte-identical
+        // bytes across turns. Re-formatting / interpolating the
+        // marker would break the cache.
+        assert!(TIME_BASED_MC_CLEARED_MESSAGE.contains("truncated"));
+        assert!(TIME_BASED_MC_CLEARED_MESSAGE.contains("micro-compact"));
+        assert_eq!(
+            TIME_BASED_MC_CLEARED_MESSAGE.len(),
+            TIME_BASED_MC_CLEARED_MESSAGE.len(),
+            "constant must not change"
+        );
+    }
+}

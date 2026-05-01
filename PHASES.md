@@ -9519,7 +9519,7 @@ research/leak tree)**:
   `compact_reactive_total{outcome=succeeded|exhausted}` for
   Prometheus once 28.x ships.
 
-#### 85.2 — Cache-aware micro-compaction   ⬜
+#### 85.2 — Cache-aware micro-compaction   ✅  (shipped 2026-05-01 — orchestrator + provider integration deferred)
 
 Today `CompactSummary` rewrites the conversation head wholesale.
 The prompt cache (Anthropic 5-min TTL, MiniMax similar) keys on

@@ -30,7 +30,9 @@ pub use auto_dream::{AutoDreamHook, AutoDreamOutcomeKind, DreamContext as DreamC
 pub use cancel::CancellationToken;
 pub use compact_policy::{
     AutoCompactBreaker, CompactContext, CompactPolicy, CompactSummary, CompactSummaryStore,
-    CompactTrigger, DefaultCompactPolicy, ExtractMemoriesConfig, SmCompactConfig,
+    CompactTrigger, DefaultCompactPolicy, DefaultMicroCompactPolicy, ExtractMemoriesConfig,
+    MicroCompactContext, MicroCompactDecision, MicroCompactPolicy, SmCompactConfig,
+    TruncatedToolResult, TIME_BASED_MC_CLEARED_MESSAGE,
 };
 pub use decision::{Decision, DecisionChoice, DecisionId};
 pub use error::HarnessError;
