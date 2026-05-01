@@ -291,6 +291,22 @@ pub async fn run_event_subscriber(
             }
             ev = subscription.next() => {
                 let Some(event) = ev else { break };
+                // Defensive hot-loop guard: if this binding's
+                // pattern accidentally matches its own re-publish
+                // topic, drop the self-event to prevent runaway
+                // recursion. Phase 82.4 schema validate is the
+                // primary guard; this is belt-and-suspenders for
+                // the "operator force-bypassed validate" path.
+                let republish_topic = event_inbound_topic(&sub.binding.id);
+                if event.topic == republish_topic {
+                    tracing::warn!(
+                        agent_id = %sub.agent_id,
+                        binding_id = %sub.binding.id,
+                        topic = %event.topic,
+                        "event_subscriber loop guard fired — dropped self-event"
+                    );
+                    continue;
+                }
                 let max_buffer = sub.binding.max_buffer;
                 let mut buf = buffer.lock().await;
                 if buf.len() >= max_buffer {
@@ -731,5 +747,50 @@ mod skeleton_tests {
         cancel.cancel();
         let res = tokio::time::timeout(Duration::from_secs(2), task).await;
         assert!(res.is_ok(), "task should join within 2s of cancel");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn run_loop_guard_drops_self_events() {
+        // Operator slipped a self-matching pattern past validate.
+        // The producer must drop the self-event without
+        // re-publishing — otherwise: infinite loop.
+        let broker = AnyBroker::local();
+        let binding = mk_binding("loopy", "plugin.inbound.event.>");
+        let sub = Arc::new(EventSubscriber::new("ana", binding, broker.clone()));
+        let cancel = CancellationToken::new();
+
+        // Listener on the re-publish topic.
+        let mut listener = broker
+            .subscribe("plugin.inbound.event.loopy")
+            .await
+            .unwrap();
+
+        let task = tokio::spawn(run_event_subscriber(Arc::clone(&sub), cancel.clone()));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Publish to the re-publish topic — pattern matches; loop
+        // guard must drop.
+        broker
+            .publish(
+                "plugin.inbound.event.loopy",
+                Event::new("plugin.inbound.event.loopy", "tester", serde_json::json!({})),
+            )
+            .await
+            .unwrap();
+
+        // Give it time to process. Listener should see ONLY the
+        // one we published — no infinite re-publish.
+        let first = tokio::time::timeout(Duration::from_millis(200), listener.next())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.source, "tester", "first event is the test publish");
+
+        // Wait briefly to confirm no second republish arrives.
+        let second = tokio::time::timeout(Duration::from_millis(300), listener.next()).await;
+        assert!(second.is_err(), "no self-republish (loop guard fired)");
+
+        cancel.cancel();
+        let _ = tokio::time::timeout(Duration::from_secs(2), task).await;
     }
 }
