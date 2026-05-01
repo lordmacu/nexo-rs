@@ -502,6 +502,81 @@ Microapps still spawn; the daemon just doesn't gate `ready`
 on the HTTP endpoint. Useful for hardened deployments that
 ban embedded HTTP servers or run them out-of-band.
 
+## Operator processing pause + intervention (Phase 82.13)
+
+Operators sometimes need to suspend agent autonomy on a
+specific scope and step in manually. v0 ships chat-takeover
+(per-conversation pause + manual reply); the wire shape is
+generalised across every agent shape so future variants
+(batch override, event injection, image-gen output edit)
+plug in without breaking the surface.
+
+### Wire shapes
+
+```rust
+#[non_exhaustive]
+enum ProcessingScope {
+    Conversation { agent_id, channel, account_id, contact_id, mcp_channel_source? },
+    AgentBinding { ... },   // reserved
+    Agent { ... },          // reserved
+    EventStream { ... },    // reserved
+    BatchQueue { ... },     // reserved
+    Custom { ... },         // forward-compat
+}
+
+#[non_exhaustive]
+enum InterventionAction {
+    Reply { channel, account_id, to, body, msg_kind, attachments?, reply_to_msg_id? },
+    SkipItem { ... },        // reserved
+    OverrideOutput { ... },  // reserved
+    InjectInput { ... },     // reserved
+    Custom { ... },          // forward-compat
+}
+
+#[non_exhaustive]
+enum ProcessingControlState {
+    AgentActive,
+    PausedByOperator { scope, paused_at_ms, operator_token_hash, reason? },
+}
+```
+
+`operator_token_hash` is the Phase 82.12 `token_hash` shape
+(sha256-hex truncated to 16 chars) — audits correlate without
+storing the cleartext bearer.
+
+### Methods
+
+- `nexo/admin/processing/pause { scope, reason?, operator_token_hash }`
+  → `ProcessingAck { changed, correlation_id }`. Idempotent.
+- `nexo/admin/processing/resume { scope, operator_token_hash }`
+  → ack.
+- `nexo/admin/processing/intervention { scope, action,
+  operator_token_hash }` → ack. Rejects calls on a
+  non-paused scope (`-32004 not_paused`) so operators never
+  double-respond.
+- `nexo/admin/processing/state { scope }` →
+  `ProcessingStateResponse { state }`.
+
+All four gated on the `operator_intervention` capability.
+Per-scope sub-gates (`operator_intervention_conversation`,
+`_batch`, …) are a future-proofing slot.
+
+### v0 surface
+
+Only the `Conversation` + `Reply` combination routes
+end-to-end. Non-v0 scopes / actions surface as `-32601
+not_implemented` so callers can probe the wire shape today
+without the daemon pretending to support unimplemented
+shapes.
+
+### Notification
+
+`nexo/notify/processing_state_changed` (literal pinned in
+`PROCESSING_STATE_CHANGED_NOTIFY_METHOD`) rides the agent
+event firehose deferred wire-up — the inbound dispatcher
+hook + transcript `role: Operator` integration land in
+82.13.b alongside the actual reply-out adapter.
+
 ## Limitations
 
 - **Bidirectional flow over single stdio**: `app:` ID prefix

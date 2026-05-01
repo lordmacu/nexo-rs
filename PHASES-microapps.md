@@ -1191,7 +1191,50 @@ Done criteria:
 - INVENTORY toggle: `NEXO_MICROAPP_HTTP_SERVERS_ENABLED`
   global killswitch.
 
-#### 82.13 — Agent processing pause + operator intervention (chat-takeover is one variant)   ⬜
+#### 82.13 — Agent processing pause + operator intervention (chat-takeover is one variant)   ✅  (shipped 2026-05-01)
+
+Four steps shipped (v0 = wire shapes + store + admin RPC
+routing; inbound-dispatcher hook + reply adapter + transcript
+Operator role deferred to 82.13.b):
+
+- **82.13.1** — `nexo_tool_meta::admin::processing` wire
+  shapes (`ProcessingScope` `#[non_exhaustive]`,
+  `InterventionAction`, `ProcessingControlState`,
+  pause/resume/intervention/state params + responses,
+  `PROCESSING_STATE_CHANGED_NOTIFY_METHOD` literal).
+  4 round-trip tests.
+- **82.13.2** — `ProcessingControlStore` async trait + 4
+  admin RPC handlers (`pause` / `resume` / `intervention` /
+  `state`) + dispatcher routing on the
+  `operator_intervention` capability.
+  6 handler tests + 5 store tests = 11.
+- **82.13.3** — `InMemoryProcessingControlStore` (DashMap,
+  drop-row-on-AgentActive semantics so the implicit default
+  doesn't hold slots). 5 tests (folded into Step 2 commit).
+- **82.13.4** — docs (`admin-rpc.md` "Operator processing
+  pause + intervention" section: wire shapes, methods, v0
+  surface, notification literal) + PHASES ✅ + FOLLOWUPS
+  deferreds.
+
+**Tests:** 4 + 6 + 5 = **15 verde**.
+
+**Deferred to 82.13.b**:
+- Inbound dispatcher hook: skip the agent turn for paused
+  conversations + replay the queued inbounds via 82.11
+  firehose. Same boot-order refactor as 82.10.h.b /
+  82.11 / 82.12 — all microapp-side wire-ups land together.
+- `InterventionAction::Reply` outbound: route through the
+  Phase 26 reply adapter, transcript-stamp with `role:
+  Operator`, emit a `nexo/notify/processing_state_changed`
+  frame on the firehose.
+- Auto-resolve hook for 82.14 (escalation): pausing a scope
+  with a pending escalation auto-flips the escalation to
+  `OperatorTakeover`.
+- SQLite-backed durable store — v0 is in-memory, daemon
+  restart drops every paused state. Not a scope drop:
+  `ProcessingControlStore` trait already exists, the new
+  impl drops in alongside the in-memory variant.
+
 
 Cross-app primitive. Operators sometimes need to suspend the
 agent's autonomous processing for a specific scope and step in

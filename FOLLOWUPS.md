@@ -1879,6 +1879,36 @@ helper). Two follow-ups stayed deferred:
   must restart. Target phase: alongside the operator
   wire-up, since both depend on the boot reload coordinator.
 
+### Phase 82.13 — operator processing pause follow-ups
+
+Phase 82.13 shipped the wire shapes + store + admin RPC
+handlers but four pieces are deferred:
+
+- **Inbound dispatcher hook**: paused conversations should
+  log inbounds via 82.11 firehose without firing an agent
+  turn. The hook lives in the inbound dispatch path
+  (alongside the binding + rate-limit checks) and depends on
+  the boot-order refactor that's already pending for
+  82.10.h.b / 82.11 / 82.12. Folded into the same shared
+  follow-up.
+- **`InterventionAction::Reply` outbound**: route through
+  the Phase 26 reply adapter; stamp the transcript entry
+  with `role: Operator`; emit
+  `nexo/notify/processing_state_changed` on the firehose.
+  Needs the same boot wire-up to access the per-microapp
+  reply adapter handle.
+- **Auto-resolve hook for 82.14**: pausing a scope with a
+  pending escalation that targets it auto-flips the
+  escalation to `OperatorTakeover`. Lands when 82.14 ships.
+- **SQLite-backed durable store**: v0 is in-memory; daemon
+  restart drops every pause. Trait + handler are
+  store-agnostic so the new impl drops in alongside
+  `InMemoryProcessingControlStore`.
+
+Target phase: 82.13.b (chat-takeover wire-up + reply
+adapter) and 82.13.c (durable store), folded with the next
+main.rs operator wire-up commit.
+
 ## Resolved (recent highlights)
 
 - 2026-04-28 — MCP denied-tool override now supports `Heartbeat`
