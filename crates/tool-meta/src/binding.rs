@@ -6,6 +6,8 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::event_source::EventSourceMeta;
+
 /// Identifies which inbound binding a tool call originated from.
 ///
 /// Stamped on every tool call dispatched to a Phase 11 stdio
@@ -69,6 +71,13 @@ pub struct BindingContext {
     /// `"telegram"`, `"imessage"`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mcp_channel_source: Option<String>,
+
+    /// Phase 82.4 — event-subscriber metadata when the agent's
+    /// inbound was synthesised from a NATS event (subject pattern
+    /// match). `None` for human-message turns / native-channel
+    /// inbounds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_source: Option<EventSourceMeta>,
 }
 
 impl BindingContext {
@@ -83,6 +92,7 @@ impl BindingContext {
             account_id: None,
             binding_id: None,
             mcp_channel_source: None,
+            event_source: None,
         }
     }
 
