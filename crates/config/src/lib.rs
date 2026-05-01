@@ -41,6 +41,10 @@ pub struct AppConfig {
     /// `~/.nexo/secret/pairing.key`); each field overrides
     /// selectively when the file is present.
     pub pairing: Option<PairingInner>,
+    /// Phase 82.2 — optional inbound webhook receiver. `None`
+    /// when absent; even when present, the listener only spawns
+    /// if `webhook_receiver.enabled == true`.
+    pub webhook_receiver: Option<WebhookServerConfig>,
 }
 
 /// Minimal config bundle for the `agent mcp-server` subcommand.
@@ -79,6 +83,7 @@ impl AppConfig {
         let transcripts =
             load_optional::<TranscriptsConfig>(dir, "transcripts.yaml")?.unwrap_or_default();
         let pairing = load_optional::<PairingConfig>(dir, "pairing.yaml")?.map(|f| f.pairing);
+        let webhook_receiver = load_optional::<WebhookServerConfig>(dir, "webhook_receiver.yaml")?;
         Ok(AppConfig {
             agents,
             broker,
@@ -93,6 +98,7 @@ impl AppConfig {
             taskflow,
             transcripts,
             pairing,
+            webhook_receiver,
         })
     }
 
