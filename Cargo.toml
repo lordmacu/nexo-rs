@@ -177,7 +177,7 @@ base64             = "0.22"
 sha2               = "0.10"
 hex                = "0.4"
 sqlite-vec         = "0.1"
-lru                = "0.12"
+lru                = "0.18"
 libsqlite3-sys     = "0.30"
 git2               = { version = "0.19", default-features = false }
 notify             = "6"
