@@ -143,30 +143,10 @@ pub(crate) fn inject_context_meta(
     let mut args = args;
     match args.as_object_mut() {
         Some(obj) => {
-            // Legacy flat block (deprecated, removal in N+1
-            // release once consumers migrated).
-            let mut meta = serde_json::Map::new();
-            meta.insert("agent_id".into(), Value::String(ctx.agent_id.clone()));
-            meta.insert(
-                "session_id".into(),
-                ctx.session_id
-                    .map(|u| Value::String(u.to_string()))
-                    .unwrap_or(Value::Null),
-            );
-
-            // Nested namespace — Phase 82.1 BindingContext.
-            // When the intake matched a binding,
-            // `ctx.binding` is `Some` and we serialise it
-            // under `_meta.nexo.binding`. When None, no
-            // `nexo` block is emitted (rather than emitting
-            // `nexo: { binding: null }`); keeps the wire
-            // compact for bindingless paths.
-            if let Some(binding) = &ctx.binding {
-                let nexo = serde_json::json!({ "binding": binding });
-                meta.insert("nexo".into(), nexo);
-            }
-
-            obj.insert("_meta".into(), Value::Object(meta));
+            // Single source of truth for `_meta` lives on
+            // AgentContext — same shape feeds Phase 11 stdio
+            // and Phase 12 MCP tools/call (Step 6).
+            obj.insert("_meta".into(), ctx.build_meta_value());
         }
         None => tracing::debug!(
             ext = %plugin_id,

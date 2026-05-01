@@ -111,11 +111,12 @@ impl McpTool {
 #[async_trait]
 impl ToolHandler for McpTool {
     async fn call(&self, ctx: &AgentContext, args: Value) -> anyhow::Result<Value> {
+        // Phase 82.1 Step 6 — share `_meta` builder with
+        // ExtensionTool so the MCP `tools/call` wire and the
+        // Phase 11 stdio wire emit identical shapes (legacy
+        // flat block + nested `nexo.binding` when bound).
         let meta = if self.context_passthrough {
-            Some(serde_json::json!({
-                "agent_id": ctx.agent_id,
-                "session_id": ctx.session_id.map(|u| u.to_string()),
-            }))
+            Some(ctx.build_meta_value())
         } else {
             None
         };

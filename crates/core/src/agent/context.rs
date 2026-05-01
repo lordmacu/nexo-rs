@@ -546,6 +546,41 @@ impl AgentContext {
         }
         Arc::new(EffectiveBindingPolicy::from_agent_defaults(&self.config))
     }
+
+    /// Phase 82.1 Step 6 — single source of truth for the `_meta`
+    /// payload exposed to extension tools (Phase 11 stdio JSON-RPC)
+    /// and MCP tools (`tools/call` `params._meta`). Both surfaces
+    /// must emit identical wire shapes so a microapp speaks the
+    /// same dialect regardless of which transport delivered the
+    /// call.
+    ///
+    /// Returned value is a JSON object with two layers:
+    /// - flat `agent_id` + `session_id` for backward-compat with
+    ///   pre-Phase-82 consumers,
+    /// - nested `nexo.binding` carrying `BindingContext` when the
+    ///   intake matched a binding (omitted otherwise to keep the
+    ///   wire compact for delegation receive / heartbeat
+    ///   bootstrap / tests).
+    pub fn build_meta_value(&self) -> serde_json::Value {
+        let mut meta = serde_json::Map::new();
+        meta.insert(
+            "agent_id".into(),
+            serde_json::Value::String(self.agent_id.clone()),
+        );
+        meta.insert(
+            "session_id".into(),
+            self.session_id
+                .map(|u| serde_json::Value::String(u.to_string()))
+                .unwrap_or(serde_json::Value::Null),
+        );
+        if let Some(binding) = &self.binding {
+            meta.insert(
+                "nexo".into(),
+                serde_json::json!({ "binding": binding }),
+            );
+        }
+        serde_json::Value::Object(meta)
+    }
 }
 
 #[cfg(test)]
@@ -1013,5 +1048,126 @@ mod binding_context_tests {
         assert_eq!(c0.binding_id.as_deref(), Some("whatsapp:personal"));
         assert_eq!(c1.binding_id.as_deref(), Some("whatsapp:business"));
         assert_ne!(c0.binding_id, c1.binding_id);
+    }
+}
+
+#[cfg(test)]
+mod build_meta_value_tests {
+    //! Phase 82.1 Step 6 — `AgentContext::build_meta_value` is the
+    //! single source of truth for the `_meta` shape sent over both
+    //! Phase 11 stdio and Phase 12 MCP `tools/call`. These tests
+    //! lock down the dual-write contract so a refactor that breaks
+    //! either surface fails here first.
+    use super::{AgentContext, BindingContext};
+    use crate::session::SessionManager;
+    use nexo_broker::AnyBroker;
+    use nexo_config::types::agents::{
+        AgentConfig, AgentRuntimeConfig, HeartbeatConfig, ModelConfig,
+    };
+    use std::sync::Arc;
+    use std::time::Duration;
+    use uuid::Uuid;
+
+    fn mini_ctx(agent: &str, session: Option<Uuid>) -> AgentContext {
+        let cfg = Arc::new(AgentConfig {
+            id: agent.into(),
+            model: ModelConfig {
+                provider: "stub".into(),
+                model: "m1".into(),
+            },
+            plugins: Vec::new(),
+            heartbeat: HeartbeatConfig::default(),
+            config: AgentRuntimeConfig::default(),
+            system_prompt: String::new(),
+            workspace: String::new(),
+            skills: Vec::new(),
+            skills_dir: String::new(),
+            skill_overrides: Default::default(),
+            transcripts_dir: String::new(),
+            dreaming: Default::default(),
+            workspace_git: Default::default(),
+            tool_rate_limits: None,
+            tool_args_validation: None,
+            extra_docs: Vec::new(),
+            inbound_bindings: Vec::new(),
+            allowed_tools: Vec::new(),
+            sender_rate_limit: None,
+            allowed_delegates: Vec::new(),
+            accept_delegates_from: Vec::new(),
+            description: String::new(),
+            outbound_allowlist: Default::default(),
+            google_auth: None,
+            credentials: Default::default(),
+            link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
+            language: None,
+            context_optimization: None,
+            dispatch_policy: Default::default(),
+            plan_mode: Default::default(),
+            remote_triggers: Vec::new(),
+            lsp: nexo_config::types::lsp::LspPolicy::default(),
+            config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
+            team: nexo_config::types::team::TeamPolicy::default(),
+            proactive: Default::default(),
+            repl: Default::default(),
+            auto_dream: None,
+            assistant_mode: None,
+            away_summary: None,
+            brief: None,
+            channels: None,
+            auto_approve: false,
+            extract_memories: None,
+        });
+        let broker = AnyBroker::local();
+        let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
+        let ctx = AgentContext::new(agent, cfg, broker, sessions);
+        match session {
+            Some(id) => ctx.with_session_id(id),
+            None => ctx,
+        }
+    }
+
+    #[tokio::test]
+    async fn meta_without_binding_emits_legacy_block_only() {
+        let ctx = mini_ctx("delegation", None);
+        let meta = ctx.build_meta_value();
+        assert_eq!(meta["agent_id"], "delegation");
+        assert!(meta["session_id"].is_null());
+        assert!(meta.get("nexo").is_none());
+    }
+
+    #[tokio::test]
+    async fn meta_with_binding_emits_dual_namespaces() {
+        let mut ctx = mini_ctx("ana", Some(Uuid::nil()));
+        ctx.binding = Some(BindingContext {
+            agent_id: "ana".into(),
+            session_id: Some(Uuid::nil()),
+            channel: Some("whatsapp".into()),
+            account_id: Some("personal".into()),
+            binding_id: Some("whatsapp:personal".into()),
+            mcp_channel_source: None,
+        });
+        let meta = ctx.build_meta_value();
+
+        // Legacy flat block intact (backward-compat).
+        assert_eq!(meta["agent_id"], "ana");
+        assert!(meta["session_id"].is_string());
+
+        // Nested binding block.
+        let binding = &meta["nexo"]["binding"];
+        assert_eq!(binding["agent_id"], "ana");
+        assert_eq!(binding["channel"], "whatsapp");
+        assert_eq!(binding["account_id"], "personal");
+        assert_eq!(binding["binding_id"], "whatsapp:personal");
+        assert!(binding.get("mcp_channel_source").is_none());
+    }
+
+    #[tokio::test]
+    async fn meta_session_id_serialises_as_string_when_present() {
+        let sid = Uuid::from_u128(0x42);
+        let ctx = mini_ctx("ana", Some(sid));
+        let meta = ctx.build_meta_value();
+        assert_eq!(meta["session_id"], sid.to_string());
     }
 }
