@@ -9411,7 +9411,7 @@ block instead of the coordinator block.
 - Smoke test parallel to 84.1's: YAML fixture with
   `role: worker`, one-turn goal, worker block appears.
 
-#### 84.5 — Docs + admin-ui sync   ⬜
+#### 84.5 — Docs + admin-ui sync   ✅  (shipped 2026-05-01)
 
 - `docs/src/agents/coordinator-mode.md` new page covering:
   role flag semantics, persona prompt sections, notification

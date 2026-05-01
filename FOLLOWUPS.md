@@ -1954,6 +1954,19 @@ admin RPC + http_server bootstrap into main.rs (single
 shared boot-order refactor — folded with 82.10.h.b /
 82.11 / 82.12 / 82.13 / 82.14 deferreds).
 
+### Phase 84.5 — admin-ui "Agent role" panel
+
+Phase 84.5 shipped CHANGELOG entries for 84.1-4 + cross-link from
+multi-agent-coordination.md. Deferred:
+
+- **`admin-ui/PHASES.md` "Agent role" panel** — per-binding role
+  view + active persona indicator (coordinator / worker / unset).
+  Defer until next admin-ui repo touch (no admin-ui work
+  scheduled in current phases).
+
+Target phase: folded with the next admin-ui sweep (same shape
+as the 82.9 admin-ui defer).
+
 ### Phase 84.3 — fork-as-tool spawn pipeline + transcript resume
 
 Phase 84.3 shipped the `WorkerRegistry` trait + `InMemoryWorkerRegistry`

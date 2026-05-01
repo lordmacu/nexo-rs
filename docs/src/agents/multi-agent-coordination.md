@@ -213,6 +213,12 @@ router.forget(goal_id);
 
 ## See also
 
+- [Coordinator mode (Phase 84)](./coordinator-mode.md) —
+  role-aware system prompt for `role: coordinator` bindings,
+  `<task-notification>` envelope, `SendMessageToWorker`
+  continuation tool, continue-vs-spawn matrix.
+- [Worker mode (Phase 84.4)](./worker-mode.md) — sister persona
+  for `role: worker` bindings.
 - [Assistant mode](./assistant-mode.md)
 - [Background agents (`agent run --bg` / ps / attach)](../cli/agent-bg.md)
 - [Auto-approve dial](./auto-approve.md)
