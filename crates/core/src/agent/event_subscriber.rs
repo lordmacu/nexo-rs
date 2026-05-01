@@ -104,6 +104,22 @@ pub fn build_synthesised_payload(
         "synthesis_mode": binding.synthesize_inbound.as_str(),
     });
 
+    // Phase 82.5 — surface the operator-declared
+    // [`InboundKind`] so `runtime::extract_inbound_meta` stamps
+    // `_meta.nexo.inbound.kind` accordingly. Default
+    // `external_user` matches synthesised webhook / event sources;
+    // operators set `internal_system` for cron tickers and
+    // pipeline fans.
+    let inbound_kind = match binding.inbound_kind {
+        nexo_tool_meta::InboundKind::ExternalUser => "external_user",
+        nexo_tool_meta::InboundKind::InternalSystem => "internal_system",
+        nexo_tool_meta::InboundKind::InterSession => "inter_session",
+        // `InboundKind` is `#[non_exhaustive]`; future variants
+        // round-trip as the literal payload string for forward-
+        // compat with newer microapp consumers.
+        _ => "external_user",
+    };
+
     Some(json!({
         "kind": "message",
         "from": from,
@@ -113,6 +129,7 @@ pub fn build_synthesised_payload(
         "is_group": false,
         "timestamp": timestamp,
         "msg_id": msg_id,
+        "inbound_kind": inbound_kind,
         EVENT_SOURCE_PAYLOAD_FIELD: event_source,
     }))
 }
@@ -445,6 +462,7 @@ mod skeleton_tests {
             max_concurrency: 1,
             max_buffer: 64,
             overflow_policy: OverflowPolicy::DropOldest,
+            inbound_kind: nexo_tool_meta::InboundKind::ExternalUser,
         }
     }
 

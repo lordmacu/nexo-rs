@@ -1523,7 +1523,31 @@ fn extract_inbound_meta(
         }
         (None, None) => unreachable!(),
     };
-    // Provider-supplied epoch seconds (whatsapp / telegram convention).
+    // Phase 82.5 — honor payload-supplied `inbound_kind` when
+    // present. Event-subscriber synthesizer stamps it from the
+    // operator-declared yaml field so `cron.daily` etc. surface
+    // as `internal_system`. Unknown / missing falls back to
+    // `external_user` already set by the constructors above.
+    if let Some(k) = payload.get("inbound_kind").and_then(|v| v.as_str()) {
+        match k {
+            "external_user" => meta.kind = nexo_tool_meta::InboundKind::ExternalUser,
+            "internal_system" => {
+                meta.kind = nexo_tool_meta::InboundKind::InternalSystem;
+                // Internal-system turns have no real sender — clear
+                // any synthesised sender from the constructor above
+                // so consumers don't rate-limit by it.
+                meta.sender_id = None;
+            }
+            "inter_session" => meta.kind = nexo_tool_meta::InboundKind::InterSession,
+            _ => {
+                tracing::warn!(
+                    inbound_kind = k,
+                    "unknown payload-supplied inbound_kind; falling back to external_user",
+                );
+            }
+        }
+    }
+    // Provider-supplied epoch seconds (whatsapp / future channels convention).
     if let Some(ts_secs) = payload.get("timestamp").and_then(|v| v.as_i64()) {
         if let Some(dt) = chrono::DateTime::<chrono::Utc>::from_timestamp(ts_secs, 0) {
             meta = meta.with_ts(dt);
@@ -1780,6 +1804,41 @@ mod tests {
         let meta = extract_inbound_meta(&payload, Some("+5491100"), false)
             .expect("meta should build");
         assert!(meta.msg_id.as_deref().unwrap().starts_with("synth.+5491100."));
+    }
+
+    #[test]
+    fn extract_inbound_meta_honors_payload_supplied_internal_system_kind() {
+        // Event-subscriber binding declared `inbound_kind: internal_system`
+        // in YAML; synthesizer stamps it on payload. Helper must
+        // reflect it on InboundMessageMeta.kind and clear sender_id
+        // (system turns have no real sender).
+        let payload = serde_json::json!({
+            "kind": "message",
+            "from": "cron.daily",
+            "msg_id": "evt.123",
+            "inbound_kind": "internal_system",
+            "timestamp": 1_756_700_096_i64,
+        });
+        let meta = extract_inbound_meta(&payload, Some("cron.daily"), false)
+            .expect("meta should build");
+        assert_eq!(meta.kind, nexo_tool_meta::InboundKind::InternalSystem);
+        assert!(
+            meta.sender_id.is_none(),
+            "internal_system clears sender_id"
+        );
+        assert_eq!(meta.msg_id.as_deref(), Some("evt.123"));
+    }
+
+    #[test]
+    fn extract_inbound_meta_unknown_payload_kind_falls_back_to_external_user() {
+        let payload = serde_json::json!({
+            "from": "x",
+            "msg_id": "y",
+            "inbound_kind": "future_kind_v3",
+        });
+        let meta = extract_inbound_meta(&payload, Some("x"), false)
+            .expect("meta should build");
+        assert_eq!(meta.kind, nexo_tool_meta::InboundKind::ExternalUser);
     }
 
     #[test]

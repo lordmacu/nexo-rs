@@ -5,8 +5,13 @@
 //! the standard inbound flow (`plugin.inbound.event.<source>`)
 //! so the existing routing/binding/dispatch primitives apply.
 
+use nexo_tool_meta::InboundKind;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+fn default_inbound_kind() -> InboundKind {
+    InboundKind::ExternalUser
+}
 
 /// What to do with an event that matches the subject pattern.
 ///
@@ -108,6 +113,16 @@ pub struct EventSubscriberBinding {
     /// Overflow behaviour when the buffer is full.
     #[serde(default)]
     pub overflow_policy: OverflowPolicy,
+
+    /// Phase 82.5 — discriminator stamped on the synthesised
+    /// inbound's `_meta.nexo.inbound.kind`. Defaults to
+    /// `external_user` (a NATS subject re-published on behalf of
+    /// an external user). Operators set `internal_system` for
+    /// system-driven sources (cron tickers, scheduler fans,
+    /// internal pipeline events) so microapps that branch on
+    /// `kind` can ignore them.
+    #[serde(default = "default_inbound_kind")]
+    pub inbound_kind: InboundKind,
 }
 
 /// Boot-time validation errors.
@@ -249,6 +264,7 @@ mod tests {
             max_concurrency: 1,
             max_buffer: 64,
             overflow_policy: OverflowPolicy::DropOldest,
+            inbound_kind: InboundKind::ExternalUser,
         }
     }
 
