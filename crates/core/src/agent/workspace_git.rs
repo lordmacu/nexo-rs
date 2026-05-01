@@ -39,6 +39,21 @@ pub struct MemoryGitRepo {
     inner: Mutex<Repository>,
     /// Phase 77.7 — secret guard for scanning staged content before commit.
     guard: Option<nexo_memory::SecretGuard>,
+    /// Phase 36.2 (MS-1.b) — optional mutation observer. Fires once
+    /// per successful commit (skipped on a clean tree). Best-effort:
+    /// the hook is dispatched via `tokio::spawn` from inside the
+    /// sync `commit_all`, so a hook failure cannot poison the
+    /// commit. When no tokio runtime is available the spawn is
+    /// silently skipped — `commit_all` still works in test code
+    /// that runs outside an async context.
+    mutation_hook: Option<std::sync::Arc<dyn nexo_driver_types::MemoryMutationHook>>,
+    /// Agent identifier passed to the mutation hook. Empty string
+    /// (default) suppresses the event so a freshly-constructed repo
+    /// without operator identity does not emit half-formed events.
+    agent_id: String,
+    /// Tenant string passed to the mutation hook. Defaults to
+    /// `"default"` for single-tenant deployments.
+    tenant: String,
 }
 impl MemoryGitRepo {
     /// Open an existing `.git` at `root`, or init a fresh repo plus
@@ -66,6 +81,9 @@ impl MemoryGitRepo {
             author_email,
             inner: Mutex::new(repo),
             guard: None,
+            mutation_hook: None,
+            agent_id: String::new(),
+            tenant: "default".into(),
         })
     }
 
@@ -73,6 +91,22 @@ impl MemoryGitRepo {
     /// before commit. On Block, the commit is aborted.
     pub fn with_guard(mut self, guard: nexo_memory::SecretGuard) -> Self {
         self.guard = Some(guard);
+        self
+    }
+
+    /// Phase 36.2 (MS-1.b) — attach a mutation observer + the
+    /// `(agent_id, tenant)` pair the event carries. The hook is
+    /// fired post-successful-commit via `tokio::spawn` so it never
+    /// blocks the libgit2 thread.
+    pub fn with_mutation_hook(
+        mut self,
+        hook: std::sync::Arc<dyn nexo_driver_types::MemoryMutationHook>,
+        agent_id: impl Into<String>,
+        tenant: impl Into<String>,
+    ) -> Self {
+        self.mutation_hook = Some(hook);
+        self.agent_id = agent_id.into();
+        self.tenant = tenant.into();
         self
     }
     pub fn root(&self) -> &Path {
@@ -189,6 +223,30 @@ impl MemoryGitRepo {
         };
         let parent_refs: Vec<&git2::Commit> = parents.iter().collect();
         let oid = repo.commit(Some("HEAD"), &sig, &sig, &message, &tree, &parent_refs)?;
+
+        // Phase 36.2 (MS-1.b) — best-effort fire of the mutation
+        // observer post-success. Spawn from a tokio handle if one
+        // is available; otherwise silently skip so this method
+        // stays usable from non-async test contexts.
+        if let (Some(hook), false) = (&self.mutation_hook, self.agent_id.is_empty()) {
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                let hook = hook.clone();
+                let agent_id = self.agent_id.clone();
+                let tenant = self.tenant.clone();
+                let oid_str = oid.to_string();
+                handle.spawn(async move {
+                    hook.on_mutation(
+                        &agent_id,
+                        &tenant,
+                        nexo_driver_types::MemoryMutationScope::Git,
+                        nexo_driver_types::MemoryMutationOp::Update,
+                        &oid_str,
+                    )
+                    .await;
+                });
+            }
+        }
+
         Ok(Some(oid))
     }
     /// Last `limit` commits reachable from HEAD, newest first.
@@ -394,6 +452,87 @@ mod tests {
         assert_eq!(log.len(), 2);
         assert_eq!(log[0].subject, "memory: note");
     }
+    #[tokio::test]
+    async fn commit_all_fires_mutation_hook_on_success() {
+        use async_trait::async_trait;
+        use std::sync::{Arc, Mutex};
+        #[derive(Default)]
+        struct Recorder {
+            events: Mutex<Vec<(String, String, String)>>,
+        }
+        #[async_trait]
+        impl nexo_driver_types::MemoryMutationHook for Recorder {
+            async fn on_mutation(
+                &self,
+                agent_id: &str,
+                tenant: &str,
+                _scope: nexo_driver_types::MemoryMutationScope,
+                _op: nexo_driver_types::MemoryMutationOp,
+                key: &str,
+            ) {
+                self.events.lock().unwrap().push((
+                    agent_id.to_string(),
+                    tenant.to_string(),
+                    key.to_string(),
+                ));
+            }
+        }
+        let td = TempDir::new().unwrap();
+        let rec = Arc::new(Recorder::default());
+        let hook: Arc<dyn nexo_driver_types::MemoryMutationHook> = rec.clone();
+        let repo = MemoryGitRepo::open_or_init(td.path(), "kate", "kate@test")
+            .unwrap()
+            .with_mutation_hook(hook, "ana", "acme");
+        std::fs::write(td.path().join("MEMORY.md"), "# hello\n").unwrap();
+        let oid = repo.commit_all("memory: note", "").unwrap();
+        assert!(oid.is_some());
+        // The hook is fire-and-forget via `tokio::spawn`; yield long
+        // enough for the spawned task to run.
+        for _ in 0..20 {
+            if !rec.events.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        let evs = rec.events.lock().unwrap();
+        assert_eq!(evs.len(), 1, "exactly one Git mutation event must fire");
+        assert_eq!(evs[0].0, "ana");
+        assert_eq!(evs[0].1, "acme");
+        assert_eq!(evs[0].2, oid.unwrap().to_string());
+    }
+
+    #[tokio::test]
+    async fn commit_all_does_not_fire_hook_on_clean_tree() {
+        use async_trait::async_trait;
+        use std::sync::{Arc, Mutex};
+        struct Counter(Mutex<u32>);
+        #[async_trait]
+        impl nexo_driver_types::MemoryMutationHook for Counter {
+            async fn on_mutation(
+                &self,
+                _: &str,
+                _: &str,
+                _: nexo_driver_types::MemoryMutationScope,
+                _: nexo_driver_types::MemoryMutationOp,
+                _: &str,
+            ) {
+                *self.0.lock().unwrap() += 1;
+            }
+        }
+        let td = TempDir::new().unwrap();
+        let c = Arc::new(Counter(Mutex::new(0)));
+        let hook: Arc<dyn nexo_driver_types::MemoryMutationHook> = c.clone();
+        let repo = MemoryGitRepo::open_or_init(td.path(), "kate", "kate@test")
+            .unwrap()
+            .with_mutation_hook(hook, "ana", "default");
+        // No staged changes — commit_all returns None and must NOT
+        // emit an event.
+        let oid = repo.commit_all("noop", "").unwrap();
+        assert!(oid.is_none());
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert_eq!(*c.0.lock().unwrap(), 0);
+    }
+
     #[test]
     fn commit_all_on_clean_tree_returns_none() {
         let td = TempDir::new().unwrap();
