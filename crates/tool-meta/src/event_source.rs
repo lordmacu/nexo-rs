@@ -76,6 +76,34 @@ pub fn format_dispatch_source(
     format!("dispatch:{extension_id}:{channel}:{account_id}")
 }
 
+/// Phase 82.7 turn-log marker. Returns
+/// `"rate_limited:tool=<name>,binding=<id|none>,rps=<f64>"` so
+/// audit log queries can identify which `(binding, tool)` pairs
+/// hit caps most frequently. Operators wire this to billing /
+/// SaaS metric pipelines.
+///
+/// `binding_id` is `"none"` for the legacy single-tenant path
+/// (binding-less turns: delegation receive, heartbeat,
+/// pre-Phase-82.7 callers).
+///
+/// # Example
+///
+/// ```
+/// use nexo_tool_meta::format_rate_limit_hit;
+/// assert_eq!(
+///     format_rate_limit_hit("marketing_send_drip", Some("whatsapp:free"), 0.167),
+///     "rate_limited:tool=marketing_send_drip,binding=whatsapp:free,rps=0.167"
+/// );
+/// assert_eq!(
+///     format_rate_limit_hit("read_state", None, 1.0),
+///     "rate_limited:tool=read_state,binding=none,rps=1"
+/// );
+/// ```
+pub fn format_rate_limit_hit(tool: &str, binding_id: Option<&str>, rps: f64) -> String {
+    let bid = binding_id.unwrap_or("none");
+    format!("rate_limited:tool={tool},binding={bid},rps={rps}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,5 +167,21 @@ mod tests {
     fn format_dispatch_marker_handles_empty_segments() {
         // Pass-through; sanitisation is the boot supervisor's job.
         assert_eq!(format_dispatch_source("", "", ""), "dispatch:::");
+    }
+
+    #[test]
+    fn format_rate_limit_hit_renders_canonical_string() {
+        assert_eq!(
+            format_rate_limit_hit("marketing_send_drip", Some("whatsapp:free"), 0.167),
+            "rate_limited:tool=marketing_send_drip,binding=whatsapp:free,rps=0.167"
+        );
+    }
+
+    #[test]
+    fn format_rate_limit_hit_with_binding_none_says_none() {
+        assert_eq!(
+            format_rate_limit_hit("read_state", None, 1.0),
+            "rate_limited:tool=read_state,binding=none,rps=1"
+        );
     }
 }
