@@ -1282,6 +1282,68 @@ async fn main() -> Result<()> {
         .context("failed to initialize broker")?;
     tracing::info!(kind = ?cfg.broker.broker.kind, url = %cfg.broker.broker.url, "broker ready");
 
+    // Phase 36.2 — memory snapshot subsystem (early init, before
+    // `LongTermMemory::open_with_vector` so the mutation hook is
+    // available when the writer attaches it). Retention worker
+    // spawn happens later, once `dream_shutdown` exists.
+    let snapshot_yaml = &cfg.memory.snapshot;
+    let memory_snapshot_state_root = if snapshot_yaml.root.is_empty() {
+        nexo_project_tracker::state::nexo_state_dir()
+    } else {
+        std::path::PathBuf::from(&snapshot_yaml.root)
+    };
+    let memdir_root_path = if snapshot_yaml.memdir_root.is_empty() {
+        memory_snapshot_state_root.clone()
+    } else {
+        std::path::PathBuf::from(&snapshot_yaml.memdir_root)
+    };
+    let sqlite_root_path = if snapshot_yaml.sqlite_root.is_empty() {
+        memory_snapshot_state_root.clone()
+    } else {
+        std::path::PathBuf::from(&snapshot_yaml.sqlite_root)
+    };
+    let memory_snapshotter: Option<Arc<dyn nexo_memory_snapshot::MemorySnapshotter>> =
+        if snapshot_yaml.enabled {
+            let s = nexo_memory_snapshot::local_fs::LocalFsSnapshotter::builder()
+                .state_root(memory_snapshot_state_root.clone())
+                .memdir_root(memdir_root_path.clone())
+                .sqlite_root(sqlite_root_path.clone())
+                .lock_timeout(std::time::Duration::from_secs(
+                    snapshot_yaml.lock_timeout_secs.max(1),
+                ))
+                .build()
+                .map_err(|e| anyhow::anyhow!("memory snapshotter build failed: {e}"))?;
+            Some(Arc::new(s))
+        } else {
+            tracing::info!(
+                target: "boot.memory_snapshot",
+                "memory.snapshot.enabled = false; subsystem disabled"
+            );
+            None
+        };
+
+    // Phase 36.2 — broker-backed event publisher used by the mutation
+    // hook on every memory write. Best-effort: a publish error must
+    // never poison the writer's transaction (the hook impl swallows
+    // and logs internally).
+    let memory_event_publisher: Arc<dyn nexo_memory_snapshot::EventPublisher> =
+        if snapshot_yaml.events.mutation_publish_enabled && memory_snapshotter.is_some() {
+            Arc::new(BrokerEventPublisher::new(broker.clone()))
+        } else {
+            Arc::new(nexo_memory_snapshot::NoopPublisher)
+        };
+    let memory_mutation_hook: Option<Arc<dyn nexo_driver_types::MemoryMutationHook>> =
+        if snapshot_yaml.events.mutation_publish_enabled && memory_snapshotter.is_some() {
+            Some(
+                nexo_memory_snapshot::MemoryMutationPublisher::new(
+                    memory_event_publisher.clone(),
+                )
+                .into_arc(),
+            )
+        } else {
+            None
+        };
+
     // Phase 80.9 — channel boot context. Holds the shared
     // `ChannelRegistry` + `SessionRegistry` + `BrokerChannelDispatcher`
     // so the per-(binding,server) inbound loops + the bridge spawn
@@ -1401,10 +1463,19 @@ async fn main() -> Result<()> {
             } else {
                 mem
             };
+            // Phase 36.2 — attach the mutation hook so every
+            // `remember_typed` / `forget` write streams onto the
+            // `nexo.memory.mutated.<agent_id>` NATS subject.
+            let mem = if let Some(ref hook) = memory_mutation_hook {
+                mem.with_mutation_hook(hook.clone())
+            } else {
+                mem
+            };
             tracing::info!(
                 path = %path,
                 vector = mem.embedding_provider().is_some(),
                 secret_guard = secret_guard.is_some(),
+                mutation_hook = memory_mutation_hook.is_some(),
                 "long-term memory ready"
             );
             Some(Arc::new(mem))
@@ -2165,47 +2236,11 @@ async fn main() -> Result<()> {
     let dream_shutdown = tokio_util::sync::CancellationToken::new();
     let mut dream_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
 
-    // Phase 36.2 — memory snapshot subsystem. Single
-    // `Arc<dyn MemorySnapshotter>` shared across every agent's tool
-    // registry; the LLM `memory_snapshot` tool dispatches through
-    // this same backend the operator CLI uses (`nexo memory ...`).
-    // `RetentionWorker` runs with the daemon's shutdown token so
-    // orphan staging dirs left by SIGKILL are swept on the next
-    // boot's first tick.
-    let snapshot_yaml = &cfg.memory.snapshot;
-    let memory_snapshot_state_root = if snapshot_yaml.root.is_empty() {
-        nexo_project_tracker::state::nexo_state_dir()
-    } else {
-        std::path::PathBuf::from(&snapshot_yaml.root)
-    };
-    let memdir_root_path = if snapshot_yaml.memdir_root.is_empty() {
-        memory_snapshot_state_root.clone()
-    } else {
-        std::path::PathBuf::from(&snapshot_yaml.memdir_root)
-    };
-    let sqlite_root_path = if snapshot_yaml.sqlite_root.is_empty() {
-        memory_snapshot_state_root.clone()
-    } else {
-        std::path::PathBuf::from(&snapshot_yaml.sqlite_root)
-    };
-    let memory_snapshotter: Option<Arc<dyn nexo_memory_snapshot::MemorySnapshotter>> = if snapshot_yaml.enabled {
-        let s = nexo_memory_snapshot::local_fs::LocalFsSnapshotter::builder()
-            .state_root(memory_snapshot_state_root.clone())
-            .memdir_root(memdir_root_path.clone())
-            .sqlite_root(sqlite_root_path.clone())
-            .lock_timeout(std::time::Duration::from_secs(
-                snapshot_yaml.lock_timeout_secs.max(1),
-            ))
-            .build()
-            .map_err(|e| anyhow::anyhow!("memory snapshotter build failed: {e}"))?;
-        Some(Arc::new(s))
-    } else {
-        tracing::info!(
-            target: "boot.memory_snapshot",
-            "memory.snapshot.enabled = false; subsystem disabled"
-        );
-        None
-    };
+    // Phase 36.2 — `RetentionWorker` spawn. The snapshotter +
+    // mutation hook were built earlier (right after `broker`) so
+    // `LongTermMemory::open_with_vector` saw the hook. Only the
+    // worker stays here because it needs `dream_shutdown` (defined
+    // a few lines up).
     if let Some(snapshotter) = &memory_snapshotter {
         let retention = nexo_memory_snapshot::RetentionConfig {
             keep_count: snapshot_yaml.retention.keep_count,
@@ -2230,6 +2265,7 @@ async fn main() -> Result<()> {
             max_age_days = snapshot_yaml.retention.max_age_days,
             gc_interval_secs = snapshot_yaml.retention.gc_interval_secs,
             auto_pre_dream = snapshot_yaml.auto_pre_dream,
+            mutation_publish_enabled = snapshot_yaml.events.mutation_publish_enabled,
             "memory snapshot subsystem ready (retention worker spawned)"
         );
     }
@@ -10970,6 +11006,69 @@ async fn dispatch_memory_subcommand(sub: &MemorySubcommand) -> Result<()> {
             state_root,
             yes,
         } => run_memory_delete(agent, tenant, id, state_root, *yes).await,
+    }
+}
+
+/// Phase 36.2 — broker bridge for the memory snapshot subsystem.
+///
+/// Implements `nexo_memory_snapshot::EventPublisher` against any
+/// `AnyBroker` so lifecycle events
+/// (`nexo.memory.snapshot.<agent>.{created,restored,deleted,gc}`)
+/// and mutation events (`nexo.memory.mutated.<agent>`) reach NATS
+/// (or the local fallback) without the snapshot crate taking a
+/// direct broker dep.
+///
+/// Best-effort: a publish error is logged via `tracing::warn!` and
+/// dropped. The trait method returns `()` so the writer's
+/// transaction is never poisoned by broker degradation.
+struct BrokerEventPublisher {
+    broker: AnyBroker,
+}
+
+impl BrokerEventPublisher {
+    fn new(broker: AnyBroker) -> Self {
+        Self { broker }
+    }
+}
+
+#[async_trait::async_trait]
+impl nexo_memory_snapshot::EventPublisher for BrokerEventPublisher {
+    async fn publish_lifecycle(&self, event: nexo_memory_snapshot::LifecycleEvent) {
+        let topic = event.subject();
+        let payload = match serde_json::to_value(&event) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(error = %e, "memory_snapshot: lifecycle event serialize failed");
+                return;
+            }
+        };
+        let evt = nexo_broker::Event::new(topic.clone(), "memory-snapshot", payload);
+        if let Err(e) = nexo_broker::BrokerHandle::publish(&self.broker, &topic, evt).await {
+            tracing::warn!(
+                topic = %topic,
+                error = %e,
+                "memory_snapshot: lifecycle publish failed (best-effort)"
+            );
+        }
+    }
+
+    async fn publish_mutation(&self, event: nexo_memory_snapshot::MutationEvent) {
+        let topic = event.subject();
+        let payload = match serde_json::to_value(&event) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(error = %e, "memory_snapshot: mutation event serialize failed");
+                return;
+            }
+        };
+        let evt = nexo_broker::Event::new(topic.clone(), "memory-snapshot", payload);
+        if let Err(e) = nexo_broker::BrokerHandle::publish(&self.broker, &topic, evt).await {
+            tracing::warn!(
+                topic = %topic,
+                error = %e,
+                "memory_snapshot: mutation publish failed (best-effort)"
+            );
+        }
     }
 }
 
