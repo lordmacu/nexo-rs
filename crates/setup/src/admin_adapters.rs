@@ -35,7 +35,13 @@ use nexo_core::agent::admin_rpc::domains::llm_providers::LlmYamlPatcher;
 use nexo_core::agent::admin_rpc::domains::pairing::{
     PairingChallengeStore, PairingNotifier, PAIRING_STATUS_NOTIFY_METHOD,
 };
+use nexo_core::agent::admin_rpc::domains::escalations::{
+    filter_matches, EscalationStore,
+};
 use nexo_core::agent::admin_rpc::domains::processing::ProcessingControlStore;
+use nexo_tool_meta::admin::escalations::{
+    EscalationEntry, EscalationState, EscalationsListParams, ResolvedBy,
+};
 use nexo_tool_meta::admin::processing::{ProcessingControlState, ProcessingScope};
 use nexo_core::agent::transcripts::{TranscriptLine, TranscriptWriter};
 use nexo_core::agent::transcripts_index::TranscriptsIndex;
@@ -1409,5 +1415,277 @@ mod processing_store_tests {
             .unwrap();
         assert!(changed, "transition counts as change");
         assert!(store.is_empty(), "no leftover row");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Phase 82.14 — in-memory `EscalationStore` adapter.
+// Mirrors the in-memory processing store. Durable SQLite
+// variant is a 82.14.b follow-up alongside the
+// `escalate_to_human` built-in tool.
+// ─────────────────────────────────────────────────────────────────────
+
+/// In-memory `EscalationStore` adapter.
+#[derive(Debug, Default, Clone)]
+pub struct InMemoryEscalationStore {
+    inner: Arc<DashMap<ProcessingScope, EscalationEntry>>,
+}
+
+impl InMemoryEscalationStore {
+    /// Build an empty store.
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(DashMap::new()),
+        }
+    }
+
+    /// Live row count — boot diagnostics + tests.
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// `true` when no escalations are tracked.
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+}
+
+#[async_trait]
+impl EscalationStore for InMemoryEscalationStore {
+    async fn list(
+        &self,
+        filter: &EscalationsListParams,
+    ) -> anyhow::Result<Vec<EscalationEntry>> {
+        let mut out: Vec<EscalationEntry> = self
+            .inner
+            .iter()
+            .filter(|r| filter_matches(r.value(), filter))
+            .map(|r| r.value().clone())
+            .collect();
+        // Newest first by request/resolve time. Pending wins
+        // over resolved at the same scope (latest mutation
+        // takes precedence).
+        out.sort_by_key(|e| match &e.state {
+            EscalationState::Pending {
+                requested_at_ms, ..
+            } => std::cmp::Reverse(*requested_at_ms),
+            EscalationState::Resolved {
+                resolved_at_ms, ..
+            } => std::cmp::Reverse(*resolved_at_ms),
+            _ => std::cmp::Reverse(0u64),
+        });
+        out.truncate(filter.limit);
+        Ok(out)
+    }
+
+    async fn get(&self, scope: &ProcessingScope) -> anyhow::Result<EscalationState> {
+        Ok(self
+            .inner
+            .get(scope)
+            .map(|r| r.value().state.clone())
+            .unwrap_or(EscalationState::None))
+    }
+
+    async fn resolve(
+        &self,
+        scope: &ProcessingScope,
+        by: ResolvedBy,
+        resolved_at_ms: u64,
+    ) -> anyhow::Result<bool> {
+        let Some(mut entry_ref) = self.inner.get_mut(scope) else {
+            return Ok(false);
+        };
+        if !matches!(entry_ref.state, EscalationState::Pending { .. }) {
+            return Ok(false);
+        }
+        entry_ref.state = EscalationState::Resolved {
+            scope: scope.clone(),
+            resolved_at_ms,
+            by,
+        };
+        Ok(true)
+    }
+
+    async fn upsert_pending(
+        &self,
+        agent_id: String,
+        state: EscalationState,
+    ) -> anyhow::Result<bool> {
+        let scope = match &state {
+            EscalationState::Pending { scope, .. }
+            | EscalationState::Resolved { scope, .. } => scope.clone(),
+            _ => anyhow::bail!("upsert_pending requires Pending or Resolved state"),
+        };
+        let entry = EscalationEntry {
+            agent_id,
+            scope: scope.clone(),
+            state,
+        };
+        let prev = self.inner.insert(scope, entry);
+        Ok(prev.is_none())
+    }
+}
+
+#[cfg(test)]
+mod escalation_store_tests {
+    use super::*;
+    use nexo_tool_meta::admin::escalations::{
+        EscalationReason, EscalationUrgency, EscalationsListFilter,
+    };
+    use std::collections::BTreeMap;
+
+    fn convo() -> ProcessingScope {
+        ProcessingScope::Conversation {
+            agent_id: "ana".into(),
+            channel: "whatsapp".into(),
+            account_id: "acc".into(),
+            contact_id: "wa.55".into(),
+            mcp_channel_source: None,
+        }
+    }
+
+    fn pending(scope: ProcessingScope, ts: u64) -> EscalationState {
+        EscalationState::Pending {
+            scope,
+            summary: "x".into(),
+            reason: EscalationReason::OutOfScope,
+            urgency: EscalationUrgency::Normal,
+            context: BTreeMap::new(),
+            requested_at_ms: ts,
+        }
+    }
+
+    #[tokio::test]
+    async fn list_returns_pending_newest_first() {
+        let store = InMemoryEscalationStore::new();
+        store
+            .upsert_pending("ana".into(), pending(convo(), 1_000))
+            .await
+            .unwrap();
+        let scope_b = ProcessingScope::Conversation {
+            agent_id: "ana".into(),
+            channel: "whatsapp".into(),
+            account_id: "acc".into(),
+            contact_id: "wa.99".into(),
+            mcp_channel_source: None,
+        };
+        store
+            .upsert_pending("ana".into(), pending(scope_b.clone(), 2_000))
+            .await
+            .unwrap();
+        let rows = store
+            .list(&EscalationsListParams {
+                filter: EscalationsListFilter::Pending,
+                limit: 50,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 2);
+        match &rows[0].state {
+            EscalationState::Pending {
+                requested_at_ms, ..
+            } => assert_eq!(*requested_at_ms, 2_000, "newest first"),
+            other => panic!("expected Pending, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn list_filters_by_agent_id() {
+        let store = InMemoryEscalationStore::new();
+        store
+            .upsert_pending("ana".into(), pending(convo(), 1_000))
+            .await
+            .unwrap();
+        let other_scope = ProcessingScope::Conversation {
+            agent_id: "bob".into(),
+            channel: "whatsapp".into(),
+            account_id: "acc".into(),
+            contact_id: "wa.99".into(),
+            mcp_channel_source: None,
+        };
+        store
+            .upsert_pending("bob".into(), pending(other_scope, 1_000))
+            .await
+            .unwrap();
+        let rows = store
+            .list(&EscalationsListParams {
+                filter: EscalationsListFilter::Pending,
+                agent_id: Some("ana".into()),
+                limit: 50,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].agent_id, "ana");
+    }
+
+    #[tokio::test]
+    async fn resolve_pending_flips_to_resolved() {
+        let store = InMemoryEscalationStore::new();
+        store
+            .upsert_pending("ana".into(), pending(convo(), 1_000))
+            .await
+            .unwrap();
+        let changed = store
+            .resolve(&convo(), ResolvedBy::OperatorTakeover, 2_000)
+            .await
+            .unwrap();
+        assert!(changed);
+        let state = store.get(&convo()).await.unwrap();
+        assert!(matches!(state, EscalationState::Resolved { .. }));
+        // Resolving an already-resolved row is a no-op.
+        let again = store
+            .resolve(&convo(), ResolvedBy::OperatorTakeover, 3_000)
+            .await
+            .unwrap();
+        assert!(!again);
+    }
+
+    #[tokio::test]
+    async fn resolve_unknown_scope_returns_false() {
+        let store = InMemoryEscalationStore::new();
+        let changed = store
+            .resolve(&convo(), ResolvedBy::OperatorTakeover, 1_000)
+            .await
+            .unwrap();
+        assert!(!changed);
+    }
+
+    #[tokio::test]
+    async fn list_resolved_filter_excludes_pending() {
+        let store = InMemoryEscalationStore::new();
+        store
+            .upsert_pending("ana".into(), pending(convo(), 1_000))
+            .await
+            .unwrap();
+        // Pending → Resolved
+        let scope_b = ProcessingScope::Conversation {
+            agent_id: "ana".into(),
+            channel: "whatsapp".into(),
+            account_id: "acc".into(),
+            contact_id: "wa.99".into(),
+            mcp_channel_source: None,
+        };
+        store
+            .upsert_pending("ana".into(), pending(scope_b.clone(), 1_500))
+            .await
+            .unwrap();
+        store
+            .resolve(&scope_b, ResolvedBy::OperatorTakeover, 2_500)
+            .await
+            .unwrap();
+
+        let rows = store
+            .list(&EscalationsListParams {
+                filter: EscalationsListFilter::Resolved,
+                limit: 50,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(matches!(rows[0].state, EscalationState::Resolved { .. }));
     }
 }
