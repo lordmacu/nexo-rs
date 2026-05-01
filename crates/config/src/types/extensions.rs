@@ -41,6 +41,28 @@ pub struct ExtensionsConfig {
     /// in. Off by default to avoid loops + surprise path escapes.
     #[serde(default)]
     pub follow_links: bool,
+    /// Phase 82.10 — per-extension entries keyed by extension id.
+    /// Today only carries `capabilities_grant` (admin RPC layer);
+    /// future per-extension knobs (e.g. http_server bind address,
+    /// state_root override) land here too.
+    #[serde(default)]
+    pub entries: std::collections::BTreeMap<String, ExtensionEntry>,
+}
+
+/// Phase 82.10 — per-extension operator settings.
+///
+/// Empty by default. Operator opts in to admin RPC by listing
+/// granted capabilities in `capabilities_grant`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ExtensionEntry {
+    /// Phase 82.10 — admin RPC capabilities the operator grants
+    /// to this extension. Each entry must match one declared in
+    /// the plugin's `plugin.toml [capabilities.admin]` block;
+    /// orphan grants (granted but not declared) trigger boot
+    /// warns. Missing required capabilities fail boot.
+    #[serde(default)]
+    pub capabilities_grant: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -153,6 +175,7 @@ impl Default for ExtensionsConfig {
             watch: ExtensionsWatchConfig::default(),
             doctor: ExtensionsDoctorConfig::default(),
             follow_links: false,
+            entries: std::collections::BTreeMap::new(),
         }
     }
 }

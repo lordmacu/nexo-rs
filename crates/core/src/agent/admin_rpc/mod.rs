@@ -13,6 +13,16 @@
 //! - **82.10.c-f**: 5 admin domains (agents / credentials /
 //!   pairing / llm_providers / channels).
 
+pub mod audit;
+pub mod capabilities;
 pub mod dispatcher;
 
+pub use audit::{
+    hash_params, now_epoch_ms, AdminAuditResult, AdminAuditRow, AdminAuditWriter,
+    InMemoryAuditWriter,
+};
+pub use capabilities::{
+    validate_capabilities_at_boot, AdminCapabilityDecl, CapabilityBootError,
+    CapabilityBootReport, CapabilityBootWarn, CapabilitySet,
+};
 pub use dispatcher::{AdminRpcDispatcher, AdminRpcError, AdminRpcResult};

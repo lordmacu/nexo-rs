@@ -154,6 +154,52 @@ pub struct ToggleStatus {
 }
 
 const INVENTORY: &[CapabilityToggle] = &[
+    // ── Phase 82.10 — admin RPC domain enables ───────────────────
+    // Per-domain global kill switches. Each is checked BEFORE the
+    // operator-granted capability set. Off → all methods in that
+    // domain return `-32601 method_not_found` regardless of grant.
+    // Default ON (no env var set behaves as `1`); operators flip
+    // OFF for hardened deployments that disable a whole domain.
+    CapabilityToggle {
+        extension: "core",
+        env_var: "NEXO_MICROAPP_ADMIN_AGENTS_ENABLED",
+        kind: ToggleKind::Boolean,
+        risk: Risk::High,
+        effect: "Enable `nexo/admin/agents/*` admin RPC domain (microapps can CRUD agents.yaml). Off disables the entire domain regardless of operator grants.",
+        hint: "export NEXO_MICROAPP_ADMIN_AGENTS_ENABLED=0  # to disable",
+    },
+    CapabilityToggle {
+        extension: "core",
+        env_var: "NEXO_MICROAPP_ADMIN_CREDENTIALS_ENABLED",
+        kind: ToggleKind::Boolean,
+        risk: Risk::High,
+        effect: "Enable `nexo/admin/credentials/*` admin RPC domain (microapps can register/revoke channel credentials).",
+        hint: "export NEXO_MICROAPP_ADMIN_CREDENTIALS_ENABLED=0",
+    },
+    CapabilityToggle {
+        extension: "core",
+        env_var: "NEXO_MICROAPP_ADMIN_PAIRING_ENABLED",
+        kind: ToggleKind::Boolean,
+        risk: Risk::Medium,
+        effect: "Enable `nexo/admin/pairing/*` admin RPC domain (microapps can initiate WhatsApp QR pairing flows).",
+        hint: "export NEXO_MICROAPP_ADMIN_PAIRING_ENABLED=0",
+    },
+    CapabilityToggle {
+        extension: "core",
+        env_var: "NEXO_MICROAPP_ADMIN_LLM_KEYS_ENABLED",
+        kind: ToggleKind::Boolean,
+        risk: Risk::Critical,
+        effect: "Enable `nexo/admin/llm_providers/*` admin RPC domain (microapps can rotate LLM provider keys via ${ENV_VAR} refs).",
+        hint: "export NEXO_MICROAPP_ADMIN_LLM_KEYS_ENABLED=0",
+    },
+    CapabilityToggle {
+        extension: "core",
+        env_var: "NEXO_MICROAPP_ADMIN_CHANNELS_ENABLED",
+        kind: ToggleKind::Boolean,
+        risk: Risk::Medium,
+        effect: "Enable `nexo/admin/channels/*` admin RPC domain (microapps can approve/revoke MCP-channel servers in agents.yaml).",
+        hint: "export NEXO_MICROAPP_ADMIN_CHANNELS_ENABLED=0",
+    },
     CapabilityToggle {
         extension: "onepassword",
         env_var: "OP_ALLOW_REVEAL",
