@@ -15,11 +15,12 @@
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 /// One audit row.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AdminAuditRow {
     /// Microapp identity (extension id from `extensions.yaml`).
     pub microapp_id: String,
@@ -42,7 +43,8 @@ pub struct AdminAuditRow {
 
 /// Outcome of a single admin call.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum AdminAuditResult {
     /// Handler returned a `result` payload.
     Ok,
@@ -61,6 +63,17 @@ impl AdminAuditResult {
             AdminAuditResult::Ok => "ok",
             AdminAuditResult::Error => "error",
             AdminAuditResult::Denied => "denied",
+        }
+    }
+
+    /// Inverse of `as_str`. Unknown strings (e.g. forward-compat
+    /// from a future writer variant) map to `Error` so the audit
+    /// row is never silently misclassified as `Ok`.
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "ok" => AdminAuditResult::Ok,
+            "denied" => AdminAuditResult::Denied,
+            _ => AdminAuditResult::Error,
         }
     }
 }

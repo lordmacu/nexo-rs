@@ -19,9 +19,39 @@ use async_trait::async_trait;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
 
-use super::audit::{AdminAuditRow, AdminAuditWriter};
-#[cfg(test)]
-use super::audit::AdminAuditResult;
+use serde::{Deserialize, Serialize};
+
+use super::audit::{AdminAuditResult, AdminAuditRow, AdminAuditWriter};
+
+/// Phase 82.10.h.2 — filter shape for `SqliteAdminAuditWriter::tail`.
+/// The `nexo microapp admin audit tail` CLI subcommand maps its
+/// flags to this struct (CLI wire-up itself is deferred to
+/// 82.10.h.b alongside the broader main.rs production wiring).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AuditTailFilter {
+    /// Restrict to a single microapp.
+    pub microapp_id: Option<String>,
+    /// Restrict to one JSON-RPC method.
+    pub method: Option<String>,
+    /// Restrict to one outcome (`ok` / `error` / `denied`).
+    pub result: Option<AdminAuditResult>,
+    /// Lower-bound timestamp (epoch ms). Use
+    /// `chrono::Utc::now().timestamp_millis() - duration_ms` for
+    /// human-friendly windows.
+    pub since_ms: Option<u64>,
+    /// Max rows to return. Default `50` if 0.
+    pub limit: usize,
+}
+
+impl AuditTailFilter {
+    /// Convenience constructor mirroring CLI defaults.
+    pub fn new() -> Self {
+        Self {
+            limit: 50,
+            ..Default::default()
+        }
+    }
+}
 
 /// SQLite-backed `AdminAuditWriter`. Production daemons construct
 /// one at boot and feed it to
@@ -145,10 +175,66 @@ impl SqliteAdminAuditWriter {
         Ok(deleted)
     }
 
-    /// Test-only — read all rows. Production callers use the CLI
-    /// tail command (Step 2).
+    /// Phase 82.10.h.2 — tail recent audit rows with filter
+    /// support. Library-level query the `nexo microapp admin
+    /// audit tail` CLI subcommand will call once main.rs becomes
+    /// buildable (deferred to 82.10.h.b — main.rs has unrelated
+    /// in-progress refactors blocking the binary build today).
+    pub async fn tail(&self, filter: &AuditTailFilter) -> anyhow::Result<Vec<AdminAuditRow>> {
+        let mut sql = String::from(
+            "SELECT microapp_id, method, capability, args_hash, started_at_ms, \
+             result, error_code, duration_ms FROM microapp_admin_audit WHERE 1=1",
+        );
+        let mut binds: Vec<String> = Vec::new();
+        if let Some(id) = &filter.microapp_id {
+            sql.push_str(" AND microapp_id = ?");
+            binds.push(id.clone());
+        }
+        if let Some(method) = &filter.method {
+            sql.push_str(" AND method = ?");
+            binds.push(method.clone());
+        }
+        if let Some(result) = &filter.result {
+            sql.push_str(" AND result = ?");
+            binds.push(result.as_str().to_string());
+        }
+        let mut int_binds: Vec<i64> = Vec::new();
+        if let Some(since_ms) = filter.since_ms {
+            sql.push_str(" AND started_at_ms >= ?");
+            int_binds.push(since_ms as i64);
+        }
+        sql.push_str(" ORDER BY started_at_ms DESC LIMIT ?");
+        int_binds.push(filter.limit.max(1) as i64);
+
+        let mut q = sqlx::query_as::<_, (String, String, String, String, i64, String, Option<i32>, i64)>(&sql);
+        for b in &binds {
+            q = q.bind(b);
+        }
+        for b in &int_binds {
+            q = q.bind(*b);
+        }
+        let rows = q.fetch_all(&self.pool).await?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(microapp_id, method, capability, args_hash, started_at_ms, result, _err, duration_ms)| {
+                    AdminAuditRow {
+                        microapp_id,
+                        method,
+                        capability,
+                        args_hash,
+                        started_at_ms: started_at_ms as u64,
+                        result: AdminAuditResult::from_str(&result),
+                        duration_ms: duration_ms as u64,
+                    }
+                },
+            )
+            .collect())
+    }
+
+    /// Test-only — read all rows.
     #[cfg(test)]
-    async fn all_rows(&self) -> anyhow::Result<Vec<AdminAuditRow>> {
+    pub(crate) async fn all_rows(&self) -> anyhow::Result<Vec<AdminAuditRow>> {
         let rows: Vec<(String, String, String, String, i64, String, Option<i32>, i64)> =
             sqlx::query_as(
                 "SELECT microapp_id, method, capability, args_hash, started_at_ms, \
@@ -178,6 +264,49 @@ impl SqliteAdminAuditWriter {
             )
             .collect())
     }
+}
+
+/// Phase 82.10.h.2 — render audit rows as a fixed-width text
+/// table for the future `nexo microapp admin audit tail` CLI.
+/// Columns: `started_at` (ISO-8601 UTC) · `microapp` · `method` ·
+/// `result` · `dur_ms` · `args_hash[..8]`. Uses a stable column
+/// order so operators can grep / awk the output.
+pub fn format_rows_as_table(rows: &[AdminAuditRow]) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    writeln!(
+        out,
+        "{:<24}  {:<20}  {:<40}  {:<7}  {:>7}  {:<10}",
+        "started_at", "microapp", "method", "result", "dur_ms", "args[..8]",
+    )
+    .ok();
+    writeln!(out, "{}", "-".repeat(24 + 2 + 20 + 2 + 40 + 2 + 7 + 2 + 7 + 2 + 10)).ok();
+    for row in rows {
+        let ts = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(row.started_at_ms as i64)
+            .map(|d| d.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+            .unwrap_or_else(|| row.started_at_ms.to_string());
+        let hash_short: String = row.args_hash.chars().take(8).collect();
+        writeln!(
+            out,
+            "{:<24}  {:<20.20}  {:<40.40}  {:<7}  {:>7}  {:<10}",
+            ts,
+            row.microapp_id,
+            row.method,
+            row.result.as_str(),
+            row.duration_ms,
+            hash_short,
+        )
+        .ok();
+    }
+    out
+}
+
+/// Phase 82.10.h.2 — render audit rows as a JSON array for
+/// machine-readable consumption (`--format json`). Pretty-prints
+/// for human review; pipelines that need NDJSON can stream
+/// `serde_json::to_string(&row)` per row instead.
+pub fn format_rows_as_json(rows: &[AdminAuditRow]) -> String {
+    serde_json::to_string_pretty(rows).unwrap_or_else(|_| "[]".into())
 }
 
 #[async_trait]
@@ -270,6 +399,118 @@ mod tests {
         assert_eq!(deleted, 1, "only the 100-day-old row should age out");
         let rows = writer.all_rows().await.unwrap();
         assert_eq!(rows.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn tail_filters_by_microapp_id_and_orders_desc() {
+        let writer = SqliteAdminAuditWriter::open_memory().await.unwrap();
+        writer.append(sample_row("a", 1_000)).await;
+        writer.append(sample_row("b", 2_000)).await;
+        writer.append(sample_row("a", 3_000)).await;
+        let rows = writer
+            .tail(&AuditTailFilter {
+                microapp_id: Some("a".into()),
+                limit: 50,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].started_at_ms, 3_000, "newest first");
+        assert_eq!(rows[1].started_at_ms, 1_000);
+    }
+
+    #[tokio::test]
+    async fn tail_filters_by_method_and_result_and_since() {
+        let writer = SqliteAdminAuditWriter::open_memory().await.unwrap();
+        let mut row1 = sample_row("a", 1_000);
+        row1.method = "nexo/admin/agents/list".into();
+        row1.result = AdminAuditResult::Ok;
+        let mut row2 = sample_row("a", 2_000);
+        row2.method = "nexo/admin/agents/list".into();
+        row2.result = AdminAuditResult::Denied;
+        let mut row3 = sample_row("a", 3_000);
+        row3.method = "nexo/admin/credentials/register".into();
+        row3.result = AdminAuditResult::Ok;
+        writer.append(row1).await;
+        writer.append(row2).await;
+        writer.append(row3).await;
+
+        let rows = writer
+            .tail(&AuditTailFilter {
+                method: Some("nexo/admin/agents/list".into()),
+                result: Some(AdminAuditResult::Denied),
+                limit: 50,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].started_at_ms, 2_000);
+
+        let recent = writer
+            .tail(&AuditTailFilter {
+                since_ms: Some(2_500),
+                limit: 50,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].started_at_ms, 3_000);
+    }
+
+    #[tokio::test]
+    async fn tail_respects_limit() {
+        let writer = SqliteAdminAuditWriter::open_memory().await.unwrap();
+        for i in 0..10 {
+            writer.append(sample_row("a", i * 100)).await;
+        }
+        let rows = writer
+            .tail(&AuditTailFilter {
+                limit: 3,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 3);
+    }
+
+    #[test]
+    fn format_table_includes_header_and_rows() {
+        let rows = vec![AdminAuditRow {
+            microapp_id: "agent-creator".into(),
+            method: "nexo/admin/agents/list".into(),
+            capability: "agents_crud".into(),
+            args_hash: "abcdef0123456789".into(),
+            started_at_ms: 1_700_000_000_000,
+            result: AdminAuditResult::Ok,
+            duration_ms: 12,
+        }];
+        let out = format_rows_as_table(&rows);
+        assert!(out.contains("started_at"), "header present");
+        assert!(out.contains("microapp"));
+        assert!(out.contains("agent-creator"));
+        assert!(out.contains("nexo/admin/agents/list"));
+        assert!(out.contains("ok"));
+        assert!(out.contains("abcdef01"), "hash truncated to 8 chars");
+        assert!(!out.contains("0123456789"), "full hash should NOT appear");
+    }
+
+    #[test]
+    fn format_json_round_trips() {
+        let rows = vec![AdminAuditRow {
+            microapp_id: "a".into(),
+            method: "nexo/admin/echo".into(),
+            capability: "echo".into(),
+            args_hash: "h".into(),
+            started_at_ms: 42,
+            result: AdminAuditResult::Denied,
+            duration_ms: 1,
+        }];
+        let json = format_rows_as_json(&rows);
+        let back: Vec<AdminAuditRow> = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, rows);
     }
 
     #[tokio::test]
