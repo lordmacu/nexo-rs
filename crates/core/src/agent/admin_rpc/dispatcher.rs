@@ -276,6 +276,12 @@ impl AdminRpcDispatcher {
             | "nexo/admin/channels/approve"
             | "nexo/admin/channels/revoke"
             | "nexo/admin/channels/doctor" => Some("channels_crud"),
+            // `reload` requires any granted CRUD capability — operators
+            // who can mutate yaml can also force-trigger the reload.
+            // Resolution falls through to `agents_crud` since it's the
+            // most likely granted capability for any UI-bearing
+            // microapp.
+            "nexo/admin/reload" => Some("agents_crud"),
             _ => None,
         }
     }
@@ -528,6 +534,17 @@ impl AdminRpcDispatcher {
                     "channels domain not configured".into(),
                 )),
             },
+            "nexo/admin/reload" => match &self.reload_signal {
+                Some(reload) => {
+                    reload();
+                    AdminRpcResult::ok(serde_json::json!({
+                        "reloaded_at_ms": now_epoch_ms(),
+                    }))
+                }
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "reload signal not configured".into(),
+                )),
+            },
             // unreachable — `required_capability` already filtered
             // unknown methods before we got here. Defensive.
             other => AdminRpcResult::err(AdminRpcError::MethodNotFound(format!(
@@ -643,6 +660,49 @@ mod tests {
         let row = writer.last().expect("row recorded");
         assert_eq!(row.result, AdminAuditResult::Error);
         assert_eq!(row.capability, "(unknown_method)");
+    }
+
+    #[tokio::test]
+    async fn reload_handler_invokes_signal_when_capability_granted() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let count = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&count);
+        let reload: ReloadSignal = Arc::new(move || {
+            counter.fetch_add(1, Ordering::Relaxed);
+        });
+        let d = dispatcher_granting("agent-creator", &["agents_crud"]);
+        // We need to manually wire the reload_signal field since
+        // `with_agents_domain` requires a YamlPatcher we don't
+        // need for this test. Use the public builder approach via
+        // a trivial mock yaml.
+        struct NoopYaml;
+        impl super::super::domains::agents::YamlPatcher for NoopYaml {
+            fn list_agent_ids(&self) -> anyhow::Result<Vec<String>> { Ok(vec![]) }
+            fn read_agent_field(&self, _: &str, _: &str) -> anyhow::Result<Option<Value>> { Ok(None) }
+            fn upsert_agent_field(&self, _: &str, _: &str, _: Value) -> anyhow::Result<()> { Ok(()) }
+            fn remove_agent(&self, _: &str) -> anyhow::Result<()> { Ok(()) }
+        }
+        let d = d.with_agents_domain(Arc::new(NoopYaml), reload);
+        let result = d
+            .dispatch("agent-creator", "nexo/admin/reload", Value::Null)
+            .await;
+        assert!(result.result.is_some());
+        assert_eq!(count.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn reload_handler_denies_without_capability() {
+        let d = AdminRpcDispatcher::new();
+        let result = d
+            .dispatch("agent-creator", "nexo/admin/reload", Value::Null)
+            .await;
+        let err = result.error.expect("error");
+        match err {
+            AdminRpcError::CapabilityNotGranted { capability, .. } => {
+                assert_eq!(capability, "agents_crud");
+            }
+            other => panic!("expected CapabilityNotGranted, got {other:?}"),
+        }
     }
 
     #[test]
