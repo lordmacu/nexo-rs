@@ -23,6 +23,7 @@ sha2        = { workspace = true }
 sha1        = "0.10"
 hmac        = "0.12"
 subtle      = "2"
+ipnetwork   = { workspace = true }
 
 [dev-dependencies]
 serde_yaml  = { workspace = true }
