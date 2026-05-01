@@ -144,6 +144,7 @@
 - [Channel doctor (MCP)](./ops/channel-doctor.md)
 - [Webhook receiver](./ops/webhook-receiver.md)
 - [Event subscribers](./ops/events.md)
+- [Per-binding tool rate-limits](./ops/per-binding-rate-limits.md)
 - [Context optimization](./ops/context-optimization.md)
 - [Link understanding](./ops/link-understanding.md)
 - [Web search](./ops/web-search.md)
