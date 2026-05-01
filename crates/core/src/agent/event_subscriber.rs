@@ -17,6 +17,7 @@
 use std::sync::Arc;
 
 use nexo_broker::{AnyBroker, Event};
+use nexo_config::types::agents::InboundBinding;
 use nexo_config::types::event_subscriber::{EventSubscriberBinding, SynthesisMode};
 use serde_json::{json, Value};
 use thiserror::Error;
@@ -120,6 +121,37 @@ fn extract_envelope_id(payload: &Value) -> Option<Uuid> {
         .get("envelope_id")?
         .as_str()
         .and_then(|s| Uuid::parse_str(s).ok())
+}
+
+/// Synthesise per-`event_subscribers` `InboundBinding` entries
+/// for each declared subscriber that doesn't already have one.
+///
+/// Idempotent — operator-declared bindings (manual override of
+/// `{ plugin: "event", instance: "<id>" }`) survive untouched.
+/// Returns the extended binding list (declared + auto-synth).
+///
+/// In-memory only: never mutates the operator's YAML. Boot
+/// supervisor calls this when constructing the agent runtime so
+/// the existing inbound resolver can match
+/// `plugin.inbound.event.<id>` re-publishes against an
+/// agent-recognised binding.
+pub fn synthesize_event_inbound_bindings(
+    declared: &[InboundBinding],
+    event_subscribers: &[EventSubscriberBinding],
+) -> Vec<InboundBinding> {
+    let mut out = declared.to_vec();
+    for sub in event_subscribers {
+        let already = out.iter().any(|b| {
+            b.plugin == EVENT_BINDING_CHANNEL && b.instance.as_deref() == Some(&sub.id)
+        });
+        if !already {
+            let mut binding = InboundBinding::default();
+            binding.plugin = EVENT_BINDING_CHANNEL.into();
+            binding.instance = Some(sub.id.clone());
+            out.push(binding);
+        }
+    }
+    out
 }
 
 /// Read `_nexo_event_source` from a re-published inbound payload
@@ -356,5 +388,58 @@ mod skeleton_tests {
             EVENT_SOURCE_PAYLOAD_FIELD: "not-an-object"
         });
         assert!(extract_nexo_event_source(&payload).is_none());
+    }
+
+    #[test]
+    fn synthesize_event_inbound_appends_when_absent() {
+        let declared: Vec<InboundBinding> = vec![];
+        let subs = vec![mk_binding("github", "x.>"), mk_binding("stripe", "y.>")];
+        let out = synthesize_event_inbound_bindings(&declared, &subs);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].plugin, "event");
+        assert_eq!(out[0].instance.as_deref(), Some("github"));
+        assert_eq!(out[1].plugin, "event");
+        assert_eq!(out[1].instance.as_deref(), Some("stripe"));
+    }
+
+    #[test]
+    fn synthesize_event_inbound_idempotent_when_manual_present() {
+        let mut manual = InboundBinding::default();
+        manual.plugin = "event".into();
+        manual.instance = Some("github".into());
+        // Tag a custom field so we can prove the manual is preserved
+        manual.allowed_tools = Some(vec!["custom_tool".into()]);
+        let declared = vec![manual.clone()];
+        let subs = vec![mk_binding("github", "x.>")];
+        let out = synthesize_event_inbound_bindings(&declared, &subs);
+        assert_eq!(out.len(), 1, "manual override preserved, no duplicate");
+        assert_eq!(out[0].allowed_tools.as_ref().unwrap()[0], "custom_tool");
+    }
+
+    #[test]
+    fn synthesize_event_inbound_partial_overlap() {
+        let mut manual = InboundBinding::default();
+        manual.plugin = "event".into();
+        manual.instance = Some("github".into());
+        let declared = vec![manual];
+        let subs = vec![mk_binding("github", "x.>"), mk_binding("stripe", "y.>")];
+        let out = synthesize_event_inbound_bindings(&declared, &subs);
+        assert_eq!(out.len(), 2);
+        // github survives manual; stripe synthesised.
+        assert_eq!(out[0].instance.as_deref(), Some("github"));
+        assert_eq!(out[1].instance.as_deref(), Some("stripe"));
+    }
+
+    #[test]
+    fn synthesize_event_inbound_preserves_unrelated_bindings() {
+        let mut wa = InboundBinding::default();
+        wa.plugin = "whatsapp".into();
+        wa.instance = Some("personal".into());
+        let declared = vec![wa];
+        let subs = vec![mk_binding("github", "x.>")];
+        let out = synthesize_event_inbound_bindings(&declared, &subs);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].plugin, "whatsapp");
+        assert_eq!(out[1].plugin, "event");
     }
 }
