@@ -555,6 +555,7 @@ mod plan_mode_tests {
             channels: None,
             auto_approve: false,
             extract_memories: None,
+            event_subscribers: Vec::new(),
         };
         AgentContext::new(
             "a",
@@ -898,6 +899,7 @@ mod binding_context_tests {
             channels: None,
             auto_approve: false,
             extract_memories: None,
+            event_subscribers: Vec::new(),
         }
     }
 
@@ -1055,6 +1057,7 @@ mod build_meta_value_tests {
             channels: None,
             auto_approve: false,
             extract_memories: None,
+            event_subscribers: Vec::new(),
         });
         let broker = AnyBroker::local();
         let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));

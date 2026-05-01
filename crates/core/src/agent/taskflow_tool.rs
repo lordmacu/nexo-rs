@@ -401,6 +401,7 @@ mod tests {
             channels: None,
             auto_approve: false,
             extract_memories: None,
+            event_subscribers: Vec::new(),
         });
         let sessions = StdArc::new(SessionManager::new(Duration::from_secs(60), 20));
         let sid = Uuid::new_v4();
@@ -608,6 +609,7 @@ mod tests {
             channels: None,
             auto_approve: false,
             extract_memories: None,
+            event_subscribers: Vec::new(),
         });
         let sessions = StdArc::new(SessionManager::new(Duration::from_secs(60), 20));
         let ctx = AgentContext::new("kate", cfg, broker, sessions);

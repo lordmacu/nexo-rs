@@ -13825,6 +13825,7 @@ mcp_server:
             channels: None,
             auto_approve: false,
             extract_memories: None,
+            event_subscribers: Vec::new(),
         };
         let ctx = nexo_core::agent::AgentContext::new(
             marker,

@@ -326,6 +326,14 @@ pub struct AgentConfig {
     /// (`build_extract_memories_config_from_yaml`).
     #[serde(default)]
     pub extract_memories: Option<ExtractMemoriesYamlConfig>,
+
+    /// Phase 82.4 — per-agent NATS event subscribers. Each
+    /// binding subscribes to a subject pattern and translates
+    /// matching events into the standard inbound flow (republished
+    /// to `plugin.inbound.event.<id>`). Empty by default; existing
+    /// agents are unaffected until the operator opts in.
+    #[serde(default)]
+    pub event_subscribers: Vec<crate::types::event_subscriber::EventSubscriberBinding>,
 }
 
 /// Phase M4.a.b — wire-shape mirror of

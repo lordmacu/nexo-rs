@@ -401,6 +401,7 @@ mod tests {
             channels: None,
             auto_approve: false,
             extract_memories: None,
+            event_subscribers: Vec::new(),
         };
         let ctx = AgentContext::new(
             "a",
@@ -622,6 +623,7 @@ mod tests {
             channels: None,
             auto_approve: false,
             extract_memories: None,
+            event_subscribers: Vec::new(),
         };
         let ctx = AgentContext::new(
             "agent-z",

@@ -149,6 +149,7 @@ fn make_config(
         channels: None,
         auto_approve: false,
         extract_memories: None,
+            event_subscribers: Vec::new(),
     }
 }
 
@@ -516,6 +517,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             channels: None,
             auto_approve: false,
             extract_memories: None,
+            event_subscribers: Vec::new(),
         },
         behavior_a,
     ));
@@ -578,6 +580,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             channels: None,
             auto_approve: false,
             extract_memories: None,
+            event_subscribers: Vec::new(),
         },
         behavior_b,
     ));

@@ -111,6 +111,7 @@ mod tests {
             channels: None,
             auto_approve: false,
             extract_memories: None,
+            event_subscribers: Vec::new(),
         };
         AgentContext::new(
             "parent_agent",
