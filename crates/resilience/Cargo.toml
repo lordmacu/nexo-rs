@@ -23,3 +23,10 @@ criterion = { version = "0.5", features = ["async_tokio"] }
 [[bench]]
 name = "circuit_breaker"
 harness = false
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
