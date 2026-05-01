@@ -1464,7 +1464,56 @@ Done criteria:
   fail-open with warn log.
 - 6+ unit tests + 1 integration test.
 
-#### 83.4 — `crates/microapp-sdk-rust` reusable Rust helper   ⬜
+#### 83.4 — `crates/microapp-sdk-rust` reusable Rust helper   🔄  (core SDK ✅, agent-creator migration + Phase 82.x-dependent helpers deferred)
+
+**Core SDK shipped (83.4 MVP):**
+- `crates/microapp-sdk/` new crate (~900 LOC + 36 tests).
+  Cargo features: `outbound`, `test-harness`, `webhook`.
+- `Microapp` chained builder (`with_tool`, `with_hook`,
+  `on_initialize`, `on_shutdown`, `run_stdio`, `run_with`).
+- `ToolHandler` async trait + blanket impl for plain async
+  fns matching `(Value, ToolCtx) -> Result<ToolReply, ToolError>`.
+- `HookHandler` + `HookOutcome { Continue, Abort { reason } }`.
+- `ToolCtx` with `binding()` accessor parsed from
+  `_meta.nexo.binding` (Phase 82.1 wire shape) +
+  `outbound()` accessor gated by `outbound` feature.
+- `ToolReply` constructors (`ok`, `ok_json`, `empty`).
+- `ToolError` `#[non_exhaustive]` enum mapping to JSON-RPC
+  codes (-32601, -32602, -32000) + symbolic codes for
+  `data.code`.
+- `init_logging_from_env(crate_name)` env-var-driven
+  `tracing-subscriber` setup.
+- Full JSON-RPC dispatch loop (`initialize`, `tools/list`,
+  `tools/call`, `hooks/<name>`, `shutdown`, parse-error
+  recovery).
+- `MicroappTestHarness` (feature `test-harness`) for
+  in-process `call_tool`, `call_tool_with_binding`,
+  `fire_hook` testing without spawning the binary.
+- `OutboundDispatcher` (feature `outbound`) v0 stub
+  returning `DispatchError::Transport` until Phase 82.3.b
+  daemon runtime ships.
+
+**Deferred to 83.4.b (agent-creator migration + advanced
+helpers):**
+- `agent-creator-microapp/src/main.rs` rewrite from 200 LOC
+  to ~30 LOC using the SDK (validates the API end-to-end).
+- `PersonaConfigMap<T>` data structure with hot-reload via
+  `agents/updated` handler (depends on Phase 82.10 admin
+  RPC).
+- `MarkdownWatcher` (notify-rs) for hot-reloadable content
+  files.
+- `LocalSqliteStore` helper with per-`agent_id` isolation
+  guard.
+- `AdminClient` wrapper for `nexo/admin/*` (depends on
+  82.10).
+- `AgentEventFirehose` consumer for
+  `nexo/notify/agent_event` (depends on 82.11).
+- `ProcessingControlClient` (depends on 82.13).
+- `EscalationClient` (depends on 82.14).
+- `HttpServerHelper` (depends on 82.12).
+- `JsonRpcLoop` standalone runner (already implicit in
+  `Microapp::run_stdio`; breaks out as a separate utility
+  if a microapp wants the loop without the dispatch table).
 
 New optional Rust crate that any Rust microapp can import to
 avoid re-implementing plumbing. Python / Node / TS microapps

@@ -1,0 +1,42 @@
+[package]
+name        = "nexo-microapp-sdk"
+description = "Reusable runtime helpers for Phase 11 stdio microapps consuming the nexo-rs daemon (JSON-RPC dispatch loop, BindingContext parsing, typed replies)."
+version       = "0.1.0"
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+homepage      = { workspace = true }
+documentation = { workspace = true }
+readme        = "README.md"
+keywords      = ["nexo", "microapp", "extension", "agent", "sdk"]
+categories    = ["api-bindings", "asynchronous"]
+
+[lints]
+workspace = true
+
+[features]
+default      = []
+outbound     = []
+test-harness = []
+webhook      = []
+
+[dependencies]
+serde       = { workspace = true, features = ["derive"] }
+serde_json  = { workspace = true }
+tokio       = { workspace = true, features = ["io-std", "io-util", "macros", "rt-multi-thread", "sync"] }
+async-trait = { workspace = true }
+thiserror   = { workspace = true }
+tracing     = { workspace = true }
+tracing-subscriber = { workspace = true }
+nexo-tool-meta = { workspace = true }
+uuid        = { workspace = true }
+
+[dev-dependencies]
+nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound"] }
+tokio             = { workspace = true, features = ["full"] }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
