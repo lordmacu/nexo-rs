@@ -2824,8 +2824,21 @@ async fn main() -> Result<()> {
     // after the loop.
     let primary_for_mcp_embed: Option<(String, nexo_config::AgentConfig)> =
         cfg.agents.agents.first().map(|a| (a.id.clone(), a.clone()));
+
+    // Phase 80.1.b.b.b — accumulate per-agent `AutoDreamRunner`s
+    // built inside the per-agent loop. After the loop closes, the
+    // primary (first non-None) registers with the
+    // `DriverOrchestrator.builder().auto_dream(...)` so the
+    // orchestrator can dispatch consolidation cycles.
+    let mut auto_dream_runners: Vec<(String, Option<Arc<nexo_dream::auto_dream::AutoDreamRunner>>)> =
+        Vec::with_capacity(cfg.agents.agents.len());
+
     for agent_cfg in cfg.agents.agents {
         let agent_id = agent_cfg.id.clone();
+        // Phase 80.1.b.b.b — capture every field auto_dream
+        // construction needs BEFORE later code paths consume
+        // `agent_cfg` (Agent::new takes ownership ~line 4265).
+        let agent_cfg_for_dream = agent_cfg.clone();
         let dream_yaml = agent_cfg.dreaming.clone();
         let workspace_for_dream = agent_cfg.workspace.clone();
         // C2 — boot-time policy resolution. `from_agent_defaults` mirrors
@@ -4100,7 +4113,7 @@ async fn main() -> Result<()> {
         // `agent_snapshot_handles` maps. The same fn is called by
         // the config-reload post-hook (single source of truth).
 
-        let mut behavior = LlmAgentBehavior::new(llm, Arc::clone(&tools))
+        let mut behavior = LlmAgentBehavior::new(llm.clone(), Arc::clone(&tools))
             .with_hooks(Arc::clone(&hooks))
             .with_tool_policy(tool_policy_registry.for_agent(&agent_id));
 
@@ -4453,6 +4466,120 @@ async fn main() -> Result<()> {
                 );
             }
         }
+
+        // Phase 80.1.b.b.b consumer — build the agent's
+        // `AutoDreamRunner` if `auto_dream` is configured + enabled.
+        // Wires the `AgentToolDispatcher`, `parent_ctx_template`,
+        // git checkpointer, and the pre-dream snapshot adapter
+        // (closes MS-3) so the runner is ready for the orchestrator
+        // registration after the loop. Uses `agent_cfg_for_dream`
+        // (cloned at loop top) since `agent_cfg` was already moved
+        // by `Agent::new`.
+        let runner_opt: Option<Arc<nexo_dream::auto_dream::AutoDreamRunner>> = match agent_cfg_for_dream
+            .auto_dream
+            .as_ref()
+        {
+            Some(ad_cfg) if ad_cfg.enabled => {
+                if agent_cfg_for_dream.workspace.trim().is_empty() {
+                    tracing::warn!(
+                        agent = %agent_id,
+                        "auto_dream.enabled=true but agent.workspace is empty — skipping"
+                    );
+                    None
+                } else {
+                    let parent_ctx_template = nexo_core::agent::AgentContext::new(
+                        agent_cfg_for_dream.id.clone(),
+                        Arc::new(agent_cfg_for_dream.clone()),
+                        broker.clone(),
+                        sessions.clone(),
+                    );
+                    let tool_dispatcher: Arc<dyn nexo_fork::ToolDispatcher> = Arc::new(
+                        nexo_fork::AgentToolDispatcher::new(
+                            tools.clone(),
+                            parent_ctx_template.clone(),
+                        ),
+                    );
+                    let git_checkpointer = agent_git.as_ref().map(|g| {
+                        Arc::new(nexo_core::agent::MemoryGitCheckpointer::new(g.clone()))
+                            as Arc<dyn nexo_driver_types::MemoryCheckpointer>
+                    });
+                    let pre_dream_snapshot = if snapshot_yaml.auto_pre_dream {
+                        memory_snapshotter.as_ref().map(|s| {
+                            nexo_memory_snapshot::PreDreamSnapshotAdapter::new(s.clone())
+                                .into_arc()
+                        })
+                    } else {
+                        None
+                    };
+                    let deps = nexo_dream::boot::BootDeps {
+                        config: ad_cfg.clone(),
+                        agent_id: agent_cfg_for_dream.id.clone(),
+                        workspace_root: std::path::PathBuf::from(&agent_cfg_for_dream.workspace),
+                        state_root: nexo_project_tracker::state::nexo_state_dir(),
+                        parent_ctx_template,
+                        llm: llm.clone(),
+                        tool_dispatcher,
+                        fork_system_prompt: agent_cfg_for_dream.system_prompt.clone(),
+                        fork_tools: Vec::new(),
+                        fork_model: agent_cfg_for_dream.model.model.clone(),
+                        git_checkpointer,
+                        pre_dream_snapshot,
+                        pre_dream_tenant: "default".into(),
+                    };
+                    match nexo_dream::boot::build_runner(deps).await {
+                        Ok(opt) => opt,
+                        Err(e) => {
+                            tracing::warn!(
+                                agent = %agent_id,
+                                error = %e,
+                                "auto_dream boot failed; agent runs without consolidation"
+                            );
+                            None
+                        }
+                    }
+                }
+            }
+            _ => None,
+        };
+
+        // Phase 80.1.c — `dream_now` LLM tool registration. Honors
+        // the `NEXO_DREAM_NOW_ENABLED` capability inventory entry
+        // (Phase 80.1.c.b) and skips when `transcripts_dir` is
+        // empty (the tool needs it to construct DreamContext).
+        let dream_now_registered = if let Some(runner) = &runner_opt {
+            if is_truthy_env("NEXO_DREAM_NOW_ENABLED")
+                && !agent_cfg_for_dream.transcripts_dir.trim().is_empty()
+            {
+                nexo_dream::tools::register_dream_now_tool(
+                    &tools,
+                    runner.clone(),
+                    std::path::PathBuf::from(&agent_cfg_for_dream.transcripts_dir),
+                );
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        tracing::info!(
+            target: "boot.auto_dream",
+            agent = %agent_id,
+            auto_dream_enabled = runner_opt.is_some(),
+            has_pre_dream_snapshot = runner_opt
+                .as_ref()
+                .map(|r| r.has_pre_dream_snapshot())
+                .unwrap_or(false),
+            has_git_checkpointer = runner_opt
+                .as_ref()
+                .map(|r| r.has_git_checkpointer())
+                .unwrap_or(false),
+            dream_now_registered,
+            "auto_dream constellation ready for agent"
+        );
+
+        auto_dream_runners.push((agent_id.clone(), runner_opt));
     }
 
     // M5.b — wrap aggregated cron-rebuild maps + build deps struct
