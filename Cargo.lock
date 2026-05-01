@@ -3739,6 +3739,8 @@ dependencies = [
  "nexo-team-store",
  "nexo-tunnel",
  "nexo-web-search",
+ "nexo-webhook-receiver",
+ "nexo-webhook-server",
  "rand 0.8.6",
  "reqwest",
  "rust-embed",
