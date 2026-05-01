@@ -29,6 +29,7 @@ use super::audit::{
 use super::capabilities::CapabilitySet;
 use super::domains::agents::YamlPatcher;
 use super::domains::credentials::CredentialStore;
+use super::domains::llm_providers::LlmYamlPatcher;
 use super::domains::pairing::{PairingChallengeStore, PairingNotifier};
 
 /// Reload signal callback — invoked by domain handlers after
@@ -149,6 +150,9 @@ pub struct AdminRpcDispatcher {
     /// `nexo/notify/pairing_status_changed`. `None` = best-effort
     /// (poll only, notifications dropped).
     pairing_notifier: Option<Arc<dyn PairingNotifier>>,
+    /// Phase 82.10.f — `llm.yaml` mutator. `None` disables
+    /// `nexo/admin/llm_providers/*`.
+    llm_yaml: Option<Arc<dyn LlmYamlPatcher>>,
 }
 
 impl std::fmt::Debug for AdminRpcDispatcher {
@@ -179,6 +183,7 @@ impl AdminRpcDispatcher {
             credential_store: None,
             pairing_store: None,
             pairing_notifier: None,
+            llm_yaml: None,
         }
     }
 
@@ -230,6 +235,25 @@ impl AdminRpcDispatcher {
         self
     }
 
+    /// Phase 82.10.f — install the llm_providers domain.
+    /// Production passes an `LlmYamlPatcher` adapter pointed at
+    /// `llm.yaml`.
+    pub fn with_llm_providers_domain(mut self, llm_yaml: Arc<dyn LlmYamlPatcher>) -> Self {
+        self.llm_yaml = Some(llm_yaml);
+        self
+    }
+
+    /// Phase 82.10.f — install the channels domain. Reuses the
+    /// agents-domain `YamlPatcher` + `ReloadSignal` (channels
+    /// live in `agents.yaml.<id>.channels.approved`).
+    pub fn with_channels_domain(self) -> Self {
+        // No-op — channels already use the agents `YamlPatcher`.
+        // Method kept for API symmetry with the other
+        // `with_*_domain` builders + future migration to a
+        // separate channels-only abstraction.
+        self
+    }
+
     /// Capability required for each method. Method routing also
     /// happens here — `None` = unknown method.
     fn required_capability(method: &str) -> Option<&'static str> {
@@ -245,7 +269,13 @@ impl AdminRpcDispatcher {
             "nexo/admin/pairing/start"
             | "nexo/admin/pairing/status"
             | "nexo/admin/pairing/cancel" => Some("pairing_initiate"),
-            // Remaining domains land in 82.10.f.
+            "nexo/admin/llm_providers/list"
+            | "nexo/admin/llm_providers/upsert"
+            | "nexo/admin/llm_providers/delete" => Some("llm_keys_crud"),
+            "nexo/admin/channels/list"
+            | "nexo/admin/channels/approve"
+            | "nexo/admin/channels/revoke"
+            | "nexo/admin/channels/doctor" => Some("channels_crud"),
             _ => None,
         }
     }
@@ -423,6 +453,79 @@ impl AdminRpcDispatcher {
                 ),
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "pairing domain not configured".into(),
+                )),
+            },
+            "nexo/admin/llm_providers/list" => match &self.llm_yaml {
+                Some(llm) => super::domains::llm_providers::list(llm.as_ref()),
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "llm_providers domain not configured".into(),
+                )),
+            },
+            "nexo/admin/llm_providers/upsert" => match (&self.llm_yaml, &self.reload_signal) {
+                (Some(llm), Some(reload)) => {
+                    let trigger = reload.clone();
+                    super::domains::llm_providers::upsert(
+                        llm.as_ref(),
+                        params,
+                        &move || trigger(),
+                    )
+                }
+                _ => AdminRpcResult::err(AdminRpcError::Internal(
+                    "llm_providers domain not configured".into(),
+                )),
+            },
+            "nexo/admin/llm_providers/delete" => {
+                match (&self.llm_yaml, &self.agents_yaml, &self.reload_signal) {
+                    (Some(llm), Some(yaml), Some(reload)) => {
+                        let trigger = reload.clone();
+                        super::domains::llm_providers::delete(
+                            llm.as_ref(),
+                            yaml.as_ref(),
+                            params,
+                            &move || trigger(),
+                        )
+                    }
+                    _ => AdminRpcResult::err(AdminRpcError::Internal(
+                        "llm_providers domain not configured".into(),
+                    )),
+                }
+            }
+            "nexo/admin/channels/list" => match &self.agents_yaml {
+                Some(yaml) => super::domains::channels::list(yaml.as_ref(), params),
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "channels domain not configured".into(),
+                )),
+            },
+            "nexo/admin/channels/approve" => match (&self.agents_yaml, &self.reload_signal) {
+                (Some(yaml), Some(reload)) => {
+                    let trigger = reload.clone();
+                    super::domains::channels::approve(
+                        yaml.as_ref(),
+                        params,
+                        &move || trigger(),
+                    )
+                }
+                _ => AdminRpcResult::err(AdminRpcError::Internal(
+                    "channels domain not configured".into(),
+                )),
+            },
+            "nexo/admin/channels/revoke" => match (&self.agents_yaml, &self.reload_signal) {
+                (Some(yaml), Some(reload)) => {
+                    let trigger = reload.clone();
+                    super::domains::channels::revoke(
+                        yaml.as_ref(),
+                        params,
+                        &move || trigger(),
+                    )
+                }
+                _ => AdminRpcResult::err(AdminRpcError::Internal(
+                    "channels domain not configured".into(),
+                )),
+            },
+            "nexo/admin/channels/doctor" => match &self.agents_yaml {
+                Some(yaml) => super::domains::channels::doctor(yaml.as_ref(), params),
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "channels domain not configured".into(),
                 )),
             },
             // unreachable — `required_capability` already filtered
