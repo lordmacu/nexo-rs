@@ -224,6 +224,18 @@ pub struct LlmAgentBehavior {
     /// (cadence stays sane) but skips the actual `extract`
     /// call so we never write outside an explicit dir.
     memory_dir: Option<PathBuf>,
+    /// Phase 36.2 (MS-1.b compactions) — optional mutation observer.
+    /// When set, every successful `compaction_store.insert` fires a
+    /// `SqliteCompactions/Insert` event keyed on the session id so
+    /// downstream subscribers can correlate the row to the agent
+    /// turn that produced it. Best-effort: a hook failure is
+    /// swallowed by the trait contract and never blocks the
+    /// compaction loop.
+    mutation_hook: Option<Arc<dyn nexo_driver_types::MemoryMutationHook>>,
+    /// Tenant string passed to the mutation hook. Defaults to
+    /// `"default"`; multi-tenant SaaS wires the per-binding tenant
+    /// at boot via `with_mutation_hook`.
+    mutation_tenant: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -330,7 +342,24 @@ impl LlmAgentBehavior {
             cache_break_tracker: Mutex::new(CacheBreakTracker::default()),
             memory_extractor: None,
             memory_dir: None,
+            mutation_hook: None,
+            mutation_tenant: "default".into(),
         }
+    }
+
+    /// Phase 36.2 (MS-1.b compactions) — wire the mutation
+    /// observer. Successful `compaction_store.insert` calls fire a
+    /// `SqliteCompactions/Insert` event onto
+    /// `nexo.memory.mutated.<agent_id>` with the session id as the
+    /// correlation key. Best-effort: hook failures are swallowed.
+    pub fn with_mutation_hook(
+        mut self,
+        hook: Arc<dyn nexo_driver_types::MemoryMutationHook>,
+        tenant: impl Into<String>,
+    ) -> Self {
+        self.mutation_hook = Some(hook);
+        self.mutation_tenant = tenant.into();
+        self
     }
 
     /// Phase M4 — wire post-turn memory extraction. When set,
@@ -1145,13 +1174,35 @@ impl LlmAgentBehavior {
                                     input_tokens: r.input_tokens as i64,
                                     output_tokens: r.output_tokens as i64,
                                 };
-                                if let Err(e) = store.insert(&row).await {
-                                    tracing::warn!(
-                                        error = %e,
-                                        session_id = %session.id,
-                                        "compaction succeeded but persist failed; \
-                                         applying anyway and continuing"
-                                    );
+                                let insert_ok = match store.insert(&row).await {
+                                    Ok(()) => true,
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            error = %e,
+                                            session_id = %session.id,
+                                            "compaction succeeded but persist failed; \
+                                             applying anyway and continuing"
+                                        );
+                                        false
+                                    }
+                                };
+                                // Phase 36.2 (MS-1.b compactions) —
+                                // fire the mutation event only when
+                                // the insert actually committed. Use
+                                // session.id as the correlation key
+                                // since compactions_v1 has no UUID
+                                // primary key.
+                                if insert_ok {
+                                    if let Some(hook) = &self.mutation_hook {
+                                        hook.on_mutation(
+                                            &ctx.agent_id,
+                                            &self.mutation_tenant,
+                                            nexo_driver_types::MemoryMutationScope::SqliteCompactions,
+                                            nexo_driver_types::MemoryMutationOp::Insert,
+                                            &session.id.to_string(),
+                                        )
+                                        .await;
+                                    }
                                 }
                                 session.apply_compaction(r.summary, r.tail_start_index);
                                 // Phase 77.2 — reset circuit breaker on success.
