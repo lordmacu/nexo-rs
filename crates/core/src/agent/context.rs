@@ -455,6 +455,27 @@ impl AgentContext {
         self.effective_tools = Some(tools);
         self
     }
+
+    /// Phase 82.4.b.b — populate `binding.event_source` when the
+    /// inbound was synthesised from a NATS event subscriber.
+    /// No-op when `self.binding` is `None`; logged at debug level
+    /// so the call-site can stay branchless if the caller doesn't
+    /// want to gate the call. Caller is expected to gate at the
+    /// call site for hot paths (every native-channel inbound
+    /// passing through the resolver).
+    pub fn with_event_source(
+        mut self,
+        meta: nexo_tool_meta::EventSourceMeta,
+    ) -> Self {
+        if let Some(b) = self.binding.as_mut() {
+            b.event_source = Some(meta);
+        } else {
+            tracing::debug!(
+                "with_event_source called on a context without a binding — no-op"
+            );
+        }
+        self
+    }
     pub fn with_credentials(
         mut self,
         credentials: Arc<nexo_auth::AgentCredentialResolver>,
@@ -718,6 +739,31 @@ mod plan_mode_tests {
         // rides alongside an already-matched binding, never as a
         // substitute).
         let c = ctx().with_mcp_channel_source("slack");
+        assert!(c.binding.is_none());
+    }
+
+    #[tokio::test]
+    async fn with_event_source_populates_when_binding_present() {
+        let mut c = ctx();
+        c.binding = Some(BindingContext::agent_only("ana"));
+        let meta = nexo_tool_meta::EventSourceMeta {
+            subject: "webhook.github.opened".into(),
+            envelope_id: None,
+            synthesis_mode: "synthesize".into(),
+        };
+        let c = c.with_event_source(meta.clone());
+        let binding = c.binding.expect("binding stays Some");
+        assert_eq!(binding.event_source, Some(meta));
+    }
+
+    #[tokio::test]
+    async fn with_event_source_no_op_when_no_binding_match() {
+        let meta = nexo_tool_meta::EventSourceMeta {
+            subject: "x.y".into(),
+            envelope_id: None,
+            synthesis_mode: "tick".into(),
+        };
+        let c = ctx().with_event_source(meta);
         assert!(c.binding.is_none());
     }
 }
