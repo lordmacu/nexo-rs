@@ -823,18 +823,21 @@ impl TranscriptReader for TranscriptReaderFs {
                 .read_session(session_id)
                 .await
                 .unwrap_or_default();
-            for (seq_idx, line) in lines.iter().enumerate() {
+            let mut entry_seq: u64 = 0;
+            for line in lines.iter() {
                 let TranscriptLine::Entry(e) = line else {
                     continue;
                 };
                 let ts_ms = e.timestamp.timestamp_millis() as u64;
+                let seq = entry_seq;
+                entry_seq += 1;
                 if ts_ms < since_ms {
                     continue;
                 }
                 out.push(AgentEventKind::TranscriptAppended {
                     agent_id: self.agent_id.clone(),
                     session_id,
-                    seq: seq_idx as u64,
+                    seq,
                     role: map_role(e.role),
                     body: e.content.clone(),
                     sent_at_ms: ts_ms,
@@ -873,11 +876,13 @@ impl TranscriptReader for TranscriptReaderFs {
         let after = params.since_seq.unwrap_or(u64::MAX);
         let want_all = params.since_seq.is_none();
         let mut out: Vec<AgentEventKind> = Vec::new();
-        for (seq_idx, line) in lines.iter().enumerate() {
+        let mut entry_seq: u64 = 0;
+        for line in lines.iter() {
             let TranscriptLine::Entry(e) = line else {
                 continue;
             };
-            let seq = seq_idx as u64;
+            let seq = entry_seq;
+            entry_seq += 1;
             if !want_all && seq <= after {
                 continue;
             }

@@ -4,6 +4,7 @@
 #[allow(clippy::module_inception)]
 pub mod agent;
 pub mod admin_rpc;
+pub mod agent_events;
 pub mod agents_directory;
 pub mod approval_correlator;
 pub mod behavior;
