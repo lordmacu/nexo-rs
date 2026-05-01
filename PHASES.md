@@ -9200,6 +9200,221 @@ Total ~ 23-28 dev-days for full parity (was 25-30, recortado
 ~1d por re-scope de 80.12). 80.7 (per-cwd lock) flagged as DEFER until Phase 32
 multi-host orchestration arrives.
 
+### Phase 84 — Coordinator agent persona + worker continuation   ⬜
+
+Phase 77.18 added the `role: coordinator | worker` binding flag and
+gated the tool surface (`TeamCreate` / `TeamDelete` /
+`SendToPeer` only callable from coordinator bindings). Phase 79.6
+shipped `TeamCreate` / `TeamDelete` for parallel worker spawn.
+Phase 80.11 shipped `agent.inbox.<goal_id>` peer messaging with
+`ListPeers` + `SendToPeer` discovery + send.
+
+Gap: the **coordinator agent itself does not know it is a coordinator**.
+Today the role flag only restricts tool availability — it does not
+shape the agent's behavior, prompting, or how it interprets worker
+output. A coordinator binding loaded with TeamCreate access still
+runs the standard agent system prompt and treats worker results as
+opaque chat fragments. This phase closes that gap by adding a
+purpose-built coordinator persona prompt, a structured wrapper for
+worker results, a continuation tool to re-engage finished workers
+with their loaded context, and a complementary worker persona.
+
+**Reference (PRIMARY)**: `research/src/agents/` agent loop +
+`research/extensions/team/` (OpenClaw team coordination — TS
+single-process pattern; nexo's NATS-based peer mesh is a superset).
+**Reference (secondary)**:
+- `crates/core/src/agent/list_peers_tool.rs` /
+  `send_to_peer_tool.rs` (existing peer surface)
+- `crates/fork/src/fork_subagent.rs` (forked subagent run +
+  return-value contract)
+- Phase 77.18 `EffectiveBindingPolicy.role` (PHASES.md §77.18)
+- Phase 79.6 `TeamCreate` / `TeamDelete` (PHASES.md §79.6)
+
+**Done criteria** (phase-level — see sub-phases for granular):
+- A binding with `role: coordinator` boots with a coordinator-
+  specific system prompt block injected ahead of the standard
+  persona; `role: worker` injects a worker-specific block; absent
+  role behaves exactly as today.
+- Worker / forked-subagent results land in the coordinator's
+  context wrapped in a structured `<task-notification>` XML envelope
+  carrying `task_id`, `status`, `summary`, optional `result`,
+  optional `usage`. The coordinator's prompt teaches it to
+  distinguish notifications from real user messages.
+- Coordinator can call a new `SendMessageToWorker` (or equivalently
+  named) LLM tool to continue a previously-finished worker with its
+  loaded context, distinct from `SendToPeer` (which targets a
+  separate live peer agent).
+- 1 coordinator-side e2e test: spawn 2 workers in parallel,
+  receive 2 `<task-notification>` envelopes in order, continue one
+  worker via the new tool, verify worker resumed with prior
+  context.
+- Docs (`docs/src/agents/coordinator-mode.md`) explain the role
+  semantics, the notification envelope, and the continue-vs-spawn
+  decision matrix. `mdbook build docs` clean.
+- `admin-ui/PHASES.md` adds an "Agent role" panel checkbox showing
+  per-binding role + whether the coordinator persona is active.
+
+#### 84.1 — Coordinator persona system prompt module   ⬜
+
+New crate-level module (likely `crates/core/src/agent/personas/coordinator.rs`)
+that exposes a `coordinator_system_prompt(ctx: CoordinatorPromptCtx) -> String`
+builder. The builder produces a single block injected ahead of the
+agent's existing system prompt only when
+`EffectiveBindingPolicy.role == Coordinator`.
+
+**Content (sections)**:
+1. Role declaration — "you are a coordinator; your job is to direct
+   workers, synthesize results, communicate with the user".
+2. Tool list — current binding's allowed tools focused on the
+   coordinator surface (`TeamCreate`, `SendToPeer`,
+   `SendMessageToWorker` from 84.3, `TaskStop`, peer discovery).
+3. **Continue-vs-spawn matrix** — table guiding when to reuse a
+   finished worker vs spawn fresh, keyed on context overlap.
+4. **Synthesis discipline** — coordinator must read worker findings
+   and craft specific implementation specs with file paths + line
+   numbers; explicit anti-pattern: "based on your findings, fix
+   the bug" (delegates understanding).
+5. **Verification rigor** — define what real verification looks
+   like (run tests with feature enabled, investigate failures,
+   skeptical reading).
+6. **Parallelism guidance** — independent work fans out; concurrent
+   tool calls in one assistant message.
+
+**Done criteria**:
+- `coordinator_system_prompt` builder + 4 unit tests covering each
+  section's presence/absence under different `CoordinatorPromptCtx`
+  inputs (empty tools, all tools, scratchpad enabled/disabled,
+  custom workers list).
+- Per-binding boot wire (`src/main.rs::Mode::Run`) reads
+  `effective_policy.role` and prepends the coordinator prompt only
+  for `Coordinator` bindings; `Worker` and absent role stay on
+  today's prompt path.
+- Smoke test: load a YAML fixture with `role: coordinator`, run a
+  one-turn goal, assert the coordinator block appears in the
+  rendered system prompt.
+
+#### 84.2 — `<task-notification>` envelope for worker results   ⬜
+
+When a forked subagent (`nexo-fork`) or a TeamCreate worker
+completes, the coordinator receives the result. Today the result is
+either appended as plain text or returned via the tool-call
+response path. Phase 84.2 standardizes a single XML envelope that
+the coordinator's parser can match deterministically.
+
+**Schema** (single line per attribute, content as inner text):
+
+```xml
+<task-notification>
+<task-id>{worker_goal_id}</task-id>
+<status>completed|failed|killed|timeout</status>
+<summary>{one-line outcome}</summary>
+<result>{worker's final assistant text — optional}</result>
+<usage>
+  <total_tokens>{N}</total_tokens>
+  <tool_uses>{N}</tool_uses>
+  <duration_ms>{N}</duration_ms>
+</usage>
+</task-notification>
+```
+
+**Done criteria**:
+- `nexo-driver-types` (or `nexo-fork`) gains a `TaskNotification`
+  struct + `to_xml()` renderer + serde round-trip test. Result
+  field skipped when worker produced no final text.
+- The fork-pass + TeamCreate completion paths render via this
+  helper instead of writing free-form text.
+- The coordinator persona prompt (84.1) cites the envelope and
+  instructs the agent never to `<thank>` or `<acknowledge>`
+  notification blocks.
+- 3 unit tests: completed-with-result / failed-no-result /
+  killed-mid-run — each round-trips and renders without breaking
+  XML escaping (`<`, `>`, `&` in body / summary).
+- Backwards-compat: legacy callers that read the raw text get the
+  rendered envelope; if `task-notification` parsing fails, the
+  block is treated as plain text (no panic, no drop).
+
+#### 84.3 — `SendMessageToWorker` continuation LLM tool   ⬜
+
+The coordinator needs to re-engage a finished worker with its
+loaded context (Section 5 of the coordinator persona). Today the
+choice is binary: spawn a fresh `TeamCreate` worker (loses the
+research context) or `SendToPeer` to a live peer (different
+semantics — peer is at-rest goal, not a forked subagent that
+already returned). Phase 84.3 fills the gap.
+
+**Tool surface**:
+
+```rust
+SendMessageToWorker {
+    worker_id: String,   // task_id from the prior <task-notification>
+    message: String,     // synthesized continuation spec
+}
+```
+
+Resumes the worker's session with one new user turn appended
+holding `message`. Reuses `nexo-fork` session-resume hooks (Phase
+67/68 binding store) so the worker re-enters its own context
+window, sees its prior tool calls + observations, then acts on the
+new spec.
+
+**Done criteria**:
+- New tool registered for `role: coordinator` bindings only;
+  `EffectiveBindingPolicy` allowlist updated.
+- 4 unit tests: success continuation / unknown worker_id (404-style
+  error JSON) / worker still running (refuse — distinct from
+  `SendToPeer` semantics) / cross-binding worker_id (refuse — only
+  workers spawned by this coordinator are reachable).
+- 1 integration test: spawn worker → receive notification →
+  continue worker → assert resumed session sees prior tool calls
+  in transcript.
+- Coordinator persona prompt (84.1) gains a worked example showing
+  continue-vs-spawn decision applied to a concrete scenario.
+
+#### 84.4 — Worker persona system prompt module   ⬜
+
+Complement to 84.1. Bindings with `role: worker` get a workerspecific
+block instead of the coordinator block.
+
+**Content**:
+1. Role declaration — "you execute self-contained tasks dispatched
+   by a coordinator; do not initiate user-facing dialogue".
+2. Output discipline — terse final answers focused on the spec's
+   done criteria (file path + commit hash for implementation;
+   findings list for research).
+3. Self-verification — run typechecks / tests before reporting
+   `done`; surface failures with the actual error, not a paraphrase.
+4. Tool surface — limited toolkit per `EffectiveBindingPolicy`
+   (no `TeamCreate`, no `SendToPeer`, no `SendMessageToWorker`).
+
+**Done criteria**:
+- `worker_system_prompt(ctx)` builder + 3 unit tests.
+- Boot wire injects worker block when `role: worker`.
+- Smoke test parallel to 84.1's: YAML fixture with
+  `role: worker`, one-turn goal, worker block appears.
+
+#### 84.5 — Docs + admin-ui sync   ⬜
+
+- `docs/src/agents/coordinator-mode.md` new page covering:
+  role flag semantics, persona prompt sections, notification
+  envelope schema, `SendMessageToWorker` tool, continue-vs-spawn
+  decision matrix.
+- `docs/src/agents/worker-mode.md` complementary page.
+- Cross-link from existing `docs/src/agents/peer-messaging.md`
+  (Phase 80.11) so operators see the full coordinator stack.
+- `admin-ui/PHASES.md` "Agent role" panel: per-binding role view +
+  active persona indicator.
+- `mdbook build docs` clean.
+- CHANGELOG `[Unreleased] / Added` entries for 84.1 → 84.4 in the
+  same commit that ships 84.5.
+
+**Phase 84 effort estimate**: 84.1 (1.5 days, prompt design + 4
+tests + boot wire), 84.2 (1 day, struct + renderer + 3 tests +
+fork/team site updates), 84.3 (2 days, tool wiring + session-resume
+re-use + 4 unit tests + integration test), 84.4 (1 day, mirror of
+84.1 with simpler scope), 84.5 (0.5 day docs). Total ~6 dev-days.
+Critical path: 84.1 → 84.2 → 84.3 (84.4 + 84.5 can run in
+parallel after 84.1).
+
 ### Phases 82 + 83 — Microapp framework
 
 The full planning for the microapp framework — Phase 82
