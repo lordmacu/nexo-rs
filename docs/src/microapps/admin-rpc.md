@@ -577,6 +577,88 @@ event firehose deferred wire-up — the inbound dispatcher
 hook + transcript `role: Operator` integration land in
 82.13.b alongside the actual reply-out adapter.
 
+## Agent escalations (Phase 82.14)
+
+Cross-app primitive for the "I need help here" channel:
+agents flag work items they cannot complete autonomously,
+operators see a list and dismiss / take over. v0 ships the
+admin RPC surface (read + resolve) plus the auto-resolve
+hook on `processing/pause`; the `escalate_to_human`
+built-in tool that raises new escalations is deferred to
+82.14.b.
+
+### Wire shapes
+
+```rust
+enum EscalationReason {
+    OutOfScope, MissingData, NeedsHumanJudgment,
+    Complaint, Error, Ambiguity, PolicyViolation, Other,
+}
+enum EscalationUrgency { Low, Normal, High }
+
+#[non_exhaustive]
+enum ResolvedBy {
+    OperatorTakeover,
+    OperatorDismissed { reason: String },
+    AgentResolved,
+}
+
+#[non_exhaustive]
+enum EscalationState {
+    None,
+    Pending {
+        scope: ProcessingScope,   // 82.13 enum
+        summary, reason, urgency,
+        context: BTreeMap<String, Value>,
+        requested_at_ms,
+    },
+    Resolved { scope, resolved_at_ms, by },
+}
+```
+
+`context` is free-form per agent shape: chat agents emit
+`{"question": …, "customer_phone": …}`, batch agents emit
+`{"job_id": …, "invalid_rows": 47}`, image-gen emits
+`{"prompt": …, "policy": "nudity"}`. Keeps the schema
+stable while letting each agent surface meaningful detail.
+
+### Methods
+
+- `nexo/admin/escalations/list { filter (default
+  pending), agent_id?, scope_kind?, limit }` →
+  `EscalationsListResponse { entries }`. Newest-first by
+  `requested_at_ms` / `resolved_at_ms`; default cap 100,
+  max 1000.
+- `nexo/admin/escalations/resolve { scope, by, dismiss_reason?,
+  operator_token_hash }` → `EscalationsResolveResponse
+  { changed, correlation_id }`. `by = "dismissed"` requires
+  a `dismiss_reason`; `by = "takeover"` is the same outcome
+  the auto-resolve hook produces.
+
+Two granular capabilities:
+- `escalations_read` — gates `list`. Read-only dashboards
+  hold this.
+- `escalations_resolve` — gates `resolve`. Strictly stronger
+  grant for operator UIs that act on escalations.
+
+### Auto-resolve on pause
+
+When `nexo/admin/processing/pause` fires on a scope with a
+matching `Pending` escalation AND both the processing +
+escalation stores are wired, the dispatcher
+auto-flips the escalation to `Resolved
+{ OperatorTakeover }` BEFORE applying the pause. Failures
+in the auto-resolve path log at `warn` and never block the
+pause itself — operator intent (pause) takes priority over
+side-effects.
+
+### Notification literals
+
+`escalation_requested` and `escalation_resolved` are pinned
+as `pub const` in the wire crate; the emit site lands in
+82.14.b alongside the `escalate_to_human` built-in tool +
+the BindingContext→scope derivation.
+
 ## Limitations
 
 - **Bidirectional flow over single stdio**: `app:` ID prefix

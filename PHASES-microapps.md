@@ -1434,7 +1434,54 @@ Out of scope:
 - Auto-resume timeout (could be future enhancement).
 - Operator-to-operator handoff between humans.
 
-#### 82.14 — Agent attention request: `escalate_to_human` tool + state + notification (chat-question is one example)   ⬜
+#### 82.14 — Agent attention request: `escalate_to_human` tool + state + notification (chat-question is one example)   ✅  (shipped 2026-05-01)
+
+Three steps shipped (read + resolve admin surface + auto-
+resolve hook on 82.13 pause; the `escalate_to_human` built-in
+tool that PRODUCES Pending rows is deferred to 82.14.b):
+
+- **82.14.1** — `nexo_tool_meta::admin::escalations` wire
+  shapes (`EscalationReason` closed enum,
+  `EscalationUrgency`, `ResolvedBy` `#[non_exhaustive]`,
+  `EscalationState` `#[non_exhaustive]` with `Pending`
+  carrying `BTreeMap<String, Value>` context for
+  per-agent-shape details, list/resolve params + responses,
+  `escalation_requested` / `escalation_resolved` notify-kind
+  literals). 4 round-trip tests.
+- **82.14.2** — `EscalationStore` async trait + 2 admin RPC
+  handlers (`list`, `resolve`) + dispatcher routing on
+  `escalations_read` / `escalations_resolve` (granular caps
+  for read-only dashboards) + `auto_resolve_on_pause` cross-
+  cut hook called from the `processing/pause` arm.
+  `InMemoryEscalationStore` (DashMap, newest-first list
+  ordering by `requested_at_ms` / `resolved_at_ms`).
+  7 handler tests + 5 store tests = 12.
+- **82.14.3** — docs (`admin-rpc.md` "Agent escalations"
+  section: wire shapes, methods, auto-resolve semantics,
+  notification literals) + PHASES ✅ + FOLLOWUPS
+  deferreds.
+
+**Tests:** 4 + 12 = **16 verde**.
+
+**Deferred to 82.14.b**:
+- `escalate_to_human` built-in tool registration in core
+  ToolRegistry. Production needs the BindingContext (82.1)
+  + the agent's current scope context (chat: contact_id;
+  batch: current job_id) to derive `ProcessingScope`
+  automatically — the agent passes only `summary` /
+  `reason` / `urgency` / `context`, framework fills in
+  scope from dispatch context.
+- `EscalationRequested` / `EscalationResolved` event
+  variants on the 82.11 firehose. The notify-kind literals
+  are pinned today; emit site lands with the boot wire-up
+  refactor.
+- Throttle: max 3 escalations per scope per hour to prevent
+  agent loops. Token-bucket from Phase 82.7 reused.
+- SQLite-backed durable store — v0 is in-memory; daemon
+  restart drops every escalation row. Trait + handler are
+  store-agnostic so the new impl drops in alongside
+  `InMemoryEscalationStore`.
+
 
 Cross-app primitive. Agents sometimes encounter work items
 they cannot complete autonomously and need human attention.

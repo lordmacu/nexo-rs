@@ -1909,6 +1909,39 @@ Target phase: 82.13.b (chat-takeover wire-up + reply
 adapter) and 82.13.c (durable store), folded with the next
 main.rs operator wire-up commit.
 
+### Phase 82.14 — escalation tool follow-ups
+
+Phase 82.14 shipped the wire shapes + store + admin RPC
+handlers + the auto-resolve hook on 82.13 pause. Four
+follow-ups stayed deferred:
+
+- **`escalate_to_human` built-in tool**: register in
+  core ToolRegistry as a provider-agnostic / use-case-
+  agnostic tool. Dispatch must derive `ProcessingScope`
+  from the agent's `BindingContext` (82.1) + scope
+  context (chat → contact_id, batch → job_id) so the
+  agent passes only `{summary, reason, urgency, context}`
+  and the framework fills in scope. Wire-up depends on
+  the same boot-order refactor as 82.10.h.b /
+  82.11 / 82.12 / 82.13.
+- **Firehose event variants**: emit `EscalationRequested
+  { agent_id, scope, summary, reason, urgency, context,
+  requested_at_ms }` and `EscalationResolved { agent_id,
+  scope, resolved_at_ms, by }` on the 82.11 firehose
+  when the tool fires / resolve handler runs. Notify-kind
+  literals already pinned in tool-meta.
+- **Throttle**: max 3 escalations per scope per hour to
+  prevent agent loops. Token-bucket from Phase 82.7 reused;
+  trait + handler unchanged.
+- **SQLite-backed durable store**: v0 is in-memory,
+  daemon restart drops every escalation. Trait +
+  handler are store-agnostic so the new impl drops in
+  alongside `InMemoryEscalationStore`.
+
+Target phase: 82.14.b (built-in tool + firehose event
+variants + throttle) and 82.14.c (durable store), folded
+with the next main.rs operator wire-up commit.
+
 ## Resolved (recent highlights)
 
 - 2026-04-28 — MCP denied-tool override now supports `Heartbeat`
