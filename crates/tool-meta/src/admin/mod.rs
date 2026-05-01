@@ -16,3 +16,4 @@ pub mod channels;
 pub mod credentials;
 pub mod llm_providers;
 pub mod pairing;
+pub mod processing;
