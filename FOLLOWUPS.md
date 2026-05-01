@@ -1954,6 +1954,39 @@ admin RPC + http_server bootstrap into main.rs (single
 shared boot-order refactor — folded with 82.10.h.b /
 82.11 / 82.12 / 82.13 / 82.14 deferreds).
 
+### Phase 85.1 — provider 413 detection + integration test
+
+Phase 85.1 shipped the type surface (LlmError::PromptTooLong,
+BudgetAxis::Consecutive413, ReplayDecision::CompactAndRetry) and
+the orchestrator branch that bumps `consecutive_413` on the
+classifier verdict. Three pieces deferred to 85.1.b:
+
+- **Provider 413 detection**: `crates/llm/src/anthropic` and
+  `crates/llm/src/minimax` (and future providers) intercept HTTP
+  413 responses + extract `tokens_used`/`tokens_limit` from the
+  provider's error body, return `LlmError::PromptTooLong` instead
+  of generic `ServerError { status: 413 }`. Today the classifier
+  routes via `error_message.contains("prompt too long")` /
+  variants — this works when the provider's body text reaches
+  the orchestrator, but a typed variant is more robust.
+
+- **Forced compact via `Trigger::Reactive413`**: the orchestrator
+  arm currently bumps the counter and re-loops, expecting the
+  proactive compact policy to fire on the next turn. The spec
+  calls for an explicit `Trigger::Reactive413` that bypasses the
+  proactive estimator (proactive may have under-counted, that's
+  why we got 413 in the first place). Add the variant to
+  `CompactTrigger`, plumb it through the orchestrator → compact
+  policy contract.
+
+- **Integration test**: `crates/driver-loop/tests/` mock provider
+  returns 413 once, then succeeds; assert one compact + one
+  successful turn + transcript shows the compact marker between
+  attempts.
+
+Target phase: 85.1.b (folded with the broader provider error
+typing sweep).
+
 ### Phase 84.5 — admin-ui "Agent role" panel
 
 Phase 84.5 shipped CHANGELOG entries for 84.1-4 + cross-link from

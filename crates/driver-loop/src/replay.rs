@@ -39,6 +39,13 @@ pub enum ReplayDecision {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rollback_to: Option<String>,
     },
+    /// Phase 85.1 — provider returned `PromptTooLong` (413). Force a
+    /// compact pass (`Trigger::Reactive413`) without consulting the
+    /// proactive estimator, then retry the same turn once. Bumps
+    /// `consecutive_413`; reset by any successful turn. Distinct
+    /// from `FreshSessionRetry` so the orchestrator routes to
+    /// the compact subsystem instead of a session re-bind.
+    CompactAndRetry,
     /// Hard stop with `Escalate { reason }`.
     Escalate { reason: String },
 }
@@ -71,6 +78,21 @@ impl ReplayPolicy for DefaultReplayPolicy {
             || msg.contains("rate limit")
             || msg.contains("unavailable")
             || msg.contains("temporarily");
+        // Phase 85.1 — reactive 413 recovery.
+        let prompt_too_long = msg.contains("prompt too long")
+            || msg.contains("prompt_too_long")
+            || msg.contains("context_length_exceeded")
+            || msg.contains("payload_too_large");
+
+        if prompt_too_long {
+            // Cap stays in `BudgetGuards.max_consecutive_413`; the
+            // orchestrator checks `is_exhausted` and converts a hit
+            // to `Escalate { reason: "consecutive_413 exceeded" }`
+            // before re-entering the loop. Replay policy itself
+            // returns `CompactAndRetry` unconditionally so the
+            // budget-axis check is centralized.
+            return ReplayDecision::CompactAndRetry;
+        }
 
         if session_dead {
             return ReplayDecision::FreshSessionRetry {
@@ -188,6 +210,76 @@ mod tests {
             }
             other => panic!("expected NextTurn, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn prompt_too_long_returns_compact_and_retry() {
+        // Phase 85.1 spec test 1: classification of `PromptTooLong`.
+        let pol = DefaultReplayPolicy::default();
+        let usage = BudgetUsage::default();
+        let d = pol
+            .classify(&ctx(
+                "prompt too long: 220000 / 200000",
+                &usage,
+                Some("abc"),
+            ))
+            .await;
+        assert_eq!(d, ReplayDecision::CompactAndRetry);
+    }
+
+    #[tokio::test]
+    async fn prompt_too_long_with_provider_phrasing_classifies() {
+        // Provider variants: Anthropic uses `prompt_too_long`,
+        // OpenAI-compat uses `context_length_exceeded`,
+        // generic 413 says `payload_too_large`. All three route to
+        // CompactAndRetry.
+        let pol = DefaultReplayPolicy::default();
+        let usage = BudgetUsage::default();
+        for phrase in [
+            "prompt_too_long: input is too long",
+            "context_length_exceeded: 220000 tokens",
+            "payload_too_large",
+        ] {
+            let d = pol.classify(&ctx(phrase, &usage, None)).await;
+            assert_eq!(
+                d,
+                ReplayDecision::CompactAndRetry,
+                "phrase `{phrase}` did not classify as CompactAndRetry"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn compact_and_retry_classification_does_not_consult_consecutive_413_cap() {
+        // Phase 85.1 spec test 2: budget axis exhaustion is
+        // centralised in the orchestrator (BudgetGuards.is_exhausted),
+        // NOT inside the classifier. The classifier returns
+        // CompactAndRetry unconditionally; the orchestrator decides
+        // when to convert to Escalate via the budget axis.
+        let pol = DefaultReplayPolicy::default();
+        let usage = BudgetUsage {
+            consecutive_413: 99,
+            ..Default::default()
+        };
+        let d = pol.classify(&ctx("prompt too long", &usage, None)).await;
+        assert_eq!(d, ReplayDecision::CompactAndRetry);
+    }
+
+    #[tokio::test]
+    async fn prompt_too_long_short_circuits_other_classifiers() {
+        // Phase 85.1 spec test 3: when an error mentions both
+        // "session" markers and "prompt too long", the 413
+        // classifier wins (no double-route into FreshSessionRetry).
+        let pol = DefaultReplayPolicy::default();
+        let usage = BudgetUsage::default();
+        let d = pol
+            .classify(&ctx(
+                "session expired AND prompt too long",
+                &usage,
+                Some("xyz"),
+            ))
+            .await;
+        assert_eq!(d, ReplayDecision::CompactAndRetry);
     }
 
     #[tokio::test]

@@ -9472,7 +9472,7 @@ mined**:
   daemon restart resumes with the same cache-edit shape — no
   re-warm-up cost.
 
-#### 85.1 — Reactive 413 recovery   ⬜
+#### 85.1 — Reactive 413 recovery   ✅  (shipped 2026-05-01 — provider 413 detection deferred)
 
 Catch `413 prompt_too_long` from the provider, force one compact
 pass, retry the turn once. Distinct from proactive: no
