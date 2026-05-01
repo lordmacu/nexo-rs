@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use nexo_tool_meta::BindingContext;
+use nexo_tool_meta::{BindingContext, InboundMessageMeta};
 use uuid::Uuid;
 
 #[cfg(feature = "outbound")]
@@ -10,9 +10,9 @@ use crate::outbound::OutboundDispatcher;
 
 /// Context passed to every [`crate::ToolHandler`] call.
 ///
-/// Carries the `(agent_id, session_id, binding)` triple parsed
-/// from the inbound JSON-RPC `_meta` block plus optional helpers
-/// gated behind cargo features (`outbound`).
+/// Carries the `(agent_id, session_id, binding, inbound)` tuple
+/// parsed from the inbound JSON-RPC `_meta` block plus optional
+/// helpers gated behind cargo features (`outbound`).
 #[derive(Debug, Clone)]
 pub struct ToolCtx {
     /// Stable agent identifier (`agents.yaml.<id>`).
@@ -23,6 +23,10 @@ pub struct ToolCtx {
     /// Inbound binding when matched. `None` for paths without a
     /// binding match.
     pub binding: Option<BindingContext>,
+    /// Per-turn inbound message metadata (sender id, msg id,
+    /// timestamp, …) when the producer populated it. `None` for
+    /// legacy producers and for tests that don't inject one.
+    pub inbound: Option<InboundMessageMeta>,
 
     /// Outbound dispatcher — only available with the `outbound`
     /// feature on. Compile-time gate (no runtime
@@ -45,6 +49,14 @@ impl ToolCtx {
         self.binding.as_ref()
     }
 
+    /// Borrow the parsed [`InboundMessageMeta`] when the producer
+    /// populated it. Returns `None` for legacy producers not yet
+    /// migrated to Phase 82.5 and for tests that didn't inject
+    /// one.
+    pub fn inbound(&self) -> Option<&InboundMessageMeta> {
+        self.inbound.as_ref()
+    }
+
     /// Borrow the outbound dispatcher.
     ///
     /// Only available with the `outbound` cargo feature on. Calling
@@ -63,6 +75,18 @@ pub struct HookCtx {
     /// Inbound binding when matched. `None` for paths without a
     /// binding match.
     pub binding: Option<BindingContext>,
+    /// Per-turn inbound message metadata when populated by the
+    /// producer. Hooks (e.g. `before_message`) read this for
+    /// anti-loop / sender-aware decisions before tool dispatch.
+    pub inbound: Option<InboundMessageMeta>,
+}
+
+impl HookCtx {
+    /// Borrow the parsed [`InboundMessageMeta`] when the producer
+    /// populated it.
+    pub fn inbound(&self) -> Option<&InboundMessageMeta> {
+        self.inbound.as_ref()
+    }
 }
 
 #[cfg(test)]
@@ -75,6 +99,7 @@ mod tests {
             agent_id: "ana".into(),
             session_id: None,
             binding: b,
+            inbound: None,
             #[cfg(not(feature = "outbound"))]
             _outbound_marker: std::marker::PhantomData,
             #[cfg(feature = "outbound")]
@@ -96,12 +121,28 @@ mod tests {
     }
 
     #[test]
+    fn inbound_accessor_returns_none_when_absent() {
+        let ctx = ctx_with_binding(None);
+        assert!(ctx.inbound().is_none());
+    }
+
+    #[test]
+    fn inbound_accessor_returns_some_when_present() {
+        let inbound = nexo_tool_meta::InboundMessageMeta::external_user("+5491100", "wa.X");
+        let mut ctx = ctx_with_binding(None);
+        ctx.inbound = Some(inbound.clone());
+        assert_eq!(ctx.inbound(), Some(&inbound));
+    }
+
+    #[test]
     fn hook_ctx_round_trip() {
         let b = BindingContext::agent_only("ana");
         let h = HookCtx {
             agent_id: "ana".into(),
             binding: Some(b.clone()),
+            inbound: None,
         };
         assert_eq!(h.binding, Some(b));
+        assert!(h.inbound().is_none());
     }
 }

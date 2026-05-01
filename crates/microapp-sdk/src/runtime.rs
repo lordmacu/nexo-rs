@@ -216,10 +216,12 @@ fn build_tool_ctx(arguments: &Value) -> ToolCtx {
         .and_then(Value::as_str)
         .and_then(|s| Uuid::parse_str(s).ok());
     let binding = nexo_tool_meta::parse_binding_from_meta(&meta);
+    let inbound = nexo_tool_meta::parse_inbound_from_meta(&meta);
     ToolCtx {
         agent_id,
         session_id,
         binding,
+        inbound,
         #[cfg(not(feature = "outbound"))]
         _outbound_marker: std::marker::PhantomData,
         #[cfg(feature = "outbound")]
@@ -235,7 +237,12 @@ fn build_hook_ctx(params: &Value) -> HookCtx {
         .unwrap_or("unknown")
         .to_string();
     let binding = nexo_tool_meta::parse_binding_from_meta(&meta);
-    HookCtx { agent_id, binding }
+    let inbound = nexo_tool_meta::parse_inbound_from_meta(&meta);
+    HookCtx {
+        agent_id,
+        binding,
+        inbound,
+    }
 }
 
 fn strip_meta(mut value: Value) -> Value {
@@ -497,5 +504,101 @@ mod tests {
         let lines = run_with_lines(h, &line).await;
         assert_eq!(lines[0]["result"]["agent_id"], "ana");
         assert_eq!(lines[0]["result"]["channel"], "whatsapp");
+    }
+
+    #[tokio::test]
+    async fn inbound_meta_parsed_into_tool_ctx() {
+        let with_inbound: Arc<dyn ToolHandler> = {
+            async fn h(_args: Value, ctx: ToolCtx) -> Result<ToolReply, ToolError> {
+                let sender = ctx
+                    .inbound
+                    .as_ref()
+                    .and_then(|i| i.sender_id.clone())
+                    .unwrap_or_default();
+                let msg = ctx
+                    .inbound
+                    .as_ref()
+                    .and_then(|i| i.msg_id.clone())
+                    .unwrap_or_default();
+                Ok(ToolReply::ok_json(json!({
+                    "sender": sender,
+                    "msg": msg,
+                })))
+            }
+            Arc::new(h)
+        };
+        let mut tools = BTreeMap::new();
+        tools.insert("introspect".into(), with_inbound);
+        let h = Handlers {
+            name: "t".into(),
+            version: "0.0.0".into(),
+            tools,
+            hooks: BTreeMap::new(),
+        };
+        let req = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 11,
+            "method": "tools/call",
+            "params": {
+                "name": "introspect",
+                "arguments": {
+                    "_meta": {
+                        "agent_id": "ana",
+                        "session_id": null,
+                        "nexo": {
+                            "inbound": {
+                                "kind": "external_user",
+                                "sender_id": "+5491100",
+                                "msg_id": "wa.ABCD"
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        let line = format!("{req}\n");
+        let lines = run_with_lines(h, &line).await;
+        assert_eq!(lines[0]["result"]["sender"], "+5491100");
+        assert_eq!(lines[0]["result"]["msg"], "wa.ABCD");
+    }
+
+    #[tokio::test]
+    async fn tool_ctx_inbound_returns_none_for_legacy_meta() {
+        let probe: Arc<dyn ToolHandler> = {
+            async fn h(_args: Value, ctx: ToolCtx) -> Result<ToolReply, ToolError> {
+                Ok(ToolReply::ok_json(json!({
+                    "has_inbound": ctx.inbound.is_some(),
+                })))
+            }
+            Arc::new(h)
+        };
+        let mut tools = BTreeMap::new();
+        tools.insert("probe".into(), probe);
+        let h = Handlers {
+            name: "t".into(),
+            version: "0.0.0".into(),
+            tools,
+            hooks: BTreeMap::new(),
+        };
+        // Legacy meta — only `binding`, no `inbound` bucket.
+        let req = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 12,
+            "method": "tools/call",
+            "params": {
+                "name": "probe",
+                "arguments": {
+                    "_meta": {
+                        "agent_id": "ana",
+                        "nexo": {
+                            "binding": { "agent_id": "ana", "channel": "whatsapp" }
+                        }
+                    }
+                }
+            }
+        });
+        let line = format!("{req}\n");
+        let lines = run_with_lines(h, &line).await;
+        assert_eq!(lines[0]["result"]["has_inbound"], false);
     }
 }

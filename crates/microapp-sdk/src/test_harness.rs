@@ -13,7 +13,7 @@ use tokio::sync::Mutex;
 
 use crate::builder::Microapp;
 use crate::hook::HookOutcome;
-use nexo_tool_meta::BindingContext;
+use nexo_tool_meta::{BindingContext, InboundMessageMeta};
 
 /// Test-harness errors.
 #[non_exhaustive]
@@ -52,7 +52,7 @@ impl MicroappTestHarness {
         tool_name: &str,
         arguments: Value,
     ) -> Result<Value, MicroappTestError> {
-        self.call_tool_inner(tool_name, arguments, None).await
+        self.call_tool_inner(tool_name, arguments, None, None).await
     }
 
     /// Invoke a tool with a pre-built `BindingContext` injected
@@ -63,7 +63,32 @@ impl MicroappTestHarness {
         arguments: Value,
         binding: BindingContext,
     ) -> Result<Value, MicroappTestError> {
-        self.call_tool_inner(tool_name, arguments, Some(binding))
+        self.call_tool_inner(tool_name, arguments, Some(binding), None)
+            .await
+    }
+
+    /// Invoke a tool with a pre-built `InboundMessageMeta`
+    /// injected into `_meta.nexo.inbound` (no binding context).
+    pub async fn call_tool_with_inbound(
+        &self,
+        tool_name: &str,
+        arguments: Value,
+        inbound: InboundMessageMeta,
+    ) -> Result<Value, MicroappTestError> {
+        self.call_tool_inner(tool_name, arguments, None, Some(inbound))
+            .await
+    }
+
+    /// Invoke a tool with both a `BindingContext` and an
+    /// `InboundMessageMeta` injected into `_meta.nexo.*`.
+    pub async fn call_tool_with_binding_and_inbound(
+        &self,
+        tool_name: &str,
+        arguments: Value,
+        binding: BindingContext,
+        inbound: InboundMessageMeta,
+    ) -> Result<Value, MicroappTestError> {
+        self.call_tool_inner(tool_name, arguments, Some(binding), Some(inbound))
             .await
     }
 
@@ -72,10 +97,20 @@ impl MicroappTestHarness {
         tool_name: &str,
         mut arguments: Value,
         binding: Option<BindingContext>,
+        inbound: Option<InboundMessageMeta>,
     ) -> Result<Value, MicroappTestError> {
-        if let Some(b) = binding {
-            // Inject _meta.nexo.binding into arguments.
-            let meta = nexo_tool_meta::build_meta_value(&b.agent_id, b.session_id, Some(&b), None);
+        if binding.is_some() || inbound.is_some() {
+            // Determine agent_id/session_id from binding when available.
+            let (agent_id, session_id) = binding
+                .as_ref()
+                .map(|b| (b.agent_id.clone(), b.session_id))
+                .unwrap_or_else(|| ("test".into(), None));
+            let meta = nexo_tool_meta::build_meta_value(
+                &agent_id,
+                session_id,
+                binding.as_ref(),
+                inbound.as_ref(),
+            );
             if let Some(obj) = arguments.as_object_mut() {
                 obj.insert("_meta".into(), meta);
             } else {
@@ -208,5 +243,59 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(out["channel"], "whatsapp");
+    }
+
+    #[tokio::test]
+    async fn call_tool_with_inbound_injects_inbound_meta() {
+        async fn read_inbound(args: Value, ctx: ToolCtx) -> Result<ToolReply, ToolError> {
+            let _ = args;
+            let sender = ctx
+                .inbound
+                .as_ref()
+                .and_then(|i| i.sender_id.clone())
+                .unwrap_or_default();
+            Ok(ToolReply::ok_json(json!({"sender": sender})))
+        }
+        let app = Microapp::new("t", "0.0.0").with_tool("read", read_inbound);
+        let h = MicroappTestHarness::new(app);
+        let inbound = InboundMessageMeta::external_user("+5491100", "wa.X");
+        let out = h
+            .call_tool_with_inbound("read", json!({}), inbound)
+            .await
+            .unwrap();
+        assert_eq!(out["sender"], "+5491100");
+    }
+
+    #[tokio::test]
+    async fn call_tool_with_binding_and_inbound_carries_both() {
+        async fn read_both(args: Value, ctx: ToolCtx) -> Result<ToolReply, ToolError> {
+            let _ = args;
+            let channel = ctx
+                .binding
+                .as_ref()
+                .and_then(|b| b.channel.clone())
+                .unwrap_or_default();
+            let sender = ctx
+                .inbound
+                .as_ref()
+                .and_then(|i| i.sender_id.clone())
+                .unwrap_or_default();
+            Ok(ToolReply::ok_json(json!({
+                "channel": channel,
+                "sender": sender,
+            })))
+        }
+        let app = Microapp::new("t", "0.0.0").with_tool("read", read_both);
+        let h = MicroappTestHarness::new(app);
+        let mut binding = BindingContext::agent_only("ana");
+        binding.channel = Some("whatsapp".into());
+        binding.account_id = Some("personal".into());
+        let inbound = InboundMessageMeta::external_user("+5491100", "wa.X");
+        let out = h
+            .call_tool_with_binding_and_inbound("read", json!({}), binding, inbound)
+            .await
+            .unwrap();
+        assert_eq!(out["channel"], "whatsapp");
+        assert_eq!(out["sender"], "+5491100");
     }
 }

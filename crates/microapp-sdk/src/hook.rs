@@ -103,6 +103,7 @@ mod tests {
         let ctx = HookCtx {
             agent_id: "a".into(),
             binding: None,
+            inbound: None,
         };
         let out = HookHandler::call(&h, Value::Null, ctx).await.unwrap();
         assert!(matches!(out, HookOutcome::Abort { .. }));
