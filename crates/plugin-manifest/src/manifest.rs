@@ -106,6 +106,67 @@ pub struct Capabilities {
     /// `extensions.yaml.<id>.capabilities_grant`.
     #[serde(default)]
     pub admin: AdminCapabilities,
+    /// Phase 82.12 — HTTP server capability. When set, the
+    /// microapp serves an HTTP UI / API; the boot supervisor
+    /// waits for the health endpoint to return 200 before
+    /// marking the extension `ready`. Default `None` keeps
+    /// stdio-only microapps unaffected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_server: Option<HttpServerCapability>,
+}
+
+/// Phase 82.12 — HTTP server declaration.
+///
+/// `bind` defaults to `127.0.0.1` (loopback). External bind
+/// (`0.0.0.0`, public IP, etc.) requires the operator to flip
+/// `extensions.yaml.<id>.allow_external_bind = true` — the
+/// boot validator rejects mismatches with
+/// `CapabilityBootError::ExternalBindNotAllowed`. Defense in
+/// depth against accidentally world-exposed services.
+///
+/// `token_env` names a process env var the operator populates
+/// (e.g. via systemd `EnvironmentFile=`) — the microapp reads
+/// it at boot to authenticate inbound HTTP requests against
+/// `Authorization: Bearer <token>` or `X-Nexo-Token: <token>`.
+/// The daemon also passes it through to the microapp at
+/// `initialize` time via the env block; rotation is signalled
+/// out-of-band via `nexo/notify/token_rotated`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct HttpServerCapability {
+    /// TCP port the microapp will listen on.
+    pub port: u16,
+    /// Bind address. `127.0.0.1` (default) keeps the server
+    /// loopback-only. Anything else requires explicit
+    /// per-extension opt-in.
+    #[serde(default = "default_http_bind")]
+    pub bind: String,
+    /// Process env var holding the shared bearer token.
+    pub token_env: String,
+    /// Health endpoint relative path. Boot supervisor polls
+    /// `GET <bind>:<port><health_path>` until 200 (or 30 s
+    /// timeout). Default `/healthz`.
+    #[serde(default = "default_health_path")]
+    pub health_path: String,
+}
+
+fn default_http_bind() -> String {
+    "127.0.0.1".to_string()
+}
+
+fn default_health_path() -> String {
+    "/healthz".to_string()
+}
+
+impl HttpServerCapability {
+    /// `true` when the bind address is loopback. Operators
+    /// don't need `allow_external_bind` for these.
+    pub fn is_loopback(&self) -> bool {
+        matches!(
+            self.bind.as_str(),
+            "127.0.0.1" | "::1" | "localhost"
+        )
+    }
 }
 
 /// Phase 82.10 — admin RPC capability declaration.
@@ -611,5 +672,55 @@ min_nexo_version = ">=0.1.0"
             let parsed: Capabilities = toml::from_str(&toml_src).unwrap();
             assert_eq!(parsed.provides, vec![variant], "round-trip {variant:?}");
         }
+    }
+
+    #[test]
+    fn http_server_defaults_loopback_and_healthz() {
+        let toml_src = r#"
+            [http_server]
+            port = 9001
+            token_env = "AGENT_CREATOR_TOKEN"
+        "#;
+        let parsed: Capabilities = toml::from_str(toml_src).unwrap();
+        let http = parsed.http_server.expect("http_server present");
+        assert_eq!(http.port, 9001);
+        assert_eq!(http.bind, "127.0.0.1");
+        assert_eq!(http.health_path, "/healthz");
+        assert_eq!(http.token_env, "AGENT_CREATOR_TOKEN");
+        assert!(http.is_loopback());
+    }
+
+    #[test]
+    fn http_server_external_bind_round_trips() {
+        let toml_src = r#"
+            [http_server]
+            port = 8080
+            bind = "0.0.0.0"
+            token_env = "TOK"
+            health_path = "/health"
+        "#;
+        let parsed: Capabilities = toml::from_str(toml_src).unwrap();
+        let http = parsed.http_server.expect("http_server present");
+        assert_eq!(http.bind, "0.0.0.0");
+        assert!(!http.is_loopback());
+        assert_eq!(http.health_path, "/health");
+    }
+
+    #[test]
+    fn http_server_absent_when_unset() {
+        let parsed: Capabilities = toml::from_str("provides = []").unwrap();
+        assert!(parsed.http_server.is_none());
+    }
+
+    #[test]
+    fn http_server_rejects_unknown_field() {
+        let toml_src = r#"
+            [http_server]
+            port = 9001
+            token_env = "T"
+            extra = true
+        "#;
+        let err = toml::from_str::<Capabilities>(toml_src).unwrap_err();
+        assert!(err.to_string().contains("extra"), "got: {err}");
     }
 }
