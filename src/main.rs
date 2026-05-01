@@ -3880,22 +3880,9 @@ async fn main() -> Result<()> {
         }
 
         if let Some(rl_cfg) = agent_cfg.tool_rate_limits.clone() {
-            let rl_core = nexo_core::agent::ToolRateLimitsConfig {
-                patterns: rl_cfg
-                    .patterns
-                    .into_iter()
-                    .map(|(k, v)| {
-                        (
-                            k,
-                            nexo_core::agent::ToolRateLimitConfig {
-                                rps: v.rps,
-                                burst: v.burst,
-                            },
-                        )
-                    })
-                    .collect(),
-            };
-            let limiter = Arc::new(nexo_core::agent::ToolRateLimiter::new(rl_core));
+            // Phase 82.7 — config ↔ runtime types unified. Direct
+            // pass-through, no translation needed.
+            let limiter = Arc::new(nexo_core::agent::ToolRateLimiter::new(rl_cfg));
             behavior = behavior.with_rate_limiter(limiter);
             tracing::info!(agent = %agent_id, "tool rate limiter enabled");
         }

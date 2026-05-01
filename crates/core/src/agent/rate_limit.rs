@@ -5,37 +5,23 @@
 //! `outcome="rate_limited"` turn result so the model can pick a
 //! different tool. No sleep-based backpressure here — the agent loop
 //! must stay live.
+//!
+//! Phase 82.7 — config types unified with the yaml-side `nexo-config`
+//! (`ToolRateLimitsConfig` + `ToolRateLimitSpec`) so a single shape
+//! crosses operator → runtime without translation. Re-exported as
+//! `ToolRateLimitConfig` for back-compat with pre-82.7 callers.
 use dashmap::DashMap;
-use serde::Deserialize;
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 use tokio::sync::Mutex;
-/// Per-tool config: requests-per-second refill rate and burst capacity.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ToolRateLimitConfig {
-    pub rps: f64,
-    #[serde(default)]
-    pub burst: u64,
-}
-impl ToolRateLimitConfig {
-    fn effective_burst(&self) -> u64 {
-        if self.burst == 0 {
-            self.rps.ceil().max(1.0) as u64
-        } else {
-            self.burst
-        }
-    }
-}
-/// Map of glob patterns to limits. `_default` is a reserved pattern that
-/// applies when nothing else matches.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ToolRateLimitsConfig {
-    #[serde(default)]
-    pub patterns: HashMap<String, ToolRateLimitConfig>,
-}
+
+pub use nexo_config::types::agents::{ToolRateLimitSpec, ToolRateLimitsConfig};
+
+/// Phase 9.2 alias — `ToolRateLimitSpec` is the canonical name in
+/// `nexo-config` (yaml shape); this alias preserves the older
+/// `ToolRateLimitConfig` symbol for downstream re-exports without
+/// duplicating the definition.
+pub type ToolRateLimitConfig = ToolRateLimitSpec;
 pub struct ToolRateLimiter {
     /// Sorted (pattern, config) pairs; `_default` always last.
     patterns: Vec<(String, ToolRateLimitConfig)>,
@@ -171,6 +157,7 @@ pub fn glob_matches(pattern: &str, s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     #[test]
     fn glob_matches_exact_and_wildcards() {
         assert!(glob_matches("foo", "foo"));
@@ -188,6 +175,7 @@ mod tests {
         let cfg = ToolRateLimitConfig {
             rps: 10.0,
             burst: 3,
+            essential_deny_on_miss: false,
         };
         let b = TokenBucket::new(&cfg);
         assert!(b.try_acquire().await);
@@ -210,13 +198,14 @@ mod tests {
         let mut patterns = HashMap::new();
         patterns.insert(
             "memory_*".to_string(),
-            ToolRateLimitConfig { rps: 1.0, burst: 1 },
+            ToolRateLimitConfig { rps: 1.0, burst: 1, essential_deny_on_miss: false },
         );
         patterns.insert(
             "_default".to_string(),
             ToolRateLimitConfig {
                 rps: 100.0,
                 burst: 100,
+                essential_deny_on_miss: false,
             },
         );
         let rl = ToolRateLimiter::new(ToolRateLimitsConfig { patterns });
@@ -233,7 +222,7 @@ mod tests {
         let mut patterns = HashMap::new();
         patterns.insert(
             "mcp_*".to_string(),
-            ToolRateLimitConfig { rps: 1.0, burst: 1 },
+            ToolRateLimitConfig { rps: 1.0, burst: 1, essential_deny_on_miss: false },
         );
         let rl = ToolRateLimiter::new(ToolRateLimitsConfig { patterns });
         assert!(rl.try_acquire("a", "mcp_fs_read").await);
