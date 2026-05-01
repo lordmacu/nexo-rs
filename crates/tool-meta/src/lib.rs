@@ -48,6 +48,7 @@
 pub mod admin;
 pub mod binding;
 pub mod event_source;
+pub mod http_server;
 pub mod inbound;
 pub mod meta;
 pub mod template;
