@@ -6463,6 +6463,27 @@ the leak's per-turn-hook design (NOT cron-based) per the spec audit.
 
 **Follow-ups** (split as 80.1.b/c/d/e):
 
+- **80.1.b.b.b.b orchestrator runtime-attach** ✅ **MVP** —
+  `DriverOrchestrator::auto_dream` field now wraps
+  `Mutex<Option<Arc<dyn AutoDreamHook>>>` (was a plain `Option`).
+  Pub setter `set_auto_dream(Option<...>)` lets the boot wire
+  attach the runner after the orchestrator is constructed (the
+  builder fires inside `boot_dispatch_ctx_if_enabled`, before
+  the per-agent loop populates the runner Vec). Reads inside
+  `run_turn` clone the Arc out of the lock so no await happens
+  while the mutex is held. `arc_swap::ArcSwapOption` was the
+  first attempt but it requires `T: Sized` and the trait object
+  is unsized — stdlib `Mutex` is the lowest-friction wrap.
+  Boot wire in `src/main.rs` picks the primary (first non-None)
+  runner after the loop and calls
+  `dispatch_ctx.orchestrator.set_auto_dream(Some(primary))`.
+  When `dispatch_ctx` is `None` (no agent has
+  dispatch_capability=full) the runner stays reachable via the
+  `dream_now` LLM tool only — logged so operators see the
+  state. Multi-runner routing remains a follow-up
+  (`80.1.b.b.b.c — per-goal_id dispatch`); MVP picks the first
+  runner with a single warn listing the skipped agent ids.
+  Commit: `549828c`.
 - **80.1.b.b.b consumer** ✅ **MVP** — `src/main.rs::Mode::Run`
   per-agent loop now constructs an `AutoDreamRunner` for every
   agent that has `auto_dream.enabled = true`. Wires the full

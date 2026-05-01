@@ -92,18 +92,29 @@ does not block production use of the feature.
   resulting bundle lands at
   `auto:pre-dream-<run_id>` per Phase 36.2.
 
-- **80.1.b.b.b.b — multi-runner orchestrator wire** ⬜
-  - Today the `DriverOrchestrator::builder().auto_dream(...)`
-    call site lives inside `boot_dispatch_ctx_if_enabled` which
-    runs BEFORE the per-agent loop, so `auto_dream_runners`
-    isn't populated when the orchestrator builds. Refactoring
-    options: (a) pre-walk `cfg.agents.agents` to build runners
-    before the dispatch boot call; or (b) defer-handle pattern
-    so the orchestrator subscribes after it's built.
-  - Multi-runner routing within the orchestrator (>1 agent
-    with auto_dream enabled) requires per-goal_id dispatch.
-    Current MVP picks the first runner only.
-  - Effort: ~1 day of investigation + refactor.
+- **80.1.b.b.b.b — orchestrator runtime-attach**
+  ✅ **shipped** (commit `549828c`). `DriverOrchestrator::auto_dream`
+  now lives behind a `Mutex<Option<Arc<dyn AutoDreamHook>>>`;
+  `set_auto_dream(Option<...>)` is the public setter the boot
+  wire calls after the per-agent loop closes. Multi-runner
+  routing within the orchestrator stays open as
+  `80.1.b.b.b.c` (per-goal_id dispatch).
+
+- **80.1.b.b.b.c — per-goal_id multi-runner dispatch** ⬜
+  - Today the orchestrator hosts a single `Arc<dyn AutoDreamHook>`.
+    With multiple agents that have `auto_dream.enabled = true`,
+    only the first attaches; the rest log a warn with their
+    skipped agent ids and remain reachable via `dream_now` only.
+  - For SaaS deployments with N autonomous agents, the
+    orchestrator needs to dispatch the per-turn hook against
+    the runner whose `goal_id` matches the active turn.
+    Either: (a) replace the single hook with a
+    `HashMap<AgentId, Arc<dyn AutoDreamHook>>` and route via
+    the `goal_id`'s agent; or (b) fan out to every registered
+    runner and let each runner's gate (kairos / time / lock)
+    short-circuit.
+  - Effort: ~1 day of design + implementation. Test fixture
+    needs 2+ agents with auto_dream enabled.
 
 - _(closed)_ MS-3 placeholder removed — see `5fe2cc0`
   - `nexo_dream::boot::BootDeps` already accepts
