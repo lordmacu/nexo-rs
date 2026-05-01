@@ -30,8 +30,11 @@ use dashmap::DashMap;
 use nexo_core::agent::admin_rpc::domains::agents::YamlPatcher;
 use nexo_core::agent::admin_rpc::domains::credentials::CredentialStore;
 use nexo_core::agent::admin_rpc::domains::llm_providers::LlmYamlPatcher;
-use nexo_core::agent::admin_rpc::domains::pairing::PairingChallengeStore;
+use nexo_core::agent::admin_rpc::domains::pairing::{
+    PairingChallengeStore, PairingNotifier, PAIRING_STATUS_NOTIFY_METHOD,
+};
 use nexo_tool_meta::admin::pairing::{PairingState, PairingStatus, PairingStatusData};
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::yaml_patch;
@@ -597,6 +600,60 @@ fn epoch_ms_now() -> u64 {
         .unwrap_or(0)
 }
 
+/// Phase 82.10.h.b.2 — `PairingNotifier` adapter that pushes
+/// `nexo/notify/pairing_status_changed` JSON-RPC notification
+/// frames into the same `mpsc::Sender<String>` the extension
+/// host uses for outbound stdin writes (the `outbox_tx` in
+/// `nexo_extensions::runtime::stdio`). Boot wires one notifier
+/// per microapp that holds an admin RPC dispatcher with the
+/// pairing domain enabled.
+///
+/// Send semantics: `try_send`, so a slow microapp can never
+/// block the dispatcher thread. When the channel is full the
+/// frame is dropped and a `warn` is emitted — losing a status
+/// update is preferable to backpressuring the daemon onto a
+/// laggy reader. Microapps that need every frame should poll
+/// `pairing/status` instead of relying solely on notifications.
+#[derive(Debug, Clone)]
+pub struct StdioPairingNotifier {
+    sender: mpsc::Sender<String>,
+}
+
+impl StdioPairingNotifier {
+    /// Build a notifier wrapping the given outbox sender.
+    pub fn new(sender: mpsc::Sender<String>) -> Self {
+        Self { sender }
+    }
+}
+
+impl PairingNotifier for StdioPairingNotifier {
+    fn notify_status(&self, status: &PairingStatus) {
+        let params = serde_json::to_value(status).unwrap_or(serde_json::Value::Null);
+        let frame = json_rpc_notification(PAIRING_STATUS_NOTIFY_METHOD, params);
+        if let Err(e) = self.sender.try_send(frame) {
+            tracing::warn!(
+                challenge_id = %status.challenge_id,
+                error = %e,
+                "pairing notifier outbox full or closed; dropping notification frame",
+            );
+        }
+    }
+}
+
+/// Build a single-line JSON-RPC 2.0 notification frame
+/// (`{"jsonrpc":"2.0","method":"…","params":…}`, no `id`). Used
+/// by [`StdioPairingNotifier`] and any future notifier the admin
+/// pipeline grows. Returns the line without trailing newline so
+/// callers control framing.
+pub fn json_rpc_notification(method: &str, params: serde_json::Value) -> String {
+    let frame = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": params,
+    });
+    serde_json::to_string(&frame).unwrap_or_else(|_| "{}".into())
+}
+
 #[cfg(test)]
 mod pairing_store_tests {
     use super::*;
@@ -658,6 +715,61 @@ mod pairing_store_tests {
     fn cancel_unknown_returns_false() {
         let store = store_with(60_000);
         assert!(!store.cancel_challenge(Uuid::nil()).unwrap());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn notifier_sends_pairing_status_changed_frame() {
+        let (tx, mut rx) = mpsc::channel::<String>(8);
+        let notifier = StdioPairingNotifier::new(tx);
+        let status = PairingStatus {
+            challenge_id: Uuid::nil(),
+            state: PairingState::QrReady,
+            data: PairingStatusData {
+                qr_ascii: Some("##".into()),
+                ..Default::default()
+            },
+        };
+        notifier.notify_status(&status);
+        let line = rx.recv().await.expect("frame received");
+        let parsed: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(parsed["jsonrpc"], "2.0");
+        assert_eq!(parsed["method"], PAIRING_STATUS_NOTIFY_METHOD);
+        assert_eq!(parsed["params"]["state"], "qr_ready");
+        assert!(parsed.get("id").is_none(), "notifications carry no id");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn notifier_drops_frames_when_channel_full() {
+        // Bound = 1; first frame fills, second is dropped.
+        let (tx, mut rx) = mpsc::channel::<String>(1);
+        let notifier = StdioPairingNotifier::new(tx);
+        let status_a = PairingStatus {
+            challenge_id: Uuid::nil(),
+            state: PairingState::Pending,
+            data: PairingStatusData::default(),
+        };
+        let status_b = PairingStatus {
+            challenge_id: Uuid::nil(),
+            state: PairingState::Cancelled,
+            data: PairingStatusData::default(),
+        };
+        notifier.notify_status(&status_a);
+        notifier.notify_status(&status_b); // dropped — channel is full, no reader yet
+        let first = rx.recv().await.unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&first).unwrap();
+        assert_eq!(parsed["params"]["state"], "pending");
+        // Second was dropped — channel is now empty until next sender call.
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn json_rpc_notification_helper_shape() {
+        let line = json_rpc_notification("nexo/notify/test", serde_json::json!({"k": 1}));
+        let parsed: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(parsed["jsonrpc"], "2.0");
+        assert_eq!(parsed["method"], "nexo/notify/test");
+        assert_eq!(parsed["params"]["k"], 1);
+        assert!(parsed.get("id").is_none());
     }
 
     #[test]
