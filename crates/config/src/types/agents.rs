@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Deserialize)]
@@ -726,19 +726,40 @@ fn default_tool_args_validation_enabled() -> bool {
 
 /// Per-tool rate limits. Pattern `_default` applies when no other
 /// pattern matches; any `*` in the pattern is a wildcard.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ToolRateLimitsConfig {
     #[serde(default)]
     pub patterns: std::collections::HashMap<String, ToolRateLimitSpec>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ToolRateLimitSpec {
     pub rps: f64,
     #[serde(default)]
     pub burst: u64,
+    /// Phase 82.7 — when `true`, fail-closed if the bucket for
+    /// `(agent, binding_id, tool)` was evicted by LRU pressure.
+    /// Default `false` matches `claude-code-leak`'s
+    /// `policyLimits::isPolicyAllowed` fail-open semantic; tools
+    /// declared "essential" (e.g. paid `marketing_send_drip` on
+    /// a free tier) opt-in to fail-closed so evicted-bucket
+    /// races cannot leak quota.
+    #[serde(default)]
+    pub essential_deny_on_miss: bool,
+}
+
+impl ToolRateLimitSpec {
+    /// Effective burst capacity. When operator omits `burst`,
+    /// derive from `rps` (rounded up, minimum 1).
+    pub fn effective_burst(&self) -> u64 {
+        if self.burst == 0 {
+            self.rps.ceil().max(1.0) as u64
+        } else {
+            self.burst
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -897,4 +918,59 @@ fn default_debounce_ms() -> u64 {
 }
 fn default_queue_cap() -> usize {
     32
+}
+
+
+#[cfg(test)]
+mod rate_limit_yaml_tests {
+    use super::*;
+
+    /// Phase 82.7 — yaml round-trip with new field.
+    #[test]
+    fn tool_rate_limit_spec_yaml_with_essential_deny_on_miss() {
+        let yaml = "rps: 0.167\nburst: 10\nessential_deny_on_miss: true\n";
+        let spec: ToolRateLimitSpec = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(spec.rps, 0.167);
+        assert_eq!(spec.burst, 10);
+        assert!(spec.essential_deny_on_miss);
+    }
+
+    /// Default `essential_deny_on_miss = false` matches
+    /// claude-code-leak `policyLimits::isPolicyAllowed` fail-open.
+    #[test]
+    fn tool_rate_limit_spec_default_essential_deny_on_miss_false() {
+        let yaml = "rps: 1.0\nburst: 5\n";
+        let spec: ToolRateLimitSpec = serde_yaml::from_str(yaml).unwrap();
+        assert!(!spec.essential_deny_on_miss);
+    }
+
+    /// `effective_burst` derives from rps when burst is 0.
+    #[test]
+    fn tool_rate_limit_spec_effective_burst_derives_from_rps() {
+        let spec = ToolRateLimitSpec {
+            rps: 3.5,
+            burst: 0,
+            essential_deny_on_miss: false,
+        };
+        assert_eq!(spec.effective_burst(), 4); // ceil(3.5)
+    }
+
+    #[test]
+    fn tool_rate_limits_config_round_trip_through_serde() {
+        let yaml = r#"
+patterns:
+  marketing_send_drip:
+    rps: 0.167
+    burst: 10
+    essential_deny_on_miss: true
+  "memory_*":
+    rps: 1.0
+    burst: 5
+"#;
+        let cfg: ToolRateLimitsConfig = serde_yaml::from_str(yaml).unwrap();
+        let drip = cfg.patterns.get("marketing_send_drip").unwrap();
+        assert!(drip.essential_deny_on_miss);
+        let mem = cfg.patterns.get("memory_*").unwrap();
+        assert!(!mem.essential_deny_on_miss);
+    }
 }
