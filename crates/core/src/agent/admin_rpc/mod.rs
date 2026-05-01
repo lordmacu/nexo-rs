@@ -14,9 +14,12 @@
 //!   pairing / llm_providers / channels).
 
 pub mod audit;
+pub mod audit_sqlite;
 pub mod capabilities;
 pub mod dispatcher;
 pub mod domains;
+
+pub use audit_sqlite::SqliteAdminAuditWriter;
 
 pub use audit::{
     hash_params, now_epoch_ms, AdminAuditResult, AdminAuditRow, AdminAuditWriter,
