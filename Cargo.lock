@@ -4019,6 +4019,7 @@ dependencies = [
  "nexo-driver-permission",
  "nexo-driver-types",
  "nexo-extensions",
+ "nexo-fork",
  "nexo-llm",
  "nexo-lsp",
  "nexo-mcp",

@@ -96,7 +96,15 @@ pub struct DriverOrchestrator {
     memory_dir: Option<PathBuf>,
     /// Phase 80.1.b — post-turn autoDream consolidation hook.
     /// `None` disables; runner is owned by `nexo-dream` impl.
-    auto_dream: Option<Arc<dyn AutoDreamHook>>,
+    /// Phase 80.1.b.b.b.b — wrapped in a `Mutex<Option<...>>` so
+    /// the boot wire can attach the runner AFTER the orchestrator
+    /// is constructed (the per-agent loop runs after the
+    /// orchestrator builder fires, by `boot_dispatch_ctx_if_enabled`
+    /// design). `arc_swap::ArcSwapOption` requires `T: Sized`, so
+    /// a stdlib mutex is the lowest-friction wrap for a `dyn`
+    /// trait object. Per-turn read cost = one uncontended lock
+    /// acquire.
+    auto_dream: std::sync::Mutex<Option<Arc<dyn AutoDreamHook>>>,
     bin_path: PathBuf,
     socket_path: PathBuf,
     /// Owns the spawned socket server; cancelling kills it.
@@ -261,7 +269,7 @@ impl DriverOrchestratorBuilder {
             compact_store,
             extract_memories: self.extract_memories,
             memory_dir: self.memory_dir,
-            auto_dream: self.auto_dream,
+            auto_dream: std::sync::Mutex::new(self.auto_dream),
             progress_every_turns,
             pause_signals: Arc::new(DashMap::new()),
             cancel_tokens: Arc::new(DashMap::new()),
@@ -279,6 +287,28 @@ impl DriverOrchestratorBuilder {
 impl DriverOrchestrator {
     pub fn builder() -> DriverOrchestratorBuilder {
         DriverOrchestratorBuilder::default()
+    }
+
+    /// Phase 80.1.b.b.b.b — runtime-attach the autoDream hook.
+    /// Used when the boot wire constructs the orchestrator before
+    /// the per-agent runner loop runs (the standard order today,
+    /// see `boot_dispatch_ctx_if_enabled`). Pass `None` to detach.
+    /// Atomic + thread-safe: subsequent `run_turn` calls observe
+    /// the new value on their next mutex acquire.
+    pub fn set_auto_dream(&self, hook: Option<Arc<dyn AutoDreamHook>>) {
+        let mut guard = self
+            .auto_dream
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        *guard = hook;
+    }
+
+    /// Read-only accessor used by tests + observability.
+    pub fn has_auto_dream(&self) -> bool {
+        self.auto_dream
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .is_some()
     }
 
     /// Phase 67.C.2 — request the goal's loop to hold before its
@@ -731,7 +761,14 @@ impl DriverOrchestrator {
             // fail cheap when cadence not yet due. Errors absorbed via
             // `let _ = ...` so a runner failure NEVER breaks the
             // driver-loop turn.
-            if let Some(ref ad) = self.auto_dream {
+            // Phase 80.1.b.b.b.b — clone the Arc out of the
+            // mutex so we drop the lock before awaiting the hook.
+            let ad_opt = self
+                .auto_dream
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone();
+            if let Some(ad) = ad_opt {
                 let transcript_dir = self
                     .workspace_manager
                     .root()
