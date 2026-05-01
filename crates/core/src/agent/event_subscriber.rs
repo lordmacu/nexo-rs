@@ -14,14 +14,19 @@
 //! The wire shape, validation rules, and `BindingContext.event_source`
 //! field were shipped in the Phase 82.4 foundations slice.
 
+use std::collections::VecDeque;
 use std::sync::Arc;
+use std::time::Duration;
 
-use nexo_broker::{AnyBroker, Event};
+use nexo_broker::{handle::BrokerHandle, AnyBroker, Event};
 use nexo_config::types::agents::InboundBinding;
-use nexo_config::types::event_subscriber::{EventSubscriberBinding, SynthesisMode};
+use nexo_config::types::event_subscriber::{
+    EventSubscriberBinding, OverflowPolicy, SynthesisMode,
+};
 use serde_json::{json, Value};
 use thiserror::Error;
-use tokio::sync::Semaphore;
+use tokio::sync::{Mutex, Notify, Semaphore};
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 /// Topic prefix the runtime re-publishes synthesised inbounds to.
@@ -166,6 +171,177 @@ pub fn extract_nexo_event_source(
 ) -> Option<nexo_tool_meta::EventSourceMeta> {
     let raw = payload.as_object()?.get(EVENT_SOURCE_PAYLOAD_FIELD)?;
     serde_json::from_value(raw.clone()).ok()
+}
+
+/// Subscribe → render → republish loop until `cancel` fires.
+///
+/// `Off` mode short-circuits at entry (info-log + return Ok).
+/// Other modes run a producer (subscribe loop) → bounded mpsc
+/// channel → consumer (render + publish) pipeline. Buffer
+/// overflow follows `binding.overflow_policy`. Concurrency cap
+/// enforced via `Arc<Semaphore>`. Cancel-token shutdown drops
+/// the broker subscription, drops the producer side of the
+/// channel, and waits ≤1s for the consumer to drain.
+pub async fn run_event_subscriber(
+    sub: Arc<EventSubscriber>,
+    cancel: CancellationToken,
+) -> Result<(), EventSubscriberError> {
+    if sub.binding.synthesize_inbound == SynthesisMode::Off {
+        tracing::info!(
+            agent_id = %sub.agent_id,
+            binding_id = %sub.binding.id,
+            "event_subscriber off — task exit"
+        );
+        return Ok(());
+    }
+
+    let mut subscription = sub
+        .broker
+        .subscribe(&sub.binding.subject_pattern)
+        .await
+        .map_err(|e| EventSubscriberError::BrokerSubscribe {
+            subject: sub.binding.subject_pattern.clone(),
+            detail: e.to_string(),
+        })?;
+
+    tracing::info!(
+        agent_id = %sub.agent_id,
+        binding_id = %sub.binding.id,
+        subject = %sub.binding.subject_pattern,
+        "event_subscriber started"
+    );
+
+    // Shared deque + notifier. Producer pushes (or drops oldest
+    // if full); consumer waits on `notify` and pops one at a time.
+    // The deque is the unit of overflow control — `mpsc` would
+    // hide the queue from the producer and prevent DropOldest.
+    let buffer: Arc<Mutex<VecDeque<Event>>> =
+        Arc::new(Mutex::new(VecDeque::with_capacity(sub.binding.max_buffer)));
+    let notify = Arc::new(Notify::new());
+    let consumer_done = Arc::new(Notify::new());
+
+    let consumer_sub = Arc::clone(&sub);
+    let consumer_buffer = Arc::clone(&buffer);
+    let consumer_notify = Arc::clone(&notify);
+    let consumer_done_emit = Arc::clone(&consumer_done);
+    let consumer_cancel = cancel.clone();
+    let consumer = tokio::spawn(async move {
+        loop {
+            // Wait for new event OR cancel.
+            tokio::select! {
+                biased;
+                _ = consumer_cancel.cancelled() => break,
+                _ = consumer_notify.notified() => {}
+            }
+            // Drain everything currently in the buffer, one at a
+            // time, respecting the semaphore.
+            loop {
+                let event = {
+                    let mut g = consumer_buffer.lock().await;
+                    g.pop_front()
+                };
+                let Some(event) = event else { break };
+
+                let permit = match &consumer_sub.semaphore {
+                    Some(sem) => match Arc::clone(sem).acquire_owned().await {
+                        Ok(p) => Some(p),
+                        Err(_) => return,
+                    },
+                    None => None,
+                };
+
+                if let Some(payload) =
+                    build_synthesised_payload(&consumer_sub.binding, &event)
+                {
+                    let topic = event_inbound_topic(&consumer_sub.binding.id);
+                    let republish = Event::new(
+                        topic.clone(),
+                        format!("event_subscriber:{}", consumer_sub.binding.id),
+                        payload,
+                    );
+                    if let Err(e) = consumer_sub.broker.publish(&topic, republish).await {
+                        tracing::warn!(
+                            agent_id = %consumer_sub.agent_id,
+                            binding_id = %consumer_sub.binding.id,
+                            topic = %topic,
+                            error = %e,
+                            "event_subscriber publish failed — dropping event"
+                        );
+                    }
+                }
+                drop(permit);
+            }
+        }
+        consumer_done_emit.notify_one();
+    });
+
+    // Producer loop.
+    let mut dropped_oldest: u64 = 0;
+    let mut dropped_newest: u64 = 0;
+    loop {
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => {
+                tracing::info!(
+                    agent_id = %sub.agent_id,
+                    binding_id = %sub.binding.id,
+                    "event_subscriber cancel — draining"
+                );
+                break;
+            }
+            ev = subscription.next() => {
+                let Some(event) = ev else { break };
+                let max_buffer = sub.binding.max_buffer;
+                let mut buf = buffer.lock().await;
+                if buf.len() >= max_buffer {
+                    match sub.binding.overflow_policy {
+                        OverflowPolicy::DropOldest => {
+                            buf.pop_front();
+                            buf.push_back(event);
+                            dropped_oldest += 1;
+                            tracing::warn!(
+                                agent_id = %sub.agent_id,
+                                binding_id = %sub.binding.id,
+                                dropped_total = dropped_oldest,
+                                "event_subscriber buffer full — drop-oldest"
+                            );
+                        }
+                        OverflowPolicy::DropNewest => {
+                            dropped_newest += 1;
+                            tracing::warn!(
+                                agent_id = %sub.agent_id,
+                                binding_id = %sub.binding.id,
+                                dropped_total = dropped_newest,
+                                "event_subscriber buffer full — drop-newest"
+                            );
+                        }
+                        _ => {
+                            // Conservative fallback for future variants.
+                            dropped_newest += 1;
+                        }
+                    }
+                } else {
+                    buf.push_back(event);
+                }
+                drop(buf);
+                notify.notify_one();
+            }
+        }
+    }
+
+    // Cancel triggers consumer drain via shared cancel; await
+    // its completion with bounded timeout.
+    let _ = tokio::time::timeout(Duration::from_secs(1), consumer_done.notified()).await;
+    consumer.abort();
+
+    tracing::info!(
+        agent_id = %sub.agent_id,
+        binding_id = %sub.binding.id,
+        dropped_oldest,
+        dropped_newest,
+        "event_subscriber stopped"
+    );
+    Ok(())
 }
 
 /// One subscription task. Cheap to clone (everything inside is
@@ -441,5 +617,119 @@ mod skeleton_tests {
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].plugin, "whatsapp");
         assert_eq!(out[1].plugin, "event");
+    }
+
+    // ────────────────────────────────────────────────────────
+    // Step 5+6 — runtime loop
+    // ────────────────────────────────────────────────────────
+
+    use std::time::Duration;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn run_loop_synthesise_republishes() {
+        let broker = AnyBroker::local();
+        let mut binding = mk_binding("github", "test.>");
+        binding.inbound_template = Some("got {{event_kind}}".into());
+        let sub = Arc::new(EventSubscriber::new("ana", binding, broker.clone()));
+        let cancel = CancellationToken::new();
+
+        // Subscribe FIRST so we don't miss the republish.
+        let mut listener = broker
+            .subscribe("plugin.inbound.event.github")
+            .await
+            .unwrap();
+
+        let task = tokio::spawn(run_event_subscriber(Arc::clone(&sub), cancel.clone()));
+        // Let the producer subscribe.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        broker
+            .publish(
+                "test.opened",
+                Event::new(
+                    "test.opened",
+                    "tester",
+                    serde_json::json!({"event_kind": "opened"}),
+                ),
+            )
+            .await
+            .unwrap();
+
+        let received = tokio::time::timeout(Duration::from_secs(2), listener.next())
+            .await
+            .expect("timeout waiting for republish")
+            .expect("no event");
+        assert_eq!(received.payload["text"], "got opened");
+        assert_eq!(received.payload["from"], "event:github");
+        assert_eq!(
+            received.payload[EVENT_SOURCE_PAYLOAD_FIELD]["synthesis_mode"],
+            "synthesize"
+        );
+
+        cancel.cancel();
+        let _ = tokio::time::timeout(Duration::from_secs(2), task).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn run_loop_tick_republishes_marker() {
+        let broker = AnyBroker::local();
+        let mut binding = mk_binding("alerts", "alert.>");
+        binding.synthesize_inbound = SynthesisMode::Tick;
+        let sub = Arc::new(EventSubscriber::new("ana", binding, broker.clone()));
+        let cancel = CancellationToken::new();
+
+        let mut listener = broker
+            .subscribe("plugin.inbound.event.alerts")
+            .await
+            .unwrap();
+        let task = tokio::spawn(run_event_subscriber(Arc::clone(&sub), cancel.clone()));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        broker
+            .publish(
+                "alert.cpu.high",
+                Event::new("alert.cpu.high", "tester", serde_json::json!({})),
+            )
+            .await
+            .unwrap();
+
+        let received = tokio::time::timeout(Duration::from_secs(2), listener.next())
+            .await
+            .unwrap()
+            .unwrap();
+        let text = received.payload["text"].as_str().unwrap();
+        assert!(text.starts_with("<event subject=\"alert.cpu.high\""));
+
+        cancel.cancel();
+        let _ = tokio::time::timeout(Duration::from_secs(2), task).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn run_loop_off_mode_exits_immediately() {
+        let broker = AnyBroker::local();
+        let mut binding = mk_binding("x", "y.>");
+        binding.synthesize_inbound = SynthesisMode::Off;
+        let sub = Arc::new(EventSubscriber::new("ana", binding, broker));
+        let cancel = CancellationToken::new();
+        let task = tokio::spawn(run_event_subscriber(Arc::clone(&sub), cancel));
+        // Off mode short-circuits — task should finish on its own
+        // without ever needing cancel.
+        let result = tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("task should finish without cancel");
+        assert!(result.unwrap().is_ok());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn run_loop_cancel_token_stops_within_one_second() {
+        let broker = AnyBroker::local();
+        let binding = mk_binding("x", "y.>");
+        let sub = Arc::new(EventSubscriber::new("ana", binding, broker));
+        let cancel = CancellationToken::new();
+        let task = tokio::spawn(run_event_subscriber(Arc::clone(&sub), cancel.clone()));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        cancel.cancel();
+        let res = tokio::time::timeout(Duration::from_secs(2), task).await;
+        assert!(res.is_ok(), "task should join within 2s of cancel");
     }
 }
