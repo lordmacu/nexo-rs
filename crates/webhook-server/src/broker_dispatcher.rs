@@ -9,11 +9,15 @@ use async_trait::async_trait;
 use nexo_broker::{handle::BrokerHandle, AnyBroker, Event};
 use nexo_webhook_receiver::{DispatchError, WebhookDispatcher, WebhookEnvelope};
 
+/// Production [`WebhookDispatcher`] — publishes the typed
+/// [`WebhookEnvelope`] as a [`nexo_broker::Event`] whose
+/// `source` field doubles as the webhook source id.
 pub struct BrokerWebhookDispatcher {
     broker: AnyBroker,
 }
 
 impl BrokerWebhookDispatcher {
+    /// Wrap an [`AnyBroker`] handle for use by the HTTP handler.
     pub fn new(broker: AnyBroker) -> Self {
         Self { broker }
     }

@@ -20,9 +20,11 @@ use nexo_config::types::webhook_receiver::WebhookServerConfig;
 use crate::router::RouterState;
 
 /// Why a previously-mounted source no longer survives the new
-/// config snapshot. `Removed` and `Disabled` are the common
-/// cases; `BindChanged` triggers a full server restart upstream
-/// (bind socket can't be hot-swapped without re-listen).
+/// config snapshot.
+///
+/// `#[non_exhaustive]` — operator-facing diagnostic; future
+/// reasons land as semver-minor.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EvictionReason {
     /// Source absent from the new YAML.
@@ -31,15 +33,23 @@ pub enum EvictionReason {
     Disabled,
     /// Source remapped to a different path (treat as remove +
     /// add for routing purposes).
-    PathChanged { old: String, new: String },
-    /// Per-source signature.algorithm/header/secret_env changed —
-    /// previous handler is invalidated; rebuild needed.
+    PathChanged {
+        /// Path the source was previously mounted at.
+        old: String,
+        /// Path declared in the new YAML.
+        new: String,
+    },
+    /// Per-source signature algorithm / header / secret_env
+    /// changed — previous handler is invalidated; rebuild needed.
     SignatureChanged,
 }
 
+/// One row in [`ReevaluateReport::evicted`].
 #[derive(Debug, Clone)]
 pub struct EvictedSource {
+    /// Webhook source id that was unmounted.
     pub source_id: String,
+    /// Why the source was unmounted.
     pub reason: EvictionReason,
 }
 
@@ -49,12 +59,19 @@ pub struct EvictedSource {
 /// continuity).
 #[derive(Debug, Clone)]
 pub struct ReevaluateReport {
+    /// Source ids kept untouched (config matched the previous
+    /// snapshot).
     pub kept: Vec<String>,
+    /// Source ids declared in the new config that were absent
+    /// previously OR that survived a path/signature rebuild.
     pub added: Vec<String>,
+    /// Sources unmounted, with the typed reason.
     pub evicted: Vec<EvictedSource>,
 }
 
 impl ReevaluateReport {
+    /// `true` when the report contains no `added` or `evicted`
+    /// rows — short-circuits noisy logs on idempotent reloads.
     pub fn is_noop(&self) -> bool {
         self.added.is_empty() && self.evicted.is_empty()
     }

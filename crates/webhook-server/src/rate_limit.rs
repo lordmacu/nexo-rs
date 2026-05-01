@@ -18,10 +18,13 @@ use nexo_config::types::channels::ChannelRateLimit;
 /// source's budget.
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct ClientBucketKey {
+    /// Webhook source id (`WebhookSourceConfig.id`).
     pub source_id: String,
+    /// Resolved client IP (after trusted-proxy logic).
     pub client_ip: IpAddr,
 }
 
+/// One token-bucket — lazy-refill per-call, no background ticker.
 #[derive(Debug)]
 pub struct TokenBucket {
     capacity: f64,
@@ -38,6 +41,7 @@ struct BucketState {
 }
 
 impl TokenBucket {
+    /// Build a fresh bucket pre-filled to `rl.burst`.
     pub fn new(rl: &ChannelRateLimit) -> Self {
         Self {
             capacity: rl.burst as f64,
@@ -88,6 +92,7 @@ pub struct ClientBucketMap {
 const DEFAULT_MAX_KEYS: usize = 4096;
 
 impl ClientBucketMap {
+    /// Build a fresh map with the default 4096-key cap.
     pub fn new(rl: ChannelRateLimit) -> Self {
         Self {
             rl,
@@ -96,19 +101,23 @@ impl ClientBucketMap {
         }
     }
 
+    /// Override the per-source key cap. Useful for tests.
     pub fn with_max_keys(mut self, n: usize) -> Self {
         self.max_keys = n.max(1);
         self
     }
 
+    /// Borrow the rate-limit configuration the map was built with.
     pub fn rate_limit(&self) -> &ChannelRateLimit {
         &self.rl
     }
 
+    /// Current number of distinct keys observed.
     pub fn len(&self) -> usize {
         self.buckets.lock().expect("buckets").len()
     }
 
+    /// `true` when no keys have been seen.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

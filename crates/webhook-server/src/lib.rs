@@ -14,6 +14,8 @@
 //! Provider-agnostic by construction — every behaviour lookup is
 //! data-driven via `WebhookServerConfig` resolvers.
 
+#![deny(missing_docs)]
+
 pub mod broker_dispatcher;
 pub mod rate_limit;
 pub mod reload;
