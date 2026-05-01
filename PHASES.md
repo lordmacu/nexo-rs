@@ -9422,6 +9422,162 @@ re-use + 4 unit tests + integration test), 84.4 (1 day, mirror of
 Critical path: 84.1 → 84.2 → 84.3 (84.4 + 84.5 can run in
 parallel after 84.1).
 
+### Phase 85 — Compaction hardening: reactive recovery + cache-aware micro-compact   ⬜
+
+Today nexo's compaction subsystem is **proactive only**:
+`DefaultCompactPolicy::classify()` (in `crates/driver-types/src/compact_policy.rs:94-156`)
+fires before the model rejects the request, using token-pressure +
+age + auto-config thresholds. Two well-known gaps from prior-art
+review:
+
+1. **No 413 fallback** — when the proactive estimator under-counts
+   (e.g. a tool result balloons unexpectedly past `max_tokens`), the
+   provider returns `413 prompt_too_long` and the turn dies.
+   `crates/llm/src/<provider>` does not currently catch + recover.
+2. **Cache-naïve compaction** — when `CompactSummary` rewrites the
+   conversation head, the prompt-cache breakpoints recomputed by
+   the provider miss; subsequent turns pay full prompt-cache cost.
+   For multi-tenant SaaS (Phase 82) this dominates token spend.
+
+Phase 85 addresses both as separate, independently-shippable
+sub-phases so 85.1 (defensive, ~1 day) can land before 85.2
+(broader, multi-day refactor).
+
+**What will make this better than the reference implementation we
+mined**:
+
+- The reference treats reactive vs proactive as **mutually
+  exclusive** (a feature flag suppresses proactive entirely when
+  reactive mode is on). Nexo will keep proactive as the primary
+  guard and add reactive **only as a last-resort safety net** —
+  proactive catches the 95% case cheaply, reactive only fires when
+  the estimator was genuinely wrong. Strictly better: zero
+  added per-turn cost when proactive works.
+- The reference's micro-compact pins `CacheEditsBlock` across turns
+  in module-level state — non-deterministic across crashes.
+  Nexo will surface the cache-pin set as part of `CompactSummary`
+  itself (already serde-persisted via `CompactSummaryStore`) so a
+  daemon restart resumes with the same cache-edit shape — no
+  re-warm-up cost.
+
+#### 85.1 — Reactive 413 recovery   ⬜
+
+Catch `413 prompt_too_long` from the provider, force one compact
+pass, retry the turn once. Distinct from proactive: no
+suppression — proactive stays on as primary, this is the safety
+net.
+
+**Reference shape (file:line — search the local
+research/leak tree)**:
+- `services/compact/reactiveCompact.ts` — the reactive entrypoint
+  module (full reactive flow lives here)
+- `services/compact/autoCompact.ts:201-223` — the suppression block
+  showing how the reference flips proactive off when reactive is
+  on. Nexo deliberately does NOT do this — see header above.
+- `query.ts:15` — wrapper `require()` gate. Useful only for naming
+  the boundary fn; nexo wires it inside the LLM client retry path
+  instead.
+- `components/TokenWarning.tsx:130-134` — UI indicator surface
+  area. Not applicable (we're a daemon, no TUI).
+
+**Done criteria**:
+- New retry classification `ReplayDecision::CompactAndRetry` in
+  `crates/driver-types/src/replay_policy.rs` (or extend existing
+  `FreshSessionRetry`).
+- Provider clients (`crates/llm/src/anthropic`, `minimax`, future)
+  intercept HTTP 413 (or the SDK's typed equivalent), return a
+  typed `LlmError::PromptTooLong { tokens_used, tokens_limit }`
+  instead of generic 4xx → `Other`. Today they likely surface as
+  generic provider error.
+- Driver-loop replay policy classifies `PromptTooLong` →
+  `CompactAndRetry`. The orchestrator forces a `CompactPolicy`
+  pass (`Trigger::Reactive413`) without consulting the proactive
+  estimate, then retries the same turn ID once.
+- New `BudgetGuards` axis `max_consecutive_413: u32` (default 2)
+  prevents infinite loop when compact still doesn't fit. Exhaustion
+  → goal aborts with `BudgetAxis::Consecutive413`.
+- 4 unit tests in `crates/driver-types/src/replay_policy.rs`:
+  classification of `PromptTooLong`, budget axis exhaustion, retry
+  count reset on success, no double-compact when consecutive < 2.
+- 1 integration test under `crates/driver-loop/tests/`: mock
+  provider returns 413 once, then succeeds; orchestrator records
+  one compact + one successful turn; transcript shows the compact
+  marker between attempts.
+- Telemetry: span `driver_loop.compact.reactive` + counter
+  `compact_reactive_total{outcome=succeeded|exhausted}` for
+  Prometheus once 28.x ships.
+
+#### 85.2 — Cache-aware micro-compaction   ⬜
+
+Today `CompactSummary` rewrites the conversation head wholesale.
+The prompt cache (Anthropic 5-min TTL, MiniMax similar) keys on
+exact prefix bytes — any rewrite invalidates downstream
+breakpoints. For autonomous loops doing 50+ turns, the lost cache
+hit ratio inflates token spend by 30-50% on long-context models.
+
+**Reference shape (file:line)**:
+- `services/compact/microCompact.ts:52-81` — module-level cache
+  state (`cachedMCModule`, `cachedMCState`, `pendingCacheEdits`)
+  + lazy init via `ensureCachedMCState()`. Useful for naming +
+  understanding the variable shape; nexo's persistence model
+  differs (see header — we serde-persist, they do module-level).
+- `services/compact/microCompact.ts:36` — `TIME_BASED_MC_CLEARED_MESSAGE`
+  marker string for tool-result truncation. Useful as the pattern
+  reference; nexo will define its own marker constant.
+- `services/compact/microCompact.ts:276` — consumption point in
+  the API request prep. Tells you the integration boundary.
+- `query.ts:423` — feature gate. Not needed; nexo will gate via
+  `CompactPolicy::micro_enabled: bool` config field.
+
+**Done criteria** (hardness ranked low → high):
+1. New `MicroCompactPolicy` trait in `crates/driver-types/src/compact_policy.rs`,
+   default impl `DefaultMicroCompactPolicy` triggers when
+   `tool_result_bytes > 8KB` AND `turn_index < cache_breakpoint`.
+2. `CompactSummary` extended with `cache_pin_keys: Vec<String>` +
+   `truncated_tool_results: Vec<TruncatedToolResult { call_id,
+   original_byte_size, marker_inserted_at_turn }>`. Backwards-
+   compat via `#[serde(default)]`.
+3. Driver-loop orchestrator consults `MicroCompactPolicy` per-turn
+   (cheap O(1) check) before assembling the request body. When
+   triggered, replaces the full tool result with the marker
+   constant + records the truncation in `CompactSummary`.
+4. Provider clients build the request honoring `cache_pin_keys` —
+   they prepend cache_control breakpoints at the pinned positions,
+   so the provider keeps the cached prefix intact across compact
+   passes.
+5. `CompactSummaryStore` (already persisted) round-trips the new
+   fields — 1 migration test in `crates/driver-loop/tests/`
+   confirming a 84.x summary deserializes cleanly with empty
+   pin_keys + truncations.
+6. 6 unit tests + 1 integration test: small tool result (no
+   truncate), oversized tool result (truncate + marker), cache pin
+   survives compact, restart re-loads pin set, two consecutive
+   compacts do not double-mark the same call_id, marker is
+   provider-agnostic (Anthropic + MiniMax fixtures).
+7. Telemetry: `compact_micro_truncated_bytes_total` counter +
+   `compact_micro_cache_hit_ratio` gauge.
+
+**Phase 85 effort estimate**: 85.1 (~1 day, mostly typed-error
+plumbing + 1 retry path), 85.2 (~3-4 days, cache-pin shape across
+2+ providers + serde migration). Total ~4-5 dev-days. 85.1 ships
+first as a defensive standalone; 85.2 is bigger but uncorrelated.
+
+**Out of scope (deferred)** — three more reference-tree compaction
+features evaluated and explicitly skipped:
+
+- Granular per-message context-collapse (`services/contextCollapse/`).
+  Async LLM call per collapsed message — latency + complexity not
+  justified until turn-mortality metrics show > 5% goal failure
+  from context overflow.
+- User-driven history snipping (`tools.ts:123` flag + picker UI in
+  `components/PromptInput/PromptInput.tsx:1721-1727,2144-2156`).
+  Daemon has no TUI; admin-ui equivalent is low value (better to
+  kill + relaunch a stuck goal).
+- Pending-compact reminders attachment (`utils/attachments.ts:922,
+  3931-3955`). Targets a human user in the loop. Nexo agents run
+  autonomous — operator observability already lives in admin-ui
+  metrics.
+
 ### Phases 82 + 83 — Microapp framework
 
 The full planning for the microapp framework — Phase 82
