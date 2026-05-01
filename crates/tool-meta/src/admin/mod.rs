@@ -11,5 +11,7 @@
 //! `llm_providers`, `channels` (82.10.d-f).
 
 pub mod agents;
+pub mod channels;
 pub mod credentials;
+pub mod llm_providers;
 pub mod pairing;
