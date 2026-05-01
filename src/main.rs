@@ -4582,6 +4582,48 @@ async fn main() -> Result<()> {
         auto_dream_runners.push((agent_id.clone(), runner_opt));
     }
 
+    // Phase 80.1.b.b.b.b — runtime-attach the primary
+    // `AutoDreamRunner` to the dispatch orchestrator (built earlier
+    // inside `boot_dispatch_ctx_if_enabled`, before this per-agent
+    // loop populated the runner Vec). Multi-runner routing is a
+    // follow-up — MVP picks the first non-None runner.
+    {
+        let active: Vec<(String, Arc<nexo_dream::auto_dream::AutoDreamRunner>)> =
+            auto_dream_runners
+                .iter()
+                .filter_map(|(id, r)| r.as_ref().map(|x| (id.clone(), x.clone())))
+                .collect();
+        if !active.is_empty() {
+            let primary_id = active[0].0.clone();
+            if active.len() > 1 {
+                let skipped: Vec<&str> =
+                    active.iter().skip(1).map(|(id, _)| id.as_str()).collect();
+                tracing::warn!(
+                    target: "boot.auto_dream",
+                    primary = %primary_id,
+                    skipped = ?skipped,
+                    "multiple agents have auto_dream enabled; only the primary attaches to the orchestrator (multi-runner routing is a follow-up)"
+                );
+            }
+            if let Some(dc) = dispatch_ctx.as_ref() {
+                let primary: Arc<dyn nexo_driver_types::AutoDreamHook> =
+                    active.into_iter().next().map(|(_, r)| r).unwrap();
+                dc.orchestrator.set_auto_dream(Some(primary));
+                tracing::info!(
+                    target: "boot.auto_dream",
+                    primary = %primary_id,
+                    "auto_dream runner attached to orchestrator"
+                );
+            } else {
+                tracing::info!(
+                    target: "boot.auto_dream",
+                    primary = %primary_id,
+                    "auto_dream runner built but dispatch orchestrator is disabled (no agent has dispatch_capability=full); runner only reachable via dream_now LLM tool"
+                );
+            }
+        }
+    }
+
     // M5.b — wrap aggregated cron-rebuild maps + build deps struct
     // for the post-hook + initial boot-time cron binding build.
     let tools_per_agent = Arc::new(tools_per_agent);
