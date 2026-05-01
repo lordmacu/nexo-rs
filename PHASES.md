@@ -9200,7 +9200,14 @@ Total ~ 23-28 dev-days for full parity (was 25-30, recortado
 ~1d por re-scope de 80.12). 80.7 (per-cwd lock) flagged as DEFER until Phase 32
 multi-host orchestration arrives.
 
-### Phase 84 — Coordinator agent persona + worker continuation   ⬜
+### Phase 84 — Coordinator agent persona + worker continuation   ⭐ PRIORITY ⬜
+
+> **Status (2026-05-01)**: brainstorm + spec + plan for sub-phase
+> 84.1 are approved in conversation. Work paused before
+> `/forge ejecutar 84.1`. **Next pickup**: re-enter the forge cycle
+> at `/forge ejecutar 84.1` — the plan is committed under
+> "84.1 plan" in this section's sub-phase block. No code changes
+> have landed; `crates/core/src/agent/personas/` does not exist yet.
 
 Phase 77.18 added the `role: coordinator | worker` binding flag and
 gated the tool surface (`TeamCreate` / `TeamDelete` /
