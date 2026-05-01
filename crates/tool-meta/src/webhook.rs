@@ -27,6 +27,12 @@ pub const ENVELOPE_SCHEMA_VERSION: u8 = 1;
 /// before publish, so a NATS subscriber sees only non-secret
 /// correlation IDs.
 ///
+/// Unlike [`crate::BindingContext`], this struct is intentionally
+/// *not* `#[non_exhaustive]`: it represents a wire-shape value
+/// constructed on both sides (the daemon writes it; tests +
+/// mocks build it via struct-literal). Field additions are
+/// semver-major because the JSON wire shape changes regardless.
+///
 /// # Example
 ///
 /// Microapps typically deserialise the envelope from a NATS
@@ -49,7 +55,6 @@ pub const ENVELOPE_SCHEMA_VERSION: u8 = 1;
 /// assert_eq!(env.schema, 1);
 /// assert_eq!(env.source_id, "github_main");
 /// ```
-#[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WebhookEnvelope {
     /// Wire-shape version. Always [`ENVELOPE_SCHEMA_VERSION`].
