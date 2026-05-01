@@ -257,6 +257,15 @@ impl StdioRuntime {
         &self.extension_id
     }
 
+    /// Phase 82.10.h.b.5 — clone of the outbound stdin queue. Used
+    /// by the admin RPC bootstrap to wire a `DispatcherAdminRouter`
+    /// + `StdioPairingNotifier` post-spawn (the underlying mpsc
+    /// channel is created inside [`spawn_with`], so a reference
+    /// can only be obtained after the runtime is up).
+    pub fn outbox_sender(&self) -> tokio::sync::mpsc::Sender<String> {
+        self.outbox_tx.clone()
+    }
+
     pub fn handshake(&self) -> &HandshakeInfo {
         &self.handshake
     }
