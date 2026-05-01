@@ -155,6 +155,18 @@ pub struct AgentContext {
     /// contexts can rely on it without opting in.
     #[doc(hidden)]
     pub assistant: nexo_assistant::ResolvedAssistant,
+    /// Phase 82.1 Step 3 — composed binding context propagated
+    /// to tool calls via `_meta.nexo.binding`. `Some` when
+    /// intake matched an `InboundBinding`; `None` for
+    /// bindingless paths (delegation receive, heartbeat
+    /// bootstrap, tests).
+    ///
+    /// Construct via `BindingContext::from_effective(&policy,
+    /// agent_id, session_id)` at the intake site that matches
+    /// the binding (Step 4). Tool dispatch reads this through
+    /// `inject_context_meta` to populate the JSON-RPC
+    /// `params._nexo_context` block (Step 5).
+    pub binding: Option<BindingContext>,
 }
 
 /// One inbound team message attached to a goal's `AgentContext.inbox`.
@@ -228,13 +240,42 @@ pub struct BindingContext {
 }
 
 impl BindingContext {
-    // TODO Step 3 of Phase 82.1 plan — `from_effective(policy,
-    // agent_id, session_id)` lands once Step 2 extends
-    // `EffectiveBindingPolicy` with `channel: Option<String>` +
-    // `account_id: Option<String>` + a `binding_id()` helper.
-    // Keeping the symbol absent for Step 1 means the struct +
-    // its standalone helpers compile without a forward
-    // reference into the not-yet-extended policy.
+    /// Pure-fn constructor from an already-resolved Phase 16
+    /// binding policy + agent / session identity.
+    ///
+    /// When the policy has no `binding_index` (synthesised by
+    /// `EffectiveBindingPolicy::from_agent_defaults` for
+    /// delegation / heartbeat / tests), the `(channel,
+    /// account_id, binding_id)` tuple stays `None`. Only
+    /// `agent_id` + `session_id` carry through.
+    ///
+    /// `mcp_channel_source` is propagated separately by the
+    /// intake site that received a Phase 80.9 MCP-channel
+    /// inbound. This constructor never infers it from the
+    /// policy alone; callers chain `.with_mcp_channel_source(s)`
+    /// when applicable.
+    pub fn from_effective(
+        policy: &EffectiveBindingPolicy,
+        agent_id: impl Into<String>,
+        session_id: Option<Uuid>,
+    ) -> Self {
+        let (channel, account_id, binding_id) = match policy.binding_index {
+            Some(_) => (
+                policy.channel.clone(),
+                policy.account_id.clone(),
+                policy.binding_id(),
+            ),
+            None => (None, None, None),
+        };
+        Self {
+            agent_id: agent_id.into(),
+            session_id,
+            channel,
+            account_id,
+            binding_id,
+            mcp_channel_source: None,
+        }
+    }
 
     /// Agent-only minimal context for paths that have neither
     /// a binding match nor a session (e.g., bootstrap
@@ -311,6 +352,14 @@ impl AgentContext {
             binding_role: None,
             assistant: nexo_assistant::ResolvedAssistant::disabled(),
             repl_registry: None,
+            // Phase 82.1 Step 3 — `None` is the default for
+            // `AgentContext::new`. Intake sites that match an
+            // inbound to an `InboundBinding` populate this via
+            // `BindingContext::from_effective(&policy, agent_id,
+            // session_id)` (Step 4). Bindingless paths
+            // (delegation receive, heartbeat bootstrap, tests)
+            // keep `None`.
+            binding: None,
         }
     }
 
@@ -724,5 +773,150 @@ mod binding_context_tests {
         let json = serde_json::to_string(&ctx).unwrap();
         let back: BindingContext = serde_json::from_str(&json).unwrap();
         assert_eq!(ctx, back);
+    }
+
+    // -- Phase 82.1 Step 3 — from_effective constructor --
+
+    fn mini_agent() -> nexo_config::types::agents::AgentConfig {
+        use nexo_config::types::agents::{
+            AgentConfig, AgentRuntimeConfig, DreamingYamlConfig, HeartbeatConfig, ModelConfig,
+            OutboundAllowlistConfig, WorkspaceGitConfig,
+        };
+        AgentConfig {
+            id: "ana".into(),
+            model: ModelConfig {
+                provider: "anthropic".into(),
+                model: "claude-haiku-4-5".into(),
+            },
+            plugins: Vec::new(),
+            heartbeat: HeartbeatConfig::default(),
+            config: AgentRuntimeConfig::default(),
+            system_prompt: String::new(),
+            workspace: String::new(),
+            skills: Vec::new(),
+            skills_dir: String::new(),
+            skill_overrides: Default::default(),
+            transcripts_dir: String::new(),
+            dreaming: DreamingYamlConfig::default(),
+            workspace_git: WorkspaceGitConfig::default(),
+            tool_rate_limits: None,
+            tool_args_validation: None,
+            extra_docs: Vec::new(),
+            inbound_bindings: Vec::new(),
+            allowed_tools: Vec::new(),
+            sender_rate_limit: None,
+            allowed_delegates: Vec::new(),
+            accept_delegates_from: Vec::new(),
+            description: String::new(),
+            google_auth: None,
+            credentials: Default::default(),
+            link_understanding: serde_json::Value::Null,
+            web_search: serde_json::Value::Null,
+            pairing_policy: serde_json::Value::Null,
+            language: None,
+            outbound_allowlist: OutboundAllowlistConfig::default(),
+            context_optimization: None,
+            dispatch_policy: Default::default(),
+            plan_mode: Default::default(),
+            remote_triggers: Vec::new(),
+            lsp: nexo_config::types::lsp::LspPolicy::default(),
+            config_tool: nexo_config::types::config_tool::ConfigToolPolicy::default(),
+            team: nexo_config::types::team::TeamPolicy::default(),
+            proactive: Default::default(),
+            repl: Default::default(),
+            auto_dream: None,
+            assistant_mode: None,
+            away_summary: None,
+            brief: None,
+            channels: None,
+            auto_approve: false,
+            extract_memories: None,
+        }
+    }
+
+    #[test]
+    fn from_effective_with_matched_binding_populates_tuple() {
+        use super::EffectiveBindingPolicy;
+        use nexo_config::types::agents::InboundBinding;
+
+        let mut a = mini_agent();
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "whatsapp".into(),
+            instance: Some("personal".into()),
+            ..Default::default()
+        });
+        let policy = EffectiveBindingPolicy::resolve(&a, 0);
+        let ctx = BindingContext::from_effective(&policy, "ana", Some(Uuid::from_u128(1)));
+
+        assert_eq!(ctx.agent_id, "ana");
+        assert_eq!(ctx.session_id, Some(Uuid::from_u128(1)));
+        assert_eq!(ctx.channel.as_deref(), Some("whatsapp"));
+        assert_eq!(ctx.account_id.as_deref(), Some("personal"));
+        assert_eq!(ctx.binding_id.as_deref(), Some("whatsapp:personal"));
+        assert!(ctx.mcp_channel_source.is_none());
+    }
+
+    #[test]
+    fn from_effective_with_synthesised_policy_keeps_tuple_none() {
+        use super::EffectiveBindingPolicy;
+
+        let a = mini_agent();
+        let policy = EffectiveBindingPolicy::from_agent_defaults(&a);
+        let ctx = BindingContext::from_effective(&policy, "delegation", None);
+
+        assert_eq!(ctx.agent_id, "delegation");
+        assert!(ctx.session_id.is_none());
+        assert!(ctx.channel.is_none());
+        assert!(ctx.account_id.is_none());
+        assert!(ctx.binding_id.is_none());
+        assert!(ctx.mcp_channel_source.is_none());
+    }
+
+    #[test]
+    fn from_effective_chains_with_mcp_channel_source() {
+        use super::EffectiveBindingPolicy;
+        use nexo_config::types::agents::InboundBinding;
+
+        let mut a = mini_agent();
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "telegram".into(),
+            instance: Some("kate_tg".into()),
+            ..Default::default()
+        });
+        let policy = EffectiveBindingPolicy::resolve(&a, 0);
+        let ctx = BindingContext::from_effective(&policy, "ana", None)
+            .with_mcp_channel_source("slack");
+
+        // Native binding tuple stays from policy.
+        assert_eq!(ctx.channel.as_deref(), Some("telegram"));
+        assert_eq!(ctx.account_id.as_deref(), Some("kate_tg"));
+        // MCP source layered on top.
+        assert_eq!(ctx.mcp_channel_source.as_deref(), Some("slack"));
+    }
+
+    #[test]
+    fn from_effective_two_personas_get_distinct_binding_ids() {
+        use super::EffectiveBindingPolicy;
+        use nexo_config::types::agents::InboundBinding;
+
+        let mut a = mini_agent();
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "whatsapp".into(),
+            instance: Some("personal".into()),
+            ..Default::default()
+        });
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "whatsapp".into(),
+            instance: Some("business".into()),
+            ..Default::default()
+        });
+        let p0 = EffectiveBindingPolicy::resolve(&a, 0);
+        let p1 = EffectiveBindingPolicy::resolve(&a, 1);
+        let c0 = BindingContext::from_effective(&p0, "ana", None);
+        let c1 = BindingContext::from_effective(&p1, "carlos", None);
+
+        assert_eq!(c0.binding_id.as_deref(), Some("whatsapp:personal"));
+        assert_eq!(c1.binding_id.as_deref(), Some("whatsapp:business"));
+        assert_ne!(c0.binding_id, c1.binding_id);
     }
 }
