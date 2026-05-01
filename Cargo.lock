@@ -3889,6 +3889,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexo-webhook-server"
+version = "0.1.1"
+dependencies = [
+ "arc-swap",
+ "async-trait",
+ "axum",
+ "bytes",
+ "chrono",
+ "hex",
+ "hmac",
+ "http-body-util",
+ "hyper",
+ "ipnetwork",
+ "nexo-broker",
+ "nexo-config",
+ "nexo-webhook-receiver",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "tower",
+ "tower-http 0.5.2",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "nix"
 version = "0.27.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
