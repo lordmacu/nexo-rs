@@ -10,6 +10,30 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 80.1.b.b.b.b — AutoDreamRunner now attaches to the
+  orchestrator at runtime.** Fixes the structural gap that
+  Phase 80.1.b.b.b consumer left open: the
+  `DriverOrchestrator::builder().auto_dream(hook)` call site
+  lives inside `boot_dispatch_ctx_if_enabled` (~line 2255 of
+  `Mode::Run`), which runs **before** the per-agent loop
+  builds the runners (~line 2827). The fix moves the
+  `auto_dream` field behind a stdlib `Mutex<Option<Arc<dyn
+  AutoDreamHook>>>` and exposes a public `set_auto_dream`
+  setter on `DriverOrchestrator`. The boot wire picks the
+  primary runner after the per-agent loop closes and attaches
+  it via `dispatch_ctx.orchestrator.set_auto_dream(Some(primary))`.
+  When `dispatch_ctx` is `None` (no agent has
+  `dispatch_capability=full`) the runner stays reachable via
+  the `dream_now` LLM tool only — operators see the state in
+  `tracing::info!` so the limitation is visible. Per-goal_id
+  multi-runner routing stays open as Phase 80.1.b.b.b.c; MVP
+  picks the first runner with a single warn listing the
+  skipped agent ids. `arc_swap::ArcSwapOption` was the
+  zero-cost alternative but requires `T: Sized` and
+  `dyn AutoDreamHook` is unsized — stdlib `Mutex` is the
+  lowest-friction wrap (per-turn read cost = one uncontended
+  lock acquire).
+
 - **Phase 80.1.b.b.b — AutoDreamRunner consumer wired in
   `Mode::Run`.** Per-agent loop in `src/main.rs` constructs an
   `AutoDreamRunner` for every agent with `auto_dream.enabled =
