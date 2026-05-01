@@ -161,7 +161,7 @@ pub struct AgentContext {
     /// bindingless paths (delegation receive, heartbeat
     /// bootstrap, tests).
     ///
-    /// Construct via `BindingContext::from_effective(&policy,
+    /// Construct via `super::binding_context_from_effective(&policy,
     /// agent_id, session_id)` at the intake site that matches
     /// the binding (Step 4). Tool dispatch reads this through
     /// `inject_context_meta` to populate the JSON-RPC
@@ -202,114 +202,44 @@ pub struct DmMessage {
 /// while still seeing the same `(channel, account_id)` binding
 /// tuple. Matches the `goal_turns.source = "channel:slack"`
 /// audit column shipped with Phase 80.9.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct BindingContext {
-    /// Stable agent identifier (`agents.yaml.<id>`).
-    pub agent_id: String,
+// Phase 82.2.b — `BindingContext` lives in the standalone
+// `nexo-tool-meta` crate so third-party microapps can `cargo add
+// nexo-tool-meta` without pulling the agent runtime. Re-exported
+// here for backward compat with internal callers.
+pub use nexo_tool_meta::BindingContext;
 
-    /// Active session UUID. `None` outside an LLM turn (heartbeat
-    /// bootstrap, delegation receive, tests).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<Uuid>,
-
-    /// Channel name as declared in `InboundBinding.plugin`
-    /// (`"whatsapp"`, `"telegram"`, `"email"`, `"web"`, …).
-    /// `None` for contexts without a binding match.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub channel: Option<String>,
-
-    /// Account / instance discriminator from
-    /// `InboundBinding.instance`. `None` when the binding
-    /// declared no instance (single-account default).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub account_id: Option<String>,
-
-    /// Stable binding identifier rendered as
-    /// `<channel>:<account_id|"default">`. Survives
-    /// `agents.yaml` reloads (does NOT depend on the binding
-    /// vector index). `None` for bindingless contexts.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub binding_id: Option<String>,
-
-    /// Phase 80.9 — MCP channel server name when the inbound
-    /// arrived via `notifications/nexo/channel`. `None` for
-    /// native-channel inbounds. Examples: `"slack"`,
-    /// `"telegram"`, `"imessage"`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mcp_channel_source: Option<String>,
-}
-
-impl BindingContext {
-    /// Pure-fn constructor from an already-resolved Phase 16
-    /// binding policy + agent / session identity.
-    ///
-    /// When the policy has no `binding_index` (synthesised by
-    /// `EffectiveBindingPolicy::from_agent_defaults` for
-    /// delegation / heartbeat / tests), the `(channel,
-    /// account_id, binding_id)` tuple stays `None`. Only
-    /// `agent_id` + `session_id` carry through.
-    ///
-    /// `mcp_channel_source` is propagated separately by the
-    /// intake site that received a Phase 80.9 MCP-channel
-    /// inbound. This constructor never infers it from the
-    /// policy alone; callers chain `.with_mcp_channel_source(s)`
-    /// when applicable.
-    pub fn from_effective(
-        policy: &EffectiveBindingPolicy,
-        agent_id: impl Into<String>,
-        session_id: Option<Uuid>,
-    ) -> Self {
-        let (channel, account_id, binding_id) = match policy.binding_index {
-            Some(_) => (
-                policy.channel.clone(),
-                policy.account_id.clone(),
-                policy.binding_id(),
-            ),
-            None => (None, None, None),
-        };
-        Self {
-            agent_id: agent_id.into(),
-            session_id,
-            channel,
-            account_id,
-            binding_id,
-            mcp_channel_source: None,
-        }
+/// Construct a [`BindingContext`] from an already-resolved
+/// Phase 16 binding policy + agent / session identity.
+///
+/// Lives here (not on `BindingContext` itself) because it depends
+/// on [`EffectiveBindingPolicy`], which is internal to the agent
+/// runtime. Microapps never construct a `BindingContext` — they
+/// receive one wire-encoded under `_meta.nexo.binding` and parse
+/// via `nexo_tool_meta::parse_binding_from_meta`.
+///
+/// When the policy has no `binding_index` (synthesised by
+/// [`EffectiveBindingPolicy::from_agent_defaults`] for
+/// delegation / heartbeat / tests), the `(channel, account_id,
+/// binding_id)` tuple stays `None`. Only `agent_id` + `session_id`
+/// carry through.
+///
+/// `mcp_channel_source` is propagated separately by the intake
+/// site that received a Phase 80.9 MCP-channel inbound. This fn
+/// never infers it from the policy alone; callers chain
+/// `.with_mcp_channel_source(s)` when applicable.
+pub fn binding_context_from_effective(
+    policy: &EffectiveBindingPolicy,
+    agent_id: impl Into<String>,
+    session_id: Option<Uuid>,
+) -> BindingContext {
+    let mut ctx = BindingContext::agent_only(agent_id);
+    ctx.session_id = session_id;
+    if policy.binding_index.is_some() {
+        ctx.channel = policy.channel.clone();
+        ctx.account_id = policy.account_id.clone();
+        ctx.binding_id = policy.binding_id();
     }
-
-    /// Agent-only minimal context for paths that have neither
-    /// a binding match nor a session (e.g., bootstrap
-    /// validation, unit tests).
-    pub fn agent_only(agent_id: impl Into<String>) -> Self {
-        Self {
-            agent_id: agent_id.into(),
-            session_id: None,
-            channel: None,
-            account_id: None,
-            binding_id: None,
-            mcp_channel_source: None,
-        }
-    }
-
-    /// Render the stable binding id from `(channel, account_id)`.
-    /// Returns `<channel>:<account_id|"default">`. Used at the
-    /// `from_effective` call site and exposed for tests /
-    /// downstream consumers that need to compute the same id
-    /// without holding a policy reference.
-    pub fn render_binding_id(channel: &str, account_id: Option<&str>) -> String {
-        format!("{}:{}", channel, account_id.unwrap_or("default"))
-    }
-
-    /// Builder for the MCP channel source (Phase 80.9). Returns
-    /// `self` so it composes inline with `from_effective`.
-    #[must_use]
-    pub fn with_mcp_channel_source(
-        mut self,
-        source: impl Into<String>,
-    ) -> Self {
-        self.mcp_channel_source = Some(source.into());
-        self
-    }
+    ctx
 }
 impl AgentContext {
     pub fn new(
@@ -355,7 +285,7 @@ impl AgentContext {
             // Phase 82.1 Step 3 — `None` is the default for
             // `AgentContext::new`. Intake sites that match an
             // inbound to an `InboundBinding` populate this via
-            // `BindingContext::from_effective(&policy, agent_id,
+            // `super::binding_context_from_effective(&policy, agent_id,
             // session_id)` (Step 4). Bindingless paths
             // (delegation receive, heartbeat bootstrap, tests)
             // keep `None`.
@@ -497,7 +427,7 @@ impl AgentContext {
         // here; it is layered on top by the channel-aware
         // intake site that received the Phase 80.9 MCP-channel
         // inbound (`with_mcp_channel_source` chained after).
-        self.binding = Some(BindingContext::from_effective(
+        self.binding = Some(binding_context_from_effective(
             &effective,
             self.agent_id.clone(),
             self.session_id,
@@ -562,24 +492,7 @@ impl AgentContext {
     ///   wire compact for delegation receive / heartbeat
     ///   bootstrap / tests).
     pub fn build_meta_value(&self) -> serde_json::Value {
-        let mut meta = serde_json::Map::new();
-        meta.insert(
-            "agent_id".into(),
-            serde_json::Value::String(self.agent_id.clone()),
-        );
-        meta.insert(
-            "session_id".into(),
-            self.session_id
-                .map(|u| serde_json::Value::String(u.to_string()))
-                .unwrap_or(serde_json::Value::Null),
-        );
-        if let Some(binding) = &self.binding {
-            meta.insert(
-                "nexo".into(),
-                serde_json::json!({ "binding": binding }),
-            );
-        }
-        serde_json::Value::Object(meta)
+        nexo_tool_meta::build_meta_value(&self.agent_id, self.session_id, self.binding.as_ref())
     }
 }
 
@@ -832,11 +745,11 @@ mod binding_context_tests {
     #[test]
     fn render_binding_id_with_account_id_renders_channel_colon_account() {
         assert_eq!(
-            BindingContext::render_binding_id("whatsapp", Some("personal")),
+            nexo_tool_meta::binding_id_render("whatsapp", Some("personal")),
             "whatsapp:personal"
         );
         assert_eq!(
-            BindingContext::render_binding_id("telegram", Some("kate_tg")),
+            nexo_tool_meta::binding_id_render("telegram", Some("kate_tg")),
             "telegram:kate_tg"
         );
     }
@@ -844,9 +757,35 @@ mod binding_context_tests {
     #[test]
     fn render_binding_id_without_account_id_uses_default_sentinel() {
         assert_eq!(
-            BindingContext::render_binding_id("whatsapp", None),
+            nexo_tool_meta::binding_id_render("whatsapp", None),
             "whatsapp:default"
         );
+    }
+
+    fn full_binding(
+        agent: &str,
+        session: Option<Uuid>,
+        channel: Option<&str>,
+        account: Option<&str>,
+        mcp: Option<&str>,
+    ) -> BindingContext {
+        let mut b = BindingContext::agent_only(agent);
+        b.session_id = session;
+        if let Some(c) = channel {
+            b.channel = Some(c.into());
+        }
+        if let Some(a) = account {
+            b.account_id = Some(a.into());
+        }
+        if let (Some(c), Some(_)) = (channel, account) {
+            b.binding_id = Some(nexo_tool_meta::binding_id_render(c, account));
+        } else if let Some(c) = channel {
+            b.binding_id = Some(nexo_tool_meta::binding_id_render(c, None));
+        }
+        if let Some(s) = mcp {
+            b = b.with_mcp_channel_source(s);
+        }
+        b
     }
 
     #[test]
@@ -858,14 +797,13 @@ mod binding_context_tests {
 
     #[test]
     fn binding_context_is_clone_eq_serializable() {
-        let ctx = BindingContext {
-            agent_id: "ana".into(),
-            session_id: Some(Uuid::nil()),
-            channel: Some("whatsapp".into()),
-            account_id: Some("personal".into()),
-            binding_id: Some("whatsapp:personal".into()),
-            mcp_channel_source: Some("slack".into()),
-        };
+        let ctx = full_binding(
+            "ana",
+            Some(Uuid::nil()),
+            Some("whatsapp"),
+            Some("personal"),
+            Some("slack"),
+        );
         let cloned = ctx.clone();
         assert_eq!(ctx, cloned);
         let json = serde_json::to_value(&ctx).unwrap();
@@ -892,14 +830,13 @@ mod binding_context_tests {
 
     #[test]
     fn binding_context_round_trips_through_serde() {
-        let ctx = BindingContext {
-            agent_id: "carlos".into(),
-            session_id: Some(Uuid::from_u128(42)),
-            channel: Some("whatsapp".into()),
-            account_id: Some("business".into()),
-            binding_id: Some("whatsapp:business".into()),
-            mcp_channel_source: None,
-        };
+        let ctx = full_binding(
+            "carlos",
+            Some(Uuid::from_u128(42)),
+            Some("whatsapp"),
+            Some("business"),
+            None,
+        );
         let json = serde_json::to_string(&ctx).unwrap();
         let back: BindingContext = serde_json::from_str(&json).unwrap();
         assert_eq!(ctx, back);
@@ -976,7 +913,7 @@ mod binding_context_tests {
             ..Default::default()
         });
         let policy = EffectiveBindingPolicy::resolve(&a, 0);
-        let ctx = BindingContext::from_effective(&policy, "ana", Some(Uuid::from_u128(1)));
+        let ctx = super::binding_context_from_effective(&policy, "ana", Some(Uuid::from_u128(1)));
 
         assert_eq!(ctx.agent_id, "ana");
         assert_eq!(ctx.session_id, Some(Uuid::from_u128(1)));
@@ -992,7 +929,7 @@ mod binding_context_tests {
 
         let a = mini_agent();
         let policy = EffectiveBindingPolicy::from_agent_defaults(&a);
-        let ctx = BindingContext::from_effective(&policy, "delegation", None);
+        let ctx = super::binding_context_from_effective(&policy, "delegation", None);
 
         assert_eq!(ctx.agent_id, "delegation");
         assert!(ctx.session_id.is_none());
@@ -1014,7 +951,7 @@ mod binding_context_tests {
             ..Default::default()
         });
         let policy = EffectiveBindingPolicy::resolve(&a, 0);
-        let ctx = BindingContext::from_effective(&policy, "ana", None)
+        let ctx = super::binding_context_from_effective(&policy, "ana", None)
             .with_mcp_channel_source("slack");
 
         // Native binding tuple stays from policy.
@@ -1042,8 +979,8 @@ mod binding_context_tests {
         });
         let p0 = EffectiveBindingPolicy::resolve(&a, 0);
         let p1 = EffectiveBindingPolicy::resolve(&a, 1);
-        let c0 = BindingContext::from_effective(&p0, "ana", None);
-        let c1 = BindingContext::from_effective(&p1, "carlos", None);
+        let c0 = super::binding_context_from_effective(&p0, "ana", None);
+        let c1 = super::binding_context_from_effective(&p1, "carlos", None);
 
         assert_eq!(c0.binding_id.as_deref(), Some("whatsapp:personal"));
         assert_eq!(c1.binding_id.as_deref(), Some("whatsapp:business"));
@@ -1140,14 +1077,12 @@ mod build_meta_value_tests {
     #[tokio::test]
     async fn meta_with_binding_emits_dual_namespaces() {
         let mut ctx = mini_ctx("ana", Some(Uuid::nil()));
-        ctx.binding = Some(BindingContext {
-            agent_id: "ana".into(),
-            session_id: Some(Uuid::nil()),
-            channel: Some("whatsapp".into()),
-            account_id: Some("personal".into()),
-            binding_id: Some("whatsapp:personal".into()),
-            mcp_channel_source: None,
-        });
+        let mut b = BindingContext::agent_only("ana");
+        b.session_id = Some(Uuid::nil());
+        b.channel = Some("whatsapp".into());
+        b.account_id = Some("personal".into());
+        b.binding_id = Some("whatsapp:personal".into());
+        ctx.binding = Some(b);
         let meta = ctx.build_meta_value();
 
         // Legacy flat block intact (backward-compat).

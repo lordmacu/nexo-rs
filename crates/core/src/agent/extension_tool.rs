@@ -350,17 +350,22 @@ mod tests {
 
     use crate::agent::context::BindingContext;
 
+    fn full_binding(agent: &str, session: Uuid, channel: &str, account: &str, mcp: Option<&str>) -> BindingContext {
+        let mut b = BindingContext::agent_only(agent);
+        b.session_id = Some(session);
+        b.channel = Some(channel.into());
+        b.account_id = Some(account.into());
+        b.binding_id = Some(format!("{channel}:{account}"));
+        if let Some(s) = mcp {
+            b = b.with_mcp_channel_source(s);
+        }
+        b
+    }
+
     #[tokio::test]
     async fn step5_inject_meta_with_binding_writes_nested_namespace() {
         let mut ctx = test_ctx("ana", Some(Uuid::nil()));
-        ctx.binding = Some(BindingContext {
-            agent_id: "ana".into(),
-            session_id: Some(Uuid::nil()),
-            channel: Some("whatsapp".into()),
-            account_id: Some("personal".into()),
-            binding_id: Some("whatsapp:personal".into()),
-            mcp_channel_source: None,
-        });
+        ctx.binding = Some(full_binding("ana", Uuid::nil(), "whatsapp", "personal", None));
         let args = serde_json::json!({"to": "+5491100", "body": "hi"});
         let out = inject_context_meta(true, &ctx, args, "ventas-etb", "etb_register_lead");
 
@@ -386,14 +391,7 @@ mod tests {
     #[tokio::test]
     async fn step5_inject_meta_with_mcp_channel_source_emits_field() {
         let mut ctx = test_ctx("ana", Some(Uuid::nil()));
-        ctx.binding = Some(BindingContext {
-            agent_id: "ana".into(),
-            session_id: Some(Uuid::nil()),
-            channel: Some("telegram".into()),
-            account_id: Some("kate_tg".into()),
-            binding_id: Some("telegram:kate_tg".into()),
-            mcp_channel_source: Some("slack".into()),
-        });
+        ctx.binding = Some(full_binding("ana", Uuid::nil(), "telegram", "kate_tg", Some("slack")));
         let out =
             inject_context_meta(true, &ctx, serde_json::json!({}), "marketing", "send_drip");
         let binding = &out["_meta"]["nexo"]["binding"];

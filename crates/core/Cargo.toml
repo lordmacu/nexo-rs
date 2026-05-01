@@ -48,6 +48,7 @@ humantime   = { workspace = true }
 anyhow      = { workspace = true }
 thiserror   = { workspace = true }
 nexo-assistant = { version = "0.1.1", path = "../assistant" }
+nexo-tool-meta = { version = "0.1.0", path = "../tool-meta" }
 nexo-config = { version = "0.1.1", path = "../config" }
 nexo-broker = { version = "0.1.1", path = "../broker" }
 nexo-team-store = { version = "0.1.1", path = "../team-store" }
