@@ -31,8 +31,7 @@ use axum::Router;
 use bytes::Bytes;
 use nexo_config::types::webhook_receiver::{WebhookConfigError, WebhookServerConfig};
 use nexo_webhook_receiver::{
-    resolve_request_client_ip, ProxyHeaders, RejectReason, WebhookDispatcher, WebhookEnvelope,
-    WebhookHandler,
+    resolve_request_client_ip, ProxyHeaders, RejectReason, WebhookDispatcher, WebhookHandler,
 };
 use thiserror::Error;
 use tokio::sync::Semaphore;
@@ -240,7 +239,11 @@ async fn handle_request(
 
     // Gate 6 — dispatch.
     let topic = handled.topic.clone();
-    let envelope = WebhookEnvelope::from_handled(handled, &envelope_headers, Some(client_ip));
+    let envelope = nexo_webhook_receiver::envelope_from_handled(
+        handled,
+        &envelope_headers,
+        Some(client_ip),
+    );
     match ctx.dispatcher.dispatch(&topic, envelope).await {
         Ok(()) => (StatusCode::NO_CONTENT, "").into_response(),
         Err(nexo_webhook_receiver::DispatchError::Broker(e)) => {
@@ -258,6 +261,16 @@ async fn handle_request(
                 "envelope rejected by dispatcher"
             );
             (StatusCode::UNPROCESSABLE_ENTITY, "rejected").into_response()
+        }
+        Err(other) => {
+            // `DispatchError` is `#[non_exhaustive]`; future variants
+            // are surfaced as a generic 502 with the error stringified.
+            tracing::error!(
+                source_id = %ctx.source.source_id,
+                error = %other,
+                "unknown dispatch error variant"
+            );
+            (StatusCode::BAD_GATEWAY, "dispatch failed").into_response()
         }
     }
 }

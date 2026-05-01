@@ -196,6 +196,7 @@ rustls             = { version = "0.23", default-features = false, features = ["
 rustls-native-certs = "0.7"
 serde_bytes        = "0.11"
 rand               = "0.8"
+nexo-tool-meta     = { version = "0.1.0", path = "crates/tool-meta" }
 
 [dependencies]
 tokio               = { workspace = true }
