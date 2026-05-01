@@ -390,7 +390,7 @@ Done criteria:
 - 5+ unit tests + 1 integration test using a mock channel
   adapter.
 
-#### 82.4 — NATS event subject → agent turn binding   🔄  (foundations ✅, runtime task deferred)
+#### 82.4 — NATS event subject → agent turn binding   🔄  (foundations ✅ + runtime ✅, boot wiring deferred)
 
 **Foundations shipped (82.4 MVP):**
 - `nexo-tool-meta::template` mustache-lite renderer
@@ -413,14 +413,28 @@ Done criteria:
   field with `#[serde(default)]` and ~25-site workspace
   sweep. Backward compat with every existing fixture.
 
-**Deferred to 82.4.b (runtime + e2e):**
-- `nexo-core::agent::event_subscriber` runtime task with
-  `tokio::sync::mpsc` bounded buffer + `Arc<Semaphore>`
-  concurrency cap + per-event template render + republish to
-  `plugin.inbound.event.<id>`.
-- 6 unit tests + 1 e2e test against a local broker.
+**Runtime shipped (82.4.b ✅):**
+- `crates/core/src/agent/event_subscriber.rs` runtime task with
+  `Arc<Mutex<VecDeque<Event>>>` + `Notify` bounded buffer +
+  `Arc<Semaphore>` concurrency cap + per-event template render
+  + re-publish to `plugin.inbound.event.<id>`.
+- `EventSubscriberError` `#[non_exhaustive]` typed error.
+- `build_synthesised_payload` builder + `extract_nexo_event_source`
+  resolver helper + `synthesize_event_inbound_bindings` auto-synth.
+- 20 unit tests verde — synthesise / tick / off / DropOldest /
+  DropNewest / cancel-token shutdown / payload shape /
+  resolver helper / auto-synth idempotency.
+
+**Deferred to 82.4.b.b (boot wiring + e2e + docs):**
 - `src/main.rs` boot supervisor wiring under shared
   `event_subscribers_shutdown` `CancellationToken`.
+- Inbound resolver populator hookup (call
+  `extract_nexo_event_source` to fill
+  `BindingContext.event_source` on `plugin.inbound.event.*`
+  matches).
+- E2E integration test against the daemon (separate from the
+  in-tree unit tests, which already cover the broker
+  round-trip).
 - Operator docs `docs/src/ops/events.md`.
 - admin-ui tech-debt entry.
 
