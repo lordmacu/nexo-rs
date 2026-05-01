@@ -1096,7 +1096,46 @@ Done criteria:
   firehose, verifies redaction passthrough, verifies kind
   filter).
 
-#### 82.12 — Plugin.toml `[capabilities.http_server]` + bind 127.0.0.1 + token auth + boot supervisor   ⬜
+#### 82.12 — Plugin.toml `[capabilities.http_server]` + bind 127.0.0.1 + token auth + boot supervisor   ✅  (shipped 2026-05-01)
+
+Five steps shipped:
+- **82.12.1** — `HttpServerCapability` in `nexo-plugin-manifest`
+  (`port` + `bind` default 127.0.0.1 + `token_env` +
+  `health_path` default `/healthz`) and `TokenRotated` +
+  `TOKEN_ROTATED_NOTIFY_METHOD` literal in
+  `nexo-tool-meta::http_server`. 6 tests.
+- **82.12.2** — `HttpServerSupervisor::probe(decl)` + 60 s
+  `spawn_monitor_loop(decl)` in `nexo-setup::http_supervisor`.
+  Typed `HealthProbeError::{Timeout, BadStatus}` so boot
+  wiring can distinguish hung microapps from misbehaving
+  ones; reqwest client built with 2 s per-request timeout.
+  6 tests.
+- **82.12.3** — `ExtensionEntry.allow_external_bind: bool`
+  field + `AdminBootstrapInputs::http_server_capabilities` +
+  bootstrap validates the bind policy before spawn.
+  `AdminBootstrapError::ExternalBindNotAllowed { microapp_id,
+  bind }` surfaces operator misconfigurations. 3 tests.
+- **82.12.4** — `NEXO_MICROAPP_HTTP_SERVERS_ENABLED` INVENTORY
+  toggle (`Risk::High`) + `token_hash(token)` helper
+  (sha256-hex truncated to 16 chars) for the
+  `TokenRotated.old_hash` field. 1 test.
+- **82.12.5** — docs (`admin-rpc.md` "HTTP server capability"
+  section: declaration, supervisor, bind policy, token
+  rotation, INVENTORY) + PHASES ✅ + FOLLOWUPS deferreds.
+
+**Tests:** 6 + 6 + 3 + 1 = **16 verde**.
+
+**Deferred:**
+- main.rs operator wire-up: thread the supervisor + the
+  `http_server_capabilities` map into `AdminRpcBootstrap`.
+  Same boot-order refactor as 82.10.h.b / 82.11 — folded
+  into the shared follow-up.
+- Token rotation emit site: the daemon needs a Phase 18
+  reload-coordinator hook that detects `<token_env>` change
+  and calls `dispatcher.notify(...token_rotated...)`. v0
+  framework has the wire shape + helper; the trigger
+  belongs to the boot wire-up follow-up.
+
 
 Cross-app primitive. Microapps with their own React UI
 (meta-microapp, dashboard-microapp, settings-microapp) need

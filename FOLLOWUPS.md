@@ -1857,6 +1857,28 @@ Target phase: 82.10.h.c (folded with 82.10.h.b's main.rs
 wire-up) for the operator wire-up; future phases for the NATS
 bridge + new kinds.
 
+### Phase 82.12 — http_server capability follow-ups
+
+Phase 82.12 shipped the building blocks (manifest field +
+boot supervisor + bind policy + INVENTORY + token-hash
+helper). Two follow-ups stayed deferred:
+
+- **main.rs operator wire-up**: thread `HttpServerSupervisor`
+  + the `http_server_capabilities` map into
+  `AdminRpcBootstrap` from `main()`. The bootstrap accepts
+  the field; activating it is the same boot-order refactor
+  as 82.10.h.b / 82.11 (one shared `boot_setup` pass that
+  reads every plugin.toml once). Folded into the same
+  follow-up — when main.rs gets its single wire-up commit,
+  http_server lands alongside.
+- **Token rotation trigger**: framework ships `TokenRotated`
+  shape + `token_hash` helper, but no code currently calls
+  `dispatcher.notify(token_rotated, ...)` — the trigger needs
+  a Phase 18 reload-coordinator hook that detects
+  `<token_env>` change. Microapps that need rotation today
+  must restart. Target phase: alongside the operator
+  wire-up, since both depend on the boot reload coordinator.
+
 ## Resolved (recent highlights)
 
 - 2026-04-28 — MCP denied-tool override now supports `Heartbeat`

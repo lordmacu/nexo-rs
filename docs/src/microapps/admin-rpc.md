@@ -443,6 +443,65 @@ re-syncs to the next surviving frame. Microapps that need
 gap-free history call `agent_events/read` from
 `last_seen_seq`.
 
+## HTTP server capability (Phase 82.12)
+
+Microapps that ship their own HTTP UI / API (meta-microapp,
+dashboard, settings panel) declare it in `plugin.toml`:
+
+```toml
+[capabilities.http_server]
+port = 9001
+bind = "127.0.0.1"             # default — loopback only
+token_env = "AGENT_CREATOR_TOKEN"
+health_path = "/healthz"        # default
+```
+
+### Boot supervisor
+
+`HttpServerSupervisor::probe(decl)` polls
+`GET <bind>:<port><health_path>` every 250 ms until 200 OK or
+the 30 s ready timeout. Typed errors:
+- `Timeout { url }` — no listener after 30 s.
+- `BadStatus { url, status }` — listener responds non-200.
+
+Once probed, `spawn_monitor_loop(decl)` polls every 60 s.
+Failures log at `warn` and flip a `watch::Receiver<bool>` so
+`nexo extension status` / admin-ui can surface the live
+health state. Monitor handle aborts on drop.
+
+### Bind policy
+
+`bind` defaults to `127.0.0.1`. Anything else (`0.0.0.0`,
+public IP, …) requires the operator to flip
+`extensions.yaml.<id>.allow_external_bind = true`. The
+`AdminRpcBootstrap::build` validator checks this BEFORE
+spawning the extension; mismatches surface as
+`AdminBootstrapError::ExternalBindNotAllowed { microapp_id,
+bind }`. Defense in depth against accidentally world-exposed
+services.
+
+### Shared bearer token
+
+The microapp reads `<token_env>` at boot (the daemon passes
+it through via the `initialize` env block). All inbound HTTP
+requests must include `Authorization: Bearer <token>` or
+`X-Nexo-Token: <token>`. Token rotation arrives as a JSON-RPC
+notification — the daemon emits
+`nexo/notify/token_rotated { old_hash, new }` after the
+operator changes the env + reloads. Microapps compare
+`old_hash` against `token_hash(<their current token>)`
+(sha256-hex truncated to 16 chars) before swapping, so a
+stale notification hitting an already-restarted microapp is
+ignored.
+
+### INVENTORY toggle
+
+`NEXO_MICROAPP_HTTP_SERVERS_ENABLED` (default `1`). Off →
+boot supervisor skips the probe + monitor loop entirely.
+Microapps still spawn; the daemon just doesn't gate `ready`
+on the HTTP endpoint. Useful for hardened deployments that
+ban embedded HTTP servers or run them out-of-band.
+
 ## Limitations
 
 - **Bidirectional flow over single stdio**: `app:` ID prefix
