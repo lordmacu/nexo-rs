@@ -6463,7 +6463,37 @@ the leak's per-turn-hook design (NOT cron-based) per the spec audit.
 
 **Follow-ups** (split as 80.1.b/c/d/e):
 
-- **80.1.b.b.b** — boot wiring helper ✅ **MVP** — shipped:
+- **80.1.b.b.b consumer** ✅ **MVP** — `src/main.rs::Mode::Run`
+  per-agent loop now constructs an `AutoDreamRunner` for every
+  agent that has `auto_dream.enabled = true`. Wires the full
+  constellation: `nexo_fork::AgentToolDispatcher` (new Phase
+  80.1.b.b.b step A — see commit `a5be157`),
+  `parent_ctx_template = AgentContext::new(...)`,
+  `MemoryGitCheckpointer` over the per-agent `MemoryGitRepo`,
+  and **`PreDreamSnapshotAdapter` over the shared snapshotter**
+  when `memory.snapshot.auto_pre_dream = true` (closes MS-3).
+  `dream_now` LLM tool registered per-agent when
+  `NEXO_DREAM_NOW_ENABLED=true` and `transcripts_dir` non-empty.
+  Per-agent tracing emit at boot
+  (`auto_dream_enabled`, `has_pre_dream_snapshot`,
+  `has_git_checkpointer`, `dream_now_registered`). Failure of
+  any single agent's `BootDeps` → log warn + `None` runner;
+  daemon proceeds. `nexo_fork::AgentToolDispatcher` lives in
+  `nexo-fork` (not `nexo-core`) because nexo-fork already
+  depends on nexo-core — putting the bridge in nexo-core would
+  form a cycle. Boot wire commits: `5fe2cc0`. 2 new tests in
+  `boot.rs::tests` covering the `pre_dream_snapshot` field
+  threading. Out of scope: orchestrator
+  `.auto_dream(primary)` registration — the
+  `DriverOrchestrator::builder()` lives inside
+  `boot_dispatch_ctx_if_enabled` which runs BEFORE the
+  per-agent loop, so the runner Vec isn't populated when the
+  builder fires. Tracked as Phase 80.1.b.b.b.b multi-runner +
+  orchestrator wire follow-up. The runner is constructed and
+  available to the `dream_now` LLM tool today; automatic
+  per-turn dispatch via the orchestrator lands when the
+  refactor lands.
+- **80.1.b.b.b helper** ✅ **MVP** — shipped:
   `crates/dream/src/boot.rs` (~270 LOC + 7 unit tests). Operator
   calls `nexo_dream::boot::build_runner(BootDeps { ... })` once at
   startup; helper validates config, mkdirs memory_dir + state_root
