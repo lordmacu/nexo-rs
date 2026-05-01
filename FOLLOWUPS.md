@@ -1789,6 +1789,39 @@ Open:
   `nexo --version` + `nexo --help`. Real systemd start lives
   manually or in a future VM-based CI lane.
 
+### Phase 82.10.h.b — admin RPC wire-path follow-ups
+
+Phase 82.10.h.b shipped the full wire path (router + reader
+routing + audit-tail CLI + `AdminRpcBootstrap` module) but two
+items stayed deferred to keep the commit small:
+
+- **Pairing notifier wire-up.** `StdioPairingNotifier` is built
+  and unit-tested, but `AdminRpcBootstrap` currently feeds
+  `with_pairing_domain(_, None)`. The chicken-and-egg is that
+  the notifier needs an `mpsc::Sender<String>` BEFORE
+  `spawn_with` runs, while the live sender is only created
+  inside `spawn_with`. Solved by introducing a separate
+  notification queue (independent of the response writer) so
+  `nexo/notify/pairing_status_changed` frames flow without
+  depending on the deferred outbound writer's bind step. Until
+  this lands, microapps poll `pairing/status` on a 1–2 s
+  cadence — functional but chatty.
+- **Operator wire-up: `None → Some(&bootstrap)` in
+  `src/main.rs`.** `run_extension_discovery` already accepts
+  `Option<&AdminRpcBootstrap>` and threads it through the spawn
+  loop; the caller passes `None` for now. Activating the
+  pipeline needs a refactor that surfaces per-extension
+  `[capabilities.admin]` declarations from a single source of
+  truth (today re-parsed inside discovery + the bootstrap
+  itself), plus wiring a real Phase 18 reload signal. Both
+  isolated to a single new boot helper but touch enough of
+  main.rs that it deserves its own commit window when no
+  parallel workstream is mid-flight there.
+
+Both deferreds are NOT scope-drops; the building blocks are
+fully in place. Target phase: 82.10.h.c (or fold into the next
+82.x phase that touches main.rs boot order).
+
 ## Resolved (recent highlights)
 
 - 2026-04-28 — MCP denied-tool override now supports `Heartbeat`
