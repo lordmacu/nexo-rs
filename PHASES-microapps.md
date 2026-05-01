@@ -390,7 +390,7 @@ Done criteria:
 - 5+ unit tests + 1 integration test using a mock channel
   adapter.
 
-#### 82.4 — NATS event subject → agent turn binding   🔄  (foundations ✅ + runtime ✅, boot wiring deferred)
+#### 82.4 — NATS event subject → agent turn binding   ✅
 
 **Foundations shipped (82.4 MVP):**
 - `nexo-tool-meta::template` mustache-lite renderer
@@ -425,18 +425,27 @@ Done criteria:
   DropNewest / cancel-token shutdown / payload shape /
   resolver helper / auto-synth idempotency.
 
-**Deferred to 82.4.b.b (boot wiring + e2e + docs):**
-- `src/main.rs` boot supervisor wiring under shared
-  `event_subscribers_shutdown` `CancellationToken`.
-- Inbound resolver populator hookup (call
-  `extract_nexo_event_source` to fill
-  `BindingContext.event_source` on `plugin.inbound.event.*`
-  matches).
-- E2E integration test against the daemon (separate from the
-  in-tree unit tests, which already cover the broker
-  round-trip).
-- Operator docs `docs/src/ops/events.md`.
-- admin-ui tech-debt entry.
+**Boot wiring shipped (82.4.b.b ✅):**
+- `src/main.rs` boot supervisor wires `EventSubscriber` tasks
+  under shared `event_subscribers_shutdown` cancel token, with
+  per-binding validation (skip on error, log + keep daemon up).
+- Auto-synth mutation of `agent_cfg.inbound_bindings` at
+  YAML-load time so the existing inbound resolver matches
+  `plugin.inbound.event.<id>` re-publishes without operator
+  having to declare the binding twice.
+- Resolver populator hook in `runtime.rs:761` reads
+  `_nexo_event_source` extension field and chains
+  `with_event_source(meta)` on `plugin.inbound.event.*` topics
+  (gated on `binding.is_some()` to avoid hot-path debug spam).
+- Producer loop self-event guard — runtime drops events whose
+  `topic` matches the binding's own re-publish topic, even if
+  schema validate was bypassed.
+- `id` reserved-character validation rejects `.`, `*`, `>`,
+  whitespace at boot.
+- Operator docs `docs/src/ops/events.md` covers schema, modes,
+  template syntax, overflow policies, auto-synth behaviour,
+  hot-reload limitation, worked GitHub example.
+- admin-ui tech-debt entry registered.
 
 **Deferred to 82.4.c**: hot-reload `reevaluate` integration.
 **Deferred to 82.4.d**: operator CLI `nexo events list/test`.

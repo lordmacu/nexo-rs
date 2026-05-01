@@ -725,4 +725,11 @@ IOUs — features that landed in the daemon but have no UI yet.
   — useful smoke-test from the browser without leaving the
   admin UI. Source rows highlight red when `secret_env` is
   unset.
+- [ ] **Event subscribers dashboard (Phase 82.4.b.b)** —
+  per-binding event-rate counters, last-event timestamp,
+  drop-oldest/drop-newest counters, mode badge
+  (synthesize/tick/off), `nexo agent events test --binding
+  <id>` invocation surface (CLI deferred to 82.4.d). Source
+  rows highlight red when validation fails at boot
+  (`tracing::error!` line tied to the row).
 - [ ] (add lines as features land — see auto-memory rule)

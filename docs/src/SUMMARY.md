@@ -143,6 +143,7 @@
 - [Capability toggles](./ops/capabilities.md)
 - [Channel doctor (MCP)](./ops/channel-doctor.md)
 - [Webhook receiver](./ops/webhook-receiver.md)
+- [Event subscribers](./ops/events.md)
 - [Context optimization](./ops/context-optimization.md)
 - [Link understanding](./ops/link-understanding.md)
 - [Web search](./ops/web-search.md)
