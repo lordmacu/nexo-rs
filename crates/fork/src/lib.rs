@@ -31,7 +31,7 @@ pub use auto_mem_filter::{tool_names, AutoMemFilter, AutoMemFilterError};
 pub use cache_safe::{CacheSafeParams, CacheSafeSlot};
 pub use delegate_mode::DelegateMode;
 pub use error::ForkError;
-pub use fork_handle::{ForkHandle, ForkResult};
+pub use fork_handle::{fork_error_to_task_notification, ForkHandle, ForkResult};
 pub use fork_subagent::{DefaultForkSubagent, ForkParams, ForkSubagent, QuerySource};
 pub use on_message::{ChainCollector, LoggingCollector, NoopCollector, OnMessage};
 pub use overrides::{create_fork_context, ForkOverrides};

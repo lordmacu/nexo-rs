@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use futures::future::BoxFuture;
+use nexo_driver_types::{TaskNotification, TaskStatus, TaskUsage};
 use nexo_llm::types::{CacheUsage, ChatMessage, ChatRole, TokenUsage};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -122,6 +123,87 @@ impl ForkResult {
             }
         })
     }
+
+    /// Phase 84.2 — render this fork outcome as a
+    /// [`TaskNotification`] so the coordinator's session sees a
+    /// canonical `<task-notification>` envelope (Phase 84.2.1)
+    /// instead of free-form text.
+    ///
+    /// `task_id` is the worker's stable id (the `goal_id` from
+    /// `ForkHandle.goal_id` when the fork was registered, or any
+    /// caller-chosen handle when the fork was unregistered).
+    /// `summary` is a one-line synthesis from the consumer; if
+    /// omitted, the helper auto-derives one from the fork's first
+    /// 80 chars of `final_text` (or `"completed"` when empty).
+    /// `duration_ms` is wall-clock time the consumer measured;
+    /// the fork loop itself does not track wall time.
+    pub fn to_task_notification(
+        &self,
+        task_id: impl Into<String>,
+        summary: Option<String>,
+        duration_ms: u64,
+    ) -> TaskNotification {
+        let auto_summary = || {
+            self.final_text
+                .as_deref()
+                .map(|t| {
+                    t.chars()
+                        .take_while(|c| *c != '\n')
+                        .take(80)
+                        .collect::<String>()
+                })
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "completed".to_string())
+        };
+        TaskNotification {
+            task_id: task_id.into(),
+            status: TaskStatus::Completed,
+            summary: summary.unwrap_or_else(auto_summary),
+            result: self.final_text.clone(),
+            usage: Some(TaskUsage {
+                total_tokens: self.total_usage.prompt_tokens as u64
+                    + self.total_usage.completion_tokens as u64,
+                tool_uses: self.turns_executed as u64,
+                duration_ms,
+            }),
+        }
+    }
+}
+
+/// Phase 84.2 — render a [`ForkError`] as a failure-shaped
+/// [`TaskNotification`].
+///
+/// Maps abort-token cancellation to [`TaskStatus::Killed`] and
+/// budget breaches to [`TaskStatus::Timeout`]. All other errors
+/// resolve to [`TaskStatus::Failed`]. The error's `Display` text
+/// becomes the summary (XML-escaped at render time, so embedded
+/// `<`/`>`/`&` round-trip safely).
+pub fn fork_error_to_task_notification(
+    err: &ForkError,
+    task_id: impl Into<String>,
+    duration_ms: u64,
+) -> TaskNotification {
+    let status = match err {
+        ForkError::Aborted => TaskStatus::Killed,
+        ForkError::Timeout(_) => TaskStatus::Timeout,
+        _ => TaskStatus::Failed,
+    };
+    let usage = if duration_ms > 0 {
+        Some(TaskUsage {
+            total_tokens: 0,
+            tool_uses: 0,
+            duration_ms,
+        })
+    } else {
+        None
+    };
+    TaskNotification {
+        task_id: task_id.into(),
+        status,
+        summary: err.to_string(),
+        result: None,
+        usage,
+    }
 }
 
 #[cfg(test)]
@@ -204,6 +286,102 @@ mod tests {
             abort.is_cancelled(),
             "drop must cancel abort when completion was never consumed"
         );
+    }
+
+    fn fork_result_with(final_text: Option<&str>, prompt: u32, completion: u32, turns: u32) -> ForkResult {
+        ForkResult {
+            messages: vec![],
+            total_usage: TokenUsage {
+                prompt_tokens: prompt,
+                completion_tokens: completion,
+            },
+            total_cache_usage: CacheUsage::default(),
+            final_text: final_text.map(str::to_string),
+            turns_executed: turns,
+        }
+    }
+
+    #[test]
+    fn to_task_notification_completed_with_explicit_summary() {
+        let r = fork_result_with(Some("Found bug in auth.rs:142"), 800, 200, 5);
+        let n = r.to_task_notification("goal-x", Some("explicit summary".into()), 12_000);
+        assert_eq!(n.task_id, "goal-x");
+        assert_eq!(n.status, TaskStatus::Completed);
+        assert_eq!(n.summary, "explicit summary");
+        assert_eq!(n.result.as_deref(), Some("Found bug in auth.rs:142"));
+        let u = n.usage.expect("usage present");
+        assert_eq!(u.total_tokens, 1_000);
+        assert_eq!(u.tool_uses, 5);
+        assert_eq!(u.duration_ms, 12_000);
+    }
+
+    #[test]
+    fn to_task_notification_auto_summary_uses_first_line() {
+        let r = fork_result_with(
+            Some("Header line first\nBody line second"),
+            0,
+            0,
+            1,
+        );
+        let n = r.to_task_notification("g", None, 0);
+        assert_eq!(n.summary, "Header line first");
+    }
+
+    #[test]
+    fn to_task_notification_auto_summary_caps_at_80_chars() {
+        let long = "x".repeat(200);
+        let r = fork_result_with(Some(&long), 0, 0, 1);
+        let n = r.to_task_notification("g", None, 0);
+        assert_eq!(n.summary.chars().count(), 80);
+    }
+
+    #[test]
+    fn to_task_notification_falls_back_when_no_final_text() {
+        let r = fork_result_with(None, 0, 0, 1);
+        let n = r.to_task_notification("g", None, 0);
+        assert_eq!(n.summary, "completed");
+        assert!(n.result.is_none());
+    }
+
+    #[test]
+    fn fork_error_aborted_maps_to_killed() {
+        let err = ForkError::Aborted;
+        let n = fork_error_to_task_notification(&err, "g", 500);
+        assert_eq!(n.status, TaskStatus::Killed);
+        assert_eq!(n.summary, "Aborted by caller");
+        assert!(n.result.is_none());
+    }
+
+    #[test]
+    fn fork_error_timeout_maps_to_timeout() {
+        let err = ForkError::Timeout(std::time::Duration::from_secs(60));
+        let n = fork_error_to_task_notification(&err, "g", 60_000);
+        assert_eq!(n.status, TaskStatus::Timeout);
+        let u = n.usage.expect("usage when duration > 0");
+        assert_eq!(u.duration_ms, 60_000);
+    }
+
+    #[test]
+    fn fork_error_other_maps_to_failed() {
+        let err = ForkError::Llm("network".into());
+        let n = fork_error_to_task_notification(&err, "g", 0);
+        assert_eq!(n.status, TaskStatus::Failed);
+        // duration_ms == 0 collapses usage entirely.
+        assert!(n.usage.is_none());
+    }
+
+    #[test]
+    fn to_task_notification_renders_clean_xml() {
+        // End-to-end: ForkResult → TaskNotification → XML.
+        let r = fork_result_with(Some("if a < b && c > d {}"), 100, 50, 2);
+        let n = r.to_task_notification("g-xml", None, 0);
+        let xml = n.to_xml();
+        assert!(xml.contains("<status>completed</status>"));
+        assert!(xml.contains("&lt;"));
+        assert!(xml.contains("&amp;"));
+        // Round-trip safety.
+        let parsed = TaskNotification::parse_block(&xml).expect("parse");
+        assert_eq!(parsed.result.as_deref(), Some("if a < b && c > d {}"));
     }
 
     #[test]
