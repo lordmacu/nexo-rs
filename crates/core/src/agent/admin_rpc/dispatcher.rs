@@ -30,6 +30,7 @@ use super::capabilities::CapabilitySet;
 use super::domains::agent_events::TranscriptReader;
 use super::domains::agents::YamlPatcher;
 use super::domains::credentials::CredentialStore;
+use super::domains::escalations::EscalationStore;
 use super::domains::llm_providers::LlmYamlPatcher;
 use super::domains::pairing::{PairingChallengeStore, PairingNotifier};
 use super::domains::processing::ProcessingControlStore;
@@ -161,6 +162,12 @@ pub struct AdminRpcDispatcher {
     /// Phase 82.13 — processing control store. `None` disables
     /// `nexo/admin/processing/*`.
     processing_store: Option<Arc<dyn ProcessingControlStore>>,
+    /// Phase 82.14 — escalation store. `None` disables
+    /// `nexo/admin/escalations/*`. When BOTH this and
+    /// `processing_store` are configured, a `pause` call
+    /// auto-flips any matching `Pending` escalation to
+    /// `Resolved { OperatorTakeover }`.
+    escalation_store: Option<Arc<dyn EscalationStore>>,
 }
 
 impl std::fmt::Debug for AdminRpcDispatcher {
@@ -194,6 +201,7 @@ impl AdminRpcDispatcher {
             llm_yaml: None,
             transcript_reader: None,
             processing_store: None,
+            escalation_store: None,
         }
     }
 
@@ -276,6 +284,18 @@ impl AdminRpcDispatcher {
         self
     }
 
+    /// Phase 82.14 — install the escalations domain.
+    /// Production wires the in-memory adapter; SQLite-backed
+    /// durable variant is a 82.14.b follow-up. `None` disables
+    /// `nexo/admin/escalations/*`.
+    pub fn with_escalations_domain(
+        mut self,
+        store: Arc<dyn EscalationStore>,
+    ) -> Self {
+        self.escalation_store = Some(store);
+        self
+    }
+
     /// Phase 82.10.f — install the channels domain. Reuses the
     /// agents-domain `YamlPatcher` + `ReloadSignal` (channels
     /// live in `agents.yaml.<id>.channels.approved`).
@@ -324,6 +344,12 @@ impl AdminRpcDispatcher {
             | "nexo/admin/processing/resume"
             | "nexo/admin/processing/intervention"
             | "nexo/admin/processing/state" => Some("operator_intervention"),
+            // Phase 82.14 — escalations: `list` is read-only,
+            // `resolve` mutates. Two granular caps so
+            // operator-readonly UIs (dashboards) hold the
+            // weaker grant.
+            "nexo/admin/escalations/list" => Some("escalations_read"),
+            "nexo/admin/escalations/resolve" => Some("escalations_resolve"),
             // `reload` requires any granted CRUD capability — operators
             // who can mutate yaml can also force-trigger the reload.
             // Resolution falls through to `agents_crud` since it's the
@@ -608,6 +634,30 @@ impl AdminRpcDispatcher {
             },
             "nexo/admin/processing/pause" => match &self.processing_store {
                 Some(store) => {
+                    // Phase 82.14 cross-cut: auto-resolve any
+                    // pending escalation matching the same
+                    // scope before flipping the pause state.
+                    // Best-effort — failures here are logged
+                    // but never block the pause itself.
+                    if let Some(escalations) = &self.escalation_store {
+                        if let Ok(p) = serde_json::from_value::<
+                            nexo_tool_meta::admin::processing::ProcessingPauseParams,
+                        >(params.clone())
+                        {
+                            if let Err(e) =
+                                super::domains::escalations::auto_resolve_on_pause(
+                                    escalations.as_ref(),
+                                    &p.scope,
+                                )
+                                .await
+                            {
+                                tracing::warn!(
+                                    error = %e,
+                                    "auto_resolve_on_pause failed; pausing anyway",
+                                );
+                            }
+                        }
+                    }
                     super::domains::processing::pause(store.as_ref(), params).await
                 }
                 None => AdminRpcResult::err(AdminRpcError::Internal(
@@ -636,6 +686,22 @@ impl AdminRpcDispatcher {
                 }
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "processing domain not configured".into(),
+                )),
+            },
+            "nexo/admin/escalations/list" => match &self.escalation_store {
+                Some(store) => {
+                    super::domains::escalations::list(store.as_ref(), params).await
+                }
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "escalations domain not configured".into(),
+                )),
+            },
+            "nexo/admin/escalations/resolve" => match &self.escalation_store {
+                Some(store) => {
+                    super::domains::escalations::resolve(store.as_ref(), params).await
+                }
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "escalations domain not configured".into(),
                 )),
             },
             "nexo/admin/reload" => match &self.reload_signal {
