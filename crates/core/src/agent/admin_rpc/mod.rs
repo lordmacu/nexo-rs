@@ -1,0 +1,18 @@
+//! Phase 82.10 — admin RPC dispatcher.
+//!
+//! Receives JSON-RPC requests with `app:` ID prefix initiated by
+//! microapps over their stdio transport, looks up the handler for
+//! `nexo/admin/<domain>/<method>`, checks the operator-granted
+//! capability, runs the handler, and returns a typed result.
+//!
+//! Sub-phase scope:
+//! - **82.10.a** (this file): single mock `nexo/admin/echo` handler
+//!   for end-to-end shape validation. Capability gates + audit
+//!   land in 82.10.b.
+//! - **82.10.b**: `CapabilitySet`, boot validation, audit log.
+//! - **82.10.c-f**: 5 admin domains (agents / credentials /
+//!   pairing / llm_providers / channels).
+
+pub mod dispatcher;
+
+pub use dispatcher::{AdminRpcDispatcher, AdminRpcError, AdminRpcResult};

@@ -18,6 +18,7 @@ workspace = true
 
 [features]
 default      = []
+admin        = ["dep:dashmap"]
 outbound     = []
 test-harness = []
 webhook      = []
@@ -25,13 +26,17 @@ webhook      = []
 [dependencies]
 serde       = { workspace = true, features = ["derive"] }
 serde_json  = { workspace = true }
-tokio       = { workspace = true, features = ["io-std", "io-util", "macros", "rt-multi-thread", "sync"] }
+tokio       = { workspace = true, features = ["io-std", "io-util", "macros", "rt-multi-thread", "sync", "time"] }
 async-trait = { workspace = true }
 thiserror   = { workspace = true }
 tracing     = { workspace = true }
 tracing-subscriber = { workspace = true }
 nexo-tool-meta = { workspace = true }
 uuid        = { workspace = true }
+# Phase 82.10 — admin RPC pending-request map. Optional dep
+# (only the `admin` feature pulls it). Keeps the default
+# microapp dep tree slim.
+dashmap     = { workspace = true, optional = true }
 
 [dev-dependencies]
 nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound"] }

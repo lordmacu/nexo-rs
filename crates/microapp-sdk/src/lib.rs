@@ -36,6 +36,9 @@ pub mod logging;
 pub mod reply;
 pub mod runtime;
 
+#[cfg(feature = "admin")]
+pub mod admin;
+
 #[cfg(feature = "outbound")]
 pub mod outbound;
 
@@ -52,6 +55,9 @@ pub use runtime::ToolHandler;
 
 #[cfg(feature = "outbound")]
 pub use outbound::{DispatchAck, DispatchError, OutboundDispatcher};
+
+#[cfg(feature = "admin")]
+pub use admin::{AdminClient, AdminError, AdminSender, DEFAULT_ADMIN_TIMEOUT};
 
 #[cfg(feature = "test-harness")]
 pub use test_harness::{MicroappTestError, MicroappTestHarness};
