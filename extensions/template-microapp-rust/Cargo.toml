@@ -1,0 +1,26 @@
+[package]
+name = "template-microapp-rust"
+description = "Skeleton stdio microapp for Nexo (Phase 83.7) — copy + rename to start a new microapp."
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["Cristian Garcia <informacion@cristiangarcia.co>"]
+publish = false
+
+[[bin]]
+name = "template-microapp-rust"
+path = "src/main.rs"
+
+[dependencies]
+# In-tree dev path. When you copy this template out of the
+# nexo-rs workspace, swap to the published version once the SDK
+# ships to crates.io:
+#   nexo-microapp-sdk = "0.1"
+nexo-microapp-sdk = { path = "../../crates/microapp-sdk" }
+
+anyhow       = "1"
+async-trait  = "0.1"
+serde        = { version = "1", features = ["derive"] }
+serde_json   = "1"
+tokio        = { version = "1", features = ["macros", "rt-multi-thread", "io-util", "io-std"] }
+tracing      = "0.1"

@@ -1,0 +1,16 @@
+[plugin]
+id = "template-microapp-rust"
+version = "0.1.0"
+name = "Microapp Template (Rust)"
+description = "Skeleton microapp using nexo-microapp-sdk. Copy + rename to bootstrap a domain-specific microapp."
+
+[capabilities]
+tools = ["greet", "ping"]
+
+[transport]
+kind = "stdio"
+command = "./template-microapp-rust"
+
+[meta]
+author = "nexo-rs"
+license = "MIT OR Apache-2.0"
