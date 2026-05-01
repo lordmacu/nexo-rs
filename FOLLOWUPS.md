@@ -193,7 +193,7 @@ coordinación de archivos cross-cutting.
 - **81.11 ⬜** Plugin doctor + capability inventory integration.
 - **81.12 ⬜** Existing-plugin migration
   (whatsapp/telegram/email/browser → `NexoPlugin` impls).
-- **81.13 ⬜** Reference plugin template
+- **81.13 ⬜ DEFER** Reference plugin template
   (`nexo plugin new <name>` CLI) + docs +
   `crates/plugins/sales-agent/` reference example.
 

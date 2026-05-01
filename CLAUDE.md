@@ -9,14 +9,18 @@ tracker**.
 
 | Phase | Name | Sub-phases | Status |
 |-------|------|-----------|--------|
-| 80 | Autonomous assistant mode | 25/22 | 🔄 follow-ups open |
-| 81 | Plug-and-play plugin system | 2/13 | 🔄 |
+| 80 | Autonomous assistant mode | 25/22 | 🔄 follow-ups open (80.7 DEFER, 80.13 ❌ DROPPED) |
+| 81 | Plug-and-play plugin system | 2/13 | 🔄 (81.13 DEFER) |
 | 82 | Multi-tenant SaaS extension enablement | 6/14 | 🔄 |
-| 83 | Microapp framework foundation | 1/14 | 🔄 |
+| 83 | Microapp framework foundation | 1/17 | 🔄 (3 new sub-phases: 83.15 testing harness, 83.16 error→operator, 83.17 config schema validation) |
 | 84 | Coordinator agent persona + worker continuation | 0/5 | ⭐ **PRIORITY — next pickup** (brainstorm + spec + plan approved; ready for `/forge ejecutar 84.1`) |
 | 85 | Compaction hardening: reactive recovery + cache-aware micro-compact | 0/2 | ⬜ |
-| 86 | Memory observability + cache debug affordance | 0/2 | ⬜ |
-| 87 | LLM-as-judge verifier + container runtime dispatcher | 0/2 | ⬜ (87.2 DEFER until Phase 32 or 82 demands harder isolation) |
+| 86 | Memory observability | 0/1 | ⬜ (86.2 ❌ DROPPED) |
+| 87 | LLM-as-judge verifier (+ container runtime DEFER) | 0/1 | ⬜ AFTER-PHASE-84 (87.2 DEFER until Phase 32 or 82 hardening) |
+
+**Curation 2026-05-01** (single source of truth for active scope):
+[`PHASES-curated.md`](PHASES-curated.md) — what is active, what was
+dropped/deferred, and why.
 
 - **Detail per sub-phase** → [`PHASES.md`](PHASES.md)
 - **Open follow-ups** (deferred items, deferreds against closed phases) → [`FOLLOWUPS.md`](FOLLOWUPS.md)
