@@ -71,6 +71,14 @@ pub struct InboundMessage {
     /// heartbeat, proactive ticks) so trusted-only dispatch fails closed
     /// unless intake explicitly marked the sender as admitted.
     pub sender_trusted: bool,
+    /// Phase 82.5 — per-turn inbound metadata (provider-native
+    /// sender id, msg id, reply target, has_media flag, …) built
+    /// at the intake site from the raw `InboundEvent` payload.
+    /// Carried on the message so the per-turn dispatch loop can
+    /// stamp it on the cloned `AgentContext` before invoking the
+    /// LLM / tools (see `extension_tool::inject_context_meta`).
+    /// `None` for legacy paths not yet migrated.
+    pub inbound: Option<nexo_tool_meta::InboundMessageMeta>,
 }
 /// Normalized media reference the agent runtime can pass to LLMs (via
 /// `Attachment`) or downstream skills (whisper/OCR/pdf-extract).
@@ -95,6 +103,7 @@ impl InboundMessage {
             media: None,
             priority: MessagePriority::Next,
             sender_trusted: false,
+            inbound: None,
         }
     }
 }

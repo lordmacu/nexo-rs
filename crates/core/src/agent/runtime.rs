@@ -6,6 +6,7 @@ use super::peer_directory::PeerDirectory;
 use super::routing::{route_topic, AgentMessage, AgentPayload, AgentRouter};
 use super::sender_rate_limit::SenderRateLimiter;
 use super::types::{InboundMedia, InboundMessage, MessagePriority, RunTrigger};
+use nexo_tool_meta::InboundMessageMeta;
 use crate::heartbeat::{heartbeat_interval, heartbeat_topic, publish_heartbeat};
 use crate::runtime_snapshot::RuntimeSnapshot;
 use crate::session::SessionManager;
@@ -709,6 +710,15 @@ impl AgentRuntime {
                         msg.media = media;
                         msg.priority = parse_inbound_priority(&event.payload);
                         msg.sender_trusted = sender_trusted;
+                        // Phase 82.5 — provider-agnostic inbound meta
+                        // built from the raw payload (works for whatsapp
+                        // today; same shape extends to telegram/email/
+                        // future channels without code change).
+                        msg.inbound = extract_inbound_meta(
+                            &event.payload,
+                            msg.sender_id.as_deref(),
+                            msg.media.is_some(),
+                        );
                         let message_id = msg.id;
                         // Atomic get-or-insert: DashMap::entry::or_insert_with
                         // guarantees only one task is spawned per session even
@@ -1347,6 +1357,14 @@ async fn flush(
                 sender_id.clone().unwrap_or_default(),
             );
         }
+        // Phase 82.5 — layer the per-turn inbound meta built at the
+        // intake site so `AgentContext::build_meta_value` (called by
+        // extension_tool / mcp_tool) stamps `_meta.nexo.inbound` on
+        // outgoing tool calls with the *current* turn's data, not
+        // the session's first turn.
+        if let Some(ref imeta) = msg.inbound {
+            turn_ctx = turn_ctx.with_inbound_meta(imeta.clone());
+        }
         inc_messages_processed_total(&ctx.agent_id);
         let span = tracing::info_span!(
             "agent.message",
@@ -1466,6 +1484,62 @@ fn parse_session_id_from_context(context: &Value) -> Option<Uuid> {
         .and_then(|v| v.as_str())
         .and_then(|s| Uuid::parse_str(s).ok())
 }
+/// Phase 82.5 — build an [`InboundMessageMeta`] from a raw plugin
+/// payload. Provider-agnostic: works for any inbound shape that
+/// exposes the standard fields (`from`, `msg_id`, `timestamp`,
+/// optional `reply_to`).
+///
+/// Returns `None` when the payload carries neither `msg_id` nor
+/// `from` (e.g. status events, typing notifications). The caller
+/// already gates LLM dispatch on text/media presence so a `None`
+/// here just means "no meta to stamp" — the turn proceeds without
+/// inbound bucket on `_meta.nexo.inbound`.
+///
+/// `has_media` is sourced from the caller (after
+/// `extract_inbound_media`) rather than re-derived here so the two
+/// helpers stay independent.
+fn extract_inbound_meta(
+    payload: &Value,
+    sender_id: Option<&str>,
+    has_media: bool,
+) -> Option<InboundMessageMeta> {
+    let msg_id = payload.get("msg_id").and_then(|v| v.as_str());
+    if sender_id.is_none() && msg_id.is_none() {
+        return None;
+    }
+    let mut meta = match (sender_id, msg_id) {
+        (Some(s), Some(m)) => InboundMessageMeta::external_user(s, m),
+        (Some(s), None) => {
+            // Synthesise a stable msg_id so dedupe / idempotency
+            // consumers always have a non-empty key. Uses the
+            // sender + a uuid v4 to avoid collisions across users.
+            let synth = format!("synth.{}.{}", s, Uuid::new_v4());
+            InboundMessageMeta::external_user(s, synth)
+        }
+        (None, Some(m)) => {
+            let mut m_meta = InboundMessageMeta::external_user("anonymous", m);
+            m_meta.sender_id = None;
+            m_meta
+        }
+        (None, None) => unreachable!(),
+    };
+    // Provider-supplied epoch seconds (whatsapp / telegram convention).
+    if let Some(ts_secs) = payload.get("timestamp").and_then(|v| v.as_i64()) {
+        if let Some(dt) = chrono::DateTime::<chrono::Utc>::from_timestamp(ts_secs, 0) {
+            meta = meta.with_ts(dt);
+        }
+    }
+    if let Some(reply) = payload.get("reply_to").and_then(|v| v.as_str()) {
+        if !reply.is_empty() {
+            meta = meta.with_reply_to(reply);
+        }
+    }
+    if has_media {
+        meta = meta.with_media();
+    }
+    Some(meta)
+}
+
 /// Pull a media reference from an inbound plugin payload. Plugins flatten
 /// `media_kind` + `media_path` at the top level (see telegram's
 /// `InboundEvent::to_payload`) so this helper is wire-format agnostic.
@@ -1656,6 +1730,71 @@ mod tests {
             parse_inbound_topic("plugin.inbound."),
             (String::new(), None)
         );
+    }
+
+    #[test]
+    fn extract_inbound_meta_from_text_message_populates_sender_msg_ts() {
+        let payload = serde_json::json!({
+            "kind": "message",
+            "from": "+5491100",
+            "msg_id": "wa.ABCD1234",
+            "timestamp": 1_756_700_096_i64,
+        });
+        let meta = extract_inbound_meta(&payload, Some("+5491100"), false)
+            .expect("meta should build");
+        assert_eq!(meta.kind, nexo_tool_meta::InboundKind::ExternalUser);
+        assert_eq!(meta.sender_id.as_deref(), Some("+5491100"));
+        assert_eq!(meta.msg_id.as_deref(), Some("wa.ABCD1234"));
+        assert!(meta.inbound_ts.is_some());
+        assert!(!meta.has_media);
+        assert!(meta.reply_to_msg_id.is_none());
+    }
+
+    #[test]
+    fn extract_inbound_meta_with_reply_and_media_layers_correctly() {
+        let payload = serde_json::json!({
+            "kind": "message",
+            "from": "+5491100",
+            "msg_id": "wa.ABCD",
+            "reply_to": "wa.PREV0001",
+            "timestamp": 1_756_700_096_i64,
+        });
+        let meta = extract_inbound_meta(&payload, Some("+5491100"), true)
+            .expect("meta should build");
+        assert!(meta.has_media);
+        assert_eq!(meta.reply_to_msg_id.as_deref(), Some("wa.PREV0001"));
+    }
+
+    #[test]
+    fn extract_inbound_meta_returns_none_when_neither_sender_nor_msg_id() {
+        let payload = serde_json::json!({"kind": "status"});
+        assert!(extract_inbound_meta(&payload, None, false).is_none());
+    }
+
+    #[test]
+    fn extract_inbound_meta_synthesises_msg_id_when_absent_but_sender_present() {
+        // Status events / reactions sometimes lack msg_id but carry
+        // sender — synthesise a stable id so dedupe consumers always
+        // have a key.
+        let payload = serde_json::json!({"from": "+5491100"});
+        let meta = extract_inbound_meta(&payload, Some("+5491100"), false)
+            .expect("meta should build");
+        assert!(meta.msg_id.as_deref().unwrap().starts_with("synth.+5491100."));
+    }
+
+    #[test]
+    fn extract_inbound_meta_provider_agnostic_telegram_shape() {
+        // Same shape works for telegram (future) — proves the helper
+        // is not whatsapp-specific.
+        let payload = serde_json::json!({
+            "from": "tg.user_42",
+            "msg_id": "tg.msg.7",
+            "timestamp": 1_756_700_096_i64,
+        });
+        let meta = extract_inbound_meta(&payload, Some("tg.user_42"), false)
+            .expect("meta should build");
+        assert_eq!(meta.sender_id.as_deref(), Some("tg.user_42"));
+        assert_eq!(meta.msg_id.as_deref(), Some("tg.msg.7"));
     }
 
     #[test]
