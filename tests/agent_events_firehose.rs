@@ -31,6 +31,7 @@ fn extensions_cfg_with_grant(id: &str, caps: &[&str]) -> ExtensionsConfig {
     let mut cfg = empty_extensions_cfg();
     let entry = ExtensionEntry {
         capabilities_grant: caps.iter().map(|s| s.to_string()).collect(),
+        allow_external_bind: false,
     };
     cfg.entries.insert(id.to_string(), entry);
     cfg
@@ -74,6 +75,7 @@ async fn firehose_delivers_redacted_frame_to_subscribed_microapp() {
             audit_db: None,
             extensions_cfg: &cfg,
             admin_capabilities: &manifests,
+            http_server_capabilities: &BTreeMap::new(),
             reload_signal: Arc::new(|| {}),
             transcript_reader: None,
         },
@@ -168,6 +170,7 @@ async fn microapp_without_subscribe_capability_receives_no_frames() {
             audit_db: None,
             extensions_cfg: &cfg,
             admin_capabilities: &manifests,
+            http_server_capabilities: &BTreeMap::new(),
             reload_signal: Arc::new(|| {}),
             transcript_reader: None,
         },

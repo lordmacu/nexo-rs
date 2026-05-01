@@ -35,7 +35,7 @@ use nexo_core::agent::agent_events::{
 };
 use nexo_extensions::runtime::admin_router::SharedAdminRouter;
 use nexo_extensions::runtime::stdio::StdioSpawnOptions;
-use nexo_plugin_manifest::manifest::AdminCapabilities;
+use nexo_plugin_manifest::manifest::{AdminCapabilities, HttpServerCapability};
 use nexo_tool_meta::admin::agent_events::{AgentEventKind, AGENT_EVENT_NOTIFY_METHOD};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::task::JoinHandle;
@@ -111,8 +111,22 @@ impl Drop for AdminRpcBootstrap {
 /// the microapp would otherwise crash on first call.
 #[derive(Debug, thiserror::Error)]
 pub enum AdminBootstrapError {
+    /// Capability validation failed (required cap missing,
+    /// orphan, etc.).
     #[error("admin capability boot validation failed: {0}")]
     CapabilityValidation(String),
+    /// Phase 82.12 — extension declared a non-loopback HTTP
+    /// bind without flipping
+    /// `extensions.yaml.<id>.allow_external_bind = true`.
+    /// Defense-in-depth — fail the boot rather than silently
+    /// expose the microapp to LAN.
+    #[error("extension `{microapp_id}` declares http_server bind=`{bind}` but `allow_external_bind` is false")]
+    ExternalBindNotAllowed {
+        /// Offending microapp id.
+        microapp_id: String,
+        /// Bind address from `plugin.toml`.
+        bind: String,
+    },
 }
 
 /// Inputs the daemon hands to [`AdminRpcBootstrap::build`].
@@ -131,6 +145,14 @@ pub struct AdminBootstrapInputs<'a> {
     /// Per-extension `[capabilities.admin]` block from each
     /// discovered `plugin.toml`. Keyed by extension id.
     pub admin_capabilities: &'a BTreeMap<String, AdminCapabilities>,
+    /// Phase 82.12 — per-extension `[capabilities.http_server]`
+    /// block from `plugin.toml`. Boot validates the bind policy
+    /// against `extensions.yaml.<id>.allow_external_bind`. v0
+    /// only checks the policy; the actual probe + monitor loop
+    /// are spawned by main.rs after `initialize` returns. Keys
+    /// match `admin_capabilities`; missing entries skip the
+    /// bind check.
+    pub http_server_capabilities: &'a BTreeMap<String, HttpServerCapability>,
     /// Phase 18 reload signal — invoked by domain handlers
     /// after a successful yaml mutation.
     pub reload_signal: ReloadSignal,
@@ -212,6 +234,28 @@ impl AdminRpcBootstrap {
             tracing::warn!(detail = ?warn, "admin capability boot warning");
         }
         let capability_set = CapabilitySet::from_grants(report.grants);
+
+        // Phase 82.12 — validate http_server bind policy. Each
+        // extension that declares a non-loopback bind must have
+        // `extensions.yaml.<id>.allow_external_bind = true` or
+        // boot fails. Loopback (127.0.0.1 / ::1 / localhost) is
+        // always allowed.
+        for (microapp_id, decl) in inputs.http_server_capabilities {
+            let allow_external = inputs
+                .extensions_cfg
+                .entries
+                .get(microapp_id)
+                .map(|e| e.allow_external_bind)
+                .unwrap_or(false);
+            if let Err(bind) =
+                crate::http_supervisor::validate_bind_policy(decl, allow_external)
+            {
+                return Err(AdminBootstrapError::ExternalBindNotAllowed {
+                    microapp_id: microapp_id.clone(),
+                    bind,
+                });
+            }
+        }
 
         // Audit writer — single instance shared across every
         // dispatcher.
@@ -473,6 +517,7 @@ mod tests {
         let mut cfg = empty_extensions_cfg();
         let entry = nexo_config::types::extensions::ExtensionEntry {
             capabilities_grant: caps.iter().map(|s| s.to_string()).collect(),
+            allow_external_bind: false,
         };
         cfg.entries.insert(id.to_string(), entry);
         cfg
@@ -500,6 +545,7 @@ mod tests {
             audit_db: None,
             extensions_cfg: &cfg,
             admin_capabilities: &manifests,
+            http_server_capabilities: &BTreeMap::new(),
             reload_signal: noop_reload(),
             transcript_reader: None,
         })
@@ -523,6 +569,7 @@ mod tests {
             audit_db: None,
             extensions_cfg: &cfg,
             admin_capabilities: &manifests,
+            http_server_capabilities: &BTreeMap::new(),
             reload_signal: noop_reload(),
             transcript_reader: None,
         })
@@ -547,6 +594,7 @@ mod tests {
             audit_db: None,
             extensions_cfg: &cfg,
             admin_capabilities: &manifests,
+            http_server_capabilities: &BTreeMap::new(),
             reload_signal: noop_reload(),
             transcript_reader: None,
         })
@@ -585,6 +633,7 @@ mod tests {
                 audit_db: None,
                 extensions_cfg: &cfg,
                 admin_capabilities: &manifests,
+                http_server_capabilities: &BTreeMap::new(),
                 reload_signal: noop_reload(),
                 transcript_reader: None,
             },
@@ -616,6 +665,7 @@ mod tests {
                 audit_db: None,
                 extensions_cfg: &cfg,
                 admin_capabilities: &manifests,
+                http_server_capabilities: &BTreeMap::new(),
                 reload_signal: noop_reload(),
                 transcript_reader: None,
             },
@@ -646,6 +696,7 @@ mod tests {
                 audit_db: None,
                 extensions_cfg: &cfg,
                 admin_capabilities: &manifests,
+                http_server_capabilities: &BTreeMap::new(),
                 reload_signal: noop_reload(),
                 transcript_reader: None,
             },
@@ -655,6 +706,128 @@ mod tests {
         .unwrap()
         .expect("admin wire built");
         assert_eq!(bootstrap.subscribe_task_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn external_bind_without_opt_in_fails_boot() {
+        use nexo_plugin_manifest::manifest::HttpServerCapability;
+        let cfg = extensions_cfg_with_grant("agent-creator", &["agents_crud"]);
+        let mut manifests = BTreeMap::new();
+        manifests.insert(
+            "agent-creator".into(),
+            admin_caps(&["agents_crud"], &[]),
+        );
+        let mut http: BTreeMap<String, HttpServerCapability> = BTreeMap::new();
+        http.insert(
+            "agent-creator".into(),
+            HttpServerCapability {
+                port: 9001,
+                bind: "0.0.0.0".into(),
+                token_env: "T".into(),
+                health_path: "/healthz".into(),
+            },
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let err = AdminRpcBootstrap::build_with_firehose(
+            AdminBootstrapInputs {
+                config_dir: dir.path(),
+                secrets_root: dir.path(),
+                audit_db: None,
+                extensions_cfg: &cfg,
+                admin_capabilities: &manifests,
+                http_server_capabilities: &http,
+                reload_signal: noop_reload(),
+                transcript_reader: None,
+            },
+            true,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, AdminBootstrapError::ExternalBindNotAllowed { .. }),
+            "got: {err:?}",
+        );
+    }
+
+    #[tokio::test]
+    async fn external_bind_with_opt_in_passes_boot() {
+        use nexo_plugin_manifest::manifest::HttpServerCapability;
+        let mut cfg = extensions_cfg_with_grant("agent-creator", &["agents_crud"]);
+        // Flip the opt-in flag.
+        if let Some(entry) = cfg.entries.get_mut("agent-creator") {
+            entry.allow_external_bind = true;
+        }
+        let mut manifests = BTreeMap::new();
+        manifests.insert(
+            "agent-creator".into(),
+            admin_caps(&["agents_crud"], &[]),
+        );
+        let mut http: BTreeMap<String, HttpServerCapability> = BTreeMap::new();
+        http.insert(
+            "agent-creator".into(),
+            HttpServerCapability {
+                port: 9001,
+                bind: "0.0.0.0".into(),
+                token_env: "T".into(),
+                health_path: "/healthz".into(),
+            },
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let bootstrap = AdminRpcBootstrap::build_with_firehose(
+            AdminBootstrapInputs {
+                config_dir: dir.path(),
+                secrets_root: dir.path(),
+                audit_db: None,
+                extensions_cfg: &cfg,
+                admin_capabilities: &manifests,
+                http_server_capabilities: &http,
+                reload_signal: noop_reload(),
+                transcript_reader: None,
+            },
+            true,
+        )
+        .await
+        .unwrap()
+        .expect("bootstrap built");
+        assert!(bootstrap.is_active());
+    }
+
+    #[tokio::test]
+    async fn loopback_bind_never_requires_opt_in() {
+        use nexo_plugin_manifest::manifest::HttpServerCapability;
+        let cfg = extensions_cfg_with_grant("agent-creator", &["agents_crud"]);
+        let mut manifests = BTreeMap::new();
+        manifests.insert(
+            "agent-creator".into(),
+            admin_caps(&["agents_crud"], &[]),
+        );
+        let mut http: BTreeMap<String, HttpServerCapability> = BTreeMap::new();
+        http.insert(
+            "agent-creator".into(),
+            HttpServerCapability {
+                port: 9001,
+                bind: "127.0.0.1".into(),
+                token_env: "T".into(),
+                health_path: "/healthz".into(),
+            },
+        );
+        let dir = tempfile::tempdir().unwrap();
+        // allow_external_bind stays false; should still pass.
+        let _ = AdminRpcBootstrap::build_with_firehose(
+            AdminBootstrapInputs {
+                config_dir: dir.path(),
+                secrets_root: dir.path(),
+                audit_db: None,
+                extensions_cfg: &cfg,
+                admin_capabilities: &manifests,
+                http_server_capabilities: &http,
+                reload_signal: noop_reload(),
+                transcript_reader: None,
+            },
+            true,
+        )
+        .await
+        .expect("bootstrap built");
     }
 
     #[tokio::test]
@@ -676,6 +849,7 @@ mod tests {
                 audit_db: None,
                 extensions_cfg: &cfg,
                 admin_capabilities: &manifests,
+                http_server_capabilities: &BTreeMap::new(),
                 reload_signal: noop_reload(),
                 transcript_reader: None,
             },
