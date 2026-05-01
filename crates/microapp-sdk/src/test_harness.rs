@@ -75,7 +75,7 @@ impl MicroappTestHarness {
     ) -> Result<Value, MicroappTestError> {
         if let Some(b) = binding {
             // Inject _meta.nexo.binding into arguments.
-            let meta = nexo_tool_meta::build_meta_value(&b.agent_id, b.session_id, Some(&b));
+            let meta = nexo_tool_meta::build_meta_value(&b.agent_id, b.session_id, Some(&b), None);
             if let Some(obj) = arguments.as_object_mut() {
                 obj.insert("_meta".into(), meta);
             } else {
