@@ -24,6 +24,7 @@ pub mod admin_adapters;
 pub mod admin_bootstrap;
 pub mod agent_wizard;
 pub mod capabilities;
+pub mod http_supervisor;
 #[cfg(feature = "config-self-edit")]
 pub mod config_tool_bridge;
 pub mod credentials_check;
