@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use thiserror::Error;
 
+pub mod admin_router;
 pub mod announce;
 pub mod directory;
 pub mod nats;
@@ -13,6 +14,7 @@ pub mod stdio;
 pub mod transport;
 pub mod wire;
 
+pub use admin_router::{AdminRouter, SharedAdminRouter};
 pub use directory::{DirectoryEntry, DirectoryEvent, ExtensionDirectory, RemovalReason};
 pub use nats::{NatsRuntime, NatsRuntimeOptions};
 pub use stdio::{StdioRuntime, StdioSpawnOptions};
