@@ -45,6 +45,7 @@ pub mod mock_plugin;
 pub mod noop;
 pub mod notebook_edit_tool;
 pub mod peer_directory;
+pub mod personas;
 pub mod plan_mode_tool;
 pub mod plugin;
 pub mod plugin_host;
