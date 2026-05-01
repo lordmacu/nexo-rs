@@ -24,6 +24,7 @@ config-self-edit = ["nexo-core/config-self-edit"]
 nexo-config = { version = "0.1.1", path = "../config" }
 nexo-plugin-email = { version = "0.1.1", path = "../plugins/email" }
 nexo-core = { version = "0.1.1", path = "../core" }
+nexo-tool-meta = { workspace = true }
 nexo-auth = { version = "0.1.1", path = "../auth" }
 nexo-llm = { version = "0.1.1", path = "../llm" }
 anyhow       = { workspace = true }
@@ -42,6 +43,7 @@ base64       = { workspace = true }
 sha2         = { workspace = true }
 uuid         = { workspace = true, features = ["v4"] }
 chrono       = { workspace = true }
+dashmap      = { workspace = true }
 rand         = "0.8"
 secrecy      = "0.8"
 indicatif    = "0.17"

@@ -23,10 +23,16 @@
 //! that ties into the main JSON-RPC writer in src/main.rs).
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
+use dashmap::DashMap;
 use nexo_core::agent::admin_rpc::domains::agents::YamlPatcher;
 use nexo_core::agent::admin_rpc::domains::credentials::CredentialStore;
 use nexo_core::agent::admin_rpc::domains::llm_providers::LlmYamlPatcher;
+use nexo_core::agent::admin_rpc::domains::pairing::PairingChallengeStore;
+use nexo_tool_meta::admin::pairing::{PairingState, PairingStatus, PairingStatusData};
+use uuid::Uuid;
 
 use crate::yaml_patch;
 
@@ -446,5 +452,227 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = FilesystemCredentialStore::new(dir.path().join("never_created"));
         assert!(store.list_credentials().unwrap().is_empty());
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Phase 82.10.h.b.1 — in-memory pairing challenge store.
+// Mirrors OpenClaw's QR-login pattern (in-memory Map + TTL — daemon
+// restart kills in-flight pairings; the QR client-side expiry is
+// shorter than any reasonable TTL anyway).
+// ─────────────────────────────────────────────────────────────────────
+
+/// One challenge entry in the in-memory store.
+#[derive(Debug, Clone)]
+struct PairingChallengeEntry {
+    status: PairingStatus,
+    expires_at: Instant,
+}
+
+/// In-memory `PairingChallengeStore` adapter. Suitable for the v1
+/// admin RPC pipeline — daemon restart drops any in-flight QR
+/// challenge, which matches WhatsApp client-side behaviour (the QR
+/// itself expires within ~30 s).
+///
+/// Boot wiring spawns a periodic [`prune_expired`] task (default
+/// every 30 s) so the map stays bounded. `read_challenge`
+/// transparently flips entries past their TTL to
+/// `PairingState::Expired` before returning them.
+#[derive(Debug, Clone)]
+pub struct InMemoryPairingChallengeStore {
+    inner: Arc<DashMap<Uuid, PairingChallengeEntry>>,
+    default_ttl: Duration,
+}
+
+impl InMemoryPairingChallengeStore {
+    /// Build a fresh store. `default_ttl` is the upper bound used
+    /// when `create_challenge` is called with `ttl_secs == 0`.
+    pub fn new(default_ttl: Duration) -> Self {
+        Self {
+            inner: Arc::new(DashMap::new()),
+            default_ttl,
+        }
+    }
+
+    /// Drop every entry whose `expires_at` is in the past. Returns
+    /// the number of entries removed. Cheap to call frequently —
+    /// `DashMap::retain` walks each bucket once.
+    pub fn prune_expired(&self) -> usize {
+        let now = Instant::now();
+        let before = self.inner.len();
+        self.inner.retain(|_, entry| entry.expires_at > now);
+        before.saturating_sub(self.inner.len())
+    }
+
+    /// Test/observability hook: current entry count (including
+    /// stale-but-not-pruned).
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// `true` when no challenges are tracked.
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+}
+
+impl PairingChallengeStore for InMemoryPairingChallengeStore {
+    fn create_challenge(
+        &self,
+        _agent_id: &str,
+        _channel: &str,
+        _instance: Option<&str>,
+        ttl_secs: u64,
+    ) -> anyhow::Result<(Uuid, u64)> {
+        let id = Uuid::new_v4();
+        let ttl = if ttl_secs == 0 {
+            self.default_ttl
+        } else {
+            Duration::from_secs(ttl_secs)
+        };
+        let expires_at = Instant::now() + ttl;
+        let expires_at_ms = epoch_ms_now().saturating_add(ttl.as_millis() as u64);
+        self.inner.insert(
+            id,
+            PairingChallengeEntry {
+                status: PairingStatus {
+                    challenge_id: id,
+                    state: PairingState::Pending,
+                    data: PairingStatusData::default(),
+                },
+                expires_at,
+            },
+        );
+        Ok((id, expires_at_ms))
+    }
+
+    fn read_challenge(
+        &self,
+        challenge_id: Uuid,
+    ) -> anyhow::Result<Option<PairingStatus>> {
+        let now = Instant::now();
+        // First pass: check + flip-to-expired without holding the
+        // entry lock past the read.
+        if let Some(mut entry) = self.inner.get_mut(&challenge_id) {
+            if entry.expires_at <= now
+                && !matches!(
+                    entry.status.state,
+                    PairingState::Linked
+                        | PairingState::Expired
+                        | PairingState::Cancelled
+                )
+            {
+                entry.status.state = PairingState::Expired;
+                entry.status.data = PairingStatusData {
+                    error: Some("ttl exceeded before user completed pairing".into()),
+                    ..Default::default()
+                };
+            }
+            return Ok(Some(entry.status.clone()));
+        }
+        Ok(None)
+    }
+
+    fn cancel_challenge(&self, challenge_id: Uuid) -> anyhow::Result<bool> {
+        let Some(mut entry) = self.inner.get_mut(&challenge_id) else {
+            return Ok(false);
+        };
+        if matches!(
+            entry.status.state,
+            PairingState::Linked | PairingState::Expired | PairingState::Cancelled
+        ) {
+            return Ok(false);
+        }
+        entry.status.state = PairingState::Cancelled;
+        entry.status.data = PairingStatusData::default();
+        Ok(true)
+    }
+}
+
+fn epoch_ms_now() -> u64 {
+    use std::time::SystemTime;
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod pairing_store_tests {
+    use super::*;
+    use std::thread::sleep;
+
+    fn store_with(ttl_ms: u64) -> InMemoryPairingChallengeStore {
+        InMemoryPairingChallengeStore::new(Duration::from_millis(ttl_ms))
+    }
+
+    #[test]
+    fn create_then_read_returns_pending_status() {
+        let store = store_with(60_000);
+        let (id, expires_at_ms) = store
+            .create_challenge("ana", "whatsapp", Some("personal"), 0)
+            .unwrap();
+        assert!(expires_at_ms > 0);
+
+        let status = store.read_challenge(id).unwrap().unwrap();
+        assert_eq!(status.challenge_id, id);
+        assert_eq!(status.state, PairingState::Pending);
+    }
+
+    #[test]
+    fn read_unknown_id_returns_none() {
+        let store = store_with(60_000);
+        assert!(store.read_challenge(Uuid::nil()).unwrap().is_none());
+    }
+
+    #[test]
+    fn read_after_ttl_flips_to_expired_with_reason() {
+        let store = store_with(10);
+        let (id, _) = store
+            .create_challenge("ana", "whatsapp", None, 0)
+            .unwrap();
+        sleep(Duration::from_millis(30));
+        let status = store.read_challenge(id).unwrap().unwrap();
+        assert_eq!(status.state, PairingState::Expired);
+        assert!(status
+            .data
+            .error
+            .as_deref()
+            .is_some_and(|s| s.contains("ttl exceeded")));
+    }
+
+    #[test]
+    fn cancel_pending_succeeds_and_is_idempotent() {
+        let store = store_with(60_000);
+        let (id, _) = store
+            .create_challenge("ana", "whatsapp", None, 0)
+            .unwrap();
+        assert!(store.cancel_challenge(id).unwrap());
+        // Second cancel — already terminal.
+        assert!(!store.cancel_challenge(id).unwrap());
+        let status = store.read_challenge(id).unwrap().unwrap();
+        assert_eq!(status.state, PairingState::Cancelled);
+    }
+
+    #[test]
+    fn cancel_unknown_returns_false() {
+        let store = store_with(60_000);
+        assert!(!store.cancel_challenge(Uuid::nil()).unwrap());
+    }
+
+    #[test]
+    fn prune_expired_drops_only_stale_entries() {
+        let store = store_with(10);
+        let (alive, _) = store
+            .create_challenge("ana", "whatsapp", None, 60)
+            .unwrap();
+        let (_dead, _) = store
+            .create_challenge("bob", "whatsapp", None, 0)
+            .unwrap(); // uses 10ms default
+        sleep(Duration::from_millis(30));
+        let removed = store.prune_expired();
+        assert_eq!(removed, 1);
+        assert_eq!(store.len(), 1);
+        assert!(store.read_challenge(alive).unwrap().is_some());
     }
 }
