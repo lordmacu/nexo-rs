@@ -343,6 +343,18 @@ Deferred to follow-ups:
 - Tier A `#![deny(missing_docs)]` + `#[non_exhaustive]` sweep
   on `nexo-resilience`, `nexo-driver-permission`,
   `nexo-webhook-receiver`, `nexo-webhook-server`.
+  - **82.2.b.b ✅** — sweep landed for `nexo-resilience`,
+    `nexo-webhook-receiver`, `nexo-webhook-server`. Refined the
+    rule: `#[non_exhaustive]` is mandatory on operator-facing
+    diagnostic enums (`RejectReason`, `EvictionReason`,
+    `WebhookRouterError`) but rejected on caller-populated
+    config / wire-shape / utility-error wrappers. `scripts/
+    tier-a-doc-check.sh` ships as the manual smoke gate.
+    `nexo-driver-permission` deferred to 82.2.b.b.b due to
+    surface size (68 pub items, 16 modules) + a pre-existing
+    failing test unrelated to this sweep.
+  - **82.2.b.b.b ⬜** — driver-permission sweep with the
+    refined ruleset; needs the pre-existing test fix first.
 - CI tier-a-gate workflow (build / test / doc / smoke per
   crate matrix).
 - Actual `cargo publish` (operator-gated, post-review).
