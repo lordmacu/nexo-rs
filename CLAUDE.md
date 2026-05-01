@@ -16,7 +16,7 @@ tracker**.
 | 84 | Coordinator agent persona + worker continuation | 5/5 | ✅ shipped 2026-05-01 (follow-ups in FOLLOWUPS.md) |
 | 85 | Compaction hardening: reactive recovery + cache-aware micro-compact | 2/2 | ✅ shipped 2026-05-01 (follow-ups in FOLLOWUPS.md) |
 | 86 | Memory observability | 1/1 | ✅ shipped 2026-05-01 (86.2 ❌ DROPPED, fire-site wiring in FOLLOWUPS) |
-| 87 | LLM-as-judge verifier (+ container runtime DEFER) | 0/1 | ⬜ AFTER-PHASE-84 (87.2 DEFER until Phase 32 or 82 hardening) |
+| 87 | LLM-as-judge verifier (+ container runtime DEFER) | 1/1 | ✅ shipped 2026-05-01 (87.2 DEFER until Phase 32/82 hardening; backend wire-up in FOLLOWUPS) |
 
 **Curation 2026-05-01** (single source of truth for active scope):
 [`PHASES-curated.md`](PHASES-curated.md) — what is active, what was

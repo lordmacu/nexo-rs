@@ -6,6 +6,7 @@ pub mod attempt;
 pub mod compact_store;
 pub mod config;
 pub mod error;
+pub mod evaluators;
 pub mod events;
 pub mod extract_memories;
 pub mod extract_memories_prompt;

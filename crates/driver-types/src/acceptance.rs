@@ -32,6 +32,16 @@ pub enum AcceptanceCriterion {
         name: String,
         args: serde_json::Value,
     },
+    /// Phase 87.1 — LLM-as-judge verifier. The orchestrator routes
+    /// this to a forked subagent running the judge persona prompt;
+    /// `criterion_text` is the human-readable rule the judge must
+    /// evaluate against the worker's output (e.g. "the diff must
+    /// add a null check at validate.ts:42"). The verdict comes
+    /// back as JSON `{verdict: pass|fail, reasons: [string]}`.
+    /// Pairs with Phase 84 coordinator's "verification rigor"
+    /// section: spawn a fresh worker with no implementation
+    /// context to cross-check the implementation worker's claim.
+    LlmJudge { criterion_text: String },
 }
 
 fn default_shell_timeout() -> u64 {
@@ -64,6 +74,14 @@ impl AcceptanceCriterion {
             path: path.into(),
             regex: regex.into(),
             required: true,
+        }
+    }
+
+    /// Phase 87.1 — build an `LlmJudge` criterion from a
+    /// human-readable rule text.
+    pub fn llm_judge(criterion_text: impl Into<String>) -> Self {
+        Self::LlmJudge {
+            criterion_text: criterion_text.into(),
         }
     }
 }

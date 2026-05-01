@@ -177,6 +177,23 @@ impl AcceptanceEvaluator for DefaultAcceptanceEvaluator {
                 AcceptanceCriterion::Custom { name, args } => {
                     self.check_custom(idx, name, args, workspace).await?
                 }
+                AcceptanceCriterion::LlmJudge { criterion_text } => {
+                    // Phase 87.1 — LlmJudge requires a wired
+                    // `LlmJudgeEvaluator` (deferred to 87.1.b).
+                    // Until that lands, the default evaluator
+                    // surfaces an explicit failure so the
+                    // criterion isn't silently passed.
+                    Some(AcceptanceFailure {
+                        criterion_index: idx,
+                        criterion_label: "llm_judge".to_string(),
+                        message: format!(
+                            "LlmJudge evaluator not yet wired (Phase 87.1.b deferred). \
+Criterion text: {}",
+                            criterion_text
+                        ),
+                        evidence: None,
+                    })
+                }
             };
             if let Some(f) = outcome {
                 failures.push(f);
