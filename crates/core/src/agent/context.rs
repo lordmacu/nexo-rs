@@ -167,6 +167,16 @@ pub struct AgentContext {
     /// `inject_context_meta` to populate the JSON-RPC
     /// `params._nexo_context` block (Step 5).
     pub binding: Option<BindingContext>,
+
+    /// Phase 82.5 — per-turn metadata about the inbound message
+    /// that triggered this agent turn (sender id, msg id,
+    /// timestamp, …). `Some` when the intake site populated it
+    /// (whatsapp plugin, event-subscriber binding, webhook
+    /// receiver, delegation receive, heartbeat tick, …); `None`
+    /// for legacy producers not yet migrated and for tests.
+    /// Surfaces under `_meta.nexo.inbound` via
+    /// [`AgentContext::build_meta_value`].
+    pub inbound: Option<InboundMessageMeta>,
 }
 
 /// One inbound team message attached to a goal's `AgentContext.inbox`.
@@ -206,7 +216,7 @@ pub struct DmMessage {
 // `nexo-tool-meta` crate so third-party microapps can `cargo add
 // nexo-tool-meta` without pulling the agent runtime. Re-exported
 // here for backward compat with internal callers.
-pub use nexo_tool_meta::BindingContext;
+pub use nexo_tool_meta::{BindingContext, InboundKind, InboundMessageMeta};
 
 /// Construct a [`BindingContext`] from an already-resolved
 /// Phase 16 binding policy + agent / session identity.
@@ -290,6 +300,12 @@ impl AgentContext {
             // (delegation receive, heartbeat bootstrap, tests)
             // keep `None`.
             binding: None,
+            // Phase 82.5 — populated by the intake site that
+            // produced the turn (whatsapp plugin, event-subscriber,
+            // webhook receiver, delegation, heartbeat). `None`
+            // from the bare constructor; producers layer their
+            // meta after `new()`.
+            inbound: None,
         }
     }
 
@@ -513,7 +529,12 @@ impl AgentContext {
     ///   wire compact for delegation receive / heartbeat
     ///   bootstrap / tests).
     pub fn build_meta_value(&self) -> serde_json::Value {
-        nexo_tool_meta::build_meta_value(&self.agent_id, self.session_id, self.binding.as_ref())
+        nexo_tool_meta::build_meta_value(
+            &self.agent_id,
+            self.session_id,
+            self.binding.as_ref(),
+            self.inbound.as_ref(),
+        )
     }
 }
 
