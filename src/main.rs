@@ -1,6 +1,6 @@
 #![allow(clippy::all)] // In-flux — Phase 76 + 79 scaffolding
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -71,6 +71,12 @@ enum Mode {
         json: bool,
     },
     ExtHelp,
+    /// `nexo memory <sub>` — operator surface for the snapshot
+    /// subsystem (Phase 36.2). Every subcommand is standalone: it
+    /// constructs a fresh `LocalFsSnapshotter` from `--state-root` (+
+    /// optional `--memdir-root` / `--sqlite-root`) and exits when the
+    /// action completes. No daemon contact required.
+    Memory(MemorySubcommand),
     McpServer(McpServerSubcommand),
     /// Phase 80.1.d — `nexo agent dream {tail|status|kill}`.
     AgentDream(AgentDreamSubcommand),
@@ -307,6 +313,70 @@ enum Mode {
         verbose: bool,
     },
     Help,
+}
+
+/// Phase 36.2 — subcommands for `nexo memory`.
+///
+/// All subcommands accept `--state-root <path>` (default: `./state`),
+/// optional `--memdir-root` / `--sqlite-root` overrides, and a final
+/// `--json` for machine-readable output.
+#[derive(Debug)]
+enum MemorySubcommand {
+    Verify {
+        bundle: PathBuf,
+        json: bool,
+    },
+    Snapshot {
+        agent: String,
+        tenant: String,
+        label: Option<String>,
+        no_redact: bool,
+        encrypt: Option<String>,
+        state_root: PathBuf,
+        memdir_root: Option<PathBuf>,
+        sqlite_root: Option<PathBuf>,
+        json: bool,
+    },
+    Restore {
+        agent: String,
+        tenant: String,
+        bundle: PathBuf,
+        dry_run: bool,
+        no_auto_pre_snapshot: bool,
+        decrypt_identity: Option<PathBuf>,
+        state_root: PathBuf,
+        memdir_root: Option<PathBuf>,
+        sqlite_root: Option<PathBuf>,
+        json: bool,
+    },
+    List {
+        agent: String,
+        tenant: String,
+        state_root: PathBuf,
+        json: bool,
+    },
+    Diff {
+        agent: String,
+        tenant: String,
+        a: String,
+        b: String,
+        state_root: PathBuf,
+        json: bool,
+    },
+    Export {
+        agent: String,
+        tenant: String,
+        id: String,
+        to: PathBuf,
+        state_root: PathBuf,
+    },
+    Delete {
+        agent: String,
+        tenant: String,
+        id: String,
+        state_root: PathBuf,
+        yes: bool,
+    },
 }
 
 /// Phase 76.14 — subcommands for `nexo mcp-server`.
@@ -792,6 +862,7 @@ async fn main() -> Result<()> {
         Mode::ExtDoctor { runtime, json } => {
             return run_ext_cli(&args.config_dir, ExtCmd::Doctor { runtime, json })
         }
+        Mode::Memory(ref sub) => return dispatch_memory_subcommand(sub).await,
         Mode::McpServer(ref sub) => match sub {
             McpServerSubcommand::Serve => return run_mcp_server(&args.config_dir).await,
             McpServerSubcommand::Inspect { url } => return run_mcp_inspect(url).await,
@@ -2093,6 +2164,75 @@ async fn main() -> Result<()> {
     // bounded timeout so SIGTERM cannot hang on an in-flight sweep.
     let dream_shutdown = tokio_util::sync::CancellationToken::new();
     let mut dream_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+
+    // Phase 36.2 — memory snapshot subsystem. Single
+    // `Arc<dyn MemorySnapshotter>` shared across every agent's tool
+    // registry; the LLM `memory_snapshot` tool dispatches through
+    // this same backend the operator CLI uses (`nexo memory ...`).
+    // `RetentionWorker` runs with the daemon's shutdown token so
+    // orphan staging dirs left by SIGKILL are swept on the next
+    // boot's first tick.
+    let snapshot_yaml = &cfg.memory.snapshot;
+    let memory_snapshot_state_root = if snapshot_yaml.root.is_empty() {
+        nexo_project_tracker::state::nexo_state_dir()
+    } else {
+        std::path::PathBuf::from(&snapshot_yaml.root)
+    };
+    let memdir_root_path = if snapshot_yaml.memdir_root.is_empty() {
+        memory_snapshot_state_root.clone()
+    } else {
+        std::path::PathBuf::from(&snapshot_yaml.memdir_root)
+    };
+    let sqlite_root_path = if snapshot_yaml.sqlite_root.is_empty() {
+        memory_snapshot_state_root.clone()
+    } else {
+        std::path::PathBuf::from(&snapshot_yaml.sqlite_root)
+    };
+    let memory_snapshotter: Option<Arc<dyn nexo_memory_snapshot::MemorySnapshotter>> = if snapshot_yaml.enabled {
+        let s = nexo_memory_snapshot::local_fs::LocalFsSnapshotter::builder()
+            .state_root(memory_snapshot_state_root.clone())
+            .memdir_root(memdir_root_path.clone())
+            .sqlite_root(sqlite_root_path.clone())
+            .lock_timeout(std::time::Duration::from_secs(
+                snapshot_yaml.lock_timeout_secs.max(1),
+            ))
+            .build()
+            .map_err(|e| anyhow::anyhow!("memory snapshotter build failed: {e}"))?;
+        Some(Arc::new(s))
+    } else {
+        tracing::info!(
+            target: "boot.memory_snapshot",
+            "memory.snapshot.enabled = false; subsystem disabled"
+        );
+        None
+    };
+    if let Some(snapshotter) = &memory_snapshotter {
+        let retention = nexo_memory_snapshot::RetentionConfig {
+            keep_count: snapshot_yaml.retention.keep_count,
+            max_age_days: snapshot_yaml.retention.max_age_days,
+            gc_interval_secs: snapshot_yaml.retention.gc_interval_secs.max(1),
+        };
+        let worker = nexo_memory_snapshot::RetentionWorker::new(
+            snapshotter.clone(),
+            memory_snapshot_state_root.clone(),
+            retention,
+        );
+        let cancel = dream_shutdown.clone();
+        tokio::spawn(async move {
+            let _ = worker.spawn(cancel);
+        });
+        tracing::info!(
+            target: "boot.memory_snapshot",
+            state_root = %memory_snapshot_state_root.display(),
+            memdir_root = %memdir_root_path.display(),
+            sqlite_root = %sqlite_root_path.display(),
+            keep_count = snapshot_yaml.retention.keep_count,
+            max_age_days = snapshot_yaml.retention.max_age_days,
+            gc_interval_secs = snapshot_yaml.retention.gc_interval_secs,
+            auto_pre_dream = snapshot_yaml.auto_pre_dream,
+            "memory snapshot subsystem ready (retention worker spawned)"
+        );
+    }
 
     // TaskFlow runtime — shared FlowManager + WaitEngine tick loop +
     // NATS resume bridge. Engine runs as a single global task; the
@@ -3490,6 +3630,23 @@ async fn main() -> Result<()> {
                 nexo_core::agent::MemoryHistoryTool::tool_def(),
                 nexo_core::agent::MemoryHistoryTool::new(Arc::clone(g)),
             );
+            // Phase 36.2 — `memory_snapshot` LLM tool. Per-binding
+            // gating still flows through `EffectiveBindingPolicy::
+            // allowed_tools` + plan-mode (the tool sits in
+            // `MUTATING_TOOLS`); the shared snapshotter dispatches
+            // every call through the same `LocalFsSnapshotter` the
+            // CLI hits, so an LLM-triggered snapshot lands next to
+            // operator-triggered ones in the same per-agent dir.
+            // Skipped when the operator disables the subsystem via
+            // `memory.snapshot.enabled = false`.
+            if let Some(snapshotter) = &memory_snapshotter {
+                let tool = nexo_core::agent::MemorySnapshotTool::new(snapshotter.clone())
+                    .with_redact_secrets_default(snapshot_yaml.redact_secrets_default);
+                tools.register(
+                    nexo_core::agent::MemorySnapshotTool::tool_def(),
+                    tool,
+                );
+            }
             // Wire session-close commit: when a session expires, snapshot
             // the workspace so the day's memory edits land in history
             // even if the agent never hit a dreaming sweep.
@@ -6318,6 +6475,98 @@ fn route_pair_subcommand(positional: &[String], has_json_flag: bool) -> Option<M
     })
 }
 
+/// Route a `nexo memory <sub>` invocation. Pulls the subcommand verb
+/// from `pos_no_flags` (already flag-stripped) and reads kv flags
+/// off the raw `positional` slice. Returns `None` if `<sub>` is not
+/// a recognised verb.
+fn route_memory_subcommand(
+    pos_no_flags: &[String],
+    positional: &[String],
+    has_json_flag: bool,
+) -> Option<Mode> {
+    let sub = pos_no_flags.get(1).map(|s| s.as_str())?;
+    let agent = parse_kv_flag(positional, "--agent").unwrap_or_default();
+    let tenant = parse_kv_flag(positional, "--tenant").unwrap_or_else(|| "default".into());
+    let state_root = parse_kv_flag(positional, "--state-root")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("./state"));
+    let memdir_root = parse_kv_flag(positional, "--memdir-root").map(PathBuf::from);
+    let sqlite_root = parse_kv_flag(positional, "--sqlite-root").map(PathBuf::from);
+
+    match sub {
+        "verify" => {
+            let bundle = parse_kv_flag(positional, "--bundle")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("."));
+            Some(Mode::Memory(MemorySubcommand::Verify {
+                bundle,
+                json: has_json_flag,
+            }))
+        }
+        "snapshot" => Some(Mode::Memory(MemorySubcommand::Snapshot {
+            agent,
+            tenant,
+            label: parse_kv_flag(positional, "--label"),
+            no_redact: positional.iter().any(|a| a == "--no-redact"),
+            encrypt: parse_kv_flag(positional, "--encrypt"),
+            state_root,
+            memdir_root,
+            sqlite_root,
+            json: has_json_flag,
+        })),
+        "restore" => Some(Mode::Memory(MemorySubcommand::Restore {
+            agent,
+            tenant,
+            bundle: parse_kv_flag(positional, "--from")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(".")),
+            dry_run: positional.iter().any(|a| a == "--dry-run"),
+            no_auto_pre_snapshot: positional.iter().any(|a| a == "--no-auto-pre-snapshot"),
+            decrypt_identity: parse_kv_flag(positional, "--decrypt-identity")
+                .map(PathBuf::from),
+            state_root,
+            memdir_root,
+            sqlite_root,
+            json: has_json_flag,
+        })),
+        "list" => Some(Mode::Memory(MemorySubcommand::List {
+            agent,
+            tenant,
+            state_root,
+            json: has_json_flag,
+        })),
+        "diff" => {
+            let a = pos_no_flags.get(2)?.clone();
+            let b = pos_no_flags.get(3)?.clone();
+            Some(Mode::Memory(MemorySubcommand::Diff {
+                agent,
+                tenant,
+                a,
+                b,
+                state_root,
+                json: has_json_flag,
+            }))
+        }
+        "export" => Some(Mode::Memory(MemorySubcommand::Export {
+            agent,
+            tenant,
+            id: parse_kv_flag(positional, "--id").unwrap_or_default(),
+            to: parse_kv_flag(positional, "--to")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(".")),
+            state_root,
+        })),
+        "delete" => Some(Mode::Memory(MemorySubcommand::Delete {
+            agent,
+            tenant,
+            id: parse_kv_flag(positional, "--id").unwrap_or_default(),
+            state_root,
+            yes: positional.iter().any(|a| a == "--yes"),
+        })),
+        _ => None,
+    }
+}
+
 /// Route a `nexo cron ...` invocation. Handles kv flags without
 /// letting their values shift positional arity.
 fn route_cron_subcommand(positional: &[String], has_json_flag: bool) -> Option<Mode> {
@@ -6478,6 +6727,12 @@ fn parse_args() -> CliArgs {
 
     if pos_no_flags.first().map(|s| s.as_str()) == Some("cron") {
         if let Some(mode) = route_cron_subcommand(&positional, has_json_flag) {
+            return CliArgs { config_dir, mode };
+        }
+    }
+
+    if pos_no_flags.first().map(|s| s.as_str()) == Some("memory") {
+        if let Some(mode) = route_memory_subcommand(&pos_no_flags, &positional, has_json_flag) {
             return CliArgs { config_dir, mode };
         }
     }
@@ -10631,6 +10886,427 @@ async fn run_mcp_server(config_dir: &std::path::Path) -> Result<()> {
 // ---------------------------------------------------------------------------
 // Phase 76.14 — `nexo mcp-server` CLI ops
 // ---------------------------------------------------------------------------
+
+/// Dispatch helper for `Mode::Memory(...)`. Each arm wires the
+/// matching handler from this module.
+async fn dispatch_memory_subcommand(sub: &MemorySubcommand) -> Result<()> {
+    match sub {
+        MemorySubcommand::Verify { bundle, json } => run_memory_verify(bundle, *json).await,
+        MemorySubcommand::Snapshot {
+            agent,
+            tenant,
+            label,
+            no_redact,
+            encrypt,
+            state_root,
+            memdir_root,
+            sqlite_root,
+            json,
+        } => {
+            run_memory_snapshot(
+                agent,
+                tenant,
+                label.clone(),
+                !*no_redact,
+                encrypt.clone(),
+                state_root,
+                memdir_root.as_deref(),
+                sqlite_root.as_deref(),
+                *json,
+            )
+            .await
+        }
+        MemorySubcommand::Restore {
+            agent,
+            tenant,
+            bundle,
+            dry_run,
+            no_auto_pre_snapshot,
+            decrypt_identity,
+            state_root,
+            memdir_root,
+            sqlite_root,
+            json,
+        } => {
+            run_memory_restore(
+                agent,
+                tenant,
+                bundle,
+                *dry_run,
+                !*no_auto_pre_snapshot,
+                decrypt_identity.as_deref(),
+                state_root,
+                memdir_root.as_deref(),
+                sqlite_root.as_deref(),
+                *json,
+            )
+            .await
+        }
+        MemorySubcommand::List {
+            agent,
+            tenant,
+            state_root,
+            json,
+        } => run_memory_list(agent, tenant, state_root, *json).await,
+        MemorySubcommand::Diff {
+            agent,
+            tenant,
+            a,
+            b,
+            state_root,
+            json,
+        } => run_memory_diff(agent, tenant, a, b, state_root, *json).await,
+        MemorySubcommand::Export {
+            agent,
+            tenant,
+            id,
+            to,
+            state_root,
+        } => run_memory_export(agent, tenant, id, to, state_root).await,
+        MemorySubcommand::Delete {
+            agent,
+            tenant,
+            id,
+            state_root,
+            yes,
+        } => run_memory_delete(agent, tenant, id, state_root, *yes).await,
+    }
+}
+
+/// Build a `LocalFsSnapshotter` from operator-supplied roots.
+/// `memdir_root` and `sqlite_root` default to `state_root` when not
+/// overridden — same pattern the YAML config uses at boot.
+fn build_snapshotter(
+    state_root: &Path,
+    memdir_root: Option<&Path>,
+    sqlite_root: Option<&Path>,
+) -> Result<nexo_memory_snapshot::local_fs::LocalFsSnapshotter> {
+    use nexo_memory_snapshot::local_fs::LocalFsSnapshotter;
+    let mut b = LocalFsSnapshotter::builder().state_root(state_root.to_path_buf());
+    if let Some(p) = memdir_root {
+        b = b.memdir_root(p.to_path_buf());
+    }
+    if let Some(p) = sqlite_root {
+        b = b.sqlite_root(p.to_path_buf());
+    }
+    b.build()
+        .map_err(|e| anyhow::anyhow!("snapshotter build failed: {e}"))
+}
+
+/// `nexo memory snapshot ...` — capture a fresh bundle.
+#[allow(clippy::too_many_arguments)]
+async fn run_memory_snapshot(
+    agent: &str,
+    tenant: &str,
+    label: Option<String>,
+    redact_secrets: bool,
+    encrypt: Option<String>,
+    state_root: &Path,
+    memdir_root: Option<&Path>,
+    sqlite_root: Option<&Path>,
+    json: bool,
+) -> Result<()> {
+    use nexo_memory_snapshot::request::SnapshotRequest;
+    use nexo_memory_snapshot::EncryptionKey;
+    use nexo_memory_snapshot::MemorySnapshotter;
+
+    if agent.is_empty() {
+        anyhow::bail!("--agent is required");
+    }
+    let snapshotter = build_snapshotter(state_root, memdir_root, sqlite_root)?;
+    let req = SnapshotRequest {
+        agent_id: agent.to_string(),
+        tenant: tenant.to_string(),
+        label,
+        redact_secrets,
+        encrypt: encrypt.map(EncryptionKey::AgePublicKey),
+        created_by: "cli".into(),
+    };
+    let meta = snapshotter
+        .snapshot(req)
+        .await
+        .map_err(|e| anyhow::anyhow!("snapshot failed: {e}"))?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&meta)?);
+    } else {
+        println!("snapshot id:   {}", meta.id);
+        println!("bundle:        {}", meta.bundle_path.display());
+        println!("size_bytes:    {}", meta.bundle_size_bytes);
+        println!("sha256:        {}", meta.bundle_sha256);
+        println!("encrypted:     {}", meta.encrypted);
+        println!("redactions:    {}", meta.redactions_applied);
+        if let Some(label) = &meta.label {
+            println!("label:         {label}");
+        }
+    }
+    Ok(())
+}
+
+/// `nexo memory restore ...` — replay a bundle on top of live state.
+/// Requires `NEXO_MEMORY_RESTORE_ALLOW=true` (capability gate).
+#[allow(clippy::too_many_arguments)]
+async fn run_memory_restore(
+    agent: &str,
+    tenant: &str,
+    bundle: &Path,
+    dry_run: bool,
+    auto_pre_snapshot: bool,
+    decrypt_identity: Option<&Path>,
+    state_root: &Path,
+    memdir_root: Option<&Path>,
+    sqlite_root: Option<&Path>,
+    json: bool,
+) -> Result<()> {
+    use nexo_memory_snapshot::request::{DecryptionIdentity, RestoreRequest};
+    use nexo_memory_snapshot::MemorySnapshotter;
+
+    if agent.is_empty() {
+        anyhow::bail!("--agent is required");
+    }
+    if !is_truthy_env("NEXO_MEMORY_RESTORE_ALLOW") {
+        anyhow::bail!(
+            "restore is gated: set NEXO_MEMORY_RESTORE_ALLOW=true (see `nexo agent doctor capabilities`)"
+        );
+    }
+    let snapshotter = build_snapshotter(state_root, memdir_root, sqlite_root)?;
+    let req = RestoreRequest {
+        agent_id: agent.to_string(),
+        tenant: tenant.to_string(),
+        bundle: bundle.to_path_buf(),
+        dry_run,
+        auto_pre_snapshot,
+        decrypt: decrypt_identity
+            .map(|p: &Path| DecryptionIdentity::AgeIdentityFile(p.to_path_buf())),
+    };
+    let report = snapshotter
+        .restore(req)
+        .await
+        .map_err(|e| anyhow::anyhow!("restore failed: {e}"))?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!("dry_run:           {}", report.dry_run);
+        println!("from:              {}", report.from);
+        if let Some(p) = &report.pre_snapshot {
+            println!("pre_snapshot:      {p}");
+        }
+        if let Some(oid) = &report.git_reset_oid {
+            println!("git_reset_oid:     {oid}");
+        }
+        println!(
+            "sqlite_restored:   [{}]",
+            report.sqlite_restored_dbs.join(", ")
+        );
+        println!(
+            "state_files:       [{}]",
+            report.state_files_restored.join(", ")
+        );
+        println!("workers_restarted: {}", report.workers_restarted);
+    }
+    Ok(())
+}
+
+/// `nexo memory list --agent <id>` — show every bundle for the agent
+/// ordered newest-first.
+async fn run_memory_list(
+    agent: &str,
+    tenant: &str,
+    state_root: &Path,
+    json: bool,
+) -> Result<()> {
+    use nexo_memory_snapshot::MemorySnapshotter;
+
+    if agent.is_empty() {
+        anyhow::bail!("--agent is required");
+    }
+    let snapshotter = build_snapshotter(state_root, None, None)?;
+    let metas = snapshotter
+        .list(&agent.to_string(), tenant)
+        .await
+        .map_err(|e| anyhow::anyhow!("list failed: {e}"))?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&metas)?);
+    } else if metas.is_empty() {
+        println!("(no snapshots)");
+    } else {
+        for m in &metas {
+            let label = m.label.as_deref().unwrap_or("-");
+            let flags = match (m.encrypted, m.redactions_applied) {
+                (true, true) => "[enc][red]",
+                (true, false) => "[enc]    ",
+                (false, true) => "    [red]",
+                (false, false) => "         ",
+            };
+            println!(
+                "{} {} {:>10} {} {}",
+                m.id, flags, m.bundle_size_bytes, label, m.created_at_ms
+            );
+        }
+    }
+    Ok(())
+}
+
+/// `nexo memory diff <id-a> <id-b> --agent <id>` — coarse delta
+/// summary between two bundles for the same agent.
+async fn run_memory_diff(
+    agent: &str,
+    tenant: &str,
+    a: &str,
+    b: &str,
+    state_root: &Path,
+    json: bool,
+) -> Result<()> {
+    use nexo_memory_snapshot::id::SnapshotId;
+    use nexo_memory_snapshot::MemorySnapshotter;
+
+    if agent.is_empty() {
+        anyhow::bail!("--agent is required");
+    }
+    let id_a: SnapshotId = a.parse().map_err(|e| anyhow::anyhow!("a: {e}"))?;
+    let id_b: SnapshotId = b.parse().map_err(|e| anyhow::anyhow!("b: {e}"))?;
+    let snapshotter = build_snapshotter(state_root, None, None)?;
+    let diff = snapshotter
+        .diff(&agent.to_string(), tenant, id_a, id_b)
+        .await
+        .map_err(|e| anyhow::anyhow!("diff failed: {e}"))?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&diff)?);
+    } else {
+        println!("a: {}", diff.a);
+        println!("b: {}", diff.b);
+        println!(
+            "git:    commits_between={} files_changed={}",
+            diff.git_summary.commits_between, diff.git_summary.files_changed
+        );
+        println!(
+            "sqlite: long_term=±{} vector=±{} concepts=±{} compactions={}",
+            diff.sqlite_summary.long_term_rows_added,
+            diff.sqlite_summary.vector_rows_added,
+            diff.sqlite_summary.concepts_rows_added,
+            diff.sqlite_summary.compactions_added
+        );
+        println!(
+            "state:  extract_cursor_changed={} last_dream_run_changed={}",
+            diff.state_summary.extract_cursor_changed,
+            diff.state_summary.last_dream_run_changed
+        );
+    }
+    Ok(())
+}
+
+/// `nexo memory export --agent <id> --id <snapshot> --to <path>` —
+/// copy a bundle (and its sibling `.sha256`) to an arbitrary
+/// destination.
+async fn run_memory_export(
+    agent: &str,
+    tenant: &str,
+    id: &str,
+    to: &Path,
+    state_root: &Path,
+) -> Result<()> {
+    use nexo_memory_snapshot::id::SnapshotId;
+    use nexo_memory_snapshot::MemorySnapshotter;
+
+    if agent.is_empty() {
+        anyhow::bail!("--agent is required");
+    }
+    let id: SnapshotId = id.parse().map_err(|e| anyhow::anyhow!("--id: {e}"))?;
+    let snapshotter = build_snapshotter(state_root, None, None)?;
+    let path = snapshotter
+        .export(&agent.to_string(), tenant, id, to)
+        .await
+        .map_err(|e| anyhow::anyhow!("export failed: {e}"))?;
+    println!("exported: {}", path.display());
+    Ok(())
+}
+
+/// `nexo memory delete --agent <id> --id <snapshot>` — drop a bundle
+/// + sibling. Refuses to delete the agent's last remaining snapshot.
+async fn run_memory_delete(
+    agent: &str,
+    tenant: &str,
+    id: &str,
+    state_root: &Path,
+    yes: bool,
+) -> Result<()> {
+    use nexo_memory_snapshot::id::SnapshotId;
+    use nexo_memory_snapshot::MemorySnapshotter;
+
+    if agent.is_empty() {
+        anyhow::bail!("--agent is required");
+    }
+    if !yes {
+        anyhow::bail!("delete is destructive; pass --yes to confirm");
+    }
+    let id: SnapshotId = id.parse().map_err(|e| anyhow::anyhow!("--id: {e}"))?;
+    let snapshotter = build_snapshotter(state_root, None, None)?;
+    snapshotter
+        .delete(&agent.to_string(), tenant, id)
+        .await
+        .map_err(|e| anyhow::anyhow!("delete failed: {e}"))?;
+    println!("deleted: {id}");
+    Ok(())
+}
+
+fn is_truthy_env(name: &str) -> bool {
+    match std::env::var(name) {
+        Ok(v) => matches!(
+            v.to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        ),
+        Err(_) => false,
+    }
+}
+
+/// `nexo memory verify --bundle <path>` — recompute every integrity
+/// check on a snapshot bundle. Read-only, no daemon contact, no live
+/// state mutation. Exit code is 0 only when every check passes.
+async fn run_memory_verify(bundle: &std::path::Path, json: bool) -> Result<()> {
+    use nexo_memory_snapshot::local_fs::LocalFsSnapshotter;
+    use nexo_memory_snapshot::MemorySnapshotter;
+
+    if !bundle.exists() {
+        anyhow::bail!("bundle not found: {}", bundle.display());
+    }
+
+    // Verify is stateless from the snapshotter's POV; the state_root
+    // here is a placeholder so the builder is satisfied. The verify
+    // path never touches it.
+    let s = LocalFsSnapshotter::builder()
+        .state_root(std::env::temp_dir())
+        .build()
+        .map_err(|e| anyhow::anyhow!("snapshotter build failed: {e}"))?;
+    let report = s
+        .verify(bundle)
+        .await
+        .map_err(|e| anyhow::anyhow!("verify failed: {e}"))?;
+
+    let all_ok = report.manifest_ok && report.bundle_sha256_ok && report.per_artifact_ok;
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!("bundle:           {}", report.bundle.display());
+        println!("manifest_ok:      {}", report.manifest_ok);
+        println!("bundle_sha256_ok: {}", report.bundle_sha256_ok);
+        println!("per_artifact_ok:  {}", report.per_artifact_ok);
+        println!("age_protected:    {}", report.age_protected);
+        println!(
+            "schema_versions:  long_term={} vector={} concepts={} compactions={} manifest={}",
+            report.schema_versions.long_term,
+            report.schema_versions.vector,
+            report.schema_versions.concepts,
+            report.schema_versions.compactions,
+            report.schema_versions.manifest,
+        );
+        println!("all_checks_ok:    {all_ok}");
+    }
+
+    if !all_ok {
+        std::process::exit(2);
+    }
+    Ok(())
+}
 
 /// `nexo mcp-server inspect <url>` — list tools and resources of a
 /// reachable MCP server.

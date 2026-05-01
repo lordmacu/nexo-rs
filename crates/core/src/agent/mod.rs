@@ -38,6 +38,7 @@ pub mod mcp_session;
 pub mod mcp_tool;
 pub mod memory_checkpoint_tool;
 pub mod memory_history_tool;
+pub mod memory_snapshot_tool;
 pub mod memory_tool;
 pub mod mock_plugin;
 pub mod noop;
@@ -118,6 +119,7 @@ pub use mcp_session::{
 pub use mcp_tool::{sanitize_name_fragment, McpTool, MCP_NAME_PREFIX};
 pub use memory_checkpoint_tool::MemoryCheckpointTool;
 pub use memory_history_tool::MemoryHistoryTool;
+pub use memory_snapshot_tool::MemorySnapshotTool;
 pub use memory_tool::MemoryTool;
 pub use mock_plugin::MockPlugin;
 pub use noop::NoOpAgent;

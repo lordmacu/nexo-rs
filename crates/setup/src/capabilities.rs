@@ -313,6 +313,27 @@ const INVENTORY: &[CapabilityToggle] = &[
                  of tokens per fire.",
         hint: "export NEXO_DREAM_NOW_ENABLED=true",
     },
+    // Memory snapshot restore gate. Critical: a restore replays the
+    // bundled SQLite + git memdir + state-provider artifacts on top
+    // of the live agent, deleting whatever was there. Operators must
+    // opt in explicitly so a stray `nexo memory restore` invocation
+    // (typo, automation glitch) cannot silently overwrite production
+    // memory. Provider-agnostic: gates the CLI subcommand at
+    // dispatch time, irrespective of which LLM drives the agent.
+    CapabilityToggle {
+        extension: "memory-snapshot",
+        env_var: "NEXO_MEMORY_RESTORE_ALLOW",
+        kind: ToggleKind::Boolean,
+        risk: Risk::Critical,
+        effect: "Allow `nexo memory restore` to overwrite the live \
+                 agent's SQLite memory + git memdir + state-provider \
+                 artifacts with a bundle's contents. Restore always \
+                 captures an auto-pre-snapshot first (rollback \
+                 anchor) but the swap itself is destructive: tags \
+                 dropped, untracked files lost, in-flight tool \
+                 results truncated.",
+        hint: "export NEXO_MEMORY_RESTORE_ALLOW=true",
+    },
 ];
 
 pub fn inventory() -> &'static [CapabilityToggle] {
@@ -728,6 +749,15 @@ mod tests {
         assert_eq!(dream_entry.extension, "dream");
         assert_eq!(dream_entry.risk, Risk::Medium);
         assert!(matches!(dream_entry.kind, ToggleKind::Boolean));
+
+        assert!(env_vars.contains(&"NEXO_MEMORY_RESTORE_ALLOW"));
+        let restore_entry = inv
+            .iter()
+            .find(|t| t.env_var == "NEXO_MEMORY_RESTORE_ALLOW")
+            .expect("memory restore entry present");
+        assert_eq!(restore_entry.extension, "memory-snapshot");
+        assert_eq!(restore_entry.risk, Risk::Critical);
+        assert!(matches!(restore_entry.kind, ToggleKind::Boolean));
     }
 
     #[test]

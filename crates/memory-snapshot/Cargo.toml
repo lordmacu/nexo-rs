@@ -1,0 +1,54 @@
+[package]
+name        = "nexo-memory-snapshot"
+description = "Atomic point-in-time snapshot/restore for agent memory: git memdir + SQLite (long_term, vector, concepts, compactions) + extract cursor + dream_run row, packaged as a verifiable tar.zst bundle with optional redaction and age encryption."
+version       = "0.1.0"
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+homepage      = { workspace = true }
+documentation = { workspace = true }
+keywords      = ["nexo", "agent", "memory", "snapshot", "backup"]
+categories    = ["asynchronous", "database"]
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait    = { workspace = true }
+tokio          = { workspace = true }
+serde          = { workspace = true, features = ["derive"] }
+serde_json     = { workspace = true }
+sha2           = { workspace = true }
+hex            = { workspace = true }
+uuid           = { workspace = true }
+thiserror      = { workspace = true }
+tracing        = { workspace = true }
+chrono         = { workspace = true }
+git2           = { workspace = true }
+dashmap        = { workspace = true }
+tokio-util     = { workspace = true }
+sqlx           = { workspace = true }
+tar            = "0.4"
+zstd           = "0.13"
+regex          = { workspace = true }
+age            = { version = "0.10", optional = true }
+tempfile       = { version = "3", optional = true }
+nexo-driver-types = { path = "../driver-types" }
+
+[dev-dependencies]
+tempfile       = "3"
+serde_yaml     = { workspace = true }
+
+[features]
+default = []
+# Opt-in age-based encryption for snapshot bundles. The body is wrapped in an
+# age-encrypted stream while the manifest stays plaintext so operators can
+# verify integrity without holding the identity. `tempfile` is pulled in to
+# buffer the decrypted stream into a `Seek`-capable handle for tar parsing.
+snapshot-encryption = ["dep:age", "dep:tempfile"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

@@ -22,6 +22,13 @@ pub struct MemoryConfig {
     /// schema, change BOTH this struct AND `secret_config.rs`.
     #[serde(default)]
     pub secret_guard: SecretGuardYamlConfig,
+    /// Phase 36.2 — memory snapshot subsystem. When omitted, defaults
+    /// match `nexo_memory_snapshot::MemorySnapshotConfig::default()`:
+    /// enabled, retention 30/90d/1h, encryption off, no auto-pre-dream,
+    /// auto-pre-restore on. Wire-shape duplicated to keep
+    /// `nexo-memory-snapshot` out of the `nexo-config` dep graph.
+    #[serde(default)]
+    pub snapshot: SnapshotYamlConfig,
 }
 
 /// Wire-shape clone of `nexo_memory::SecretGuardConfig`. See doc on
@@ -68,6 +75,112 @@ impl Default for SecretGuardYamlConfig {
             on_secret: "block".into(),
             rules: serde_yaml::Value::String("all".into()),
             exclude_rules: Vec::new(),
+        }
+    }
+}
+
+/// Wire-shape mirror of `nexo_memory_snapshot::MemorySnapshotConfig`.
+///
+/// **Schema-duplication note**: when adding/renaming/removing a field
+/// here, mirror the change in `crates/memory-snapshot/src/config.rs`
+/// AND in the converter `src/main.rs::build_snapshot_config_from_yaml`
+/// — both are exercised by `crates/config/tests/load_test.rs`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SnapshotYamlConfig {
+    pub enabled: bool,
+    /// On-disk root for the per-tenant snapshot tree. When the path
+    /// is empty (default), `src/main.rs` falls back to
+    /// `nexo_state_dir()`.
+    pub root: String,
+    pub auto_pre_dream: bool,
+    pub auto_pre_restore: bool,
+    pub auto_pre_mutating_tool: bool,
+    pub lock_timeout_secs: u64,
+    pub redact_secrets_default: bool,
+    pub encryption: SnapshotEncryptionYamlConfig,
+    pub retention: SnapshotRetentionYamlConfig,
+    pub events: SnapshotEventsYamlConfig,
+    /// Optional override of the per-agent memdir root. When unset,
+    /// the snapshotter falls back to `root` (single-tenant ops) or
+    /// the per-agent `workspace_git` root (multi-tenant SaaS, future).
+    #[serde(default)]
+    pub memdir_root: String,
+    /// Optional override of the per-agent SQLite root. Same fallback
+    /// as `memdir_root`.
+    #[serde(default)]
+    pub sqlite_root: String,
+}
+
+impl Default for SnapshotYamlConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            root: String::new(),
+            auto_pre_dream: false,
+            auto_pre_restore: true,
+            auto_pre_mutating_tool: false,
+            lock_timeout_secs: 60,
+            redact_secrets_default: true,
+            encryption: SnapshotEncryptionYamlConfig::default(),
+            retention: SnapshotRetentionYamlConfig::default(),
+            events: SnapshotEventsYamlConfig::default(),
+            memdir_root: String::new(),
+            sqlite_root: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SnapshotEncryptionYamlConfig {
+    pub enabled: bool,
+    pub recipients: Vec<String>,
+    pub identity_path: String,
+}
+
+impl Default for SnapshotEncryptionYamlConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            recipients: Vec::new(),
+            identity_path: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SnapshotRetentionYamlConfig {
+    pub keep_count: u32,
+    pub max_age_days: u32,
+    pub gc_interval_secs: u64,
+}
+
+impl Default for SnapshotRetentionYamlConfig {
+    fn default() -> Self {
+        Self {
+            keep_count: 30,
+            max_age_days: 90,
+            gc_interval_secs: 3600,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SnapshotEventsYamlConfig {
+    pub mutation_subject_prefix: String,
+    pub lifecycle_subject_prefix: String,
+    pub mutation_publish_enabled: bool,
+}
+
+impl Default for SnapshotEventsYamlConfig {
+    fn default() -> Self {
+        Self {
+            mutation_subject_prefix: "nexo.memory.mutated".into(),
+            lifecycle_subject_prefix: "nexo.memory.snapshot".into(),
+            mutation_publish_enabled: true,
         }
     }
 }

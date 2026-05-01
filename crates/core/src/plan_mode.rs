@@ -312,6 +312,10 @@ pub const MUTATING_TOOLS: &[&str] = &[
     "TeamCreate",
     "TeamDelete",
     "TeamSendMessage",
+    // Memory snapshot writes a full bundle to disk + a sibling
+    // SHA-256 file. Restore is operator-only (CLI) and explicitly
+    // not exposed as a tool.
+    "memory_snapshot",
 ];
 
 /// Canonical read-only tool list. Tools not in either bucket trigger a

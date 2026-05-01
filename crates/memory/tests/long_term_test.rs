@@ -2,6 +2,118 @@ use chrono::{Duration, Utc};
 use nexo_memory::{EmailFollowupStatus, LongTermMemory};
 use uuid::Uuid;
 
+// ---- Phase 36.2: mutation hook fire sites ----
+
+#[tokio::test]
+async fn mutation_hook_fires_on_remember_and_forget() {
+    use async_trait::async_trait;
+    use nexo_driver_types::{
+        MemoryMutationHook, MemoryMutationOp, MemoryMutationScope,
+    };
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Default)]
+    struct Recorder {
+        events: Mutex<Vec<(String, String, MemoryMutationScope, MemoryMutationOp, String)>>,
+    }
+    #[async_trait]
+    impl MemoryMutationHook for Recorder {
+        async fn on_mutation(
+            &self,
+            agent_id: &str,
+            tenant: &str,
+            scope: MemoryMutationScope,
+            op: MemoryMutationOp,
+            key: &str,
+        ) {
+            self.events.lock().unwrap().push((
+                agent_id.to_string(),
+                tenant.to_string(),
+                scope,
+                op,
+                key.to_string(),
+            ));
+        }
+    }
+    let rec = Arc::new(Recorder::default());
+    let hook: Arc<dyn MemoryMutationHook> = rec.clone();
+    let db = LongTermMemory::open(":memory:")
+        .await
+        .unwrap()
+        .with_mutation_hook(hook)
+        .with_tenant("acme");
+
+    let id = db
+        .remember("ana", "first memory", &["greeting"])
+        .await
+        .unwrap();
+    db.forget(id).await.unwrap();
+
+    let evs = rec.events.lock().unwrap();
+    assert_eq!(evs.len(), 2, "expected one insert + one delete event");
+    let (ag, ten, scope, op, key) = &evs[0];
+    assert_eq!(ag, "ana");
+    assert_eq!(ten, "acme");
+    assert!(matches!(scope, MemoryMutationScope::SqliteLongTerm));
+    assert!(matches!(op, MemoryMutationOp::Insert));
+    assert_eq!(key, &id.to_string());
+    let (_, _, _, op2, key2) = &evs[1];
+    assert!(matches!(op2, MemoryMutationOp::Delete));
+    assert_eq!(key2, &id.to_string());
+}
+
+#[tokio::test]
+async fn mutation_hook_absent_by_default_does_not_panic() {
+    let db = LongTermMemory::open(":memory:").await.unwrap();
+    let id = db
+        .remember("ana", "no hook attached", &[])
+        .await
+        .unwrap();
+    db.forget(id).await.unwrap();
+    // Just reaching here without panic proves the path tolerates a None hook.
+}
+
+#[tokio::test]
+async fn mutation_hook_skips_event_when_forget_id_missing() {
+    use async_trait::async_trait;
+    use nexo_driver_types::{
+        MemoryMutationHook, MemoryMutationOp, MemoryMutationScope,
+    };
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Default)]
+    struct Recorder {
+        events: Mutex<Vec<MemoryMutationOp>>,
+    }
+    #[async_trait]
+    impl MemoryMutationHook for Recorder {
+        async fn on_mutation(
+            &self,
+            _: &str,
+            _: &str,
+            _: MemoryMutationScope,
+            op: MemoryMutationOp,
+            _: &str,
+        ) {
+            self.events.lock().unwrap().push(op);
+        }
+    }
+    let rec = Arc::new(Recorder::default());
+    let hook: Arc<dyn MemoryMutationHook> = rec.clone();
+    let db = LongTermMemory::open(":memory:")
+        .await
+        .unwrap()
+        .with_mutation_hook(hook);
+
+    let bogus = Uuid::new_v4();
+    let removed = db.forget(bogus).await.unwrap();
+    assert!(!removed);
+    assert!(
+        rec.events.lock().unwrap().is_empty(),
+        "no event must fire when DELETE matches zero rows"
+    );
+}
+
 async fn open_temp_db() -> LongTermMemory {
     // Use :memory: for fast, isolated tests
     LongTermMemory::open(":memory:").await.unwrap()

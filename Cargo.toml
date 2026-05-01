@@ -49,6 +49,7 @@ members = [
     "crates/tool-meta",
     "crates/webhook-receiver",
     "crates/webhook-server",
+    "crates/memory-snapshot",
     # Phase 76.15 — MCP server skeleton extension. Member because
     # we want CI / `cargo build --workspace` to keep it green; it
     # depends on `nexo-mcp` via in-tree path dep. Operators copy
@@ -109,6 +110,11 @@ config-self-edit = ["nexo-core/config-self-edit", "nexo-setup/config-self-edit"]
 # that persist across LLM turns). Off by default — code execution
 # is dangerous and must be explicitly opted into per-agent.
 repl-tool = ["nexo-core/repl-tool"]
+# Phase 36.2 — opt-in age encryption for `nexo memory snapshot`.
+# Forwards to `nexo-memory-snapshot` so the encryption codec compiles
+# into the binary; without the flag, the bundle path stays plaintext
+# and any `--encrypt` / `.tar.zst.age` request fails fast.
+snapshot-encryption = ["nexo-memory-snapshot/snapshot-encryption"]
 
 [build-dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
@@ -241,6 +247,7 @@ nexo-driver-claude     = { version = "0.1.1", path = "crates/driver-claude" }
 nexo-driver-loop       = { version = "0.1.1", path = "crates/driver-loop" }
 nexo-driver-permission = { version = "0.1.1", path = "crates/driver-permission" }
 nexo-driver-types      = { version = "0.1.1", path = "crates/driver-types" }
+nexo-memory-snapshot   = { version = "0.1.0", path = "crates/memory-snapshot" }
 nexo-plugin-manifest   = { version = "0.1.0", path = "crates/plugin-manifest" }
 nexo-project-tracker   = { version = "0.1.1", path = "crates/project-tracker" }
 nexo-tool-meta         = { version = "0.1.0", path = "crates/tool-meta" }

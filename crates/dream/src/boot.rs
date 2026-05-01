@@ -101,6 +101,20 @@ pub struct BootDeps {
     /// NOT downgrade the outcome.
     pub git_checkpointer:
         Option<Arc<dyn nexo_driver_types::MemoryCheckpointer>>,
+    /// Phase 36.2 — optional pre-dream snapshot sink. When `Some`,
+    /// the runner captures a `LocalFsSnapshotter` bundle (label
+    /// `auto:pre-dream-<run_id>`) immediately before the fork-pass,
+    /// so a corrupt dream can be reverted via `nexo memory restore`.
+    /// Failure logs `tracing::warn!` and the dream proceeds without
+    /// the rollback anchor — operators who want a hard gate enforce
+    /// it at the boot wire (omit this hook until the snapshotter is
+    /// healthy).
+    pub pre_dream_snapshot:
+        Option<Arc<dyn nexo_driver_types::PreDreamSnapshotHook>>,
+    /// Tenant string passed to the pre-dream snapshot hook. Defaults
+    /// to `"default"` for single-tenant deployments. Multi-tenant
+    /// SaaS wires the per-binding tenant at boot.
+    pub pre_dream_tenant: String,
 }
 
 /// Build an [`AutoDreamRunner`] ready to register on the
@@ -171,6 +185,13 @@ pub async fn build_runner(
     // provided one. Per-binding decision; default is None (no commit).
     let runner_inner = match deps.git_checkpointer {
         Some(ckpt) => runner_inner.with_git_checkpointer(ckpt),
+        None => runner_inner,
+    };
+    // Phase 36.2 — wire optional pre-dream snapshot sink.
+    let runner_inner = match deps.pre_dream_snapshot {
+        Some(hook) => runner_inner
+            .with_pre_dream_snapshot(hook)
+            .with_pre_dream_tenant(deps.pre_dream_tenant),
         None => runner_inner,
     };
     let runner = Arc::new(runner_inner);
@@ -332,6 +353,8 @@ mod tests {
             fork_tools: Vec::new(),
             fork_model: "test-model".into(),
             git_checkpointer: None,
+            pre_dream_snapshot: None,
+            pre_dream_tenant: "default".into(),
         }
     }
 

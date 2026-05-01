@@ -153,6 +153,7 @@
 - [Telemetry (opt-in)](./ops/telemetry.md)
 - [Benchmarks](./ops/benchmarks.md)
 - [Backup + restore](./ops/backup.md)
+- [Memory snapshots](./ops/memory-snapshot.md)
 - [Privacy toolkit (GDPR)](./ops/privacy.md)
 - [Health checks](./ops/health.md)
 - [Cost & quota](./ops/cost.md)
