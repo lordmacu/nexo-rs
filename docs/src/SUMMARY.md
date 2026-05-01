@@ -125,6 +125,7 @@
 - [Auto-approve dial](./agents/auto-approve.md)
 - [AWAY_SUMMARY digest](./agents/away-summary.md)
 - [Multi-agent coordination](./agents/multi-agent-coordination.md)
+- [Coordinator mode (Phase 84)](./agents/coordinator-mode.md)
 
 # CLI
 

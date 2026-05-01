@@ -921,6 +921,35 @@ mod tests {
     }
 
     #[test]
+    fn coordinator_role_loaded_from_yaml_renders_persona_block() {
+        // Smoke test: deserialize a YAML binding fixture, attach it
+        // to an agent, resolve, and assert the persona prefix.
+        let yaml = r#"
+plugin: whatsapp
+instance: ana_main
+role: coordinator
+allowed_tools:
+  - TeamCreate
+  - TeamDelete
+  - SendToPeer
+  - TodoWrite
+"#;
+        let binding: InboundBinding =
+            serde_yaml::from_str(yaml).expect("valid binding YAML");
+        let mut a = sample_agent();
+        a.inbound_bindings.push(binding);
+
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+        assert!(eff.system_prompt.starts_with("# COORDINATOR ROLE"));
+        assert!(eff.system_prompt.contains("- `TeamCreate`"));
+        assert!(eff.system_prompt.contains("- `TeamDelete`"));
+        assert!(eff.system_prompt.contains("- `SendToPeer`"));
+        assert!(eff.system_prompt.contains("- `TodoWrite`"));
+        assert!(eff.system_prompt.contains("## Scratchpad"));
+        assert!(eff.system_prompt.contains("You are Ana."));
+    }
+
+    #[test]
     fn coordinator_role_composes_with_channel_addendum() {
         let mut a = sample_agent();
         a.inbound_bindings.push(InboundBinding {

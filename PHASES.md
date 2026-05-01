@@ -9273,7 +9273,7 @@ single-process pattern; nexo's NATS-based peer mesh is a superset).
 - `admin-ui/PHASES.md` adds an "Agent role" panel checkbox showing
   per-binding role + whether the coordinator persona is active.
 
-#### 84.1 — Coordinator persona system prompt module   ⬜
+#### 84.1 — Coordinator persona system prompt module   ✅  (shipped 2026-05-01)
 
 New crate-level module (likely `crates/core/src/agent/personas/coordinator.rs`)
 that exposes a `coordinator_system_prompt(ctx: CoordinatorPromptCtx) -> String`
