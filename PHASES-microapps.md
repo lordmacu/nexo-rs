@@ -196,7 +196,7 @@ Across every Phase 82 + 83 sub-phase:
 
 ---
 
-### Phase 82 — Multi-tenant SaaS extension enablement + control plane   ⬜
+### Phase 82 — Multi-tenant SaaS extension enablement + control plane   🔄  (1 / 14)
 
 Phase 82 closes the gaps in core nexo that prevent a Phase 11
 extension (subprocess + `plugin.toml`) from implementing a
@@ -236,7 +236,7 @@ that mechanically requires in-process plugin access (advisors
 mid-turn, custom channel adapters, persona-as-plugin) stays in
 Phase 81 backlog.
 
-#### 82.1 — Tool call enriched with `BindingContext`   ⬜
+#### 82.1 — Tool call enriched with `BindingContext`   ✅
 
 Hard blocker. Today when a channel delivers an inbound message
 and the agent fires a tool call, the extension does not know
