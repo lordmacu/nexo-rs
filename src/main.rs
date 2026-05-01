@@ -1015,7 +1015,23 @@ async fn main() -> Result<()> {
 
     let config_dir = args.config_dir;
     tracing::info!(config_dir = %config_dir.display(), "loading config");
-    let cfg = AppConfig::load(&config_dir).context("failed to load config")?;
+    let mut cfg = AppConfig::load(&config_dir).context("failed to load config")?;
+
+    // Phase 82.4.b.b — auto-synth `InboundBinding { plugin: "event",
+    // instance: "<id>" }` for each declared `event_subscribers[*].id`
+    // so the existing inbound resolver matches `plugin.inbound.event.<id>`
+    // re-publishes from the EventSubscriber runtime. Idempotent — a
+    // manually-declared binding survives untouched (operator override
+    // wins).
+    for agent_cfg in &mut cfg.agents.agents {
+        if !agent_cfg.event_subscribers.is_empty() {
+            agent_cfg.inbound_bindings = nexo_core::agent::event_subscriber::synthesize_event_inbound_bindings(
+                &agent_cfg.inbound_bindings,
+                &agent_cfg.event_subscribers,
+            );
+        }
+    }
+    let cfg = cfg;
 
     // First pass of per-binding override validation — structural
     // checks only (duplicate bindings, unknown telegram instances,
@@ -1859,6 +1875,61 @@ async fn main() -> Result<()> {
         tracing::debug!("webhook_receiver disabled (config absent or enabled=false)");
         None
     };
+
+    // Phase 82.4.b.b — spawn one EventSubscriber task per
+    // (agent, binding) under a shared cancel token. Validation
+    // failures are non-fatal (log + skip the offending binding
+    // or whole-agent on duplicate-id); daemon stays up.
+    let event_subscribers_shutdown = tokio_util::sync::CancellationToken::new();
+    let mut total_event_subs = 0usize;
+    for agent_cfg in &cfg.agents.agents {
+        if agent_cfg.event_subscribers.is_empty() {
+            continue;
+        }
+        if let Err(e) =
+            nexo_config::types::event_subscriber::check_event_subscribers_unique(
+                &agent_cfg.event_subscribers,
+            )
+        {
+            tracing::error!(
+                agent_id = %agent_cfg.id,
+                error = %e,
+                "event_subscribers disabled for agent — duplicate id"
+            );
+            continue;
+        }
+        for binding in &agent_cfg.event_subscribers {
+            if let Err(e) = binding.validate() {
+                tracing::error!(
+                    agent_id = %agent_cfg.id,
+                    binding_id = %binding.id,
+                    error = %e,
+                    "skipping event_subscriber binding — invalid"
+                );
+                continue;
+            }
+            let sub = std::sync::Arc::new(
+                nexo_core::agent::event_subscriber::EventSubscriber::new(
+                    agent_cfg.id.clone(),
+                    binding.clone(),
+                    broker.clone(),
+                ),
+            );
+            let cancel = event_subscribers_shutdown.clone();
+            tokio::spawn(async move {
+                if let Err(e) =
+                    nexo_core::agent::event_subscriber::run_event_subscriber(sub, cancel).await
+                {
+                    tracing::error!(error = %e, "event_subscriber task exited with error");
+                }
+            });
+            total_event_subs += 1;
+        }
+    }
+    if total_event_subs > 0 {
+        tracing::info!(count = total_event_subs, "event subscribers online");
+    }
+
     // Phase 21 — single shared link extractor (HTTP client + LRU cache).
     // Per-binding config gates whether each turn actually fetches; the
     // extractor itself is cheap to keep around always.
