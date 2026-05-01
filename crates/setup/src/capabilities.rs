@@ -214,6 +214,21 @@ const INVENTORY: &[CapabilityToggle] = &[
         effect: "Enable `nexo/admin/agent_events/*` backfill + `nexo/notify/agent_event` firehose. Off disables the whole subsystem (microapps see -32601 + receive no notifications) regardless of operator grants.",
         hint: "export NEXO_MICROAPP_AGENT_EVENTS_ENABLED=0  # to disable",
     },
+    // Phase 82.12 — microapp HTTP servers (`[capabilities.http_server]`).
+    // Off → boot supervisor skips the health probe AND the
+    // monitor loop; microapps that declare an http_server still
+    // start, but the daemon never marks them `ready` based on
+    // health. Per-extension token rotation notifications still
+    // fire when the microapp is reachable. Operator killswitch
+    // for hardened deployments that ban embedded HTTP servers.
+    CapabilityToggle {
+        extension: "core",
+        env_var: "NEXO_MICROAPP_HTTP_SERVERS_ENABLED",
+        kind: ToggleKind::Boolean,
+        risk: Risk::High,
+        effect: "Enable boot health probe + monitor loop for microapps declaring `[capabilities.http_server]`. Off disables the supervisor; microapps still start but their HTTP-readiness is not gated.",
+        hint: "export NEXO_MICROAPP_HTTP_SERVERS_ENABLED=0  # to disable",
+    },
     CapabilityToggle {
         extension: "onepassword",
         env_var: "OP_ALLOW_REVEAL",
