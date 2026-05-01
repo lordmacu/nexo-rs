@@ -33,6 +33,9 @@ use nexo_config::{
     AgentConfig, DispatchPolicy, InboundBinding, ModelConfig, OutboundAllowlistConfig,
     ProactiveConfig, SenderRateLimitConfig, SenderRateLimitKeyword, SenderRateLimitOverride,
 };
+use nexo_config::types::plan_mode::BindingRole;
+
+use crate::agent::personas::{coordinator_system_prompt, CoordinatorPromptCtx};
 
 /// Concrete capability snapshot for one session attached to one binding.
 ///
@@ -223,13 +226,19 @@ impl EffectiveBindingPolicy {
     /// so callers in legacy/unbound code paths can still produce a policy.
     pub fn resolve(agent: &AgentConfig, binding_index: usize) -> Self {
         let binding = agent.inbound_bindings.get(binding_index);
+        let allowed_tools = resolve_allowed_tools(agent, binding);
+        let role = BindingRole::from_role_str(
+            binding.and_then(|b| b.role.as_deref()),
+        );
+        let base_prompt = resolve_prompt(agent, binding);
+        let system_prompt = apply_persona_prefix(&allowed_tools, role, base_prompt);
         Self {
             binding_index: Some(binding_index),
-            allowed_tools: resolve_allowed_tools(agent, binding),
+            allowed_tools,
             outbound_allowlist: resolve_outbound(agent, binding),
             skills: resolve_skills(agent, binding),
             model: resolve_model(agent, binding),
-            system_prompt: resolve_prompt(agent, binding),
+            system_prompt,
             sender_rate_limit: resolve_rate_limit(agent, binding),
             allowed_delegates: resolve_delegates(agent, binding),
             remote_triggers: resolve_remote_triggers(agent, binding),
@@ -441,6 +450,34 @@ fn resolve_prompt(agent: &AgentConfig, binding: Option<&InboundBinding>) -> Stri
         // (personality, hard rules) stays visually distinct from the
         // channel-specific add-on.
         format!("{}\n\n# CHANNEL ADDENDUM\n{}", base.trim_end(), extra)
+    }
+}
+
+/// Phase 84.1 — when the binding's resolved `BindingRole` is
+/// `Coordinator`, prepend the coordinator persona block ahead of
+/// the agent's existing system prompt. Other roles (Worker /
+/// Proactive / Unset) return `base` unchanged so today's behaviour
+/// is byte-identical for non-coordinator bindings.
+fn apply_persona_prefix(
+    allowed_tools: &[String],
+    role: BindingRole,
+    base: String,
+) -> String {
+    if !matches!(role, BindingRole::Coordinator) {
+        return base;
+    }
+    let scratchpad_enabled = allowed_tools
+        .iter()
+        .any(|t| t.eq_ignore_ascii_case("TodoWrite"));
+    let prefix = coordinator_system_prompt(CoordinatorPromptCtx {
+        allowed_tools,
+        scratchpad_enabled,
+        workers: &[],
+    });
+    if base.trim().is_empty() {
+        prefix
+    } else {
+        format!("{}\n\n{}", prefix, base)
     }
 }
 
@@ -830,6 +867,79 @@ mod tests {
         assert!(eff.system_prompt.starts_with("You are Ana."));
         assert!(eff.system_prompt.contains("# CHANNEL ADDENDUM"));
         assert!(eff.system_prompt.contains("Private Telegram."));
+    }
+
+    #[test]
+    fn coordinator_role_prepends_persona_block() {
+        let mut a = sample_agent();
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "whatsapp".into(),
+            role: Some("coordinator".into()),
+            allowed_tools: Some(vec![
+                "TeamCreate".into(),
+                "SendToPeer".into(),
+                "TodoWrite".into(),
+            ]),
+            ..Default::default()
+        });
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+        assert!(
+            eff.system_prompt.starts_with("# COORDINATOR ROLE"),
+            "coordinator block must come first; got:\n{}",
+            eff.system_prompt
+        );
+        // Agent's own prompt is preserved AFTER the persona block.
+        assert!(eff.system_prompt.contains("You are Ana."));
+        // Scratchpad section appears because TodoWrite is in surface.
+        assert!(eff.system_prompt.contains("## Scratchpad"));
+        // Tool list reflects the binding's allowed_tools.
+        assert!(eff.system_prompt.contains("- `TeamCreate`"));
+        assert!(eff.system_prompt.contains("- `SendToPeer`"));
+        assert!(eff.system_prompt.contains("- `TodoWrite`"));
+    }
+
+    #[test]
+    fn worker_role_does_not_prepend_persona_block() {
+        let mut a = sample_agent();
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "whatsapp".into(),
+            role: Some("worker".into()),
+            ..Default::default()
+        });
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+        assert_eq!(eff.system_prompt, "You are Ana.");
+        assert!(!eff.system_prompt.contains("COORDINATOR ROLE"));
+    }
+
+    #[test]
+    fn unset_role_does_not_prepend_persona_block() {
+        let mut a = sample_agent();
+        a.inbound_bindings.push(legacy_binding());
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+        assert_eq!(eff.system_prompt, "You are Ana.");
+        assert!(!eff.system_prompt.contains("COORDINATOR ROLE"));
+    }
+
+    #[test]
+    fn coordinator_role_composes_with_channel_addendum() {
+        let mut a = sample_agent();
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "whatsapp".into(),
+            role: Some("coordinator".into()),
+            system_prompt_extra: Some("Sales-priority channel.".into()),
+            ..Default::default()
+        });
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+        // Order: persona → agent prompt → channel addendum.
+        let persona_idx = eff.system_prompt.find("# COORDINATOR ROLE");
+        let agent_idx = eff.system_prompt.find("You are Ana.");
+        let addendum_idx = eff.system_prompt.find("# CHANNEL ADDENDUM");
+        assert!(persona_idx.is_some());
+        assert!(agent_idx.is_some());
+        assert!(addendum_idx.is_some());
+        assert!(persona_idx < agent_idx);
+        assert!(agent_idx < addendum_idx);
+        assert!(eff.system_prompt.contains("Sales-priority channel."));
     }
 
     #[test]
