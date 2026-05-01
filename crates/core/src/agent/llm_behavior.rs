@@ -1784,6 +1784,12 @@ impl AgentBehavior for LlmAgentBehavior {
             tick.source_plugin = "followup".to_string();
             tick.source_instance = followup.source_instance.clone();
             tick.priority = MessagePriority::Later;
+            // Phase 82.5 — followup ticks are scheduler-driven
+            // (no end-user) → InternalSystem.
+            tick.inbound = Some(
+                nexo_tool_meta::InboundMessageMeta::internal_system()
+                    .with_ts(Utc::now()),
+            );
 
             match self.run_turn(ctx, tick, false).await {
                 Ok(_) => {

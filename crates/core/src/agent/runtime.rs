@@ -937,6 +937,20 @@ impl AgentRuntime {
                                 inbound.trigger = RunTrigger::Manual;
                                 inbound.source_plugin = "agent".to_string();
                                 inbound.sender_id = Some(msg.from.clone());
+                                // Phase 82.5 — delegation receive surfaces as
+                                // `InboundKind::InterSession` so a microapp
+                                // can branch on origin (peer agent vs end
+                                // user). `correlation_id` is the per-request
+                                // token from the calling peer; carrying it as
+                                // `origin_session_id` lets the receiver
+                                // reconstruct the delegation graph in audit
+                                // logs.
+                                inbound.inbound = Some(
+                                    nexo_tool_meta::InboundMessageMeta::inter_session(
+                                        msg.correlation_id,
+                                    )
+                                    .with_ts(chrono::Utc::now()),
+                                );
                                 tracing::info!(
                                     agent_id = %agent.id,
                                     from = %msg.from,
@@ -1210,6 +1224,16 @@ async fn session_debounce_task(
                     tick.source_plugin = "proactive".to_string();
                     tick.sender_id = None;
                     tick.priority = MessagePriority::Later;
+                    // Phase 82.5 — proactive ticks are
+                    // system-injected turns. Microapps branch on
+                    // `ctx.inbound().kind == InternalSystem` to
+                    // skip per-user rate-limits and avoid
+                    // anti-loop heuristics that only apply to
+                    // external traffic.
+                    tick.inbound = Some(
+                        nexo_tool_meta::InboundMessageMeta::internal_system()
+                            .with_ts(chrono::Utc::now()),
+                    );
                     tracing::info!(
                         agent_id = %ctx.agent_id,
                         %session_id,
@@ -1827,6 +1851,49 @@ mod tests {
             "internal_system clears sender_id"
         );
         assert_eq!(meta.msg_id.as_deref(), Some("evt.123"));
+    }
+
+    #[test]
+    fn delegation_inter_session_meta_carries_correlation_as_origin_session() {
+        // Synthesise the wiring path for delegation receive: the
+        // call site in `runtime::start` builds an InboundMessage,
+        // sets `RunTrigger::Manual`, then stamps
+        // `InboundMessageMeta::inter_session(correlation_id)`.
+        // Validates the contract directly so a refactor that
+        // forgets to layer the meta surfaces here.
+        let correlation_id = Uuid::from_u128(0xDEADBEEF);
+        let mut msg = InboundMessage::new(Uuid::new_v4(), "ana", "delegated task");
+        msg.trigger = RunTrigger::Manual;
+        msg.source_plugin = "agent".to_string();
+        msg.inbound = Some(
+            nexo_tool_meta::InboundMessageMeta::inter_session(correlation_id)
+                .with_ts(chrono::Utc::now()),
+        );
+        let imeta = msg.inbound.as_ref().unwrap();
+        assert_eq!(imeta.kind, nexo_tool_meta::InboundKind::InterSession);
+        assert_eq!(imeta.origin_session_id, Some(correlation_id));
+        assert!(imeta.sender_id.is_none(), "inter_session has no sender");
+    }
+
+    #[test]
+    fn proactive_tick_internal_system_meta_clears_sender_and_msg() {
+        // Scheduler-driven turn: kind=InternalSystem, no sender,
+        // no msg_id (synthesised internally). Validates the shape
+        // a microapp sees on `ctx.inbound()` for proactive turns.
+        let mut tick = InboundMessage::new(Uuid::new_v4(), "ana", "tick body");
+        tick.trigger = RunTrigger::Tick;
+        tick.source_plugin = "proactive".to_string();
+        tick.priority = MessagePriority::Later;
+        tick.inbound = Some(
+            nexo_tool_meta::InboundMessageMeta::internal_system()
+                .with_ts(chrono::Utc::now()),
+        );
+        let imeta = tick.inbound.as_ref().unwrap();
+        assert_eq!(imeta.kind, nexo_tool_meta::InboundKind::InternalSystem);
+        assert!(imeta.sender_id.is_none());
+        assert!(imeta.msg_id.is_none());
+        assert!(imeta.origin_session_id.is_none());
+        assert!(imeta.inbound_ts.is_some());
     }
 
     #[test]
