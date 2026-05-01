@@ -110,6 +110,8 @@ mod tests {
             before_tokens: 100_000,
             after_tokens: 20_000,
             stored_at: chrono::Utc::now(),
+            cache_pin_keys: Vec::new(),
+            truncated_tool_results: Vec::new(),
         };
         s.store(summary).await.unwrap();
     }

@@ -751,6 +751,8 @@ impl DriverOrchestrator {
                             before_tokens: compact_before_tokens,
                             after_tokens: usage.tokens,
                             stored_at: chrono::Utc::now(),
+                            cache_pin_keys: Vec::new(),
+                            truncated_tool_results: Vec::new(),
                         };
                         let _ = self.compact_store.store(summary).await;
                     }

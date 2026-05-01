@@ -1954,6 +1954,40 @@ admin RPC + http_server bootstrap into main.rs (single
 shared boot-order refactor — folded with 82.10.h.b /
 82.11 / 82.12 / 82.13 / 82.14 deferreds).
 
+### Phase 85.2 — orchestrator + provider integration
+
+Phase 85.2 shipped the type surface (MicroCompactPolicy trait,
+DefaultMicroCompactPolicy, CompactSummary.cache_pin_keys +
+truncated_tool_results, TruncatedToolResult,
+TIME_BASED_MC_CLEARED_MESSAGE marker constant) + 10 unit tests
+covering policy decisions and serde back-compat. Three pieces
+deferred to 85.2.b:
+
+- **Orchestrator wire-up**: per-turn `MicroCompactPolicy::classify`
+  call before request body assembly. When triggered, splice the
+  marker into the tool result and append a `TruncatedToolResult`
+  to the next `CompactSummary`. Idempotency: dedupe by `call_id`
+  across consecutive compacts so the same result isn't marked
+  twice.
+
+- **Provider client integration**: `crates/llm/src/anthropic` and
+  `crates/llm/src/minimax` request builders honor
+  `cache_pin_keys` — prepend `cache_control: { type: "ephemeral" }`
+  breakpoints at the pinned positions so the provider preserves
+  the cached prefix across compact passes.
+
+- **Integration test**: `crates/driver-loop/tests/` two consecutive
+  compacts on the same goal — assert (a) the same call_id is not
+  double-marked, (b) the cache_pin_keys persist through a daemon
+  restart via CompactSummaryStore.
+
+- **Telemetry**: `compact_micro_truncated_bytes_total` counter +
+  `compact_micro_cache_hit_ratio` gauge for the Phase 28
+  Prometheus surface.
+
+Target phase: 85.2.b (folded with broader provider request-builder
+sweep).
+
 ### Phase 85.1 — provider 413 detection + integration test
 
 Phase 85.1 shipped the type surface (LlmError::PromptTooLong,
