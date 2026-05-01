@@ -759,6 +759,24 @@ impl AgentRuntime {
                                 Arc::clone(&sessions),
                             );
                             ctx = ctx.with_effective(Arc::clone(&effective_for_session));
+                            // Phase 82.4.b.b — populate
+                            // `BindingContext.event_source` when the
+                            // inbound was synthesised by an
+                            // EventSubscriber. Gate on the topic
+                            // prefix to avoid debug-log spam on
+                            // native-channel inbounds.
+                            if event.topic.starts_with(
+                                crate::agent::event_subscriber::EVENT_INBOUND_TOPIC_PREFIX,
+                            ) && ctx.binding.is_some()
+                            {
+                                if let Some(meta) =
+                                    crate::agent::event_subscriber::extract_nexo_event_source(
+                                        &event.payload,
+                                    )
+                                {
+                                    ctx = ctx.with_event_source(meta);
+                                }
+                            }
                             ctx = ctx.with_plan_approval_registry(plan_approval_registry.clone());
                             ctx = ctx.with_context_optimization(snap.context_optimization);
                             if let Some(tools) = effective_tools_for_session.clone() {
