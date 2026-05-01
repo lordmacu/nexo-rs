@@ -27,22 +27,64 @@ re-reading the full `PHASES.md` / `PHASES-microapps.md` /
 
 ---
 
+## Pickup order — read this first
+
+Sub-phases are tagged with one of these labels. Pick from the
+top of the list when starting a sprint; do not skip ahead.
+
+| Tag | Meaning |
+|-----|---------|
+| **P0 — NEXT** | In-flight or the immediate blocker. One sub-phase carries this at any time; finish before pulling another P0. |
+| **P1 — CRITICAL PATH** | Blocks shipping the current product (today: `agent-creator-microapp`). Pull as soon as the active P0 lands. |
+| **P2 — PARALLEL** | High-leverage hardening / observability that can run alongside P1 without blocking. Pull when you have spare cycles or a separate contributor. |
+| **P3 — POST-CRITICAL** | Waits on P1/P2 predecessors. Don't pull early — you'll re-do work. |
+| **DEFER** | Real use case but the trigger has not arrived. Don't touch unless the trigger fires. |
+| **DROPPED** | Removed from active scope. Don't touch. |
+
+### Suggested pickup order (top → bottom)
+
+1. **P0** — Phase 84.1 coordinator persona system prompt (in flight: brainstorm + spec + plan approved → `/forge ejecutar 84.1`)
+2. **P0** — Phase 84.2 → 84.3 → 84.4 → 84.5 (chain of the current phase)
+3. **P1** — Phase 82.12 HTTP server hosting (agent-creator can't bind without it)
+4. **P1** — Phase 82.11 agent event firehose (agent-creator UI can't reconstruct conversations without it)
+5. **P1** — Phase 82.13 agent processing pause + takeover (operator intervention blocks production use)
+6. **P1** — Phase 83.15 microapp testing harness (every author needs it; lands DX value early)
+7. **P1** — Phase 83.16 microapp error → operator path (operational visibility)
+8. **P1** — Phase 83.17 microapp config schema validation (install-time fail-fast)
+9. **P1** — Phase 83.5 compliance primitives (gates 83.8 ventas-etb + serves agent-creator)
+10. **P1** — Phase 83.6 microapp contract document (gates Python/TS authors using 83.7-Rust as porting source)
+11. **P1** — Phase 83.10 second microapp validation (agent-creator production validation)
+12. **P1** — Phase 83.12 → 83.13 → 83.14 React UI scaffold + component library + SDK publish (agent-creator UI shell)
+13. **P2** — Phase 85.1 reactive 413 recovery (defensive, always-on benefit, ~1 d)
+14. **P2** — Phase 86.1 local memory-shape metrics (ops observability, ~1 d)
+15. **P2** — Phase 81.5 PluginRegistry::discover (unlocks 81.6/7/9 chain)
+16. **P2** — Phase 81.9 Mode::Run registry sweep (~500 → 30 LOC critical milestone)
+17. **P2** — Phase 81.3 / 81.4 / 81.6 / 81.7 / 81.8 (plug-and-play remainder; order after 81.5/9)
+18. **P3** — Phase 85.2 cache-aware micro-compaction (multi-tenant cost optimization, ~3-4 d)
+19. **P3** — Phase 87.1 LlmJudgeEvaluator (depends on Phase 84 fully shipped)
+20. **P3** — Phase 81.10 / 81.11 / 81.12 (plugin hot-load / doctor / migration — after 81.5/9 land)
+
+Anything not in this list is either ✅ shipped, **DEFER**, or
+**DROPPED** — see sections below.
+
+---
+
 ## ACTIVE — what we will ship next
 
 Order: priority within each phase × phase numerical order.
 
-### ⭐ Phase 84 — Coordinator agent persona + worker continuation
+### ⭐ Phase 84 — Coordinator agent persona + worker continuation   `P0`
 
 **Status**: brainstorm + spec + plan all approved in
 conversation. Next action: `/forge ejecutar 84.1`.
 
-| Sub-phase | Status | Effort |
-|-----------|--------|--------|
-| 84.1 — Coordinator persona system prompt | ⬜ ready | 1.5 d |
-| 84.2 — `<task-notification>` envelope | ⬜ | 1 d |
-| 84.3 — `SendMessageToWorker` continuation tool | ⬜ | 2 d |
-| 84.4 — Worker persona system prompt | ⬜ | 1 d |
-| 84.5 — Docs + admin-ui sync | ⬜ | 0.5 d |
+| Sub-phase | Priority | Status | Effort |
+|-----------|----------|--------|--------|
+| 84.1 — Coordinator persona system prompt | **P0 NEXT** | ⬜ ready | 1.5 d |
+| 84.2 — `<task-notification>` envelope | **P0** | ⬜ | 1 d |
+| 84.3 — `SendMessageToWorker` continuation tool | **P0** | ⬜ | 2 d |
+| 84.4 — Worker persona system prompt | **P0** | ⬜ | 1 d |
+| 84.5 — Docs + admin-ui sync | **P0** | ⬜ | 0.5 d |
 
 **Total**: ~6 dev-days. Critical path 84.1 → 84.2 → 84.3.
 
@@ -51,28 +93,27 @@ conversation. Next action: `/forge ejecutar 84.1`.
 ### Phase 83 — Microapp framework foundation (active for the agent-creator critical path)
 
 The agent-creator microapp at `/home/familia/chat/agent-creator-microapp/`
-drives this phase. The 6 sub-phases on its critical path are
-flagged `★`.
+drives this phase. Critical-path rows flagged `P1`.
 
-| Sub-phase | Status | Notes |
-|-----------|--------|-------|
-| 83.1 — Per-agent extension config propagation | ⬜ | Microapp wants per-agent config maps |
-| 83.2 — Extension-contributed skills | ⬜ | Microapp ships its own skills |
-| 83.3 — Hook interceptor (vote-to-block) | ⬜ | Compliance primitives plug in here |
-| 83.4 — `microapp-sdk-rust` reusable helper | 🔄 | Core SDK ✅ shipped 2026-04-30; 83.4.b agent-creator migration ✅; 83.4.c Phase 82.x helpers pending |
-| 83.5 — `compliance-primitives` reusable library | ⬜ | Anti-loop / anti-manipulation / opt-out / PII redact / rate-limit / consent. KEEP — provider-agnostic, microapp-foundational |
-| 83.6 — Microapp contract document | ⬜ | The language-agnostic spec — replaces Python/TS reference templates as the portability story |
-| 83.7 — Microapp template (Rust only) | ⬜ | **Reduced** from Rust + Python + TypeScript to Rust only. Other stacks port from 83.6 contract. |
-| 83.8 — `ventas-etb` reference microapp | ⬜ | First production microapp |
-| 83.9 — `ana` cutover | ⬜ | Migration from yaml-only to extension-based |
-| 83.10 — Second microapp validation ★ | ⬜ | agent-creator production validation — proves framework reusability |
-| 83.11 — Docs + admin-ui sync | ⬜ | |
-| 83.12 — Meta-microapp React UI scaffold ★ | ⬜ | agent-creator UI |
-| 83.13 — `microapp-ui-react` component library ★ | ⬜ | WhatsApp-inspired chat helper for microapps that need it |
-| 83.14 — Publish SDKs (crates.io + npm) ★ | ⬜ | Decouples agent-creator from nexo source |
-| **83.15 — Microapp testing harness (mock daemon)** ★ | ⬜ NEW | Closes a foundational DX gap — every author re-invents mocks today |
-| **83.16 — Microapp error → operator path** ★ | ⬜ NEW | Operator visibility into microapp boot/handler failures |
-| **83.17 — Microapp config schema validation** | ⬜ NEW | Shifts validation to install/boot time so misconfig fails fast |
+| Sub-phase | Priority | Status | Notes |
+|-----------|----------|--------|-------|
+| 83.1 — Per-agent extension config propagation | **P2** | ⬜ | Microapp wants per-agent config maps; not yet a hard blocker |
+| 83.2 — Extension-contributed skills | **P2** | ⬜ | Microapp ships its own skills; opportunistic |
+| 83.3 — Hook interceptor (vote-to-block) | **P1** | ⬜ | Compliance primitives plug in here — gates 83.5 + 83.8 |
+| 83.4 — `microapp-sdk-rust` reusable helper | **P1** | 🔄 | Core SDK ✅ 2026-04-30; 83.4.b ✅; 83.4.c Phase 82.x helpers pending |
+| 83.5 — `compliance-primitives` reusable library | **P1** | ⬜ | Anti-loop / anti-manipulation / opt-out / PII redact / rate-limit / consent. Provider-agnostic, microapp-foundational |
+| 83.6 — Microapp contract document | **P1** | ⬜ | Language-agnostic spec — replaces Python/TS reference templates as the portability story |
+| 83.7 — Microapp template (Rust only) | **P2** | ⬜ | **Reduced** from 3 stacks to Rust only. Other stacks port from 83.6 contract |
+| 83.8 — `ventas-etb` reference microapp | **P2** | ⬜ | First production microapp built on the framework |
+| 83.9 — `ana` cutover | **P3** | ⬜ | Migration from yaml-only to extension-based; depends on 83.8 |
+| 83.10 — Second microapp validation | **P1** | ⬜ | agent-creator production validation — proves framework reusability |
+| 83.11 — Docs + admin-ui sync | **P3** | ⬜ | Final docs sweep |
+| 83.12 — Meta-microapp React UI scaffold | **P1** | ⬜ | agent-creator UI shell |
+| 83.13 — `microapp-ui-react` component library | **P1** | ⬜ | WhatsApp-inspired chat helper for microapps that need it |
+| 83.14 — Publish SDKs (crates.io + npm) | **P1** | ⬜ | Decouples agent-creator from nexo source |
+| **83.15 — Microapp testing harness (mock daemon)** | **P1** | ⬜ NEW | Closes a foundational DX gap — every author re-invents mocks today |
+| **83.16 — Microapp error → operator path** | **P1** | ⬜ NEW | Operator visibility into microapp boot/handler failures |
+| **83.17 — Microapp config schema validation** | **P1** | ⬜ NEW | Shifts validation to install/boot time so misconfig fails fast |
 
 **3 new gap-closing sub-phases added in this curation pass**
 (83.15 / 83.16 / 83.17). They were missing from the original
@@ -83,66 +124,66 @@ plan — every microapp author would have hit them.
 ### Phase 82 — Multi-tenant SaaS extension enablement
 
 Critical path for agent-creator: **82.11 / 82.12 / 82.13** all
-flagged `★`. Without these the agent-creator UI cannot stream
+flagged `P1`. Without these the agent-creator UI cannot stream
 transcripts, host its HTTP server, or pause agents.
 
-| Sub-phase | Status |
-|-----------|--------|
-| 82.1 — `BindingContext` enrichment | ✅ |
-| 82.2 — Tool registry + manifest parsing | ✅ |
-| 82.3 — Plugin.toml [outbound_bindings] schema | ✅ |
-| 82.4 / 82.5 / 82.7 / 82.10 | ✅ |
-| 82.6 — Per-extension state_root convention | ⬜ |
-| 82.8 — Multi-tenant audit log filter | ⬜ |
-| 82.9 — Reference SaaS template | ⬜ |
-| 82.11 — Agent event firehose + transcripts ★ | ⬜ |
-| 82.12 — HTTP server hosting ★ | ⬜ |
-| 82.13 — Agent processing pause + takeover ★ | ⬜ |
-| 82.14 — `escalate_to_human` tool + notification | ⬜ |
+| Sub-phase | Priority | Status |
+|-----------|----------|--------|
+| 82.1 — `BindingContext` enrichment | — | ✅ |
+| 82.2 — Tool registry + manifest parsing | — | ✅ |
+| 82.3 — Plugin.toml [outbound_bindings] schema | — | ✅ |
+| 82.4 / 82.5 / 82.7 / 82.10 | — | ✅ |
+| 82.6 — Per-extension state_root convention | **P2** | ⬜ |
+| 82.8 — Multi-tenant audit log filter | **P2** | ⬜ |
+| 82.9 — Reference SaaS template | **P3** | ⬜ |
+| 82.11 — Agent event firehose + transcripts | **P1** | ⬜ |
+| 82.12 — HTTP server hosting | **P1** | ⬜ |
+| 82.13 — Agent processing pause + takeover | **P1** | ⬜ |
+| 82.14 — `escalate_to_human` tool + notification | **P2** | ⬜ |
 
 ---
 
 ### Phase 81 — Plug-and-Play Plugin System
 
-| Sub-phase | Status |
-|-----------|--------|
-| 81.1 / 81.2 | ✅ |
-| 81.3 — Tool namespace runtime enforcement | ⬜ |
-| 81.4 — Plugin-scoped config dir loader | ⬜ |
-| 81.5 — `PluginRegistry::discover` filesystem walk | ⬜ |
-| 81.6 — Plugin-side agent registration | ⬜ |
-| 81.7 — Plugin-side `skills_dir` | ⬜ |
-| 81.8 — `ChannelAdapter` trait | ⬜ |
-| 81.9 — `Mode::Run` registry sweep | ⬜ critical milestone |
-| 81.10 — Plugin hot-load via reload coord | ⬜ |
-| 81.11 — Plugin doctor + capability inventory | ⬜ |
-| 81.12 — Existing plugin migration | ⬜ |
-| 81.13 — Reference plugin template + CLI | ⬜ DEFER (until 81.5 + 81.9 ship — the example will be obvious then) |
+| Sub-phase | Priority | Status |
+|-----------|----------|--------|
+| 81.1 / 81.2 | — | ✅ |
+| 81.3 — Tool namespace runtime enforcement | **P2** | ⬜ |
+| 81.4 — Plugin-scoped config dir loader | **P2** | ⬜ |
+| 81.5 — `PluginRegistry::discover` filesystem walk | **P2** | ⬜ unblocks 81.6/7/9 chain |
+| 81.6 — Plugin-side agent registration | **P3** | ⬜ |
+| 81.7 — Plugin-side `skills_dir` | **P3** | ⬜ |
+| 81.8 — `ChannelAdapter` trait | **P3** | ⬜ |
+| 81.9 — `Mode::Run` registry sweep | **P2** | ⬜ critical milestone (~500 → 30 LOC) |
+| 81.10 — Plugin hot-load via reload coord | **P3** | ⬜ |
+| 81.11 — Plugin doctor + capability inventory | **P3** | ⬜ |
+| 81.12 — Existing plugin migration | **P3** | ⬜ |
+| 81.13 — Reference plugin template + CLI | **DEFER** | ⬜ gated on 81.5 + 81.9 |
 
 ---
 
 ### Phase 85 — Compaction hardening
 
-| Sub-phase | Status | Effort |
-|-----------|--------|--------|
-| 85.1 — Reactive 413 recovery | ⬜ | ~1 d |
-| 85.2 — Cache-aware micro-compaction | ⬜ | ~3-4 d |
+| Sub-phase | Priority | Status | Effort |
+|-----------|----------|--------|--------|
+| 85.1 — Reactive 413 recovery | **P2** | ⬜ | ~1 d |
+| 85.2 — Cache-aware micro-compaction | **P3** | ⬜ | ~3-4 d |
 
 ---
 
 ### Phase 86 — Memory observability
 
-| Sub-phase | Status | Effort |
-|-----------|--------|--------|
-| 86.1 — Local memory-shape Prometheus metrics | ⬜ | ~1 d |
+| Sub-phase | Priority | Status | Effort |
+|-----------|----------|--------|--------|
+| 86.1 — Local memory-shape Prometheus metrics | **P2** | ⬜ | ~1 d |
 
 ---
 
 ### Phase 87 — LLM-as-judge verifier
 
-| Sub-phase | Status | Effort |
-|-----------|--------|--------|
-| 87.1 — `LlmJudgeEvaluator` impl | ⬜ AFTER-PHASE-84 | ~2 d |
+| Sub-phase | Priority | Status | Effort |
+|-----------|----------|--------|--------|
+| 87.1 — `LlmJudgeEvaluator` impl | **P3** | ⬜ AFTER-PHASE-84 | ~2 d |
 
 ---
 
