@@ -1464,7 +1464,7 @@ Done criteria:
   fail-open with warn log.
 - 6+ unit tests + 1 integration test.
 
-#### 83.4 — `crates/microapp-sdk-rust` reusable Rust helper   🔄  (core SDK ✅, agent-creator migration + Phase 82.x-dependent helpers deferred)
+#### 83.4 — `crates/microapp-sdk-rust` reusable Rust helper   🔄  (core SDK ✅, agent-creator migration ✅ — 83.4.b shipped 2026-05-01; Phase 82.x-dependent helpers deferred to 83.4.c)
 
 **Core SDK shipped (83.4 MVP):**
 - `crates/microapp-sdk/` new crate (~900 LOC + 36 tests).
@@ -1493,10 +1493,22 @@ Done criteria:
   returning `DispatchError::Transport` until Phase 82.3.b
   daemon runtime ships.
 
-**Deferred to 83.4.b (agent-creator migration + advanced
-helpers):**
-- `agent-creator-microapp/src/main.rs` rewrite from 200 LOC
-  to ~30 LOC using the SDK (validates the API end-to-end).
+**83.4.b shipped (agent-creator migration, 2026-05-01):**
+- `agent-creator-microapp` 0.0.1 → 0.0.2 — `src/main.rs`
+  collapsed from ~200 LOC to ~30 LOC using
+  `Microapp::new(...).with_hook("before_message", ...).run_stdio()`.
+- Inline tests refactored to `MicroappTestHarness` — 4
+  redundant SDK-covered tests deleted, 2 microapp-specific
+  retained (`before_message_hook_returns_continue`,
+  `unknown_tool_returns_method_not_found`).
+- `tests/binding_wire_contract.rs` integration test passes
+  unchanged — wire contract identical pre/post migration.
+- Direct deps removed: `anyhow`, `thiserror`,
+  `tracing-subscriber` (subsumed by SDK).
+- Single atomic commit `feat(0.0.2): migrate runtime to
+  nexo-microapp-sdk (Phase 83.4.b)`.
+
+**Deferred to 83.4.c (advanced helpers, Phase 82.x-dependent):**
 - `PersonaConfigMap<T>` data structure with hot-reload via
   `agents/updated` handler (depends on Phase 82.10 admin
   RPC).
