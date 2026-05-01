@@ -196,7 +196,7 @@ Across every Phase 82 + 83 sub-phase:
 
 ---
 
-### Phase 82 — Multi-tenant SaaS extension enablement + control plane   🔄  (2 / 14)
+### Phase 82 — Multi-tenant SaaS extension enablement + control plane   🔄  (2 / 14 + 82.2.b ✅)
 
 Phase 82 closes the gaps in core nexo that prevent a Phase 11
 extension (subprocess + `plugin.toml`) from implementing a
@@ -314,6 +314,39 @@ Done criteria:
 - Subject pattern collision detection at boot.
 - Integration test using axum test-client + signed payload.
 - `webhook_receiver` YAML schema documented.
+
+#### 82.2.b — Extract `nexo-tool-meta` + Tier A publish-readiness   ✅
+
+Follow-up to 82.2. Extracts the wire-shape types
+(`BindingContext`, `WebhookEnvelope`, `_meta` builder/parser
+helpers) into a slim, framework-free crate so any third-party
+Rust microapp can `cargo add nexo-tool-meta` without pulling
+the agent runtime. Ships pre-publish posture for the Tier A
+surface (READMEs, `[package.metadata.docs.rs]`, doctests,
+forward-compat policy).
+
+Scope:
+- New crate `crates/tool-meta/` (~600 LOC + tests + doctests)
+  with the four-dependency wire-only surface (serde +
+  serde_json + uuid + chrono).
+- Re-exports from `nexo-core::agent::context::BindingContext`
+  and `nexo-webhook-receiver::dispatcher::{WebhookEnvelope,
+  format_webhook_source}` keep every internal call-site
+  working unchanged.
+- Microapp-side validation: `agent-creator-microapp`
+  consumes `nexo-tool-meta` via path-dep and the
+  `parse_binding_via_sdk_helper` test locks the public surface.
+- Operator docs `docs/src/microapps/rust.md` document the
+  Tier A surface and the SDK's forward-compat policy.
+
+Deferred to follow-ups:
+- Tier A `#![deny(missing_docs)]` + `#[non_exhaustive]` sweep
+  on `nexo-resilience`, `nexo-driver-permission`,
+  `nexo-webhook-receiver`, `nexo-webhook-server`.
+- CI tier-a-gate workflow (build / test / doc / smoke per
+  crate matrix).
+- Actual `cargo publish` (operator-gated, post-review).
+- `nexo-test-fixtures` extraction (Tier B).
 
 #### 82.3 — Outbound dispatch from extension (stdio path)   ⬜
 
