@@ -591,10 +591,64 @@ impl LlmAgentBehavior {
         }
         let started_tool = std::time::Instant::now();
         let call_ctx = ctx.clone().with_session_id(msg.session_id);
+        // Phase 82.7 — rate-limit lookup is binding-aware. The
+        // limiter resolves per-binding overrides
+        // (`ctx.effective.tool_rate_limits`) before the global
+        // pattern set; bucket cardinality is per
+        // `(agent, binding_id, tool)` so a single binding can't
+        // starve other bindings on the same agent.
+        let binding_id_owned = ctx.binding.as_ref().and_then(|b| b.binding_id.clone());
+        let per_binding_override = ctx
+            .effective
+            .as_ref()
+            .and_then(|p| p.tool_rate_limits.clone());
         let rate_allowed = match &self.rate_limiter {
-            Some(rl) if skip_call.is_none() => rl.try_acquire(&ctx.agent_id, &call.name).await,
+            Some(rl) if skip_call.is_none() => {
+                rl.try_acquire_with_binding(
+                    &ctx.agent_id,
+                    binding_id_owned.as_deref(),
+                    &call.name,
+                    per_binding_override.as_ref(),
+                )
+                .await
+            }
             _ => true,
         };
+        if !rate_allowed {
+            // Phase 82.7 — Phase 72 turn-log marker on denial so
+            // operator audit queries can identify which
+            // `(binding, tool)` pairs hit caps most. The marker
+            // is wire-shape stable; downstream billing pipelines
+            // parse the format documented on `format_rate_limit_hit`.
+            //
+            // Resolved rps lookup: we redo the resolve here purely
+            // for the marker — the limiter consumed the bucket
+            // already and we don't need its f64 internally. Falls
+            // back to 0.0 when the configured pattern is gone (race
+            // with hot-reload); the marker still carries enough
+            // signal to identify the binding and tool.
+            let rps_for_marker = per_binding_override
+                .as_ref()
+                .and_then(|over| {
+                    over.patterns
+                        .iter()
+                        .find(|(p, _)| {
+                            super::rate_limit::glob_matches(p, &call.name)
+                        })
+                        .or_else(|| over.patterns.get_key_value("_default"))
+                        .map(|(_, spec)| spec.rps)
+                })
+                .unwrap_or(0.0);
+            tracing::info!(
+                agent_id = %ctx.agent_id,
+                marker = %nexo_tool_meta::format_rate_limit_hit(
+                    &call.name,
+                    binding_id_owned.as_deref(),
+                    rps_for_marker,
+                ),
+                "tool call rate-limited"
+            );
+        }
         let schema_error: Option<String> = match &self.schema_validator {
             Some(v) if skip_call.is_none() && rate_allowed => {
                 if let Some((def, _)) = self.tools.get(&call.name) {

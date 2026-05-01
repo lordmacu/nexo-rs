@@ -54,7 +54,8 @@ pub mod webhook;
 
 pub use binding::{binding_id_render, BindingContext};
 pub use event_source::{
-    format_dispatch_source, format_event_subscriber_source, EventSourceMeta,
+    format_dispatch_source, format_event_subscriber_source, format_rate_limit_hit,
+    EventSourceMeta,
 };
 pub use inbound::{InboundKind, InboundMessageMeta};
 pub use meta::{
