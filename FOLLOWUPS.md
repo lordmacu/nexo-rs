@@ -24,48 +24,66 @@ The `nexo-memory-snapshot` crate is feature-complete and operational.
 Three deferred items track follow-up commits — each is isolated and
 does not block production use of the feature.
 
-- **MS-1 — Mutation hook fire-site sweep + boot publisher wire** ⬜
-  - `LongTermMemory::remember_typed` + `forget` already fire
-    `MemoryMutationHook` (3 tests in `long_term_test.rs`). The
-    remaining writers follow the exact same pattern:
-    - `crates/memory/src/vector.rs` — vector insert / delete
-    - `crates/memory/src/concepts.rs` — concept tag write paths
-    - `crates/memory/src/compactions.rs` — `compactions_v1` insert,
-      lock acquire / release
-    - `crates/core/src/agent/workspace_git.rs::commit_all` — git
-      commit emit `Git` scope `Update`
-  - Boot wire requires init-order shuffle in `src/main.rs::Mode::Run`:
-    today the snapshotter is built ~line 2186 (after
-    `flow_manager`); `LongTermMemory::open_with_vector` runs ~line
-    1396 and never sees the hook. Move the snapshotter +
-    `MemoryMutationPublisher` construction above line 1396 (or
-    refactor LongTermMemory to accept an `Arc<dyn MemoryMutationHook>`
-    via a fluent setter applied post-open). The `MemoryMutationPublisher`
-    bridge already exists in
-    `crates/memory-snapshot/src/dream_adapter.rs`; main.rs only
-    needs a tiny `EventPublisher` impl that wraps `AnyBroker`.
-  - Effort: ~half day. Risk: low — pattern is mechanical, each
-    fire site individually testable.
+- **MS-1 — Mutation hook fire-site sweep + boot publisher wire**
+  ✅ **shipped** (commit `208da43`). Init-order shuffle put the
+  snapshotter + `BrokerEventPublisher` + mutation hook
+  construction immediately after broker init so
+  `LongTermMemory::open_with_vector` picks up
+  `with_mutation_hook(...)` cleanly.
+  `LongTermMemory::remember_typed` + `forget` fire `Insert` /
+  `Delete` events onto `nexo.memory.mutated.<agent_id>` via
+  `BrokerEventPublisher` wrapping `AnyBroker`. Best-effort: a
+  serialize or publish failure logs `tracing::warn!` and never
+  poisons the writer's transaction.
 
-- **MS-2 — Per-agent memdir / sqlite path discovery** ⬜
-  - Today `LocalFsSnapshotter` accepts global `memdir_root` and
-    `sqlite_root` from YAML. Multi-tenant SaaS (Phase 82) wants
-    per-agent paths so each agent's `MemoryGitRepo` (which lives
-    at `agent_cfg.workspace`) is the source of truth for that
-    agent's memdir, and per-agent SQLite paths come from the
-    agent registry.
-  - Design: introduce `pub trait PathResolver: Send + Sync` with
-    `fn memdir(&self, agent_id: &str, tenant: &str) -> PathBuf`
-    + `fn sqlite_dir(&self, agent_id: &str, tenant: &str) -> PathBuf`.
-    `LocalFsSnapshotterBuilder::with_path_resolver(Arc<dyn PathResolver>)`
-    overrides the static roots. Default impl uses the YAML
-    `memdir_root` / `sqlite_root` per Phase 36.2.
-  - Boot wire injects a `PathResolver` that consults the agent
-    registry for the workspace path.
-  - Effort: ~1 day. Risk: medium — touches the snapshotter
-    builder + every snapshot/restore call site that resolves
-    paths. New tests for cross-tenant isolation + bad agent_id
-    fallback.
+- **MS-1.b — Remaining fire sites (compactions / git / vector /
+  concepts)** ⬜
+  - `crates/memory/src/vector.rs` and
+    `crates/memory/src/concepts.rs` are pure helpers — actual
+    writes happen inside `LongTermMemory::remember_typed` /
+    `forget`, so they piggyback on MS-1's existing fire site
+    transactionally. Documented decision: `MemoryMutationScope::
+    SqliteVector` / `SqliteConcepts` variants stay reserved for
+    future standalone writers (e.g. a vector-only pipeline).
+  - `crates/memory/src/compactions.rs::CompactionStore` is global
+    per-deployment (one DB shared across every agent) and
+    doesn't carry an `agent_id` correlation token in its
+    method signatures. Wiring needs a schema decision: either
+    add `agent_id` to `CompactionRow` (breaking schema) or
+    pre-bind at `CompactionStore::with_agent_id` per-agent
+    (needs a per-agent store, big refactor). Defer until the
+    operator surface demands it.
+  - `crates/core/src/agent/workspace_git.rs::commit_all` is
+    sync but `MemoryMutationHook::on_mutation` is async. Needs
+    either a sibling `commit_all_async` that wraps in
+    `spawn_blocking` + fires the hook post-commit, or each
+    caller wraps a `tokio::spawn` themselves. Surgical, ~1
+    hour but adds an async dual to a sync function.
+  - Effort: ~2 hours combined. Risk: low — mechanical wire
+    once the design choice on `CompactionStore` is settled.
+
+- **MS-2 — Per-agent memdir / sqlite path discovery**
+  ✅ **shipped** (commit `e78d75f`). New `PathResolver` trait in
+  `crates/memory-snapshot/src/path_resolver.rs` plus two impls
+  (`DefaultPathResolver` over the YAML globals,
+  `ClosureResolver<F1, F2>` for boot-time strategy injection).
+  `LocalFsSnapshotterBuilder::path_resolver(Arc<dyn PathResolver>)`
+  threads the override through; `snapshot.rs::build_bundle` and
+  `restore.rs::apply_restore` consult the resolver. Restore
+  picks the tenant from the bundle's manifest so resolver calls
+  match what was used at snapshot time.
+
+- **MS-2.b — Inject a `ClosureResolver` from the agent registry
+  at boot** ⬜
+  - Today `src/main.rs::Mode::Run` constructs `LocalFsSnapshotter`
+    with the YAML defaults — every agent shares the same
+    `memdir_root/<agent_id>`. Real per-agent memdir lives at
+    `agent_cfg.workspace/.git/`. A boot-time `ClosureResolver`
+    that maps `agent_id → agent_cfg.workspace` (looked up from
+    the same `cfg.agents.agents` already iterated in the
+    per-agent tool registry loop) closes the loop.
+  - Effort: ~1 hour. Risk: low — pure boot-wire change, no new
+    types.
 
 - **MS-3 — `BootDeps` consumer in `Mode::Run` for AutoDreamRunner** ⬜
   - `nexo_dream::boot::BootDeps` already accepts
