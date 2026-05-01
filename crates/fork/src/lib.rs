@@ -14,6 +14,7 @@
 //!
 //! Tests verify bit-for-bit message-prefix pass-through.
 
+pub mod agent_dispatcher;
 pub mod auto_mem_filter;
 pub mod cache_safe;
 pub mod delegate_mode;
@@ -25,6 +26,7 @@ pub mod overrides;
 pub mod tool_filter;
 pub mod turn_loop;
 
+pub use agent_dispatcher::AgentToolDispatcher;
 pub use auto_mem_filter::{tool_names, AutoMemFilter, AutoMemFilterError};
 pub use cache_safe::{CacheSafeParams, CacheSafeSlot};
 pub use delegate_mode::DelegateMode;
