@@ -2023,7 +2023,7 @@ Done criteria:
 - Used by both `ventas-etb` (83.8) and the second microapp
   (83.10) demonstrating reusability.
 
-#### 83.6 — Microapp contract document   ⬜
+#### 83.6 — Microapp contract document   ✅  (shipped 2026-05-01)
 
 Language-agnostic spec for "what is a nexo microapp". Docs
 page `docs/src/microapps/contract.md`. Mandatory reading
