@@ -22,7 +22,9 @@ use ipnetwork::IpNetwork;
 /// `.get(...).and_then(|v| v.to_str().ok())` calls.
 #[derive(Debug, Clone, Copy)]
 pub struct ProxyHeaders<'a> {
+    /// Borrowed `X-Forwarded-For` value, if present.
     pub forwarded_for: Option<&'a str>,
+    /// Borrowed `X-Real-IP` value, if present.
     pub real_ip: Option<&'a str>,
 }
 

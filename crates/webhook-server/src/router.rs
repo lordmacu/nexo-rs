@@ -288,6 +288,9 @@ fn map_reject(r: &RejectReason) -> (StatusCode, String) {
         | RejectReason::InvalidEventKindForSubject { .. } => {
             (StatusCode::UNPROCESSABLE_ENTITY, r.to_string())
         }
+        // `RejectReason` is `#[non_exhaustive]`; future reasons
+        // default to 422 until a more specific status is wired.
+        _ => (StatusCode::UNPROCESSABLE_ENTITY, r.to_string()),
     }
 }
 
