@@ -26,6 +26,7 @@ pub mod runtime;
 pub mod taskflow;
 pub mod team;
 pub mod transcripts;
+pub mod webhook_receiver;
 
 pub use agents::*;
 pub use broker::*;
@@ -50,3 +51,4 @@ pub use runtime::*;
 pub use taskflow::*;
 pub use team::*;
 pub use transcripts::*;
+pub use webhook_receiver::*;
