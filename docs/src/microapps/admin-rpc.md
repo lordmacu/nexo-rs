@@ -213,10 +213,21 @@ struct AdminAuditRow {
 `args_hash` lets operator audit pipelines detect repeated
 identical calls (potential abuse) without storing PII payloads.
 
-The v1 implementation uses `InMemoryAuditWriter`. SQLite
-persistence (`microapp_admin_audit` table) + retention sweep +
-`nexo microapp admin audit tail` CLI are deferred to follow-up
-82.10.h.
+Two writer implementations:
+
+- **`InMemoryAuditWriter`** — default, used in tests and as a
+  fallback when no on-disk path is configured. Resets on restart.
+- **`SqliteAdminAuditWriter`** (Phase 82.10.h.1) — writes the
+  `microapp_admin_audit` table (idempotent `CREATE TABLE IF NOT
+  EXISTS` + WAL + 2 indices on `microapp_id` and `method`).
+  `sweep_retention(retention_days, max_rows)` runs at boot to
+  enforce age + cap limits via the
+  `NEXO_MICROAPP_ADMIN_AUDIT_RETENTION_DAYS` /
+  `_MAX_ROWS` toggles. Library-level `tail(&AuditTailFilter)`
+  query (Phase 82.10.h.2) backs the future `nexo microapp admin
+  audit tail` CLI subcommand — `format_rows_as_table` and
+  `format_rows_as_json` helpers ship in the same module so the
+  CLI is one trivial flag-mapping away.
 
 ## INVENTORY env toggles
 
@@ -264,34 +275,53 @@ a oneshot receiver, writes the JSON-RPC frame, and awaits the
 response (default 30 s timeout). Capability denial maps to the
 typed `AdminError::CapabilityNotGranted { capability, method }`.
 
-## Production wiring (deferred to 82.10.h)
+## Production wiring
 
-The framework is shipped; production wiring in `src/main.rs`
-constructs the four trait adapters and feeds them to the
-dispatcher:
+Three production adapters ship in `nexo_setup::admin_adapters`
+(Phase 82.10.h.3) — they close the cycle between core (which
+declares the traits) and setup (which holds the concrete
+`yaml_patch` + filesystem code):
 
 ```rust
+use nexo_setup::admin_adapters::{
+    AgentsYamlPatcher, FilesystemCredentialStore, LlmYamlPatcherFs,
+};
+
+let agents = AgentsYamlPatcher::new(config_dir.join("agents.yaml"));
+let llm    = LlmYamlPatcherFs::new(config_dir.join("llm.yaml"));
+let creds  = FilesystemCredentialStore::new(secrets_root);
+let audit  = SqliteAdminAuditWriter::open(state_dir.join("admin_audit.db")).await?;
+
 let dispatcher = AdminRpcDispatcher::new()
     .with_capabilities(capability_set)
-    .with_audit_writer(audit_writer)
-    .with_agents_domain(yaml_patcher_for_agents, reload_signal)
-    .with_credentials_domain(credential_store)
-    .with_pairing_domain(pairing_store, Some(pairing_notifier))
-    .with_llm_providers_domain(llm_yaml_patcher)
-    .with_channels_domain();
+    .with_audit_writer(audit)
+    .with_agents_domain(agents.clone(), reload_signal.clone())
+    .with_credentials_domain(agents, creds)
+    .with_llm_providers_domain(llm);
 ```
 
-Until that wire-up lands, microapps that call admin methods
-receive `Internal: <domain> not configured` errors. The trait
-abstractions are stable; only the adapter wiring is pending.
+`AgentsYamlPatcher` is `Clone` and feeds both the agents and the
+credentials domain (the latter mutates `inbound_bindings` on each
+agent). `serde_yaml::Value` ↔ `serde_json::Value` conversion
+happens inside the adapter, so trait callers stay JSON-typed
+(matching what microapps see on the wire).
+
+**Pairing** (challenge store + notifier) and **main.rs glue**
+(stdio routing for the `app:` prefix, per-microapp dispatcher
+instantiation, boot validation wire) are deferred to 82.10.h.b.
+The pairing challenge store needs a fresh SQLite schema for the
+QR state machine; the notifier needs main.rs stdio integration to
+publish `nexo/notify/pairing_status_changed` frames on the same
+JSON-RPC stdout the dispatcher reads from.
 
 ## Limitations
 
 - **Bidirectional flow over single stdio**: `app:` ID prefix
   disambiguates microapp-initiated requests from daemon-initiated
   ones. Daemon must not use `app:` prefix for its own request IDs.
-- **Audit log volatile in v1**: `InMemoryAuditWriter` resets on
-  daemon restart. SQLite persistence in 82.10.h.
+- **Audit log writer choice**: `InMemoryAuditWriter` resets on
+  daemon restart; pick `SqliteAdminAuditWriter::open(path)` for
+  durable retention + the boot-time `sweep_retention()` sweeper.
 - **`channels/doctor` static-only**: live MCP probe stays in
   `nexo channel doctor --runtime` CLI.
 - **Live operator approval**: every grant is yaml-static. v1 has
