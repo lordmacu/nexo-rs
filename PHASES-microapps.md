@@ -360,7 +360,40 @@ Deferred to follow-ups:
 - Actual `cargo publish` (operator-gated, post-review).
 - `nexo-test-fixtures` extraction (Tier B).
 
-#### 82.3 — Outbound dispatch from extension (stdio path)   ⬜
+#### 82.3 — Outbound dispatch from extension (stdio path)   🔄  (foundations ✅, runtime + wire + boot deferred)
+
+**Foundations shipped (82.3 MVP):**
+- `nexo-tool-meta::format_dispatch_source(extension, channel,
+  account_id) -> "dispatch:<ext>:<chan>:<acct>"` Phase 72
+  turn-log marker. 2 tests.
+- `nexo-extensions::manifest::OutboundBindings` newtype +
+  `[outbound_bindings]` TOML schema. `allows(channel,
+  account_id)` lookup helper + `validate()` rejecting empty
+  segments. `ExtensionManifest.outbound_bindings` field with
+  `#[serde(default)]`. 4 tests.
+- Operator can declare the outbound allowlist today even though
+  the runtime gate isn't wired yet (so operators stage YAML
+  before `82.3.b` ships).
+
+**Deferred to 82.3.b (runtime + wire + boot):**
+- `nexo-extensions::runtime::wire::decode_message` distinguishing
+  request vs response vs notification on stdout.
+- `ExtensionRequestHandler` trait + `MethodNotFound` typed
+  error + `StdioRuntime::with_request_handler` builder.
+- Reader-loop request branch dispatching `nexo/dispatch` to the
+  attached handler.
+- `nexo-core::agent::dispatch_from_extension::DispatchFromExtensionHandler`
+  with auth gate (channel/account_id allowlist) + per-extension
+  rate limit + broker publish + audit row.
+- Boot wiring in `src/main.rs` (per-extension handler attached
+  to each `StdioRuntime`).
+- E2E test with mock channel adapter.
+- Operator docs `docs/src/ops/extension-dispatch.md` +
+  admin-ui tech-debt entry.
+
+**Deferred to 82.3.c**: idempotency dedup (field accepted, not
+yet enforced).
+**Deferred to 82.3.d**: hot-reload of `outbound_bindings`.
 
 For proactive sends — drips at T-1h, T-24h reminders, win-back
 campaigns — the extension dispatches a message *without* any
