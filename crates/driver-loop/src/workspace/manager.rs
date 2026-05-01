@@ -228,6 +228,7 @@ mod tests {
                 max_tokens: 1_000,
                 max_consecutive_denies: 1,
                 max_consecutive_errors: 5,
+            max_consecutive_413: 2,
             },
             workspace,
             metadata: serde_json::Map::new(),

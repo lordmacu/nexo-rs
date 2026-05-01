@@ -66,6 +66,7 @@ async fn happy_goal_done_in_one_turn() {
             max_tokens: 100_000,
             max_consecutive_denies: 3,
             max_consecutive_errors: 5,
+            max_consecutive_413: 2,
         },
         workspace: None,
         metadata: serde_json::Map::new(),
