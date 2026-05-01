@@ -147,16 +147,13 @@ impl EffectiveBindingPolicy {
     /// Returns `None` when the policy has no channel match
     /// (synthesised — delegation / heartbeat / tests).
     ///
-    /// Reusable across tests and downstream consumers (the
-    /// `BindingContext::from_effective` constructor lands in
-    /// Step 3 and calls this helper).
+    /// Reusable across tests and downstream consumers; the
+    /// `binding_context_from_effective` free fn calls this
+    /// helper to fill the `BindingContext.binding_id` field.
     pub fn binding_id(&self) -> Option<String> {
-        self.channel.as_deref().map(|ch| {
-            super::context::BindingContext::render_binding_id(
-                ch,
-                self.account_id.as_deref(),
-            )
-        })
+        self.channel
+            .as_deref()
+            .map(|ch| nexo_tool_meta::binding_id_render(ch, self.account_id.as_deref()))
     }
 }
 

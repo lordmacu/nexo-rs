@@ -194,14 +194,12 @@ async fn extension_tool_passthrough_emits_nexo_binding_block() {
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
     let session = Uuid::nil();
     let mut ctx = AgentContext::new("ana", agent_cfg(), broker, sessions).with_session_id(session);
-    ctx.binding = Some(BindingContext {
-        agent_id: "ana".into(),
-        session_id: Some(session),
-        channel: Some("whatsapp".into()),
-        account_id: Some("personal".into()),
-        binding_id: Some("whatsapp:personal".into()),
-        mcp_channel_source: None,
-    });
+    let mut binding = BindingContext::agent_only("ana");
+    binding.session_id = Some(session);
+    binding.channel = Some("whatsapp".into());
+    binding.account_id = Some("personal".into());
+    binding.binding_id = Some("whatsapp:personal".into());
+    ctx.binding = Some(binding);
 
     let result = handler
         .call(&ctx, json!({"to": "+5491100", "body": "hola"}))
