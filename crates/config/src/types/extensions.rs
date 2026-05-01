@@ -63,6 +63,14 @@ pub struct ExtensionEntry {
     /// warns. Missing required capabilities fail boot.
     #[serde(default)]
     pub capabilities_grant: Vec<String>,
+    /// Phase 82.12 — opt-in for non-loopback HTTP bind. The
+    /// boot validator rejects manifests whose
+    /// `[capabilities.http_server] bind` is anything other than
+    /// `127.0.0.1` / `::1` / `localhost` unless this flag is
+    /// `true`. Defense in depth against accidentally
+    /// world-exposed services.
+    #[serde(default)]
+    pub allow_external_bind: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
