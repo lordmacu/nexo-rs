@@ -45,6 +45,7 @@ members = [
     "crates/dream",
     "crates/assistant",
     "crates/plugin-manifest",
+    "crates/microapp-sdk",
     "crates/tool-meta",
     "crates/webhook-receiver",
     "crates/webhook-server",
@@ -197,6 +198,7 @@ rustls-native-certs = "0.7"
 serde_bytes        = "0.11"
 rand               = "0.8"
 nexo-tool-meta     = { version = "0.1.0", path = "crates/tool-meta" }
+nexo-microapp-sdk  = { version = "0.1.0", path = "crates/microapp-sdk" }
 
 [dependencies]
 tokio               = { workspace = true }
