@@ -715,4 +715,14 @@ IOUs — features that landed in the daemon but have no UI yet.
   "dream"` row from `INVENTORY`. `nexo agent dream kill <run_id>`
   per-row red button with "Are you sure?" confirm + memory-dir
   override input.
+- [ ] **Webhook receiver dashboard (Phase 82.2)** — admin tab
+  surfaces every configured webhook source: id, path,
+  signature.algorithm, last-event timestamp, last-status
+  counters (2xx / 4xx / 5xx) per source over the last 1 h /
+  24 h. Inline "doctor" runs the static half of validate
+  against the live config + env (secret presence). "Test"
+  button signs a sample body locally and POSTs to the listener
+  — useful smoke-test from the browser without leaving the
+  admin UI. Source rows highlight red when `secret_env` is
+  unset.
 - [ ] (add lines as features land — see auto-memory rule)

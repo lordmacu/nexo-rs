@@ -138,6 +138,7 @@
 - [Bash safety knobs](./ops/bash-safety.md)
 - [Capability toggles](./ops/capabilities.md)
 - [Channel doctor (MCP)](./ops/channel-doctor.md)
+- [Webhook receiver](./ops/webhook-receiver.md)
 - [Context optimization](./ops/context-optimization.md)
 - [Link understanding](./ops/link-understanding.md)
 - [Web search](./ops/web-search.md)

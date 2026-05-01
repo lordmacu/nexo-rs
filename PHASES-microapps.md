@@ -196,7 +196,7 @@ Across every Phase 82 + 83 sub-phase:
 
 ---
 
-### Phase 82 — Multi-tenant SaaS extension enablement + control plane   🔄  (1 / 14)
+### Phase 82 — Multi-tenant SaaS extension enablement + control plane   🔄  (2 / 14)
 
 Phase 82 closes the gaps in core nexo that prevent a Phase 11
 extension (subprocess + `plugin.toml`) from implementing a
@@ -288,7 +288,7 @@ Done criteria:
   Phase 80.9 MCP channel source preservation.
 - Docs page on extension contract documents the new field.
 
-#### 82.2 — Webhook receiver wire-up (= existing 80.12.b)   ⬜
+#### 82.2 — Webhook receiver wire-up (= existing 80.12.b)   ✅
 
 Hard blocker. Phase 80.12 shipped `WebhookHandler::handle` +
 HMAC-SHA256/SHA1/RawToken signature verification + event-kind
