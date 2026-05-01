@@ -9389,7 +9389,7 @@ new spec.
 - Coordinator persona prompt (84.1) gains a worked example showing
   continue-vs-spawn decision applied to a concrete scenario.
 
-#### 84.4 — Worker persona system prompt module   ⬜
+#### 84.4 — Worker persona system prompt module   ✅  (shipped 2026-05-01)
 
 Complement to 84.1. Bindings with `role: worker` get a workerspecific
 block instead of the coordinator block.

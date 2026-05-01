@@ -35,7 +35,10 @@ use nexo_config::{
 };
 use nexo_config::types::plan_mode::BindingRole;
 
-use crate::agent::personas::{coordinator_system_prompt, CoordinatorPromptCtx};
+use crate::agent::personas::{
+    coordinator_system_prompt, worker_system_prompt, CoordinatorPromptCtx,
+    WorkerPromptCtx,
+};
 
 /// Concrete capability snapshot for one session attached to one binding.
 ///
@@ -453,27 +456,31 @@ fn resolve_prompt(agent: &AgentConfig, binding: Option<&InboundBinding>) -> Stri
     }
 }
 
-/// Phase 84.1 — when the binding's resolved `BindingRole` is
-/// `Coordinator`, prepend the coordinator persona block ahead of
-/// the agent's existing system prompt. Other roles (Worker /
-/// Proactive / Unset) return `base` unchanged so today's behaviour
-/// is byte-identical for non-coordinator bindings.
+/// Phase 84.1 + 84.4 — when the binding's resolved `BindingRole`
+/// is `Coordinator` or `Worker`, prepend the role-specific persona
+/// block ahead of the agent's existing system prompt. Other roles
+/// (Proactive / Unset) return `base` unchanged so today's
+/// behaviour is byte-identical for non-role bindings.
 fn apply_persona_prefix(
     allowed_tools: &[String],
     role: BindingRole,
     base: String,
 ) -> String {
-    if !matches!(role, BindingRole::Coordinator) {
-        return base;
-    }
     let scratchpad_enabled = allowed_tools
         .iter()
         .any(|t| t.eq_ignore_ascii_case("TodoWrite"));
-    let prefix = coordinator_system_prompt(CoordinatorPromptCtx {
-        allowed_tools,
-        scratchpad_enabled,
-        workers: &[],
-    });
+    let prefix = match role {
+        BindingRole::Coordinator => coordinator_system_prompt(CoordinatorPromptCtx {
+            allowed_tools,
+            scratchpad_enabled,
+            workers: &[],
+        }),
+        BindingRole::Worker => worker_system_prompt(WorkerPromptCtx {
+            allowed_tools,
+            scratchpad_enabled,
+        }),
+        BindingRole::Proactive | BindingRole::Unset => return base,
+    };
     if base.trim().is_empty() {
         prefix
     } else {
@@ -899,16 +906,43 @@ mod tests {
     }
 
     #[test]
-    fn worker_role_does_not_prepend_persona_block() {
+    fn worker_role_prepends_worker_persona_block() {
         let mut a = sample_agent();
         a.inbound_bindings.push(InboundBinding {
             plugin: "whatsapp".into(),
             role: Some("worker".into()),
+            allowed_tools: Some(vec!["BashTool".into(), "FileEdit".into()]),
+            ..Default::default()
+        });
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+        assert!(
+            eff.system_prompt.starts_with("# WORKER ROLE"),
+            "worker block must come first; got:\n{}",
+            eff.system_prompt
+        );
+        assert!(eff.system_prompt.contains("You are Ana."));
+        // Coordinator block must NOT leak into worker bindings.
+        assert!(!eff.system_prompt.contains("COORDINATOR ROLE"));
+        // Tool list reflects the binding's allowed_tools.
+        assert!(eff.system_prompt.contains("- `BashTool`"));
+        assert!(eff.system_prompt.contains("- `FileEdit`"));
+        // Worker block always reminds about absent coordinator
+        // tools.
+        assert!(eff.system_prompt.contains("do **not** have `TeamCreate`"));
+    }
+
+    #[test]
+    fn proactive_role_does_not_prepend_persona_block() {
+        let mut a = sample_agent();
+        a.inbound_bindings.push(InboundBinding {
+            plugin: "whatsapp".into(),
+            role: Some("proactive".into()),
             ..Default::default()
         });
         let eff = EffectiveBindingPolicy::resolve(&a, 0);
         assert_eq!(eff.system_prompt, "You are Ana.");
         assert!(!eff.system_prompt.contains("COORDINATOR ROLE"));
+        assert!(!eff.system_prompt.contains("WORKER ROLE"));
     }
 
     #[test]
@@ -918,6 +952,31 @@ mod tests {
         let eff = EffectiveBindingPolicy::resolve(&a, 0);
         assert_eq!(eff.system_prompt, "You are Ana.");
         assert!(!eff.system_prompt.contains("COORDINATOR ROLE"));
+    }
+
+    #[test]
+    fn worker_role_loaded_from_yaml_renders_persona_block() {
+        let yaml = r#"
+plugin: whatsapp
+instance: ana_worker
+role: worker
+allowed_tools:
+  - BashTool
+  - FileEdit
+  - TodoWrite
+"#;
+        let binding: InboundBinding =
+            serde_yaml::from_str(yaml).expect("valid binding YAML");
+        let mut a = sample_agent();
+        a.inbound_bindings.push(binding);
+
+        let eff = EffectiveBindingPolicy::resolve(&a, 0);
+        assert!(eff.system_prompt.starts_with("# WORKER ROLE"));
+        assert!(!eff.system_prompt.contains("# COORDINATOR ROLE"));
+        assert!(eff.system_prompt.contains("- `BashTool`"));
+        assert!(eff.system_prompt.contains("- `TodoWrite`"));
+        assert!(eff.system_prompt.contains("## Scratchpad"));
+        assert!(eff.system_prompt.contains("You are Ana."));
     }
 
     #[test]
