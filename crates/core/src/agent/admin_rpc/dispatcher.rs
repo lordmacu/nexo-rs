@@ -32,6 +32,7 @@ use super::domains::agents::YamlPatcher;
 use super::domains::credentials::CredentialStore;
 use super::domains::llm_providers::LlmYamlPatcher;
 use super::domains::pairing::{PairingChallengeStore, PairingNotifier};
+use super::domains::processing::ProcessingControlStore;
 
 /// Reload signal callback — invoked by domain handlers after
 /// successful yaml mutations to trigger Phase 18 hot-reload.
@@ -157,6 +158,9 @@ pub struct AdminRpcDispatcher {
     /// Phase 82.11 — transcripts read surface. `None` disables
     /// `nexo/admin/agent_events/*`.
     transcript_reader: Option<Arc<dyn TranscriptReader>>,
+    /// Phase 82.13 — processing control store. `None` disables
+    /// `nexo/admin/processing/*`.
+    processing_store: Option<Arc<dyn ProcessingControlStore>>,
 }
 
 impl std::fmt::Debug for AdminRpcDispatcher {
@@ -189,6 +193,7 @@ impl AdminRpcDispatcher {
             pairing_notifier: None,
             llm_yaml: None,
             transcript_reader: None,
+            processing_store: None,
         }
     }
 
@@ -259,6 +264,18 @@ impl AdminRpcDispatcher {
         self
     }
 
+    /// Phase 82.13 — install the processing domain. Production
+    /// passes a `ProcessingControlStore` adapter (in-memory
+    /// DashMap variant in v0). `None` keeps the four
+    /// `nexo/admin/processing/*` methods disabled.
+    pub fn with_processing_domain(
+        mut self,
+        store: Arc<dyn ProcessingControlStore>,
+    ) -> Self {
+        self.processing_store = Some(store);
+        self
+    }
+
     /// Phase 82.10.f — install the channels domain. Reuses the
     /// agents-domain `YamlPatcher` + `ReloadSignal` (channels
     /// live in `agents.yaml.<id>.channels.approved`).
@@ -300,6 +317,13 @@ impl AdminRpcDispatcher {
             "nexo/admin/agent_events/list"
             | "nexo/admin/agent_events/read"
             | "nexo/admin/agent_events/search" => Some("transcripts_read"),
+            // Phase 82.13 — processing pause + intervention.
+            // Single combined gate; per-scope sub-gates are a
+            // 82.13.b follow-up.
+            "nexo/admin/processing/pause"
+            | "nexo/admin/processing/resume"
+            | "nexo/admin/processing/intervention"
+            | "nexo/admin/processing/state" => Some("operator_intervention"),
             // `reload` requires any granted CRUD capability — operators
             // who can mutate yaml can also force-trigger the reload.
             // Resolution falls through to `agents_crud` since it's the
@@ -580,6 +604,38 @@ impl AdminRpcDispatcher {
                 }
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "agent_events domain not configured".into(),
+                )),
+            },
+            "nexo/admin/processing/pause" => match &self.processing_store {
+                Some(store) => {
+                    super::domains::processing::pause(store.as_ref(), params).await
+                }
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "processing domain not configured".into(),
+                )),
+            },
+            "nexo/admin/processing/resume" => match &self.processing_store {
+                Some(store) => {
+                    super::domains::processing::resume(store.as_ref(), params).await
+                }
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "processing domain not configured".into(),
+                )),
+            },
+            "nexo/admin/processing/intervention" => match &self.processing_store {
+                Some(store) => {
+                    super::domains::processing::intervention(store.as_ref(), params).await
+                }
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "processing domain not configured".into(),
+                )),
+            },
+            "nexo/admin/processing/state" => match &self.processing_store {
+                Some(store) => {
+                    super::domains::processing::state(store.as_ref(), params).await
+                }
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "processing domain not configured".into(),
                 )),
             },
             "nexo/admin/reload" => match &self.reload_signal {

@@ -35,6 +35,8 @@ use nexo_core::agent::admin_rpc::domains::llm_providers::LlmYamlPatcher;
 use nexo_core::agent::admin_rpc::domains::pairing::{
     PairingChallengeStore, PairingNotifier, PAIRING_STATUS_NOTIFY_METHOD,
 };
+use nexo_core::agent::admin_rpc::domains::processing::ProcessingControlStore;
+use nexo_tool_meta::admin::processing::{ProcessingControlState, ProcessingScope};
 use nexo_core::agent::transcripts::{TranscriptLine, TranscriptWriter};
 use nexo_core::agent::transcripts_index::TranscriptsIndex;
 use nexo_tool_meta::admin::agent_events::{
@@ -1248,5 +1250,164 @@ mod transcript_reader_tests {
             .unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("FTS index"), "got: {msg}");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Phase 82.13 — in-memory `ProcessingControlStore` adapter.
+// Mirrors the in-memory pairing store pattern from 82.10.h.b.1:
+// `DashMap` keyed by scope, lazy initialisation, drop = forget.
+// SQLite-backed durable variant is a 82.13.b follow-up.
+// ─────────────────────────────────────────────────────────────────────
+
+/// In-memory `ProcessingControlStore` adapter.
+#[derive(Debug, Default, Clone)]
+pub struct InMemoryProcessingControlStore {
+    inner: Arc<DashMap<ProcessingScope, ProcessingControlState>>,
+}
+
+impl InMemoryProcessingControlStore {
+    /// Build an empty store. Daemon boot constructs one shared
+    /// instance and feeds it to every per-microapp dispatcher
+    /// via `with_processing_domain` so an operator pause
+    /// reaches every admin RPC route at once.
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(DashMap::new()),
+        }
+    }
+
+    /// Live row count — boot diagnostics + tests.
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// `true` when no scope is paused.
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+}
+
+#[async_trait]
+impl ProcessingControlStore for InMemoryProcessingControlStore {
+    async fn get(
+        &self,
+        scope: &ProcessingScope,
+    ) -> anyhow::Result<ProcessingControlState> {
+        Ok(self
+            .inner
+            .get(scope)
+            .map(|r| r.value().clone())
+            .unwrap_or(ProcessingControlState::AgentActive))
+    }
+
+    async fn set(
+        &self,
+        scope: ProcessingScope,
+        state: ProcessingControlState,
+    ) -> anyhow::Result<bool> {
+        // `changed` semantics: prior value differs from the new
+        // one. AgentActive default counts as "no row" so storing
+        // it clears the entry.
+        let prev = match state {
+            ProcessingControlState::AgentActive => self.inner.remove(&scope).map(|(_, v)| v),
+            _ => self.inner.insert(scope, state.clone()),
+        };
+        Ok(prev.as_ref() != Some(&state))
+    }
+
+    async fn clear(&self, scope: &ProcessingScope) -> anyhow::Result<bool> {
+        Ok(self.inner.remove(scope).is_some())
+    }
+}
+
+#[cfg(test)]
+mod processing_store_tests {
+    use super::*;
+    use nexo_tool_meta::admin::processing::{
+        ProcessingControlState, ProcessingScope,
+    };
+
+    fn convo() -> ProcessingScope {
+        ProcessingScope::Conversation {
+            agent_id: "ana".into(),
+            channel: "whatsapp".into(),
+            account_id: "acc".into(),
+            contact_id: "wa.55".into(),
+            mcp_channel_source: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn get_returns_agent_active_for_unknown_scope() {
+        let store = InMemoryProcessingControlStore::new();
+        let state = store.get(&convo()).await.unwrap();
+        assert!(matches!(state, ProcessingControlState::AgentActive));
+        assert!(store.is_empty());
+    }
+
+    #[tokio::test]
+    async fn set_paused_then_get_round_trip() {
+        let store = InMemoryProcessingControlStore::new();
+        let paused = ProcessingControlState::PausedByOperator {
+            scope: convo(),
+            paused_at_ms: 1_700_000_000_000,
+            operator_token_hash: "h".into(),
+            reason: None,
+        };
+        let changed = store.set(convo(), paused.clone()).await.unwrap();
+        assert!(changed);
+        let read = store.get(&convo()).await.unwrap();
+        assert_eq!(read, paused);
+    }
+
+    #[tokio::test]
+    async fn set_same_state_twice_returns_false() {
+        let store = InMemoryProcessingControlStore::new();
+        let paused = ProcessingControlState::PausedByOperator {
+            scope: convo(),
+            paused_at_ms: 1,
+            operator_token_hash: "h".into(),
+            reason: None,
+        };
+        store.set(convo(), paused.clone()).await.unwrap();
+        let changed = store.set(convo(), paused).await.unwrap();
+        assert!(!changed, "second identical set is a no-op");
+    }
+
+    #[tokio::test]
+    async fn clear_removes_row() {
+        let store = InMemoryProcessingControlStore::new();
+        let paused = ProcessingControlState::PausedByOperator {
+            scope: convo(),
+            paused_at_ms: 1,
+            operator_token_hash: "h".into(),
+            reason: None,
+        };
+        store.set(convo(), paused).await.unwrap();
+        let cleared = store.clear(&convo()).await.unwrap();
+        assert!(cleared);
+        assert!(store.is_empty());
+    }
+
+    #[tokio::test]
+    async fn set_agent_active_drops_row() {
+        let store = InMemoryProcessingControlStore::new();
+        let paused = ProcessingControlState::PausedByOperator {
+            scope: convo(),
+            paused_at_ms: 1,
+            operator_token_hash: "h".into(),
+            reason: None,
+        };
+        store.set(convo(), paused).await.unwrap();
+        // Setting back to AgentActive should drop the row so
+        // `get` returns the implicit default without holding
+        // the slot in the map.
+        let changed = store
+            .set(convo(), ProcessingControlState::AgentActive)
+            .await
+            .unwrap();
+        assert!(changed, "transition counts as change");
+        assert!(store.is_empty(), "no leftover row");
     }
 }
