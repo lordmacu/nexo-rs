@@ -243,6 +243,7 @@ nexo-pairing = { version = "0.1.2", path = "crates/pairing" }
 nexo-agent-registry    = { version = "0.1.1", path = "crates/agent-registry" }
 nexo-dispatch-tools    = { version = "0.1.1", path = "crates/dispatch-tools" }
 nexo-dream             = { version = "0.1.1", path = "crates/dream" }
+nexo-fork              = { version = "0.1.1", path = "crates/fork" }
 nexo-driver-claude     = { version = "0.1.1", path = "crates/driver-claude" }
 nexo-driver-loop       = { version = "0.1.1", path = "crates/driver-loop" }
 nexo-driver-permission = { version = "0.1.1", path = "crates/driver-permission" }
