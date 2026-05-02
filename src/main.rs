@@ -1298,6 +1298,39 @@ async fn main() -> Result<()> {
                 None
             }
         };
+        // Phase 83.8.12.3.thread — multi-tenant SaaS registry
+        // backed by `tenants.yaml`. Hands the patcher to the
+        // bootstrap so `nexo/admin/tenants/*` works against the
+        // real config. Single-tenant deployments without the file
+        // see read returns []; the patcher creates the file on
+        // first write.
+        let tenant_store: Option<
+            std::sync::Arc<dyn nexo_core::agent::admin_rpc::domains::tenants::TenantStore>,
+        > = Some(std::sync::Arc::new(
+            nexo_setup::admin_adapters::TenantsYamlPatcher::new(
+                config_dir.join("tenants.yaml"),
+                config_dir.join("agents.yaml"),
+            ),
+        ));
+        // Phase 83.8.3.thread — filesystem-backed skills store at
+        // `./skills` (matches the default `skills_dir` every agent
+        // config uses). `nexo/admin/skills/*` admin writes land
+        // where the runtime `SkillLoader` reads from.
+        let skills_store: Option<
+            std::sync::Arc<dyn nexo_core::agent::admin_rpc::domains::skills::SkillsStore>,
+        > = Some(std::sync::Arc::new(
+            nexo_setup::admin_adapters::FsSkillsStore::new("./skills"),
+        ));
+        // Phase 82.14.thread — in-memory escalation store. v0
+        // semantics: pause-resume cycle clears state, daemon
+        // restart drops every escalation. SQLite-backed durable
+        // variant exists (`SqliteEscalationStore`) and lands
+        // alongside the future per-tenant retention scheduler.
+        let escalation_store: Option<
+            std::sync::Arc<dyn nexo_core::agent::admin_rpc::domains::escalations::EscalationStore>,
+        > = Some(std::sync::Arc::new(
+            nexo_setup::admin_adapters::InMemoryEscalationStore::default(),
+        ));
         match nexo_setup::admin_bootstrap::AdminRpcBootstrap::build(
             nexo_setup::admin_bootstrap::AdminBootstrapInputs {
                 config_dir: &config_dir,
@@ -1311,9 +1344,9 @@ async fn main() -> Result<()> {
                 broker: None,
                 transcript_writer: None,
                 processing_store: None,
-                tenant_store: None,
-                skills_store: None,
-                escalation_store: None,
+                tenant_store: tenant_store.clone(),
+                skills_store: skills_store.clone(),
+                escalation_store: escalation_store.clone(),
                 agent_event_log: agent_event_log.clone(),
             },
         )
