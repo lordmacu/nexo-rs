@@ -2435,19 +2435,28 @@ incrementally):
    Requires a "current-session-for-scope" lookup
    (`TranscriptsIndex` extension or active-session map). Agent
    reads its own transcript on next turn and sees the operator's
-   words as if it had said them.
+   words as if it had said them. **✅ shipped 2026-05-02 as
+   82.13.b.1** — `TranscriptAppender` trait + handler hook +
+   `TranscriptWriterAppender` production adapter +
+   `SendReplyArgs.with_session()` SDK helper. The microapp
+   passes the active `session_id` in `intervention` params; the
+   daemon stamps `role: Assistant`, `source_plugin:
+   "intervention:<channel>"`, `sender_id: "operator:<hash>"`.
+   Ack carries `transcript_stamped: Some(bool)`. Production
+   wire-up at boot when `AdminBootstrapInputs.transcript_writer`
+   is `Some`.
 2. **Buffer inbounds during pause.** Instead of dropping inbounds
    when `ProcessingControlState::PausedByOperator`, store them
    in `pending_inbounds` on the state row. On resume, replay them
    as synthetic User entries in the transcript. Agent sees what
-   the user said while it was paused.
+   the user said while it was paused. **Pending — 82.13.b.3.**
 3. **`HumanTakeover::release(summary_for_agent)` end-to-end.**
    The `summary_for_agent` parameter exists in the SDK
    (Phase 83.8.6) but the daemon side never injects. When wired,
    the operator's free-form summary lands as a `System` entry
    ("operator summary: …") right before the next agent turn.
    Most flexible — operator can synthesise context the agent
-   needs without forcing a literal replay.
+   needs without forcing a literal replay. **Pending — 82.13.b.2.**
 
 Order of value: #1 (highest, ~1.5 commits) > #3 (~1 commit) >
 #2 (highest framework refactor, ~3 commits — needs pending

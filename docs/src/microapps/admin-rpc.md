@@ -577,6 +577,80 @@ event firehose deferred wire-up — the inbound dispatcher
 hook + transcript `role: Operator` integration land in
 82.13.b alongside the actual reply-out adapter.
 
+### Transcript stamping (Phase 82.13.b.1)
+
+When the operator dispatches a reply via
+`nexo/admin/processing/intervention`, the daemon optionally
+stamps the reply onto the agent transcript so the agent sees
+it on its next turn (after `resume`). To opt in, the
+microapp passes the active `session_id` in the params:
+
+```jsonc
+{
+    "method": "nexo/admin/processing/intervention",
+    "params": {
+        "scope": { "kind": "conversation", "agent_id": "ana", ... },
+        "action": {
+            "kind": "reply",
+            "channel": "whatsapp",
+            "account_id": "wa.0",
+            "to": "wa.55",
+            "body": "ya te resuelvo, dame 1 minuto",
+            "msg_kind": "text"
+        },
+        "operator_token_hash": "abcdef0123456789",
+        "session_id": "33333333-3333-4333-8333-333333333333"
+    }
+}
+```
+
+After the channel send acks, the daemon appends one entry to
+the session transcript:
+
+| Field | Value |
+|-------|-------|
+| `role` | `Assistant` (so the agent reads it as natural continuity on its next turn) |
+| `content` | The reply body, run through the standard redactor |
+| `source_plugin` | `intervention:<channel>` (e.g. `intervention:whatsapp`) — distinguishes operator stand-in from native LLM output |
+| `sender_id` | `operator:<token_hash>` — identifies the operator without exposing PII |
+| `message_id` | Channel-side provider id when the plugin acked one |
+
+The same redactor + FTS index + Phase 82.11 firehose
+pipeline as native agent appends — subscribers of
+`nexo/notify/agent_event` see the operator's reply with
+the discriminator above.
+
+The ack includes a `transcript_stamped` hint:
+
+| Value | Meaning |
+|-------|---------|
+| `Some(true)` | Reply persisted on transcript. Agent will see it on next turn. |
+| `Some(false)` | Channel send happened, transcript was NOT modified. Either no `session_id` in params, no transcript appender wired in boot, or persistence failed (logged). |
+| `None` (omitted) | Field not applicable (e.g. for non-Reply interventions). |
+
+When `transcript_stamped: false` and the operator UI knows
+the active session, prompt the operator to reopen the
+conversation and retry — the agent will otherwise reanudar
+"ciega" without seeing what was said during takeover.
+
+The SDK helper threads this through fluently:
+
+```rust
+use nexo_microapp_sdk::admin::{HumanTakeover, SendReplyArgs};
+
+let takeover = HumanTakeover::engage(&admin, scope, token_hash, None).await?;
+takeover
+    .send_reply(
+        "whatsapp",
+        "wa.0",
+        "wa.55",
+        SendReplyArgs::text("ya te resuelvo")
+            .with_session(active_session_id),
+    )
+    .await?;
+takeover.release(None).await?;
+```
+
 ## Agent escalations (Phase 82.14)
 
 Cross-app primitive for the "I need help here" channel:

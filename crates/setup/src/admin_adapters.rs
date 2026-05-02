@@ -29,6 +29,9 @@ use std::time::{Duration, Instant};
 use dashmap::DashMap;
 use async_trait::async_trait;
 use nexo_core::agent::admin_rpc::domains::agent_events::TranscriptReader;
+use nexo_core::agent::admin_rpc::transcript_appender::{
+    TranscriptAppender, TranscriptEntry as AppenderEntry, TranscriptRole as AppenderRole,
+};
 use nexo_core::agent::admin_rpc::domains::agents::YamlPatcher;
 use nexo_core::agent::admin_rpc::domains::credentials::CredentialStore;
 use nexo_core::agent::admin_rpc::domains::llm_providers::LlmYamlPatcher;
@@ -1293,6 +1296,132 @@ fn parse_wire_role(s: &str) -> WireTranscriptRole {
         "assistant" => WireTranscriptRole::Assistant,
         "tool" => WireTranscriptRole::Tool,
         _ => WireTranscriptRole::System,
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Phase 82.13.b.1.3 — production `TranscriptAppender` adapter wrapping
+// the same `TranscriptWriter` the daemon already uses for native
+// agent appends. The adapter translates the admin-RPC-side
+// `AppenderEntry` / `AppenderRole` into the writer's own types at
+// the boundary so the admin-RPC crate stays decoupled from the
+// concrete writer module.
+// ─────────────────────────────────────────────────────────────────────
+
+/// Production `TranscriptAppender` impl. Holds an `Arc<TranscriptWriter>`
+/// (cheap to clone — the writer's internal state is `Arc`d) and
+/// forwards `append()` calls into `writer.append_entry()`. Reuses the
+/// writer's redactor + per-session header lock + FTS index + firehose
+/// emitter — operator stamps go through the same pipeline as native
+/// agent stamps, so subscribers see them via Phase 82.11
+/// `nexo/notify/agent_event` notifications without any new wiring.
+pub struct TranscriptWriterAppender {
+    writer: Arc<TranscriptWriter>,
+}
+
+impl std::fmt::Debug for TranscriptWriterAppender {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TranscriptWriterAppender")
+            .finish_non_exhaustive()
+    }
+}
+
+impl TranscriptWriterAppender {
+    /// Build an appender pinned to the daemon's `TranscriptWriter`.
+    /// The agent_id stamped on each entry is supplied by the
+    /// admin-RPC handler from `ProcessingScope.agent_id()` — the
+    /// adapter doesn't pin its own.
+    pub fn new(writer: Arc<TranscriptWriter>) -> Self {
+        Self { writer }
+    }
+}
+
+#[async_trait]
+impl TranscriptAppender for TranscriptWriterAppender {
+    async fn append(
+        &self,
+        agent_id: &str,
+        session_id: uuid::Uuid,
+        entry: AppenderEntry,
+    ) -> anyhow::Result<()> {
+        // Defense-in-depth: refuse to stamp a session that does
+        // not belong to this writer's pinned agent. Without this
+        // check, a buggy admin RPC caller (or compromised
+        // operator token) could write into a different agent's
+        // transcript via the shared writer instance.
+        let writer_agent = self.writer.agent_id();
+        if writer_agent != agent_id {
+            return Err(anyhow::anyhow!(
+                "agent_id mismatch: writer pinned to {writer_agent}, request for {agent_id}"
+            ));
+        }
+        let core_entry = nexo_core::agent::transcripts::TranscriptEntry {
+            timestamp: chrono::Utc::now(),
+            role: match entry.role {
+                AppenderRole::User => nexo_core::agent::transcripts::TranscriptRole::User,
+                AppenderRole::Assistant => {
+                    nexo_core::agent::transcripts::TranscriptRole::Assistant
+                }
+                AppenderRole::Tool => nexo_core::agent::transcripts::TranscriptRole::Tool,
+                AppenderRole::System => nexo_core::agent::transcripts::TranscriptRole::System,
+            },
+            content: entry.content,
+            message_id: entry.message_id,
+            source_plugin: entry.source_plugin,
+            sender_id: entry.sender_id,
+        };
+        self.writer.append_entry(session_id, core_entry).await
+    }
+}
+
+#[cfg(test)]
+mod transcript_appender_adapter_tests {
+    use super::*;
+    use nexo_core::agent::transcripts::TranscriptWriter;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn append_writes_through_to_jsonl() {
+        let tmp = TempDir::new().unwrap();
+        let writer = Arc::new(TranscriptWriter::new(tmp.path(), "ana"));
+        let adapter = TranscriptWriterAppender::new(writer.clone());
+        let session_id = uuid::Uuid::new_v4();
+        let entry = AppenderEntry {
+            role: AppenderRole::Assistant,
+            content: "hola desde operador".into(),
+            source_plugin: "intervention:whatsapp".into(),
+            sender_id: Some("operator:tokhash".into()),
+            message_id: None,
+        };
+        adapter.append("ana", session_id, entry).await.unwrap();
+        // Read the JSONL back — header + 1 entry expected.
+        let jsonl = tmp.path().join(format!("{session_id}.jsonl"));
+        let raw = tokio::fs::read_to_string(&jsonl).await.unwrap();
+        let lines: Vec<_> = raw.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[1].contains("\"role\":\"assistant\""));
+        assert!(lines[1].contains("\"content\":\"hola desde operador\""));
+        assert!(lines[1].contains("intervention:whatsapp"));
+        assert!(lines[1].contains("operator:tokhash"));
+    }
+
+    #[tokio::test]
+    async fn append_rejects_cross_agent_request() {
+        let tmp = TempDir::new().unwrap();
+        let writer = Arc::new(TranscriptWriter::new(tmp.path(), "ana"));
+        let adapter = TranscriptWriterAppender::new(writer);
+        let entry = AppenderEntry {
+            role: AppenderRole::Assistant,
+            content: "x".into(),
+            source_plugin: "intervention:whatsapp".into(),
+            sender_id: None,
+            message_id: None,
+        };
+        let r = adapter
+            .append("OTHER_AGENT", uuid::Uuid::new_v4(), entry)
+            .await;
+        assert!(r.is_err());
+        assert!(r.unwrap_err().to_string().contains("agent_id mismatch"));
     }
 }
 

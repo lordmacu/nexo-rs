@@ -137,6 +137,15 @@ impl TranscriptWriter {
     pub fn root(&self) -> &Path {
         &self.root
     }
+    /// Phase 82.13.b.1.3 — owning agent id this writer was
+    /// pinned to at construction. The
+    /// `TranscriptWriterAppender` adapter (in `nexo-setup`)
+    /// uses it for a defense-in-depth check that operator
+    /// stamps cannot cross into a different agent's
+    /// transcript via the shared writer instance.
+    pub fn agent_id(&self) -> &str {
+        &self.agent_id
+    }
     fn session_path(&self, session_id: Uuid) -> PathBuf {
         self.root.join(format!("{session_id}.jsonl"))
     }

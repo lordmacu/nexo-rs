@@ -169,6 +169,16 @@ pub struct AdminBootstrapInputs<'a> {
     /// Production wiring in `main.rs` always passes
     /// `Some(broker.clone())`.
     pub broker: Option<nexo_broker::AnyBroker>,
+    /// Phase 82.13.b.1 — optional `TranscriptWriter` shared with
+    /// the agent runtime. When `Some`, the dispatcher gains a
+    /// `TranscriptWriterAppender` so
+    /// `nexo/admin/processing/intervention` stamps operator
+    /// replies on the agent transcript (the agent reads them on
+    /// its next turn). When `None`, the channel send still
+    /// happens but `ProcessingAck.transcript_stamped` reports
+    /// `Some(false)`.
+    pub transcript_writer:
+        Option<Arc<nexo_core::agent::transcripts::TranscriptWriter>>,
 }
 
 
@@ -378,6 +388,17 @@ impl AdminRpcBootstrap {
                 );
                 dispatcher = dispatcher.with_channel_outbound(outbound);
             }
+            // Phase 82.13.b.1 — wire the production transcript
+            // appender when boot has the writer handle. Without
+            // it, intervention(Reply) still dispatches via the
+            // outbound adapter but the ack reports
+            // `transcript_stamped: false`.
+            if let Some(writer) = inputs.transcript_writer.clone() {
+                let appender = Arc::new(
+                    crate::admin_adapters::TranscriptWriterAppender::new(writer),
+                );
+                dispatcher = dispatcher.with_transcript_appender(appender);
+            }
 
             // Phase 82.11 — spawn a per-microapp subscriber when
             // the operator granted `transcripts_subscribe` or
@@ -572,6 +593,7 @@ mod tests {
             reload_signal: noop_reload(),
             transcript_reader: None,
             broker: None,
+            transcript_writer: None,
         })
         .await
         .unwrap();
@@ -597,6 +619,7 @@ mod tests {
             reload_signal: noop_reload(),
             transcript_reader: None,
             broker: None,
+            transcript_writer: None,
         })
         .await
         .unwrap_err();
@@ -623,6 +646,7 @@ mod tests {
             reload_signal: noop_reload(),
             transcript_reader: None,
             broker: None,
+            transcript_writer: None,
         })
         .await
         .unwrap()
@@ -663,6 +687,7 @@ mod tests {
                 reload_signal: noop_reload(),
                 transcript_reader: None,
             broker: None,
+            transcript_writer: None,
             },
             true,
         )
@@ -696,6 +721,7 @@ mod tests {
                 reload_signal: noop_reload(),
                 transcript_reader: None,
             broker: None,
+            transcript_writer: None,
             },
             true,
         )
@@ -728,6 +754,7 @@ mod tests {
                 reload_signal: noop_reload(),
                 transcript_reader: None,
             broker: None,
+            transcript_writer: None,
             },
             true,
         )
@@ -768,6 +795,7 @@ mod tests {
                 reload_signal: noop_reload(),
                 transcript_reader: None,
             broker: None,
+            transcript_writer: None,
             },
             true,
         )
@@ -814,6 +842,7 @@ mod tests {
                 reload_signal: noop_reload(),
                 transcript_reader: None,
             broker: None,
+            transcript_writer: None,
             },
             true,
         )
@@ -855,6 +884,7 @@ mod tests {
                 reload_signal: noop_reload(),
                 transcript_reader: None,
             broker: None,
+            transcript_writer: None,
             },
             true,
         )
@@ -885,6 +915,7 @@ mod tests {
                 reload_signal: noop_reload(),
                 transcript_reader: None,
             broker: None,
+            transcript_writer: None,
             },
             false,
         )

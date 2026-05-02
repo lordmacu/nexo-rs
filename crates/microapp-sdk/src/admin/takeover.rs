@@ -23,6 +23,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use nexo_tool_meta::admin::processing::ProcessingScope;
+use uuid::Uuid;
 
 use super::{AdminClient, AdminError};
 
@@ -43,6 +44,15 @@ pub struct SendReplyArgs {
     /// threaded replies.
     #[serde(default)]
     pub reply_to_msg_id: Option<String>,
+    /// Phase 82.13.b.1 — optional session id. When provided AND
+    /// the daemon has a transcript appender wired (production
+    /// always does), the operator's reply is appended to the
+    /// agent transcript so the agent reanudes coherently after
+    /// release. When `None`, the channel send still happens but
+    /// the transcript is not modified — operator UIs should
+    /// surface the `transcript_stamped: false` ack hint.
+    #[serde(default)]
+    pub session_id: Option<Uuid>,
 }
 
 impl SendReplyArgs {
@@ -53,7 +63,15 @@ impl SendReplyArgs {
             msg_kind: "text".into(),
             attachments: Vec::new(),
             reply_to_msg_id: None,
+            session_id: None,
         }
+    }
+
+    /// Phase 82.13.b.1 — fluent setter for the session id used
+    /// to stamp the operator reply on the agent transcript.
+    pub fn with_session(mut self, session_id: Uuid) -> Self {
+        self.session_id = Some(session_id);
+        self
     }
 }
 
@@ -105,7 +123,7 @@ impl<'a> HumanTakeover<'a> {
         to: impl Into<String>,
         args: SendReplyArgs,
     ) -> Result<Value, AdminError> {
-        let params = json!({
+        let mut params = json!({
             "scope": self.scope,
             "operator_token_hash": self.operator_token_hash,
             "action": {
@@ -119,6 +137,12 @@ impl<'a> HumanTakeover<'a> {
                 "reply_to_msg_id": args.reply_to_msg_id,
             },
         });
+        // Phase 82.13.b.1 — thread session_id when the caller
+        // provided one. Skip the field on the wire when None so
+        // legacy daemons keep deserialising the params.
+        if let Some(sid) = args.session_id {
+            params["session_id"] = json!(sid);
+        }
         self.admin
             .call("nexo/admin/processing/intervention", params)
             .await
@@ -280,5 +304,94 @@ mod tests {
         assert_eq!(a.msg_kind, "text");
         assert!(a.attachments.is_empty());
         assert!(a.reply_to_msg_id.is_none());
+        assert!(a.session_id.is_none());
+    }
+
+    /// Phase 82.13.b.1 — `with_session` threads the session id
+    /// onto the intervention frame so the daemon stamps the
+    /// reply on the agent transcript.
+    #[tokio::test]
+    async fn send_reply_with_session_threads_session_id_onto_wire() {
+        let sender = Arc::new(ScriptedSender::default());
+        let admin = AdminClient::with_timeout(sender.clone(), Duration::from_secs(2));
+        let admin_for_calls = admin.clone();
+
+        let captured: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+        let captured_clone = captured.clone();
+        let session_id = Uuid::parse_str("33333333-3333-4333-8333-333333333333").unwrap();
+
+        let task = async move {
+            let takeover =
+                HumanTakeover::engage(&admin_for_calls, convo(), "h0", None).await?;
+            takeover
+                .send_reply(
+                    "whatsapp",
+                    "wa.0",
+                    "wa.55",
+                    SendReplyArgs::text("hello").with_session(session_id),
+                )
+                .await?;
+            Ok(())
+        };
+
+        let responder = move |frame: &Value| {
+            captured_clone.lock().unwrap().push(frame.clone());
+            json!({
+                "changed": true,
+                "correlation_id": "00000000-0000-0000-0000-000000000000",
+                "transcript_stamped": true,
+            })
+        };
+        let result = run_with_responses(admin, sender, responder, task).await;
+        result.expect("send_reply with session round trip");
+
+        let frames = captured.lock().unwrap().clone();
+        // pause + intervention. Pause has no session_id;
+        // intervention does.
+        let intervention = frames
+            .iter()
+            .find(|f| f["method"] == "nexo/admin/processing/intervention")
+            .expect("intervention frame present");
+        assert_eq!(
+            intervention["params"]["session_id"],
+            json!(session_id.to_string())
+        );
+    }
+
+    /// Round-trip without `with_session` MUST omit `session_id`
+    /// on the wire (graceful absence — pre-Phase 82.13.b daemons
+    /// keep accepting these frames).
+    #[tokio::test]
+    async fn send_reply_without_session_skips_field_on_wire() {
+        let sender = Arc::new(ScriptedSender::default());
+        let admin = AdminClient::with_timeout(sender.clone(), Duration::from_secs(2));
+        let admin_for_calls = admin.clone();
+
+        let captured: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+        let captured_clone = captured.clone();
+
+        let task = async move {
+            let takeover =
+                HumanTakeover::engage(&admin_for_calls, convo(), "h0", None).await?;
+            takeover
+                .send_reply("whatsapp", "wa.0", "wa.55", SendReplyArgs::text("hi"))
+                .await?;
+            Ok(())
+        };
+
+        let responder = move |frame: &Value| {
+            captured_clone.lock().unwrap().push(frame.clone());
+            json!({ "changed": true, "correlation_id": "00000000-0000-0000-0000-000000000000" })
+        };
+        run_with_responses(admin, sender, responder, task)
+            .await
+            .expect("round trip");
+
+        let frames = captured.lock().unwrap().clone();
+        let intervention = frames
+            .iter()
+            .find(|f| f["method"] == "nexo/admin/processing/intervention")
+            .expect("intervention frame present");
+        assert!(intervention["params"].get("session_id").is_none());
     }
 }
