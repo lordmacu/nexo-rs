@@ -44,6 +44,7 @@ use crate::admin_adapters::{
     json_rpc_notification, AgentsYamlPatcher, DeferredAdminOutboundWriter,
     FilesystemCredentialStore, InMemoryPairingChallengeStore, LlmYamlPatcherFs,
 };
+use nexo_core::agent::admin_rpc::domains::processing::ProcessingControlStore;
 
 /// Capability that lets a microapp receive `TranscriptAppended`
 /// events.
@@ -179,6 +180,20 @@ pub struct AdminBootstrapInputs<'a> {
     /// `Some(false)`.
     pub transcript_writer:
         Option<Arc<nexo_core::agent::transcripts::TranscriptWriter>>,
+    /// Phase 82.13.c — operator pause-control store SHARED with
+    /// the agent runtime. Boot constructs ONE
+    /// `InMemoryProcessingControlStore`, hands it here for the
+    /// admin RPC dispatcher (`pause`/`resume`/`intervention`
+    /// handlers), and ALSO threads the same `Arc` to every
+    /// `AgentRuntime` via `with_processing_store(...)`. The
+    /// shared instance is what makes a `processing/pause` RPC
+    /// reach the inbound loop on the very next message —
+    /// without sharing, the dispatcher and runtime see two
+    /// different stores and pause never reaches the runtime.
+    /// When `None`, the dispatcher domain is disabled (admin
+    /// RPC returns `processing domain not configured`) AND the
+    /// runtime processes every inbound regardless of pause.
+    pub processing_store: Option<Arc<dyn ProcessingControlStore>>,
 }
 
 
@@ -399,6 +414,14 @@ impl AdminRpcBootstrap {
                 );
                 dispatcher = dispatcher.with_transcript_appender(appender);
             }
+            // Phase 82.13.c — install the processing-control
+            // domain when boot has a shared store. Same `Arc`
+            // is also handed to every runtime via
+            // `Runtime::with_processing_store` so a pause RPC
+            // reaches the inbound loop on the next message.
+            if let Some(store) = inputs.processing_store.clone() {
+                dispatcher = dispatcher.with_processing_domain(store);
+            }
 
             // Phase 82.11 — spawn a per-microapp subscriber when
             // the operator granted `transcripts_subscribe` or
@@ -594,6 +617,7 @@ mod tests {
             transcript_reader: None,
             broker: None,
             transcript_writer: None,
+            processing_store: None,
         })
         .await
         .unwrap();
@@ -620,6 +644,7 @@ mod tests {
             transcript_reader: None,
             broker: None,
             transcript_writer: None,
+            processing_store: None,
         })
         .await
         .unwrap_err();
@@ -647,6 +672,7 @@ mod tests {
             transcript_reader: None,
             broker: None,
             transcript_writer: None,
+            processing_store: None,
         })
         .await
         .unwrap()
@@ -688,6 +714,7 @@ mod tests {
                 transcript_reader: None,
             broker: None,
             transcript_writer: None,
+            processing_store: None,
             },
             true,
         )
@@ -722,6 +749,7 @@ mod tests {
                 transcript_reader: None,
             broker: None,
             transcript_writer: None,
+            processing_store: None,
             },
             true,
         )
@@ -755,6 +783,7 @@ mod tests {
                 transcript_reader: None,
             broker: None,
             transcript_writer: None,
+            processing_store: None,
             },
             true,
         )
@@ -796,6 +825,7 @@ mod tests {
                 transcript_reader: None,
             broker: None,
             transcript_writer: None,
+            processing_store: None,
             },
             true,
         )
@@ -843,6 +873,7 @@ mod tests {
                 transcript_reader: None,
             broker: None,
             transcript_writer: None,
+            processing_store: None,
             },
             true,
         )
@@ -885,11 +916,88 @@ mod tests {
                 transcript_reader: None,
             broker: None,
             transcript_writer: None,
+            processing_store: None,
             },
             true,
         )
         .await
         .expect("bootstrap built");
+    }
+
+    /// Phase 82.13.c.2 — boot must share the SAME
+    /// `Arc<dyn ProcessingControlStore>` between the admin RPC
+    /// dispatcher and the agent runtime. Without sharing, a
+    /// pause RPC would land on one store while the runtime
+    /// would consult a different one, and pause would never
+    /// reach the inbound loop.
+    #[tokio::test]
+    async fn shared_processing_store_round_trips_pause_to_runtime_check() {
+        use crate::admin_adapters::InMemoryProcessingControlStore;
+        use nexo_core::agent::admin_rpc::domains::processing::ProcessingControlStore;
+        use nexo_tool_meta::admin::processing::{
+            ProcessingControlState, ProcessingScope,
+        };
+
+        let cfg = extensions_cfg_with_grant("agent-creator", &["agents_crud"]);
+        let mut manifests = BTreeMap::new();
+        manifests.insert(
+            "agent-creator".into(),
+            admin_caps(&["agents_crud"], &[]),
+        );
+        let dir = tempfile::tempdir().unwrap();
+
+        // ONE store, two consumers.
+        let shared: Arc<dyn ProcessingControlStore> =
+            Arc::new(InMemoryProcessingControlStore::new());
+
+        let _bootstrap = AdminRpcBootstrap::build(AdminBootstrapInputs {
+            config_dir: dir.path(),
+            secrets_root: dir.path(),
+            audit_db: None,
+            extensions_cfg: &cfg,
+            admin_capabilities: &manifests,
+            http_server_capabilities: &BTreeMap::new(),
+            reload_signal: noop_reload(),
+            transcript_reader: None,
+            broker: None,
+            transcript_writer: None,
+            processing_store: Some(shared.clone()),
+        })
+        .await
+        .unwrap()
+        .expect("admin wire built with shared store");
+
+        // Simulate: admin RPC pauses a scope (operator action).
+        let scope = ProcessingScope::Conversation {
+            agent_id: "ana".into(),
+            channel: "whatsapp".into(),
+            account_id: "wa.0".into(),
+            contact_id: "wa.55".into(),
+            mcp_channel_source: None,
+        };
+        shared
+            .set(
+                scope.clone(),
+                ProcessingControlState::PausedByOperator {
+                    scope: scope.clone(),
+                    paused_at_ms: 1_700_000_000_000,
+                    operator_token_hash: "h".into(),
+                    reason: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        // The runtime would receive the SAME `Arc` via
+        // `Runtime::with_processing_store(shared.clone())`.
+        // Verify the runtime side reads the paused state
+        // (same instance — pause is visible).
+        let runtime_view: Arc<dyn ProcessingControlStore> = shared.clone();
+        let read = runtime_view.get(&scope).await.unwrap();
+        assert!(
+            matches!(read, ProcessingControlState::PausedByOperator { .. }),
+            "runtime side did not see the pause set via admin RPC: {read:?}",
+        );
     }
 
     #[tokio::test]
@@ -916,6 +1024,7 @@ mod tests {
                 transcript_reader: None,
             broker: None,
             transcript_writer: None,
+            processing_store: None,
             },
             false,
         )

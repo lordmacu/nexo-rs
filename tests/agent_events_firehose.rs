@@ -80,6 +80,7 @@ async fn firehose_delivers_redacted_frame_to_subscribed_microapp() {
             transcript_reader: None,
             broker: None,
             transcript_writer: None,
+            processing_store: None,
         },
         true,
     )
@@ -177,6 +178,7 @@ async fn microapp_without_subscribe_capability_receives_no_frames() {
             transcript_reader: None,
             broker: None,
             transcript_writer: None,
+            processing_store: None,
         },
         true,
     )
