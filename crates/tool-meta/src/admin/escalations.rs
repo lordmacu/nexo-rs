@@ -40,6 +40,13 @@ pub enum EscalationReason {
     Ambiguity,
     /// Policy-flagged content needs moderator review.
     PolicyViolation,
+    /// Agent could not answer because the request falls outside
+    /// every loaded skill / knowledge entry. Surface this from
+    /// agent logic when the response would otherwise be a
+    /// `"I don't know"` — the operator UI displays an
+    /// "agent doesn't know" notification so a human can take
+    /// over or extend the knowledge base.
+    UnknownQuery,
     /// Catch-all when none of the above fits.
     Other,
 }
@@ -252,6 +259,14 @@ mod tests {
         assert_eq!(v["state"], "resolved");
         assert_eq!(v["by"]["kind"], "operator_dismissed");
         assert_eq!(v["by"]["reason"], "duplicate");
+    }
+
+    #[test]
+    fn unknown_query_reason_round_trips_as_snake_case() {
+        let v = serde_json::to_value(EscalationReason::UnknownQuery).unwrap();
+        assert_eq!(v, serde_json::json!("unknown_query"));
+        let back: EscalationReason = serde_json::from_value(v).unwrap();
+        assert_eq!(back, EscalationReason::UnknownQuery);
     }
 
     #[test]
