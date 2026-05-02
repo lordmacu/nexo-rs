@@ -18,6 +18,9 @@
 use async_trait::async_trait;
 use nexo_tool_meta::admin::processing::{ProcessingControlState, ProcessingScope};
 
+use crate::agent::admin_rpc::channel_outbound::{
+    ChannelOutboundDispatcher, ChannelOutboundError, OutboundMessage,
+};
 use crate::agent::admin_rpc::dispatcher::AdminRpcError;
 
 /// Storage abstraction for the per-scope control state. v0
@@ -180,18 +183,22 @@ pub async fn resume(
     )
 }
 
-/// `nexo/admin/processing/intervention` — operator-driven
-/// action inside a paused scope. v0 only accepts
-/// `Reply` action on `Conversation` scope; the actual
-/// reply-out / transcript-stamp wire-up lands in 82.13.b. Today
-/// the handler validates inputs + returns ack so callers can
-/// integration-test the surface.
+/// `nexo/admin/processing/intervention` — operator-driven action
+/// inside a paused scope. v0 routes `Reply` on `Conversation`
+/// end-to-end through a [`ChannelOutboundDispatcher`]: the handler
+/// validates inputs, asserts the scope is paused, then forwards
+/// the reply to the channel-plugin adapter and returns the
+/// provider message id back to the caller.
+///
+/// Closes the wire that previously stopped at "validate inputs +
+/// return ack" — Phase 82.13's deferred .b is now this handler.
 pub async fn intervention(
     store: &dyn ProcessingControlStore,
+    outbound: Option<&dyn ChannelOutboundDispatcher>,
     params: serde_json::Value,
 ) -> crate::agent::admin_rpc::dispatcher::AdminRpcResult {
     use nexo_tool_meta::admin::processing::{
-        ProcessingAck, ProcessingInterventionParams,
+        InterventionAction, ProcessingAck, ProcessingInterventionParams,
     };
 
     let p: ProcessingInterventionParams = match serde_json::from_value(params) {
@@ -225,11 +232,10 @@ pub async fn intervention(
         Ok(ProcessingControlState::PausedByOperator { .. }) => {}
         Ok(_) => {
             return crate::agent::admin_rpc::dispatcher::AdminRpcResult::err(
-                AdminRpcError::CapabilityNotGranted {
-                    capability: "operator_intervention".into(),
-                    method: "nexo/admin/processing/intervention".into(),
-                    microapp_id: format!("scope_not_paused:{}", p.scope.agent_id()),
-                },
+                AdminRpcError::InvalidParams(format!(
+                    "scope_not_paused: {}",
+                    p.scope.agent_id()
+                )),
             )
         }
         Err(e) => {
@@ -238,6 +244,61 @@ pub async fn intervention(
             )
         }
     }
+    // Phase 83.8.4.a — actually dispatch the Reply through the
+    // channel-outbound adapter. Without one wired the handler
+    // surfaces `channel_unavailable` so the operator UI can show
+    // a helpful "no outbound configured for this channel" error.
+    let outbound_message_id = match &p.action {
+        InterventionAction::Reply {
+            channel,
+            account_id,
+            to,
+            body,
+            msg_kind,
+            attachments,
+            reply_to_msg_id,
+        } => {
+            let Some(disp) = outbound else {
+                return crate::agent::admin_rpc::dispatcher::AdminRpcResult::err(
+                    AdminRpcError::Internal(
+                        "channel_outbound dispatcher not configured".into(),
+                    ),
+                );
+            };
+            let msg = OutboundMessage {
+                channel: channel.clone(),
+                account_id: account_id.clone(),
+                to: to.clone(),
+                body: body.clone(),
+                msg_kind: msg_kind.clone(),
+                attachments: attachments.clone(),
+                reply_to_msg_id: reply_to_msg_id.clone(),
+            };
+            match disp.send(msg).await {
+                Ok(ack) => ack.outbound_message_id,
+                Err(ChannelOutboundError::ChannelUnavailable(name)) => {
+                    return crate::agent::admin_rpc::dispatcher::AdminRpcResult::err(
+                        AdminRpcError::Internal(format!(
+                            "channel_unavailable: {name}"
+                        )),
+                    )
+                }
+                Err(ChannelOutboundError::InvalidParams(msg)) => {
+                    return crate::agent::admin_rpc::dispatcher::AdminRpcResult::err(
+                        AdminRpcError::InvalidParams(msg),
+                    )
+                }
+                Err(ChannelOutboundError::Transport(msg)) => {
+                    return crate::agent::admin_rpc::dispatcher::AdminRpcResult::err(
+                        AdminRpcError::Internal(format!("transport: {msg}")),
+                    )
+                }
+            }
+        }
+        _ => unreachable!("is_v0_supported gate above limited to Reply"),
+    };
+
+    let _ = outbound_message_id; // future audit-log threading
     crate::agent::admin_rpc::dispatcher::AdminRpcResult::ok(
         serde_json::to_value(ProcessingAck {
             changed: true,
@@ -263,6 +324,29 @@ mod tests {
     use nexo_tool_meta::admin::processing::{
         InterventionAction, ProcessingControlState, ProcessingScope,
     };
+
+    use crate::agent::admin_rpc::channel_outbound::{
+        ChannelOutboundError, OutboundAck, OutboundMessage,
+    };
+
+    #[derive(Debug, Default)]
+    struct CapturingOutbound {
+        sent: std::sync::Mutex<Vec<OutboundMessage>>,
+        respond_with_id: Option<String>,
+    }
+
+    #[async_trait]
+    impl ChannelOutboundDispatcher for CapturingOutbound {
+        async fn send(
+            &self,
+            msg: OutboundMessage,
+        ) -> Result<OutboundAck, ChannelOutboundError> {
+            self.sent.lock().unwrap().push(msg);
+            Ok(OutboundAck {
+                outbound_message_id: self.respond_with_id.clone(),
+            })
+        }
+    }
 
     #[derive(Debug, Default)]
     struct MockStore {
@@ -387,8 +471,10 @@ mod tests {
         .await;
 
         // intervention on a non-paused scope is rejected.
+        let outbound = CapturingOutbound::default();
         let attempt = intervention(
             &store,
+            Some(&outbound),
             serde_json::json!({
                 "scope": convo(),
                 "action": InterventionAction::Reply {
@@ -404,14 +490,60 @@ mod tests {
             }),
         )
         .await;
-        assert!(matches!(
-            attempt.error.expect("error"),
-            AdminRpcError::CapabilityNotGranted { .. }
-        ));
+        match attempt.error.expect("error") {
+            AdminRpcError::InvalidParams(m) => {
+                assert!(m.contains("scope_not_paused"), "got: {m}");
+            }
+            other => panic!("expected InvalidParams, got {other:?}"),
+        }
+        // outbound was NOT called because scope check happened first.
+        assert!(outbound.sent.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
-    async fn intervention_accepts_reply_when_scope_is_paused() {
+    async fn intervention_dispatches_reply_through_outbound_when_scope_is_paused() {
+        let store = MockStore::default();
+        let _ = pause(
+            &store,
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+            }),
+        )
+        .await;
+        let outbound = CapturingOutbound {
+            respond_with_id: Some("provider-id-9".into()),
+            ..Default::default()
+        };
+        let result = intervention(
+            &store,
+            Some(&outbound),
+            serde_json::json!({
+                "scope": convo(),
+                "action": {
+                    "kind": "reply",
+                    "channel": "whatsapp",
+                    "account_id": "acc",
+                    "to": "wa.55",
+                    "body": "hello operator",
+                    "msg_kind": "text",
+                },
+                "operator_token_hash": "h",
+            }),
+        )
+        .await;
+        assert!(result.result.is_some(), "ok: {result:?}");
+        let sent = outbound.sent.lock().unwrap();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].channel, "whatsapp");
+        assert_eq!(sent[0].account_id, "acc");
+        assert_eq!(sent[0].to, "wa.55");
+        assert_eq!(sent[0].body, "hello operator");
+        assert_eq!(sent[0].msg_kind, "text");
+    }
+
+    #[tokio::test]
+    async fn intervention_returns_internal_when_outbound_missing() {
         let store = MockStore::default();
         let _ = pause(
             &store,
@@ -423,6 +555,7 @@ mod tests {
         .await;
         let result = intervention(
             &store,
+            None,
             serde_json::json!({
                 "scope": convo(),
                 "action": {
@@ -437,7 +570,12 @@ mod tests {
             }),
         )
         .await;
-        assert!(result.result.is_some(), "ok: {result:?}");
+        match result.error.expect("error") {
+            AdminRpcError::Internal(m) => {
+                assert!(m.contains("channel_outbound"), "got: {m}");
+            }
+            other => panic!("expected Internal, got {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -451,8 +589,10 @@ mod tests {
             }),
         )
         .await;
+        let outbound = CapturingOutbound::default();
         let result = intervention(
             &store,
+            Some(&outbound),
             serde_json::json!({
                 "scope": convo(),
                 "action": {

@@ -2404,6 +2404,39 @@ deferred:
   fresh data. Same boot-order refactor as the rest of 82.x's
   deferreds — folded with main.rs operator wire-up.
 
+### Phase 83.8.4.b — production ChannelOutboundDispatcher adapter
+
+Phase 83.8.4.a shipped the `ChannelOutboundDispatcher` trait in
+`nexo-core` and wired `processing/intervention` to dispatch
+operator `Reply` actions through it. **No production adapter is
+wired yet** — agent-creator v1 microapp can mock the trait in
+tests, but a real WhatsApp / Telegram / Email reply from an
+operator UI fails with `Internal: channel_outbound dispatcher not
+configured`.
+
+Adapter (target `nexo-setup::admin_adapters::ChannelOutboundRouter`)
+matches by `OutboundMessage.channel` and calls into the existing
+plugin-side send paths:
+
+- `whatsapp` → reuse the WhatsApp plugin's existing send path
+  (the `crates/plugins/whatsapp/src/media.rs::send_media_auto`
+  family + the text-send adjacent).
+- `telegram` → `crates/plugins/telegram/src/bot.rs::send_message_full`.
+- `email` → `crates/plugins/email/src/outbound::OutboundDispatcher::send`.
+
+Each plugin currently exposes a different signature, so the
+adapter doubles as the *first place we unify outbound send across
+plugins*. v1 routes can default to text + reply_to_msg_id; media
++ template variants land alongside per-channel feature work.
+
+Dependencies: needs the boot wire-up to construct the router after
+plugins are spawned but before the dispatcher returns. Same
+ordering pattern as `with_pairing_domain` etc.
+
+Target: `83.8.4.b`. Until then, the trait surface is testable by
+microapps via mocks, and the wire returns a typed error that the
+SDK can surface in the operator UI as "outbound not configured".
+
 ### Phase 83.8 — domain kill-switch env vars are advisory-only
 
 Discovered while wiring `nexo/admin/skills/*` (83.8.2): the
