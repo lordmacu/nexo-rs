@@ -2456,7 +2456,16 @@ incrementally):
    the operator's free-form summary lands as a `System` entry
    ("operator summary: …") right before the next agent turn.
    Most flexible — operator can synthesise context the agent
-   needs without forcing a literal replay. **Pending — 82.13.b.2.**
+   needs without forcing a literal replay. **✅ shipped 2026-05-02
+   as 82.13.b.2** — `ProcessingResumeParams.session_id` +
+   `summary_for_agent` wire fields, handler validates (empty /
+   > 4096 chars / session_id_required), best-effort stamp as
+   `role: System` content `[operator_summary] <body>` with
+   `source_plugin: "intervention:summary"`. SDK
+   `HumanTakeover::with_session(id).release(Some(summary))`
+   forwards both. Validation runs BEFORE state flip so a
+   rejected call keeps the pause; appender errors leave the
+   scope Active and surface via `transcript_stamped: false`.
 
 Order of value: #1 (highest, ~1.5 commits) > #3 (~1 commit) >
 #2 (highest framework refactor, ~3 commits — needs pending

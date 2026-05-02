@@ -233,7 +233,30 @@ pub struct ProcessingResumeParams {
     pub scope: ProcessingScope,
     /// Operator bearer hash.
     pub operator_token_hash: String,
+    /// Phase 82.13.b.2 — session in which to inject the
+    /// optional summary. MUST be set whenever
+    /// `summary_for_agent` is `Some`; daemon returns
+    /// `-32602 invalid_params session_id_required_with_summary`
+    /// otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<Uuid>,
+    /// Phase 82.13.b.2 — optional operator-supplied free text
+    /// the agent sees as a `System` entry on its next turn.
+    /// Daemon prefixes with `[operator_summary] ` server-side,
+    /// runs through the redactor, and persists alongside the
+    /// regular transcript.
+    ///
+    /// Validation:
+    /// - empty / whitespace-only after trim → `-32602 empty_summary`.
+    /// - len > 4096 chars → `-32602 summary_too_long`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_for_agent: Option<String>,
 }
+
+/// Phase 82.13.b.2 — operator summary length cap. Mirrors the
+/// FTS5 doc cap in `TranscriptsIndex` so a stamped summary
+/// always indexes cleanly.
+pub const PROCESSING_SUMMARY_MAX_LEN: usize = 4096;
 
 /// Params for `nexo/admin/processing/intervention`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -424,6 +447,45 @@ mod tests {
         // And serialising the result back skips the field on the wire.
         let s = serde_json::to_string(&p).unwrap();
         assert!(!s.contains("session_id"));
+    }
+
+    #[test]
+    fn resume_params_round_trip_with_session_and_summary() {
+        let p = ProcessingResumeParams {
+            scope: conversation_scope(),
+            operator_token_hash: "h".into(),
+            session_id: Some(Uuid::nil()),
+            summary_for_agent: Some("cliente confirmó dirección".into()),
+        };
+        let v = serde_json::to_value(&p).unwrap();
+        assert_eq!(v["session_id"], "00000000-0000-0000-0000-000000000000");
+        assert_eq!(v["summary_for_agent"], "cliente confirmó dirección");
+        let back: ProcessingResumeParams = serde_json::from_value(v).unwrap();
+        assert_eq!(back, p);
+    }
+
+    #[test]
+    fn resume_params_legacy_payload_without_new_fields_deserializes() {
+        // Pre-Phase 82.13.b.2 microapps emit no `session_id` or
+        // `summary_for_agent` fields. Wire shape MUST keep
+        // deserialising those payloads to None for both fields.
+        let raw = serde_json::json!({
+            "scope": {
+                "kind": "conversation",
+                "agent_id": "ana",
+                "channel": "whatsapp",
+                "account_id": "55-1234",
+                "contact_id": "55-5678",
+            },
+            "operator_token_hash": "h",
+        });
+        let p: ProcessingResumeParams = serde_json::from_value(raw).unwrap();
+        assert!(p.session_id.is_none());
+        assert!(p.summary_for_agent.is_none());
+        // Round-trip back skips both fields.
+        let s = serde_json::to_string(&p).unwrap();
+        assert!(!s.contains("session_id"));
+        assert!(!s.contains("summary_for_agent"));
     }
 
     #[test]

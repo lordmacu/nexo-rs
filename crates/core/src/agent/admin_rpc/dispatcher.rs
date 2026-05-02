@@ -745,7 +745,12 @@ impl AdminRpcDispatcher {
             },
             "nexo/admin/processing/resume" => match &self.processing_store {
                 Some(store) => {
-                    super::domains::processing::resume(store.as_ref(), params).await
+                    super::domains::processing::resume(
+                        store.as_ref(),
+                        self.transcript_appender.as_deref(),
+                        params,
+                    )
+                    .await
                 }
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "processing domain not configured".into(),
