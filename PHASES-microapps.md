@@ -1844,7 +1844,7 @@ Done criteria:
   name overrides the extension's.
 - 5+ unit tests + 1 integration test.
 
-#### 83.3 — Hook interceptor (vote-to-block)   ⬜
+#### 83.3 — Hook interceptor (vote-to-block)   ✅  (shipped 2026-05-02 — dispatch enforcement deferred to 83.3.b)
 
 Phase 11 hooks today are observer-only — they see the
 inbound message, return `{abort: false}`, and cannot influence

@@ -44,6 +44,17 @@ pub fn is_valid_hook(name: &str) -> bool {
 /// the original event for the next handler (and for the host's
 /// consumption of the final event). `abort=true` wins over any
 /// `override_event` — aborted handlers don't get to reshape the event.
+///
+/// Phase 83.3 adds three optional fields used by the vote-to-block /
+/// vote-to-transform interceptor path:
+/// - `decision`: explicit `"allow" | "block" | "transform"` (the
+///   legacy `abort` boolean is still accepted; this field is the
+///   richer audit-log signal).
+/// - `transformed_body`: rewritten inbound body the agent should
+///   see in place of the original (only meaningful when
+///   `decision == "transform"`).
+/// - `do_not_reply_again`: anti-loop signal — when `true` the host
+///   should suppress pending auto-replies for the same conversation.
 #[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize, PartialEq)]
 pub struct HookResponse {
     #[serde(default)]
@@ -55,6 +66,26 @@ pub struct HookResponse {
     /// (can't merge a scalar into a map).
     #[serde(default, rename = "override", skip_serializing_if = "Option::is_none")]
     pub override_event: Option<serde_json::Value>,
+
+    /// Phase 83.3 — explicit decision discriminator. `None` for
+    /// pre-83.3 responses (legacy `abort` boolean is the source of
+    /// truth in that case).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision: Option<String>,
+    /// Phase 83.3 — rewritten inbound body. Only meaningful when
+    /// `decision == Some("transform")`; the host applies the
+    /// rewrite (subject to operator policy) and audit-logs the diff.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transformed_body: Option<String>,
+    /// Phase 83.3 — anti-loop signal. `true` means the host should
+    /// suppress pending auto-replies for this conversation in
+    /// addition to whatever block/transform action was voted for.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub do_not_reply_again: bool,
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 
 #[cfg(test)]
@@ -79,6 +110,49 @@ mod tests {
         let r = HookResponse::default();
         assert!(!r.abort);
         assert!(r.reason.is_none());
+        assert!(r.decision.is_none());
+        assert!(r.transformed_body.is_none());
+        assert!(!r.do_not_reply_again);
+    }
+
+    // ── Phase 83.3 — parser tolerates new + legacy shapes ──
+
+    #[test]
+    fn hook_response_parses_legacy_abort_shape() {
+        let json = r#"{"abort":true,"reason":"spam"}"#;
+        let r: HookResponse = serde_json::from_str(json).unwrap();
+        assert!(r.abort);
+        assert_eq!(r.reason.as_deref(), Some("spam"));
+        assert!(r.decision.is_none());
+    }
+
+    #[test]
+    fn hook_response_parses_phase_83_3_block_decision() {
+        let json = r#"{"abort":true,"decision":"block","reason":"anti-loop","do_not_reply_again":true}"#;
+        let r: HookResponse = serde_json::from_str(json).unwrap();
+        assert!(r.abort);
+        assert_eq!(r.decision.as_deref(), Some("block"));
+        assert!(r.do_not_reply_again);
+    }
+
+    #[test]
+    fn hook_response_parses_phase_83_3_transform_decision() {
+        let json = r#"{"abort":false,"decision":"transform","transformed_body":"Hasta luego","reason":"opt-out"}"#;
+        let r: HookResponse = serde_json::from_str(json).unwrap();
+        // Transform does NOT abort dispatch — body just gets
+        // rewritten by the host.
+        assert!(!r.abort);
+        assert_eq!(r.decision.as_deref(), Some("transform"));
+        assert_eq!(r.transformed_body.as_deref(), Some("Hasta luego"));
+        assert_eq!(r.reason.as_deref(), Some("opt-out"));
+    }
+
+    #[test]
+    fn hook_response_parses_continue_with_decision_allow() {
+        let json = r#"{"abort":false,"decision":"allow"}"#;
+        let r: HookResponse = serde_json::from_str(json).unwrap();
+        assert!(!r.abort);
+        assert_eq!(r.decision.as_deref(), Some("allow"));
     }
 }
 
