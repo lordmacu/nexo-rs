@@ -86,6 +86,27 @@ impl LlmRegistry {
         llm_cfg: &LlmConfig,
         agent_model: &ModelConfig,
     ) -> anyhow::Result<Arc<dyn LlmClient>> {
+        // Phase 83.8.12.5 — back-compat shim. Single-tenant
+        // deployments (and tests) keep calling the 2-arg form;
+        // it now resolves with `tenant_id: None` which matches
+        // pre-Phase 83.8.12.5 semantics exactly (only the
+        // global `providers` table is consulted).
+        self.build_for_tenant(llm_cfg, agent_model, None)
+    }
+
+    /// Phase 83.8.12.5 — tenant-aware sister of `build`. When
+    /// `tenant_id` is `Some`, the registry looks up the
+    /// provider via `LlmConfig::resolve_provider(tenant_id,
+    /// name)` first — that prefers the tenant-scoped definition
+    /// under `llm.yaml.tenants.<id>.providers.<name>` over the
+    /// global one. Falls back to the global table when the
+    /// tenant has no override (or when `tenant_id` is `None`).
+    pub fn build_for_tenant(
+        &self,
+        llm_cfg: &LlmConfig,
+        agent_model: &ModelConfig,
+        tenant_id: Option<&str>,
+    ) -> anyhow::Result<Arc<dyn LlmClient>> {
         let factory = self.factories.get(&agent_model.provider).ok_or_else(|| {
             anyhow::anyhow!(
                 "LLM provider '{}' not registered (known: {:?})",
@@ -94,12 +115,12 @@ impl LlmRegistry {
             )
         })?;
         let provider_cfg = llm_cfg
-            .providers
-            .get(&agent_model.provider)
+            .resolve_provider(tenant_id, &agent_model.provider)
             .ok_or_else(|| {
                 anyhow::anyhow!(
-                    "LLM provider '{}' not present in config.providers",
-                    agent_model.provider
+                    "LLM provider '{}' not present in config.providers (tenant_id: {:?})",
+                    agent_model.provider,
+                    tenant_id,
                 )
             })?;
         factory.build(provider_cfg, &agent_model.model, llm_cfg.retry.clone())
@@ -176,6 +197,7 @@ mod tests {
                 backoff_multiplier: 1.0,
             },
             context_optimization: Default::default(),
+            tenants: std::collections::HashMap::new(),
         }
     }
 
@@ -233,5 +255,55 @@ mod tests {
         };
         let client = r.build(&cfg, &model).expect("client");
         assert_eq!(client.provider(), "minimax");
+    }
+
+    /// Phase 83.8.12.5 — `build_for_tenant` resolves the
+    /// provider via tenant-first / global-fallback semantics.
+    /// Sanity test: with a tenant-scoped override present,
+    /// the call still returns a valid client (the tenant's
+    /// provider def takes precedence).
+    #[test]
+    fn build_for_tenant_resolves_via_tenant_namespace_when_present() {
+        use std::collections::HashMap;
+        let r = LlmRegistry::with_builtins();
+        // Global has minimax. Tenant `acme` overrides minimax
+        // with a different api_key.
+        let mut cfg = llm_cfg("minimax");
+        let mut acme_providers = HashMap::new();
+        acme_providers.insert("minimax".to_string(), provider_cfg());
+        cfg.tenants.insert(
+            "acme".to_string(),
+            nexo_config::TenantLlmConfig {
+                providers: acme_providers,
+            },
+        );
+        let model = ModelConfig {
+            provider: "minimax".into(),
+            model: "m1".into(),
+        };
+        // tenant_id None → global path, equivalent to legacy build.
+        let c1 = r.build_for_tenant(&cfg, &model, None).expect("global path");
+        assert_eq!(c1.provider(), "minimax");
+        // tenant_id Some("acme") → resolves tenant-scoped provider.
+        let c2 = r
+            .build_for_tenant(&cfg, &model, Some("acme"))
+            .expect("tenant path");
+        assert_eq!(c2.provider(), "minimax");
+    }
+
+    #[test]
+    fn build_for_tenant_unknown_tenant_falls_back_to_global() {
+        let r = LlmRegistry::with_builtins();
+        let cfg = llm_cfg("minimax"); // no tenants block
+        let model = ModelConfig {
+            provider: "minimax".into(),
+            model: "m1".into(),
+        };
+        // Unknown tenant → fall through to global. Build
+        // succeeds because global has minimax.
+        let c = r
+            .build_for_tenant(&cfg, &model, Some("unknown-tenant"))
+            .expect("fall-through to global");
+        assert_eq!(c.provider(), "minimax");
     }
 }

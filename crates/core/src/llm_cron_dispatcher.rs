@@ -1005,6 +1005,7 @@ mod tests {
                 backoff_multiplier: 1.0,
             },
             context_optimization: Default::default(),
+            tenants: std::collections::HashMap::new(),
         }
     }
 

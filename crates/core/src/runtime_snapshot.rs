@@ -240,6 +240,7 @@ mod tests {
             providers: std::collections::HashMap::new(),
             retry: Default::default(),
             context_optimization: Default::default(),
+            tenants: std::collections::HashMap::new(),
         }
     }
 
