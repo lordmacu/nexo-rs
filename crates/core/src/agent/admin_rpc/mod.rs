@@ -13,6 +13,7 @@
 //! - **82.10.c-f**: 5 admin domains (agents / credentials /
 //!   pairing / llm_providers / channels).
 
+pub mod agent_events_sqlite;
 pub mod audit;
 pub mod audit_sqlite;
 pub mod capabilities;
@@ -24,6 +25,9 @@ pub mod processing_sqlite;
 pub mod router;
 pub mod transcript_appender;
 
+pub use agent_events_sqlite::{
+    AgentEventLog, AgentEventLogFilter, SqliteAgentEventLog,
+};
 pub use audit_sqlite::{
     format_rows_as_json, format_rows_as_table, AuditTailFilter, SqliteAdminAuditWriter,
 };

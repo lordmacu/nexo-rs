@@ -1885,10 +1885,34 @@ test). Three follow-ups stayed deferred:
   emit on the existing `nexo/notify/agent_event` subject; no
   FTS change required (search remains TranscriptAppended-
   only).
+- **82.11.log.b — boot wire-up + retention sweep +
+  agent_events/list cross-source merge.** Phase 82.11.log
+  shipped the `SqliteAgentEventLog` primitive (read+write
+  trait, SQLite impl, AgentEventEmitter sink). Three
+  deferreds:
+  - **Boot**: stitch `Tee([BroadcastAgentEventEmitter,
+    SqliteAgentEventLog::open(state_dir.join("agent_events.db"))])`
+    inside `AdminRpcBootstrap::new` so every emit reaches
+    both. Folds with the same boot-order refactor as the
+    other 82.x operator wire-ups.
+  - **Retention sweep**: append-only log grows unbounded.
+    Match the audit-log retention pattern (default 90 days,
+    configurable via `agent_events.retention_days` in
+    `agents.yaml`). Same scheduler as `audit_sqlite::sweep`.
+  - **`agent_events/list` cross-source**: today the admin
+    RPC handler reads only `TranscriptReader` (transcript
+    JSONL). Operator dashboards that need
+    `ProcessingStateChanged` history must read directly from
+    SqliteAgentEventLog. The merge: handler queries the log
+    for non-`TranscriptAppended` kinds AND the JSONL reader
+    for transcripts, merges by `at_ms`, returns one stream.
+    Newer wins on duplicate seq. Wire-up depends on the
+    boot stitch above.
 
 Target phase: 82.10.h.c (folded with 82.10.h.b's main.rs
-wire-up) for the operator wire-up; future phases for the NATS
-bridge + new kinds.
+wire-up) for the operator wire-up; 82.11.log.b for the boot
++ retention + cross-source merge; future phases for the
+NATS bridge + new kinds.
 
 ### Phase 82.12 — http_server capability follow-ups
 
@@ -2736,6 +2760,29 @@ Cross-references:
   cap=3, cap=0 disables buffering, atomic drain, per-scope
   isolation, on-disk round-trip survives drop+reopen, idempotent
   DDL.
+- 82.11.log ✅ SqliteAgentEventLog — durable sink for the
+  agent-event firehose so `ProcessingStateChanged`,
+  `EscalationRequested`, `EscalationResolved`,
+  `PendingInboundsDropped`, and `TranscriptAppended` survive
+  daemon restart for operator-dashboard backfill. Single
+  table with denormalised columns (kind / agent_id /
+  tenant_id / at_ms) + per-axis indexes; full
+  `AgentEventKind` round-trips as JSON so future
+  `#[non_exhaustive]` variants land non-breaking. Doubles
+  as an `AgentEventEmitter` so boot composes
+  `Tee([Broadcast, SqliteAgentEventLog])` without changing
+  emit-site signatures. Read API
+  (`AgentEventLog::list_recent`) supports `agent_id` +
+  `kind` + `tenant_id` + `since_ms` + `limit` filters with
+  parameterised SQL (defense-in-depth: never interpolates
+  user-controlled strings). Mirrors audit_sqlite /
+  processing_sqlite / escalations_sqlite open pattern (WAL,
+  idempotent DDL, `open_memory()` for tests). 10 tests:
+  round-trip, agent / kind / tenant / since_ms filters,
+  limit cap + default, emit→append routing, empty-on-unknown,
+  pool clone shares rows. Boot wire-up + retention sweep +
+  `agent_events/list` cross-source merge are deferred (see
+  82.11.log.b below).
 - 82.14.b.firehose ✅ Escalation firehose variants —
   `AgentEventKind::EscalationRequested` + `EscalationResolved`
   variants land on the wire (with `tenant_id` skip-when-None for
