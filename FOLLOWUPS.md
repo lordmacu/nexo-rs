@@ -2437,6 +2437,47 @@ Target: `83.8.4.b`. Until then, the trait surface is testable by
 microapps via mocks, and the wire returns a typed error that the
 SDK can surface in the operator UI as "outbound not configured".
 
+### Phase 83.8.12 — multi-empresa framework primitive
+
+Decision 2026-05-02: 1 daemon hosts N empresas (was: 1 daemon =
+1 empresa, manual provisioning). The microapp manages every
+empresa from a single daemon. Requires a new framework concept
+`empresa_id` that sits above the existing `account_id`
+(`account_id` is the channel-side discriminator — WhatsApp phone
+number — not the SaaS tenant).
+
+Scope (when this sub-fase opens):
+
+- `nexo-tool-meta::admin::empresas` — wire shapes:
+  `EmpresaSummary`, `EmpresaDetail`, `EmpresasListResponse`,
+  `EmpresasUpsertInput`, `EmpresasDeleteParams`, plus the
+  `empresa_id` field on `BindingContext`.
+- `nexo-core` admin RPC domain `nexo/admin/empresas/*` with an
+  `EmpresaStore` trait. Production adapter writes to
+  `empresas.yaml` (or extends `agents.yaml` with an `empresa_id`
+  field per agent).
+- Filter every multi-tenant-aware admin RPC by `empresa_id`:
+  `agents/list`, `agent_events/list`, `escalations/list`.
+- LLM providers: scoped per-empresa (each empresa has its own
+  `${ENV_VAR}` keys) — operator UI surfaces a per-empresa key
+  vault. Global providers stay possible for the operator's own
+  use.
+- Microapp tools: `empresa_create`, `empresa_list`,
+  `empresa_get`, `empresa_update`, `empresa_delete`,
+  `empresa_set_active`. Existing `agent_*` tools gain an
+  `empresa_id` filter argument.
+- Audit log (Phase 82.10.h) gains an `empresa_id` column for
+  cross-empresa observability.
+
+**MUST land before** the UI sub-fases 83.12 / 83.13 — the UI
+treats empresa as a first-class entity ("create empresa →
+inside, create agent → assign channel + LLM").
+
+Cross-references:
+- `project_microapp_is_saas_meta_creator.md` constraint #7 was
+  REVISED.
+- `project_ui_whatsapp_web_react.md` UI scope clarification.
+
 ### Phase 83.12 / 83.13 — UI WhatsApp-Web look + React stack
 
 UI of the agent-creator SaaS (operator + tenant) MUST visually
