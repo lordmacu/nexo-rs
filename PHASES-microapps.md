@@ -2100,6 +2100,7 @@ Atomic sub-fases shipped:
 | 83.8.2 | admin/skills domain handler + capability + INVENTORY | core |
 | 83.8.3 | FsSkillsStore production adapter | setup |
 | 83.8.4.a | ChannelOutboundDispatcher trait + processing.intervention end-to-end | core |
+| 83.8.4.b | BrokerOutboundDispatcher production adapter + WhatsAppTranslator | setup |
 | 83.8.5 | EscalationReason::UnknownQuery variant | tool-meta |
 | 83.8.6 | SDK HumanTakeover helper | microapp-sdk |
 | 83.8.7 | SDK TranscriptStream::filter_by_agent | microapp-sdk |
