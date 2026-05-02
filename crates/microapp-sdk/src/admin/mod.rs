@@ -17,7 +17,9 @@
 //!   release.
 
 pub mod takeover;
+pub mod transcripts;
 pub use takeover::{HumanTakeover, SendReplyArgs};
+pub use transcripts::TranscriptStream;
 
 use std::sync::Arc;
 
