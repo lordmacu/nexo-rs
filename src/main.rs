@@ -13290,7 +13290,13 @@ async fn start_mcp_autonomous_worker(
     nexo_plugin_email::register_email_tools(&worker_tools, email_tool_ctx);
 
     let llm_registry = LlmRegistry::with_builtins();
-    let llm = match llm_registry.build(&full_cfg.llm, &worker_agent_cfg.model) {
+    // Phase 83.8.12.5.b — tenant-aware build; falls back to
+    // global providers when the worker agent has no `tenant_id`.
+    let llm = match llm_registry.build_for_tenant(
+        &full_cfg.llm,
+        &worker_agent_cfg.model,
+        worker_agent_cfg.tenant_id.as_deref(),
+    ) {
         Ok(c) => c,
         Err(e) => {
             let _ = email_plugin.stop().await;

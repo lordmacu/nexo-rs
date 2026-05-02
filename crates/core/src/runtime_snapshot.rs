@@ -155,8 +155,17 @@ impl RuntimeSnapshot {
                 );
             }
         }
+        // Phase 83.8.12.5.b — resolve provider via tenant-first
+        // namespace when the agent declares `tenant_id`. Single-
+        // tenant deployments leave `nexo_config.tenant_id` as
+        // `None` → falls back to the legacy global path
+        // (identical bytes to pre-83.8.12.5).
         let llm_client = llm_registry
-            .build(llm_cfg, &nexo_config.model)
+            .build_for_tenant(
+                llm_cfg,
+                &nexo_config.model,
+                nexo_config.tenant_id.as_deref(),
+            )
             .map_err(|e| {
                 anyhow::anyhow!(
                     "snapshot build: LLM client for agent '{}' failed: {}",
