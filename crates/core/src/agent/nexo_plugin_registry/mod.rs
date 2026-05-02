@@ -12,11 +12,18 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 
 pub mod config;
+pub mod contributes;
 pub mod discovery;
+pub mod init_loop;
 pub mod report;
 
 pub use config::{resolve_search_paths, PluginDiscoveryConfig};
+pub use contributes::{
+    merge_plugin_contributed_agents, AgentMergeConflict, AgentMergeReport,
+    MergeResolution,
+};
 pub use discovery::discover;
+pub use init_loop::{run_plugin_init_loop, InitOutcome};
 pub use report::{
     DiagnosticLevel, DiscoveredPlugin, DiscoveryDiagnostic,
     DiscoveryDiagnosticKind, PluginDiscoveryReport,

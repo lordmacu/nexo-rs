@@ -189,8 +189,24 @@ coordinación de archivos cross-cutting.
   `validate::run_all`. 16 unit + 1 integration test. Library-only ship:
   boot wire in `src/main.rs::Mode::Run` + `nexo agent doctor plugins`
   CLI deferred to 81.6 (will land alongside `NexoPlugin::init()`).
-- **81.6 ⬜** Plugin-side agent registration (manifest
-  `agents.contributes_dir` merged with existing `agents.d`).
+- **81.6 ✅ shipped 2026-05-02** — `merge_plugin_contributed_agents`
+  fn in `nexo_core::agent::nexo_plugin_registry::contributes` walks
+  each loaded plugin's `agents.contributes_dir`, parses YAMLs, folds
+  into `AgentsConfig` honoring operator-priority + per-plugin
+  `allow_override` flag. Conflict detection emits typed
+  `MergeResolution { OperatorWins / PluginOverrideAccepted /
+  LastPluginWins }`. Attribution sidecar map (`agent_id ->
+  plugin_id`) instead of touching `AgentConfig` schema.
+  `run_plugin_init_loop` async sequential driver records
+  `InitOutcome { Ok / Failed / NoHandle }`. `PluginDiscoveryReport`
+  extended with `contributed_agents_per_plugin` +
+  `agent_merge_conflicts` + `init_outcomes` (all `#[serde(default,
+  skip_serializing_if = ...is_empty)]` for backward-compat with 81.5
+  consumers). 8 unit + 1 integration test. **Library-only ship**:
+  boot wire in `src/main.rs::Mode::Run` + `nexo agent doctor plugins`
+  CLI subcommand (also deferred from 81.5) lands alongside 81.7
+  manifest-driven `NexoPlugin` instantiation that populates the
+  handles map.
 - **81.7 ⬜** Plugin-side `skills_dir` contribution.
 - **81.8 ⬜** `ChannelAdapter` trait extension point para nuevos
   channel kinds (SMS, Discord, custom webhook).

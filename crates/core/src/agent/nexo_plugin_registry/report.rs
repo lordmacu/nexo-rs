@@ -3,13 +3,22 @@
 //! Every diagnostic kind is its own enum variant so admin-ui + the
 //! `nexo agent doctor plugins` CLI can render localized messages
 //! without parsing free-form strings.
+//!
+//! Phase 81.6 extends this with three fields tracking plugin-
+//! contributed agents, merge conflicts, and `NexoPlugin::init()`
+//! outcomes. All three are `#[serde(default, skip_serializing_if)]`
+//! so the wire format stays backward-compatible with 81.5 consumers.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use semver::Version;
 use serde::Serialize;
 
 use nexo_plugin_manifest::PluginManifest;
+
+use super::contributes::{AgentMergeConflict, AgentMergeReport};
+use super::init_loop::InitOutcome;
 
 /// One validated plugin manifest plus the on-disk paths used to find
 /// it. The `manifest` field carries the full schema parsed by
@@ -32,6 +41,35 @@ pub struct PluginDiscoveryReport {
     pub invalid: usize,
     pub disabled: usize,
     pub duplicates: usize,
+    /// Phase 81.6 — `plugin_id -> [agent_id, ...]` populated by the
+    /// merge step. Empty when no plugins contribute agents.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub contributed_agents_per_plugin: BTreeMap<String, Vec<String>>,
+    /// Phase 81.6 — collisions detected during the merge.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agent_merge_conflicts: Vec<AgentMergeConflict>,
+    /// Phase 81.6 — `plugin_id -> outcome` populated by the
+    /// `NexoPlugin::init()` driver.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub init_outcomes: BTreeMap<String, InitOutcome>,
+}
+
+impl PluginDiscoveryReport {
+    /// Phase 81.6 — fold a [`super::contributes::AgentMergeReport`]
+    /// into this report. Diagnostics are appended; the
+    /// `contributed_agents_per_plugin` map is replaced verbatim;
+    /// conflicts are appended.
+    pub fn fold_agent_merge(&mut self, m: AgentMergeReport) {
+        self.diagnostics.extend(m.diagnostics);
+        self.contributed_agents_per_plugin = m.contributed_agents_per_plugin;
+        self.agent_merge_conflicts.extend(m.conflicts);
+    }
+
+    /// Phase 81.6 — fold the result of
+    /// [`super::init_loop::run_plugin_init_loop`] into this report.
+    pub fn fold_init_outcomes(&mut self, outcomes: BTreeMap<String, InitOutcome>) {
+        self.init_outcomes = outcomes;
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -82,6 +120,7 @@ mod tests {
             invalid: 0,
             disabled: 1,
             duplicates: 0,
+            ..Default::default()
         };
         let s = serde_json::to_string(&report).expect("serialize");
         assert!(s.contains("\"loaded_ids\""));
