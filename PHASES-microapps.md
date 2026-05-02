@@ -2609,7 +2609,7 @@ plugin discovery, no in-process channel adapters, no
 in-process advisor registration. Those stay in Phase 81
 backlog.
 
-#### 83.15 — Microapp testing harness (mock daemon + SDK helper)   ⬜ NEW 2026-05-01
+#### 83.15 — Microapp testing harness (mock daemon + SDK helper)   ✅  (shipped 2026-05-02 — MockAdminRpc + reference test deferred to 83.15.b)
 
 > **Curation gap**: today a microapp author must spawn the real
 > `nexo` daemon to exercise their handlers — friction so high that

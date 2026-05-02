@@ -1954,6 +1954,33 @@ admin RPC + http_server bootstrap into main.rs (single
 shared boot-order refactor — folded with 82.10.h.b /
 82.11 / 82.12 / 82.13 / 82.14 deferreds).
 
+### Phase 83.15 — MockAdminRpc + reference test + docs
+
+Phase 83.15 already had `MicroappTestHarness::call_tool*` /
+`fire_hook` (shipped in 83.4); this turn added
+`MockBindingContext` builder + 7 tests covering minimal /
+account-less / account-with / session / mcp-channel /
+panic-when-no-agent / harness-integration. Three pieces deferred
+to 83.15.b:
+
+- **`MockDaemon`**: full async stub that owns an in-memory
+  JSON-RPC transport and lets tests push synthetic
+  `agents/updated` / `hooks/<name>` notifications. Today the
+  harness drives a `Microapp` builder directly without
+  simulating the daemon side; richer integration tests need
+  the bidirectional mock.
+- **`MockAdminRpc`**: programmable responses to `nexo/admin/*`
+  requests so microapps consuming admin surfaces can assert
+  request shape + handle response. Land alongside the
+  `admin` Cargo feature's request side.
+- **Reference test** in `extensions/template-microapp-rust/`
+  demonstrating the harness end-to-end (1 unit test per tool +
+  1 integration test booting `MockDaemon`).
+- **Docs page** `docs/src/microapps/testing.md` with a 50-line
+  worked example.
+
+Target phase: 83.15.b (folded with the next SDK feature touch).
+
 ### Phase 83.17 — CLI integration + derive macro + integration test
 
 Phase 83.17 shipped the validator (`validate_config(config,
