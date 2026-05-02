@@ -16,7 +16,9 @@
 //! shapes.
 
 use async_trait::async_trait;
-use nexo_tool_meta::admin::processing::{ProcessingControlState, ProcessingScope};
+use nexo_tool_meta::admin::processing::{
+    PendingInbound, ProcessingControlState, ProcessingScope,
+};
 
 use crate::agent::admin_rpc::channel_outbound::{
     ChannelOutboundDispatcher, ChannelOutboundError, OutboundMessage,
@@ -58,6 +60,55 @@ pub trait ProcessingControlStore: Send + Sync + std::fmt::Debug {
     /// `AgentActive`. Equivalent to `set(scope, AgentActive)`
     /// but lets the store reclaim the slot.
     async fn clear(&self, scope: &ProcessingScope) -> anyhow::Result<bool>;
+
+    /// Phase 82.13.b.3 — push one inbound captured during a
+    /// pause onto the per-scope queue. Returns
+    /// `(new_depth, dropped_count)`:
+    /// - `new_depth` is the queue length AFTER the push +
+    ///   eviction.
+    /// - `dropped_count` is the number of OLDEST entries the
+    ///   implementation evicted to honour the cap (0 on the
+    ///   no-eviction path).
+    ///
+    /// Implementations cap the queue per scope (default
+    /// [`nexo_tool_meta::admin::processing::DEFAULT_PENDING_INBOUNDS_CAP`]).
+    /// FIFO eviction. Default impl is a `not_implemented` stub
+    /// so legacy stores compile without forcing every
+    /// `ProcessingControlStore` impl to pick this up at once;
+    /// the v0 in-memory store overrides.
+    async fn push_pending(
+        &self,
+        _scope: &ProcessingScope,
+        _inbound: PendingInbound,
+    ) -> anyhow::Result<(usize, u32)> {
+        Err(anyhow::anyhow!(
+            "push_pending not implemented for this store"
+        ))
+    }
+
+    /// Phase 82.13.b.3 — drain the queue for `scope`,
+    /// returning the captured inbounds in arrival order. The
+    /// queue is cleared atomically. Default impl returns the
+    /// empty vec so legacy stores keep `resume()` working
+    /// without forcing the override (resume just won't replay
+    /// anything).
+    async fn drain_pending(
+        &self,
+        _scope: &ProcessingScope,
+    ) -> anyhow::Result<Vec<PendingInbound>> {
+        Ok(Vec::new())
+    }
+
+    /// Phase 82.13.b.3 — current queue length for `scope`
+    /// without draining. Used by operator UIs to surface a
+    /// "N inbounds pending" badge. Default impl returns 0
+    /// (legacy store has no buffer).
+    async fn pending_depth(
+        &self,
+        _scope: &ProcessingScope,
+    ) -> anyhow::Result<usize> {
+        Ok(0)
+    }
 }
 
 /// Boot-injected error variants reserved for the dispatcher
@@ -140,6 +191,7 @@ pub async fn pause(
             changed,
             correlation_id: uuid::Uuid::new_v4(),
             transcript_stamped: None,
+            drained_pending: None,
         })
         .unwrap_or(serde_json::Value::Null),
     )
@@ -259,6 +311,7 @@ pub async fn resume(
             changed,
             correlation_id: uuid::Uuid::new_v4(),
             transcript_stamped,
+            drained_pending: None,
         })
         .unwrap_or(serde_json::Value::Null),
     )
@@ -433,6 +486,7 @@ pub async fn intervention(
             changed: true,
             correlation_id: uuid::Uuid::new_v4(),
             transcript_stamped,
+            drained_pending: None,
         })
         .unwrap_or(serde_json::Value::Null),
     )
