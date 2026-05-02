@@ -1221,18 +1221,94 @@ async fn main() -> Result<()> {
     // Runs before anything that depends on extensions. Spawns stdio runtimes
     // (Phase 11.3) for each discovered candidate and keeps them alive for
     // the agent's lifetime. Tool-registry injection lands in 11.5.
-    // Phase 82.10.h.b.5 — admin RPC bootstrap. v1 ships the
-    // wire path plumbed end-to-end but feeds `None` here so
-    // existing flows are byte-identical. Operators that want
-    // admin RPC enabled construct `AdminRpcBootstrap` from
-    // their plugin manifests + reload_signal and pass it
-    // (single-line change). Defer wiring is intentional: the
-    // bootstrap needs the per-extension `[capabilities.admin]`
-    // declarations from each plugin.toml, which today are
-    // re-parsed inside `run_extension_discovery` rather than
-    // surfaced from a single source of truth — refactor lands
-    // alongside the operator wire-up follow-up.
-    let admin_bootstrap: Option<nexo_setup::admin_bootstrap::AdminRpcBootstrap> = None;
+    //
+    // Phase 82.10.h.b.b — pre-discovery pass to learn plugin roots, then
+    // collect `[capabilities.admin]` + `[capabilities.http_server]` from
+    // each `nexo-plugin.toml` (separate file from the runtime
+    // `plugin.toml` discovery reads). Boot then constructs
+    // `AdminRpcBootstrap` so admin RPC pipes are alive end-to-end.
+    //
+    // The deeper integrations (`Some(broker)`, `Some(transcript_writer)`,
+    // `Some(processing_store)`, etc.) stay `None` here — those types are
+    // built later in main.rs. Bootstrap dispatcher surfaces typed
+    // `... domain not configured` errors for the unwired domains so
+    // microapps keep working with whatever IS wired today (CRUD on
+    // agents/credentials/pairing/llm/channels). Per-domain follow-ups
+    // thread the rest as the broker + writer + stores get hoisted.
+    let plugin_roots: Vec<PathBuf> = if let Some(ext_cfg) = cfg.extensions.as_ref() {
+        if ext_cfg.enabled {
+            let discovery = nexo_extensions::ExtensionDiscovery::new(
+                ext_cfg.search_paths.iter().map(PathBuf::from).collect(),
+                ext_cfg.ignore_dirs.clone(),
+                ext_cfg.disabled.clone(),
+                ext_cfg.allowlist.clone(),
+                ext_cfg.max_depth,
+            );
+            discovery
+                .discover()
+                .candidates
+                .iter()
+                .map(|c| c.root_dir.clone())
+                .collect()
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+    let admin_capabilities =
+        nexo_setup::admin_capability_collect::collect_admin_capabilities(&plugin_roots);
+    let http_server_capabilities =
+        nexo_setup::admin_capability_collect::collect_http_server_capabilities(&plugin_roots);
+    let admin_bootstrap: Option<nexo_setup::admin_bootstrap::AdminRpcBootstrap> = if cfg
+        .extensions
+        .as_ref()
+        .map(|c| c.enabled)
+        .unwrap_or(false)
+        && !admin_capabilities.is_empty()
+    {
+        let reload_noop: nexo_core::agent::admin_rpc::dispatcher::ReloadSignal =
+            std::sync::Arc::new(|| {});
+        let extensions_cfg_ref = cfg.extensions.as_ref().unwrap();
+        match nexo_setup::admin_bootstrap::AdminRpcBootstrap::build(
+            nexo_setup::admin_bootstrap::AdminBootstrapInputs {
+                config_dir: &config_dir,
+                secrets_root: &secrets_dir,
+                audit_db: None,
+                extensions_cfg: extensions_cfg_ref,
+                admin_capabilities: &admin_capabilities,
+                http_server_capabilities: &http_server_capabilities,
+                reload_signal: reload_noop,
+                transcript_reader: None,
+                broker: None,
+                transcript_writer: None,
+                processing_store: None,
+                tenant_store: None,
+                skills_store: None,
+                escalation_store: None,
+                agent_event_log: None,
+            },
+        )
+        .await
+        {
+            Ok(b) => {
+                if let Some(ref bs) = b {
+                    tracing::info!(
+                        microapps = admin_capabilities.len(),
+                        active = bs.is_active(),
+                        "admin RPC bootstrap wired",
+                    );
+                }
+                b
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "admin RPC bootstrap failed; admin RPC disabled");
+                None
+            }
+        }
+    } else {
+        None
+    };
     let (extension_runtimes, ext_mcp_decls) =
         run_extension_discovery(cfg.extensions.as_ref(), admin_bootstrap.as_ref()).await;
 

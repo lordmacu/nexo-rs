@@ -1830,20 +1830,51 @@ items stayed deferred to keep the commit small:
   bind. Microapps now receive `nexo/notify/pairing_status_changed`
   frames in real time without polling.
 - **Operator wire-up: `None → Some(&bootstrap)` in
-  `src/main.rs`.** `run_extension_discovery` already accepts
-  `Option<&AdminRpcBootstrap>` and threads it through the spawn
-  loop; the caller passes `None` for now. Activating the
-  pipeline needs a refactor that surfaces per-extension
-  `[capabilities.admin]` declarations from a single source of
-  truth (today re-parsed inside discovery + the bootstrap
-  itself), plus wiring a real Phase 18 reload signal. Both
-  isolated to a single new boot helper but touch enough of
-  main.rs that it deserves its own commit window when no
-  parallel workstream is mid-flight there.
+  `src/main.rs`.** ✅ shipped 2026-05-02 in Phase
+  82.10.h.b.b.activate. Boot now does a pre-discovery pass
+  to learn plugin roots, calls
+  `nexo_setup::admin_capability_collect::collect_admin_capabilities`
+  + `collect_http_server_capabilities` to surface
+  `[capabilities.admin]` and `[capabilities.http_server]` from
+  each `nexo-plugin.toml`, then constructs
+  `AdminRpcBootstrap::build(...)` with the maps. Result is
+  threaded into `run_extension_discovery` so admin RPC pipes
+  are alive end-to-end. Reload signal stays a no-op closure
+  for now (Phase 18 lands later); deeper integrations
+  (`Some(broker)`, `Some(transcript_writer)`,
+  `Some(processing_store)`, etc.) stay `None` because those
+  types are constructed later in main.rs. Per-domain
+  follow-ups thread the rest as the broker + writer + stores
+  get hoisted (see "Per-domain main.rs threading" below).
 
-Both deferreds are NOT scope-drops; the building blocks are
-fully in place. Target phase: 82.10.h.c (or fold into the next
-82.x phase that touches main.rs boot order).
+### Per-domain main.rs threading (post-activate cleanup)
+
+`AdminRpcBootstrap` is now constructed in main.rs but several
+of its inputs default to `None` because the underlying state
+(broker handle, transcripts writer, processing store, tenant
+store, skills store, escalation store, agent event log,
+firehose-side transcript_reader) is built later in the boot
+sequence. Each unwired domain returns the typed
+`<domain> not configured` -32603 from admin RPC; microapps
+that probe see the negative result and degrade gracefully.
+
+Closing each one is a one-line edit (hand the existing `Arc`
+into the right `AdminBootstrapInputs` field) once the state is
+hoisted ahead of the bootstrap call. Until then:
+
+- Processing pause/intervention dispatch via admin RPC works
+  the moment the runtime starts sharing a
+  `ProcessingControlStore` with the bootstrap.
+- Channel intervention `Reply` works the moment the broker
+  handle is hoisted.
+- Operator firehose backfill of non-transcript kinds works
+  the moment a `SqliteAgentEventLog` is opened at
+  `state_dir/agent_events.db` and wrapped in
+  `MergingAgentEventReader`.
+
+Each per-domain hoist is independent and can ship as its own
+small commit. None require the bootstrap activation refactor
+that just landed.
 
 ### Phase 82.11 — agent event firehose follow-ups
 
