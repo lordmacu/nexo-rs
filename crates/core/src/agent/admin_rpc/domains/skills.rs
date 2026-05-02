@@ -27,23 +27,98 @@ pub const MAX_SKILL_BODY_BYTES: usize = 64 * 1024;
 
 /// Write-side surface the skills admin handlers consume.
 /// Production wires `nexo_setup::admin_adapters::FsSkillsStore`
-/// against an on-disk `<root>/<name>/SKILL.md` layout. Tests
-/// inject in-memory mocks.
+/// against an on-disk
+/// `<root>/{__global__,<tenant_id>}/<name>/SKILL.md` layout.
+/// Tests inject in-memory mocks.
 #[async_trait]
 pub trait SkillsStore: Send + Sync + std::fmt::Debug {
     /// List skills, optionally filtered by name prefix. Returns an
     /// empty `Vec` (NOT an error) when the store is empty.
+    /// Operates on the global / shared `__global__` slot — see
+    /// `list_for_tenant` for the per-tenant variant.
     async fn list(&self, prefix: Option<&str>) -> anyhow::Result<Vec<SkillSummary>>;
-    /// Read one skill. Returns `Ok(None)` when the name has no
-    /// matching directory (NOT an error).
+    /// Read one skill from the global slot. Returns `Ok(None)`
+    /// when the name has no matching directory (NOT an error).
     async fn get(&self, name: &str) -> anyhow::Result<Option<SkillRecord>>;
-    /// Create or update one skill. The boolean is `true` when the
-    /// call created a new directory, `false` when it overwrote an
-    /// existing one (idempotent retry).
+    /// Create or update one skill in the global slot. The boolean
+    /// is `true` when the call created a new directory, `false`
+    /// when it overwrote an existing one (idempotent retry).
     async fn upsert(&self, params: SkillsUpsertParams) -> anyhow::Result<(SkillRecord, bool)>;
-    /// Delete one skill. Returns `Ok(false)` when the name had no
-    /// matching directory (idempotent — not an error).
+    /// Delete one skill from the global slot. Returns `Ok(false)`
+    /// when the name had no matching directory (idempotent — not
+    /// an error).
     async fn delete(&self, name: &str) -> anyhow::Result<bool>;
+
+    /// Phase 83.8.12.6 — list under a tenant scope. Default impl
+    /// returns empty, so legacy stores compile without changes
+    /// while behaving as if no tenant skills existed.
+    async fn list_for_tenant(
+        &self,
+        _tenant_id: &str,
+        _prefix: Option<&str>,
+    ) -> anyhow::Result<Vec<SkillSummary>> {
+        Ok(Vec::new())
+    }
+
+    /// Phase 83.8.12.6 — read under a tenant scope.
+    async fn get_for_tenant(
+        &self,
+        _tenant_id: &str,
+        _name: &str,
+    ) -> anyhow::Result<Option<SkillRecord>> {
+        Ok(None)
+    }
+
+    /// Phase 83.8.12.6 — upsert under a tenant scope. Default
+    /// errors so unimplemented adapters surface the gap rather
+    /// than silently no-op.
+    async fn upsert_for_tenant(
+        &self,
+        _tenant_id: &str,
+        _params: SkillsUpsertParams,
+    ) -> anyhow::Result<(SkillRecord, bool)> {
+        Err(anyhow::anyhow!(
+            "upsert_for_tenant not implemented for this SkillsStore"
+        ))
+    }
+
+    /// Phase 83.8.12.6 — delete under a tenant scope.
+    async fn delete_for_tenant(
+        &self,
+        _tenant_id: &str,
+        _name: &str,
+    ) -> anyhow::Result<bool> {
+        Err(anyhow::anyhow!(
+            "delete_for_tenant not implemented for this SkillsStore"
+        ))
+    }
+}
+
+/// Phase 83.8.12.6 — defense-in-depth tenant id validation.
+/// Same charset as agent ids and skill names so tenant_id can
+/// safely become a path segment.
+pub fn validate_skill_tenant_id(tenant_id: &str) -> Result<(), &'static str> {
+    if tenant_id.is_empty() {
+        return Err("tenant_id is empty");
+    }
+    if tenant_id.len() > 64 {
+        return Err("tenant_id longer than 64 chars");
+    }
+    if tenant_id == "__global__" {
+        return Err("tenant_id `__global__` is reserved for the shared slot");
+    }
+    let bytes = tenant_id.as_bytes();
+    let first = bytes[0];
+    if !(first.is_ascii_lowercase() || first.is_ascii_digit()) {
+        return Err("tenant_id must start with [a-z0-9]");
+    }
+    for &b in bytes {
+        let ok = b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-';
+        if !ok {
+            return Err("tenant_id must match [a-z0-9-]");
+        }
+    }
+    Ok(())
 }
 
 /// Reject names that would escape the skills root or otherwise
@@ -90,7 +165,23 @@ pub async fn list(store: &dyn SkillsStore, params: Value) -> AdminRpcResult {
         Ok(p) => p,
         Err(e) => return AdminRpcResult::err(AdminRpcError::InvalidParams(e.to_string())),
     };
-    let skills = match store.list(p.prefix.as_deref()).await {
+    // Phase 83.8.12.6 — dispatch on tenant_id. None → global slot
+    // (legacy path). Validation: "" treated as None.
+    let tenant_id = p
+        .tenant_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if let Some(tid) = tenant_id {
+        if let Err(msg) = validate_skill_tenant_id(tid) {
+            return AdminRpcResult::err(AdminRpcError::InvalidParams(msg.into()));
+        }
+    }
+    let skills = match tenant_id {
+        Some(tid) => store.list_for_tenant(tid, p.prefix.as_deref()).await,
+        None => store.list(p.prefix.as_deref()).await,
+    };
+    let skills = match skills {
         Ok(v) => v,
         Err(e) => {
             return AdminRpcResult::err(AdminRpcError::Internal(format!(
@@ -112,7 +203,21 @@ pub async fn get(store: &dyn SkillsStore, params: Value) -> AdminRpcResult {
     if let Err(msg) = validate_skill_name(&p.name) {
         return AdminRpcResult::err(AdminRpcError::InvalidParams(msg.into()));
     }
-    let skill = match store.get(&p.name).await {
+    let tenant_id = p
+        .tenant_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if let Some(tid) = tenant_id {
+        if let Err(msg) = validate_skill_tenant_id(tid) {
+            return AdminRpcResult::err(AdminRpcError::InvalidParams(msg.into()));
+        }
+    }
+    let skill = match tenant_id {
+        Some(tid) => store.get_for_tenant(tid, &p.name).await,
+        None => store.get(&p.name).await,
+    };
+    let skill = match skill {
         Ok(s) => s,
         Err(e) => {
             return AdminRpcResult::err(AdminRpcError::Internal(format!(
@@ -136,7 +241,22 @@ pub async fn upsert(store: &dyn SkillsStore, params: Value) -> AdminRpcResult {
     if let Err(msg) = validate_body(&p.body) {
         return AdminRpcResult::err(AdminRpcError::InvalidParams(msg.into()));
     }
-    let (skill, created) = match store.upsert(p).await {
+    let tenant_id = p
+        .tenant_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    if let Some(tid) = &tenant_id {
+        if let Err(msg) = validate_skill_tenant_id(tid) {
+            return AdminRpcResult::err(AdminRpcError::InvalidParams(msg.into()));
+        }
+    }
+    let pair = match tenant_id.as_deref() {
+        Some(tid) => store.upsert_for_tenant(tid, p).await,
+        None => store.upsert(p).await,
+    };
+    let (skill, created) = match pair {
         Ok(pair) => pair,
         Err(e) => {
             return AdminRpcResult::err(AdminRpcError::Internal(format!(
@@ -158,7 +278,21 @@ pub async fn delete(store: &dyn SkillsStore, params: Value) -> AdminRpcResult {
     if let Err(msg) = validate_skill_name(&p.name) {
         return AdminRpcResult::err(AdminRpcError::InvalidParams(msg.into()));
     }
-    let deleted = match store.delete(&p.name).await {
+    let tenant_id = p
+        .tenant_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if let Some(tid) = tenant_id {
+        if let Err(msg) = validate_skill_tenant_id(tid) {
+            return AdminRpcResult::err(AdminRpcError::InvalidParams(msg.into()));
+        }
+    }
+    let deleted = match tenant_id {
+        Some(tid) => store.delete_for_tenant(tid, &p.name).await,
+        None => store.delete(&p.name).await,
+    };
+    let deleted = match deleted {
         Ok(b) => b,
         Err(e) => {
             return AdminRpcResult::err(AdminRpcError::Internal(format!(
