@@ -1564,4 +1564,119 @@ mod tests {
         assert!(matches!(captured[1].2.role, super::TranscriptRole::User));
         assert_eq!(captured[1].2.content, "msg 0");
     }
+
+    /// Phase 82.13.c regression test — operator can pause and
+    /// resume the same conversation N times without
+    /// drag-along between cycles. Each cycle:
+    /// - Pause sets state to PausedByOperator (atomic).
+    /// - Push N inbounds onto the per-scope queue.
+    /// - Resume drains exactly N entries; queue cleared.
+    /// - Next cycle starts with empty queue.
+    ///
+    /// The 3rd cycle has zero inbounds → ack reports
+    /// `drained_pending: None` (not Some(0)) per the
+    /// "field doesn't apply" convention.
+    #[tokio::test]
+    async fn pause_resume_cycles_dont_drag_along_pending_entries() {
+        let store = MockStore::default();
+        let appender = RecordingAppender::default();
+        let session_id = paused_with_session();
+
+        // ── Cycle 1: pause + 2 inbounds + resume → drain=2 ──
+        let _ = pause(
+            &store,
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+            }),
+        )
+        .await;
+        store.push_pending(&convo(), pending(0)).await.unwrap();
+        store.push_pending(&convo(), pending(1)).await.unwrap();
+        let r1 = resume(
+            &store,
+            Some(&appender),
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+                "session_id": session_id,
+            }),
+        )
+        .await;
+        assert!(r1.error.is_none());
+        assert_eq!(r1.result.unwrap()["drained_pending"], 2);
+        assert_eq!(appender.captured.lock().unwrap().len(), 2);
+
+        // Drain MUST have cleared the queue — verify
+        // independently of the resume path.
+        assert!(store.drain_pending(&convo()).await.unwrap().is_empty());
+
+        // ── Cycle 2: pause + 1 inbound + resume → drain=1 ──
+        let _ = pause(
+            &store,
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+            }),
+        )
+        .await;
+        store.push_pending(&convo(), pending(99)).await.unwrap();
+        let r2 = resume(
+            &store,
+            Some(&appender),
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+                "session_id": session_id,
+            }),
+        )
+        .await;
+        assert!(r2.error.is_none());
+        let v2 = r2.result.unwrap();
+        assert_eq!(v2["drained_pending"], 1, "no drag-along from cycle 1");
+        // Cumulative across both cycles: 2 (cycle 1) + 1 (cycle 2) = 3.
+        let captured = appender.captured.lock().unwrap();
+        assert_eq!(captured.len(), 3);
+        // The 3rd entry (last drain) must be the cycle-2 inbound,
+        // NOT a leaked cycle-1 entry.
+        assert_eq!(captured[2].2.content, "msg 99");
+        drop(captured);
+
+        // ── Cycle 3: pause + ZERO inbounds + resume ──
+        let _ = pause(
+            &store,
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+            }),
+        )
+        .await;
+        let r3 = resume(
+            &store,
+            Some(&appender),
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+                "session_id": session_id,
+            }),
+        )
+        .await;
+        assert!(r3.error.is_none());
+        let v3 = r3.result.unwrap();
+        // Empty queue on resume → field omitted (None per
+        // ack convention; no `drained_pending` key on the wire).
+        assert!(
+            v3.get("drained_pending").is_none(),
+            "empty drain MUST omit the field, got: {v3}",
+        );
+        // No new entries stamped.
+        assert_eq!(appender.captured.lock().unwrap().len(), 3);
+
+        // Final state: AgentActive, no leftover queue.
+        assert!(matches!(
+            store.get(&convo()).await.unwrap(),
+            ProcessingControlState::AgentActive
+        ));
+        assert!(store.drain_pending(&convo()).await.unwrap().is_empty());
+    }
 }
