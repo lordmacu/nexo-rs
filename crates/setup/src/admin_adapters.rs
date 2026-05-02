@@ -1167,6 +1167,65 @@ impl PairingNotifier for StdioPairingNotifier {
     }
 }
 
+/// Phase 82.10.h.b — `PairingNotifier` whose backing
+/// `mpsc::Sender<String>` is bound after construction. Same
+/// chicken-and-egg as [`DeferredAdminOutboundWriter`]: the
+/// admin RPC dispatcher needs a notifier at build time
+/// (passed to `with_pairing_domain`), but the live extension
+/// stdin sender only exists post-spawn. Boot wires the
+/// notifier alongside the writer; [`bind`] binds both handles
+/// in one shot.
+///
+/// Frames sent before [`bind`] is called are dropped with a
+/// `warn` — same best-effort policy as
+/// [`StdioPairingNotifier`]: a backed-up reader must NOT
+/// backpressure the daemon. Microapps that need every status
+/// transition poll `pairing/status` instead.
+#[derive(Debug, Default)]
+pub struct DeferredPairingNotifier {
+    sender: OnceLock<mpsc::Sender<String>>,
+}
+
+impl DeferredPairingNotifier {
+    /// Build an unbound notifier. Status frames sent before
+    /// [`bind`] is called are dropped + logged.
+    pub fn new() -> Self {
+        Self {
+            sender: OnceLock::new(),
+        }
+    }
+
+    /// Attach the live extension stdin sender. Idempotent —
+    /// `OnceLock` semantics so a second call is a no-op.
+    /// Boot calls this from the same code path that binds the
+    /// admin response writer so both flow through the same
+    /// stdin queue.
+    pub fn bind(&self, sender: mpsc::Sender<String>) {
+        let _ = self.sender.set(sender);
+    }
+}
+
+impl PairingNotifier for DeferredPairingNotifier {
+    fn notify_status(&self, status: &PairingStatus) {
+        let Some(s) = self.sender.get() else {
+            tracing::warn!(
+                challenge_id = %status.challenge_id,
+                "pairing notifier sent before outbound writer was bound; frame dropped",
+            );
+            return;
+        };
+        let params = serde_json::to_value(status).unwrap_or(serde_json::Value::Null);
+        let frame = json_rpc_notification(PAIRING_STATUS_NOTIFY_METHOD, params);
+        if let Err(e) = s.try_send(frame) {
+            tracing::warn!(
+                challenge_id = %status.challenge_id,
+                error = %e,
+                "pairing notifier outbox full or closed; dropping notification frame",
+            );
+        }
+    }
+}
+
 /// Phase 82.10.h.b.5 — `AdminOutboundWriter` whose backing
 /// `mpsc::Sender<String>` is bound after construction. Solves
 /// the chicken-and-egg between [`DispatcherAdminRouter`] (needs
@@ -1762,6 +1821,69 @@ mod pairing_store_tests {
         assert_eq!(removed, 1);
         assert_eq!(store.len(), 1);
         assert!(store.read_challenge(alive).unwrap().is_some());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn deferred_notifier_drops_frames_sent_before_bind() {
+        let notifier = DeferredPairingNotifier::new();
+        let status = PairingStatus {
+            challenge_id: Uuid::nil(),
+            state: PairingState::Pending,
+            data: PairingStatusData::default(),
+        };
+        // No bind yet — frame is dropped + warn-logged. Must not panic.
+        notifier.notify_status(&status);
+
+        // Bind now and confirm subsequent frames are delivered.
+        let (tx, mut rx) = mpsc::channel::<String>(8);
+        notifier.bind(tx);
+        notifier.notify_status(&status);
+        let line = rx.recv().await.expect("frame received post-bind");
+        let parsed: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(parsed["method"], PAIRING_STATUS_NOTIFY_METHOD);
+        assert_eq!(parsed["params"]["state"], "pending");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn deferred_notifier_delivers_after_bind() {
+        let notifier = DeferredPairingNotifier::new();
+        let (tx, mut rx) = mpsc::channel::<String>(8);
+        notifier.bind(tx);
+
+        let status = PairingStatus {
+            challenge_id: Uuid::nil(),
+            state: PairingState::QrReady,
+            data: PairingStatusData {
+                qr_ascii: Some("##".into()),
+                ..Default::default()
+            },
+        };
+        notifier.notify_status(&status);
+        let line = rx.recv().await.expect("frame received");
+        let parsed: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(parsed["jsonrpc"], "2.0");
+        assert_eq!(parsed["method"], PAIRING_STATUS_NOTIFY_METHOD);
+        assert_eq!(parsed["params"]["state"], "qr_ready");
+        assert!(parsed.get("id").is_none(), "notifications carry no id");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn deferred_notifier_bind_is_idempotent() {
+        let notifier = DeferredPairingNotifier::new();
+        let (tx_first, mut rx_first) = mpsc::channel::<String>(8);
+        let (tx_second, mut rx_second) = mpsc::channel::<String>(8);
+        notifier.bind(tx_first);
+        // Second bind is a no-op (OnceLock semantics) — frames stay on the first sender.
+        notifier.bind(tx_second);
+
+        let status = PairingStatus {
+            challenge_id: Uuid::nil(),
+            state: PairingState::Pending,
+            data: PairingStatusData::default(),
+        };
+        notifier.notify_status(&status);
+        assert!(rx_first.recv().await.is_some(), "first sender wins");
+        assert!(rx_second.try_recv().is_err(), "second sender stays empty");
     }
 }
 

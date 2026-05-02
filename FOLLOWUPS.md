@@ -1818,17 +1818,17 @@ Phase 82.10.h.b shipped the full wire path (router + reader
 routing + audit-tail CLI + `AdminRpcBootstrap` module) but two
 items stayed deferred to keep the commit small:
 
-- **Pairing notifier wire-up.** `StdioPairingNotifier` is built
-  and unit-tested, but `AdminRpcBootstrap` currently feeds
-  `with_pairing_domain(_, None)`. The chicken-and-egg is that
-  the notifier needs an `mpsc::Sender<String>` BEFORE
-  `spawn_with` runs, while the live sender is only created
-  inside `spawn_with`. Solved by introducing a separate
-  notification queue (independent of the response writer) so
-  `nexo/notify/pairing_status_changed` frames flow without
-  depending on the deferred outbound writer's bind step. Until
-  this lands, microapps poll `pairing/status` on a 1–2 s
-  cadence — functional but chatty.
+- **Pairing notifier wire-up.** ✅ shipped 2026-05-02 in Phase
+  82.10.h.b.pairing. `DeferredPairingNotifier` mirrors the
+  `DeferredAdminOutboundWriter` deferred-bind pattern: built
+  alongside the response writer, fed to
+  `with_pairing_domain(_, Some(notifier))`, then bound to the
+  live `mpsc::Sender<String>` post-`spawn_with` from the same
+  call site (`PerMicroappWire::bind_writer`). Frames sent
+  before bind warn-drop instead of panicking; tests cover
+  drop-before-bind, post-bind delivery, and idempotent second
+  bind. Microapps now receive `nexo/notify/pairing_status_changed`
+  frames in real time without polling.
 - **Operator wire-up: `None → Some(&bootstrap)` in
   `src/main.rs`.** `run_extension_discovery` already accepts
   `Option<&AdminRpcBootstrap>` and threads it through the spawn

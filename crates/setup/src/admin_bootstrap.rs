@@ -68,6 +68,12 @@ fn agent_events_enabled() -> bool {
 struct PerMicroappWire {
     router: Arc<DispatcherAdminRouter>,
     writer: Arc<DeferredAdminOutboundWriter>,
+    /// Phase 82.10.h.b.pairing — `nexo/notify/pairing_status_changed`
+    /// notifier sharing the same stdin queue as `writer`. Bound
+    /// in [`AdminRpcBootstrap::bind_writer`] alongside the
+    /// response writer so microapps see status transitions in
+    /// real time instead of polling.
+    pairing_notifier: Arc<crate::admin_adapters::DeferredPairingNotifier>,
 }
 
 /// Owns every shared admin RPC singleton + per-microapp wires.
@@ -400,13 +406,23 @@ impl AdminRpcBootstrap {
         let mut subscribe_handles: Vec<JoinHandle<()>> = Vec::new();
         for (id, _decl) in &declared {
             let writer = Arc::new(DeferredAdminOutboundWriter::new());
+            // Phase 82.10.h.b.pairing — separate notification
+            // queue for `nexo/notify/pairing_status_changed` so
+            // microapps stop polling pairing/status on a 1-2 s
+            // cadence. Bound post-spawn alongside the response
+            // writer in `bind_writer`.
+            let pairing_notifier =
+                Arc::new(crate::admin_adapters::DeferredPairingNotifier::new());
 
             let mut dispatcher = AdminRpcDispatcher::new()
                 .with_capabilities(capability_set.clone())
                 .with_audit_writer(audit.clone())
                 .with_agents_domain(agents_yaml.clone(), inputs.reload_signal.clone())
                 .with_credentials_domain(credential_store.clone())
-                .with_pairing_domain(pairing_store.clone(), None)
+                .with_pairing_domain(
+                    pairing_store.clone(),
+                    Some(pairing_notifier.clone()),
+                )
                 .with_llm_providers_domain(llm_yaml.clone())
                 .with_channels_domain();
             if let Some(reader) = inputs.transcript_reader.clone() {
@@ -503,6 +519,7 @@ impl AdminRpcBootstrap {
                 PerMicroappWire {
                     router,
                     writer,
+                    pairing_notifier,
                 },
             );
         }
@@ -544,14 +561,20 @@ impl AdminRpcBootstrap {
 
     /// Bind the live extension stdin queue post-spawn. After
     /// this call, every admin response routed through the
-    /// dispatcher flows out through the extension's stdin.
+    /// dispatcher flows out through the extension's stdin AND
+    /// every `nexo/notify/pairing_status_changed` frame from
+    /// the deferred pairing notifier reaches the same queue
+    /// (Phase 82.10.h.b.pairing — closes the chicken-and-egg
+    /// that previously left microapps polling
+    /// `pairing/status`).
     pub fn bind_writer(
         &self,
         extension_id: &str,
         sender: tokio::sync::mpsc::Sender<String>,
     ) {
         if let Some(wire) = self.wires.get(extension_id) {
-            wire.writer.bind(sender);
+            wire.writer.bind(sender.clone());
+            wire.pairing_notifier.bind(sender);
         }
     }
 
