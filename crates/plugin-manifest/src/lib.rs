@@ -39,10 +39,14 @@
 //!   (Phase 11.1 extension manifest — distinct concept, distinct
 //!   filename).
 
+pub mod config_schema;
 pub mod error;
 pub mod manifest;
 pub mod validate;
 
+pub use config_schema::{
+    is_validation_bypassed, validate_config, ConfigSchemaError, SKIP_SCHEMA_ENV,
+};
 pub use error::ManifestError;
 pub use manifest::{
     AdvisorsSection, AgentsSection, Capabilities, Capability, CapabilityGateDecl,
