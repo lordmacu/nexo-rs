@@ -16,8 +16,10 @@
 //! - [`takeover`] — Phase 83.8.6 `HumanTakeover` engage / send /
 //!   release.
 
+pub mod runtime_sender;
 pub mod takeover;
 pub mod transcripts;
+pub use runtime_sender::WriterAdminSender;
 pub use takeover::{HumanTakeover, SendReplyArgs};
 pub use transcripts::TranscriptStream;
 
