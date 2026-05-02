@@ -33,6 +33,7 @@ pub mod prompt;
 pub mod registry;
 pub mod services;
 pub mod services_imperative;
+pub mod skills_migrate;
 pub mod status;
 pub mod telegram_link;
 pub mod writer;

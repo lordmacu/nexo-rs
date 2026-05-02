@@ -2646,6 +2646,21 @@ Cross-references:
   gained `session_id: Option<Uuid>` (was missing since Phase
   82.13.b.1 added the field on the SDK side). Out-of-tree commit
   9f634a9.
+- 83.8.12.6.runtime ✅ SkillLoader fallback chain — `SkillLoader`
+  gains `with_tenant_id(Option<String>)` builder + per-call
+  fallback `<root>/<tid>/<name>/` → `<root>/__global__/<name>/`
+  → legacy `<root>/<name>/` (logged with deprecation warning).
+  `llm_behavior.rs` threads `ctx.config.tenant_id.clone()`. 5
+  new tests (global, tenant precedence, tenant→global fallback,
+  legacy fallback, not-found).
+- 83.8.12.6.b ✅ On-disk migration helper —
+  `nexo_setup::skills_migrate::migrate_legacy_skills_to_global`
+  moves `<root>/<name>/SKILL.md` (where `<name>` ≠
+  `__global__` and is a legacy skill dir, detected by direct
+  `SKILL.md` presence) into `<root>/__global__/<name>/SKILL.md`.
+  Idempotent, leaves tenant-scope dirs untouched, reports
+  conflicts. 6 new tests. CLI sub-command exposure deferred —
+  helper is callable from Rust ops scripts today.
 - 83.8.12.7 ✅ Audit log `tenant_id` column +
   `tail_for_tenant` — `AdminAuditRow.tenant_id:
   Option<String>` (serde-skip when None);

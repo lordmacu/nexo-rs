@@ -897,7 +897,15 @@ impl LlmAgentBehavior {
                 );
             } else {
                 let loader =
-                    SkillLoader::new(skills_dir).with_overrides(ctx.config.skill_overrides.clone());
+                    SkillLoader::new(skills_dir)
+                        .with_overrides(ctx.config.skill_overrides.clone())
+                        // Phase 83.8.12.6.runtime — tenant-scoped
+                        // skill resolution: per-tenant skills
+                        // (`<root>/<tenant_id>/<name>/`) win over
+                        // global, and legacy `<root>/<name>/`
+                        // remains as fallback for un-migrated
+                        // deployments.
+                        .with_tenant_id(ctx.config.tenant_id.clone());
                 let loaded = loader.load_many(&effective.skills).await;
                 if let Some(blocks) = render_skill_blocks(&loaded) {
                     skills_section = Some(blocks);
