@@ -161,6 +161,14 @@ pub struct AdminBootstrapInputs<'a> {
     /// installed on every dispatcher. `None` skips the domain
     /// (microapps see `-32601` for those methods).
     pub transcript_reader: Option<Arc<dyn TranscriptReader>>,
+    /// Phase 83.8.4.b — broker handle the
+    /// `BrokerOutboundDispatcher` publishes to. `None` keeps the
+    /// outbound surface disabled —
+    /// `nexo/admin/processing/intervention` returns
+    /// `-32603 channel_outbound dispatcher not configured`.
+    /// Production wiring in `main.rs` always passes
+    /// `Some(broker.clone())`.
+    pub broker: Option<nexo_broker::AnyBroker>,
 }
 
 
@@ -355,6 +363,21 @@ impl AdminRpcBootstrap {
             if let Some(reader) = inputs.transcript_reader.clone() {
                 dispatcher = dispatcher.with_agent_events_domain(reader);
             }
+            // Phase 83.8.4.b — wire the production
+            // BrokerOutboundDispatcher when the broker handle is
+            // available. Without it, `processing.intervention`
+            // returns the typed "channel_outbound dispatcher not
+            // configured" error so callers diagnose the wire-up
+            // gap clearly.
+            if let Some(broker) = inputs.broker.clone() {
+                let outbound = Arc::new(
+                    crate::admin_adapters::BrokerOutboundDispatcher::new(broker)
+                        .with_translator(Box::new(
+                            crate::admin_adapters::WhatsAppTranslator,
+                        )),
+                );
+                dispatcher = dispatcher.with_channel_outbound(outbound);
+            }
 
             // Phase 82.11 — spawn a per-microapp subscriber when
             // the operator granted `transcripts_subscribe` or
@@ -548,6 +571,7 @@ mod tests {
             http_server_capabilities: &BTreeMap::new(),
             reload_signal: noop_reload(),
             transcript_reader: None,
+            broker: None,
         })
         .await
         .unwrap();
@@ -572,6 +596,7 @@ mod tests {
             http_server_capabilities: &BTreeMap::new(),
             reload_signal: noop_reload(),
             transcript_reader: None,
+            broker: None,
         })
         .await
         .unwrap_err();
@@ -597,6 +622,7 @@ mod tests {
             http_server_capabilities: &BTreeMap::new(),
             reload_signal: noop_reload(),
             transcript_reader: None,
+            broker: None,
         })
         .await
         .unwrap()
@@ -636,6 +662,7 @@ mod tests {
                 http_server_capabilities: &BTreeMap::new(),
                 reload_signal: noop_reload(),
                 transcript_reader: None,
+            broker: None,
             },
             true,
         )
@@ -668,6 +695,7 @@ mod tests {
                 http_server_capabilities: &BTreeMap::new(),
                 reload_signal: noop_reload(),
                 transcript_reader: None,
+            broker: None,
             },
             true,
         )
@@ -699,6 +727,7 @@ mod tests {
                 http_server_capabilities: &BTreeMap::new(),
                 reload_signal: noop_reload(),
                 transcript_reader: None,
+            broker: None,
             },
             true,
         )
@@ -738,6 +767,7 @@ mod tests {
                 http_server_capabilities: &http,
                 reload_signal: noop_reload(),
                 transcript_reader: None,
+            broker: None,
             },
             true,
         )
@@ -783,6 +813,7 @@ mod tests {
                 http_server_capabilities: &http,
                 reload_signal: noop_reload(),
                 transcript_reader: None,
+            broker: None,
             },
             true,
         )
@@ -823,6 +854,7 @@ mod tests {
                 http_server_capabilities: &http,
                 reload_signal: noop_reload(),
                 transcript_reader: None,
+            broker: None,
             },
             true,
         )
@@ -852,6 +884,7 @@ mod tests {
                 http_server_capabilities: &BTreeMap::new(),
                 reload_signal: noop_reload(),
                 transcript_reader: None,
+            broker: None,
             },
             false,
         )
