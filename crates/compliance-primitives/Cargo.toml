@@ -9,8 +9,9 @@ authors = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 documentation = { workspace = true }
-keywords = { workspace = true }
-categories = { workspace = true }
+readme = "README.md"
+keywords = ["nexo", "microapp", "compliance", "gdpr", "anti-spam"]
+categories = ["text-processing", "api-bindings"]
 
 [lints]
 workspace = true

@@ -2498,7 +2498,7 @@ Out of scope for v0:
 - i18n / RTL languages (CSS prep ready, content
   translation operator-side).
 
-#### 83.14 — Publish SDK crates + npm package   ⬜
+#### 83.14 — Publish SDK crates + npm package   ✅  (shipped 2026-05-02 — actual crates.io upload + release-plz CI + npm package deferred to 83.14.b)
 
 Migration milestone from path-dep development workflow to
 published artifacts. Triggered when the SDK API stabilises
