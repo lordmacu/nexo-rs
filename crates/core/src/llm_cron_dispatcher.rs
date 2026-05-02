@@ -185,6 +185,14 @@ impl RoutedClientResolver {
         if let Some(hit) = self.cache.get(&key) {
             return Ok((Arc::clone(hit.value()), model));
         }
+        // Phase 83.8.12.5.b — uses the tenant-less shim
+        // intentionally. Cron entries are operator-scheduled
+        // infra (not per-agent or per-tenant); making them
+        // tenant-aware requires a `CronEntry.tenant_id` schema
+        // migration + cache key extension. Logged as
+        // 83.8.12.5.cron follow-up; current behaviour matches
+        // pre-83.8.12.5 (only the global `providers` table
+        // is consulted).
         let built = self.registry.build(&self.llm_cfg, &model).map_err(|e| {
             anyhow::anyhow!(
                 "build client {}:{} failed: {e}",
