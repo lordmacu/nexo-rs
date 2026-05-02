@@ -13,6 +13,8 @@
 //! [`crate::agent::transcripts_index::TranscriptsIndex`]
 //! adapters).
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde_json::Value;
 
@@ -21,6 +23,7 @@ use nexo_tool_meta::admin::agent_events::{
     AgentEventsReadResponse, AgentEventsSearchParams, AgentEventsSearchResponse, SearchHit,
 };
 
+use crate::agent::admin_rpc::agent_events_sqlite::{AgentEventLog, AgentEventLogFilter};
 use crate::agent::admin_rpc::dispatcher::{AdminRpcError, AdminRpcResult};
 
 /// Default `since_ms` when the caller omits the field. 30 days
@@ -60,6 +63,167 @@ pub trait TranscriptReader: Send + Sync {
         &self,
         params: &AgentEventsSearchParams,
     ) -> anyhow::Result<Vec<SearchHit>>;
+}
+
+/// Phase 82.11.log.merge — `TranscriptReader` impl that
+/// composes a transcripts source (JSONL via
+/// `TranscriptReaderFs`) with a durable
+/// [`AgentEventLog`] (firehose backfill). Operator UIs that
+/// open after a `ProcessingStateChanged` / `EscalationRequested`
+/// emit see those rows in `agent_events/list` even though the
+/// transcripts JSONL never captured them.
+///
+/// The merge respects the `kind` filter:
+/// - `Some("transcript_appended")`: query transcripts only.
+/// - `Some(other)`: query the durable log only (with the kind
+///   pushed into [`AgentEventLogFilter::kind`]).
+/// - `None`: query both, drop transcripts from the log result
+///   so they aren't double-counted (boot wires the log as a
+///   `Tee` sink alongside the broadcast emitter, so it
+///   receives every kind including TranscriptAppended), then
+///   merge by `at_ms` desc and truncate to `filter.limit`.
+///
+/// `read_session_events` and `search_events` pass through to
+/// the transcripts source — `session_id` semantics + FTS5 are
+/// transcript-only today.
+pub struct MergingAgentEventReader {
+    transcripts: Arc<dyn TranscriptReader>,
+    log: Arc<dyn AgentEventLog>,
+}
+
+impl std::fmt::Debug for MergingAgentEventReader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MergingAgentEventReader").finish()
+    }
+}
+
+impl MergingAgentEventReader {
+    /// Build the merger from the two backing sources. Boot
+    /// wires `transcripts: Arc<TranscriptReaderFs>` and
+    /// `log: Arc<SqliteAgentEventLog>`.
+    pub fn new(
+        transcripts: Arc<dyn TranscriptReader>,
+        log: Arc<dyn AgentEventLog>,
+    ) -> Self {
+        Self { transcripts, log }
+    }
+}
+
+/// Pulls the timestamp from any `AgentEventKind` variant —
+/// matches the same field set the SQLite log denormalises.
+/// Unknown future variants surface as `0` so they sort to the
+/// bottom on a `DESC` order.
+fn event_at_ms(event: &AgentEventKind) -> u64 {
+    match event {
+        AgentEventKind::TranscriptAppended { sent_at_ms, .. } => *sent_at_ms,
+        AgentEventKind::PendingInboundsDropped { at_ms, .. } => *at_ms,
+        AgentEventKind::EscalationRequested {
+            requested_at_ms, ..
+        } => *requested_at_ms,
+        AgentEventKind::EscalationResolved { resolved_at_ms, .. } => {
+            *resolved_at_ms
+        }
+        AgentEventKind::ProcessingStateChanged { at_ms, .. } => *at_ms,
+        _ => 0,
+    }
+}
+
+#[async_trait]
+impl TranscriptReader for MergingAgentEventReader {
+    async fn list_recent_events(
+        &self,
+        filter: &AgentEventsListFilter,
+    ) -> anyhow::Result<Vec<AgentEventKind>> {
+        let limit = if filter.limit == 0 {
+            DEFAULT_LIST_LIMIT
+        } else {
+            filter.limit.min(MAX_LIST_LIMIT)
+        };
+        // Branch on kind — the merger pushes the filter down so
+        // each backing source only loads what is asked.
+        match filter.kind.as_deref() {
+            Some("transcript_appended") => {
+                self.transcripts.list_recent_events(filter).await
+            }
+            Some(other) => {
+                let log_filter = AgentEventLogFilter {
+                    agent_id: filter.agent_id.clone(),
+                    kind: Some(other.to_string()),
+                    since_ms: filter.since_ms,
+                    tenant_id: filter.tenant_id.clone(),
+                    limit,
+                };
+                self.log.list_recent(&log_filter).await
+            }
+            None => {
+                // Pull from both — over-read each source so the
+                // merge truncation does not lose recent rows from
+                // the lighter side.
+                let transcripts = self
+                    .transcripts
+                    .list_recent_events(filter)
+                    .await
+                    .unwrap_or_else(|e| {
+                        tracing::warn!(error = %e, "merger: transcripts side failed");
+                        Vec::new()
+                    });
+                let log_filter = AgentEventLogFilter {
+                    agent_id: filter.agent_id.clone(),
+                    kind: None,
+                    since_ms: filter.since_ms,
+                    tenant_id: filter.tenant_id.clone(),
+                    limit,
+                };
+                let log_rows = self
+                    .log
+                    .list_recent(&log_filter)
+                    .await
+                    .unwrap_or_else(|e| {
+                        tracing::warn!(error = %e, "merger: log side failed");
+                        Vec::new()
+                    });
+                // Drop transcripts from the log side: the boot
+                // wiring of `Tee([Broadcast, SqliteAgentEventLog])`
+                // means the log captured TranscriptAppended too,
+                // but the JSONL reader is the canonical source.
+                let log_rows: Vec<AgentEventKind> = log_rows
+                    .into_iter()
+                    .filter(|e| {
+                        !matches!(e, AgentEventKind::TranscriptAppended { .. })
+                    })
+                    .collect();
+                let mut merged: Vec<AgentEventKind> =
+                    Vec::with_capacity(transcripts.len() + log_rows.len());
+                merged.extend(transcripts);
+                merged.extend(log_rows);
+                // Newest first; fall back to insertion order on
+                // exact-tie timestamps (sort_by_key is stable).
+                merged.sort_by_key(|e| std::cmp::Reverse(event_at_ms(e)));
+                merged.truncate(limit);
+                Ok(merged)
+            }
+        }
+    }
+
+    async fn read_session_events(
+        &self,
+        params: &AgentEventsReadParams,
+    ) -> anyhow::Result<Vec<AgentEventKind>> {
+        // session_id semantics live in the JSONL reader. The
+        // durable log has no session_id (non-transcript kinds
+        // don't carry one).
+        self.transcripts.read_session_events(params).await
+    }
+
+    async fn search_events(
+        &self,
+        params: &AgentEventsSearchParams,
+    ) -> anyhow::Result<Vec<SearchHit>> {
+        // FTS5 is transcript-only today. Future revs may extend
+        // search across non-transcript kinds; that lands as a new
+        // `AgentEventLog::search` method.
+        self.transcripts.search_events(params).await
+    }
 }
 
 /// `nexo/admin/agent_events/list` — most-recent events for one
@@ -429,5 +593,216 @@ mod tests {
         let result = list(&reader, serde_json::json!({ "agent_id": "ana" })).await;
         let err = result.error.expect("error");
         assert!(matches!(err, AdminRpcError::Internal(_)));
+    }
+
+    // ── Phase 82.11.log.merge — `MergingAgentEventReader` tests ──
+
+    use crate::agent::admin_rpc::SqliteAgentEventLog;
+    use nexo_tool_meta::admin::escalations::{EscalationReason, EscalationUrgency};
+    use nexo_tool_meta::admin::processing::{
+        ProcessingControlState, ProcessingScope,
+    };
+
+    fn convo(agent: &str) -> ProcessingScope {
+        ProcessingScope::Conversation {
+            agent_id: agent.into(),
+            channel: "whatsapp".into(),
+            account_id: "55-1234".into(),
+            contact_id: "55-5678".into(),
+            mcp_channel_source: None,
+        }
+    }
+
+    fn transcript(agent: &str, sent_at_ms: u64) -> AgentEventKind {
+        AgentEventKind::TranscriptAppended {
+            agent_id: agent.into(),
+            session_id: Uuid::nil(),
+            seq: 0,
+            role: TranscriptRole::User,
+            body: "hola".into(),
+            sent_at_ms,
+            sender_id: None,
+            source_plugin: "whatsapp".into(),
+            tenant_id: None,
+        }
+    }
+
+    fn pause_changed(agent: &str, at_ms: u64) -> AgentEventKind {
+        AgentEventKind::ProcessingStateChanged {
+            agent_id: agent.into(),
+            scope: convo(agent),
+            prev_state: ProcessingControlState::AgentActive,
+            new_state: ProcessingControlState::PausedByOperator {
+                scope: convo(agent),
+                paused_at_ms: at_ms,
+                operator_token_hash: "abcdef0123456789".into(),
+                reason: None,
+            },
+            at_ms,
+            tenant_id: None,
+        }
+    }
+
+    fn escalation(agent: &str, requested_at_ms: u64) -> AgentEventKind {
+        AgentEventKind::EscalationRequested {
+            agent_id: agent.into(),
+            scope: convo(agent),
+            summary: "needs review".into(),
+            reason: EscalationReason::UnknownQuery,
+            urgency: EscalationUrgency::Normal,
+            requested_at_ms,
+            tenant_id: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn merger_kind_none_interleaves_both_sources_by_at_ms_desc() {
+        // transcripts: t=1000, t=3000
+        let transcripts: Arc<dyn TranscriptReader> = Arc::new(
+            MockReader::default()
+                .with_event(transcript("ana", 1_000))
+                .with_event(transcript("ana", 3_000)),
+        );
+        // log: pause at t=2000, escalation at t=4000
+        let log = Arc::new(SqliteAgentEventLog::open_memory().await.unwrap());
+        log.append(pause_changed("ana", 2_000)).await.unwrap();
+        log.append(escalation("ana", 4_000)).await.unwrap();
+
+        let merger = MergingAgentEventReader::new(transcripts, log);
+        let out = merger
+            .list_recent_events(&AgentEventsListFilter {
+                agent_id: "ana".into(),
+                limit: 10,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(out.len(), 4);
+        let stamps: Vec<u64> = out.iter().map(event_at_ms).collect();
+        assert_eq!(stamps, vec![4_000, 3_000, 2_000, 1_000]);
+    }
+
+    #[tokio::test]
+    async fn merger_kind_transcript_appended_routes_to_transcripts_only() {
+        let transcripts: Arc<dyn TranscriptReader> =
+            Arc::new(MockReader::default().with_event(transcript("ana", 1_000)));
+        let log = Arc::new(SqliteAgentEventLog::open_memory().await.unwrap());
+        log.append(pause_changed("ana", 2_000)).await.unwrap();
+        let merger = MergingAgentEventReader::new(transcripts, log);
+        let out = merger
+            .list_recent_events(&AgentEventsListFilter {
+                agent_id: "ana".into(),
+                kind: Some("transcript_appended".into()),
+                limit: 10,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(out.len(), 1);
+        assert!(matches!(
+            out[0],
+            AgentEventKind::TranscriptAppended { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn merger_kind_other_routes_to_log_only() {
+        let transcripts: Arc<dyn TranscriptReader> = Arc::new(
+            MockReader::default().with_event(transcript("ana", 1_000)),
+        );
+        let log = Arc::new(SqliteAgentEventLog::open_memory().await.unwrap());
+        log.append(pause_changed("ana", 2_000)).await.unwrap();
+        log.append(escalation("ana", 3_000)).await.unwrap();
+        let merger = MergingAgentEventReader::new(transcripts, log);
+        let out = merger
+            .list_recent_events(&AgentEventsListFilter {
+                agent_id: "ana".into(),
+                kind: Some("processing_state_changed".into()),
+                limit: 10,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(out.len(), 1);
+        assert!(matches!(
+            out[0],
+            AgentEventKind::ProcessingStateChanged { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn merger_skips_log_transcripts_to_avoid_double_count() {
+        // Boot wires the log as a Tee sink, so the log captured
+        // TranscriptAppended too. The merger drops it on the log
+        // side because the JSONL reader is canonical.
+        let transcripts: Arc<dyn TranscriptReader> = Arc::new(
+            MockReader::default().with_event(transcript("ana", 1_000)),
+        );
+        let log = Arc::new(SqliteAgentEventLog::open_memory().await.unwrap());
+        log.append(transcript("ana", 1_000)).await.unwrap(); // duplicate via log
+        log.append(pause_changed("ana", 2_000)).await.unwrap();
+        let merger = MergingAgentEventReader::new(transcripts, log);
+        let out = merger
+            .list_recent_events(&AgentEventsListFilter {
+                agent_id: "ana".into(),
+                limit: 10,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        // Expect exactly 2: 1 transcript + 1 pause; the log's
+        // TranscriptAppended copy is filtered out.
+        assert_eq!(out.len(), 2);
+        let n_transcripts = out
+            .iter()
+            .filter(|e| matches!(e, AgentEventKind::TranscriptAppended { .. }))
+            .count();
+        assert_eq!(n_transcripts, 1, "no duplicate transcripts");
+    }
+
+    #[tokio::test]
+    async fn merger_truncates_to_limit_after_merging() {
+        let transcripts: Arc<dyn TranscriptReader> = Arc::new(
+            MockReader::default()
+                .with_event(transcript("ana", 1_000))
+                .with_event(transcript("ana", 2_000)),
+        );
+        let log = Arc::new(SqliteAgentEventLog::open_memory().await.unwrap());
+        log.append(pause_changed("ana", 3_000)).await.unwrap();
+        log.append(escalation("ana", 4_000)).await.unwrap();
+        let merger = MergingAgentEventReader::new(transcripts, log);
+        let out = merger
+            .list_recent_events(&AgentEventsListFilter {
+                agent_id: "ana".into(),
+                limit: 2,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(out.len(), 2);
+        // Newest 2 wins.
+        let stamps: Vec<u64> = out.iter().map(event_at_ms).collect();
+        assert_eq!(stamps, vec![4_000, 3_000]);
+    }
+
+    #[tokio::test]
+    async fn merger_passes_through_read_session_to_transcripts() {
+        let transcripts: Arc<dyn TranscriptReader> = Arc::new(
+            MockReader::default().with_event(transcript("ana", 1_000)),
+        );
+        let log = Arc::new(SqliteAgentEventLog::open_memory().await.unwrap());
+        let merger = MergingAgentEventReader::new(transcripts, log);
+        // session_id semantics live in transcripts; the read
+        // path should not consult the log at all.
+        let out = merger
+            .read_session_events(&AgentEventsReadParams {
+                agent_id: "ana".into(),
+                session_id: Uuid::nil(),
+                limit: 10,
+                since_seq: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(out.len(), 1);
     }
 }

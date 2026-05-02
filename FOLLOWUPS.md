@@ -1885,28 +1885,25 @@ test). Three follow-ups stayed deferred:
   emit on the existing `nexo/notify/agent_event` subject; no
   FTS change required (search remains TranscriptAppended-
   only).
-- **82.11.log.b — boot wire-up + agent_events/list
-  cross-source merge.** Phase 82.11.log shipped the
-  `SqliteAgentEventLog` primitive (read+write trait, SQLite
-  impl, AgentEventEmitter sink) AND the retention sweep
-  (Phase 82.11.log.sweep, 2026-05-02). Two deferreds remain:
-  - **Boot**: stitch `Tee([BroadcastAgentEventEmitter,
-    SqliteAgentEventLog::open(state_dir.join("agent_events.db"))])`
-    inside `AdminRpcBootstrap::new` so every emit reaches
-    both. Boot scheduler also calls
-    `sweep_retention(retention_days, max_rows)` on the same
-    cadence as the audit-log sweep (defaults 90d / 100k rows).
-    Folds with the same boot-order refactor as the other 82.x
-    operator wire-ups.
-  - **`agent_events/list` cross-source**: today the admin
-    RPC handler reads only `TranscriptReader` (transcript
-    JSONL). Operator dashboards that need
-    `ProcessingStateChanged` history must read directly from
-    SqliteAgentEventLog. The merge: handler queries the log
-    for non-`TranscriptAppended` kinds AND the JSONL reader
-    for transcripts, merges by `at_ms`, returns one stream.
-    Newer wins on duplicate seq. Wire-up depends on the
-    boot stitch above.
+- **82.11.log.b — boot wire-up.** Phase 82.11.log shipped
+  the `SqliteAgentEventLog` primitive (read+write trait,
+  SQLite impl, AgentEventEmitter sink). 82.11.log.sweep
+  shipped the retention sweep (2026-05-02). 82.11.log.merge
+  shipped the cross-source `MergingAgentEventReader` that
+  composes `TranscriptReader` + `AgentEventLog` behind the
+  same trait so the existing `agent_events/list` handler
+  returns merged results without changing
+  (2026-05-02). Only deferred: **Boot** — stitch
+  `Tee([BroadcastAgentEventEmitter,
+  SqliteAgentEventLog::open(state_dir.join("agent_events.db"))])`
+  inside `AdminRpcBootstrap::new` so every emit reaches both,
+  and pass `MergingAgentEventReader::new(transcripts_fs, log)`
+  as the `transcript_reader` field so backfill returns
+  durable kinds. Boot scheduler also calls
+  `sweep_retention(retention_days, max_rows)` on the same
+  cadence as the audit-log sweep (defaults 90d / 100k rows).
+  Folds with the same boot-order refactor as the other 82.x
+  operator wire-ups.
 
 Target phase: 82.10.h.c (folded with 82.10.h.b's main.rs
 wire-up) for the operator wire-up; 82.11.log.b for the boot
@@ -2781,6 +2778,24 @@ Cross-references:
   limit cap + default, emit→append routing, empty-on-unknown,
   pool clone shares rows. Boot wire-up + `agent_events/list`
   cross-source merge are deferred (see 82.11.log.b below).
+- 82.11.log.merge ✅ MergingAgentEventReader — `TranscriptReader`
+  impl that composes a transcripts source (JSONL via
+  `TranscriptReaderFs`) with a durable `AgentEventLog` (SQLite
+  firehose backfill) behind the same trait so the existing
+  `agent_events/list` handler returns merged results without
+  changing. `kind` filter is pushed down: `transcript_appended`
+  routes to JSONL only, other kinds route to the log only,
+  `None` queries both then merges by `at_ms` desc + truncates
+  to `filter.limit`. The boot wiring of `Tee([Broadcast,
+  SqliteAgentEventLog])` means the log captures TranscriptAppended
+  too; the merger drops those on the log side to avoid
+  double-counting. `read_session_events` + `search_events`
+  pass through to transcripts (session_id + FTS5 are transcript-
+  only). 6 new tests: kind-none interleaves both sources by
+  at_ms desc, kind=transcript_appended routes to transcripts
+  only, kind=processing_state_changed routes to log only,
+  duplicate transcripts dedup'd from log side, limit truncation
+  picks newest after merge, read_session pass-through.
 - 82.11.log.sweep ✅ Retention sweep on `SqliteAgentEventLog`
   — `sweep_retention(retention_days, max_rows)` mirrors the
   audit-log sweep shape so boot can run both with one shared
