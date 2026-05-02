@@ -2646,6 +2646,21 @@ Cross-references:
   gained `session_id: Option<Uuid>` (was missing since Phase
   82.13.b.1 added the field on the SDK side). Out-of-tree commit
   9f634a9.
+- 82.13.d ✅ SqliteProcessingControlStore — durable variant of
+  the in-memory ProcessingControlStore so operator pause /
+  resume + per-scope pending inbound queues survive daemon
+  restart. Two SQLite tables (states keyed by canonical scope
+  JSON; pending FIFO indexed by autoincrement id with per-scope
+  index). Open / open_memory / with_pending_cap mirror
+  audit_sqlite + InMemoryProcessingControlStore APIs so boot
+  swaps `Arc::new(InMemory...)` → `Arc::new(Sqlite::open(path)
+  .await?)` without any other change. Trait is store-agnostic so
+  the dispatcher + runtime see no difference. 11 tests:
+  default-AgentActive, set/get round-trip, idempotent set,
+  AgentActive deletes row, clear semantics, FIFO eviction with
+  cap=3, cap=0 disables buffering, atomic drain, per-scope
+  isolation, on-disk round-trip survives drop+reopen, idempotent
+  DDL.
 - 82.14.b.firehose ✅ Escalation firehose variants —
   `AgentEventKind::EscalationRequested` + `EscalationResolved`
   variants land on the wire (with `tenant_id` skip-when-None for

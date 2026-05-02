@@ -19,12 +19,14 @@ pub mod capabilities;
 pub mod channel_outbound;
 pub mod dispatcher;
 pub mod domains;
+pub mod processing_sqlite;
 pub mod router;
 pub mod transcript_appender;
 
 pub use audit_sqlite::{
     format_rows_as_json, format_rows_as_table, AuditTailFilter, SqliteAdminAuditWriter,
 };
+pub use processing_sqlite::SqliteProcessingControlStore;
 
 pub use audit::{
     hash_params, now_epoch_ms, AdminAuditResult, AdminAuditRow, AdminAuditWriter,
