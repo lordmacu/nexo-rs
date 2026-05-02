@@ -57,7 +57,9 @@ use nexo_tool_meta::admin::escalations::{
 use nexo_tool_meta::admin::skills::{
     SkillRecord, SkillRequiresRecord, SkillSummary, SkillsUpsertParams,
 };
-use nexo_tool_meta::admin::processing::{ProcessingControlState, ProcessingScope};
+use nexo_tool_meta::admin::processing::{
+    PendingInbound, ProcessingControlState, ProcessingScope,
+};
 use nexo_core::agent::transcripts::{TranscriptLine, TranscriptWriter};
 use nexo_core::agent::transcripts_index::TranscriptsIndex;
 use nexo_tool_meta::admin::agent_events::{
@@ -1735,16 +1737,39 @@ mod transcript_reader_tests {
 #[derive(Debug, Default, Clone)]
 pub struct InMemoryProcessingControlStore {
     inner: Arc<DashMap<ProcessingScope, ProcessingControlState>>,
+    /// Phase 82.13.b.3 — per-scope pending inbound queue.
+    /// FIFO `VecDeque`. Capped at `pending_cap` per scope; on
+    /// overflow the oldest entry is evicted. A shared cap is
+    /// kept on the store so boot can override via env var
+    /// without retro-fitting per-call params.
+    pending: Arc<DashMap<ProcessingScope, std::collections::VecDeque<PendingInbound>>>,
+    /// Phase 82.13.b.3 — max entries per scope. Defaults to
+    /// `DEFAULT_PENDING_INBOUNDS_CAP`; production boot reads
+    /// `NEXO_PROCESSING_PENDING_QUEUE_CAP` and overrides.
+    pending_cap: usize,
 }
 
 impl InMemoryProcessingControlStore {
-    /// Build an empty store. Daemon boot constructs one shared
-    /// instance and feeds it to every per-microapp dispatcher
-    /// via `with_processing_domain` so an operator pause
-    /// reaches every admin RPC route at once.
+    /// Build an empty store with the default per-scope queue
+    /// cap. Daemon boot constructs one shared instance and
+    /// feeds it to every per-microapp dispatcher via
+    /// `with_processing_domain` so an operator pause reaches
+    /// every admin RPC route at once.
     pub fn new() -> Self {
+        Self::with_pending_cap(
+            nexo_tool_meta::admin::processing::DEFAULT_PENDING_INBOUNDS_CAP,
+        )
+    }
+
+    /// Phase 82.13.b.3 — build with a custom per-scope queue
+    /// cap. Boot wiring uses this when the operator sets
+    /// `NEXO_PROCESSING_PENDING_QUEUE_CAP`. `0` disables
+    /// buffering entirely (every push reports a drop).
+    pub fn with_pending_cap(cap: usize) -> Self {
         Self {
             inner: Arc::new(DashMap::new()),
+            pending: Arc::new(DashMap::new()),
+            pending_cap: cap,
         }
     }
 
@@ -1788,7 +1813,59 @@ impl ProcessingControlStore for InMemoryProcessingControlStore {
     }
 
     async fn clear(&self, scope: &ProcessingScope) -> anyhow::Result<bool> {
+        // Phase 82.13.b.3 — clearing a scope (resume) does NOT
+        // implicitly drain the pending queue here; the resume
+        // handler calls `drain_pending` first so it can stamp
+        // entries on the transcript before they vanish.
         Ok(self.inner.remove(scope).is_some())
+    }
+
+    async fn push_pending(
+        &self,
+        scope: &ProcessingScope,
+        inbound: PendingInbound,
+    ) -> anyhow::Result<(usize, u32)> {
+        let mut entry = self
+            .pending
+            .entry(scope.clone())
+            .or_insert_with(std::collections::VecDeque::new);
+        let mut dropped = 0u32;
+        if self.pending_cap == 0 {
+            // Cap of 0 disables buffering: count every push as
+            // dropped + don't keep the entry.
+            dropped = 1;
+        } else {
+            entry.push_back(inbound);
+            // FIFO eviction loop in case the cap was lowered
+            // dynamically (env var change between boots).
+            while entry.len() > self.pending_cap {
+                if entry.pop_front().is_some() {
+                    dropped = dropped.saturating_add(1);
+                }
+            }
+        }
+        Ok((entry.len(), dropped))
+    }
+
+    async fn drain_pending(
+        &self,
+        scope: &ProcessingScope,
+    ) -> anyhow::Result<Vec<PendingInbound>> {
+        Ok(match self.pending.remove(scope) {
+            Some((_, queue)) => queue.into_iter().collect(),
+            None => Vec::new(),
+        })
+    }
+
+    async fn pending_depth(
+        &self,
+        scope: &ProcessingScope,
+    ) -> anyhow::Result<usize> {
+        Ok(self
+            .pending
+            .get(scope)
+            .map(|r| r.value().len())
+            .unwrap_or(0))
     }
 }
 
@@ -1880,6 +1957,110 @@ mod processing_store_tests {
             .unwrap();
         assert!(changed, "transition counts as change");
         assert!(store.is_empty(), "no leftover row");
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // Phase 82.13.b.3 — pending inbound queue tests.
+    // ──────────────────────────────────────────────────────────
+
+    fn other_convo() -> ProcessingScope {
+        ProcessingScope::Conversation {
+            agent_id: "ana".into(),
+            channel: "whatsapp".into(),
+            account_id: "acc".into(),
+            // Different contact_id → different scope.
+            contact_id: "wa.99".into(),
+            mcp_channel_source: None,
+        }
+    }
+
+    fn pending(seq: u64) -> PendingInbound {
+        PendingInbound {
+            message_id: Some(uuid::Uuid::nil()),
+            from_contact_id: format!("wa.55+{seq}"),
+            body: format!("msg {seq}"),
+            timestamp_ms: 1_700_000_000_000 + seq,
+            source_plugin: "whatsapp".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn push_under_cap_no_drops() {
+        let store = InMemoryProcessingControlStore::with_pending_cap(5);
+        for i in 0..3 {
+            let (depth, dropped) = store.push_pending(&convo(), pending(i)).await.unwrap();
+            assert_eq!(depth, (i as usize) + 1);
+            assert_eq!(dropped, 0);
+        }
+        assert_eq!(store.pending_depth(&convo()).await.unwrap(), 3);
+    }
+
+    #[tokio::test]
+    async fn push_at_cap_drops_oldest_fifo() {
+        let store = InMemoryProcessingControlStore::with_pending_cap(2);
+        store.push_pending(&convo(), pending(0)).await.unwrap();
+        store.push_pending(&convo(), pending(1)).await.unwrap();
+        // 3rd push exceeds cap → 1 drop, depth stays at 2.
+        let (depth, dropped) = store.push_pending(&convo(), pending(2)).await.unwrap();
+        assert_eq!(depth, 2);
+        assert_eq!(dropped, 1);
+        // Drained queue holds the surviving FIFO order.
+        let drained = store.drain_pending(&convo()).await.unwrap();
+        assert_eq!(drained.len(), 2);
+        assert_eq!(drained[0].body, "msg 1");
+        assert_eq!(drained[1].body, "msg 2");
+    }
+
+    #[tokio::test]
+    async fn push_isolates_scopes_from_each_other() {
+        let store = InMemoryProcessingControlStore::with_pending_cap(10);
+        store.push_pending(&convo(), pending(0)).await.unwrap();
+        store
+            .push_pending(&other_convo(), pending(99))
+            .await
+            .unwrap();
+        store
+            .push_pending(&other_convo(), pending(100))
+            .await
+            .unwrap();
+        // First scope has 1, second has 2.
+        assert_eq!(store.pending_depth(&convo()).await.unwrap(), 1);
+        assert_eq!(store.pending_depth(&other_convo()).await.unwrap(), 2);
+        // Drain one doesn't affect the other.
+        let _ = store.drain_pending(&convo()).await.unwrap();
+        assert_eq!(store.pending_depth(&convo()).await.unwrap(), 0);
+        assert_eq!(store.pending_depth(&other_convo()).await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn drain_returns_fifo_and_clears() {
+        let store = InMemoryProcessingControlStore::with_pending_cap(10);
+        for i in 0..4 {
+            store.push_pending(&convo(), pending(i)).await.unwrap();
+        }
+        let drained = store.drain_pending(&convo()).await.unwrap();
+        assert_eq!(drained.len(), 4);
+        for (i, p) in drained.iter().enumerate() {
+            assert_eq!(p.body, format!("msg {i}"));
+        }
+        assert_eq!(store.pending_depth(&convo()).await.unwrap(), 0);
+        // Second drain returns empty (no error).
+        assert!(store.drain_pending(&convo()).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn pending_depth_for_unknown_scope_is_zero() {
+        let store = InMemoryProcessingControlStore::new();
+        assert_eq!(store.pending_depth(&convo()).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn cap_zero_treats_every_push_as_dropped() {
+        let store = InMemoryProcessingControlStore::with_pending_cap(0);
+        let (depth, dropped) = store.push_pending(&convo(), pending(0)).await.unwrap();
+        assert_eq!(depth, 0);
+        assert_eq!(dropped, 1);
+        assert!(store.drain_pending(&convo()).await.unwrap().is_empty());
     }
 }
 

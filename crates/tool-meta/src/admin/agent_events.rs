@@ -60,6 +60,28 @@ pub enum AgentEventKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tenant_id: Option<String>,
     },
+    /// Phase 82.13.b.3 — fired when the inbound dispatcher
+    /// captures an inbound during pause but the per-scope
+    /// pending queue is at the cap and the oldest entry had
+    /// to be evicted. Operator UIs can render a "history
+    /// thinning" hint so the operator knows the agent will not
+    /// see those evicted messages on resume. The `dropped`
+    /// count is the number of entries evicted by THIS push (1
+    /// per push under the FIFO cap policy; future variants
+    /// may batch). `agent_id` is denormalised so subscribers
+    /// filter without parsing `scope`.
+    PendingInboundsDropped {
+        /// Owning agent.
+        agent_id: String,
+        /// Scope under which the drop happened. Carried whole
+        /// (rather than just `(channel, account_id, contact_id)`)
+        /// so future scope variants stay forward-compatible.
+        scope: crate::admin::processing::ProcessingScope,
+        /// Number of pending inbounds evicted by THIS push.
+        dropped: u32,
+        /// Epoch ms when the eviction happened.
+        at_ms: u64,
+    },
 }
 
 /// Speaker role mirror — kept on the wire side so SDK types

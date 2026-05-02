@@ -224,6 +224,14 @@ pub struct ProcessingAck {
     /// intervention with a non-Reply action).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transcript_stamped: Option<bool>,
+    /// Phase 82.13.b.3 — populated only on resume. Reports how
+    /// many inbounds were drained from the pending queue (those
+    /// captured during the pause). `Some(0)` when the queue was
+    /// empty; `Some(N)` when N inbounds were stamped as
+    /// synthetic User entries on the transcript; `None` for
+    /// non-resume calls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drained_pending: Option<u32>,
 }
 
 /// Params for `nexo/admin/processing/resume`.
@@ -257,6 +265,45 @@ pub struct ProcessingResumeParams {
 /// FTS5 doc cap in `TranscriptsIndex` so a stamped summary
 /// always indexes cleanly.
 pub const PROCESSING_SUMMARY_MAX_LEN: usize = 4096;
+
+/// Phase 82.13.b.3 — default per-scope inbound buffer cap.
+/// Inbounds arriving while a scope is `PausedByOperator` are
+/// buffered server-side instead of dropped; on resume they are
+/// stamped onto the transcript as `User` entries so the agent
+/// sees what the customer said during the takeover. The cap
+/// bounds memory: when exceeded, the oldest entry is dropped
+/// and a `PendingInboundsDropped` firehose event is emitted so
+/// operators can surface the drop in the UI. v0 in-memory store
+/// uses this as the only cap; durable SQLite store (82.13.c)
+/// can re-tune.
+pub const DEFAULT_PENDING_INBOUNDS_CAP: usize = 50;
+
+/// Phase 82.13.b.3 — one inbound captured during a pause.
+/// Persisted on the `ProcessingControlStore` keyed by scope;
+/// drained back on resume.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PendingInbound {
+    /// Channel-side message id when the plugin produced one.
+    /// Threaded through to the resulting `User` transcript
+    /// entry so audit + reply-to correlation continues to
+    /// work after replay.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<Uuid>,
+    /// Counterparty id (e.g. WA jid). Lands as the `User`
+    /// entry's `sender_id` on replay.
+    pub from_contact_id: String,
+    /// Already-redacted message body (the redactor runs on
+    /// the inbound dispatcher path before the entry hits the
+    /// store, mirroring the live transcript flow).
+    pub body: String,
+    /// Epoch ms when the inbound originally arrived. Preserved
+    /// (not `now_ms()` at replay) so the agent reads the real
+    /// chronology.
+    pub timestamp_ms: u64,
+    /// Channel/plugin that produced the inbound. Lands as the
+    /// `User` entry's `source_plugin`.
+    pub source_plugin: String,
+}
 
 /// Params for `nexo/admin/processing/intervention`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -489,11 +536,50 @@ mod tests {
     }
 
     #[test]
+    fn pending_inbound_round_trip_omits_unset_message_id() {
+        let p = PendingInbound {
+            message_id: None,
+            from_contact_id: "wa.55".into(),
+            body: "hola".into(),
+            timestamp_ms: 1_700_000_000_000,
+            source_plugin: "whatsapp".into(),
+        };
+        let s = serde_json::to_string(&p).unwrap();
+        assert!(!s.contains("message_id"));
+        let back: PendingInbound = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, p);
+    }
+
+    #[test]
+    fn ack_drained_pending_round_trip_with_value_and_absent() {
+        let with = ProcessingAck {
+            changed: true,
+            correlation_id: Uuid::nil(),
+            transcript_stamped: None,
+            drained_pending: Some(7),
+        };
+        let s = serde_json::to_string(&with).unwrap();
+        assert!(s.contains("\"drained_pending\":7"));
+        let back: ProcessingAck = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, with);
+
+        let without = ProcessingAck {
+            changed: false,
+            correlation_id: Uuid::nil(),
+            transcript_stamped: None,
+            drained_pending: None,
+        };
+        let s = serde_json::to_string(&without).unwrap();
+        assert!(!s.contains("drained_pending"));
+    }
+
+    #[test]
     fn ack_round_trip_with_transcript_stamped_present_and_absent() {
         let with = ProcessingAck {
             changed: true,
             correlation_id: Uuid::nil(),
             transcript_stamped: Some(true),
+            drained_pending: None,
         };
         let s = serde_json::to_string(&with).unwrap();
         assert!(s.contains("transcript_stamped"));
@@ -504,6 +590,7 @@ mod tests {
             changed: false,
             correlation_id: Uuid::nil(),
             transcript_stamped: None,
+            drained_pending: None,
         };
         let s = serde_json::to_string(&without).unwrap();
         assert!(!s.contains("transcript_stamped"));

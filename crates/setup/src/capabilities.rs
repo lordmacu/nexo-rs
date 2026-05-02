@@ -230,6 +230,18 @@ const INVENTORY: &[CapabilityToggle] = &[
         effect: "Enable `nexo/admin/agent_events/*` backfill + `nexo/notify/agent_event` firehose. Off disables the whole subsystem (microapps see -32601 + receive no notifications) regardless of operator grants.",
         hint: "export NEXO_MICROAPP_AGENT_EVENTS_ENABLED=0  # to disable",
     },
+    CapabilityToggle {
+        extension: "core",
+        env_var: "NEXO_PROCESSING_PENDING_QUEUE_CAP",
+        // Numeric cap rendered as a Boolean toggle entry: the
+        // inventory cares whether the operator is overriding
+        // the default, not the exact value (the value lands in
+        // `agent doctor capabilities` via the env var dump).
+        kind: ToggleKind::Boolean,
+        risk: Risk::Low,
+        effect: "Phase 82.13.b.3 — max inbounds buffered per scope while paused. Inbounds beyond cap are evicted FIFO and surfaced via `PendingInboundsDropped` firehose event. `0` disables buffering entirely (every inbound during pause is dropped). Default 50.",
+        hint: "export NEXO_PROCESSING_PENDING_QUEUE_CAP=100  # tune buffer size",
+    },
     // Phase 82.12 — microapp HTTP servers (`[capabilities.http_server]`).
     // Off → boot supervisor skips the health probe AND the
     // monitor loop; microapps that declare an http_server still
