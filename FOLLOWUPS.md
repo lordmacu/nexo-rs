@@ -2646,6 +2646,20 @@ Cross-references:
   gained `session_id: Option<Uuid>` (was missing since Phase
   82.13.b.1 added the field on the SDK side). Out-of-tree commit
   9f634a9.
+- 82.14.c ✅ SqliteEscalationStore — durable variant of the
+  in-memory escalation store. Single-table design keyed by
+  canonical scope JSON; full `EscalationEntry` round-trips as
+  JSON so future state variants (`Snoozed { until }` etc.)
+  land non-breaking. `agent_id` denormalised onto its own
+  column with a `(agent_id, updated_at_ms DESC)` index for
+  future server-side filter push-down. `open` / `open_memory`
+  + WAL mirror audit_sqlite + processing_sqlite open pattern.
+  10 tests: missing-scope→None, upsert+get round-trip,
+  idempotent upsert returns false on repeat, resolve flips
+  Pending→Resolved, double-resolve no-op, resolve unknown
+  scope, list newest-first + truncate by limit, list filters
+  by agent_id, on-disk round-trip survives drop+reopen, DDL
+  idempotent.
 - 82.13.d ✅ SqliteProcessingControlStore — durable variant of
   the in-memory ProcessingControlStore so operator pause /
   resume + per-scope pending inbound queues survive daemon
