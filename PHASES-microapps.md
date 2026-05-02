@@ -2649,7 +2649,7 @@ Done criteria:
   harness, removing private mock code as evidence the harness
   covers a real use case.
 
-#### 83.16 — Microapp error → operator path   ⬜ NEW 2026-05-01
+#### 83.16 — Microapp error → operator path   ✅  (shipped 2026-05-02 — supervisor emit + admin-ui + counter deferred to 83.16.b)
 
 > **Curation gap**: today an uncaught exception inside a
 > microapp handler stays in the microapp's stderr — operator

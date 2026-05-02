@@ -1954,6 +1954,33 @@ admin RPC + http_server bootstrap into main.rs (single
 shared boot-order refactor — folded with 82.10.h.b /
 82.11 / 82.12 / 82.13 / 82.14 deferreds).
 
+### Phase 83.16 — supervisor emit + admin-ui badge + counter
+
+Phase 83.16 shipped the `MicroappError` wire shape (kinds enum,
+payload struct, builder helpers) + 6 unit tests in
+`nexo-tool-meta`. Five pieces deferred to 83.16.b:
+
+- **Daemon supervisor emit**: the stdio supervisor in
+  `crates/setup/` (or `crates/extensions/`) detects the four
+  error categories and publishes
+  `nexo/notify/microapp_error` on the broker. Folds with the
+  next supervisor boot-order touch.
+- **Admin-ui health badge**: per-microapp badge that flips red
+  on first error in last 5 min, summary on hover. Defer to
+  the next admin-ui sweep.
+- **Counter `microapp_errors_total{microapp_id, kind}`**: emit
+  via Phase 28 metrics infra in the same supervisor commit as
+  the broker publish.
+- **Audit log entry `nexo.audit.microapp_error{...}`** —
+  publish on broker so external observers (Phase 39 stable
+  admin API) see the same signal.
+- **Respawn rate limit** (>50 errors / 5 min) → daemon emits
+  `MicroappBackoff` event and stops respawning until operator
+  clears the badge. New variant for `MicroappErrorKind`
+  (`#[non_exhaustive]` makes this non-major).
+
+Target phase: 83.16.b (folded with next supervisor touch).
+
 ### Phase 83.3 — dispatch enforcement + audit log + integration test
 
 Phase 83.3 shipped both wire halves:
