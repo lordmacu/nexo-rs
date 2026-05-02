@@ -199,6 +199,14 @@ pub struct AdminRpcDispatcher {
     /// Production wires
     /// `nexo_setup::admin_adapters::TranscriptWriterAppender`.
     transcript_appender: Option<Arc<dyn TranscriptAppender>>,
+    /// Phase 82.14.b — firehose emitter shared with the
+    /// transcripts subsystem. `None` keeps the wire surface
+    /// alive but `escalations/resolve` (and the auto-resolve on
+    /// `processing/pause`) skip the
+    /// `AgentEventKind::EscalationResolved` emit so subscribers
+    /// fall back to polling. Production threads
+    /// `AdminRpcBootstrap.event_emitter()` here.
+    event_emitter: Option<Arc<dyn crate::agent::agent_events::AgentEventEmitter>>,
 }
 
 impl std::fmt::Debug for AdminRpcDispatcher {
@@ -237,7 +245,22 @@ impl AdminRpcDispatcher {
             channel_outbound: None,
             tenant_store: None,
             transcript_appender: None,
+            event_emitter: None,
         }
+    }
+
+    /// Phase 82.14.b — install the firehose emitter shared with
+    /// the transcripts subsystem so escalation resolve
+    /// transitions also reach `nexo/notify/agent_event`
+    /// subscribers in real time. Without one, the resolve
+    /// transition still happens; subscribers fall back to
+    /// polling `escalations/list`.
+    pub fn with_event_emitter(
+        mut self,
+        emitter: Arc<dyn crate::agent::agent_events::AgentEventEmitter>,
+    ) -> Self {
+        self.event_emitter = Some(emitter);
+        self
     }
 
     /// Replace the capability set. Boot wiring calls this once
@@ -752,6 +775,7 @@ impl AdminRpcDispatcher {
                             if let Err(e) =
                                 super::domains::escalations::auto_resolve_on_pause(
                                     escalations.as_ref(),
+                                    self.event_emitter.as_ref(),
                                     &p.scope,
                                 )
                                 .await
@@ -815,7 +839,12 @@ impl AdminRpcDispatcher {
             },
             "nexo/admin/escalations/resolve" => match &self.escalation_store {
                 Some(store) => {
-                    super::domains::escalations::resolve(store.as_ref(), params).await
+                    super::domains::escalations::resolve(
+                        store.as_ref(),
+                        self.event_emitter.as_ref(),
+                        params,
+                    )
+                    .await
                 }
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "escalations domain not configured".into(),

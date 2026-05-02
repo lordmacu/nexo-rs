@@ -82,6 +82,51 @@ pub enum AgentEventKind {
         /// Epoch ms when the eviction happened.
         at_ms: u64,
     },
+    /// Phase 82.14.b — fired when an agent flags a scope for
+    /// human review via the escalations admin RPC. Operator UIs
+    /// render a badge / notification so the operator picks it up
+    /// without polling `nexo/admin/escalations/list`.
+    EscalationRequested {
+        /// Owning agent.
+        agent_id: String,
+        /// Scope of the work item the agent is escalating.
+        scope: crate::admin::processing::ProcessingScope,
+        /// Free-form summary the agent supplied (already capped
+        /// to 500 chars by the admin handler before emit).
+        summary: String,
+        /// Closed-enum reason for the escalation.
+        reason: crate::admin::escalations::EscalationReason,
+        /// Operator hint on how aggressively to surface.
+        urgency: crate::admin::escalations::EscalationUrgency,
+        /// Epoch ms when the agent raised the request.
+        requested_at_ms: u64,
+        /// Phase 83.8.12 — owning tenant; `None` for legacy /
+        /// single-tenant deployments. Firehose subscribers route
+        /// per-tenant without re-querying `agents.yaml`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tenant_id: Option<String>,
+    },
+    /// Phase 82.14.b — fired when an escalation transitions out
+    /// of `Pending`. Carries the same `agent_id` + `scope` keys
+    /// as the matching `EscalationRequested` so subscribers can
+    /// pair the two via `(agent_id, scope)` regardless of the
+    /// settle path (operator dismiss / takeover / agent resolve).
+    EscalationResolved {
+        /// Owning agent.
+        agent_id: String,
+        /// Scope that was settled. Same value the `Pending`
+        /// emit carried.
+        scope: crate::admin::processing::ProcessingScope,
+        /// Epoch ms when the resolution happened.
+        resolved_at_ms: u64,
+        /// How the escalation was settled.
+        by: crate::admin::escalations::ResolvedBy,
+        /// Phase 83.8.12 — owning tenant. Mirrors the
+        /// `Requested` shape so the pair stays
+        /// shape-symmetrical.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tenant_id: Option<String>,
+    },
 }
 
 /// Speaker role mirror — kept on the wire side so SDK types
