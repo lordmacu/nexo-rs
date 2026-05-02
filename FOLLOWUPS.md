@@ -1909,11 +1909,25 @@ handlers but four pieces are deferred:
 
 - **Inbound dispatcher hook**: paused conversations should
   log inbounds via 82.11 firehose without firing an agent
-  turn. The hook lives in the inbound dispatch path
-  (alongside the binding + rate-limit checks) and depends on
-  the boot-order refactor that's already pending for
-  82.10.h.b / 82.11 / 82.12. Folded into the same shared
-  follow-up.
+  turn. **✅ shipped 2026-05-02 as Phase 82.13.c**.
+  Runtime gained `with_processing_store(store)` +
+  `with_event_emitter(em)` builders;
+  `runtime.rs:780-890ish` (right after `let message_id =
+  msg.id`) checks the per-scope state, redacts the body,
+  pushes onto the per-scope queue, and emits a firehose
+  drop event when the cap evicts. Boot
+  (`AdminBootstrapInputs.processing_store`) shares ONE
+  `Arc` between the admin RPC dispatcher + every runtime
+  so a pause RPC reaches the inbound loop on the next
+  message. Fail-open on store errors (broken store doesn't
+  freeze the inbound loop). 6 integration tests cover
+  buffer-on-pause, passthrough-on-active, fail-open,
+  redaction-before-push, cap-eviction firehose, unwired
+  legacy. Boot activation in `src/main.rs:1228` still
+  hardcoded to `None` — depends on the broader Phase
+  82.10.h.b.b boot-order refactor (gates ALL admin RPC).
+  Once that lands, the round-trip works without further
+  changes.
 - **`InterventionAction::Reply` outbound**: route through
   the Phase 26 reply adapter; stamp the transcript entry
   with `role: Operator`; emit
@@ -2466,20 +2480,22 @@ incrementally):
    in `pending_inbounds` on the state row. On resume, replay them
    as synthetic User entries in the transcript. Agent sees what
    the user said while it was paused. **✅ shipped 2026-05-02
-   as 82.13.b.3** — `PendingInbound` wire shape +
-   `ProcessingControlStore.{push_pending,drain_pending,
-   pending_depth}` + `InMemoryProcessingControlStore` queue
-   with FIFO cap (`NEXO_PROCESSING_PENDING_QUEUE_CAP`,
-   default 50) + `AgentEventKind::PendingInboundsDropped`
-   firehose variant + resume drain stamps each as a `User`
-   transcript entry with original timestamps. **One side
-   still pending** (logged below): the inbound dispatcher
-   push hook itself (the daemon-side pause check that
-   captures inbounds during pause and calls `push_pending`)
-   is folded with Phase 82.13's "inbound dispatcher hook"
-   follow-up. The drain side is fully functional; once the
-   dispatcher hook lands, the round-trip works end-to-end
-   with no further handler changes.
+   end-to-end** —
+   - 82.13.b.3 (drain side): `PendingInbound` wire shape +
+     `ProcessingControlStore.{push_pending,drain_pending,
+     pending_depth}` + `InMemoryProcessingControlStore` queue
+     with FIFO cap (`NEXO_PROCESSING_PENDING_QUEUE_CAP`,
+     default 50) + `AgentEventKind::PendingInboundsDropped`
+     firehose variant + resume drain stamps each as a `User`
+     transcript entry with original timestamps.
+   - 82.13.c (push side): runtime intake hook in `runtime.rs`
+     calls `push_pending` when a scope is paused, redacts
+     body before push, fail-open on store errors, fires
+     drop event via firehose when cap evicts. Shared `Arc`
+     between admin RPC dispatcher + runtime via
+     `AdminBootstrapInputs.processing_store`.
+   Round-trip works once `src/main.rs:1228` gets the boot-
+   order refactor that activates `AdminRpcBootstrap`.
 3. **`HumanTakeover::release(summary_for_agent)` end-to-end.**
    The `summary_for_agent` parameter exists in the SDK
    (Phase 83.8.6) but the daemon side never injects. When wired,
