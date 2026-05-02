@@ -83,6 +83,11 @@ pub struct HumanTakeover<'a> {
     admin: &'a AdminClient,
     scope: ProcessingScope,
     operator_token_hash: String,
+    /// Phase 82.13.b.2 — session id remembered for `release()` so
+    /// the operator can pass `summary_for_agent` without
+    /// re-supplying the session. Set via [`Self::with_session`]
+    /// (idempotent, returns `Self` so chains work).
+    session_id: Option<Uuid>,
 }
 
 impl<'a> HumanTakeover<'a> {
@@ -109,7 +114,19 @@ impl<'a> HumanTakeover<'a> {
             admin,
             scope,
             operator_token_hash,
+            session_id: None,
         })
+    }
+
+    /// Phase 82.13.b.2 — pin the session id used for transcript
+    /// stamping (operator reply via [`Self::send_reply`]) and
+    /// summary injection (operator narrative via
+    /// [`Self::release`]). Both calls fall back to per-call
+    /// arguments when this is not set; pinning here lets the
+    /// operator UI configure once and forget.
+    pub fn with_session(mut self, session_id: Uuid) -> Self {
+        self.session_id = Some(session_id);
+        self
     }
 
     /// Dispatch one operator reply through
@@ -138,9 +155,12 @@ impl<'a> HumanTakeover<'a> {
             },
         });
         // Phase 82.13.b.1 — thread session_id when the caller
-        // provided one. Skip the field on the wire when None so
-        // legacy daemons keep deserialising the params.
-        if let Some(sid) = args.session_id {
+        // provided one. Falls back to the orchestrator's pinned
+        // session (set via [`Self::with_session`]). Skip the
+        // field on the wire when both are None so legacy
+        // daemons keep deserialising the params.
+        let effective_session = args.session_id.or(self.session_id);
+        if let Some(sid) = effective_session {
             params["session_id"] = json!(sid);
         }
         self.admin
@@ -148,20 +168,31 @@ impl<'a> HumanTakeover<'a> {
             .await
     }
 
-    /// Resume the agent. Drops the orchestrator. The
-    /// `summary_for_agent` argument is reserved for the synthetic
-    /// system-message injection follow-up — v1 ignores it locally
-    /// (gap is logged in `FOLLOWUPS.md` as the `synthetic message
-    /// inject API` item) and only forwards it once the
-    /// daemon-side surface lands.
+    /// Resume the agent. Drops the orchestrator.
+    ///
+    /// Phase 82.13.b.2 — when `summary_for_agent` is `Some` AND
+    /// the orchestrator has a session pinned (via
+    /// [`Self::with_session`]), the daemon stamps a `System`
+    /// transcript entry `[operator_summary] <body>` so the
+    /// agent reads the operator's narrative on its next turn.
+    /// Without a pinned session, passing a summary returns a
+    /// `-32602 session_id_required_with_summary` from the
+    /// daemon — surface it to the operator UI as "open the
+    /// conversation first".
     pub async fn release(
         self,
-        _summary_for_agent: Option<String>,
+        summary_for_agent: Option<String>,
     ) -> Result<(), AdminError> {
-        let params = json!({
+        let mut params = json!({
             "scope": self.scope,
             "operator_token_hash": self.operator_token_hash,
         });
+        if let Some(sid) = self.session_id {
+            params["session_id"] = json!(sid);
+        }
+        if let Some(summary) = summary_for_agent {
+            params["summary_for_agent"] = json!(summary);
+        }
         let _: Value = self
             .admin
             .call("nexo/admin/processing/resume", params)
@@ -356,6 +387,98 @@ mod tests {
             intervention["params"]["session_id"],
             json!(session_id.to_string())
         );
+    }
+
+    /// Phase 82.13.b.2 — `release(Some("..."))` after
+    /// `.with_session(id)` threads both `session_id` and
+    /// `summary_for_agent` onto the resume frame.
+    #[tokio::test]
+    async fn release_with_session_and_summary_threads_both_onto_wire() {
+        let sender = Arc::new(ScriptedSender::default());
+        let admin = AdminClient::with_timeout(sender.clone(), Duration::from_secs(2));
+        let admin_for_calls = admin.clone();
+
+        let captured: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+        let captured_clone = captured.clone();
+        let session_id = Uuid::parse_str("44444444-4444-4444-8444-444444444444").unwrap();
+
+        let task = async move {
+            let takeover =
+                HumanTakeover::engage(&admin_for_calls, convo(), "h0", None)
+                    .await?
+                    .with_session(session_id);
+            takeover
+                .release(Some("cliente confirmó dirección".into()))
+                .await
+        };
+
+        let responder = move |frame: &Value| {
+            captured_clone.lock().unwrap().push(frame.clone());
+            json!({
+                "changed": true,
+                "correlation_id": "00000000-0000-0000-0000-000000000000",
+                "transcript_stamped": true,
+            })
+        };
+        run_with_responses(admin, sender, responder, task)
+            .await
+            .expect("release with summary round trip");
+
+        let frames = captured.lock().unwrap().clone();
+        let resume = frames
+            .iter()
+            .find(|f| f["method"] == "nexo/admin/processing/resume")
+            .expect("resume frame present");
+        assert_eq!(
+            resume["params"]["session_id"],
+            json!(session_id.to_string())
+        );
+        assert_eq!(
+            resume["params"]["summary_for_agent"],
+            json!("cliente confirmó dirección")
+        );
+    }
+
+    /// Phase 82.13.b.2 — `release(None)` MUST NOT emit
+    /// `summary_for_agent` on the wire even when a session is
+    /// pinned. Allows operators to release without a summary.
+    #[tokio::test]
+    async fn release_without_summary_omits_field_on_wire() {
+        let sender = Arc::new(ScriptedSender::default());
+        let admin = AdminClient::with_timeout(sender.clone(), Duration::from_secs(2));
+        let admin_for_calls = admin.clone();
+
+        let captured: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+        let captured_clone = captured.clone();
+        let session_id = Uuid::parse_str("55555555-5555-4555-8555-555555555555").unwrap();
+
+        let task = async move {
+            let takeover =
+                HumanTakeover::engage(&admin_for_calls, convo(), "h0", None)
+                    .await?
+                    .with_session(session_id);
+            takeover.release(None).await
+        };
+
+        let responder = move |frame: &Value| {
+            captured_clone.lock().unwrap().push(frame.clone());
+            json!({ "changed": true, "correlation_id": "00000000-0000-0000-0000-000000000000" })
+        };
+        run_with_responses(admin, sender, responder, task)
+            .await
+            .expect("release no summary round trip");
+
+        let frames = captured.lock().unwrap().clone();
+        let resume = frames
+            .iter()
+            .find(|f| f["method"] == "nexo/admin/processing/resume")
+            .expect("resume frame present");
+        // session_id present (pinned), summary absent.
+        assert_eq!(
+            resume["params"]["session_id"],
+            json!(session_id.to_string())
+        );
+        assert!(resume["params"].get("summary_for_agent").is_none());
     }
 
     /// Round-trip without `with_session` MUST omit `session_id`

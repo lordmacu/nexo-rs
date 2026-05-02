@@ -651,6 +651,69 @@ takeover
 takeover.release(None).await?;
 ```
 
+### Operator summary on resume (Phase 82.13.b.2)
+
+The operator can hand the agent a free-text summary of what
+happened during takeover. The daemon stamps it as a `System`
+transcript entry just after the resume flip, so the agent
+reads it as a system directive on its next turn:
+
+```jsonc
+{
+    "method": "nexo/admin/processing/resume",
+    "params": {
+        "scope": { "kind": "conversation", "agent_id": "ana", ... },
+        "operator_token_hash": "abcdef0123456789",
+        "session_id": "33333333-3333-4333-8333-333333333333",
+        "summary_for_agent": "cliente confirmó dirección, IA puede continuar con confirmación de envío"
+    }
+}
+```
+
+The stamped entry shape:
+
+| Field | Value |
+|-------|-------|
+| `role` | `System` |
+| `content` | `[operator_summary] <body>` (body trimmed; prefix added server-side) |
+| `source_plugin` | `intervention:summary` |
+| `sender_id` | `operator:<token_hash>` |
+| `message_id` | `None` |
+
+Validation (handler-side, all `-32602 invalid_params`):
+
+| Code | When |
+|------|------|
+| `session_id_required_with_summary` | `summary_for_agent` set but `session_id` missing |
+| `empty_summary` | summary trims to zero length |
+| `summary_too_long` | summary > 4096 chars (matches `TranscriptsIndex` FTS5 doc cap) |
+
+Validation runs BEFORE the state flip, so a rejected call
+keeps the scope paused. Stamping itself is best-effort —
+appender errors leave the scope `AgentActive` (resume still
+succeeds) and surface only via `ack.transcript_stamped:
+Some(false)`.
+
+The SDK helper takes the summary on `release()` after pinning
+the session via `with_session()`:
+
+```rust
+let takeover = HumanTakeover::engage(&admin, scope, token_hash, None)
+    .await?
+    .with_session(active_session_id);
+// ... operator types replies via takeover.send_reply ...
+takeover
+    .release(Some(
+        "cliente confirmó dirección, IA puede continuar con envío".into(),
+    ))
+    .await?;
+```
+
+The pinned session is reused by both `send_reply` (transcript
+stamping) and `release` (summary injection) — set once,
+forget. Per-call `SendReplyArgs.with_session()` overrides the
+pinned one when both are present.
+
 ## Agent escalations (Phase 82.14)
 
 Cross-app primitive for the "I need help here" channel:

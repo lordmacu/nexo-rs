@@ -148,11 +148,24 @@ pub async fn pause(
 /// `nexo/admin/processing/resume` — flip back to `AgentActive`.
 /// Idempotent: resuming an already-active scope returns
 /// `changed = false`.
+///
+/// Phase 82.13.b.2 — when `params.summary_for_agent` is `Some`
+/// AND `params.session_id` is `Some` AND the appender is wired,
+/// the daemon appends a `TranscriptEntry { role: System,
+/// content: "[operator_summary] <body>", source_plugin:
+/// "intervention:summary", sender_id: "operator:<hash>" }` after
+/// flipping state to `AgentActive`. The agent reads the summary
+/// as a system directive on its next turn — most flexible
+/// awareness option (operator can synthesise context without
+/// forcing a literal replay).
 pub async fn resume(
     store: &dyn ProcessingControlStore,
+    appender: Option<&dyn TranscriptAppender>,
     params: serde_json::Value,
 ) -> crate::agent::admin_rpc::dispatcher::AdminRpcResult {
-    use nexo_tool_meta::admin::processing::{ProcessingAck, ProcessingResumeParams};
+    use nexo_tool_meta::admin::processing::{
+        ProcessingAck, ProcessingResumeParams, PROCESSING_SUMMARY_MAX_LEN,
+    };
 
     let p: ProcessingResumeParams = match serde_json::from_value(params) {
         Ok(p) => p,
@@ -170,6 +183,31 @@ pub async fn resume(
             ),
         );
     }
+    // Phase 82.13.b.2 — validate summary BEFORE clearing state
+    // so the operator gets a clear error and the pause stays
+    // in place. Without this guard the state flip would happen
+    // and the operator would see ack=changed:true even though
+    // the summary they typed was invalid.
+    if let Some(summary) = &p.summary_for_agent {
+        if p.session_id.is_none() {
+            return crate::agent::admin_rpc::dispatcher::AdminRpcResult::err(
+                AdminRpcError::InvalidParams(
+                    "session_id_required_with_summary".into(),
+                ),
+            );
+        }
+        let trimmed = summary.trim();
+        if trimmed.is_empty() {
+            return crate::agent::admin_rpc::dispatcher::AdminRpcResult::err(
+                AdminRpcError::InvalidParams("empty_summary".into()),
+            );
+        }
+        if summary.chars().count() > PROCESSING_SUMMARY_MAX_LEN {
+            return crate::agent::admin_rpc::dispatcher::AdminRpcResult::err(
+                AdminRpcError::InvalidParams("summary_too_long".into()),
+            );
+        }
+    }
     let changed = match store.clear(&p.scope).await {
         Ok(c) => c,
         Err(e) => {
@@ -178,11 +216,49 @@ pub async fn resume(
             )
         }
     };
+    // Phase 82.13.b.2 — best-effort summary stamp. State has
+    // already flipped to Active by this point; failure here is
+    // logged but does NOT roll back the resume — the alternative
+    // (operator gets stuck in a paused state because their
+    // optional summary couldn't persist) is worse.
+    let transcript_stamped = match (
+        p.summary_for_agent.as_ref(),
+        p.session_id,
+        appender,
+    ) {
+        (Some(summary), Some(session_id), Some(app)) => {
+            let entry = TranscriptEntry {
+                role: TranscriptRole::System,
+                content: format!("[operator_summary] {}", summary.trim()),
+                source_plugin: "intervention:summary".into(),
+                sender_id: Some(format!("operator:{}", p.operator_token_hash)),
+                message_id: None,
+            };
+            match app.append(p.scope.agent_id(), session_id, entry).await {
+                Ok(()) => Some(true),
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        agent = %p.scope.agent_id(),
+                        session_id = %session_id,
+                        "operator summary stamp failed; resume already cleared",
+                    );
+                    Some(false)
+                }
+            }
+        }
+        // No summary, or summary present but appender / session
+        // missing → not applicable. Same convention as
+        // intervention(): None means the field doesn't apply,
+        // Some(false) means it applied but degraded.
+        (None, _, _) => None,
+        _ => Some(false),
+    };
     crate::agent::admin_rpc::dispatcher::AdminRpcResult::ok(
         serde_json::to_value(ProcessingAck {
             changed,
             correlation_id: uuid::Uuid::new_v4(),
-            transcript_stamped: None,
+            transcript_stamped,
         })
         .unwrap_or(serde_json::Value::Null),
     )
@@ -517,6 +593,7 @@ mod tests {
         .await;
         let _ = resume(
             &store,
+            None,
             serde_json::json!({
                 "scope": convo(),
                 "operator_token_hash": "h",
@@ -925,5 +1002,220 @@ mod tests {
             }
             other => panic!("expected MethodNotFound, got {other:?}"),
         }
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // Phase 82.13.b.2 — operator summary on resume.
+    // ──────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn resume_injects_summary_as_system_entry_with_prefix() {
+        let store = MockStore::default();
+        let _ = pause(
+            &store,
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+            }),
+        )
+        .await;
+        let appender = RecordingAppender::default();
+        let session_id = paused_with_session();
+        let result = resume(
+            &store,
+            Some(&appender),
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "tokhash",
+                "session_id": session_id,
+                "summary_for_agent": "  cliente confirmó dirección  ",
+            }),
+        )
+        .await;
+        assert!(result.error.is_none(), "{result:?}");
+        let captured = appender.captured.lock().unwrap();
+        assert_eq!(captured.len(), 1);
+        let (agent_id, sid, entry) = &captured[0];
+        assert_eq!(agent_id, "ana");
+        assert_eq!(*sid, session_id);
+        assert!(matches!(entry.role, super::TranscriptRole::System));
+        // Trim happens before the prefix is added.
+        assert_eq!(
+            entry.content,
+            "[operator_summary] cliente confirmó dirección"
+        );
+        assert_eq!(entry.source_plugin, "intervention:summary");
+        assert_eq!(entry.sender_id.as_deref(), Some("operator:tokhash"));
+        let v = result.result.unwrap();
+        assert_eq!(v["transcript_stamped"], true);
+        assert_eq!(v["changed"], true);
+    }
+
+    #[tokio::test]
+    async fn resume_rejects_summary_without_session_id() {
+        let store = MockStore::default();
+        let _ = pause(
+            &store,
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+            }),
+        )
+        .await;
+        let appender = RecordingAppender::default();
+        let result = resume(
+            &store,
+            Some(&appender),
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+                "summary_for_agent": "ok",
+            }),
+        )
+        .await;
+        match result.error.expect("error") {
+            AdminRpcError::InvalidParams(m) => {
+                assert!(m.contains("session_id_required_with_summary"), "got: {m}");
+            }
+            other => panic!("expected InvalidParams, got {other:?}"),
+        }
+        // Defense-in-depth: state was NOT cleared because
+        // validation rejected the call BEFORE the store flip.
+        assert!(matches!(
+            store.get(&convo()).await,
+            Ok(ProcessingControlState::PausedByOperator { .. })
+        ));
+        // No stamp happened either.
+        assert!(appender.captured.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn resume_rejects_empty_summary() {
+        let store = MockStore::default();
+        let _ = pause(
+            &store,
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+            }),
+        )
+        .await;
+        let result = resume(
+            &store,
+            None,
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+                "session_id": paused_with_session(),
+                "summary_for_agent": "    \t  \n",
+            }),
+        )
+        .await;
+        match result.error.expect("error") {
+            AdminRpcError::InvalidParams(m) => assert!(m.contains("empty_summary")),
+            other => panic!("expected InvalidParams, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn resume_rejects_summary_over_4096_chars() {
+        let store = MockStore::default();
+        let _ = pause(
+            &store,
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+            }),
+        )
+        .await;
+        let huge = "a".repeat(4097);
+        let result = resume(
+            &store,
+            None,
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+                "session_id": paused_with_session(),
+                "summary_for_agent": huge,
+            }),
+        )
+        .await;
+        match result.error.expect("error") {
+            AdminRpcError::InvalidParams(m) => assert!(m.contains("summary_too_long")),
+            other => panic!("expected InvalidParams, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn resume_without_summary_skips_injection_and_returns_none() {
+        // Legacy path — pre-Phase 82.13.b.2 microapps that
+        // never send a summary. Resume MUST work identically
+        // to before; transcript_stamped MUST be None (not
+        // applicable) so the operator UI doesn't render a
+        // stamping indicator.
+        let store = MockStore::default();
+        let _ = pause(
+            &store,
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+            }),
+        )
+        .await;
+        let appender = RecordingAppender::default();
+        let result = resume(
+            &store,
+            Some(&appender),
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+            }),
+        )
+        .await;
+        assert!(result.error.is_none());
+        assert!(appender.captured.lock().unwrap().is_empty());
+        let v = result.result.unwrap();
+        assert!(v.get("transcript_stamped").is_none());
+        assert_eq!(v["changed"], true);
+    }
+
+    #[tokio::test]
+    async fn resume_logs_and_proceeds_when_appender_errs() {
+        let store = MockStore::default();
+        let _ = pause(
+            &store,
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+            }),
+        )
+        .await;
+        let appender = RecordingAppender {
+            fail: true,
+            ..Default::default()
+        };
+        let result = resume(
+            &store,
+            Some(&appender),
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+                "session_id": paused_with_session(),
+                "summary_for_agent": "anything",
+            }),
+        )
+        .await;
+        // Resume itself MUST succeed even when the stamp
+        // fails — the alternative (state stays paused because
+        // the optional summary couldn't persist) is worse.
+        assert!(result.error.is_none(), "{result:?}");
+        let v = result.result.unwrap();
+        assert_eq!(v["transcript_stamped"], false);
+        assert_eq!(v["changed"], true);
+        // Store has flipped to AgentActive.
+        assert!(matches!(
+            store.get(&convo()).await,
+            Ok(ProcessingControlState::AgentActive)
+        ));
     }
 }
