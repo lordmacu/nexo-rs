@@ -43,6 +43,10 @@ use nexo_core::agent::admin_rpc::channel_outbound::{
 };
 use nexo_core::agent::admin_rpc::domains::processing::ProcessingControlStore;
 use nexo_core::agent::admin_rpc::domains::skills::SkillsStore;
+use nexo_core::agent::admin_rpc::domains::tenants::TenantStore;
+use nexo_tool_meta::admin::tenants::{
+    TenantDetail, TenantSummary, TenantsListFilter, TenantsUpsertInput,
+};
 use nexo_broker::{AnyBroker, BrokerHandle, Event};
 use nexo_tool_meta::admin::escalations::{
     EscalationEntry, EscalationState, EscalationsListParams, ResolvedBy,
@@ -2861,4 +2865,393 @@ mod broker_outbound_tests {
         assert_eq!(evt.payload["to"], json!(["ana@example.com"]));
         assert_eq!(evt.payload["body"], json!("Hola, te respondo desde el operador."));
     }
+}
+
+// ── Phase 83.8.12.3 — TenantsYamlPatcher ─────────────────────────
+
+/// Filesystem-backed [`TenantStore`] implementation. Mirrors the
+/// pattern of `AgentsYamlPatcher` + `FsSkillsStore`: holds the
+/// `config/tenants.yaml` path, performs atomic writes via
+/// `tmp+rename`, computes `agent_count` for [`TenantSummary`] on
+/// demand by scanning `agents.yaml` for the matching `tenant_id`.
+///
+/// Concurrency: a single per-instance `tokio::sync::Mutex<()>`
+/// serialises all writes (the file is small and writes are
+/// infrequent — the operator UI gates them). Reads do not lock.
+pub struct TenantsYamlPatcher {
+    path: PathBuf,
+    /// `agents.yaml` path used to compute `agent_count` and the
+    /// orphan list during `delete(purge=false)`.
+    agents_yaml_path: PathBuf,
+    write_lock: Arc<tokio::sync::Mutex<()>>,
+}
+
+impl std::fmt::Debug for TenantsYamlPatcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TenantsYamlPatcher")
+            .field("path", &self.path)
+            .field("agents_yaml_path", &self.agents_yaml_path)
+            .finish()
+    }
+}
+
+impl TenantsYamlPatcher {
+    /// Build a patcher over `tenants.yaml` and the matching
+    /// `agents.yaml` (used for orphan detection).
+    pub fn new(
+        tenants_yaml: impl Into<PathBuf>,
+        agents_yaml: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            path: tenants_yaml.into(),
+            agents_yaml_path: agents_yaml.into(),
+            write_lock: Arc::new(tokio::sync::Mutex::new(())),
+        }
+    }
+
+    /// Read the entire tenants.yaml into a typed Vec<TenantDetail>.
+    /// Returns empty Vec when the file is absent (legacy / fresh
+    /// deployment).
+    fn read_all(&self) -> anyhow::Result<Vec<TenantDetail>> {
+        if !self.path.exists() {
+            return Ok(Vec::new());
+        }
+        let raw = std::fs::read_to_string(&self.path)?;
+        if raw.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        #[derive(serde::Deserialize)]
+        struct File {
+            #[serde(default)]
+            tenants: Vec<TenantDetail>,
+        }
+        let parsed: File = serde_yaml::from_str(&raw)?;
+        Ok(parsed.tenants)
+    }
+
+    /// Write the entire tenants.yaml atomically (tmp + rename).
+    fn write_all(&self, tenants: &[TenantDetail]) -> anyhow::Result<()> {
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        #[derive(serde::Serialize)]
+        struct File<'a> {
+            tenants: &'a [TenantDetail],
+        }
+        let body = serde_yaml::to_string(&File { tenants })?;
+        let tmp = self.path.with_extension("yaml.tmp");
+        std::fs::write(&tmp, body)?;
+        std::fs::rename(&tmp, &self.path)?;
+        Ok(())
+    }
+
+    fn agent_count(&self, tenant_id: &str) -> usize {
+        crate::yaml_patch::list_agents_by_tenant(&self.agents_yaml_path, tenant_id)
+            .map(|v| v.len())
+            .unwrap_or(0)
+    }
+}
+
+#[async_trait]
+impl TenantStore for TenantsYamlPatcher {
+    async fn list(
+        &self,
+        filter: &TenantsListFilter,
+    ) -> anyhow::Result<Vec<TenantSummary>> {
+        let all = self.read_all()?;
+        let mut out: Vec<TenantSummary> = all
+            .into_iter()
+            .filter(|t| !filter.active_only || t.active)
+            .filter(|t| match &filter.prefix {
+                Some(p) => t.id.starts_with(p),
+                None => true,
+            })
+            .map(|t| TenantSummary {
+                id: t.id.clone(),
+                display_name: t.display_name,
+                active: t.active,
+                agent_count: self.agent_count(&t.id),
+                created_at: t.created_at,
+            })
+            .collect();
+        out.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(out)
+    }
+
+    async fn get(&self, tenant_id: &str) -> anyhow::Result<Option<TenantDetail>> {
+        let all = self.read_all()?;
+        Ok(all.into_iter().find(|t| t.id == tenant_id))
+    }
+
+    async fn upsert(
+        &self,
+        params: TenantsUpsertInput,
+    ) -> anyhow::Result<(TenantDetail, bool)> {
+        let _guard = self.write_lock.lock().await;
+        let mut all = self.read_all()?;
+        let existing_idx = all.iter().position(|t| t.id == params.id);
+        let created = existing_idx.is_none();
+        let detail = if let Some(idx) = existing_idx {
+            // Update path: preserve created_at, override fields.
+            let prev = all[idx].clone();
+            TenantDetail {
+                id: params.id,
+                display_name: params.display_name,
+                active: params.active.unwrap_or(prev.active),
+                created_at: prev.created_at,
+                llm_provider_refs: params
+                    .llm_provider_refs
+                    .unwrap_or(prev.llm_provider_refs),
+                metadata: params.metadata.unwrap_or(prev.metadata),
+            }
+        } else {
+            // Create path: stamp now() for created_at.
+            TenantDetail {
+                id: params.id,
+                display_name: params.display_name,
+                active: params.active.unwrap_or(true),
+                created_at: chrono::Utc::now(),
+                llm_provider_refs: params.llm_provider_refs.unwrap_or_default(),
+                metadata: params.metadata.unwrap_or_default(),
+            }
+        };
+        if let Some(idx) = existing_idx {
+            all[idx] = detail.clone();
+        } else {
+            all.push(detail.clone());
+        }
+        all.sort_by(|a, b| a.id.cmp(&b.id));
+        self.write_all(&all)?;
+        Ok((detail, created))
+    }
+
+    async fn delete(
+        &self,
+        tenant_id: &str,
+        purge: bool,
+    ) -> anyhow::Result<(bool, Vec<String>)> {
+        let _guard = self.write_lock.lock().await;
+        let mut all = self.read_all()?;
+        let Some(idx) = all.iter().position(|t| t.id == tenant_id) else {
+            // Idempotent unknown-tenant case.
+            return Ok((false, Vec::new()));
+        };
+        let orphans = crate::yaml_patch::list_agents_by_tenant(
+            &self.agents_yaml_path,
+            tenant_id,
+        )
+        .unwrap_or_default();
+        if !orphans.is_empty() && !purge {
+            // Refuse delete; surface orphan list so UI can confirm.
+            return Ok((false, orphans));
+        }
+        all.remove(idx);
+        self.write_all(&all)?;
+        // purge=true: orphan agents stay in agents.yaml but their
+        // tenant_id no longer matches a record — operator handles
+        // explicit agent_delete or reassignment via the agents
+        // domain. We acknowledge orphans by returning the list.
+        Ok((true, orphans))
+    }
+}
+
+#[cfg(test)]
+mod tenants_yaml_tests {
+    use super::*;
+    use chrono::Utc;
+    use std::collections::BTreeMap;
+
+    fn tmp_dir() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "nexo-tenants-yaml-{}",
+            uuid::Uuid::new_v4()
+        ))
+    }
+
+    fn fixture(dir: &std::path::Path) -> TenantsYamlPatcher {
+        std::fs::create_dir_all(dir).unwrap();
+        let tenants = dir.join("tenants.yaml");
+        let agents = dir.join("agents.yaml");
+        // seed agents.yaml so list_agents_by_tenant works.
+        std::fs::write(
+            &agents,
+            "agents:\n  - id: bot-acme-1\n    tenant_id: acme-corp\n    model: { provider: c, name: claude-opus-4-7 }\n  - id: bot-globex-1\n    tenant_id: globex\n    model: { provider: c, name: claude-opus-4-7 }\n  - id: bot-legacy\n    model: { provider: c, name: claude-opus-4-7 }\n",
+        )
+        .unwrap();
+        TenantsYamlPatcher::new(tenants, agents)
+    }
+
+    fn upsert_input(id: &str, name: &str) -> TenantsUpsertInput {
+        TenantsUpsertInput {
+            id: id.into(),
+            display_name: name.into(),
+            active: None,
+            llm_provider_refs: None,
+            metadata: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn upsert_then_list_round_trips_with_agent_count() {
+        let dir = tmp_dir();
+        let store = fixture(&dir);
+        let (_d, created) = store.upsert(upsert_input("acme-corp", "Acme")).await.unwrap();
+        assert!(created);
+        let list = store.list(&TenantsListFilter::default()).await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, "acme-corp");
+        assert_eq!(list[0].agent_count, 1, "agent bot-acme-1 references tenant");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn upsert_twice_preserves_created_at_returns_false_second() {
+        let dir = tmp_dir();
+        let store = fixture(&dir);
+        let (d1, created1) = store
+            .upsert(upsert_input("acme-corp", "Acme"))
+            .await
+            .unwrap();
+        let (d2, created2) = store
+            .upsert(upsert_input("acme-corp", "Acme v2"))
+            .await
+            .unwrap();
+        assert!(created1);
+        assert!(!created2);
+        assert_eq!(d1.created_at, d2.created_at, "created_at preserved");
+        assert_eq!(d2.display_name, "Acme v2");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn get_missing_returns_none() {
+        let dir = tmp_dir();
+        let store = fixture(&dir);
+        let r = store.get("absent").await.unwrap();
+        assert!(r.is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn delete_unknown_returns_false_no_orphans() {
+        let dir = tmp_dir();
+        let store = fixture(&dir);
+        let (removed, orphans) = store.delete("absent", false).await.unwrap();
+        assert!(!removed);
+        assert!(orphans.is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn delete_with_orphans_purge_false_returns_orphans() {
+        let dir = tmp_dir();
+        let store = fixture(&dir);
+        let _ = store.upsert(upsert_input("acme-corp", "Acme")).await.unwrap();
+        let (removed, orphans) = store.delete("acme-corp", false).await.unwrap();
+        assert!(!removed, "delete rejected because of orphan agents");
+        assert_eq!(orphans, vec!["bot-acme-1"]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn delete_with_orphans_purge_true_removes_tenant_acks_orphans() {
+        let dir = tmp_dir();
+        let store = fixture(&dir);
+        let _ = store.upsert(upsert_input("acme-corp", "Acme")).await.unwrap();
+        let (removed, orphans) = store.delete("acme-corp", true).await.unwrap();
+        assert!(removed);
+        assert_eq!(orphans, vec!["bot-acme-1"]);
+        // tenant gone from yaml.
+        assert!(store.get("acme-corp").await.unwrap().is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn delete_no_orphans_succeeds_purge_false() {
+        let dir = tmp_dir();
+        let store = fixture(&dir);
+        // Tenant with ZERO referencing agents.
+        let _ = store
+            .upsert(upsert_input("ghost-co", "Ghost"))
+            .await
+            .unwrap();
+        let (removed, orphans) = store.delete("ghost-co", false).await.unwrap();
+        assert!(removed);
+        assert!(orphans.is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn list_filter_active_only_drops_inactive() {
+        let dir = tmp_dir();
+        let store = fixture(&dir);
+        let mut live = upsert_input("live-co", "Live");
+        live.active = Some(true);
+        let mut frozen = upsert_input("frozen-co", "Frozen");
+        frozen.active = Some(false);
+        store.upsert(live).await.unwrap();
+        store.upsert(frozen).await.unwrap();
+        let active_only = TenantsListFilter {
+            active_only: true,
+            prefix: None,
+        };
+        let list = store.list(&active_only).await.unwrap();
+        let ids: Vec<&str> = list.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, vec!["live-co"]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn list_filter_prefix() {
+        let dir = tmp_dir();
+        let store = fixture(&dir);
+        for id in ["alpha", "alpine", "beta"] {
+            let _ = store.upsert(upsert_input(id, id)).await.unwrap();
+        }
+        let f = TenantsListFilter {
+            active_only: false,
+            prefix: Some("alp".into()),
+        };
+        let list = store.list(&f).await.unwrap();
+        let ids: Vec<&str> = list.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, vec!["alpha", "alpine"]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn upsert_preserves_metadata_on_partial_update() {
+        let dir = tmp_dir();
+        let store = fixture(&dir);
+        let mut first = upsert_input("acme-corp", "Acme");
+        let mut meta = BTreeMap::new();
+        meta.insert("tier".into(), serde_json::json!("pro"));
+        first.metadata = Some(meta);
+        let _ = store.upsert(first).await.unwrap();
+        // Second upsert without metadata → preserve previous.
+        let (d, _) = store
+            .upsert(upsert_input("acme-corp", "Acme v2"))
+            .await
+            .unwrap();
+        assert_eq!(d.metadata.get("tier"), Some(&serde_json::json!("pro")));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn empty_tenants_yaml_lists_zero() {
+        let dir = tmp_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = TenantsYamlPatcher::new(
+            dir.join("tenants.yaml"),
+            dir.join("agents.yaml"),
+        );
+        let list = store
+            .list(&TenantsListFilter::default())
+            .await
+            .unwrap();
+        assert!(list.is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[allow(dead_code)]
+    fn _suppress_unused_imports(_t: &TenantDetail, _u: &Utc) {}
 }
