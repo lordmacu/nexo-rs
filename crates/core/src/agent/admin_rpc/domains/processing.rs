@@ -22,6 +22,9 @@ use crate::agent::admin_rpc::channel_outbound::{
     ChannelOutboundDispatcher, ChannelOutboundError, OutboundMessage,
 };
 use crate::agent::admin_rpc::dispatcher::AdminRpcError;
+use crate::agent::admin_rpc::transcript_appender::{
+    TranscriptAppender, TranscriptEntry, TranscriptRole,
+};
 
 /// Storage abstraction for the per-scope control state. v0
 /// production impl is `nexo_setup::admin_adapters::InMemoryProcessingControlStore`
@@ -188,15 +191,24 @@ pub async fn resume(
 /// `nexo/admin/processing/intervention` — operator-driven action
 /// inside a paused scope. v0 routes `Reply` on `Conversation`
 /// end-to-end through a [`ChannelOutboundDispatcher`]: the handler
-/// validates inputs, asserts the scope is paused, then forwards
-/// the reply to the channel-plugin adapter and returns the
-/// provider message id back to the caller.
+/// validates inputs, asserts the scope is paused, forwards the
+/// reply to the channel-plugin adapter, and (Phase 82.13.b.1)
+/// stamps the reply onto the agent transcript so the agent sees
+/// it on resume.
 ///
-/// Closes the wire that previously stopped at "validate inputs +
-/// return ack" — Phase 82.13's deferred .b is now this handler.
+/// `appender` is `Some` in production (boot wires
+/// `TranscriptWriterAppender`) and `None` for daemons without
+/// transcript persistence wired. When `appender` is `Some` AND
+/// `params.session_id` is `Some` AND the channel send acks OK,
+/// the handler appends a `TranscriptEntry { role: Assistant,
+/// source_plugin: "intervention:<channel>", sender_id:
+/// "operator:<token_hash>" }` to the session JSONL. The Reply
+/// itself succeeds regardless — `transcript_stamped` on the ack
+/// reports whether stamping happened.
 pub async fn intervention(
     store: &dyn ProcessingControlStore,
     outbound: Option<&dyn ChannelOutboundDispatcher>,
+    appender: Option<&dyn TranscriptAppender>,
     params: serde_json::Value,
 ) -> crate::agent::admin_rpc::dispatcher::AdminRpcResult {
     use nexo_tool_meta::admin::processing::{
@@ -250,7 +262,12 @@ pub async fn intervention(
     // channel-outbound adapter. Without one wired the handler
     // surfaces `channel_unavailable` so the operator UI can show
     // a helpful "no outbound configured for this channel" error.
-    let outbound_message_id = match &p.action {
+    //
+    // Phase 82.13.b.1 — after a successful send, optionally stamp
+    // the reply on the agent transcript so the agent sees it on
+    // resume. The body / channel captured before the channel
+    // call drives the stamp call below.
+    let (outbound_message_id, reply_body, reply_channel) = match &p.action {
         InterventionAction::Reply {
             channel,
             account_id,
@@ -276,7 +293,7 @@ pub async fn intervention(
                 attachments: attachments.clone(),
                 reply_to_msg_id: reply_to_msg_id.clone(),
             };
-            match disp.send(msg).await {
+            let omid = match disp.send(msg).await {
                 Ok(ack) => ack.outbound_message_id,
                 Err(ChannelOutboundError::ChannelUnavailable(name)) => {
                     return crate::agent::admin_rpc::dispatcher::AdminRpcResult::err(
@@ -295,17 +312,51 @@ pub async fn intervention(
                         AdminRpcError::Internal(format!("transport: {msg}")),
                     )
                 }
-            }
+            };
+            (omid, body.clone(), channel.clone())
         }
         _ => unreachable!("is_v0_supported gate above limited to Reply"),
     };
 
-    let _ = outbound_message_id; // future audit-log threading
+    // Phase 82.13.b.1 — best-effort transcript stamp. Channel
+    // send already succeeded by this point; failure here MUST
+    // NOT fail the whole RPC, only set
+    // `transcript_stamped: Some(false)` so the operator UI can
+    // surface a hint.
+    let transcript_stamped = match (p.session_id, appender) {
+        (Some(session_id), Some(app)) => {
+            let entry = TranscriptEntry {
+                role: TranscriptRole::Assistant,
+                content: reply_body,
+                source_plugin: format!("intervention:{reply_channel}"),
+                sender_id: Some(format!("operator:{}", p.operator_token_hash)),
+                message_id: outbound_message_id
+                    .as_deref()
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok()),
+            };
+            match app.append(p.scope.agent_id(), session_id, entry).await {
+                Ok(()) => Some(true),
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        agent = %p.scope.agent_id(),
+                        session_id = %session_id,
+                        "transcript stamp failed; reply already sent",
+                    );
+                    Some(false)
+                }
+            }
+        }
+        // Either no session_id (operator UI didn't pass it) or
+        // no appender wired in boot — degrade silently.
+        _ => Some(false),
+    };
+
     crate::agent::admin_rpc::dispatcher::AdminRpcResult::ok(
         serde_json::to_value(ProcessingAck {
             changed: true,
             correlation_id: uuid::Uuid::new_v4(),
-            transcript_stamped: None,
+            transcript_stamped,
         })
         .unwrap_or(serde_json::Value::Null),
     )
@@ -478,6 +529,7 @@ mod tests {
         let attempt = intervention(
             &store,
             Some(&outbound),
+            None,
             serde_json::json!({
                 "scope": convo(),
                 "action": InterventionAction::Reply {
@@ -521,6 +573,7 @@ mod tests {
         let result = intervention(
             &store,
             Some(&outbound),
+            None,
             serde_json::json!({
                 "scope": convo(),
                 "action": {
@@ -559,6 +612,7 @@ mod tests {
         let result = intervention(
             &store,
             None,
+            None,
             serde_json::json!({
                 "scope": convo(),
                 "action": {
@@ -581,6 +635,263 @@ mod tests {
         }
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // Phase 82.13.b.1 — transcript stamping behaviour.
+    // ──────────────────────────────────────────────────────────────
+
+    /// Recording appender used in stamping tests — captures
+    /// every `(agent_id, session_id, entry)` tuple without
+    /// touching disk.
+    #[derive(Debug, Default)]
+    struct RecordingAppender {
+        captured: std::sync::Mutex<
+            Vec<(String, uuid::Uuid, super::TranscriptEntry)>,
+        >,
+        fail: bool,
+    }
+
+    #[async_trait]
+    impl super::TranscriptAppender for RecordingAppender {
+        async fn append(
+            &self,
+            agent_id: &str,
+            session_id: uuid::Uuid,
+            entry: super::TranscriptEntry,
+        ) -> anyhow::Result<()> {
+            if self.fail {
+                return Err(anyhow::anyhow!("synthetic disk full"));
+            }
+            self.captured
+                .lock()
+                .unwrap()
+                .push((agent_id.into(), session_id, entry));
+            Ok(())
+        }
+    }
+
+    fn paused_with_session() -> uuid::Uuid {
+        uuid::Uuid::parse_str("11111111-1111-4111-8111-111111111111").unwrap()
+    }
+
+    #[tokio::test]
+    async fn intervention_stamps_transcript_when_session_and_appender_both_set() {
+        let store = MockStore::default();
+        let _ = pause(
+            &store,
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+            }),
+        )
+        .await;
+        let outbound = CapturingOutbound {
+            respond_with_id: Some("550e8400-e29b-41d4-a716-446655440000".into()),
+            ..Default::default()
+        };
+        let appender = RecordingAppender::default();
+        let session_id = paused_with_session();
+        let result = intervention(
+            &store,
+            Some(&outbound),
+            Some(&appender),
+            serde_json::json!({
+                "scope": convo(),
+                "action": {
+                    "kind": "reply",
+                    "channel": "whatsapp",
+                    "account_id": "acc",
+                    "to": "wa.55",
+                    "body": "ya te resuelvo",
+                    "msg_kind": "text",
+                },
+                "operator_token_hash": "tokhash",
+                "session_id": session_id,
+            }),
+        )
+        .await;
+        assert!(result.error.is_none(), "{result:?}");
+        // Channel send happened.
+        assert_eq!(outbound.sent.lock().unwrap().len(), 1);
+        // Transcript stamp happened with the right shape.
+        let captured = appender.captured.lock().unwrap();
+        assert_eq!(captured.len(), 1);
+        let (agent_id, sid, entry) = &captured[0];
+        assert_eq!(agent_id, "ana");
+        assert_eq!(*sid, session_id);
+        assert!(matches!(entry.role, super::TranscriptRole::Assistant));
+        assert_eq!(entry.content, "ya te resuelvo");
+        assert_eq!(entry.source_plugin, "intervention:whatsapp");
+        assert_eq!(entry.sender_id.as_deref(), Some("operator:tokhash"));
+        assert!(entry.message_id.is_some(), "outbound_message_id threaded");
+        // Ack reports stamped=true.
+        let v = result.result.unwrap();
+        assert_eq!(v["transcript_stamped"], true);
+    }
+
+    #[tokio::test]
+    async fn intervention_skips_stamp_when_session_id_absent() {
+        let store = MockStore::default();
+        let _ = pause(
+            &store,
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+            }),
+        )
+        .await;
+        let outbound = CapturingOutbound::default();
+        let appender = RecordingAppender::default();
+        let result = intervention(
+            &store,
+            Some(&outbound),
+            Some(&appender),
+            serde_json::json!({
+                "scope": convo(),
+                "action": {
+                    "kind": "reply",
+                    "channel": "whatsapp",
+                    "account_id": "acc",
+                    "to": "wa.55",
+                    "body": "hi",
+                    "msg_kind": "text",
+                },
+                "operator_token_hash": "h",
+            }),
+        )
+        .await;
+        // Channel send still happened.
+        assert_eq!(outbound.sent.lock().unwrap().len(), 1);
+        // No transcript stamp.
+        assert!(appender.captured.lock().unwrap().is_empty());
+        // Ack reports stamped=false.
+        let v = result.result.unwrap();
+        assert_eq!(v["transcript_stamped"], false);
+    }
+
+    #[tokio::test]
+    async fn intervention_skips_stamp_when_appender_unwired() {
+        let store = MockStore::default();
+        let _ = pause(
+            &store,
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+            }),
+        )
+        .await;
+        let outbound = CapturingOutbound::default();
+        let result = intervention(
+            &store,
+            Some(&outbound),
+            None, // no appender wired in boot
+            serde_json::json!({
+                "scope": convo(),
+                "action": {
+                    "kind": "reply",
+                    "channel": "whatsapp",
+                    "account_id": "acc",
+                    "to": "wa.55",
+                    "body": "hi",
+                    "msg_kind": "text",
+                },
+                "operator_token_hash": "h",
+                "session_id": paused_with_session(),
+            }),
+        )
+        .await;
+        assert_eq!(outbound.sent.lock().unwrap().len(), 1);
+        let v = result.result.unwrap();
+        assert_eq!(v["transcript_stamped"], false);
+    }
+
+    #[tokio::test]
+    async fn intervention_degrades_when_appender_returns_err() {
+        let store = MockStore::default();
+        let _ = pause(
+            &store,
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+            }),
+        )
+        .await;
+        let outbound = CapturingOutbound::default();
+        let appender = RecordingAppender {
+            fail: true,
+            ..Default::default()
+        };
+        let result = intervention(
+            &store,
+            Some(&outbound),
+            Some(&appender),
+            serde_json::json!({
+                "scope": convo(),
+                "action": {
+                    "kind": "reply",
+                    "channel": "whatsapp",
+                    "account_id": "acc",
+                    "to": "wa.55",
+                    "body": "hi",
+                    "msg_kind": "text",
+                },
+                "operator_token_hash": "h",
+                "session_id": paused_with_session(),
+            }),
+        )
+        .await;
+        // RPC overall succeeds — the channel send is what
+        // matters operationally.
+        assert!(result.error.is_none(), "{result:?}");
+        assert_eq!(outbound.sent.lock().unwrap().len(), 1);
+        // Stamp failure surfaces only via the ack hint.
+        let v = result.result.unwrap();
+        assert_eq!(v["transcript_stamped"], false);
+    }
+
+    #[tokio::test]
+    async fn intervention_stamp_omits_message_id_when_outbound_returns_none() {
+        let store = MockStore::default();
+        let _ = pause(
+            &store,
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+            }),
+        )
+        .await;
+        let outbound = CapturingOutbound {
+            respond_with_id: None, // plugin doesn't ack with provider id
+            ..Default::default()
+        };
+        let appender = RecordingAppender::default();
+        let result = intervention(
+            &store,
+            Some(&outbound),
+            Some(&appender),
+            serde_json::json!({
+                "scope": convo(),
+                "action": {
+                    "kind": "reply",
+                    "channel": "telegram",
+                    "account_id": "tg.bot",
+                    "to": "tg.55",
+                    "body": "hola",
+                    "msg_kind": "text",
+                },
+                "operator_token_hash": "h",
+                "session_id": paused_with_session(),
+            }),
+        )
+        .await;
+        assert!(result.error.is_none());
+        let captured = appender.captured.lock().unwrap();
+        assert_eq!(captured.len(), 1);
+        let entry = &captured[0].2;
+        assert!(entry.message_id.is_none());
+        // Discriminator format follows :<channel>.
+        assert_eq!(entry.source_plugin, "intervention:telegram");
+    }
+
     #[tokio::test]
     async fn intervention_rejects_non_v0_action() {
         let store = MockStore::default();
@@ -596,6 +907,7 @@ mod tests {
         let result = intervention(
             &store,
             Some(&outbound),
+            None,
             serde_json::json!({
                 "scope": convo(),
                 "action": {

@@ -35,6 +35,7 @@ use super::domains::llm_providers::LlmYamlPatcher;
 use super::domains::pairing::{PairingChallengeStore, PairingNotifier};
 use super::domains::processing::ProcessingControlStore;
 use super::channel_outbound::ChannelOutboundDispatcher;
+use super::transcript_appender::TranscriptAppender;
 use super::domains::skills::SkillsStore;
 use super::domains::tenants::TenantStore;
 
@@ -189,6 +190,15 @@ pub struct AdminRpcDispatcher {
     /// management). Production wires
     /// `nexo_setup::admin_adapters::TenantsYamlPatcher`.
     tenant_store: Option<Arc<dyn TenantStore>>,
+    /// Phase 82.13.b.1 — transcript appender used by
+    /// `processing/intervention` (and later `processing/resume`)
+    /// to stamp operator replies / summary / replayed inbounds
+    /// onto the agent transcript. `None` keeps the wire surface
+    /// alive — the channel send still happens but
+    /// `ProcessingAck.transcript_stamped` reports `Some(false)`.
+    /// Production wires
+    /// `nexo_setup::admin_adapters::TranscriptWriterAppender`.
+    transcript_appender: Option<Arc<dyn TranscriptAppender>>,
 }
 
 impl std::fmt::Debug for AdminRpcDispatcher {
@@ -226,6 +236,7 @@ impl AdminRpcDispatcher {
             skills_store: None,
             channel_outbound: None,
             tenant_store: None,
+            transcript_appender: None,
         }
     }
 
@@ -339,6 +350,22 @@ impl AdminRpcDispatcher {
         outbound: Arc<dyn ChannelOutboundDispatcher>,
     ) -> Self {
         self.channel_outbound = Some(outbound);
+        self
+    }
+
+    /// Phase 82.13.b.1 — install the transcript appender used by
+    /// `processing/intervention` to stamp operator replies onto
+    /// the agent transcript. Without one wired, replies still go
+    /// out through the channel but the transcript is not
+    /// modified — `ProcessingAck.transcript_stamped` reports
+    /// `Some(false)` so the operator UI can surface a hint.
+    /// Production wires
+    /// `nexo_setup::admin_adapters::TranscriptWriterAppender`.
+    pub fn with_transcript_appender(
+        mut self,
+        appender: Arc<dyn TranscriptAppender>,
+    ) -> Self {
+        self.transcript_appender = Some(appender);
         self
     }
 
@@ -729,6 +756,7 @@ impl AdminRpcDispatcher {
                     super::domains::processing::intervention(
                         store.as_ref(),
                         self.channel_outbound.as_deref(),
+                        self.transcript_appender.as_deref(),
                         params,
                     )
                     .await
