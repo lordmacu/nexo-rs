@@ -2415,15 +2415,19 @@ landed at message-id Y". Closing this needs a per-plugin reply
 pattern (broker request/response or correlation-id back-channel).
 Standalone follow-up; not blocking takeover UX.
 
-### Phase 83.8.4.b.tg / 83.8.4.b.em — Telegram + Email translators
+### Phase 83.8.4.b.gen — plugin-owned ChannelPayloadTranslator
 
-WhatsApp translator shipped in 83.8.4.b.1. Telegram and Email
-remain TBD until those channels ramp (memory `feedback_only_whatsapp_channel.md`).
-Each is a small additive sub-fase: implement
-`ChannelPayloadTranslator` for the channel + register it on
-`BrokerOutboundDispatcher` at boot. Topic constants already
-exist (`plugin.outbound.telegram[.<account>]`,
-`plugin.outbound.email.<instance>`).
+Today translators (WhatsApp / Telegram / Email) live in
+`nexo-setup::admin_adapters` and `setup` re-exports + registers
+each at boot. Adding a new channel = edit `setup` again. Future
+work: move `ChannelPayloadTranslator` trait to `nexo-tool-meta`
+and let each plugin crate own its translator (next to its
+existing `dispatch.rs` outbound subscriber). Boot auto-discovers
+via inventory crate or explicit registration list. Result:
+adding a new channel becomes zero-touch on `nexo-setup`.
+
+Not blocking — current setup-side composition is fine for the
+3 channels shipped. Reopen if/when a 4th channel arrives.
 
 ### Phase 83.8.12 — multi-empresa framework primitive
 
