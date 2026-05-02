@@ -88,6 +88,7 @@
 
 # Microapps
 
+- [`agent-creator` SaaS meta-microapp](./microapps/agent-creator.md)
 - [Building microapps in Rust](./microapps/rust.md)
 - [Admin RPC](./microapps/admin-rpc.md)
 - [Contract (language-agnostic)](./microapps/contract.md)

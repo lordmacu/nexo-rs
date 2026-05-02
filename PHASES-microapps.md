@@ -2083,7 +2083,51 @@ Done criteria:
   a "porting to Python/TypeScript" section pointing back to the
   contract document.
 
-#### 83.8 — `ventas-etb` reference microapp   ⬜
+#### 83.8 — `agent-creator` SaaS meta-microapp   ✅
+
+**Pivot 2026-05-02:** the original `ventas-etb` scope was
+re-targeted to a **SaaS meta-microapp** (`agent-creator`) that
+lets operators CRUD agents / skills / LLM keys / pairing flows
+through admin RPC. The microapp lives out-of-tree at
+`/home/familia/chat/agent-creator-microapp/` and consumes the
+framework via `nexo-microapp-sdk` + `nexo-tool-meta`.
+
+Atomic sub-fases shipped:
+
+| Step | What | Where |
+|---|---|---|
+| 83.8.1 | admin/skills CRUD wire shapes | tool-meta |
+| 83.8.2 | admin/skills domain handler + capability + INVENTORY | core |
+| 83.8.3 | FsSkillsStore production adapter | setup |
+| 83.8.4.a | ChannelOutboundDispatcher trait + processing.intervention end-to-end | core |
+| 83.8.5 | EscalationReason::UnknownQuery variant | tool-meta |
+| 83.8.6 | SDK HumanTakeover helper | microapp-sdk |
+| 83.8.7 | SDK TranscriptStream::filter_by_agent | microapp-sdk |
+| 83.8.8.a | SDK runtime admin integration (Microapp::with_admin) | microapp-sdk |
+| 83.8.8 | microapp agents/skills/llm CRUD tools | agent-creator-microapp |
+| 83.8.9 | pairing/conversations/takeover/escalations tools | agent-creator-microapp |
+| 83.8.10 | compliance hook dispatcher (opt-out + anti-loop + PII) | agent-creator-microapp |
+| 83.8.11 | docs + admin-ui sync + close-out | docs |
+
+**Framework gaps surfaced + closed during stress test:**
+1. `nexo/admin/skills/*` CRUD missing → shipped end-to-end.
+2. `processing.intervention` no outbound dispatch → `ChannelOutboundDispatcher` trait.
+3. SDK had `AdminClient` type but no runtime integration → `Microapp::with_admin()` builder + ToolCtx accessor.
+4. `EscalationReason::UnknownQuery` variant absent.
+5. SDK lacked `HumanTakeover` + `TranscriptStream::filter_by_agent` helpers.
+
+**Deferred follow-ups (logged in FOLLOWUPS.md):**
+- 83.8.4.b — production `ChannelOutboundDispatcher` adapter bridging plugin send paths.
+- 83.8.x — domain kill-switch env vars are advisory-only (pre-existing pattern bug).
+- 83.8.10 follow-up — per-agent compliance toggle propagation (needs `extensions_config` in BindingContext).
+- 83.8.10 follow-up — `HookOutcome::Transform` not piped end-to-end (PII redactor logs but does not rewrite body yet).
+
+Original ventas-etb scope (port of monolithic `agents.d/ana.yaml`)
+is dropped — the SaaS meta-microapp covers the same code paths
+with multi-tenant + WhatsApp-only constraints and exercises the
+framework harder.
+
+#### 83.8.OLD — `ventas-etb` reference microapp (DROPPED)
 
 The first real microapp built using 83.1 - 83.7. Validates
 that the framework is usable for actual production work,
