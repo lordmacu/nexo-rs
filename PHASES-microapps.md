@@ -1816,7 +1816,7 @@ Done criteria:
   hot-reload, malformed config rejection, missing
   agent_id, isolation between agents.
 
-#### 83.2 — Extension-contributed skills   ⬜
+#### 83.2 — Extension-contributed skills   ✅  (shipped 2026-05-02 — SkillLoader merge deferred to 83.2.b)
 
 Today `agents.yaml.skills_dir` is a static path the operator
 must point at the right folder. When the skill ships *with*

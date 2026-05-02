@@ -113,6 +113,19 @@ pub struct Capabilities {
     /// stdio-only microapps unaffected.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub http_server: Option<HttpServerCapability>,
+    /// Phase 83.2 — extension-contributed skill names. Each
+    /// entry MUST have a matching `<plugin_root>/skills/<name>/SKILL.md`
+    /// file (validated by [`validate_contributed_skills`]). The
+    /// daemon's skill loader auto-discovers these and merges
+    /// them into any agent's skill scope when the extension is
+    /// in `agents.yaml.<id>.extensions: [...]`. Operator-
+    /// declared `skills_dir` still works; extension skills
+    /// merge on top.
+    ///
+    /// Empty by default; legacy plugins without contributed
+    /// skills are unaffected.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<String>,
 }
 
 /// Phase 82.12 — HTTP server declaration.
@@ -334,6 +347,60 @@ impl Default for ConfigSection {
 
 fn default_true() -> bool {
     true
+}
+
+// ── Phase 83.2 — contributed-skills validation ───────────────────
+
+/// Errors surfaced when the manifest's declared
+/// `[capabilities] skills = [...]` list does not match what's
+/// actually on disk under `<plugin_root>/skills/<name>/`.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum ContributedSkillError {
+    /// `[capabilities] skills` declares a name with no
+    /// `<plugin_root>/skills/<name>/SKILL.md` on disk.
+    #[error("contributed skill `{name}` declared in plugin.toml has no `skills/{name}/SKILL.md`")]
+    Missing { name: String },
+    /// Skill name fails the slug rule (lowercase ASCII, digits,
+    /// dashes; max 64 chars). Defends against accidentally
+    /// shipping a skill named `../../etc/passwd`.
+    #[error("contributed skill name `{name}` is not a valid slug ([a-z0-9-], max 64 chars)")]
+    InvalidSlug { name: String },
+}
+
+const SKILL_NAME_MAX: usize = 64;
+
+fn is_valid_skill_slug(name: &str) -> bool {
+    if name.is_empty() || name.len() > SKILL_NAME_MAX {
+        return false;
+    }
+    name.chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// Phase 83.2 — verify every name in `caps.skills` has a
+/// matching `<plugin_root>/skills/<name>/SKILL.md` on disk and
+/// passes the slug rule. Returns the list of validated relative
+/// paths the daemon's `SkillLoader` should register; the
+/// SkillLoader merge itself is deferred to 83.2.b.
+pub fn validate_contributed_skills(
+    caps: &Capabilities,
+    plugin_root: &std::path::Path,
+) -> Result<Vec<PathBuf>, ContributedSkillError> {
+    let mut out = Vec::with_capacity(caps.skills.len());
+    for name in &caps.skills {
+        if !is_valid_skill_slug(name) {
+            return Err(ContributedSkillError::InvalidSlug { name: name.clone() });
+        }
+        let candidate = plugin_root
+            .join("skills")
+            .join(name)
+            .join("SKILL.md");
+        if !candidate.is_file() {
+            return Err(ContributedSkillError::Missing { name: name.clone() });
+        }
+        out.push(candidate);
+    }
+    Ok(out)
 }
 
 // ── Requires section ────────────────────────────────────────────
@@ -722,5 +789,124 @@ min_nexo_version = ">=0.1.0"
         "#;
         let err = toml::from_str::<Capabilities>(toml_src).unwrap_err();
         assert!(err.to_string().contains("extra"), "got: {err}");
+    }
+
+    // ── Phase 83.2 — contributed-skills tests ───────────────────
+
+    #[test]
+    fn contributed_skills_field_round_trips() {
+        let toml_src = r#"
+            provides = []
+            skills = ["ventas-flujo", "soporte-flujo"]
+        "#;
+        let parsed: Capabilities = toml::from_str(toml_src).unwrap();
+        assert_eq!(parsed.skills, vec!["ventas-flujo", "soporte-flujo"]);
+    }
+
+    #[test]
+    fn contributed_skills_default_empty() {
+        let parsed: Capabilities = toml::from_str("provides = []").unwrap();
+        assert!(parsed.skills.is_empty());
+    }
+
+    #[test]
+    fn contributed_skills_skip_serialise_when_empty() {
+        let caps = Capabilities {
+            provides: Vec::new(),
+            admin: AdminCapabilities::default(),
+            http_server: None,
+            skills: Vec::new(),
+        };
+        let serialised = toml::to_string(&caps).unwrap();
+        assert!(
+            !serialised.contains("skills"),
+            "empty skills must not appear:\n{serialised}"
+        );
+    }
+
+    #[test]
+    fn validate_contributed_skills_happy_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("skills").join("ventas-flujo");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), "# ventas-flujo").unwrap();
+        let caps = Capabilities {
+            provides: Vec::new(),
+            admin: AdminCapabilities::default(),
+            http_server: None,
+            skills: vec!["ventas-flujo".into()],
+        };
+        let paths = validate_contributed_skills(&caps, tmp.path()).expect("ok");
+        assert_eq!(paths.len(), 1);
+        assert!(paths[0].ends_with("ventas-flujo/SKILL.md"));
+    }
+
+    #[test]
+    fn validate_contributed_skills_missing_file_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        let caps = Capabilities {
+            provides: Vec::new(),
+            admin: AdminCapabilities::default(),
+            http_server: None,
+            skills: vec!["ghost".into()],
+        };
+        let err = validate_contributed_skills(&caps, tmp.path()).unwrap_err();
+        assert_eq!(
+            err,
+            ContributedSkillError::Missing { name: "ghost".into() }
+        );
+    }
+
+    #[test]
+    fn validate_contributed_skills_rejects_path_traversal_slug() {
+        let tmp = tempfile::tempdir().unwrap();
+        let caps = Capabilities {
+            provides: Vec::new(),
+            admin: AdminCapabilities::default(),
+            http_server: None,
+            // Path-traversal attempt — must be rejected at slug
+            // validation BEFORE filesystem access.
+            skills: vec!["../../etc/passwd".into()],
+        };
+        let err = validate_contributed_skills(&caps, tmp.path()).unwrap_err();
+        match err {
+            ContributedSkillError::InvalidSlug { name } => {
+                assert_eq!(name, "../../etc/passwd");
+            }
+            other => panic!("expected InvalidSlug, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_contributed_skills_rejects_uppercase_or_special_chars() {
+        let tmp = tempfile::tempdir().unwrap();
+        for bad in ["VentasFlujo", "ventas_flujo", "ventas flujo", ""] {
+            let caps = Capabilities {
+                provides: Vec::new(),
+                admin: AdminCapabilities::default(),
+                http_server: None,
+                skills: vec![bad.into()],
+            };
+            assert!(
+                matches!(
+                    validate_contributed_skills(&caps, tmp.path()),
+                    Err(ContributedSkillError::InvalidSlug { .. })
+                ),
+                "expected `{bad}` to be rejected as invalid slug"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_contributed_skills_empty_list_returns_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let caps = Capabilities {
+            provides: Vec::new(),
+            admin: AdminCapabilities::default(),
+            http_server: None,
+            skills: Vec::new(),
+        };
+        let paths = validate_contributed_skills(&caps, tmp.path()).unwrap();
+        assert!(paths.is_empty());
     }
 }

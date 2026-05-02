@@ -22,3 +22,6 @@ semver    = { workspace = true, features = ["serde"] }
 regex     = { workspace = true }
 thiserror = { workspace = true }
 anyhow    = { workspace = true }
+
+[dev-dependencies]
+tempfile  = "3"
