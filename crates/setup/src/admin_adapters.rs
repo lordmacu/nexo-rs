@@ -38,8 +38,12 @@ use nexo_core::agent::admin_rpc::domains::pairing::{
 use nexo_core::agent::admin_rpc::domains::escalations::{
     filter_matches, EscalationStore,
 };
+use nexo_core::agent::admin_rpc::channel_outbound::{
+    ChannelOutboundDispatcher, ChannelOutboundError, OutboundAck, OutboundMessage,
+};
 use nexo_core::agent::admin_rpc::domains::processing::ProcessingControlStore;
 use nexo_core::agent::admin_rpc::domains::skills::SkillsStore;
+use nexo_broker::{AnyBroker, BrokerHandle, Event};
 use nexo_tool_meta::admin::escalations::{
     EscalationEntry, EscalationState, EscalationsListParams, ResolvedBy,
 };
@@ -2239,5 +2243,325 @@ mod escalation_store_tests {
         let n: i32 = rec.body[1..].parse().unwrap();
         assert!((0..16).contains(&n));
         tokio::fs::remove_dir_all(&root).await.ok();
+    }
+}
+
+// ── Phase 83.8.4.b — production ChannelOutboundDispatcher ────────
+
+/// Per-plugin payload translator. Each plugin's existing
+/// outbound dispatcher (`crates/plugins/<channel>/src/dispatch.rs`
+/// and friends) listens on its own NATS topic and consumes its
+/// own JSON shape. The translator owns the `OutboundMessage` →
+/// `(topic, payload)` projection so the
+/// `BrokerOutboundDispatcher` stays channel-agnostic.
+pub trait ChannelPayloadTranslator: Send + Sync + std::fmt::Debug {
+    /// Channel name this translator serves
+    /// (`"whatsapp"` / `"telegram"` / `"email"` / future).
+    fn channel(&self) -> &str;
+
+    /// Translate the operator-driven `OutboundMessage` into the
+    /// `(topic, payload)` pair the channel plugin's existing
+    /// dispatcher consumes. Errors propagate to the admin RPC
+    /// layer as `-32602 invalid_params`.
+    fn translate(
+        &self,
+        msg: &OutboundMessage,
+    ) -> Result<(String, serde_json::Value), TranslationError>;
+}
+
+/// Errors a translator may return. Map to JSON-RPC at the
+/// dispatcher layer.
+#[derive(Debug, thiserror::Error)]
+pub enum TranslationError {
+    /// Required field absent from the `OutboundMessage`.
+    #[error("missing field: {0}")]
+    MissingField(&'static str),
+    /// Field present but value cannot be honoured.
+    #[error("invalid value for {field}: {reason}")]
+    InvalidValue {
+        /// Offending field name.
+        field: &'static str,
+        /// Why the value was rejected.
+        reason: String,
+    },
+    /// `msg_kind` not implemented by this translator.
+    #[error("unsupported msg_kind: {0}")]
+    UnsupportedKind(String),
+}
+
+/// Production [`ChannelOutboundDispatcher`] that publishes the
+/// translated payload to the broker. Each per-channel
+/// `plugin.outbound.<channel>[.<account>]` topic already has a
+/// plugin-side dispatcher subscribed (see
+/// `crates/plugins/whatsapp/src/dispatch.rs` for the canonical
+/// shape) — this adapter is just the operator-driven entry
+/// point.
+pub struct BrokerOutboundDispatcher {
+    broker: AnyBroker,
+    translators: std::collections::HashMap<String, Box<dyn ChannelPayloadTranslator>>,
+}
+
+impl std::fmt::Debug for BrokerOutboundDispatcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let channels: Vec<&String> = self.translators.keys().collect();
+        f.debug_struct("BrokerOutboundDispatcher")
+            .field("channels", &channels)
+            .finish()
+    }
+}
+
+impl BrokerOutboundDispatcher {
+    /// Build a dispatcher with the given broker handle. Add
+    /// translators with [`Self::with_translator`] before
+    /// installing into the admin RPC dispatcher.
+    pub fn new(broker: AnyBroker) -> Self {
+        Self {
+            broker,
+            translators: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Register a translator for one channel. Re-adding the
+    /// same channel name overwrites the previous translator.
+    pub fn with_translator(
+        mut self,
+        translator: Box<dyn ChannelPayloadTranslator>,
+    ) -> Self {
+        self.translators
+            .insert(translator.channel().to_string(), translator);
+        self
+    }
+}
+
+#[async_trait]
+impl ChannelOutboundDispatcher for BrokerOutboundDispatcher {
+    async fn send(
+        &self,
+        msg: OutboundMessage,
+    ) -> Result<OutboundAck, ChannelOutboundError> {
+        let translator = self
+            .translators
+            .get(&msg.channel)
+            .ok_or_else(|| ChannelOutboundError::ChannelUnavailable(msg.channel.clone()))?;
+        let (topic, payload) = translator
+            .translate(&msg)
+            .map_err(|e| match e {
+                TranslationError::MissingField(_)
+                | TranslationError::InvalidValue { .. }
+                | TranslationError::UnsupportedKind(_) => {
+                    ChannelOutboundError::InvalidParams(e.to_string())
+                }
+            })?;
+        let event = Event::new(&topic, &msg.channel, payload);
+        self.broker
+            .publish(&topic, event)
+            .await
+            .map_err(|e| ChannelOutboundError::Transport(e.to_string()))?;
+        // Plugin dispatchers are fire-and-forget; outbound
+        // message id correlation is logged in FOLLOWUPS as
+        // 83.8.4.c.
+        Ok(OutboundAck {
+            outbound_message_id: None,
+        })
+    }
+}
+
+/// WhatsApp translator. Topic is
+/// `nexo_plugin_whatsapp::dispatch::TOPIC_OUTBOUND` plus an
+/// optional `.<account_id>` suffix matching the plugin's
+/// existing convention. Payload mirrors the plugin's
+/// `OutboundPayload` (text, reply, media variants).
+#[derive(Debug, Default)]
+pub struct WhatsAppTranslator;
+
+impl ChannelPayloadTranslator for WhatsAppTranslator {
+    fn channel(&self) -> &str {
+        "whatsapp"
+    }
+
+    fn translate(
+        &self,
+        msg: &OutboundMessage,
+    ) -> Result<(String, serde_json::Value), TranslationError> {
+        let base = nexo_plugin_whatsapp::dispatch::TOPIC_OUTBOUND;
+        let topic = if msg.account_id.is_empty() || msg.account_id == "default" {
+            base.to_string()
+        } else {
+            format!("{base}.{}", msg.account_id)
+        };
+        let payload = match msg.msg_kind.as_str() {
+            "text" => serde_json::json!({
+                "to": msg.to,
+                "text": msg.body,
+                "kind": "text",
+            }),
+            "reply" => {
+                let msg_id = msg
+                    .reply_to_msg_id
+                    .as_deref()
+                    .ok_or(TranslationError::MissingField("reply_to_msg_id"))?;
+                serde_json::json!({
+                    "kind": "reply",
+                    "name": "reply",
+                    "payload": { "to": msg.to, "msg_id": msg_id, "text": msg.body },
+                })
+            }
+            "media" => {
+                let attachment = msg.attachments.first().ok_or(
+                    TranslationError::MissingField("attachments[0]"),
+                )?;
+                let url = attachment
+                    .get("url")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or(TranslationError::MissingField("attachments[0].url"))?;
+                let mut p = serde_json::json!({
+                    "kind": "media",
+                    "to": msg.to,
+                    "url": url,
+                    "caption": msg.body,
+                });
+                if let Some(file_name) = attachment.get("file_name") {
+                    p["file_name"] = file_name.clone();
+                }
+                p
+            }
+            other => return Err(TranslationError::UnsupportedKind(other.into())),
+        };
+        Ok((topic, payload))
+    }
+}
+
+#[cfg(test)]
+mod broker_outbound_tests {
+    use super::*;
+    use nexo_broker::LocalBroker;
+    use serde_json::json;
+
+    fn text_msg() -> OutboundMessage {
+        OutboundMessage {
+            channel: "whatsapp".into(),
+            account_id: "wa.0".into(),
+            to: "wa.55".into(),
+            body: "hi".into(),
+            msg_kind: "text".into(),
+            attachments: vec![],
+            reply_to_msg_id: None,
+        }
+    }
+
+    #[test]
+    fn whatsapp_translator_text_round_trips() {
+        let (topic, payload) = WhatsAppTranslator.translate(&text_msg()).unwrap();
+        assert_eq!(topic, "plugin.outbound.whatsapp.wa.0");
+        assert_eq!(payload["to"], json!("wa.55"));
+        assert_eq!(payload["text"], json!("hi"));
+        assert_eq!(payload["kind"], json!("text"));
+    }
+
+    #[test]
+    fn whatsapp_translator_default_account_uses_base_topic() {
+        let mut msg = text_msg();
+        msg.account_id = "default".into();
+        let (topic, _) = WhatsAppTranslator.translate(&msg).unwrap();
+        assert_eq!(topic, "plugin.outbound.whatsapp");
+        msg.account_id = "".into();
+        let (topic2, _) = WhatsAppTranslator.translate(&msg).unwrap();
+        assert_eq!(topic2, "plugin.outbound.whatsapp");
+    }
+
+    #[test]
+    fn whatsapp_translator_reply_includes_msg_id() {
+        let mut msg = text_msg();
+        msg.msg_kind = "reply".into();
+        msg.reply_to_msg_id = Some("ABC123".into());
+        let (_, payload) = WhatsAppTranslator.translate(&msg).unwrap();
+        assert_eq!(payload["kind"], json!("reply"));
+        assert_eq!(payload["payload"]["msg_id"], json!("ABC123"));
+        assert_eq!(payload["payload"]["text"], json!("hi"));
+    }
+
+    #[test]
+    fn whatsapp_translator_reply_missing_msg_id_errors() {
+        let mut msg = text_msg();
+        msg.msg_kind = "reply".into();
+        let r = WhatsAppTranslator.translate(&msg);
+        assert!(matches!(r, Err(TranslationError::MissingField("reply_to_msg_id"))));
+    }
+
+    #[test]
+    fn whatsapp_translator_media_reads_first_attachment() {
+        let mut msg = text_msg();
+        msg.msg_kind = "media".into();
+        msg.body = "look".into();
+        msg.attachments = vec![json!({
+            "url": "https://x/y.jpg",
+            "file_name": "y.jpg"
+        })];
+        let (_, payload) = WhatsAppTranslator.translate(&msg).unwrap();
+        assert_eq!(payload["kind"], json!("media"));
+        assert_eq!(payload["url"], json!("https://x/y.jpg"));
+        assert_eq!(payload["caption"], json!("look"));
+        assert_eq!(payload["file_name"], json!("y.jpg"));
+    }
+
+    #[test]
+    fn whatsapp_translator_media_missing_url_errors() {
+        let mut msg = text_msg();
+        msg.msg_kind = "media".into();
+        msg.attachments = vec![json!({})];
+        let r = WhatsAppTranslator.translate(&msg);
+        assert!(matches!(r, Err(TranslationError::MissingField("attachments[0].url"))));
+    }
+
+    #[test]
+    fn whatsapp_translator_unknown_kind_errors() {
+        let mut msg = text_msg();
+        msg.msg_kind = "voice".into();
+        let r = WhatsAppTranslator.translate(&msg);
+        assert!(matches!(r, Err(TranslationError::UnsupportedKind(s)) if s == "voice"));
+    }
+
+    #[tokio::test]
+    async fn broker_dispatcher_routes_known_channel_to_translator() {
+        let broker: AnyBroker = AnyBroker::Local(LocalBroker::new());
+        let mut sub = broker
+            .subscribe("plugin.outbound.whatsapp.wa.0")
+            .await
+            .unwrap();
+        let dispatcher = BrokerOutboundDispatcher::new(broker)
+            .with_translator(Box::new(WhatsAppTranslator));
+        let ack = dispatcher.send(text_msg()).await.unwrap();
+        assert!(ack.outbound_message_id.is_none());
+        let evt = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            sub.next(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(evt.payload["text"], json!("hi"));
+        assert_eq!(evt.payload["to"], json!("wa.55"));
+    }
+
+    #[tokio::test]
+    async fn broker_dispatcher_unknown_channel_returns_channel_unavailable() {
+        let broker: AnyBroker = AnyBroker::Local(LocalBroker::new());
+        let dispatcher = BrokerOutboundDispatcher::new(broker)
+            .with_translator(Box::new(WhatsAppTranslator));
+        let mut msg = text_msg();
+        msg.channel = "telegram".into();
+        let r = dispatcher.send(msg).await;
+        assert!(matches!(r, Err(ChannelOutboundError::ChannelUnavailable(s)) if s == "telegram"));
+    }
+
+    #[tokio::test]
+    async fn broker_dispatcher_translator_error_maps_to_invalid_params() {
+        let broker: AnyBroker = AnyBroker::Local(LocalBroker::new());
+        let dispatcher = BrokerOutboundDispatcher::new(broker)
+            .with_translator(Box::new(WhatsAppTranslator));
+        let mut msg = text_msg();
+        msg.msg_kind = "voice".into();
+        let r = dispatcher.send(msg).await;
+        assert!(matches!(r, Err(ChannelOutboundError::InvalidParams(_))));
     }
 }

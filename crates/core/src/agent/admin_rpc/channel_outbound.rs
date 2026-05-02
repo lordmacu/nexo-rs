@@ -21,7 +21,6 @@ use thiserror::Error;
 
 /// Operator-driven outbound message. Passed to a channel-plugin
 /// adapter that knows how to translate into its native send call.
-#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct OutboundMessage {
     /// Channel plugin id (`"whatsapp"`, `"telegram"`, `"email"`, …).
@@ -49,7 +48,6 @@ pub struct OutboundMessage {
 
 /// Acknowledgement returned to the admin handler. Used to populate
 /// the audit log + the SDK-side `ProcessingIntervenAck`.
-#[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct OutboundAck {
     /// Provider-side message id when the channel returned one.
