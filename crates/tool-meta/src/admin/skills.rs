@@ -33,7 +33,6 @@ pub enum SkillDepsMode {
 
 /// Soft constraints declared by the skill author. Mirrors the
 /// `requires` block of the `SKILL.md` frontmatter.
-#[non_exhaustive]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct SkillRequiresRecord {
@@ -48,7 +47,6 @@ pub struct SkillRequiresRecord {
 /// Compact summary used by `skills/list` responses. Excludes the
 /// markdown body so list calls stay cheap on a daemon that hosts
 /// hundreds of skills.
-#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SkillSummary {
     /// Stable name (matches the directory name on disk).
@@ -67,7 +65,6 @@ pub struct SkillSummary {
 /// `body` is the raw markdown body (sans frontmatter) — the daemon
 /// reconstructs the on-disk file by composing frontmatter from the
 /// other fields.
-#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SkillRecord {
     /// Stable name (matches the directory name on disk).
