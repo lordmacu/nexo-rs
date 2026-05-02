@@ -449,6 +449,11 @@ impl AdminRpcDispatcher {
         let started = Instant::now();
         let started_at_ms = now_epoch_ms();
         let args_hash = hash_params(&params);
+        // Phase 83.8.12.7 — sniff tenant scope from params so the
+        // audit row is filterable per tenant. Method routing /
+        // capability gate / handler dispatch all see the same
+        // value.
+        let tenant_id = super::audit::extract_tenant_id(&params);
 
         // 1. Method routing — capability lookup serves double
         //    duty: identifies the method, names the gate.
@@ -461,6 +466,7 @@ impl AdminRpcDispatcher {
                 started_at_ms,
                 result: AdminAuditResult::Error,
                 duration_ms: started.elapsed().as_millis() as u64,
+                tenant_id: tenant_id.clone(),
             };
             self.audit.append(row).await;
             return AdminRpcResult::err(AdminRpcError::MethodNotFound(format!(
@@ -478,6 +484,7 @@ impl AdminRpcDispatcher {
                 started_at_ms,
                 result: AdminAuditResult::Denied,
                 duration_ms: started.elapsed().as_millis() as u64,
+                tenant_id: tenant_id.clone(),
             };
             self.audit.append(row).await;
             return AdminRpcResult::err(AdminRpcError::CapabilityNotGranted {
@@ -503,6 +510,7 @@ impl AdminRpcDispatcher {
             started_at_ms,
             result: audit_result,
             duration_ms: started.elapsed().as_millis() as u64,
+            tenant_id,
         };
         self.audit.append(row).await;
         result

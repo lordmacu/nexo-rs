@@ -2617,6 +2617,38 @@ Cross-references:
   `agents.yaml.<id>.tenant_id`. Defense-in-depth: agents
   without `tenant_id` filter out under any non-`None`
   request (no leak of existence).
+- 83.8.12.5 ✅ LLM providers per-tenant — `LlmConfig.tenants`
+  + `TenantLlmConfig.providers` with serde-default empty
+  hashmap, `LlmConfig::resolve_provider(tenant_id, name)`
+  tenant-first/global-fallback, `LlmRegistry::build_for_tenant`,
+  admin RPC `llm_providers/{upsert,delete}` route to tenant
+  namespace when `tenant_id.is_some()`, `LlmYamlPatcher`
+  trait gains 4 tenant methods, `LlmYamlPatcherFs` overrides
+  via `tenants.<tid>.providers.<pid>.*` yaml path. Cron LLM
+  build still on legacy `build()` shim — separate scope
+  (83.8.12.5.cron).
+- 83.8.12.6 ✅ Skills per-tenant layout —
+  `<root>/{__global__,<tenant_id>}/<name>/SKILL.md`. All 4
+  `SkillsStore` trait methods gain tenant variants;
+  `FsSkillsStore` shares 3 `*_in_scope` helpers across
+  global/tenant. `__global__` reserved as a tenant id
+  sentinel to keep precedence explicit. Runtime SkillLoader
+  fallback (read tenant first, then global) still pending —
+  separate scope (83.8.12.6.runtime).
+- 83.8.12.7 ✅ Audit log `tenant_id` column +
+  `tail_for_tenant` — `AdminAuditRow.tenant_id:
+  Option<String>` (serde-skip when None);
+  `AuditTailFilter.tenant_id`; idempotent ALTER for pre-
+  83.8.12.7 DBs (suppresses duplicate-column-name error so
+  `open()` round-trips on legacy + fresh paths); SQLite
+  index `idx_microapp_admin_audit_tenant`. Dispatcher sniffs
+  `tenant_id` from `params.tenant_id` (string only — non-
+  string defensive None) and stamps every audit row from
+  routing/denial/dispatch sites. CLI `nexo microapp admin
+  audit tail --tenant <id>` flag added. New tests: 6 in
+  audit.rs + 6 in audit_sqlite.rs (round-trip, filter, null
+  exclusion, since_ms combo, limit floor clamp, DDL
+  idempotence on existing DB).
 
 ### Phase 83.8.12.4.b — agent_events/escalations handler-level tenant filter + TranscriptWriter tenant_id population
 

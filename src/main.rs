@@ -100,6 +100,11 @@ enum Mode {
         limit: usize,
         format: String,
         db: Option<PathBuf>,
+        /// Phase 83.8.12.7 — restrict to a single tenant scope.
+        /// Leaves rows with `NULL tenant_id` (echo, pairing,
+        /// credentials) out when set; `None` keeps the tail
+        /// un-scoped.
+        tenant_id: Option<String>,
     },
     /// Phase 80.1.d — `nexo agent dream {tail|status|kill}`.
     AgentDream(AgentDreamSubcommand),
@@ -906,6 +911,7 @@ async fn main() -> Result<()> {
             limit,
             format,
             db,
+            tenant_id,
         } => {
             return run_microapp_admin_audit_tail(
                 microapp_id,
@@ -916,6 +922,7 @@ async fn main() -> Result<()> {
                 limit,
                 format,
                 db,
+                tenant_id,
             )
             .await;
         }
@@ -7130,6 +7137,7 @@ fn parse_args() -> CliArgs {
                 format: parse_kv_flag(&positional, "--format")
                     .unwrap_or_else(|| "table".into()),
                 db: parse_kv_flag(&positional, "--db").map(PathBuf::from),
+                tenant_id: parse_kv_flag(&positional, "--tenant"),
             },
         };
     }
@@ -12076,6 +12084,7 @@ async fn run_microapp_admin_audit_tail(
     limit: usize,
     format: String,
     db: Option<PathBuf>,
+    tenant_id: Option<String>,
 ) -> Result<()> {
     use nexo_core::agent::admin_rpc::{
         format_rows_as_json, format_rows_as_table, AdminAuditResult, AuditTailFilter,
@@ -12119,6 +12128,7 @@ async fn run_microapp_admin_audit_tail(
         result: result_enum,
         since_ms: resolved_since_ms,
         limit: limit.max(1),
+        tenant_id,
     };
     let rows = writer
         .tail(&filter)

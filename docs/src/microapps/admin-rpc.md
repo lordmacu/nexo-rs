@@ -219,15 +219,42 @@ Two writer implementations:
   fallback when no on-disk path is configured. Resets on restart.
 - **`SqliteAdminAuditWriter`** (Phase 82.10.h.1) — writes the
   `microapp_admin_audit` table (idempotent `CREATE TABLE IF NOT
-  EXISTS` + WAL + 2 indices on `microapp_id` and `method`).
-  `sweep_retention(retention_days, max_rows)` runs at boot to
-  enforce age + cap limits via the
+  EXISTS` + WAL + 3 indices on `microapp_id`, `method`, and
+  `tenant_id`). `sweep_retention(retention_days, max_rows)`
+  runs at boot to enforce age + cap limits via the
   `NEXO_MICROAPP_ADMIN_AUDIT_RETENTION_DAYS` /
   `_MAX_ROWS` toggles. Library-level `tail(&AuditTailFilter)`
-  query (Phase 82.10.h.2) backs the future `nexo microapp admin
-  audit tail` CLI subcommand — `format_rows_as_table` and
-  `format_rows_as_json` helpers ship in the same module so the
-  CLI is one trivial flag-mapping away.
+  query (Phase 82.10.h.2) backs the `nexo microapp admin
+  audit tail` CLI — `format_rows_as_table` and
+  `format_rows_as_json` helpers ship in the same module.
+
+### Phase 83.8.12.7 — per-tenant audit scope
+
+Every audit row carries an `Option<String> tenant_id` that the
+dispatcher sniffs from `params.tenant_id` (string-typed only —
+non-string values yield `None` defensively). Calls that lack a
+tenant scope (`echo`, `pairing/*`, `credentials/*`) leave the
+column `NULL` so existing pre-83.8.12.7 deployments keep
+working. Operators can filter the tail by tenant for SaaS
+billing or compliance reviews:
+
+```bash
+# CLI — restrict to one tenant scope
+nexo microapp admin audit tail --tenant acme --limit 100
+
+# combine with other filters
+nexo microapp admin audit tail --tenant acme --result denied --since-mins 60
+
+# library-side convenience: tail_for_tenant(tenant, since_ms?, limit)
+let rows = writer.tail_for_tenant("acme", None, 50).await?;
+```
+
+Schema migrates forward-only on `open()`: the inline
+`CREATE TABLE IF NOT EXISTS` adds `tenant_id` for fresh DBs, and
+`ALTER TABLE ... ADD COLUMN tenant_id TEXT` runs idempotently
+on legacy DBs (the duplicate-column-name error is the green
+path). Existing audit rows keep `NULL` and are excluded from
+any tenant-scoped tail.
 
 ## INVENTORY env toggles
 

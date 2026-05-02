@@ -33,6 +33,7 @@ async fn audit_tail_renders_seeded_rows_in_table_format() {
             started_at_ms: 1_700_000_000_000,
             result: AdminAuditResult::Ok,
             duration_ms: 5,
+            tenant_id: None,
         },
         AdminAuditRow {
             microapp_id: "agent-creator".into(),
@@ -42,6 +43,7 @@ async fn audit_tail_renders_seeded_rows_in_table_format() {
             started_at_ms: 1_700_000_010_000,
             result: AdminAuditResult::Denied,
             duration_ms: 2,
+            tenant_id: None,
         },
     ];
     for row in &seed {
@@ -92,6 +94,7 @@ async fn audit_tail_filters_by_result_and_emits_json() {
             started_at_ms: 1_700_000_000_000,
             result: AdminAuditResult::Ok,
             duration_ms: 1,
+            tenant_id: None,
         })
         .await;
     writer
@@ -103,6 +106,7 @@ async fn audit_tail_filters_by_result_and_emits_json() {
             started_at_ms: 1_700_000_010_000,
             result: AdminAuditResult::Denied,
             duration_ms: 2,
+            tenant_id: None,
         })
         .await;
     drop(writer);
