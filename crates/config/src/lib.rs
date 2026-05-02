@@ -277,10 +277,16 @@ fn load_plugins(dir: &Path) -> Result<PluginsConfig> {
         load_optional::<EmailPluginConfigFile>(&plugins_dir, "email.yaml")?.map(|f| f.email);
     let browser =
         load_optional::<BrowserConfigFile>(&plugins_dir, "browser.yaml")?.map(|f| f.browser);
+    // Phase 81.5 — optional discovery knobs at plugins/discovery.yaml.
+    // Missing file => default (empty search_paths => nothing scanned).
+    let discovery = load_optional::<PluginDiscoveryConfigFile>(&plugins_dir, "discovery.yaml")?
+        .map(|f| f.discovery)
+        .unwrap_or_default();
     Ok(PluginsConfig {
         whatsapp,
         telegram,
         email,
         browser,
+        discovery,
     })
 }

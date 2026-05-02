@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use serde::Deserialize;
 
 #[derive(Debug, Default)]
@@ -13,6 +15,40 @@ pub struct PluginsConfig {
     pub telegram: Vec<TelegramPluginConfig>,
     pub email: Option<EmailPluginConfig>,
     pub browser: Option<BrowserConfig>,
+    /// Phase 81.5 — operator-configured plugin discovery walk knobs.
+    /// Loaded from `<config_dir>/plugins/discovery.yaml` (optional —
+    /// missing file means defaults: empty search_paths so nothing is
+    /// scanned; legacy plugins continue to register through the
+    /// hardcoded boot loop).
+    pub discovery: PluginDiscoveryConfig,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginDiscoveryConfigFile {
+    pub discovery: PluginDiscoveryConfig,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginDiscoveryConfig {
+    /// Directories scanned at boot for `nexo-plugin.toml` manifests.
+    /// Each entry's immediate children are tested as plugin dirs.
+    /// Supports `$NEXO_HOME` and `$HOME` env-var expansion.
+    #[serde(default)]
+    pub search_paths: Vec<PathBuf>,
+    /// Plugin ids to skip even when a valid manifest is found.
+    #[serde(default)]
+    pub disabled: Vec<String>,
+    /// Empty = accept all valid plugins. Non-empty = whitelist; only
+    /// plugins whose id is in this list are loaded.
+    #[serde(default)]
+    pub allowlist: Vec<String>,
+    /// When false (default), the walker refuses to follow symlinks
+    /// that escape the search-path canonical root. Set true only in
+    /// trusted dev environments.
+    #[serde(default)]
+    pub follow_symlinks: bool,
 }
 
 // ── Browser plugin config ─────────────────────────────────────────────────────
