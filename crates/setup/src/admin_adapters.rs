@@ -39,8 +39,12 @@ use nexo_core::agent::admin_rpc::domains::escalations::{
     filter_matches, EscalationStore,
 };
 use nexo_core::agent::admin_rpc::domains::processing::ProcessingControlStore;
+use nexo_core::agent::admin_rpc::domains::skills::SkillsStore;
 use nexo_tool_meta::admin::escalations::{
     EscalationEntry, EscalationState, EscalationsListParams, ResolvedBy,
+};
+use nexo_tool_meta::admin::skills::{
+    SkillRecord, SkillRequiresRecord, SkillSummary, SkillsUpsertParams,
 };
 use nexo_tool_meta::admin::processing::{ProcessingControlState, ProcessingScope};
 use nexo_core::agent::transcripts::{TranscriptLine, TranscriptWriter};
@@ -281,6 +285,328 @@ fn write_atomic_bytes(path: &Path, body: &[u8]) -> anyhow::Result<()> {
     tmp.persist(path)
         .map_err(|e| anyhow::anyhow!("persist credential {}: {e}", path.display()))?;
     Ok(())
+}
+
+/// Filesystem-backed skills CRUD adapter — Phase 83.8.3.
+///
+/// Mirrors the on-disk layout the runtime
+/// `crate::agent::skills::SkillLoader` already reads from:
+/// `<root>/<name>/SKILL.md`. The body is composed back into the
+/// frontmatter format `SkillLoader::parse_frontmatter` recognises, so
+/// a CRUD round-trip through admin RPC produces a file the loader
+/// reads identically to a hand-authored one.
+///
+/// Concurrency: per-name `tokio::sync::Mutex` so concurrent
+/// upserts to the same skill serialise; different skills proceed
+/// in parallel.
+///
+/// Hot-reload: optional `on_change` callback fired after a
+/// successful `upsert` or `delete`. Production wiring passes a
+/// closure that triggers the existing Phase 18
+/// `ConfigReloadCoordinator`, so an agent that uses the skill
+/// reloads its system prompt on the next turn.
+pub struct FsSkillsStore {
+    root: PathBuf,
+    locks: DashMap<String, Arc<tokio::sync::Mutex<()>>>,
+    on_change: Option<Arc<dyn Fn() + Send + Sync>>,
+}
+
+impl std::fmt::Debug for FsSkillsStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FsSkillsStore")
+            .field("root", &self.root)
+            .field("on_change", &self.on_change.is_some())
+            .finish()
+    }
+}
+
+impl FsSkillsStore {
+    /// Build a store rooted at `root`. The directory is created on
+    /// first write if missing.
+    pub fn new(root: impl Into<PathBuf>) -> Self {
+        Self {
+            root: root.into(),
+            locks: DashMap::new(),
+            on_change: None,
+        }
+    }
+
+    /// Install a callback fired after every successful mutation.
+    /// Production wiring passes the agents-domain reload trigger so
+    /// hot-reload happens in lock-step with other yaml mutations.
+    pub fn with_on_change(
+        mut self,
+        cb: Arc<dyn Fn() + Send + Sync>,
+    ) -> Self {
+        self.on_change = Some(cb);
+        self
+    }
+
+    fn lock_for(&self, name: &str) -> Arc<tokio::sync::Mutex<()>> {
+        self.locks
+            .entry(name.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    }
+
+    /// Resolve `<root>/<name>/SKILL.md`. Defense-in-depth on top
+    /// of the handler-side regex check: rejects names containing
+    /// path separators, parent-dir refs, or non-component
+    /// characters that the regex `^[a-z0-9][a-z0-9-]{0,63}$`
+    /// already filters at the handler boundary.
+    fn resolve_skill_path(&self, name: &str) -> anyhow::Result<PathBuf> {
+        if name.is_empty()
+            || name.contains('/')
+            || name.contains('\\')
+            || name.contains("..")
+            || name.contains('\0')
+            || name == "."
+        {
+            anyhow::bail!("skill path escapes root: invalid name `{name}`");
+        }
+        Ok(self.root.join(name).join("SKILL.md"))
+    }
+
+    fn compose_blob(record: &SkillRecord) -> String {
+        // YAML frontmatter only when at least one field is set.
+        let has_meta = record.display_name.is_some()
+            || record.description.is_some()
+            || record.max_chars.is_some()
+            || !record.requires.bins.is_empty()
+            || !record.requires.env.is_empty()
+            || record.requires.mode != Default::default();
+        if !has_meta {
+            return record.body.clone();
+        }
+        let mut yaml = String::new();
+        if let Some(n) = &record.display_name {
+            yaml.push_str(&format!("name: {}\n", yaml_escape(n)));
+        }
+        if let Some(d) = &record.description {
+            yaml.push_str(&format!("description: {}\n", yaml_escape(d)));
+        }
+        if let Some(c) = record.max_chars {
+            yaml.push_str(&format!("max_chars: {c}\n"));
+        }
+        let r = &record.requires;
+        if !r.bins.is_empty() || !r.env.is_empty() || r.mode != Default::default() {
+            yaml.push_str("requires:\n");
+            if !r.bins.is_empty() {
+                yaml.push_str("  bins:\n");
+                for b in &r.bins {
+                    yaml.push_str(&format!("    - {}\n", yaml_escape(b)));
+                }
+            }
+            if !r.env.is_empty() {
+                yaml.push_str("  env:\n");
+                for e in &r.env {
+                    yaml.push_str(&format!("    - {}\n", yaml_escape(e)));
+                }
+            }
+            yaml.push_str(&format!(
+                "  mode: {}\n",
+                match r.mode {
+                    nexo_tool_meta::admin::skills::SkillDepsMode::Strict => "strict",
+                    nexo_tool_meta::admin::skills::SkillDepsMode::Warn => "warn",
+                    nexo_tool_meta::admin::skills::SkillDepsMode::Disable => "disable",
+                }
+            ));
+        }
+        format!("---\n{yaml}---\n\n{}", record.body)
+    }
+
+    async fn read_record(&self, name: &str) -> anyhow::Result<Option<SkillRecord>> {
+        let path = self.resolve_skill_path(name)?;
+        let raw = match tokio::fs::read_to_string(&path).await {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+        let updated_at = match tokio::fs::metadata(&path).await {
+            Ok(meta) => meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| {
+                    chrono::DateTime::<chrono::Utc>::from_timestamp(
+                        d.as_secs() as i64,
+                        d.subsec_nanos(),
+                    )
+                    .unwrap_or_else(chrono::Utc::now)
+                })
+                .unwrap_or_else(chrono::Utc::now),
+            Err(_) => chrono::Utc::now(),
+        };
+        let (display_name, description, max_chars, requires, body) = parse_frontmatter(&raw);
+        Ok(Some(SkillRecord {
+            name: name.to_string(),
+            display_name,
+            description,
+            body,
+            max_chars,
+            requires,
+            updated_at,
+        }))
+    }
+}
+
+/// Minimal YAML scalar escaping — wraps in double quotes when the
+/// value contains characters that would break the scalar.
+fn yaml_escape(s: &str) -> String {
+    let needs_quote = s.is_empty()
+        || s.contains(':')
+        || s.contains('#')
+        || s.contains('\n')
+        || s.starts_with(' ')
+        || s.ends_with(' ');
+    if needs_quote {
+        let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
+        format!("\"{escaped}\"")
+    } else {
+        s.to_string()
+    }
+}
+
+fn parse_frontmatter(
+    raw: &str,
+) -> (Option<String>, Option<String>, Option<usize>, SkillRequiresRecord, String) {
+    if !raw.starts_with("---") {
+        return (None, None, None, SkillRequiresRecord::default(), raw.to_string());
+    }
+    let after_open = match raw.find('\n') {
+        Some(n) => &raw[n + 1..],
+        None => return (None, None, None, SkillRequiresRecord::default(), String::new()),
+    };
+    let mut offset = 0;
+    let mut end_idx = None;
+    for line in after_open.split_inclusive('\n') {
+        let stripped = line.strip_suffix('\n').unwrap_or(line);
+        if stripped.trim() == "---" {
+            end_idx = Some(offset);
+            break;
+        }
+        offset += line.len();
+    }
+    let Some(end_idx) = end_idx else {
+        return (None, None, None, SkillRequiresRecord::default(), raw.to_string());
+    };
+    let yaml = &after_open[..end_idx];
+    let after_close = &after_open[end_idx..];
+    let body = after_close
+        .find('\n')
+        .map(|i| &after_close[i + 1..])
+        .unwrap_or("");
+    let body_owned = body.trim_start_matches('\n').to_string();
+    #[derive(serde::Deserialize, Default)]
+    #[serde(default)]
+    struct ParsedFrontmatter {
+        name: Option<String>,
+        description: Option<String>,
+        max_chars: Option<usize>,
+        requires: ParsedRequires,
+    }
+    #[derive(serde::Deserialize, Default)]
+    #[serde(default)]
+    struct ParsedRequires {
+        bins: Vec<String>,
+        env: Vec<String>,
+        mode: nexo_tool_meta::admin::skills::SkillDepsMode,
+    }
+    let parsed: ParsedFrontmatter = serde_yaml::from_str(yaml).unwrap_or_default();
+    let requires = SkillRequiresRecord {
+        bins: parsed.requires.bins,
+        env: parsed.requires.env,
+        mode: parsed.requires.mode,
+    };
+    (parsed.name, parsed.description, parsed.max_chars, requires, body_owned)
+}
+
+#[async_trait]
+impl SkillsStore for FsSkillsStore {
+    async fn list(&self, prefix: Option<&str>) -> anyhow::Result<Vec<SkillSummary>> {
+        let mut out = Vec::new();
+        let mut entries = match tokio::fs::read_dir(&self.root).await {
+            Ok(d) => d,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(out),
+            Err(e) => return Err(e.into()),
+        };
+        while let Some(entry) = entries.next_entry().await? {
+            let ft = match entry.file_type().await {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            if !ft.is_dir() {
+                continue;
+            }
+            let Some(name) = entry.file_name().to_str().map(|s| s.to_string()) else {
+                continue;
+            };
+            if let Some(p) = prefix {
+                if !name.starts_with(p) {
+                    continue;
+                }
+            }
+            let Some(record) = self.read_record(&name).await? else {
+                continue;
+            };
+            out.push(SkillSummary {
+                name: record.name,
+                display_name: record.display_name,
+                description: record.description,
+                updated_at: record.updated_at,
+            });
+        }
+        out.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(out)
+    }
+
+    async fn get(&self, name: &str) -> anyhow::Result<Option<SkillRecord>> {
+        self.read_record(name).await
+    }
+
+    async fn upsert(
+        &self,
+        params: SkillsUpsertParams,
+    ) -> anyhow::Result<(SkillRecord, bool)> {
+        let lock = self.lock_for(&params.name);
+        let _guard = lock.lock().await;
+        let path = self.resolve_skill_path(&params.name)?;
+        let dir = path.parent().expect("SKILL.md has parent");
+        let created = !path.exists();
+        tokio::fs::create_dir_all(dir).await?;
+        let record = SkillRecord {
+            name: params.name.clone(),
+            display_name: params.display_name,
+            description: params.description,
+            body: params.body,
+            max_chars: params.max_chars,
+            requires: params.requires.unwrap_or_default(),
+            updated_at: chrono::Utc::now(),
+        };
+        let blob = Self::compose_blob(&record);
+        let tmp = path.with_extension("md.tmp");
+        tokio::fs::write(&tmp, &blob).await?;
+        tokio::fs::rename(&tmp, &path).await?;
+        if let Some(cb) = &self.on_change {
+            (cb)();
+        }
+        Ok((record, created))
+    }
+
+    async fn delete(&self, name: &str) -> anyhow::Result<bool> {
+        let lock = self.lock_for(name);
+        let _guard = lock.lock().await;
+        let path = self.resolve_skill_path(name)?;
+        let dir = path.parent().expect("SKILL.md has parent");
+        if !dir.exists() {
+            return Ok(false);
+        }
+        tokio::fs::remove_dir_all(dir).await?;
+        if let Some(cb) = &self.on_change {
+            (cb)();
+        }
+        Ok(true)
+    }
 }
 
 #[cfg(test)]
@@ -1687,5 +2013,231 @@ mod escalation_store_tests {
             .unwrap();
         assert_eq!(rows.len(), 1);
         assert!(matches!(rows[0].state, EscalationState::Resolved { .. }));
+    }
+
+    // ── FsSkillsStore tests ──────────────────────────────────────
+
+    fn skills_tmp() -> PathBuf {
+        std::env::temp_dir().join(format!("nexo-fs-skills-{}", uuid::Uuid::new_v4()))
+    }
+
+    #[tokio::test]
+    async fn fs_skills_upsert_then_list_round_trip() {
+        let root = skills_tmp();
+        let store = FsSkillsStore::new(&root);
+        let (rec, created) = store
+            .upsert(SkillsUpsertParams {
+                name: "weather".into(),
+                display_name: Some("Weather".into()),
+                description: Some("Forecasts.".into()),
+                body: "Use for forecasts.".into(),
+                max_chars: None,
+                requires: None,
+            })
+            .await
+            .unwrap();
+        assert!(created);
+        assert_eq!(rec.name, "weather");
+        let list = store.list(None).await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].name, "weather");
+        tokio::fs::remove_dir_all(&root).await.ok();
+    }
+
+    #[tokio::test]
+    async fn fs_skills_list_empty_root_is_not_error() {
+        let root = skills_tmp();
+        let store = FsSkillsStore::new(&root);
+        let list = store.list(None).await.unwrap();
+        assert!(list.is_empty());
+    }
+
+    #[tokio::test]
+    async fn fs_skills_get_missing_returns_none() {
+        let root = skills_tmp();
+        let store = FsSkillsStore::new(&root);
+        let r = store.get("ghost").await.unwrap();
+        assert!(r.is_none());
+    }
+
+    #[tokio::test]
+    async fn fs_skills_upsert_twice_reports_created_false_second() {
+        let root = skills_tmp();
+        let store = FsSkillsStore::new(&root);
+        let p = SkillsUpsertParams {
+            name: "twice".into(),
+            display_name: None,
+            description: None,
+            body: "first".into(),
+            max_chars: None,
+            requires: None,
+        };
+        let (_, c1) = store.upsert(p.clone()).await.unwrap();
+        let (rec2, c2) = store
+            .upsert(SkillsUpsertParams {
+                body: "second".into(),
+                ..p
+            })
+            .await
+            .unwrap();
+        assert!(c1);
+        assert!(!c2);
+        assert_eq!(rec2.body, "second");
+        tokio::fs::remove_dir_all(&root).await.ok();
+    }
+
+    #[tokio::test]
+    async fn fs_skills_delete_missing_returns_false() {
+        let root = skills_tmp();
+        let store = FsSkillsStore::new(&root);
+        let d = store.delete("absent").await.unwrap();
+        assert!(!d);
+    }
+
+    #[tokio::test]
+    async fn fs_skills_delete_then_get_returns_none() {
+        let root = skills_tmp();
+        let store = FsSkillsStore::new(&root);
+        let _ = store
+            .upsert(SkillsUpsertParams {
+                name: "tmp".into(),
+                display_name: None,
+                description: None,
+                body: "x".into(),
+                max_chars: None,
+                requires: None,
+            })
+            .await
+            .unwrap();
+        let d = store.delete("tmp").await.unwrap();
+        assert!(d);
+        let r = store.get("tmp").await.unwrap();
+        assert!(r.is_none());
+        tokio::fs::remove_dir_all(&root).await.ok();
+    }
+
+    #[tokio::test]
+    async fn fs_skills_path_traversal_rejected() {
+        let root = skills_tmp();
+        tokio::fs::create_dir_all(&root).await.unwrap();
+        let store = FsSkillsStore::new(&root);
+        // resolve_skill_path is the gatekeeper; bad names must not
+        // escape the root.
+        let r = store.resolve_skill_path("../escape");
+        assert!(r.is_err(), "path traversal must be rejected");
+        tokio::fs::remove_dir_all(&root).await.ok();
+    }
+
+    #[tokio::test]
+    async fn fs_skills_on_change_callback_fires_after_upsert_and_delete() {
+        let root = skills_tmp();
+        let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter_for_cb = counter.clone();
+        let store = FsSkillsStore::new(&root).with_on_change(Arc::new(move || {
+            counter_for_cb.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }));
+        let _ = store
+            .upsert(SkillsUpsertParams {
+                name: "cb".into(),
+                display_name: None,
+                description: None,
+                body: "body".into(),
+                max_chars: None,
+                requires: None,
+            })
+            .await
+            .unwrap();
+        let _ = store.delete("cb").await.unwrap();
+        assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 2);
+        tokio::fs::remove_dir_all(&root).await.ok();
+    }
+
+    #[tokio::test]
+    async fn fs_skills_list_prefix_filters() {
+        let root = skills_tmp();
+        let store = FsSkillsStore::new(&root);
+        for name in ["alpha", "beta", "alpine"] {
+            let _ = store
+                .upsert(SkillsUpsertParams {
+                    name: name.into(),
+                    display_name: None,
+                    description: None,
+                    body: "x".into(),
+                    max_chars: None,
+                    requires: None,
+                })
+                .await
+                .unwrap();
+        }
+        let list = store.list(Some("alp")).await.unwrap();
+        let names: Vec<&str> = list.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["alpha", "alpine"]);
+        tokio::fs::remove_dir_all(&root).await.ok();
+    }
+
+    #[tokio::test]
+    async fn fs_skills_frontmatter_round_trips_through_skill_loader_format() {
+        // Write via FsSkillsStore, read raw bytes, confirm shape
+        // matches what crate::agent::skills::SkillLoader expects:
+        // `---\n<yaml>\n---\n\n<body>`.
+        let root = skills_tmp();
+        let store = FsSkillsStore::new(&root);
+        let _ = store
+            .upsert(SkillsUpsertParams {
+                name: "rt".into(),
+                display_name: Some("Round Trip".into()),
+                description: Some("Probe.".into()),
+                body: "body line".into(),
+                max_chars: Some(1024),
+                requires: None,
+            })
+            .await
+            .unwrap();
+        let blob = tokio::fs::read_to_string(root.join("rt").join("SKILL.md"))
+            .await
+            .unwrap();
+        assert!(blob.starts_with("---\n"));
+        assert!(blob.contains("name: Round Trip"));
+        assert!(blob.contains("description: Probe."));
+        assert!(blob.contains("max_chars: 1024"));
+        assert!(blob.contains("\n---\n\nbody line"));
+        // Read back through FsSkillsStore — frontmatter parses
+        // back into typed fields.
+        let rec = store.get("rt").await.unwrap().unwrap();
+        assert_eq!(rec.display_name.as_deref(), Some("Round Trip"));
+        assert_eq!(rec.description.as_deref(), Some("Probe."));
+        assert_eq!(rec.max_chars, Some(1024));
+        assert_eq!(rec.body, "body line");
+        tokio::fs::remove_dir_all(&root).await.ok();
+    }
+
+    #[tokio::test]
+    async fn fs_skills_concurrent_upserts_same_name_dont_corrupt() {
+        let root = skills_tmp();
+        let store = Arc::new(FsSkillsStore::new(&root));
+        let mut handles = Vec::new();
+        for i in 0..16 {
+            let s = store.clone();
+            handles.push(tokio::spawn(async move {
+                s.upsert(SkillsUpsertParams {
+                    name: "race".into(),
+                    display_name: None,
+                    description: None,
+                    body: format!("v{i}"),
+                    max_chars: None,
+                    requires: None,
+                })
+                .await
+            }));
+        }
+        for h in handles {
+            h.await.unwrap().unwrap();
+        }
+        let rec = store.get("race").await.unwrap().unwrap();
+        // Body must be one of the 16 versions, not garbage.
+        assert!(rec.body.starts_with("v"));
+        let n: i32 = rec.body[1..].parse().unwrap();
+        assert!((0..16).contains(&n));
+        tokio::fs::remove_dir_all(&root).await.ok();
     }
 }
