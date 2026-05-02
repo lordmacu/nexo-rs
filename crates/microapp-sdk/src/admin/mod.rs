@@ -16,9 +16,13 @@
 //! - [`takeover`] — Phase 83.8.6 `HumanTakeover` engage / send /
 //!   release.
 
+#[cfg(feature = "test-harness")]
+pub mod mock;
 pub mod runtime_sender;
 pub mod takeover;
 pub mod transcripts;
+#[cfg(feature = "test-harness")]
+pub use mock::{MockAdminRpc, MockRequest};
 pub use runtime_sender::WriterAdminSender;
 pub use takeover::{HumanTakeover, SendReplyArgs};
 pub use transcripts::TranscriptStream;

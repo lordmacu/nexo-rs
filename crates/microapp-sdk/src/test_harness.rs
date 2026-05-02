@@ -34,6 +34,12 @@ pub enum MicroappTestError {
 /// In-process driver for unit tests.
 pub struct MicroappTestHarness {
     app: Mutex<Option<Microapp>>,
+    /// Phase 83.15.b — optional admin RPC mock. When `Some`, the
+    /// dispatch loop's `Handlers` get this mock's `AdminClient`
+    /// installed so tools that call `ctx.admin()` see programmable
+    /// canned responses instead of `None`.
+    #[cfg(feature = "admin")]
+    admin_mock: Mutex<Option<crate::admin::AdminClient>>,
 }
 
 impl MicroappTestHarness {
@@ -41,7 +47,20 @@ impl MicroappTestHarness {
     pub fn new(app: Microapp) -> Self {
         Self {
             app: Mutex::new(Some(app)),
+            #[cfg(feature = "admin")]
+            admin_mock: Mutex::new(None),
         }
+    }
+
+    /// Phase 83.15.b — install a [`crate::admin::MockAdminRpc`]
+    /// so tools that call `ctx.admin()` receive programmable
+    /// responses. Without this call, `ctx.admin()` returns
+    /// `None` (matching the no-admin-feature production path).
+    /// Available with `admin + test-harness` features.
+    #[cfg(feature = "admin")]
+    pub async fn with_admin_mock(self, mock: &crate::admin::MockAdminRpc) -> Self {
+        *self.admin_mock.lock().await = Some(mock.client());
+        self
     }
 
     /// Invoke a tool by name with `arguments`. Returns the JSON
@@ -178,7 +197,18 @@ impl MicroappTestHarness {
         // EOF on the in-memory cursor, terminating naturally.
         let writer_arc = std::sync::Arc::new(Mutex::new(writer));
         let writer_for_run = std::sync::Arc::clone(&writer_arc);
-        let handlers = app.into_handlers();
+        #[allow(unused_mut)]
+        let mut handlers = app.into_handlers();
+        // Phase 83.15.b — inject the optional MockAdminRpc client
+        // so tools that call `ctx.admin()` see canned responses.
+        // Without this, `Handlers.admin = None` and the tool path
+        // matches the no-admin-feature production behaviour.
+        #[cfg(feature = "admin")]
+        {
+            if let Some(client) = self.admin_mock.lock().await.clone() {
+                handlers.admin = Some(std::sync::Arc::new(client));
+            }
+        }
         crate::runtime::dispatch_loop(reader, writer_for_run, handlers)
             .await
             .map_err(|e| MicroappTestError::Internal(e.to_string()))?;
@@ -301,6 +331,58 @@ mod tests {
 
     async fn echo(args: Value, _ctx: ToolCtx) -> Result<ToolReply, ToolError> {
         Ok(ToolReply::ok_json(args))
+    }
+
+    #[cfg(feature = "admin")]
+    #[tokio::test]
+    async fn call_tool_with_admin_mock_routes_admin_calls() {
+        // Phase 83.15.b — tool that exercises the admin RPC
+        // surface; the harness's MockAdminRpc supplies the
+        // canned response without a daemon in the loop.
+        async fn list_agents_tool(
+            _args: Value,
+            ctx: ToolCtx,
+        ) -> Result<ToolReply, ToolError> {
+            let admin = ctx
+                .admin()
+                .ok_or_else(|| ToolError::Internal("admin client missing".into()))?;
+            let raw = admin
+                .call_raw("nexo/admin/agents/list", json!({}))
+                .await
+                .map_err(|e| ToolError::Internal(e.to_string()))?;
+            Ok(ToolReply::ok_json(raw))
+        }
+        let mock = crate::admin::MockAdminRpc::new();
+        mock.on(
+            "nexo/admin/agents/list",
+            json!({ "agents": [{ "id": "ana", "active": true }] }),
+        );
+        let app = Microapp::new("t", "0.0.0")
+            .with_admin()
+            .with_tool("list_agents", list_agents_tool);
+        let h = MicroappTestHarness::new(app).with_admin_mock(&mock).await;
+        let out = h.call_tool("list_agents", json!({})).await.unwrap();
+        assert_eq!(out["agents"][0]["id"], "ana");
+        // Mock recorded the request.
+        let calls = mock.requests_for("nexo/admin/agents/list");
+        assert_eq!(calls.len(), 1);
+    }
+
+    #[cfg(feature = "admin")]
+    #[tokio::test]
+    async fn tool_without_mock_sees_no_admin_client() {
+        async fn probe_admin(_args: Value, ctx: ToolCtx) -> Result<ToolReply, ToolError> {
+            // No mock wired → ctx.admin() must be None.
+            assert!(ctx.admin().is_none(), "admin client must be None");
+            Ok(ToolReply::ok_json(json!({ "admin_present": false })))
+        }
+        let app = Microapp::new("t", "0.0.0")
+            .with_admin()
+            .with_tool("probe", probe_admin);
+        // Note: NO `with_admin_mock` call.
+        let h = MicroappTestHarness::new(app);
+        let out = h.call_tool("probe", json!({})).await.unwrap();
+        assert_eq!(out["admin_present"], false);
     }
 
     #[tokio::test]
