@@ -2646,6 +2646,17 @@ Cross-references:
   gained `session_id: Option<Uuid>` (was missing since Phase
   82.13.b.1 added the field on the SDK side). Out-of-tree commit
   9f634a9.
+- 83.15.b.docs ✅ `docs/src/microapps/testing.md` —
+  end-to-end testing reference: `MicroappTestHarness` smoke,
+  `MockBindingContext` for binding-aware tools, all three
+  `MockAdminRpc::on*` flavours (static Ok, static Err,
+  closure responder), error round-trip variant preservation,
+  invocation counting via Arc<AtomicUsize>, hook fire pattern,
+  and what the harness does NOT do (no real daemon, no
+  firehose subscription, no persistence). Linked from
+  `docs/src/SUMMARY.md` after Templates. Reference test in
+  `extensions/template-microapp-rust/` cited as the runnable
+  source.
 - 83.15.b.template ✅ Reference test in
   `extensions/template-microapp-rust/` exercising MockAdminRpc.
   Template refactored to expose `build_app()` + new `whoami_tool`
