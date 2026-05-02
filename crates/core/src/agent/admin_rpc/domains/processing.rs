@@ -306,12 +306,58 @@ pub async fn resume(
         (None, _, _) => None,
         _ => Some(false),
     };
+    // Phase 82.13.b.3 — drain the per-scope pending queue
+    // (inbounds buffered while the scope was paused) and stamp
+    // each as a `User` transcript entry with its ORIGINAL
+    // timestamp so the agent reads real chronology on its next
+    // turn. Stamp errors are best-effort logged; the resume
+    // ack still reports the drained count via
+    // `drained_pending`.
+    let drained = match store.drain_pending(&p.scope).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                agent = %p.scope.agent_id(),
+                "drain_pending failed; resume continues without replay",
+            );
+            Vec::new()
+        }
+    };
+    if !drained.is_empty() {
+        if let (Some(session_id), Some(app)) = (p.session_id, appender) {
+            for it in &drained {
+                let entry = TranscriptEntry {
+                    role: TranscriptRole::User,
+                    content: it.body.clone(),
+                    source_plugin: it.source_plugin.clone(),
+                    sender_id: Some(it.from_contact_id.clone()),
+                    message_id: it.message_id,
+                };
+                if let Err(e) =
+                    app.append(p.scope.agent_id(), session_id, entry).await
+                {
+                    tracing::warn!(
+                        error = %e,
+                        agent = %p.scope.agent_id(),
+                        session_id = %session_id,
+                        "pending inbound stamp failed; replay best-effort",
+                    );
+                }
+            }
+        }
+    }
+    let drained_pending = if drained.is_empty() {
+        None
+    } else {
+        Some(drained.len() as u32)
+    };
     crate::agent::admin_rpc::dispatcher::AdminRpcResult::ok(
         serde_json::to_value(ProcessingAck {
             changed,
             correlation_id: uuid::Uuid::new_v4(),
             transcript_stamped,
-            drained_pending: None,
+            drained_pending,
         })
         .unwrap_or(serde_json::Value::Null),
     )
@@ -535,6 +581,15 @@ mod tests {
     #[derive(Debug, Default)]
     struct MockStore {
         rows: Mutex<std::collections::HashMap<ProcessingScope, ProcessingControlState>>,
+        /// Phase 82.13.b.3 — pending queue for the resume drain
+        /// path. Tests seed this directly via `push_pending` to
+        /// drive the drain branch of `resume()`.
+        pending: Mutex<
+            std::collections::HashMap<
+                ProcessingScope,
+                std::collections::VecDeque<PendingInbound>,
+            >,
+        >,
     }
 
     #[async_trait]
@@ -562,6 +617,30 @@ mod tests {
         }
         async fn clear(&self, scope: &ProcessingScope) -> anyhow::Result<bool> {
             Ok(self.rows.lock().unwrap().remove(scope).is_some())
+        }
+        async fn push_pending(
+            &self,
+            scope: &ProcessingScope,
+            inbound: PendingInbound,
+        ) -> anyhow::Result<(usize, u32)> {
+            let mut p = self.pending.lock().unwrap();
+            let q = p
+                .entry(scope.clone())
+                .or_insert_with(std::collections::VecDeque::new);
+            q.push_back(inbound);
+            Ok((q.len(), 0))
+        }
+        async fn drain_pending(
+            &self,
+            scope: &ProcessingScope,
+        ) -> anyhow::Result<Vec<PendingInbound>> {
+            Ok(self
+                .pending
+                .lock()
+                .unwrap()
+                .remove(scope)
+                .map(|q| q.into_iter().collect())
+                .unwrap_or_default())
         }
     }
 
@@ -1271,5 +1350,218 @@ mod tests {
             store.get(&convo()).await,
             Ok(ProcessingControlState::AgentActive)
         ));
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // Phase 82.13.b.3 — drain pending inbounds on resume.
+    // ──────────────────────────────────────────────────────────────
+
+    fn pending(seq: u64) -> PendingInbound {
+        PendingInbound {
+            message_id: None,
+            from_contact_id: format!("wa.55+{seq}"),
+            body: format!("msg {seq}"),
+            timestamp_ms: 1_700_000_000_000 + seq,
+            source_plugin: "whatsapp".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn resume_drains_pending_into_transcript_user_entries() {
+        let store = MockStore::default();
+        let _ = pause(
+            &store,
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+            }),
+        )
+        .await;
+        // Seed the pending queue with 3 inbounds (out-of-band:
+        // production wires this to the inbound dispatcher; tests
+        // drive the store directly).
+        for i in 0..3 {
+            store.push_pending(&convo(), pending(i)).await.unwrap();
+        }
+        let appender = RecordingAppender::default();
+        let session_id = paused_with_session();
+        let result = resume(
+            &store,
+            Some(&appender),
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+                "session_id": session_id,
+            }),
+        )
+        .await;
+        assert!(result.error.is_none(), "{result:?}");
+        let v = result.result.unwrap();
+        assert_eq!(v["drained_pending"], 3);
+        // 3 User entries stamped on the transcript with original
+        // timestamps + sender_id.
+        let captured = appender.captured.lock().unwrap();
+        assert_eq!(captured.len(), 3);
+        for (i, (_, sid, entry)) in captured.iter().enumerate() {
+            assert_eq!(*sid, session_id);
+            assert!(matches!(entry.role, super::TranscriptRole::User));
+            assert_eq!(entry.content, format!("msg {i}"));
+            assert_eq!(entry.source_plugin, "whatsapp");
+            assert_eq!(
+                entry.sender_id.as_deref(),
+                Some(format!("wa.55+{i}").as_str())
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn resume_with_empty_queue_returns_drained_pending_none() {
+        let store = MockStore::default();
+        let _ = pause(
+            &store,
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+            }),
+        )
+        .await;
+        let appender = RecordingAppender::default();
+        let result = resume(
+            &store,
+            Some(&appender),
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+                "session_id": paused_with_session(),
+            }),
+        )
+        .await;
+        assert!(result.error.is_none());
+        let v = result.result.unwrap();
+        assert!(v.get("drained_pending").is_none(), "no field when empty");
+        assert!(appender.captured.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn resume_drains_only_target_scope() {
+        let store = MockStore::default();
+        let other = ProcessingScope::Conversation {
+            agent_id: "ana".into(),
+            channel: "whatsapp".into(),
+            account_id: "acc".into(),
+            contact_id: "wa.99".into(),
+            mcp_channel_source: None,
+        };
+        let _ = pause(
+            &store,
+            serde_json::json!({ "scope": convo(), "operator_token_hash": "h" }),
+        )
+        .await;
+        let _ = pause(
+            &store,
+            serde_json::json!({ "scope": other, "operator_token_hash": "h" }),
+        )
+        .await;
+        store.push_pending(&convo(), pending(0)).await.unwrap();
+        store.push_pending(&convo(), pending(1)).await.unwrap();
+        let other_scope = ProcessingScope::Conversation {
+            agent_id: "ana".into(),
+            channel: "whatsapp".into(),
+            account_id: "acc".into(),
+            contact_id: "wa.99".into(),
+            mcp_channel_source: None,
+        };
+        store
+            .push_pending(&other_scope, pending(99))
+            .await
+            .unwrap();
+        let appender = RecordingAppender::default();
+        let result = resume(
+            &store,
+            Some(&appender),
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+                "session_id": paused_with_session(),
+            }),
+        )
+        .await;
+        assert!(result.error.is_none());
+        // Only the target scope was drained: ack reports 2.
+        let v = result.result.unwrap();
+        assert_eq!(v["drained_pending"], 2);
+        // The OTHER scope's queue is untouched.
+        let other_remaining = store.drain_pending(&other_scope).await.unwrap();
+        assert_eq!(other_remaining.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn resume_drains_but_skips_stamp_when_session_id_missing() {
+        // Operator UI didn't pass session_id. Drain still
+        // happens (queue cleared), but no transcript stamp —
+        // operator visibility via the ack count alone.
+        let store = MockStore::default();
+        let _ = pause(
+            &store,
+            serde_json::json!({ "scope": convo(), "operator_token_hash": "h" }),
+        )
+        .await;
+        store.push_pending(&convo(), pending(0)).await.unwrap();
+        store.push_pending(&convo(), pending(1)).await.unwrap();
+        let appender = RecordingAppender::default();
+        let result = resume(
+            &store,
+            Some(&appender),
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+            }),
+        )
+        .await;
+        assert!(result.error.is_none());
+        let v = result.result.unwrap();
+        assert_eq!(v["drained_pending"], 2);
+        // Stamp skipped — no session id provided.
+        assert!(appender.captured.lock().unwrap().is_empty());
+        // Queue is cleared even without session id.
+        assert!(store.drain_pending(&convo()).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn resume_drains_alongside_summary_injection() {
+        // Combined Phase 82.13.b.2 + .b.3: summary injects as
+        // System BEFORE drain stamps as User entries. Both
+        // surface on the same resume call.
+        let store = MockStore::default();
+        let _ = pause(
+            &store,
+            serde_json::json!({ "scope": convo(), "operator_token_hash": "h" }),
+        )
+        .await;
+        store.push_pending(&convo(), pending(0)).await.unwrap();
+        let appender = RecordingAppender::default();
+        let session_id = paused_with_session();
+        let result = resume(
+            &store,
+            Some(&appender),
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+                "session_id": session_id,
+                "summary_for_agent": "cliente confirmó dirección",
+            }),
+        )
+        .await;
+        assert!(result.error.is_none());
+        let v = result.result.unwrap();
+        assert_eq!(v["transcript_stamped"], true);
+        assert_eq!(v["drained_pending"], 1);
+        // 2 entries: summary first (System), then drained inbound (User).
+        let captured = appender.captured.lock().unwrap();
+        assert_eq!(captured.len(), 2);
+        assert!(matches!(captured[0].2.role, super::TranscriptRole::System));
+        assert!(captured[0].2.content.starts_with("[operator_summary]"));
+        assert!(matches!(captured[1].2.role, super::TranscriptRole::User));
+        assert_eq!(captured[1].2.content, "msg 0");
     }
 }
