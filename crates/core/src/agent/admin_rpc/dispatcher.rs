@@ -787,7 +787,12 @@ impl AdminRpcDispatcher {
                             }
                         }
                     }
-                    super::domains::processing::pause(store.as_ref(), params).await
+                    super::domains::processing::pause(
+                        store.as_ref(),
+                        self.event_emitter.as_ref(),
+                        params,
+                    )
+                    .await
                 }
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "processing domain not configured".into(),
@@ -797,6 +802,7 @@ impl AdminRpcDispatcher {
                 Some(store) => {
                     super::domains::processing::resume(
                         store.as_ref(),
+                        self.event_emitter.as_ref(),
                         self.transcript_appender.as_deref(),
                         params,
                     )

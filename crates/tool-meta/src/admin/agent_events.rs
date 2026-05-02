@@ -127,6 +127,37 @@ pub enum AgentEventKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tenant_id: Option<String>,
     },
+    /// Phase 82.13.b.firehose — fired when an admin RPC handler
+    /// flips the [`crate::admin::processing::ProcessingControlState`]
+    /// for a scope (operator pause / resume / intervention reply).
+    /// Operator UIs render a real-time pause indicator without
+    /// polling `processing/state`. `prev_state` carries the value
+    /// the handler observed before the transition so subscribers
+    /// can render correct deltas (e.g. badge clears on
+    /// `paused → active`); on initial pause the `prev` is
+    /// `agent_active`. The matching JSON-RPC method literal lives
+    /// at [`crate::admin::processing::PROCESSING_STATE_CHANGED_NOTIFY_METHOD`]
+    /// — emit sites use the firehose `agent_event` notify method
+    /// (this variant rides on the same channel as every other
+    /// agent event), but the constant is kept for any future
+    /// dedicated subject.
+    ProcessingStateChanged {
+        /// Owning agent (denormalised from `scope` so subscribers
+        /// filter without parsing the discriminator).
+        agent_id: String,
+        /// Scope whose state flipped.
+        scope: crate::admin::processing::ProcessingScope,
+        /// State observed immediately before the transition.
+        prev_state: crate::admin::processing::ProcessingControlState,
+        /// State the handler installed.
+        new_state: crate::admin::processing::ProcessingControlState,
+        /// Epoch ms when the transition happened.
+        at_ms: u64,
+        /// Phase 83.8.12 — owning tenant. `None` for legacy /
+        /// single-tenant deployments.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tenant_id: Option<String>,
+    },
 }
 
 /// Speaker role mirror — kept on the wire side so SDK types
@@ -328,5 +359,42 @@ mod tests {
         assert_eq!(back, p);
 
         assert_eq!(AGENT_EVENT_NOTIFY_METHOD, "nexo/notify/agent_event");
+    }
+
+    #[test]
+    fn processing_state_changed_round_trip_carries_prev_and_new() {
+        use crate::admin::processing::{ProcessingControlState, ProcessingScope};
+
+        let scope = ProcessingScope::Conversation {
+            agent_id: "ana".into(),
+            channel: "whatsapp".into(),
+            account_id: "55-1234".into(),
+            contact_id: "55-5678".into(),
+            mcp_channel_source: None,
+        };
+        let evt = AgentEventKind::ProcessingStateChanged {
+            agent_id: "ana".into(),
+            scope: scope.clone(),
+            prev_state: ProcessingControlState::AgentActive,
+            new_state: ProcessingControlState::PausedByOperator {
+                scope: scope.clone(),
+                paused_at_ms: 1_700_000_000_000,
+                operator_token_hash: "abcdef0123456789".into(),
+                reason: Some("escalated".into()),
+            },
+            at_ms: 1_700_000_000_000,
+            tenant_id: None,
+        };
+        let v = serde_json::to_value(&evt).unwrap();
+        assert_eq!(v["kind"], "processing_state_changed");
+        assert_eq!(v["agent_id"], "ana");
+        assert_eq!(v["prev_state"]["state"], "agent_active");
+        assert_eq!(v["new_state"]["state"], "paused_by_operator");
+        assert!(
+            v.get("tenant_id").is_none(),
+            "tenant_id absent must be skipped"
+        );
+        let back: AgentEventKind = serde_json::from_value(v).unwrap();
+        assert_eq!(back, evt);
     }
 }

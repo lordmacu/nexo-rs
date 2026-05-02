@@ -15,7 +15,10 @@
 //! without the daemon pretending to support unimplemented
 //! shapes.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
+use nexo_tool_meta::admin::agent_events::AgentEventKind;
 use nexo_tool_meta::admin::processing::{
     PendingInbound, ProcessingControlState, ProcessingScope,
 };
@@ -27,6 +30,7 @@ use crate::agent::admin_rpc::dispatcher::AdminRpcError;
 use crate::agent::admin_rpc::transcript_appender::{
     TranscriptAppender, TranscriptEntry, TranscriptRole,
 };
+use crate::agent::agent_events::AgentEventEmitter;
 
 /// Storage abstraction for the per-scope control state. v0
 /// production impl is `nexo_setup::admin_adapters::InMemoryProcessingControlStore`
@@ -150,8 +154,17 @@ pub async fn state(
 /// `nexo/admin/processing/pause` — flip the scope to
 /// `PausedByOperator`. Idempotent: pausing an already-paused
 /// scope returns `changed = false`.
+///
+/// Phase 82.13.b.firehose — when `emitter` is `Some` AND the
+/// transition was a real flip (`changed = true`), fires
+/// `AgentEventKind::ProcessingStateChanged` so operator UIs
+/// subscribed to `nexo/notify/agent_event` render the pause
+/// indicator without polling `processing/state`. `prev_state`
+/// is captured before the mutation so the wire frame carries
+/// both ends of the transition.
 pub async fn pause(
     store: &dyn ProcessingControlStore,
+    emitter: Option<&Arc<dyn AgentEventEmitter>>,
     params: serde_json::Value,
 ) -> crate::agent::admin_rpc::dispatcher::AdminRpcResult {
     use nexo_tool_meta::admin::processing::{ProcessingAck, ProcessingPauseParams};
@@ -172,13 +185,23 @@ pub async fn pause(
             ),
         );
     }
+    let prev_state = match store.get(&p.scope).await {
+        Ok(s) => s,
+        Err(e) => {
+            return crate::agent::admin_rpc::dispatcher::AdminRpcResult::err(
+                AdminRpcError::Internal(format!("processing.pause get: {e}")),
+            )
+        }
+    };
+    let at_ms = now_epoch_ms();
     let new_state = ProcessingControlState::PausedByOperator {
         scope: p.scope.clone(),
-        paused_at_ms: now_epoch_ms(),
+        paused_at_ms: at_ms,
         operator_token_hash: p.operator_token_hash,
         reason: p.reason,
     };
-    let changed = match store.set(p.scope, new_state).await {
+    let new_state_for_emit = new_state.clone();
+    let changed = match store.set(p.scope.clone(), new_state).await {
         Ok(c) => c,
         Err(e) => {
             return crate::agent::admin_rpc::dispatcher::AdminRpcResult::err(
@@ -186,6 +209,19 @@ pub async fn pause(
             )
         }
     };
+    if changed {
+        if let Some(em) = emitter {
+            em.emit(AgentEventKind::ProcessingStateChanged {
+                agent_id: p.scope.agent_id().to_string(),
+                scope: p.scope.clone(),
+                prev_state,
+                new_state: new_state_for_emit,
+                at_ms,
+                tenant_id: None,
+            })
+            .await;
+        }
+    }
     crate::agent::admin_rpc::dispatcher::AdminRpcResult::ok(
         serde_json::to_value(ProcessingAck {
             changed,
@@ -212,6 +248,7 @@ pub async fn pause(
 /// forcing a literal replay).
 pub async fn resume(
     store: &dyn ProcessingControlStore,
+    emitter: Option<&Arc<dyn AgentEventEmitter>>,
     appender: Option<&dyn TranscriptAppender>,
     params: serde_json::Value,
 ) -> crate::agent::admin_rpc::dispatcher::AdminRpcResult {
@@ -260,6 +297,15 @@ pub async fn resume(
             );
         }
     }
+    let prev_state = match store.get(&p.scope).await {
+        Ok(s) => s,
+        Err(e) => {
+            return crate::agent::admin_rpc::dispatcher::AdminRpcResult::err(
+                AdminRpcError::Internal(format!("processing.resume get: {e}")),
+            )
+        }
+    };
+    let at_ms = now_epoch_ms();
     let changed = match store.clear(&p.scope).await {
         Ok(c) => c,
         Err(e) => {
@@ -268,6 +314,19 @@ pub async fn resume(
             )
         }
     };
+    if changed {
+        if let Some(em) = emitter {
+            em.emit(AgentEventKind::ProcessingStateChanged {
+                agent_id: p.scope.agent_id().to_string(),
+                scope: p.scope.clone(),
+                prev_state,
+                new_state: ProcessingControlState::AgentActive,
+                at_ms,
+                tenant_id: None,
+            })
+            .await;
+        }
+    }
     // Phase 82.13.b.2 — best-effort summary stamp. State has
     // already flipped to Active by this point; failure here is
     // logged but does NOT roll back the resume — the alternative
@@ -662,7 +721,7 @@ mod tests {
             "operator_token_hash": "abcdef0123456789",
             "reason": "escalated",
         });
-        let result = pause(&store, pause_params).await;
+        let result = pause(&store, None, pause_params).await;
         assert!(result.result.is_some(), "pause ok");
         let ack: nexo_tool_meta::admin::processing::ProcessingAck =
             serde_json::from_value(result.result.unwrap()).unwrap();
@@ -686,8 +745,8 @@ mod tests {
             "scope": convo(),
             "operator_token_hash": "h",
         });
-        let _ = pause(&store, pause_params.clone()).await;
-        let result = pause(&store, pause_params).await;
+        let _ = pause(&store, None, pause_params.clone()).await;
+        let result = pause(&store, None, pause_params).await;
         let ack: nexo_tool_meta::admin::processing::ProcessingAck =
             serde_json::from_value(result.result.unwrap()).unwrap();
         assert!(!ack.changed, "second pause is a no-op");
@@ -698,6 +757,7 @@ mod tests {
         let store = MockStore::default();
         let result = pause(
             &store,
+            None,
             serde_json::json!({
                 "scope": ProcessingScope::Agent { agent_id: "ana".into() },
                 "operator_token_hash": "h",
@@ -718,6 +778,7 @@ mod tests {
         // Pause + resume → AgentActive again.
         let _ = pause(
             &store,
+            None,
             serde_json::json!({
                 "scope": convo(),
                 "operator_token_hash": "h",
@@ -726,6 +787,7 @@ mod tests {
         .await;
         let _ = resume(
             &store,
+            None,
             None,
             serde_json::json!({
                 "scope": convo(),
@@ -770,6 +832,7 @@ mod tests {
         let store = MockStore::default();
         let _ = pause(
             &store,
+            None,
             serde_json::json!({
                 "scope": convo(),
                 "operator_token_hash": "h",
@@ -813,6 +876,7 @@ mod tests {
         let store = MockStore::default();
         let _ = pause(
             &store,
+            None,
             serde_json::json!({
                 "scope": convo(),
                 "operator_token_hash": "h",
@@ -888,6 +952,7 @@ mod tests {
         let store = MockStore::default();
         let _ = pause(
             &store,
+            None,
             serde_json::json!({
                 "scope": convo(),
                 "operator_token_hash": "h",
@@ -943,6 +1008,7 @@ mod tests {
         let store = MockStore::default();
         let _ = pause(
             &store,
+            None,
             serde_json::json!({
                 "scope": convo(),
                 "operator_token_hash": "h",
@@ -983,6 +1049,7 @@ mod tests {
         let store = MockStore::default();
         let _ = pause(
             &store,
+            None,
             serde_json::json!({
                 "scope": convo(),
                 "operator_token_hash": "h",
@@ -1019,6 +1086,7 @@ mod tests {
         let store = MockStore::default();
         let _ = pause(
             &store,
+            None,
             serde_json::json!({
                 "scope": convo(),
                 "operator_token_hash": "h",
@@ -1063,6 +1131,7 @@ mod tests {
         let store = MockStore::default();
         let _ = pause(
             &store,
+            None,
             serde_json::json!({
                 "scope": convo(),
                 "operator_token_hash": "h",
@@ -1107,6 +1176,7 @@ mod tests {
         let store = MockStore::default();
         let _ = pause(
             &store,
+            None,
             serde_json::json!({
                 "scope": convo(),
                 "operator_token_hash": "h",
@@ -1146,6 +1216,7 @@ mod tests {
         let store = MockStore::default();
         let _ = pause(
             &store,
+            None,
             serde_json::json!({
                 "scope": convo(),
                 "operator_token_hash": "h",
@@ -1156,6 +1227,7 @@ mod tests {
         let session_id = paused_with_session();
         let result = resume(
             &store,
+            None,
             Some(&appender),
             serde_json::json!({
                 "scope": convo(),
@@ -1189,6 +1261,7 @@ mod tests {
         let store = MockStore::default();
         let _ = pause(
             &store,
+            None,
             serde_json::json!({
                 "scope": convo(),
                 "operator_token_hash": "h",
@@ -1198,6 +1271,7 @@ mod tests {
         let appender = RecordingAppender::default();
         let result = resume(
             &store,
+            None,
             Some(&appender),
             serde_json::json!({
                 "scope": convo(),
@@ -1227,6 +1301,7 @@ mod tests {
         let store = MockStore::default();
         let _ = pause(
             &store,
+            None,
             serde_json::json!({
                 "scope": convo(),
                 "operator_token_hash": "h",
@@ -1235,6 +1310,7 @@ mod tests {
         .await;
         let result = resume(
             &store,
+            None,
             None,
             serde_json::json!({
                 "scope": convo(),
@@ -1255,6 +1331,7 @@ mod tests {
         let store = MockStore::default();
         let _ = pause(
             &store,
+            None,
             serde_json::json!({
                 "scope": convo(),
                 "operator_token_hash": "h",
@@ -1264,6 +1341,7 @@ mod tests {
         let huge = "a".repeat(4097);
         let result = resume(
             &store,
+            None,
             None,
             serde_json::json!({
                 "scope": convo(),
@@ -1289,6 +1367,7 @@ mod tests {
         let store = MockStore::default();
         let _ = pause(
             &store,
+            None,
             serde_json::json!({
                 "scope": convo(),
                 "operator_token_hash": "h",
@@ -1298,6 +1377,7 @@ mod tests {
         let appender = RecordingAppender::default();
         let result = resume(
             &store,
+            None,
             Some(&appender),
             serde_json::json!({
                 "scope": convo(),
@@ -1317,6 +1397,7 @@ mod tests {
         let store = MockStore::default();
         let _ = pause(
             &store,
+            None,
             serde_json::json!({
                 "scope": convo(),
                 "operator_token_hash": "h",
@@ -1329,6 +1410,7 @@ mod tests {
         };
         let result = resume(
             &store,
+            None,
             Some(&appender),
             serde_json::json!({
                 "scope": convo(),
@@ -1371,6 +1453,7 @@ mod tests {
         let store = MockStore::default();
         let _ = pause(
             &store,
+            None,
             serde_json::json!({
                 "scope": convo(),
                 "operator_token_hash": "h",
@@ -1387,6 +1470,7 @@ mod tests {
         let session_id = paused_with_session();
         let result = resume(
             &store,
+            None,
             Some(&appender),
             serde_json::json!({
                 "scope": convo(),
@@ -1419,6 +1503,7 @@ mod tests {
         let store = MockStore::default();
         let _ = pause(
             &store,
+            None,
             serde_json::json!({
                 "scope": convo(),
                 "operator_token_hash": "h",
@@ -1428,6 +1513,7 @@ mod tests {
         let appender = RecordingAppender::default();
         let result = resume(
             &store,
+            None,
             Some(&appender),
             serde_json::json!({
                 "scope": convo(),
@@ -1454,11 +1540,13 @@ mod tests {
         };
         let _ = pause(
             &store,
+            None,
             serde_json::json!({ "scope": convo(), "operator_token_hash": "h" }),
         )
         .await;
         let _ = pause(
             &store,
+            None,
             serde_json::json!({ "scope": other, "operator_token_hash": "h" }),
         )
         .await;
@@ -1478,6 +1566,7 @@ mod tests {
         let appender = RecordingAppender::default();
         let result = resume(
             &store,
+            None,
             Some(&appender),
             serde_json::json!({
                 "scope": convo(),
@@ -1503,6 +1592,7 @@ mod tests {
         let store = MockStore::default();
         let _ = pause(
             &store,
+            None,
             serde_json::json!({ "scope": convo(), "operator_token_hash": "h" }),
         )
         .await;
@@ -1511,6 +1601,7 @@ mod tests {
         let appender = RecordingAppender::default();
         let result = resume(
             &store,
+            None,
             Some(&appender),
             serde_json::json!({
                 "scope": convo(),
@@ -1535,6 +1626,7 @@ mod tests {
         let store = MockStore::default();
         let _ = pause(
             &store,
+            None,
             serde_json::json!({ "scope": convo(), "operator_token_hash": "h" }),
         )
         .await;
@@ -1543,6 +1635,7 @@ mod tests {
         let session_id = paused_with_session();
         let result = resume(
             &store,
+            None,
             Some(&appender),
             serde_json::json!({
                 "scope": convo(),
@@ -1585,6 +1678,7 @@ mod tests {
         // ── Cycle 1: pause + 2 inbounds + resume → drain=2 ──
         let _ = pause(
             &store,
+            None,
             serde_json::json!({
                 "scope": convo(),
                 "operator_token_hash": "h",
@@ -1595,6 +1689,7 @@ mod tests {
         store.push_pending(&convo(), pending(1)).await.unwrap();
         let r1 = resume(
             &store,
+            None,
             Some(&appender),
             serde_json::json!({
                 "scope": convo(),
@@ -1614,6 +1709,7 @@ mod tests {
         // ── Cycle 2: pause + 1 inbound + resume → drain=1 ──
         let _ = pause(
             &store,
+            None,
             serde_json::json!({
                 "scope": convo(),
                 "operator_token_hash": "h",
@@ -1623,6 +1719,7 @@ mod tests {
         store.push_pending(&convo(), pending(99)).await.unwrap();
         let r2 = resume(
             &store,
+            None,
             Some(&appender),
             serde_json::json!({
                 "scope": convo(),
@@ -1645,6 +1742,7 @@ mod tests {
         // ── Cycle 3: pause + ZERO inbounds + resume ──
         let _ = pause(
             &store,
+            None,
             serde_json::json!({
                 "scope": convo(),
                 "operator_token_hash": "h",
@@ -1653,6 +1751,7 @@ mod tests {
         .await;
         let r3 = resume(
             &store,
+            None,
             Some(&appender),
             serde_json::json!({
                 "scope": convo(),
@@ -1678,5 +1777,141 @@ mod tests {
             ProcessingControlState::AgentActive
         ));
         assert!(store.drain_pending(&convo()).await.unwrap().is_empty());
+    }
+
+    #[derive(Debug, Default)]
+    struct CapturingEmitter {
+        events: std::sync::Mutex<Vec<AgentEventKind>>,
+    }
+
+    #[async_trait]
+    impl crate::agent::agent_events::AgentEventEmitter for CapturingEmitter {
+        async fn emit(&self, event: AgentEventKind) {
+            self.events.lock().unwrap().push(event);
+        }
+    }
+
+    #[tokio::test]
+    async fn pause_emits_processing_state_changed_with_prev_active() {
+        let store = MockStore::default();
+        let captured: Arc<CapturingEmitter> = Arc::new(CapturingEmitter::default());
+        let emitter: Arc<dyn crate::agent::agent_events::AgentEventEmitter> =
+            captured.clone();
+        let _ = pause(
+            &store,
+            Some(&emitter),
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "abcdef0123456789",
+                "reason": "investigando",
+            }),
+        )
+        .await;
+        let evs = captured.events.lock().unwrap();
+        assert_eq!(evs.len(), 1, "first pause must emit once");
+        match &evs[0] {
+            AgentEventKind::ProcessingStateChanged {
+                agent_id,
+                prev_state,
+                new_state,
+                ..
+            } => {
+                assert_eq!(agent_id, "ana");
+                assert!(matches!(prev_state, ProcessingControlState::AgentActive));
+                assert!(matches!(
+                    new_state,
+                    ProcessingControlState::PausedByOperator { .. }
+                ));
+            }
+            other => panic!("unexpected emit: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn pause_skips_emit_when_already_paused() {
+        let store = MockStore::default();
+        let captured: Arc<CapturingEmitter> = Arc::new(CapturingEmitter::default());
+        let emitter: Arc<dyn crate::agent::agent_events::AgentEventEmitter> =
+            captured.clone();
+        let params = serde_json::json!({
+            "scope": convo(),
+            "operator_token_hash": "abcdef0123456789",
+        });
+        let _ = pause(&store, Some(&emitter), params.clone()).await;
+        let _ = pause(&store, Some(&emitter), params).await;
+        let evs = captured.events.lock().unwrap();
+        assert_eq!(
+            evs.len(),
+            1,
+            "idempotent re-pause must not double-emit (subscribers would see phantom)",
+        );
+    }
+
+    #[tokio::test]
+    async fn resume_emits_processing_state_changed_with_prev_paused() {
+        let store = MockStore::default();
+        let captured: Arc<CapturingEmitter> = Arc::new(CapturingEmitter::default());
+        let emitter: Arc<dyn crate::agent::agent_events::AgentEventEmitter> =
+            captured.clone();
+        let _ = pause(
+            &store,
+            Some(&emitter),
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "abcdef0123456789",
+            }),
+        )
+        .await;
+        let _ = resume(
+            &store,
+            Some(&emitter),
+            None,
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "abcdef0123456789",
+            }),
+        )
+        .await;
+        let evs = captured.events.lock().unwrap();
+        assert_eq!(evs.len(), 2, "pause + resume each emit once");
+        match &evs[1] {
+            AgentEventKind::ProcessingStateChanged {
+                prev_state,
+                new_state,
+                ..
+            } => {
+                assert!(matches!(
+                    prev_state,
+                    ProcessingControlState::PausedByOperator { .. }
+                ));
+                assert!(matches!(new_state, ProcessingControlState::AgentActive));
+            }
+            other => panic!("unexpected emit: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn resume_skips_emit_when_already_active() {
+        let store = MockStore::default();
+        let captured: Arc<CapturingEmitter> = Arc::new(CapturingEmitter::default());
+        let emitter: Arc<dyn crate::agent::agent_events::AgentEventEmitter> =
+            captured.clone();
+        // No prior pause — resume on AgentActive must not emit.
+        let _ = resume(
+            &store,
+            Some(&emitter),
+            None,
+            serde_json::json!({
+                "scope": convo(),
+                "operator_token_hash": "h",
+            }),
+        )
+        .await;
+        let evs = captured.events.lock().unwrap();
+        assert_eq!(
+            evs.len(),
+            0,
+            "no-op resume must not emit (subscribers would see phantom transitions)",
+        );
     }
 }
