@@ -2437,6 +2437,33 @@ Target: `83.8.4.b`. Until then, the trait surface is testable by
 microapps via mocks, and the wire returns a typed error that the
 SDK can surface in the operator UI as "outbound not configured".
 
+### Phase 83.8.10 — per-agent compliance toggle propagation
+
+The agent-creator microapp ships a `before_message` compliance
+hook (Phase 83.8.10) that runs `OptOutMatcher` +
+`AntiLoopDetector` + `PiiRedactor` on every inbound. Today the
+toggles are hard-coded defaults — the hook does not honour the
+per-agent `extensions_config.compliance` block (Phase 83.1)
+because `BindingContext` (the only per-turn context the hook
+sees) does not surface that block.
+
+Fix path:
+
+1. Add an optional `extensions_config: BTreeMap<String,
+   serde_yaml::Value>` (or specifically `compliance: ComplianceCfg`
+   wire shape) to `nexo_tool_meta::BindingContext`.
+2. Producer side (whatsapp-rs and friends) populates it from
+   the agent's `extensions_config.compliance` slice when emitting
+   the inbound `_meta`.
+3. SDK `parse_binding_from_meta` reads it back.
+4. Microapp hook reads `ctx.binding().extensions_config.compliance`
+   and overrides the defaults.
+
+Additionally, the SDK `HookOutcome::Transform` variant is not yet
+piped through the dispatch loop's typed return, so PII redaction
+silently logs but does not rewrite the body. Closing the
+`Transform` wire is a sister follow-up (Phase 83.8 helper sweep).
+
 ### Phase 83.8 — domain kill-switch env vars are advisory-only
 
 Discovered while wiring `nexo/admin/skills/*` (83.8.2): the
