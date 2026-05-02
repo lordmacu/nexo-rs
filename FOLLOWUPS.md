@@ -2646,6 +2646,20 @@ Cross-references:
   gained `session_id: Option<Uuid>` (was missing since Phase
   82.13.b.1 added the field on the SDK side). Out-of-tree commit
   9f634a9.
+- 82.14.b.throttle ✅ EscalationThrottle primitive — sliding-
+  window per-scope counter (default 3/h) defending against
+  agent loops that flood the operator UI with identical
+  escalations. `try_acquire(scope, now_ms)` returns
+  `Ok(remaining)` or `Err(ThrottleDenied { cap, window_ms,
+  retry_after_ms })`. Per-scope (NOT per-agent) so an agent
+  flagging two distinct conversations within an hour passes;
+  `forget(scope)` resets after a successful resolve. Wire-up
+  at the future `escalate_to_human` built-in tool call site;
+  trait + handler unchanged. 7 tests cover: default cap-3
+  admit-then-deny, window slide drops old entries, per-scope
+  isolation, retry_after computed from oldest in-window stamp,
+  forget resets, zero-cap denies always, tracked_scopes
+  observability.
 - 82.14.c ✅ SqliteEscalationStore — durable variant of the
   in-memory escalation store. Single-table design keyed by
   canonical scope JSON; full `EscalationEntry` round-trips as

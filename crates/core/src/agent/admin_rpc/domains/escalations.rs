@@ -211,6 +211,123 @@ pub async fn auto_resolve_on_pause(
     Ok(changed)
 }
 
+/// Phase 82.14.b — sliding-window escalation throttle.
+///
+/// Caps how many `escalate_to_human` calls a single scope can
+/// emit within a rolling time window. Defends against agent
+/// loops that flood the operator UI with thousands of identical
+/// escalations on each token-budget cycle. The future built-in
+/// tool consults `try_acquire(scope)` before calling
+/// `store.upsert_pending`; on `Err(ThrottleDenied)` the agent
+/// receives the denial and the operator UI never sees the
+/// noise.
+///
+/// Defaults: 3 escalations per scope per hour. Mirrors the
+/// 82.14 follow-up spec ("max 3 escalations per scope per hour
+/// to prevent agent loops"). Per-scope (NOT per-agent) so an
+/// agent that genuinely needs to flag two distinct
+/// conversations within an hour still passes.
+#[derive(Debug)]
+pub struct EscalationThrottle {
+    window_ms: u64,
+    cap: u32,
+    history:
+        std::sync::Arc<dashmap::DashMap<ProcessingScope, std::collections::VecDeque<u64>>>,
+}
+
+/// Failure shape returned by [`EscalationThrottle::try_acquire`]
+/// when the per-scope cap is exhausted. Caller surfaces this to
+/// the agent so the agent can wait + retry rather than spinning
+/// on the same scope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThrottleDenied {
+    /// Window cap that was hit (e.g. `3`).
+    pub cap: u32,
+    /// Window length in ms (e.g. 3_600_000 for an hour).
+    pub window_ms: u64,
+    /// Milliseconds the caller should wait before retrying.
+    /// Computed from the oldest captured timestamp.
+    pub retry_after_ms: u64,
+}
+
+impl Default for EscalationThrottle {
+    fn default() -> Self {
+        // 3 per scope per rolling hour — operator-facing default
+        // tuned in the 82.14 spec, conservative on purpose.
+        Self::new(3_600_000, 3)
+    }
+}
+
+impl EscalationThrottle {
+    /// Build with a custom window + cap. `window_ms = 60_000` and
+    /// `cap = 1` for tests that want a tight gate; production
+    /// uses [`Default`] (3/h).
+    pub fn new(window_ms: u64, cap: u32) -> Self {
+        Self {
+            window_ms,
+            cap,
+            history: std::sync::Arc::new(dashmap::DashMap::new()),
+        }
+    }
+
+    /// Try to record one escalation at `now_ms`. Returns
+    /// `Ok(remaining_after)` when admitted, where
+    /// `remaining_after` is how many escalations the scope still
+    /// has in this window (0 means the next call will deny).
+    /// Returns `Err(ThrottleDenied)` when the rolling window
+    /// already has `cap` entries — caller surfaces the
+    /// `retry_after_ms` to the agent.
+    pub fn try_acquire(
+        &self,
+        scope: &ProcessingScope,
+        now_ms: u64,
+    ) -> Result<u32, ThrottleDenied> {
+        let mut entry = self
+            .history
+            .entry(scope.clone())
+            .or_insert_with(std::collections::VecDeque::new);
+        // Prune stamps that fell out of the window.
+        let cutoff = now_ms.saturating_sub(self.window_ms);
+        while let Some(&front) = entry.front() {
+            if front < cutoff {
+                entry.pop_front();
+            } else {
+                break;
+            }
+        }
+        if (entry.len() as u32) >= self.cap {
+            // Oldest in-window stamp + window = first moment a
+            // slot frees. Saturating arithmetic keeps the math
+            // safe across clock edge cases.
+            let oldest = entry.front().copied().unwrap_or(now_ms);
+            let retry_after_ms = oldest
+                .saturating_add(self.window_ms)
+                .saturating_sub(now_ms);
+            return Err(ThrottleDenied {
+                cap: self.cap,
+                window_ms: self.window_ms,
+                retry_after_ms,
+            });
+        }
+        entry.push_back(now_ms);
+        Ok(self.cap.saturating_sub(entry.len() as u32))
+    }
+
+    /// Drop the per-scope window after a successful resolve so
+    /// the next legitimate escalation on the same scope starts
+    /// fresh. Production wires this from the resolve handler;
+    /// tests call directly.
+    pub fn forget(&self, scope: &ProcessingScope) {
+        self.history.remove(scope);
+    }
+
+    /// Active scope count — observability only (boot diagnostics
+    /// + tests).
+    pub fn tracked_scopes(&self) -> usize {
+        self.history.len()
+    }
+}
+
 /// Convenience: filter helper used by in-memory store impls.
 /// Production callers that need a different ordering can
 /// override list directly.
@@ -738,5 +855,109 @@ mod tests {
             }),
             "agent"
         );
+    }
+
+    // ── Phase 82.14.b — escalation throttle primitive ──────────
+
+    fn other_convo() -> ProcessingScope {
+        ProcessingScope::Conversation {
+            agent_id: "ana".into(),
+            channel: "whatsapp".into(),
+            account_id: "acc".into(),
+            contact_id: "wa.99".into(),
+            mcp_channel_source: None,
+        }
+    }
+
+    #[test]
+    fn throttle_default_admits_first_three_then_denies_fourth() {
+        let throttle = EscalationThrottle::default();
+        let scope = convo();
+        // Cap = 3 within the rolling hour. Every call shares
+        // the same now_ms so the window window doesn't help
+        // the 4th call.
+        let now = 1_700_000_000_000u64;
+        assert_eq!(throttle.try_acquire(&scope, now).unwrap(), 2);
+        assert_eq!(throttle.try_acquire(&scope, now).unwrap(), 1);
+        assert_eq!(throttle.try_acquire(&scope, now).unwrap(), 0);
+        let denied = throttle.try_acquire(&scope, now).unwrap_err();
+        assert_eq!(denied.cap, 3);
+        assert_eq!(denied.window_ms, 3_600_000);
+        // Oldest entry was at `now`; window slides at
+        // `now + 3_600_000` → retry_after_ms == window_ms.
+        assert_eq!(denied.retry_after_ms, 3_600_000);
+    }
+
+    #[test]
+    fn throttle_window_slides_so_old_entries_dont_count() {
+        // 60s window, cap 2.
+        let throttle = EscalationThrottle::new(60_000, 2);
+        let scope = convo();
+        // Two acquires at t=0, fully occupying the window.
+        throttle.try_acquire(&scope, 0).unwrap();
+        throttle.try_acquire(&scope, 1_000).unwrap();
+        // 4th acquire at t=70_000 — well past the window for
+        // the first entry, just past for the second. The
+        // second entry (at t=1_000) is now > 60s old, so the
+        // window is empty and we admit.
+        assert_eq!(throttle.try_acquire(&scope, 70_000).unwrap(), 1);
+    }
+
+    #[test]
+    fn throttle_per_scope_independent() {
+        let throttle = EscalationThrottle::new(60_000, 1);
+        let now = 1_000u64;
+        // First scope eats its only slot.
+        throttle.try_acquire(&convo(), now).unwrap();
+        assert!(throttle.try_acquire(&convo(), now).is_err());
+        // Other scope still has its own slot.
+        assert_eq!(
+            throttle.try_acquire(&other_convo(), now).unwrap(),
+            0,
+            "other scope's window must NOT inherit the first's count"
+        );
+    }
+
+    #[test]
+    fn throttle_retry_after_is_first_moment_a_slot_frees() {
+        let throttle = EscalationThrottle::new(60_000, 2);
+        let scope = convo();
+        throttle.try_acquire(&scope, 0).unwrap();
+        throttle.try_acquire(&scope, 10_000).unwrap();
+        // 3rd at t=15_000: oldest is at 0, window=60_000, so
+        // first slot frees at t=60_000 → retry_after = 45_000.
+        let denied = throttle.try_acquire(&scope, 15_000).unwrap_err();
+        assert_eq!(denied.retry_after_ms, 45_000);
+    }
+
+    #[test]
+    fn throttle_forget_resets_scope_history() {
+        let throttle = EscalationThrottle::new(60_000, 1);
+        let scope = convo();
+        throttle.try_acquire(&scope, 0).unwrap();
+        assert!(throttle.try_acquire(&scope, 1).is_err());
+        throttle.forget(&scope);
+        // Reset → next acquire admits.
+        assert_eq!(throttle.try_acquire(&scope, 2).unwrap(), 0);
+    }
+
+    #[test]
+    fn throttle_zero_cap_denies_every_call() {
+        let throttle = EscalationThrottle::new(60_000, 0);
+        let denied = throttle.try_acquire(&convo(), 0).unwrap_err();
+        assert_eq!(denied.cap, 0);
+    }
+
+    #[test]
+    fn throttle_tracked_scopes_increments_per_distinct_scope() {
+        let throttle = EscalationThrottle::default();
+        assert_eq!(throttle.tracked_scopes(), 0);
+        throttle.try_acquire(&convo(), 0).unwrap();
+        assert_eq!(throttle.tracked_scopes(), 1);
+        throttle.try_acquire(&other_convo(), 0).unwrap();
+        assert_eq!(throttle.tracked_scopes(), 2);
+        // Same scope again: no new entry.
+        throttle.try_acquire(&convo(), 1).unwrap();
+        assert_eq!(throttle.tracked_scopes(), 2);
     }
 }
