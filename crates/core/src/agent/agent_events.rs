@@ -121,6 +121,78 @@ impl AgentEventEmitter for BroadcastAgentEventEmitter {
 /// the emitter through trait objects.
 pub type SharedAgentEventEmitter = Arc<dyn AgentEventEmitter>;
 
+/// Phase 82.11.tee — fan-out emitter that delivers each event to
+/// every wrapped sink in registration order. Lets boot compose
+/// the in-process [`BroadcastAgentEventEmitter`] (live
+/// subscribers) with a future durable SQLite log and / or a
+/// NATS bridge without touching any caller — every emit site
+/// holds a single `Arc<dyn AgentEventEmitter>` and Tee multiplies
+/// transparently.
+///
+/// Per-sink failures are isolated by trait contract:
+/// implementations log + drop on transport failure, so a slow or
+/// broken sink cannot block the others. Tee preserves that
+/// guarantee — emit returns after every inner has been polled
+/// (sequentially, since `emit` is async). One slow sink CAN
+/// throttle the whole tee; production wiring keeps each inner
+/// non-blocking (broadcast `try_send`, NATS publish, etc.).
+pub struct TeeAgentEventEmitter {
+    sinks: Vec<Arc<dyn AgentEventEmitter>>,
+}
+
+impl fmt::Debug for TeeAgentEventEmitter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TeeAgentEventEmitter")
+            .field("sinks", &self.sinks.len())
+            .finish()
+    }
+}
+
+impl TeeAgentEventEmitter {
+    /// Build with no sinks — every emit is a no-op until the
+    /// first [`Self::push`]. Equivalent to [`NoopAgentEventEmitter`]
+    /// in that case but keeps the type uniform across boot.
+    pub fn new() -> Self {
+        Self { sinks: Vec::new() }
+    }
+
+    /// Build from a vec of sinks. Order matches emit order.
+    pub fn with_sinks(sinks: Vec<Arc<dyn AgentEventEmitter>>) -> Self {
+        Self { sinks }
+    }
+
+    /// Append a sink. Returns `self` for chained construction.
+    pub fn push(mut self, sink: Arc<dyn AgentEventEmitter>) -> Self {
+        self.sinks.push(sink);
+        self
+    }
+
+    /// Number of registered sinks.
+    pub fn len(&self) -> usize {
+        self.sinks.len()
+    }
+
+    /// `true` when no sinks are registered (Tee acts as a no-op).
+    pub fn is_empty(&self) -> bool {
+        self.sinks.is_empty()
+    }
+}
+
+impl Default for TeeAgentEventEmitter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl AgentEventEmitter for TeeAgentEventEmitter {
+    async fn emit(&self, event: AgentEventKind) {
+        for sink in &self.sinks {
+            sink.emit(event.clone()).await;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,5 +281,68 @@ mod tests {
         let emitter = NoopAgentEventEmitter;
         // Just asserting it doesn't panic / block.
         emitter.emit(sample_event(0, "x")).await;
+    }
+
+    #[derive(Debug, Default)]
+    struct RecordingSink {
+        seen: tokio::sync::Mutex<Vec<AgentEventKind>>,
+    }
+
+    #[async_trait]
+    impl AgentEventEmitter for RecordingSink {
+        async fn emit(&self, event: AgentEventKind) {
+            self.seen.lock().await.push(event);
+        }
+    }
+
+    #[tokio::test]
+    async fn tee_fans_out_each_event_to_every_sink() {
+        let a = Arc::new(RecordingSink::default());
+        let b = Arc::new(RecordingSink::default());
+        let tee = TeeAgentEventEmitter::new()
+            .push(a.clone() as Arc<dyn AgentEventEmitter>)
+            .push(b.clone() as Arc<dyn AgentEventEmitter>);
+        assert_eq!(tee.len(), 2);
+
+        tee.emit(sample_event(0, "first")).await;
+        tee.emit(sample_event(1, "second")).await;
+
+        let a_seen = a.seen.lock().await;
+        let b_seen = b.seen.lock().await;
+        assert_eq!(a_seen.len(), 2);
+        assert_eq!(b_seen.len(), 2);
+        // Same event identity reaches both — no swap on the way.
+        match (&a_seen[0], &b_seen[0]) {
+            (
+                AgentEventKind::TranscriptAppended { seq: sa, .. },
+                AgentEventKind::TranscriptAppended { seq: sb, .. },
+            ) => assert_eq!(sa, sb),
+            other => panic!("unexpected events: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn tee_with_zero_sinks_is_noop_safe() {
+        let tee = TeeAgentEventEmitter::new();
+        assert!(tee.is_empty());
+        // No panic, no allocation surprise.
+        tee.emit(sample_event(0, "drop")).await;
+    }
+
+    #[tokio::test]
+    async fn tee_preserves_sink_order() {
+        // Two recorders + a noop in between — assert the noop
+        // doesn't swallow downstream emits and order matches
+        // registration.
+        let a = Arc::new(RecordingSink::default());
+        let b = Arc::new(RecordingSink::default());
+        let tee = TeeAgentEventEmitter::with_sinks(vec![
+            a.clone() as Arc<dyn AgentEventEmitter>,
+            Arc::new(NoopAgentEventEmitter) as Arc<dyn AgentEventEmitter>,
+            b.clone() as Arc<dyn AgentEventEmitter>,
+        ]);
+        tee.emit(sample_event(7, "ordered")).await;
+        assert_eq!(a.seen.lock().await.len(), 1);
+        assert_eq!(b.seen.lock().await.len(), 1);
     }
 }

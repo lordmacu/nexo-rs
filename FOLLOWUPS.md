@@ -1868,13 +1868,23 @@ test). Three follow-ups stayed deferred:
   subject so a microapp running on a different node hears
   events from every daemon. Trait is in place; the new impl
   drops in alongside `BroadcastAgentEventEmitter` without
-  touching the writer hook.
+  touching the writer hook. **Composition unblocked
+  2026-05-02 by Phase 82.11.tee — `TeeAgentEventEmitter` lets
+  boot wire `[Broadcast, Sqlite, Nats]` together as a single
+  `Arc<dyn AgentEventEmitter>` without changing emit-site
+  signatures.**
 - **Future kinds beyond `TranscriptAppended`.** `AgentEventKind`
   is `#[non_exhaustive]` so adding `BatchJobCompleted` /
   `OutputProduced` / `Custom` is a non-breaking additive
   change. Each new kind needs (a) the variant in tool-meta,
   (b) the emit site in whatever subsystem produces it, and (c)
   optionally an FTS index for `agent_events/search` filtering.
+  **Two new kinds shipped 2026-05-02**: `EscalationRequested`
+  + `EscalationResolved` (Phase 82.14.b.firehose) and
+  `ProcessingStateChanged` (Phase 82.13.b.firehose) — both
+  emit on the existing `nexo/notify/agent_event` subject; no
+  FTS change required (search remains TranscriptAppended-
+  only).
 
 Target phase: 82.10.h.c (folded with 82.10.h.b's main.rs
 wire-up) for the operator wire-up; future phases for the NATS
