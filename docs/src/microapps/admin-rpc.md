@@ -233,6 +233,27 @@ Two writer implementations:
   audit tail` CLI — `format_rows_as_table` and
   `format_rows_as_json` helpers ship in the same module.
 
+### Phase 83.8.12.6.runtime + .b — skills resolution chain + migration
+
+The runtime `SkillLoader` resolves a skill name in this order:
+
+1. `<root>/<tenant_id>/<name>/SKILL.md` (when the agent has
+   `tenant_id` set)
+2. `<root>/__global__/<name>/SKILL.md`
+3. `<root>/<name>/SKILL.md` (legacy pre-83.8.12.6 layout — logs
+   a deprecation warning when used)
+
+Per-tenant skills override the global namespace, and the global
+namespace fills in for tenants that don't have their own copy.
+The legacy fallback keeps existing deployments working without
+any migration; the deprecation log nudges operators toward the
+new layout.
+
+For a clean cutover, `nexo_setup::skills_migrate::migrate_legacy_skills_to_global`
+moves every legacy `<root>/<name>/SKILL.md` into
+`<root>/__global__/<name>/SKILL.md`. Idempotent, leaves
+tenant-scoped layouts untouched, reports filename conflicts.
+
 ### Phase 83.8.12.4.b — per-tenant event firehose + escalations filter
 
 `AgentEventKind::TranscriptAppended` events carry the agent's

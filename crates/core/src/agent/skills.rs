@@ -134,12 +134,21 @@ pub enum SkillLoadAction {
 pub struct SkillLoader {
     root: PathBuf,
     overrides: BTreeMap<String, SkillDepsMode>,
+    /// Phase 83.8.12.6.runtime — owning tenant for per-tenant
+    /// skill resolution. `None` (default) skips the tenant-
+    /// scoped lookup. Resolution order in `load_one`:
+    /// 1. `<root>/<tenant_id>/<name>/SKILL.md` (when set)
+    /// 2. `<root>/__global__/<name>/SKILL.md`
+    /// 3. `<root>/<name>/SKILL.md` (legacy — pre-83.8.12.6
+    ///    deployments; logged as deprecation when used)
+    tenant_id: Option<String>,
 }
 impl SkillLoader {
     pub fn new(root: impl AsRef<Path>) -> Self {
         Self {
             root: root.as_ref().to_path_buf(),
             overrides: BTreeMap::new(),
+            tenant_id: None,
         }
     }
     /// Per-agent mode override map. Names that match a loaded skill
@@ -147,6 +156,53 @@ impl SkillLoader {
     pub fn with_overrides(mut self, overrides: BTreeMap<String, SkillDepsMode>) -> Self {
         self.overrides = overrides;
         self
+    }
+    /// Phase 83.8.12.6.runtime — pin the loader to one tenant so
+    /// per-tenant skills (`<root>/<tenant_id>/<name>/SKILL.md`)
+    /// take precedence over the global namespace. Multi-tenant
+    /// boot (in `llm_behavior.rs`) threads `agent.tenant_id`
+    /// through here.
+    pub fn with_tenant_id(mut self, tenant_id: Option<String>) -> Self {
+        self.tenant_id = tenant_id;
+        self
+    }
+    /// Resolve a skill name to its on-disk path via the
+    /// fallback chain (tenant → global → legacy). Returns the
+    /// first existing `SKILL.md` path; returns `None` when none
+    /// of the candidates exist. Uses sync `Path::exists` so the
+    /// resolution stays cheap (no async I/O for the lookup
+    /// step itself; the actual file read still goes through
+    /// `tokio::fs`).
+    fn resolve_skill_path(&self, name: &str) -> Option<PathBuf> {
+        let candidates = self.candidate_paths(name);
+        for (idx, path) in candidates.iter().enumerate() {
+            if path.exists() {
+                if idx == candidates.len() - 1 && candidates.len() > 1 {
+                    // Legacy fallback hit — log a deprecation so
+                    // operators see they should migrate to the
+                    // 83.8.12.6 layout.
+                    tracing::warn!(
+                        skill = name,
+                        path = %path.display(),
+                        "skill resolved via legacy <root>/<name>/SKILL.md path; \
+                         migrate to <root>/__global__/<name>/SKILL.md (run \
+                         `nexo_setup::migrate_legacy_skills_to_global`)"
+                    );
+                }
+                return Some(path.clone());
+            }
+        }
+        None
+    }
+
+    fn candidate_paths(&self, name: &str) -> Vec<PathBuf> {
+        let mut out = Vec::with_capacity(3);
+        if let Some(tid) = self.tenant_id.as_deref() {
+            out.push(self.root.join(tid).join(name).join("SKILL.md"));
+        }
+        out.push(self.root.join("__global__").join(name).join("SKILL.md"));
+        out.push(self.root.join(name).join("SKILL.md"));
+        out
     }
     pub async fn load_many(&self, names: &[String]) -> Vec<LoadedSkill> {
         let (loaded, _status) = self.load_many_with_status(names).await;
@@ -188,7 +244,15 @@ impl SkillLoader {
         if trimmed.is_empty() {
             return None;
         }
-        let path = self.root.join(trimmed).join("SKILL.md");
+        let Some(path) = self.resolve_skill_path(trimmed) else {
+            tracing::warn!(
+                skill = trimmed,
+                tenant = self.tenant_id.as_deref().unwrap_or("(none)"),
+                root = %self.root.display(),
+                "skill not found in tenant, __global__, or legacy paths"
+            );
+            return None;
+        };
         let raw = match tokio::fs::read_to_string(&path).await {
             Ok(s) => s,
             Err(e) => {
@@ -712,6 +776,100 @@ mod tests {
         assert!(rendered.contains("Use for forecasts."));
         tokio::fs::remove_dir_all(tmp).await.ok();
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn loader_resolves_global_namespace_layout() -> anyhow::Result<()> {
+        let tmp = tmpdir();
+        tokio::fs::create_dir_all(tmp.join("__global__").join("weather")).await?;
+        tokio::fs::write(
+            tmp.join("__global__").join("weather").join("SKILL.md"),
+            "Global weather.",
+        )
+        .await?;
+        let loader = SkillLoader::new(&tmp);
+        let loaded = loader.load_many(&["weather".into()]).await;
+        assert_eq!(loaded.len(), 1);
+        assert!(loaded[0].content.contains("Global weather."));
+        tokio::fs::remove_dir_all(tmp).await.ok();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn loader_with_tenant_id_prefers_tenant_scope_over_global() -> anyhow::Result<()> {
+        let tmp = tmpdir();
+        // global copy
+        tokio::fs::create_dir_all(tmp.join("__global__").join("weather")).await?;
+        tokio::fs::write(
+            tmp.join("__global__").join("weather").join("SKILL.md"),
+            "Global weather.",
+        )
+        .await?;
+        // tenant-scoped copy (different content)
+        tokio::fs::create_dir_all(tmp.join("acme").join("weather")).await?;
+        tokio::fs::write(
+            tmp.join("acme").join("weather").join("SKILL.md"),
+            "Acme weather.",
+        )
+        .await?;
+        let loader = SkillLoader::new(&tmp).with_tenant_id(Some("acme".into()));
+        let loaded = loader.load_many(&["weather".into()]).await;
+        assert_eq!(loaded.len(), 1);
+        assert!(
+            loaded[0].content.contains("Acme weather."),
+            "tenant scope must take precedence; got {}",
+            loaded[0].content
+        );
+        tokio::fs::remove_dir_all(tmp).await.ok();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn loader_with_tenant_id_falls_back_to_global() -> anyhow::Result<()> {
+        let tmp = tmpdir();
+        // only global copy
+        tokio::fs::create_dir_all(tmp.join("__global__").join("weather")).await?;
+        tokio::fs::write(
+            tmp.join("__global__").join("weather").join("SKILL.md"),
+            "Global weather.",
+        )
+        .await?;
+        let loader = SkillLoader::new(&tmp).with_tenant_id(Some("acme".into()));
+        let loaded = loader.load_many(&["weather".into()]).await;
+        assert_eq!(loaded.len(), 1, "fallback to global when tenant is empty");
+        assert!(loaded[0].content.contains("Global weather."));
+        tokio::fs::remove_dir_all(tmp).await.ok();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn loader_falls_back_to_legacy_root_layout() -> anyhow::Result<()> {
+        let tmp = tmpdir();
+        // pre-83.8.12.6 layout
+        tokio::fs::create_dir_all(tmp.join("weather")).await?;
+        tokio::fs::write(
+            tmp.join("weather").join("SKILL.md"),
+            "Legacy weather.",
+        )
+        .await?;
+        let loader = SkillLoader::new(&tmp);
+        let loaded = loader.load_many(&["weather".into()]).await;
+        assert_eq!(loaded.len(), 1, "legacy layout must keep working");
+        assert!(loaded[0].content.contains("Legacy weather."));
+        tokio::fs::remove_dir_all(tmp).await.ok();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn loader_returns_not_found_when_no_layout_matches() {
+        let tmp = tmpdir();
+        tokio::fs::create_dir_all(&tmp).await.unwrap();
+        let loader = SkillLoader::new(&tmp).with_tenant_id(Some("acme".into()));
+        let (loaded, status) = loader.load_many_with_status(&["weather".into()]).await;
+        assert!(loaded.is_empty());
+        assert_eq!(status.len(), 1);
+        assert_eq!(status[0].action, SkillLoadAction::NotFound);
+        tokio::fs::remove_dir_all(tmp).await.ok();
     }
 
     #[tokio::test]
