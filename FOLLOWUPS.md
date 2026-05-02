@@ -1893,21 +1893,23 @@ test). Three follow-ups stayed deferred:
   emit on the existing `nexo/notify/agent_event` subject; no
   FTS change required (search remains TranscriptAppended-
   only).
-- **82.11.log.b — boot wire-up.** Phase 82.11.log shipped
-  the `SqliteAgentEventLog` primitive (read+write trait,
-  SQLite impl, AgentEventEmitter sink). 82.11.log.sweep
-  shipped the retention sweep (2026-05-02). 82.11.log.merge
-  shipped the cross-source `MergingAgentEventReader` that
-  composes `TranscriptReader` + `AgentEventLog` behind the
-  same trait so the existing `agent_events/list` handler
-  returns merged results without changing
-  (2026-05-02). Only deferred: **Boot** — stitch
-  `Tee([BroadcastAgentEventEmitter,
-  SqliteAgentEventLog::open(state_dir.join("agent_events.db"))])`
-  inside `AdminRpcBootstrap::new` so every emit reaches both,
-  and pass `MergingAgentEventReader::new(transcripts_fs, log)`
-  as the `transcript_reader` field so backfill returns
-  durable kinds. Boot scheduler also calls
+- **82.11.log.b — main.rs activation.** Phase 82.11.log
+  shipped the `SqliteAgentEventLog` primitive
+  (read+write trait, SQLite impl, AgentEventEmitter sink).
+  82.11.log.sweep shipped the retention sweep (2026-05-02).
+  82.11.log.merge shipped the cross-source
+  `MergingAgentEventReader` (2026-05-02). 82.11.log.compose
+  shipped the boot-side composition (2026-05-02):
+  `AdminBootstrapInputs.agent_event_log: Option<Arc<SqliteAgentEventLog>>`
+  is now in place, and when `Some`, build composes
+  `Tee([Broadcast, Log])` internally — emit-side wiring
+  zero-cost from the perspective of every call site. Only
+  deferred: **main.rs activation** — open the SQLite DB at
+  `state_dir.join("agent_events.db")` and pass it as the
+  field, AND wrap `transcripts_fs` in
+  `MergingAgentEventReader::new(transcripts_fs, log)` for
+  the `transcript_reader` field so backfill returns durable
+  kinds. Boot scheduler also calls
   `sweep_retention(retention_days, max_rows)` on the same
   cadence as the audit-log sweep (defaults 90d / 100k rows).
   Folds with the same boot-order refactor as the other 82.x
@@ -2786,6 +2788,22 @@ Cross-references:
   limit cap + default, emit→append routing, empty-on-unknown,
   pool clone shares rows. Boot wire-up + `agent_events/list`
   cross-source merge are deferred (see 82.11.log.b below).
+- 82.11.log.compose ✅ Boot-side Tee composition —
+  `AdminBootstrapInputs.agent_event_log: Option<Arc<SqliteAgentEventLog>>`
+  field added. When `Some`, `build_with_firehose` composes
+  `Tee([BroadcastAgentEventEmitter, SqliteAgentEventLog])`
+  via `TeeAgentEventEmitter::with_sinks` so every emit
+  reaches both live subscribers AND the durable log without
+  changing emit-site signatures. Concrete `Arc<SqliteAgentEventLog>`
+  type (not `Arc<dyn AgentEventLog>`) so boot can use the same
+  handle for both the emitter side (Tee composition via the
+  `AgentEventEmitter` impl) and the read side (constructing
+  `MergingAgentEventReader` via the `AgentEventLog` impl) —
+  MSRV 1.80 doesn't support trait object upcasting yet.
+  1 integration test confirms the durable side captures
+  emissions driven through `bootstrap.event_emitter()`.
+  11 fixture sites updated with `agent_event_log: None`.
+  Only main.rs activation remains — see 82.11.log.b above.
 - 82.11.bridge ✅ NatsAgentEventEmitter — multi-host
   firehose bridge. Impls `AgentEventEmitter` by publishing
   serialised `AgentEventKind` to
