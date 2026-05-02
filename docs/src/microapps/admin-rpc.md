@@ -233,6 +233,24 @@ Two writer implementations:
   audit tail` CLI — `format_rows_as_table` and
   `format_rows_as_json` helpers ship in the same module.
 
+### Phase 83.8.12.4.b — per-tenant event firehose + escalations filter
+
+`AgentEventKind::TranscriptAppended` events carry the agent's
+`tenant_id` whenever the runtime knows it (`agent.tenant_id`
+from `agents.yaml`). The framework writer
+(`TranscriptWriter::with_tenant_id`) and reader
+(`TranscriptReaderFs::with_tenant_id`) both stamp the field
+on emit; firehose subscribers can filter per-tenant without
+a per-event lookup against `agents.yaml`. Untagged
+deployments (single-tenant) emit `tenant_id: null` — back
+compat preserved.
+
+`agent_events/list` and `escalations/list` honour
+`filter.tenant_id` defense-in-depth: cross-tenant queries
+return empty (no leak of existence). Agents lacking a
+`tenant_id` field in `agents.yaml` are excluded from any
+non-`null` tenant filter.
+
 ### Phase 83.8.12.7 — per-tenant audit scope
 
 Every audit row carries an `Option<String> tenant_id` that the

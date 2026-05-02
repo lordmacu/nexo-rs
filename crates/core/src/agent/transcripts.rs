@@ -94,6 +94,12 @@ pub struct TranscriptWriter {
     /// entry-only enumeration so backfill `agent_events/read` and
     /// the live notification stream agree on `seq`.
     entry_seq: DashMap<Uuid, Arc<AtomicU64>>,
+    /// Phase 83.8.12.4.b — owning tenant. Stamped on every
+    /// `TranscriptAppended` firehose event. `None` for
+    /// single-tenant deployments (default) — multi-tenant boot
+    /// passes the agent's `tenant_id` through
+    /// [`Self::with_tenant_id`].
+    tenant_id: Option<String>,
 }
 impl TranscriptWriter {
     pub fn new(root: impl Into<PathBuf>, agent_id: impl Into<String>) -> Self {
@@ -105,7 +111,17 @@ impl TranscriptWriter {
             event_emitter: Arc::new(NoopAgentEventEmitter),
             header_locks: DashMap::new(),
             entry_seq: DashMap::new(),
+            tenant_id: None,
         }
+    }
+
+    /// Phase 83.8.12.4.b — tag the writer with its owning tenant so
+    /// every emitted `TranscriptAppended` event carries `tenant_id`.
+    /// Boot wire reads `agent.tenant_id` and threads it through.
+    /// `None` is the legacy / single-tenant case (default).
+    pub fn with_tenant_id(mut self, tenant_id: Option<String>) -> Self {
+        self.tenant_id = tenant_id;
+        self
     }
     /// Wrap the writer with a redactor and/or FTS index. Both are
     /// optional — `Redactor::disabled()` and `None` reproduce the
@@ -124,6 +140,7 @@ impl TranscriptWriter {
             event_emitter: Arc::new(NoopAgentEventEmitter),
             header_locks: DashMap::new(),
             entry_seq: DashMap::new(),
+            tenant_id: None,
         }
     }
 
@@ -269,12 +286,11 @@ impl TranscriptWriter {
             } else {
                 entry.source_plugin.clone()
             },
-            // Phase 83.8.12 — populated by the producer side
-            // when the agent is empresa-owned. Today the
-            // TranscriptWriter does not know its tenant, so
-            // emit None; follow-up wire passes the tenant_id
-            // through the writer's constructor.
-            tenant_id: None,
+            // Phase 83.8.12.4.b — stamped from the writer's
+            // own `tenant_id` field (set at boot via
+            // `with_tenant_id` from `agent.tenant_id`). `None`
+            // for single-tenant deployments.
+            tenant_id: self.tenant_id.clone(),
         };
         self.event_emitter.emit(event).await;
         Ok(())
@@ -491,6 +507,61 @@ mod tests {
                 assert_eq!(b2, "second message");
             }
             other => panic!("unexpected events: {other:?}"),
+        }
+        tokio::fs::remove_dir_all(&root).await.ok();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn append_emit_carries_tenant_id_when_writer_tagged() -> anyhow::Result<()> {
+        use crate::agent::agent_events::BroadcastAgentEventEmitter;
+        use nexo_tool_meta::admin::agent_events::AgentEventKind;
+
+        let root = tmp_dir("emit_tenant_some");
+        let emitter = Arc::new(BroadcastAgentEventEmitter::new());
+        let mut rx = emitter.subscribe();
+        let writer = TranscriptWriter::new(&root, "kate")
+            .with_tenant_id(Some("acme".into()))
+            .with_emitter(emitter.clone());
+
+        let session_id = Uuid::new_v4();
+        writer
+            .append_entry(session_id, user_entry("hi", "wa"))
+            .await?;
+
+        let event = rx.recv().await?;
+        match event {
+            AgentEventKind::TranscriptAppended { tenant_id, .. } => {
+                assert_eq!(tenant_id.as_deref(), Some("acme"));
+            }
+            other => panic!("unexpected event kind: {other:?}"),
+        }
+        tokio::fs::remove_dir_all(&root).await.ok();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn append_emit_legacy_writer_carries_none_tenant_id() -> anyhow::Result<()> {
+        use crate::agent::agent_events::BroadcastAgentEventEmitter;
+        use nexo_tool_meta::admin::agent_events::AgentEventKind;
+
+        let root = tmp_dir("emit_tenant_none");
+        let emitter = Arc::new(BroadcastAgentEventEmitter::new());
+        let mut rx = emitter.subscribe();
+        // No `with_tenant_id` — legacy single-tenant path.
+        let writer = TranscriptWriter::new(&root, "kate").with_emitter(emitter.clone());
+
+        let session_id = Uuid::new_v4();
+        writer
+            .append_entry(session_id, user_entry("hi", "wa"))
+            .await?;
+
+        let event = rx.recv().await?;
+        match event {
+            AgentEventKind::TranscriptAppended { tenant_id, .. } => {
+                assert_eq!(tenant_id, None, "legacy writer must not stamp tenant_id");
+            }
+            other => panic!("unexpected event kind: {other:?}"),
         }
         tokio::fs::remove_dir_all(&root).await.ok();
         Ok(())

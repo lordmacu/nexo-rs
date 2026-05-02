@@ -1262,6 +1262,15 @@ pub struct TranscriptReaderFs {
     /// Owner agent — fixed at construction. Calls scoped to a
     /// different `agent_id` return empty results.
     agent_id: String,
+    /// Phase 83.8.12.4.b — owning tenant. Defense-in-depth gate
+    /// at every read entry: if the caller passes
+    /// `filter.tenant_id` and it does NOT match this reader's
+    /// tenant (or the reader has no tenant), the reader returns
+    /// an empty result — no leak of cross-tenant existence.
+    /// Also stamped on every emitted `TranscriptAppended` so
+    /// firehose subscribers can route per-tenant without
+    /// re-querying `agents.yaml`.
+    tenant_id: Option<String>,
 }
 
 impl std::fmt::Debug for TranscriptReaderFs {
@@ -1288,7 +1297,17 @@ impl TranscriptReaderFs {
             writer,
             index,
             agent_id: agent_id.into(),
+            tenant_id: None,
         }
+    }
+
+    /// Phase 83.8.12.4.b — tag the reader with its owning tenant
+    /// so cross-tenant queries return empty (defense-in-depth)
+    /// and emitted events carry `tenant_id`. `None` (default) is
+    /// the legacy single-tenant path.
+    pub fn with_tenant_id(mut self, tenant_id: Option<String>) -> Self {
+        self.tenant_id = tenant_id;
+        self
     }
 }
 
@@ -1300,6 +1319,15 @@ impl TranscriptReader for TranscriptReaderFs {
     ) -> anyhow::Result<Vec<AgentEventKind>> {
         if filter.agent_id != self.agent_id {
             return Ok(Vec::new());
+        }
+        // Phase 83.8.12.4.b — cross-tenant requests return empty
+        // (no leak of existence). Same defense-in-depth as
+        // `agents/list`. A reader with `tenant_id: None` rejects
+        // any tenant-scoped query.
+        if let Some(want) = &filter.tenant_id {
+            if self.tenant_id.as_deref() != Some(want.as_str()) {
+                return Ok(Vec::new());
+            }
         }
         let root = self.writer.root().to_path_buf();
         if !root.exists() {
@@ -1364,7 +1392,7 @@ impl TranscriptReader for TranscriptReaderFs {
                     } else {
                         e.source_plugin.clone()
                     },
-                    tenant_id: None,
+                    tenant_id: self.tenant_id.clone(),
                 });
             }
         }
@@ -1386,6 +1414,11 @@ impl TranscriptReader for TranscriptReaderFs {
         if params.agent_id != self.agent_id {
             return Ok(Vec::new());
         }
+        // Phase 83.8.12.4.b — `read` accepts no tenant filter on
+        // the wire (session_id alone scopes the call). The
+        // `agent_id` pin above already prevents cross-agent
+        // reads, which transitively blocks cross-tenant since
+        // each reader is per-agent-and-tenant.
         let lines = self
             .writer
             .read_session(params.session_id)
@@ -1417,7 +1450,7 @@ impl TranscriptReader for TranscriptReaderFs {
                 } else {
                     e.source_plugin.clone()
                 },
-                tenant_id: None,
+                tenant_id: self.tenant_id.clone(),
             });
             if out.len() >= params.limit {
                 break;
@@ -1875,6 +1908,69 @@ mod transcript_reader_tests {
             .await
             .unwrap();
         assert_eq!(capped.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn list_recent_events_stamps_tenant_id_when_reader_tagged() {
+        let tmp = tempfile::tempdir().unwrap();
+        let writer = seeded_writer(tmp.path(), "ana", &[(Uuid::new_v4(), &["x"])]).await;
+        let reader =
+            TranscriptReaderFs::new(writer, None, "ana").with_tenant_id(Some("acme".into()));
+        let events = reader
+            .list_recent_events(&AgentEventsListFilter {
+                agent_id: "ana".into(),
+                limit: 10,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            AgentEventKind::TranscriptAppended { tenant_id, .. } => {
+                assert_eq!(tenant_id.as_deref(), Some("acme"));
+            }
+            other => panic!("unexpected kind: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn list_recent_events_cross_tenant_returns_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let writer = seeded_writer(tmp.path(), "ana", &[(Uuid::new_v4(), &["x"])]).await;
+        let reader =
+            TranscriptReaderFs::new(writer, None, "ana").with_tenant_id(Some("acme".into()));
+        let events = reader
+            .list_recent_events(&AgentEventsListFilter {
+                agent_id: "ana".into(),
+                tenant_id: Some("globex".into()),
+                limit: 10,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(
+            events.is_empty(),
+            "cross-tenant list must not leak rows; got {events:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_recent_events_legacy_reader_rejects_tenant_filter() {
+        let tmp = tempfile::tempdir().unwrap();
+        let writer = seeded_writer(tmp.path(), "ana", &[(Uuid::new_v4(), &["x"])]).await;
+        // Legacy reader (no tenant_id) — defense-in-depth: any
+        // non-None tenant filter rejects.
+        let reader = TranscriptReaderFs::new(writer, None, "ana");
+        let events = reader
+            .list_recent_events(&AgentEventsListFilter {
+                agent_id: "ana".into(),
+                tenant_id: Some("acme".into()),
+                limit: 10,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(events.is_empty(), "untagged reader must reject tenant filter");
     }
 
     #[tokio::test]

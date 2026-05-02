@@ -60,8 +60,18 @@ pub trait EscalationStore: Send + Sync + std::fmt::Debug {
 }
 
 /// `nexo/admin/escalations/list` — read-only paginated query.
+///
+/// Phase 83.8.12.4.b — `patcher` is optional. When `Some` AND
+/// `params.tenant_id.is_some()`, the handler filters returned
+/// rows by joining each `EscalationEntry.agent_id` against
+/// `agents.yaml.<id>.tenant_id`. Defense-in-depth: agents
+/// without a `tenant_id` field are excluded from any non-`None`
+/// tenant query (matches the `agents/list` behavior). When
+/// `patcher` is `None` (test paths), the filter is a pass-through
+/// — preserving prior behavior.
 pub async fn list(
     store: &dyn EscalationStore,
+    patcher: Option<&dyn super::agents::YamlPatcher>,
     params: Value,
 ) -> AdminRpcResult {
     let mut p: EscalationsListParams = match serde_json::from_value(params) {
@@ -79,6 +89,16 @@ pub async fn list(
                 "escalations.list: {e}"
             )))
         }
+    };
+    let entries = match (&p.tenant_id, patcher) {
+        (Some(want), Some(patcher)) => entries
+            .into_iter()
+            .filter(|e| {
+                super::agents::agent_tenant_id(patcher, &e.agent_id).as_deref()
+                    == Some(want.as_str())
+            })
+            .collect(),
+        _ => entries,
     };
     AdminRpcResult::ok(
         serde_json::to_value(EscalationsListResponse { entries })
@@ -303,7 +323,7 @@ mod tests {
             .upsert_pending("ana".into(), pending_state())
             .await
             .unwrap();
-        let result = list(&store, serde_json::json!({})).await;
+        let result = list(&store, None, serde_json::json!({})).await;
         let resp: EscalationsListResponse =
             serde_json::from_value(result.result.unwrap()).unwrap();
         assert_eq!(resp.entries.len(), 1);
@@ -318,6 +338,7 @@ mod tests {
             .unwrap();
         let result = list(
             &store,
+            None,
             serde_json::json!({ "filter": "all", "limit": 0 }),
         )
         .await;
@@ -389,6 +410,132 @@ mod tests {
         let resp: EscalationsResolveResponse =
             serde_json::from_value(r.result.unwrap()).unwrap();
         assert!(!resp.changed);
+    }
+
+    /// Phase 83.8.12.4.b — minimal `YamlPatcher` mock used to feed
+    /// `agent_tenant_id` lookups during the tenant-filter tests.
+    /// Maps `agent_id → tenant_id` via a static table; only the
+    /// `tenant_id` dotted field is honoured.
+    #[derive(Debug, Default)]
+    struct MockTenantPatcher {
+        tenants: std::collections::HashMap<String, Option<String>>,
+    }
+
+    impl super::super::agents::YamlPatcher for MockTenantPatcher {
+        fn list_agent_ids(&self) -> anyhow::Result<Vec<String>> {
+            Ok(self.tenants.keys().cloned().collect())
+        }
+        fn read_agent_field(
+            &self,
+            agent_id: &str,
+            dotted: &str,
+        ) -> anyhow::Result<Option<Value>> {
+            if dotted == "tenant_id" {
+                if let Some(t) = self.tenants.get(agent_id) {
+                    return Ok(t.as_ref().map(|s| Value::String(s.clone())));
+                }
+            }
+            Ok(None)
+        }
+        fn upsert_agent_field(
+            &self,
+            _: &str,
+            _: &str,
+            _: Value,
+        ) -> anyhow::Result<()> {
+            Err(anyhow::anyhow!("upsert not used in escalations tests"))
+        }
+        fn remove_agent(&self, _: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn pending_state_for(agent_id: &str) -> EscalationState {
+        EscalationState::Pending {
+            scope: ProcessingScope::Conversation {
+                agent_id: agent_id.into(),
+                channel: "whatsapp".into(),
+                account_id: "acc".into(),
+                contact_id: "wa.55".into(),
+                mcp_channel_source: None,
+            },
+            summary: format!("{agent_id} needs human"),
+            reason: EscalationReason::OutOfScope,
+            urgency: EscalationUrgency::High,
+            context: BTreeMap::new(),
+            requested_at_ms: 1_700_000_000_000,
+        }
+    }
+
+    #[tokio::test]
+    async fn list_filters_by_tenant_when_patcher_wired() {
+        let store = MockStore::default();
+        store
+            .upsert_pending("ana".into(), pending_state_for("ana"))
+            .await
+            .unwrap();
+        store
+            .upsert_pending("bob".into(), pending_state_for("bob"))
+            .await
+            .unwrap();
+        let mut patcher = MockTenantPatcher::default();
+        patcher.tenants.insert("ana".into(), Some("acme".into()));
+        patcher.tenants.insert("bob".into(), Some("globex".into()));
+
+        let result = list(
+            &store,
+            Some(&patcher),
+            serde_json::json!({ "tenant_id": "acme" }),
+        )
+        .await;
+        let resp: EscalationsListResponse =
+            serde_json::from_value(result.result.unwrap()).unwrap();
+        assert_eq!(resp.entries.len(), 1, "only ana (tenant=acme) survives");
+        assert_eq!(resp.entries[0].agent_id, "ana");
+    }
+
+    #[tokio::test]
+    async fn list_filter_passes_through_when_patcher_absent() {
+        let store = MockStore::default();
+        store
+            .upsert_pending("ana".into(), pending_state())
+            .await
+            .unwrap();
+        // Tenant filter requested but no patcher available → row
+        // returned unfiltered (back-compat behavior; production
+        // wires the patcher always).
+        let result = list(
+            &store,
+            None,
+            serde_json::json!({ "tenant_id": "acme" }),
+        )
+        .await;
+        let resp: EscalationsListResponse =
+            serde_json::from_value(result.result.unwrap()).unwrap();
+        assert_eq!(resp.entries.len(), 1, "no patcher → no filter");
+    }
+
+    #[tokio::test]
+    async fn list_filters_excludes_agents_without_tenant_id() {
+        let store = MockStore::default();
+        store
+            .upsert_pending("ana".into(), pending_state())
+            .await
+            .unwrap();
+        let mut patcher = MockTenantPatcher::default();
+        patcher.tenants.insert("ana".into(), None); // agent has no tenant
+        let result = list(
+            &store,
+            Some(&patcher),
+            serde_json::json!({ "tenant_id": "acme" }),
+        )
+        .await;
+        let resp: EscalationsListResponse =
+            serde_json::from_value(result.result.unwrap()).unwrap();
+        assert!(
+            resp.entries.is_empty(),
+            "agents without tenant_id must filter out (defense-in-depth)"
+        );
     }
 
     #[tokio::test]
