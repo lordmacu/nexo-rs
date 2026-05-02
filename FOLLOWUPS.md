@@ -1867,14 +1867,36 @@ hoisted ahead of the bootstrap call. Until then:
   `ProcessingControlStore` with the bootstrap.
 - Channel intervention `Reply` works the moment the broker
   handle is hoisted.
-- Operator firehose backfill of non-transcript kinds works
-  the moment a `SqliteAgentEventLog` is opened at
-  `state_dir/agent_events.db` and wrapped in
-  `MergingAgentEventReader`.
+- Operator firehose backfill of non-transcript kinds — ✅
+  shipped 2026-05-02 in Phase 82.11.log.thread. boot opens
+  `SqliteAgentEventLog::open(state_dir/agent_events.db)` and
+  hands `Some(log_arc)` to `agent_event_log` so
+  `Tee([Broadcast, Log])` composes internally. Open failure
+  warns + degrades to live-only, never blocks boot.
+- Durable admin audit log — ✅ shipped 2026-05-02 in Phase
+  82.10.h.b.b.audit-db. boot now passes
+  `Some(state_dir/admin_audit.db)` to the bootstrap (was
+  `None` → in-memory writer that lost rows on restart).
+  Same path the `nexo microapp admin audit tail` CLI defaults
+  to — operator queries land on the same file the daemon
+  writes.
+
+Still pending:
+- `MergingAgentEventReader` wrap for `transcript_reader` —
+  needs a `TranscriptReaderFs` instance. Boot doesn't
+  currently construct one (transcript writer is per-agent;
+  the reader builds against the same dir tree). One small
+  helper away.
+- `Some(processing_store)` thread — wait for the runtime
+  hoist that surfaces a shared `Arc<dyn ProcessingControlStore>`.
+- `Some(broker)` thread — wait for the broker connection
+  hoist that surfaces `Some(AnyBroker)` ahead of bootstrap.
+- Per-tenant retention sweep scheduler — wait for the audit
+  sweep scheduler so both run from one place.
 
 Each per-domain hoist is independent and can ship as its own
 small commit. None require the bootstrap activation refactor
-that just landed.
+that already landed.
 
 ### Phase 82.11 — agent event firehose follow-ups
 
