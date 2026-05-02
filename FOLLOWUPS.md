@@ -1885,20 +1885,19 @@ test). Three follow-ups stayed deferred:
   emit on the existing `nexo/notify/agent_event` subject; no
   FTS change required (search remains TranscriptAppended-
   only).
-- **82.11.log.b — boot wire-up + retention sweep +
-  agent_events/list cross-source merge.** Phase 82.11.log
-  shipped the `SqliteAgentEventLog` primitive (read+write
-  trait, SQLite impl, AgentEventEmitter sink). Three
-  deferreds:
+- **82.11.log.b — boot wire-up + agent_events/list
+  cross-source merge.** Phase 82.11.log shipped the
+  `SqliteAgentEventLog` primitive (read+write trait, SQLite
+  impl, AgentEventEmitter sink) AND the retention sweep
+  (Phase 82.11.log.sweep, 2026-05-02). Two deferreds remain:
   - **Boot**: stitch `Tee([BroadcastAgentEventEmitter,
     SqliteAgentEventLog::open(state_dir.join("agent_events.db"))])`
     inside `AdminRpcBootstrap::new` so every emit reaches
-    both. Folds with the same boot-order refactor as the
-    other 82.x operator wire-ups.
-  - **Retention sweep**: append-only log grows unbounded.
-    Match the audit-log retention pattern (default 90 days,
-    configurable via `agent_events.retention_days` in
-    `agents.yaml`). Same scheduler as `audit_sqlite::sweep`.
+    both. Boot scheduler also calls
+    `sweep_retention(retention_days, max_rows)` on the same
+    cadence as the audit-log sweep (defaults 90d / 100k rows).
+    Folds with the same boot-order refactor as the other 82.x
+    operator wire-ups.
   - **`agent_events/list` cross-source**: today the admin
     RPC handler reads only `TranscriptReader` (transcript
     JSONL). Operator dashboards that need
@@ -2780,9 +2779,19 @@ Cross-references:
   idempotent DDL, `open_memory()` for tests). 10 tests:
   round-trip, agent / kind / tenant / since_ms filters,
   limit cap + default, emit→append routing, empty-on-unknown,
-  pool clone shares rows. Boot wire-up + retention sweep +
-  `agent_events/list` cross-source merge are deferred (see
-  82.11.log.b below).
+  pool clone shares rows. Boot wire-up + `agent_events/list`
+  cross-source merge are deferred (see 82.11.log.b below).
+- 82.11.log.sweep ✅ Retention sweep on `SqliteAgentEventLog`
+  — `sweep_retention(retention_days, max_rows)` mirrors the
+  audit-log sweep shape so boot can run both with one shared
+  scheduler. Two-pass DELETE: (1) age-based by `at_ms`
+  cutoff, (2) cap-based (oldest first by `at_ms ASC, id ASC`)
+  when total > max_rows. Returns total rows deleted. 3 new
+  tests: 100d-old row deleted under 60d retention while 30d
+  survives; 5-row cap-to-2 drops 3 oldest with newest
+  preserved; idempotent no-op when already under both
+  thresholds. Boot scheduler wire-up folded into 82.11.log.b
+  (alongside `Tee` composition).
 - 82.14.b.firehose ✅ Escalation firehose variants —
   `AgentEventKind::EscalationRequested` + `EscalationResolved`
   variants land on the wire (with `tenant_id` skip-when-None for
