@@ -36,6 +36,7 @@ use super::domains::pairing::{PairingChallengeStore, PairingNotifier};
 use super::domains::processing::ProcessingControlStore;
 use super::channel_outbound::ChannelOutboundDispatcher;
 use super::domains::skills::SkillsStore;
+use super::domains::tenants::TenantStore;
 
 /// Reload signal callback — invoked by domain handlers after
 /// successful yaml mutations to trigger Phase 18 hot-reload.
@@ -182,6 +183,12 @@ pub struct AdminRpcDispatcher {
     /// `channel_unavailable`. Production wires the multi-channel
     /// router adapter living in `nexo-setup`.
     channel_outbound: Option<Arc<dyn ChannelOutboundDispatcher>>,
+    /// Phase 83.8.12 — multi-tenant SaaS registry. `None`
+    /// disables `nexo/admin/tenants/*` (single-tenant
+    /// deployments where there is no operator-level tenant
+    /// management). Production wires
+    /// `nexo_setup::admin_adapters::TenantsYamlPatcher`.
+    tenant_store: Option<Arc<dyn TenantStore>>,
 }
 
 impl std::fmt::Debug for AdminRpcDispatcher {
@@ -218,6 +225,7 @@ impl AdminRpcDispatcher {
             escalation_store: None,
             skills_store: None,
             channel_outbound: None,
+            tenant_store: None,
         }
     }
 

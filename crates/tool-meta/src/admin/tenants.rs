@@ -1,8 +1,8 @@
 //! Phase 83.8.12 — `nexo/admin/tenants/*` wire types.
 //!
-//! An *empresa* (company / tenant) is the top-level multi-tenant
+//! An *tenant* (company / tenant) is the top-level multi-tenant
 //! key for the SaaS deployment of `agent-creator`. One daemon
-//! hosts N tenants; each empresa owns its own agents, skills,
+//! hosts N tenants; each tenant owns its own agents, skills,
 //! and LLM provider keys. The wire shapes live here so SDK
 //! consumers (microapps, operator UIs) and the daemon's
 //! [`nexo_core::agent::admin_rpc::domains::tenants`] handlers
@@ -10,7 +10,7 @@
 //! pulling in the other.
 //!
 //! Storage on the daemon side is `config/tenants.yaml`
-//! (see `nexo_setup::admin_adapters::EmpresasYamlPatcher`); the
+//! (see `nexo_setup::admin_adapters::TenantsYamlPatcher`); the
 //! wire shapes intentionally do NOT mention the file format.
 
 use chrono::{DateTime, Utc};
@@ -21,26 +21,26 @@ use std::collections::BTreeMap;
 /// provider list + metadata so list calls stay cheap on a daemon
 /// that hosts hundreds of tenants.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct EmpresaSummary {
+pub struct TenantSummary {
     /// Stable kebab-case id (`acme-corp`, `globex`, …). Matches
     /// the regex `^[a-z0-9][a-z0-9-]{0,63}$`.
     pub id: String,
     /// Operator-facing display name (1..=128 chars after trim).
     pub display_name: String,
-    /// Whether the empresa is currently serving traffic.
+    /// Whether the tenant is currently serving traffic.
     pub active: bool,
-    /// How many agents in `agents.yaml` reference this empresa.
+    /// How many agents in `agents.yaml` reference this tenant.
     /// Computed at list time by the production adapter.
     pub agent_count: usize,
     /// Tenant creation timestamp.
     pub created_at: DateTime<Utc>,
 }
 
-/// Full empresa record returned by `tenants/get` and
+/// Full tenant record returned by `tenants/get` and
 /// `tenants/upsert`. Adds the LLM provider refs and metadata
 /// the summary omits.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct EmpresaDetail {
+pub struct TenantDetail {
     /// Stable kebab-case id.
     pub id: String,
     /// Operator-facing display name.
@@ -50,7 +50,7 @@ pub struct EmpresaDetail {
     /// Tenant creation timestamp.
     pub created_at: DateTime<Utc>,
     /// Provider names (from the `llm.yaml.tenants.<id>.providers.*`
-    /// or `llm.yaml.providers.*` namespace) the empresa is
+    /// or `llm.yaml.providers.*` namespace) the tenant is
     /// allowed to use. Empty list = none granted yet.
     #[serde(default)]
     pub llm_provider_refs: Vec<String>,
@@ -64,36 +64,36 @@ pub struct EmpresaDetail {
 /// Params for `nexo/admin/tenants/list`. All filters optional.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
-pub struct EmpresasListFilter {
+pub struct TenantsListFilter {
     /// When `true`, omit tenants whose `active` flag is `false`.
     pub active_only: bool,
     /// Filter by id prefix (case-sensitive). `None` returns
-    /// every empresa.
+    /// every tenant.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prefix: Option<String>,
 }
 
 /// Result of `nexo/admin/tenants/list`. Sorted alpha by id.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct EmpresasListResponse {
+pub struct TenantsListResponse {
     /// Matching tenants.
-    pub tenants: Vec<EmpresaSummary>,
+    pub tenants: Vec<TenantSummary>,
 }
 
 /// Params for `nexo/admin/tenants/get`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct EmpresasGetParams {
+pub struct TenantsGetParams {
     /// Stable id.
     pub tenant_id: String,
 }
 
-/// Result of `nexo/admin/tenants/get`. `empresa = None` is the
+/// Result of `nexo/admin/tenants/get`. `tenant = None` is the
 /// not-found case (daemon does NOT return an error so callers
 /// can probe).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct EmpresasGetResponse {
-    /// Matching empresa, or `None` when the id is unknown.
-    pub empresa: Option<EmpresaDetail>,
+pub struct TenantsGetResponse {
+    /// Matching tenant, or `None` when the id is unknown.
+    pub tenant: Option<TenantDetail>,
 }
 
 /// Params for `nexo/admin/tenants/upsert`. Create-or-update —
@@ -101,7 +101,7 @@ pub struct EmpresasGetResponse {
 /// `None`-valued optional fields preserve the existing value
 /// (or default to `true`/`[]`/`{}` for new tenants).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct EmpresasUpsertInput {
+pub struct TenantsUpsertInput {
     /// Stable kebab-case id. Must match
     /// `^[a-z0-9][a-z0-9-]{0,63}$`.
     pub id: String,
@@ -120,21 +120,21 @@ pub struct EmpresasUpsertInput {
 
 /// Result of `nexo/admin/tenants/upsert`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct EmpresasUpsertResponse {
-    /// Final empresa record after the write.
-    pub empresa: EmpresaDetail,
-    /// `true` when this call created a new empresa, `false` when
+pub struct TenantsUpsertResponse {
+    /// Final tenant record after the write.
+    pub tenant: TenantDetail,
+    /// `true` when this call created a new tenant, `false` when
     /// it updated an existing one (idempotent retry).
     pub created: bool,
 }
 
 /// Params for `nexo/admin/tenants/delete`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct EmpresasDeleteParams {
+pub struct TenantsDeleteParams {
     /// Stable id.
     pub tenant_id: String,
     /// `true` cascades the delete to every agent owned by the
-    /// empresa. `false` (default) succeeds only when no agents
+    /// tenant. `false` (default) succeeds only when no agents
     /// reference it — the response carries the orphan list so
     /// the UI can confirm before retrying with `purge: true`.
     #[serde(default)]
@@ -143,12 +143,12 @@ pub struct EmpresasDeleteParams {
 
 /// Result of `nexo/admin/tenants/delete`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct EmpresasDeleteResponse {
-    /// `true` when the empresa entry was removed, `false`
+pub struct TenantsDeleteResponse {
+    /// `true` when the tenant entry was removed, `false`
     /// when the delete was rejected (orphan agents present
     /// AND `purge: false`) OR the id had no record.
     pub removed: bool,
-    /// Agent ids that still reference the empresa. Populated
+    /// Agent ids that still reference the tenant. Populated
     /// when `purge: false` rejected the delete; empty
     /// otherwise.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -167,7 +167,7 @@ mod tests {
 
     #[test]
     fn empresa_summary_round_trips() {
-        let s = EmpresaSummary {
+        let s = TenantSummary {
             id: "acme-corp".into(),
             display_name: "Acme Corp.".into(),
             active: true,
@@ -175,7 +175,7 @@ mod tests {
             created_at: fixed_ts(),
         };
         let v = to_value(&s).unwrap();
-        let back: EmpresaSummary = from_value(v).unwrap();
+        let back: TenantSummary = from_value(v).unwrap();
         assert_eq!(s, back);
     }
 
@@ -184,7 +184,7 @@ mod tests {
         let mut metadata = BTreeMap::new();
         metadata.insert("contact".into(), json!("support@acme.example"));
         metadata.insert("tier".into(), json!("pro"));
-        let d = EmpresaDetail {
+        let d = TenantDetail {
             id: "acme-corp".into(),
             display_name: "Acme Corp.".into(),
             active: true,
@@ -193,13 +193,13 @@ mod tests {
             metadata,
         };
         let v = to_value(&d).unwrap();
-        let back: EmpresaDetail = from_value(v).unwrap();
+        let back: TenantDetail = from_value(v).unwrap();
         assert_eq!(d, back);
     }
 
     #[test]
     fn empresas_upsert_input_omits_optional_fields_when_none() {
-        let p = EmpresasUpsertInput {
+        let p = TenantsUpsertInput {
             id: "globex".into(),
             display_name: "Globex".into(),
             active: None,
@@ -215,7 +215,7 @@ mod tests {
 
     #[test]
     fn empresas_delete_response_omits_orphans_when_empty() {
-        let r = EmpresasDeleteResponse {
+        let r = TenantsDeleteResponse {
             removed: true,
             orphaned_agents: vec![],
         };
@@ -226,7 +226,7 @@ mod tests {
 
     #[test]
     fn empresas_delete_response_includes_orphans_when_present() {
-        let r = EmpresasDeleteResponse {
+        let r = TenantsDeleteResponse {
             removed: false,
             orphaned_agents: vec!["a-1".into(), "a-2".into()],
         };
@@ -237,22 +237,22 @@ mod tests {
 
     #[test]
     fn empresas_list_filter_default_serializes_compact() {
-        let f = EmpresasListFilter::default();
+        let f = TenantsListFilter::default();
         let v = to_value(&f).unwrap();
         assert_eq!(v, json!({ "active_only": false }));
     }
 
     #[test]
     fn empresas_get_response_serializes_none_explicitly() {
-        let r = EmpresasGetResponse { empresa: None };
+        let r = TenantsGetResponse { tenant: None };
         let v = to_value(&r).unwrap();
-        assert_eq!(v, json!({ "empresa": null }));
+        assert_eq!(v, json!({ "tenant": null }));
     }
 
     #[test]
     fn empresas_upsert_response_round_trips_created_flag() {
-        let r = EmpresasUpsertResponse {
-            empresa: EmpresaDetail {
+        let r = TenantsUpsertResponse {
+            tenant: TenantDetail {
                 id: "x".into(),
                 display_name: "X".into(),
                 active: true,
@@ -264,7 +264,7 @@ mod tests {
         };
         let v = to_value(&r).unwrap();
         assert_eq!(v["created"], json!(true));
-        let back: EmpresasUpsertResponse = from_value(v).unwrap();
+        let back: TenantsUpsertResponse = from_value(v).unwrap();
         assert_eq!(r, back);
     }
 }
