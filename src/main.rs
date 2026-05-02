@@ -1270,11 +1270,39 @@ async fn main() -> Result<()> {
         let reload_noop: nexo_core::agent::admin_rpc::dispatcher::ReloadSignal =
             std::sync::Arc::new(|| {});
         let extensions_cfg_ref = cfg.extensions.as_ref().unwrap();
+        // Phase 82.10.h.b.b.audit-db — durable audit log at the
+        // canonical state path (`$NEXO_HOME/admin_audit.db`),
+        // matching the `nexo microapp admin audit tail` CLI
+        // default. Operator queries the same file across daemon
+        // restarts.
+        let state_dir = nexo_project_tracker::state::nexo_state_dir();
+        let audit_db_path = state_dir.join("admin_audit.db");
+        // Phase 82.11.log.thread — durable agent-event log at
+        // `$NEXO_HOME/agent_events.db`. When opened, boot
+        // composes `Tee([Broadcast, Log])` so every emit (chat
+        // transcripts + processing pause/resume + escalation
+        // requested/resolved) lands in SQLite for backfill across
+        // daemon restart. Open failure logs + degrades to live-only
+        // (no durability) rather than failing boot.
+        let agent_event_log = match nexo_core::agent::admin_rpc::SqliteAgentEventLog::open(
+            &state_dir.join("agent_events.db"),
+        )
+        .await
+        {
+            Ok(log) => Some(std::sync::Arc::new(log)),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "agent_event_log open failed; firehose stays live-only without durable backfill",
+                );
+                None
+            }
+        };
         match nexo_setup::admin_bootstrap::AdminRpcBootstrap::build(
             nexo_setup::admin_bootstrap::AdminBootstrapInputs {
                 config_dir: &config_dir,
                 secrets_root: &secrets_dir,
-                audit_db: None,
+                audit_db: Some(&audit_db_path),
                 extensions_cfg: extensions_cfg_ref,
                 admin_capabilities: &admin_capabilities,
                 http_server_capabilities: &http_server_capabilities,
@@ -1286,7 +1314,7 @@ async fn main() -> Result<()> {
                 tenant_store: None,
                 skills_store: None,
                 escalation_store: None,
-                agent_event_log: None,
+                agent_event_log: agent_event_log.clone(),
             },
         )
         .await
@@ -1296,6 +1324,8 @@ async fn main() -> Result<()> {
                     tracing::info!(
                         microapps = admin_capabilities.len(),
                         active = bs.is_active(),
+                        audit_db = %audit_db_path.display(),
+                        agent_event_log_durable = agent_event_log.is_some(),
                         "admin RPC bootstrap wired",
                     );
                 }
