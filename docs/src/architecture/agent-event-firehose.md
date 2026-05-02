@@ -101,6 +101,17 @@ sequentially. Production keeps each inner non-blocking (broadcast
 `try_send`, NATS publish, async SQLite append) so a slow sink
 cannot throttle the whole tee.
 
+### Boot composition state
+
+`AdminBootstrapInputs` (in `nexo-setup`) accepts an optional
+`agent_event_log: Option<Arc<SqliteAgentEventLog>>`. When `Some`,
+`build_with_firehose` composes `Tee([Broadcast, Log])`
+internally — every emit through `bootstrap.event_emitter()` lands
+in the durable log. The NATS bridge is library-side ready
+(`NatsAgentEventEmitter::new(client)`) but not yet stitched by
+boot — adding it is one line in the same composition once the
+broker handle is threaded into bootstrap inputs.
+
 ### `NoopAgentEventEmitter`
 
 Default for headless installs and tests. Useful as an explicit
