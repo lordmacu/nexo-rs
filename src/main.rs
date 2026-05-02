@@ -1260,6 +1260,19 @@ async fn main() -> Result<()> {
         nexo_setup::admin_capability_collect::collect_admin_capabilities(&plugin_roots);
     let http_server_capabilities =
         nexo_setup::admin_capability_collect::collect_http_server_capabilities(&plugin_roots);
+    // Phase 82.13.c.thread — single in-memory ProcessingControlStore
+    // SHARED between the admin RPC dispatcher and every AgentRuntime
+    // built below. Without sharing, the dispatcher and runtime hold
+    // different stores and a `processing/pause` RPC never reaches
+    // the inbound loop. SQLite-backed durable variant
+    // (`SqliteProcessingControlStore`) lands when the per-tenant
+    // retention scheduler does — same swap shape as audit /
+    // agent_event_log.
+    let processing_store: std::sync::Arc<
+        dyn nexo_core::agent::admin_rpc::domains::processing::ProcessingControlStore,
+    > = std::sync::Arc::new(
+        nexo_setup::admin_adapters::InMemoryProcessingControlStore::new(),
+    );
     let admin_bootstrap: Option<nexo_setup::admin_bootstrap::AdminRpcBootstrap> = if cfg
         .extensions
         .as_ref()
@@ -1343,7 +1356,7 @@ async fn main() -> Result<()> {
                 transcript_reader: None,
                 broker: None,
                 transcript_writer: None,
-                processing_store: None,
+                processing_store: Some(std::sync::Arc::clone(&processing_store)),
                 tenant_store: tenant_store.clone(),
                 skills_store: skills_store.clone(),
                 escalation_store: escalation_store.clone(),
@@ -4540,6 +4553,17 @@ async fn main() -> Result<()> {
         runtime = runtime.with_plan_approval_registry(plan_approval_registry.clone());
         if let Some(ref dc) = dispatch_ctx {
             runtime = runtime.with_dispatch_ctx(Arc::clone(dc));
+        }
+        // Phase 82.13.c.thread — share the same ProcessingControlStore
+        // the admin RPC dispatcher holds so a `processing/pause` RPC
+        // reaches the inbound loop on the next message.
+        runtime = runtime.with_processing_store(Arc::clone(&processing_store));
+        // Phase 82.13.c.thread (firehose) — share the bootstrap's
+        // event emitter so per-scope pending-queue eviction emits
+        // `PendingInboundsDropped` on the same firehose subscribers
+        // already listen to. Without an emitter, evictions log only.
+        if let Some(ref bs) = admin_bootstrap {
+            runtime = runtime.with_event_emitter(bs.event_emitter());
         }
         // M5.b — capture maps before `runtime.start()` consumes self.
         // `tools_per_agent` carries the per-agent registry the cron
