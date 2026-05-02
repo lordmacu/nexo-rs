@@ -2646,6 +2646,19 @@ Cross-references:
   gained `session_id: Option<Uuid>` (was missing since Phase
   82.13.b.1 added the field on the SDK side). Out-of-tree commit
   9f634a9.
+- 82.14.b.firehose ✅ Escalation firehose variants —
+  `AgentEventKind::EscalationRequested` + `EscalationResolved`
+  variants land on the wire (with `tenant_id` skip-when-None for
+  multi-tenant routing). Emit-sites: `escalations::resolve` fires
+  `EscalationResolved` when the store transition flips
+  (`changed = true`); auto-resolve on `processing/pause` fires
+  the same shape so subscribers can't tell the two paths apart.
+  Dispatcher gains `with_event_emitter` builder; threads emitter
+  through to both call sites. `EscalationRequested` emit lands
+  alongside the future `escalate_to_human` built-in tool (boot-
+  blocked on the BindingContext→scope derivation). 3 new tests:
+  resolve emits with right shape + agent_id, no-op skips emit,
+  auto-resolve on pause emits.
 - 83.15.b ✅ MockAdminRpc — programmable in-process replacement
   for `nexo/admin/*` so microapp tool/hook tests run without a
   daemon. `MockAdminRpc::on(method, value)` /

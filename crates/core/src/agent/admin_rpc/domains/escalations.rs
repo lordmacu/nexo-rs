@@ -13,15 +13,18 @@
 //! resolve surface so operator UIs can poll today.
 
 use async_trait::async_trait;
+use nexo_tool_meta::admin::agent_events::AgentEventKind;
 use nexo_tool_meta::admin::escalations::{
     EscalationEntry, EscalationState, EscalationsListFilter, EscalationsListParams,
     EscalationsListResponse, EscalationsResolveParams, EscalationsResolveResponse, ResolvedBy,
 };
 use nexo_tool_meta::admin::processing::ProcessingScope;
 use serde_json::Value;
+use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::agent::admin_rpc::dispatcher::{AdminRpcError, AdminRpcResult};
+use crate::agent::agent_events::AgentEventEmitter;
 
 /// Default `list` cap when the caller leaves it unset.
 pub const DEFAULT_LIST_LIMIT: usize = 100;
@@ -107,8 +110,17 @@ pub async fn list(
 }
 
 /// `nexo/admin/escalations/resolve` — flip Pending → Resolved.
+///
+/// Phase 82.14.b — when `emitter` is `Some` AND the resolve
+/// transition was a real flip (`changed = true`), fires
+/// `AgentEventKind::EscalationResolved` on the firehose so
+/// operator UIs subscribed to `nexo/notify/agent_event` clear
+/// the badge in real time. Without an emitter wired the
+/// transition still happens; subscribers fall back to polling
+/// `escalations/list`.
 pub async fn resolve(
     store: &dyn EscalationStore,
+    emitter: Option<&Arc<dyn AgentEventEmitter>>,
     params: Value,
 ) -> AdminRpcResult {
     let p: EscalationsResolveParams = match serde_json::from_value(params) {
@@ -131,7 +143,9 @@ pub async fn resolve(
             )))
         }
     };
-    let changed = match store.resolve(&p.scope, by, now_epoch_ms()).await {
+    let resolved_at_ms = now_epoch_ms();
+    let by_for_emit = by.clone();
+    let changed = match store.resolve(&p.scope, by, resolved_at_ms).await {
         Ok(c) => c,
         Err(e) => {
             return AdminRpcResult::err(AdminRpcError::Internal(format!(
@@ -139,6 +153,18 @@ pub async fn resolve(
             )))
         }
     };
+    if changed {
+        if let Some(em) = emitter {
+            em.emit(AgentEventKind::EscalationResolved {
+                agent_id: p.scope.agent_id().to_string(),
+                scope: p.scope.clone(),
+                resolved_at_ms,
+                by: by_for_emit,
+                tenant_id: None,
+            })
+            .await;
+        }
+    }
     AdminRpcResult::ok(
         serde_json::to_value(EscalationsResolveResponse {
             changed,
@@ -155,13 +181,34 @@ pub async fn resolve(
 /// processing pause handler when both stores are configured.
 /// Idempotent — returns `Ok(true)` when a row was flipped,
 /// `Ok(false)` otherwise.
+///
+/// Phase 82.14.b — when `emitter` is `Some` AND the row
+/// flipped, fires `AgentEventKind::EscalationResolved` on the
+/// firehose. Same shape as the operator-driven `resolve`
+/// handler emit so subscribers can't tell the two paths
+/// apart on the wire.
 pub async fn auto_resolve_on_pause(
     store: &dyn EscalationStore,
+    emitter: Option<&Arc<dyn AgentEventEmitter>>,
     scope: &ProcessingScope,
 ) -> anyhow::Result<bool> {
-    store
-        .resolve(scope, ResolvedBy::OperatorTakeover, now_epoch_ms())
-        .await
+    let resolved_at_ms = now_epoch_ms();
+    let changed = store
+        .resolve(scope, ResolvedBy::OperatorTakeover, resolved_at_ms)
+        .await?;
+    if changed {
+        if let Some(em) = emitter {
+            em.emit(AgentEventKind::EscalationResolved {
+                agent_id: scope.agent_id().to_string(),
+                scope: scope.clone(),
+                resolved_at_ms,
+                by: ResolvedBy::OperatorTakeover,
+                tenant_id: None,
+            })
+            .await;
+        }
+    }
+    Ok(changed)
 }
 
 /// Convenience: filter helper used by in-memory store impls.
@@ -359,6 +406,7 @@ mod tests {
             .unwrap();
         let r = resolve(
             &store,
+            None,
             serde_json::json!({
                 "scope": convo(),
                 "by": "dismissed",
@@ -381,6 +429,7 @@ mod tests {
             .unwrap();
         let r = resolve(
             &store,
+            None,
             serde_json::json!({
                 "scope": convo(),
                 "by": "takeover",
@@ -400,6 +449,7 @@ mod tests {
         let store = MockStore::default();
         let r = resolve(
             &store,
+            None,
             serde_json::json!({
                 "scope": convo(),
                 "by": "takeover",
@@ -538,6 +588,129 @@ mod tests {
         );
     }
 
+    /// Phase 82.14.b — minimal `AgentEventEmitter` mock that
+    /// captures emitted events into a Vec for the firehose
+    /// emit assertions.
+    #[derive(Debug, Default)]
+    struct CaptureEmitter {
+        events: std::sync::Mutex<Vec<nexo_tool_meta::admin::agent_events::AgentEventKind>>,
+    }
+
+    #[async_trait]
+    impl crate::agent::agent_events::AgentEventEmitter for CaptureEmitter {
+        async fn emit(
+            &self,
+            event: nexo_tool_meta::admin::agent_events::AgentEventKind,
+        ) {
+            self.events.lock().unwrap().push(event);
+        }
+    }
+
+    #[tokio::test]
+    async fn resolve_emits_escalation_resolved_when_changed() {
+        let store = MockStore::default();
+        store
+            .upsert_pending("ana".into(), pending_state())
+            .await
+            .unwrap();
+        let emitter: std::sync::Arc<dyn crate::agent::agent_events::AgentEventEmitter> =
+            std::sync::Arc::new(CaptureEmitter::default());
+        let _r = resolve(
+            &store,
+            Some(&emitter),
+            serde_json::json!({
+                "scope": convo(),
+                "by": "takeover",
+                "operator_token_hash": "h",
+            }),
+        )
+        .await;
+        // Reach into the concrete capture buffer via downcast
+        // through Arc::strong_count guard? Simpler: rebuild a
+        // local emitter, bypass the trait object dance.
+        let cap = std::sync::Arc::new(CaptureEmitter::default());
+        let cap_dyn: std::sync::Arc<dyn crate::agent::agent_events::AgentEventEmitter> =
+            cap.clone();
+        let store2 = MockStore::default();
+        store2
+            .upsert_pending("ana".into(), pending_state())
+            .await
+            .unwrap();
+        let _ = resolve(
+            &store2,
+            Some(&cap_dyn),
+            serde_json::json!({
+                "scope": convo(),
+                "by": "takeover",
+                "operator_token_hash": "h",
+            }),
+        )
+        .await;
+        let events = cap.events.lock().unwrap().clone();
+        assert_eq!(events.len(), 1, "exactly one EscalationResolved fired");
+        match &events[0] {
+            nexo_tool_meta::admin::agent_events::AgentEventKind::EscalationResolved {
+                agent_id,
+                by,
+                ..
+            } => {
+                assert_eq!(agent_id, "ana");
+                assert!(matches!(by, ResolvedBy::OperatorTakeover));
+            }
+            other => panic!("unexpected emit: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn resolve_skips_emit_when_no_change() {
+        // Resolve a scope that has nothing pending → store
+        // returns false, emitter stays untouched.
+        let store = MockStore::default();
+        let cap = std::sync::Arc::new(CaptureEmitter::default());
+        let cap_dyn: std::sync::Arc<dyn crate::agent::agent_events::AgentEventEmitter> =
+            cap.clone();
+        let _ = resolve(
+            &store,
+            Some(&cap_dyn),
+            serde_json::json!({
+                "scope": convo(),
+                "by": "takeover",
+                "operator_token_hash": "h",
+            }),
+        )
+        .await;
+        assert!(
+            cap.events.lock().unwrap().is_empty(),
+            "no-op resolve must not emit (subscribers would see phantom events)"
+        );
+    }
+
+    #[tokio::test]
+    async fn auto_resolve_on_pause_emits_when_pending_existed() {
+        let store = MockStore::default();
+        store
+            .upsert_pending("ana".into(), pending_state())
+            .await
+            .unwrap();
+        let cap = std::sync::Arc::new(CaptureEmitter::default());
+        let cap_dyn: std::sync::Arc<dyn crate::agent::agent_events::AgentEventEmitter> =
+            cap.clone();
+        let changed = auto_resolve_on_pause(&store, Some(&cap_dyn), &convo())
+            .await
+            .unwrap();
+        assert!(changed);
+        let events = cap.events.lock().unwrap().clone();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            nexo_tool_meta::admin::agent_events::AgentEventKind::EscalationResolved {
+                by, ..
+            } => {
+                assert!(matches!(by, ResolvedBy::OperatorTakeover));
+            }
+            other => panic!("unexpected emit: {other:?}"),
+        }
+    }
+
     #[tokio::test]
     async fn auto_resolve_on_pause_flips_pending_to_takeover() {
         let store = MockStore::default();
@@ -545,7 +718,7 @@ mod tests {
             .upsert_pending("ana".into(), pending_state())
             .await
             .unwrap();
-        let changed = auto_resolve_on_pause(&store, &convo()).await.unwrap();
+        let changed = auto_resolve_on_pause(&store, None, &convo()).await.unwrap();
         assert!(changed);
         let state = store.get(&convo()).await.unwrap();
         match state {
