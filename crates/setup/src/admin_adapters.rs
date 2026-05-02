@@ -1189,6 +1189,7 @@ impl TranscriptReader for TranscriptReaderFs {
                     } else {
                         e.source_plugin.clone()
                     },
+                    tenant_id: None,
                 });
             }
         }
@@ -1241,6 +1242,7 @@ impl TranscriptReader for TranscriptReaderFs {
                 } else {
                     e.source_plugin.clone()
                 },
+                tenant_id: None,
             });
             if out.len() >= params.limit {
                 break;

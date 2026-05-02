@@ -64,6 +64,18 @@ pub fn list(patcher: &dyn YamlPatcher, params: Value) -> AdminRpcResult {
             Some(p) => has_plugin_binding(patcher, &s.id, p),
             None => true,
         })
+        .filter(|s| match &filter.tenant_id {
+            // Phase 83.8.12 — multi-tenant filter. Defense-in-
+            // depth: an agent without `tenant_id` is treated
+            // as `None` and filtered out when caller requests
+            // a specific tenant. Cross-tenant returns empty
+            // (no leak of existence).
+            Some(want) => agent_tenant_id(patcher, &s.id)
+                .as_deref()
+                .map(|got| got == want)
+                .unwrap_or(false),
+            None => true,
+        })
         .collect();
     // Stable alpha order — operator UIs rely on it for diff
     // displays.
@@ -167,6 +179,16 @@ pub fn delete(
 
 fn parse_or_default<T: for<'de> serde::Deserialize<'de> + Default>(v: Value) -> T {
     serde_json::from_value(v).unwrap_or_default()
+}
+
+/// Phase 83.8.12 — read `agents.yaml.<id>.tenant_id`. Returns
+/// `None` for legacy agents (no field) and on any read error
+/// (defense-in-depth: fail closed for cross-tenant filters).
+fn agent_tenant_id(patcher: &dyn YamlPatcher, agent_id: &str) -> Option<String> {
+    match patcher.read_agent_field(agent_id, "tenant_id").ok().flatten() {
+        Some(Value::String(s)) => Some(s),
+        _ => None,
+    }
 }
 
 fn read_summary(

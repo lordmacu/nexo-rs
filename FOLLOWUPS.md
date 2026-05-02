@@ -2517,6 +2517,66 @@ Cross-references:
   REVISED.
 - `project_ui_whatsapp_web_react.md` UI scope clarification.
 
+**Status 2026-05-02** — naming + sub-step ship log:
+
+- Code identifier is `tenant_id` (not `empresa_id`). Decision:
+  the framework already ships `tenant` since Phase 76.3/76.4
+  (MCP auth `TenantId`, JWT claim, static-token `with_tenant`)
+  and `crates/memory-snapshot/` (bundle path
+  `<state_root>/<tenant>/<agent_id>/`, CLI `--tenant` flag,
+  `MemoryMutationHook::on_mutation(agent_id, tenant, ...)`).
+  Renaming would break JWT claim contract, CLI flag, and
+  bundle layout for existing operators. UI may surface
+  "Empresa", "Workspace", "Division", etc. — `tenant_id` is
+  the technical handle, not a product noun. Single-tenant
+  deployments default to `"default"` or omit `tenant_id`
+  entirely (every field is `Option<String>` with
+  `#[serde(default, skip_serializing_if = "Option::is_none")]`).
+- 83.8.12.1 ✅ wire shapes + `BindingContext.tenant_id` +
+  `AgentConfig.tenant_id` (commit dd40fa8 + rename 5b45273).
+- 83.8.12.2 ✅ tenants domain handler + `tenants_crud`
+  capability + INVENTORY (commit 62858ab).
+- 83.8.12.3 ✅ `TenantsYamlPatcher` adapter (commit 780c3c5).
+- 83.8.12.4 ✅ `AgentsListFilter.tenant_id` +
+  `AgentEventsListFilter.tenant_id` +
+  `EscalationsListParams.tenant_id` +
+  `AgentEventKind::TranscriptAppended.tenant_id` wire shapes.
+  `agents/list` handler honours the filter via
+  `agent_tenant_id()` helper that reads
+  `agents.yaml.<id>.tenant_id`. Defense-in-depth: agents
+  without `tenant_id` filter out under any non-`None`
+  request (no leak of existence).
+
+### Phase 83.8.12.4.b — agent_events/escalations handler-level tenant filter + TranscriptWriter tenant_id population
+
+Three deferreds left from 83.8.12.4:
+
+1. **`agent_events/list` handler filter**: today the
+   `tenant_id` field on the filter struct round-trips on the
+   wire but the handler ignores it — events are returned
+   regardless. Wire-up needs `YamlPatcher` injected into the
+   `agent_events` domain so it can cross-reference
+   `agents.yaml.<agent_id>.tenant_id` per row. Same shape as
+   the `agents/list` filter, just at a different domain.
+2. **`escalations/list` handler filter**: identical pattern
+   to (1). Trait method already accepts the param; the store
+   adapter's `list()` impl needs to filter by joining on
+   `agents.yaml`.
+3. **`TranscriptWriter` tenant_id population**: today the
+   writer emits `AgentEventKind::TranscriptAppended { tenant_id:
+   None, .. }` because it does not know its owning tenant.
+   Constructor needs an `Option<String> tenant_id` parameter
+   (passed by the agent runtime that already knows
+   `AgentConfig.tenant_id`). Until wired, multi-tenant
+   firehose subscribers must fall back to re-querying
+   `agents.yaml` per-event — works but defeats the point of
+   the field.
+
+Standalone, can ship incrementally. Not blocking the rest of
+83.8.12.5-9 (LLM/skills per-tenant + audit empresa_id
+column + microapp tools + docs) since those don't depend on
+event-level filtering.
+
 ### Phase 83.12 / 83.13 — UI WhatsApp-Web look + React stack
 
 UI of the agent-creator SaaS (operator + tenant) MUST visually

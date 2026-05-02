@@ -54,6 +54,11 @@ pub enum AgentEventKind {
         /// Channel/plugin that produced or received the entry
         /// (e.g. `whatsapp`, `telegram`, `internal`).
         source_plugin: String,
+        /// Phase 83.8.12 — owning tenant. `None` for agents
+        /// predating multi-tenant. Firehose subscribers filter
+        /// on this without re-querying agents.yaml.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tenant_id: Option<String>,
     },
 }
 
@@ -92,6 +97,13 @@ pub struct AgentEventsListFilter {
     /// default (500).
     #[serde(default)]
     pub limit: usize,
+    /// Phase 83.8.12 — multi-tenant filter. `Some(id)` requires
+    /// the inbound that produced the event was bound to an
+    /// agent with `agents.yaml.<agent_id>.tenant_id` matching.
+    /// Defense-in-depth: cross-tenant queries return empty
+    /// instead of leaking existence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<String>,
 }
 
 /// Response for `nexo/admin/agent_events/list`. Newest first.
@@ -191,6 +203,7 @@ mod tests {
             sent_at_ms: 1_700_000_000_000,
             sender_id: Some("wa.55123".into()),
             source_plugin: "whatsapp".into(),
+            tenant_id: None,
         };
         let v = serde_json::to_value(&evt).unwrap();
         // Discriminator is present on the wire.
@@ -212,6 +225,7 @@ mod tests {
             sent_at_ms: 1,
             sender_id: None,
             source_plugin: "internal".into(),
+            tenant_id: None,
         };
         let s = serde_json::to_string(&evt).unwrap();
         assert!(!s.contains("sender_id"), "absent sender skipped on wire");
@@ -224,6 +238,7 @@ mod tests {
             kind: None,
             since_ms: None,
             limit: 0,
+            tenant_id: None,
         };
         let s = serde_json::to_string(&f).unwrap();
         assert!(!s.contains("kind"));

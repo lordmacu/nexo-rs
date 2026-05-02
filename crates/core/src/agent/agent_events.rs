@@ -138,6 +138,7 @@ mod tests {
             sent_at_ms: 1_700_000_000_000 + seq,
             sender_id: None,
             source_plugin: "whatsapp".into(),
+            tenant_id: None,
         }
     }
 

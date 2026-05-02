@@ -260,6 +260,12 @@ impl TranscriptWriter {
             } else {
                 entry.source_plugin.clone()
             },
+            // Phase 83.8.12 — populated by the producer side
+            // when the agent is empresa-owned. Today the
+            // TranscriptWriter does not know its tenant, so
+            // emit None; follow-up wire passes the tenant_id
+            // through the writer's constructor.
+            tenant_id: None,
         };
         self.event_emitter.emit(event).await;
         Ok(())

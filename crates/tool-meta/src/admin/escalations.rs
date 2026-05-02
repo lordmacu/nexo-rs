@@ -159,6 +159,12 @@ pub struct EscalationsListParams {
     /// default 100.
     #[serde(default)]
     pub limit: usize,
+    /// Phase 83.8.12 — multi-tenant filter. `Some(id)` returns
+    /// only escalations whose owning agent has
+    /// `agents.yaml.<agent_id>.tenant_id` matching. Defense-in-
+    /// depth: cross-tenant queries return empty list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<String>,
 }
 
 /// One row of `EscalationsListResponse`.
