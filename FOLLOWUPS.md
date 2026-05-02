@@ -1954,6 +1954,42 @@ admin RPC + http_server bootstrap into main.rs (single
 shared boot-order refactor — folded with 82.10.h.b /
 82.11 / 82.12 / 82.13 / 82.14 deferreds).
 
+### Phase 83.3 — dispatch enforcement + audit log + integration test
+
+Phase 83.3 shipped both wire halves:
+- SDK side: `HookOutcome::{Block, Transform}` variants + helpers
+  + dual-shape serialiser (legacy `abort:bool` + new `decision`).
+- Daemon side: `HookResponse.{decision, transformed_body,
+  do_not_reply_again}` fields + parser test coverage.
+
+Three pieces deferred to 83.3.b:
+
+- **Dispatch enforcement**: today the daemon's hook-runner
+  collects votes but doesn't yet act on `decision: "transform"`
+  (still uses the legacy `override_event` path) or
+  `do_not_reply_again`. The vote-to-block path via legacy
+  `abort:true` already short-circuits dispatch. Wiring needs:
+  - `Transform` decision: the host applies `transformed_body`
+    in place of the original inbound body (subject to operator
+    policy) and audit-logs the diff.
+  - `do_not_reply_again`: cancel pending auto-replies for the
+    conversation (anti-loop signal).
+- **Audit log row** for every applied block / transform —
+  emit on the broker so admin-ui + Prometheus see who voted
+  what. Same shape as the existing 82.10 admin audit log.
+- **Fail-open with warn**: when a hook subprocess crashes /
+  times out / returns malformed JSON, the dispatcher MUST
+  proceed (never silently fail-closed) and log a `warn!`. Spec
+  says "defense in depth"; today the legacy `default()` path
+  is fail-open but the new vote semantics need the same
+  guarantee.
+- **Integration test**: 3 scenarios — block short-circuits +
+  audit row; transform rewrites body + audit row; malformed
+  hook response fails-open with warn.
+
+Target phase: 83.3.b (folded with the next agent dispatcher
+boot-order touch).
+
 ### Phase 83.2 — SkillLoader merge + integration test
 
 Phase 83.2 shipped the manifest schema (`Capabilities.skills`)
