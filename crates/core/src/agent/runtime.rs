@@ -1,4 +1,6 @@
 use super::agent::Agent;
+use super::agent_events::AgentEventEmitter;
+use super::admin_rpc::domains::processing::ProcessingControlStore;
 use super::behavior::{AgentBehavior, AgentTurnControl};
 use super::context::AgentContext;
 use super::effective::EffectiveBindingPolicy;
@@ -6,6 +8,10 @@ use super::peer_directory::PeerDirectory;
 use super::routing::{route_topic, AgentMessage, AgentPayload, AgentRouter};
 use super::sender_rate_limit::SenderRateLimiter;
 use super::types::{InboundMedia, InboundMessage, MessagePriority, RunTrigger};
+use nexo_tool_meta::admin::agent_events::AgentEventKind;
+use nexo_tool_meta::admin::processing::{
+    PendingInbound, ProcessingControlState, ProcessingScope,
+};
 use nexo_tool_meta::InboundMessageMeta;
 use crate::heartbeat::{heartbeat_interval, heartbeat_topic, publish_heartbeat};
 use crate::runtime_snapshot::RuntimeSnapshot;
@@ -133,6 +139,22 @@ pub struct AgentRuntime {
     /// Receiver owned by the runtime until `start()` moves it into
     /// the select loop. `Option` because it can only be taken once.
     reload_rx: Arc<Mutex<Option<mpsc::Receiver<ReloadCommand>>>>,
+    /// Phase 82.13.c — operator pause check. When `Some`, the
+    /// inbound intake loop calls `get(scope)` on every inbound;
+    /// `PausedByOperator` triggers `push_pending` instead of
+    /// firing the agent turn. `None` keeps the legacy
+    /// "process every inbound" behaviour for tests + daemons
+    /// without admin RPC. Production wires the same `Arc`
+    /// shared with the admin RPC dispatcher so a pause RPC
+    /// reaches the inbound loop on the next message.
+    processing_store: Option<Arc<dyn ProcessingControlStore>>,
+    /// Phase 82.13.c — agent event firehose (Phase 82.11). When
+    /// `Some` AND `processing_store` evicts an inbound from a
+    /// full pending queue, runtime emits
+    /// `AgentEventKind::PendingInboundsDropped` so the operator
+    /// UI can surface the drop. `None` keeps the eviction
+    /// silent (logs only).
+    event_emitter: Option<Arc<dyn AgentEventEmitter>>,
     shutdown: CancellationToken,
     tasks: Arc<Mutex<JoinSet<()>>>,
 }
@@ -196,6 +218,8 @@ impl AgentRuntime {
             tool_cache: Arc::new(super::tool_registry_cache::ToolRegistryCache::new()),
             reload_tx,
             reload_rx: Arc::new(Mutex::new(Some(reload_rx))),
+            processing_store: None,
+            event_emitter: None,
             shutdown: CancellationToken::new(),
             tasks: Arc::new(Mutex::new(JoinSet::new())),
         }
@@ -206,6 +230,34 @@ impl AgentRuntime {
     }
     pub fn with_redactor(mut self, redactor: Arc<super::redaction::Redactor>) -> Self {
         self.redactor = Some(redactor);
+        self
+    }
+
+    /// Phase 82.13.c — install the operator pause-check store.
+    /// Pass the SAME `Arc` boot wired into the admin RPC
+    /// dispatcher so a pause RPC reaches the inbound loop on
+    /// the very next message. Without this builder, the
+    /// runtime processes every inbound regardless of operator
+    /// pause state (legacy / tests).
+    pub fn with_processing_store(
+        mut self,
+        store: Arc<dyn ProcessingControlStore>,
+    ) -> Self {
+        self.processing_store = Some(store);
+        self
+    }
+
+    /// Phase 82.13.c — install the agent event emitter for
+    /// firehose drop notifications when the per-scope pending
+    /// queue evicts an oldest entry. Production wires the same
+    /// `BroadcastAgentEventEmitter` Phase 82.11 already plumbs
+    /// to `TranscriptWriter`. `None` keeps eviction silent
+    /// (tracing only).
+    pub fn with_event_emitter(
+        mut self,
+        emitter: Arc<dyn AgentEventEmitter>,
+    ) -> Self {
+        self.event_emitter = Some(emitter);
         self
     }
     pub fn with_transcripts_index(
@@ -352,6 +404,11 @@ impl AgentRuntime {
         let pairing_gate = self.pairing_gate.clone();
         let pairing_adapters = self.pairing_adapters.clone();
         let dispatch_ctx = self.dispatch_ctx.clone();
+        // Phase 82.13.c — clone into the spawn closure. Both
+        // are `Option<Arc<dyn _>>`, so cloning is cheap and
+        // `None` defaults preserve legacy behaviour.
+        let processing_store = self.processing_store.clone();
+        let event_emitter = self.event_emitter.clone();
         let router = Arc::clone(&self.router);
         let session_txs = Arc::clone(&self.session_txs);
         let debounce_ms = self.debounce_ms;
@@ -720,6 +777,123 @@ impl AgentRuntime {
                             msg.media.is_some(),
                         );
                         let message_id = msg.id;
+                        // Phase 82.13.c — operator pause check.
+                        // When the admin RPC dispatcher has marked
+                        // this conversation as `PausedByOperator`,
+                        // buffer the inbound onto the per-scope
+                        // pending queue instead of firing an agent
+                        // turn. `resume()` later drains the queue
+                        // onto the transcript as `User` entries
+                        // (Phase 82.13.b.3.2).
+                        if let Some(ps) = processing_store.as_ref() {
+                            let scope = ProcessingScope::Conversation {
+                                agent_id: agent.id.clone(),
+                                channel: msg.source_plugin.clone(),
+                                account_id: msg
+                                    .source_instance
+                                    .clone()
+                                    .unwrap_or_else(|| "default".into()),
+                                contact_id: msg
+                                    .sender_id
+                                    .clone()
+                                    .unwrap_or_else(|| "unknown".into()),
+                                mcp_channel_source: None,
+                            };
+                            let paused = match ps.get(&scope).await {
+                                Ok(ProcessingControlState::PausedByOperator { .. }) => true,
+                                Ok(_) => false,
+                                Err(e) => {
+                                    // Fail-open: a broken store
+                                    // must not freeze the whole
+                                    // inbound loop. Worst case the
+                                    // operator's pause briefly
+                                    // leaks one inbound through.
+                                    tracing::warn!(
+                                        error = %e,
+                                        agent_id = %agent.id,
+                                        "processing_store.get failed; treating as not paused",
+                                    );
+                                    false
+                                }
+                            };
+                            if paused {
+                                // Redact body BEFORE pushing —
+                                // keeps PII out of the queue
+                                // (cap-bounded in-memory now,
+                                // future durable SQLite store
+                                // down the line).
+                                let redacted_body = if let Some(r) = redactor.as_ref() {
+                                    r.apply(&msg.text).redacted_text
+                                } else {
+                                    msg.text.clone()
+                                };
+                                let pending = PendingInbound {
+                                    message_id: Some(msg.id),
+                                    from_contact_id: msg
+                                        .sender_id
+                                        .clone()
+                                        .unwrap_or_else(|| "unknown".into()),
+                                    body: redacted_body,
+                                    timestamp_ms: msg
+                                        .timestamp
+                                        .timestamp_millis()
+                                        .max(0)
+                                        as u64,
+                                    source_plugin: msg.source_plugin.clone(),
+                                };
+                                match ps.push_pending(&scope, pending).await {
+                                    Ok((depth, dropped)) => {
+                                        tracing::debug!(
+                                            agent_id = %agent.id,
+                                            session_id = %session_id,
+                                            depth,
+                                            dropped,
+                                            "inbound buffered while paused",
+                                        );
+                                        if dropped > 0 {
+                                            if let Some(em) = event_emitter.as_ref() {
+                                                let now_ms = std::time::SystemTime::now()
+                                                    .duration_since(std::time::UNIX_EPOCH)
+                                                    .map(|d| d.as_millis() as u64)
+                                                    .unwrap_or(0);
+                                                em.emit(AgentEventKind::PendingInboundsDropped {
+                                                    agent_id: agent.id.clone(),
+                                                    scope: scope.clone(),
+                                                    dropped,
+                                                    at_ms: now_ms,
+                                                })
+                                                .await;
+                                            }
+                                        }
+                                        // Skip session-spawn +
+                                        // try_send when the push
+                                        // succeeded. Resume drain
+                                        // (Phase 82.13.b.3.2) will
+                                        // stamp this onto the
+                                        // transcript as a `User`
+                                        // entry preserving the
+                                        // original timestamp.
+                                        continue;
+                                    }
+                                    Err(e) => {
+                                        // Fail-open: a broken store
+                                        // must not block messages.
+                                        // Raw msg falls through to
+                                        // the session channel below
+                                        // — agent will process it.
+                                        // Logging only.
+                                        tracing::warn!(
+                                            error = %e,
+                                            agent_id = %agent.id,
+                                            "push_pending failed; inbound will fire turn",
+                                        );
+                                        // No `continue` — fall
+                                        // through to the session
+                                        // spawn block.
+                                    }
+                                }
+                            }
+                        }
                         // Atomic get-or-insert: DashMap::entry::or_insert_with
                         // guarantees only one task is spawned per session even
                         // when two threads race the first message for a new
