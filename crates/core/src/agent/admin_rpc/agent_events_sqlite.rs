@@ -143,6 +143,52 @@ impl SqliteAgentEventLog {
         .await?;
         Ok(())
     }
+
+    /// Boot-time retention sweep. Deletes rows older than
+    /// `retention_days` AND drops the oldest beyond `max_rows`.
+    /// Returns total rows deleted. Errors propagate — caller
+    /// (boot supervisor) logs them; the live firehose never
+    /// depends on this fn.
+    ///
+    /// Same shape as
+    /// [`crate::agent::admin_rpc::SqliteAdminAuditWriter::sweep_retention`]
+    /// so boot can run them in lockstep with one shared
+    /// scheduler.
+    pub async fn sweep_retention(
+        &self,
+        retention_days: u64,
+        max_rows: usize,
+    ) -> anyhow::Result<usize> {
+        let mut deleted = 0usize;
+
+        // 1. Time-based delete.
+        let now_ms = chrono::Utc::now().timestamp_millis() as u64;
+        let cutoff_ms = now_ms.saturating_sub(retention_days * 86_400 * 1000);
+        let res = sqlx::query("DELETE FROM nexo_agent_events WHERE at_ms < ?")
+            .bind(cutoff_ms as i64)
+            .execute(&self.pool)
+            .await?;
+        deleted += res.rows_affected() as usize;
+
+        // 2. Cap-based delete (oldest first).
+        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM nexo_agent_events")
+            .fetch_one(&self.pool)
+            .await?;
+        if (total as usize) > max_rows {
+            let excess = (total as usize) - max_rows;
+            let res = sqlx::query(
+                "DELETE FROM nexo_agent_events WHERE id IN (
+                    SELECT id FROM nexo_agent_events
+                    ORDER BY at_ms ASC, id ASC LIMIT ?
+                )",
+            )
+            .bind(excess as i64)
+            .execute(&self.pool)
+            .await?;
+            deleted += res.rows_affected() as usize;
+        }
+        Ok(deleted)
+    }
 }
 
 /// Pull the denormalised columns out of a typed event. Keeps
@@ -578,5 +624,79 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(out.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn sweep_retention_deletes_old_rows_by_age() {
+        let log = SqliteAgentEventLog::open_memory().await.unwrap();
+        let now_ms = chrono::Utc::now().timestamp_millis() as u64;
+        let day_ms = 86_400_000u64;
+        // 100d ago: should be deleted under 60d retention.
+        log.append(pause_changed("ana", now_ms - 100 * day_ms, None))
+            .await
+            .unwrap();
+        // 30d ago: should survive.
+        log.append(pause_changed("ana", now_ms - 30 * day_ms, None))
+            .await
+            .unwrap();
+        let deleted = log.sweep_retention(60, 10_000).await.unwrap();
+        assert_eq!(deleted, 1);
+        let out = log
+            .list_recent(&AgentEventLogFilter {
+                agent_id: "ana".into(),
+                limit: 100,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(out.len(), 1, "30d-old row survives");
+    }
+
+    #[tokio::test]
+    async fn sweep_retention_caps_max_rows_dropping_oldest_first() {
+        let log = SqliteAgentEventLog::open_memory().await.unwrap();
+        // 5 rows, all recent (timestamps anchored to "now" so the
+        // age-based delete leaves them all alone — only the
+        // cap-based delete fires).
+        let now_ms = chrono::Utc::now().timestamp_millis() as u64;
+        for i in 0..5u64 {
+            log.append(pause_changed("ana", now_ms + i, None))
+                .await
+                .unwrap();
+        }
+        // Cap to 2 → 3 oldest dropped.
+        let deleted = log.sweep_retention(365, 2).await.unwrap();
+        assert_eq!(deleted, 3);
+        let out = log
+            .list_recent(&AgentEventLogFilter {
+                agent_id: "ana".into(),
+                limit: 100,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(out.len(), 2);
+        // Survivors are the two newest (i=3 and i=4).
+        match (&out[0], &out[1]) {
+            (
+                AgentEventKind::ProcessingStateChanged { at_ms: a, .. },
+                AgentEventKind::ProcessingStateChanged { at_ms: b, .. },
+            ) => {
+                assert_eq!(*a, now_ms + 4);
+                assert_eq!(*b, now_ms + 3);
+            }
+            other => panic!("unexpected survivors: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn sweep_retention_is_idempotent_when_nothing_to_drop() {
+        let log = SqliteAgentEventLog::open_memory().await.unwrap();
+        let now_ms = chrono::Utc::now().timestamp_millis() as u64;
+        log.append(pause_changed("ana", now_ms, None)).await.unwrap();
+        let first = log.sweep_retention(90, 100).await.unwrap();
+        let second = log.sweep_retention(90, 100).await.unwrap();
+        assert_eq!(first, 0);
+        assert_eq!(second, 0);
     }
 }
