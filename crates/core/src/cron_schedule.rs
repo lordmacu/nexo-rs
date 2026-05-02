@@ -107,6 +107,15 @@ pub struct CronEntry {
     /// them away. Default `false`.
     #[serde(default)]
     pub permanent: bool,
+    /// Phase 83.8.12.5.cron — owning tenant. Stamped at schedule
+    /// time from the agent's `AgentConfig.tenant_id`. The cron
+    /// dispatcher's LLM client cache keys on
+    /// `(provider, model, tenant_id)` and resolves provider keys
+    /// via `LlmRegistry::build_for_tenant` so multi-tenant cron
+    /// fires use the tenant's own LLM credentials. `None` for
+    /// single-tenant deployments + legacy rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -138,7 +147,8 @@ const SCHEMA: &str = "
         paused          INTEGER NOT NULL DEFAULT 0,
         recipient       TEXT,
         model_provider  TEXT,
-        model_name      TEXT
+        model_name      TEXT,
+        tenant_id       TEXT
     )
 ";
 
@@ -453,6 +463,18 @@ impl SqliteCronStore {
                 return Err(CronStoreError::Sql(e));
             }
         }
+        // Phase 83.8.12.5.cron — tenant_id column. Idempotent
+        // ALTER for DBs created before multi-tenant cron landed.
+        let alter_tenant_id =
+            sqlx::query("ALTER TABLE nexo_cron_entries ADD COLUMN tenant_id TEXT")
+                .execute(&pool)
+                .await;
+        if let Err(e) = alter_tenant_id {
+            let msg = e.to_string();
+            if !msg.contains("duplicate column") {
+                return Err(CronStoreError::Sql(e));
+            }
+        }
         Ok(Self { pool })
     }
 
@@ -491,6 +513,8 @@ fn row_to_entry(row: &SqliteRow) -> Result<CronEntry, CronStoreError> {
         // migration. Default to None when the row predates the
         // column.
         recipient: row.try_get("recipient").unwrap_or(None),
+        // Phase 83.8.12.5.cron — same forward-only ALTER pattern.
+        tenant_id: row.try_get("tenant_id").unwrap_or(None),
     })
 }
 
@@ -499,8 +523,8 @@ impl CronStore for SqliteCronStore {
     async fn insert(&self, entry: &CronEntry) -> Result<(), CronStoreError> {
         sqlx::query(
             "INSERT INTO nexo_cron_entries \
-             (id, binding_id, cron_expr, prompt, channel, recurring, created_at, next_fire_at, last_fired_at, failure_count, paused, recipient, model_provider, model_name, permanent) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+             (id, binding_id, cron_expr, prompt, channel, recurring, created_at, next_fire_at, last_fired_at, failure_count, paused, recipient, model_provider, model_name, permanent, tenant_id) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
         )
         .bind(&entry.id)
         .bind(&entry.binding_id)
@@ -517,6 +541,7 @@ impl CronStore for SqliteCronStore {
         .bind(entry.model_provider.as_deref())
         .bind(entry.model_name.as_deref())
         .bind(entry.permanent as i64)
+        .bind(entry.tenant_id.as_deref())
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -696,6 +721,7 @@ pub async fn build_new_entry(
     recipient: Option<&str>,
     model_provider: Option<&str>,
     model_name: Option<&str>,
+    tenant_id: Option<&str>,
 ) -> Result<CronEntry, CronStoreError> {
     let now = Utc::now().timestamp();
     let next_fire_at = next_fire_after(cron_expr, now)?;
@@ -723,6 +749,7 @@ pub async fn build_new_entry(
         paused: false,
         permanent: false,
         recipient: recipient.map(str::to_string),
+        tenant_id: tenant_id.map(str::to_string),
     })
 }
 
@@ -733,6 +760,7 @@ mod tests {
     fn entry(binding: &str, expr: &str) -> CronEntry {
         let now = 1_700_000_000;
         CronEntry {
+            tenant_id: None,
             id: Uuid::new_v4().to_string(),
             binding_id: binding.into(),
             cron_expr: expr.into(),
@@ -845,6 +873,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await
             .unwrap();
@@ -857,6 +886,7 @@ mod tests {
             "ping",
             None,
             true,
+            None,
             None,
             None,
             None,
@@ -968,6 +998,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await
             .unwrap();
@@ -984,11 +1015,51 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .await
         .unwrap();
         store.insert(&e).await.unwrap();
         assert_eq!(store.count_by_binding("binding-b").await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn cron_entry_round_trips_tenant_id_through_sqlite() {
+        let store = SqliteCronStore::open_memory().await.unwrap();
+        let mut e = entry("whatsapp:default", "*/5 * * * *");
+        e.tenant_id = Some("acme".into());
+        store.insert(&e).await.unwrap();
+        let back = store.get(&e.id).await.unwrap();
+        assert_eq!(back.tenant_id.as_deref(), Some("acme"));
+    }
+
+    #[tokio::test]
+    async fn cron_entry_legacy_row_round_trips_none_tenant_id() {
+        let store = SqliteCronStore::open_memory().await.unwrap();
+        let e = entry("whatsapp:default", "*/5 * * * *");
+        store.insert(&e).await.unwrap();
+        let back = store.get(&e.id).await.unwrap();
+        assert_eq!(back.tenant_id, None);
+    }
+
+    #[tokio::test]
+    async fn build_new_entry_stamps_tenant_id_when_provided() {
+        let store: Arc<dyn CronStore> = Arc::new(SqliteCronStore::open_memory().await.unwrap());
+        let e = build_new_entry(
+            &store,
+            "whatsapp:ops",
+            "*/5 * * * *",
+            "ping",
+            None,
+            true,
+            None,
+            None,
+            None,
+            Some("acme"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(e.tenant_id.as_deref(), Some("acme"));
     }
 
     // ----- Phase 80.2-80.6 jitter cluster -----

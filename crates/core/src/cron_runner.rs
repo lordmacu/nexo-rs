@@ -465,6 +465,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -626,6 +627,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await
             .unwrap();
@@ -682,6 +684,7 @@ mod tests {
             paused: false,
             permanent: false,
             recipient: None,
+            tenant_id: None,
         };
         assert!(LoggingCronDispatcher.fire(&entry).await.is_ok());
     }
