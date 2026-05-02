@@ -1928,12 +1928,27 @@ handlers but four pieces are deferred:
   82.10.h.b.b boot-order refactor (gates ALL admin RPC).
   Once that lands, the round-trip works without further
   changes.
-- **`InterventionAction::Reply` outbound**: route through
-  the Phase 26 reply adapter; stamp the transcript entry
-  with `role: Operator`; emit
-  `nexo/notify/processing_state_changed` on the firehose.
-  Needs the same boot wire-up to access the per-microapp
-  reply adapter handle.
+- **`InterventionAction::Reply` outbound**: ✅ partially shipped
+  2026-05-02 in Phase 82.13.b.firehose. Channel send already
+  flows through `ChannelOutboundDispatcher` (Phase 83.8.4.a)
+  and the transcript stamp already lands as
+  `Assistant + sender_id "operator:<hash>" + source_plugin
+  "intervention:<channel>"` (Phase 82.13.b.1) — `TranscriptRole`
+  has no `Operator` variant by design (the agent reads operator
+  replies as Assistant for context coherence, the operator
+  prefix on `sender_id` disambiguates). What just landed is
+  the missing firehose emit:
+  `AgentEventKind::ProcessingStateChanged { agent_id, scope,
+  prev_state, new_state, at_ms, tenant_id }` is emitted from
+  `processing/pause` + `processing/resume` whenever the
+  transition is a real flip (idempotent retries skip the
+  emit). Reply (intervention) does not emit
+  ProcessingStateChanged — state stays paused — but the
+  TranscriptAppended emit on the operator stamp already gives
+  subscribers a real-time signal of operator activity. Still
+  deferred: per-tenant `tenant_id` look-up at emit time
+  (currently `None`); folds into the same boot-order refactor
+  that surfaces tenants from agents.yaml.
 - **Auto-resolve hook for 82.14**: pausing a scope with a
   pending escalation that targets it auto-flips the
   escalation to `OperatorTakeover`. Lands when 82.14 ships.
