@@ -41,6 +41,12 @@ pub struct AuditTailFilter {
     pub since_ms: Option<u64>,
     /// Max rows to return. Default `50` if 0.
     pub limit: usize,
+    /// Phase 83.8.12.7 — restrict to a single tenant scope. Rows
+    /// stamped from non tenant-scoped calls (`tenant_id IS NULL`)
+    /// are excluded when this filter is `Some`. Use `None` (the
+    /// default) to leave the tail un-scoped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<String>,
 }
 
 impl AuditTailFilter {
@@ -77,21 +83,7 @@ impl SqliteAdminAuditWriter {
             .connect_with(opts)
             .await?;
         sqlx::query("PRAGMA journal_mode=WAL").execute(&pool).await.ok();
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS microapp_admin_audit (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                microapp_id TEXT NOT NULL,
-                method TEXT NOT NULL,
-                capability TEXT NOT NULL,
-                args_hash TEXT NOT NULL,
-                started_at_ms INTEGER NOT NULL,
-                result TEXT NOT NULL CHECK(result IN ('ok','error','denied')),
-                error_code INTEGER,
-                duration_ms INTEGER NOT NULL
-            )",
-        )
-        .execute(&pool)
-        .await?;
+        Self::run_ddl(&pool).await?;
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_microapp_admin_audit_microapp
                 ON microapp_admin_audit(microapp_id, started_at_ms DESC)",
@@ -101,6 +93,12 @@ impl SqliteAdminAuditWriter {
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_microapp_admin_audit_method
                 ON microapp_admin_audit(method, started_at_ms DESC)",
+        )
+        .execute(&pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_microapp_admin_audit_tenant
+                ON microapp_admin_audit(tenant_id, started_at_ms DESC)",
         )
         .execute(&pool)
         .await?;
@@ -115,6 +113,16 @@ impl SqliteAdminAuditWriter {
             .max_connections(2)
             .connect_with(opts)
             .await?;
+        Self::run_ddl(&pool).await?;
+        Ok(Self { pool })
+    }
+
+    /// Phase 83.8.12.7 — DDL bootstrap. Creates the audit table
+    /// from scratch with the full current schema; for pre-83.8.12.7
+    /// DBs that were created without `tenant_id`, ALTER adds the
+    /// column idempotently (the "duplicate column name" error is
+    /// the green path on already-migrated DBs and is suppressed).
+    async fn run_ddl(pool: &SqlitePool) -> anyhow::Result<()> {
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS microapp_admin_audit (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -125,12 +133,26 @@ impl SqliteAdminAuditWriter {
                 started_at_ms INTEGER NOT NULL,
                 result TEXT NOT NULL CHECK(result IN ('ok','error','denied')),
                 error_code INTEGER,
-                duration_ms INTEGER NOT NULL
+                duration_ms INTEGER NOT NULL,
+                tenant_id TEXT
             )",
         )
-        .execute(&pool)
+        .execute(pool)
         .await?;
-        Ok(Self { pool })
+        // Forward-only migration for DBs created before 83.8.12.7.
+        // SQLite raises "duplicate column name" if the column
+        // already exists — that's the success case.
+        if let Err(e) =
+            sqlx::query("ALTER TABLE microapp_admin_audit ADD COLUMN tenant_id TEXT")
+                .execute(pool)
+                .await
+        {
+            let msg = e.to_string();
+            if !msg.contains("duplicate column") {
+                return Err(e.into());
+            }
+        }
+        Ok(())
     }
 
     /// Boot-time retention sweep. Deletes rows older than
@@ -183,7 +205,8 @@ impl SqliteAdminAuditWriter {
     pub async fn tail(&self, filter: &AuditTailFilter) -> anyhow::Result<Vec<AdminAuditRow>> {
         let mut sql = String::from(
             "SELECT microapp_id, method, capability, args_hash, started_at_ms, \
-             result, error_code, duration_ms FROM microapp_admin_audit WHERE 1=1",
+             result, error_code, duration_ms, tenant_id \
+             FROM microapp_admin_audit WHERE 1=1",
         );
         let mut binds: Vec<String> = Vec::new();
         if let Some(id) = &filter.microapp_id {
@@ -198,6 +221,10 @@ impl SqliteAdminAuditWriter {
             sql.push_str(" AND result = ?");
             binds.push(result.as_str().to_string());
         }
+        if let Some(tenant) = &filter.tenant_id {
+            sql.push_str(" AND tenant_id = ?");
+            binds.push(tenant.clone());
+        }
         let mut int_binds: Vec<i64> = Vec::new();
         if let Some(since_ms) = filter.since_ms {
             sql.push_str(" AND started_at_ms >= ?");
@@ -206,7 +233,10 @@ impl SqliteAdminAuditWriter {
         sql.push_str(" ORDER BY started_at_ms DESC LIMIT ?");
         int_binds.push(filter.limit.max(1) as i64);
 
-        let mut q = sqlx::query_as::<_, (String, String, String, String, i64, String, Option<i32>, i64)>(&sql);
+        let mut q = sqlx::query_as::<
+            _,
+            (String, String, String, String, i64, String, Option<i32>, i64, Option<String>),
+        >(&sql);
         for b in &binds {
             q = q.bind(b);
         }
@@ -217,49 +247,96 @@ impl SqliteAdminAuditWriter {
         Ok(rows
             .into_iter()
             .map(
-                |(microapp_id, method, capability, args_hash, started_at_ms, result, _err, duration_ms)| {
-                    AdminAuditRow {
-                        microapp_id,
-                        method,
-                        capability,
-                        args_hash,
-                        started_at_ms: started_at_ms as u64,
-                        result: AdminAuditResult::from_str(&result),
-                        duration_ms: duration_ms as u64,
-                    }
+                |(
+                    microapp_id,
+                    method,
+                    capability,
+                    args_hash,
+                    started_at_ms,
+                    result,
+                    _err,
+                    duration_ms,
+                    tenant_id,
+                )| AdminAuditRow {
+                    microapp_id,
+                    method,
+                    capability,
+                    args_hash,
+                    started_at_ms: started_at_ms as u64,
+                    result: AdminAuditResult::from_str(&result),
+                    duration_ms: duration_ms as u64,
+                    tenant_id,
                 },
             )
             .collect())
     }
 
+    /// Phase 83.8.12.7 — convenience tail bound to a single tenant.
+    /// Equivalent to `tail()` with `tenant_id = Some(tenant)`,
+    /// `since_ms`, and `limit` set; other filters left empty.
+    /// Used by the `nexo/admin/audit/tail_for_tenant` future
+    /// CLI/RPC subcommand and by SaaS billing pipelines.
+    pub async fn tail_for_tenant(
+        &self,
+        tenant_id: &str,
+        since_ms: Option<u64>,
+        limit: usize,
+    ) -> anyhow::Result<Vec<AdminAuditRow>> {
+        self.tail(&AuditTailFilter {
+            tenant_id: Some(tenant_id.to_string()),
+            since_ms,
+            limit: limit.max(1),
+            ..Default::default()
+        })
+        .await
+    }
+
     /// Test-only — read all rows.
     #[cfg(test)]
     pub(crate) async fn all_rows(&self) -> anyhow::Result<Vec<AdminAuditRow>> {
-        let rows: Vec<(String, String, String, String, i64, String, Option<i32>, i64)> =
-            sqlx::query_as(
-                "SELECT microapp_id, method, capability, args_hash, started_at_ms, \
-                 result, error_code, duration_ms FROM microapp_admin_audit \
-                 ORDER BY started_at_ms ASC",
-            )
-            .fetch_all(&self.pool)
-            .await?;
+        let rows: Vec<(
+            String,
+            String,
+            String,
+            String,
+            i64,
+            String,
+            Option<i32>,
+            i64,
+            Option<String>,
+        )> = sqlx::query_as(
+            "SELECT microapp_id, method, capability, args_hash, started_at_ms, \
+             result, error_code, duration_ms, tenant_id FROM microapp_admin_audit \
+             ORDER BY started_at_ms ASC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
         Ok(rows
             .into_iter()
             .map(
-                |(microapp_id, method, capability, args_hash, started_at_ms, result, _err, duration_ms)| {
-                    AdminAuditRow {
-                        microapp_id,
-                        method,
-                        capability,
-                        args_hash,
-                        started_at_ms: started_at_ms as u64,
-                        result: match result.as_str() {
-                            "ok" => AdminAuditResult::Ok,
-                            "denied" => AdminAuditResult::Denied,
-                            _ => AdminAuditResult::Error,
-                        },
-                        duration_ms: duration_ms as u64,
-                    }
+                |(
+                    microapp_id,
+                    method,
+                    capability,
+                    args_hash,
+                    started_at_ms,
+                    result,
+                    _err,
+                    duration_ms,
+                    tenant_id,
+                )| AdminAuditRow {
+                    microapp_id,
+                    method,
+                    capability,
+                    args_hash,
+                    started_at_ms: started_at_ms as u64,
+                    result: match result.as_str() {
+                        "ok" => AdminAuditResult::Ok,
+                        "denied" => AdminAuditResult::Denied,
+                        _ => AdminAuditResult::Error,
+                    },
+                    duration_ms: duration_ms as u64,
+                    tenant_id,
                 },
             )
             .collect())
@@ -316,8 +393,8 @@ impl AdminAuditWriter for SqliteAdminAuditWriter {
         let res = sqlx::query(
             "INSERT INTO microapp_admin_audit
                 (microapp_id, method, capability, args_hash, started_at_ms,
-                 result, error_code, duration_ms)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                 result, error_code, duration_ms, tenant_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&row.microapp_id)
         .bind(&row.method)
@@ -327,6 +404,7 @@ impl AdminAuditWriter for SqliteAdminAuditWriter {
         .bind(result_str)
         .bind::<Option<i32>>(None)
         .bind(row.duration_ms as i64)
+        .bind(row.tenant_id.as_deref())
         .execute(&self.pool)
         .await;
         if let Err(e) = res {
@@ -353,6 +431,18 @@ mod tests {
             started_at_ms,
             result: AdminAuditResult::Ok,
             duration_ms: 5,
+            tenant_id: None,
+        }
+    }
+
+    fn sample_row_with_tenant(
+        microapp_id: &str,
+        started_at_ms: u64,
+        tenant_id: &str,
+    ) -> AdminAuditRow {
+        AdminAuditRow {
+            tenant_id: Some(tenant_id.into()),
+            ..sample_row(microapp_id, started_at_ms)
         }
     }
 
@@ -486,6 +576,7 @@ mod tests {
             started_at_ms: 1_700_000_000_000,
             result: AdminAuditResult::Ok,
             duration_ms: 12,
+            tenant_id: None,
         }];
         let out = format_rows_as_table(&rows);
         assert!(out.contains("started_at"), "header present");
@@ -507,10 +598,116 @@ mod tests {
             started_at_ms: 42,
             result: AdminAuditResult::Denied,
             duration_ms: 1,
+            tenant_id: None,
         }];
         let json = format_rows_as_json(&rows);
         let back: Vec<AdminAuditRow> = serde_json::from_str(&json).unwrap();
         assert_eq!(back, rows);
+    }
+
+    #[tokio::test]
+    async fn tenant_id_round_trips_through_insert_and_read() {
+        let writer = SqliteAdminAuditWriter::open_memory().await.unwrap();
+        writer
+            .append(sample_row_with_tenant("a", 1_000, "acme"))
+            .await;
+        writer.append(sample_row("a", 2_000)).await;
+        let rows = writer.all_rows().await.unwrap();
+        assert_eq!(rows.len(), 2);
+        let tenant_row = rows.iter().find(|r| r.started_at_ms == 1_000).unwrap();
+        assert_eq!(tenant_row.tenant_id.as_deref(), Some("acme"));
+        let null_row = rows.iter().find(|r| r.started_at_ms == 2_000).unwrap();
+        assert_eq!(null_row.tenant_id, None);
+    }
+
+    #[tokio::test]
+    async fn tail_filters_by_tenant_id_excludes_null_rows() {
+        let writer = SqliteAdminAuditWriter::open_memory().await.unwrap();
+        writer
+            .append(sample_row_with_tenant("a", 1_000, "acme"))
+            .await;
+        writer
+            .append(sample_row_with_tenant("a", 2_000, "globex"))
+            .await;
+        writer.append(sample_row("a", 3_000)).await;
+        let rows = writer
+            .tail(&AuditTailFilter {
+                tenant_id: Some("acme".into()),
+                limit: 50,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].tenant_id.as_deref(), Some("acme"));
+        assert_eq!(rows[0].started_at_ms, 1_000);
+    }
+
+    #[tokio::test]
+    async fn tail_for_tenant_convenience_matches_explicit_filter() {
+        let writer = SqliteAdminAuditWriter::open_memory().await.unwrap();
+        writer
+            .append(sample_row_with_tenant("a", 1_000, "acme"))
+            .await;
+        writer
+            .append(sample_row_with_tenant("a", 2_000, "acme"))
+            .await;
+        writer
+            .append(sample_row_with_tenant("a", 3_000, "globex"))
+            .await;
+        let rows = writer
+            .tail_for_tenant("acme", None, 50)
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 2);
+        // newest first
+        assert_eq!(rows[0].started_at_ms, 2_000);
+        assert_eq!(rows[1].started_at_ms, 1_000);
+        for r in &rows {
+            assert_eq!(r.tenant_id.as_deref(), Some("acme"));
+        }
+    }
+
+    #[tokio::test]
+    async fn tail_for_tenant_combines_with_since_ms() {
+        let writer = SqliteAdminAuditWriter::open_memory().await.unwrap();
+        writer
+            .append(sample_row_with_tenant("a", 1_000, "acme"))
+            .await;
+        writer
+            .append(sample_row_with_tenant("a", 5_000, "acme"))
+            .await;
+        let rows = writer
+            .tail_for_tenant("acme", Some(2_500), 50)
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].started_at_ms, 5_000);
+    }
+
+    #[tokio::test]
+    async fn tail_for_tenant_clamps_limit_floor_to_one() {
+        let writer = SqliteAdminAuditWriter::open_memory().await.unwrap();
+        writer
+            .append(sample_row_with_tenant("a", 1_000, "acme"))
+            .await;
+        let rows = writer.tail_for_tenant("acme", None, 0).await.unwrap();
+        assert_eq!(rows.len(), 1, "limit=0 should be clamped to 1, not return empty");
+    }
+
+    #[tokio::test]
+    async fn ddl_idempotent_when_tenant_id_already_present() {
+        // Open + close + re-open the same DB to exercise the
+        // ALTER TABLE duplicate-column suppression path.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("audit.db");
+        let w1 = SqliteAdminAuditWriter::open(&path).await.unwrap();
+        w1.append(sample_row_with_tenant("a", 1, "acme")).await;
+        drop(w1);
+        let w2 = SqliteAdminAuditWriter::open(&path).await.unwrap();
+        let rows = w2.all_rows().await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].tenant_id.as_deref(), Some("acme"));
     }
 
     #[tokio::test]

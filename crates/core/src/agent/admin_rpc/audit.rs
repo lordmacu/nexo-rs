@@ -39,6 +39,13 @@ pub struct AdminAuditRow {
     pub result: AdminAuditResult,
     /// Wall-clock duration of the dispatch.
     pub duration_ms: u64,
+    /// Phase 83.8.12.7 — tenant scope for the call. Sniffed from
+    /// `params.tenant_id` (string) when present; legacy rows / non
+    /// tenant-scoped calls (echo, pairing, credentials) leave
+    /// this `None`. Lets operators filter audit tails per tenant
+    /// for SaaS billing or compliance reviews.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<String>,
 }
 
 /// Outcome of a single admin call.
@@ -152,6 +159,21 @@ fn hex_encode(bytes: &[u8]) -> String {
     s
 }
 
+/// Phase 83.8.12.7 — sniff `tenant_id` from JSON params for the
+/// audit row. Tenant-scoped admin domains (agents/llm_providers/
+/// skills/audit) pass this in the params object; non tenant-
+/// scoped calls (echo, pairing, credentials) lack the field, so
+/// the function returns `None` instead of stamping a fake value.
+/// Returns `None` for non-string values (defensive — never panic
+/// on malformed params).
+pub fn extract_tenant_id(params: &Value) -> Option<String> {
+    params
+        .as_object()
+        .and_then(|m| m.get("tenant_id"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
 /// Helper used by the dispatcher to stamp `started_at_ms`.
 pub fn now_epoch_ms() -> u64 {
     SystemTime::now()
@@ -175,6 +197,7 @@ mod tests {
             started_at_ms: 1_700_000_000_000,
             result: AdminAuditResult::Ok,
             duration_ms: 5,
+            tenant_id: None,
         };
         writer.append(row.clone()).await;
         assert_eq!(writer.rows().len(), 1);
@@ -193,6 +216,7 @@ mod tests {
                 started_at_ms: now_epoch_ms(),
                 result: AdminAuditResult::Denied,
                 duration_ms: 0,
+                tenant_id: None,
             })
             .await;
         let last = writer.last().unwrap();
@@ -219,5 +243,63 @@ mod tests {
         assert_eq!(AdminAuditResult::Ok.as_str(), "ok");
         assert_eq!(AdminAuditResult::Error.as_str(), "error");
         assert_eq!(AdminAuditResult::Denied.as_str(), "denied");
+    }
+
+    #[test]
+    fn extract_tenant_id_reads_string_field() {
+        let p = serde_json::json!({ "tenant_id": "acme", "other": 1 });
+        assert_eq!(extract_tenant_id(&p), Some("acme".into()));
+    }
+
+    #[test]
+    fn extract_tenant_id_missing_field_yields_none() {
+        let p = serde_json::json!({ "agent_id": "a1" });
+        assert_eq!(extract_tenant_id(&p), None);
+    }
+
+    #[test]
+    fn extract_tenant_id_non_string_yields_none() {
+        let p = serde_json::json!({ "tenant_id": 42 });
+        assert_eq!(extract_tenant_id(&p), None);
+    }
+
+    #[test]
+    fn extract_tenant_id_non_object_yields_none() {
+        let p = serde_json::json!(["a", "b"]);
+        assert_eq!(extract_tenant_id(&p), None);
+        let p = serde_json::json!("scalar");
+        assert_eq!(extract_tenant_id(&p), None);
+    }
+
+    #[test]
+    fn audit_row_serde_skips_none_tenant_id() {
+        let row = AdminAuditRow {
+            microapp_id: "a".into(),
+            method: "nexo/admin/echo".into(),
+            capability: "echo".into(),
+            args_hash: "h".into(),
+            started_at_ms: 1,
+            result: AdminAuditResult::Ok,
+            duration_ms: 1,
+            tenant_id: None,
+        };
+        let json = serde_json::to_string(&row).unwrap();
+        assert!(!json.contains("tenant_id"), "None tenant skips field");
+    }
+
+    #[test]
+    fn audit_row_serde_emits_some_tenant_id() {
+        let row = AdminAuditRow {
+            microapp_id: "a".into(),
+            method: "nexo/admin/echo".into(),
+            capability: "echo".into(),
+            args_hash: "h".into(),
+            started_at_ms: 1,
+            result: AdminAuditResult::Ok,
+            duration_ms: 1,
+            tenant_id: Some("acme".into()),
+        };
+        let json = serde_json::to_string(&row).unwrap();
+        assert!(json.contains("\"tenant_id\":\"acme\""));
     }
 }
