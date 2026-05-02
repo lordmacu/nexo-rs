@@ -12,8 +12,13 @@ uses this surface to:
 - CRUD agents (`agents.yaml.<id>`)
 - Register / revoke channel credentials (many-to-many)
 - Initiate WhatsApp QR pairing flows
-- Manage LLM provider entries (`llm.yaml.providers.*`)
+- Manage LLM provider entries (`llm.yaml.providers.*` global,
+  `llm.yaml.tenants.<id>.providers.*` per-tenant — Phase
+  83.8.12.5)
 - Approve / revoke MCP-channel servers per agent
+- CRUD tenants (`config/tenants.yaml`) for SaaS deployments
+  hosting N empresas / workspaces from one daemon (Phase
+  83.8.12 — `nexo/admin/tenants/{list,get,upsert,delete}`)
 - Force a hot-reload after batch mutations
 
 ## Layered grant model
