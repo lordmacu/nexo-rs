@@ -2646,6 +2646,20 @@ Cross-references:
   gained `session_id: Option<Uuid>` (was missing since Phase
   82.13.b.1 added the field on the SDK side). Out-of-tree commit
   9f634a9.
+- 83.15.b ✅ MockAdminRpc — programmable in-process replacement
+  for `nexo/admin/*` so microapp tool/hook tests run without a
+  daemon. `MockAdminRpc::on(method, value)` /
+  `on_err(method, AdminError)` / `on_with(method, |params| ...)`
+  register canned responses; `requests_for(method)` exposes the
+  request log for assertions. `MicroappTestHarness::with_admin_mock`
+  injects the mock's `AdminClient` so `ctx.admin()` returns
+  `Some(...)`. Variant-preserving error round-trip (snapshot →
+  wire frame → typed AdminError) so mock and daemon paths are
+  byte-identical from the caller's POV. 8 mock-module tests + 2
+  harness integration tests, 86 SDK tests green. Reference test
+  in `extensions/template-microapp-rust/` and dedicated docs
+  page (`docs/src/microapps/testing.md`) deferred to next
+  template touch.
 - 82.14.b + 83.8.2.b ✅ Skills + escalations admin_bootstrap
   wire-up — same gap as 83.8.12.2.b: dispatcher had
   `with_skills_domain` / `with_escalations_domain` builders
