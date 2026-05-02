@@ -2036,15 +2036,23 @@ with the next main.rs operator wire-up commit.
 
 ### Phase 82.6 — state_root env injection follow-up
 
-Phase 82.6 shipped the path helper + CLI but the daemon
-doesn't yet stamp `NEXO_EXTENSION_STATE_ROOT` onto the
-spawned extension's process environment.
-`EXTENSION_STATE_ROOT_ENV` constant pinned in
-`nexo_extensions::state`; the actual `Command::env(...)`
-call lives next to whatever Phase 82 follow-up wires the
-admin RPC + http_server bootstrap into main.rs (single
-shared boot-order refactor — folded with 82.10.h.b /
-82.11 / 82.12 / 82.13 / 82.14 deferreds).
+✅ Shipped 2026-05-02 in Phase 82.6.b. `build_command` in
+`crates/extensions/src/runtime/stdio.rs` now calls
+`crate::state::ensure_state_dir(extension_id)` and stamps
+`NEXO_EXTENSION_STATE_ROOT` onto the child process env so
+microapp boot points its on-disk state (SQLite DBs, vault
+files, per-tenant artifacts) at the canonical location
+(`$NEXO_HOME/extensions/<id>/state`) without reimplementing
+the path layout. Idempotent mkdir; failure surfaces as a
+warn rather than a spawn error so a permission misconfig
+flags loudly without taking down every extension at boot.
+Did NOT need the broader 82.10.h.b.b boot-order refactor
+because `build_command` already had `extension_id` in
+scope — env injection lives at the spawn site, not in
+main.rs's bootstrap code. 1 new test
+(`build_command_stamps_state_root_env_pointing_at_per_extension_dir`)
+confirms the env var lands on the spawned `Command` and
+points at the per-extension dir.
 
 ### Phase 83.14 — actual crates.io upload + release-plz CI + npm
 

@@ -547,6 +547,54 @@ mod env_blocklist_tests {
     }
 }
 
+#[cfg(test)]
+mod state_root_env_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    /// `NEXO_HOME` is process-global. Tests that mutate it must
+    /// serialise — running `cargo test` with the default thread
+    /// pool would otherwise race with `state_root_env_tests`.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn build_command_stamps_state_root_env_pointing_at_per_extension_dir() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var("NEXO_HOME", home.path());
+
+        let opts = StdioSpawnOptions {
+            cwd: PathBuf::from("."),
+            ..Default::default()
+        };
+        let cmd = build_command("agent-creator", "/bin/true", &[], &opts);
+
+        // Tokio's `Command::get_envs()` gives us the env list as
+        // it will be applied to the spawned child.
+        let envs: std::collections::HashMap<String, String> = cmd
+            .as_std()
+            .get_envs()
+            .filter_map(|(k, v)| {
+                Some((k.to_str()?.to_string(), v?.to_str()?.to_string()))
+            })
+            .collect();
+
+        let stamped = envs
+            .get(crate::state::EXTENSION_STATE_ROOT_ENV)
+            .expect("NEXO_EXTENSION_STATE_ROOT must be stamped on the spawned command");
+        let expected = home
+            .path()
+            .join("extensions")
+            .join("agent-creator")
+            .join("state");
+        assert_eq!(std::path::Path::new(stamped), expected);
+        // Also confirms the directory was materialised.
+        assert!(expected.is_dir(), "ensure_state_dir should mkdir -p");
+
+        std::env::remove_var("NEXO_HOME");
+    }
+}
+
 /// Inspect `command` for a `#!` shebang and, if the interpreter path
 /// it names is absent, return a human-readable message naming the
 /// missing interpreter. Caller wraps it in a `std::io::Error` so the
@@ -649,6 +697,26 @@ fn build_command(
     }
     cmd.env("AGENT_VERSION", env!("CARGO_PKG_VERSION"));
     cmd.env("AGENT_EXTENSION_ID", extension_id);
+    // Phase 82.6.b — stamp the per-extension state directory so
+    // microapp boot points its on-disk state (SQLite DBs, vault
+    // files, per-tenant artifacts) at the canonical location
+    // without reimplementing the path layout. Idempotent
+    // mkdir; failure is surfaced as a warn rather than a spawn
+    // error so a permission misconfig flags loudly without
+    // taking down every extension at boot.
+    match crate::state::ensure_state_dir(extension_id) {
+        Ok(path) => {
+            cmd.env(crate::state::EXTENSION_STATE_ROOT_ENV, path);
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                extension_id,
+                "ensure_state_dir failed; child won't see {} env",
+                crate::state::EXTENSION_STATE_ROOT_ENV,
+            );
+        }
+    }
     cmd
 }
 
