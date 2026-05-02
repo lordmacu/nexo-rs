@@ -1954,6 +1954,30 @@ admin RPC + http_server bootstrap into main.rs (single
 shared boot-order refactor — folded with 82.10.h.b /
 82.11 / 82.12 / 82.13 / 82.14 deferreds).
 
+### Phase 83.2 — SkillLoader merge + integration test
+
+Phase 83.2 shipped the manifest schema (`Capabilities.skills`)
+and the validation helper (`validate_contributed_skills` —
+slug rule + filesystem existence check) + 8 unit tests. Two
+pieces deferred to 83.2.b:
+
+- **SkillLoader merge**: the daemon's existing skill-loading
+  path (today reads only `agents.yaml.skills_dir`) must
+  auto-discover skills from each loaded extension's
+  `<plugin_root>/skills/<name>/SKILL.md` and merge them into
+  any agent that lists the extension under
+  `agents.yaml.<id>.extensions: [...]`. Operator-declared
+  `skills_dir` still wins on name collision (operator
+  override > extension contribution).
+- **Integration test**: extension `ventas-etb` ships
+  `skills/ventas-flujo/SKILL.md`, the agent declares
+  `skills: [ventas-flujo]` without `skills_dir`, the loader
+  resolves the skill from the extension. Plus a name-collision
+  test verifying operator override.
+
+Target phase: 83.2.b (folded with the next agent-boot skill-
+loader touch).
+
 ### Phase 83.1 — JSON-RPC propagation + hot-reload + integration test
 
 Phase 83.1 shipped the `AgentConfig.extensions_config: BTreeMap<String, serde_yaml::Value>`
