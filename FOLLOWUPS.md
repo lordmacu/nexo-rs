@@ -1954,6 +1954,32 @@ admin RPC + http_server bootstrap into main.rs (single
 shared boot-order refactor — folded with 82.10.h.b /
 82.11 / 82.12 / 82.13 / 82.14 deferreds).
 
+### Phase 83.17 — CLI integration + derive macro + integration test
+
+Phase 83.17 shipped the validator (`validate_config(config,
+schema)`) + skip-env helper + 11 unit tests in
+`nexo-plugin-manifest`. Three pieces deferred to 83.17.b:
+
+- **CLI integration**: `nexo extensions install <id>` reads
+  `extensions/<id>/config.schema.json` (when present), parses
+  the operator-supplied `extensions_config.<id>` from
+  `agents.yaml`, runs the validator, aborts install on
+  failures with a structured CLI error rendering the JSON
+  pointer + message of each failure.
+- **Boot pre-flight**: same validation at daemon boot (re-runs
+  on hot-reload) — fails fast before spawning the microapp.
+- **`#[derive(MicroappConfig)]` macro**: auto-derive a JSON
+  Schema from a typed Rust config struct (uses `schemars`).
+  Lands in `microapp-sdk-rust` as a proc-macro crate so
+  authors don't write JSON Schema by hand.
+- **Integration test**: `nexo extensions install` fails clean
+  on a deliberately bad config + succeeds on a corrected one.
+- **Docs page**: `docs/src/microapps/config-schema.md`
+  authoring guide + derive macro walkthrough.
+
+Target phase: 83.17.b (folded with the next CLI / extensions
+install touch).
+
 ### Phase 83.16 — supervisor emit + admin-ui badge + counter
 
 Phase 83.16 shipped the `MicroappError` wire shape (kinds enum,

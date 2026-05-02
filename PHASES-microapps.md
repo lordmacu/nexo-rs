@@ -2690,7 +2690,7 @@ Done criteria:
 - Reference doc `docs/src/microapps/error-handling.md` lists
   the 4 kinds + payload shape + operator runbook.
 
-#### 83.17 — Microapp config schema validation at install   ⬜ NEW 2026-05-01
+#### 83.17 — Microapp config schema validation at install   ✅  (shipped 2026-05-02 — CLI integration + derive macro deferred to 83.17.b)
 
 > **Curation gap**: Phase 81.4 plans a plugin-scoped config
 > dir loader; today nothing validates the shape of the YAML
