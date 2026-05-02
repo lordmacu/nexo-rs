@@ -16,6 +16,7 @@
 pub mod audit;
 pub mod audit_sqlite;
 pub mod capabilities;
+pub mod channel_outbound;
 pub mod dispatcher;
 pub mod domains;
 pub mod router;
@@ -31,6 +32,9 @@ pub use audit::{
 pub use capabilities::{
     validate_capabilities_at_boot, AdminCapabilityDecl, CapabilityBootError,
     CapabilityBootReport, CapabilityBootWarn, CapabilitySet,
+};
+pub use channel_outbound::{
+    ChannelOutboundDispatcher, ChannelOutboundError, OutboundAck, OutboundMessage,
 };
 pub use dispatcher::{AdminRpcDispatcher, AdminRpcError, AdminRpcResult};
 pub use router::{AdminOutboundWriter, DispatcherAdminRouter};

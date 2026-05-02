@@ -34,6 +34,7 @@ use super::domains::escalations::EscalationStore;
 use super::domains::llm_providers::LlmYamlPatcher;
 use super::domains::pairing::{PairingChallengeStore, PairingNotifier};
 use super::domains::processing::ProcessingControlStore;
+use super::channel_outbound::ChannelOutboundDispatcher;
 use super::domains::skills::SkillsStore;
 
 /// Reload signal callback — invoked by domain handlers after
@@ -174,6 +175,13 @@ pub struct AdminRpcDispatcher {
     /// `nexo_setup::admin_adapters::FsSkillsStore` against the
     /// existing `SkillLoader` filesystem layout.
     skills_store: Option<Arc<dyn SkillsStore>>,
+    /// Phase 83.8.4.a — channel-outbound dispatcher used by
+    /// `processing/intervention` when the action is `Reply`.
+    /// `None` keeps the wire surface alive (`-32601` style
+    /// rejection) but operator replies fail with
+    /// `channel_unavailable`. Production wires the multi-channel
+    /// router adapter living in `nexo-setup`.
+    channel_outbound: Option<Arc<dyn ChannelOutboundDispatcher>>,
 }
 
 impl std::fmt::Debug for AdminRpcDispatcher {
@@ -209,6 +217,7 @@ impl AdminRpcDispatcher {
             processing_store: None,
             escalation_store: None,
             skills_store: None,
+            channel_outbound: None,
         }
     }
 
@@ -309,6 +318,19 @@ impl AdminRpcDispatcher {
     /// `nexo/admin/skills/*`.
     pub fn with_skills_domain(mut self, store: Arc<dyn SkillsStore>) -> Self {
         self.skills_store = Some(store);
+        self
+    }
+
+    /// Phase 83.8.4.a — install the channel-outbound dispatcher
+    /// used by `processing/intervention` when the action is
+    /// `Reply`. Without one wired the handler returns
+    /// `-32004 channel_unavailable`. Production passes a
+    /// multi-channel router adapter living in `nexo-setup`.
+    pub fn with_channel_outbound(
+        mut self,
+        outbound: Arc<dyn ChannelOutboundDispatcher>,
+    ) -> Self {
+        self.channel_outbound = Some(outbound);
         self
     }
 
@@ -696,7 +718,12 @@ impl AdminRpcDispatcher {
             },
             "nexo/admin/processing/intervention" => match &self.processing_store {
                 Some(store) => {
-                    super::domains::processing::intervention(store.as_ref(), params).await
+                    super::domains::processing::intervention(
+                        store.as_ref(),
+                        self.channel_outbound.as_deref(),
+                        params,
+                    )
+                    .await
                 }
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "processing domain not configured".into(),
