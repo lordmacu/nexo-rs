@@ -29,6 +29,12 @@ pub enum SkillDepsMode {
 #[serde(deny_unknown_fields)]
 pub struct AgentConfig {
     pub id: String,
+    /// Phase 83.8.12 — SaaS empresa (tenant) owner. `None` =
+    /// global agent (operator-level, not tenant-owned).
+    /// Multi-tenant filtering across admin RPC + microapp tools
+    /// keys on this field.
+    #[serde(default)]
+    pub empresa_id: Option<String>,
     pub model: ModelConfig,
     #[serde(default)]
     pub plugins: Vec<String>,

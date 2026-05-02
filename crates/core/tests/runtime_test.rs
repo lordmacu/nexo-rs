@@ -150,6 +150,7 @@ fn make_config(
         auto_approve: false,
         extract_memories: None,
             event_subscribers: Vec::new(),
+            empresa_id: None,
             extensions_config: std::collections::BTreeMap::new(),
     }
 }
@@ -519,6 +520,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             auto_approve: false,
             extract_memories: None,
             event_subscribers: Vec::new(),
+            empresa_id: None,
             extensions_config: std::collections::BTreeMap::new(),
         },
         behavior_a,
@@ -583,6 +585,7 @@ async fn runtime_routes_delegate_and_returns_result() {
             auto_approve: false,
             extract_memories: None,
             event_subscribers: Vec::new(),
+            empresa_id: None,
             extensions_config: std::collections::BTreeMap::new(),
         },
         behavior_b,
