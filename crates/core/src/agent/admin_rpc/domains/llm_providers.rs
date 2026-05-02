@@ -78,6 +78,18 @@ pub fn upsert(
     if input.base_url.is_empty() {
         return AdminRpcResult::err(AdminRpcError::InvalidParams("base_url is empty".into()));
     }
+    // Phase 83.8.12.5.c — wire shape accepts `tenant_id` but
+    // the yaml patcher does not yet write to
+    // `tenants.<id>.providers.<provider_id>` (needs new
+    // `upsert_tenant_llm_provider_field` helper). Reject
+    // explicitly so operators don't think their tenant-scoped
+    // upsert took effect when only the global table was
+    // touched. Lands as `83.8.12.5.c.b`.
+    if input.tenant_id.is_some() {
+        return AdminRpcResult::err(AdminRpcError::MethodNotFound(
+            "not_implemented: llm_providers/upsert with tenant_id (yaml writer pending — Phase 83.8.12.5.c.b)".into(),
+        ));
+    }
     if std::env::var(&input.api_key_env).is_err() {
         return AdminRpcResult::err(AdminRpcError::InvalidParams(format!(
             "api_key_env `{}` is not set in process env",
@@ -123,6 +135,7 @@ pub fn upsert(
         id: input.id,
         base_url: input.base_url,
         api_key_env: input.api_key_env,
+        tenant_scope: None,
     };
     AdminRpcResult::ok(serde_json::to_value(summary).unwrap_or(Value::Null))
 }
@@ -140,6 +153,15 @@ pub fn delete(
         Ok(p) => p,
         Err(e) => return AdminRpcResult::err(AdminRpcError::InvalidParams(e.to_string())),
     };
+    // Phase 83.8.12.5.c — same wire-stub gate as upsert. Wire
+    // shape accepts `tenant_id` so SDK + microapp UIs build
+    // correct calls; handler rejects until 83.8.12.5.c.b ships
+    // the tenant-scoped yaml writer.
+    if p.tenant_id.is_some() {
+        return AdminRpcResult::err(AdminRpcError::MethodNotFound(
+            "not_implemented: llm_providers/delete with tenant_id (yaml writer pending — Phase 83.8.12.5.c.b)".into(),
+        ));
+    }
 
     // Refuse when any agent uses this provider.
     let agent_ids = match agents.list_agent_ids() {
@@ -206,6 +228,13 @@ fn read_summary(
         id: provider_id.to_string(),
         base_url,
         api_key_env,
+        // Phase 83.8.12.5.c — global-scope reads stamp `None`.
+        // Tenant-scoped reads (when the handler honours
+        // `tenant_id` filter) populate this field with the
+        // owning tenant id. Wire-up of the tenant read path
+        // lands as a follow-up; today the reader is global
+        // only so emitting None here is correct.
+        tenant_scope: None,
     }))
 }
 
