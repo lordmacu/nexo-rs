@@ -640,13 +640,44 @@ not_implemented` so callers can probe the wire shape today
 without the daemon pretending to support unimplemented
 shapes.
 
-### Notification
+### Notification (Phase 82.13.b.firehose)
 
-`nexo/notify/processing_state_changed` (literal pinned in
-`PROCESSING_STATE_CHANGED_NOTIFY_METHOD`) rides the agent
-event firehose deferred wire-up — the inbound dispatcher
-hook + transcript `role: Operator` integration land in
-82.13.b alongside the actual reply-out adapter.
+Pause and resume transitions are emitted on the agent event
+firehose (`nexo/notify/agent_event`) as
+`AgentEventKind::ProcessingStateChanged`. Operator UIs render
+the pause indicator in real time without polling
+`processing/state`. The constant
+`PROCESSING_STATE_CHANGED_NOTIFY_METHOD` is reserved for any
+future dedicated subject; today the variant rides on the same
+firehose channel as every other agent event.
+
+```jsonc
+{
+    "jsonrpc": "2.0",
+    "method": "nexo/notify/agent_event",
+    "params": {
+        "kind": "processing_state_changed",
+        "agent_id": "ana",
+        "scope": { "kind": "conversation", ... },
+        "prev_state": { "state": "agent_active" },
+        "new_state": {
+            "state": "paused_by_operator",
+            "scope": { "kind": "conversation", ... },
+            "paused_at_ms": 1700000000000,
+            "operator_token_hash": "abcdef0123456789",
+            "reason": "investigando"
+        },
+        "at_ms": 1700000000000
+    }
+}
+```
+
+Idempotent retries (a second `pause` on an already-paused
+scope, a `resume` on `agent_active`) skip the emit so
+subscribers do not see phantom transitions. Reply
+intervention does NOT emit `ProcessingStateChanged` — state
+stays paused; the `TranscriptAppended` emit on the operator
+stamp signals operator activity instead.
 
 ### Transcript stamping (Phase 82.13.b.1)
 
