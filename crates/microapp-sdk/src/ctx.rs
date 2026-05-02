@@ -39,6 +39,13 @@ pub struct ToolCtx {
     #[cfg(not(feature = "outbound"))]
     #[allow(dead_code)]
     pub(crate) _outbound_marker: std::marker::PhantomData<Arc<()>>,
+
+    /// Admin RPC client — `Some` when the microapp builder opts
+    /// in via [`crate::Microapp::with_admin`]. Tools call admin
+    /// RPC through `ctx.admin()`. Only present with the `admin`
+    /// cargo feature.
+    #[cfg(feature = "admin")]
+    pub(crate) admin: Option<Arc<crate::admin::AdminClient>>,
 }
 
 impl ToolCtx {
@@ -65,6 +72,15 @@ impl ToolCtx {
     pub fn outbound(&self) -> &OutboundDispatcher {
         &self.outbound
     }
+
+    /// Borrow the admin RPC client when one was wired via
+    /// [`crate::Microapp::with_admin`]. Returns `None` if the
+    /// microapp did not opt in. Only available with the `admin`
+    /// cargo feature on.
+    #[cfg(feature = "admin")]
+    pub fn admin(&self) -> Option<&crate::admin::AdminClient> {
+        self.admin.as_deref()
+    }
 }
 
 /// Context passed to every [`crate::HookHandler`] call.
@@ -79,6 +95,12 @@ pub struct HookCtx {
     /// producer. Hooks (e.g. `before_message`) read this for
     /// anti-loop / sender-aware decisions before tool dispatch.
     pub inbound: Option<InboundMessageMeta>,
+    /// Admin RPC client — `Some` when the microapp builder opts
+    /// in via [`crate::Microapp::with_admin`]. Hooks call admin
+    /// RPC through `ctx.admin()`. Only present with the `admin`
+    /// cargo feature.
+    #[cfg(feature = "admin")]
+    pub(crate) admin: Option<Arc<crate::admin::AdminClient>>,
 }
 
 impl HookCtx {
@@ -86,6 +108,15 @@ impl HookCtx {
     /// populated it.
     pub fn inbound(&self) -> Option<&InboundMessageMeta> {
         self.inbound.as_ref()
+    }
+
+    /// Borrow the admin RPC client when one was wired via
+    /// [`crate::Microapp::with_admin`]. Returns `None` if the
+    /// microapp did not opt in. Only available with the `admin`
+    /// cargo feature on.
+    #[cfg(feature = "admin")]
+    pub fn admin(&self) -> Option<&crate::admin::AdminClient> {
+        self.admin.as_deref()
     }
 }
 
@@ -104,6 +135,8 @@ mod tests {
             _outbound_marker: std::marker::PhantomData,
             #[cfg(feature = "outbound")]
             outbound: Arc::new(OutboundDispatcher::new_stub()),
+            #[cfg(feature = "admin")]
+            admin: None,
         }
     }
 
@@ -141,6 +174,8 @@ mod tests {
             agent_id: "ana".into(),
             binding: Some(b.clone()),
             inbound: None,
+            #[cfg(feature = "admin")]
+            admin: None,
         };
         assert_eq!(h.binding, Some(b));
         assert!(h.inbound().is_none());

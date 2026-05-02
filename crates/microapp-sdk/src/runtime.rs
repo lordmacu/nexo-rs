@@ -51,6 +51,13 @@ pub struct Handlers {
     /// Registered hook handlers keyed by hook name (no `hooks/`
     /// prefix).
     pub hooks: BTreeMap<String, Arc<dyn HookHandler>>,
+    /// Phase 83.8.8.a — admin RPC client. `Some` when the
+    /// `Microapp::with_admin()` builder method opts in. The
+    /// dispatch loop forwards inbound frames whose `id` starts
+    /// with `app:` to its `on_inbound_response` instead of the
+    /// regular tool/hook dispatch.
+    #[cfg(feature = "admin")]
+    pub admin: Option<Arc<crate::admin::AdminClient>>,
 }
 
 impl Handlers {
@@ -94,6 +101,22 @@ where
         let id = req.get("id").cloned();
         let method = req.get("method").and_then(Value::as_str).unwrap_or("");
         let params = req.get("params").cloned().unwrap_or(Value::Null);
+
+        // Phase 83.8.8.a — admin RPC response interception. A
+        // microapp that issued a `nexo/admin/<method>` request via
+        // `AdminClient::call` receives the response back through
+        // the same line transport with an `app:<uuid>` correlation
+        // id. Route those frames to the client's pending map
+        // before the regular dispatch table sees them.
+        #[cfg(feature = "admin")]
+        if let Some(admin) = &handlers.admin {
+            if let Some(id_str) = id.as_ref().and_then(Value::as_str) {
+                if id_str.starts_with("app:") && method.is_empty() {
+                    admin.on_inbound_response(id_str, &req);
+                    continue;
+                }
+            }
+        }
 
         let stop = handle_one(&handlers, &writer, id, method, params).await?;
         if stop {
@@ -140,7 +163,11 @@ where
                 .unwrap_or("")
                 .to_string();
             let arguments = params.get("arguments").cloned().unwrap_or(Value::Null);
-            let ctx = build_tool_ctx(&arguments);
+            let ctx = build_tool_ctx(
+                &arguments,
+                #[cfg(feature = "admin")]
+                handlers.admin.clone(),
+            );
             // Strip `_meta` from arguments before passing to the
             // handler so the handler sees only its own fields.
             let stripped_args = strip_meta(arguments.clone());
@@ -166,7 +193,11 @@ where
         }
         m if m.starts_with("hooks/") => {
             let hook_name = m.trim_start_matches("hooks/").to_string();
-            let ctx = build_hook_ctx(&params);
+            let ctx = build_hook_ctx(
+                &params,
+                #[cfg(feature = "admin")]
+                handlers.admin.clone(),
+            );
             match handlers.hooks.get(&hook_name) {
                 Some(handler) => match handler.call(params, ctx).await {
                     Ok(outcome) => {
@@ -204,7 +235,10 @@ where
     }
 }
 
-fn build_tool_ctx(arguments: &Value) -> ToolCtx {
+fn build_tool_ctx(
+    arguments: &Value,
+    #[cfg(feature = "admin")] admin: Option<Arc<crate::admin::AdminClient>>,
+) -> ToolCtx {
     let meta = arguments.get("_meta").cloned().unwrap_or(Value::Null);
     let agent_id = meta
         .get("agent_id")
@@ -226,10 +260,15 @@ fn build_tool_ctx(arguments: &Value) -> ToolCtx {
         _outbound_marker: std::marker::PhantomData,
         #[cfg(feature = "outbound")]
         outbound: Arc::new(crate::outbound::OutboundDispatcher::new_stub()),
+        #[cfg(feature = "admin")]
+        admin,
     }
 }
 
-fn build_hook_ctx(params: &Value) -> HookCtx {
+fn build_hook_ctx(
+    params: &Value,
+    #[cfg(feature = "admin")] admin: Option<Arc<crate::admin::AdminClient>>,
+) -> HookCtx {
     let meta = params.get("_meta").cloned().unwrap_or(Value::Null);
     let agent_id = meta
         .get("agent_id")
@@ -242,6 +281,8 @@ fn build_hook_ctx(params: &Value) -> HookCtx {
         agent_id,
         binding,
         inbound,
+        #[cfg(feature = "admin")]
+        admin,
     }
 }
 
@@ -364,6 +405,8 @@ mod tests {
             version: "0.0.0".into(),
             tools: BTreeMap::new(),
             hooks: BTreeMap::new(),
+            #[cfg(feature = "admin")]
+            admin: None,
         }
     }
 
@@ -381,6 +424,8 @@ mod tests {
             version: "0.0.0".into(),
             tools,
             hooks: BTreeMap::new(),
+            #[cfg(feature = "admin")]
+            admin: None,
         }
     }
 
@@ -477,6 +522,8 @@ mod tests {
             version: "0.0.0".into(),
             tools,
             hooks: BTreeMap::new(),
+            #[cfg(feature = "admin")]
+            admin: None,
         };
         let req = serde_json::json!({
             "jsonrpc": "2.0",
@@ -534,6 +581,8 @@ mod tests {
             version: "0.0.0".into(),
             tools,
             hooks: BTreeMap::new(),
+            #[cfg(feature = "admin")]
+            admin: None,
         };
         let req = serde_json::json!({
             "jsonrpc": "2.0",
@@ -579,6 +628,8 @@ mod tests {
             version: "0.0.0".into(),
             tools,
             hooks: BTreeMap::new(),
+            #[cfg(feature = "admin")]
+            admin: None,
         };
         // Legacy meta — only `binding`, no `inbound` bucket.
         let req = serde_json::json!({

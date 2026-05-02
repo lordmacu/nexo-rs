@@ -32,6 +32,14 @@ pub struct Microapp {
     hooks: BTreeMap<String, Arc<dyn HookHandler>>,
     on_initialize: Option<InitCallback>,
     on_shutdown: Option<ShutdownCallback>,
+    /// Phase 83.8.8.a — when set, the runtime constructs an
+    /// [`crate::admin::AdminClient`] sharing the same line writer
+    /// as the daemon-reply path and exposes it through
+    /// [`crate::ctx::ToolCtx::admin`] / [`crate::ctx::HookCtx::admin`].
+    /// `None` keeps the SDK admin client out of the dispatch loop
+    /// (microapps that do not need admin RPC pay zero).
+    #[cfg(feature = "admin")]
+    pub(crate) admin_enabled: bool,
 }
 
 impl Microapp {
@@ -47,7 +55,25 @@ impl Microapp {
             hooks: BTreeMap::new(),
             on_initialize: None,
             on_shutdown: None,
+            #[cfg(feature = "admin")]
+            admin_enabled: false,
         }
+    }
+
+    /// Phase 83.8.8.a — opt the microapp into the admin RPC
+    /// surface. The runtime constructs an
+    /// [`crate::admin::AdminClient`] sharing the dispatch loop's
+    /// line writer, exposes it through
+    /// [`crate::ctx::ToolCtx::admin`] / [`crate::ctx::HookCtx::admin`],
+    /// and routes inbound frames whose `id` starts with `app:`
+    /// to [`crate::admin::AdminClient::on_inbound_response`]
+    /// instead of the regular dispatch table.
+    ///
+    /// Available with the `admin` cargo feature on.
+    #[cfg(feature = "admin")]
+    pub fn with_admin(mut self) -> Self {
+        self.admin_enabled = true;
+        self
     }
 
     /// Register an async tool handler.
@@ -110,6 +136,8 @@ impl Microapp {
             version: self.version,
             tools: self.tools,
             hooks: self.hooks,
+            #[cfg(feature = "admin")]
+            admin: None,
         };
         // `on_initialize` / `on_shutdown` callbacks are reserved
         // for a future micro-extension (post-83.4); v0 ignores
@@ -118,6 +146,22 @@ impl Microapp {
         let _ = self.on_initialize;
         let _ = self.on_shutdown;
         let writer = std::sync::Arc::new(tokio::sync::Mutex::new(writer));
+        // Phase 83.8.8.a — when admin is enabled, build the client
+        // that shares this writer so daemon replies + microapp
+        // requests do not interleave.
+        #[cfg(feature = "admin")]
+        let handlers = {
+            let mut h = handlers;
+            if self.admin_enabled {
+                let sender = std::sync::Arc::new(
+                    crate::admin::WriterAdminSender::new(writer.clone()),
+                );
+                let client =
+                    std::sync::Arc::new(crate::admin::AdminClient::new(sender));
+                h.admin = Some(client);
+            }
+            h
+        };
         dispatch_loop(reader, writer, handlers).await
     }
 
@@ -131,6 +175,8 @@ impl Microapp {
             version: self.version,
             tools: self.tools,
             hooks: self.hooks,
+            #[cfg(feature = "admin")]
+            admin: None,
         }
     }
 }
