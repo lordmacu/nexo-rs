@@ -2635,6 +2635,17 @@ Cross-references:
   sentinel to keep precedence explicit. Runtime SkillLoader
   fallback (read tenant first, then global) still pending —
   separate scope (83.8.12.6.runtime).
+- 83.8.12.8 ✅ Microapp `tenant_*` tools — agent-creator
+  exposes `tenant_list/get/upsert/delete` over the existing
+  `nexo/admin/tenants/*` admin RPC handlers. `tenant_set_active`
+  folds into `tenant_upsert` (`active: Some(false)`) so the tool
+  surface stays minimal. Existing `agent_*`/`skill_*`/
+  `llm_provider_*` tools required no change because their wire
+  shapes already carry `tenant_id` (Phase 83.8.12.4/.5/.6) and
+  serde forwards transparently. Drive-by: takeover.rs `SendArgs`
+  gained `session_id: Option<Uuid>` (was missing since Phase
+  82.13.b.1 added the field on the SDK side). Out-of-tree commit
+  9f634a9.
 - 83.8.12.7 ✅ Audit log `tenant_id` column +
   `tail_for_tenant` — `AdminAuditRow.tenant_id:
   Option<String>` (serde-skip when None);
