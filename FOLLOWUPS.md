@@ -1863,16 +1863,24 @@ test). Three follow-ups stayed deferred:
   82.10.h.b operator wire-up — folded into that follow-up
   rather than duplicated here.
 - **NATS bridge variant of `AgentEventEmitter` for multi-host
-  deployments.** v0 is in-process broadcast — perfect for a
-  single-daemon install; multi-host topologies need a NATS
-  subject so a microapp running on a different node hears
-  events from every daemon. Trait is in place; the new impl
-  drops in alongside `BroadcastAgentEventEmitter` without
-  touching the writer hook. **Composition unblocked
-  2026-05-02 by Phase 82.11.tee — `TeeAgentEventEmitter` lets
-  boot wire `[Broadcast, Sqlite, Nats]` together as a single
-  `Arc<dyn AgentEventEmitter>` without changing emit-site
-  signatures.**
+  deployments.** ✅ shipped 2026-05-02 in Phase 82.11.bridge.
+  `NatsAgentEventEmitter` impls `AgentEventEmitter` by
+  publishing serialised `AgentEventKind` frames to
+  `<prefix>.<agent_id>.<kind>` (default prefix
+  `nexo.agent_events`). Subscribers route per-agent (`>`/
+  `<prefix>.ana.>`), per-kind
+  (`<prefix>.*.processing_state_changed`), or both at the
+  broker. Subject derivation lives in the pure
+  `agent_event_subject(prefix, &event)` fn so boot can
+  validate routing without a live NATS client. agent_id is
+  sanitised at emit-site (`.`/`*`/`>`/whitespace → `_`) so a
+  malformed config can't break wildcard subscriptions.
+  Composes with `Tee` so boot wires `[Broadcast, Sqlite,
+  Nats]` together as a single `Arc<dyn AgentEventEmitter>`
+  without changing emit-site signatures. Boot stitch is
+  folded into 82.11.log.b (next main.rs operator wire-up).
+  5 unit tests cover subject derivation per variant +
+  custom-prefix override + agent_id sanitisation.
 - **Future kinds beyond `TranscriptAppended`.** `AgentEventKind`
   is `#[non_exhaustive]` so adding `BatchJobCompleted` /
   `OutputProduced` / `Custom` is a non-breaking additive
@@ -2778,6 +2786,24 @@ Cross-references:
   limit cap + default, emit→append routing, empty-on-unknown,
   pool clone shares rows. Boot wire-up + `agent_events/list`
   cross-source merge are deferred (see 82.11.log.b below).
+- 82.11.bridge ✅ NatsAgentEventEmitter — multi-host
+  firehose bridge. Impls `AgentEventEmitter` by publishing
+  serialised `AgentEventKind` to
+  `<prefix>.<agent_id>.<kind>` (default prefix
+  `nexo.agent_events`). Pure `agent_event_subject(prefix,
+  &event)` fn exposes the routing key without a live client.
+  agent_id sanitisation (`.`/`*`/`>`/whitespace → `_`)
+  defends wildcard subscribes. Best-effort: publish errors
+  log + drop, broker crate's circuit breaker + disk queue
+  protect against NATS being down. Composes with `Tee` so
+  boot wires `[Broadcast, Sqlite, Nats]` together. async-nats
+  moved from dev-deps to regular deps on nexo-core (1 line).
+  5 new tests in `agent::agent_events::tests`: subject for
+  TranscriptAppended / ProcessingStateChanged /
+  EscalationRequested / EscalationResolved, custom-prefix
+  override, agent_id sanitisation against `.` separator.
+  Boot stitch (alongside Sqlite log + Tee composition) is
+  folded into 82.11.log.b.
 - 82.11.log.merge ✅ MergingAgentEventReader — `TranscriptReader`
   impl that composes a transcripts source (JSONL via
   `TranscriptReaderFs`) with a durable `AgentEventLog` (SQLite

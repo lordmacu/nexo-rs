@@ -193,6 +193,128 @@ impl AgentEventEmitter for TeeAgentEventEmitter {
     }
 }
 
+/// Phase 82.11.bridge — NATS-backed `AgentEventEmitter` for
+/// multi-host SaaS deployments. Single-daemon installs run
+/// happily on the in-process [`BroadcastAgentEventEmitter`];
+/// once the operator UI lives on a different node from the
+/// daemon, microapps need to reach events from every daemon.
+/// Boot composes
+/// `Tee([Broadcast, SqliteAgentEventLog, NatsAgentEventEmitter])`
+/// so live + durable + multi-host all stay in lockstep.
+///
+/// Subject convention:
+/// `<prefix>.<agent_id>.<kind>`. Defaults to
+/// `nexo.agent_events`. Subscribers route per-agent (`>` /
+/// `<prefix>.ana.>`) or per-kind
+/// (`<prefix>.*.processing_state_changed`) at the broker.
+///
+/// Failure mode: best-effort. Publish errors log + drop —
+/// same trait contract as Broadcast. The broker crate's
+/// circuit breaker + disk queue protect against NATS being
+/// down; this emitter delegates to the shared `async_nats::Client`
+/// boot already configured for the broker.
+pub struct NatsAgentEventEmitter {
+    client: async_nats::Client,
+    subject_prefix: String,
+}
+
+impl fmt::Debug for NatsAgentEventEmitter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NatsAgentEventEmitter")
+            .field("subject_prefix", &self.subject_prefix)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Default subject prefix used by [`NatsAgentEventEmitter::new`].
+/// Boot can override via [`NatsAgentEventEmitter::with_prefix`]
+/// when the deployment shards namespaces (e.g. multi-tenant
+/// SaaS where each tenant gets its own subject root).
+pub const DEFAULT_AGENT_EVENT_SUBJECT_PREFIX: &str = "nexo.agent_events";
+
+impl NatsAgentEventEmitter {
+    /// Build with [`DEFAULT_AGENT_EVENT_SUBJECT_PREFIX`].
+    pub fn new(client: async_nats::Client) -> Self {
+        Self {
+            client,
+            subject_prefix: DEFAULT_AGENT_EVENT_SUBJECT_PREFIX.to_string(),
+        }
+    }
+
+    /// Override the subject prefix. Empty string is rejected at
+    /// build time (subjects must have at least one segment).
+    pub fn with_prefix(client: async_nats::Client, prefix: impl Into<String>) -> Self {
+        let prefix = prefix.into();
+        assert!(
+            !prefix.is_empty() && !prefix.contains(' '),
+            "agent event subject prefix must be non-empty and contain no spaces, got: {prefix:?}"
+        );
+        Self {
+            client,
+            subject_prefix: prefix,
+        }
+    }
+}
+
+/// Pure subject derivation — exposed so tests + boot can
+/// validate the routing key without a live NATS client.
+///
+/// Returns `None` for unknown future variants (`#[non_exhaustive]`)
+/// so the emitter skips publishing rather than synthesise a
+/// wrong subject. Live broadcast sinks still surface them.
+pub fn agent_event_subject(prefix: &str, event: &AgentEventKind) -> Option<String> {
+    let (agent_id, kind): (&str, &str) = match event {
+        AgentEventKind::TranscriptAppended { agent_id, .. } => {
+            (agent_id, "transcript_appended")
+        }
+        AgentEventKind::PendingInboundsDropped { agent_id, .. } => {
+            (agent_id, "pending_inbounds_dropped")
+        }
+        AgentEventKind::EscalationRequested { agent_id, .. } => {
+            (agent_id, "escalation_requested")
+        }
+        AgentEventKind::EscalationResolved { agent_id, .. } => {
+            (agent_id, "escalation_resolved")
+        }
+        AgentEventKind::ProcessingStateChanged { agent_id, .. } => {
+            (agent_id, "processing_state_changed")
+        }
+        _ => return None,
+    };
+    // NATS subjects must not contain whitespace or `.` mid-token.
+    // `agent_id` is operator-controlled but we still defend by
+    // replacing any wildcards / separators a future variant might
+    // sneak in.
+    let safe_agent = agent_id.replace([' ', '\t', '\n', '.', '*', '>'], "_");
+    Some(format!("{prefix}.{safe_agent}.{kind}"))
+}
+
+#[async_trait]
+impl AgentEventEmitter for NatsAgentEventEmitter {
+    async fn emit(&self, event: AgentEventKind) {
+        let Some(subject) = agent_event_subject(&self.subject_prefix, &event) else {
+            return;
+        };
+        let payload = match serde_json::to_vec(&event) {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "nats agent event emitter: serialise failed; frame dropped",
+                );
+                return;
+            }
+        };
+        if let Err(e) = self.client.publish(subject.clone(), payload.into()).await {
+            tracing::warn!(
+                error = %e,
+                subject = %subject,
+                "nats agent event emitter: publish failed; live broadcast continues",
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,5 +466,104 @@ mod tests {
         tee.emit(sample_event(7, "ordered")).await;
         assert_eq!(a.seen.lock().await.len(), 1);
         assert_eq!(b.seen.lock().await.len(), 1);
+    }
+
+    // ── Phase 82.11.bridge — `agent_event_subject` ──────────────
+
+    use nexo_tool_meta::admin::escalations::{EscalationReason, EscalationUrgency};
+    use nexo_tool_meta::admin::processing::{
+        ProcessingControlState, ProcessingScope,
+    };
+
+    fn convo(agent: &str) -> ProcessingScope {
+        ProcessingScope::Conversation {
+            agent_id: agent.into(),
+            channel: "whatsapp".into(),
+            account_id: "55-1234".into(),
+            contact_id: "55-5678".into(),
+            mcp_channel_source: None,
+        }
+    }
+
+    #[test]
+    fn nats_subject_for_transcript_appended() {
+        let evt = sample_event(0, "x");
+        let s = agent_event_subject("nexo.agent_events", &evt).unwrap();
+        assert_eq!(s, "nexo.agent_events.ana.transcript_appended");
+    }
+
+    #[test]
+    fn nats_subject_for_processing_state_changed() {
+        let scope = convo("ana");
+        let evt = AgentEventKind::ProcessingStateChanged {
+            agent_id: "ana".into(),
+            scope: scope.clone(),
+            prev_state: ProcessingControlState::AgentActive,
+            new_state: ProcessingControlState::PausedByOperator {
+                scope,
+                paused_at_ms: 1,
+                operator_token_hash: "h".into(),
+                reason: None,
+            },
+            at_ms: 1,
+            tenant_id: None,
+        };
+        let s = agent_event_subject("nexo.agent_events", &evt).unwrap();
+        assert_eq!(s, "nexo.agent_events.ana.processing_state_changed");
+    }
+
+    #[test]
+    fn nats_subject_for_escalation_kinds() {
+        let req = AgentEventKind::EscalationRequested {
+            agent_id: "ana".into(),
+            scope: convo("ana"),
+            summary: "x".into(),
+            reason: EscalationReason::UnknownQuery,
+            urgency: EscalationUrgency::Normal,
+            requested_at_ms: 1,
+            tenant_id: None,
+        };
+        assert_eq!(
+            agent_event_subject("nexo.agent_events", &req).unwrap(),
+            "nexo.agent_events.ana.escalation_requested"
+        );
+        let res = AgentEventKind::EscalationResolved {
+            agent_id: "ana".into(),
+            scope: convo("ana"),
+            resolved_at_ms: 1,
+            by: nexo_tool_meta::admin::escalations::ResolvedBy::OperatorTakeover,
+            tenant_id: None,
+        };
+        assert_eq!(
+            agent_event_subject("nexo.agent_events", &res).unwrap(),
+            "nexo.agent_events.ana.escalation_resolved"
+        );
+    }
+
+    #[test]
+    fn nats_subject_sanitises_agent_id_with_separator_chars() {
+        // Defense-in-depth: an agent_id containing `.` would
+        // shift the topic structure and break wildcard
+        // subscriptions. The emitter replaces it with `_`.
+        let evt = AgentEventKind::TranscriptAppended {
+            agent_id: "ana.bad".into(),
+            session_id: Uuid::nil(),
+            seq: 0,
+            role: TranscriptRole::User,
+            body: "x".into(),
+            sent_at_ms: 1,
+            sender_id: None,
+            source_plugin: "whatsapp".into(),
+            tenant_id: None,
+        };
+        let s = agent_event_subject("nexo.agent_events", &evt).unwrap();
+        assert_eq!(s, "nexo.agent_events.ana_bad.transcript_appended");
+    }
+
+    #[test]
+    fn nats_subject_honours_custom_prefix() {
+        let evt = sample_event(0, "x");
+        let s = agent_event_subject("acme.events", &evt).unwrap();
+        assert_eq!(s, "acme.events.ana.transcript_appended");
     }
 }
