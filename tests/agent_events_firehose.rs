@@ -79,6 +79,7 @@ async fn firehose_delivers_redacted_frame_to_subscribed_microapp() {
             reload_signal: Arc::new(|| {}),
             transcript_reader: None,
             broker: None,
+            transcript_writer: None,
         },
         true,
     )
@@ -175,6 +176,7 @@ async fn microapp_without_subscribe_capability_receives_no_frames() {
             reload_signal: Arc::new(|| {}),
             transcript_reader: None,
             broker: None,
+            transcript_writer: None,
         },
         true,
     )
