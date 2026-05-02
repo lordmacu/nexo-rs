@@ -169,6 +169,60 @@ impl LlmYamlPatcher for LlmYamlPatcherFs {
         yaml_patch::remove_llm_provider(&self.path, provider_id)?;
         Ok(())
     }
+
+    // Phase 83.8.12.5.c.b — tenant-scoped CRUD overrides the
+    // default trait impls (which return Err). Backed by the
+    // same atomic write lock as the global path so concurrent
+    // tenant + global upserts don't tear the file.
+    fn list_tenant_provider_ids(
+        &self,
+        tenant_id: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        yaml_patch::list_llm_tenant_provider_ids(&self.path, tenant_id)
+    }
+
+    fn read_tenant_provider_field(
+        &self,
+        tenant_id: &str,
+        provider_id: &str,
+        dotted: &str,
+    ) -> anyhow::Result<Option<serde_json::Value>> {
+        match yaml_patch::read_llm_tenant_provider_field(
+            &self.path,
+            tenant_id,
+            provider_id,
+            dotted,
+        )? {
+            Some(yaml_value) => Ok(Some(yaml_to_json(yaml_value)?)),
+            None => Ok(None),
+        }
+    }
+
+    fn upsert_tenant_provider_field(
+        &self,
+        tenant_id: &str,
+        provider_id: &str,
+        dotted: &str,
+        value: serde_json::Value,
+    ) -> anyhow::Result<()> {
+        let yaml_value = json_to_yaml(value)?;
+        yaml_patch::upsert_llm_tenant_provider_field(
+            &self.path,
+            tenant_id,
+            provider_id,
+            dotted,
+            yaml_value,
+        )
+    }
+
+    fn remove_tenant_provider(
+        &self,
+        tenant_id: &str,
+        provider_id: &str,
+    ) -> anyhow::Result<()> {
+        yaml_patch::remove_llm_tenant_provider(&self.path, tenant_id, provider_id)?;
+        Ok(())
+    }
 }
 
 /// Filesystem-backed `CredentialStore` rooted at `secrets/`.

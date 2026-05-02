@@ -2046,6 +2046,199 @@ pub fn remove_llm_provider(path: &Path, provider_id: &str) -> Result<bool> {
     Ok(removed)
 }
 
+// ── Phase 83.8.12.5.c.b — tenant-scoped provider helpers ──
+//
+// Operate on `tenants.<tenant_id>.providers.<provider_id>.*`.
+// Mirror the global `*_llm_provider_*` helpers above —
+// same root-mapping semantics, same atomic write, same lock
+// — just nested under the `tenants.<id>` namespace.
+
+/// List provider ids under `tenants.<tenant_id>.providers`.
+/// Empty when the tenant has no providers block (or the
+/// tenant or `tenants:` are absent).
+pub fn list_llm_tenant_provider_ids(
+    path: &Path,
+    tenant_id: &str,
+) -> Result<Vec<String>> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    if text.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let root: Value =
+        serde_yaml::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
+    let providers = match root
+        .get("tenants")
+        .and_then(|t| t.get(tenant_id))
+        .and_then(|t| t.get("providers"))
+        .and_then(Value::as_mapping)
+    {
+        Some(m) => m,
+        None => return Ok(Vec::new()),
+    };
+    Ok(providers
+        .keys()
+        .filter_map(|k| k.as_str().map(String::from))
+        .collect())
+}
+
+/// Read a dotted field under
+/// `tenants.<tenant_id>.providers.<provider_id>.*`.
+pub fn read_llm_tenant_provider_field(
+    path: &Path,
+    tenant_id: &str,
+    provider_id: &str,
+    dotted: &str,
+) -> Result<Option<Value>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    if text.trim().is_empty() {
+        return Ok(None);
+    }
+    let root: Value =
+        serde_yaml::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
+    let provider = match root
+        .get("tenants")
+        .and_then(|t| t.get(tenant_id))
+        .and_then(|t| t.get("providers"))
+        .and_then(|p| p.get(provider_id))
+    {
+        Some(p) => p,
+        None => return Ok(None),
+    };
+    let mut cur: &Value = provider;
+    for segment in dotted.split('.') {
+        match cur.get(segment) {
+            Some(next) => cur = next,
+            None => return Ok(None),
+        }
+    }
+    Ok(Some(cur.clone()))
+}
+
+/// Upsert a dotted field under
+/// `tenants.<tenant_id>.providers.<provider_id>.*`. Creates
+/// every intermediate mapping (`tenants:`, `tenants.<id>:`,
+/// `.providers:`, `.providers.<provider_id>:`) on demand.
+pub fn upsert_llm_tenant_provider_field(
+    path: &Path,
+    tenant_id: &str,
+    provider_id: &str,
+    dotted: &str,
+    value: Value,
+) -> Result<()> {
+    let _guard = YAML_UPSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let mut root: Value = if path.exists() {
+        let text =
+            fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+        if text.trim().is_empty() {
+            Value::Mapping(Mapping::new())
+        } else {
+            serde_yaml::from_str(&text)
+                .with_context(|| format!("parse {}", path.display()))?
+        }
+    } else {
+        Value::Mapping(Mapping::new())
+    };
+
+    if !root.is_mapping() {
+        anyhow::bail!("{} root is not a mapping", path.display());
+    }
+    {
+        let root_map = root.as_mapping_mut().unwrap();
+        let tenants_key = Value::String("tenants".into());
+        if !root_map.contains_key(&tenants_key) {
+            root_map.insert(tenants_key.clone(), Value::Mapping(Mapping::new()));
+        }
+        let tenants = root_map
+            .get_mut(&tenants_key)
+            .and_then(Value::as_mapping_mut)
+            .ok_or_else(|| anyhow::anyhow!("`tenants:` is not a mapping in {}", path.display()))?;
+        let tenant_key = Value::String(tenant_id.into());
+        if !tenants.contains_key(&tenant_key) {
+            tenants.insert(tenant_key.clone(), Value::Mapping(Mapping::new()));
+        }
+        let tenant = tenants
+            .get_mut(&tenant_key)
+            .and_then(Value::as_mapping_mut)
+            .ok_or_else(|| {
+                anyhow::anyhow!("`tenants.{tenant_id}:` is not a mapping in {}", path.display())
+            })?;
+        let providers_key = Value::String("providers".into());
+        if !tenant.contains_key(&providers_key) {
+            tenant.insert(providers_key.clone(), Value::Mapping(Mapping::new()));
+        }
+        let providers = tenant
+            .get_mut(&providers_key)
+            .and_then(Value::as_mapping_mut)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "`tenants.{tenant_id}.providers:` is not a mapping in {}",
+                    path.display()
+                )
+            })?;
+        let provider_key = Value::String(provider_id.into());
+        if !providers.contains_key(&provider_key) {
+            providers.insert(provider_key.clone(), Value::Mapping(Mapping::new()));
+        }
+        let provider = providers
+            .get_mut(&provider_key)
+            .ok_or_else(|| anyhow::anyhow!("provider `{provider_id}` lookup failed"))?;
+        let parts: Vec<&str> = dotted.split('.').collect();
+        if parts.is_empty() {
+            anyhow::bail!("empty dotted path");
+        }
+        set_path(provider, &parts, value)?;
+    }
+    write_atomic(path, &root)
+}
+
+/// Drop the
+/// `tenants.<tenant_id>.providers.<provider_id>` mapping.
+/// Idempotent — returns `Ok(false)` when the id is already
+/// absent. Empty `providers` / `tenants.<id>` blocks are
+/// LEFT IN PLACE on purpose: deleting a single provider must
+/// not delete the whole tenant config (operator's other
+/// per-tenant knobs may live there in future).
+pub fn remove_llm_tenant_provider(
+    path: &Path,
+    tenant_id: &str,
+    provider_id: &str,
+) -> Result<bool> {
+    let _guard = YAML_UPSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    if !path.exists() {
+        return Ok(false);
+    }
+    let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    if text.trim().is_empty() {
+        return Ok(false);
+    }
+    let mut root: Value =
+        serde_yaml::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
+    let removed = {
+        let providers = match root
+            .get_mut("tenants")
+            .and_then(|t| t.get_mut(tenant_id))
+            .and_then(|t| t.get_mut("providers"))
+            .and_then(Value::as_mapping_mut)
+        {
+            Some(m) => m,
+            None => return Ok(false),
+        };
+        providers
+            .remove(&Value::String(provider_id.into()))
+            .is_some()
+    };
+    if removed {
+        write_atomic(path, &root)?;
+    }
+    Ok(removed)
+}
+
 #[cfg(test)]
 mod admin_adapter_helper_tests {
     use super::*;
@@ -2165,6 +2358,136 @@ mod admin_adapter_helper_tests {
         assert_eq!(
             list_llm_provider_ids(&path).unwrap(),
             vec!["active".to_string()]
+        );
+    }
+
+    // ── Phase 83.8.12.5.c.b — tenant-scoped helpers ──
+
+    #[test]
+    fn upsert_llm_tenant_provider_creates_nested_blocks_from_scratch() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("llm.yaml");
+        // File doesn't exist yet — helper builds the whole
+        // hierarchy.
+        upsert_llm_tenant_provider_field(
+            &path,
+            "acme",
+            "minimax",
+            "base_url",
+            Value::String("https://acme.minimax".into()),
+        )
+        .unwrap();
+        upsert_llm_tenant_provider_field(
+            &path,
+            "acme",
+            "minimax",
+            "api_key_env",
+            Value::String("ACME_KEY".into()),
+        )
+        .unwrap();
+        // Read back the values.
+        let v = read_llm_tenant_provider_field(&path, "acme", "minimax", "base_url")
+            .unwrap()
+            .unwrap();
+        assert_eq!(v.as_str(), Some("https://acme.minimax"));
+        let ids = list_llm_tenant_provider_ids(&path, "acme").unwrap();
+        assert_eq!(ids, vec!["minimax".to_string()]);
+    }
+
+    #[test]
+    fn list_llm_tenant_provider_ids_isolates_tenants() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("llm.yaml");
+        upsert_llm_tenant_provider_field(
+            &path,
+            "acme",
+            "minimax",
+            "base_url",
+            Value::String("https://acme".into()),
+        )
+        .unwrap();
+        upsert_llm_tenant_provider_field(
+            &path,
+            "globex",
+            "openai",
+            "base_url",
+            Value::String("https://globex".into()),
+        )
+        .unwrap();
+        assert_eq!(
+            list_llm_tenant_provider_ids(&path, "acme").unwrap(),
+            vec!["minimax".to_string()]
+        );
+        assert_eq!(
+            list_llm_tenant_provider_ids(&path, "globex").unwrap(),
+            vec!["openai".to_string()]
+        );
+        // Unknown tenant returns empty (not error).
+        assert!(list_llm_tenant_provider_ids(&path, "ghost")
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn remove_llm_tenant_provider_only_drops_target_block() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("llm.yaml");
+        // Seed: tenant `acme` with `minimax` AND `openai`.
+        upsert_llm_tenant_provider_field(
+            &path,
+            "acme",
+            "minimax",
+            "base_url",
+            Value::String("https://m".into()),
+        )
+        .unwrap();
+        upsert_llm_tenant_provider_field(
+            &path,
+            "acme",
+            "openai",
+            "base_url",
+            Value::String("https://o".into()),
+        )
+        .unwrap();
+        let removed = remove_llm_tenant_provider(&path, "acme", "minimax").unwrap();
+        assert!(removed);
+        // Sibling provider intact.
+        assert_eq!(
+            list_llm_tenant_provider_ids(&path, "acme").unwrap(),
+            vec!["openai".to_string()]
+        );
+    }
+
+    #[test]
+    fn tenant_and_global_provider_with_same_id_coexist() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_yaml(
+            dir.path(),
+            "llm.yaml",
+            "providers:\n  minimax:\n    base_url: https://global\n",
+        );
+        upsert_llm_tenant_provider_field(
+            &path,
+            "acme",
+            "minimax",
+            "base_url",
+            Value::String("https://acme".into()),
+        )
+        .unwrap();
+        // Both reads succeed independently.
+        assert_eq!(
+            read_llm_provider_field(&path, "minimax", "base_url")
+                .unwrap()
+                .unwrap()
+                .as_str(),
+            Some("https://global")
+        );
+        assert_eq!(
+            read_llm_tenant_provider_field(&path, "acme", "minimax", "base_url")
+                .unwrap()
+                .unwrap()
+                .as_str(),
+            Some("https://acme")
         );
     }
 }

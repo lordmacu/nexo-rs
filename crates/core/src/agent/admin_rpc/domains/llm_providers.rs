@@ -35,6 +35,59 @@ pub trait LlmYamlPatcher: Send + Sync {
     ) -> anyhow::Result<()>;
     /// Remove the entire `providers.<id>` block.
     fn remove_provider(&self, provider_id: &str) -> anyhow::Result<()>;
+
+    /// Phase 83.8.12.5.c.b — list provider ids under
+    /// `tenants.<tenant_id>.providers`. Empty when the tenant
+    /// has no providers block (or the tenant doesn't exist).
+    /// Default impl returns empty so legacy patchers without
+    /// tenant support compile cleanly while behaving as if no
+    /// tenant overrides existed.
+    fn list_tenant_provider_ids(
+        &self,
+        _tenant_id: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+
+    /// Phase 83.8.12.5.c.b — read a dotted field under
+    /// `tenants.<tenant_id>.providers.<provider_id>.*`.
+    /// Default impl returns `None`.
+    fn read_tenant_provider_field(
+        &self,
+        _tenant_id: &str,
+        _provider_id: &str,
+        _dotted: &str,
+    ) -> anyhow::Result<Option<Value>> {
+        Ok(None)
+    }
+
+    /// Phase 83.8.12.5.c.b — upsert a dotted field under
+    /// `tenants.<tenant_id>.providers.<provider_id>.*`.
+    /// Default impl errors so unimplemented adapters surface
+    /// the gap explicitly rather than silently no-op.
+    fn upsert_tenant_provider_field(
+        &self,
+        _tenant_id: &str,
+        _provider_id: &str,
+        _dotted: &str,
+        _value: Value,
+    ) -> anyhow::Result<()> {
+        Err(anyhow::anyhow!(
+            "upsert_tenant_provider_field not implemented for this LlmYamlPatcher"
+        ))
+    }
+
+    /// Phase 83.8.12.5.c.b — remove the
+    /// `tenants.<tenant_id>.providers.<provider_id>` block.
+    fn remove_tenant_provider(
+        &self,
+        _tenant_id: &str,
+        _provider_id: &str,
+    ) -> anyhow::Result<()> {
+        Err(anyhow::anyhow!(
+            "remove_tenant_provider not implemented for this LlmYamlPatcher"
+        ))
+    }
 }
 
 /// `nexo/admin/llm_providers/list` — return all providers from
@@ -78,18 +131,6 @@ pub fn upsert(
     if input.base_url.is_empty() {
         return AdminRpcResult::err(AdminRpcError::InvalidParams("base_url is empty".into()));
     }
-    // Phase 83.8.12.5.c — wire shape accepts `tenant_id` but
-    // the yaml patcher does not yet write to
-    // `tenants.<id>.providers.<provider_id>` (needs new
-    // `upsert_tenant_llm_provider_field` helper). Reject
-    // explicitly so operators don't think their tenant-scoped
-    // upsert took effect when only the global table was
-    // touched. Lands as `83.8.12.5.c.b`.
-    if input.tenant_id.is_some() {
-        return AdminRpcResult::err(AdminRpcError::MethodNotFound(
-            "not_implemented: llm_providers/upsert with tenant_id (yaml writer pending — Phase 83.8.12.5.c.b)".into(),
-        ));
-    }
     if std::env::var(&input.api_key_env).is_err() {
         return AdminRpcResult::err(AdminRpcError::InvalidParams(format!(
             "api_key_env `{}` is not set in process env",
@@ -97,20 +138,34 @@ pub fn upsert(
         )));
     }
 
-    if let Err(e) = patcher.upsert_provider_field(
-        &input.id,
-        "base_url",
-        Value::String(input.base_url.clone()),
-    ) {
+    // Phase 83.8.12.5.c.b — split the write path: tenant-scoped
+    // upserts call `upsert_tenant_provider_field` (writes under
+    // `tenants.<id>.providers.<provider_id>.*`); global upserts
+    // call the legacy `upsert_provider_field` exactly as before.
+    // Tenant id "" treated as None for defense-in-depth (caller
+    // bug should not silently write to `tenants..providers.*`).
+    let tenant_id = input
+        .tenant_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
+    let write_field = |dotted: &str, value: Value| -> anyhow::Result<()> {
+        match tenant_id.as_deref() {
+            Some(tid) => patcher.upsert_tenant_provider_field(tid, &input.id, dotted, value),
+            None => patcher.upsert_provider_field(&input.id, dotted, value),
+        }
+    };
+
+    if let Err(e) = write_field("base_url", Value::String(input.base_url.clone())) {
         return AdminRpcResult::err(AdminRpcError::Internal(format!(
             "yaml write: {e}"
         )));
     }
-    if let Err(e) = patcher.upsert_provider_field(
-        &input.id,
-        "api_key_env",
-        Value::String(input.api_key_env.clone()),
-    ) {
+    if let Err(e) =
+        write_field("api_key_env", Value::String(input.api_key_env.clone()))
+    {
         return AdminRpcResult::err(AdminRpcError::Internal(format!(
             "yaml write: {e}"
         )));
@@ -121,9 +176,7 @@ pub fn upsert(
             .iter()
             .map(|(k, v)| (k.clone(), Value::String(v.clone())))
             .collect();
-        if let Err(e) =
-            patcher.upsert_provider_field(&input.id, "headers", Value::Object(map))
-        {
+        if let Err(e) = write_field("headers", Value::Object(map)) {
             return AdminRpcResult::err(AdminRpcError::Internal(format!(
                 "yaml write: {e}"
             )));
@@ -135,7 +188,7 @@ pub fn upsert(
         id: input.id,
         base_url: input.base_url,
         api_key_env: input.api_key_env,
-        tenant_scope: None,
+        tenant_scope: tenant_id,
     };
     AdminRpcResult::ok(serde_json::to_value(summary).unwrap_or(Value::Null))
 }
@@ -153,17 +206,17 @@ pub fn delete(
         Ok(p) => p,
         Err(e) => return AdminRpcResult::err(AdminRpcError::InvalidParams(e.to_string())),
     };
-    // Phase 83.8.12.5.c — same wire-stub gate as upsert. Wire
-    // shape accepts `tenant_id` so SDK + microapp UIs build
-    // correct calls; handler rejects until 83.8.12.5.c.b ships
-    // the tenant-scoped yaml writer.
-    if p.tenant_id.is_some() {
-        return AdminRpcResult::err(AdminRpcError::MethodNotFound(
-            "not_implemented: llm_providers/delete with tenant_id (yaml writer pending — Phase 83.8.12.5.c.b)".into(),
-        ));
-    }
+    let tenant_id = p
+        .tenant_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
 
-    // Refuse when any agent uses this provider.
+    // Refuse when any agent of the SAME scope uses this
+    // provider. Cross-scope agents are unaffected — a global
+    // delete doesn't break tenant-scoped agents pointing at a
+    // tenant-scoped provider with the same id, and vice versa.
     let agent_ids = match agents.list_agent_ids() {
         Ok(ids) => ids,
         Err(e) => {
@@ -173,32 +226,60 @@ pub fn delete(
         }
     };
     for aid in &agent_ids {
-        if let Some(Value::String(provider)) = agents
+        let Some(Value::String(provider)) = agents
             .read_agent_field(aid, "model.provider")
             .ok()
             .flatten()
-        {
-            if provider == p.provider_id {
-                return AdminRpcResult::err(AdminRpcError::InvalidParams(format!(
-                    "provider `{}` still in use by agent `{aid}`; \
-                     swap providers via agents/upsert before deleting",
-                    p.provider_id
-                )));
-            }
+        else {
+            continue;
+        };
+        if provider != p.provider_id {
+            continue;
+        }
+        // Match agent's tenant_id against the delete scope.
+        let agent_tenant = agents
+            .read_agent_field(aid, "tenant_id")
+            .ok()
+            .flatten()
+            .and_then(|v| match v {
+                Value::String(s) => Some(s),
+                _ => None,
+            });
+        if agent_tenant.as_deref() == tenant_id.as_deref() {
+            return AdminRpcResult::err(AdminRpcError::InvalidParams(format!(
+                "provider `{}` still in use by agent `{aid}` (scope: {}); \
+                 swap providers via agents/upsert before deleting",
+                p.provider_id,
+                tenant_id.as_deref().unwrap_or("global"),
+            )));
         }
     }
 
-    let existed = matches!(
-        llm.list_provider_ids(),
-        Ok(ids) if ids.iter().any(|id| id == &p.provider_id)
-    );
+    // Phase 83.8.12.5.c.b — split the delete path mirroring
+    // upsert. Tenant scope checks the tenant's provider list +
+    // calls `remove_tenant_provider`; global scope keeps the
+    // legacy path.
+    let existed = match tenant_id.as_deref() {
+        Some(tid) => matches!(
+            llm.list_tenant_provider_ids(tid),
+            Ok(ids) if ids.iter().any(|id| id == &p.provider_id)
+        ),
+        None => matches!(
+            llm.list_provider_ids(),
+            Ok(ids) if ids.iter().any(|id| id == &p.provider_id)
+        ),
+    };
     if !existed {
         return AdminRpcResult::ok(
             serde_json::to_value(LlmProvidersDeleteResponse { removed: false })
                 .unwrap_or(Value::Null),
         );
     }
-    match llm.remove_provider(&p.provider_id) {
+    let removed = match tenant_id.as_deref() {
+        Some(tid) => llm.remove_tenant_provider(tid, &p.provider_id),
+        None => llm.remove_provider(&p.provider_id),
+    };
+    match removed {
         Ok(()) => {
             reload_signal();
             AdminRpcResult::ok(
@@ -247,6 +328,11 @@ mod tests {
     #[derive(Default)]
     struct MockLlm {
         providers: Mutex<HashMap<String, HashMap<String, Value>>>,
+        /// Phase 83.8.12.5.c.b — tenant providers keyed by
+        /// `(tenant_id, provider_id)`.
+        tenant_providers: Mutex<
+            HashMap<(String, String), HashMap<String, Value>>,
+        >,
     }
     impl MockLlm {
         fn with(provs: &[(&str, &str, &str)]) -> Self {
@@ -302,6 +388,60 @@ mod tests {
         }
         fn remove_provider(&self, id: &str) -> anyhow::Result<()> {
             self.providers.lock().unwrap().remove(id);
+            Ok(())
+        }
+        fn list_tenant_provider_ids(
+            &self,
+            tenant_id: &str,
+        ) -> anyhow::Result<Vec<String>> {
+            let mut v: Vec<String> = self
+                .tenant_providers
+                .lock()
+                .unwrap()
+                .keys()
+                .filter(|(t, _)| t == tenant_id)
+                .map(|(_, p)| p.clone())
+                .collect();
+            v.sort();
+            Ok(v)
+        }
+        fn read_tenant_provider_field(
+            &self,
+            tenant_id: &str,
+            provider_id: &str,
+            dotted: &str,
+        ) -> anyhow::Result<Option<Value>> {
+            Ok(self
+                .tenant_providers
+                .lock()
+                .unwrap()
+                .get(&(tenant_id.to_string(), provider_id.to_string()))
+                .and_then(|m| m.get(dotted).cloned()))
+        }
+        fn upsert_tenant_provider_field(
+            &self,
+            tenant_id: &str,
+            provider_id: &str,
+            dotted: &str,
+            value: Value,
+        ) -> anyhow::Result<()> {
+            self.tenant_providers
+                .lock()
+                .unwrap()
+                .entry((tenant_id.to_string(), provider_id.to_string()))
+                .or_default()
+                .insert(dotted.to_string(), value);
+            Ok(())
+        }
+        fn remove_tenant_provider(
+            &self,
+            tenant_id: &str,
+            provider_id: &str,
+        ) -> anyhow::Result<()> {
+            self.tenant_providers
+                .lock()
+                .unwrap()
+                .remove(&(tenant_id.to_string(), provider_id.to_string()));
             Ok(())
         }
     }
@@ -447,5 +587,165 @@ mod tests {
         let response: LlmProvidersDeleteResponse =
             serde_json::from_value(result.result.unwrap()).unwrap();
         assert!(!response.removed);
+    }
+
+    // ── Phase 83.8.12.5.c.b — tenant-scoped CRUD ──
+
+    /// `tenant_id: Some` upsert writes under tenant namespace
+    /// + leaves the global table untouched. Resulting summary
+    /// echoes `tenant_scope`.
+    #[tokio::test]
+    async fn llm_providers_upsert_with_tenant_id_writes_under_tenant_namespace() {
+        // Make sure the env var the handler validates exists.
+        std::env::set_var("MINIMAX_KEY_ACME_TEST", "value");
+        let llm = MockLlm::default();
+        let result = upsert(
+            &llm,
+            serde_json::json!({
+                "id": "minimax",
+                "base_url": "https://api.minimax.io",
+                "api_key_env": "MINIMAX_KEY_ACME_TEST",
+                "tenant_id": "acme",
+            }),
+            &|| {},
+        );
+        assert!(result.error.is_none(), "{result:?}");
+        let summary: LlmProviderSummary =
+            serde_json::from_value(result.result.unwrap()).unwrap();
+        assert_eq!(summary.tenant_scope.as_deref(), Some("acme"));
+        // Global table untouched.
+        assert!(llm.list_provider_ids().unwrap().is_empty());
+        // Tenant namespace populated.
+        assert_eq!(
+            llm.list_tenant_provider_ids("acme").unwrap(),
+            vec!["minimax".to_string()]
+        );
+        let v = llm
+            .read_tenant_provider_field("acme", "minimax", "base_url")
+            .unwrap();
+        assert_eq!(v, Some(Value::String("https://api.minimax.io".into())));
+    }
+
+    /// Tenant delete removes ONLY the tenant-scoped block. A
+    /// global provider with the same id stays intact (the two
+    /// scopes are independent).
+    #[tokio::test]
+    async fn llm_providers_delete_with_tenant_id_isolates_from_global() {
+        std::env::set_var("MINIMAX_KEY", "v");
+        // Seed both: a global "minimax" + a tenant "acme.minimax".
+        let llm = MockLlm::with(&[("minimax", "https://global", "MINIMAX_KEY")]);
+        llm.upsert_tenant_provider_field(
+            "acme",
+            "minimax",
+            "base_url",
+            Value::String("https://acme".into()),
+        )
+        .unwrap();
+        let agents = MockAgents::default(); // no agents reference these
+        let result = delete(
+            &llm,
+            &agents,
+            serde_json::json!({ "provider_id": "minimax", "tenant_id": "acme" }),
+            &|| {},
+        );
+        let response: LlmProvidersDeleteResponse =
+            serde_json::from_value(result.result.unwrap()).unwrap();
+        assert!(response.removed);
+        // Global still there.
+        assert!(llm.list_provider_ids().unwrap().contains(&"minimax".into()));
+        // Tenant scope cleared.
+        assert!(llm.list_tenant_provider_ids("acme").unwrap().is_empty());
+    }
+
+    /// Tenant delete refuses when an agent OF THE SAME tenant
+    /// scope still uses the provider.
+    #[tokio::test]
+    async fn llm_providers_delete_tenant_rejects_when_same_scope_agent_uses_it() {
+        let llm = MockLlm::default();
+        llm.upsert_tenant_provider_field(
+            "acme",
+            "minimax",
+            "base_url",
+            Value::String("https://acme".into()),
+        )
+        .unwrap();
+        let agents = MockAgents::default();
+        // Seed an agent in tenant `acme` using minimax.
+        agents
+            .agents
+            .lock()
+            .unwrap()
+            .entry("ana".into())
+            .or_default()
+            .insert("model.provider".into(), Value::String("minimax".into()));
+        agents
+            .agents
+            .lock()
+            .unwrap()
+            .entry("ana".into())
+            .or_default()
+            .insert("tenant_id".into(), Value::String("acme".into()));
+        let result = delete(
+            &llm,
+            &agents,
+            serde_json::json!({ "provider_id": "minimax", "tenant_id": "acme" }),
+            &|| {},
+        );
+        let err = result.error.expect("error");
+        assert!(matches!(err, AdminRpcError::InvalidParams(_)));
+        // Tenant block still present.
+        assert_eq!(
+            llm.list_tenant_provider_ids("acme").unwrap(),
+            vec!["minimax".to_string()]
+        );
+    }
+
+    /// Cross-scope delete: a global delete does NOT block on
+    /// tenant-scoped agents using a same-named tenant
+    /// provider. Tenant agent still has its own provider; the
+    /// global delete is allowed.
+    #[tokio::test]
+    async fn llm_providers_delete_global_unaffected_by_tenant_agent_using_same_id() {
+        let llm = MockLlm::with(&[("minimax", "u", "K")]);
+        llm.upsert_tenant_provider_field(
+            "acme",
+            "minimax",
+            "base_url",
+            Value::String("https://acme".into()),
+        )
+        .unwrap();
+        let agents = MockAgents::default();
+        // Tenant `acme` agent uses minimax — but the delete
+        // targets the GLOBAL minimax, not acme's.
+        agents
+            .agents
+            .lock()
+            .unwrap()
+            .entry("ana".into())
+            .or_default()
+            .insert("model.provider".into(), Value::String("minimax".into()));
+        agents
+            .agents
+            .lock()
+            .unwrap()
+            .entry("ana".into())
+            .or_default()
+            .insert("tenant_id".into(), Value::String("acme".into()));
+        let result = delete(
+            &llm,
+            &agents,
+            // No tenant_id → global scope.
+            serde_json::json!({ "provider_id": "minimax" }),
+            &|| {},
+        );
+        let response: LlmProvidersDeleteResponse =
+            serde_json::from_value(result.result.unwrap()).unwrap();
+        assert!(response.removed);
+        // Global minimax gone, tenant minimax intact.
+        assert!(llm.list_provider_ids().unwrap().is_empty());
+        assert_eq!(
+            llm.list_tenant_provider_ids("acme").unwrap(),
+            vec!["minimax".to_string()]
+        );
     }
 }
