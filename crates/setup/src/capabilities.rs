@@ -216,6 +216,14 @@ const INVENTORY: &[CapabilityToggle] = &[
     },
     CapabilityToggle {
         extension: "core",
+        env_var: "NEXO_MICROAPP_ADMIN_TENANTS_ENABLED",
+        kind: ToggleKind::Boolean,
+        risk: Risk::High,
+        effect: "Enable `nexo/admin/tenants/*` admin RPC domain (microapps can CRUD multi-tenant SaaS empresa records). Off disables the entire domain regardless of operator grants.",
+        hint: "export NEXO_MICROAPP_ADMIN_TENANTS_ENABLED=0",
+    },
+    CapabilityToggle {
+        extension: "core",
         env_var: "NEXO_MICROAPP_AGENT_EVENTS_ENABLED",
         kind: ToggleKind::Boolean,
         risk: Risk::High,

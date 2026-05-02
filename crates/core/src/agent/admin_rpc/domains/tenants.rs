@@ -1,22 +1,22 @@
 //! Phase 83.8.12 — `nexo/admin/tenants/*` handlers.
 //!
-//! CRUD surface for multi-tenant empresa records. The runtime
+//! CRUD surface for multi-tenant tenant records. The runtime
 //! itself does not consume tenants directly — it only reads
 //! `BindingContext.tenant_id` populated upstream by the
 //! producer side. This domain exists for the operator UI +
 //! microapp layer to manage the tenancy registry.
 //!
-//! Backed by an [`EmpresaStore`] trait so this crate stays
+//! Backed by an [`TenantStore`] trait so this crate stays
 //! cycle-free vs `nexo-setup` (which holds the concrete
-//! `EmpresasYamlPatcher` adapter introduced in 83.8.12.3).
+//! `TenantsYamlPatcher` adapter introduced in 83.8.12.3).
 
 use async_trait::async_trait;
 use serde_json::Value;
 
 use nexo_tool_meta::admin::tenants::{
-    EmpresaDetail, EmpresaSummary, EmpresasDeleteParams, EmpresasDeleteResponse,
-    EmpresasGetParams, EmpresasGetResponse, EmpresasListFilter, EmpresasListResponse,
-    EmpresasUpsertInput, EmpresasUpsertResponse,
+    TenantDetail, TenantSummary, TenantsDeleteParams, TenantsDeleteResponse,
+    TenantsGetParams, TenantsGetResponse, TenantsListFilter, TenantsListResponse,
+    TenantsUpsertInput, TenantsUpsertResponse,
 };
 
 use crate::agent::admin_rpc::dispatcher::{AdminRpcError, AdminRpcResult};
@@ -26,44 +26,44 @@ use crate::agent::admin_rpc::dispatcher::{AdminRpcError, AdminRpcResult};
 /// dropdown. 128 chars matches the typical UI label cap.
 pub const MAX_DISPLAY_NAME_CHARS: usize = 128;
 
-/// Storage abstraction for the empresa registry. Production
-/// adapter `nexo_setup::admin_adapters::EmpresasYamlPatcher`
+/// Storage abstraction for the tenant registry. Production
+/// adapter `nexo_setup::admin_adapters::TenantsYamlPatcher`
 /// reads/writes `config/tenants.yaml`. Tests inject in-memory
 /// mocks.
 #[async_trait]
-pub trait EmpresaStore: Send + Sync + std::fmt::Debug {
+pub trait TenantStore: Send + Sync + std::fmt::Debug {
     /// List tenants matching `filter`. Empty registry returns
     /// an empty `Vec` (NOT an error).
     async fn list(
         &self,
-        filter: &EmpresasListFilter,
-    ) -> anyhow::Result<Vec<EmpresaSummary>>;
+        filter: &TenantsListFilter,
+    ) -> anyhow::Result<Vec<TenantSummary>>;
 
-    /// Read one empresa. Unknown id returns `Ok(None)` — daemon
+    /// Read one tenant. Unknown id returns `Ok(None)` — daemon
     /// does NOT surface a not-found error so callers can probe.
-    async fn get(&self, tenant_id: &str) -> anyhow::Result<Option<EmpresaDetail>>;
+    async fn get(&self, tenant_id: &str) -> anyhow::Result<Option<TenantDetail>>;
 
-    /// Create or update one empresa. The boolean is `true` when
+    /// Create or update one tenant. The boolean is `true` when
     /// this call created a new record, `false` on idempotent
     /// retry / update.
     async fn upsert(
         &self,
-        params: EmpresasUpsertInput,
-    ) -> anyhow::Result<(EmpresaDetail, bool)>;
+        params: TenantsUpsertInput,
+    ) -> anyhow::Result<(TenantDetail, bool)>;
 
-    /// Delete one empresa.
+    /// Delete one tenant.
     ///
     /// Returns `(removed, orphaned_agents)`:
     ///
     /// - `purge: false` → returns `(false, [agent ids])` when
-    ///   one or more agents still reference the empresa. The
+    ///   one or more agents still reference the tenant. The
     ///   delete is rejected. UI shows the orphan list and
     ///   confirms before retrying with `purge: true`.
     /// - `purge: false` AND no orphans → cascade is unnecessary,
     ///   delete proceeds, returns `(true, [])`.
     /// - `purge: true` → cascade-deletes every orphan agent,
-    ///   then removes the empresa, returns `(true, [])`.
-    /// - Unknown empresa id → `(false, [])` (idempotent).
+    ///   then removes the tenant, returns `(true, [])`.
+    /// - Unknown tenant id → `(false, [])` (idempotent).
     async fn delete(
         &self,
         tenant_id: &str,
@@ -71,7 +71,7 @@ pub trait EmpresaStore: Send + Sync + std::fmt::Debug {
     ) -> anyhow::Result<(bool, Vec<String>)>;
 }
 
-/// Validate the empresa id matches the kebab-case regex
+/// Validate the tenant id matches the kebab-case regex
 /// `^[a-z0-9][a-z0-9-]{0,63}$` so the name is safe for use as
 /// a directory under `skills/<tenant_id>/` and as a yaml key
 /// under `llm.yaml.tenants.<tenant_id>`.
@@ -109,8 +109,8 @@ fn validate_display_name(name: &str) -> Result<(), &'static str> {
 
 /// `nexo/admin/tenants/list` — list tenants with optional
 /// filters (active_only, prefix).
-pub async fn list(store: &dyn EmpresaStore, params: Value) -> AdminRpcResult {
-    let filter: EmpresasListFilter = match serde_json::from_value(params) {
+pub async fn list(store: &dyn TenantStore, params: Value) -> AdminRpcResult {
+    let filter: TenantsListFilter = match serde_json::from_value(params) {
         Ok(f) => f,
         Err(e) => return AdminRpcResult::err(AdminRpcError::InvalidParams(e.to_string())),
     };
@@ -122,21 +122,21 @@ pub async fn list(store: &dyn EmpresaStore, params: Value) -> AdminRpcResult {
             )))
         }
     };
-    let response = EmpresasListResponse { tenants };
+    let response = TenantsListResponse { tenants };
     AdminRpcResult::ok(serde_json::to_value(response).unwrap_or(Value::Null))
 }
 
-/// `nexo/admin/tenants/get` — read one empresa. Unknown id
-/// returns `{ "empresa": null }`, NOT an error.
-pub async fn get(store: &dyn EmpresaStore, params: Value) -> AdminRpcResult {
-    let p: EmpresasGetParams = match serde_json::from_value(params) {
+/// `nexo/admin/tenants/get` — read one tenant. Unknown id
+/// returns `{ "tenant": null }`, NOT an error.
+pub async fn get(store: &dyn TenantStore, params: Value) -> AdminRpcResult {
+    let p: TenantsGetParams = match serde_json::from_value(params) {
         Ok(p) => p,
         Err(e) => return AdminRpcResult::err(AdminRpcError::InvalidParams(e.to_string())),
     };
     if let Err(msg) = validate_empresa_id(&p.tenant_id) {
         return AdminRpcResult::err(AdminRpcError::InvalidParams(msg.into()));
     }
-    let empresa = match store.get(&p.tenant_id).await {
+    let tenant = match store.get(&p.tenant_id).await {
         Ok(e) => e,
         Err(e) => {
             return AdminRpcResult::err(AdminRpcError::Internal(format!(
@@ -144,13 +144,13 @@ pub async fn get(store: &dyn EmpresaStore, params: Value) -> AdminRpcResult {
             )))
         }
     };
-    let response = EmpresasGetResponse { empresa };
+    let response = TenantsGetResponse { tenant };
     AdminRpcResult::ok(serde_json::to_value(response).unwrap_or(Value::Null))
 }
 
-/// `nexo/admin/tenants/upsert` — create or update one empresa.
-pub async fn upsert(store: &dyn EmpresaStore, params: Value) -> AdminRpcResult {
-    let p: EmpresasUpsertInput = match serde_json::from_value(params) {
+/// `nexo/admin/tenants/upsert` — create or update one tenant.
+pub async fn upsert(store: &dyn TenantStore, params: Value) -> AdminRpcResult {
+    let p: TenantsUpsertInput = match serde_json::from_value(params) {
         Ok(p) => p,
         Err(e) => return AdminRpcResult::err(AdminRpcError::InvalidParams(e.to_string())),
     };
@@ -160,7 +160,7 @@ pub async fn upsert(store: &dyn EmpresaStore, params: Value) -> AdminRpcResult {
     if let Err(msg) = validate_display_name(&p.display_name) {
         return AdminRpcResult::err(AdminRpcError::InvalidParams(msg.into()));
     }
-    let (empresa, created) = match store.upsert(p).await {
+    let (tenant, created) = match store.upsert(p).await {
         Ok(pair) => pair,
         Err(e) => {
             return AdminRpcResult::err(AdminRpcError::Internal(format!(
@@ -168,16 +168,16 @@ pub async fn upsert(store: &dyn EmpresaStore, params: Value) -> AdminRpcResult {
             )))
         }
     };
-    let response = EmpresasUpsertResponse { empresa, created };
+    let response = TenantsUpsertResponse { tenant, created };
     AdminRpcResult::ok(serde_json::to_value(response).unwrap_or(Value::Null))
 }
 
-/// `nexo/admin/tenants/delete` — remove one empresa.
+/// `nexo/admin/tenants/delete` — remove one tenant.
 /// Idempotent: a missing id returns `{ removed: false }`.
-/// Orphan agent handling per the [`EmpresaStore::delete`]
+/// Orphan agent handling per the [`TenantStore::delete`]
 /// contract.
-pub async fn delete(store: &dyn EmpresaStore, params: Value) -> AdminRpcResult {
-    let p: EmpresasDeleteParams = match serde_json::from_value(params) {
+pub async fn delete(store: &dyn TenantStore, params: Value) -> AdminRpcResult {
+    let p: TenantsDeleteParams = match serde_json::from_value(params) {
         Ok(p) => p,
         Err(e) => return AdminRpcResult::err(AdminRpcError::InvalidParams(e.to_string())),
     };
@@ -192,7 +192,7 @@ pub async fn delete(store: &dyn EmpresaStore, params: Value) -> AdminRpcResult {
             )))
         }
     };
-    let response = EmpresasDeleteResponse {
+    let response = TenantsDeleteResponse {
         removed,
         orphaned_agents,
     };
@@ -208,14 +208,14 @@ mod tests {
     use std::sync::Mutex;
 
     #[derive(Debug, Default)]
-    struct InMemoryEmpresaStore {
-        rows: Mutex<BTreeMap<String, EmpresaDetail>>,
+    struct InMemoryTenantStore {
+        rows: Mutex<BTreeMap<String, TenantDetail>>,
         /// Configurable: simulate `agents.yaml` rows for orphan
         /// detection. Maps tenant_id → agent_ids.
         agent_index: Mutex<BTreeMap<String, Vec<String>>>,
     }
 
-    impl InMemoryEmpresaStore {
+    impl InMemoryTenantStore {
         fn with_agents(&self, tenant_id: &str, agents: &[&str]) {
             self.agent_index.lock().unwrap().insert(
                 tenant_id.into(),
@@ -225,11 +225,11 @@ mod tests {
     }
 
     #[async_trait]
-    impl EmpresaStore for InMemoryEmpresaStore {
+    impl TenantStore for InMemoryTenantStore {
         async fn list(
             &self,
-            filter: &EmpresasListFilter,
-        ) -> anyhow::Result<Vec<EmpresaSummary>> {
+            filter: &TenantsListFilter,
+        ) -> anyhow::Result<Vec<TenantSummary>> {
             let rows = self.rows.lock().unwrap();
             let agent_index = self.agent_index.lock().unwrap();
             Ok(rows
@@ -239,7 +239,7 @@ mod tests {
                     Some(p) => d.id.starts_with(p),
                     None => true,
                 })
-                .map(|d| EmpresaSummary {
+                .map(|d| TenantSummary {
                     id: d.id.clone(),
                     display_name: d.display_name.clone(),
                     active: d.active,
@@ -248,17 +248,17 @@ mod tests {
                 })
                 .collect())
         }
-        async fn get(&self, tenant_id: &str) -> anyhow::Result<Option<EmpresaDetail>> {
+        async fn get(&self, tenant_id: &str) -> anyhow::Result<Option<TenantDetail>> {
             Ok(self.rows.lock().unwrap().get(tenant_id).cloned())
         }
         async fn upsert(
             &self,
-            params: EmpresasUpsertInput,
-        ) -> anyhow::Result<(EmpresaDetail, bool)> {
+            params: TenantsUpsertInput,
+        ) -> anyhow::Result<(TenantDetail, bool)> {
             let mut rows = self.rows.lock().unwrap();
             let created = !rows.contains_key(&params.id);
             let existing = rows.get(&params.id).cloned();
-            let detail = EmpresaDetail {
+            let detail = TenantDetail {
                 id: params.id.clone(),
                 display_name: params.display_name,
                 active: params
@@ -305,8 +305,8 @@ mod tests {
         }
     }
 
-    fn store() -> std::sync::Arc<InMemoryEmpresaStore> {
-        std::sync::Arc::new(InMemoryEmpresaStore::default())
+    fn store() -> std::sync::Arc<InMemoryTenantStore> {
+        std::sync::Arc::new(InMemoryTenantStore::default())
     }
 
     #[tokio::test]
@@ -334,9 +334,9 @@ mod tests {
 
         let g = get(s.as_ref(), json!({ "tenant_id": "acme-corp" })).await;
         let v = g.result.unwrap();
-        assert_eq!(v["empresa"]["id"], json!("acme-corp"));
-        assert_eq!(v["empresa"]["display_name"], json!("Acme Corp."));
-        assert_eq!(v["empresa"]["active"], json!(true));
+        assert_eq!(v["tenant"]["id"], json!("acme-corp"));
+        assert_eq!(v["tenant"]["display_name"], json!("Acme Corp."));
+        assert_eq!(v["tenant"]["active"], json!(true));
     }
 
     #[tokio::test]
@@ -356,7 +356,7 @@ mod tests {
         let s = store();
         let g = get(s.as_ref(), json!({ "tenant_id": "absent" })).await;
         assert!(g.error.is_none());
-        assert_eq!(g.result.unwrap(), json!({ "empresa": null }));
+        assert_eq!(g.result.unwrap(), json!({ "tenant": null }));
     }
 
     #[tokio::test]

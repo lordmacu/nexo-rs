@@ -79,8 +79,8 @@ pub struct BindingContext {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event_source: Option<EventSourceMeta>,
 
-    /// Phase 83.8.12 — SaaS empresa (tenant) key. `None` for
-    /// agents that predate the multi-empresa model
+    /// Phase 83.8.12 — SaaS tenant (tenant) key. `None` for
+    /// agents that predate the multi-tenant model
     /// (`agents.yaml.<id>` without an `tenant_id` field).
     /// Multi-tenant filtering across admin RPC + microapp tools
     /// keys on this field. Sits ABOVE `account_id`, which
