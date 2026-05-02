@@ -72,7 +72,7 @@ async fn memory_recall_records_events_for_every_hit() -> anyhow::Result<()> {
         auto_approve: false,
         extract_memories: None,
             event_subscribers: Vec::new(),
-            empresa_id: None,
+            tenant_id: None,
             extensions_config: std::collections::BTreeMap::new(),
     });
     let broker = AnyBroker::local();

@@ -34,7 +34,7 @@ pub struct AgentConfig {
     /// Multi-tenant filtering across admin RPC + microapp tools
     /// keys on this field.
     #[serde(default)]
-    pub empresa_id: Option<String>,
+    pub tenant_id: Option<String>,
     pub model: ModelConfig,
     #[serde(default)]
     pub plugins: Vec<String>,

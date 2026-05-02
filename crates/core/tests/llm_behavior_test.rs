@@ -205,7 +205,7 @@ fn make_context(broker: AnyBroker) -> AgentContext {
         auto_approve: false,
         extract_memories: None,
             event_subscribers: Vec::new(),
-            empresa_id: None,
+            tenant_id: None,
             extensions_config: std::collections::BTreeMap::new(),
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
@@ -309,7 +309,7 @@ async fn system_prompt_prepended_to_llm_request() {
         auto_approve: false,
         extract_memories: None,
             event_subscribers: Vec::new(),
-            empresa_id: None,
+            tenant_id: None,
             extensions_config: std::collections::BTreeMap::new(),
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
@@ -398,7 +398,7 @@ async fn output_language_directive_renders_when_configured() {
         auto_approve: false,
         extract_memories: None,
             event_subscribers: Vec::new(),
-            empresa_id: None,
+            tenant_id: None,
             extensions_config: std::collections::BTreeMap::new(),
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
@@ -545,7 +545,7 @@ async fn workspace_bundle_prepended_to_system_message() -> anyhow::Result<()> {
         auto_approve: false,
         extract_memories: None,
             event_subscribers: Vec::new(),
-            empresa_id: None,
+            tenant_id: None,
             extensions_config: std::collections::BTreeMap::new(),
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
@@ -660,7 +660,7 @@ async fn skills_loaded_between_workspace_and_system_prompt() -> anyhow::Result<(
         auto_approve: false,
         extract_memories: None,
             event_subscribers: Vec::new(),
-            empresa_id: None,
+            tenant_id: None,
             extensions_config: std::collections::BTreeMap::new(),
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
@@ -767,7 +767,7 @@ async fn workspace_memory_skipped_when_source_is_peer_agent() -> anyhow::Result<
         auto_approve: false,
         extract_memories: None,
             event_subscribers: Vec::new(),
-            empresa_id: None,
+            tenant_id: None,
             extensions_config: std::collections::BTreeMap::new(),
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
@@ -862,7 +862,7 @@ async fn transcript_written_when_dir_configured() -> anyhow::Result<()> {
         auto_approve: false,
         extract_memories: None,
             event_subscribers: Vec::new(),
-            empresa_id: None,
+            tenant_id: None,
             extensions_config: std::collections::BTreeMap::new(),
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
@@ -1039,7 +1039,7 @@ async fn heartbeat_delivers_due_reminders_once() {
         auto_approve: false,
         extract_memories: None,
             event_subscribers: Vec::new(),
-            empresa_id: None,
+            tenant_id: None,
             extensions_config: std::collections::BTreeMap::new(),
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
@@ -1140,7 +1140,7 @@ async fn schedule_reminder_tool_uses_current_conversation_context() {
         auto_approve: false,
         extract_memories: None,
             event_subscribers: Vec::new(),
-            empresa_id: None,
+            tenant_id: None,
             extensions_config: std::collections::BTreeMap::new(),
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
@@ -1244,7 +1244,7 @@ async fn llm_can_call_delegate_tool_and_receive_result() {
         auto_approve: false,
         extract_memories: None,
             event_subscribers: Vec::new(),
-            empresa_id: None,
+            tenant_id: None,
             extensions_config: std::collections::BTreeMap::new(),
     };
     let runtime_b = AgentRuntime::new(
@@ -1304,7 +1304,7 @@ async fn llm_can_call_delegate_tool_and_receive_result() {
         auto_approve: false,
         extract_memories: None,
             event_subscribers: Vec::new(),
-            empresa_id: None,
+            tenant_id: None,
             extensions_config: std::collections::BTreeMap::new(),
     });
     let mut sub = broker.subscribe("plugin.outbound.telegram").await.unwrap();
@@ -1714,7 +1714,7 @@ async fn delegation_rejects_target_outside_allowed_delegates() {
         auto_approve: false,
         extract_memories: None,
             event_subscribers: Vec::new(),
-            empresa_id: None,
+            tenant_id: None,
             extensions_config: std::collections::BTreeMap::new(),
     });
     let router = Arc::new(AgentRouter::new());
@@ -1831,7 +1831,7 @@ async fn peer_directory_renders_into_system_prompt() {
         auto_approve: false,
         extract_memories: None,
             event_subscribers: Vec::new(),
-            empresa_id: None,
+            tenant_id: None,
             extensions_config: std::collections::BTreeMap::new(),
     });
     let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
