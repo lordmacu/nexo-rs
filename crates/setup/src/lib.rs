@@ -22,6 +22,7 @@
 
 pub mod admin_adapters;
 pub mod admin_bootstrap;
+pub mod admin_capability_collect;
 pub mod agent_wizard;
 pub mod capabilities;
 pub mod http_supervisor;
