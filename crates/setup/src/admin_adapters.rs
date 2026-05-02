@@ -2366,6 +2366,130 @@ impl ChannelOutboundDispatcher for BrokerOutboundDispatcher {
     }
 }
 
+/// Telegram translator. Topic is
+/// `plugin.outbound.telegram[.<account_id>]` matching the
+/// plugin's `tool.rs::publish_outbound` convention. Payload
+/// mirrors what `TelegramSendMessageTool` publishes:
+/// `{ "to": chat_id (i64), "text": body }`. Reply variant adds
+/// `reply_to_message_id` (parsed from `OutboundMessage.reply_to_msg_id`).
+///
+/// `OutboundMessage.to` is parsed as `i64` — Telegram chat ids
+/// are signed 64-bit (negative for groups/channels). The
+/// translator returns `InvalidValue` on parse failure so the
+/// admin RPC layer surfaces a typed `-32602`.
+#[derive(Debug, Default)]
+pub struct TelegramTranslator;
+
+impl ChannelPayloadTranslator for TelegramTranslator {
+    fn channel(&self) -> &str {
+        "telegram"
+    }
+
+    fn translate(
+        &self,
+        msg: &OutboundMessage,
+    ) -> Result<(String, serde_json::Value), TranslationError> {
+        let topic = if msg.account_id.is_empty() || msg.account_id == "default" {
+            "plugin.outbound.telegram".to_string()
+        } else {
+            format!("plugin.outbound.telegram.{}", msg.account_id)
+        };
+        let chat_id: i64 = msg.to.parse().map_err(|e: std::num::ParseIntError| {
+            TranslationError::InvalidValue {
+                field: "to",
+                reason: format!("Telegram chat_id must be i64: {e}"),
+            }
+        })?;
+        let payload = match msg.msg_kind.as_str() {
+            "text" => serde_json::json!({
+                "to": chat_id,
+                "text": msg.body,
+            }),
+            "reply" => {
+                let reply_id_raw = msg
+                    .reply_to_msg_id
+                    .as_deref()
+                    .ok_or(TranslationError::MissingField("reply_to_msg_id"))?;
+                let reply_id: i64 = reply_id_raw.parse().map_err(
+                    |e: std::num::ParseIntError| TranslationError::InvalidValue {
+                        field: "reply_to_msg_id",
+                        reason: format!("Telegram message id must be i64: {e}"),
+                    },
+                )?;
+                serde_json::json!({
+                    "to": chat_id,
+                    "text": msg.body,
+                    "reply_to_message_id": reply_id,
+                })
+            }
+            other => return Err(TranslationError::UnsupportedKind(other.into())),
+        };
+        Ok((topic, payload))
+    }
+}
+
+/// Email translator. Topic is
+/// `plugin.outbound.email[.<account_id>]` matching the email
+/// plugin's `outbound_topic_for(instance)` convention
+/// (`crates/plugins/email/src/plugin.rs::outbound_topic_for`).
+/// Payload mirrors `crates/plugins/email/src/events.rs::OutboundCommand`
+/// — single-recipient list `[to]`, subject parsed from
+/// `OutboundMessage.attachments[0].subject` (operator UI passes
+/// it as a header), and body from `OutboundMessage.body`. CC /
+/// BCC / multi-recipient is out of scope for v1 takeover (the
+/// operator is replying to ONE conversation).
+///
+/// `msg_kind == "reply"` maps `reply_to_msg_id` to the
+/// `in_reply_to` Message-ID header so the threading
+/// stays coherent with the inbound message the operator is
+/// answering.
+#[derive(Debug, Default)]
+pub struct EmailTranslator;
+
+impl ChannelPayloadTranslator for EmailTranslator {
+    fn channel(&self) -> &str {
+        "email"
+    }
+
+    fn translate(
+        &self,
+        msg: &OutboundMessage,
+    ) -> Result<(String, serde_json::Value), TranslationError> {
+        let topic = if msg.account_id.is_empty() || msg.account_id == "default" {
+            "plugin.outbound.email".to_string()
+        } else {
+            format!("plugin.outbound.email.{}", msg.account_id)
+        };
+        // Subject is required by the email plugin. Operator UI
+        // ships it through the `attachments[0]` extras slot
+        // (free-form Value) since `OutboundMessage` does not
+        // have a `subject` field. Defaults to `"(no subject)"`
+        // when absent — matches the lenient default the email
+        // plugin already accepts on the `email_send` tool.
+        let subject = msg
+            .attachments
+            .first()
+            .and_then(|a| a.get("subject"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("(no subject)");
+        let mut payload = serde_json::json!({
+            "to": [msg.to.clone()],
+            "subject": subject,
+            "body": msg.body,
+        });
+        if msg.msg_kind == "reply" {
+            let in_reply_to = msg
+                .reply_to_msg_id
+                .as_deref()
+                .ok_or(TranslationError::MissingField("reply_to_msg_id"))?;
+            payload["in_reply_to"] = serde_json::Value::String(in_reply_to.to_string());
+        } else if msg.msg_kind != "text" {
+            return Err(TranslationError::UnsupportedKind(msg.msg_kind.clone()));
+        }
+        Ok((topic, payload))
+    }
+}
+
 /// WhatsApp translator. Topic is
 /// `nexo_plugin_whatsapp::dispatch::TOPIC_OUTBOUND` plus an
 /// optional `.<account_id>` suffix matching the plugin's
@@ -2563,5 +2687,178 @@ mod broker_outbound_tests {
         msg.msg_kind = "voice".into();
         let r = dispatcher.send(msg).await;
         assert!(matches!(r, Err(ChannelOutboundError::InvalidParams(_))));
+    }
+
+    // ── Telegram translator ─────────────────────────────────
+
+    fn telegram_msg() -> OutboundMessage {
+        OutboundMessage {
+            channel: "telegram".into(),
+            account_id: "primary".into(),
+            to: "12345".into(),
+            body: "hola".into(),
+            msg_kind: "text".into(),
+            attachments: vec![],
+            reply_to_msg_id: None,
+        }
+    }
+
+    #[test]
+    fn telegram_translator_text_round_trips() {
+        let (topic, payload) = TelegramTranslator.translate(&telegram_msg()).unwrap();
+        assert_eq!(topic, "plugin.outbound.telegram.primary");
+        assert_eq!(payload["to"], json!(12345));
+        assert_eq!(payload["text"], json!("hola"));
+    }
+
+    #[test]
+    fn telegram_translator_negative_chat_id_for_groups() {
+        let mut msg = telegram_msg();
+        msg.to = "-100123456".into();
+        let (_, payload) = TelegramTranslator.translate(&msg).unwrap();
+        assert_eq!(payload["to"], json!(-100123456));
+    }
+
+    #[test]
+    fn telegram_translator_non_numeric_to_errors_invalid_value() {
+        let mut msg = telegram_msg();
+        msg.to = "wa.55@s.whatsapp.net".into(); // clearly non-numeric
+        let r = TelegramTranslator.translate(&msg);
+        assert!(matches!(
+            r,
+            Err(TranslationError::InvalidValue { field: "to", .. })
+        ));
+    }
+
+    #[test]
+    fn telegram_translator_reply_includes_reply_to_message_id() {
+        let mut msg = telegram_msg();
+        msg.msg_kind = "reply".into();
+        msg.reply_to_msg_id = Some("999".into());
+        let (_, payload) = TelegramTranslator.translate(&msg).unwrap();
+        assert_eq!(payload["reply_to_message_id"], json!(999));
+    }
+
+    #[test]
+    fn telegram_translator_reply_missing_id_errors() {
+        let mut msg = telegram_msg();
+        msg.msg_kind = "reply".into();
+        let r = TelegramTranslator.translate(&msg);
+        assert!(matches!(r, Err(TranslationError::MissingField("reply_to_msg_id"))));
+    }
+
+    #[test]
+    fn telegram_translator_default_account_uses_base_topic() {
+        let mut msg = telegram_msg();
+        msg.account_id = "default".into();
+        let (topic, _) = TelegramTranslator.translate(&msg).unwrap();
+        assert_eq!(topic, "plugin.outbound.telegram");
+    }
+
+    #[test]
+    fn telegram_translator_unknown_kind_errors() {
+        let mut msg = telegram_msg();
+        msg.msg_kind = "media".into();
+        let r = TelegramTranslator.translate(&msg);
+        assert!(matches!(r, Err(TranslationError::UnsupportedKind(_))));
+    }
+
+    // ── Email translator ────────────────────────────────────
+
+    fn email_msg() -> OutboundMessage {
+        OutboundMessage {
+            channel: "email".into(),
+            account_id: "ops".into(),
+            to: "ana@example.com".into(),
+            body: "Hola, te respondo desde el operador.".into(),
+            msg_kind: "text".into(),
+            attachments: vec![json!({ "subject": "Re: tu consulta" })],
+            reply_to_msg_id: None,
+        }
+    }
+
+    #[test]
+    fn email_translator_text_round_trips() {
+        let (topic, payload) = EmailTranslator.translate(&email_msg()).unwrap();
+        assert_eq!(topic, "plugin.outbound.email.ops");
+        assert_eq!(payload["to"], json!(["ana@example.com"]));
+        assert_eq!(payload["subject"], json!("Re: tu consulta"));
+        assert_eq!(payload["body"], json!("Hola, te respondo desde el operador."));
+    }
+
+    #[test]
+    fn email_translator_default_subject_when_attachments_empty() {
+        let mut msg = email_msg();
+        msg.attachments = vec![];
+        let (_, payload) = EmailTranslator.translate(&msg).unwrap();
+        assert_eq!(payload["subject"], json!("(no subject)"));
+    }
+
+    #[test]
+    fn email_translator_reply_threads_in_reply_to_header() {
+        let mut msg = email_msg();
+        msg.msg_kind = "reply".into();
+        msg.reply_to_msg_id = Some("<abc@x>".into());
+        let (_, payload) = EmailTranslator.translate(&msg).unwrap();
+        assert_eq!(payload["in_reply_to"], json!("<abc@x>"));
+    }
+
+    #[test]
+    fn email_translator_reply_missing_id_errors() {
+        let mut msg = email_msg();
+        msg.msg_kind = "reply".into();
+        let r = EmailTranslator.translate(&msg);
+        assert!(matches!(r, Err(TranslationError::MissingField("reply_to_msg_id"))));
+    }
+
+    #[test]
+    fn email_translator_default_account_uses_base_topic() {
+        let mut msg = email_msg();
+        msg.account_id = "".into();
+        let (topic, _) = EmailTranslator.translate(&msg).unwrap();
+        assert_eq!(topic, "plugin.outbound.email");
+    }
+
+    #[test]
+    fn email_translator_unknown_kind_errors() {
+        let mut msg = email_msg();
+        msg.msg_kind = "media".into();
+        let r = EmailTranslator.translate(&msg);
+        assert!(matches!(r, Err(TranslationError::UnsupportedKind(_))));
+    }
+
+    #[tokio::test]
+    async fn dispatcher_routes_telegram_payload_to_topic() {
+        let broker: AnyBroker = AnyBroker::Local(LocalBroker::new());
+        let mut sub = broker.subscribe("plugin.outbound.telegram.primary").await.unwrap();
+        let dispatcher = BrokerOutboundDispatcher::new(broker)
+            .with_translator(Box::new(TelegramTranslator));
+        dispatcher.send(telegram_msg()).await.unwrap();
+        let evt = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            sub.next(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(evt.payload["to"], json!(12345));
+    }
+
+    #[tokio::test]
+    async fn dispatcher_routes_email_payload_to_topic() {
+        let broker: AnyBroker = AnyBroker::Local(LocalBroker::new());
+        let mut sub = broker.subscribe("plugin.outbound.email.ops").await.unwrap();
+        let dispatcher = BrokerOutboundDispatcher::new(broker)
+            .with_translator(Box::new(EmailTranslator));
+        dispatcher.send(email_msg()).await.unwrap();
+        let evt = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            sub.next(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(evt.payload["to"], json!(["ana@example.com"]));
+        assert_eq!(evt.payload["body"], json!("Hola, te respondo desde el operador."));
     }
 }
