@@ -1991,7 +1991,7 @@ Done criteria:
 - Reference example `examples/hello-microapp.rs` ~50 LOC
   shows a fully functional microapp with one tool.
 
-#### 83.5 — `crates/compliance-primitives` reusable library   ⬜
+#### 83.5 — `crates/compliance-primitives` reusable library   ✅  (shipped 2026-05-02)
 
 Anti-loop, anti-manipulation, opt-out, PII redaction, rate
 limit per user, GDPR consent tracking — universal compliance

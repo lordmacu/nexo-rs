@@ -3245,6 +3245,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexo-compliance-primitives"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "regex",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "nexo-config"
 version = "0.1.1"
 dependencies = [
