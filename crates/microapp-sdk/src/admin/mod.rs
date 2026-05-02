@@ -10,6 +10,14 @@
 //! capability declared in `plugin.toml [capabilities.admin]` AND
 //! granted by the operator in `extensions.yaml.<id>.capabilities_grant`.
 //! Missing → `AdminError::CapabilityNotGranted`.
+//!
+//! Sub-modules layer ergonomic helpers on top of the generic
+//! [`AdminClient`]:
+//! - [`takeover`] — Phase 83.8.6 `HumanTakeover` engage / send /
+//!   release.
+
+pub mod takeover;
+pub use takeover::{HumanTakeover, SendReplyArgs};
 
 use std::sync::Arc;
 
