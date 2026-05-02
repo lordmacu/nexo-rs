@@ -194,6 +194,14 @@ pub struct AdminBootstrapInputs<'a> {
     /// RPC returns `processing domain not configured`) AND the
     /// runtime processes every inbound regardless of pause.
     pub processing_store: Option<Arc<dyn ProcessingControlStore>>,
+    /// Phase 83.8.12.2 close-out — multi-tenant SaaS registry.
+    /// `None` keeps `nexo/admin/tenants/*` returning the typed
+    /// `tenants domain not configured` error (single-tenant
+    /// deployments). Production wires
+    /// `crate::admin_adapters::TenantsYamlPatcher` against
+    /// `config/tenants.yaml`.
+    pub tenant_store:
+        Option<Arc<dyn nexo_core::agent::admin_rpc::domains::tenants::TenantStore>>,
 }
 
 
@@ -422,6 +430,15 @@ impl AdminRpcBootstrap {
             if let Some(store) = inputs.processing_store.clone() {
                 dispatcher = dispatcher.with_processing_domain(store);
             }
+            // Phase 83.8.12.2 close-out — install the tenants
+            // domain when boot has the production
+            // `TenantsYamlPatcher` adapter. Without it,
+            // `nexo/admin/tenants/*` returns the typed
+            // `tenants domain not configured` -32603 so the
+            // microapp surfaces a clear wire-up gap.
+            if let Some(store) = inputs.tenant_store.clone() {
+                dispatcher = dispatcher.with_tenants_domain(store);
+            }
 
             // Phase 82.11 — spawn a per-microapp subscriber when
             // the operator granted `transcripts_subscribe` or
@@ -618,6 +635,7 @@ mod tests {
             broker: None,
             transcript_writer: None,
             processing_store: None,
+            tenant_store: None,
         })
         .await
         .unwrap();
@@ -645,6 +663,7 @@ mod tests {
             broker: None,
             transcript_writer: None,
             processing_store: None,
+            tenant_store: None,
         })
         .await
         .unwrap_err();
@@ -673,6 +692,7 @@ mod tests {
             broker: None,
             transcript_writer: None,
             processing_store: None,
+            tenant_store: None,
         })
         .await
         .unwrap()
@@ -715,6 +735,7 @@ mod tests {
             broker: None,
             transcript_writer: None,
             processing_store: None,
+            tenant_store: None,
             },
             true,
         )
@@ -750,6 +771,7 @@ mod tests {
             broker: None,
             transcript_writer: None,
             processing_store: None,
+            tenant_store: None,
             },
             true,
         )
@@ -784,6 +806,7 @@ mod tests {
             broker: None,
             transcript_writer: None,
             processing_store: None,
+            tenant_store: None,
             },
             true,
         )
@@ -826,6 +849,7 @@ mod tests {
             broker: None,
             transcript_writer: None,
             processing_store: None,
+            tenant_store: None,
             },
             true,
         )
@@ -874,6 +898,7 @@ mod tests {
             broker: None,
             transcript_writer: None,
             processing_store: None,
+            tenant_store: None,
             },
             true,
         )
@@ -917,6 +942,7 @@ mod tests {
             broker: None,
             transcript_writer: None,
             processing_store: None,
+            tenant_store: None,
             },
             true,
         )
@@ -962,6 +988,7 @@ mod tests {
             broker: None,
             transcript_writer: None,
             processing_store: Some(shared.clone()),
+            tenant_store: None,
         })
         .await
         .unwrap()
@@ -1025,6 +1052,7 @@ mod tests {
             broker: None,
             transcript_writer: None,
             processing_store: None,
+            tenant_store: None,
             },
             false,
         )

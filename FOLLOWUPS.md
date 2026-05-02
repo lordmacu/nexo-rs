@@ -2646,6 +2646,17 @@ Cross-references:
   gained `session_id: Option<Uuid>` (was missing since Phase
   82.13.b.1 added the field on the SDK side). Out-of-tree commit
   9f634a9.
+- 83.8.12.2.b ✅ Tenants admin RPC dispatcher routing —
+  Phase 83.8.12.2 shipped the `domains::tenants` handlers + the
+  `TenantStore` trait but the dispatcher never routed to them
+  (`tenant_store` field was dead, `nexo/admin/tenants/*`
+  returned MethodNotFound, microapp tools shipped in .8 hit a
+  rejection). Closed: `with_tenants_domain` builder + 4
+  handler arms (list/get/upsert/delete) + `tenants_crud`
+  capability gate + `AdminBootstrapInputs.tenant_store` so
+  production wires the `TenantsYamlPatcher` adapter.
+  3 new dispatch tests (capability denial, unwired typed gap,
+  routed-to-store success).
 - 83.8.12.5.cron ✅ Tenant-aware cron LLM build —
   `CronEntry.tenant_id: Option<String>` (serde-skip when None)
   + idempotent `ALTER TABLE` for legacy DBs +

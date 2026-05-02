@@ -340,6 +340,16 @@ impl AdminRpcDispatcher {
         self
     }
 
+    /// Phase 83.8.12.2 — install the tenants domain. Production
+    /// passes a `TenantsYamlPatcher` adapter wrapping
+    /// `config/tenants.yaml`. `None` disables
+    /// `nexo/admin/tenants/*` (single-tenant deployments where
+    /// the operator has no tenant management surface).
+    pub fn with_tenants_domain(mut self, store: Arc<dyn TenantStore>) -> Self {
+        self.tenant_store = Some(store);
+        self
+    }
+
     /// Phase 83.8.4.a — install the channel-outbound dispatcher
     /// used by `processing/intervention` when the action is
     /// `Reply`. Without one wired the handler returns
@@ -429,6 +439,14 @@ impl AdminRpcDispatcher {
             | "nexo/admin/skills/get"
             | "nexo/admin/skills/upsert"
             | "nexo/admin/skills/delete" => Some("skills_crud"),
+            // Phase 83.8.12.2 — tenants CRUD. Same combined-gate
+            // pattern as skills: any microapp that holds
+            // `tenants_crud` can list/get/upsert/delete the
+            // operator's tenants registry.
+            "nexo/admin/tenants/list"
+            | "nexo/admin/tenants/get"
+            | "nexo/admin/tenants/upsert"
+            | "nexo/admin/tenants/delete" => Some("tenants_crud"),
             // `reload` requires any granted CRUD capability — operators
             // who can mutate yaml can also force-trigger the reload.
             // Resolution falls through to `agents_crud` since it's the
@@ -827,6 +845,30 @@ impl AdminRpcDispatcher {
                     "skills domain not configured".into(),
                 )),
             },
+            "nexo/admin/tenants/list" => match &self.tenant_store {
+                Some(store) => super::domains::tenants::list(store.as_ref(), params).await,
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "tenants domain not configured".into(),
+                )),
+            },
+            "nexo/admin/tenants/get" => match &self.tenant_store {
+                Some(store) => super::domains::tenants::get(store.as_ref(), params).await,
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "tenants domain not configured".into(),
+                )),
+            },
+            "nexo/admin/tenants/upsert" => match &self.tenant_store {
+                Some(store) => super::domains::tenants::upsert(store.as_ref(), params).await,
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "tenants domain not configured".into(),
+                )),
+            },
+            "nexo/admin/tenants/delete" => match &self.tenant_store {
+                Some(store) => super::domains::tenants::delete(store.as_ref(), params).await,
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "tenants domain not configured".into(),
+                )),
+            },
             "nexo/admin/reload" => match &self.reload_signal {
                 Some(reload) => {
                     reload();
@@ -907,6 +949,109 @@ mod tests {
         let err = result.error.expect("error");
         assert!(matches!(err, AdminRpcError::MethodNotFound(_)));
         assert_eq!(err.code(), -32601);
+    }
+
+    #[tokio::test]
+    async fn dispatch_tenants_list_returns_internal_when_store_unwired() {
+        // Phase 83.8.12.2 close-out — capability gate + handler
+        // routing both exist. Without `with_tenants_domain`, the
+        // handler arm returns a typed `tenants domain not
+        // configured` Internal error so microapps surface a
+        // clear wire-up gap.
+        let d = dispatcher_granting("agent-creator", &["tenants_crud"]);
+        let result = d
+            .dispatch(
+                "agent-creator",
+                "nexo/admin/tenants/list",
+                serde_json::json!({}),
+            )
+            .await;
+        let err = result.error.expect("error");
+        match err {
+            AdminRpcError::Internal(msg) => {
+                assert!(
+                    msg.contains("tenants domain not configured"),
+                    "expected typed gap error; got {msg}"
+                );
+            }
+            other => panic!("expected Internal, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_tenants_list_denies_when_capability_not_granted() {
+        // No `tenants_crud` grant → capability gate rejects
+        // before the handler arm runs.
+        let d = AdminRpcDispatcher::new();
+        let result = d
+            .dispatch(
+                "agent-creator",
+                "nexo/admin/tenants/list",
+                serde_json::json!({}),
+            )
+            .await;
+        let err = result.error.expect("error");
+        match err {
+            AdminRpcError::CapabilityNotGranted { capability, .. } => {
+                assert_eq!(capability, "tenants_crud");
+            }
+            other => panic!("expected CapabilityNotGranted, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_tenants_list_routes_to_handler_when_store_wired() {
+        use super::super::domains::tenants::TenantStore;
+        use async_trait::async_trait;
+        use nexo_tool_meta::admin::tenants::{
+            TenantDetail, TenantSummary, TenantsListFilter, TenantsUpsertInput,
+        };
+
+        #[derive(Debug, Default)]
+        struct StaticStore;
+        #[async_trait]
+        impl TenantStore for StaticStore {
+            async fn list(
+                &self,
+                _filter: &TenantsListFilter,
+            ) -> anyhow::Result<Vec<TenantSummary>> {
+                Ok(vec![TenantSummary {
+                    id: "acme".into(),
+                    display_name: "Acme".into(),
+                    active: true,
+                    agent_count: 0,
+                    created_at: chrono::Utc::now(),
+                }])
+            }
+            async fn get(&self, _id: &str) -> anyhow::Result<Option<TenantDetail>> {
+                Ok(None)
+            }
+            async fn upsert(
+                &self,
+                _input: TenantsUpsertInput,
+            ) -> anyhow::Result<(TenantDetail, bool)> {
+                anyhow::bail!("not used")
+            }
+            async fn delete(
+                &self,
+                _id: &str,
+                _purge: bool,
+            ) -> anyhow::Result<(bool, Vec<String>)> {
+                Ok((false, vec![]))
+            }
+        }
+
+        let d = dispatcher_granting("agent-creator", &["tenants_crud"])
+            .with_tenants_domain(Arc::new(StaticStore));
+        let result = d
+            .dispatch(
+                "agent-creator",
+                "nexo/admin/tenants/list",
+                serde_json::json!({}),
+            )
+            .await;
+        let value = result.result.expect("ok");
+        assert_eq!(value["tenants"][0]["id"], "acme");
     }
 
     #[tokio::test]
