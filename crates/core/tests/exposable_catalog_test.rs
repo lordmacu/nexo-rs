@@ -81,6 +81,7 @@ fn fixture_agent_ctx() -> Arc<AgentContext> {
         auto_approve: false,
         extract_memories: None,
             event_subscribers: Vec::new(),
+            extensions_config: std::collections::BTreeMap::new(),
     };
     Arc::new(AgentContext::new(
         "exposable-test",

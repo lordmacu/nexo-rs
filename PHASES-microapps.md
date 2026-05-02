@@ -1776,7 +1776,7 @@ state, defense-in-depth compliance hooks, structural inbound
 metadata, audit isolation per agent, and a stable JSON-RPC
 contract that does not rot across nexo releases.
 
-#### 83.1 — Per-agent extension config propagation   ⬜
+#### 83.1 — Per-agent extension config propagation   ✅  (shipped 2026-05-02 — JSON-RPC propagation deferred to 83.1.b)
 
 Universal primitive. Today extensions read a global config
 file at boot. Microapps that serve multiple personas /

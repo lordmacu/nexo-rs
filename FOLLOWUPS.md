@@ -1954,6 +1954,30 @@ admin RPC + http_server bootstrap into main.rs (single
 shared boot-order refactor — folded with 82.10.h.b /
 82.11 / 82.12 / 82.13 / 82.14 deferreds).
 
+### Phase 83.1 — JSON-RPC propagation + hot-reload + integration test
+
+Phase 83.1 shipped the `AgentConfig.extensions_config: BTreeMap<String, serde_yaml::Value>`
+field (with `#[serde(default)]` back-compat) + 2 YAML round-trip tests +
+all literal-construct sites updated. Three pieces deferred to 83.1.b:
+
+- **JSON-RPC `initialize` propagation**: the daemon's microapp
+  spawn loop must thread `agents_config: { <agent_id>: <config> }`
+  into the `initialize` params so the microapp builds its
+  `HashMap<agent_id, Config>` lookup on startup.
+- **`agents/updated` notification on hot-reload**: when Phase 18
+  hot-reload picks up a YAML change affecting a binding, fire
+  `agents/updated` to the affected microapps so the in-process
+  map refreshes within 1 s without dispatch interruption.
+- **Integration test**: 3 personas in `agents.yaml` map to 3
+  distinct configs visible to the same subprocess. Hot-reload
+  changes one persona's config and asserts the microapp's map
+  reflects it without restart.
+- **SDK helper**: `ToolCtx::extension_config()` lookup that
+  reads the per-agent slice indexed by `BindingContext.agent_id`.
+
+Target phase: 83.1.b (folded with the next microapp-spawn
+boot-order touch).
+
 ### Phase 87.1 — JudgeBackend wire-up + budget axis + telemetry
 
 Phase 87.1 shipped `AcceptanceCriterion::LlmJudge` variant +
