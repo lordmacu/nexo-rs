@@ -10,6 +10,35 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.6 — Plugin-contributed agent merge + `NexoPlugin::init()` driver
+  (library + tests).** New module
+  `nexo_core::agent::nexo_plugin_registry::contributes` exposes
+  `merge_plugin_contributed_agents(snapshot, &mut base) -> AgentMergeReport`.
+  Walks each loaded plugin's `agents.contributes_dir` (already in
+  Phase 81.1's manifest schema), reads `*.yaml` agent configs, folds
+  them into the runtime `AgentsConfig` honoring operator-priority via
+  load order. Conflict resolution: typed `MergeResolution { OperatorWins
+  | PluginOverrideAccepted | LastPluginWins }`. Per-plugin
+  `agents.allow_override = true` flips precedence so plugin
+  contribution replaces the operator's. Attribution lives in a
+  sidecar `BTreeMap<agent_id, plugin_id>` returned in the merge
+  report — `AgentConfig` schema unchanged. Companion module
+  `init_loop` ships `run_plugin_init_loop(snapshot, handles, ctx_factory)
+  -> BTreeMap<plugin_id, InitOutcome>` async sequential driver: each
+  plugin's `NexoPlugin::init()` is called in registry order; failures
+  log `tracing::warn!` and the loop continues; absence of a handle
+  yields `InitOutcome::NoHandle`. `PluginDiscoveryReport` extended
+  with `contributed_agents_per_plugin`, `agent_merge_conflicts`,
+  `init_outcomes` — all `#[serde(default, skip_serializing_if = ...)]`
+  so the 81.5 wire format stays backward-compat. 8 unit tests + 1
+  integration test in `crates/core/tests/plugin_contributes_integration.rs`
+  cover the full discover → merge → init pipeline. **Out of scope
+  (deferred follow-up alongside 81.7)**: boot wire in
+  `src/main.rs::Mode::Run` + `nexo agent doctor plugins` CLI
+  subcommand. Today every plugin records `NoHandle` because no
+  consumer constructs `Arc<dyn NexoPlugin>` from a manifest yet —
+  81.7 ships that handle factory.
+
 - **Phase 81.5 — `NexoPluginRegistry` filesystem discovery (library + tests).**
   New module `crates/core/src/agent/nexo_plugin_registry/` consumes the
   Phase 81.1 manifest schema + 4-tier validator. `discover()` walks
