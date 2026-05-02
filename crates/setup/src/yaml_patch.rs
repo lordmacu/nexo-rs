@@ -211,6 +211,25 @@ pub fn get_agent_list(file: &Path, agent_id: &str, list_key: &str) -> Result<Vec
 /// `*.example.yaml`). Mirrors the loader logic in `nexo-config`'s
 /// `merge_agents_drop_in` so the wizard sees the same set the
 /// daemon will load at boot.
+/// Phase 83.8.12 — list every agent id whose
+/// `agents.yaml.<id>.tenant_id` matches `tenant_id`. Returns
+/// the list in stable order (matches `list_agent_ids`). Used
+/// by `TenantsYamlPatcher` to detect orphan agents on tenant
+/// delete. Empty list when no agent references the tenant.
+pub fn list_agents_by_tenant(file: &Path, tenant_id: &str) -> Result<Vec<String>> {
+    let all_ids = list_agent_ids(file)?;
+    let mut out = Vec::new();
+    for id in all_ids {
+        let value = read_agent_field(file, &id, "tenant_id")?;
+        if let Some(serde_yaml::Value::String(s)) = value {
+            if s == tenant_id {
+                out.push(id);
+            }
+        }
+    }
+    Ok(out)
+}
+
 pub fn list_agent_ids(file: &Path) -> Result<Vec<String>> {
     let mut out: Vec<String> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
