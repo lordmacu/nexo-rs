@@ -68,6 +68,7 @@ fn agent_with_inline_google(id: &str) -> AgentConfig {
         auto_approve: false,
         extract_memories: None,
             event_subscribers: Vec::new(),
+            extensions_config: std::collections::BTreeMap::new(),
     }
 }
 

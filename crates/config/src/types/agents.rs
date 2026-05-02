@@ -334,6 +334,30 @@ pub struct AgentConfig {
     /// agents are unaffected until the operator opts in.
     #[serde(default)]
     pub event_subscribers: Vec<crate::types::event_subscriber::EventSubscriberBinding>,
+
+    /// Phase 83.1 — per-agent extension config. Operator declares
+    /// per-extension knobs in `agents.yaml` so a single microapp
+    /// subprocess that serves multiple personas / tenants can
+    /// look up the right config in O(1) by `agent_id`. The shape
+    /// is `{ <extension_id>: <opaque YAML> }` — opaque to the
+    /// daemon, validated by the microapp itself (Phase 83.17 will
+    /// add boot-time schema validation as opt-in).
+    ///
+    /// ```yaml
+    /// agents:
+    ///   - id: ana
+    ///     extensions_config:
+    ///       ventas-etb:
+    ///         regional: bogota
+    ///         asesor_phone: "573115728852"
+    /// ```
+    ///
+    /// Empty by default; agents that don't bind to any
+    /// per-extension config keep working unchanged. Propagated
+    /// to the microapp via the JSON-RPC `initialize` method
+    /// (Phase 83.1.b will wire the propagation).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extensions_config: BTreeMap<String, serde_yaml::Value>,
 }
 
 /// Phase M4.a.b — wire-shape mirror of
@@ -382,6 +406,33 @@ model:
   provider: anthropic
   model: claude-opus-4-7
 "#
+    }
+
+    /// Phase 83.1 — YAML lacking `extensions_config` deserialises
+    /// to an empty map (back-compat via `#[serde(default)]`).
+    #[test]
+    fn agent_config_yaml_without_extensions_config_parses() {
+        let cfg: AgentConfig = serde_yaml::from_str(minimal_yaml()).unwrap();
+        assert!(cfg.extensions_config.is_empty());
+    }
+
+    /// Phase 83.1 — YAML with `extensions_config` round-trips per
+    /// `<extension_id>` and preserves the opaque YAML payload.
+    #[test]
+    fn agent_config_yaml_with_extensions_config_parses() {
+        let yaml = format!(
+            "{}extensions_config:\n  ventas-etb:\n    regional: bogota\n    asesor_phone: \"573115728852\"\n  another-app:\n    enabled: true\n",
+            minimal_yaml()
+        );
+        let cfg: AgentConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(cfg.extensions_config.len(), 2);
+        let etb = cfg.extensions_config.get("ventas-etb").expect("ventas-etb config");
+        let regional = etb.get("regional").and_then(|v| v.as_str());
+        assert_eq!(regional, Some("bogota"));
+        let phone = etb.get("asesor_phone").and_then(|v| v.as_str());
+        assert_eq!(phone, Some("573115728852"));
+        let another = cfg.extensions_config.get("another-app").expect("another-app");
+        assert_eq!(another.get("enabled").and_then(|v| v.as_bool()), Some(true));
     }
 
     /// Phase 80.1.b.b — YAML lacking `auto_dream` block must

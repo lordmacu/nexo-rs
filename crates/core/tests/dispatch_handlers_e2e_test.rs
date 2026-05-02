@@ -126,6 +126,7 @@ fn empty_config(dispatch_full: bool) -> Arc<AgentConfig> {
         auto_approve: false,
         extract_memories: None,
             event_subscribers: Vec::new(),
+            extensions_config: std::collections::BTreeMap::new(),
     })
 }
 
