@@ -22,6 +22,7 @@
 - [Overview](./architecture/overview.md)
 - [Agent runtime](./architecture/agent-runtime.md)
 - [Event bus (NATS)](./architecture/event-bus.md)
+- [Agent event firehose (Phase 82.11)](./architecture/agent-event-firehose.md)
 - [Fault tolerance](./architecture/fault-tolerance.md)
 - [Transcripts (FTS + redaction)](./architecture/transcripts.md)
 - [vs OpenClaw](./architecture/vs-openclaw.md)
