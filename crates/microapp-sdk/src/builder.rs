@@ -19,6 +19,14 @@ pub type HandlerRegistry = Handlers;
 
 type InitCallback = Pin<Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = SdkResult<()>> + Send>> + Send>>;
 type ShutdownCallback = Pin<Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>>;
+/// Phase 83.4.b.handle — fires once with the live `AdminClient`
+/// right before the dispatch loop enters its read loop. Microapp
+/// authors capture the handle to reach `nexo/admin/*` from
+/// parallel tasks (HTTP server, background workers, etc.) that
+/// run alongside the stdio loop.
+#[cfg(feature = "admin")]
+type AdminReadyCallback =
+    Box<dyn FnOnce(Arc<crate::admin::AdminClient>) + Send>;
 
 /// Builder for a Phase 11 stdio microapp.
 ///
@@ -40,6 +48,14 @@ pub struct Microapp {
     /// (microapps that do not need admin RPC pay zero).
     #[cfg(feature = "admin")]
     pub(crate) admin_enabled: bool,
+    /// Phase 83.4.b.handle — optional callback fired once with
+    /// the live `AdminClient` right before dispatch_loop starts.
+    /// Lets microapps share the client with parallel tasks (HTTP
+    /// server, background workers) that run alongside the stdio
+    /// loop. `None` skips the callback (default — most microapps
+    /// only consume the client through `ctx.admin()`).
+    #[cfg(feature = "admin")]
+    on_admin_ready: Option<AdminReadyCallback>,
 }
 
 impl Microapp {
@@ -57,6 +73,8 @@ impl Microapp {
             on_shutdown: None,
             #[cfg(feature = "admin")]
             admin_enabled: false,
+            #[cfg(feature = "admin")]
+            on_admin_ready: None,
         }
     }
 
@@ -73,6 +91,38 @@ impl Microapp {
     #[cfg(feature = "admin")]
     pub fn with_admin(mut self) -> Self {
         self.admin_enabled = true;
+        self
+    }
+
+    /// Phase 83.4.b.handle — register a callback that fires once
+    /// with the live `AdminClient` right before the dispatch loop
+    /// enters its read loop. Microapp authors capture the handle
+    /// to reach `nexo/admin/*` from parallel tasks (HTTP server,
+    /// background workers, etc.) that run alongside the stdio
+    /// loop.
+    ///
+    /// The callback is fired only when [`Self::with_admin`] was
+    /// also called; otherwise no client exists. Microapps that do
+    /// not need a parallel admin handle ignore this method —
+    /// `ctx.admin()` inside tool / hook handlers is unaffected.
+    ///
+    /// Common pattern with a `oneshot` channel so the parallel
+    /// task awaits the client's construction:
+    ///
+    /// ```ignore
+    /// let (tx, rx) = tokio::sync::oneshot::channel();
+    /// let app = Microapp::new("…", "…")
+    ///     .with_admin()
+    ///     .on_admin_ready(move |client| { let _ = tx.send(client); });
+    /// let stdio = tokio::spawn(app.run_stdio());
+    /// let admin = rx.await?;     // ready by the time the loop is up
+    /// ```
+    #[cfg(feature = "admin")]
+    pub fn on_admin_ready<F>(mut self, callback: F) -> Self
+    where
+        F: FnOnce(Arc<crate::admin::AdminClient>) + Send + 'static,
+    {
+        self.on_admin_ready = Some(Box::new(callback));
         self
     }
 
@@ -158,6 +208,14 @@ impl Microapp {
                 );
                 let client =
                     std::sync::Arc::new(crate::admin::AdminClient::new(sender));
+                // Phase 83.4.b.handle — hand a clone to any
+                // registered listener BEFORE entering the
+                // dispatch loop so parallel tasks (HTTP servers,
+                // background workers) start with the live client
+                // already in hand.
+                if let Some(cb) = self.on_admin_ready {
+                    cb(std::sync::Arc::clone(&client));
+                }
                 h.admin = Some(client);
             }
             h
@@ -217,5 +275,39 @@ mod tests {
         let h = app.into_handlers();
         assert_eq!(h.name, "agent-creator");
         assert_eq!(h.version, "0.1.0");
+    }
+
+    #[cfg(feature = "admin")]
+    #[tokio::test]
+    async fn on_admin_ready_fires_with_live_client_before_dispatch_loop() {
+        // Run a tiny microapp: feed it just an `initialize` request
+        // followed by EOF. The callback must fire before the loop
+        // returns.
+        let (tx, rx) = tokio::sync::oneshot::channel::<Arc<crate::admin::AdminClient>>();
+        let app = Microapp::new("t", "0.0.0")
+            .with_admin()
+            .on_admin_ready(move |client| {
+                let _ = tx.send(client);
+            });
+        // Empty input → loop reads EOF immediately + exits clean.
+        let reader = tokio::io::BufReader::new(tokio::io::empty());
+        let writer = Vec::new();
+        let _ = app.run_with(reader, writer).await;
+        // Callback fired — we have a live client.
+        assert!(rx.await.is_ok(), "on_admin_ready must fire before run_with returns");
+    }
+
+    #[cfg(feature = "admin")]
+    #[tokio::test]
+    async fn on_admin_ready_does_not_fire_without_with_admin() {
+        let (tx, rx) = tokio::sync::oneshot::channel::<Arc<crate::admin::AdminClient>>();
+        let app = Microapp::new("t", "0.0.0").on_admin_ready(move |client| {
+            let _ = tx.send(client);
+        });
+        let reader = tokio::io::BufReader::new(tokio::io::empty());
+        let writer = Vec::new();
+        let _ = app.run_with(reader, writer).await;
+        // Callback was registered but admin is disabled — no fire.
+        assert!(rx.await.is_err(), "callback must not fire without with_admin()");
     }
 }
