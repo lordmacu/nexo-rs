@@ -788,7 +788,8 @@ impl AdminRpcDispatcher {
             },
             "nexo/admin/escalations/list" => match &self.escalation_store {
                 Some(store) => {
-                    super::domains::escalations::list(store.as_ref(), params).await
+                    let patcher = self.agents_yaml.as_deref().map(|y| y as &dyn super::domains::agents::YamlPatcher);
+                    super::domains::escalations::list(store.as_ref(), patcher, params).await
                 }
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "escalations domain not configured".into(),

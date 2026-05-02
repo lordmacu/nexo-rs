@@ -184,7 +184,7 @@ fn parse_or_default<T: for<'de> serde::Deserialize<'de> + Default>(v: Value) -> 
 /// Phase 83.8.12 — read `agents.yaml.<id>.tenant_id`. Returns
 /// `None` for legacy agents (no field) and on any read error
 /// (defense-in-depth: fail closed for cross-tenant filters).
-fn agent_tenant_id(patcher: &dyn YamlPatcher, agent_id: &str) -> Option<String> {
+pub(crate) fn agent_tenant_id(patcher: &dyn YamlPatcher, agent_id: &str) -> Option<String> {
     match patcher.read_agent_field(agent_id, "tenant_id").ok().flatten() {
         Some(Value::String(s)) => Some(s),
         _ => None,

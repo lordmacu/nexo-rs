@@ -1712,7 +1712,12 @@ impl LlmAgentBehavior {
                 &ctx.agent_id,
                 redactor,
                 ctx.transcripts_index.clone(),
-            );
+            )
+            // Phase 83.8.12.4.b — tag the writer with the
+            // owning tenant so emitted `TranscriptAppended`
+            // events carry `tenant_id`. `None` for
+            // single-tenant agents.
+            .with_tenant_id(ctx.config.tenant_id.clone());
             let user_entry = TranscriptEntry {
                 timestamp: Utc::now(),
                 role: TranscriptRole::User,

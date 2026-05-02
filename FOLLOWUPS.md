@@ -2661,9 +2661,34 @@ Cross-references:
   exclusion, since_ms combo, limit floor clamp, DDL
   idempotence on existing DB).
 
-### Phase 83.8.12.4.b — agent_events/escalations handler-level tenant filter + TranscriptWriter tenant_id population
+### Phase 83.8.12.4.b ✅ — handler-level tenant filter + TranscriptWriter tenant_id (shipped 2026-05-02)
 
-Three deferreds left from 83.8.12.4:
+All three deferreds from 83.8.12.4 closed:
+
+1. **`agent_events/list` handler filter ✅** —
+   `TranscriptReaderFs.tenant_id` (set via `with_tenant_id`) gates
+   `list_recent_events` defense-in-depth: cross-tenant filter
+   returns `Vec::new()`; legacy un-tagged readers reject any
+   non-`None` tenant filter. `read_session_events` keeps the
+   existing `agent_id` pin (params carry no `tenant_id` field on
+   the wire today).
+2. **`escalations/list` handler filter ✅** —
+   `escalations::list(store, patcher, params)` signature gains
+   `Option<&dyn YamlPatcher>`. Dispatcher injects the existing
+   agents-yaml patcher; handler filters rows by joining
+   `EscalationEntry.agent_id` against
+   `agents.yaml.<id>.tenant_id` via the existing
+   `agents::agent_tenant_id` helper. Tests cover patcher-wired,
+   patcher-absent (back-compat pass-through), and
+   agents-without-tenant_id-filtered cases.
+3. **`TranscriptWriter` tenant_id population ✅** —
+   `TranscriptWriter.tenant_id: Option<String>` + `with_tenant_id`
+   builder. Emit site stamps every `TranscriptAppended` from the
+   writer's own field (no per-event lookup). `llm_behavior.rs`
+   threads `ctx.config.tenant_id.clone()` into the writer
+   construction so multi-tenant agents stamp automatically.
+
+Original deferred description for posterity:
 
 1. **`agent_events/list` handler filter**: today the
    `tenant_id` field on the filter struct round-trips on the
