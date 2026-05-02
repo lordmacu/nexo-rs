@@ -2223,7 +2223,7 @@ Done criteria:
   authoring surfaced — those become new sub-phases (Phase
   82+83 grows organically) or post-Phase-83 follow-ups.
 
-#### 83.11 — Docs + admin-ui sync   ⬜
+#### 83.11 — Docs + admin-ui sync   ✅  (shipped 2026-05-02 — walkthroughs + admin-ui entries deferred to 83.11.b)
 
 Mandatory docs + admin-ui closeout for any phase touching
 operator surface.

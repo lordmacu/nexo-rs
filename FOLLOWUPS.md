@@ -1954,6 +1954,28 @@ admin RPC + http_server bootstrap into main.rs (single
 shared boot-order refactor — folded with 82.10.h.b /
 82.11 / 82.12 / 82.13 / 82.14 deferreds).
 
+### Phase 83.11 — walkthrough docs + admin-ui PHASES entries
+
+Phase 83.11 shipped three docs pages
+(`getting-started.md`, `templates.md`, `compliance-primitives.md`)
+linked from SUMMARY.md. Two pieces deferred to 83.11.b:
+
+- **`ventas-etb-walkthrough.md`** — annotated full source of
+  the reference microapp line-by-line. Lands when 83.8
+  (ventas-etb) ships its source.
+- **`meta-microapp-walkthrough.md`** — annotated source of the
+  agent-creator microapp covering admin RPC + transcript
+  firehose + HTTP server hosting. Lands when agent-creator
+  out-of-tree repo gets a docs revision.
+- **6 admin-ui `PHASES.md` tech-debt entries**: microapp
+  registry panel, persona config inspector, compliance event
+  feed, microapp doctor, microapp admin audit viewer,
+  microapp HTTP health dashboard. Defer with the next
+  admin-ui repo touch (no admin-ui work scheduled).
+
+Target phase: 83.11.b (folded with 83.8 source-doc walkthrough
++ next admin-ui sweep).
+
 ### Phase 83.15 — MockAdminRpc + reference test + docs
 
 Phase 83.15 already had `MicroappTestHarness::call_tool*` /
