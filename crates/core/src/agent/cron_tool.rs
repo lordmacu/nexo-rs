@@ -129,6 +129,10 @@ impl ToolHandler for CronCreateTool {
             } else {
                 Some(model_name)
             },
+            // Phase 83.8.12.5.cron — pin the agent's tenant on
+            // every cron entry so the cron LLM dispatcher
+            // resolves the tenant's own provider keys.
+            ctx.config.tenant_id.as_deref(),
         )
         .await
         .map_err(map_err)?;
@@ -482,6 +486,7 @@ mod tests {
             "c",
             None,
             true,
+            None,
             None,
             None,
             None,

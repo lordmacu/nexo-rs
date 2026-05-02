@@ -2646,6 +2646,17 @@ Cross-references:
   gained `session_id: Option<Uuid>` (was missing since Phase
   82.13.b.1 added the field on the SDK side). Out-of-tree commit
   9f634a9.
+- 83.8.12.5.cron ✅ Tenant-aware cron LLM build —
+  `CronEntry.tenant_id: Option<String>` (serde-skip when None)
+  + idempotent `ALTER TABLE` for legacy DBs +
+  `cron_create` tool stamps `ctx.config.tenant_id` at schedule
+  time. `RoutedClientResolver` cache key extends with tenant
+  scope (provider/model/tenant separator); build call switches
+  to `LlmRegistry::build_for_tenant(cfg, model, entry.tenant_id)`
+  → tenant-A and tenant-B fires use distinct LlmClients even
+  for the same `provider:model` pair. 4 new tests
+  (round-trip with tenant + legacy None + build_new_entry stamp
+  + dispatcher per-tenant cache isolation).
 - 83.8.12.6.runtime ✅ SkillLoader fallback chain — `SkillLoader`
   gains `with_tenant_id(Option<String>)` builder + per-call
   fallback `<root>/<tid>/<name>/` → `<root>/__global__/<name>/`

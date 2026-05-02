@@ -181,25 +181,34 @@ impl RoutedClientResolver {
         entry: &CronEntry,
     ) -> anyhow::Result<(Arc<dyn LlmClient>, ModelConfig)> {
         let model = self.model_for_entry(entry)?;
-        let key = format!("{}\u{1f}{}", model.provider, model.model);
+        // Phase 83.8.12.5.cron — cache key extends with tenant
+        // scope so tenant-A's cron client doesn't collide with
+        // tenant-B's even when both pin the same `provider:model`
+        // pair (their resolved provider keys differ via
+        // `LlmConfig::resolve_provider`).
+        let tenant_key = entry.tenant_id.as_deref().unwrap_or("__none__");
+        let key = format!(
+            "{}\u{1f}{}\u{1f}{}",
+            model.provider, model.model, tenant_key
+        );
         if let Some(hit) = self.cache.get(&key) {
             return Ok((Arc::clone(hit.value()), model));
         }
-        // Phase 83.8.12.5.b — uses the tenant-less shim
-        // intentionally. Cron entries are operator-scheduled
-        // infra (not per-agent or per-tenant); making them
-        // tenant-aware requires a `CronEntry.tenant_id` schema
-        // migration + cache key extension. Logged as
-        // 83.8.12.5.cron follow-up; current behaviour matches
-        // pre-83.8.12.5 (only the global `providers` table
-        // is consulted).
-        let built = self.registry.build(&self.llm_cfg, &model).map_err(|e| {
-            anyhow::anyhow!(
-                "build client {}:{} failed: {e}",
-                model.provider,
-                model.model
-            )
-        })?;
+        // Phase 83.8.12.5.cron — resolve via tenant-first
+        // /global-fallback so cron fires charge the tenant's
+        // own provider key when one exists; falls back to the
+        // global namespace when tenant_id is None.
+        let built = self
+            .registry
+            .build_for_tenant(&self.llm_cfg, &model, entry.tenant_id.as_deref())
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "build client {}:{} (tenant={:?}) failed: {e}",
+                    model.provider,
+                    model.model,
+                    entry.tenant_id,
+                )
+            })?;
         let slot = self.cache.entry(key).or_insert_with(|| Arc::clone(&built));
         Ok((Arc::clone(slot.value()), model))
     }
@@ -538,6 +547,7 @@ mod tests {
             paused: false,
             permanent: false,
             recipient: None,
+            tenant_id: None,
         }
     }
 
@@ -1051,6 +1061,82 @@ mod tests {
         assert_eq!(
             seen,
             vec!["campaign-model".to_string(), "campaign-model".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn routed_dispatcher_caches_per_tenant_separately() {
+        // Phase 83.8.12.5.cron — same provider/model, different
+        // tenant → distinct cache slots so each tenant's
+        // LlmClient is built separately (and uses its own
+        // resolved provider config). Two fires per tenant + one
+        // cross-tenant fire: 2 builds total (one per tenant
+        // scope), 4 chat calls.
+        let builds = Arc::new(Mutex::new(Vec::new()));
+        let seen_request_models = Arc::new(Mutex::new(Vec::new()));
+        let mut registry = LlmRegistry::new();
+        registry
+            .register(Box::new(RoutedMockFactory {
+                builds: Arc::clone(&builds),
+                seen_request_models: Arc::clone(&seen_request_models),
+            }))
+            .unwrap();
+        // Add tenant scopes to llm_cfg so resolve_provider hits
+        // the tenant table for `acme` / `globex`.
+        let mut cfg = routed_llm_cfg();
+        let mk_tenant = |name: &str| nexo_config::types::llm::TenantLlmConfig {
+            providers: {
+                let mut p = HashMap::new();
+                p.insert(
+                    "stub".to_string(),
+                    LlmProviderConfig {
+                        api_key: format!("k-{name}"),
+                        base_url: "http://example.invalid".into(),
+                        group_id: None,
+                        rate_limit: RateLimitConfig {
+                            requests_per_second: 1.0,
+                            quota_alert_threshold: Some(100),
+                        },
+                        auth: None,
+                        api_flavor: None,
+                        embedding_model: None,
+                        safety_settings: None,
+                    },
+                );
+                p
+            },
+        };
+        cfg.tenants.insert("acme".into(), mk_tenant("acme"));
+        cfg.tenants.insert("globex".into(), mk_tenant("globex"));
+
+        let dispatcher = LlmCronDispatcher::from_registry(
+            Arc::new(registry),
+            cfg,
+            HashMap::new(),
+            Some(ModelConfig {
+                provider: "stub".into(),
+                model: "fallback-model".into(),
+            }),
+        );
+
+        let mut e_acme = entry("hi", true);
+        e_acme.model_provider = Some("stub".into());
+        e_acme.model_name = Some("campaign-model".into());
+        e_acme.tenant_id = Some("acme".into());
+
+        let mut e_globex = e_acme.clone();
+        e_globex.tenant_id = Some("globex".into());
+
+        dispatcher.fire(&e_acme).await.unwrap();
+        dispatcher.fire(&e_acme).await.unwrap(); // cache hit
+        dispatcher.fire(&e_globex).await.unwrap();
+        dispatcher.fire(&e_globex).await.unwrap(); // cache hit
+
+        let built = builds.lock().unwrap().clone();
+        assert_eq!(
+            built.len(),
+            2,
+            "one build per tenant scope (cache keys differ); got {built:?}"
         );
     }
 
