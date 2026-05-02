@@ -82,6 +82,8 @@ async fn firehose_delivers_redacted_frame_to_subscribed_microapp() {
             transcript_writer: None,
             processing_store: None,
             tenant_store: None,
+            skills_store: None,
+            escalation_store: None,
         },
         true,
     )
@@ -181,6 +183,8 @@ async fn microapp_without_subscribe_capability_receives_no_frames() {
             transcript_writer: None,
             processing_store: None,
             tenant_store: None,
+            skills_store: None,
+            escalation_store: None,
         },
         true,
     )

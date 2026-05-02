@@ -202,6 +202,22 @@ pub struct AdminBootstrapInputs<'a> {
     /// `config/tenants.yaml`.
     pub tenant_store:
         Option<Arc<dyn nexo_core::agent::admin_rpc::domains::tenants::TenantStore>>,
+    /// Phase 83.8.2 close-out — skills domain store. `None`
+    /// keeps `nexo/admin/skills/*` returning the typed
+    /// `skills domain not configured` -32603. Production wires
+    /// `crate::admin_adapters::FsSkillsStore` against the same
+    /// skills root the runtime `SkillLoader` reads from so admin
+    /// writes land where the runtime reads (Phase 83.8.12.6
+    /// layout).
+    pub skills_store:
+        Option<Arc<dyn nexo_core::agent::admin_rpc::domains::skills::SkillsStore>>,
+    /// Phase 82.14 close-out — escalations store. `None` keeps
+    /// `nexo/admin/escalations/*` returning the typed
+    /// `escalations domain not configured` -32603. Production
+    /// wires the in-memory store + the future SQLite adapter.
+    pub escalation_store: Option<
+        Arc<dyn nexo_core::agent::admin_rpc::domains::escalations::EscalationStore>,
+    >,
 }
 
 
@@ -439,6 +455,16 @@ impl AdminRpcBootstrap {
             if let Some(store) = inputs.tenant_store.clone() {
                 dispatcher = dispatcher.with_tenants_domain(store);
             }
+            // Phase 83.8.2 close-out — install the skills domain
+            // when boot has the production `FsSkillsStore`.
+            if let Some(store) = inputs.skills_store.clone() {
+                dispatcher = dispatcher.with_skills_domain(store);
+            }
+            // Phase 82.14 close-out — install the escalations
+            // domain when boot has a store adapter wired.
+            if let Some(store) = inputs.escalation_store.clone() {
+                dispatcher = dispatcher.with_escalations_domain(store);
+            }
 
             // Phase 82.11 — spawn a per-microapp subscriber when
             // the operator granted `transcripts_subscribe` or
@@ -636,6 +662,8 @@ mod tests {
             transcript_writer: None,
             processing_store: None,
             tenant_store: None,
+            skills_store: None,
+            escalation_store: None,
         })
         .await
         .unwrap();
@@ -664,6 +692,8 @@ mod tests {
             transcript_writer: None,
             processing_store: None,
             tenant_store: None,
+            skills_store: None,
+            escalation_store: None,
         })
         .await
         .unwrap_err();
@@ -693,6 +723,8 @@ mod tests {
             transcript_writer: None,
             processing_store: None,
             tenant_store: None,
+            skills_store: None,
+            escalation_store: None,
         })
         .await
         .unwrap()
@@ -736,6 +768,8 @@ mod tests {
             transcript_writer: None,
             processing_store: None,
             tenant_store: None,
+            skills_store: None,
+            escalation_store: None,
             },
             true,
         )
@@ -772,6 +806,8 @@ mod tests {
             transcript_writer: None,
             processing_store: None,
             tenant_store: None,
+            skills_store: None,
+            escalation_store: None,
             },
             true,
         )
@@ -807,6 +843,8 @@ mod tests {
             transcript_writer: None,
             processing_store: None,
             tenant_store: None,
+            skills_store: None,
+            escalation_store: None,
             },
             true,
         )
@@ -850,6 +888,8 @@ mod tests {
             transcript_writer: None,
             processing_store: None,
             tenant_store: None,
+            skills_store: None,
+            escalation_store: None,
             },
             true,
         )
@@ -899,6 +939,8 @@ mod tests {
             transcript_writer: None,
             processing_store: None,
             tenant_store: None,
+            skills_store: None,
+            escalation_store: None,
             },
             true,
         )
@@ -943,6 +985,8 @@ mod tests {
             transcript_writer: None,
             processing_store: None,
             tenant_store: None,
+            skills_store: None,
+            escalation_store: None,
             },
             true,
         )
@@ -989,6 +1033,8 @@ mod tests {
             transcript_writer: None,
             processing_store: Some(shared.clone()),
             tenant_store: None,
+            skills_store: None,
+            escalation_store: None,
         })
         .await
         .unwrap()
@@ -1053,6 +1099,8 @@ mod tests {
             transcript_writer: None,
             processing_store: None,
             tenant_store: None,
+            skills_store: None,
+            escalation_store: None,
             },
             false,
         )
