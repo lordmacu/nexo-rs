@@ -91,6 +91,9 @@
 - [Building microapps in Rust](./microapps/rust.md)
 - [Admin RPC](./microapps/admin-rpc.md)
 - [Contract (language-agnostic)](./microapps/contract.md)
+- [Getting started (1-hour walkthrough)](./microapps/getting-started.md)
+- [Templates by language](./microapps/templates.md)
+- [Compliance primitives](./microapps/compliance-primitives.md)
 
 # MCP
 
