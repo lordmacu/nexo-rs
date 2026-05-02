@@ -200,6 +200,98 @@ impl MicroappTestHarness {
     }
 }
 
+// ── Phase 83.15 — MockBindingContext builder ─────────────────────
+
+/// Phase 83.15 — fluent builder for [`BindingContext`] in tests.
+///
+/// `BindingContext` ships with `agent_only(...)` for the no-binding
+/// case. Multi-binding microapp tests need a richer builder so each
+/// test reads at the call site like the YAML it mirrors:
+///
+/// ```ignore
+/// let ctx = MockBindingContext::new()
+///     .with_agent("ana")
+///     .with_channel("whatsapp")
+///     .with_account("acme")
+///     .build();
+/// ```
+///
+/// Sets `binding_id` automatically when both `channel` and one of
+/// `account_id` / no-account are specified — matches the canonical
+/// `<channel>:<account_id|"default">` render the daemon produces
+/// at boot.
+#[derive(Debug, Clone, Default)]
+pub struct MockBindingContext {
+    agent_id: Option<String>,
+    channel: Option<String>,
+    account_id: Option<String>,
+    session_id: Option<uuid::Uuid>,
+    mcp_channel_source: Option<String>,
+}
+
+impl MockBindingContext {
+    /// Fresh builder with every field unset.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the agent id (required — `build()` panics if unset).
+    pub fn with_agent(mut self, agent_id: impl Into<String>) -> Self {
+        self.agent_id = Some(agent_id.into());
+        self
+    }
+
+    /// Set the channel name (`"whatsapp"`, `"telegram"`, `"web"`,
+    /// …). Drives `binding_id` rendering.
+    pub fn with_channel(mut self, channel: impl Into<String>) -> Self {
+        self.channel = Some(channel.into());
+        self
+    }
+
+    /// Set the account / instance discriminator. Goes into
+    /// `binding_id` as the second segment; `None` (default)
+    /// renders as `"default"`.
+    pub fn with_account(mut self, account_id: impl Into<String>) -> Self {
+        self.account_id = Some(account_id.into());
+        self
+    }
+
+    /// Pin a specific session UUID. Default leaves `None` (no
+    /// active LLM turn).
+    pub fn with_session(mut self, session_id: uuid::Uuid) -> Self {
+        self.session_id = Some(session_id);
+        self
+    }
+
+    /// Layer the MCP channel-source label on top.
+    pub fn with_mcp_channel_source(
+        mut self,
+        source: impl Into<String>,
+    ) -> Self {
+        self.mcp_channel_source = Some(source.into());
+        self
+    }
+
+    /// Materialise the [`BindingContext`]. Panics when `agent_id`
+    /// is unset — every binding has an agent owner.
+    pub fn build(self) -> BindingContext {
+        let agent_id = self.agent_id.expect(
+            "MockBindingContext: with_agent(...) is required before build()",
+        );
+        let mut ctx = BindingContext::agent_only(agent_id);
+        ctx.session_id = self.session_id;
+        ctx.channel = self.channel.clone();
+        ctx.account_id = self.account_id.clone();
+        ctx.binding_id = self.channel.as_deref().map(|ch| {
+            nexo_tool_meta::binding_id_render(ch, self.account_id.as_deref())
+        });
+        if let Some(s) = self.mcp_channel_source {
+            ctx = ctx.with_mcp_channel_source(s);
+        }
+        ctx
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,5 +389,89 @@ mod tests {
             .unwrap();
         assert_eq!(out["channel"], "whatsapp");
         assert_eq!(out["sender"], "+5491100");
+    }
+
+    // ── Phase 83.15 — MockBindingContext tests ───────────────
+
+    #[test]
+    fn mock_binding_minimal_agent_only() {
+        let ctx = MockBindingContext::new().with_agent("ana").build();
+        assert_eq!(ctx.agent_id, "ana");
+        assert!(ctx.channel.is_none());
+        assert!(ctx.binding_id.is_none());
+    }
+
+    #[test]
+    fn mock_binding_renders_binding_id_with_account() {
+        let ctx = MockBindingContext::new()
+            .with_agent("ana")
+            .with_channel("whatsapp")
+            .with_account("acme")
+            .build();
+        assert_eq!(ctx.channel.as_deref(), Some("whatsapp"));
+        assert_eq!(ctx.account_id.as_deref(), Some("acme"));
+        assert_eq!(ctx.binding_id.as_deref(), Some("whatsapp:acme"));
+    }
+
+    #[test]
+    fn mock_binding_renders_default_segment_when_no_account() {
+        let ctx = MockBindingContext::new()
+            .with_agent("ana")
+            .with_channel("telegram")
+            .build();
+        // Canonical render is `<channel>:<account|"default">`.
+        assert_eq!(ctx.binding_id.as_deref(), Some("telegram:default"));
+    }
+
+    #[test]
+    fn mock_binding_carries_session_uuid() {
+        let id = uuid::Uuid::new_v4();
+        let ctx = MockBindingContext::new()
+            .with_agent("ana")
+            .with_session(id)
+            .build();
+        assert_eq!(ctx.session_id, Some(id));
+    }
+
+    #[test]
+    fn mock_binding_layers_mcp_channel_source() {
+        let ctx = MockBindingContext::new()
+            .with_agent("ana")
+            .with_channel("telegram")
+            .with_mcp_channel_source("slack")
+            .build();
+        assert_eq!(ctx.mcp_channel_source.as_deref(), Some("slack"));
+    }
+
+    #[test]
+    #[should_panic(expected = "with_agent")]
+    fn mock_binding_panics_when_agent_unset() {
+        let _ = MockBindingContext::new().build();
+    }
+
+    #[test]
+    fn mock_binding_chains_call_tool_with_harness() {
+        // Smoke test: the builder output plugs cleanly into
+        // MicroappTestHarness::call_tool_with_binding without
+        // any glue.
+        async fn read(_args: Value, ctx: ToolCtx) -> Result<ToolReply, ToolError> {
+            let ag = ctx
+                .binding()
+                .map(|b| b.agent_id.clone())
+                .unwrap_or_default();
+            Ok(ToolReply::ok_json(json!({ "agent": ag })))
+        }
+        let app = Microapp::new("t", "0.0.0").with_tool("read", read);
+        let h = MicroappTestHarness::new(app);
+        let ctx = MockBindingContext::new()
+            .with_agent("ana")
+            .with_channel("whatsapp")
+            .build();
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let out = rt
+            .block_on(h.call_tool_with_binding("read", json!({}), ctx))
+            .unwrap();
+        assert_eq!(out["agent"], "ana");
     }
 }

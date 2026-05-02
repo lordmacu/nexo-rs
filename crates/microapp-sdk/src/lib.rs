@@ -60,4 +60,4 @@ pub use outbound::{DispatchAck, DispatchError, OutboundDispatcher};
 pub use admin::{AdminClient, AdminError, AdminSender, DEFAULT_ADMIN_TIMEOUT};
 
 #[cfg(feature = "test-harness")]
-pub use test_harness::{MicroappTestError, MicroappTestHarness};
+pub use test_harness::{MicroappTestError, MicroappTestHarness, MockBindingContext};
