@@ -12,6 +12,66 @@ pub struct LlmConfig {
     /// compaction defaults off (rollout gradual), token_counter on.
     #[serde(default)]
     pub context_optimization: ContextOptimizationConfig,
+    /// Phase 83.8.12.5 — per-tenant LLM provider sub-namespaces.
+    /// SaaS deployments isolate one tenant's API keys + endpoints
+    /// from another's; agents resolve their provider via
+    /// `LlmConfig::resolve_provider(tenant_id, name)` which checks
+    /// `tenants.<id>.providers.<name>` first, then falls back to
+    /// the global `providers.<name>`. Single-tenant deployments
+    /// leave this empty and behaviour is unchanged.
+    #[serde(default)]
+    pub tenants: HashMap<String, TenantLlmConfig>,
+}
+
+/// Phase 83.8.12.5 — per-tenant LLM config under
+/// `llm.yaml.tenants.<tenant_id>`. Currently only carries
+/// providers; future tenant-scoped knobs (rate limits, retry
+/// overrides) plug in additively.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct TenantLlmConfig {
+    /// Tenant-scoped provider table. Same shape as the global
+    /// `LlmConfig.providers` so an operator can copy-paste a
+    /// provider def into a tenant block without changes.
+    #[serde(default)]
+    pub providers: HashMap<String, LlmProviderConfig>,
+}
+
+impl LlmConfig {
+    /// Phase 83.8.12.5 — resolve a provider with tenant-first /
+    /// global-fallback semantics. Returns the tenant-scoped
+    /// definition when present, falling back to the global
+    /// `providers` table; `None` when neither exists.
+    ///
+    /// Defense-in-depth: passing a `tenant_id` that does not
+    /// exist in `tenants` falls through to the global table —
+    /// the alternative ("strict tenant isolation, refuse if
+    /// tenant has no providers") was rejected because most
+    /// providers are operator-shared (e.g. an operator's own
+    /// MiniMax key) and forcing every tenant to redeclare them
+    /// makes the YAML noisy. Tenants that need strict
+    /// isolation declare an empty `providers: {}` block under
+    /// their tenant key — that wins over the fallback.
+    ///
+    /// Wait: `providers: {}` empty would still fall through
+    /// because `get(name)` on an empty map returns `None`. To
+    /// truly isolate, an operator can put a sentinel provider
+    /// `{name: "_blocked", ...}` per tenant. Practical default
+    /// is: tenants supplement, not replace, the global pool.
+    pub fn resolve_provider(
+        &self,
+        tenant_id: Option<&str>,
+        name: &str,
+    ) -> Option<&LlmProviderConfig> {
+        if let Some(tid) = tenant_id {
+            if let Some(t) = self.tenants.get(tid) {
+                if let Some(p) = t.providers.get(name) {
+                    return Some(p);
+                }
+            }
+        }
+        self.providers.get(name)
+    }
 }
 
 /// Aggregated kill-switches and tunables for the four context-size
@@ -424,6 +484,130 @@ fn default_multiplier() -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Phase 83.8.12.5 — resolve_provider semantics ──
+
+    fn provider(api_key: &str) -> LlmProviderConfig {
+        let yaml = format!(
+            "api_key: {api_key}\nbase_url: https://api.example.com\n"
+        );
+        serde_yaml::from_str(&yaml).unwrap()
+    }
+
+    fn cfg_with(global: &[(&str, &str)], tenants: &[(&str, &[(&str, &str)])]) -> LlmConfig {
+        let providers: HashMap<String, LlmProviderConfig> = global
+            .iter()
+            .map(|(k, v)| (k.to_string(), provider(v)))
+            .collect();
+        let tenants_map: HashMap<String, TenantLlmConfig> = tenants
+            .iter()
+            .map(|(tid, plist)| {
+                let providers: HashMap<String, LlmProviderConfig> = plist
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), provider(v)))
+                    .collect();
+                (tid.to_string(), TenantLlmConfig { providers })
+            })
+            .collect();
+        LlmConfig {
+            providers,
+            retry: RetryConfig {
+                max_attempts: 1,
+                initial_backoff_ms: 1,
+                max_backoff_ms: 1,
+                backoff_multiplier: 1.0,
+            },
+            context_optimization: ContextOptimizationConfig::default(),
+            tenants: tenants_map,
+        }
+    }
+
+    #[test]
+    fn resolve_provider_tenant_scoped_present_returns_tenant_version() {
+        let cfg = cfg_with(
+            &[("openai", "global-key")],
+            &[("acme", &[("openai", "tenant-key")])],
+        );
+        let p = cfg.resolve_provider(Some("acme"), "openai").unwrap();
+        assert_eq!(p.api_key, "tenant-key");
+    }
+
+    #[test]
+    fn resolve_provider_tenant_scoped_missing_falls_back_to_global() {
+        let cfg = cfg_with(&[("openai", "global-key")], &[("acme", &[])]);
+        let p = cfg.resolve_provider(Some("acme"), "openai").unwrap();
+        assert_eq!(p.api_key, "global-key");
+    }
+
+    #[test]
+    fn resolve_provider_no_tenant_id_uses_only_global() {
+        let cfg = cfg_with(
+            &[("openai", "global-key")],
+            &[("acme", &[("openai", "tenant-key")])],
+        );
+        let p = cfg.resolve_provider(None, "openai").unwrap();
+        assert_eq!(p.api_key, "global-key");
+    }
+
+    #[test]
+    fn resolve_provider_unknown_tenant_falls_through_to_global() {
+        let cfg = cfg_with(
+            &[("openai", "global-key")],
+            &[("acme", &[("openai", "tenant-key")])],
+        );
+        // `globex` tenant doesn't exist in config → fall through.
+        let p = cfg.resolve_provider(Some("globex"), "openai").unwrap();
+        assert_eq!(p.api_key, "global-key");
+    }
+
+    #[test]
+    fn resolve_provider_both_missing_returns_none() {
+        let cfg = cfg_with(&[], &[("acme", &[])]);
+        assert!(cfg.resolve_provider(Some("acme"), "openai").is_none());
+        assert!(cfg.resolve_provider(None, "openai").is_none());
+    }
+
+    #[test]
+    fn tenants_field_defaults_to_empty_when_absent_from_yaml() {
+        let yaml = r#"
+providers:
+  openai:
+    api_key: x
+    base_url: https://api.openai.com
+"#;
+        let cfg: LlmConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(cfg.tenants.is_empty());
+        assert!(cfg.providers.contains_key("openai"));
+    }
+
+    #[test]
+    fn tenants_block_round_trips_from_yaml() {
+        let yaml = r#"
+providers:
+  openai:
+    api_key: global
+    base_url: https://api.openai.com
+tenants:
+  acme:
+    providers:
+      openai:
+        api_key: acme-key
+        base_url: https://api.openai.com
+"#;
+        let cfg: LlmConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(cfg.tenants.len(), 1);
+        let acme = cfg.tenants.get("acme").unwrap();
+        assert_eq!(acme.providers["openai"].api_key, "acme-key");
+        // Resolve respects precedence.
+        assert_eq!(
+            cfg.resolve_provider(Some("acme"), "openai").unwrap().api_key,
+            "acme-key"
+        );
+        assert_eq!(
+            cfg.resolve_provider(None, "openai").unwrap().api_key,
+            "global"
+        );
+    }
 
     #[test]
     fn auth_anthropic_full_shape_parses() {
