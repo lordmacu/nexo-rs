@@ -714,6 +714,57 @@ stamping) and `release` (summary injection) — set once,
 forget. Per-call `SendReplyArgs.with_session()` overrides the
 pinned one when both are present.
 
+### Pending inbounds during pause (Phase 82.13.b.3)
+
+While a scope is `PausedByOperator`, inbound user messages
+arriving on the channel are buffered server-side instead of
+firing an agent turn. On resume, the buffer is drained and
+each inbound is stamped on the agent transcript as a `User`
+entry with its ORIGINAL timestamp — so the agent reads real
+chronology of what the customer said during takeover.
+
+| Field | Value |
+|-------|-------|
+| `role` | `User` |
+| `content` | Original (already-redacted) inbound body |
+| `source_plugin` | Channel that produced the inbound (`whatsapp`, etc.) |
+| `sender_id` | Counterparty id (e.g. WA jid) |
+| `message_id` | Channel-side provider id when present |
+
+The cap is configured via `NEXO_PROCESSING_PENDING_QUEUE_CAP`
+(default 50, set to `0` to disable buffering entirely).
+When the cap is exceeded, the OLDEST entry is evicted FIFO
+and an `AgentEventKind::PendingInboundsDropped` firehose
+event fires so operator UIs can surface the drop.
+
+```jsonc
+// Firehose frame on cap-exceeded eviction:
+{
+    "jsonrpc": "2.0",
+    "method": "nexo/notify/agent_event",
+    "params": {
+        "kind": "pending_inbounds_dropped",
+        "agent_id": "ana",
+        "scope": { "kind": "conversation", "agent_id": "ana", ... },
+        "dropped": 1,
+        "at_ms": 1700000000000
+    }
+}
+```
+
+`ProcessingAck.drained_pending: Some(N)` on the resume call
+reports how many entries were drained — `None` when the
+queue was empty (no field on the wire). Operator UIs render
+"replay: 3 messages" so the operator knows what the agent
+will see on its next turn.
+
+**Note (Phase 82.13.b.3.2 limitation):** the inbound
+dispatcher push hook is still deferred. Until that ships
+(folded with Phase 82.13's "inbound dispatcher hook"
+follow-up), the queue is not populated automatically — the
+drain side is fully functional, but production buffering
+needs the dispatcher-side pause check to land.
+
 ## Agent escalations (Phase 82.14)
 
 Cross-app primitive for the "I need help here" channel:

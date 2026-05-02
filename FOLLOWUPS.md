@@ -2449,7 +2449,21 @@ incrementally):
    when `ProcessingControlState::PausedByOperator`, store them
    in `pending_inbounds` on the state row. On resume, replay them
    as synthetic User entries in the transcript. Agent sees what
-   the user said while it was paused. **Pending — 82.13.b.3.**
+   the user said while it was paused. **✅ shipped 2026-05-02
+   as 82.13.b.3** — `PendingInbound` wire shape +
+   `ProcessingControlStore.{push_pending,drain_pending,
+   pending_depth}` + `InMemoryProcessingControlStore` queue
+   with FIFO cap (`NEXO_PROCESSING_PENDING_QUEUE_CAP`,
+   default 50) + `AgentEventKind::PendingInboundsDropped`
+   firehose variant + resume drain stamps each as a `User`
+   transcript entry with original timestamps. **One side
+   still pending** (logged below): the inbound dispatcher
+   push hook itself (the daemon-side pause check that
+   captures inbounds during pause and calls `push_pending`)
+   is folded with Phase 82.13's "inbound dispatcher hook"
+   follow-up. The drain side is fully functional; once the
+   dispatcher hook lands, the round-trip works end-to-end
+   with no further handler changes.
 3. **`HumanTakeover::release(summary_for_agent)` end-to-end.**
    The `summary_for_agent` parameter exists in the SDK
    (Phase 83.8.6) but the daemon side never injects. When wired,
