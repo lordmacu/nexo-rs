@@ -51,6 +51,7 @@ pub mod event_source;
 pub mod http_server;
 pub mod inbound;
 pub mod meta;
+pub mod microapp_error;
 pub mod template;
 pub mod webhook;
 
@@ -60,6 +61,9 @@ pub use event_source::{
     EventSourceMeta,
 };
 pub use inbound::{InboundKind, InboundMessageMeta};
+pub use microapp_error::{
+    MicroappError, MicroappErrorKind, MICROAPP_ERROR_NOTIFY_METHOD,
+};
 pub use meta::{
     build_meta_value, parse_binding_from_meta, parse_inbound_from_meta, BINDING_KEY, INBOUND_KEY,
     META_KEY, NEXO_NAMESPACE,
