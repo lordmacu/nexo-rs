@@ -58,6 +58,15 @@ pub struct Handlers {
     /// regular tool/hook dispatch.
     #[cfg(feature = "admin")]
     pub admin: Option<Arc<crate::admin::AdminClient>>,
+    /// Phase 83.4.c — JSON-RPC notification listeners keyed by
+    /// method name (e.g. `"nexo/notify/agent_event"`). When the
+    /// dispatch loop sees a frame WITHOUT an `id` (notification
+    /// per JSON-RPC 2.0) AND the method matches a registered
+    /// listener, the handler is invoked with the `params` value.
+    /// Errors are swallowed — same best-effort contract as the
+    /// daemon-side broadcast emitter (`AgentEventEmitter::emit`).
+    pub notification_listeners:
+        BTreeMap<String, Arc<dyn Fn(Value) + Send + Sync>>,
 }
 
 impl Handlers {
@@ -116,6 +125,26 @@ where
                     continue;
                 }
             }
+        }
+
+        // Phase 83.4.c — JSON-RPC notification dispatch. Per the
+        // JSON-RPC 2.0 spec, a frame WITHOUT an `id` field is a
+        // notification — the daemon doesn't expect a response.
+        // When the method matches a registered listener
+        // (`Microapp::with_notification_listener`), invoke the
+        // handler with `params`. Errors are intentionally
+        // swallowed — same contract as
+        // `AgentEventEmitter::emit`. Unknown notification methods
+        // are silently dropped (same as the daemon-side broadcast
+        // emit) rather than 404'd, because the microapp may not
+        // care about every kind the daemon happens to emit.
+        if id.is_none() && !method.is_empty() {
+            if let Some(handler) = handlers.notification_listeners.get(method) {
+                handler(params);
+                continue;
+            }
+            // Unknown notification — drop silently.
+            continue;
         }
 
         let stop = handle_one(&handlers, &writer, id, method, params).await?;
@@ -407,6 +436,7 @@ mod tests {
             hooks: BTreeMap::new(),
             #[cfg(feature = "admin")]
             admin: None,
+            notification_listeners: std::collections::BTreeMap::new(),
         }
     }
 
@@ -426,6 +456,7 @@ mod tests {
             hooks: BTreeMap::new(),
             #[cfg(feature = "admin")]
             admin: None,
+            notification_listeners: std::collections::BTreeMap::new(),
         }
     }
 
@@ -524,6 +555,7 @@ mod tests {
             hooks: BTreeMap::new(),
             #[cfg(feature = "admin")]
             admin: None,
+            notification_listeners: std::collections::BTreeMap::new(),
         };
         let req = serde_json::json!({
             "jsonrpc": "2.0",
@@ -583,6 +615,7 @@ mod tests {
             hooks: BTreeMap::new(),
             #[cfg(feature = "admin")]
             admin: None,
+            notification_listeners: std::collections::BTreeMap::new(),
         };
         let req = serde_json::json!({
             "jsonrpc": "2.0",
@@ -630,6 +663,7 @@ mod tests {
             hooks: BTreeMap::new(),
             #[cfg(feature = "admin")]
             admin: None,
+            notification_listeners: std::collections::BTreeMap::new(),
         };
         // Legacy meta — only `binding`, no `inbound` bucket.
         let req = serde_json::json!({

@@ -5,11 +5,16 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use serde_json::Value;
 use tokio::io::{AsyncBufRead, AsyncWrite, BufReader};
 
 use crate::errors::Result as SdkResult;
 use crate::hook::HookHandler;
 use crate::runtime::{dispatch_loop, Handlers, ToolHandler};
+
+/// Phase 83.4.c — registered notification handler. Type-erased
+/// closure that receives the JSON-RPC `params` value.
+type NotificationHandler = Arc<dyn Fn(Value) + Send + Sync>;
 
 /// Type alias for the registry of `(tool_name → handler)` and
 /// `(hook_name → handler)` pairs the builder accumulates. Public
@@ -56,6 +61,12 @@ pub struct Microapp {
     /// only consume the client through `ctx.admin()`).
     #[cfg(feature = "admin")]
     on_admin_ready: Option<AdminReadyCallback>,
+    /// Phase 83.4.c — JSON-RPC notification listeners keyed by
+    /// method name. Populated by [`Self::with_notification_listener`].
+    /// The dispatch loop invokes the matching handler for any
+    /// inbound frame whose `id` is absent (notification per
+    /// JSON-RPC 2.0) and whose `method` matches a registered key.
+    notification_listeners: BTreeMap<String, NotificationHandler>,
 }
 
 impl Microapp {
@@ -75,6 +86,7 @@ impl Microapp {
             admin_enabled: false,
             #[cfg(feature = "admin")]
             on_admin_ready: None,
+            notification_listeners: BTreeMap::new(),
         }
     }
 
@@ -123,6 +135,45 @@ impl Microapp {
         F: FnOnce(Arc<crate::admin::AdminClient>) + Send + 'static,
     {
         self.on_admin_ready = Some(Box::new(callback));
+        self
+    }
+
+    /// Phase 83.4.c — register a JSON-RPC notification listener.
+    ///
+    /// `method` is the literal frame method (e.g.
+    /// `"nexo/notify/agent_event"`, `"nexo/notify/token_rotated"`,
+    /// `"nexo/notify/pairing_status_changed"`). The handler runs
+    /// inside the dispatch loop's task and must NOT block —
+    /// wire it to a `tokio::sync::mpsc::Sender` (or similar
+    /// non-blocking sink) when downstream work is non-trivial.
+    ///
+    /// Errors inside the handler are intentionally swallowed —
+    /// notifications are best-effort by JSON-RPC 2.0 contract
+    /// (no response expected). A panicking handler tears down
+    /// the dispatch loop, so wrap fallible logic in
+    /// `std::panic::catch_unwind` if the work is risky.
+    ///
+    /// Common pattern — bridge to an `mpsc` consumed by a
+    /// parallel task:
+    ///
+    /// ```ignore
+    /// let (tx, rx) = tokio::sync::mpsc::channel::<serde_json::Value>(64);
+    /// let app = Microapp::new("…", "…")
+    ///     .with_notification_listener("nexo/notify/agent_event", move |params| {
+    ///         let _ = tx.try_send(params);
+    ///     });
+    /// // ... spawn a task consuming `rx` ...
+    /// ```
+    pub fn with_notification_listener<F>(
+        mut self,
+        method: impl Into<String>,
+        handler: F,
+    ) -> Self
+    where
+        F: Fn(Value) + Send + Sync + 'static,
+    {
+        self.notification_listeners
+            .insert(method.into(), Arc::new(handler));
         self
     }
 
@@ -188,6 +239,7 @@ impl Microapp {
             hooks: self.hooks,
             #[cfg(feature = "admin")]
             admin: None,
+            notification_listeners: self.notification_listeners,
         };
         // `on_initialize` / `on_shutdown` callbacks are reserved
         // for a future micro-extension (post-83.4); v0 ignores
@@ -235,6 +287,7 @@ impl Microapp {
             hooks: self.hooks,
             #[cfg(feature = "admin")]
             admin: None,
+            notification_listeners: self.notification_listeners,
         }
     }
 }
@@ -295,6 +348,69 @@ mod tests {
         let _ = app.run_with(reader, writer).await;
         // Callback fired — we have a live client.
         assert!(rx.await.is_ok(), "on_admin_ready must fire before run_with returns");
+    }
+
+    #[tokio::test]
+    async fn notification_listener_fires_on_matching_method_with_no_id() {
+        // Frame: notification per JSON-RPC 2.0 (no `id` field).
+        let req = r#"{"jsonrpc":"2.0","method":"nexo/notify/agent_event","params":{"kind":"transcript_appended"}}"#;
+        let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter_cb = Arc::clone(&counter);
+        let app = Microapp::new("t", "0.0.0").with_notification_listener(
+            "nexo/notify/agent_event",
+            move |params| {
+                assert_eq!(params["kind"], "transcript_appended");
+                counter_cb.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            },
+        );
+        let reader = tokio::io::BufReader::new(std::io::Cursor::new(
+            format!("{req}\n").into_bytes(),
+        ));
+        let writer = Vec::new();
+        let _ = app.run_with(reader, writer).await;
+        assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn notification_listener_does_not_fire_for_unregistered_method() {
+        let req = r#"{"jsonrpc":"2.0","method":"nexo/notify/unknown","params":{}}"#;
+        let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter_cb = Arc::clone(&counter);
+        let app = Microapp::new("t", "0.0.0").with_notification_listener(
+            "nexo/notify/agent_event",
+            move |_| {
+                counter_cb.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            },
+        );
+        let reader = tokio::io::BufReader::new(std::io::Cursor::new(
+            format!("{req}\n").into_bytes(),
+        ));
+        let _ = app.run_with(reader, Vec::new()).await;
+        assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn notification_listener_skipped_when_id_present() {
+        // Same method but WITH `id` — that's a request, not a
+        // notification, so the listener must NOT fire.
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"nexo/notify/agent_event","params":{}}"#;
+        let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter_cb = Arc::clone(&counter);
+        let app = Microapp::new("t", "0.0.0").with_notification_listener(
+            "nexo/notify/agent_event",
+            move |_| {
+                counter_cb.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            },
+        );
+        let reader = tokio::io::BufReader::new(std::io::Cursor::new(
+            format!("{req}\n").into_bytes(),
+        ));
+        let _ = app.run_with(reader, Vec::new()).await;
+        assert_eq!(
+            counter.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "listener must only fire for notifications, not requests"
+        );
     }
 
     #[cfg(feature = "admin")]
