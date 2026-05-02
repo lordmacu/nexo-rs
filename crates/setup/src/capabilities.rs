@@ -208,6 +208,14 @@ const INVENTORY: &[CapabilityToggle] = &[
     // `agent_events_subscribe_all` capability grants.
     CapabilityToggle {
         extension: "core",
+        env_var: "NEXO_MICROAPP_ADMIN_SKILLS_ENABLED",
+        kind: ToggleKind::Boolean,
+        risk: Risk::Medium,
+        effect: "Enable `nexo/admin/skills/*` admin RPC domain (microapps can CRUD markdown skills attachable to agents). Off disables the entire domain regardless of operator grants.",
+        hint: "export NEXO_MICROAPP_ADMIN_SKILLS_ENABLED=0",
+    },
+    CapabilityToggle {
+        extension: "core",
         env_var: "NEXO_MICROAPP_AGENT_EVENTS_ENABLED",
         kind: ToggleKind::Boolean,
         risk: Risk::High,

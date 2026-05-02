@@ -2404,6 +2404,27 @@ deferred:
   fresh data. Same boot-order refactor as the rest of 82.x's
   deferreds — folded with main.rs operator wire-up.
 
+### Phase 83.8 — domain kill-switch env vars are advisory-only
+
+Discovered while wiring `nexo/admin/skills/*` (83.8.2): the
+`NEXO_MICROAPP_ADMIN_*_ENABLED` env-var entries listed in
+`crates/setup/src/capabilities.rs::INVENTORY` (`AGENTS`,
+`CREDENTIALS`, `PAIRING`, `LLM_KEYS`, `CHANNELS`, `SKILLS`) are
+documented as global kill switches but no consumer reads them. A
+microapp granted the operator capability still gets the domain
+even when the operator exports
+`NEXO_MICROAPP_ADMIN_<DOMAIN>_ENABLED=0`.
+
+Fix is a small one-shot: have `admin_bootstrap` consult each toggle
+when constructing the dispatcher and, when off, omit the domain
+adapter so the relevant arms of `call_handler` fall through to
+`-32601 method_not_found` (or the existing
+"<domain> not configured" `-32603`). Same pattern
+`NEXO_MICROAPP_AGENT_EVENTS_ENABLED` already follows. Predates this
+phase but only surfaced now while scanning INVENTORY for the
+`SKILLS` slot. Target: small framework hardening sub-phase
+(suggest `83.8.x` after the agent-creator v1 close-out).
+
 ## Resolved (recent highlights)
 
 - 2026-04-28 — MCP denied-tool override now supports `Heartbeat`

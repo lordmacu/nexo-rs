@@ -34,6 +34,7 @@ use super::domains::escalations::EscalationStore;
 use super::domains::llm_providers::LlmYamlPatcher;
 use super::domains::pairing::{PairingChallengeStore, PairingNotifier};
 use super::domains::processing::ProcessingControlStore;
+use super::domains::skills::SkillsStore;
 
 /// Reload signal callback — invoked by domain handlers after
 /// successful yaml mutations to trigger Phase 18 hot-reload.
@@ -168,6 +169,11 @@ pub struct AdminRpcDispatcher {
     /// auto-flips any matching `Pending` escalation to
     /// `Resolved { OperatorTakeover }`.
     escalation_store: Option<Arc<dyn EscalationStore>>,
+    /// Phase 83.8 — skills CRUD store. `None` disables
+    /// `nexo/admin/skills/*`. Production wires
+    /// `nexo_setup::admin_adapters::FsSkillsStore` against the
+    /// existing `SkillLoader` filesystem layout.
+    skills_store: Option<Arc<dyn SkillsStore>>,
 }
 
 impl std::fmt::Debug for AdminRpcDispatcher {
@@ -202,6 +208,7 @@ impl AdminRpcDispatcher {
             transcript_reader: None,
             processing_store: None,
             escalation_store: None,
+            skills_store: None,
         }
     }
 
@@ -296,6 +303,15 @@ impl AdminRpcDispatcher {
         self
     }
 
+    /// Phase 83.8 — install the skills domain. Production passes
+    /// an `FsSkillsStore` adapter pointed at the same skills root
+    /// the `SkillLoader` reads from. `None` disables
+    /// `nexo/admin/skills/*`.
+    pub fn with_skills_domain(mut self, store: Arc<dyn SkillsStore>) -> Self {
+        self.skills_store = Some(store);
+        self
+    }
+
     /// Phase 82.10.f — install the channels domain. Reuses the
     /// agents-domain `YamlPatcher` + `ReloadSignal` (channels
     /// live in `agents.yaml.<id>.channels.approved`).
@@ -350,6 +366,12 @@ impl AdminRpcDispatcher {
             // weaker grant.
             "nexo/admin/escalations/list" => Some("escalations_read"),
             "nexo/admin/escalations/resolve" => Some("escalations_resolve"),
+            // Phase 83.8 — skills CRUD. Single combined gate;
+            // microapps that hold this can list/get/upsert/delete.
+            "nexo/admin/skills/list"
+            | "nexo/admin/skills/get"
+            | "nexo/admin/skills/upsert"
+            | "nexo/admin/skills/delete" => Some("skills_crud"),
             // `reload` requires any granted CRUD capability — operators
             // who can mutate yaml can also force-trigger the reload.
             // Resolution falls through to `agents_crud` since it's the
@@ -702,6 +724,30 @@ impl AdminRpcDispatcher {
                 }
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "escalations domain not configured".into(),
+                )),
+            },
+            "nexo/admin/skills/list" => match &self.skills_store {
+                Some(store) => super::domains::skills::list(store.as_ref(), params).await,
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "skills domain not configured".into(),
+                )),
+            },
+            "nexo/admin/skills/get" => match &self.skills_store {
+                Some(store) => super::domains::skills::get(store.as_ref(), params).await,
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "skills domain not configured".into(),
+                )),
+            },
+            "nexo/admin/skills/upsert" => match &self.skills_store {
+                Some(store) => super::domains::skills::upsert(store.as_ref(), params).await,
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "skills domain not configured".into(),
+                )),
+            },
+            "nexo/admin/skills/delete" => match &self.skills_store {
+                Some(store) => super::domains::skills::delete(store.as_ref(), params).await,
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "skills domain not configured".into(),
                 )),
             },
             "nexo/admin/reload" => match &self.reload_signal {
