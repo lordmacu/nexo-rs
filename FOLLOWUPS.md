@@ -2437,6 +2437,40 @@ Target: `83.8.4.b`. Until then, the trait surface is testable by
 microapps via mocks, and the wire returns a typed error that the
 SDK can surface in the operator UI as "outbound not configured".
 
+### Phase 83.12 / 83.13 — UI WhatsApp-Web look + React stack
+
+UI of the agent-creator SaaS (operator + tenant) MUST visually
+imitate WhatsApp Web so users feel at home from minute one — the
+operator and tenant already live inside WhatsApp Web (same
+channel as the agents they manage). Cuts onboarding cognitive
+load + reduces error rate.
+
+Constraints (apply to brainstorms / specs / plans of 83.12 +
+83.13):
+
+- Split-pane: conversation list left, chat panel right.
+- Palette: green `#00a884`, grey `#f0f2f5`, white panel,
+  light-green `#d9fdd3` outbound bubbles.
+- Sans-serif typography (Helvetica / Segoe family).
+- React + TypeScript stack. Tailwind for palette consistency.
+  Vite or Next.js TBD in 83.12 spec.
+- Extensions on top of the WhatsApp Web shape: top-bar tenant
+  switcher (operator), right-side drawer for CRUD
+  agents/skills/LLM keys + takeover + escalation badge.
+- Component library (83.13): `ConversationList`, `ChatPanel`,
+  `MessageBubble`, `TopBar`, `TenantSwitcher`, `TakeoverDrawer`,
+  `EscalationBadge`.
+- DO NOT copy Meta/WhatsApp assets (logos, names). Layout + palette
+  imitation only — keep the trademark line clean.
+- Comms: frontend ↔ daemon over HTTP server capability
+  (Phase 82.12) + transcripts firehose (Phase 82.11) +
+  agent-creator microapp tool surface (Phase 83.8 — 22 tools).
+- Packaging: bundle inside Rust binary via `rust-embed`, serve
+  from microapp HTTP server, OR ship as separate app with
+  CORS — pick in 83.12 spec.
+
+Logged in user-memory: `project_ui_whatsapp_web_react.md`.
+
 ### Phase 83.8.10 — per-agent compliance toggle propagation
 
 The agent-creator microapp ships a `before_message` compliance
