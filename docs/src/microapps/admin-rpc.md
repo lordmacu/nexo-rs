@@ -758,12 +758,64 @@ queue was empty (no field on the wire). Operator UIs render
 "replay: 3 messages" so the operator knows what the agent
 will see on its next turn.
 
-**Note (Phase 82.13.b.3.2 limitation):** the inbound
-dispatcher push hook is still deferred. Until that ships
-(folded with Phase 82.13's "inbound dispatcher hook"
-follow-up), the queue is not populated automatically — the
-drain side is fully functional, but production buffering
-needs the dispatcher-side pause check to land.
+**Round-trip end-to-end (Phase 82.13.c, 2026-05-02):**
+the inbound dispatcher push hook now lives in
+`runtime.rs`, gated on a shared
+`Arc<dyn ProcessingControlStore>` boot wires to BOTH the
+admin RPC dispatcher AND every `AgentRuntime`. When the
+operator pauses via `nexo/admin/processing/pause`, the very
+next inbound channel message is buffered onto the
+per-scope queue (cap = `NEXO_PROCESSING_PENDING_QUEUE_CAP`,
+default 50, FIFO eviction). Body is redacted at push time
+so the queue never holds raw PII. Resume drains the queue
+onto the transcript as `User` entries with original
+timestamps — agent reanudes coherently with full
+chronology.
+
+**Smoke recipe** (manual end-to-end):
+
+```bash
+# 1. Pause a conversation via admin RPC.
+curl -X POST localhost:.../admin -d '{
+    "method": "nexo/admin/processing/pause",
+    "params": {
+        "scope": { "kind": "conversation", "agent_id": "ana",
+                   "channel": "whatsapp", "account_id": "wa.0",
+                   "contact_id": "wa.55" },
+        "operator_token_hash": "..."
+    }
+}'
+
+# 2. Send 3 WhatsApp inbounds while paused.
+#    The agent does NOT reply (intake hook buffers them).
+
+# 3. Resume with optional summary.
+curl -X POST localhost:.../admin -d '{
+    "method": "nexo/admin/processing/resume",
+    "params": {
+        "scope": { ... },
+        "session_id": "...",
+        "summary_for_agent": "cliente confirmó dirección",
+        "operator_token_hash": "..."
+    }
+}'
+
+# 4. Verify the transcript JSONL contains 3 fresh `User`
+#    entries with their ORIGINAL timestamps (not now()),
+#    plus a `[operator_summary] cliente confirmó dirección`
+#    System entry just after the resume.
+
+# 5. Send 1 more WhatsApp inbound → agent replies normally,
+#    seeing all 4 buffered + 1 fresh user messages on its
+#    next turn.
+```
+
+**Boot activation** still depends on `src/main.rs` building
+the `AdminRpcBootstrap` (deferred follow-up — same
+boot-order refactor that gates the rest of the admin RPC
+surface). Until then, the pause check + buffer infra exist
+but are dormant in production. Once that lands, this
+round-trip works without any further changes.
 
 ## Agent escalations (Phase 82.14)
 
