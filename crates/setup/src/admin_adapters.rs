@@ -416,12 +416,25 @@ impl FsSkillsStore {
             .clone()
     }
 
-    /// Resolve `<root>/<name>/SKILL.md`. Defense-in-depth on top
-    /// of the handler-side regex check: rejects names containing
-    /// path separators, parent-dir refs, or non-component
-    /// characters that the regex `^[a-z0-9][a-z0-9-]{0,63}$`
-    /// already filters at the handler boundary.
-    fn resolve_skill_path(&self, name: &str) -> anyhow::Result<PathBuf> {
+    /// Resolve `<root>/<scope>/<name>/SKILL.md` where `scope`
+    /// is either `__global__` (default) or a sanitised
+    /// tenant_id. Defense-in-depth on top of the handler-side
+    /// regex check: rejects names containing path separators,
+    /// parent-dir refs, or non-component characters that the
+    /// regex `^[a-z0-9][a-z0-9-]{0,63}$` already filters at the
+    /// handler boundary.
+    ///
+    /// Phase 83.8.12.6 — also validates `tenant_id` when set
+    /// (same charset as skill name), prevents the literal
+    /// segment `__global__` from being passed (reserved for the
+    /// shared slot), and refuses paths that escape `self.root`
+    /// after canonicalisation when the directories already
+    /// exist.
+    fn resolve_skill_path(
+        &self,
+        tenant_id: Option<&str>,
+        name: &str,
+    ) -> anyhow::Result<PathBuf> {
         if name.is_empty()
             || name.contains('/')
             || name.contains('\\')
@@ -431,7 +444,23 @@ impl FsSkillsStore {
         {
             anyhow::bail!("skill path escapes root: invalid name `{name}`");
         }
-        Ok(self.root.join(name).join("SKILL.md"))
+        let scope = match tenant_id {
+            None => "__global__",
+            Some(tid) => {
+                if tid.is_empty()
+                    || tid.contains('/')
+                    || tid.contains('\\')
+                    || tid.contains("..")
+                    || tid.contains('\0')
+                    || tid == "."
+                    || tid == "__global__"
+                {
+                    anyhow::bail!("skill path escapes root: invalid tenant_id `{tid}`");
+                }
+                tid
+            }
+        };
+        Ok(self.root.join(scope).join(name).join("SKILL.md"))
     }
 
     fn compose_blob(record: &SkillRecord) -> String {
@@ -482,8 +511,12 @@ impl FsSkillsStore {
         format!("---\n{yaml}---\n\n{}", record.body)
     }
 
-    async fn read_record(&self, name: &str) -> anyhow::Result<Option<SkillRecord>> {
-        let path = self.resolve_skill_path(name)?;
+    async fn read_record(
+        &self,
+        tenant_id: Option<&str>,
+        name: &str,
+    ) -> anyhow::Result<Option<SkillRecord>> {
+        let path = self.resolve_skill_path(tenant_id, name)?;
         let raw = match tokio::fs::read_to_string(&path).await {
             Ok(s) => s,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -588,11 +621,21 @@ fn parse_frontmatter(
     (parsed.name, parsed.description, parsed.max_chars, requires, body_owned)
 }
 
-#[async_trait]
-impl SkillsStore for FsSkillsStore {
-    async fn list(&self, prefix: Option<&str>) -> anyhow::Result<Vec<SkillSummary>> {
+impl FsSkillsStore {
+    /// Phase 83.8.12.6 — shared list implementation. `tenant_id`
+    /// `None` reads `<root>/__global__/`; `Some(tid)` reads
+    /// `<root>/<tid>/`.
+    async fn list_in_scope(
+        &self,
+        tenant_id: Option<&str>,
+        prefix: Option<&str>,
+    ) -> anyhow::Result<Vec<SkillSummary>> {
+        let scope_dir = match tenant_id {
+            None => self.root.join("__global__"),
+            Some(tid) => self.root.join(tid),
+        };
         let mut out = Vec::new();
-        let mut entries = match tokio::fs::read_dir(&self.root).await {
+        let mut entries = match tokio::fs::read_dir(&scope_dir).await {
             Ok(d) => d,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(out),
             Err(e) => return Err(e.into()),
@@ -613,7 +656,7 @@ impl SkillsStore for FsSkillsStore {
                     continue;
                 }
             }
-            let Some(record) = self.read_record(&name).await? else {
+            let Some(record) = self.read_record(tenant_id, &name).await? else {
                 continue;
             };
             out.push(SkillSummary {
@@ -627,17 +670,22 @@ impl SkillsStore for FsSkillsStore {
         Ok(out)
     }
 
-    async fn get(&self, name: &str) -> anyhow::Result<Option<SkillRecord>> {
-        self.read_record(name).await
-    }
-
-    async fn upsert(
+    /// Phase 83.8.12.6 — shared upsert implementation.
+    async fn upsert_in_scope(
         &self,
+        tenant_id: Option<&str>,
         params: SkillsUpsertParams,
     ) -> anyhow::Result<(SkillRecord, bool)> {
-        let lock = self.lock_for(&params.name);
+        // Scope the lock by `(tenant_id, name)` so concurrent
+        // global + tenant upserts of the same name don't
+        // serialise.
+        let lock_key = match tenant_id {
+            None => format!("__global__/{}", &params.name),
+            Some(tid) => format!("{tid}/{}", &params.name),
+        };
+        let lock = self.lock_for(&lock_key);
         let _guard = lock.lock().await;
-        let path = self.resolve_skill_path(&params.name)?;
+        let path = self.resolve_skill_path(tenant_id, &params.name)?;
         let dir = path.parent().expect("SKILL.md has parent");
         let created = !path.exists();
         tokio::fs::create_dir_all(dir).await?;
@@ -660,10 +708,19 @@ impl SkillsStore for FsSkillsStore {
         Ok((record, created))
     }
 
-    async fn delete(&self, name: &str) -> anyhow::Result<bool> {
-        let lock = self.lock_for(name);
+    /// Phase 83.8.12.6 — shared delete implementation.
+    async fn delete_in_scope(
+        &self,
+        tenant_id: Option<&str>,
+        name: &str,
+    ) -> anyhow::Result<bool> {
+        let lock_key = match tenant_id {
+            None => format!("__global__/{name}"),
+            Some(tid) => format!("{tid}/{name}"),
+        };
+        let lock = self.lock_for(&lock_key);
         let _guard = lock.lock().await;
-        let path = self.resolve_skill_path(name)?;
+        let path = self.resolve_skill_path(tenant_id, name)?;
         let dir = path.parent().expect("SKILL.md has parent");
         if !dir.exists() {
             return Ok(false);
@@ -675,6 +732,65 @@ impl SkillsStore for FsSkillsStore {
         Ok(true)
     }
 }
+
+#[async_trait]
+impl SkillsStore for FsSkillsStore {
+    async fn list(&self, prefix: Option<&str>) -> anyhow::Result<Vec<SkillSummary>> {
+        self.list_in_scope(None, prefix).await
+    }
+
+    async fn get(&self, name: &str) -> anyhow::Result<Option<SkillRecord>> {
+        self.read_record(None, name).await
+    }
+
+    async fn upsert(
+        &self,
+        params: SkillsUpsertParams,
+    ) -> anyhow::Result<(SkillRecord, bool)> {
+        self.upsert_in_scope(None, params).await
+    }
+
+    async fn delete(&self, name: &str) -> anyhow::Result<bool> {
+        self.delete_in_scope(None, name).await
+    }
+
+    // Phase 83.8.12.6 — tenant-scoped overrides delegate to
+    // the same shared helpers, just with `Some(tenant_id)` on
+    // the path resolver.
+
+    async fn list_for_tenant(
+        &self,
+        tenant_id: &str,
+        prefix: Option<&str>,
+    ) -> anyhow::Result<Vec<SkillSummary>> {
+        self.list_in_scope(Some(tenant_id), prefix).await
+    }
+
+    async fn get_for_tenant(
+        &self,
+        tenant_id: &str,
+        name: &str,
+    ) -> anyhow::Result<Option<SkillRecord>> {
+        self.read_record(Some(tenant_id), name).await
+    }
+
+    async fn upsert_for_tenant(
+        &self,
+        tenant_id: &str,
+        params: SkillsUpsertParams,
+    ) -> anyhow::Result<(SkillRecord, bool)> {
+        self.upsert_in_scope(Some(tenant_id), params).await
+    }
+
+    async fn delete_for_tenant(
+        &self,
+        tenant_id: &str,
+        name: &str,
+    ) -> anyhow::Result<bool> {
+        self.delete_in_scope(Some(tenant_id), name).await
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -2407,6 +2523,7 @@ mod escalation_store_tests {
                 body: "Use for forecasts.".into(),
                 max_chars: None,
                 requires: None,
+                tenant_id: None,
             })
             .await
             .unwrap();
@@ -2445,6 +2562,7 @@ mod escalation_store_tests {
             body: "first".into(),
             max_chars: None,
             requires: None,
+                tenant_id: None,
         };
         let (_, c1) = store.upsert(p.clone()).await.unwrap();
         let (rec2, c2) = store
@@ -2480,6 +2598,7 @@ mod escalation_store_tests {
                 body: "x".into(),
                 max_chars: None,
                 requires: None,
+                tenant_id: None,
             })
             .await
             .unwrap();
@@ -2497,8 +2616,13 @@ mod escalation_store_tests {
         let store = FsSkillsStore::new(&root);
         // resolve_skill_path is the gatekeeper; bad names must not
         // escape the root.
-        let r = store.resolve_skill_path("../escape");
+        let r = store.resolve_skill_path(None, "../escape");
         assert!(r.is_err(), "path traversal must be rejected");
+        // Phase 83.8.12.6 — same gatekeeper for tenant_id.
+        let r2 = store.resolve_skill_path(Some("../escape"), "ok");
+        assert!(r2.is_err(), "tenant_id traversal must be rejected");
+        let r3 = store.resolve_skill_path(Some("__global__"), "ok");
+        assert!(r3.is_err(), "tenant_id `__global__` is reserved");
         tokio::fs::remove_dir_all(&root).await.ok();
     }
 
@@ -2518,6 +2642,7 @@ mod escalation_store_tests {
                 body: "body".into(),
                 max_chars: None,
                 requires: None,
+                tenant_id: None,
             })
             .await
             .unwrap();
@@ -2539,6 +2664,7 @@ mod escalation_store_tests {
                     body: "x".into(),
                     max_chars: None,
                     requires: None,
+                tenant_id: None,
                 })
                 .await
                 .unwrap();
@@ -2546,6 +2672,195 @@ mod escalation_store_tests {
         let list = store.list(Some("alp")).await.unwrap();
         let names: Vec<&str> = list.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, vec!["alpha", "alpine"]);
+        tokio::fs::remove_dir_all(&root).await.ok();
+    }
+
+    // ── Phase 83.8.12.6 — tenant-scoped skills ──
+
+    #[tokio::test]
+    async fn fs_skills_tenant_upsert_writes_under_tenant_dir() {
+        let root = skills_tmp();
+        let store = FsSkillsStore::new(&root);
+        let (_, created) = store
+            .upsert_for_tenant(
+                "acme",
+                SkillsUpsertParams {
+                    name: "billing".into(),
+                    display_name: Some("Billing".into()),
+                    description: None,
+                    body: "tenant body".into(),
+                    max_chars: None,
+                    requires: None,
+                    tenant_id: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert!(created);
+        // File on disk lives under <root>/acme/billing/SKILL.md.
+        let blob = tokio::fs::read_to_string(
+            root.join("acme").join("billing").join("SKILL.md"),
+        )
+        .await
+        .unwrap();
+        assert!(blob.contains("tenant body"));
+        // Global slot has no `billing`.
+        let global_list = store.list(None).await.unwrap();
+        assert!(global_list.iter().all(|s| s.name != "billing"));
+        tokio::fs::remove_dir_all(&root).await.ok();
+    }
+
+    #[tokio::test]
+    async fn fs_skills_tenant_isolation_global_and_tenant_coexist() {
+        let root = skills_tmp();
+        let store = FsSkillsStore::new(&root);
+        // Same skill name written to BOTH global and tenant
+        // namespaces with different bodies.
+        store
+            .upsert(SkillsUpsertParams {
+                name: "checkout".into(),
+                display_name: None,
+                description: None,
+                body: "global body".into(),
+                max_chars: None,
+                requires: None,
+                tenant_id: None,
+            })
+            .await
+            .unwrap();
+        store
+            .upsert_for_tenant(
+                "acme",
+                SkillsUpsertParams {
+                    name: "checkout".into(),
+                    display_name: None,
+                    description: None,
+                    body: "acme body".into(),
+                    max_chars: None,
+                    requires: None,
+                    tenant_id: None,
+                },
+            )
+            .await
+            .unwrap();
+        let g = store.get("checkout").await.unwrap().unwrap();
+        let t = store
+            .get_for_tenant("acme", "checkout")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(g.body, "global body");
+        assert_eq!(t.body, "acme body");
+        tokio::fs::remove_dir_all(&root).await.ok();
+    }
+
+    #[tokio::test]
+    async fn fs_skills_tenant_list_only_returns_tenant_dir_entries() {
+        let root = skills_tmp();
+        let store = FsSkillsStore::new(&root);
+        // Seed: 2 global, 1 in tenant `acme`, 1 in `globex`.
+        for n in &["global1", "global2"] {
+            store
+                .upsert(SkillsUpsertParams {
+                    name: (*n).into(),
+                    display_name: None,
+                    description: None,
+                    body: "x".into(),
+                    max_chars: None,
+                    requires: None,
+                    tenant_id: None,
+                })
+                .await
+                .unwrap();
+        }
+        store
+            .upsert_for_tenant(
+                "acme",
+                SkillsUpsertParams {
+                    name: "tenant-acme".into(),
+                    display_name: None,
+                    description: None,
+                    body: "x".into(),
+                    max_chars: None,
+                    requires: None,
+                    tenant_id: None,
+                },
+            )
+            .await
+            .unwrap();
+        store
+            .upsert_for_tenant(
+                "globex",
+                SkillsUpsertParams {
+                    name: "tenant-globex".into(),
+                    display_name: None,
+                    description: None,
+                    body: "x".into(),
+                    max_chars: None,
+                    requires: None,
+                    tenant_id: None,
+                },
+            )
+            .await
+            .unwrap();
+        // Each list returns ONLY its scope.
+        let global_list = store.list(None).await.unwrap();
+        let global_names: Vec<&str> =
+            global_list.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(global_names, vec!["global1", "global2"]);
+        let acme_list = store.list_for_tenant("acme", None).await.unwrap();
+        let acme_names: Vec<&str> =
+            acme_list.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(acme_names, vec!["tenant-acme"]);
+        let globex_list = store.list_for_tenant("globex", None).await.unwrap();
+        let globex_names: Vec<&str> =
+            globex_list.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(globex_names, vec!["tenant-globex"]);
+        tokio::fs::remove_dir_all(&root).await.ok();
+    }
+
+    #[tokio::test]
+    async fn fs_skills_tenant_delete_only_drops_target_block() {
+        let root = skills_tmp();
+        let store = FsSkillsStore::new(&root);
+        // Same name in global + acme.
+        store
+            .upsert(SkillsUpsertParams {
+                name: "shared".into(),
+                display_name: None,
+                description: None,
+                body: "g".into(),
+                max_chars: None,
+                requires: None,
+                tenant_id: None,
+            })
+            .await
+            .unwrap();
+        store
+            .upsert_for_tenant(
+                "acme",
+                SkillsUpsertParams {
+                    name: "shared".into(),
+                    display_name: None,
+                    description: None,
+                    body: "a".into(),
+                    max_chars: None,
+                    requires: None,
+                    tenant_id: None,
+                },
+            )
+            .await
+            .unwrap();
+        let removed = store.delete_for_tenant("acme", "shared").await.unwrap();
+        assert!(removed);
+        // Tenant gone.
+        assert!(store
+            .get_for_tenant("acme", "shared")
+            .await
+            .unwrap()
+            .is_none());
+        // Global intact.
+        assert!(store.get("shared").await.unwrap().is_some());
         tokio::fs::remove_dir_all(&root).await.ok();
     }
 
@@ -2564,12 +2879,18 @@ mod escalation_store_tests {
                 body: "body line".into(),
                 max_chars: Some(1024),
                 requires: None,
+                tenant_id: None,
             })
             .await
             .unwrap();
-        let blob = tokio::fs::read_to_string(root.join("rt").join("SKILL.md"))
-            .await
-            .unwrap();
+        // Phase 83.8.12.6 — global skills now live under
+        // `<root>/__global__/<name>/SKILL.md` (was `<root>/<name>/`
+        // pre-83.8.12.6). Test refactored accordingly.
+        let blob = tokio::fs::read_to_string(
+            root.join("__global__").join("rt").join("SKILL.md"),
+        )
+        .await
+        .unwrap();
         assert!(blob.starts_with("---\n"));
         assert!(blob.contains("name: Round Trip"));
         assert!(blob.contains("description: Probe."));
@@ -2600,6 +2921,7 @@ mod escalation_store_tests {
                     body: format!("v{i}"),
                     max_chars: None,
                     requires: None,
+                tenant_id: None,
                 })
                 .await
             }));
