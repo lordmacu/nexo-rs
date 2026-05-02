@@ -1954,6 +1954,32 @@ admin RPC + http_server bootstrap into main.rs (single
 shared boot-order refactor — folded with 82.10.h.b /
 82.11 / 82.12 / 82.13 / 82.14 deferreds).
 
+### Phase 83.14 — actual crates.io upload + release-plz CI + npm
+
+Phase 83.14 shipped publish-readiness for the four Tier-A
+crates: clean dry-run on `nexo-tool-meta`,
+`nexo-plugin-manifest`, `nexo-compliance-primitives`. Per-crate
+README.md + CHANGELOG.md present. Publishing doc
+(`docs/src/microapps/publishing.md`) covers the dependency
+order. Three pieces deferred to 83.14.b:
+
+- **Actual crates.io upload**: operator runs the documented
+  publish sequence on tag day. `nexo-microapp-sdk` is gated on
+  `nexo-tool-meta` propagating to crates.io first (chicken-
+  and-egg between path-dep and registry index).
+- **release-plz CI integration**: `.github/workflows/publish.yml`
+  triggers on `v*.*.*` tags, reads `CARGO_REGISTRY_TOKEN`,
+  walks the publish order with index-propagation waits between
+  steps.
+- **npm package `@nexo/microapp-ui-react`**: lands when 83.13
+  ships the React component library. Until then there is
+  nothing to publish to npm.
+- **out-of-tree consumer migration** (agent-creator from
+  path-dep to versioned `0.1` deps) — straightforward
+  Cargo.toml edit on the consumer side post-publish.
+
+Target phase: 83.14.b (folded with the v0.1.0 tag day).
+
 ### Phase 83.11 — walkthrough docs + admin-ui PHASES entries
 
 Phase 83.11 shipped three docs pages

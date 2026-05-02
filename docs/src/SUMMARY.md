@@ -94,6 +94,7 @@
 - [Getting started (1-hour walkthrough)](./microapps/getting-started.md)
 - [Templates by language](./microapps/templates.md)
 - [Compliance primitives](./microapps/compliance-primitives.md)
+- [Publishing the SDK crates](./microapps/publishing.md)
 
 # MCP
 
