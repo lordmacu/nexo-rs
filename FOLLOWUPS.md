@@ -2646,6 +2646,17 @@ Cross-references:
   gained `session_id: Option<Uuid>` (was missing since Phase
   82.13.b.1 added the field on the SDK side). Out-of-tree commit
   9f634a9.
+- 83.15.b.template ✅ Reference test in
+  `extensions/template-microapp-rust/` exercising MockAdminRpc.
+  Template refactored to expose `build_app()` + new `whoami_tool`
+  that calls `nexo/admin/agents/get` (Cargo.toml gains
+  `features = ["admin"]` on the SDK; dev-deps add
+  `test-harness`). 5 tests in `src/main.rs`: ping smoke,
+  greet+binding, whoami routes admin call and surfaces canned
+  response, whoami propagates typed AdminError as ToolError,
+  before_message hook observes-and-continues. Authors copying
+  the template inherit the same wiring; their tool tests run
+  without a live daemon.
 - 82.14.b.throttle ✅ EscalationThrottle primitive — sliding-
   window per-scope counter (default 3/h) defending against
   agent loops that flood the operator UI with identical

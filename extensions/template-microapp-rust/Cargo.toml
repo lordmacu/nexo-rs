@@ -15,8 +15,8 @@ path = "src/main.rs"
 # In-tree dev path. When you copy this template out of the
 # nexo-rs workspace, swap to the published version once the SDK
 # ships to crates.io:
-#   nexo-microapp-sdk = "0.1"
-nexo-microapp-sdk = { path = "../../crates/microapp-sdk" }
+#   nexo-microapp-sdk = { version = "0.1", features = ["admin"] }
+nexo-microapp-sdk = { path = "../../crates/microapp-sdk", features = ["admin"] }
 
 anyhow       = "1"
 async-trait  = "0.1"
@@ -24,3 +24,10 @@ serde        = { version = "1", features = ["derive"] }
 serde_json   = "1"
 tokio        = { version = "1", features = ["macros", "rt-multi-thread", "io-util", "io-std"] }
 tracing      = "0.1"
+
+[dev-dependencies]
+# Phase 83.15.b — reference test exercises the SDK's
+# `MockAdminRpc` + `MicroappTestHarness::with_admin_mock` via the
+# `test-harness` feature. Authors copying this template inherit
+# the same wiring so their tool tests run without a live daemon.
+nexo-microapp-sdk = { path = "../../crates/microapp-sdk", features = ["admin", "test-harness"] }
