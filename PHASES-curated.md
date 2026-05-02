@@ -57,7 +57,7 @@ top of the list when starting a sprint; do not skip ahead.
 12. **P1** — Phase 83.12 → 83.13 → 83.14 React UI scaffold + component library + SDK publish (agent-creator UI shell)
 13. **P2** — Phase 85.1 reactive 413 recovery (defensive, always-on benefit, ~1 d)
 14. **P2** — Phase 86.1 local memory-shape metrics (ops observability, ~1 d)
-15. **P2** — Phase 81.5 PluginRegistry::discover (unlocks 81.6/7/9 chain)
+15. ✅ ~~Phase 81.5 PluginRegistry::discover~~ (shipped 2026-05-02 library + tests; boot wire + CLI deferred to 81.6)
 16. **P2** — Phase 81.9 Mode::Run registry sweep (~500 → 30 LOC critical milestone)
 17. **P2** — Phase 81.3 / 81.4 / 81.6 / 81.7 / 81.8 (plug-and-play remainder; order after 81.5/9)
 18. **P3** — Phase 85.2 cache-aware micro-compaction (multi-tenant cost optimization, ~3-4 d)
@@ -150,7 +150,7 @@ transcripts, host its HTTP server, or pause agents.
 | 81.1 / 81.2 | — | ✅ |
 | 81.3 — Tool namespace runtime enforcement | **P2** | ⬜ |
 | 81.4 — Plugin-scoped config dir loader | **P2** | ⬜ |
-| 81.5 — `PluginRegistry::discover` filesystem walk | **P2** | ⬜ unblocks 81.6/7/9 chain |
+| 81.5 — `PluginRegistry::discover` filesystem walk | **P2** | ✅ shipped 2026-05-02 (library + tests; boot wire + CLI deferred to 81.6) |
 | 81.6 — Plugin-side agent registration | **P3** | ⬜ |
 | 81.7 — Plugin-side `skills_dir` | **P3** | ⬜ |
 | 81.8 — `ChannelAdapter` trait | **P3** | ⬜ |

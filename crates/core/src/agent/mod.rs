@@ -42,6 +42,7 @@ pub mod memory_history_tool;
 pub mod memory_snapshot_tool;
 pub mod memory_tool;
 pub mod mock_plugin;
+pub mod nexo_plugin_registry;
 pub mod noop;
 pub mod notebook_edit_tool;
 pub mod peer_directory;

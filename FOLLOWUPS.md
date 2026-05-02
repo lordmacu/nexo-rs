@@ -180,8 +180,15 @@ coordinación de archivos cross-cutting.
 - **81.3 ⬜** Tool namespace runtime enforcement at boot.
 - **81.4 ⬜** Plugin-scoped config dir loader
   (`config/plugins/<id>/*.yaml` auto-read).
-- **81.5 ⬜** `PluginRegistry::discover` walks
-  `crates/plugins/*` + user dir reading manifests.
+- **81.5 ✅ shipped 2026-05-02** — `nexo_core::agent::nexo_plugin_registry`
+  module: `discover()` filesystem walker (max_depth=2, manifest fixed
+  at `<plugin_dir>/nexo-plugin.toml`), `NexoPluginRegistry` ArcSwap-
+  backed snapshot container, `PluginDiscoveryConfig` YAML loaded from
+  `<config_dir>/plugins/discovery.yaml`, typed `DiscoveryDiagnostic`
+  enum (10 kinds). Reuses `nexo-plugin-manifest::PluginManifest` +
+  `validate::run_all`. 16 unit + 1 integration test. Library-only ship:
+  boot wire in `src/main.rs::Mode::Run` + `nexo agent doctor plugins`
+  CLI deferred to 81.6 (will land alongside `NexoPlugin::init()`).
 - **81.6 ⬜** Plugin-side agent registration (manifest
   `agents.contributes_dir` merged with existing `agents.d`).
 - **81.7 ⬜** Plugin-side `skills_dir` contribution.

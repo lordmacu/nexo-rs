@@ -10,7 +10,7 @@ tracker**.
 | Phase | Name | Sub-phases | Status |
 |-------|------|-----------|--------|
 | 80 | Autonomous assistant mode | 25/22 | 🔄 follow-ups open (80.7 DEFER, 80.13 ❌ DROPPED) |
-| 81 | Plug-and-play plugin system | 2/13 | 🔄 (81.13 DEFER) |
+| 81 | Plug-and-play plugin system | 3/13 | 🔄 (81.5 ✅ 2026-05-02 library; 81.13 DEFER) |
 | 82 | Multi-tenant SaaS extension enablement | 15/15 | ✅ shipped 2026-05-01 (follow-ups in FOLLOWUPS.md) |
 | 83 | Microapp framework foundation | 13/17 | 🔄 (83.1-7 + 83.8 agent-creator-v1 + 83.11 + 83.14-17 ✅; 83.9/83.12/83.13 pending — heavy product/UI sub-phases) |
 | 84 | Coordinator agent persona + worker continuation | 5/5 | ✅ shipped 2026-05-01 (follow-ups in FOLLOWUPS.md) |

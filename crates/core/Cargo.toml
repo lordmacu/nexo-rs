@@ -87,6 +87,9 @@ serde_urlencoded = "0.7"
 regex           = "1.10"
 sqlx            = { workspace = true }
 semver          = { workspace = true }
+# Phase 81.5 — plugin discovery walker + manifest parsing
+walkdir         = "2"
+toml            = "0.8"
 
 [dev-dependencies]
 nexo-llm = { version = "0.1.1", path = "../llm", features = ["stub"] }

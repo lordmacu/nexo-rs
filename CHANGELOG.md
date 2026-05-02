@@ -10,6 +10,28 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.5 — `NexoPluginRegistry` filesystem discovery (library + tests).**
+  New module `crates/core/src/agent/nexo_plugin_registry/` consumes the
+  Phase 81.1 manifest schema + 4-tier validator. `discover()` walks
+  operator-configured `search_paths` (with `$NEXO_HOME` / `$HOME` env
+  expansion), reads `<plugin_dir>/nexo-plugin.toml` at fixed path with
+  `WalkDir::max_depth(2)`, validates each manifest, and produces a
+  `NexoPluginRegistrySnapshot` keyed by plugin id. Snapshot held in an
+  `ArcSwap` for Phase 18 hot-reload zero-contention reads. Typed
+  `DiscoveryDiagnostic` enum covers 10 kinds: SearchPathMissing /
+  ManifestParseError / ValidationFailed / SymlinkEscape /
+  PermissionDenied / DuplicateId / VersionMismatch / Disabled /
+  AllowlistRejected / UnresolvedEnvVar. Symlink-escape detection via
+  canonicalize-boundary check when `follow_symlinks=false`. Operator
+  config under `plugins.discovery` block in YAML (loaded from
+  `<config_dir>/plugins/discovery.yaml` if present; absent file ⇒ empty
+  search_paths ⇒ no scan). 16 unit tests + 1 integration test (ArcSwap
+  swap semantics + on-disk tree round-trip). **Out of scope (deferred
+  to 81.6)**: boot wire in `src/main.rs::Mode::Run` + `nexo agent
+  doctor plugins` CLI subcommand — 81.6 will wire both alongside
+  `NexoPlugin::init()` invocation. Library + tests ship now so
+  downstream sub-phases (81.6/7/8/9) have a stable consumer surface.
+
 - **Phase 84.1 → 84.4 — Coordinator + Worker personas + worker
   continuation primitives.** Closes the gap where `BindingRole`
   (Phase 77.18) only restricted the tool surface but didn't
