@@ -224,6 +224,30 @@ pub struct AdminBootstrapInputs<'a> {
     pub escalation_store: Option<
         Arc<dyn nexo_core::agent::admin_rpc::domains::escalations::EscalationStore>,
     >,
+    /// Phase 82.11.log close-out — durable agent-event log. When
+    /// `Some`, boot composes the live broadcast emitter with the
+    /// log into a `Tee([Broadcast, Log])` so every emit (transcripts
+    /// + processing state changes + escalation requested/resolved)
+    /// also lands in SQLite for backfill across daemon restarts.
+    /// `None` keeps the broadcast-only behaviour — backfill RPC
+    /// then returns transcripts JSONL only via `TranscriptReaderFs`,
+    /// without the durable non-transcript kinds.
+    ///
+    /// Concrete-typed (`Arc<SqliteAgentEventLog>`) on purpose so
+    /// boot can use the same handle for both the emitter side
+    /// (Tee composition via the `AgentEventEmitter` impl) AND the
+    /// read side (constructing `MergingAgentEventReader` via the
+    /// `AgentEventLog` impl). MSRV 1.80 doesn't support trait
+    /// object upcasting yet, so a single-typed handle keeps both
+    /// uses free of awkward casting helpers. Tests use the same
+    /// type via `SqliteAgentEventLog::open_memory()`.
+    ///
+    /// Boot supervisor calls `sweep_retention(retention_days,
+    /// max_rows)` on the same scheduler as the audit-log sweep
+    /// when the log is wired.
+    pub agent_event_log: Option<
+        Arc<nexo_core::agent::admin_rpc::SqliteAgentEventLog>,
+    >,
 }
 
 
@@ -389,10 +413,25 @@ impl AdminRpcBootstrap {
             );
             None
         };
-        let event_emitter: Arc<dyn AgentEventEmitter> = match broadcast.clone() {
-            Some(b) => b,
-            None => Arc::new(NoopAgentEventEmitter),
-        };
+        // Phase 82.11.log close-out — when boot wires a durable
+        // `SqliteAgentEventLog`, compose `Tee([Broadcast, Log])`
+        // so every emit reaches both live subscribers AND the
+        // durable backfill source. Without a log, the broadcast
+        // (or noop) emitter passes through unchanged.
+        let event_emitter: Arc<dyn AgentEventEmitter> =
+            match (broadcast.clone(), inputs.agent_event_log.clone()) {
+                (Some(b), Some(log)) => Arc::new(
+                    nexo_core::agent::agent_events::TeeAgentEventEmitter::with_sinks(
+                        vec![
+                            b as Arc<dyn AgentEventEmitter>,
+                            log as Arc<dyn AgentEventEmitter>,
+                        ],
+                    ),
+                ),
+                (Some(b), None) => b,
+                (None, Some(log)) => log as Arc<dyn AgentEventEmitter>,
+                (None, None) => Arc::new(NoopAgentEventEmitter),
+            };
 
         // Build one (router, deferred writer) per declared microapp.
         // Pairing notifier is intentionally omitted for v1: the
@@ -687,6 +726,7 @@ mod tests {
             tenant_store: None,
             skills_store: None,
             escalation_store: None,
+            agent_event_log: None,
         })
         .await
         .unwrap();
@@ -717,6 +757,7 @@ mod tests {
             tenant_store: None,
             skills_store: None,
             escalation_store: None,
+            agent_event_log: None,
         })
         .await
         .unwrap_err();
@@ -748,6 +789,7 @@ mod tests {
             tenant_store: None,
             skills_store: None,
             escalation_store: None,
+            agent_event_log: None,
         })
         .await
         .unwrap()
@@ -793,6 +835,7 @@ mod tests {
             tenant_store: None,
             skills_store: None,
             escalation_store: None,
+            agent_event_log: None,
             },
             true,
         )
@@ -831,6 +874,7 @@ mod tests {
             tenant_store: None,
             skills_store: None,
             escalation_store: None,
+            agent_event_log: None,
             },
             true,
         )
@@ -868,6 +912,7 @@ mod tests {
             tenant_store: None,
             skills_store: None,
             escalation_store: None,
+            agent_event_log: None,
             },
             true,
         )
@@ -913,6 +958,7 @@ mod tests {
             tenant_store: None,
             skills_store: None,
             escalation_store: None,
+            agent_event_log: None,
             },
             true,
         )
@@ -964,6 +1010,7 @@ mod tests {
             tenant_store: None,
             skills_store: None,
             escalation_store: None,
+            agent_event_log: None,
             },
             true,
         )
@@ -1010,6 +1057,7 @@ mod tests {
             tenant_store: None,
             skills_store: None,
             escalation_store: None,
+            agent_event_log: None,
             },
             true,
         )
@@ -1058,6 +1106,7 @@ mod tests {
             tenant_store: None,
             skills_store: None,
             escalation_store: None,
+            agent_event_log: None,
         })
         .await
         .unwrap()
@@ -1124,6 +1173,7 @@ mod tests {
             tenant_store: None,
             skills_store: None,
             escalation_store: None,
+            agent_event_log: None,
             },
             false,
         )
@@ -1135,5 +1185,74 @@ mod tests {
         // wired — microapp keeps its router for direct calls.
         assert_eq!(bootstrap.subscribe_task_count(), 0);
         assert!(bootstrap.is_active());
+    }
+
+    #[tokio::test]
+    async fn agent_event_log_when_wired_durably_captures_emissions() {
+        // Boot composes Tee([Broadcast, SqliteAgentEventLog]) so
+        // every emit reaches both the live broadcast (microapp
+        // notifications) AND the durable log (operator-dashboard
+        // backfill across daemon restart).
+        use nexo_core::agent::admin_rpc::{
+            AgentEventLog, AgentEventLogFilter, SqliteAgentEventLog,
+        };
+        use nexo_tool_meta::admin::agent_events::{AgentEventKind, TranscriptRole};
+        use uuid::Uuid;
+
+        let cfg = extensions_cfg_with_grant("agent-creator", &["agents_crud"]);
+        let mut manifests = BTreeMap::new();
+        manifests.insert("agent-creator".into(), admin_caps(&["agents_crud"], &[]));
+        let dir = tempfile::tempdir().unwrap();
+        let log = Arc::new(SqliteAgentEventLog::open_memory().await.unwrap());
+        let bootstrap = AdminRpcBootstrap::build_with_firehose(
+            AdminBootstrapInputs {
+                config_dir: dir.path(),
+                secrets_root: dir.path(),
+                audit_db: None,
+                extensions_cfg: &cfg,
+                admin_capabilities: &manifests,
+                http_server_capabilities: &BTreeMap::new(),
+                reload_signal: noop_reload(),
+                transcript_reader: None,
+                broker: None,
+                transcript_writer: None,
+                processing_store: None,
+                tenant_store: None,
+                skills_store: None,
+                escalation_store: None,
+                agent_event_log: Some(log.clone()),
+            },
+            true,
+        )
+        .await
+        .unwrap()
+        .expect("admin wire built");
+
+        // Drive an emit through the boot-built emitter.
+        bootstrap
+            .event_emitter()
+            .emit(AgentEventKind::TranscriptAppended {
+                agent_id: "ana".into(),
+                session_id: Uuid::nil(),
+                seq: 0,
+                role: TranscriptRole::User,
+                body: "hola".into(),
+                sent_at_ms: 1_700_000_000_000,
+                sender_id: None,
+                source_plugin: "whatsapp".into(),
+                tenant_id: None,
+            })
+            .await;
+
+        // Durable side captured the row.
+        let rows = log
+            .list_recent(&AgentEventLogFilter {
+                agent_id: "ana".into(),
+                limit: 10,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1, "Tee[Broadcast, Log] persists emit");
     }
 }
