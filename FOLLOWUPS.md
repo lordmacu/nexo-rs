@@ -2404,6 +2404,53 @@ deferred:
   fresh data. Same boot-order refactor as the rest of 82.x's
   deferreds — folded with main.rs operator wire-up.
 
+### Phase 82.13.b — IA awareness during/after operator takeover
+
+Cristian asked 2026-05-02 "¿la IA sabe de la conversación
+después del resume?". Today's behaviour:
+
+- Pre-pause history: agent transcript persists. ✅
+- During pause: inbound user messages are SKIPPED (Phase 82.13
+  contract: "agent skips inbounds while paused"). ❌
+- During pause: operator replies via `intervention.Reply` reach
+  the user via outbound but are NOT stamped in the agent's
+  transcript. ❌
+- After resume: agent has zero context of what happened during
+  the takeover — neither user messages nor operator replies. ❌
+
+Three improvements close the gap (each independent, can ship
+incrementally):
+
+1. **Stamp operator replies in transcript.** When
+   `processing/intervention` Reply is dispatched, append a
+   `TranscriptEntry { role: Assistant, content: body,
+   sender_id: Some("operator"), ... }` to the active session.
+   Requires a "current-session-for-scope" lookup
+   (`TranscriptsIndex` extension or active-session map). Agent
+   reads its own transcript on next turn and sees the operator's
+   words as if it had said them.
+2. **Buffer inbounds during pause.** Instead of dropping inbounds
+   when `ProcessingControlState::PausedByOperator`, store them
+   in `pending_inbounds` on the state row. On resume, replay them
+   as synthetic User entries in the transcript. Agent sees what
+   the user said while it was paused.
+3. **`HumanTakeover::release(summary_for_agent)` end-to-end.**
+   The `summary_for_agent` parameter exists in the SDK
+   (Phase 83.8.6) but the daemon side never injects. When wired,
+   the operator's free-form summary lands as a `System` entry
+   ("operator summary: …") right before the next agent turn.
+   Most flexible — operator can synthesise context the agent
+   needs without forcing a literal replay.
+
+Order of value: #1 (highest, ~1.5 commits) > #3 (~1 commit) >
+#2 (highest framework refactor, ~3 commits — needs pending
+inbound queue + replay machinery).
+
+Not blocker for the agent-creator v1 microapp UI: takeover
+already works end-to-end (operator message reaches the user via
+the channel plugin). The agent just resumes "blind" from the
+last pre-pause turn. Phase 2 SaaS UX polish.
+
 ### Phase 83.8.4.c — outbound_message_id correlation ack flow
 
 Plugin outbound dispatchers (`crates/plugins/whatsapp/src/dispatch.rs`
