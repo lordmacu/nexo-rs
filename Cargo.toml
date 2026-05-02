@@ -222,6 +222,7 @@ rand                = "0.8"
 rust-embed          = { version = "8", features = ["include-exclude"] }
 sha2                = { workspace = true }
 arc-swap            = { workspace = true }
+semver              = { workspace = true }
 nexo-plugin-browser = { version = "0.1.1", path = "crates/plugins/browser" }
 nexo-plugin-whatsapp = { version = "0.1.1", path = "crates/plugins/whatsapp" }
 nexo-plugin-telegram = { version = "0.1.1", path = "crates/plugins/telegram" }

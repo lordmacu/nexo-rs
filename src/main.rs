@@ -1705,6 +1705,34 @@ async fn main() -> Result<()> {
         .await
         .context("failed to start plugins")?;
 
+    // Phase 81.5 — discover NexoPlugin manifests on disk and produce
+    // a hot-reloadable snapshot. Production registration of these
+    // plugins (NexoPlugin::init() invocation) is Phase 81.6's job;
+    // here we only validate + populate the snapshot so downstream
+    // sub-phases have a stable consumer surface.
+    let nexo_plugin_registry =
+        nexo_core::agent::nexo_plugin_registry::NexoPluginRegistry::empty();
+    {
+        let snap = nexo_core::agent::nexo_plugin_registry::discover(
+            &cfg.plugins.discovery,
+            &semver::Version::parse(env!("CARGO_PKG_VERSION"))
+                .unwrap_or_else(|_| semver::Version::new(0, 0, 0)),
+        );
+        tracing::info!(
+            target: "plugins.discovery",
+            loaded = snap.last_report.loaded_ids.len(),
+            invalid = snap.last_report.invalid,
+            disabled = snap.last_report.disabled,
+            duplicates = snap.last_report.duplicates,
+            "plugin discovery completed"
+        );
+        nexo_plugin_registry.swap(snap);
+    }
+    // `nexo_plugin_registry` is held in scope so 81.6 can pull it
+    // into BootDeps when it ships. Today no consumer reads from it —
+    // discovery is observation-only.
+    let _nexo_plugin_registry = nexo_plugin_registry;
+
     // Email tool context — built post-start so the dispatcher handle
     // is primed. Each agent loop below picks it up when its `plugins`
     // list mentions `email`.
