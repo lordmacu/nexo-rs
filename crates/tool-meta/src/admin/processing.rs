@@ -215,6 +215,15 @@ pub struct ProcessingAck {
     pub changed: bool,
     /// `correlation_id` for log / audit lookups.
     pub correlation_id: Uuid,
+    /// Phase 82.13.b.1 — `Some(true)` when the daemon appended
+    /// the operator reply (or summary, or replayed inbound) to
+    /// the agent transcript; `Some(false)` when the call
+    /// provided no `session_id`, no transcript appender was
+    /// wired, or persistence failed; `None` for calls where
+    /// transcript stamping is not applicable (pause, or
+    /// intervention with a non-Reply action).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcript_stamped: Option<bool>,
 }
 
 /// Params for `nexo/admin/processing/resume`.
@@ -235,6 +244,18 @@ pub struct ProcessingInterventionParams {
     pub action: InterventionAction,
     /// Operator bearer hash.
     pub operator_token_hash: String,
+    /// Phase 82.13.b.1 — session in which to stamp the operator
+    /// reply on the agent transcript. When set together with a
+    /// `Reply` action, the daemon appends a synthetic entry
+    /// (`role: Assistant`, `source_plugin:
+    /// "intervention:<channel>"`, `sender_id:
+    /// "operator:<token_hash>"`) AFTER the channel-side send
+    /// acks. When absent the reply still goes out but the
+    /// transcript is not modified — `ProcessingAck.
+    /// transcript_stamped` reports `Some(false)` so the operator
+    /// UI can surface a hint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<Uuid>,
 }
 
 /// Params for `nexo/admin/processing/state`.
@@ -350,5 +371,81 @@ mod tests {
             PROCESSING_STATE_CHANGED_NOTIFY_METHOD,
             "nexo/notify/processing_state_changed"
         );
+    }
+
+    #[test]
+    fn intervention_params_round_trip_with_session_id() {
+        let p = ProcessingInterventionParams {
+            scope: conversation_scope(),
+            action: InterventionAction::Reply {
+                channel: "whatsapp".into(),
+                account_id: "55-1234".into(),
+                to: "55-5678".into(),
+                body: "ok".into(),
+                msg_kind: "text".into(),
+                attachments: vec![],
+                reply_to_msg_id: None,
+            },
+            operator_token_hash: "abcdef0123456789".into(),
+            session_id: Some(Uuid::nil()),
+        };
+        let v = serde_json::to_value(&p).unwrap();
+        assert_eq!(v["session_id"], "00000000-0000-0000-0000-000000000000");
+        let back: ProcessingInterventionParams = serde_json::from_value(v).unwrap();
+        assert_eq!(back, p);
+    }
+
+    #[test]
+    fn intervention_params_legacy_payload_without_session_id_deserializes() {
+        // Pre-Phase 82.13.b microapps emit no `session_id` field.
+        // Wire shape MUST keep deserialising those payloads to
+        // `session_id: None` so existing operator UIs keep
+        // working unchanged.
+        let raw = serde_json::json!({
+            "scope": {
+                "kind": "conversation",
+                "agent_id": "ana",
+                "channel": "whatsapp",
+                "account_id": "55-1234",
+                "contact_id": "55-5678",
+            },
+            "action": {
+                "kind": "reply",
+                "channel": "whatsapp",
+                "account_id": "55-1234",
+                "to": "55-5678",
+                "body": "ok",
+                "msg_kind": "text",
+            },
+            "operator_token_hash": "abcdef0123456789",
+        });
+        let p: ProcessingInterventionParams = serde_json::from_value(raw).unwrap();
+        assert!(p.session_id.is_none());
+        // And serialising the result back skips the field on the wire.
+        let s = serde_json::to_string(&p).unwrap();
+        assert!(!s.contains("session_id"));
+    }
+
+    #[test]
+    fn ack_round_trip_with_transcript_stamped_present_and_absent() {
+        let with = ProcessingAck {
+            changed: true,
+            correlation_id: Uuid::nil(),
+            transcript_stamped: Some(true),
+        };
+        let s = serde_json::to_string(&with).unwrap();
+        assert!(s.contains("transcript_stamped"));
+        let back: ProcessingAck = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, with);
+
+        let without = ProcessingAck {
+            changed: false,
+            correlation_id: Uuid::nil(),
+            transcript_stamped: None,
+        };
+        let s = serde_json::to_string(&without).unwrap();
+        assert!(!s.contains("transcript_stamped"));
+        let back: ProcessingAck = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, without);
     }
 }

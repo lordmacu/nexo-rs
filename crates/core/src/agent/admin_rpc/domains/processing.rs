@@ -136,6 +136,7 @@ pub async fn pause(
         serde_json::to_value(ProcessingAck {
             changed,
             correlation_id: uuid::Uuid::new_v4(),
+            transcript_stamped: None,
         })
         .unwrap_or(serde_json::Value::Null),
     )
@@ -178,6 +179,7 @@ pub async fn resume(
         serde_json::to_value(ProcessingAck {
             changed,
             correlation_id: uuid::Uuid::new_v4(),
+            transcript_stamped: None,
         })
         .unwrap_or(serde_json::Value::Null),
     )
@@ -303,6 +305,7 @@ pub async fn intervention(
         serde_json::to_value(ProcessingAck {
             changed: true,
             correlation_id: uuid::Uuid::new_v4(),
+            transcript_stamped: None,
         })
         .unwrap_or(serde_json::Value::Null),
     )
