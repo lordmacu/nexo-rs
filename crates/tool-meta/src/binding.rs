@@ -78,6 +78,15 @@ pub struct BindingContext {
     /// inbounds.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event_source: Option<EventSourceMeta>,
+
+    /// Phase 83.8.12 — SaaS empresa (tenant) key. `None` for
+    /// agents that predate the multi-empresa model
+    /// (`agents.yaml.<id>` without an `empresa_id` field).
+    /// Multi-tenant filtering across admin RPC + microapp tools
+    /// keys on this field. Sits ABOVE `account_id`, which
+    /// remains the channel-side discriminator.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub empresa_id: Option<String>,
 }
 
 impl BindingContext {
@@ -93,6 +102,7 @@ impl BindingContext {
             binding_id: None,
             mcp_channel_source: None,
             event_source: None,
+            empresa_id: None,
         }
     }
 

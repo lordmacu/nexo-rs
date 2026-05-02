@@ -1,0 +1,22 @@
+[plugin]
+id = "ventas-etb"
+version = "0.1.0"
+name = "ETB Sales Microapp"
+description = "Reference SaaS-shaped microapp — telecom sales workflow. Serves multiple personas (Ana / Carlos / María) off the same binary; per-agent config selects regional + tier + tarifario."
+
+[capabilities]
+tools = [
+    "ventas_etb_get_planes",
+    "ventas_etb_check_coverage",
+    "ventas_etb_register_lead",
+    "ventas_etb_lead_summary",
+]
+skills = ["ventas-flujo"]
+
+[transport]
+kind = "stdio"
+command = "./ventas-etb"
+
+[meta]
+author = "nexo-rs"
+license = "MIT OR Apache-2.0"

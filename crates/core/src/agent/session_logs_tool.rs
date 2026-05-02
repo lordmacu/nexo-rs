@@ -470,6 +470,7 @@ mod tests {
             auto_approve: false,
             extract_memories: None,
             event_subscribers: Vec::new(),
+            empresa_id: None,
             extensions_config: std::collections::BTreeMap::new(),
         });
         let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));
@@ -687,6 +688,7 @@ mod tests {
             auto_approve: false,
             extract_memories: None,
             event_subscribers: Vec::new(),
+            empresa_id: None,
             extensions_config: std::collections::BTreeMap::new(),
         });
         let sessions = Arc::new(SessionManager::new(Duration::from_secs(60), 20));

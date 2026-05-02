@@ -4088,6 +4088,7 @@ dependencies = [
  "globset",
  "indicatif",
  "nexo-auth",
+ "nexo-broker",
  "nexo-config",
  "nexo-core",
  "nexo-extensions",

@@ -123,6 +123,7 @@ fn agent_cfg() -> Arc<AgentConfig> {
         auto_approve: false,
         extract_memories: None,
             event_subscribers: Vec::new(),
+            empresa_id: None,
             extensions_config: std::collections::BTreeMap::new(),
     })
 }

@@ -583,6 +583,7 @@ mod tests {
             auto_approve: false,
             extract_memories: None,
             event_subscribers: Vec::new(),
+            empresa_id: None,
             extensions_config: std::collections::BTreeMap::new(),
         };
         let ctx = Arc::new(AgentContext::new(
@@ -918,6 +919,7 @@ mod tests {
             auto_approve: false,
             extract_memories: None,
             event_subscribers: Vec::new(),
+            empresa_id: None,
             extensions_config: std::collections::BTreeMap::new(),
         };
         let actx = Arc::new(AgentContext::new(
@@ -1052,6 +1054,7 @@ mod tests {
             auto_approve: false,
             extract_memories: None,
             event_subscribers: Vec::new(),
+            empresa_id: None,
             extensions_config: std::collections::BTreeMap::new(),
         };
         let actx = Arc::new(AgentContext::new(
