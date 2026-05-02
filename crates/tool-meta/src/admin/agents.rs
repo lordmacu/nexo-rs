@@ -18,6 +18,12 @@ pub struct AgentsListFilter {
     /// returns every plugin.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plugin_filter: Option<String>,
+    /// Phase 83.8.12 — multi-tenant filter. `Some(id)` returns
+    /// only agents whose `agents.yaml.<id>.tenant_id` matches.
+    /// `None` returns every agent regardless of tenant
+    /// (operator scope).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<String>,
 }
 
 /// One row of the `agents/list` result.
