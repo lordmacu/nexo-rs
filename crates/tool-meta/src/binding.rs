@@ -81,12 +81,12 @@ pub struct BindingContext {
 
     /// Phase 83.8.12 — SaaS empresa (tenant) key. `None` for
     /// agents that predate the multi-empresa model
-    /// (`agents.yaml.<id>` without an `empresa_id` field).
+    /// (`agents.yaml.<id>` without an `tenant_id` field).
     /// Multi-tenant filtering across admin RPC + microapp tools
     /// keys on this field. Sits ABOVE `account_id`, which
     /// remains the channel-side discriminator.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub empresa_id: Option<String>,
+    pub tenant_id: Option<String>,
 }
 
 impl BindingContext {
@@ -102,7 +102,7 @@ impl BindingContext {
             binding_id: None,
             mcp_channel_source: None,
             event_source: None,
-            empresa_id: None,
+            tenant_id: None,
         }
     }
 
@@ -157,6 +157,34 @@ mod tests {
         assert!(ctx.account_id.is_none());
         assert!(ctx.binding_id.is_none());
         assert!(ctx.mcp_channel_source.is_none());
+        assert!(ctx.tenant_id.is_none());
+    }
+
+    #[test]
+    fn binding_context_round_trips_with_tenant_id() {
+        let mut ctx = BindingContext::agent_only("ana");
+        ctx.tenant_id = Some("acme-corp".into());
+        let v = serde_json::to_value(&ctx).unwrap();
+        assert_eq!(v["tenant_id"], serde_json::json!("acme-corp"));
+        let back: BindingContext = serde_json::from_value(v).unwrap();
+        assert_eq!(back.tenant_id, Some("acme-corp".into()));
+    }
+
+    #[test]
+    fn binding_context_deserializes_legacy_payload_without_tenant_id() {
+        // Producers predating Phase 83.8.12 emit BindingContext
+        // payloads that lack the tenant_id field. The wire path
+        // MUST NOT fail in that case — the new field defaults to
+        // None so single-tenant deployments keep working.
+        let legacy = serde_json::json!({
+            "agent_id": "ana",
+            "channel": "whatsapp",
+            "account_id": "wa.0",
+            "binding_id": "whatsapp:wa.0"
+        });
+        let parsed: BindingContext = serde_json::from_value(legacy).unwrap();
+        assert_eq!(parsed.agent_id, "ana");
+        assert!(parsed.tenant_id.is_none());
     }
 
     #[test]

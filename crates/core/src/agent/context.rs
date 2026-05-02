@@ -608,7 +608,7 @@ mod plan_mode_tests {
             auto_approve: false,
             extract_memories: None,
             event_subscribers: Vec::new(),
-            empresa_id: None,
+            tenant_id: None,
             extensions_config: std::collections::BTreeMap::new(),
         };
         AgentContext::new(
@@ -979,7 +979,7 @@ mod binding_context_tests {
             auto_approve: false,
             extract_memories: None,
             event_subscribers: Vec::new(),
-            empresa_id: None,
+            tenant_id: None,
             extensions_config: std::collections::BTreeMap::new(),
         }
     }
@@ -1139,7 +1139,7 @@ mod build_meta_value_tests {
             auto_approve: false,
             extract_memories: None,
             event_subscribers: Vec::new(),
-            empresa_id: None,
+            tenant_id: None,
             extensions_config: std::collections::BTreeMap::new(),
         });
         let broker = AnyBroker::local();

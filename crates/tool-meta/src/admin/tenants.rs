@@ -1,15 +1,15 @@
-//! Phase 83.8.12 — `nexo/admin/empresas/*` wire types.
+//! Phase 83.8.12 — `nexo/admin/tenants/*` wire types.
 //!
 //! An *empresa* (company / tenant) is the top-level multi-tenant
 //! key for the SaaS deployment of `agent-creator`. One daemon
-//! hosts N empresas; each empresa owns its own agents, skills,
+//! hosts N tenants; each empresa owns its own agents, skills,
 //! and LLM provider keys. The wire shapes live here so SDK
 //! consumers (microapps, operator UIs) and the daemon's
-//! [`nexo_core::agent::admin_rpc::domains::empresas`] handlers
+//! [`nexo_core::agent::admin_rpc::domains::tenants`] handlers
 //! agree on the params + result shapes without either crate
 //! pulling in the other.
 //!
-//! Storage on the daemon side is `config/empresas.yaml`
+//! Storage on the daemon side is `config/tenants.yaml`
 //! (see `nexo_setup::admin_adapters::EmpresasYamlPatcher`); the
 //! wire shapes intentionally do NOT mention the file format.
 
@@ -17,9 +17,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Compact summary used by `empresas/list`. Excludes the LLM
+/// Compact summary used by `tenants/list`. Excludes the LLM
 /// provider list + metadata so list calls stay cheap on a daemon
-/// that hosts hundreds of empresas.
+/// that hosts hundreds of tenants.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EmpresaSummary {
     /// Stable kebab-case id (`acme-corp`, `globex`, …). Matches
@@ -32,12 +32,12 @@ pub struct EmpresaSummary {
     /// How many agents in `agents.yaml` reference this empresa.
     /// Computed at list time by the production adapter.
     pub agent_count: usize,
-    /// Empresa creation timestamp.
+    /// Tenant creation timestamp.
     pub created_at: DateTime<Utc>,
 }
 
-/// Full empresa record returned by `empresas/get` and
-/// `empresas/upsert`. Adds the LLM provider refs and metadata
+/// Full empresa record returned by `tenants/get` and
+/// `tenants/upsert`. Adds the LLM provider refs and metadata
 /// the summary omits.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EmpresaDetail {
@@ -47,9 +47,9 @@ pub struct EmpresaDetail {
     pub display_name: String,
     /// Active flag.
     pub active: bool,
-    /// Empresa creation timestamp.
+    /// Tenant creation timestamp.
     pub created_at: DateTime<Utc>,
-    /// Provider names (from the `llm.yaml.empresas.<id>.providers.*`
+    /// Provider names (from the `llm.yaml.tenants.<id>.providers.*`
     /// or `llm.yaml.providers.*` namespace) the empresa is
     /// allowed to use. Empty list = none granted yet.
     #[serde(default)]
@@ -61,11 +61,11 @@ pub struct EmpresaDetail {
     pub metadata: BTreeMap<String, serde_json::Value>,
 }
 
-/// Params for `nexo/admin/empresas/list`. All filters optional.
+/// Params for `nexo/admin/tenants/list`. All filters optional.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct EmpresasListFilter {
-    /// When `true`, omit empresas whose `active` flag is `false`.
+    /// When `true`, omit tenants whose `active` flag is `false`.
     pub active_only: bool,
     /// Filter by id prefix (case-sensitive). `None` returns
     /// every empresa.
@@ -73,21 +73,21 @@ pub struct EmpresasListFilter {
     pub prefix: Option<String>,
 }
 
-/// Result of `nexo/admin/empresas/list`. Sorted alpha by id.
+/// Result of `nexo/admin/tenants/list`. Sorted alpha by id.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EmpresasListResponse {
-    /// Matching empresas.
-    pub empresas: Vec<EmpresaSummary>,
+    /// Matching tenants.
+    pub tenants: Vec<EmpresaSummary>,
 }
 
-/// Params for `nexo/admin/empresas/get`.
+/// Params for `nexo/admin/tenants/get`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EmpresasGetParams {
     /// Stable id.
-    pub empresa_id: String,
+    pub tenant_id: String,
 }
 
-/// Result of `nexo/admin/empresas/get`. `empresa = None` is the
+/// Result of `nexo/admin/tenants/get`. `empresa = None` is the
 /// not-found case (daemon does NOT return an error so callers
 /// can probe).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -96,10 +96,10 @@ pub struct EmpresasGetResponse {
     pub empresa: Option<EmpresaDetail>,
 }
 
-/// Params for `nexo/admin/empresas/upsert`. Create-or-update —
+/// Params for `nexo/admin/tenants/upsert`. Create-or-update —
 /// the daemon decides based on whether the id already exists.
 /// `None`-valued optional fields preserve the existing value
-/// (or default to `true`/`[]`/`{}` for new empresas).
+/// (or default to `true`/`[]`/`{}` for new tenants).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EmpresasUpsertInput {
     /// Stable kebab-case id. Must match
@@ -118,7 +118,7 @@ pub struct EmpresasUpsertInput {
     pub metadata: Option<BTreeMap<String, serde_json::Value>>,
 }
 
-/// Result of `nexo/admin/empresas/upsert`.
+/// Result of `nexo/admin/tenants/upsert`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EmpresasUpsertResponse {
     /// Final empresa record after the write.
@@ -128,11 +128,11 @@ pub struct EmpresasUpsertResponse {
     pub created: bool,
 }
 
-/// Params for `nexo/admin/empresas/delete`.
+/// Params for `nexo/admin/tenants/delete`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EmpresasDeleteParams {
     /// Stable id.
-    pub empresa_id: String,
+    pub tenant_id: String,
     /// `true` cascades the delete to every agent owned by the
     /// empresa. `false` (default) succeeds only when no agents
     /// reference it — the response carries the orphan list so
@@ -141,7 +141,7 @@ pub struct EmpresasDeleteParams {
     pub purge: bool,
 }
 
-/// Result of `nexo/admin/empresas/delete`.
+/// Result of `nexo/admin/tenants/delete`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EmpresasDeleteResponse {
     /// `true` when the empresa entry was removed, `false`

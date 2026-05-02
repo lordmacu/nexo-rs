@@ -180,7 +180,7 @@ fn two_binding_agent() -> AgentConfig {
         auto_approve: false,
         extract_memories: None,
             event_subscribers: Vec::new(),
-            empresa_id: None,
+            tenant_id: None,
             extensions_config: std::collections::BTreeMap::new(),
     }
 }
@@ -377,7 +377,7 @@ async fn agent_without_bindings_drops_inbound_events() {
         auto_approve: false,
         extract_memories: None,
             event_subscribers: Vec::new(),
-            empresa_id: None,
+            tenant_id: None,
             extensions_config: std::collections::BTreeMap::new(),
     };
     let (runtime, captures, broker) = spawn_runtime(cfg).await;

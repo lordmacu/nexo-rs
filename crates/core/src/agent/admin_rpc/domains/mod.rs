@@ -15,6 +15,7 @@ pub mod agent_events;
 pub mod agents;
 pub mod channels;
 pub mod credentials;
+pub mod tenants;
 pub mod escalations;
 pub mod llm_providers;
 pub mod pairing;
