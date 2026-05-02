@@ -2646,6 +2646,15 @@ Cross-references:
   gained `session_id: Option<Uuid>` (was missing since Phase
   82.13.b.1 added the field on the SDK side). Out-of-tree commit
   9f634a9.
+- 82.14.b + 83.8.2.b ✅ Skills + escalations admin_bootstrap
+  wire-up — same gap as 83.8.12.2.b: dispatcher had
+  `with_skills_domain` / `with_escalations_domain` builders
+  but `admin_bootstrap` never threaded a store, so production
+  always returned the typed "domain not configured" -32603.
+  `AdminBootstrapInputs` gains `skills_store: Option<Arc<dyn
+  SkillsStore>>` + `escalation_store: Option<Arc<dyn
+  EscalationStore>>`; build_inner installs both when wired.
+  13 fixture sites picked up the new fields.
 - 83.8.12.2.b ✅ Tenants admin RPC dispatcher routing —
   Phase 83.8.12.2 shipped the `domains::tenants` handlers + the
   `TenantStore` trait but the dispatcher never routed to them
