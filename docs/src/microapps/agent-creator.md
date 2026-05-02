@@ -73,9 +73,14 @@ tenant's allowed set before the microapp ever sees the frame.
 | `takeover_release` | `HumanTakeover::release` → `nexo/admin/processing/resume` |
 
 `takeover_send` flows operator-typed replies through the
-`ChannelOutboundDispatcher` trait wired in Phase 83.8.4.a — the
-production adapter that bridges to plugin send paths is
-deferred-83.8.4.b.
+`ChannelOutboundDispatcher` trait wired in Phase 83.8.4.a — Phase
+83.8.4.b ships the production
+`BrokerOutboundDispatcher` (`nexo_setup::admin_adapters`) that
+publishes to the per-channel
+`plugin.outbound.<channel>[.<account>]` topic each plugin's
+existing dispatcher already listens on. WhatsApp translator
+ships in v1; Telegram + Email translators are TBD per-channel
+follow-ups (`83.8.4.b.tg` / `83.8.4.b.em`).
 
 ### Escalations — Phase 83.8.9
 
