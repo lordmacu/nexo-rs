@@ -276,7 +276,70 @@ awaits the matching reply.
 expands the query with up to 3 derived concept tags so FTS5 hits
 memories whose stored content diverges from the query surface.
 
-### 5.3 `broker.publish` (child → host)
+### 5.3 `llm.complete` (child → host request) <Phase 81.20.b>
+
+When the plugin needs an LLM completion, it issues a request and
+awaits the response.
+
+**Child → host request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 50,
+  "method": "llm.complete",
+  "params": {
+    "provider": "minimax",
+    "model": "minimax-m2.5",
+    "messages": [
+      {"role": "user", "content": "summarize this in one line: ..."}
+    ],
+    "max_tokens": 1024,
+    "temperature": 0.7,
+    "system_prompt": "You answer concisely."
+  }
+}
+```
+
+`messages[].role` is one of `system`, `user`, `assistant`, `tool`.
+`max_tokens` defaults to 4096; `temperature` defaults to 0.7;
+`system_prompt` is optional.
+
+**Host → child reply (success):**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 50,
+  "result": {
+    "content": "Concise reply text.",
+    "finish_reason": "stop",
+    "usage": {
+      "prompt_tokens": 25,
+      "completion_tokens": 8
+    }
+  }
+}
+```
+
+`finish_reason` is one of `stop`, `length`, `tool_use`,
+`other:<reason>`.
+
+**Host → child reply (errors):**
+- `-32602` invalid params (missing `provider` / `model` /
+  `messages`, malformed message, empty messages array).
+- `-32603` LLM not configured (operator hasn't wired the
+  registry to the subprocess pipeline) OR client build failed
+  (provider name not registered, config invalid) OR `chat()`
+  call returned an error.
+- `-32601` provider returned tool calls instead of text — MVP
+  surfaces this as `not_implemented`. The tool-call wire shape
+  (which lets the child re-submit `tool_result` follow-ups)
+  lands in a future contract bump.
+
+Daemon-side caps `max_tokens` at u32::MAX. Streaming via
+`llm.complete.delta` notifications is on the roadmap (81.20.b.b)
+— today the host buffers the full response and replies once.
+
+### 5.4 `broker.publish` (child → host)
 
 When the plugin wants to push an event onto the broker (e.g.
 delivering an inbound message from Slack), it writes:
@@ -563,3 +626,4 @@ contract document.
 |---------|------|---------|
 | `1.0.0` | 2026-05-01 | Initial publication. Lifecycle (`initialize` / `shutdown`) + broker bridge (`broker.event` / `broker.publish`) + manifest `[plugin.entrypoint]` section. Host adapter shipped in Phase 81.14 + 81.14.b; Rust child SDK in Phase 81.15.a. |
 | `1.1.0` | 2026-05-01 | Phase 81.20.a — `memory.recall` request-response added. Additive; existing 1.0.0 plugins continue to work unchanged. Manifest `[plugin.supervisor]` section (Phase 81.21.b) — additive. Host-side activation: Phase 81.17.b boot wire. Phase 81.21 supervisor + 81.21.b stderr tail capture. |
+| `1.2.0` | 2026-05-01 | Phase 81.20.b — `llm.complete` request-response added. Additive. MVP supports text responses only; tool-call responses surface as `-32601 not_implemented`. Streaming (`llm.complete.delta` notifications) on roadmap as 81.20.b.b. Host-side runtime threading deferred to 81.20.b.b — daemon today returns `-32603 "llm not configured"` until main.rs threads `LlmServices` into the subprocess pipeline. |

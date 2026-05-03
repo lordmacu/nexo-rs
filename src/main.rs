@@ -1503,7 +1503,14 @@ async fn main() -> Result<()> {
             }
         }
     }
-    let llm_registry = LlmRegistry::with_builtins();
+    // Phase 81.20.b — wrap in Arc immediately so the
+    // wire_plugin_registry callsite below can clone it into
+    // `SubprocessRuntime.llm_registry` for the daemon-mediated
+    // `llm.complete` RPC. Pre-81.20.b we wrapped at line ~5023
+    // (after the wire callsite); now the Arc lives from
+    // construction onward. All intermediate `llm_registry.method()`
+    // calls work via `Arc<T>: Deref<Target = T>`.
+    let llm_registry = Arc::new(LlmRegistry::with_builtins());
 
     // Provider-level validation pass: every agent's (and every
     // binding override's) `model.provider` must be a real registered
@@ -1989,6 +1996,15 @@ async fn main() -> Result<()> {
         // disabled long-term memory in `memory.yaml`, not because
         // of a daemon-side plumbing gap.
         long_term_memory: memory.clone(),
+        // Phase 81.20.b — `llm.complete` handler shape ships
+        // library-side; threading `llm: Some(LlmServices { registry,
+        // config })` into the subprocess pipeline requires extending
+        // `PluginInitContext` with `llm_services: Option<LlmServices>`
+        // (or similar) so SubprocessNexoPlugin::init can pass it to
+        // spawn_and_handshake. Deferred to 81.20.b.b — until that
+        // ships, subprocess plugins receive -32603 "llm not
+        // configured" for every llm.complete request.
+        llm: None,
     };
     let wire =
         nexo_core::agent::nexo_plugin_registry::wire_plugin_registry_with_runtime(
@@ -5020,7 +5036,9 @@ async fn main() -> Result<()> {
     // CancellationToken tied to `watcher_shutdown` so the watcher +
     // broker subscriber exit alongside the extensions watcher on
     // SIGTERM.
-    let llm_registry = Arc::new(llm_registry);
+    // Phase 81.20.b — `llm_registry` is already `Arc<LlmRegistry>`
+    // from the construction at line ~1506; the prior duplicate
+    // `Arc::new(llm_registry)` here is removed.
     let reload_coord = Arc::new(nexo_core::ConfigReloadCoordinator::new(
         config_dir.clone(),
         Arc::clone(&llm_registry),
