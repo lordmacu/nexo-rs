@@ -10,6 +10,25 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.9.b — `nexo agent doctor plugins` CLI subcommand.** Closes
+  the deferred CLI piece of Phase 81.9. New `Mode::DoctorPlugins { json: bool }`
+  variant + parser arm `[cmd, sub] if cmd == "doctor" && sub == "plugins"`.
+  Handler `run_doctor_plugins(config_dir, json) -> Result<i32>` loads
+  the daemon config in-process via `AppConfig::load`, runs
+  `wire_plugin_registry`, and renders the resulting snapshot via the
+  `doctor_render` module shipped in 81.9. Renders 8 sections (LOADED
+  PLUGINS / DIAGNOSTICS / PLUGIN AGENTS CONTRIBUTED / AGENT MERGE
+  CONFLICTS / PLUGIN INIT OUTCOMES / PLUGIN SKILLS CONTRIBUTED / SKILL
+  CONFLICTS / CHANNEL ADAPTERS) plus a header with config path +
+  daemon version + a SCANNED-counts line + trailing `EXIT 0|1`. Exits
+  1 when error-level diagnostics, `LastPluginWins` agent conflicts, or
+  `Failed` init outcomes surface; exits 0 on warn-only states.
+  `--json` flag re-emits a `DoctorPluginsJsonReport` (single-line JSON)
+  for CI pipelines and admin-ui consumption (Phase 81.11). Help text
+  in `print_usage` updated. Operator runs the command BEFORE booting
+  to validate plugin discovery + merge + init wiring without a live
+  daemon.
+
 - **Phase 81.9 — `wire_plugin_registry` boot helper + boot wire integration
   + `doctor_render` module (library + tests).** New module
   `nexo_core::agent::nexo_plugin_registry::boot` exposes
