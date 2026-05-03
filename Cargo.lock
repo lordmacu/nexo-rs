@@ -3788,6 +3788,8 @@ dependencies = [
  "async-trait",
  "dashmap 6.1.0",
  "nexo-broker",
+ "nexo-llm",
+ "nexo-memory",
  "nexo-microapp-sdk",
  "nexo-plugin-manifest",
  "nexo-tool-meta",

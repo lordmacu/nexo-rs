@@ -10,6 +10,108 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.15.c — SDK child-side RPC helpers (`recall_memory`
+  + `complete_llm`).** Extends `nexo-microapp-sdk`'s
+  `BrokerSender` (the handle plugin authors receive in their
+  `BrokerEventHandler`) from publish-only to full request-
+  response. Plugin authors no longer hand-roll JSON-RPC framing
+  to call the daemon's `memory.recall` / `llm.complete` RPCs.
+  
+  New low-level helper:
+  ```rust
+  pub async fn request(
+      &self,
+      method: &str,
+      params: Value,
+      timeout: Option<Duration>,
+  ) -> Result<Value, RpcError>;
+  ```
+  Allocates a fresh request id (child id space starts at 100 to
+  leave headroom under the host's reserved 1/2 for initialize/
+  shutdown), registers a `oneshot::Sender` in a child-side
+  pending DashMap, writes the request frame to stdout, awaits
+  the response with a default 30 s timeout. On timeout the
+  pending entry is removed so a delayed reply is dropped
+  silently.
+  
+  Typed wrappers:
+  ```rust
+  pub async fn recall_memory(
+      &self,
+      agent_id: &str,
+      query: &str,
+      limit: u64,
+  ) -> Result<Vec<MemoryEntry>, RpcError>;
+  
+  pub async fn complete_llm(
+      &self,
+      params: LlmCompleteParams,
+  ) -> Result<LlmCompleteResult, RpcError>;
+  ```
+  
+  New `RpcError` enum (thiserror-derived):
+  - `Server { code, message }` — host returned a JSON-RPC error
+    response. `code` = JSON-RPC error code from the host.
+  - `Timeout(Duration)` — no reply within the timeout window.
+  - `Transport(String)` — stdin write failed or oneshot canceled
+    before reply (host crashed mid-request).
+  - `Decode(String)` — response payload couldn't deserialize
+    into the typed wrapper's expected shape.
+  
+  New typed structs `LlmCompleteParams` + `LlmCompleteResult` +
+  `TokenCount`. `LlmCompleteResult` uses a local `TokenCount`
+  rather than `nexo_llm::TokenUsage` to keep the SDK independent
+  of upstream serde-derive quirks (TokenUsage isn't Serialize).
+  
+  Dispatch loop extended to detect response frames (frame has
+  `id` AND `result/error` AND no `method`) and resolve the
+  matching pending `oneshot::Sender`. Out-of-order responses
+  (id we don't recognize, e.g. after timeout) are dropped with
+  debug log.
+  
+  **Critical fix**: handler dispatch wrapped in `tokio::spawn`
+  to prevent self-deadlock. Without it, a handler that calls
+  `broker.request(...)` blocks the dispatch loop awaiting its
+  own response — which only the dispatch loop can deliver by
+  reading the next stdin line. The 3 RPC-roundtrip tests
+  failed with this exact symptom before the fix landed.
+  
+  Cargo.toml: `plugin` feature now pulls `nexo-llm` +
+  `nexo-memory` + `dashmap` (all gated, microapp users still
+  pay no dep cost).
+  
+  4 new unit tests using `tokio::io::duplex` for full
+  end-to-end simulation:
+  - `request_helper_round_trips_via_dispatch_loop` — handler
+    issues `test.echo` request, test side reads outgoing frame
+    + replies with `{"echoed": ...}`, asserts handler observed
+    the response.
+  - `request_helper_propagates_server_error` — host returns
+    `{"error": {"code": -32603, "message": "memory not
+    configured"}}`; handler observes `RpcError::Server` with
+    code + message preserved.
+  - `request_helper_times_out_when_host_silent` — host never
+    replies; handler observes `RpcError::Timeout` after 150ms
+    custom timeout.
+  - `recall_memory_typed_wrapper_round_trips` — handler calls
+    `broker.recall_memory("agent_x", "preference", 5)`, test
+    fabricates a MemoryEntry-shaped response, asserts wrapper
+    deserialized correctly.
+  
+  10/10 SDK plugin tests pass (6 prior + 4 new). Workspace +
+  e2e tests unchanged.
+  
+  Out of scope: streaming consumption (`complete_llm_stream`)
+  carved out as 81.15.c.b. That needs the pending map to
+  support multi-message subscriptions (today single oneshot
+  per id; streaming requires an mpsc receiver for delta
+  notifications + a final oneshot for the response).
+  
+  IRROMPIBLE refs: internal subprocess.rs host-side pending
+  pattern (mirrored on child side); claude-code-leak
+  `src/utils/computerUse/mcpServer.ts` MCP `client.request()`
+  pattern; OpenClaw absence stated.
+
 - **Phase 81.20.b.c — `llm.complete` streaming via
   `llm.complete.delta` notifications.** Opt-in streaming for the
   RPC handler. Plugins set `params.stream = true` in the

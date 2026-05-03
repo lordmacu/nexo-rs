@@ -622,6 +622,29 @@ coordinación de archivos cross-cutting.
   v1.3.0. SDK-side streaming consumption helpers deferred to
   81.15.c.
 
+- **81.15.c ✅ shipped 2026-05-01** — SDK child-side RPC
+  helpers. BrokerSender extends with pending DashMap +
+  next_id AtomicU64 + new `request(method, params, timeout) ->
+  Result<Value, RpcError>` low-level helper. Typed wrappers
+  `recall_memory(agent_id, query, limit)` returns
+  `Vec<MemoryEntry>` and `complete_llm(LlmCompleteParams)`
+  returns `LlmCompleteResult`. New `RpcError` enum (Server /
+  Timeout / Transport / Decode). Dispatch loop extended to
+  demux response frames. Critical fix: handler dispatch wrapped
+  in `tokio::spawn` to prevent self-deadlock when handler calls
+  `broker.request(...)`. SDK feature `plugin` adds nexo-llm +
+  nexo-memory + dashmap deps (gated). 10/10 SDK plugin tests
+  pass.
+
+- **81.15.c.b ⬜** SDK streaming consumption helper
+  (`complete_llm_stream`). Extends BrokerSender with a method
+  that returns both `Stream<Item = String>` (delta chunks) +
+  `Future<Output = LlmCompleteResult>` (final usage). Requires
+  pending map supporting multi-message subscriptions: today
+  single oneshot per id; streaming needs an mpsc receiver for
+  delta notifications + a final oneshot for the response.
+  ~1.5 d.
+
 - **81.20.c ⏸ DEFERRED** — `tool.dispatch` RPC. Original ~1d
   estimate wrong: `ToolHandler::call` requires full AgentContext
   (~25 fields of per-running-agent state owned by main.rs's
