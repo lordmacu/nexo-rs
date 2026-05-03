@@ -105,6 +105,13 @@ pub struct PluginSection {
     /// section because every field defaults.
     #[serde(default)]
     pub entrypoint: EntrypointSection,
+
+    /// Phase 81.21.b — supervisor knobs (auto-respawn config +
+    /// stderr tail capture for crashed events). Every field
+    /// defaults so manifests without `[plugin.supervisor]` keep
+    /// today's behavior (no respawn, 32-line stderr tail).
+    #[serde(default)]
+    pub supervisor: SupervisorSection,
 }
 
 // ── Subprocess entrypoint (Phase 81.14) ─────────────────────────
@@ -146,6 +153,86 @@ impl EntrypointSection {
             .unwrap_or(false)
     }
 }
+
+// ── Supervisor (Phase 81.21.b) ──────────────────────────────────
+
+/// Phase 81.21.b — supervisor configuration. Controls how the
+/// daemon reacts when a subprocess plugin's child process exits
+/// unexpectedly.
+///
+/// Today (81.21.b) only `stderr_tail_lines` is read — the host
+/// captures that many recent stderr lines and attaches them to
+/// the `plugin.lifecycle.<id>.crashed` broker event so operators
+/// can debug without grepping logs. Auto-respawn fields parse
+/// + validate cleanly but are NOT yet wired (deferred to
+/// 81.21.b.b which adds the higher-level supervisor that owns
+/// the spawn lifecycle).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SupervisorSection {
+    /// When `true`, the supervisor automatically respawns the
+    /// child after a crash, up to `max_attempts` times with
+    /// exponential backoff starting at `backoff_ms`. Default
+    /// `false` — opt-in because community-tier plugins should
+    /// not silently keep restarting if they're broken.
+    ///
+    /// Phase 81.21.b ships the manifest field; 81.21.b.b ships
+    /// the actual respawn loop. With this set today, the host
+    /// logs a `tracing::info!(target: "plugin.supervisor",
+    /// respawn_requested = true, "respawn config not yet wired")`
+    /// reminder on first crash so operators know the field is
+    /// validated but not yet acted on.
+    #[serde(default = "default_supervisor_respawn")]
+    pub respawn: bool,
+
+    /// Maximum respawn attempts before the supervisor gives up
+    /// and emits a `plugin.lifecycle.<id>.gave_up` event.
+    #[serde(default = "default_supervisor_max_attempts")]
+    pub max_attempts: u32,
+
+    /// Initial backoff before the first respawn attempt, in
+    /// milliseconds. Subsequent attempts double the backoff up
+    /// to a hard cap of 60 s.
+    #[serde(default = "default_supervisor_backoff_ms")]
+    pub backoff_ms: u64,
+
+    /// Number of recent stderr lines to retain in a ring buffer
+    /// per running plugin. On crash, the supervisor drains this
+    /// buffer into the `stderr_tail` field of the crashed event
+    /// payload. Capped at 512 to prevent a manifest from
+    /// requesting unbounded memory; values above the cap are
+    /// rejected at parse time via [`validate`].
+    #[serde(default = "default_supervisor_stderr_tail")]
+    pub stderr_tail_lines: usize,
+}
+
+fn default_supervisor_respawn() -> bool {
+    false
+}
+fn default_supervisor_max_attempts() -> u32 {
+    3
+}
+fn default_supervisor_backoff_ms() -> u64 {
+    1_000
+}
+fn default_supervisor_stderr_tail() -> usize {
+    32
+}
+
+impl Default for SupervisorSection {
+    fn default() -> Self {
+        Self {
+            respawn: default_supervisor_respawn(),
+            max_attempts: default_supervisor_max_attempts(),
+            backoff_ms: default_supervisor_backoff_ms(),
+            stderr_tail_lines: default_supervisor_stderr_tail(),
+        }
+    }
+}
+
+/// Hard cap on `stderr_tail_lines`. Prevents a manifest from
+/// requesting megabytes of in-memory ring buffer.
+pub const SUPERVISOR_STDERR_TAIL_MAX: usize = 512;
 
 // ── Capabilities ────────────────────────────────────────────────
 

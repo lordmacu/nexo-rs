@@ -101,6 +101,15 @@ pub enum ManifestError {
 
     #[error("plugin description must not be empty")]
     DescriptionEmpty,
+
+    #[error(
+        "supervisor.stderr_tail_lines `{value}` exceeds cap `{max}`. \
+         Lower the value to prevent unbounded ring-buffer memory."
+    )]
+    SupervisorStderrTailExceedsCap {
+        value: usize,
+        max: usize,
+    },
 }
 
 #[cfg(test)]

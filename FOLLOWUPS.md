@@ -585,12 +585,32 @@ coordinación de archivos cross-cutting.
   15/15 subprocess + 2/2 e2e tests pass. Auto-respawn +
   backoff + resource limits deferred to 81.21.b/.c.
 
-- **81.21.b ⬜** Plugin supervisor: auto-respawn + backoff policy.
-  Manifest config `supervisor.{respawn: bool, max_attempts: u32,
-  backoff_ms: u64}` + respawn loop in supervisor task on detected
-  crash. Stderr tail capture (~last 32 lines) attached to crash
-  event for operator context. Required before community-tier
-  plugins are safe in production. ~1 d.
+- **81.21.b ✅ shipped 2026-05-01** — Plugin supervisor: stderr
+  tail capture + manifest.supervisor config. New
+  `[plugin.supervisor]` section (additive) with `respawn`,
+  `max_attempts`, `backoff_ms`, `stderr_tail_lines` (capped at
+  `SUPERVISOR_STDERR_TAIL_MAX = 512`, validation rejects above).
+  Stderr reader populates a `VecDeque<String>` ring buffer;
+  supervisor on crash drains into the `stderr_tail: [String]`
+  field of the `plugin.lifecycle.<id>.crashed` event payload.
+  `respawn = true` parses + validates but logs a one-shot
+  reminder that the actual loop is in 81.21.b.b. 17/17
+  subprocess tests + 2/2 e2e + 295 in-tree plugin tests pass.
+
+- **81.21.b.b ⬜** Plugin supervisor auto-respawn loop. Wires
+  the parsed `manifest.supervisor.respawn` field into actual
+  behavior: on crash, if respawn enabled AND attempts <
+  max_attempts → cancel current bridge tasks → wait
+  exponential backoff → spawn fresh child → redo handshake →
+  redo bridge wiring. Requires either a higher-level supervisor
+  task that owns SubprocessNexoPlugin lifecycle (and atomically
+  swaps `Inner` instances) OR `Inner` refactor to be
+  partially-replaceable. The current `Mutex<Option<Inner>>`
+  shape is single-shot owned by the adapter — supervisor task
+  only has Arc handles to child + cancel + broker, not write
+  access to Inner. Either path is ~2-3 d careful state
+  management. Required before community-tier plugins are safe
+  in production.
 
 - **81.21.c ⬜** Plugin resource limits. OS-divergent: linux
   cgroup v2 + rlimit, macOS sandbox-exec resource caps, fallback

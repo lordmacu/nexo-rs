@@ -75,6 +75,25 @@ pub fn run_all(
     validate_channel_kinds(&manifest.plugin.channels.register, errors);
     validate_capability_impl(manifest, errors);
     validate_capability_gates_unique(&manifest.plugin.capability_gates.gates, errors);
+    validate_supervisor(&manifest.plugin.supervisor, errors);
+}
+
+/// Phase 81.21.b — guard against a manifest requesting an
+/// unbounded stderr tail buffer. The cap is hard-coded in
+/// `manifest::SUPERVISOR_STDERR_TAIL_MAX` (today: 512 lines per
+/// running plugin) — generous enough for realistic debug needs,
+/// small enough to keep the daemon's memory bounded across many
+/// plugins.
+fn validate_supervisor(
+    supervisor: &super::manifest::SupervisorSection,
+    errors: &mut Vec<ManifestError>,
+) {
+    if supervisor.stderr_tail_lines > super::manifest::SUPERVISOR_STDERR_TAIL_MAX {
+        errors.push(ManifestError::SupervisorStderrTailExceedsCap {
+            value: supervisor.stderr_tail_lines,
+            max: super::manifest::SUPERVISOR_STDERR_TAIL_MAX,
+        });
+    }
 }
 
 fn validate_id(id: &str, errors: &mut Vec<ManifestError>) {
