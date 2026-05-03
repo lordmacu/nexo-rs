@@ -21,6 +21,7 @@ covers Phases 1-81; everything microapp-related lives here.
 |-------|------|-----------|--------|
 | 82 | Multi-tenant SaaS extension enablement + control plane | 14 | 0/14 |
 | 83 | Microapp framework foundation | 14 | 0/14 |
+| 88 | Poller admin RPC + scheduled-tasks operator UI | 13 | 0/13 |
 
 ## Why a separate file
 
@@ -3049,3 +3050,156 @@ extra) once meta-microapp is shippeable.
 - All Markdown content in this file is in English.
 - Code identifiers in English.
 - Spanish-language comments NOT permitted (project rule).
+
+---
+
+## Phase 88 — Poller admin RPC + scheduled-tasks operator UI   ⬜  (13 sub-phases planned)
+
+Standalone phase (separate from Phase 82.x admin RPC family) for
+the periodic-task control plane. Triggered by the
+`agent-creator-microapp` build needing a UI to manage scheduled
+agent triggers, RSS / Gmail / webhook polls, and on-demand
+tick-now operations without dropping to YAML editing.
+
+### Scope
+
+The `crates/poller/` runtime exists since Phase 12 with five
+builtin kinds (`agent_turn`, `gmail`, `google_calendar`, `rss`,
+`webhook_poll`). It exposes a legacy REST surface at
+`/admin/pollers/*` (in `crates/poller/src/admin.rs`) that
+predates the Phase 82.10 dispatcher and bypasses
+capability-gating + audit-log + JSON-RPC framing. Microapps
+that consume the daemon today have NO way to manage poller
+configuration via the admin RPC contract.
+
+This phase ships the `nexo/admin/pollers/*` JSON-RPC family,
+the production yaml adapter, the runtime control bridge
+(adding pause/resume/run_now to `PollerRunner`), and the
+`agent-creator-microapp` UI route that exercises the lot.
+
+### Sub-phases
+
+- **88.1** — `nexo_tool_meta::admin::pollers` wire shapes —
+  `PollerKind` enum (5 variants matching builtins), `PollerSchedule`
+  untagged enum (cron / interval / at), `PollerEntry`,
+  `PollersListFilter` / `Response`, `PollersGetParams`,
+  `PollersUpsertInput` / `Response`, `PollersDeleteParams` /
+  `Response`, `PollersRuntimeParams` / `Response`. Method literals
+  (7) + ID regex const. ~250 LOC, 8 tests.
+
+- **88.2** — `nexo-core::agent::admin_rpc::domains::pollers`
+  domain handler: `PollerStore` trait (list / get / upsert /
+  delete) + `PollerRuntimeControl` trait (pause / resume /
+  run_now). 7 handler functions. Validation: ID regex,
+  cron syntax via `chrono-cron`, agent_id existence cross-check
+  via `AgentsYamlPatcher`. ~350 LOC, 14 tests.
+
+- **88.3** — `crates/poller/src/runner.rs` framework gap fix:
+  add `pub async fn pause(&self, job_id: &str)`,
+  `pub async fn resume(&self, job_id: &str)`,
+  `pub async fn run_now(&self, job_id: &str) -> TickOutcome`.
+  Implementation reuses existing `JobTask` shape + `CancellationToken`.
+  5 tests. ~150 LOC.
+
+- **88.4** — `nexo_setup::poller_yaml_patcher::FsPollerYamlPatcher`
+  production adapter. Reads / writes `config/poller.yaml` via
+  the existing `yaml_patch` lock mechanism. Triggers reload
+  signal post-mutation so `PollerRunner::reload` picks up the
+  change. ~200 LOC, 6 tests.
+
+- **88.5** — `nexo_setup::poller_runtime::PollerRunnerControl`
+  bridge between admin RPC and `Arc<PollerRunner>`. Implements
+  the `PollerRuntimeControl` trait by delegating to the runner's
+  pause/resume/run_now methods from 88.3. ~100 LOC, no
+  separate tests (covered via integration test 88.10).
+
+- **88.6** — Dispatcher routing + capability table extension.
+  Three granular caps:
+  - `pollers_read` — list, get
+  - `pollers_crud` — upsert, delete (implies `pollers_read`)
+  - `pollers_runtime` — pause, resume, run_now (implies `pollers_read`)
+  Plus `nexo/admin/pollers/*` match arm in `call_handler`.
+  ~50 LOC.
+
+- **88.7** — INVENTORY entry `NEXO_MICROAPP_ADMIN_POLLERS_ENABLED`
+  (Risk::High — pollers can fan out to external channels) and
+  audit redaction map: `deliver.recipient` is hashed before
+  audit row writes (phone numbers / chat IDs / email addresses
+  are sensitive). ~80 LOC.
+
+- **88.8** — `AdminBootstrapInputs.poller_store: Option<Arc<dyn PollerStore>>`
+  + `poller_runtime: Option<Arc<dyn PollerRuntimeControl>>` fields.
+  Auto-construct production adapters from `Arc<PollerRunner>`
+  when caller passes `None` for both AND has poller runtime
+  ready. Sed migration of ~14 fixture sites. ~100 LOC.
+
+- **88.9** — Bridge old REST admin: mark all
+  `crates/poller/src/admin.rs` endpoints as `#[deprecated]`
+  with note pointing to the new dispatcher. Don't remove —
+  preserve backwards compat for operator scripts. ~30 LOC.
+
+- **88.10** — Integration test (`crates/setup/tests/pollers_admin.rs`).
+  Harness drives upsert → list → run_now → pause → resume →
+  delete via the JSON-RPC dispatcher. Asserts yaml mutations,
+  runtime state changes, audit rows, capability gating.
+  ~250 LOC, 1 test.
+
+- **88.11** — Docs: `docs/src/microapps/admin-rpc.md` "Poller
+  management" section covering the 7 methods, capability tiers,
+  schedule formats, kind-specific config schemas, redaction
+  notes. ~150 LOC. Plus framework commit + push.
+
+- **88.12** — Microapp `agent-creator-microapp` backend:
+  `src/tools/pollers.rs` — 7 thin admin RPC pass-through tools.
+  `plugin.toml` declares `pollers_read` + `pollers_crud` +
+  `pollers_runtime` under `[capabilities.admin].optional`.
+  ~200 LOC.
+
+- **88.13** — Microapp frontend: dedicated `/pollers` route in
+  the operator dashboard.
+  - `pages/Pollers.tsx` — list view paginada con status badges
+    (running / paused / errored / never_run) + action buttons
+    (pause / resume / run-now / edit / delete).
+  - `components/PollerEditModal.tsx` — kind picker + dynamic
+    form per-kind + cron/interval/at switcher.
+  - `components/SchedulePicker.tsx` — visual preview of next 5
+    firings.
+  - `components/DeliveryTargetForm.tsx` — channel + recipient
+    reusable.
+  - `components/PollerStatusBadge.tsx` — visual state.
+  - `api/pollers.ts` — 7 typed clients.
+  - Sidebar header gains a Clock icon button → `/pollers` route.
+  - Cmd+K palette gains "Listar pollers" + "Crear poller" actions.
+  - Microapp version bump + commit + push.
+  ~700 LOC TypeScript.
+
+### Done criteria
+
+- 7 admin RPC methods (`nexo/admin/pollers/{list,get,upsert,delete,pause,resume,run_now}`) functioning end-to-end with capability gates + audit logging + redaction.
+- `PollerRunner` exposes pause/resume/run_now public methods (framework gap closed).
+- `agent-creator-microapp` operator can manage poller lifecycle (CRUD + runtime control) entirely through the dashboard UI without touching `poller.yaml` directly.
+- Old REST surface in `crates/poller/src/admin.rs` deprecated, kept for backwards compat.
+- Cross-repo `cargo test --workspace` clean.
+- ~40 framework tests + manual smoke tests on microapp UI.
+
+### Estimate
+
+~34h cross-repo (~5 working days). Phased execution:
+- **Day 1**: 88.1–88.2 (wire shapes + handler + traits + tests)
+- **Day 2**: 88.3–88.5 (framework gap fix + adapter + bridge)
+- **Day 3**: 88.6–88.10 (routing + capabilities + INVENTORY + bootstrap + integration test)
+- **Day 4**: 88.11 + framework commit + push + 88.12 (microapp backend tools + plugin.toml)
+- **Day 5**: 88.13 (microapp frontend `/pollers` route + bump + commit + push)
+
+### Carve-outs (out of scope, future)
+
+- **`agent_loop` poller kind** — new poller kind that invokes the full agent runtime with tools (vs `agent_turn`'s prompt-only). Required for ETB email-to-WhatsApp use case. Spawn as Phase 89.
+- **Schedule preview server-side** — `pollers/preview` RPC returning next N firings without actually scheduling. Today the UI computes next 5 firings client-side via `cron-parser`. Future enhancement.
+- **Dry-run** — `pollers/run_now` with `dry_run: true` that bypasses delivery. Useful for debugging without spamming channels.
+- **Webhook secret rotation for `webhook_poll`** — current schema accepts plaintext secret in config; future could integrate with `nexo/admin/secrets/write` (Phase 82.10.k) for at-rest encryption.
+
+### Microapp dependency
+
+This phase enables milestone **M13 — Scheduled tasks UI** in
+`agent-creator-microapp/proyecto/PHASES.md`. Microapp side
+ships in 88.12 + 88.13 sub-phases.
