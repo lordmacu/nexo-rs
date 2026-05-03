@@ -74,6 +74,12 @@ struct PerMicroappWire {
     /// response writer so microapps see status transitions in
     /// real time instead of polling.
     pairing_notifier: Arc<crate::admin_adapters::DeferredPairingNotifier>,
+    /// Phase 82.10.o — `nexo/notify/token_rotated` notifier
+    /// sharing the same stdin queue. Bound alongside the
+    /// pairing notifier in [`AdminRpcBootstrap::bind_writer`].
+    /// The daemon-global `FsAuthRotator` pushes via the fanout;
+    /// the fanout dispatches to this per-microapp deferred.
+    token_rotated_notifier: Arc<crate::admin_adapters::DeferredTokenRotatedNotifier>,
 }
 
 /// Owns every shared admin RPC singleton + per-microapp wires.
@@ -229,19 +235,30 @@ pub struct AdminBootstrapInputs<'a> {
     pub llm_provider_probe: Option<
         Arc<dyn nexo_core::agent::admin_rpc::domains::llm_providers::LlmProvidersProbe>,
     >,
-    /// Phase 82.10.o — operator bearer rotator. `None` keeps
-    /// `nexo/admin/auth/rotate_token` returning the typed
-    /// `auth rotator not configured` -32603. Production wires
-    /// `crate::auth_rotator::FsAuthRotator` rooted at
-    /// `<state_root>/secrets/operator_token.txt` with the SDK's
-    /// stdio notification multicaster + the firehose audit
-    /// emitter so a successful rotation lands BOTH the live
-    /// `nexo/notify/token_rotated` AND the durable
-    /// `AgentEventKind::SecurityEvent::TokenRotated` audit row.
-    /// Resolves M2.b.frame.emit + unblocks M2.b.audit (microapp
-    /// follow-ups).
+    /// Phase 82.10.o — operator bearer rotator. Test override:
+    /// when `Some`, the bootstrap installs this rotator
+    /// directly without consulting [`Self::auth_token_path`] /
+    /// [`Self::auth_initial_hash`]. Useful for mocks.
     pub auth_rotator:
         Option<Arc<dyn nexo_core::agent::admin_rpc::domains::auth::AuthRotator>>,
+    /// Phase 82.10.o — canonical operator-token file path.
+    /// Production passes
+    /// `<state_root>/secrets/operator_token.txt`. When `Some`
+    /// AND [`Self::auth_initial_hash`] is also `Some` AND
+    /// [`Self::auth_rotator`] is `None`, the bootstrap builds
+    /// `FsAuthRotator` internally with the per-microapp fanout
+    /// notifier + the shared firehose `AgentEventEmitter` so a
+    /// rotation lands BOTH the live `nexo/notify/token_rotated`
+    /// AND the durable
+    /// `AgentEventKind::SecurityEvent::TokenRotated` audit row.
+    /// Resolves M2.b.frame.emit + unblocks M2.b.audit.
+    pub auth_token_path: Option<std::path::PathBuf>,
+    /// Phase 82.10.o — initial operator-token-hash (16-char
+    /// sha256-hex prefix). Computed by the caller from the
+    /// operator-supplied env var at boot. Used as the very first
+    /// rotation's `old_hash` so microapp listeners can verify
+    /// the message matches the token they hold.
+    pub auth_initial_hash: Option<String>,
     /// Phase 83.8.2 close-out — skills domain store. `None`
     /// keeps `nexo/admin/skills/*` returning the typed
     /// `skills domain not configured` -32603. Production wires
@@ -477,6 +494,14 @@ impl AdminRpcBootstrap {
         // independent of the response writer.
         let mut wires = BTreeMap::new();
         let mut subscribe_handles: Vec<JoinHandle<()>> = Vec::new();
+        // Phase 82.10.o — fan-out notifier for
+        // `nexo/notify/token_rotated`. Singleton across the
+        // daemon; the global `FsAuthRotator` writes here, and we
+        // register one `DeferredTokenRotatedNotifier` per
+        // microapp inside the loop so a rotation fans out to
+        // every connected listener.
+        let auth_token_rotated_fanout =
+            Arc::new(crate::admin_adapters::FanoutTokenRotatedNotifier::new());
         for (id, _decl) in &declared {
             let writer = Arc::new(DeferredAdminOutboundWriter::new());
             // Phase 82.10.h.b.pairing — separate notification
@@ -486,6 +511,13 @@ impl AdminRpcBootstrap {
             // writer in `bind_writer`.
             let pairing_notifier =
                 Arc::new(crate::admin_adapters::DeferredPairingNotifier::new());
+            // Phase 82.10.o — per-microapp deferred token-rotated
+            // notifier, registered with the daemon-global fanout
+            // below so a single rotate fans out to every connected
+            // microapp.
+            let token_rotated_notifier =
+                Arc::new(crate::admin_adapters::DeferredTokenRotatedNotifier::new());
+            auth_token_rotated_fanout.add(token_rotated_notifier.clone());
 
             let mut dispatcher = AdminRpcDispatcher::new()
                 .with_capabilities(capability_set.clone())
@@ -563,14 +595,30 @@ impl AdminRpcBootstrap {
                     crate::llm_provider_probe::HttpLlmProviderProbe::new(llm_yaml.clone())
                 });
             dispatcher = dispatcher.with_llm_provider_probe(probe);
-            // Phase 82.10.o — install the auth rotator when boot
-            // has it wired. No default-construct path — the
-            // rotator needs an stdio multicaster + audit emitter
-            // that only `main.rs` can provide post-spawn. When
-            // `None`, `nexo/admin/auth/rotate_token` returns the
-            // typed `auth rotator not configured` -32603.
-            // Resolves M2.b.frame.emit.
+            // Phase 82.10.o — install the auth rotator. Test
+            // override (`auth_rotator: Some(...)`) wins;
+            // otherwise build the production `FsAuthRotator` if
+            // the caller supplied `auth_token_path` AND
+            // `auth_initial_hash`. The shared
+            // `auth_token_rotated_fanout` registered above gets
+            // a `DeferredTokenRotatedNotifier` per microapp so
+            // a single rotation reaches every connected
+            // listener. When neither path applies, the dispatcher
+            // returns the typed `auth rotator not configured`
+            // -32603 so callers diagnose the gap clearly.
             if let Some(rotator) = inputs.auth_rotator.clone() {
+                dispatcher = dispatcher.with_auth_rotator(rotator);
+            } else if let (Some(token_path), Some(initial_hash)) = (
+                inputs.auth_token_path.clone(),
+                inputs.auth_initial_hash.clone(),
+            ) {
+                let rotator = crate::auth_rotator::FsAuthRotator::new(
+                    token_path,
+                    auth_token_rotated_fanout.clone()
+                        as Arc<dyn nexo_core::agent::admin_rpc::domains::auth::TokenRotatedNotifier>,
+                    event_emitter.clone(),
+                    initial_hash,
+                );
                 dispatcher = dispatcher.with_auth_rotator(rotator);
             }
             // Phase 83.8.2 close-out — install the skills domain
@@ -622,6 +670,7 @@ impl AdminRpcBootstrap {
                     router,
                     writer,
                     pairing_notifier,
+                    token_rotated_notifier,
                 },
             );
         }
@@ -676,7 +725,11 @@ impl AdminRpcBootstrap {
     ) {
         if let Some(wire) = self.wires.get(extension_id) {
             wire.writer.bind(sender.clone());
-            wire.pairing_notifier.bind(sender);
+            wire.pairing_notifier.bind(sender.clone());
+            // Phase 82.10.o — same stdin queue carries the
+            // token-rotated notify so microapp's
+            // `LiveTokenState` listener swaps in-place.
+            wire.token_rotated_notifier.bind(sender);
         }
     }
 
@@ -790,6 +843,8 @@ mod tests {
             secrets_store: None,
             llm_provider_probe: None,
             auth_rotator: None,
+            auth_token_path: None,
+            auth_initial_hash: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -824,6 +879,8 @@ mod tests {
             secrets_store: None,
             llm_provider_probe: None,
             auth_rotator: None,
+            auth_token_path: None,
+            auth_initial_hash: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -859,6 +916,8 @@ mod tests {
             secrets_store: None,
             llm_provider_probe: None,
             auth_rotator: None,
+            auth_token_path: None,
+            auth_initial_hash: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -908,6 +967,8 @@ mod tests {
             secrets_store: None,
             llm_provider_probe: None,
             auth_rotator: None,
+            auth_token_path: None,
+            auth_initial_hash: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -950,6 +1011,8 @@ mod tests {
             secrets_store: None,
             llm_provider_probe: None,
             auth_rotator: None,
+            auth_token_path: None,
+            auth_initial_hash: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -991,6 +1054,8 @@ mod tests {
             secrets_store: None,
             llm_provider_probe: None,
             auth_rotator: None,
+            auth_token_path: None,
+            auth_initial_hash: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -1040,6 +1105,8 @@ mod tests {
             secrets_store: None,
             llm_provider_probe: None,
             auth_rotator: None,
+            auth_token_path: None,
+            auth_initial_hash: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -1095,6 +1162,8 @@ mod tests {
             secrets_store: None,
             llm_provider_probe: None,
             auth_rotator: None,
+            auth_token_path: None,
+            auth_initial_hash: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -1145,6 +1214,8 @@ mod tests {
             secrets_store: None,
             llm_provider_probe: None,
             auth_rotator: None,
+            auth_token_path: None,
+            auth_initial_hash: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -1197,6 +1268,8 @@ mod tests {
             secrets_store: None,
             llm_provider_probe: None,
             auth_rotator: None,
+            auth_token_path: None,
+            auth_initial_hash: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -1267,6 +1340,8 @@ mod tests {
             secrets_store: None,
             llm_provider_probe: None,
             auth_rotator: None,
+            auth_token_path: None,
+            auth_initial_hash: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -1317,6 +1392,8 @@ mod tests {
             secrets_store: None,
             llm_provider_probe: None,
             auth_rotator: None,
+            auth_token_path: None,
+            auth_initial_hash: None,
                 skills_store: None,
                 escalation_store: None,
                 agent_event_log: Some(log.clone()),
