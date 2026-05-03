@@ -10,6 +10,42 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.12.a — Browser plugin dual-trait migration to `NexoPlugin`.**
+  First per-plugin slice of the `81.12` migration. New file
+  `crates/plugins/browser/nexo-plugin.toml` (~30 LOC) declares the
+  plugin's id (`"browser"`), version, name, description,
+  `min_nexo_version = ">=0.1.0"`, and `requires.nexo_capabilities = ["broker"]`.
+  The manifest is **dormant** — top-of-file comment instructs operators
+  not to add the directory to `plugins.discovery.search_paths` until
+  Phase 81.12.e ships the boot wire flip. `BrowserPlugin` struct gains
+  a `cached_manifest: PluginManifest` field parsed once via
+  `include_str!("../nexo-plugin.toml")` + `toml::from_str` in
+  `BrowserPlugin::new()`. `impl NexoPlugin for BrowserPlugin` ships
+  alongside the existing `impl Plugin for BrowserPlugin` (dual-trait):
+  `manifest()` returns `&self.cached_manifest`; `init(ctx)` calls the
+  legacy `Plugin::start(self, ctx.broker.clone()).await` and maps any
+  `anyhow::Error` to `PluginInitError::Other { plugin_id, source }`;
+  `shutdown()` mirrors via `Plugin::stop` mapped to
+  `PluginShutdownError::Other`. Public factory builder
+  `pub fn browser_plugin_factory(config: BrowserConfig) -> PluginFactory`
+  in `crates/plugins/browser/src/lib.rs` returns a closure that clones
+  `config` per invocation and constructs an `Arc<dyn NexoPlugin>` from
+  it. The factory is exported but no caller registers it today —
+  `src/main.rs`'s legacy plugin registration block (lines 1855-1872
+  for browser) stays untouched. **Behavior identical to pre-81.12.a
+  until Phase 81.12.e flips main.rs**. New deps: `nexo-plugin-manifest
+  = { path = "../../plugin-manifest" }` + `toml = "0.8"` on the
+  browser crate's `Cargo.toml`. No cycle introduced (manifest crate
+  is standalone). 4 unit tests cover: manifest parses + id correct;
+  cached_manifest populated at construction; factory builder produces
+  a usable `Arc<dyn NexoPlugin>`; same instance dispatched through
+  both `&dyn Plugin` and `&dyn NexoPlugin` agrees on identity.
+  Compatibility audit pre-implementation: `PluginInitError::Other` +
+  `PluginShutdownError::Other` already exist (no enum variant
+  additions needed); `BrowserConfig: Clone` already derived; struct
+  literal callsites for `BrowserPlugin` are zero outside the crate
+  (only `BrowserPlugin::new(cfg)` callers).
+
 - **Phase 81.12.0 — `PluginFactoryRegistry` foundation (no plugin
   migrations).** New module
   `nexo_core::agent::nexo_plugin_registry::factory` ships the

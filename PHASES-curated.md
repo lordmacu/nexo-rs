@@ -106,7 +106,7 @@ drives this phase. Critical-path rows flagged `P1`.
 | 81.10 — Plugin hot-load via Phase 18 reload coord | **P3** | ✅ shipped 2026-05-03 (register_plugin_registry_reload_hook helper + boot wire + 3 unit tests; skill_roots rebuild + live discovery_cfg deferred 81.10.b) |
 | 81.11 — Plugin doctor + capability inventory integration | **P3** | ✅ shipped 2026-05-03 (capability_aggregator + 3 new diagnostic variants + report extension + wire_plugin_registry signature; doctor_render sections + DoctorCapabilities envelope mode deferred 81.11.b) |
 | 81.12.0 — `PluginFactoryRegistry` foundation (no plugin migrations) | **P3** | ✅ shipped 2026-05-03 (factory module + run_plugin_init_loop_with_factory + wire_plugin_registry 6th param) |
-| 81.12.a — Browser plugin migration to NexoPlugin | **P3** | ⬜ pending |
+| 81.12.a — Browser plugin migration to NexoPlugin | **P3** | ✅ shipped 2026-05-03 (dual-trait + manifest + factory builder; dormant — main.rs untouched) |
 | 81.12.b — Telegram plugin migration to NexoPlugin | **P3** | ⬜ pending |
 | 81.12.c — WhatsApp plugin migration to NexoPlugin | **P3** | ⬜ pending |
 | 81.12.d — Email plugin migration to NexoPlugin | **P3** | ⬜ pending |

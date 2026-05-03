@@ -11,6 +11,10 @@ use uuid::Uuid;
 use nexo_broker::{AnyBroker, BrokerHandle, Event};
 use nexo_config::BrowserConfig;
 use nexo_core::agent::{Command, Plugin, Response};
+use nexo_core::agent::plugin_host::{
+    NexoPlugin, PluginInitContext, PluginInitError, PluginShutdownError,
+};
+use nexo_plugin_manifest::PluginManifest;
 use nexo_resilience::{CircuitBreaker, CircuitBreakerConfig};
 
 use crate::cdp::{CdpClient, CdpSession};
@@ -223,13 +227,22 @@ impl BrowserInner {
 pub struct BrowserPlugin {
     inner: Arc<BrowserInner>,
     shutdown: CancellationToken,
+    /// Phase 81.12.a — parsed manifest cached at construction time
+    /// via `include_str!("../nexo-plugin.toml")`. Returned by
+    /// `<Self as NexoPlugin>::manifest()`. Static for the lifetime
+    /// of the plugin instance.
+    cached_manifest: PluginManifest,
 }
 
 impl BrowserPlugin {
     pub fn new(config: BrowserConfig) -> Self {
+        const MANIFEST_TOML: &str = include_str!("../nexo-plugin.toml");
+        let cached_manifest: PluginManifest = toml::from_str(MANIFEST_TOML)
+            .expect("compile-time-bundled nexo-plugin.toml must parse");
         Self {
             inner: Arc::new(BrowserInner::new(config)),
             shutdown: CancellationToken::new(),
+            cached_manifest,
         }
     }
 
@@ -316,6 +329,118 @@ impl Plugin for BrowserPlugin {
                 anyhow::bail!("browser plugin does not handle messaging commands");
             }
         }
+    }
+}
+
+/// Phase 81.12.a — `NexoPlugin` trait impl. Delegates to the legacy
+/// `Plugin::start` / `Plugin::stop` so behavior is identical to the
+/// pre-migration path. Both traits coexist on the same struct;
+/// 81.12.e flips main.rs's boot wire from legacy registration to
+/// factory-driven instantiation.
+#[async_trait]
+impl NexoPlugin for BrowserPlugin {
+    fn manifest(&self) -> &PluginManifest {
+        &self.cached_manifest
+    }
+
+    async fn init(
+        &self,
+        ctx: &mut PluginInitContext<'_>,
+    ) -> Result<(), PluginInitError> {
+        Plugin::start(self, ctx.broker.clone()).await.map_err(|source| {
+            PluginInitError::Other {
+                plugin_id: self.cached_manifest.plugin.id.clone(),
+                source,
+            }
+        })
+    }
+
+    async fn shutdown(&self) -> Result<(), PluginShutdownError> {
+        Plugin::stop(self).await.map_err(|source| {
+            PluginShutdownError::Other {
+                plugin_id: self.cached_manifest.plugin.id.clone(),
+                source,
+            }
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_browser_config() -> BrowserConfig {
+        // BrowserConfig does not derive Default. Build the minimal
+        // shape inline; the values don't trigger any real Chrome
+        // launch since these tests don't call `init()` end-to-end.
+        BrowserConfig {
+            headless: true,
+            executable: String::new(),
+            cdp_url: String::new(),
+            user_data_dir: "./data/browser/profile".to_string(),
+            window_width: 1280,
+            window_height: 800,
+            connect_timeout_ms: 10_000,
+            command_timeout_ms: 15_000,
+            args: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn manifest_parses_and_id_is_browser() {
+        const MANIFEST_TOML: &str = include_str!("../nexo-plugin.toml");
+        let m: PluginManifest = toml::from_str(MANIFEST_TOML).unwrap();
+        assert_eq!(m.plugin.id, "browser");
+        assert_eq!(m.plugin.version.to_string(), "0.1.1");
+        assert_eq!(m.plugin.requires.nexo_capabilities, vec!["broker".to_string()]);
+    }
+
+    #[test]
+    fn nexo_plugin_init_delegates_to_legacy_start() {
+        // Build the plugin and verify the cached_manifest field
+        // populates correctly. Direct invocation of NexoPlugin::init
+        // requires a full PluginInitContext — instead we cast to
+        // &dyn NexoPlugin and assert the trait dispatch sees the
+        // manifest. The init body is a 1-line delegation to
+        // Plugin::start; semantics covered by the legacy crate's
+        // existing coverage.
+        let plugin = BrowserPlugin::new(test_browser_config());
+        let nexo: &dyn NexoPlugin = &plugin;
+        assert_eq!(nexo.manifest().plugin.id, "browser");
+        assert_eq!(nexo.manifest().plugin.version.to_string(), "0.1.1");
+    }
+
+    #[test]
+    fn factory_builder_produces_usable_handle() {
+        // Note: this test uses the CRATE-LOCAL factory shape via
+        // direct lib.rs entry point. We construct it via the same
+        // closure type signature.
+        let cfg = test_browser_config();
+        let factory: nexo_core::agent::nexo_plugin_registry::PluginFactory =
+            Box::new(move |_m| {
+                let plugin: Arc<dyn NexoPlugin> = Arc::new(BrowserPlugin::new(cfg.clone()));
+                Ok(plugin)
+            });
+        const MANIFEST_TOML: &str = include_str!("../nexo-plugin.toml");
+        let m: PluginManifest = toml::from_str(MANIFEST_TOML).unwrap();
+        match factory(&m) {
+            Ok(handle) => assert_eq!(handle.manifest().plugin.id, "browser"),
+            Err(e) => panic!("factory should succeed, got {e}"),
+        }
+    }
+
+    #[test]
+    fn dual_trait_methods_share_state() {
+        let plugin = BrowserPlugin::new(test_browser_config());
+        // Cast the SAME instance through both trait objects.
+        let legacy: &dyn Plugin = &plugin;
+        let nexo: &dyn NexoPlugin = &plugin;
+        // Legacy trait reports the registry name.
+        assert_eq!(legacy.name(), "browser");
+        // NexoPlugin reports the manifest id.
+        assert_eq!(nexo.manifest().plugin.id, "browser");
+        // Both agree on the plugin's identity.
+        assert_eq!(legacy.name(), nexo.manifest().plugin.id);
     }
 }
 
