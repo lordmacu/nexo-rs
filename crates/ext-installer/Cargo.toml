@@ -1,0 +1,37 @@
+[package]
+name = "nexo-ext-installer"
+description = "Phase 31.1 — fetch + resolve + download + sha256-verify nexo plugin tarballs against the ext-registry index. Building block for `nexo plugin install <id>` (CLI integration in 31.1.c)."
+version       = "0.1.0"
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+homepage      = { workspace = true }
+documentation = { workspace = true }
+readme        = "README.md"
+keywords      = { workspace = true }
+categories    = { workspace = true }
+
+[lints]
+workspace = true
+
+[dependencies]
+nexo-ext-registry    = { version = "0.1.0", path = "../ext-registry" }
+nexo-plugin-manifest = { version = "0.1.0", path = "../plugin-manifest" }
+reqwest           = { workspace = true }
+semver            = { workspace = true }
+serde             = { workspace = true, features = ["derive"] }
+serde_json        = { workspace = true }
+sha2              = { workspace = true }
+hex               = { workspace = true }
+toml              = "0.8"
+tokio             = { workspace = true, features = ["fs", "io-util"] }
+thiserror         = { workspace = true }
+tracing           = { workspace = true }
+futures           = { workspace = true }
+
+[dev-dependencies]
+wiremock          = "0.6"
+tempfile          = "3"
+tokio             = { workspace = true, features = ["full", "test-util"] }

@@ -646,6 +646,47 @@ coordinación de archivos cross-cutting.
   version 1.0.0. 9 unit tests pass. Index repo bootstrap is a
   separate operator-side init outside this workspace.
 
+- **Phase 31 architecture pivot 2026-05-03** — marketplace pivoted
+  from centralized catalog (Option A) to decentralized GitHub
+  Releases (Option B) per user direction ("no voy a alojar esto").
+  Plugin authors publish to their own GitHub repo as Releases
+  with a fixed asset naming convention; install CLI hits GitHub
+  Releases API directly. Zero infrastructure for nexo-rs
+  maintainers, no gatekeeping for plugin authors, operator
+  controls trust via per-author cosign keys (Phase 31.3).
+  `crates/ext-registry/` types still useful for index-style
+  bookkeeping but not on the install hot path.
+
+- **31.1 ✅ shipped 2026-05-03** — ext-installer crate (Option B).
+  New `crates/ext-installer/` workspace member: `PluginCoords`
+  parser (`owner/repo@tag`, defaults `latest`), `resolve_release`
+  hits GitHub Releases API + parses `nexo-plugin.toml` asset to
+  learn `plugin.id` + locates `<id>-<version>-<target>.tar.gz` +
+  matching `.sha256` asset, `download_and_verify` streams the
+  tarball with incremental sha256 + verifies vs the `.sha256`
+  body (cleans up on mismatch), `current_target_triple` detects
+  rust target with `NEXO_INSTALL_TARGET` env override.
+  `InstallError` enum covers coords, http, release shape, target
+  not found, sha256 invalid/mismatch. Deps: reqwest streaming +
+  sha2 + hex + toml + nexo-plugin-manifest + nexo-ext-registry.
+  Dev-deps: wiremock + tempfile. 8/8 unit tests pass via
+  wiremock simulating GitHub Releases API (coords parsing, URL
+  branching latest/tagged, missing-manifest rejection,
+  missing-target-tarball rejection, happy-path round-trip,
+  sha256-mismatch cleanup). README documents Option B + asset
+  naming convention. Workspace builds clean.
+
+- **31.1.b ⬜** Tarball extraction. After `download_and_verify`
+  the verified tarball must be extracted into the daemon's
+  `plugins.discovery.search_paths`. Reject path traversal entries
+  (`..`, absolute paths), preserve executable bits, idempotent
+  overwrite. ~0.5 d.
+
+- **31.1.c ⬜** `Mode::PluginInstall` CLI integration in main.rs.
+  New CLI mode parses coords, resolves config to learn install
+  root, calls `install_plugin` + tarball extraction, prints
+  installed plugin id + version + sha256. ~0.5 d.
+
 - **81.15.c.b ✅ shipped 2026-05-01** — SDK streaming
   consumption helper. Pending value type changed to
   `PendingKind` enum (Single for non-streaming, Streaming for
