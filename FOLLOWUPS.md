@@ -334,9 +334,26 @@ coordinación de archivos cross-cutting.
     NoHandle behavior; Some routes via the factory-driven helper.
     main.rs both callsites pass `None` por ahora (legacy block
     untouched). 5 unit + 1 init_loop helper + 2 integration tests.
-  - **81.12.a ⬜** Browser plugin migration to `NexoPlugin`
-    trait + `nexo-plugin.toml` + register factory in main.rs.
-    Single-instance, simplest. ~2h effort.
+  - **81.12.a ✅ shipped 2026-05-03** — Browser plugin dual-trait
+    migration. New manifest `crates/plugins/browser/nexo-plugin.toml`
+    (dormant — operator must NOT add to discovery search_paths
+    until 81.12.e). `BrowserPlugin` gana `cached_manifest:
+    PluginManifest` field parsed via `include_str!` once en `new()`.
+    `impl NexoPlugin for BrowserPlugin` delegating wrapper:
+    `manifest()` returns cached field, `init()` calls
+    `Plugin::start` mapped a `PluginInitError::Other`, `shutdown()`
+    calls `Plugin::stop` mapped a `PluginShutdownError::Other`.
+    `pub fn browser_plugin_factory(config) -> PluginFactory`
+    expuesto en lib.rs — operador (o 81.12.e) lo registra en
+    `PluginFactoryRegistry`. main.rs UNTOUCHED — legacy registration
+    block sigue construyendo `BrowserPlugin` directamente. Both
+    traits coexist en el mismo struct. 4 unit tests covering
+    manifest parse + dual-trait identity + factory builder.
+    Compatibilidad audit pre-cycle: PluginInitError::Other y
+    PluginShutdownError::Other ya existen, BrowserConfig: Clone
+    derivado, BrowserPlugin solo construido via ::new(),
+    nexo-plugin-manifest sin cycle. Behavior idéntico a
+    pre-81.12.a hasta que 81.12.e flippee main.rs.
   - **81.12.b ⬜** Telegram plugin migration. Multi-instance loop
     inside init(). ~3h effort.
   - **81.12.c ⬜** WhatsApp plugin migration. Multi-instance +

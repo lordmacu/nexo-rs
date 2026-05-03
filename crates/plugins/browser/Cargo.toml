@@ -32,6 +32,10 @@ nexo-config = { version = "0.1.1", path = "../../config" }
 nexo-core = { version = "0.1.1", path = "../../core" }
 nexo-llm = { version = "0.1.1", path = "../../llm" }
 nexo-resilience = { version = "0.1.1", path = "../../resilience" }
+# Phase 81.12.a — dormant manifest + dual-trait NexoPlugin impl.
+# Manifest crate is standalone (no cycle).
+nexo-plugin-manifest = { version = "0.1.0", path = "../../plugin-manifest" }
+toml = "0.8"
 
 [dev-dependencies]
 libc = "0.2"
