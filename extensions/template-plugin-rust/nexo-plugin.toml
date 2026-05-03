@@ -1,0 +1,67 @@
+# Phase 81.15.a / 81.17.c — out-of-tree subprocess plugin template.
+#
+# COPY-AND-MODIFY workflow:
+# 1. Copy this entire `extensions/template-plugin-rust/` directory
+#    into a new repo of your own (or anywhere outside the nexo-rs
+#    workspace).
+# 2. Edit Cargo.toml: rename `package.name`, swap the in-tree
+#    `path = "../../crates/microapp-sdk"` deps for the published
+#    crates.io versions once they're released (see Cargo.toml).
+# 3. Edit this manifest: pick a unique `plugin.id` (see naming
+#    rules below).
+# 4. Implement your plugin's logic in `src/main.rs` — replace the
+#    echo handler.
+# 5. Build: `cargo build --release`.
+# 6. Drop this directory (or a directory tree containing
+#    `nexo-plugin.toml` + `target/release/<bin>`) into one of the
+#    operator's `plugins.discovery.search_paths`.
+# 7. Restart the daemon (or trigger Phase 18 hot-reload). The
+#    daemon's auto-subprocess fallback (Phase 81.17 + 81.17.b)
+#    will spawn your binary, handshake, and start forwarding
+#    broker events.
+#
+# Operator-side activation: nothing required beyond pointing the
+# discovery walker at this directory. Plugin loading is automatic.
+#
+# Naming: `plugin.id` MUST match the regex `^[a-z][a-z0-9_]{0,31}$`.
+# It must be globally unique across all plugins the daemon loads.
+# It becomes the prefix for any tool / channel kind / config
+# namespace this plugin contributes.
+
+[plugin]
+id = "template_plugin_rust"
+version = "0.1.0"
+name = "Template Plugin (Rust)"
+description = "Skeleton out-of-tree subprocess plugin demonstrating PluginAdapter."
+min_nexo_version = ">=0.1.0"
+
+[plugin.requires]
+nexo_capabilities = ["broker"]
+
+# Declare the channel kinds this plugin handles. The daemon
+# derives the broker bridge subscribe / publish allowlist from
+# these (see nexo-plugin-contract.md §6):
+#   inbound:  plugin.inbound.<kind>[.<instance>]
+#   outbound: plugin.outbound.<kind>[.<instance>]
+[[plugin.channels.register]]
+kind = "template_echo"
+adapter = "TemplateEchoAdapter"
+
+# Phase 81.14 entrypoint declaration. Daemon spawns this binary
+# as a child process and drives it via newline-delimited
+# JSON-RPC 2.0 over stdin/stdout (see nexo-plugin-contract.md §1).
+#
+# `command` should be an absolute path in production. For dev
+# inside the workspace, you can point at the cargo target output;
+# operators running the binary from a release tarball will replace
+# this with `/usr/local/bin/template-plugin-rust` or similar.
+[plugin.entrypoint]
+command = "./target/debug/template-plugin-rust"
+args = []
+
+# `env` is forwarded verbatim to the child's environment. Keys
+# starting with `NEXO_` are REJECTED by the daemon at boot — those
+# are reserved for the runtime. Use this to pass plugin-specific
+# config that doesn't fit elsewhere.
+# [plugin.entrypoint.env]
+# RUST_LOG = "info"

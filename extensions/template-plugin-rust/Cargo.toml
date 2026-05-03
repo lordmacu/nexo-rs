@@ -1,0 +1,30 @@
+[package]
+name = "template-plugin-rust"
+description = "Skeleton out-of-tree subprocess plugin for Nexo (Phase 81.15.a/.17.c) — copy + rename to start a new plugin."
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["Cristian Garcia <informacion@cristiangarcia.co>"]
+publish = false
+
+[[bin]]
+name = "template-plugin-rust"
+path = "src/main.rs"
+
+[dependencies]
+# In-tree dev path. When you copy this template out of the
+# nexo-rs workspace, swap to the published version once the SDK
+# ships to crates.io:
+#   nexo-microapp-sdk = { version = "0.1", features = ["plugin"] }
+#   nexo-broker = "0.1"
+nexo-microapp-sdk = { path = "../../crates/microapp-sdk", features = ["plugin"] }
+nexo-broker       = { path = "../../crates/broker" }
+
+anyhow       = "1"
+serde_json   = "1"
+tokio        = { version = "1", features = ["macros", "rt-multi-thread", "io-util", "io-std"] }
+tracing      = "0.1"
+tracing-subscriber = "0.3"
+
+[lints]
+workspace = true

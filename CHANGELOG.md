@@ -8,6 +8,38 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ## [Unreleased]
 
+### Added
+
+- **Phase 81.15.b — Rust plugin template (in-workspace draft).**
+  New `extensions/template-plugin-rust/` crate. Skeleton out-of-tree
+  subprocess plugin authors clone-and-rename to start a new
+  channel plugin. Three files: `Cargo.toml` with
+  `nexo-microapp-sdk = { features = ["plugin"] }` + `nexo-broker`
+  path deps (operators swap to crates.io versions when copying out
+  of the workspace); `nexo-plugin.toml` declaring
+  `[[plugin.channels.register]] kind = "template_echo"` plus
+  `[plugin.entrypoint] command = "./target/debug/template-plugin-rust"`;
+  `src/main.rs` ~70 LOC using the shipped `PluginAdapter` builder
+  — echoes inbound `broker.event` notifications back as
+  `broker.publish` notifications on `plugin.inbound.template_echo`.
+  Stderr logging via `tracing-subscriber` for operator visibility
+  pending Phase 81.23's stdio→tracing bridge. Workspace member so
+  `cargo build --workspace` keeps it green. README walks the
+  copy-rename-build flow, documents the topic-allowlist
+  conventions, and includes a handshake smoke-test command. Smoke
+  test passes — feeding one `initialize` request to the binary
+  returns a valid `{ manifest, server_version }` JSON-RPC reply
+  with all 12 manifest sections serialized cleanly. The template
+  doubles as 81.17.c-validation: a real Rust binary (not the
+  earlier bash mock) proves the wire format end-to-end against
+  the production daemon path. Phase 31.6 `nexo plugin new --lang
+  rust` scaffolder will eventually publish this directory as the
+  external `github.com/nexo-rs/plugin-template-rust` repo. IRROMPIBLE
+  refs: `extensions/template-rust/` + `extensions/template-microapp-rust/`
+  (proven workspace-template patterns we mirror); claude-code-leak
+  `src/plugins/builtinPlugins.ts` (TS plugin authoring shape);
+  OpenClaw absence stated.
+
 ### Changed
 
 - **Phase 81.17.b — `wire_plugin_registry` is now async + retains

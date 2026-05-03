@@ -63,6 +63,13 @@ members = [
     # `nexo-microapp-sdk` builder API. README points authors at
     # `docs/src/microapps/contract.md` for porting to other langs.
     "extensions/template-microapp-rust",
+    # Phase 81.15.a / 81.17.c — out-of-tree subprocess plugin
+    # template. Copy + rename to bootstrap a channel plugin that
+    # speaks the wire spec at `nexo-plugin-contract.md` via the
+    # `nexo-microapp-sdk` `plugin` feature + `PluginAdapter`.
+    # Member because CI must keep it green; operators copy the
+    # directory out of the repo and swap path deps for crates.io.
+    "extensions/template-plugin-rust",
     # Phase 80.9 fixture — minimal MCP server with channel
     # capabilities for end-to-end testing of the channels
     # surface. Operator-facing fixture, not a template.
