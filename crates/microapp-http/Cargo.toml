@@ -19,6 +19,8 @@ tower      = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["limit", "trace", "fs", "compression-gzip", "compression-br"] }
 http       = "1"
 tokio      = { version = "1", features = ["rt", "macros", "sync"] }
+async-stream = "0.3"
+futures      = "0.3"
 arc-swap   = "1"
 sha2       = "0.10"
 subtle     = "2"

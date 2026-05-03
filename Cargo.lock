@@ -3198,7 +3198,7 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "nexo-agent-registry"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -3221,7 +3221,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-assistant"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "nexo-config",
  "serde",
@@ -3381,7 +3381,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-dispatch-tools"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -3412,7 +3412,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-dream"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3442,7 +3442,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-driver-claude"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3464,7 +3464,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-driver-loop"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -3495,7 +3495,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-driver-permission"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3515,7 +3515,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-driver-types"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3568,7 +3568,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-fork"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3762,8 +3762,10 @@ name = "nexo-microapp-http"
 version = "0.1.0"
 dependencies = [
  "arc-swap",
+ "async-stream",
  "async-trait",
  "axum",
+ "futures",
  "http",
  "http-body-util",
  "nexo-microapp-sdk",
@@ -4048,7 +4050,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-project-tracker"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -4078,7 +4080,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-rs"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -4233,7 +4235,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-tunnel"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4272,7 +4274,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-webhook-receiver"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "bytes",
@@ -4295,7 +4297,7 @@ dependencies = [
 
 [[package]]
 name = "nexo-webhook-server"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "arc-swap",
  "async-trait",

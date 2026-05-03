@@ -15,4 +15,5 @@
 pub mod admin_proxy;
 pub mod auth;
 pub mod error;
+pub mod sse;
 pub mod static_assets;
