@@ -8,6 +8,540 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ## [Unreleased]
 
+## [0.1.1](https://github.com/lordmacu/nexo-rs/releases/tag/nexo-rs-v0.1.1) - 2026-05-03
+
+### Added
+
+- *(82.10.m)* SDK transparent operator_token_hash stamping
+- *(82.10.l)* admin/llm_providers/probe — daemon-side LLM provider reachability check
+- *(82.10.k)* nexo/admin/secrets/write — atomic secret persist + std::env::set_var injection
+- *(82.13.c.thread)* share processing_store + event_emitter with runtime
+- *(82.x.thread)* wire tenant + skills + escalation stores into bootstrap
+- *(82.11.log.thread+82.10.h.b.b.audit-db)* durable threads
+- *(82.10.h.b.b.activate)* main.rs admin RPC bootstrap activation
+- *(82.6.b)* stamp NEXO_EXTENSION_STATE_ROOT onto extension env
+- *(82.11.log.compose)* boot-side Tee composition for durable firehose
+- *(82.11.bridge)* NatsAgentEventEmitter — multi-host firehose
+- *(82.11.log.merge)* MergingAgentEventReader cross-source backfill
+- *(82.11.log.sweep)* retention sweep on SqliteAgentEventLog
+- *(82.11.log)* SqliteAgentEventLog — durable firehose sink
+- *(82.11.tee)* TeeAgentEventEmitter — fan-out emitter composition
+- *(82.13.b.firehose)* emit ProcessingStateChanged on pause/resume
+- *(82.10.h.b.pairing)* wire pairing notifier into admin_bootstrap
+- *(83.15.b.template)* reference test using MockAdminRpc
+- *(82.14.b.throttle)* EscalationThrottle — sliding-window per-scope cap
+- *(82.14.c)* SqliteEscalationStore — durable pending escalations
+- *(82.13.d)* SqliteProcessingControlStore — durable pause + pending queue
+- *(82.14.b.firehose)* EscalationRequested + EscalationResolved variants
+- *(83.15.b)* MockAdminRpc + MicroappTestHarness::with_admin_mock
+- *(83.8.12.5.cron)* tenant-aware cron LLM build
+- *(83.8.12.6.runtime+.b)* SkillLoader fallback chain + on-disk migration
+- *(83.8.12.4.b)* tenant-aware firehose + escalations handler filter
+- *(83.8.12.7)* admin audit log tenant_id column + tail_for_tenant
+- *(83.8.12.5.b)* wire BindingContext/AgentConfig.tenant_id → build_for_tenant on agent + worker
+- *(82.13.c.2)* boot shares ProcessingControlStore between admin RPC + runtime
+- *(82.13.c.1)* runtime intake hook checks ProcessingControlStore + buffers inbound during pause
+- *(81.6)* plugin-contributed agent merge + NexoPlugin::init() driver (library + tests)
+- *(82.13.b.2)* processing/resume injects operator summary as System transcript entry + SDK release end-to-end
+- *(81.5.b)* boot wire — call discover() in Mode::Run
+- *(82.13.b.1.3)* TranscriptWriterAppender adapter + SDK + boot wire + docs
+- *(81.5)* NexoPluginRegistry filesystem discovery (library + tests)
+- *(82.13.b.1.1)* TranscriptAppender trait + ProcessingInterventionParams.session_id
+- *(83.8.12.4)* tenant_id filter wire shapes + agents handler enforcement
+- *(83.8.12.1)* empresa wire shapes + BindingContext + AgentConfig empresa_id
+- *(83.8.4.b.b)* TelegramTranslator + EmailTranslator
+- *(83.8.4.b.3)* integration test + docs + close-out
+- *(83.8.4.b.2)* boot wire — AdminBootstrapInputs.broker
+- *(83.8.11)* docs + admin-ui sync + close-out
+- *(83.8.4.a)* close processing.intervention end-to-end via ChannelOutboundDispatcher
+- *(83.8.2)* admin/skills domain handler + capability + INVENTORY
+- *(83.14)* publish-readiness — CHANGELOGs + READMEs + dry-run pass
+- *(83.15)* MockBindingContext builder + 7 tests
+- *(83.17)* config schema validator + 11 tests
+- *(83.16)* MicroappError notification wire shape + 6 tests
+- *(83.5)* nexo-compliance-primitives crate (6 modules + 47 tests)
+- *(83.3)* hook vote-to-block / vote-to-transform wire shapes + 19 tests
+- *(83.2)* contributed-skills manifest field + 8 validation tests
+- *(83.1)* AgentConfig.extensions_config field + 2 YAML round-trip tests
+- *(83.7)* microapp template (Rust) — copy-and-rename scaffold
+- *(87.1)* LlmJudgeEvaluator + AcceptanceCriterion::LlmJudge + 11 tests
+- *(86.1)* memory metrics module + 9 tests
+- *(85.2)* MicroCompactPolicy + CompactSummary cache fields + 10 tests
+- *(85.1)* ReplayDecision::CompactAndRetry + classifier + 4 tests
+- *(84.4)* worker persona system prompt + boot wire
+- *(82.8)* multi-tenant audit log filter (account_id column + tail_for_account)
+- *(82.6)* per-extension state_dir helper + nexo ext state-dir CLI
+- *(82.12.3)* allow_external_bind opt-in + boot validate
+- *(82.10.h.b.5)* main.rs admin RPC bootstrap wire-path
+- *(82.10.h.b.4)* nexo microapp admin audit tail CLI subcommand
+- *(80.1.b.b.b.c)* per-goal_id multi-runner auto_dream dispatch
+- *(80.1.b.b.b.b)* runtime-attach AutoDreamRunner to orchestrator
+- *(80.1.b.b.b)* wire AutoDreamRunner per-agent + dream_now tool
+- *(36.2/MS-1.b)* wire mutation hook on workspace_git.commit_all
+- *(36.2/MS-2.b)* inject ClosureResolver from agent registry
+- *(36.2/MS-1)* wire memory mutation hook end-to-end
+- *(36.2)* agent memory snapshot subsystem
+- *(82.7.a)* unify ToolRateLimitSpec + add essential_deny_on_miss
+- *(83.4)* nexo-microapp-sdk crate — core builder + dispatch loop
+- *(82.4.b.b.3-5)* boot supervisor + auto-synth + resolver hook
+- *(82.4.4)* EventSubscriberBinding schema + AgentConfig field
+- *(82.4.1)* nexo-tool-meta — mustache-lite template renderer
+- *(82.2.b.b.4)* Tier A doc-check smoke script + close-out
+- *(82.2.b.7)* nexo-webhook-receiver re-exports envelope from tool-meta
+- *(82.2.b.6)* nexo-core re-exports BindingContext from tool-meta
+- *(82.2.b.1)* nexo-tool-meta crate skeleton
+- *(82.2.10)* main.rs boot supervisor for webhook receiver
+- *(82.2.5+6)* nexo-webhook-server crate — axum router + lifecycle
+- *(82.2.4)* WebhookDispatcher trait + envelope + recording mock
+- *(82.2.3)* client_ip pure-fn — XFF chain + trusted-proxy gates
+- *(82.2.1)* WebhookServerConfig schema + validation
+- *(extensions)* sample-channel-server MCP fixture (Phase 80.9)
+- *(channels)* permission relay end-to-end + public docs
+- *(channels)* rate limit + per-binding tool granularity (Phase 80.9 closed)
+- *(channels)* main.rs hookup + ChannelRelayDecider (Phase 80.9 final)
+- *(core)* NexoPlugin trait + PluginInitContext + lifecycle errors (Phase 81.2)
+- *(plugin-manifest)* nexo-plugin.toml schema + 4-tier validator (Phase 81.1)
+- *(config,main)* daemon-embed MCP HTTP server in Mode::Run (M1.b.c)
+- *(driver-permission)* generic ToolAdvisor + AdvisorRegistry (advisory_hook)
+- *(mcp,main)* SIGHUP reload trigger for nexo mcp-server expose_tools (M1.b)
+- *(config,driver-loop,main)* extract_memories boot wire (M4.a.b)
+- *(core,driver-types,driver-loop)* MemoryExtractor trait + LlmAgentBehavior wire (M4.a)
+- *(llm)* LlmError::QuotaExceeded + 4-provider plumb + last-quota cache (C4.c)
+- *(driver-permission/mcp)* sandbox 5th tier in gather_bash_warnings (C4.b)
+- *(core)* built-in deferred tools sweep (M8.a)
+- *(core/bridge)* listChanged capability + ArcSwap allowlist (M1.a)
+- *(driver-permission/mcp)* wire sed_validator + path_extractor into gather_bash_warnings (C4.a)
+- *(cron)* config-reload post-hook + smoke test + docs (M5.b step 5-6)
+- *(main)* consume memory.secret_guard from config + adapter (C5 step 2)
+- *(config)* wire memory.secret_guard YAML key (C5 step 1)
+- *(effective-policy)* per-binding override for lsp/team/config_tool/repl (C1)
+- deferred-schema filtering, cron jitter, MCP completion/complete, plan-mode pairing parser
+- Phase 77.2-77.6 + skills (autoCompact, sessionMemoryCompact, extractMemories, relevance scorer, bundled skills)
+- *(memory)* add secret scanner + guard for Phase 77.7
+- *(cache)* add global cache-break detection with anthropic diagnostics
+- *(setup)* per-agent wizard submenu + yaml_patch helpers
+- audit-before-done as code (HookAction::DispatchAudit + AuditChainer)
+- operator interrupt + audit-before-done workflow
+- *(project-tracker,dispatch-tools)* per-sub-phase acceptance criteria
+- *(main)* auto-boot driver subsystem when any agent has dispatch_capability=full
+- self-modify gate so Cody can finish the nexo-rs roadmap
+- *(core,project-tracker,agents)* Cody flows — preflight + workspace ops
+- *(main,core)* in-process driver subsystem behind NEXO_DRIVER_INTEGRATED
+- *(main,docs)* wire dispatch tool defs into agent bin + clarify integration paths
+- *(companion-tui)* reference scaffold for pairing protocol [PR-4 partial]
+- *(tunnel)* sidecar URL accessor for daemon↔CLI [PR-3 finalisation]
+- *(plugins/google)* CircuitBreaker on all 5 OAuth endpoints [H-1 finalisation]
+- *(core)* web_fetch built-in tool [W-2]
+- *(pair)* default_ttl_secs honoured from pairing.yaml [PR-6 finalisation]
+- *(setup)* web-search wizard entry [W-3]
+- *(pair)* tunnel.url + cleartext-allow into URL resolver [PR-3 partial]
+- *(core)* PT-1 — ToolHandler adapters for the dispatch surface
+- *(config)* pairing.yaml schema + loader + boot wiring [PR-6 partial]
+- *(dispatch-tools)* PT-6 — fold legacy driver subcommands into nexo-driver-tools
+- *(plugins)* CircuitBreaker on Telegram + Google [H-1 partial]
+- *(link-understanding)* readability-shaped boilerplate dropper [L-2]
+- *(evals)* fixture format + 43-case starter suite [Phase 51.1]
+- *(core)* Phase 67.H.3 — dispatch capability hot-reload via fresh ToolRegistryCache
+- *(ops)* cost report script + budget runbook [Phase 45.1]
+- *(dispatch-tools)* Phase 67.H.2 — NATS subject inventory + telemetry trait
+- *(dispatch-tools)* Phase 67.H.1 — nexo-driver-tools CLI subcommands
+- *(ops)* operator health-summary script + 3-layer probe doc [Phase 44.1]
+- *(agent-registry,dispatch-tools)* Phase 67.G.4 — admin tools
+- *(ops)* GDPR forget-user script + privacy runbook [Phase 50.1]
+- *(dispatch-tools,driver-loop)* Phase 67.G.2 — cancel/pause/resume/update_budget
+- *(ops)* backup script + operator doc [Phase 36.1]
+- *(ci)* bench workflow + operator-facing benchmarks doc [Phase 35.6 partial]
+- *(taskflow)* WaitEngine tick bench [Phase 35.4]
+- *(llm)* SSE parser benches [Phase 35.3]
+- *(broker)* topic_matches + local_publish benches [Phase 35.2]
+- *(resilience)* criterion bench scaffolding [Phase 35.1]
+- *(dispatch-tools)* Phase 67.E.1 — program_phase tool dispatch
+- *(core,dispatch-tools)* Phase 67.D.3 — registry filters by DispatchPolicy
+- *(release)* SBOM workflow + reproducibility docs [Phase 27.9 partial]
+- *(dispatch-tools)* Phase 67.D.2 — DispatchGate policy + trust + cap check
+- *(config,core)* Phase 67.D.1 — DispatchPolicy on agent + per-binding override
+- *(release)* Cosign keyless signing for Docker + assets [Phase 27.3 partial]
+- *(packaging)* Homebrew formula source-of-truth [Phase 27.6 partial]
+- *(packaging)* Debian .deb + RPM .spec recipes [Phase 27.4 partial]
+- *(packaging)* Termux .deb recipe [Phase 27.8 partial]
+- *(agent-registry)* Phase 67.B.3 — cap, FIFO queue, ArcSwap snapshot
+- *(ci)* publish multi-arch Docker image to ghcr.io [Phase 27.5]
+- *(agent-registry)* Phase 67.B.2 — crate scaffold + types + SQLite store
+- *(driver-claude)* Phase 67.B.1 — SessionBinding origin + dispatcher (schema v2)
+- *(project-tracker)* Phase 67.A.5 — config YAML + capabilities entry
+- *(project-tracker)* Phase 67.A.3 — git log lookup behind CircuitBreaker
+- *(project-tracker)* Phase 67.A.2 — FOLLOWUPS parser + FsProjectTracker
+- *(project-tracker)* Phase 67.A.1 — crate scaffold + PHASES.md parser
+- *(driver-loop)* Phase 67.9 — opportunistic /compact policy
+- *(driver-loop)* replay-policy + auto-rollback + deny shortcut (Phase 67.8)
+- *(driver-loop)* semantic memory of decisions via sqlite-vec (Phase 67.7)
+- *(driver-loop)* git worktree sandboxing + per-turn checkpoint (Phase 67.6)
+- *(driver-loop)* real AcceptanceEvaluator (Phase 67.5)
+- *(driver-loop)* goal orchestrator + LlmDecider + Unix socket bridge (Phase 67.4)
+- *(driver-permission)* MCP permission_prompt tool (Phase 67.3)
+- *(driver-claude)* SQLite SessionBindingStore (Phase 67.2)
+- *(driver-claude)* spawn + stream-json parser + binding store (Phase 67.1)
+- *(driver-types)* scaffold AgentHarness trait + Goal/Attempt/Decision (Phase 67.0)
+- *(pairing)* wire telemetry counters PR-2 (Phase 26.y)
+- *(pairing)* channel-adapter registry + per-channel reply delivery
+- *(core)* wire pairing gate into runtime intake
+- *(core+bin)* wire pairing — config field, policy, CLI
+- *(pairing)* DM-challenge gate + setup-code crate scaffold
+- *(core)* wire web_search tool + per-agent/per-binding policy
+- *(web-search)* multi-provider search crate scaffold
+- *(core/link-understanding)* fetch + extract URLs into prompt context
+- *(boot)* wire context-optimization into AgentRuntime
+- *(config)* per-agent context_optimization override
+- *(poller)* kind: agent_turn — scheduled LLM turns from YAML
+- *(llm)* DeepSeek connector via OpenAI-compatible reuse
+- *(llm/anthropic)* cache_control breakpoints + token counter
+- *(admin)* Telegram form — chat-id allowlist + auto-transcribe; Agents — credentials pinning UI [no-docs]
+- *(llm/context-opt)* foundation types for prompt cache + compaction
+- *(admin)* Telegram chat-ids + auto-transcribe + agent credentials pin [no-docs]
+- *(admin/channels)* Telegram edit (PATCH) + delete [no-docs]
+- *(poller/gmail)* retire legacy crate + ship six gmail_* LLM tools
+- *(admin)* channels list + add-telegram form + hot-reload dev loop [no-docs]
+- *(poller/gmail)* seen-id dedup cache + sample pollers.yaml
+- *(poller-ext)* extension-shipped custom LLM tools
+- *(admin/wizard)* avatar, draft persistence, getMe probe, WhatsApp reuse [no-docs]
+- *(extensions)* template-poller-python — sample stdio poller in 130 LoC
+- *(poller-ext)* poller capability for stdio extensions
+- *(admin)* Phase A1 first-run wizard (identity, soul, brain, channel)
+- *(metrics)* publish agent_poller series under /metrics
+- *(gmail-poller)* legacy YAML translator, no own loop
+- *(poller-tools)* LLM tools — pollers_{list,show,run,pause,resume,reset}
+- *(poller)* wire runner into main.rs (boot + admin + CLI)
+- *(admin)* React + Vite + Tailwind bundle served by agent admin
+- *(poller)* runner core + backoff + hot-reload
+- *(admin)* 'agent admin' command — cloudflared tunnel + Basic Auth
+- *(poller)* scaffold + types + schedule + sqlite state
+- *(google)* lazy-refresh client_id/secret on file mtime change
+- *(auth)* hot-reload credentials via POST /admin/credentials/reload
+- *(cli)* agent reload — trigger hot-reload via control.reload topic
+- *(core)* intake reads from snapshot.load() — hot-reload now takes effect
+- *(browser)* BrowserConfig.args — forward extra flags to Chrome
+- *(auth)* per-(channel,instance) circuit breakers
+- *(install)* Termux (Android) compatibility — additive, no breakage
+- *(boot)* wire ConfigReloadCoordinator after agents spawn
+- *(core)* ConfigReloadCoordinator — hot-swap of existing agents
+- *(auth)* strict mode rejects legacy inline google_auth
+- *(core)* ReloadCommand channel + apply handler in AgentRuntime
+- *(install)* native / no-Docker install path — doc + bootstrap script
+- *(core)* debounced config file watcher for Phase 18
+- *(setup)* phase 17 — multi-instance WA/TG + google-auth.yaml flows
+- *(core)* telemetry primitives for Phase 18 hot-reload
+- *(core)* AgentRuntime owns an ArcSwap<RuntimeSnapshot>
+- *(setup)* run credential gauntlet inside the wizard
+- *(core)* RuntimeSnapshot — immutable per-agent reloadable state
+- *(config)* RuntimeConfig schema for Phase 18 hot-reload
+- *(auth)* phase 17 — runtime integration
+- *(auth)* phase 17 scaffold — per-agent credential framework
+- *(config)* resolve relative paths against config dir at load time
+- *(core)* wire ToolRegistryCache into runtime intake
+- *(boot)* validate model.provider against the LLM registry
+- *(boot)* second-pass binding validation after tool registry assembly
+- *(core)* aggregate binding validation + wildcard overlap warn
+- *(core)* enforce per-binding allowed_tools at LLM turn + execution
+- *(plugins,core)* outbound + delegation read effective policy
+- *(core)* prompt, skills, and allowed_delegates read from effective policy
+- *(core)* LLM model read from effective policy per binding
+- *(core)* resolve EffectiveBindingPolicy at inbound intake
+- *(core)* per-binding tool registry cache
+- *(core)* AgentContext carries EffectiveBindingPolicy
+- *(boot)* validate per-binding overrides after config load
+- *(core)* binding_validate — boot-time checks for per-binding overrides
+- *(core)* EffectiveBindingPolicy — resolve per-binding overrides
+- *(config)* binding overrides — Option<> fields on InboundBinding
+- *(plugins)* gmail-poller — cron-style email → broker bridge
+- *(config)* load private agents from config/agents.d/*.yaml
+- Ana sales agent + per-agent outbound allowlist + setup polish
+- *(setup)* guided wizard + google plugin extraction + inline pairing
+- agent framework phases 1-14 — runtime, memory, LLMs, plugins, skills, taskflow
+- *(config)* per-agent isolation fields + multi-instance plugin shapes
+- *(1.2)* config loading — AppConfig::load, env var resolution, typed structs
+- *(1.1)* workspace scaffold — 9 crates, config YAMLs, cargo build clean
+
+### Fixed
+
+- *(82.14.b+83.8.2.b)* wire skills + escalations into admin_bootstrap
+- *(83.8.12.2.b)* wire tenants domain into admin RPC dispatcher
+- *(ci)* clippy doc indent + Docker build context
+- *(docker)* drop ARG TARGETARCH default so buildx multi-arch works
+- *(ci)* unused imports + broken docs links + README SEO
+- B22+B23+B24 + comprehensive READMEs for programmer agent crates
+- B17–B21 + S1/S3/S5 — audit pass cleanup
+- B10 + B11 + B12 + B13 + B16 hardening pass
+- *(agent-registry,dispatch-tools)* PT-5 + PT-4 + PT-7
+- *(llm/telemetry)* pure renderer kills test/test global race [Phase 38.x.1]
+- *(ci)* cross arm64 jammy image + ignore 2 known concurrency-flake tests
+- *(ci)* cross-arm64 — install libssl-dev:arm64 + reqwest rustls
+- *(ci)* rustfmt one-liner + sort_by_key for clippy 1.95
+- *(ci)* green-up rustfmt + clippy on rust 1.95 toolchain
+- *(audit)* land 18 of 25 findings from AUDIT-2026-04-25-pass2
+- *(audit)* land 16 of 36 findings from AUDIT-2026-04-25
+- *(core)* hot-reload runs post-assembly tool-name validation
+- *(cli)* bring BrokerHandle trait into scope + derive Deserialize on ReloadOutcome
+- *(auth)* redact inline credential paths in error output
+- *(core)* make ToolRegistryCache::get_or_build atomic + review follow-ups
+
+### Other
+
+- *(82.11.log.compose)* firehose page — boot composition state
+- *(82.11.firehose-doc)* architecture page — firehose composition
+- *(82.13.b.firehose)* admin-rpc page — ProcessingStateChanged emit
+- *(83.15.b.docs)* testing microapps page
+- *(83.8.12.8)* close-out — tenant tools shipped + framework xref
+- *(82.13.c.3)* close-out — round-trip pause takeover end-to-end
+- *(82.13.b.3.3)* pending inbound buffer docs + FOLLOWUPS close-out
+- *(82.13.b)* log IA awareness during/after takeover follow-up
+- *(83.8.12.1.fix)* rename empresa → tenant for English code identifiers
+- log Phase 83.8.12 multi-empresa framework primitive
+- log WhatsApp-Web UI constraint for Phase 83.12 + 83.13
+- *(83.8.10)* log per-agent compliance toggle propagation gap
+- *(83.11)* getting-started + templates + compliance-primitives
+- *(83.6)* microapp contract — language-agnostic spec
+- *(84.5)* CHANGELOG entries + cross-link + Phase 84 close-out
+- *(84.3)* SendMessageToWorker docs + worked example + close-out
+- *(84.2)* coordinator-mode envelope section + close-out
+- *(84.1)* YAML-fixture smoke test + coordinator-mode docs page
+- *(82)* mark Phase 82 complete in CLAUDE.md tracker
+- *(82.9)* multi-tenant SaaS walkthrough — close out Phase 82
+- *(82.14.3)* close out escalation read + resolve + auto-resolve hook
+- *(82.13.4)* close out operator processing pause + intervention
+- *(82.12.5)* close out http_server capability subsystem
+- *(82.11.6)* close out agent event firehose + integration test
+- priority tags (P0/P1/P2/P3) on every active sub-phase + pickup-order index
+- curation pass — DROP/DEFER/REDUCE + 3 new microapp gap sub-phases + curated source-of-truth file
+- *(87)* register Phase 87 — LLM-as-judge verifier + container runtime dispatcher
+- *(86)* register Phase 86 — memory observability + cache debug affordance
+- *(85)* register Phase 85 — compaction hardening (reactive + cache-aware)
+- *(84)* mark Phase 84 as priority — paused after plan approval
+- *(82.10.h.b)* document deferreds in FOLLOWUPS.md
+- *(82.10.h.b.6)* close out pairing adapters + main.rs wire path + audit-tail CLI
+- *(84)* register Phase 84 — coordinator agent persona + worker continuation
+- *(80.1.b.b.b.b)* mark orchestrator runtime-attach shipped
+- *(82.10.h.4)* close out SQLite audit + production adapters
+- *(80.1.b.b.b)* MS-3 pre-dream snapshot threading + docs sync
+- *(82.10)* close out admin RPC + capability gates + 5 CRUD domains
+- *(36.2)* mark MS-1.b (git) + MS-2.b shipped
+- *(36.2)* mark MS-1 + MS-2 shipped, document MS-1.b + MS-2.b
+- *(82.7)* close out Phase 82.7 — per-binding tool rate-limits
+- *(82.5)* close out Phase 82.5 with InboundMessageMeta surface
+- *(83.4.b)* mark agent-creator migration to SDK ✅
+- *(82.3)* mark Phase 82.3 foundations ✅ MVP — runtime deferred
+- *(82.4.b.b)* mark Phase 82.4 ✅ — boot wiring + docs close-out
+- *(82.4.b)* mark EventSubscriber runtime ✅ MVP — boot wiring deferred
+- *(82.4)* mark Phase 82.4 foundations ✅ MVP — runtime task deferred
+- *(82.2.b)* mark Phase 82.2.b ✅ MVP — operator docs + close-out
+- *(82.2)* mark Phase 82.2 ✅ MVP — operator docs + admin-ui registry
+- *(82.1.9)* mark Phase 82.1 ✅ MVP — close-out summary
+- *(.claude)* expand permissions allow-list, add deny for destructive ops
+- *(phases-microapps)* integrate Phase 80.9 MCP channels learnings into 82.x specs
+- comprehensive autonomous-agent capabilities overview
+- *(phases-microapps)* clarify v1 microapp UI scope is WhatsApp-only
+- *(phases-microapps)* clarify many-to-many channel↔agent assignment
+- *(phases-microapps)* generalize chat-coupled primitives to be use-case agnostic
+- *(phases-microapps)* repo topology + dev methodology + 83.14 publish SDK
+- *(phases-microapps)* add 82.13 + 82.14 + 83.13 — operator takeover, agent escalation, WhatsApp Web-inspired UI library
+- *(phases-microapps)* add 83.12 — meta-microapp React UI reference scaffold
+- *(claude.md)* compress Phase 82 + 83 rows + point to PHASES-microapps.md
+- *(wip)* checkpoint mid-refactor + split microapp PHASES into dedicated file
+- *(cron)* boot path uses build_cron_bindings_from_snapshots + collects per-agent maps (M5.b step 3-4)
+- *(cron)* extract build_cron_bindings_from_snapshots + CronRebuildDeps (M5.b step 1-2)
+- C5 SecretGuardConfig YAML wired + CHANGELOG (C5 step 4)
+- *(config)* cover memory.secret_guard YAML round-trip (C5 step 3)
+- M5 (partial — ArcSwap infra) shipped + M5.b deferred wire (M5 step 5)
+- *(cron)* ArcSwap-ify RuntimeCronToolExecutor for hot-swap support (M5 step 1)
+- M9 expose_tools regression guard shipped + CHANGELOG (M9 step 2)
+- M2 args_hash + args_size shipped + CHANGELOG (M2 step 5)
+- C3 INVENTORY drift fix shipped + CHANGELOG (C3 step 8)
+- C2 hot-reload coverage matrix + FOLLOWUPS H-3 marked shipped (C2 step 9)
+- *(team-tools)* pull policy from ctx.effective_policy() per call (C2 step 5)
+- *(repl-tool)* per-call allowlist guard + drop dead config field (C2 step 4)
+- *(lsp-tool)* pull policy from ctx.effective_policy() per call (C2 steps 2-3)
+- *(main)* read 4 policies from EffectiveBindingPolicy at boot (C2 step 1)
+- audit followups: log all 2026-04-30 findings + ship M3 + M10
+- update Phase 77 counters (14/20, 251 total sub-phases)
+- disable automatic docker workflow during active development
+- fix workspace clippy/build regressions and docker context
+- sync all local changes
+- stabilize workspace: complete mcp/followup wiring and satisfy strict CI lints
+- harden denied overrides and pass per-call session context
+- Phase 79.6 step 12: docs + tally bumps
+- Phase 79.6 step 11 (incl. step 10 deferral): main.rs boot wiring
+- Phase 79.6 step 9: full Team* handlers (Create/Delete/SendMessage/List/Status)
+- Phase 79.6 step 8: team_tools scaffold + 5 ToolDef stubs
+- Phase 79.6 step 7: plan-mode entries for the 5 Team* tools
+- Phase 79.6 step 6: AgentContext team fields + DmMessage
+- Phase 79.6 step 5: TeamMessageRouter — DM + broadcast over `team.>`
+- Phase 79.6 step 4: TeamPolicy + AgentConfig.team + fixture sweep
+- Phase 79.6 step 3: SqliteTeamStore — full SQL store
+- Phase 79.6 step 2: nexo-team-store types + sanitize/validate
+- Phase 79.6 step 1: nexo-team-store crate scaffold
+- Phase 79.10.b: Config tool — full main.rs registration via setup bridge
+- Phase 79.10 steps 12+13: CI matrix + docs sync
+- Phase 79.10 step 11: main.rs boot wiring (audit store + tail tool)
+- Phase 79.10 step 10: root Cargo feature flag `config-self-edit`
+- Phase 79.10 step 8: Config tool — read path + scaffold (gated)
+- Phase 79.10 step 3: ConfigToolPolicy + SUPPORTED_SETTINGS + AgentConfig.config_tool
+- Phase 79.10 step 1: ConfigTool denylist + globset workspace dep
+- Phase 79.5 step 13: docs sync — `lsp.md` + SUMMARY + tally bumps
+- Phase 79.5 step 12: main.rs boot wiring + AgentConfig.lsp + fixture sweep
+- Phase 79.5 step 1: nexo-lsp crate scaffold
+- untrack Claude Code scheduled_tasks.lock runtime artifact
+- CI fix: silence clippy on in-flux Phase 76 + 79 + 48 scaffolding
+- pairing handshake + MCP HTTP transport + project-tracker state + browser CDP polish
+- Phase 27.4 docs: install-deb.md + install-rpm.md placeholders
+- Phase 76 MCP server hardening: HTTP transport, auth, multi-tenancy, rate-limit, telemetry
+- Phase 79.7 follow-up: outbound publish — cron LLM responses reach the user
+- Phase 79.7 follow-up: LlmCronDispatcher (real LLM call)
+- Phase 79.7 follow-up: runtime firing live (logging dispatcher)
+- Phase 79.11: ListMcpResources + ReadMcpResource router tools (MVP)
+- Phase 79.7 + 79.8: register cron tools + RemoteTrigger in main.rs
+- Phase 79.2 follow-up: ToolSearch per-agent rate limit (5/min)
+- Phase 79.7: cron_create / cron_list / cron_delete (MVP — runtime firing deferred)
+- Phase 79.8: RemoteTrigger outbound publisher (webhook + NATS)
+- Phase 79.13: NotebookEdit Jupyter cell editor
+- Phase 79.3: SyntheticOutput typed-output validator
+- Phase 79.2: ToolSearch deferred-schema discovery (MVP)
+- Phase 79.4: TodoWriteTool (intra-turn scratch list)
+- Phase 79.1: EnterPlanMode + ExitPlanMode tools (MVP)
+- Phase 48 use cases: email_attachment_get + email_health + email_instances_list
+- Phase 15.9: Anthropic OAuth Claude-Code request shape
+- Phase 48 audit fixes: DSN sender-domain harden + boot connectivity probe
+- Phase 48 audit fixes: dispatcher diagnostic surface
+- Phase 48 follow-up #3 (partial): in-process pipeline tests
+- Phase 48 follow-up #5: surgical hot-reload (close add-only gap)
+- Phase 48 follow-up #5 (partial): account-diff + add-only hot-reload
+- Phase 48 follow-up: interactive setup wizard
+- Phase 48 follow-up #9: binding-policy auto-filter
+- phase 78.3: inject FOLLOWUPS PR-N spec + fix shell timeout default
+- Phase 48 follow-up #10: attachment ref-count + retention GC
+- Phase 48 follow-up #8: dedicated Prometheus metrics
+- Phase 48 follow-up #7: /email/health HTTP route
+- Phase 48 follow-up #4: persistent bounce history
+- Phase 48 follow-up #2: IMAP STARTTLS
+- Phase 48 follow-up #6: multi-selector DKIM probe
+- Phase 48 follow-up #1: register email_* tools in main.rs
+- wire driver acceptance.default_shell_timeout in integrated daemon
+- Phase 48.10: close Phase 48 — main.rs wiring + capabilities + docs
+- phase 78.2: synthetic test for Continue → NextTurn → turn N+1
+- Phase 48.9.a: SPF/DKIM boot check + provider hint
+- Phase 48.8: loop-prevention + DSN/bounce parsing
+- Phase 48.7.c: archive/move_to/label/search + IMAP wrappers (closes 48.7)
+- Phase 48.7.b: email_send + email_reply handlers
+- Phase 48.7.a: tool context + DispatcherHandle + IMAP op helpers
+- Phase 48.6: thread_root_id + session-id v5 + reply enrichment
+- Phase 48.5.c: outbound multipart builder + enqueue read
+- Phase 48.5.b: inbound MIME parser + drain enrichment
+- Phase 48.5.a: MIME envelope foundations (events, deps, config)
+- Phase 48.4.b: SMTP dispatcher + lettre wiring
+- Phase 48.4.a: outbound foundations (events, mime_text, queue)
+- Phase 48.3.b: IMAP IDLE worker + reconnect/backoff/cursor
+- Phase 48.3.a: email plugin foundations (events, health, cursor)
+- Phase 48.2: EmailCredentialStore in nexo-auth
+- Phase 48.1: email plugin scaffold + multi-account config
+- Phase 27.2: GH Actions release workflow (Linux + Termux)
+- Phase 27.1: cargo-dist baseline + bundled WIP
+- Phase 72: turn-level audit log
+- Phase 71: agent registry persistence + shutdown drain
+- Phase 70: pairing/dispatch DX cleanup
+- fetch full history for build+test job
+- cargo fmt --all
+- *(calculator)* sample PHASES + FOLLOWUPS for the dispatch subsystem
+- *(release)* split release-plz + rate-limit publish [5 crates / 10 min]
+- *(ops)* web_fetch operator page [W-2 follow-on]
+- B8 — boot wiring sample for the dispatch subsystem
+- *(core)* PT-8 — multi-agent dispatch e2e for handler + telemetry wiring
+- Phase 67.H.6 — PHASES + CLAUDE counter + FOLLOWUPS deferrals
+- Phase 67.H.5 — project-tracker.md page + SUMMARY entry
+- *(recipes)* AWS EC2 deploy recipe [Phase 40.3]
+- *(admin-ui)* Phase 67.H.4 — flesh out tracker / registry / dispatch / hooks tiles
+- *(ops)* anonymous telemetry spec [Phase 41.1]
+- *(recipes)* Hetzner + Fly.io deploy recipes [Phase 40 partial]
+- *(getting-started)* install landing page rewrite [Phase 27.10 partial]
+- *(phases)* thread TaskFlow integration into pollers / pairing / local-llm
+- *(phases)* make Phase 68 model-agnostic; add 68.14 catalog
+- *(phases)* add Phase 68 — Local LLM tier (llama.cpp)
+- *(claude)* bump deferred sub-phase counter (148 / 6 deferred)
+- *(release)* bump nexo-pairing + nexo-memory to 0.1.2; sync path-dep pins
+- *(release)* per-crate independent versioning
+- *(ci)* release-plz workflow + config for auto-publish
+- *(release)* add check-registry.sh
+- *(release)* publish-order script + RELEASE.md
+- *(PHASES)* expand Phase 27 release pipeline into sub-phases
+- *(release)* bump workspace 0.1.0 → 0.1.1, add per-crate READMEs
+- telemetry counters + histogram (W-1)
+- *(PHASES)* rename stale `agent_llm::TokenCounter` ref to `nexo_llm::`
+- link understanding telemetry (L-1)
+- align stale agent-* prose to nexo-* naming
+- agent_* crates → nexo_*, agent bin → nexo
+- hot-reload context_optimization flags via per-turn snapshot read
+- *(context-opt)* operations guide + admin-ui tech-debt entry
+- *(admin-ui/PHASES)* expand A6 — MCP gaps + manager UI [no-docs]
+- roadmap Phases 20-26 — agent_turn done, OpenClaw-parity backlog
+- *(followups)* document Phase 19 V2 deferrals
+- *(poller)* config/pollers.md + build-a-poller.md, phase index
+- Cargo.lock sync after rust-embed + sha2 pulls [no-docs]
+- *(config)* document per-agent + per-binding output language
+- *(hot-reload)* security model section after the cross-phase audit
+- *(followups)* document agent-llm + agent-mcp telemetry parallel-test races
+- phase 17 follow-up surfaces (hot-reload, breakers, device-code, lazy-refresh, multi-instance setup)
+- *(recipes)* hot-reload — rotate API key, A/B prompts, narrow allowlist
+- *(followups)* close items 4 + 6 (strict legacy hard-error, inline path display)
+- *(followups)* close item 3 (google device-code OAuth en setup)
+- *(release)* cargo fetch + --frozen instead of --locked [no-docs]
+- *(followups)* close item 5 (google lazy-refresh)
+- commit Cargo.lock (nexo-rs is a binary app) [no-docs]
+- aarch64 portability check + pre-built release binaries [no-docs]
+- *(followups)* close item 2 (hot-reload credentials)
+- CHANGELOG + dependabot [no-docs]
+- Phase 18 config hot-reload — 9/9 sub-phases complete
+- OSS repo chrome — SECURITY, CoC, issue + PR templates [no-docs]
+- pre-commit docs-sync gate
+- *(followups)* close phase 17 setup wizard items (multi-instance, credentials autowrite, google store migration)
+- enable GitHub icon link in mdBook top-right
+- *(followups)* expand phase 17 setup wizard deferred items
+- prominent docs link + deep links to top pages
+- *(docs)* make rustdoc non-fatal so mdBook still deploys
+- *(phase 17)* sync plugin + metrics + agents pages to credentials
+- *(core)* add arc-swap + notify deps for Phase 18 hot-reload
+- *(d17)* polish — link-check in CI, README badges
+- *(d15)* architecture decision records — nine backfilled ADRs
+- *(followups)* phase 17 deferred items
+- *(d14)* API reference bridge — rustdoc under /api/
+- *(d13)* recipes — five end-to-end walkthroughs
+- *(d12)* CLI reference — one page, every subcommand
+- *(d11)* operations — docker, metrics + health, logging, dlq
+- Option<usize> sentinel fixed; trim per-binding follow-ups to the 3 structural items remaining
+- *(core)* binding_index is Option<usize>, not usize::MAX sentinel
+- *(d10)* soul, identity & learning — identity, memory, dreaming
+- *(d9)* TaskFlow — model + manager
+- *(config)* lock down path canonicalisation + strip leading ./
+- *(d8)* skills — catalog + gating
+- ToolRegistryCache is now wired; drop it from open follow-ups
+- *(d7)* MCP — introduction, client, server
+- *(d6)* extensions — manifest, stdio, nats, cli, templates
+- close resolved per-binding follow-ups, trim to open polish items
+- *(d5)* memory — short-term, long-term, vector
+- *(d4)* channel plugins — whatsapp, telegram, email, browser, google
+- Phase 16 per-binding capability override — PHASES, index, user-facing
+- *(d3)* LLM providers — minimax, anthropic, openai-compat, retry
+- *(core)* lock down match_binding_index first-match semantics
+- pre-resolve policies + skip boot prune for bound agents
+- *(d2)* configuration — layout, agents, llm, broker, memory, drop-in
+- *(d1)* architecture section — overview, runtime, bus, fault tolerance
+- scaffold mdBook with phased doc plan + phase D0 content
+- add NOTICE for mandatory attribution
+- *(config)* ana.per-binding.example.yaml — two-binding override example
+- *(config)* binding override YAML parse coverage
+- pre-release prep — CI, dual license, ext gating, Ana→MiniMax
+- README + MIT license
+- *(whatsapp)* pull wa-agent 0.1.1 from crates.io
+- mark 1.1 done, update progress 1/68
+- mandate brainstorm before every sub-phase
+- agent framework design, phases, and dev tooling
+
 ### Added
 
 - **Phase 81.6 — Plugin-contributed agent merge + `NexoPlugin::init()` driver
