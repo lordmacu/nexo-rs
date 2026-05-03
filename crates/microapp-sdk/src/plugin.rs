@@ -71,7 +71,7 @@ use serde_json::{json, Value};
 use tokio::io::{
     self, AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader,
 };
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 
 use crate::errors::{Error as SdkError, Result as SdkResult};
 
@@ -127,12 +127,42 @@ where
 /// Phase 81.15.c — child-side request-response correlation map.
 /// Each outbound request (memory.recall, llm.complete, ...) is
 /// keyed by an integer id; the dispatch loop's reader looks up
-/// the matching pending oneshot and resolves it when the host
+/// the matching pending entry and resolves it when the host
 /// replies. Reserved ids: 1 = (host→child) initialize, 2 =
 /// (host→child) shutdown — both flow the OPPOSITE direction so
 /// they never collide with the child's outbound id space (which
 /// starts at 100).
-type ChildPending = Arc<DashMap<u64, oneshot::Sender<Result<Value, RpcError>>>>;
+///
+/// 81.15.c.b — pending value type changed from a single oneshot
+/// to an enum [`PendingKind`] so streaming requests
+/// (`complete_llm_stream`) can register both a `mpsc` receiver
+/// for delta chunks AND a final oneshot for the
+/// `LlmCompleteResult` reply.
+type ChildPending = Arc<DashMap<u64, PendingKind>>;
+
+/// Phase 81.15.c.b — variant of pending entry kept alive while a
+/// child request is in flight. The dispatch loop's response
+/// path resolves `Single` / `Streaming.final_tx`; the
+/// notification path pushes chunks into `Streaming.delta_tx`.
+#[doc(hidden)]
+pub enum PendingKind {
+    /// Non-streaming request. The dispatch loop resolves this
+    /// oneshot once the response frame lands.
+    Single(oneshot::Sender<Result<Value, RpcError>>),
+    /// Streaming request. The dispatch loop pushes
+    /// `llm.complete.delta` chunks into `delta_tx` as they
+    /// arrive; the final response frame resolves `final_tx`
+    /// (which then closes the stream from the user's side).
+    Streaming {
+        /// Per-request channel for delta chunks. Unbounded so a
+        /// fast provider doesn't backpressure the dispatch loop;
+        /// the buffer is reclaimed when the consumer drops the
+        /// `LlmStream`.
+        delta_tx: mpsc::UnboundedSender<String>,
+        /// Resolved when the host's final response frame lands.
+        final_tx: oneshot::Sender<Result<LlmCompleteResult, RpcError>>,
+    },
+}
 
 /// Default timeout for child-issued RPC requests. The daemon's
 /// `memory.recall` returns in milliseconds; `llm.complete` can
@@ -274,7 +304,7 @@ impl BrokerSender {
             "params": params,
         });
         let (tx, rx) = oneshot::channel::<Result<Value, RpcError>>();
-        self.pending.insert(id, tx);
+        self.pending.insert(id, PendingKind::Single(tx));
 
         // Serialize + write atomically under the writer lock so a
         // concurrent publish() can't interleave bytes mid-frame.
@@ -342,15 +372,94 @@ impl BrokerSender {
             .map_err(|e| RpcError::Decode(format!("memory.recall entries: {e}")))
     }
 
+    /// Phase 81.15.c.b — streaming variant of `complete_llm`.
+    /// Issues the request with `stream: true` and returns an
+    /// [`LlmStream`] handle the caller drives via
+    /// [`LlmStream::next_chunk`] (delta chunks as they arrive)
+    /// and [`LlmStream::await_final`] (final usage + finish
+    /// reason after the stream closes). Dropping the
+    /// `LlmStream` before the host sends its final response is
+    /// safe — the pending entry is cleaned up via `Drop` so a
+    /// late delta or final reply is silently discarded with a
+    /// debug log.
+    ///
+    /// Errors:
+    /// - [`RpcError::Transport`] when the stdin write fails
+    ///   before the request leaves (host already closed).
+    /// - The returned `LlmStream`'s `await_final()` resolves
+    ///   with [`RpcError::Server`] when the host returns a
+    ///   JSON-RPC error response (e.g. `-32603 "llm not
+    ///   configured"`).
+    pub async fn complete_llm_stream(
+        &self,
+        p: LlmCompleteParams,
+    ) -> Result<LlmStream, RpcError> {
+        let mut params = json!({
+            "provider": p.provider,
+            "model": p.model,
+            "messages": p.messages,
+            "stream": true,
+        });
+        if let Some(max) = p.max_tokens {
+            params["max_tokens"] = json!(max);
+        }
+        if let Some(temp) = p.temperature {
+            params["temperature"] = json!(temp);
+        }
+        if let Some(sys) = p.system_prompt {
+            params["system_prompt"] = json!(sys);
+        }
+        let id = next_request_id(&self.next_id);
+        let frame = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "llm.complete",
+            "params": params,
+        });
+        let (delta_tx, delta_rx) = mpsc::unbounded_channel::<String>();
+        let (final_tx, final_rx) =
+            oneshot::channel::<Result<LlmCompleteResult, RpcError>>();
+        self.pending.insert(
+            id,
+            PendingKind::Streaming {
+                delta_tx,
+                final_tx,
+            },
+        );
+
+        let line = serde_json::to_string(&frame).map_err(|e| {
+            self.pending.remove(&id);
+            RpcError::Decode(format!("serialize stream request: {e}"))
+        })?;
+        {
+            let mut w = self.writer.lock().await;
+            if w.write_all(line.as_bytes()).await.is_err()
+                || w.write_all(b"\n").await.is_err()
+                || w.flush().await.is_err()
+            {
+                self.pending.remove(&id);
+                return Err(RpcError::Transport(
+                    "stdin write failed (host closed?)".to_string(),
+                ));
+            }
+        }
+        Ok(LlmStream {
+            request_id: id,
+            chunks: delta_rx,
+            finished: Some(final_rx),
+            pending: self.pending.clone(),
+        })
+    }
+
     /// Phase 81.15.c — typed wrapper for `llm.complete`
     /// (non-streaming). Builds the JSON-RPC params from
     /// [`LlmCompleteParams`], issues the request, deserializes
     /// the response into [`LlmCompleteResult`].
     ///
-    /// Streaming consumption ships in 81.15.c.b — that variant
-    /// will return an `impl Stream<Item = String>` of text
-    /// chunks plus a final `LlmCompleteResult` (without
-    /// `content`).
+    /// For streaming consumption use
+    /// [`Self::complete_llm_stream`] instead — that variant
+    /// returns an [`LlmStream`] handle yielding delta chunks +
+    /// a final `LlmCompleteResult`.
     ///
     /// Errors mirror the host wire spec at
     /// `nexo-plugin-contract.md` §5.2.
@@ -407,6 +516,79 @@ pub struct PluginAdapter {
     server_version: String,
     on_broker_event: Option<Arc<dyn BrokerEventHandler>>,
     on_shutdown: Option<Arc<dyn ShutdownHandler>>,
+}
+
+/// Phase 81.15.c.b — handle returned by
+/// [`BrokerSender::complete_llm_stream`]. Yields text chunks as
+/// the host streams them, then a final [`LlmCompleteResult`] with
+/// usage + finish reason after the stream closes.
+///
+/// Typical usage:
+///
+/// ```ignore
+/// let mut stream = broker.complete_llm_stream(params).await?;
+/// while let Some(chunk) = stream.next_chunk().await {
+///     print!("{}", chunk);
+/// }
+/// let result = stream.await_final().await?;
+/// println!("\n[finish_reason={}]", result.finish_reason);
+/// ```
+///
+/// Dropping the `LlmStream` early is safe — the pending entry
+/// is cleaned up via `Drop` so a late delta or final reply
+/// from the host is silently discarded with a debug log on the
+/// dispatch loop side.
+pub struct LlmStream {
+    request_id: u64,
+    chunks: mpsc::UnboundedReceiver<String>,
+    /// `Option` so [`Self::await_final`] can `take()` ownership
+    /// of the receiver despite `LlmStream` having a `Drop` impl
+    /// (which forbids moving fields out of `&mut self`).
+    finished: Option<oneshot::Receiver<Result<LlmCompleteResult, RpcError>>>,
+    pending: ChildPending,
+}
+
+impl LlmStream {
+    /// Pull the next text chunk. Returns `None` when the stream
+    /// closes (after which [`Self::await_final`] should be
+    /// awaited for the final result).
+    pub async fn next_chunk(&mut self) -> Option<String> {
+        self.chunks.recv().await
+    }
+
+    /// Await the host's final response. Resolves once all
+    /// deltas have been delivered and the host's response frame
+    /// lands. Returns [`RpcError::Server`] when the host
+    /// returned a JSON-RPC error (e.g. mid-stream provider
+    /// failure mapped to `-32603`); [`RpcError::Transport`] when
+    /// the dispatch loop dropped the oneshot before resolving
+    /// (host crashed mid-stream). Calling twice returns
+    /// `RpcError::Transport` on the second call (the receiver
+    /// was already taken).
+    pub async fn await_final(mut self) -> Result<LlmCompleteResult, RpcError> {
+        let rx = self.finished.take().ok_or_else(|| {
+            RpcError::Transport("await_final already consumed".into())
+        })?;
+        match rx.await {
+            Ok(payload) => payload,
+            Err(_canceled) => Err(RpcError::Transport(
+                "final response oneshot canceled (host closed mid-stream)".into(),
+            )),
+        }
+    }
+}
+
+impl Drop for LlmStream {
+    fn drop(&mut self) {
+        // Clean up the pending entry if it's still there. The
+        // dispatch loop's get/remove on response path is the
+        // normal cleanup; this Drop covers the case where the
+        // user dropped the stream before consuming the final
+        // reply (or before any deltas arrived). Late deltas /
+        // final reply land on a missing pending entry → dropped
+        // with debug log.
+        self.pending.remove(&self.request_id);
+    }
 }
 
 impl PluginAdapter {
@@ -528,22 +710,57 @@ where
         if let Some(id_val) = id.as_ref() {
             if method.is_empty() {
                 if let Some(req_id) = id_val.as_u64() {
-                    if let Some((_, sender)) = pending.remove(&req_id) {
-                        let payload = if let Some(err) = frame.get("error") {
-                            let code = err
-                                .get("code")
-                                .and_then(|v| v.as_i64())
-                                .unwrap_or(-32603) as i32;
-                            let message = err
-                                .get("message")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("(no message)")
-                                .to_string();
-                            Err(RpcError::Server { code, message })
-                        } else {
-                            Ok(frame.get("result").cloned().unwrap_or(Value::Null))
-                        };
-                        let _ = sender.send(payload);
+                    if let Some((_, kind)) = pending.remove(&req_id) {
+                        let err_obj = frame.get("error").cloned();
+                        let result_val = frame.get("result").cloned().unwrap_or(Value::Null);
+                        match kind {
+                            PendingKind::Single(sender) => {
+                                let payload = if let Some(err) = err_obj {
+                                    let code = err
+                                        .get("code")
+                                        .and_then(|v| v.as_i64())
+                                        .unwrap_or(-32603)
+                                        as i32;
+                                    let message = err
+                                        .get("message")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("(no message)")
+                                        .to_string();
+                                    Err(RpcError::Server { code, message })
+                                } else {
+                                    Ok(result_val)
+                                };
+                                let _ = sender.send(payload);
+                            }
+                            PendingKind::Streaming { final_tx, .. } => {
+                                // Phase 81.15.c.b — final response
+                                // for a streaming request. delta_tx
+                                // drops with the enum, closing the
+                                // chunks channel cleanly so the
+                                // user's `next_chunk()` loop returns
+                                // `None`. Then `await_final()`
+                                // resolves with this payload.
+                                let payload = if let Some(err) = err_obj {
+                                    let code = err
+                                        .get("code")
+                                        .and_then(|v| v.as_i64())
+                                        .unwrap_or(-32603)
+                                        as i32;
+                                    let message = err
+                                        .get("message")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("(no message)")
+                                        .to_string();
+                                    Err(RpcError::Server { code, message })
+                                } else {
+                                    serde_json::from_value::<LlmCompleteResult>(result_val)
+                                        .map_err(|e| RpcError::Decode(format!(
+                                            "llm.complete stream final result: {e}"
+                                        )))
+                                };
+                                let _ = final_tx.send(payload);
+                            }
+                        }
                         continue;
                     }
                     tracing::debug!(
@@ -592,6 +809,38 @@ where
                     tokio::spawn(async move {
                         handler_clone.handle(topic, event, sender).await;
                     });
+                }
+            } else if method == "llm.complete.delta" {
+                // Phase 81.15.c.b — streaming chunk for an
+                // outstanding `complete_llm_stream` request. Look
+                // up the pending entry by request_id; if it's
+                // Streaming, push the chunk into delta_tx. If the
+                // pending entry is missing (already finalized or
+                // user dropped the LlmStream), the chunk is
+                // dropped with debug log.
+                let req_id = params
+                    .get("request_id")
+                    .and_then(|v| v.as_u64());
+                let chunk = params
+                    .get("chunk")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if let Some(req_id) = req_id {
+                    if let Some(entry) = pending.get(&req_id) {
+                        if let PendingKind::Streaming { delta_tx, .. } = entry.value() {
+                            let _ = delta_tx.send(chunk.to_string());
+                        } else {
+                            tracing::debug!(
+                                request_id = req_id,
+                                "llm.complete.delta arrived for non-streaming pending — drop"
+                            );
+                        }
+                    } else {
+                        tracing::debug!(
+                            request_id = req_id,
+                            "llm.complete.delta with unknown request_id — drop"
+                        );
+                    }
                 }
             } else {
                 tracing::debug!(method, "unhandled notification — drop");
@@ -1180,6 +1429,113 @@ min_nexo_version = ">=0.1.0"
         assert!(
             observed.load(Ordering::SeqCst),
             "recall_memory wrapper must deserialize entries"
+        );
+    }
+
+    /// Phase 81.15.c.b — `complete_llm_stream` returns an
+    /// `LlmStream` yielding text chunks via `next_chunk()` and
+    /// resolving `await_final()` once the host sends the final
+    /// response frame. Test fabricates 3 deltas + a final
+    /// response, asserts the handler reassembled the text and
+    /// got the right finish_reason + usage.
+    #[tokio::test]
+    async fn complete_llm_stream_yields_chunks_and_final_result() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let observed = Arc::new(AtomicBool::new(false));
+        let observed_clone = observed.clone();
+        let adapter = PluginAdapter::new(TEST_MANIFEST)
+            .expect("manifest parses")
+            .on_broker_event(move |_t, _e, broker: BrokerSender| {
+                let observed = observed_clone.clone();
+                async move {
+                    let params = LlmCompleteParams {
+                        provider: "stub".into(),
+                        model: "x".into(),
+                        messages: vec![],
+                        ..Default::default()
+                    };
+                    let mut stream = match broker.complete_llm_stream(params).await {
+                        Ok(s) => s,
+                        Err(e) => panic!("complete_llm_stream open failed: {e}"),
+                    };
+                    let mut assembled = String::new();
+                    while let Some(chunk) = stream.next_chunk().await {
+                        assembled.push_str(&chunk);
+                    }
+                    let result = match stream.await_final().await {
+                        Ok(r) => r,
+                        Err(e) => panic!("await_final failed: {e}"),
+                    };
+                    assert_eq!(assembled, "hello world");
+                    assert_eq!(result.finish_reason, "stop");
+                    assert_eq!(result.usage.completion_tokens, 5);
+                    observed.store(true, Ordering::SeqCst);
+                }
+            });
+        let (mut host_write, mut host_read, _join) = run_adapter_on_duplex(adapter).await;
+
+        // Trigger the handler via broker.event.
+        let trigger = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "broker.event",
+            "params": {
+                "topic": "plugin.outbound.test",
+                "event": {
+                    "id": "00000000-0000-0000-0000-000000000010",
+                    "timestamp": "2026-05-01T00:00:00Z",
+                    "topic": "plugin.outbound.test",
+                    "source": "host",
+                    "session_id": null,
+                    "payload": {}
+                }
+            }
+        });
+        host_write
+            .write_all(format!("{}\n", trigger).as_bytes())
+            .await
+            .unwrap();
+
+        // Adapter issues llm.complete with stream:true; capture
+        // the request id then send 3 delta notifications + final
+        // response.
+        let req = read_reply_line(&mut host_read).await;
+        assert_eq!(req["method"], "llm.complete");
+        assert_eq!(req["params"]["stream"], true);
+        let req_id = req["id"].clone();
+        for chunk in ["hello", " ", "world"] {
+            let delta = serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "llm.complete.delta",
+                "params": { "request_id": req_id, "chunk": chunk }
+            });
+            host_write
+                .write_all(format!("{}\n", delta).as_bytes())
+                .await
+                .unwrap();
+        }
+        // After deltas land, send final response. The dispatch
+        // loop dropping the Streaming pending entry closes
+        // delta_tx → next_chunk() returns None → handler proceeds
+        // to await_final.
+        let final_resp = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "content": "",
+                "finish_reason": "stop",
+                "usage": { "prompt_tokens": 3, "completion_tokens": 5 }
+            }
+        });
+        host_write
+            .write_all(format!("{}\n", final_resp).as_bytes())
+            .await
+            .unwrap();
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(
+            observed.load(Ordering::SeqCst),
+            "handler must reassemble chunks + observe final result"
         );
     }
 }
