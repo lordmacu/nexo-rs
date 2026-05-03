@@ -10,6 +10,63 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.15.a — `nexo-microapp-sdk` plugin-mode (`PluginAdapter`
+  child-side helper).** Lets out-of-tree plugin authors avoid hand-
+  rolling the JSON-RPC parser / manifest handshake / broker-publish
+  framing — same role `nexo-microapp-sdk::Microapp` plays for stdio
+  microapps, but for the plugin lifecycle shape that `SubprocessNexoPlugin`
+  drives on the host side (81.14 + 81.14.b). New module
+  `crates/microapp-sdk/src/plugin.rs` (~430 LOC) exposed behind a
+  new optional Cargo feature `plugin` with gated deps
+  (`nexo-plugin-manifest` + `nexo-broker` + `toml`) — microapp
+  authors leave the feature off and don't pay the dep cost. Builder
+  API: `PluginAdapter::new(manifest_toml: &str)` parses + caches
+  the manifest at construction (failure is `SdkError::Io` with a
+  structured message);
+  `.with_server_version(...)` lets a binary that hot-patched ship a
+  runtime version distinct from the manifest version (defaults to
+  `<plugin.id>-<plugin.version>`); `.on_broker_event(handler)` and
+  `.on_shutdown(handler)` register user closures (plain async fns
+  via blanket impl on `Fn(...) -> impl Future`); `.run_stdio()`
+  drives the dispatch loop on stdin/stdout until EOF or `shutdown`,
+  and `.run(reader, writer)` is the IO-injectable variant unit
+  tests use via `tokio::io::duplex`. Child-side `BrokerSender`
+  helper is clone-cheap (wraps `Arc<Mutex<dyn AsyncWrite>>` shared
+  with the dispatch writer) and exposes `publish(topic, event)`
+  that emits a `broker.publish` notification on stdout — the host
+  validates the topic against its allowlist before forwarding to
+  the broker, so a buggy plugin can't poison core nexo topics.
+  Dispatch loop handles: `initialize` request → replies with
+  `{ manifest: <cached>, server_version: <derived> }`;
+  `broker.event { topic, event }` notification → invokes the user's
+  `on_broker_event` with `topic`, parsed `nexo_broker::Event`, and
+  a `BrokerSender` clone (handler errors are intentionally
+  swallowed — same best-effort contract the host adapter uses);
+  `shutdown` request → invokes user handler if registered (any
+  `Err` propagates as JSON-RPC `-32000` so the host surfaces
+  `PluginShutdownError::Other`), replies `{ok: true}`, breaks the
+  loop; unknown methods → `-32601` (`method not found`); parse
+  errors → `-32700`. Notifications without `id` and matching no
+  registered method are silently dropped (debug-logged) — same
+  pattern the existing `runtime.rs` dispatch loop uses for
+  microapp notifications. 6 unit tests using `tokio::io::duplex`
+  for end-to-end simulation: `initialize_replies_with_cached_manifest`,
+  `broker_event_dispatches_to_user_handler`,
+  `broker_sender_writes_publish_notification` (asserts the
+  outgoing frame has NO `id` per JSON-RPC notification semantics),
+  `shutdown_invokes_handler_and_breaks_loop`,
+  `unknown_method_returns_neg_32601`, `parse_error_returns_neg_32700`.
+  Re-exports under `pub use plugin::*` gated by the same feature.
+  **Out of scope**: the template repo `github.com/nexo-rs/plugin-template-rust`
+  is 81.15.b — external repo bootstrap with a single commit
+  (Cargo.toml, manifest skeleton, example main.rs, CI template).
+  IRROMPIBLE refs: internal `crates/microapp-sdk/src/runtime.rs:87-264`
+  for the dispatch-loop pattern reused structurally;
+  `crates/core/src/agent/nexo_plugin_registry/subprocess.rs` for
+  the host wire format the SDK must match; claude-code-leak
+  `src/utils/computerUse/mcpServer.ts` for the MCP child-side
+  notification pattern; OpenClaw absence stated.
+
 - **Phase 81.14.b — Broker ↔ child topic bridge.** Wires the
   `SubprocessNexoPlugin` adapter shipped in 81.14 to the broker so
   out-of-tree plugins receive their outbound events from the daemon
