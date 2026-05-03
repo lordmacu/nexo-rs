@@ -32,6 +32,8 @@ nexo-llm = { version = "0.1.1", path = "../../llm" }
 nexo-auth = { version = "0.1.1", path = "../../auth" }
 nexo-pairing = { version = "0.1.2", path = "../../pairing", default-features = false }
 nexo-resilience = { version = "0.1.1", path = "../../resilience" }
+nexo-plugin-manifest = { version = "0.1.0", path = "../../plugin-manifest" }
+toml = "0.8"
 
 [dev-dependencies]
 wiremock     = "0.6"

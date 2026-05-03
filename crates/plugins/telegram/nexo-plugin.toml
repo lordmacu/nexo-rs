@@ -1,0 +1,27 @@
+# Phase 81.12.b — DORMANT until Phase 81.12.e ships the boot wire flip.
+#
+# This manifest is part of the plugin crate and parsed at compile-time
+# via `include_str!` in `TelegramPlugin::new()`. Operators MUST NOT add
+# this directory to `plugins.discovery.search_paths` until Phase 81.12.e
+# (see proyecto/PHASES-curated.md). Doing so today would cause the
+# discovery walker to pick up the plugin while the legacy registration
+# in `src/main.rs:1902-1910` still constructs `TelegramPlugin` via
+# `PluginRegistry::register`. The result is harmless on its own
+# (factory_registry passed to wire_plugin_registry is `None`, so the
+# discovered plugin records `InitOutcome::NoHandle`) — but it's
+# dead noise.
+#
+# 81.12.e moves this file (or a symlink) into the operator's discovery
+# search path AND replaces the legacy block with
+# `factory_registry.register("telegram", telegram_plugin_factory(cfg))`
+# called once per `TelegramPluginConfig` instance.
+
+[plugin]
+id = "telegram"
+version = "0.1.1"
+name = "Telegram Bot"
+description = "Telegram bot channel for nexo agents."
+min_nexo_version = ">=0.1.0"
+
+[plugin.requires]
+nexo_capabilities = ["broker"]

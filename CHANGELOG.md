@@ -10,6 +10,46 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.12.b — Telegram plugin dual-trait migration to `NexoPlugin`.**
+  Second per-plugin slice of the `81.12` migration (after 81.12.a / browser).
+  New file `crates/plugins/telegram/nexo-plugin.toml` (~28 LOC) declares
+  `id = "telegram"`, version `0.1.1`, name `"Telegram Bot"`,
+  `min_nexo_version = ">=0.1.0"`, and `requires.nexo_capabilities = ["broker"]`.
+  Manifest is **dormant** — top-of-file warning matches the browser slice:
+  do not add to `plugins.discovery.search_paths` until 81.12.e flips the
+  boot wire. `TelegramPlugin` struct gains a `cached_manifest: PluginManifest`
+  field parsed once via `include_str!("../nexo-plugin.toml")` + `toml::from_str`
+  in `TelegramPlugin::new()`. `impl NexoPlugin for TelegramPlugin` ships
+  alongside the existing `impl Plugin for TelegramPlugin` (dual-trait):
+  `manifest()` returns `&self.cached_manifest`; `init(ctx)` calls the
+  legacy `Plugin::start(self, ctx.broker.clone()).await` and maps any
+  `anyhow::Error` to `PluginInitError::Other { plugin_id, source }`;
+  `shutdown()` mirrors via `Plugin::stop` mapped to
+  `PluginShutdownError::Other`. Public factory builder
+  `pub fn telegram_plugin_factory(cfg: TelegramPluginConfig) -> PluginFactory`
+  in `crates/plugins/telegram/src/lib.rs` returns a closure that clones
+  `cfg` per invocation and constructs an `Arc<dyn NexoPlugin>`. **Multi-instance
+  is operator-side**: the factory captures one `TelegramPluginConfig` per call,
+  so multi-bot setups invoke it once per `TelegramPluginConfig` (matching the
+  shape of the existing `src/main.rs:1902-1910` loop). Crucially,
+  `manifest().plugin.id == "telegram"` for every instance — the per-instance
+  label (`bot_a`, `bot_b`, …) lives in `TelegramPlugin::registry_name`, NOT
+  in the manifest. The factory is what differentiates instances by closing
+  over distinct configs. The factory is exported but no caller registers it
+  today — main.rs's legacy loop stays untouched. **Behavior identical to
+  pre-81.12.b until Phase 81.12.e flips main.rs**. New deps:
+  `nexo-plugin-manifest = { path = "../../plugin-manifest" }` + `toml = "0.8"`
+  on the telegram crate's `Cargo.toml`. No cycle introduced. 5 unit tests:
+  manifest parses + id correct; cached_manifest reachable via &dyn NexoPlugin;
+  factory builder produces a usable `Arc<dyn NexoPlugin>`; dual-trait dispatch
+  agrees on identity for single-bot; multi-instance factory yields distinct
+  `registry_name`s but identical `manifest().plugin.id`. Compatibility audit
+  pre-implementation: `TelegramPluginConfig: Clone` already derived; struct
+  literal callsites are zero outside the crate (only `TelegramPlugin::new(cfg)`
+  callers); `TelegramPairingAdapter` registered separately and is out of
+  81.12.b scope; `register_telegram_tools` per-agent at main.rs:3350 is out
+  of scope (defer Phase 81.3 tool namespace runtime enforcement).
+
 - **Phase 81.12.a — Browser plugin dual-trait migration to `NexoPlugin`.**
   First per-plugin slice of the `81.12` migration. New file
   `crates/plugins/browser/nexo-plugin.toml` (~30 LOC) declares the

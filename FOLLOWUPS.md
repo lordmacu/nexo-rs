@@ -354,8 +354,19 @@ coordinación de archivos cross-cutting.
     derivado, BrowserPlugin solo construido via ::new(),
     nexo-plugin-manifest sin cycle. Behavior idéntico a
     pre-81.12.a hasta que 81.12.e flippee main.rs.
-  - **81.12.b ⬜** Telegram plugin migration. Multi-instance loop
-    inside init(). ~3h effort.
+  - **81.12.b ✅ shipped 2026-05-01** — Telegram plugin migration:
+    dual-trait `TelegramPlugin` + dormant `crates/plugins/telegram/nexo-plugin.toml`
+    + `pub fn telegram_plugin_factory(cfg) -> PluginFactory` in lib.rs.
+    Manifest parsed once via `include_str!` in `new()`. 5 unit tests
+    (4 same as browser + `multi_instance_factory_yields_distinct_registry_names_same_manifest_id`
+    proving multi-bot pattern: per-instance label lives in `registry_name`,
+    `manifest().plugin.id == "telegram"` for every instance — operator
+    differentiates via factory closure capture, not via the manifest).
+    Multi-instance handled by operator (one factory call per
+    `TelegramPluginConfig` — same shape as legacy main.rs:1902-1910 loop).
+    Compatibility audit pre-cycle: TelegramPluginConfig: Clone derived,
+    PluginInitError::Other already exists. Behavior identical to pre-81.12.b
+    until 81.12.e flips main.rs.
   - **81.12.c ⬜** WhatsApp plugin migration. Multi-instance +
     pairing state collection. ~4h effort.
   - **81.12.d ⬜** Email plugin migration. Single-NexoPlugin,

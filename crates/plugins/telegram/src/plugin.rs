@@ -8,6 +8,10 @@ use dashmap::DashMap;
 use nexo_broker::{AnyBroker, BrokerHandle, Event};
 use nexo_config::types::plugins::TelegramPluginConfig;
 use nexo_core::agent::plugin::{Command, Plugin, Response};
+use nexo_core::agent::plugin_host::{
+    NexoPlugin, PluginInitContext, PluginInitError, PluginShutdownError,
+};
+use nexo_plugin_manifest::PluginManifest;
 use serde::Deserialize;
 use tokio::sync::{oneshot, Mutex, OnceCell};
 use tokio::task::{AbortHandle, JoinHandle};
@@ -82,6 +86,11 @@ pub struct TelegramPlugin {
     /// `PluginRegistry` keys on this string, so multi-bot setups need
     /// unique names to avoid one overwriting another on register.
     registry_name: String,
+    /// Phase 81.12.b — compile-time-bundled plugin manifest. Parsed
+    /// once in `new()` from `../nexo-plugin.toml` via `include_str!`.
+    /// `manifest().plugin.id` stays `"telegram"` for every instance —
+    /// the per-instance label lives in `registry_name`, not the manifest.
+    cached_manifest: PluginManifest,
     bot: OnceCell<Arc<BotClient>>,
     broker: OnceCell<AnyBroker>,
     pending: PendingMap,
@@ -93,6 +102,12 @@ pub struct TelegramPlugin {
     /// can join them instead of just signalling cancellation.
     spawned: Mutex<Vec<JoinHandle<()>>>,
 }
+
+/// Phase 81.12.b — bundled NexoPlugin manifest. `expect()` is OK here:
+/// the file ships in this crate and is checked at compile time by
+/// `include_str!`, so a parse failure means the workspace itself is
+/// broken — fail-fast at boot beats a deferred "manifest missing" surprise.
+const MANIFEST_TOML: &str = include_str!("../nexo-plugin.toml");
 
 impl TelegramPlugin {
     pub fn new(cfg: TelegramPluginConfig) -> Self {
@@ -110,9 +125,12 @@ impl TelegramPlugin {
             Some(inst) if !inst.is_empty() => format!("telegram.{inst}"),
             _ => "telegram".to_string(),
         };
+        let cached_manifest: PluginManifest = toml::from_str(MANIFEST_TOML)
+            .expect("compile-time-bundled nexo-plugin.toml must parse");
         Self {
             cfg: Arc::new(cfg),
             registry_name,
+            cached_manifest,
             bot: OnceCell::new(),
             broker: OnceCell::new(),
             pending: Arc::new(DashMap::new()),
@@ -234,6 +252,42 @@ impl Plugin for TelegramPlugin {
             }),
             Command::Custom { name, payload } => dispatch_custom(bot, &name, payload).await,
         }
+    }
+}
+
+/// Phase 81.12.b — dual-trait wrapper. Until Phase 81.12.e flips the
+/// boot path in `src/main.rs`, the legacy `Plugin` impl above is the
+/// one actually invoked at runtime; this `NexoPlugin` impl exists so a
+/// future `factory_registry.register("telegram", telegram_plugin_factory(cfg))`
+/// callsite can drive the same plugin through `wire_plugin_registry`
+/// without touching the per-instance fields.
+///
+/// Note that `manifest().plugin.id == "telegram"` for every instance —
+/// the per-instance label (`"bot_a"`, `"bot_b"`, …) is operator-side
+/// state and lives in `registry_name`, not the manifest. The factory
+/// is what differentiates instances by closing over distinct configs.
+#[async_trait]
+impl NexoPlugin for TelegramPlugin {
+    fn manifest(&self) -> &PluginManifest {
+        &self.cached_manifest
+    }
+
+    async fn init(&self, ctx: &mut PluginInitContext<'_>) -> Result<(), PluginInitError> {
+        Plugin::start(self, ctx.broker.clone())
+            .await
+            .map_err(|source| PluginInitError::Other {
+                plugin_id: self.cached_manifest.plugin.id.clone(),
+                source,
+            })
+    }
+
+    async fn shutdown(&self) -> Result<(), PluginShutdownError> {
+        Plugin::stop(self)
+            .await
+            .map_err(|source| PluginShutdownError::Other {
+                plugin_id: self.cached_manifest.plugin.id.clone(),
+                source,
+            })
     }
 }
 
@@ -1522,5 +1576,100 @@ mod topic_tests {
     #[test]
     fn missing_question_id_marker_returns_none() {
         assert!(extract_question_id_marker("hello").is_none());
+    }
+}
+
+#[cfg(test)]
+mod nexo_plugin_tests {
+    use super::*;
+
+    fn test_telegram_config(instance: Option<&str>) -> TelegramPluginConfig {
+        // Token is dummy — these tests never call Telegram's API.
+        // `Plugin::start` would fail with a network error, but we cover
+        // only the trait-shape paths (manifest, factory, dual-trait).
+        TelegramPluginConfig {
+            token: "dummy:test-token".to_string(),
+            polling: Default::default(),
+            allowlist: Default::default(),
+            auto_transcribe: Default::default(),
+            bridge_timeout_ms: 120_000,
+            instance: instance.map(|s| s.to_string()),
+            allow_agents: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn manifest_parses_and_id_is_telegram() {
+        let m: PluginManifest = toml::from_str(MANIFEST_TOML).unwrap();
+        assert_eq!(m.plugin.id, "telegram");
+        assert_eq!(m.plugin.version.to_string(), "0.1.1");
+        assert_eq!(
+            m.plugin.requires.nexo_capabilities,
+            vec!["broker".to_string()]
+        );
+    }
+
+    #[test]
+    fn nexo_plugin_init_delegates_to_legacy_start() {
+        // We cover the trait-dispatch shape: build the plugin, cast to
+        // &dyn NexoPlugin, and verify the cached_manifest is reachable
+        // through the trait. The init body is a 1-line delegation to
+        // Plugin::start; calling it for real requires network + a live
+        // Telegram bot token, which is out of scope for unit tests.
+        let plugin = TelegramPlugin::new(test_telegram_config(None));
+        let nexo: &dyn NexoPlugin = &plugin;
+        assert_eq!(nexo.manifest().plugin.id, "telegram");
+        assert_eq!(nexo.manifest().plugin.version.to_string(), "0.1.1");
+    }
+
+    #[test]
+    fn factory_builder_produces_usable_handle() {
+        let cfg = test_telegram_config(None);
+        let factory: nexo_core::agent::nexo_plugin_registry::PluginFactory =
+            Box::new(move |_m| {
+                let plugin: Arc<dyn NexoPlugin> = Arc::new(TelegramPlugin::new(cfg.clone()));
+                Ok(plugin)
+            });
+        let m: PluginManifest = toml::from_str(MANIFEST_TOML).unwrap();
+        match factory(&m) {
+            Ok(handle) => assert_eq!(handle.manifest().plugin.id, "telegram"),
+            Err(e) => panic!("factory should succeed, got {e}"),
+        }
+    }
+
+    #[test]
+    fn dual_trait_methods_share_state() {
+        // Single-bot (no instance label): legacy registry_name and
+        // manifest id agree. Multi-bot diverges — see the next test.
+        let plugin = TelegramPlugin::new(test_telegram_config(None));
+        let legacy: &dyn Plugin = &plugin;
+        let nexo: &dyn NexoPlugin = &plugin;
+        assert_eq!(legacy.name(), "telegram");
+        assert_eq!(nexo.manifest().plugin.id, "telegram");
+        assert_eq!(legacy.name(), nexo.manifest().plugin.id);
+    }
+
+    #[test]
+    fn multi_instance_factory_yields_distinct_registry_names_same_manifest_id() {
+        // Multi-bot: per-instance label diverges (`telegram.bot_a` vs
+        // `telegram.bot_b`) but the manifest id stays `"telegram"` for
+        // both. Operator-side state lives in `registry_name`, never the
+        // manifest — that is what lets one factory_registry entry per
+        // bot coexist without collapsing into one another.
+        let p_a = TelegramPlugin::new(test_telegram_config(Some("bot_a")));
+        let p_b = TelegramPlugin::new(test_telegram_config(Some("bot_b")));
+        let legacy_a: &dyn Plugin = &p_a;
+        let legacy_b: &dyn Plugin = &p_b;
+        let nexo_a: &dyn NexoPlugin = &p_a;
+        let nexo_b: &dyn NexoPlugin = &p_b;
+        assert_eq!(legacy_a.name(), "telegram.bot_a");
+        assert_eq!(legacy_b.name(), "telegram.bot_b");
+        assert_ne!(legacy_a.name(), legacy_b.name());
+        assert_eq!(nexo_a.manifest().plugin.id, "telegram");
+        assert_eq!(nexo_b.manifest().plugin.id, "telegram");
+        assert_eq!(
+            nexo_a.manifest().plugin.id,
+            nexo_b.manifest().plugin.id
+        );
     }
 }
