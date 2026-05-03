@@ -8,6 +8,69 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ## [Unreleased]
 
+### Added
+
+- **Phase 81.14 — `SubprocessNexoPlugin` host-side adapter (spawn +
+  stdio JSON-RPC handshake).** First slice of out-of-tree plugin
+  infrastructure. Plugin authors will eventually ship binaries that
+  speak newline-delimited JSON-RPC 2.0 over stdin/stdout; the
+  daemon owns the child process via this adapter and exposes it as
+  `Arc<dyn NexoPlugin>` so the existing `wire_plugin_registry` boot
+  path drives lifecycle without any new trait-level hook on the host.
+  New manifest section `[plugin.entrypoint]` (additive, every field
+  defaults so the four 81.12.a-d in-tree manifests parse without
+  changes): `command: Option<String>` (`None` = in-tree Rust plugin —
+  legacy shape), `args: Vec<String>`, `env: BTreeMap<String, String>`.
+  `EntrypointSection::is_subprocess()` returns `true` only when
+  `command` is `Some` and non-empty. New file
+  `crates/core/src/agent/nexo_plugin_registry/subprocess.rs` (~480 LOC)
+  ships `SubprocessNexoPlugin` + `subprocess_plugin_factory` helper.
+  `init()` body: spawns child via `tokio::process::Command` (stdio
+  piped, stderr null, kill_on_drop), then writes one
+  `initialize { nexo_version }` request line and awaits a reply with
+  matching id on stdout. Reply must carry `manifest.plugin.id` equal
+  to the factory's registered id — out-of-tree binary pretending to
+  be a different plugin gets rejected. Defense-in-depth on env keys:
+  manifest `entrypoint.env` cannot redefine reserved `NEXO_*` names
+  (a plugin author overriding `NEXO_STATE_ROOT` from a manifest gets
+  a hard boot failure, not silent confusion). Three background tasks
+  per plugin: stdin writer task (single mpsc consumer, bounded depth
+  64 — drop-on-full matches at-most-once broker semantics), stdout
+  reader task (parses each line, demuxes id-tagged responses to
+  pending oneshots vs untagged notifications which are debug-logged
+  this slice — broker bridge wiring lands in 81.14 follow-up), and
+  the daemon-wide cancellation token cascades cancellation into
+  child tokens. `shutdown()` sends a JSON-RPC `shutdown` request,
+  waits 5s for reply, then 1s grace before SIGKILL via `Child::kill`,
+  finally joins all background tasks with 1s each. Idempotent across
+  multiple calls (a never-started plugin returns `Ok(())`).
+  Configurable timeout via `NEXO_PLUGIN_INIT_TIMEOUT_MS` env (default
+  5000). 9 unit tests: `entrypoint_section_serde_roundtrip`,
+  `is_subprocess_returns_false_for_in_tree_default`,
+  `subprocess_plugin_manifest_returns_cached`,
+  `init_fails_when_command_not_found`,
+  `init_fails_when_env_collides_with_nexo_reserved`,
+  `init_times_out_when_child_silent` (uses `/bin/cat` as the canonical
+  silent child),
+  `init_fails_when_manifest_id_mismatch_on_initialize_reply` (writes
+  a tiny shell script fixture into tempdir that returns a wrong id),
+  `factory_helper_produces_arc_dyn_nexoplugin`,
+  `shutdown_is_idempotent_when_never_started`. **Out of scope this
+  slice** (deferred to follow-up sub-phases already tracked in
+  PHASES-curated.md): broker → child topic bridge (81.14.b),
+  child-side `PluginAdapter` SDK helper (81.15), versioned
+  `nexo-plugin-contract.md` spec (81.16), real out-of-tree plugin
+  extraction (81.17), `memory.recall` / `llm.complete` / `tool.dispatch`
+  host RPC handlers (81.20), supervisor + respawn + resource limits
+  (81.21), sandbox (81.22), stdio → tracing bridge (81.23). IRROMPIBLE
+  refs: internal `extensions/openai-whisper/src/main.rs:1-79` +
+  `protocol.rs:1-23` (proven nexo subprocess plugin shape, reuses
+  same JSON-RPC envelope); claude-code-leak
+  `src/utils/computerUse/mcpServer.ts` + `src/commands/mcp/addCommand.ts`
+  (MCP stdio transport pattern via `@modelcontextprotocol/sdk`); OpenClaw
+  absence stated — `research/extensions/{whatsapp,telegram,browser}/`
+  ran in-process Node, no subprocess channel-plugin precedent there.
+
 ### Changed
 
 - **Phase 81.12.e deferred → superseded by Phase 81.17** (extract
