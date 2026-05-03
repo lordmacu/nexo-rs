@@ -17,6 +17,9 @@ use serde::Serialize;
 
 use nexo_plugin_manifest::PluginManifest;
 
+use super::capability_aggregator::{
+    AggregatedGate, PluginCapabilityAggregation, UnmetRequirement,
+};
 use super::contributes::{AgentMergeConflict, AgentMergeReport};
 use super::contributes_skills::{SkillConflict, SkillsMergeReport};
 use super::init_loop::InitOutcome;
@@ -60,6 +63,17 @@ pub struct PluginDiscoveryReport {
     /// Phase 81.7 — same-skill-name collisions across plugins.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skill_conflicts: Vec<SkillConflict>,
+    /// Phase 81.11 — plugin-declared capability gates aggregated
+    /// at boot. Keyed by `env_var`. Drift-prevention contract
+    /// preserved: `nexo_setup::capabilities::INVENTORY` stays
+    /// immutable; this map is the parallel plugin view.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub plugin_capability_gates: BTreeMap<String, AggregatedGate>,
+    /// Phase 81.11 — `requires.nexo_capabilities` entries that the
+    /// running daemon does not provide. Warn-level (graceful
+    /// degradation).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unmet_required_capabilities: Vec<UnmetRequirement>,
 }
 
 impl PluginDiscoveryReport {
@@ -89,6 +103,15 @@ impl PluginDiscoveryReport {
         self.diagnostics.extend(m.diagnostics);
         self.contributed_skills_per_plugin = m.contributed_per_plugin;
         self.skill_conflicts.extend(m.conflicts);
+    }
+
+    /// Phase 81.11 — fold a [`PluginCapabilityAggregation`] into
+    /// this report. Diagnostics appended; `plugin_capability_gates`
+    /// replaced verbatim; `unmet_required_capabilities` extended.
+    pub fn fold_capability_aggregation(&mut self, agg: PluginCapabilityAggregation) {
+        self.diagnostics.extend(agg.conflicts);
+        self.plugin_capability_gates = agg.gates;
+        self.unmet_required_capabilities.extend(agg.unmet_required);
     }
 }
 
@@ -129,6 +152,30 @@ pub enum DiscoveryDiagnosticKind {
         channel_kind: String,
         prior_registered_by: String,
         attempted_by: String,
+    },
+    /// Phase 81.11 — plugin's manifest declares a `[plugin.capability_gates.gate]`
+    /// whose `env_var` is already in `nexo_setup::capabilities::INVENTORY`.
+    /// Plugin gate dropped (operator must disable one).
+    CapabilityGateConflictsCore {
+        env_var: String,
+        plugin_id: String,
+        core_extension: String,
+    },
+    /// Phase 81.11 — two plugins declare the same `env_var` in
+    /// their `[plugin.capability_gates.gate]` arrays.
+    /// First-plugin-wins; second's gate dropped.
+    CapabilityGateConflictsPlugin {
+        env_var: String,
+        plugin_a: String,
+        plugin_b: String,
+    },
+    /// Phase 81.11 — plugin declares a `requires.nexo_capabilities`
+    /// entry that the running daemon does not provide. Warn-level:
+    /// operator may run degraded; plugin's own `init()` may still
+    /// reject when manifest-driven factory ships.
+    RequiredCapabilityNotGranted {
+        plugin_id: String,
+        capability_name: String,
     },
 }
 

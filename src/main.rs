@@ -1949,11 +1949,16 @@ async fn main() -> Result<()> {
     // empty handles map today — every plugin records `NoHandle`
     // until the manifest-driven `Arc<dyn NexoPlugin>` factory
     // ships in 81.12.
+    let core_envs = core_capability_env_vars();
+    let available_caps = build_available_capabilities(&cfg);
+    let discovery_cfg_clone = cfg.plugins.discovery.clone();
     let wire = nexo_core::agent::nexo_plugin_registry::wire_plugin_registry(
         &mut cfg.agents,
-        &cfg.plugins.discovery,
+        &discovery_cfg_clone,
         &semver::Version::parse(env!("CARGO_PKG_VERSION"))
             .unwrap_or_else(|_| semver::Version::new(0, 0, 0)),
+        &core_envs,
+        &available_caps,
     );
     // `wire.registry` + `wire.skill_roots` +
     // `wire.channel_adapter_registry` stay in scope for 81.10 hot-
@@ -6617,9 +6622,49 @@ fn run_pair_help() -> Result<()> {
 /// disabled / allowlist rejects surfaced; `1` when any error
 /// diagnostic, `LastPluginWins` conflict, or `Failed` init
 /// outcome appears.
+/// Phase 81.11 — bridge `nexo_setup::capabilities::INVENTORY` to
+/// the plugin capability aggregator's `&[(env_var, extension)]`
+/// slice shape. Lives in main.rs because `nexo-core` cannot depend
+/// on `nexo-setup` (cycle); main.rs is the boundary that knows
+/// both sides.
+fn core_capability_env_vars() -> Vec<(&'static str, &'static str)> {
+    // INVENTORY is private to nexo-setup; surface its (env_var,
+    // extension) tuples via the public `evaluate_all` API. This
+    // pays one redundant env::var read per toggle at boot — fine
+    // for boot-time observability; the alternative would be
+    // making INVENTORY public, which would invalidate the
+    // drift-prevention contract.
+    nexo_setup::capabilities::evaluate_all()
+        .into_iter()
+        .map(|s| (s.toggle.env_var, s.toggle.extension))
+        .collect()
+}
+
+/// Phase 81.11 — describe which framework capabilities are
+/// actually wired in the current daemon config. Aggregator uses
+/// this set to surface unmet `requires.nexo_capabilities` as
+/// Warn-level diagnostics. Conservative: only marks capabilities
+/// that the loaded config definitively wires.
+fn build_available_capabilities(
+    cfg: &nexo_config::AppConfig,
+) -> std::collections::BTreeSet<String> {
+    let mut set = std::collections::BTreeSet::new();
+    // Always-on framework capabilities.
+    set.insert("broker".to_string());
+    set.insert("memory".to_string()); // short-term memory always on
+    set.insert("sessions".to_string());
+    // Conditionally-wired.
+    if !cfg.memory.long_term.backend.is_empty() {
+        set.insert("long_term_memory".to_string());
+    }
+    set
+}
+
 fn run_doctor_plugins(config_dir: &std::path::Path, json: bool) -> Result<i32> {
     let cfg = nexo_config::AppConfig::load(config_dir)
         .with_context(|| format!("failed to load config from {}", config_dir.display()))?;
+    let core_envs = core_capability_env_vars();
+    let available = build_available_capabilities(&cfg);
     let mut agents = cfg.agents;
     let version = semver::Version::parse(env!("CARGO_PKG_VERSION"))
         .unwrap_or_else(|_| semver::Version::new(0, 0, 0));
@@ -6627,6 +6672,8 @@ fn run_doctor_plugins(config_dir: &std::path::Path, json: bool) -> Result<i32> {
         &mut agents,
         &cfg.plugins.discovery,
         &version,
+        &core_envs,
+        &available,
     );
     let snap = wire.registry.snapshot();
     let exit_code =

@@ -293,7 +293,32 @@ coordinación de archivos cross-cutting.
   hoy) + per-agent `plugin_skill_roots` re-clone. Cuando 81.7.b /
   81.12 shippeen el manifest-driven `Arc<dyn NexoPlugin>` factory,
   ese phase agrega su slice al hook (re-init plugins on reload).
-- **81.11 ⬜** Plugin doctor + capability inventory integration.
+- **81.11 ✅ shipped 2026-05-03** —
+  `capability_aggregator` module en
+  `nexo_core::agent::nexo_plugin_registry`. `aggregate_plugin_gates(snapshot, core_env_vars, available)`
+  itera plugin manifests + cataloga capability_gates en
+  `BTreeMap<env_var, AggregatedGate>` con runtime evaluation por
+  `GateKind` (Boolean/Allowlist via env::var; CargoFeature siempre
+  Disabled). Conflict detection at aggregate time: vs core
+  INVENTORY → `CapabilityGateConflictsCore` Error; cross-plugin
+  → `CapabilityGateConflictsPlugin` Error (first-plugin-wins);
+  unmet `requires.nexo_capabilities` → `RequiredCapabilityNotGranted`
+  Warn (graceful degraded). 3 nuevas variants en
+  `DiscoveryDiagnosticKind`. `PluginDiscoveryReport` extiende con
+  `plugin_capability_gates` + `unmet_required_capabilities`
+  (additive serde, backward-compat). Helper
+  `fold_capability_aggregation`. `wire_plugin_registry` signature
+  gana 4th + 5th param `core_env_vars: &[(&str, &str)]` +
+  `available_capabilities: &BTreeSet<String>`. main.rs bridge
+  helpers `core_capability_env_vars()` (via `evaluate_all` —
+  INVENTORY const stays private) + `build_available_capabilities(&cfg)`.
+  NO mutar INVENTORY. NO touch setup crate API. NO new validator
+  at manifest crate level. 4 unit tests + 1 integration regression
+  fix. **Out of scope (deferred 81.11.b)**: doctor_render TTY
+  sections (PLUGIN CAPABILITY GATES + PLUGIN REQUIRED
+  CAPABILITIES) + DoctorCapabilities envelope JSON mode + Phase
+  18 reload re-aggregation hook slice. Library + aggregator wire
+  shipped today; render layer follows when working tree quiets.
 - **81.12 ⬜** Existing-plugin migration
   (whatsapp/telegram/email/browser → `NexoPlugin` impls).
 - **81.13 ⬜ DEFER** Reference plugin template

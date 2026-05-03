@@ -274,6 +274,15 @@ fn diagnostic_kind_tag(kind: &DiscoveryDiagnosticKind) -> &'static str {
         DiscoveryDiagnosticKind::ChannelKindAlreadyRegistered { .. } => {
             "channel_kind_already_registered"
         }
+        DiscoveryDiagnosticKind::CapabilityGateConflictsCore { .. } => {
+            "capability_gate_conflicts_core"
+        }
+        DiscoveryDiagnosticKind::CapabilityGateConflictsPlugin { .. } => {
+            "capability_gate_conflicts_plugin"
+        }
+        DiscoveryDiagnosticKind::RequiredCapabilityNotGranted { .. } => {
+            "required_capability_not_granted"
+        }
     }
 }
 
@@ -306,6 +315,22 @@ fn diagnostic_summary(kind: &DiscoveryDiagnosticKind) -> String {
         } => format!(
             "kind={channel_kind} prior={prior_registered_by} attempted={attempted_by}"
         ),
+        DiscoveryDiagnosticKind::CapabilityGateConflictsCore {
+            env_var,
+            plugin_id,
+            core_extension,
+        } => format!(
+            "env_var={env_var} plugin={plugin_id} core_extension={core_extension}"
+        ),
+        DiscoveryDiagnosticKind::CapabilityGateConflictsPlugin {
+            env_var,
+            plugin_a,
+            plugin_b,
+        } => format!("env_var={env_var} prior={plugin_a} attempted={plugin_b}"),
+        DiscoveryDiagnosticKind::RequiredCapabilityNotGranted {
+            plugin_id,
+            capability_name,
+        } => format!("{plugin_id} requires {capability_name} (NOT granted)"),
     }
 }
 
