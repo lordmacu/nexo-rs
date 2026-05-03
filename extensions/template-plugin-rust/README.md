@@ -5,9 +5,10 @@ to start a new channel plugin that speaks the wire format defined
 in [`nexo-plugin-contract.md`](../../nexo-plugin-contract.md) at
 the workspace root.
 
-This template is the Rust counterpart to upcoming Phase 31.4
-(Python) and 31.5 (TypeScript) SDKs. The wire format is identical
-across languages — only the SDK differs.
+This template is the Rust counterpart to the Phase 31.4 Python
+SDK ([`extensions/template-plugin-python/`](../template-plugin-python/))
+and the upcoming Phase 31.5 TypeScript SDK. The wire format is
+identical across languages — only the SDK differs.
 
 ## What this template provides
 

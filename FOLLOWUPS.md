@@ -786,6 +786,39 @@ coordinación de archivos cross-cutting.
   NO per-plugin override beyond per-owner, NO TUF/GPG/threshold
   sigs.
 
+- **31.4 ✅ shipped 2026-05-03** — Python plugin SDK +
+  template + `noarch` resolver fallback. New
+  `extensions/sdk-python/nexo_plugin_sdk/` package
+  (`PluginAdapter` async dispatch loop, `BrokerSender.publish`,
+  `Event` dataclass, `read_manifest` TOML reader, 3 exception
+  types). Stdlib only (`tomllib` 3.11+ with `tomli` fallback
+  shim). New `extensions/template-plugin-python/` plugin
+  template: manifest with `entrypoint.command = "./bin/<id>"`
+  pointing at a bash launcher, `src/main.py` echo handler,
+  `scripts/{extract-plugin-meta.sh, pack-tarball-python.sh,
+  verify-pure-python.sh}`, `tests/test_pack_tarball.py`
+  end-to-end synthetic-SDK pack assertion,
+  `.github/workflows/release.yml` (Phase 31.2-shaped 4-job with
+  single `noarch` matrix entry + setup-python@v5 + pure-python
+  audit gate). Resolver in `crates/ext-installer/src/lib.rs`
+  falls back to `<id>-<version>-noarch.tar.gz` when no
+  per-target tarball matches; per-target preferred when both
+  present. 2 new resolver tests; ext-installer 38→40. SDK has
+  6 tests via stdlib `unittest` (handshake, dispatch incl.
+  non-blocking reader proof, shutdown with in-flight drain,
+  unknown method, manifest validation). Daemon spawn pipeline
+  UNCHANGED — language-agnostic by design. New docs page
+  `docs/src/plugins/python-sdk.md`; SUMMARY wired. Cross-link
+  in Rust template README. SDK fix during dev:
+  `PluginAdapter` tracks in-flight handler tasks via
+  `_inflight: set[Task]` and awaits them in `_drain_inflight`
+  before replying to `shutdown` so handlers do not get
+  cancelled mid-publish. `pytest` not used — stdlib `unittest`
+  zero install friction. NO `[runtime]` block in manifest
+  schema, NO daemon-side changes, NO embedded interpreter, NO
+  PyPI publish (defer until 31.5 lands), NO native-ext
+  per-target Python tarballs (defer 31.4.b).
+
 - **81.15.c.b ✅ shipped 2026-05-01** — SDK streaming
   consumption helper. Pending value type changed to
   `PendingKind` enum (Single for non-streaming, Streaming for

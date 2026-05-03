@@ -277,26 +277,32 @@ pub async fn resolve_release(
         })?;
     let plugin_id = manifest.plugin.id.clone();
 
-    // Find the tarball asset for the requested target.
-    let tarball_name = format!("{plugin_id}-{version_str}-{target}.tar.gz");
-    let tarball_asset = release
-        .assets
-        .iter()
-        .find(|a| a.name == tarball_name)
-        .ok_or_else(|| {
-            let available: Vec<String> = release
-                .assets
-                .iter()
-                .filter(|a| a.name.ends_with(".tar.gz"))
-                .map(|a| a.name.clone())
-                .collect();
-            InstallError::TargetNotFound {
-                id: plugin_id.clone(),
-                version: version.clone(),
-                target: target.to_string(),
-                available,
+    // Find the tarball asset for the requested target. Phase 31.4
+    // adds `noarch` as a fallback target name so portable plugins
+    // (Python, TypeScript) can publish a single asset that all
+    // daemons accept.
+    let per_target_name = format!("{plugin_id}-{version_str}-{target}.tar.gz");
+    let noarch_name = format!("{plugin_id}-{version_str}-noarch.tar.gz");
+    let (tarball_asset, tarball_name) = match release.assets.iter().find(|a| a.name == per_target_name) {
+        Some(a) => (a, per_target_name),
+        None => match release.assets.iter().find(|a| a.name == noarch_name) {
+            Some(a) => (a, noarch_name),
+            None => {
+                let available: Vec<String> = release
+                    .assets
+                    .iter()
+                    .filter(|a| a.name.ends_with(".tar.gz"))
+                    .map(|a| a.name.clone())
+                    .collect();
+                return Err(InstallError::TargetNotFound {
+                    id: plugin_id.clone(),
+                    version: version.clone(),
+                    target: target.to_string(),
+                    available,
+                });
             }
-        })?;
+        },
+    };
 
     // Find the matching .sha256 asset.
     let sha256_name = format!("{tarball_name}.sha256");
@@ -721,6 +727,78 @@ nexo_capabilities = ["broker"]
             }
             other => panic!("expected TargetNotFound, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn resolve_release_falls_back_to_noarch_when_per_target_absent() {
+        let server = MockServer::start().await;
+        let manifest_body = manifest_toml("slack", "0.2.0");
+        let manifest_url = format!("{}/manifest", server.uri());
+        let release = json!({
+            "tag_name": "v0.2.0",
+            "assets": [
+                {"name": "nexo-plugin.toml", "browser_download_url": manifest_url, "size": manifest_body.len()},
+                // ONLY noarch — no per-target tarball.
+                {"name": "slack-0.2.0-noarch.tar.gz", "browser_download_url": "https://example.com/tar", "size": 100},
+                {"name": "slack-0.2.0-noarch.tar.gz.sha256", "browser_download_url": "https://example.com/sha", "size": 64}
+            ]
+        });
+        Mock::given(method("GET"))
+            .and(path("/repos/alice/x/releases/tags/v0.2.0"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(release))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/manifest"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(manifest_body))
+            .mount(&server)
+            .await;
+
+        let coords = PluginCoords::parse("alice/x@v0.2.0").unwrap();
+        let client = reqwest::Client::new();
+        let resolved = resolve_release(&client, &coords, "x86_64-unknown-linux-gnu", &server.uri())
+            .await
+            .expect("noarch fallback");
+        assert_eq!(resolved.entry.downloads[0].url.as_str(), "https://example.com/tar");
+        assert!(resolved.sha256_url.contains("/sha"));
+    }
+
+    #[tokio::test]
+    async fn resolve_release_prefers_per_target_over_noarch() {
+        let server = MockServer::start().await;
+        let manifest_body = manifest_toml("slack", "0.2.0");
+        let manifest_url = format!("{}/manifest", server.uri());
+        let release = json!({
+            "tag_name": "v0.2.0",
+            "assets": [
+                {"name": "nexo-plugin.toml", "browser_download_url": manifest_url, "size": manifest_body.len()},
+                {"name": "slack-0.2.0-x86_64-unknown-linux-gnu.tar.gz", "browser_download_url": "https://example.com/per-target", "size": 100},
+                {"name": "slack-0.2.0-x86_64-unknown-linux-gnu.tar.gz.sha256", "browser_download_url": "https://example.com/per-sha", "size": 64},
+                {"name": "slack-0.2.0-noarch.tar.gz", "browser_download_url": "https://example.com/noarch", "size": 100},
+                {"name": "slack-0.2.0-noarch.tar.gz.sha256", "browser_download_url": "https://example.com/noarch-sha", "size": 64}
+            ]
+        });
+        Mock::given(method("GET"))
+            .and(path("/repos/alice/x/releases/tags/v0.2.0"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(release))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/manifest"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(manifest_body))
+            .mount(&server)
+            .await;
+
+        let coords = PluginCoords::parse("alice/x@v0.2.0").unwrap();
+        let client = reqwest::Client::new();
+        let resolved = resolve_release(&client, &coords, "x86_64-unknown-linux-gnu", &server.uri())
+            .await
+            .expect("per-target preferred");
+        assert_eq!(
+            resolved.entry.downloads[0].url.as_str(),
+            "https://example.com/per-target",
+            "per-target tarball must win when both present"
+        );
     }
 
     #[tokio::test]
