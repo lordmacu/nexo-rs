@@ -220,7 +220,63 @@ plugin processes the event (e.g. forwards `payload.text` to
 Slack's API) and **may** reply with a `broker.publish`
 notification (§5.2) — but it is **not required** to reply.
 
-### 5.2 `broker.publish` (child → host)
+### 5.2 `memory.recall` (child → host request) <Phase 81.20.a>
+
+When the plugin needs to look up agent memory entries, it issues
+a JSON-RPC request to the daemon. Unlike `broker.event` /
+`broker.publish` which are notifications, this is a
+**request-response** flow: the child sends with an `id` and
+awaits the matching reply.
+
+**Child → host request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 42,
+  "method": "memory.recall",
+  "params": {
+    "agent_id": "ventas_v1",
+    "query": "user prefers concise answers",
+    "limit": 5
+  }
+}
+```
+
+**Host → child reply (success):**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 42,
+  "result": {
+    "entries": [
+      {
+        "id": "01940000-0000-0000-0000-000000000001",
+        "agent_id": "ventas_v1",
+        "content": "user prefers concise answers",
+        "tags": ["preference"],
+        "concept_tags": [],
+        "created_at": "2026-04-30T18:22:31Z",
+        "memory_type": null
+      }
+    ]
+  }
+}
+```
+
+**Host → child reply (error):**
+- `-32601` method not found (only `memory.recall` wired in 81.20.a;
+  `llm.complete` / `tool.dispatch` ship in 81.20.b/.c).
+- `-32602` invalid params (missing `agent_id` / wrong type for
+  `query`).
+- `-32603` memory not configured (operator hasn't enabled
+  long-term memory) OR memory backend returned an error.
+
+`limit` defaults to 10, capped hard at 1000. The handler calls
+`LongTermMemory::recall(agent_id, query, limit)` which already
+expands the query with up to 3 derived concept tags so FTS5 hits
+memories whose stored content diverges from the query surface.
+
+### 5.3 `broker.publish` (child → host)
 
 When the plugin wants to push an event onto the broker (e.g.
 delivering an inbound message from Slack), it writes:
@@ -506,3 +562,4 @@ contract document.
 | Version | Date | Changes |
 |---------|------|---------|
 | `1.0.0` | 2026-05-01 | Initial publication. Lifecycle (`initialize` / `shutdown`) + broker bridge (`broker.event` / `broker.publish`) + manifest `[plugin.entrypoint]` section. Host adapter shipped in Phase 81.14 + 81.14.b; Rust child SDK in Phase 81.15.a. |
+| `1.1.0` | 2026-05-01 | Phase 81.20.a — `memory.recall` request-response added. Additive; existing 1.0.0 plugins continue to work unchanged. Manifest `[plugin.supervisor]` section (Phase 81.21.b) — additive. Host-side activation: Phase 81.17.b boot wire. Phase 81.21 supervisor + 81.21.b stderr tail capture. |

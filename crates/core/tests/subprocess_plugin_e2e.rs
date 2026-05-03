@@ -110,6 +110,7 @@ async fn auto_subprocess_pipeline_initializes_and_forwards_publish() {
         shutdown: CancellationToken::new(),
         config_dir: tmp.path().to_path_buf(),
         state_root: tmp.path().to_path_buf(),
+        long_term_memory: None,
     };
 
     // Cap the initialize-reply window short for the test so a
@@ -205,6 +206,7 @@ nexo_capabilities = ["broker"]
         shutdown: CancellationToken::new(),
         config_dir: tmp.path().to_path_buf(),
         state_root: tmp.path().to_path_buf(),
+        long_term_memory: None,
     };
 
     let wire = wire_plugin_registry_with_runtime(

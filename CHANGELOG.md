@@ -10,6 +10,102 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.20.a — Daemon-mediated RPC: `memory.recall`.** First
+  of three planned RPC bridges (81.20.a/b/c) that let subprocess
+  plugins, in any language, call into framework infra
+  (memory / LLM / tools) without re-implementing or vendoring
+  duplicate clients. Today only `memory.recall` ships;
+  `llm.complete` (81.20.b) + `tool.dispatch` (81.20.c) extend the
+  same dispatch table.
+  
+  Wire format (added to `nexo-plugin-contract.md` §5.2, contract
+  bumped to v1.1.0 — additive change):
+  
+  Child → host request:
+  ```json
+  {
+    "jsonrpc": "2.0",
+    "id": 42,
+    "method": "memory.recall",
+    "params": {
+      "agent_id": "ventas_v1",
+      "query": "user prefers concise answers",
+      "limit": 5
+    }
+  }
+  ```
+  
+  Host → child reply (success): `{"id":42,"result":{"entries":[...]}}` —
+  each entry is the existing `nexo_memory::MemoryEntry` Serde
+  shape. Reply errors: `-32601` method not found, `-32602` invalid
+  params (missing/bad-type `agent_id` or `query`), `-32603` memory
+  not configured (operator hasn't enabled long-term memory) or
+  backend recall error.
+  
+  Reader extension: a frame with `id` AND `method` is now
+  recognized as an INCOMING REQUEST from child (vs response to
+  one of OUR outgoing requests, which has `id` only). Routes to
+  `handle_child_request(method, params, bridge)` which today
+  matches `memory.recall` and 81.20.b/c will extend.
+  
+  `BridgeContext` extends with
+  `memory: Option<Arc<LongTermMemory>>`. `SubprocessRuntime`
+  extends with `long_term_memory: Option<Arc<LongTermMemory>>` —
+  threading from the daemon's existing memory handle to the
+  subprocess pipeline. Today main.rs passes `None` because
+  `long_term_memory` is constructed at main.rs:10883, AFTER the
+  wire callsite at 1984. Reorder is deferred to 81.20.a.b
+  follow-up — until that lands, subprocess plugins receive
+  `-32603 "memory not configured"` for every `memory.recall`
+  request, even when the operator has long-term memory enabled.
+  Library + tests are complete; only the boot-wire threading is
+  pending.
+  
+  `LongTermMemory::recall` is called with `(agent_id, query,
+  limit)` — the existing API which already expands the query with
+  up to 3 derived concept tags (Phase 10.7) so FTS5 hits memories
+  whose stored content diverges from the query surface text. The
+  handler caps `limit` at 1000 to prevent a buggy / malicious
+  plugin from requesting unbounded results.
+  
+  3 new unit tests directly exercising `handle_memory_recall`:
+  - `memory_recall_handler_returns_seeded_entry` opens an
+    in-memory `LongTermMemory`, seeds one entry with
+    `remember(agent_x, "user prefers concise answers", &["preference"])`,
+    builds a `BridgeContext` with that memory + an empty broker,
+    invokes the handler with a matching query, asserts the
+    returned `entries` array contains the seeded content under
+    the right `agent_id`.
+  - `memory_recall_handler_returns_neg_32603_when_memory_none`
+    exercises the degraded path: bridge with `memory: None` →
+    handler returns `(-32603, "memory not configured")`.
+  - `memory_recall_handler_returns_neg_32602_on_bad_params`
+    exercises both missing `agent_id` and wrong-type `query`
+    (number instead of string) → both return `-32602` with the
+    field name in the error message.
+  
+  Total: 19/19 subprocess unit tests + 2/2 e2e tests pass.
+  
+  Out of scope (tracked):
+  - 81.20.a.b: ~30 LOC main.rs reorder so `long_term_memory` is
+    in scope at the wire callsite.
+  - 81.20.b: `llm.complete` (with streaming via
+    `llm.complete.delta` notifications since JSON-RPC has no
+    partial responses).
+  - 81.20.c: `tool.dispatch` (needs ToolRegistry in BridgeContext;
+    today only stubbed).
+  - SDK side: child-side helper
+    `BrokerSender::memory_recall(agent_id, query, limit)` for
+    the Rust SDK (Phase 81.15.c) and equivalents for Python /
+    TypeScript (Phase 31.4 / 31.5).
+  
+  IRROMPIBLE refs: internal `crates/memory/src/long_term.rs:552`
+  (the `recall()` method we wire to); internal subprocess.rs
+  (where the dispatcher extends); claude-code-leak
+  `src/services/plugins/pluginOperations.ts` per-method dispatch
+  pattern; OpenClaw absence stated — their plugins called memory
+  in-process, no IPC layer.
+
 - **Phase 81.21.b — Plugin supervisor: stderr tail capture +
   manifest.supervisor config.** Crashed events now carry the
   last N stderr lines from the dying child so operators can

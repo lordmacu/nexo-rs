@@ -57,6 +57,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use nexo_broker::{topic::topic_matches, AnyBroker, BrokerHandle, Event};
+use nexo_memory::LongTermMemory;
 use nexo_plugin_manifest::PluginManifest;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -160,6 +161,7 @@ impl SubprocessNexoPlugin {
         &self,
         ctx_shutdown: CancellationToken,
         broker: Option<AnyBroker>,
+        memory: Option<Arc<LongTermMemory>>,
     ) -> Result<Inner, anyhow::Error> {
         let entry = &self.cached_manifest.plugin.entrypoint;
         let command = entry
@@ -361,6 +363,11 @@ impl SubprocessNexoPlugin {
         // EOF.
         let reader_cancel = cancel.clone();
         let reader_pending = pending.clone();
+        // Phase 81.20.a — reader needs stdin_tx so it can write
+        // responses back to the child for incoming requests
+        // (memory.recall today; llm.complete + tool.dispatch in
+        // 81.20.b/.c).
+        let reader_stdin_tx = stdin_tx.clone();
         let reader_plugin_id = plugin_id_for_log.clone();
         let reader_bridge = bridge_cell.clone();
         let reader_handle = tokio::spawn(async move {
@@ -403,8 +410,63 @@ impl SubprocessNexoPlugin {
                         continue;
                     }
                 };
-                // Response: has "id" + ("result" XOR "error").
-                if let Some(id) = parsed.get("id").and_then(|v| v.as_u64()) {
+                // Frame routing: id + method = INCOMING REQUEST
+                // (child → host, expect response). id alone =
+                // RESPONSE to one of OUR outbound requests
+                // (initialize / shutdown / future). No id =
+                // notification.
+                let id_val = parsed.get("id").cloned();
+                let method_str = parsed
+                    .get("method")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if id_val.is_some() && !method_str.is_empty() {
+                    // Phase 81.20.a — incoming child request.
+                    // Dispatch + write response back via stdin_tx.
+                    // Bridge is the source of host services
+                    // (memory / future llm + tools); when bridge
+                    // is None (boot still racing or no broker), we
+                    // return -32603 "service not yet wired".
+                    let id_for_reply = id_val.clone().unwrap_or(Value::Null);
+                    let params =
+                        parsed.get("params").cloned().unwrap_or(Value::Null);
+                    let response = match reader_bridge.get() {
+                        Some(bridge) => {
+                            handle_child_request(
+                                bridge,
+                                &reader_plugin_id,
+                                method_str,
+                                &params,
+                            )
+                            .await
+                        }
+                        None => Err((
+                            -32603,
+                            "host services not yet wired".to_string(),
+                        )),
+                    };
+                    let frame = match response {
+                        Ok(result) => json!({
+                            "jsonrpc": "2.0",
+                            "id": id_for_reply,
+                            "result": result,
+                        }),
+                        Err((code, msg)) => json!({
+                            "jsonrpc": "2.0",
+                            "id": id_for_reply,
+                            "error": { "code": code, "message": msg },
+                        }),
+                    };
+                    if let Err(e) = reader_stdin_tx.try_send(frame) {
+                        tracing::warn!(
+                            plugin = %reader_plugin_id,
+                            error = %e,
+                            "memory.recall response dropped: stdin queue full or closed"
+                        );
+                    }
+                    continue;
+                }
+                if let Some(id) = id_val.as_ref().and_then(|v| v.as_u64()) {
                     if let Some((_, sender)) = reader_pending.remove(&id) {
                         let payload = if let Some(err) = parsed.get("error") {
                             Err(err.to_string())
@@ -701,7 +763,18 @@ impl SubprocessNexoPlugin {
             let _ = bridge_cell.set(BridgeContext {
                 broker,
                 publish_allowlist,
+                memory,
             });
+        } else if let Some(_mem) = memory.as_ref() {
+            // Memory provided but no broker → can't reach this
+            // path today (factory_registry callers always pass
+            // both Some or both None via SubprocessRuntime).
+            // Logged for future-proofing.
+            tracing::debug!(
+                target: "plugin.subprocess",
+                plugin_id = %plugin_id_for_log,
+                "memory provided without broker — bridge inactive, memory.recall path won't fire"
+            );
         }
 
         Ok(Inner {
@@ -725,8 +798,9 @@ async fn kill_handle(h: &Arc<Mutex<Option<Child>>>) {
     }
 }
 
-/// Phase 81.14.b — captured by the stdout reader task to forward
-/// validated `broker.publish` notifications to the broker.
+/// Phase 81.14.b + 81.20.a — captured by the stdout reader task to
+/// forward validated `broker.publish` notifications to the broker
+/// AND service incoming `memory.recall` requests from the child.
 struct BridgeContext {
     broker: AnyBroker,
     /// Topic patterns the child is allowed to publish to. Derived
@@ -737,6 +811,14 @@ struct BridgeContext {
     /// defense against a malicious / buggy plugin attempting to
     /// hijack core nexo topics like `agent.route.*`.
     publish_allowlist: Vec<String>,
+    /// Phase 81.20.a — long-term memory backend the daemon
+    /// exposes to subprocess plugins via the `memory.recall`
+    /// JSON-RPC method. `None` when the operator hasn't
+    /// configured long-term memory OR main.rs hasn't yet plumbed
+    /// the handle through `SubprocessRuntime` (deferred to
+    /// 81.20.a.b reorder). Handler returns `-32603` "memory not
+    /// configured" when None.
+    memory: Option<Arc<LongTermMemory>>,
 }
 
 /// Forward a `broker.publish` notification from the child onto the
@@ -793,6 +875,81 @@ async fn handle_child_publish(bridge: &BridgeContext, plugin_id: &str, parsed: &
     }
 }
 
+/// Phase 81.20.a — dispatch an incoming child request to the
+/// matching daemon-side handler. Returns `Ok(result_value)` on
+/// success or `Err((code, message))` to be serialized as a
+/// JSON-RPC error response.
+///
+/// Today only `memory.recall` is wired. `llm.complete` (81.20.b)
+/// + `tool.dispatch` (81.20.c) extend this match.
+async fn handle_child_request(
+    bridge: &BridgeContext,
+    plugin_id: &str,
+    method: &str,
+    params: &Value,
+) -> Result<Value, (i32, String)> {
+    match method {
+        "memory.recall" => handle_memory_recall(bridge, plugin_id, params).await,
+        other => Err((-32601, format!("method not found: {other}"))),
+    }
+}
+
+/// Phase 81.20.a — service a `memory.recall` request from the
+/// child. Params shape:
+///   { "agent_id": "<id>", "query": "<text>", "limit": <u64> }
+/// Result on success:
+///   { "entries": [<MemoryEntry>...] }
+/// Errors:
+///   -32602 invalid params (missing required field, bad type)
+///   -32603 memory backend not configured
+///   -32603 memory recall returned an error
+async fn handle_memory_recall(
+    bridge: &BridgeContext,
+    plugin_id: &str,
+    params: &Value,
+) -> Result<Value, (i32, String)> {
+    let memory = bridge
+        .memory
+        .as_ref()
+        .ok_or_else(|| (-32603, "memory not configured".to_string()))?;
+    let agent_id = params
+        .get("agent_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            (-32602, "missing or invalid `agent_id` (string)".to_string())
+        })?;
+    let query = params
+        .get("query")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            (-32602, "missing or invalid `query` (string)".to_string())
+        })?;
+    let limit_u64 = params
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(10);
+    // Hard cap to prevent a malicious / buggy plugin from asking
+    // for unbounded results. Same defensive shape as Phase 80.4
+    // tail caps.
+    let limit: usize = (limit_u64 as usize).min(1000);
+    let entries = memory
+        .recall(agent_id, query, limit)
+        .await
+        .map_err(|e| {
+            tracing::warn!(
+                plugin_id,
+                agent_id,
+                error = %e,
+                "memory.recall: backend returned error"
+            );
+            (-32603, format!("memory recall failed: {e}"))
+        })?;
+    let entries_json = serde_json::to_value(&entries).map_err(|e| {
+        (-32603, format!("memory.recall: serialize entries failed: {e}"))
+    })?;
+    Ok(json!({ "entries": entries_json }))
+}
+
 #[async_trait]
 impl NexoPlugin for SubprocessNexoPlugin {
     fn manifest(&self) -> &PluginManifest {
@@ -804,7 +961,7 @@ impl NexoPlugin for SubprocessNexoPlugin {
         ctx: &mut PluginInitContext<'_>,
     ) -> Result<(), PluginInitError> {
         let inner = self
-            .spawn_and_handshake(ctx.shutdown.clone(), Some(ctx.broker.clone()))
+            .spawn_and_handshake(ctx.shutdown.clone(), Some(ctx.broker.clone()), ctx.long_term_memory.clone())
             .await
             .map_err(|source| PluginInitError::Other {
                 plugin_id: self.cached_manifest.plugin.id.clone(),
@@ -952,7 +1109,7 @@ RUST_LOG = "info"
         ));
         let plugin = SubprocessNexoPlugin::new(m);
         let cancel = CancellationToken::new();
-        let result = plugin.spawn_and_handshake(cancel, None).await;
+        let result = plugin.spawn_and_handshake(cancel, None, None).await;
         match result {
             Ok(_) => panic!("spawn must fail for missing command"),
             Err(err) => assert!(
@@ -971,7 +1128,7 @@ RUST_LOG = "info"
         );
         let plugin = SubprocessNexoPlugin::new(m);
         let cancel = CancellationToken::new();
-        let result = plugin.spawn_and_handshake(cancel, None).await;
+        let result = plugin.spawn_and_handshake(cancel, None, None).await;
         match result {
             Ok(_) => panic!("env collision must fail"),
             Err(err) => assert!(
@@ -990,7 +1147,7 @@ RUST_LOG = "info"
         let m = manifest_with_entrypoint(Some("/bin/cat"));
         let plugin = SubprocessNexoPlugin::new(m);
         let cancel = CancellationToken::new();
-        let result = plugin.spawn_and_handshake(cancel, None).await;
+        let result = plugin.spawn_and_handshake(cancel, None, None).await;
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
         match result {
             Ok(_) => panic!("silent child must time out"),
@@ -1029,7 +1186,7 @@ sleep 30
         // "impostor" — adapter must reject.
         let plugin = SubprocessNexoPlugin::new(m);
         let cancel = CancellationToken::new();
-        let result = plugin.spawn_and_handshake(cancel, None).await;
+        let result = plugin.spawn_and_handshake(cancel, None, None).await;
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
         match result {
             Ok(_) => panic!("id mismatch must fail"),
@@ -1158,7 +1315,7 @@ sleep 5
         let cancel = CancellationToken::new();
         let broker = AnyBroker::Local(nexo_broker::LocalBroker::new());
         let res = plugin
-            .spawn_and_handshake(cancel.clone(), Some(broker))
+            .spawn_and_handshake(cancel.clone(), Some(broker), None)
             .await;
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
         let inner = res.expect("handshake + bridge wiring must succeed");
@@ -1196,7 +1353,7 @@ sleep 5
             .await
             .expect("subscribe before init");
         let _inner = plugin
-            .spawn_and_handshake(cancel.clone(), Some(broker))
+            .spawn_and_handshake(cancel.clone(), Some(broker), None)
             .await
             .expect("handshake + bridge wiring");
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
@@ -1230,7 +1387,7 @@ sleep 5
             .await
             .expect("subscribe rogue");
         let _inner = plugin
-            .spawn_and_handshake(cancel.clone(), Some(broker))
+            .spawn_and_handshake(cancel.clone(), Some(broker), None)
             .await
             .expect("handshake");
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
@@ -1258,7 +1415,7 @@ sleep 5
         let m = manifest_with_channel(path.to_str().unwrap(), "slack");
         let plugin = SubprocessNexoPlugin::new(m);
         let cancel = CancellationToken::new();
-        let res = plugin.spawn_and_handshake(cancel.clone(), None).await;
+        let res = plugin.spawn_and_handshake(cancel.clone(), None, None).await;
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
         let inner = res.expect("handshake must succeed without broker");
         // 81.23 + 81.21 — writer + stdout reader + stderr reader
@@ -1311,7 +1468,7 @@ sleep 5
         let m = manifest_with_entrypoint(Some(path.to_str().unwrap()));
         let plugin = SubprocessNexoPlugin::new(m);
         let cancel = CancellationToken::new();
-        let res = plugin.spawn_and_handshake(cancel.clone(), None).await;
+        let res = plugin.spawn_and_handshake(cancel.clone(), None, None).await;
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
 
         let inner = res.expect("handshake must succeed with stderr piped");
@@ -1363,7 +1520,7 @@ exit 7
             .await
             .expect("subscribe to crash topic");
         let _inner = plugin
-            .spawn_and_handshake(cancel.clone(), Some(broker))
+            .spawn_and_handshake(cancel.clone(), Some(broker), None)
             .await
             .expect("handshake");
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
@@ -1447,5 +1604,134 @@ stderr_tail_lines = {}
             )),
             "expected SupervisorStderrTailExceedsCap, got {errors:?}"
         );
+    }
+
+    /// Phase 81.20.a — `memory.recall` request handler servicing
+    /// a child's request. We seed an in-memory `LongTermMemory`
+    /// with one entry, build a BridgeContext with it, then call
+    /// the handler directly. This avoids spinning up the full
+    /// subprocess loop — the wire-level routing is structural,
+    /// covered by the existing routing tests; what's new in
+    /// 81.20.a is the host-side dispatch + serialization.
+    #[tokio::test]
+    async fn memory_recall_handler_returns_seeded_entry() {
+        use nexo_memory::LongTermMemory;
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("test_memory.db");
+        let memory = Arc::new(
+            LongTermMemory::open(db_path.to_str().unwrap())
+                .await
+                .expect("open long-term memory"),
+        );
+        memory
+            .remember("agent_x", "user prefers concise answers", &["preference"])
+            .await
+            .expect("seed memory entry");
+
+        let bridge = BridgeContext {
+            broker: AnyBroker::Local(nexo_broker::LocalBroker::new()),
+            publish_allowlist: vec![],
+            memory: Some(memory),
+        };
+
+        let params = json!({
+            "agent_id": "agent_x",
+            "query": "concise",
+            "limit": 5,
+        });
+        let result = handle_memory_recall(&bridge, "test_plugin", &params)
+            .await
+            .expect("memory.recall must succeed");
+        let entries = result
+            .get("entries")
+            .and_then(|v| v.as_array())
+            .expect("entries field is an array");
+        assert!(
+            !entries.is_empty(),
+            "expected at least one entry for query that matches seed"
+        );
+        let first = &entries[0];
+        assert_eq!(
+            first.get("agent_id").and_then(|v| v.as_str()),
+            Some("agent_x")
+        );
+        assert!(
+            first
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .contains("concise"),
+            "content field must contain the seeded text"
+        );
+    }
+
+    /// Phase 81.20.a — when memory backend is None (operator
+    /// hasn't configured long-term memory OR main.rs hasn't
+    /// plumbed the handle yet), the handler returns -32603 with
+    /// a clear "memory not configured" message. Plugin authors
+    /// see the structured error and can degrade gracefully.
+    #[tokio::test]
+    async fn memory_recall_handler_returns_neg_32603_when_memory_none() {
+        let bridge = BridgeContext {
+            broker: AnyBroker::Local(nexo_broker::LocalBroker::new()),
+            publish_allowlist: vec![],
+            memory: None,
+        };
+        let params = json!({"agent_id": "any", "query": "any"});
+        let result = handle_memory_recall(&bridge, "test_plugin", &params).await;
+        match result {
+            Ok(v) => panic!("expected error, got Ok({v:?})"),
+            Err((code, msg)) => {
+                assert_eq!(code, -32603);
+                assert!(
+                    msg.contains("not configured"),
+                    "error message should mention 'not configured', got: {msg}"
+                );
+            }
+        }
+    }
+
+    /// Phase 81.20.a — bad params surface as -32602 invalid
+    /// params per JSON-RPC 2.0 spec. Tests both missing
+    /// `agent_id` and wrong-type `query`.
+    #[tokio::test]
+    async fn memory_recall_handler_returns_neg_32602_on_bad_params() {
+        use nexo_memory::LongTermMemory;
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("test_memory.db");
+        let memory = Arc::new(
+            LongTermMemory::open(db_path.to_str().unwrap())
+                .await
+                .expect("open long-term memory"),
+        );
+        let bridge = BridgeContext {
+            broker: AnyBroker::Local(nexo_broker::LocalBroker::new()),
+            publish_allowlist: vec![],
+            memory: Some(memory),
+        };
+
+        // Missing agent_id
+        let r = handle_memory_recall(
+            &bridge,
+            "test_plugin",
+            &json!({"query": "x"}),
+        )
+        .await;
+        match r {
+            Err((-32602, msg)) => assert!(msg.contains("agent_id")),
+            other => panic!("expected -32602 missing agent_id, got {other:?}"),
+        }
+
+        // query is a number, not a string
+        let r = handle_memory_recall(
+            &bridge,
+            "test_plugin",
+            &json!({"agent_id": "x", "query": 42}),
+        )
+        .await;
+        match r {
+            Err((-32602, msg)) => assert!(msg.contains("query")),
+            other => panic!("expected -32602 invalid query, got {other:?}"),
+        }
     }
 }

@@ -572,6 +572,35 @@ coordinación de archivos cross-cutting.
   for cross-language SDK authoring + internal wire-change
   reviews.
 
+- **81.20.a ✅ shipped 2026-05-01** — Daemon-mediated
+  `memory.recall` RPC bridge. First of 3 planned RPC handlers.
+  Reader detects `id + method` frame as incoming child request,
+  routes to `handle_child_request`. `memory.recall` validates
+  params (`agent_id` + `query` strings, `limit` u64 capped 1000),
+  calls `LongTermMemory::recall`, returns `{ entries }` shape.
+  Errors -32601 / -32602 / -32603. `BridgeContext.memory` and
+  `SubprocessRuntime.long_term_memory` added. Wire docs in
+  contract v1.1.0. 19/19 subprocess + 2/2 e2e tests pass.
+
+- **81.20.a.b ⬜** main.rs reorder: today `long_term_memory` is
+  constructed at line 10883, AFTER the wire callsite at 1984, so
+  `SubprocessRuntime.long_term_memory` is `None` at boot.
+  Subprocess plugins receive -32603 "memory not configured" for
+  every memory.recall request, even when operator has long-term
+  memory enabled. ~30 LOC reorder. Required to actually deliver
+  the value 81.20.a's plumbing promises.
+
+- **81.20.b ⬜** Daemon-mediated `llm.complete` RPC. Extends
+  `handle_child_request` match. Streaming via
+  `llm.complete.delta` notifications (JSON-RPC has no partial
+  responses). CircuitBreaker around `LlmRegistry::build` +
+  `complete`. ~1.5 d.
+
+- **81.20.c ⬜** Daemon-mediated `tool.dispatch` RPC. Extends
+  `handle_child_request` match. Needs ToolRegistry in
+  BridgeContext (today only stubbed via SubprocessCtxStubs).
+  Result shape mirrors existing ToolReply. ~1 d.
+
 - **81.21 ✅ shipped 2026-05-01** — Plugin supervisor (MVP:
   crash detection + broker event). Inner.child wrapped as
   `Arc<Mutex<Option<Child>>>`. Supervisor task polls `try_wait()`

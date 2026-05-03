@@ -1979,6 +1979,12 @@ async fn main() -> Result<()> {
         shutdown: subprocess_shutdown,
         config_dir: config_dir.clone(),
         state_root: plugin_state_root,
+        // Phase 81.20.a — long_term_memory is constructed at
+        // main.rs:10883, AFTER this wire callsite. Pass None
+        // today; subprocess plugin `memory.recall` requests
+        // return -32603 "memory not configured" until 81.20.a.b
+        // reorders construction so the handle is in scope here.
+        long_term_memory: None,
     };
     let wire =
         nexo_core::agent::nexo_plugin_registry::wire_plugin_registry_with_runtime(
