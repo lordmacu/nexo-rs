@@ -218,6 +218,11 @@ pub const ESCALATION_REQUESTED_NOTIFY_KIND: &str = "escalation_requested";
 /// Sibling literal for resolution events.
 pub const ESCALATION_RESOLVED_NOTIFY_KIND: &str = "escalation_resolved";
 
+/// JSON-RPC method literal for `escalations/list`.
+pub const ESCALATIONS_LIST_METHOD: &str = "nexo/admin/escalations/list";
+/// JSON-RPC method literal for `escalations/resolve`.
+pub const ESCALATIONS_RESOLVE_METHOD: &str = "nexo/admin/escalations/resolve";
+
 #[cfg(test)]
 mod tests {
     use super::*;

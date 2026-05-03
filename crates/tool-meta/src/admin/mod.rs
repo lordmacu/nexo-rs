@@ -17,6 +17,7 @@ pub mod credentials;
 pub mod tenants;
 pub mod escalations;
 pub mod llm_providers;
+pub mod operator_stamping;
 pub mod pairing;
 pub mod processing;
 pub mod secrets;
