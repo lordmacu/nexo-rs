@@ -39,7 +39,15 @@ use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
 pub mod error;
+pub mod extract;
+pub mod extract_error;
+
 pub use error::InstallError;
+pub use extract::{
+    extract_verified_tarball, ExtractInput, ExtractLimits, ExtractedPlugin, MAX_ENTRIES,
+    MAX_ENTRY_BYTES, MAX_EXTRACTED_BYTES, MAX_TARBALL_BYTES,
+};
+pub use extract_error::ExtractError;
 
 /// Parsed `<owner>/<repo>@<tag>` coordinates. `tag` defaults to
 /// `latest` when the user omits it.

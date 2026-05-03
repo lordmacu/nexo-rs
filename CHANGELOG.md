@@ -38,6 +38,113 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 31.1.b — Tarball extraction.** New `extract.rs` +
+  `extract_error.rs` modules in `nexo-ext-installer`. The
+  install pipeline now closes from "verified tarball on disk"
+  to "plugin laid out under `<dest_root>/<id>-<version>/`,
+  binary executable, manifest re-validated".
+  
+  Public API:
+  
+  ```rust
+  pub async fn extract_verified_tarball(
+      input: ExtractInput<'_>,
+  ) -> Result<ExtractedPlugin, ExtractError>;
+  ```
+  
+  Pipeline:
+  1. Idempotent check — if `<dest_root>/<id>-<version>/` already
+     exists with a matching manifest, short-circuit with
+     `was_already_present: true`. Mismatch (operator hand-tampered)
+     returns `ManifestMismatch`.
+  2. Stale `.staging-*` cleanup at the start of every call
+     (crash-recovery from a prior killed install).
+  3. Allocate `dest_root/.staging-<id>-<random_hex>/`.
+  4. Sync extract under `tokio::task::spawn_blocking`. Per-entry:
+     - Whitelist entry type as `Regular | Directory`. Symlinks,
+       hardlinks, char/block/fifo/GNU long-name/sparse/etc. all
+       rejected with `DisallowedEntryType`.
+     - `validate_entry_path` rejects absolute, parent (`..`),
+       Windows-prefix, root, and NUL-byte components.
+     - Header-declared size + running entry count enforced
+       against `ExtractLimits`.
+     - `tar::Entry::unpack_in(staging_dir)` (rust-tar applies
+       its own escape check; ours runs first as defense-in-depth).
+  5. Re-parse `nexo-plugin.toml` from staging. Compare against
+     resolver-advertised id+version → mismatch returns
+     `ManifestMismatch` after staging cleanup.
+  6. Verify `bin/<id>` exists; on Unix `chmod 0o755` if exec
+     bits absent (EPERM/ENOTSUP swallowed for NFS root_squash /
+     FUSE).
+  7. `fs::rename(staging, final)` — atomic on same filesystem.
+  
+  `ExtractLimits` (defaults exposed as `pub const`):
+  
+  | Knob | Default |
+  |------|---------|
+  | `max_tarball_bytes` | 100 MB |
+  | `max_entries` | 10,000 |
+  | `max_extracted_bytes` | 250 MB |
+  | `max_entry_bytes` | 100 MB |
+  
+  `ExtractError` enum (11 variants): `Io`, `TarballTooLarge`,
+  `TooManyEntries`, `EntryTooLarge`, `ExtractedTooLarge`,
+  `UnsafePath`, `DisallowedEntryType`, `ManifestMismatch`,
+  `ManifestInvalid`, `BinaryMissing`, `JoinError`.
+  
+  Tarball publish convention enforced (documented in
+  `crates/ext-installer/README.md`):
+  
+  ```
+  <id>-<version>-<target>.tar.gz
+  ├── nexo-plugin.toml
+  ├── bin/<id>          # executable, mode 0755 on unix
+  └── (optional) any other regular files / dirs
+  ```
+  
+  No top-level wrapping dir; tar must be created via
+  `tar -czf out.tgz -C <stage> .` (the publish workflow in
+  31.2 will guarantee this).
+  
+  13 new tests in `extract.rs::tests`:
+  - 5 helper-level: 4 `validate_entry_path` (good /
+    parent / absolute / nested-parent) + 1
+    `cleanup_stale_staging` smoke.
+  - 8 public-API: happy-path with binary chmod check;
+    idempotent re-install skip; manifest mismatch + staging
+    cleanup; path traversal via `..` (raw-header crafted to
+    bypass `tar::Builder::set_path` upstream rejection);
+    absolute-path injection (raw-header into GNU `name`
+    field); symlink rejection; entry count limit (override
+    `max_entries: 5`); binary missing after extract.
+  
+  21/21 installer tests pass (8 prior + 13 new). Workspace
+  builds clean.
+  
+  Crate intentionally does NOT read configuration — caller
+  (Phase 31.1.c CLI integration) resolves `dest_root` from
+  `plugins.discovery.search_paths[0]` and passes it in. Keeps
+  `nexo-ext-installer` reusable from contexts other than the
+  daemon binary (CI publish workflow validation, third-party
+  Rust tooling, future Python/TS host harnesses).
+  
+  Out of scope (tracked):
+  - 31.1.c CLI integration (~0.5 d).
+  - 31.3 cosign verification (operates on the tarball BEFORE
+    31.1.b runs).
+  - 31.4/31.5 Python + TS plugin runtime support — affects
+    `bin/<id>` convention for non-rust plugins; will likely
+    extend the manifest with a `[runtime]` block + relax the
+    binary-existence check.
+  
+  IRROMPIBLE refs: `research/src/infra/archive.ts:510-517`
+  (`BLOCKED_TAR_ENTRY_TYPES` whitelist), `research/src/infra/archive.ts:539-573`
+  (per-entry preflight checker pattern),
+  `research/src/infra/archive.ts:599-637` (staging dir +
+  merge atomic-swap pattern); internal
+  `crates/ext-installer/src/lib.rs` (Phase 31.1 — supplies
+  the verified tarball this module consumes).
+
 - **Phase 31.1 — Plugin installer library (decentralized
   GitHub Releases).** New `crates/ext-installer/` workspace
   member implementing the install pipeline against the GitHub
