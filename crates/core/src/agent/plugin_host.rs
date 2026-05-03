@@ -164,6 +164,15 @@ pub struct PluginInitContext<'a> {
     /// Daemon-wide shutdown signal. Plugin's background tasks
     /// should `tokio::select!` on this to exit cleanly.
     pub shutdown: CancellationToken,
+
+    /// Phase 81.8 — extension point for plugins shipping new
+    /// channel kinds (SMS, Discord, IRC, Matrix, custom webhooks).
+    /// Plugin's `init()` calls
+    /// `ctx.channel_adapter_registry.register(Arc::new(MyAdapter), self.manifest().plugin.id.clone())?;`
+    /// First-registers-wins-rest-rejected — see
+    /// [`crate::agent::channel_adapter::ChannelAdapterRegistrationError`].
+    pub channel_adapter_registry:
+        Arc<crate::agent::channel_adapter::ChannelAdapterRegistry>,
 }
 
 impl PluginInitContext<'_> {

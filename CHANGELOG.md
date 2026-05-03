@@ -10,6 +10,48 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.8 — `ChannelAdapter` trait + registry + `PluginInitContext`
+  handle (library + tests).** New module
+  `nexo_core::agent::channel_adapter` defines a minimal async trait
+  with 4 methods (`kind / start / stop / send_outbound`) so
+  plugins can ship new channel kinds (SMS, Discord, IRC, Matrix,
+  custom webhooks) without modifying nexo-core. `OutboundMessage`
+  enum carries 3 variants — `Text { to, body }`, `Media { to,
+  url, caption }`, `Custom(serde_json::Value)` — with `Custom` as
+  the escape hatch for adapter-specific shapes (Discord embeds,
+  SMS template params). `OutboundAck { message_id, sent_at_unix }`
+  is the minimal acknowledgement. `ChannelAdapterError` thiserror
+  enum has 6 variants (Connection / Authentication / Recipient /
+  RateLimited / Unsupported / Other) so callers discriminate
+  retry-vs-fail-vs-fallback without parsing strings.
+  `ChannelAdapterRegistry` (process-wide, `std::sync::RwLock`-
+  backed) implements **first-registers-wins-rest-rejected**:
+  channels compete for broker topic exclusivity, so the second
+  plugin attempting to register an already-claimed kind receives
+  `ChannelAdapterRegistrationError::KindAlreadyRegistered` (the
+  rejected plugin's other registrations — tools / advisors /
+  hooks — are untouched). This is asymmetric vs Phase 81.6/81.7's
+  first-plugin-wins for agents/skills, by design and documented.
+  `PluginInitContext` (Phase 81.2) gains a new field
+  `channel_adapter_registry: Arc<ChannelAdapterRegistry>` —
+  additive, no `NexoPlugin` trait method change. Plugin's
+  `init()` calls
+  `ctx.channel_adapter_registry.register(Arc::new(MyAdapter), self.manifest().plugin.id.clone())?`.
+  `DiscoveryDiagnosticKind` extended with
+  `ChannelKindAlreadyRegistered { channel_kind,
+  prior_registered_by, attempted_by }` variant (field renamed
+  from `kind` to `channel_kind` to avoid colliding with the
+  enum's serde tag). 6 unit tests + 2 integration tests cover
+  registry semantics + serde round-trip + duplicate rejection +
+  `OutboundMessage` Text / Media / Custom dispatch. Legacy
+  `Plugin` trait (whatsapp / telegram / email / browser plugins)
+  stays untouched; migration to `ChannelAdapter` is Phase 81.12's
+  scope. **Out of scope (deferred bundle)**: boot wire that
+  threads the registry into the agent runtime's outbound
+  dispatcher + `nexo agent doctor plugins` CHANNEL ADAPTERS
+  section. The bundle ships alongside 81.5.b / 81.6 / 81.7
+  wires when the working tree's pre-existing diagnostics quiet.
+
 - **Phase 81.7 — Plugin-contributed skills_dir cataloging + `SkillLoader::with_plugin_roots`
   (library + tests).** New module
   `nexo_core::agent::nexo_plugin_registry::contributes_skills`
