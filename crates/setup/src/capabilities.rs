@@ -240,6 +240,14 @@ const INVENTORY: &[CapabilityToggle] = &[
     },
     CapabilityToggle {
         extension: "core",
+        env_var: "NEXO_MICROAPP_ADMIN_AUTH_ENABLED",
+        kind: ToggleKind::Boolean,
+        risk: Risk::Critical,
+        effect: "Phase 82.10.o — enable `nexo/admin/auth/rotate_token` admin RPC (microapps with `auth_rotate` capability rotate the operator bearer; daemon persists new value to <state_root>/secrets/operator_token.txt + emits nexo/notify/token_rotated to live listeners + emits AgentEventKind::SecurityEvent::TokenRotated audit row on the firehose). Off disables the domain regardless of operator grants. CRITICAL: a compromised microapp with this capability can lock the operator out of their own daemon.",
+        hint: "export NEXO_MICROAPP_ADMIN_AUTH_ENABLED=0  # to disable",
+    },
+    CapabilityToggle {
+        extension: "core",
         env_var: "NEXO_MICROAPP_AGENT_EVENTS_ENABLED",
         kind: ToggleKind::Boolean,
         risk: Risk::High,

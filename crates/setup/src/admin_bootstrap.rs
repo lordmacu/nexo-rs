@@ -229,6 +229,19 @@ pub struct AdminBootstrapInputs<'a> {
     pub llm_provider_probe: Option<
         Arc<dyn nexo_core::agent::admin_rpc::domains::llm_providers::LlmProvidersProbe>,
     >,
+    /// Phase 82.10.o — operator bearer rotator. `None` keeps
+    /// `nexo/admin/auth/rotate_token` returning the typed
+    /// `auth rotator not configured` -32603. Production wires
+    /// `crate::auth_rotator::FsAuthRotator` rooted at
+    /// `<state_root>/secrets/operator_token.txt` with the SDK's
+    /// stdio notification multicaster + the firehose audit
+    /// emitter so a successful rotation lands BOTH the live
+    /// `nexo/notify/token_rotated` AND the durable
+    /// `AgentEventKind::SecurityEvent::TokenRotated` audit row.
+    /// Resolves M2.b.frame.emit + unblocks M2.b.audit (microapp
+    /// follow-ups).
+    pub auth_rotator:
+        Option<Arc<dyn nexo_core::agent::admin_rpc::domains::auth::AuthRotator>>,
     /// Phase 83.8.2 close-out — skills domain store. `None`
     /// keeps `nexo/admin/skills/*` returning the typed
     /// `skills domain not configured` -32603. Production wires
@@ -550,6 +563,16 @@ impl AdminRpcBootstrap {
                     crate::llm_provider_probe::HttpLlmProviderProbe::new(llm_yaml.clone())
                 });
             dispatcher = dispatcher.with_llm_provider_probe(probe);
+            // Phase 82.10.o — install the auth rotator when boot
+            // has it wired. No default-construct path — the
+            // rotator needs an stdio multicaster + audit emitter
+            // that only `main.rs` can provide post-spawn. When
+            // `None`, `nexo/admin/auth/rotate_token` returns the
+            // typed `auth rotator not configured` -32603.
+            // Resolves M2.b.frame.emit.
+            if let Some(rotator) = inputs.auth_rotator.clone() {
+                dispatcher = dispatcher.with_auth_rotator(rotator);
+            }
             // Phase 83.8.2 close-out — install the skills domain
             // when boot has the production `FsSkillsStore`.
             if let Some(store) = inputs.skills_store.clone() {
@@ -766,6 +789,7 @@ mod tests {
             tenant_store: None,
             secrets_store: None,
             llm_provider_probe: None,
+            auth_rotator: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -799,6 +823,7 @@ mod tests {
             tenant_store: None,
             secrets_store: None,
             llm_provider_probe: None,
+            auth_rotator: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -833,6 +858,7 @@ mod tests {
             tenant_store: None,
             secrets_store: None,
             llm_provider_probe: None,
+            auth_rotator: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -881,6 +907,7 @@ mod tests {
             tenant_store: None,
             secrets_store: None,
             llm_provider_probe: None,
+            auth_rotator: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -922,6 +949,7 @@ mod tests {
             tenant_store: None,
             secrets_store: None,
             llm_provider_probe: None,
+            auth_rotator: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -962,6 +990,7 @@ mod tests {
             tenant_store: None,
             secrets_store: None,
             llm_provider_probe: None,
+            auth_rotator: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -1010,6 +1039,7 @@ mod tests {
             tenant_store: None,
             secrets_store: None,
             llm_provider_probe: None,
+            auth_rotator: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -1064,6 +1094,7 @@ mod tests {
             tenant_store: None,
             secrets_store: None,
             llm_provider_probe: None,
+            auth_rotator: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -1113,6 +1144,7 @@ mod tests {
             tenant_store: None,
             secrets_store: None,
             llm_provider_probe: None,
+            auth_rotator: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -1164,6 +1196,7 @@ mod tests {
             tenant_store: None,
             secrets_store: None,
             llm_provider_probe: None,
+            auth_rotator: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -1233,6 +1266,7 @@ mod tests {
             tenant_store: None,
             secrets_store: None,
             llm_provider_probe: None,
+            auth_rotator: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -1282,6 +1316,7 @@ mod tests {
                 tenant_store: None,
             secrets_store: None,
             llm_provider_probe: None,
+            auth_rotator: None,
                 skills_store: None,
                 escalation_store: None,
                 agent_event_log: Some(log.clone()),
