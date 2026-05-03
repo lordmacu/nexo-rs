@@ -136,6 +136,30 @@ pub fn hash_params(params: &Value) -> String {
     hex_encode(&digest)
 }
 
+/// Redact sensitive fields per-method BEFORE hashing for the
+/// audit row. Without this, low-entropy values (e.g. operator
+/// pasting `"test"`) could be brute-forced from the stored hash.
+///
+/// Called from the dispatcher before [`hash_params`].
+///
+/// Phase 82.10.k — `secrets/write` redacts `value`. Future
+/// methods that carry secret-grade fields hook in here.
+pub fn redact_for_audit(method: &str, params: &Value) -> Value {
+    if method == "nexo/admin/secrets/write" {
+        if let Some(obj) = params.as_object() {
+            let mut redacted = obj.clone();
+            if redacted.contains_key("value") {
+                redacted.insert(
+                    "value".into(),
+                    Value::String("<redacted>".into()),
+                );
+            }
+            return Value::Object(redacted);
+        }
+    }
+    params.clone()
+}
+
 fn canonicalize(value: &Value) -> Value {
     match value {
         Value::Object(map) => {
@@ -243,6 +267,30 @@ mod tests {
         assert_eq!(AdminAuditResult::Ok.as_str(), "ok");
         assert_eq!(AdminAuditResult::Error.as_str(), "error");
         assert_eq!(AdminAuditResult::Denied.as_str(), "denied");
+    }
+
+    /// Phase 82.10.k — `secrets/write` redacts the `value`
+    /// field BEFORE hashing so low-entropy values can't be
+    /// brute-forced from the stored hash.
+    #[test]
+    fn redact_for_audit_redacts_secrets_write_value() {
+        let original = serde_json::json!({
+            "name": "MINIMAX_API_KEY",
+            "value": "sk-leak-this-not"
+        });
+        let redacted = redact_for_audit("nexo/admin/secrets/write", &original);
+        assert_eq!(redacted["name"], "MINIMAX_API_KEY");
+        assert_eq!(redacted["value"], "<redacted>");
+        // Hashes diverge — proves the redaction takes effect
+        // before hashing in the dispatcher.
+        assert_ne!(hash_params(&original), hash_params(&redacted));
+    }
+
+    #[test]
+    fn redact_for_audit_passthrough_for_other_methods() {
+        let original = serde_json::json!({"agent_id": "ana"});
+        let result = redact_for_audit("nexo/admin/agents/get", &original);
+        assert_eq!(result, original);
     }
 
     #[test]

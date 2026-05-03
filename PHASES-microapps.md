@@ -961,6 +961,78 @@ Done criteria:
 - Capability declaration in `plugin.toml` validated at boot;
   declared but not granted → boot warn.
 
+#### 82.10.k — `nexo/admin/secrets/write` (atomic secret persistence)   ✅  (shipped 2026-05-03)
+
+Resolves microapp follow-up **M9.frame.a** — the agent-creator
+wizard's Step 1 LLM-key flow no longer requires the operator to
+manually `export` an env var and restart the daemon. Wire shape
++ handler + production adapter ship together so the microapp
+can call the RPC immediately after the framework lands.
+
+Eight steps shipped:
+- **82.10.k.1** — `nexo_tool_meta::admin::secrets` wire shapes
+  (`SecretsWriteInput { name, value }` with redacting `Debug`,
+  `SecretsWriteResponse { path, overwrote_env }`,
+  `SECRETS_WRITE_METHOD` const). 4 unit tests pin round-trip,
+  redaction, and the method string.
+- **82.10.k.2** — `nexo_core::agent::admin_rpc::domains::secrets`
+  handler with `SecretsStore` trait + name regex
+  `^[A-Z][A-Z0-9_]{1,63}$` + value bounds (1-8192 bytes).
+  5 unit tests cover validation + dispatch.
+- **82.10.k.3** — dispatcher routing: `with_secrets_domain`
+  builder + `secrets_write` capability + 3 routing tests
+  (happy path, denied, store missing).
+- **82.10.k.4** — audit redaction: `redact_for_audit(method,
+  params)` strips the `value` field BEFORE hashing for the
+  audit row so low-entropy values can't be brute-forced.
+- **82.10.k.5** — `nexo_setup::secrets_store::FsSecretsStore`
+  production adapter: atomic file write
+  (`<secrets_dir>/<NAME>.txt` mode 0600, tmp + rename) +
+  `std::env::set_var` so existing `std::env::var(name)`
+  consumers (LLM clients, plugin auth) pick up the value
+  without a daemon restart. 2 unit tests cover persist + env +
+  overwrite flag.
+- **82.10.k.6** — INVENTORY entry
+  `NEXO_MICROAPP_ADMIN_SECRETS_ENABLED` (Risk::Critical) for
+  `agent doctor capabilities` visibility.
+- **82.10.k.7** — `AdminBootstrapInputs.secrets_store` +
+  `main.rs` wire-up (production adapter rooted at the
+  operator-resolved `secrets_dir`).
+- **82.10.k.8** — integration test `crates/setup/tests/
+  secrets_admin_rpc.rs` covers the dispatcher → production
+  `FsSecretsStore` → file + env path end-to-end.
+
+Done criteria:
+- Microapp with `secrets_write` capability calls
+  `nexo/admin/secrets/write { name, value }` → daemon writes
+  `<secrets_dir>/<NAME>.txt` (mode 0600) AND
+  `std::env::var(name)` returns the new value.
+- Without the capability → -32004 capability_not_granted.
+- Without `value` (empty) or with bad `name` (lowercase /
+  traversal) → -32602 invalid_params.
+- Audit log records the call but `value` is redacted to
+  `<redacted>` before hashing — low-entropy values can't be
+  brute-forced from the stored hash.
+- 15 new tests across `nexo-tool-meta`, `nexo-core`, and
+  `nexo-setup` (4 wire + 5 handler + 3 dispatcher + 1 audit
+  redaction + 2 adapter unit + 1 integration).
+
+**Known limitation:** `std::env::set_var` is technically
+unsound across threads on stable Rust 2024+ (it works on the
+project's MSRV 1.79 but Rust's stdlib has been deprecating it
+for safety). Follow-up **82.10.k.d** migrates LLM clients to a
+unified `SecretStore` trait so we can drop the `set_var` call.
+
+**Followups carved:**
+- 82.10.k.b — `secrets/list` + `secrets/delete` admin RPCs.
+- 82.10.k.c — Unify LLM client secret resolution behind a
+  `SecretStore` trait (replaces bespoke `secrets/<provider>_*.txt`
+  filenames).
+- 82.10.k.d — Drop `std::env::set_var` once LLM clients use
+  the trait.
+- 82.10.k.audit-encryption — encrypt-at-rest for `secrets/*.txt`
+  via SOPS / system keychain.
+
 #### 82.11 — Agent event firehose + admin RPC (transcript-shaped events as one variant)   ✅  (shipped 2026-05-01)
 
 Six steps shipped:

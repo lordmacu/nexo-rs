@@ -207,6 +207,15 @@ pub struct AdminRpcDispatcher {
     /// fall back to polling. Production threads
     /// `AdminRpcBootstrap.event_emitter()` here.
     event_emitter: Option<Arc<dyn crate::agent::agent_events::AgentEventEmitter>>,
+    /// Phase 82.10.k — secrets store. `None` disables
+    /// `nexo/admin/secrets/write` (returns `Internal` for that
+    /// method). Production wires
+    /// `nexo_setup::secrets_store::FsSecretsStore` rooted at
+    /// `<state_root>/secrets/` (mode 0600 file write +
+    /// `std::env::set_var` so existing LLM clients see the
+    /// new value without a daemon restart). Resolves M9.frame.a
+    /// (microapp follow-up).
+    secrets_store: Option<Arc<dyn super::domains::secrets::SecretsStore>>,
 }
 
 impl std::fmt::Debug for AdminRpcDispatcher {
@@ -246,7 +255,20 @@ impl AdminRpcDispatcher {
             tenant_store: None,
             transcript_appender: None,
             event_emitter: None,
+            secrets_store: None,
         }
+    }
+
+    /// Phase 82.10.k — install the secrets domain. Production
+    /// passes `nexo_setup::secrets_store::FsSecretsStore::new(&state_root)`.
+    /// Without one, `nexo/admin/secrets/write` returns
+    /// `Internal("secrets domain not configured")`.
+    pub fn with_secrets_domain(
+        mut self,
+        store: Arc<dyn super::domains::secrets::SecretsStore>,
+    ) -> Self {
+        self.secrets_store = Some(store);
+        self
     }
 
     /// Phase 82.14.b — install the firehose emitter shared with
@@ -470,6 +492,12 @@ impl AdminRpcDispatcher {
             | "nexo/admin/tenants/get"
             | "nexo/admin/tenants/upsert"
             | "nexo/admin/tenants/delete" => Some("tenants_crud"),
+            // Phase 82.10.k — secrets/write persists operator-
+            // supplied secrets to `<state_root>/secrets/<NAME>.txt`
+            // and `std::env::set_var` so existing LLM clients
+            // pick up the value without a daemon restart.
+            // Critical capability; INVENTORY-gated.
+            "nexo/admin/secrets/write" => Some("secrets_write"),
             // `reload` requires any granted CRUD capability — operators
             // who can mutate yaml can also force-trigger the reload.
             // Resolution falls through to `agents_crud` since it's the
@@ -489,7 +517,10 @@ impl AdminRpcDispatcher {
     ) -> AdminRpcResult {
         let started = Instant::now();
         let started_at_ms = now_epoch_ms();
-        let args_hash = hash_params(&params);
+        // Phase 82.10.k — redact sensitive fields per-method
+        // BEFORE hashing so low-entropy values can't be
+        // brute-forced from the audit DB hash.
+        let args_hash = hash_params(&super::audit::redact_for_audit(method, &params));
         // Phase 83.8.12.7 — sniff tenant scope from params so the
         // audit row is filterable per tenant. Method routing /
         // capability gate / handler dispatch all see the same
@@ -904,6 +935,12 @@ impl AdminRpcDispatcher {
                     "tenants domain not configured".into(),
                 )),
             },
+            "nexo/admin/secrets/write" => match &self.secrets_store {
+                Some(store) => super::domains::secrets::write(store.as_ref(), params).await,
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "secrets domain not configured".into(),
+                )),
+            },
             "nexo/admin/reload" => match &self.reload_signal {
                 Some(reload) => {
                     reload();
@@ -1197,5 +1234,86 @@ mod tests {
         assert_eq!(AdminRpcError::MethodNotFound("x".into()).code(), -32601);
         assert_eq!(AdminRpcError::InvalidParams("x".into()).code(), -32602);
         assert_eq!(AdminRpcError::Internal("x".into()).code(), -32603);
+    }
+
+    /// Phase 82.10.k — `secrets/write` requires `secrets_write`
+    /// capability + an installed `SecretsStore`. Test the
+    /// happy-path routing.
+    #[tokio::test]
+    async fn dispatcher_routes_secrets_write_with_capability_and_store() {
+        use std::path::PathBuf;
+        use async_trait::async_trait;
+        use nexo_tool_meta::admin::secrets::SecretsWriteResponse;
+
+        struct StaticStore;
+        #[async_trait]
+        impl super::super::domains::secrets::SecretsStore for StaticStore {
+            async fn write(
+                &self,
+                name: &str,
+                _value: &str,
+            ) -> Result<SecretsWriteResponse, AdminRpcError> {
+                Ok(SecretsWriteResponse {
+                    path: PathBuf::from(format!("/test/secrets/{name}.txt")),
+                    overwrote_env: false,
+                })
+            }
+        }
+
+        let d = dispatcher_granting("agent-creator", &["secrets_write"])
+            .with_secrets_domain(Arc::new(StaticStore));
+        let result = d
+            .dispatch(
+                "agent-creator",
+                "nexo/admin/secrets/write",
+                serde_json::json!({"name": "MINIMAX_API_KEY", "value": "sk-test"}),
+            )
+            .await;
+        let value = result.result.expect("ok");
+        assert_eq!(value["path"], "/test/secrets/MINIMAX_API_KEY.txt");
+        assert_eq!(value["overwrote_env"], false);
+    }
+
+    /// Without the `secrets_write` capability, dispatch is
+    /// rejected at the gate before the handler runs.
+    #[tokio::test]
+    async fn dispatcher_secrets_write_capability_denied() {
+        let d = dispatcher_granting("agent-creator", &["agents_crud"]);
+        let result = d
+            .dispatch(
+                "agent-creator",
+                "nexo/admin/secrets/write",
+                serde_json::json!({"name": "MINIMAX_API_KEY", "value": "sk-test"}),
+            )
+            .await;
+        let err = result.error.expect("denied");
+        match err {
+            AdminRpcError::CapabilityNotGranted { capability, .. } => {
+                assert_eq!(capability, "secrets_write");
+            }
+            other => panic!("expected CapabilityNotGranted, got {other:?}"),
+        }
+    }
+
+    /// With the capability granted but no SecretsStore wired,
+    /// the dispatcher returns `Internal` so operators can tell
+    /// it's a misconfiguration vs an unknown method.
+    #[tokio::test]
+    async fn dispatcher_secrets_write_internal_when_store_missing() {
+        let d = dispatcher_granting("agent-creator", &["secrets_write"]);
+        let result = d
+            .dispatch(
+                "agent-creator",
+                "nexo/admin/secrets/write",
+                serde_json::json!({"name": "MINIMAX_API_KEY", "value": "sk-test"}),
+            )
+            .await;
+        let err = result.error.expect("internal");
+        match err {
+            AdminRpcError::Internal(msg) => {
+                assert!(msg.contains("secrets domain not configured"));
+            }
+            other => panic!("expected Internal, got {other:?}"),
+        }
     }
 }
