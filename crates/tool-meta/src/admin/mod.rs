@@ -20,6 +20,7 @@ pub mod escalations;
 pub mod llm_providers;
 pub mod operator_stamping;
 pub mod pairing;
+pub mod pollers;
 pub mod processing;
 pub mod secrets;
 pub mod skills;
