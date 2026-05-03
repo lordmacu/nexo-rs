@@ -13,13 +13,16 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 
+pub mod boot;
 pub mod config;
 pub mod contributes;
 pub mod contributes_skills;
 pub mod discovery;
+pub mod doctor_render;
 pub mod init_loop;
 pub mod report;
 
+pub use boot::{wire_plugin_registry, WirePluginRegistryOutput};
 pub use config::{resolve_search_paths, PluginDiscoveryConfig};
 pub use contributes::{
     merge_plugin_contributed_agents, AgentMergeConflict, AgentMergeReport,

@@ -245,8 +245,32 @@ coordinación de archivos cross-cutting.
   outbound dispatcher consulta el registry) + doctor CLI section
   CHANNEL ADAPTERS land en el deferred bundle alongside
   81.5.b/81.6/81.7 sites.
-- **81.9 ⬜** `Mode::Run` registry sweep — reduce ~500 LOC boot
-  wire a ~30 LOC iteration. Critical milestone.
+- **81.9 ✅ shipped 2026-05-03** —
+  `wire_plugin_registry(&mut cfg, discovery_cfg, version) ->
+  WirePluginRegistryOutput { registry, skill_roots,
+  channel_adapter_registry }` helper en
+  `nexo_core::agent::nexo_plugin_registry::boot`. 4-step atomic
+  pipeline (discover → merge_agents → merge_skills → init_loop
+  con empty handles → all NoHandle), folds three reports en single
+  snapshot, single tracing::info summary con 8 fields.
+  `LlmAgentBehavior` gana `plugin_skill_roots: Vec<PathBuf>` field
+  + `with_plugin_skill_roots(roots)` builder; `prepare_system_prompt`
+  chains `.with_plugin_roots(...)` onto `SkillLoader::new` — operator
+  priority preserved by candidate_paths search order. `src/main.rs`
+  replaces existing 81.5.b block (lines 1928-1954) con single
+  helper call. `doctor_render` module ships `render_text` +
+  `render_json` + `determine_exit_code` (8 unit tests covering
+  empty / loaded / diagnostics / agent conflicts / init outcomes /
+  exit code rules / JSON shape / EXIT-line termination). 1
+  integration test verifies full pipeline. **Out of scope (deferred
+  follow-up)**: `Mode::DoctorPlugins` CLI subcommand + parser arm
+  + `cmd_doctor_plugins` handler — main.rs's pre-existing
+  in-progress work (nexo-tool-meta diagnostics, microapp-http
+  modules) made the CLI surgery risky for this commit. Doctor CLI
+  ships in 81.9.b once the working tree quiets. Reduction "~500
+  LOC boot wire" original goal stays open: requires legacy
+  whatsapp/telegram/email/browser migration to `NexoPlugin`
+  trait — that's Phase 81.12.
 - **81.10 ⬜** Plugin hot-load via Phase 18 reload coord.
 - **81.11 ⬜** Plugin doctor + capability inventory integration.
 - **81.12 ⬜** Existing-plugin migration

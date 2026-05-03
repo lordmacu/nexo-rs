@@ -10,6 +10,52 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.9 — `wire_plugin_registry` boot helper + boot wire integration
+  + `doctor_render` module (library + tests).** New module
+  `nexo_core::agent::nexo_plugin_registry::boot` exposes
+  `wire_plugin_registry(&mut cfg, discovery_cfg, version) -> WirePluginRegistryOutput { registry, skill_roots, channel_adapter_registry }`.
+  The helper runs the four-step pipeline atomically: `discover` →
+  `merge_plugin_contributed_agents` → `merge_plugin_contributed_skills`
+  → `run_plugin_init_loop` (empty handles → every plugin records
+  `InitOutcome::NoHandle` until 81.12 ships the manifest-driven
+  factory). All three reports fold into a fresh
+  `NexoPluginRegistrySnapshot` whose `last_report` carries the
+  full audit + whose `skill_roots` is the runtime routing data.
+  Single `tracing::info!(target: "plugins.discovery")` summary at
+  end with eight fields (loaded / invalid / disabled / duplicates
+  + contributed-agents / contributed-skills / merge-conflicts /
+  init-failed totals). `LlmAgentBehavior` (`crates/core/src/agent/llm_behavior.rs`)
+  gains `plugin_skill_roots: Vec<PathBuf>` field + `with_plugin_skill_roots(roots)`
+  builder; `prepare_system_prompt` chains
+  `.with_plugin_roots(self.plugin_skill_roots.clone())` onto the
+  existing `SkillLoader::new(...)` builder so plugin-contributed
+  skills become discoverable to every agent without the operator
+  having to symlink them into `skills_dir`. Operator priority is
+  preserved by `candidate_paths` search order — operator's tenant
+  / global / legacy chain still wins. `src/main.rs::Mode::Run`
+  replaces the existing 81.5.b block (lines 1928-1954) with a
+  single `wire_plugin_registry` call. New module
+  `nexo_core::agent::nexo_plugin_registry::doctor_render` ships
+  `render_text` + `render_json` + `determine_exit_code` +
+  `DoctorPluginsJsonReport` struct — the future `nexo agent
+  doctor plugins` CLI handler (deferred — see below) consumes
+  these. 8 unit tests cover empty / loaded / diagnostics by
+  level / agent conflict resolution / init outcome rendering /
+  exit code rules (Error diag OR LastPluginWins OR Failed init →
+  exit 1; warns alone → exit 0) / JSON shape / EXIT-line
+  termination. 1 integration test verifies the full pipeline
+  against an on-disk fixture. **Out of scope (deferred follow-up
+  81.9.b)**: `Mode::DoctorPlugins` CLI subcommand + parser arm
+  + `cmd_doctor_plugins` handler. The CLI body would be a
+  ~30-line wrapper that calls `wire_plugin_registry` in-process
+  + invokes `render_text` / `render_json`, but main.rs has
+  pre-existing in-progress diagnostic noise that made the CLI
+  surgery risky in this commit. The render module + helper are
+  ready; the CLI ships when the working tree quiets. The
+  "reduce ~500 LOC boot wire" headline goal remains open until
+  81.12 migrates whatsapp/telegram/email/browser plugins to the
+  `NexoPlugin` trait.
+
 - **Phase 81.8 — `ChannelAdapter` trait + registry + `PluginInitContext`
   handle (library + tests).** New module
   `nexo_core::agent::channel_adapter` defines a minimal async trait

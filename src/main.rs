@@ -1157,7 +1157,10 @@ async fn main() -> Result<()> {
             );
         }
     }
-    let cfg = cfg;
+    // Phase 81.9 — `cfg` stays mutable so `wire_plugin_registry`
+    // can fold plugin-contributed agents into `cfg.agents` later
+    // in this fn.
+    let mut cfg = cfg;
 
     // First pass of per-binding override validation — structural
     // checks only (duplicate bindings, unknown telegram instances,
@@ -1925,33 +1928,25 @@ async fn main() -> Result<()> {
         .await
         .context("failed to start plugins")?;
 
-    // Phase 81.5 — discover NexoPlugin manifests on disk and produce
-    // a hot-reloadable snapshot. Production registration of these
-    // plugins (NexoPlugin::init() invocation) is Phase 81.6's job;
-    // here we only validate + populate the snapshot so downstream
-    // sub-phases have a stable consumer surface.
-    let nexo_plugin_registry =
-        nexo_core::agent::nexo_plugin_registry::NexoPluginRegistry::empty();
-    {
-        let snap = nexo_core::agent::nexo_plugin_registry::discover(
-            &cfg.plugins.discovery,
-            &semver::Version::parse(env!("CARGO_PKG_VERSION"))
-                .unwrap_or_else(|_| semver::Version::new(0, 0, 0)),
-        );
-        tracing::info!(
-            target: "plugins.discovery",
-            loaded = snap.last_report.loaded_ids.len(),
-            invalid = snap.last_report.invalid,
-            disabled = snap.last_report.disabled,
-            duplicates = snap.last_report.duplicates,
-            "plugin discovery completed"
-        );
-        nexo_plugin_registry.swap(snap);
-    }
-    // `nexo_plugin_registry` is held in scope so 81.6 can pull it
-    // into BootDeps when it ships. Today no consumer reads from it —
-    // discovery is observation-only.
-    let _nexo_plugin_registry = nexo_plugin_registry;
+    // Phase 81.9 — atomic plugin registry boot wire. The helper
+    // runs the four-step pipeline (discover → merge agents → merge
+    // skills → init loop) and folds every report so downstream
+    // consumers (`LlmAgentBehavior::with_plugin_skill_roots`,
+    // future `nexo agent doctor plugins` CLI, admin-ui in 81.11)
+    // see a single source of truth. The init loop runs with an
+    // empty handles map today — every plugin records `NoHandle`
+    // until the manifest-driven `Arc<dyn NexoPlugin>` factory
+    // ships in 81.12.
+    let _wire = nexo_core::agent::nexo_plugin_registry::wire_plugin_registry(
+        &mut cfg.agents,
+        &cfg.plugins.discovery,
+        &semver::Version::parse(env!("CARGO_PKG_VERSION"))
+            .unwrap_or_else(|_| semver::Version::new(0, 0, 0)),
+    );
+    // `_wire.registry` + `_wire.skill_roots` +
+    // `_wire.channel_adapter_registry` stay in scope for 81.12 +
+    // future per-agent threading without changing the boot wire
+    // shape.
 
     // Email tool context — built post-start so the dispatcher handle
     // is primed. Each agent loop below picks it up when its `plugins`
