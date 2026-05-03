@@ -636,14 +636,16 @@ coordinación de archivos cross-cutting.
   nexo-memory + dashmap deps (gated). 10/10 SDK plugin tests
   pass.
 
-- **81.15.c.b ⬜** SDK streaming consumption helper
-  (`complete_llm_stream`). Extends BrokerSender with a method
-  that returns both `Stream<Item = String>` (delta chunks) +
-  `Future<Output = LlmCompleteResult>` (final usage). Requires
-  pending map supporting multi-message subscriptions: today
-  single oneshot per id; streaming needs an mpsc receiver for
-  delta notifications + a final oneshot for the response.
-  ~1.5 d.
+- **81.15.c.b ✅ shipped 2026-05-01** — SDK streaming
+  consumption helper. Pending value type changed to
+  `PendingKind` enum (Single for non-streaming, Streaming for
+  delta + final channels). New `BrokerSender::complete_llm_stream`
+  returns `LlmStream` handle with `next_chunk()` +
+  `await_final()` API. Dispatch loop notification path handles
+  `llm.complete.delta`. `LlmStream.finished` is `Option<...>`
+  so `await_final` can `take()` despite Drop impl. Drop impl
+  cleans up pending entry on early-drop. 11/11 SDK plugin
+  tests pass.
 
 - **81.20.c ⏸ DEFERRED** — `tool.dispatch` RPC. Original ~1d
   estimate wrong: `ToolHandler::call` requires full AgentContext

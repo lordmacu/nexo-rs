@@ -64,8 +64,8 @@ pub use outbound::{DispatchAck, DispatchError, OutboundDispatcher};
 
 #[cfg(feature = "plugin")]
 pub use plugin::{
-    BrokerEventHandler, BrokerSender, LlmCompleteParams, LlmCompleteResult, PluginAdapter,
-    RpcError, ShutdownHandler, TokenCount,
+    BrokerEventHandler, BrokerSender, LlmCompleteParams, LlmCompleteResult, LlmStream,
+    PluginAdapter, RpcError, ShutdownHandler, TokenCount,
 };
 
 #[cfg(feature = "admin")]

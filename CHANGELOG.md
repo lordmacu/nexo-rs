@@ -10,6 +10,79 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.15.c.b — SDK streaming consumption helper
+  (`complete_llm_stream`).** Closes the streaming half of the
+  SDK ergonomics gap. Plugin authors now write:
+  ```rust
+  let mut stream = broker.complete_llm_stream(params).await?;
+  while let Some(chunk) = stream.next_chunk().await {
+      print!("{}", chunk);
+  }
+  let result = stream.await_final().await?;
+  ```
+  instead of hand-correlating `llm.complete.delta` notifications
+  by request_id.
+  
+  Pending map value type changed from
+  `oneshot::Sender<Result<Value, RpcError>>` to
+  `PendingKind` enum:
+  - `Single(oneshot::Sender<...>)` — non-streaming requests
+    (existing memory.recall + non-streaming complete_llm)
+  - `Streaming { delta_tx: mpsc::UnboundedSender<String>,
+    final_tx: oneshot::Sender<...> }` — streaming complete_llm
+  
+  Dispatch loop response path branches on kind: Single resolves
+  the oneshot directly; Streaming resolves final_tx with the
+  deserialized `LlmCompleteResult`. delta_tx drops with the
+  enum entry, closing the chunks channel cleanly so the user's
+  `next_chunk()` loop returns `None` before `await_final()` is
+  awaited.
+  
+  Notification path adds `llm.complete.delta { request_id, chunk }`
+  handling: looks up pending by id, if Streaming pushes chunk
+  to delta_tx; if Single (or missing), drops with debug log.
+  
+  New `BrokerSender::complete_llm_stream(params) -> Result<LlmStream, RpcError>`
+  builds the request frame with `stream: true`, registers a
+  Streaming pending entry, writes the frame, returns
+  `LlmStream` handle. The function itself returns synchronously
+  after the write — only `next_chunk()` and `await_final()` await.
+  
+  New public struct `LlmStream`:
+  - `next_chunk(&mut self) -> Option<String>` — pulls deltas;
+    returns None on stream close.
+  - `await_final(self) -> Result<LlmCompleteResult, RpcError>`
+    — awaits the final response frame with usage + finish reason.
+  
+  `LlmStream.finished` field is `Option<oneshot::Receiver<...>>`
+  so `await_final` can `take()` ownership despite the Drop
+  impl (Drop forbids moving fields out of `&mut self`).
+  
+  `LlmStream` Drop impl removes the pending entry on early-drop
+  so late deltas / final reply land on a missing pending entry →
+  dropped with debug log. Memory leak protection.
+  
+  1 new unit test
+  `complete_llm_stream_yields_chunks_and_final_result`:
+  - Handler calls `broker.complete_llm_stream(params)`,
+    consumes `next_chunk()` in a loop, reassembles to `String`,
+    awaits final.
+  - Test side reads outgoing `llm.complete` request (verifies
+    `stream: true` flag set), then sends 3 delta notifications
+    `["hello", " ", "world"]` correlated by request_id, then
+    final response frame with `finish_reason: "stop"` and
+    `completion_tokens: 5`.
+  - Asserts handler observed reassembled "hello world" + correct
+    finish_reason + completion_tokens.
+  
+  11/11 SDK plugin tests pass (10 prior + 1 new streaming test).
+  Workspace + e2e tests unchanged.
+  
+  IRROMPIBLE refs: internal subprocess.rs streaming-host pattern
+  shipped in 81.20.b.c (mirrored on child side); claude-code-leak
+  `src/services/llm/streamHandler.ts` partial-token streaming
+  pattern; OpenClaw `research/src/agents/streamUtils.ts`.
+
 - **Phase 81.15.c — SDK child-side RPC helpers (`recall_memory`
   + `complete_llm`).** Extends `nexo-microapp-sdk`'s
   `BrokerSender` (the handle plugin authors receive in their
