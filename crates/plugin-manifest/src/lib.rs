@@ -51,6 +51,6 @@ pub use error::ManifestError;
 pub use manifest::{
     AdvisorsSection, AgentsSection, Capabilities, Capability, CapabilityGateDecl,
     CapabilityGatesSection, ChannelDecl, ChannelsSection, ConfigSection, ContractsSection,
-    GateKind, GateRisk, MetaSection, PluginManifest, PluginSection, RequiresSection,
-    SkillsSection, ToolsSection, UiHint, UiSection, PLUGIN_MANIFEST_FILENAME,
+    EntrypointSection, GateKind, GateRisk, MetaSection, PluginManifest, PluginSection,
+    RequiresSection, SkillsSection, ToolsSection, UiHint, UiSection, PLUGIN_MANIFEST_FILENAME,
 };

@@ -438,13 +438,47 @@ coordinación de archivos cross-cutting.
     mediated RPC. So 81.12.e is throwaway by design once 81.17 ships.
     Phase 81 dual-trait migration counts a/b/c/d ✅; e is absorbed by
     the subprocess work in 81.14 → 81.17 → 81.18 → 81.19.
-- **81.13 ⬜ DEFER** Reference plugin template
-  (`nexo plugin new <name>` CLI) + docs +
-  `crates/plugins/sales-agent/` reference example.
+- **81.13 → folded into Phase 31.6** (`nexo plugin new --lang
+  <rust|python|ts>`). Replaces the deferred template + CLI scope
+  once subprocess infra (81.14-81.23) closes.
+
+- **81.14 ✅ shipped 2026-05-01** — `SubprocessNexoPlugin`
+  host-side adapter (spawn + handshake plumbing). New manifest
+  `[plugin.entrypoint]` section (additive, every field defaults
+  so 81.12.a-d in-tree manifests parse unchanged). Adapter spawns
+  child via `tokio::process::Command`, writes one
+  `initialize { nexo_version }` request, awaits reply on stdout
+  with id-tagged response demuxing. Manifest-id mismatch in
+  reply = hard fail. Defense-in-depth: `entrypoint.env` cannot
+  redefine reserved `NEXO_*` keys. Background tasks: stdin
+  writer (mpsc consumer, bounded depth 64, drop-on-full),
+  stdout reader (parses + demuxes responses vs notifications).
+  Configurable timeout via `NEXO_PLUGIN_INIT_TIMEOUT_MS` env
+  (default 5000). `shutdown()` sends JSON-RPC shutdown, 5s reply
+  wait, 1s grace before SIGKILL, joins all spawned tasks.
+  Idempotent across multiple calls. 9 unit tests cover happy
+  path + error paths (missing command / env collision /
+  initialize timeout / id mismatch / shutdown idempotency).
+  Pattern reuses `extensions/openai-whisper` JSON-RPC envelope.
+  **Out of scope this slice** — broker → child topic bridge
+  (81.14.b), child-side SDK (81.15), contract spec (81.16),
+  out-of-tree plugin extraction (81.17), daemon-mediated RPC
+  for memory/llm/tools (81.20), supervisor (81.21), sandbox
+  (81.22), tracing bridge (81.23).
+
+- **81.14.b ⬜** Broker → child topic bridge follow-up to
+  81.14. Wires `manifest.channels.register` against
+  `ChannelAdapterRegistry` (81.8). Daemon subscribes to topics
+  declared in manifest, forwards each event to child as
+  `broker.event { topic, event }` notification. Child publishes
+  via `broker.publish { topic, event }` notification — daemon
+  validates topic against manifest allowlist before forwarding
+  to broker. ~1 d effort. Required before 81.17 pilot extract.
 
 Critical path: 81.1 → 81.2 → 81.5 → 81.9 (~3 días). Después
-de 81.9 plugin model is fully operational; 81.10-81.13 son
-polish + ergonomics.
+de 81.9 plugin model is fully operational. Out-of-tree path
+adds 81.14 → 81.14.b → 81.15 → 81.16 → 81.17 → 81.18 →
+81.19 → 81.20-81.28 → Phase 31 marketplace.
 
 ### Audit 2026-04-30 — Phase 76/77/79 backlog
 

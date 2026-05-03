@@ -23,6 +23,7 @@ pub mod doctor_render;
 pub mod factory;
 pub mod init_loop;
 pub mod report;
+pub mod subprocess;
 
 pub use boot::{
     register_plugin_registry_reload_hook, wire_plugin_registry, WirePluginRegistryOutput,
@@ -45,6 +46,7 @@ pub use factory::{
     PluginFactoryRegistry,
 };
 pub use init_loop::{run_plugin_init_loop, run_plugin_init_loop_with_factory, InitOutcome};
+pub use subprocess::{subprocess_plugin_factory, SubprocessNexoPlugin};
 pub use report::{
     DiagnosticLevel, DiscoveredPlugin, DiscoveryDiagnostic,
     DiscoveryDiagnosticKind, PluginDiscoveryReport,

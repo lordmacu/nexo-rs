@@ -91,6 +91,60 @@ pub struct PluginSection {
 
     #[serde(default)]
     pub meta: MetaSection,
+
+    /// Phase 81.14 — optional subprocess entrypoint. When `command`
+    /// is `Some`, the daemon spawns this binary as a child process
+    /// and drives the plugin via newline-delimited JSON-RPC over
+    /// stdio (`SubprocessNexoPlugin` adapter). When `command` is
+    /// `None` (the default), the manifest describes an in-tree
+    /// native Rust plugin linked into the daemon binary —
+    /// 81.12.a/b/c/d's dual-trait migration shape.
+    ///
+    /// All in-tree plugin manifests shipped by 81.12.a-d (browser /
+    /// telegram / whatsapp / email) parse cleanly without this
+    /// section because every field defaults.
+    #[serde(default)]
+    pub entrypoint: EntrypointSection,
+}
+
+// ── Subprocess entrypoint (Phase 81.14) ─────────────────────────
+
+/// Phase 81.14 — declares how the daemon launches an out-of-tree
+/// plugin as a child process. Empty / absent means "this manifest
+/// describes an in-tree Rust plugin" — preserved as the default so
+/// every existing 81.12.a-d manifest stays valid.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EntrypointSection {
+    /// Absolute path or PATH-resolvable binary name. `None` =
+    /// in-tree plugin (no spawn).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+
+    /// Args appended to `command` at spawn time.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+
+    /// Environment variables added to the child's environment on
+    /// top of the daemon's own `env`. Keys cannot collide with
+    /// reserved nexo runtime envs (`NEXO_*`); the spawn helper
+    /// rejects collisions before fork.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
+}
+
+impl EntrypointSection {
+    /// `true` when this manifest describes an out-of-tree subprocess
+    /// plugin. The daemon's `wire_plugin_registry` reads this to
+    /// pick `SubprocessNexoPlugin` factory over the in-tree closure
+    /// path. Empty / unset always returns `false` for backward
+    /// compatibility with 81.12.a-d in-tree manifests.
+    pub fn is_subprocess(&self) -> bool {
+        self.command
+            .as_deref()
+            .map(|c| !c.trim().is_empty())
+            .unwrap_or(false)
+    }
 }
 
 // ── Capabilities ────────────────────────────────────────────────
