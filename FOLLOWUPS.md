@@ -582,13 +582,13 @@ coordinación de archivos cross-cutting.
   `SubprocessRuntime.long_term_memory` added. Wire docs in
   contract v1.1.0. 19/19 subprocess + 2/2 e2e tests pass.
 
-- **81.20.a.b ⬜** main.rs reorder: today `long_term_memory` is
-  constructed at line 10883, AFTER the wire callsite at 1984, so
-  `SubprocessRuntime.long_term_memory` is `None` at boot.
-  Subprocess plugins receive -32603 "memory not configured" for
-  every memory.recall request, even when operator has long-term
-  memory enabled. ~30 LOC reorder. Required to actually deliver
-  the value 81.20.a's plumbing promises.
+- **81.20.a.b ✅ shipped 2026-05-01** — 1-LOC fix:
+  `long_term_memory: memory.clone()` instead of `None`. The
+  daemon path's `let memory =` binding (main.rs:1731-1821) is
+  already in scope at the wire callsite — no reorder needed.
+  Earlier note about line 10883 was inside `run_mcp_server`, a
+  separate function. Subprocess memory.recall now reaches the
+  real backend.
 
 - **81.20.b ⬜** Daemon-mediated `llm.complete` RPC. Extends
   `handle_child_request` match. Streaming via

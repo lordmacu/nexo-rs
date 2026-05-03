@@ -10,6 +10,19 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.20.a.b — main.rs threads `memory` → `SubprocessRuntime`.**
+  Turned out to be a 1-LOC fix: the daemon path's `let memory =`
+  binding at `src/main.rs:1731-1821` (Long-term memory section)
+  is already in scope at the wire callsite (line 1984). The
+  earlier 81.20.a follow-up note had cited the
+  `let long_term_memory =` binding at line 10883 — that one's
+  inside `run_mcp_server`, a separate function. Replaced
+  `long_term_memory: None` with `long_term_memory: memory.clone()`
+  so subprocess plugins now receive `-32603 "memory not configured"`
+  ONLY when the operator has explicitly disabled long-term memory
+  in `memory.yaml`, not because of a daemon-side plumbing gap.
+  19/19 subprocess unit tests + 2/2 e2e tests still pass.
+
 - **Phase 81.20.a — Daemon-mediated RPC: `memory.recall`.** First
   of three planned RPC bridges (81.20.a/b/c) that let subprocess
   plugins, in any language, call into framework infra
