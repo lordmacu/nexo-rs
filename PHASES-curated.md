@@ -101,7 +101,8 @@ drives this phase. Critical-path rows flagged `P1`.
 | 81.6 — Plugin-side agent registration (library + tests) | **P2** | ✅ shipped 2026-05-02 (merge + init loop + report extension; boot wire + CLI deferred follow-up) |
 | 81.7 — Plugin-side `skills_dir` contribution (library + tests) | **P2** | ✅ shipped 2026-05-03 (merge + SkillLoader::with_plugin_roots + report extension; boot wire deferred bundle) |
 | 81.8 — `ChannelAdapter` trait + registry (library + tests) | **P2** | ✅ shipped 2026-05-03 (trait + registry + PluginInitContext extension + diagnostic variant; boot wire deferred bundle) |
-| 81.9 — `wire_plugin_registry` boot helper + boot wire integration | **P2** | ✅ shipped 2026-05-03 (helper + LlmAgentBehavior.plugin_skill_roots + main.rs replaces 81.5.b block; doctor CLI subcommand deferred follow-up) |
+| 81.9 — `wire_plugin_registry` boot helper + boot wire integration | **P2** | ✅ shipped 2026-05-03 (helper + LlmAgentBehavior.plugin_skill_roots + main.rs replaces 81.5.b block) |
+| 81.9.b — `nexo agent doctor plugins` CLI subcommand | **P2** | ✅ shipped 2026-05-03 (Mode::DoctorPlugins variant + parser arm + run_doctor_plugins handler + 8-section TTY/JSON render) |
 | 83.2 — Extension-contributed skills | **P2** | ⬜ | Microapp ships its own skills; opportunistic |
 | 83.3 — Hook interceptor (vote-to-block) | **P1** | ⬜ | Compliance primitives plug in here — gates 83.5 + 83.8 |
 | 83.4 — `microapp-sdk-rust` reusable helper | **P1** | 🔄 | Core SDK ✅ 2026-04-30; 83.4.b ✅; 83.4.c Phase 82.x helpers pending |

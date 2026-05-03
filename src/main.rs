@@ -252,6 +252,14 @@ enum Mode {
     DoctorCapabilities {
         json: bool,
     },
+    /// Phase 81.9.b — `agent doctor plugins [--json]` — runs the
+    /// discover + merge_agents + merge_skills + init_loop pipeline
+    /// in-process and renders an 8-section report. Exits 1 when
+    /// error-level diagnostics, `LastPluginWins` conflicts, or
+    /// `Failed` init outcomes surface; exits 0 otherwise.
+    DoctorPlugins {
+        json: bool,
+    },
     /// Query the running agent's admin HTTP endpoint and pretty-print
     /// the agent directory. `json: true` returns raw JSON (machine
     /// consumable); otherwise a plain-text table goes to stdout.
@@ -1035,6 +1043,10 @@ async fn main() -> Result<()> {
                 print!("{}", nexo_setup::capabilities::render_tty(&statuses));
             }
             return Ok(());
+        }
+        Mode::DoctorPlugins { json } => {
+            let exit_code = run_doctor_plugins(&args.config_dir, json)?;
+            std::process::exit(exit_code);
         }
         Mode::SetupTelegramLink { agent } => {
             return nexo_setup::run_telegram_link(&args.config_dir, agent.as_deref())
@@ -6584,6 +6596,51 @@ fn run_pair_help() -> Result<()> {
     Ok(())
 }
 
+/// Phase 81.9.b — `nexo agent doctor plugins [--json]` handler.
+/// Loads the daemon config in-process, runs the
+/// `wire_plugin_registry` pipeline, and renders the resulting
+/// snapshot via `doctor_render`. Returns the desired exit code:
+/// `0` when only warn-level diagnostics + accepted overrides /
+/// disabled / allowlist rejects surfaced; `1` when any error
+/// diagnostic, `LastPluginWins` conflict, or `Failed` init
+/// outcome appears.
+fn run_doctor_plugins(config_dir: &std::path::Path, json: bool) -> Result<i32> {
+    let cfg = nexo_config::AppConfig::load(config_dir)
+        .with_context(|| format!("failed to load config from {}", config_dir.display()))?;
+    let mut agents = cfg.agents;
+    let version = semver::Version::parse(env!("CARGO_PKG_VERSION"))
+        .unwrap_or_else(|_| semver::Version::new(0, 0, 0));
+    let wire = nexo_core::agent::nexo_plugin_registry::wire_plugin_registry(
+        &mut agents,
+        &cfg.plugins.discovery,
+        &version,
+    );
+    let snap = wire.registry.snapshot();
+    let exit_code =
+        nexo_core::agent::nexo_plugin_registry::doctor_render::determine_exit_code(&snap);
+    if json {
+        let out = nexo_core::agent::nexo_plugin_registry::doctor_render::render_json(
+            &snap,
+            &wire.channel_adapter_registry,
+            config_dir,
+            &version,
+        );
+        println!("{out}");
+    } else {
+        let out = nexo_core::agent::nexo_plugin_registry::doctor_render::render_text(
+            &snap,
+            &wire.channel_adapter_registry,
+            config_dir,
+            &version,
+        );
+        // render_text already terminates with newlines per section
+        // and a trailing newline after EXIT — use print! to avoid
+        // duplicating the final newline.
+        print!("{out}");
+    }
+    Ok(exit_code)
+}
+
 async fn run_pair_start(
     config_dir: &std::path::Path,
     device_label: Option<&str>,
@@ -7574,6 +7631,9 @@ fn parse_args() -> CliArgs {
         [cmd, sub] if cmd == "doctor" && sub == "capabilities" => Mode::DoctorCapabilities {
             json: has_json_flag,
         },
+        [cmd, sub] if cmd == "doctor" && sub == "plugins" => Mode::DoctorPlugins {
+            json: has_json_flag,
+        },
         [cmd, sub] if cmd == "setup" && sub == "telegram-link" => {
             Mode::SetupTelegramLink { agent: None }
         }
@@ -7683,6 +7743,9 @@ fn print_usage() {
     println!("  agent [--config <dir>] ext doctor [--runtime] [--json]");
     println!(
         "  agent doctor capabilities [--json]     List write/reveal env toggles and their state"
+    );
+    println!(
+        "  agent doctor plugins [--json]          Audit plugin discovery + merges + init outcomes (Phase 81.9.b)"
     );
     println!("  agent flow <sub> ...                   TaskFlow admin (run `agent flow` for help)");
     println!("  agent status [<id>] [--json] [--endpoint=URL] Pretty-print running agents (or one by id)");
