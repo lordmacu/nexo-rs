@@ -54,10 +54,16 @@ pub struct SubprocessRuntime {
     /// subprocess plugins via the `memory.recall` JSON-RPC method.
     /// `None` when the operator hasn't configured memory.
     pub long_term_memory: Option<Arc<nexo_memory::LongTermMemory>>,
-    /// Phase 81.20.b — LLM services exposed via `llm.complete`.
-    /// `None` when main.rs hasn't yet threaded the registry +
-    /// config (or operator has explicitly disabled the path).
-    pub llm: Option<crate::agent::nexo_plugin_registry::subprocess::LlmServices>,
+    /// Phase 81.20.b.b — real LLM registry (with operator's
+    /// providers registered) threaded into the subprocess
+    /// pipeline so `llm.complete` requests reach actual providers
+    /// instead of the SubprocessCtxStubs empty stub.
+    pub llm_registry: Arc<nexo_llm::LlmRegistry>,
+    /// Phase 81.20.b.b — provider config (api keys, endpoints,
+    /// retry knobs, tenant overrides) the registry needs at
+    /// `build()` time. Subprocess plugins issuing `llm.complete`
+    /// requests get clients constructed from this config.
+    pub llm_config: Arc<nexo_config::LlmConfig>,
 }
 
 /// Phase 81.9 — bundle of registry handles produced by
@@ -339,7 +345,6 @@ struct SubprocessCtxStubs {
     tool_registry: Arc<crate::agent::tool_registry::ToolRegistry>,
     advisor_registry: Arc<tokio::sync::RwLock<nexo_driver_permission::AdvisorRegistry>>,
     hook_registry: Arc<crate::agent::hook_registry::HookRegistry>,
-    llm_registry: Arc<nexo_llm::LlmRegistry>,
     reload_coord: Arc<ConfigReloadCoordinator>,
     sessions: Arc<crate::session::SessionManager>,
     channel_adapter_registry: Arc<ChannelAdapterRegistry>,
@@ -347,10 +352,15 @@ struct SubprocessCtxStubs {
 
 impl SubprocessCtxStubs {
     fn build(rt: &SubprocessRuntime) -> Self {
-        let llm_registry = Arc::new(nexo_llm::LlmRegistry::new());
+        // Phase 81.20.b.b — reuse rt's REAL llm_registry for the
+        // reload coordinator instead of a separate empty stub.
+        // ConfigReloadCoordinator only reads the registry to
+        // re-build LLM clients on hot-reload; using the same
+        // instance the subprocess plugins see keeps boot + reload
+        // semantics symmetrical.
         let reload_coord = Arc::new(ConfigReloadCoordinator::new(
             rt.config_dir.clone(),
-            llm_registry.clone(),
+            rt.llm_registry.clone(),
             rt.shutdown.clone(),
         ));
         Self {
@@ -359,7 +369,6 @@ impl SubprocessCtxStubs {
                 nexo_driver_permission::AdvisorRegistry::new(),
             )),
             hook_registry: Arc::new(crate::agent::hook_registry::HookRegistry::new()),
-            llm_registry,
             reload_coord,
             sessions: Arc::new(crate::session::SessionManager::new(
                 std::time::Duration::from_secs(60),
@@ -381,7 +390,12 @@ impl SubprocessCtxStubs {
             advisor_registry: self.advisor_registry.clone(),
             hook_registry: self.hook_registry.clone(),
             broker: rt.broker.clone(),
-            llm_registry: self.llm_registry.clone(),
+            // Phase 81.20.b.b — pass the runtime's REAL llm
+            // registry instead of the stubs' empty one, so
+            // subprocess plugins issuing `llm.complete` reach
+            // operator-configured providers.
+            llm_registry: rt.llm_registry.clone(),
+            llm_config: rt.llm_config.clone(),
             reload_coord: self.reload_coord.clone(),
             sessions: self.sessions.clone(),
             long_term_memory: rt.long_term_memory.clone(),

@@ -1996,15 +1996,13 @@ async fn main() -> Result<()> {
         // disabled long-term memory in `memory.yaml`, not because
         // of a daemon-side plumbing gap.
         long_term_memory: memory.clone(),
-        // Phase 81.20.b — `llm.complete` handler shape ships
-        // library-side; threading `llm: Some(LlmServices { registry,
-        // config })` into the subprocess pipeline requires extending
-        // `PluginInitContext` with `llm_services: Option<LlmServices>`
-        // (or similar) so SubprocessNexoPlugin::init can pass it to
-        // spawn_and_handshake. Deferred to 81.20.b.b — until that
-        // ships, subprocess plugins receive -32603 "llm not
-        // configured" for every llm.complete request.
-        llm: None,
+        // Phase 81.20.b.b — thread the daemon's real
+        // `llm_registry` (Arc'd at construction since 81.20.b)
+        // and `cfg.llm` so subprocess plugins issuing
+        // `llm.complete` reach operator-configured providers
+        // (Minimax, OpenAI, etc.).
+        llm_registry: llm_registry.clone(),
+        llm_config: Arc::new(cfg.llm.clone()),
     };
     let wire =
         nexo_core::agent::nexo_plugin_registry::wire_plugin_registry_with_runtime(

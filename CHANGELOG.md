@@ -10,6 +10,52 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.20.b.b — main.rs threads `LlmServices` into
+  subprocess runtime.** Closes the runtime-plumbing half of
+  81.20.b. Subprocess plugins now receive `-32603 "llm not
+  configured"` from `llm.complete` ONLY when the operator hasn't
+  configured providers in `llm.yaml` — not because of a
+  daemon-side plumbing gap.
+  
+  `PluginInitContext` extended with `llm_config: Arc<LlmConfig>`
+  paired with the existing `llm_registry: Arc<LlmRegistry>`. Both
+  in-tree and subprocess plugins can now build LLM clients
+  without the caller threading config separately.
+  
+  `SubprocessNexoPlugin::init` builds
+  `LlmServices { registry: ctx.llm_registry.clone(), config: ctx.llm_config.clone() }`
+  inline and passes it as the 4th param to `spawn_and_handshake`.
+  
+  `SubprocessRuntime.llm: Option<LlmServices>` replaced with two
+  flat fields: `llm_registry: Arc<LlmRegistry>` + `llm_config:
+  Arc<LlmConfig>`. `SubprocessCtxStubs.context_for` now passes
+  the runtime's REAL llm_registry (not the stubs' empty one) so
+  subprocess plugins reach operator-configured providers. The
+  stubs' own `llm_registry` field is removed —
+  `ConfigReloadCoordinator` reuses `rt.llm_registry` via the same
+  Arc clone, keeping boot + reload semantics symmetrical.
+  
+  main.rs:
+  - `SubprocessRuntime` initializer threads
+    `llm_registry: llm_registry.clone()` (already Arc'd at line
+    1506 since 81.20.b) and `llm_config: Arc::new(cfg.llm.clone())`.
+  - 2 e2e test SubprocessRuntime literals updated to construct
+    empty `LlmRegistry::new()` + zero-providers `LlmConfig` since
+    the tests don't exercise llm.complete (3 unit tests in
+    subprocess.rs cover the handler).
+  
+  Streaming via `llm.complete.delta` notifications still pending,
+  carved out as 81.20.b.c (~1 d).
+  
+  22/22 subprocess unit tests + 2/2 e2e tests pass — same count
+  as 81.20.b, no behavioral regressions.
+  
+  IRROMPIBLE refs: internal subprocess.rs (where init builds
+  LlmServices); internal boot.rs SubprocessCtxStubs (where the
+  context is built from rt); internal plugin_host.rs (where the
+  new `llm_config` field lives). claude-code-leak per-method
+  dispatch + OpenClaw absence — same as 81.20.b.
+
 - **Phase 81.20.b — Daemon-mediated RPC: `llm.complete`
   (non-streaming MVP).** Second of three planned RPC handlers
   (81.20.a memory.recall ✅, 81.20.b llm.complete this slice,

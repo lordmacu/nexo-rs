@@ -57,6 +57,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use nexo_broker::AnyBroker;
 use nexo_driver_permission::AdvisorRegistry;
+use nexo_config::LlmConfig;
 use nexo_llm::LlmRegistry;
 use nexo_memory::LongTermMemory;
 use nexo_plugin_manifest::PluginManifest;
@@ -145,6 +146,14 @@ pub struct PluginInitContext<'a> {
     /// LLM provider builder. Plugin builds clients via
     /// `llm_registry.build(&cfg.llm, &model_cfg)?`.
     pub llm_registry: Arc<LlmRegistry>,
+
+    /// Phase 81.20.b.b — LLM config the registry needs at build
+    /// time (provider table with API keys, retry knobs, tenant
+    /// overrides). Subprocess plugins (`SubprocessNexoPlugin`)
+    /// pair this with `llm_registry` to construct `LlmServices`
+    /// for the `llm.complete` JSON-RPC handler. In-tree plugins
+    /// that build their own clients also use it.
+    pub llm_config: Arc<LlmConfig>,
 
     /// Phase 18 reload coordinator. Plugin registers post-hooks
     /// via `reload_coord.register_post_hook(Box::new(...)).await`
