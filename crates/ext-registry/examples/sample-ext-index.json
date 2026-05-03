@@ -1,0 +1,54 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at": "2026-05-01T00:00:00Z",
+  "entries": [
+    {
+      "id": "slack",
+      "version": "0.2.0",
+      "name": "Slack Channel",
+      "description": "Slack bot integration via the Slack Web API. Receive messages, post replies, react to events.",
+      "homepage": "https://github.com/nexo-rs/plugin-slack",
+      "tier": "verified",
+      "min_nexo_version": ">=0.1.0",
+      "downloads": [
+        {
+          "target": "x86_64-unknown-linux-gnu",
+          "url": "https://nexo-rs.dev/releases/slack-0.2.0/slack-0.2.0-x86_64-linux.tar.gz",
+          "sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+          "size_bytes": 4500000
+        },
+        {
+          "target": "aarch64-apple-darwin",
+          "url": "https://nexo-rs.dev/releases/slack-0.2.0/slack-0.2.0-aarch64-darwin.tar.gz",
+          "sha256": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+          "size_bytes": 4200000
+        }
+      ],
+      "manifest_url": "https://nexo-rs.dev/releases/slack-0.2.0/nexo-plugin.toml",
+      "signing": {
+        "cosign_signature_url": "https://nexo-rs.dev/releases/slack-0.2.0/slack-0.2.0.sig",
+        "cosign_certificate_url": "https://nexo-rs.dev/releases/slack-0.2.0/slack-0.2.0.cert"
+      },
+      "authors": ["nexo-rs maintainers <ops@nexo-rs.dev>"]
+    },
+    {
+      "id": "discord",
+      "version": "0.1.0",
+      "name": "Discord Channel (Community)",
+      "description": "Community-maintained Discord bot integration. Operator must allowlist the signing key in trusted_keys.toml before install.",
+      "homepage": "https://github.com/community-author/nexo-plugin-discord",
+      "tier": "community",
+      "min_nexo_version": ">=0.1.0",
+      "downloads": [
+        {
+          "target": "x86_64-unknown-linux-gnu",
+          "url": "https://example.com/discord-0.1.0-x86_64-linux.tar.gz",
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "size_bytes": 3800000
+        }
+      ],
+      "manifest_url": "https://example.com/discord-0.1.0/nexo-plugin.toml",
+      "authors": ["Community Author <community@example.com>"]
+    }
+  ]
+}

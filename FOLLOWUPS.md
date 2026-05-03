@@ -636,6 +636,16 @@ coordinación de archivos cross-cutting.
   nexo-memory + dashmap deps (gated). 10/10 SDK plugin tests
   pass.
 
+- **31.0 ✅ shipped 2026-05-01** — ext-registry index format
+  types crate. New `crates/ext-registry/` workspace member with
+  `ExtRegistryIndex` + `ExtEntry` + `ExtDownload` + `ExtSigning`
+  + `ExtTier` + `IndexValidationError`. Validation enforces id
+  regex, HTTPS-only URLs, sha256 hex format, non-empty
+  downloads, verified-tier requires signing, `deny_unknown_fields`.
+  Bundled sample at `examples/sample-ext-index.json`. Schema
+  version 1.0.0. 9 unit tests pass. Index repo bootstrap is a
+  separate operator-side init outside this workspace.
+
 - **81.15.c.b ✅ shipped 2026-05-01** — SDK streaming
   consumption helper. Pending value type changed to
   `PendingKind` enum (Single for non-streaming, Streaming for
