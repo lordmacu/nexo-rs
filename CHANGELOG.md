@@ -10,6 +10,56 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.12.c — WhatsApp plugin dual-trait migration to `NexoPlugin`.**
+  Third per-plugin slice of the `81.12` migration (after 81.12.a / browser
+  and 81.12.b / telegram). New file `crates/plugins/whatsapp/nexo-plugin.toml`
+  (~28 LOC) declares `id = "whatsapp"`, version `0.1.1`, name `"WhatsApp"`,
+  description referencing `wa-agent + Signal Protocol`,
+  `min_nexo_version = ">=0.1.0"`, and `requires.nexo_capabilities = ["broker"]`.
+  Manifest is **dormant** — top-of-file warning matches the prior slices:
+  do not add to `plugins.discovery.search_paths` until 81.12.e flips the
+  boot wire. `WhatsappPlugin` struct gains a `cached_manifest: PluginManifest`
+  field parsed once via `include_str!("../nexo-plugin.toml")` + `toml::from_str`
+  in `WhatsappPlugin::new()`. `impl NexoPlugin for WhatsappPlugin` ships
+  alongside the existing `impl Plugin for WhatsappPlugin` (dual-trait):
+  `manifest()` returns `&self.cached_manifest`; `init(ctx)` calls the
+  legacy `Plugin::start(self, ctx.broker.clone()).await` and maps any
+  `anyhow::Error` to `PluginInitError::Other { plugin_id, source }`;
+  `shutdown()` mirrors via `Plugin::stop` mapped to
+  `PluginShutdownError::Other`. Public factory builder
+  `pub fn whatsapp_plugin_factory(cfg: WhatsappPluginConfig) -> PluginFactory`
+  in `crates/plugins/whatsapp/src/lib.rs` returns a closure that clones
+  `cfg` per invocation and constructs an `Arc<dyn NexoPlugin>`. **Multi-account
+  is operator-side**: the factory captures one `WhatsappPluginConfig` per
+  call, so multi-account setups invoke it once per config (matching the
+  shape of the existing `src/main.rs:1880-1897` loop). Distinct
+  `session_dir` per instance keeps Signal Protocol keys isolated — the
+  multi-instance test verifies the per-instance fixture builds disjoint
+  paths. Crucially, `manifest().plugin.id == "whatsapp"` for every
+  instance — the per-instance label (`acct_a`, `acct_b`, …) lives in
+  `WhatsappPlugin::registry_name`, NOT in the manifest. The factory
+  differentiates instances by closing over distinct configs.
+  `enabled = false` short-circuits inside `Plugin::start` returning
+  `Ok(())`, so init-disabled plugins still report success through the
+  NexoPlugin path — same observable behavior as the legacy `register` +
+  `start_all` combination. The factory is exported but no caller registers
+  it today — main.rs's legacy loop stays untouched. **Behavior identical to
+  pre-81.12.c until Phase 81.12.e flips main.rs**. New deps:
+  `nexo-plugin-manifest = { path = "../../plugin-manifest" }` + `toml = "0.8"`
+  on the whatsapp crate's `Cargo.toml`. No cycle introduced. 5 unit tests
+  in `nexo_plugin_tests`: manifest parses + id correct; cached_manifest
+  reachable via `&dyn NexoPlugin`; factory builder produces a usable
+  `Arc<dyn NexoPlugin>`; dual-trait dispatch agrees on identity for
+  single-account; multi-instance factory yields distinct `registry_name`s
+  but identical `manifest().plugin.id`. Compatibility audit
+  pre-implementation: `WhatsappPluginConfig: Clone` already derived
+  (`crates/config/src/types/plugins.rs:145-190`); zero struct-literal
+  callsites for `WhatsappPlugin` outside the crate (only `WhatsappPlugin::new(cfg)`
+  callers); `WhatsappPairingAdapter` (registered separately at main.rs)
+  untouched; `pairing_state()` accessor for HTTP server polling untouched;
+  `register_whatsapp_tools` per-agent at main.rs untouched (defer Phase
+  81.3 tool namespace runtime enforcement).
+
 - **Phase 81.12.b — Telegram plugin dual-trait migration to `NexoPlugin`.**
   Second per-plugin slice of the `81.12` migration (after 81.12.a / browser).
   New file `crates/plugins/telegram/nexo-plugin.toml` (~28 LOC) declares
