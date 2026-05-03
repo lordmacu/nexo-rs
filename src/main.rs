@@ -77,12 +77,17 @@ enum Mode {
     /// Decentralized GitHub Releases install; downloads + sha-verifies
     /// + extracts under `plugins.discovery.search_paths[0]` (or
     /// `--dest`). Best-effort `plugin.lifecycle.<id>.installed` event
-    /// emitted when broker is up.
+    /// emitted when broker is up. Phase 31.3 added cosign signature
+    /// verification per `config/extensions/trusted_keys.toml`; the
+    /// two flags below force `Require` / `Ignore` modes for a single
+    /// invocation respectively.
     PluginInstall {
         coords: String,
         dest: Option<PathBuf>,
         target: Option<String>,
         json: bool,
+        require_signature: bool,
+        skip_signature_verify: bool,
     },
     /// Phase 31.1.c — static help block for the plugin subcommand.
     PluginHelp,
@@ -1161,6 +1166,8 @@ async fn main() -> Result<()> {
             dest,
             target,
             json,
+            require_signature,
+            skip_signature_verify,
         } => {
             let code = plugin_install::run_plugin_install(
                 &args.config_dir,
@@ -1168,6 +1175,8 @@ async fn main() -> Result<()> {
                 dest,
                 target,
                 json,
+                require_signature,
+                skip_signature_verify,
             )
             .await?;
             std::process::exit(code);
@@ -7628,12 +7637,14 @@ fn parse_args() -> CliArgs {
             id: id.clone(),
             ensure: positional.iter().any(|a| a == "--ensure"),
         },
-        // Phase 31.1.c — `nexo plugin install <coords> [...]`.
+        // Phase 31.1.c + 31.3 — `nexo plugin install <coords> [...]`.
         [cmd, sub, coords] if cmd == "plugin" && sub == "install" => Mode::PluginInstall {
             coords: coords.clone(),
             dest: parse_kv_flag(&positional, "--dest").map(PathBuf::from),
             target: parse_kv_flag(&positional, "--target"),
             json: has_json_flag,
+            require_signature: positional.iter().any(|a| a == "--require-signature"),
+            skip_signature_verify: positional.iter().any(|a| a == "--skip-signature-verify"),
         },
         [cmd, sub] if cmd == "plugin" && sub == "help" => Mode::PluginHelp,
         // Phase 76.14 — mcp-server with optional subcommands
@@ -7907,7 +7918,10 @@ fn print_usage() {
     println!("  agent [--config <dir>] ext uninstall <id> --yes [--json]");
     println!("  agent [--config <dir>] ext doctor [--runtime] [--json]");
     println!(
-        "  agent [--config <dir>] plugin install <owner>/<repo>[@<tag>] [--dest <path>] [--target <triple>] [--json]"
+        "  agent [--config <dir>] plugin install <owner>/<repo>[@<tag>] [--dest <path>] [--target <triple>]"
+    );
+    println!(
+        "                                         [--require-signature|--skip-signature-verify] [--json]"
     );
     println!("  agent plugin help                      Show plugin subcommand help");
     println!(

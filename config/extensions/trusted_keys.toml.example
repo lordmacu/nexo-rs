@@ -1,0 +1,41 @@
+# Phase 31.3 — operator trust policy for cosign signature
+# verification of community plugins installed via
+# `nexo plugin install`.
+#
+# Copy this file to `trusted_keys.toml` (drop the .example
+# suffix) inside the same directory to activate. An empty or
+# missing file gives the global default `warn` mode plus zero
+# allowlisted authors.
+
+schema_version = "1.0"
+
+# Global default applied when an install's owner does not match
+# any [[authors]] entry. One of:
+#   "ignore"  — skip cosign verification entirely (dev / CI use).
+#   "warn"    — verify when .sig + .cert assets are present in
+#               the release; if absent, log a stderr warning and
+#               proceed unverified.
+#   "require" — every install MUST have a valid allowlisted
+#               signature; reject unsigned or mismatched plugins.
+default = "warn"
+
+# Optional override for the cosign binary path. Leave commented
+# to fall back to $PATH walk + well-known locations
+# (/usr/local/bin/cosign, /opt/homebrew/bin/cosign, ~/go/bin/cosign).
+# cosign_binary = "/usr/local/bin/cosign"
+
+# ── Per-author trust upgrades ─────────────────────────────────
+# Each [[authors]] block trusts a single GitHub repo owner. The
+# `identity_regexp` matches the cosign certificate Subject
+# Alternative Name; in keyless flow the SAN encodes the GitHub
+# Actions workflow URL. Make the regex specific enough to lock
+# in the workflow path but loose enough to tolerate refs / repo
+# additions.
+
+# Example: trust every plugin published from any repo owned by
+# `lordmacu`, signed via the standard `release.yml` workflow.
+# [[authors]]
+# owner = "lordmacu"
+# identity_regexp = "^https://github.com/lordmacu/[^/]+/\\.github/workflows/release\\.yml@.*$"
+# oidc_issuer = "https://token.actions.githubusercontent.com"
+# # mode = "require"   # uncomment to upgrade this owner above the global default

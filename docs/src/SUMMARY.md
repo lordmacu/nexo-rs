@@ -156,6 +156,7 @@
 - [Memdir scanner](./ops/memdir-scanner.md)
 - [Bash safety knobs](./ops/bash-safety.md)
 - [Capability toggles](./ops/capabilities.md)
+- [Plugin trust (cosign + trusted_keys.toml)](./ops/plugin-trust.md)
 - [Channel doctor (MCP)](./ops/channel-doctor.md)
 - [Webhook receiver](./ops/webhook-receiver.md)
 - [Event subscribers](./ops/events.md)

@@ -41,6 +41,9 @@ use tokio::io::AsyncWriteExt;
 pub mod error;
 pub mod extract;
 pub mod extract_error;
+pub mod trusted_keys;
+pub mod verify;
+pub mod verify_error;
 
 pub use error::InstallError;
 pub use extract::{
@@ -48,6 +51,9 @@ pub use extract::{
     MAX_ENTRY_BYTES, MAX_EXTRACTED_BYTES, MAX_TARBALL_BYTES,
 };
 pub use extract_error::ExtractError;
+pub use trusted_keys::{AuthorPolicy, TrustMode, TrustedKeysConfig};
+pub use verify::{discover_cosign_binary, verify_plugin_signature, VerifiedSignature, VerifyInput};
+pub use verify_error::VerifyError;
 
 /// Parsed `<owner>/<repo>@<tag>` coordinates. `tag` defaults to
 /// `latest` when the user omits it.

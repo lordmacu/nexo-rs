@@ -751,6 +751,41 @@ coordinación de archivos cross-cutting.
   Windows target; multi-plugin monorepo; `crates.io`
   auto-publish.
 
+- **31.3 ✅ shipped 2026-05-03** — Cosign signature verification
+  + `<config_dir>/extensions/trusted_keys.toml` operator trust
+  policy. New `crates/ext-installer/src/{trusted_keys.rs,
+  verify.rs, verify_error.rs}` modules + sample at
+  `config/extensions/trusted_keys.toml.example`. Three trust
+  modes: `ignore` / `warn` (default) / `require`; per-author
+  `[[authors]]` entries override the global default. CLI
+  flags `--require-signature` / `--skip-signature-verify`
+  (mutually exclusive — `FlagsConflict` parse-time error).
+  Verify pipeline shells out to `cosign verify-blob` via
+  `tokio::process::Command` with `--certificate-identity-regexp`
+  + `--certificate-oidc-issuer` (+ optional `--bundle` for
+  offline Rekor proof). `discover_cosign_binary` walks
+  override → $PATH → /usr/local/bin / /opt/homebrew/bin /
+  /usr/bin / ~/go/bin fallbacks. New `VerifyError` enum (7
+  variants: CosignNotFound, CosignFailed, Io, PolicyRequiresSig,
+  AssetIncomplete, TrustedKeysParse, IdentityRegexpInvalid).
+  `PluginInstallReport` extended with `signature_verified` +
+  `signature_identity` + `signature_issuer` + `trust_mode` +
+  `trust_policy_matched`. Verify hook lands between
+  `download_and_verify` (sha256) and `extract_verified_tarball`.
+  Cleans cached signing material post-success along with the
+  cached tarball. Hint blocks for `CosignNotFound`,
+  `PolicyRequiresSig`, `CosignFailed`. New docs page
+  `docs/src/ops/plugin-trust.md` covers trust modes +
+  identity_regexp shape + cosign install + JSON schema +
+  troubleshooting. Template README addendum shows authors what
+  operators need in `[[authors]]`. 14 new tests (9 in
+  `trusted_keys.rs::tests` + 6 in `verify.rs::tests` using
+  mock cosign shell-script + 4 in `plugin_install::tests`):
+  ext-installer 21→38, plugin_install 8→12. Workspace builds
+  clean; mdbook clean. NO env knob v1, NO sigstore-rs (defer),
+  NO per-plugin override beyond per-owner, NO TUF/GPG/threshold
+  sigs.
+
 - **81.15.c.b ✅ shipped 2026-05-01** — SDK streaming
   consumption helper. Pending value type changed to
   `PendingKind` enum (Single for non-streaming, Streaming for
