@@ -38,6 +38,187 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 31.4 — Python plugin SDK + template + `noarch`
+  resolver fallback.** Plugin authors can now ship Python
+  plugins through the same `nexo plugin install` pipeline used
+  by Rust plugins. Two new in-tree directories:
+  
+  - `extensions/sdk-python/nexo_plugin_sdk/` — Python SDK
+    package (`PluginAdapter`, `BrokerSender`, `Event`,
+    `read_manifest`, exception types). Stdlib-only at runtime
+    (`tomllib` on 3.11+ with a `tomli` fallback shim). Mirrors
+    the Rust SDK's surface — same handshake reply shape, same
+    `broker.event` notification dispatch, same `shutdown`
+    request lifecycle.
+  - `extensions/template-plugin-python/` — drop-in template
+    with `nexo-plugin.toml`, `src/main.py` echo handler,
+    `scripts/{extract-plugin-meta.sh, pack-tarball-python.sh,
+    verify-pure-python.sh}`, `tests/test_pack_tarball.py`,
+    and `.github/workflows/release.yml`.
+  
+  Tarball convention extension: a new `noarch` target string
+  for portable plugins. The resolver in
+  `crates/ext-installer/src/lib.rs::resolve_release` now tries
+  `<id>-<version>-<target>.tar.gz` first, then falls back to
+  `<id>-<version>-noarch.tar.gz`. Per-target wins when both are
+  present (test:
+  `resolve_release_prefers_per_target_over_noarch`).
+  Backward-compatible: every existing per-target release still
+  resolves identically.
+  
+  Tarball layout for Python plugins:
+  
+  ```
+  <id>-<version>-noarch.tar.gz
+  ├── nexo-plugin.toml
+  ├── bin/<id>            # bash launcher, mode 0755
+  └── lib/
+      ├── plugin/main.py
+      └── nexo_plugin_sdk/...
+      (plus any vendored requirements.txt deps)
+  ```
+  
+  Bash launcher (~5 LOC) sets `PYTHONPATH` to the vendored
+  `lib/` and exec's `python3 lib/plugin/main.py`. The daemon's
+  spawn pipeline (`crates/core/src/agent/nexo_plugin_registry/subprocess.rs`)
+  is **unchanged** — it just exec's `bin/<id>`, OS shebang
+  dispatches.
+  
+  Pure-Python deps constraint: `verify-pure-python.sh` audits
+  the vendored `lib/` for `*.so` / `*.pyd` / `*.dylib` and
+  fails the publish workflow if any are present. Native-ext
+  Python plugins would need per-target tarballs
+  (`<id>-<version>-py312-x86_64-linux.tar.gz`) — tracked as
+  Phase 31.4.b, not yet shipped.
+  
+  Publish workflow shape (`.github/workflows/release.yml`):
+  
+  - Same 4-job structure as Phase 31.2 (validate-tag, build,
+    sign, release).
+  - Build matrix has a single `noarch` entry instead of the
+    Rust template's 4 cross-compiled triples.
+  - Build step uses `actions/setup-python@v5` with `cache: pip`
+    + `pip install --target lib/ -r requirements.txt`.
+  - Post-pack the workflow re-extracts the tarball into a
+    scratch dir and runs `scripts/verify-pure-python.sh
+    .audit/lib` as a hard gate.
+  - Sign + release jobs identical to the Rust template; cosign
+    keyless OIDC produces `.sig` + `.pem` + `.bundle` per asset
+    when `COSIGN_ENABLED == "true"`.
+  
+  Operator install path (no changes for Python plugins):
+  
+  ```bash
+  nexo plugin install your-handle/your-plugin@v0.2.0
+  ```
+  
+  Pipeline: resolve release → try per-target tarball (miss for
+  noarch plugins) → fall back to `noarch` (Phase 31.4
+  addition) → sha256 verify (31.1) → cosign verify per
+  `trusted_keys.toml` (31.3) → extract under
+  `<dest_root>/<id>-0.2.0/` (31.1.b) → daemon picks it up at
+  next boot or hot-reload.
+  
+  `PluginAdapter` Python class:
+  
+  ```python
+  PluginAdapter(
+      manifest_toml=...,
+      server_version="0.1.0",
+      on_event=async_handler,    # (topic, Event, BrokerSender) -> None
+      on_shutdown=async_cleanup, # () -> None
+  )
+  ```
+  
+  `on_event` handler runs as a detached `asyncio.Task` so the
+  dispatch loop continues reading stdin while the handler
+  awaits its own `broker.publish` calls — same self-deadlock
+  fix from the Rust SDK (Phase 81.15.c). On `shutdown`, the
+  SDK awaits all in-flight handler tasks (`_drain_inflight`)
+  before sending `{ ok: true }` so handlers do not get
+  cancelled mid-publish.
+  
+  6 SDK tests using stdlib `unittest` (zero pytest install
+  friction):
+  
+  - `test_handshake.py::test_initialize_returns_manifest`
+  - `test_handshake.py::test_unknown_method_returns_error`
+    (`-32601`)
+  - `test_handshake.py::test_manifest_missing_id_raises`
+  - `test_dispatch.py::test_broker_event_invokes_handler`
+  - `test_dispatch.py::test_handler_does_not_block_reader`
+    (proves slow handler does not gate `shutdown` processing
+    via the in-flight drain mechanism)
+  - `test_shutdown.py::test_shutdown_request_replies_and_exits`
+  
+  1 template test
+  (`tests/test_pack_tarball.py::test_pack_tarball_produces_canonical_layout`):
+  builds a synthetic SDK in a tempdir, runs
+  `pack-tarball-python.sh` with `SDK_SRC` + `SKIP_PIP=1`
+  overrides, asserts the asset + sidecar exist, sha256 round-
+  trip valid, re-extracts and verifies layout (`bin/<id>` +
+  `lib/plugin/main.py` + `lib/nexo_plugin_sdk/__init__.py` +
+  `nexo-plugin.toml` at root, no wrapping dir, launcher mode
+  `0o755`).
+  
+  2 new Rust resolver tests in
+  `crates/ext-installer/src/lib.rs::tests`:
+  
+  - `resolve_release_falls_back_to_noarch_when_per_target_absent`.
+  - `resolve_release_prefers_per_target_over_noarch`.
+  
+  Test totals: ext-installer 38→40, Python SDK 6, template 1.
+  Workspace builds clean. mdbook clean.
+  
+  New docs page `docs/src/plugins/python-sdk.md` (operator-author
+  facing): architecture diagram, public API table, tarball
+  convention, pure-Python constraint, CI workflow walkthrough,
+  install flow, smoke test commands, cross-links to publishing
+  + plugin-trust pages. Wired under `# Plugins` in
+  `docs/src/SUMMARY.md` after `publishing.md`.
+  
+  Run commands:
+  
+  ```bash
+  cargo test -p nexo-ext-installer                    # 40/40
+  cd extensions/sdk-python && PYTHONPATH=. python3 -m unittest discover tests/    # 6/6
+  cd extensions/template-plugin-python && python3 -m unittest tests/test_pack_tarball.py    # 1/1
+  ```
+  
+  Out of scope (tracked):
+  - `[runtime]` block in `nexo-plugin.toml` schema —
+    unnecessary; `entrypoint.command` covers spawn for any
+    language.
+  - Embedded Python interpreter (PyO3 / Pyodide) — keeps wire
+    contract simple, isolation strong.
+  - PyPI publish of `nexo-plugin-sdk` — defer until Phase 31.5
+    (TypeScript SDK) verifies cross-language API stability.
+  - Per-target Python tarballs for plugins with native deps —
+    Phase 31.4.b follow-up.
+  - TypeScript SDK + template — Phase 31.5.
+  - `nexo plugin new --lang python` scaffolder — Phase 31.6.
+  
+  IRROMPIBLE refs:
+  internal `crates/microapp-sdk/src/plugin.rs:514-549`
+  (Rust `PluginAdapter` shape mirrored verbatim);
+  internal `crates/microapp-sdk/src/plugin.rs:227+`
+  (`BrokerSender` shape — `publish()` method same signature);
+  internal `crates/core/src/agent/nexo_plugin_registry/subprocess.rs:170-219`
+  (daemon spawn pipeline — language-agnostic, no daemon-side
+  changes needed for this slice);
+  internal `nexo-plugin-contract.md` — wire format spec,
+  Python SDK implements verbatim;
+  internal `extensions/template-plugin-rust/scripts/pack-tarball.sh`
+  (Phase 31.2 — packer pattern reused, `noarch` variant);
+  internal `crates/ext-installer/src/lib.rs` — resolver hook
+  point for noarch fallback;
+  internal `crates/core/src/agent/repl_registry.rs:343-364`
+  (`has_runtime("python")` precedent — pattern for python3
+  presence checks);
+  OpenClaw `research/skills/skill-creator/scripts/init_skill.py`
+  — Python entrypoint script bundling pattern (light reference;
+  our SDK is asyncio-based).
+
 - **Phase 31.3 — Cosign signature verification + `trusted_keys.toml`.**
   New modules `crates/ext-installer/src/{trusted_keys.rs,
   verify.rs, verify_error.rs}` plus a sample config at

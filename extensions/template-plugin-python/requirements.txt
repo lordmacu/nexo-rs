@@ -1,0 +1,8 @@
+# Phase 31.4 — runtime deps for the Python plugin template.
+#
+# In-tree dev path: pack-tarball-python.sh copies the SDK out of
+# `../sdk-python/nexo_plugin_sdk` directly. Once
+# `nexo-plugin-sdk` ships to PyPI (Phase 31.4 follow-up), uncomment
+# below + remove the in-tree copy step in pack-tarball-python.sh.
+#
+# nexo-plugin-sdk == 0.1.0
