@@ -8,7 +8,128 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ## [Unreleased]
 
+### Changed
+
+- **Phase 31 architecture pivot — decentralized GitHub Releases
+  (Option B) instead of central catalog (Option A).** The
+  earlier 31.0 design assumed a single `ext-index.json` hosted on
+  `nexo-rs.dev` (or via raw.githubusercontent.com). After
+  reviewing infra costs + curation overhead, the user chose to
+  host nothing — plugin authors publish to their own GitHub
+  repos as Releases, the install CLI hits the GitHub Releases
+  API directly, and discovery happens via GitHub topic search.
+  
+  Tradeoffs accepted:
+  - Lose the `tier: verified` curated tier (everything starts
+    `community`; operator allowlists per-author cosign keys for
+    upgrade in 31.3).
+  - Lose centralized review of submissions (anyone can publish).
+  - Gain zero infrastructure (no catalog repo, no Pages, no
+    CDN, no DNS) and zero gatekeeping (authors publish on their
+    own cadence).
+  
+  Architectural impact: `ExtRegistryIndex` (the central catalog
+  type from 31.0) is now unused — kept in `nexo-ext-registry`
+  as dead code rather than removed mid-flight to avoid churning
+  the just-shipped crate. Future cleanup may drop it. The
+  entry types (`ExtEntry`, `ExtDownload`, `ExtSigning`,
+  `ExtTier`) remain useful as the resolved-artifact shape;
+  `nexo-ext-installer` builds them from GitHub Release JSON.
+
 ### Added
+
+- **Phase 31.1 — Plugin installer library (decentralized
+  GitHub Releases).** New `crates/ext-installer/` workspace
+  member implementing the install pipeline against the GitHub
+  Releases API.
+  
+  `PluginCoords::parse("owner/repo@tag")` parses the install
+  coords; tag defaults to `"latest"` when omitted. Validates
+  owner/repo against `[A-Za-z0-9._-]` so a typo fails loud.
+  
+  `release_api_url(api_base)` branches on tag: `latest` →
+  `/repos/{owner}/{repo}/releases/latest`; otherwise →
+  `/repos/{owner}/{repo}/releases/tags/{tag}`. The `api_base`
+  is parameterized so tests point at a wiremock URL; production
+  default is `https://api.github.com` via
+  `DEFAULT_GITHUB_API_BASE`.
+  
+  `resolve_release()`:
+  1. Fetches the GitHub release JSON (with
+     `Accept: application/vnd.github+json` + a `User-Agent`
+     header — GitHub rejects requests without a UA).
+  2. Parses the `tag_name` (stripping leading `v`) into semver.
+  3. Locates the `nexo-plugin.toml` asset in the release.
+  4. Fetches + parses the manifest to extract `plugin.id`.
+  5. Locates the tarball asset matching the convention
+     `<id>-<version>-<target>.tar.gz`.
+  6. Locates the matching `.sha256` asset.
+  7. Optionally locates `.sig` + `.cert` (cosign material;
+     enforcement deferred to 31.3 — present here only as
+     `ExtSigning` for the installer to surface to 31.3).
+  8. Builds an `ExtEntry` with one `ExtDownload`.
+  
+  `download_and_verify()`:
+  1. Fetches the `.sha256` asset; reads single hex line; rejects
+     non-64-hex-chars with `Sha256Invalid`.
+  2. Streams the tarball via `bytes_stream()`, hashing chunks
+     with `Sha256::update` while writing to disk.
+  3. Compares the computed sha256 against the expected one;
+     `Sha256Mismatch` + removes the partial file on failure.
+  4. Returns `InstalledTarball { tarball_path, entry, size_bytes }`.
+  
+  `install_plugin()` one-shot wraps parse + resolve + download.
+  
+  `current_target_triple()` detects the running daemon's
+  target with cfg-guards for the four common platforms
+  (linux/macos × x86_64/aarch64). `NEXO_INSTALL_TARGET` env
+  overrides for cross-target installs (CI, testing).
+  
+  Plugin author publishing convention (documented in the
+  crate's README + `nexo-plugin-contract.md` follow-up):
+  
+  | Asset | Required | Contents |
+  |-------|----------|----------|
+  | `nexo-plugin.toml` | ✅ | Manifest |
+  | `<id>-<version>-<target>.tar.gz` | ✅ | Binary tarball per target |
+  | `<id>-<version>-<target>.tar.gz.sha256` | ✅ | Single line of lowercase hex |
+  | `<id>-<version>-<target>.tar.gz.sig` | ⬜ | cosign signature (Phase 31.3) |
+  | `<id>-<version>-<target>.tar.gz.cert` | ⬜ | cosign certificate (Phase 31.3) |
+  
+  8 unit tests via wiremock simulating GitHub API:
+  - `parse_coords_default_tag_latest` / `parse_coords_with_tag`
+    / `parse_coords_rejects_bad_shapes` (empty owner / empty
+    tag / whitespace).
+  - `release_api_url_branches_on_tag` (tag vs latest).
+  - `install_round_trip_with_real_sha` — wiremock serves
+    release JSON + manifest body + tarball + sha256; resolver
+    builds the entry, downloader streams + verifies, asserts
+    the file lands on disk with matching content.
+  - `rejects_release_missing_manifest_asset` — release with no
+    `nexo-plugin.toml` → `ReleaseShape` error.
+  - `rejects_release_missing_target_tarball` — manifest present
+    but tarball is for the wrong target → `TargetNotFound`
+    with `available` list of tarball names.
+  - `detects_sha256_mismatch_and_cleans_up` — wiremock serves
+    payload with intentionally-wrong advertised sha; downloader
+    detects mismatch + removes the partial file.
+  
+  8/8 installer tests pass. Workspace builds clean.
+  
+  Out of scope (tracked in PHASES-curated.md):
+  - 31.1.b tarball extraction (~0.5 d) — untar into
+    `plugins.discovery.search_paths`, reject path traversal,
+    preserve executable bits, validate extracted manifest.
+  - 31.1.c `Mode::PluginInstall` CLI integration (~0.5 d) —
+    main.rs Mode + parser arm + progress reporting.
+  - 31.3 cosign verification + `trusted_keys.toml` policy.
+  - 31.4/31.5 Python + TypeScript SDKs (separate slices).
+  
+  IRROMPIBLE refs: internal `crates/ext-registry/` (entry types
+  reused); GitHub Releases API
+  (`https://docs.github.com/en/rest/releases/releases#get-a-release-by-tag-name`);
+  real-world `cargo binstall` + `gh extension install` per-repo
+  binary install pattern.
 
 - **Phase 31.0 — `ext-registry` index format spec + types crate.**
   Foundation for the plugin marketplace. Out-of-tree subprocess
