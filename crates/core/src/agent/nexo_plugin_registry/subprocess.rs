@@ -55,11 +55,12 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use dashmap::DashMap;
+use nexo_broker::{topic::topic_matches, AnyBroker, BrokerHandle, Event};
 use nexo_plugin_manifest::PluginManifest;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex, OnceCell};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -142,9 +143,17 @@ impl SubprocessNexoPlugin {
     /// Spawn the child and handshake. Returns the populated
     /// `Inner` on success; on failure leaves the adapter in the
     /// "not started" state and surfaces a structured error.
+    ///
+    /// `broker` is `Some` for the production lifecycle path
+    /// (`init()` passes `ctx.broker.clone()`) so the topic bridge
+    /// can subscribe outbound topics + forward `broker.publish`
+    /// notifications. Tests that exercise the spawn / handshake
+    /// shape only (without bridge wiring) pass `None` to skip the
+    /// subscription work.
     async fn spawn_and_handshake(
         &self,
         ctx_shutdown: CancellationToken,
+        broker: Option<AnyBroker>,
     ) -> Result<Inner, anyhow::Error> {
         let entry = &self.cached_manifest.plugin.entrypoint;
         let command = entry
@@ -245,19 +254,26 @@ impl SubprocessNexoPlugin {
         let (init_tx, init_rx) = oneshot::channel::<Result<Value, String>>();
         pending.insert(init_id, init_tx);
 
+        // Phase 81.14.b — broker bridge state.
+        // The reader task reads `broker.publish` notifications and
+        // forwards to the broker, but it must SKIP forwarding until
+        // the handshake completes successfully (otherwise the child
+        // could spam the broker before manifest validation).
+        // `bridge_cell` holds (broker, allowlist) and is set ONCE
+        // after handshake validation passes — reader checks it on
+        // every notification. `tokio::sync::OnceCell::get()` is
+        // sync + atomic so the reader never blocks.
+        let bridge_cell: Arc<OnceCell<BridgeContext>> = Arc::new(OnceCell::new());
+        let plugin_id_for_log = self.cached_manifest.plugin.id.clone();
+
         // Stdout reader task — parses each line as JSON-RPC,
         // demuxes by id (response → resolve oneshot) or method
         // (notification → broker bridge). Bridges shut down on
         // EOF.
         let reader_cancel = cancel.clone();
         let reader_pending = pending.clone();
-        let plugin_id_for_log = self.cached_manifest.plugin.id.clone();
-        // Phase 81.14 host-side wires only spawn + handshake +
-        // reader/writer plumbing. The broker → child topic bridge
-        // and child → broker forwarding land in the 81.14 follow-up
-        // slice that wires `manifest.channels.register` against the
-        // ChannelAdapterRegistry shipped in 81.8. The reader logs
-        // unknown notifications today so debug visibility holds.
+        let reader_plugin_id = plugin_id_for_log.clone();
+        let reader_bridge = bridge_cell.clone();
         let reader_handle = tokio::spawn(async move {
             let mut reader = BufReader::new(stdout).lines();
             loop {
@@ -268,7 +284,7 @@ impl SubprocessNexoPlugin {
                         Ok(Some(l)) => l,
                         Ok(None) => return, // EOF
                         Err(e) => {
-                            tracing::warn!(error = %e, plugin = %plugin_id_for_log, "stdout read failed");
+                            tracing::warn!(error = %e, plugin = %reader_plugin_id, "stdout read failed");
                             return;
                         }
                     },
@@ -282,7 +298,7 @@ impl SubprocessNexoPlugin {
                     Err(e) => {
                         tracing::warn!(
                             error = %e,
-                            plugin = %plugin_id_for_log,
+                            plugin = %reader_plugin_id,
                             "stdout: drop frame, parse failed"
                         );
                         continue;
@@ -301,19 +317,31 @@ impl SubprocessNexoPlugin {
                     }
                     tracing::warn!(
                         id,
-                        plugin = %plugin_id_for_log,
+                        plugin = %reader_plugin_id,
                         "stdout: response with unknown id"
                     );
                     continue;
                 }
-                // Notification path — only `broker.publish` is
-                // wired in 81.14. Other methods log + drop until
-                // 81.20 ships memory/llm/tool host handlers.
-                let _method = parsed.get("method").and_then(|v| v.as_str()).unwrap_or("");
+                // Notification path. 81.14.b wires `broker.publish`
+                // forwarding when the bridge is active; other methods
+                // (`memory.recall`, `llm.complete`, `tool.dispatch`)
+                // wait for 81.20.
+                let method = parsed.get("method").and_then(|v| v.as_str()).unwrap_or("");
+                if method == "broker.publish" {
+                    let Some(bridge) = reader_bridge.get() else {
+                        tracing::debug!(
+                            plugin = %reader_plugin_id,
+                            "broker.publish before bridge active — drop"
+                        );
+                        continue;
+                    };
+                    handle_child_publish(bridge, &reader_plugin_id, &parsed).await;
+                    continue;
+                }
                 tracing::debug!(
-                    plugin = %plugin_id_for_log,
-                    method = _method,
-                    "stdout notification received (broker bridge wired in 81.14 follow-up)"
+                    plugin = %reader_plugin_id,
+                    method,
+                    "stdout notification: unhandled method (deferred to 81.20)"
                 );
             }
         });
@@ -370,13 +398,173 @@ impl SubprocessNexoPlugin {
             );
         }
 
+        // Phase 81.14.b — wire the broker ↔ child topic bridge.
+        // Derives subscribe / publish patterns from
+        // `manifest.channels.register[].kind`. Plugins that don't
+        // declare any channel kind get no bridge — the connection
+        // stays open with just the writer + reader tasks but no
+        // broker traffic crosses. Test paths pass `broker = None`
+        // to skip subscriptions entirely.
+        let mut tasks = vec![writer_handle, reader_handle];
+        if let Some(broker) = broker {
+            let kinds: Vec<String> = self
+                .cached_manifest
+                .plugin
+                .channels
+                .register
+                .iter()
+                .map(|c| c.kind.clone())
+                .collect();
+            // Two patterns per kind: exact `plugin.outbound.<kind>`
+            // covers single-instance (legacy back-compat) AND
+            // wildcard `plugin.outbound.<kind>.>` covers multi-
+            // segment instance suffixes the operator may use
+            // (`plugin.outbound.slack.team_a`). Both must match
+            // because `topic_matches("foo.>", "foo")` is FALSE —
+            // wildcards demand at least one trailing segment.
+            let mut subscribe_patterns: Vec<String> = Vec::with_capacity(kinds.len() * 2);
+            let mut publish_allowlist: Vec<String> = Vec::with_capacity(kinds.len() * 2);
+            for kind in &kinds {
+                subscribe_patterns.push(format!("plugin.outbound.{kind}"));
+                subscribe_patterns.push(format!("plugin.outbound.{kind}.>"));
+                publish_allowlist.push(format!("plugin.inbound.{kind}"));
+                publish_allowlist.push(format!("plugin.inbound.{kind}.>"));
+            }
+            for pattern in subscribe_patterns {
+                let mut sub = match broker.subscribe(&pattern).await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        cancel.cancel();
+                        let _ = child.kill().await;
+                        anyhow::bail!(
+                            "subprocess plugin: broker subscribe `{pattern}` failed: {e}"
+                        );
+                    }
+                };
+                let stdin_tx_for_fwd = stdin_tx.clone();
+                let cancel_for_fwd = cancel.clone();
+                let plugin_id_for_fwd = plugin_id_for_log.clone();
+                let task = tokio::spawn(async move {
+                    loop {
+                        let event = tokio::select! {
+                            biased;
+                            _ = cancel_for_fwd.cancelled() => return,
+                            ev = sub.next() => match ev {
+                                Some(e) => e,
+                                None => return,
+                            },
+                        };
+                        let frame = json!({
+                            "jsonrpc": "2.0",
+                            "method": "broker.event",
+                            "params": {
+                                "topic": event.topic.clone(),
+                                "event": event,
+                            },
+                        });
+                        // try_send (not send) so a stalled child
+                        // can't backpressure the daemon's broker.
+                        // The bounded mpsc + drop-on-full matches
+                        // at-most-once semantics already noted in
+                        // 81.14.
+                        match stdin_tx_for_fwd.try_send(frame) {
+                            Ok(()) => {}
+                            Err(mpsc::error::TrySendError::Full(_)) => {
+                                tracing::warn!(
+                                    plugin = %plugin_id_for_fwd,
+                                    "stdin queue full — dropping broker event for child"
+                                );
+                            }
+                            Err(mpsc::error::TrySendError::Closed(_)) => return,
+                        }
+                    }
+                });
+                tasks.push(task);
+            }
+            // Activate the reader's `broker.publish` forwarding
+            // path AFTER subscribers are wired so the child can't
+            // race ahead of its inbound stream.
+            let _ = bridge_cell.set(BridgeContext {
+                broker,
+                publish_allowlist,
+            });
+        }
+
         Ok(Inner {
             stdin_tx,
             pending,
-            tasks: vec![writer_handle, reader_handle],
+            tasks,
             child: Some(child),
             cancel,
         })
+    }
+}
+
+/// Phase 81.14.b — captured by the stdout reader task to forward
+/// validated `broker.publish` notifications to the broker.
+struct BridgeContext {
+    broker: AnyBroker,
+    /// Topic patterns the child is allowed to publish to. Derived
+    /// from `manifest.channels.register[].kind` — for each kind,
+    /// `plugin.inbound.<kind>` and `plugin.inbound.<kind>.>` are
+    /// allowed. A child publish to anything outside this list gets
+    /// dropped with a warn-level log; this is the host's primary
+    /// defense against a malicious / buggy plugin attempting to
+    /// hijack core nexo topics like `agent.route.*`.
+    publish_allowlist: Vec<String>,
+}
+
+/// Forward a `broker.publish` notification from the child onto the
+/// broker. Validates the topic against the allowlist before
+/// publishing. Logs + drops on any failure path so a misbehaving
+/// child can't poison the bridge.
+async fn handle_child_publish(bridge: &BridgeContext, plugin_id: &str, parsed: &Value) {
+    let topic = parsed
+        .pointer("/params/topic")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if topic.is_empty() {
+        tracing::warn!(
+            plugin = %plugin_id,
+            "broker.publish: empty topic — drop"
+        );
+        return;
+    }
+    if !bridge
+        .publish_allowlist
+        .iter()
+        .any(|pat| topic_matches(pat, topic))
+    {
+        tracing::warn!(
+            plugin = %plugin_id,
+            topic,
+            "broker.publish: topic outside child's inbound allowlist — drop"
+        );
+        return;
+    }
+    let event_val = parsed
+        .pointer("/params/event")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let event: Event = match serde_json::from_value(event_val) {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::warn!(
+                plugin = %plugin_id,
+                topic,
+                error = %e,
+                "broker.publish: deserialize Event failed — drop"
+            );
+            return;
+        }
+    };
+    if let Err(e) = bridge.broker.publish(topic, event).await {
+        tracing::warn!(
+            plugin = %plugin_id,
+            topic,
+            error = %e,
+            "broker.publish: broker forward failed"
+        );
     }
 }
 
@@ -391,17 +579,12 @@ impl NexoPlugin for SubprocessNexoPlugin {
         ctx: &mut PluginInitContext<'_>,
     ) -> Result<(), PluginInitError> {
         let inner = self
-            .spawn_and_handshake(ctx.shutdown.clone())
+            .spawn_and_handshake(ctx.shutdown.clone(), Some(ctx.broker.clone()))
             .await
             .map_err(|source| PluginInitError::Other {
                 plugin_id: self.cached_manifest.plugin.id.clone(),
                 source,
             })?;
-        // 81.14 wires only the host-side spawn + handshake.
-        // Broker → child topic bridge ships in the 81.14 follow-up
-        // slice; today we keep the connection alive with the
-        // tasks already spawned (stdin writer + stdout reader).
-        let _ = ctx.broker.clone(); // silence: bridge wiring lands next slice
         *self.inner.lock().await = Some(inner);
         Ok(())
     }
@@ -540,7 +723,7 @@ RUST_LOG = "info"
         ));
         let plugin = SubprocessNexoPlugin::new(m);
         let cancel = CancellationToken::new();
-        let result = plugin.spawn_and_handshake(cancel).await;
+        let result = plugin.spawn_and_handshake(cancel, None).await;
         match result {
             Ok(_) => panic!("spawn must fail for missing command"),
             Err(err) => assert!(
@@ -559,7 +742,7 @@ RUST_LOG = "info"
         );
         let plugin = SubprocessNexoPlugin::new(m);
         let cancel = CancellationToken::new();
-        let result = plugin.spawn_and_handshake(cancel).await;
+        let result = plugin.spawn_and_handshake(cancel, None).await;
         match result {
             Ok(_) => panic!("env collision must fail"),
             Err(err) => assert!(
@@ -578,7 +761,7 @@ RUST_LOG = "info"
         let m = manifest_with_entrypoint(Some("/bin/cat"));
         let plugin = SubprocessNexoPlugin::new(m);
         let cancel = CancellationToken::new();
-        let result = plugin.spawn_and_handshake(cancel).await;
+        let result = plugin.spawn_and_handshake(cancel, None).await;
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
         match result {
             Ok(_) => panic!("silent child must time out"),
@@ -617,7 +800,7 @@ sleep 30
         // "impostor" — adapter must reject.
         let plugin = SubprocessNexoPlugin::new(m);
         let cancel = CancellationToken::new();
-        let result = plugin.spawn_and_handshake(cancel).await;
+        let result = plugin.spawn_and_handshake(cancel, None).await;
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
         match result {
             Ok(_) => panic!("id mismatch must fail"),
@@ -649,5 +832,211 @@ sleep 30
             .shutdown()
             .await
             .expect("second shutdown also idempotent");
+    }
+
+    // ─── Phase 81.14.b — broker bridge tests ────────────────────────
+
+    use nexo_broker::AnyBroker;
+    use nexo_plugin_manifest::ChannelDecl;
+
+    /// Build a manifest with one channel kind declared so the bridge
+    /// derives its subscribe / publish patterns from it. The mock
+    /// script writes its own initialize reply with the matching id.
+    fn manifest_with_channel(command: &str, kind: &str) -> PluginManifest {
+        let mut m = manifest_with_entrypoint(Some(command));
+        m.plugin.channels.register.push(ChannelDecl {
+            kind: kind.to_string(),
+            adapter: "MockAdapter".to_string(),
+        });
+        m
+    }
+
+    /// Drop a tiny shell-script fixture that:
+    /// 1. Echoes an initialize reply with manifest.plugin.id =
+    ///    `plugin_id` so handshake passes.
+    /// 2. Writes a `broker.publish` notification immediately on
+    ///    the topic provided so the host bridge has something to
+    ///    forward — used by `bridge_forwards_valid_child_publish_*`.
+    /// 3. Sleeps so the test can drive its assertions before the
+    ///    child exits.
+    fn write_bridge_mock_script(
+        dir_name: &str,
+        plugin_id: &str,
+        publish_topic: Option<&str>,
+    ) -> std::path::PathBuf {
+        let publish_line = match publish_topic {
+            Some(t) => format!(
+                concat!(
+                    "echo '{{\"jsonrpc\":\"2.0\",\"method\":\"broker.publish\",",
+                    "\"params\":{{\"topic\":\"{}\",",
+                    "\"event\":{{\"id\":\"00000000-0000-0000-0000-000000000001\",",
+                    "\"timestamp\":\"2026-05-01T00:00:00Z\",",
+                    "\"topic\":\"{}\",\"source\":\"mock\",\"session_id\":null,",
+                    "\"payload\":{{\"hello\":\"world\"}}}}}}}}'\n"
+                ),
+                t, t
+            ),
+            None => String::new(),
+        };
+        // The 0.3s gap between initialize reply and the publish
+        // notification gives the host time to validate manifest id,
+        // wire bridge tasks, and set the OnceCell that gates the
+        // reader's broker.publish forwarding. Without it the
+        // notification can outrun the bridge wiring on fast CI
+        // boxes and get dropped.
+        let script = format!(
+            r#"#!/bin/sh
+read line
+echo '{{"jsonrpc":"2.0","id":1,"result":{{"manifest":{{"plugin":{{"id":"{plugin_id}","version":"0.1.0","name":"x","description":"x","min_nexo_version":">=0.1.0"}}}},"server_version":"mock-0.1.0"}}}}'
+sleep 0.3
+{publish_line}
+sleep 5
+"#
+        );
+        let dir = std::env::temp_dir().join(dir_name);
+        std::fs::create_dir_all(&dir).unwrap();
+        let script_path = dir.join("plugin.sh");
+        std::fs::write(&script_path, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms).unwrap();
+        }
+        script_path
+    }
+
+    #[tokio::test]
+    async fn bridge_subscribes_outbound_topics_for_each_channel_register_kind() {
+        // Manifest declares one channel kind ("slack"). Host should
+        // subscribe both `plugin.outbound.slack` and
+        // `plugin.outbound.slack.>` so a publish to either matches.
+        // We assert by publishing to the wildcard form and verifying
+        // the child receives a `broker.event` line on its stdin.
+        // Since we don't read the child's stdin from inside the host
+        // (it's piped to the child), we infer success from a clean
+        // handshake + no panic on the bridge tasks. The richer
+        // assertion ships with `bridge_forwards_valid_child_publish_*`.
+        std::env::set_var("NEXO_PLUGIN_INIT_TIMEOUT_MS", "1000");
+        let path = write_bridge_mock_script(
+            "nexo-bridge-test-subscribe",
+            "test_plugin",
+            None,
+        );
+        let m = manifest_with_channel(path.to_str().unwrap(), "slack");
+        let plugin = SubprocessNexoPlugin::new(m);
+        let cancel = CancellationToken::new();
+        let broker = AnyBroker::Local(nexo_broker::LocalBroker::new());
+        let res = plugin
+            .spawn_and_handshake(cancel.clone(), Some(broker))
+            .await;
+        std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
+        let inner = res.expect("handshake + bridge wiring must succeed");
+        // 2 baseline tasks (writer + reader) + 2 bridge tasks
+        // (one per subscribe pattern, exact + wildcard) for the one
+        // declared kind = 4 total.
+        assert_eq!(
+            inner.tasks.len(),
+            4,
+            "expected writer + reader + 2 forwarder tasks"
+        );
+        cancel.cancel();
+    }
+
+    #[tokio::test]
+    async fn bridge_forwards_valid_child_publish_to_broker() {
+        // Mock script publishes `plugin.inbound.slack` immediately
+        // after handshake. The host bridge must validate the topic
+        // (matches `plugin.inbound.slack` exact) and forward to the
+        // broker. We subscribe to `plugin.inbound.slack` from a
+        // separate task and assert delivery within 1s.
+        std::env::set_var("NEXO_PLUGIN_INIT_TIMEOUT_MS", "1000");
+        let path = write_bridge_mock_script(
+            "nexo-bridge-test-forward",
+            "test_plugin",
+            Some("plugin.inbound.slack"),
+        );
+        let m = manifest_with_channel(path.to_str().unwrap(), "slack");
+        let plugin = SubprocessNexoPlugin::new(m);
+        let cancel = CancellationToken::new();
+        let broker = AnyBroker::Local(nexo_broker::LocalBroker::new());
+        let mut sub = broker
+            .subscribe("plugin.inbound.slack")
+            .await
+            .expect("subscribe before init");
+        let _inner = plugin
+            .spawn_and_handshake(cancel.clone(), Some(broker))
+            .await
+            .expect("handshake + bridge wiring");
+        std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
+        let event = tokio::time::timeout(Duration::from_secs(2), sub.next())
+            .await
+            .expect("event arrives within 2s");
+        let event = event.expect("subscription delivers Some");
+        assert_eq!(event.topic, "plugin.inbound.slack");
+        assert_eq!(event.source, "mock");
+        cancel.cancel();
+    }
+
+    #[tokio::test]
+    async fn bridge_rejects_child_publish_outside_inbound_allowlist() {
+        // Mock publishes to `agent.route.system_critical` — outside
+        // the allowlist for kind=slack. Bridge must DROP, never
+        // forward. Verify by subscribing to the rogue topic and
+        // ensuring no event arrives within a short window.
+        std::env::set_var("NEXO_PLUGIN_INIT_TIMEOUT_MS", "1000");
+        let path = write_bridge_mock_script(
+            "nexo-bridge-test-reject",
+            "test_plugin",
+            Some("agent.route.system_critical"),
+        );
+        let m = manifest_with_channel(path.to_str().unwrap(), "slack");
+        let plugin = SubprocessNexoPlugin::new(m);
+        let cancel = CancellationToken::new();
+        let broker = AnyBroker::Local(nexo_broker::LocalBroker::new());
+        let mut rogue_sub = broker
+            .subscribe("agent.route.system_critical")
+            .await
+            .expect("subscribe rogue");
+        let _inner = plugin
+            .spawn_and_handshake(cancel.clone(), Some(broker))
+            .await
+            .expect("handshake");
+        std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
+        // 500ms is long enough for the mock to write its line; if the
+        // bridge had forwarded, we'd see the event by then.
+        let result = tokio::time::timeout(Duration::from_millis(500), rogue_sub.next()).await;
+        cancel.cancel();
+        assert!(
+            result.is_err(),
+            "rogue topic must NOT deliver — bridge dropped"
+        );
+    }
+
+    #[tokio::test]
+    async fn bridge_skipped_when_broker_is_none() {
+        // Test the `broker = None` path — no subscribe attempts,
+        // no bridge cell set. Verifies tests can still drive the
+        // handshake shape without standing up a broker.
+        std::env::set_var("NEXO_PLUGIN_INIT_TIMEOUT_MS", "1000");
+        let path = write_bridge_mock_script(
+            "nexo-bridge-test-none",
+            "test_plugin",
+            None,
+        );
+        let m = manifest_with_channel(path.to_str().unwrap(), "slack");
+        let plugin = SubprocessNexoPlugin::new(m);
+        let cancel = CancellationToken::new();
+        let res = plugin.spawn_and_handshake(cancel.clone(), None).await;
+        std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
+        let inner = res.expect("handshake must succeed without broker");
+        // Only writer + reader, no forwarder tasks.
+        assert_eq!(
+            inner.tasks.len(),
+            2,
+            "expected writer + reader only, no forwarders"
+        );
+        cancel.cancel();
     }
 }

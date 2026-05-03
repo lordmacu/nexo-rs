@@ -466,14 +466,27 @@ coordinación de archivos cross-cutting.
   for memory/llm/tools (81.20), supervisor (81.21), sandbox
   (81.22), tracing bridge (81.23).
 
-- **81.14.b ⬜** Broker → child topic bridge follow-up to
-  81.14. Wires `manifest.channels.register` against
-  `ChannelAdapterRegistry` (81.8). Daemon subscribes to topics
-  declared in manifest, forwards each event to child as
-  `broker.event { topic, event }` notification. Child publishes
-  via `broker.publish { topic, event }` notification — daemon
-  validates topic against manifest allowlist before forwarding
-  to broker. ~1 d effort. Required before 81.17 pilot extract.
+- **81.14.b ✅ shipped 2026-05-01** — Broker ↔ child topic bridge.
+  `spawn_and_handshake` signature gains `Option<AnyBroker>` —
+  `init()` passes `Some(ctx.broker.clone())`, unit tests of the
+  shape-only paths pass `None`. Subscribe patterns derived from
+  `manifest.channels.register[].kind`: both exact
+  `plugin.outbound.<kind>` and wildcard `plugin.outbound.<kind>.>`
+  per kind (wildcard demands ≥1 trailing segment in the broker's
+  matcher). Per-pattern forwarder task pulls events and `try_send`s
+  `broker.event { topic, event }` notifications down the bounded
+  stdin mpsc — drop-on-full + warn so a stalled child can't
+  backpressure the daemon. Reader task extended to handle
+  `broker.publish { topic, event }` notifications: allowlist
+  validation via `nexo_broker::topic::topic_matches` against
+  `plugin.inbound.<kind>[.>]` for each declared kind, deserialize
+  Event via serde, forward to broker. `BridgeContext` activation
+  gated by `tokio::sync::OnceCell` — `set()` AFTER handshake
+  validates manifest id so the reader's broker.publish path is
+  dormant during boot. Child publishing to `agent.route.*` gets
+  dropped with warn — defense-in-depth core for community-tier
+  plugins. 4 new unit tests cover subscribe pattern derivation,
+  child publish forwarding, allowlist rejection, broker=None skip.
 
 Critical path: 81.1 → 81.2 → 81.5 → 81.9 (~3 días). Después
 de 81.9 plugin model is fully operational. Out-of-tree path

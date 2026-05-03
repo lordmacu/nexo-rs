@@ -10,6 +10,57 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.14.b — Broker ↔ child topic bridge.** Wires the
+  `SubprocessNexoPlugin` adapter shipped in 81.14 to the broker so
+  out-of-tree plugins receive their outbound events from the daemon
+  AND can publish inbound events back. `spawn_and_handshake` gains
+  an `Option<AnyBroker>` parameter — production lifecycle
+  (`init()`) passes `Some(ctx.broker.clone())`, unit tests of the
+  spawn / handshake shape pass `None` to skip subscription work.
+  Subscribe pattern derivation: for each `kind` in
+  `manifest.channels.register[]`, the daemon subscribes both
+  `plugin.outbound.<kind>` (exact, single-instance back-compat) and
+  `plugin.outbound.<kind>.>` (multi-segment wildcard for instance
+  suffixes). Each subscriber spawns a forwarder task that pulls
+  events from `Subscription::next()` and `try_send`s a
+  `broker.event { topic, event }` notification down the existing
+  bounded mpsc to the child's stdin — drop-on-full + warn so a
+  stalled child can't backpressure the daemon. Reader task is
+  extended to handle `broker.publish { topic, event }`
+  notifications: validates the topic against the allowlist
+  (`plugin.inbound.<kind>` exact + `plugin.inbound.<kind>.>`
+  wildcard for each declared kind, matched via
+  `nexo_broker::topic::topic_matches`), deserializes the `event`
+  field via serde into `nexo_broker::Event`, then calls
+  `broker.publish(topic, event)`. Activation gating via
+  `tokio::sync::OnceCell<BridgeContext>` — the cell is `set()` ONLY
+  after handshake validates manifest id, so the reader's
+  `broker.publish` path is dormant during boot and can never be
+  triggered before the host has authenticated the child's identity.
+  Defense-in-depth: a malicious / buggy child publishing to
+  `agent.route.system_critical` (or any non-inbound topic) gets
+  dropped with a warn-level log instead of poisoning the broker.
+  4 new unit tests:
+  `bridge_subscribes_outbound_topics_for_each_channel_register_kind`
+  (verifies forwarder task count = 2 per channel kind),
+  `bridge_forwards_valid_child_publish_to_broker` (mock script
+  publishes `plugin.inbound.slack`, asserts broker subscriber sees
+  it within 2s),
+  `bridge_rejects_child_publish_outside_inbound_allowlist` (mock
+  publishes `agent.route.system_critical`, asserts rogue subscriber
+  receives nothing within 500ms),
+  `bridge_skipped_when_broker_is_none` (asserts only writer +
+  reader spawned, no forwarders). Mock script fixture extended
+  with a 0.3s gap between initialize reply and broker.publish line
+  so the host has deterministic time to wire bridge tasks +
+  populate the `OnceCell` before the notification arrives.
+  Existing 9 tests from 81.14 unchanged. **Out of scope** (already
+  tracked): `memory.recall` / `llm.complete` / `tool.dispatch`
+  daemon-mediated RPC handlers (81.20), supervisor + respawn
+  (81.21), sandbox (81.22), stdio→tracing bridge (81.23). IRROMPIBLE
+  refs: same as 81.14 plus `crates/broker/src/topic.rs:7` for
+  NATS-style wildcard semantics.
+
 - **Phase 81.14 — `SubprocessNexoPlugin` host-side adapter (spawn +
   stdio JSON-RPC handshake).** First slice of out-of-tree plugin
   infrastructure. Plugin authors will eventually ship binaries that
