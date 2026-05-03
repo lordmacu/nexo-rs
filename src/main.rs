@@ -1979,12 +1979,16 @@ async fn main() -> Result<()> {
         shutdown: subprocess_shutdown,
         config_dir: config_dir.clone(),
         state_root: plugin_state_root,
-        // Phase 81.20.a — long_term_memory is constructed at
-        // main.rs:10883, AFTER this wire callsite. Pass None
-        // today; subprocess plugin `memory.recall` requests
-        // return -32603 "memory not configured" until 81.20.a.b
-        // reorders construction so the handle is in scope here.
-        long_term_memory: None,
+        // Phase 81.20.a.b — `memory` is already constructed at
+        // main.rs:1731-1821 (Long-term memory section above), so
+        // it's in scope here without any reorder. Original 81.20.a
+        // assumption that `long_term_memory` lived only at the
+        // mcp-server path (line 10883) was wrong — that's a
+        // separate function. Subprocess plugins now get -32603
+        // "memory not configured" only when the OPERATOR has
+        // disabled long-term memory in `memory.yaml`, not because
+        // of a daemon-side plumbing gap.
+        long_term_memory: memory.clone(),
     };
     let wire =
         nexo_core::agent::nexo_plugin_registry::wire_plugin_registry_with_runtime(
