@@ -115,11 +115,16 @@ struct Inner {
     pending: Arc<DashMap<u64, oneshot::Sender<Result<Value, String>>>>,
 
     /// Background tasks: stdin writer, stdout reader, broker→child
-    /// bridge per subscribed topic. Joined on shutdown.
+    /// bridge per subscribed topic, supervisor (Phase 81.21).
+    /// Joined on shutdown.
     tasks: Vec<JoinHandle<()>>,
 
-    /// Child process handle. Optional because shutdown takes it.
-    child: Option<Child>,
+    /// Child process handle. Phase 81.21 wraps in
+    /// `Arc<Mutex<...>>` so the supervisor task can `try_wait()`
+    /// every 500ms while `shutdown()` can still `take()` for
+    /// reaping. Mutex contention is cheap (one try_wait poll per
+    /// half-second vs single take on shutdown).
+    child: Arc<Mutex<Option<Child>>>,
 
     /// Plugin-id-keyed cancellation token for all spawned tasks.
     /// Daemon-wide shutdown also cancels them via the
@@ -206,6 +211,14 @@ impl SubprocessNexoPlugin {
             .stderr
             .take()
             .ok_or_else(|| anyhow::anyhow!("child has no stderr"))?;
+
+        // Phase 81.21 — wrap the Child in Arc<Mutex<Option<...>>>
+        // immediately so the supervisor task (spawned after the
+        // bridge wires up) can poll `try_wait` while shutdown can
+        // still `take()` for reaping. Mutex contention is cheap:
+        // one half-second poll vs single take on shutdown.
+        let child_handle: Arc<Mutex<Option<Child>>> =
+            Arc::new(Mutex::new(Some(child)));
 
         let cancel = ctx_shutdown.child_token();
         let pending: Arc<DashMap<u64, oneshot::Sender<Result<Value, String>>>> =
@@ -422,17 +435,17 @@ impl SubprocessNexoPlugin {
             Ok(Ok(Ok(v))) => v,
             Ok(Ok(Err(err))) => {
                 cancel.cancel();
-                let _ = child.kill().await;
+                kill_handle(&child_handle).await;
                 anyhow::bail!("child returned error to initialize: {err}");
             }
             Ok(Err(_canceled)) => {
                 cancel.cancel();
-                let _ = child.kill().await;
+                kill_handle(&child_handle).await;
                 anyhow::bail!("initialize oneshot canceled before reply");
             }
             Err(_elapsed) => {
                 cancel.cancel();
-                let _ = child.kill().await;
+                kill_handle(&child_handle).await;
                 anyhow::bail!(
                     "child did not reply to initialize within {}ms",
                     timeout.as_millis()
@@ -451,7 +464,7 @@ impl SubprocessNexoPlugin {
             })?;
         if returned_id != self.cached_manifest.plugin.id {
             cancel.cancel();
-            let _ = child.kill().await;
+            kill_handle(&child_handle).await;
             anyhow::bail!(
                 "manifest id mismatch: factory expected `{}`, child reported `{}`",
                 self.cached_manifest.plugin.id,
@@ -466,7 +479,93 @@ impl SubprocessNexoPlugin {
         // stays open with just the writer + reader tasks but no
         // broker traffic crosses. Test paths pass `broker = None`
         // to skip subscriptions entirely.
-        let mut tasks = vec![writer_handle, reader_handle, stderr_handle];
+        // Phase 81.21 — supervisor task. Polls `child.try_wait()`
+        // every 500ms; on exit detection, publishes a
+        // `plugin.lifecycle.<id>.crashed` event on the broker
+        // (when one is wired) so operator hooks can observe the
+        // crash, then cancels the plugin's tasks. Auto-respawn
+        // with backoff is deferred to 81.21.b — this MVP just
+        // surfaces the crash so the operator can decide.
+        // Captures `broker.clone()` early since the variable is
+        // moved into the bridge wiring loop below.
+        let supervisor_broker = broker.clone();
+        let supervisor_child = child_handle.clone();
+        let supervisor_cancel = cancel.clone();
+        let supervisor_plugin_id = self.cached_manifest.plugin.id.clone();
+        let supervisor_handle = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_millis(500));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = supervisor_cancel.cancelled() => return,
+                    _ = interval.tick() => {}
+                }
+                // Lock briefly to poll exit status. `try_wait()`
+                // does not block — it queries waitpid + returns
+                // immediately. Returns None while alive, Some(status)
+                // on exit, Err on waitpid failure.
+                let exit_status = {
+                    let mut guard = supervisor_child.lock().await;
+                    if let Some(ref mut c) = *guard {
+                        c.try_wait()
+                    } else {
+                        // Shutdown took the child; supervisor's
+                        // job is done.
+                        return;
+                    }
+                };
+                match exit_status {
+                    Ok(None) => continue, // still alive
+                    Ok(Some(status)) => {
+                        let exit_code = status.code().unwrap_or(-1);
+                        tracing::warn!(
+                            target: "plugin.supervisor",
+                            plugin_id = %supervisor_plugin_id,
+                            exit_code,
+                            "subprocess plugin exited unexpectedly"
+                        );
+                        if let Some(broker) = supervisor_broker.as_ref() {
+                            let topic = format!(
+                                "plugin.lifecycle.{}.crashed",
+                                supervisor_plugin_id
+                            );
+                            let payload = json!({
+                                "plugin_id": supervisor_plugin_id,
+                                "exit_code": exit_code,
+                            });
+                            let event =
+                                Event::new(&topic, "plugin.supervisor", payload);
+                            if let Err(e) = broker.publish(&topic, event).await {
+                                tracing::warn!(
+                                    target: "plugin.supervisor",
+                                    plugin_id = %supervisor_plugin_id,
+                                    error = %e,
+                                    "broker publish of crashed event failed"
+                                );
+                            }
+                        }
+                        // Cascade-teardown: cancel the plugin's
+                        // tasks (writer / readers / forwarders) so
+                        // they don't run against a dead child.
+                        supervisor_cancel.cancel();
+                        return;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "plugin.supervisor",
+                            plugin_id = %supervisor_plugin_id,
+                            error = %e,
+                            "subprocess plugin try_wait failed"
+                        );
+                        return;
+                    }
+                }
+            }
+        });
+
+        let mut tasks =
+            vec![writer_handle, reader_handle, stderr_handle, supervisor_handle];
         if let Some(broker) = broker {
             let kinds: Vec<String> = self
                 .cached_manifest
@@ -496,7 +595,7 @@ impl SubprocessNexoPlugin {
                     Ok(s) => s,
                     Err(e) => {
                         cancel.cancel();
-                        let _ = child.kill().await;
+                        kill_handle(&child_handle).await;
                         anyhow::bail!(
                             "subprocess plugin: broker subscribe `{pattern}` failed: {e}"
                         );
@@ -555,9 +654,20 @@ impl SubprocessNexoPlugin {
             stdin_tx,
             pending,
             tasks,
-            child: Some(child),
+            child: child_handle,
             cancel,
         })
+    }
+}
+
+/// Phase 81.21 — kill the wrapped child if still present. Used by
+/// every spawn_and_handshake error path to make sure a partial
+/// boot doesn't leak the child process. Idempotent — `take()`
+/// makes follow-up calls a no-op.
+async fn kill_handle(h: &Arc<Mutex<Option<Child>>>) {
+    let mut guard = h.lock().await;
+    if let Some(mut c) = guard.take() {
+        let _ = c.kill().await;
     }
 }
 
@@ -673,10 +783,14 @@ impl NexoPlugin for SubprocessNexoPlugin {
         }
         // Whether the shutdown reply arrived or not, tear down.
         inner.cancel.cancel();
-        if let Some(mut child) = inner.child.take() {
-            // 1s grace for the child to exit on its own; SIGKILL after.
-            let _ = tokio::time::timeout(Duration::from_secs(1), child.wait()).await;
-            let _ = child.kill().await;
+        // 1s grace for the child to exit on its own; SIGKILL after.
+        // The supervisor task (Phase 81.21) may have already taken
+        // the child if it observed an exit; `take()` returning None
+        // is fine — `kill_handle` is a no-op.
+        let child_taken = inner.child.lock().await.take();
+        if let Some(mut c) = child_taken {
+            let _ = tokio::time::timeout(Duration::from_secs(1), c.wait()).await;
+            let _ = c.kill().await;
         }
         for task in inner.tasks.drain(..) {
             let _ = tokio::time::timeout(Duration::from_secs(1), task).await;
@@ -994,13 +1108,14 @@ sleep 5
             .await;
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
         let inner = res.expect("handshake + bridge wiring must succeed");
-        // 3 baseline tasks (writer + stdout reader + 81.23 stderr
-        // reader) + 2 bridge tasks (one per subscribe pattern,
-        // exact + wildcard) for the one declared kind = 5 total.
+        // 4 baseline tasks (writer + stdout reader + 81.23 stderr
+        // reader + 81.21 supervisor) + 2 bridge tasks (one per
+        // subscribe pattern, exact + wildcard) for the one
+        // declared kind = 6 total.
         assert_eq!(
             inner.tasks.len(),
-            5,
-            "expected writer + stdout reader + stderr reader + 2 forwarder tasks"
+            6,
+            "expected writer + stdout reader + stderr reader + supervisor + 2 forwarder tasks"
         );
         cancel.cancel();
     }
@@ -1092,12 +1207,12 @@ sleep 5
         let res = plugin.spawn_and_handshake(cancel.clone(), None).await;
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
         let inner = res.expect("handshake must succeed without broker");
-        // 81.23 — writer + stdout reader + stderr reader, no
-        // forwarder tasks (broker = None).
+        // 81.23 + 81.21 — writer + stdout reader + stderr reader
+        // + supervisor, no forwarder tasks (broker = None).
         assert_eq!(
             inner.tasks.len(),
-            3,
-            "expected writer + stdout reader + stderr reader, no forwarders"
+            4,
+            "expected writer + stdout reader + stderr reader + supervisor, no forwarders"
         );
         cancel.cancel();
     }
@@ -1146,12 +1261,72 @@ sleep 5
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
 
         let inner = res.expect("handshake must succeed with stderr piped");
-        // 3 tasks confirm the stderr reader is alive: writer +
-        // stdout reader + stderr reader.
+        // 4 tasks confirm the stderr reader + 81.21 supervisor are
+        // alive: writer + stdout reader + stderr reader + supervisor.
         assert_eq!(
             inner.tasks.len(),
-            3,
-            "writer + stdout reader + stderr reader = 3"
+            4,
+            "writer + stdout reader + stderr reader + supervisor = 4"
+        );
+        cancel.cancel();
+    }
+
+    /// Phase 81.21 — supervisor task detects child exit and
+    /// publishes a `plugin.lifecycle.<id>.crashed` event. We
+    /// drop a mock that exits 200ms after handshake (well below
+    /// the 500ms supervisor poll interval, but the supervisor
+    /// will catch it on its next tick — assertion uses a 2s
+    /// timeout so the wait is generous enough).
+    #[tokio::test]
+    async fn supervisor_publishes_crashed_event_on_child_exit() {
+        let script = r#"#!/bin/sh
+read line
+echo '{"jsonrpc":"2.0","id":1,"result":{"manifest":{"plugin":{"id":"test_plugin","version":"0.1.0","name":"x","description":"x","min_nexo_version":">=0.1.0"}},"server_version":"mock-0.1.0"}}'
+sleep 0.2
+exit 7
+"#;
+        let dir = std::env::temp_dir().join("nexo-supervisor-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("plugin.sh");
+        std::fs::write(&path, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&path).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&path, perms).unwrap();
+        }
+
+        std::env::set_var("NEXO_PLUGIN_INIT_TIMEOUT_MS", "1000");
+        let m = manifest_with_entrypoint(Some(path.to_str().unwrap()));
+        let plugin = SubprocessNexoPlugin::new(m);
+        let cancel = CancellationToken::new();
+        let broker = AnyBroker::Local(nexo_broker::LocalBroker::new());
+        let mut sub = broker
+            .subscribe("plugin.lifecycle.test_plugin.crashed")
+            .await
+            .expect("subscribe to crash topic");
+        let _inner = plugin
+            .spawn_and_handshake(cancel.clone(), Some(broker))
+            .await
+            .expect("handshake");
+        std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
+
+        // Supervisor polls every 500ms — exit at 200ms post-handshake
+        // is caught on the second tick. 2s timeout is plenty.
+        let event = tokio::time::timeout(Duration::from_secs(2), sub.next())
+            .await
+            .expect("crashed event arrives within 2s");
+        let event = event.expect("subscription delivers Some");
+        assert_eq!(event.topic, "plugin.lifecycle.test_plugin.crashed");
+        assert_eq!(event.source, "plugin.supervisor");
+        assert_eq!(
+            event.payload.get("plugin_id").and_then(|v| v.as_str()),
+            Some("test_plugin")
+        );
+        assert_eq!(
+            event.payload.get("exit_code").and_then(|v| v.as_i64()),
+            Some(7)
         );
         cancel.cancel();
     }
