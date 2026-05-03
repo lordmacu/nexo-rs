@@ -50,6 +50,8 @@ nexo-core       = { version = "0.1.1", path = "../../core" }
 nexo-config     = { version = "0.1.1", path = "../../config" }
 nexo-auth       = { version = "0.1.1", path = "../../auth" }
 nexo-resilience = { version = "0.1.1", path = "../../resilience" }
+nexo-plugin-manifest = { version = "0.1.0", path = "../../plugin-manifest" }
+toml = "0.8"
 
 [dev-dependencies]
 serde_yaml   = { workspace = true }

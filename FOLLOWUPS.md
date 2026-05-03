@@ -386,9 +386,33 @@ coordinación de archivos cross-cutting.
     `pairing_state()` accessor for HTTP server polling untouched,
     `register_whatsapp_tools` per-agent untouched (defer Phase 81.3).
     Behavior identical to pre-81.12.c until 81.12.e flips main.rs.
-  - **81.12.d ⬜** Email plugin migration. Single-NexoPlugin,
-    multi-account internal, credential injection (may extend
-    PluginInitContext). ~5h effort.
+  - **81.12.d ✅ shipped 2026-05-01** — Email plugin migration:
+    dual-trait `EmailPlugin` + dormant
+    `crates/plugins/email/nexo-plugin.toml` + `pub fn email_plugin_factory(cfg, creds, google, data_dir) -> PluginFactory`
+    in lib.rs. Manifest parsed once via `include_str!` in `new()`.
+    4 unit tests in `nexo_plugin_tests`: manifest parses + id correct;
+    cached_manifest reachable via `&dyn NexoPlugin`; 4-arg factory
+    builder produces usable handle; dual-trait identity agrees
+    (`name()` == `manifest().plugin.id` == `"email"`).
+    Single-plugin / multi-account-internal model — unlike telegram /
+    whatsapp where N plugin instances each carry one account's
+    `registry_name`, email is ONE plugin with `EmailPluginConfig.accounts:
+    Vec<>` driving internal fan-out via `InboundManager` +
+    `OutboundDispatcher`. No per-instance label divergence.
+    **Credential injection avoided extending `PluginInitContext`** —
+    factory closure captures `creds: Arc<EmailCredentialStore>`,
+    `google: Arc<GoogleCredentialStore>`, and `data_dir: PathBuf` at
+    registration time (analog to browser closing over `BrowserConfig`).
+    Same pattern lets future plugins with non-config dependencies stay
+    factory-side without touching the trait. `enabled = false` or empty
+    `accounts` short-circuits inside `Plugin::start` returning `Ok(())`,
+    so init-disabled plugins still report success through the NexoPlugin
+    path. Compatibility audit pre-cycle: EmailPluginConfig: Clone derived,
+    PluginInitError::Other already exists, EmailPlugin construction site
+    at main.rs:1914-1937 untouched, hot-reload `apply_account_diff` API
+    untouched, GC ticker untouched, `register_email_tools` per-agent
+    untouched (defer Phase 81.3). Behavior identical to pre-81.12.d
+    until 81.12.e flips main.rs.
   - **81.12.e ⬜** Remove legacy plugin registration block from
     main.rs:1855-1941 (~87 LOC). Only after 81.12.a-d ship dual-
     trait. ~2h effort.

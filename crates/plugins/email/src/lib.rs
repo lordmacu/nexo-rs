@@ -51,3 +51,40 @@ pub use tool::{
     register_email_tools_filtered, run_imap_op, DispatcherHandle, EmailToolContext,
     EMAIL_TOOL_NAMES,
 };
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use nexo_auth::email::EmailCredentialStore;
+use nexo_auth::google::GoogleCredentialStore;
+use nexo_config::types::plugins::EmailPluginConfig;
+use nexo_core::agent::nexo_plugin_registry::PluginFactory;
+use nexo_core::agent::plugin_host::NexoPlugin;
+
+/// Phase 81.12.d — factory builder for the email plugin. Email is a
+/// **single-plugin / multi-account-internal** model: one factory call
+/// returns one plugin handle that fans out across `cfg.accounts`. The
+/// closure clones the four constructor arguments per call (`cfg` is
+/// `Clone`; `creds` and `google` are `Arc<>` so the clone is just a
+/// refcount bump; `data_dir` is a small `PathBuf`).
+///
+/// Today (81.12.d): exported but no caller registers it — main.rs's
+/// legacy block at `src/main.rs:1914-1937` keeps constructing
+/// `EmailPlugin` directly via `register_arc`. 81.12.e flips that block
+/// to use this factory.
+pub fn email_plugin_factory(
+    cfg: EmailPluginConfig,
+    creds: Arc<EmailCredentialStore>,
+    google: Arc<GoogleCredentialStore>,
+    data_dir: PathBuf,
+) -> PluginFactory {
+    Box::new(move |_manifest| {
+        let plugin: Arc<dyn NexoPlugin> = Arc::new(EmailPlugin::new(
+            cfg.clone(),
+            creds.clone(),
+            google.clone(),
+            data_dir.clone(),
+        ));
+        Ok(plugin)
+    })
+}
