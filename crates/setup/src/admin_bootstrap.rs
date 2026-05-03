@@ -299,6 +299,18 @@ pub struct AdminBootstrapInputs<'a> {
     pub agent_event_log: Option<
         Arc<nexo_core::agent::admin_rpc::SqliteAgentEventLog>,
     >,
+    /// Phase 82.10.n — channel credential persisters that bridge
+    /// `nexo/admin/credentials/register` to per-channel runtime
+    /// state (yaml accounts list + secret file). Boot iterates
+    /// this list and calls `dispatcher.register_persister` for
+    /// each. Empty by default keeps the opaque-only path (no
+    /// regression for non-channel-aware callers). Production
+    /// pushes
+    /// [`crate::persisters::TelegramPersister`],
+    /// [`crate::persisters::EmailPersister`],
+    /// [`crate::persisters::WhatsappPersister`] when the matching
+    /// plugin is enabled in `extensions.yaml`.
+    pub persisters: Vec<Arc<dyn nexo_core::agent::admin_rpc::domains::credentials::ChannelCredentialPersister>>,
 }
 
 
@@ -621,6 +633,17 @@ impl AdminRpcBootstrap {
                 );
                 dispatcher = dispatcher.with_auth_rotator(rotator);
             }
+            // Phase 82.10.n — register per-channel credential
+            // persisters. Each push (telegram/email/whatsapp +
+            // future) becomes a dispatcher registry entry that
+            // `credentials/register` looks up by `channel`. The
+            // dispatcher panics on duplicate channel; main.rs is
+            // responsible for ensuring each channel registers at
+            // most one persister (typically tied to whether the
+            // matching plugin is enabled in extensions.yaml).
+            for p in &inputs.persisters {
+                dispatcher.register_persister(p.clone());
+            }
             // Phase 83.8.2 close-out — install the skills domain
             // when boot has the production `FsSkillsStore`.
             if let Some(store) = inputs.skills_store.clone() {
@@ -848,6 +871,7 @@ mod tests {
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
+            persisters: Vec::new(),
         })
         .await
         .unwrap();
@@ -884,6 +908,7 @@ mod tests {
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
+            persisters: Vec::new(),
         })
         .await
         .unwrap_err();
@@ -921,6 +946,7 @@ mod tests {
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
+            persisters: Vec::new(),
         })
         .await
         .unwrap()
@@ -972,6 +998,7 @@ mod tests {
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
+            persisters: Vec::new(),
             },
             true,
         )
@@ -1016,6 +1043,7 @@ mod tests {
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
+            persisters: Vec::new(),
             },
             true,
         )
@@ -1059,6 +1087,7 @@ mod tests {
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
+            persisters: Vec::new(),
             },
             true,
         )
@@ -1110,6 +1139,7 @@ mod tests {
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
+            persisters: Vec::new(),
             },
             true,
         )
@@ -1167,6 +1197,7 @@ mod tests {
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
+            persisters: Vec::new(),
             },
             true,
         )
@@ -1219,6 +1250,7 @@ mod tests {
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
+            persisters: Vec::new(),
             },
             true,
         )
@@ -1273,6 +1305,7 @@ mod tests {
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
+            persisters: Vec::new(),
         })
         .await
         .unwrap()
@@ -1345,6 +1378,7 @@ mod tests {
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
+            persisters: Vec::new(),
             },
             false,
         )
@@ -1397,6 +1431,7 @@ mod tests {
                 skills_store: None,
                 escalation_store: None,
                 agent_event_log: Some(log.clone()),
+                persisters: Vec::new(),
             },
             true,
         )

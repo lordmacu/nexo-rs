@@ -90,6 +90,7 @@ async fn firehose_delivers_redacted_frame_to_subscribed_microapp() {
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
+            persisters: Vec::new(),
         },
         true,
     )
@@ -197,6 +198,7 @@ async fn microapp_without_subscribe_capability_receives_no_frames() {
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
+            persisters: Vec::new(),
         },
         true,
     )

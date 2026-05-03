@@ -29,7 +29,7 @@ use super::audit::{
 use super::capabilities::CapabilitySet;
 use super::domains::agent_events::TranscriptReader;
 use super::domains::agents::YamlPatcher;
-use super::domains::credentials::CredentialStore;
+use super::domains::credentials::{ChannelCredentialPersister, CredentialStore, PersisterRegistry};
 use super::domains::escalations::EscalationStore;
 use super::domains::llm_providers::LlmYamlPatcher;
 use super::domains::pairing::{PairingChallengeStore, PairingNotifier};
@@ -150,6 +150,12 @@ pub struct AdminRpcDispatcher {
     /// Phase 82.10.d — credential filesystem store. `None`
     /// disables `nexo/admin/credentials/*`.
     credential_store: Option<Arc<dyn CredentialStore>>,
+    /// Phase 82.10.n — per-channel credential persisters keyed
+    /// by channel id. Empty by default. Channel plugins register
+    /// themselves at boot via [`Self::register_persister`].
+    /// `credentials/register` looks up by `input.channel`; absent
+    /// = opaque-only path (back-compat).
+    persisters: PersisterRegistry,
     /// Phase 82.10.e — pairing challenge store. `None` disables
     /// `nexo/admin/pairing/*`.
     pairing_store: Option<Arc<dyn PairingChallengeStore>>,
@@ -264,6 +270,7 @@ impl AdminRpcDispatcher {
             agents_yaml: None,
             reload_signal: None,
             credential_store: None,
+            persisters: PersisterRegistry::new(),
             pairing_store: None,
             pairing_notifier: None,
             llm_yaml: None,
@@ -366,6 +373,43 @@ impl AdminRpcDispatcher {
     pub fn with_credentials_domain(mut self, store: Arc<dyn CredentialStore>) -> Self {
         self.credential_store = Some(store);
         self
+    }
+
+    /// Phase 82.10.n — register a per-channel credential
+    /// persister. Channel plugins (telegram, email, whatsapp,
+    /// future slack/discord) call this at boot to bridge
+    /// `credentials/register` from the opaque payload to their
+    /// own runtime state (yaml accounts list, secret file,
+    /// in-memory store).
+    ///
+    /// Panics on duplicate registration for the same channel id
+    /// — this is a boot-time configuration error, not a runtime
+    /// path. Returns `&mut Self` (not consuming `self`) so boot
+    /// wiring can register N persisters in a loop.
+    pub fn register_persister(
+        &mut self,
+        persister: Arc<dyn ChannelCredentialPersister>,
+    ) -> &mut Self {
+        let channel = persister.channel().to_string();
+        if self.persisters.contains_key(&channel) {
+            panic!(
+                "duplicate ChannelCredentialPersister registration for channel `{channel}`"
+            );
+        }
+        self.persisters.insert(channel, persister);
+        self
+    }
+
+    /// Phase 82.10.n — read-only accessor for the persister
+    /// registered against `channel`. Used by the
+    /// `credentials/register` + `credentials/revoke` handlers to
+    /// route to the per-channel bridge. `None` = opaque-only
+    /// fallback path.
+    pub fn persister_for(
+        &self,
+        channel: &str,
+    ) -> Option<Arc<dyn ChannelCredentialPersister>> {
+        self.persisters.get(channel).cloned()
     }
 
     /// Phase 82.10.e — install the pairing domain. `notifier`
@@ -698,12 +742,26 @@ impl AdminRpcDispatcher {
                 match (&self.credential_store, &self.agents_yaml, &self.reload_signal) {
                     (Some(store), Some(yaml), Some(reload)) => {
                         let trigger = reload.clone();
+                        // Phase 82.10.n — peek at the channel
+                        // field to look up the registered
+                        // persister BEFORE handing the params off
+                        // to the handler. Bad shapes still get
+                        // `InvalidParams` from the handler — we
+                        // just default to no-persister on parse
+                        // failure so the existing error path
+                        // wins.
+                        let persister = params
+                            .get("channel")
+                            .and_then(Value::as_str)
+                            .and_then(|c| self.persister_for(c));
                         super::domains::credentials::register(
                             store.as_ref(),
                             yaml.as_ref(),
+                            persister,
                             params,
                             &move || trigger(),
                         )
+                        .await
                     }
                     _ => AdminRpcResult::err(AdminRpcError::Internal(
                         "credentials domain not configured".into(),
@@ -714,12 +772,18 @@ impl AdminRpcDispatcher {
                 match (&self.credential_store, &self.agents_yaml, &self.reload_signal) {
                     (Some(store), Some(yaml), Some(reload)) => {
                         let trigger = reload.clone();
+                        let persister = params
+                            .get("channel")
+                            .and_then(Value::as_str)
+                            .and_then(|c| self.persister_for(c));
                         super::domains::credentials::revoke(
                             store.as_ref(),
                             yaml.as_ref(),
+                            persister,
                             params,
                             &move || trigger(),
                         )
+                        .await
                     }
                     _ => AdminRpcResult::err(AdminRpcError::Internal(
                         "credentials domain not configured".into(),

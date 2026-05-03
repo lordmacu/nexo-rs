@@ -168,6 +168,121 @@ credential file.
 Framework is channel-agnostic; v1 microapp UIs scope to WhatsApp
 only.
 
+## Channel credential persisters (Phase 82.10.n)
+
+`credentials/register` does NOT only write the opaque credential
+blob: it also brides into the per-channel plugin's runtime state
+(yaml accounts list, secret file, in-memory store) via the
+`ChannelCredentialPersister` trait. Channel plugins register a
+persister at boot; the dispatcher routes per `input.channel`.
+
+Lifecycle on register (when a persister is registered):
+
+1. `validate_shape(payload, metadata)` — synchronous,
+   network-free shape check. Bad shape → `-32602 invalid_params`.
+2. Opaque blob write (`CredentialStore::write_credential`).
+3. `persist(instance, payload, metadata).await` — writes the
+   per-channel runtime state. Failure leaves the opaque blob on
+   disk so the operator can retry.
+4. Agent bindings + reload signal (existing).
+5. `probe(instance, payload, metadata).await` — best-effort
+   connectivity check. Errors NEVER abort register; outcome is
+   surfaced to the caller as `validation`.
+
+Response shape:
+
+```json
+{
+  "summary": { "channel": "telegram", "instance": "kate",
+                "agent_ids": ["kate"] },
+  "validation": {
+    "probed": true,
+    "healthy": true,
+    "detail": "authenticated as @kate_bot",
+    "reason_code": "ok"
+  }
+}
+```
+
+`validation` is `null` when no persister is registered for the
+channel (back-compat: pre-82.10.n callers see only `summary`-
+shaped data inside the wrapper).
+
+### Stable reason codes
+
+`reason_code` mirrors the pattern in
+`research/docs/auth-credential-semantics.md`:
+
+| Code | Meaning |
+|------|---------|
+| `ok` | Probe completed; channel reachable + authenticated |
+| `unsupported_channel` | No persister registered for the channel |
+| `invalid_payload` | Persister rejected payload shape |
+| `invalid_metadata` | Persister rejected metadata shape |
+| `connectivity_failed` | Network failure (DNS, TCP, timeout) |
+| `auth_failed` | Provider rejected credentials (401, IMAP `NO`) |
+| `tls_failed` | TLS handshake failed |
+| `not_probed` | Persister opted out of probing (whatsapp default) |
+
+### Bundled persisters
+
+| Channel | Yaml file | Secret layout | Probe |
+|---------|-----------|---------------|-------|
+| `telegram` | `<config_dir>/plugins/telegram.yaml` | `<secrets>/telegram_<instance>_token.txt` (mode 0600) | `GET https://api.telegram.org/bot<TOKEN>/getMe` (5s timeout) |
+| `email` | `<config_dir>/plugins/email.yaml` | `<secrets>/email/<instance>.toml` (mode 0600) | TCP connect + TLS handshake to IMAP host (5s timeout) |
+| `whatsapp` | n/a (pairing flow owns it) | n/a | `not_probed` (pairing has its own probe surface) |
+
+Telegram persister metadata fields (all optional, defaults
+applied):
+
+```json
+{
+  "polling": { "enabled": true, "interval_ms": 1000 },
+  "allow_agents": ["kate"],
+  "allowed_chat_ids": [123, 456]
+}
+```
+
+Email persister payload + metadata shape (all required unless
+noted):
+
+```json
+{
+  "channel": "email",
+  "instance": "ops",
+  "agent_ids": ["ana"],
+  "payload": {
+    "address": "ops@example.com",
+    "password": "..."          // OR "xoauth2_token", exactly one
+  },
+  "metadata": {
+    "imap": { "host": "imap.example.com", "port": 993, "tls": "implicit_tls" },
+    "smtp": { "host": "smtp.example.com", "port": 587, "tls": "starttls" },
+    "provider": "gmail"        // optional
+  }
+}
+```
+
+### Audit redaction
+
+`payload.token`, `payload.password`, `payload.xoauth2_token` are
+replaced with `"<redacted>"` before the audit row's `args_hash`
+is computed. Defense-in-depth: any `token` / `password` /
+`xoauth2_token` / `api_key` / `secret` key inside `metadata.*`
+(including nested objects) is also redacted.
+
+### Adding a new channel persister
+
+1. Implement [`ChannelCredentialPersister`](crate::ChannelCredentialPersister)
+   in `crates/setup/src/persisters/<channel>.rs`.
+2. Add to `nexo_setup::persisters` re-exports.
+3. Push into `AdminBootstrapInputs.persisters` in `src/main.rs`.
+4. Document the payload + metadata schema + reason codes here.
+
+The trait + dispatcher registry lives in `nexo-core`; the
+trait is `#[async_trait]` and probe has a default implementation
+returning `not_probed` so a persister can opt out.
+
 ## Async pairing flow
 
 ```

@@ -144,6 +144,15 @@ pub fn hash_params(params: &Value) -> String {
 ///
 /// Phase 82.10.k — `secrets/write` redacts `value`. Future
 /// methods that carry secret-grade fields hook in here.
+///
+/// Phase 82.10.n — `credentials/register` redacts secret-grade
+/// keys inside `payload` + `metadata` (token, password,
+/// xoauth2_token, api_key, secret). The
+/// [`ChannelCredentialPersister`] family routes structured
+/// payloads through here, so the audit hash is invariant to the
+/// secret material.
+///
+/// [`ChannelCredentialPersister`]: super::domains::credentials::ChannelCredentialPersister
 pub fn redact_for_audit(method: &str, params: &Value) -> Value {
     if method == "nexo/admin/secrets/write" {
         if let Some(obj) = params.as_object() {
@@ -157,7 +166,54 @@ pub fn redact_for_audit(method: &str, params: &Value) -> Value {
             return Value::Object(redacted);
         }
     }
+    if method == "nexo/admin/credentials/register" {
+        if let Some(obj) = params.as_object() {
+            let mut redacted = obj.clone();
+            if let Some(payload) = redacted.get("payload").cloned() {
+                redacted.insert("payload".into(), redact_secret_keys(&payload));
+            }
+            if let Some(metadata) = redacted.get("metadata").cloned() {
+                redacted.insert("metadata".into(), redact_secret_keys(&metadata));
+            }
+            return Value::Object(redacted);
+        }
+    }
     params.clone()
+}
+
+/// Walk a JSON value and replace every occurrence of a known
+/// secret-grade key (`token`, `password`, `xoauth2_token`,
+/// `api_key`, `secret`) with `"<redacted>"`. Recurses into nested
+/// objects and arrays so deeply-nested metadata (e.g.
+/// `metadata.imap.password`) is covered defense-in-depth.
+///
+/// Recursion is bounded by serde_json's nesting limit (default
+/// 128) — no separate guard needed.
+fn redact_secret_keys(value: &Value) -> Value {
+    const SECRET_KEYS: &[&str] = &[
+        "token",
+        "password",
+        "xoauth2_token",
+        "api_key",
+        "secret",
+    ];
+    match value {
+        Value::Object(map) => {
+            let mut out = serde_json::Map::with_capacity(map.len());
+            for (k, v) in map {
+                if SECRET_KEYS.iter().any(|s| s.eq_ignore_ascii_case(k)) {
+                    out.insert(k.clone(), Value::String("<redacted>".into()));
+                } else {
+                    out.insert(k.clone(), redact_secret_keys(v));
+                }
+            }
+            Value::Object(out)
+        }
+        Value::Array(arr) => {
+            Value::Array(arr.iter().map(redact_secret_keys).collect())
+        }
+        other => other.clone(),
+    }
 }
 
 fn canonicalize(value: &Value) -> Value {
@@ -291,6 +347,94 @@ mod tests {
         let original = serde_json::json!({"agent_id": "ana"});
         let result = redact_for_audit("nexo/admin/agents/get", &original);
         assert_eq!(result, original);
+    }
+
+    /// Phase 82.10.n — `credentials/register` redacts the
+    /// telegram bot token in `payload.token` so the audit hash
+    /// doesn't fingerprint the secret.
+    #[test]
+    fn redact_for_audit_redacts_telegram_token() {
+        let original = serde_json::json!({
+            "channel": "telegram",
+            "instance": "kate",
+            "agent_ids": ["kate"],
+            "payload": { "token": "bot12345:ABCDEF" }
+        });
+        let redacted = redact_for_audit("nexo/admin/credentials/register", &original);
+        assert_eq!(redacted["channel"], "telegram");
+        assert_eq!(redacted["payload"]["token"], "<redacted>");
+        // Hash diverges from the unredacted form.
+        assert_ne!(hash_params(&original), hash_params(&redacted));
+    }
+
+    /// Email password lives in `payload.password`; xoauth2 token
+    /// lives in `payload.xoauth2_token`. Both must redact.
+    #[test]
+    fn redact_for_audit_redacts_email_password_and_xoauth2() {
+        let with_pw = serde_json::json!({
+            "channel": "email",
+            "instance": "ops",
+            "payload": { "address": "ops@example.com", "password": "p@ss" }
+        });
+        let r1 = redact_for_audit("nexo/admin/credentials/register", &with_pw);
+        assert_eq!(r1["payload"]["password"], "<redacted>");
+        assert_eq!(r1["payload"]["address"], "ops@example.com");
+
+        let with_xoauth = serde_json::json!({
+            "channel": "email",
+            "instance": "ops",
+            "payload": { "address": "ops@example.com", "xoauth2_token": "xo.AAA" }
+        });
+        let r2 = redact_for_audit("nexo/admin/credentials/register", &with_xoauth);
+        assert_eq!(r2["payload"]["xoauth2_token"], "<redacted>");
+    }
+
+    /// Defense-in-depth: secret-grade keys nested inside
+    /// `metadata.*` (operator could fat-finger a password into
+    /// metadata) also redact.
+    #[test]
+    fn redact_for_audit_redacts_nested_metadata_secrets() {
+        let original = serde_json::json!({
+            "channel": "email",
+            "payload": { "address": "ops@example.com" },
+            "metadata": {
+                "imap": { "host": "imap.example.com", "password": "leaked-here" },
+                "api_key": "should-not-leak",
+                "tls": "implicit_tls"
+            }
+        });
+        let redacted = redact_for_audit("nexo/admin/credentials/register", &original);
+        // Nested key inside metadata.imap.
+        assert_eq!(
+            redacted["metadata"]["imap"]["password"],
+            "<redacted>"
+        );
+        // Top-level metadata.api_key.
+        assert_eq!(redacted["metadata"]["api_key"], "<redacted>");
+        // Non-secret fields preserved.
+        assert_eq!(redacted["metadata"]["imap"]["host"], "imap.example.com");
+        assert_eq!(redacted["metadata"]["tls"], "implicit_tls");
+    }
+
+    /// Non-secret fields stay untouched — verifies the redactor
+    /// is conservative (doesn't accidentally mask things like
+    /// `address` or `host`).
+    #[test]
+    fn redact_for_audit_preserves_non_secret_fields() {
+        let original = serde_json::json!({
+            "channel": "email",
+            "instance": "ops",
+            "agent_ids": ["ana"],
+            "payload": { "address": "ops@example.com" },
+            "metadata": {
+                "imap": { "host": "imap.example.com", "port": 993, "tls": "implicit_tls" }
+            }
+        });
+        let redacted = redact_for_audit("nexo/admin/credentials/register", &original);
+        assert_eq!(redacted["channel"], "email");
+        assert_eq!(redacted["agent_ids"][0], "ana");
+        assert_eq!(redacted["metadata"]["imap"]["host"], "imap.example.com");
+        assert_eq!(redacted["metadata"]["imap"]["port"], 993);
     }
 
     #[test]

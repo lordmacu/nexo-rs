@@ -3640,6 +3640,40 @@ phase but only surfaced now while scanning INVENTORY for the
     without additional session isolation. Defer until Phase 79.5
     follow-up lands per-session LSP process management.
 
+### Phase 82.10.n — Channel credential persisters (deferred)
+
+Trait + dispatcher + telegram/email/whatsapp persisters shipped
+2026-05-03. Five follow-ups left intentionally:
+
+- **82.10.n.cb** — wrap the telegram `getMe` + email IMAP probes
+  with `nexo-resilience::CircuitBreaker`. Today both use only
+  `tokio::time::timeout(5s)`. CB has no value for one-shot
+  probes; add when continuous health monitoring (82.10.n.health)
+  lands so repeated failures stop hammering the provider.
+- **82.10.n.health** — periodic re-probe scheduler that emits
+  `nexo/notify/credential_health` events. Operator UIs render a
+  rolling badge instead of a register-time snapshot.
+  Implementation lives in `nexo-setup` next to the persisters
+  with a single `tokio::spawn`'d loop.
+- **82.10.n.imap-login** — extend the email probe to issue
+  `LOGIN + NOOP + LOGOUT` over IMAP. Today it stops at TCP +
+  TLS handshake; auth failure surfaces only on first inbound
+  poll cycle. Either reuse `nexo-plugin-email::ImapConnection`
+  from `nexo-setup` (heavy — needs `EmailAccount` +
+  `GoogleCredentialStore` construction) or roll a minimal
+  IMAP client in the persister.
+- **82.10.n.starttls** — the email probe currently only does
+  the TLS handshake when `metadata.imap.tls = "implicit_tls"`.
+  STARTTLS path skips the handshake (TCP-reach check only)
+  because the IMAP `* OK` greeting + `STARTTLS` issuance are
+  not implemented at the persister layer. Rolls into the
+  `82.10.n.imap-login` work.
+- **82.10.n.slack** — bundled `SlackPersister` when the slack
+  channel plugin lands. Trait + dispatcher already accept any
+  channel id — adding a new persister is a single
+  `crates/setup/src/persisters/slack.rs` file + push into
+  `src/main.rs`'s `AdminBootstrapInputs.persisters` vec.
+
 ## Maintenance note
 
 If a future historical import includes non-English notes, keep them in `archive/spanish/*.txt` and update this Markdown tracker in English only.

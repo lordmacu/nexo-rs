@@ -1170,6 +1170,143 @@ Tests: +9 (3 tool-meta + 6 microapp-sdk). 0 regressions.
   86+ multi-tenant lands; same closure pattern, separate
   registry entry).
 
+#### 82.10.n — Channel credential persisters (yaml bridge)   ✅  (shipped 2026-05-03)
+
+Closes the gap between `nexo/admin/credentials/register` (which
+wrote an opaque blob) and the per-channel plugin runtime state
+(yaml accounts list, secret file). Channel plugins now register
+a `ChannelCredentialPersister` at boot; the dispatcher routes
+the register/revoke calls per-channel. Microapps use ONE
+generic admin method to wire telegram + email + whatsapp +
+future channels; the framework stays channel-agnostic (only the
+trait + registry live in `nexo-core`; the per-channel impls
+live in `nexo-setup::persisters` to avoid plugin↔setup
+circular deps).
+
+Eleven steps shipped:
+
+- **82.10.n.1** — `nexo_tool_meta::admin::credentials` extends
+  `CredentialRegisterInput` with `metadata: HashMap<String, Value>`
+  (defaults to empty for back-compat) + adds
+  `CredentialValidationOutcome { probed, healthy, detail,
+  reason_code }` + wraps the response in
+  `CredentialRegisterResponse { summary, validation }` + ships a
+  `reason_code` const module mirroring the
+  `research/docs/auth-credential-semantics.md` pattern (`ok`,
+  `unsupported_channel`, `invalid_payload`, `invalid_metadata`,
+  `connectivity_failed`, `auth_failed`, `tls_failed`,
+  `not_probed`). 11 tests round-trip the new shapes.
+- **82.10.n.2** — `ChannelCredentialPersister` async trait +
+  `PersisterRegistry` type alias in
+  `nexo-core::agent::admin_rpc::domains::credentials`. Trait
+  methods: `channel`, `validate_shape` (sync, network-free),
+  `persist` (async, idempotent), `revoke` (async, idempotent),
+  `probe` (async with `not_probed` default — persisters opt
+  out). `AdminRpcDispatcher` gains a `persisters` HashMap field
+  + `register_persister` builder that panics on duplicate
+  channel (boot-time misconfig).
+- **82.10.n.3** — `register/revoke` handlers become async + take
+  the per-channel persister. New flow:
+  `validate_shape → opaque write → persist → bind → reload →
+  probe`. Persister failure aborts before binding (opaque blob
+  preserved for retry). Probe failure is non-fatal — outcome
+  flows back to caller as `validation`. Reload also fires when
+  the persister patches plugin yaml even with empty
+  `agent_ids`. 7 new tests + 7 pre-existing migrated to
+  `#[tokio::test]`.
+- **82.10.n.4** — `TelegramPersister` in
+  `crates/setup/src/persisters/telegram.rs`: validates
+  `payload.token` non-empty + polling.interval_ms ≥ 100,
+  writes `<secrets>/telegram_<instance>_token.txt` (mode 0600,
+  atomic rename), upserts `telegram.yaml` with the runtime
+  loader's exact shape (`token: ${file:./secrets/...}` +
+  `polling` + `allow_agents` + `allowlist.chat_ids`), revokes
+  both. Probe = `GET https://api.telegram.org/bot<TOKEN>/getMe`
+  with 5-second `tokio::time::timeout` — circuit breaker
+  deferred (one-shot probe doesn't benefit). 12 tests.
+- **82.10.n.5** — `EmailPersister` in
+  `crates/setup/src/persisters/email.rs`: validates
+  `payload.address` (must contain `@`), `payload.password`
+  XOR `payload.xoauth2_token`, `metadata.imap`/`metadata.smtp`
+  with host + port + tls (one of `implicit_tls|starttls|none`).
+  Persists hand-formatted TOML to `<secrets>/email/<instance>.toml`
+  + upserts `email.yaml` `accounts[]` entry. Probe = TCP
+  connect + (for `implicit_tls`) rustls handshake — STARTTLS
+  defers to first poll cycle for the IMAP layer. 18 tests
+  including a real `TcpListener` mock for the TCP-reach path.
+- **82.10.n.6** — `WhatsappPersister` in
+  `crates/setup/src/persisters/whatsapp.rs` is intentionally a
+  no-op delegate. WhatsApp credentials follow a different
+  lifecycle (pairing flow writes its own state via
+  `nexo/admin/pairing/*`); the persister exists so the
+  dispatcher routes `channel: "whatsapp"` to a registered
+  handler instead of falling through to opaque-only behavior.
+  Probe returns `not_probed` with a pointer to
+  `nexo/notify/pairing_status_changed`. 5 tests.
+- **82.10.n.7** — `AdminBootstrapInputs` gains
+  `persisters: Vec<Arc<dyn ChannelCredentialPersister>>` field;
+  the bootstrap loop calls `dispatcher.register_persister(p)`
+  for each. `src/main.rs` always wires all three production
+  persisters (independent of whether the matching plugin is
+  currently enabled in `extensions.yaml` — operators routinely
+  register accounts BEFORE the plugin is hot, and config
+  reload activates them on the next tick). 12 init sites
+  updated workspace-wide.
+- **82.10.n.8** — `redact_for_audit` extends to
+  `nexo/admin/credentials/register`: walks `payload` + `metadata`
+  with a recursive `redact_secret_keys` helper that masks
+  `token`, `password`, `xoauth2_token`, `api_key`, `secret`
+  (case-insensitive) at any nesting depth. Defense-in-depth
+  against operators fat-fingering secrets into metadata. 4
+  new tests; non-secret fields stay untouched.
+- **82.10.n.9** — `crates/setup/tests/admin_rpc_credentials_bridge.rs`
+  end-to-end: spawns a real dispatcher with `AgentsYamlPatcher` +
+  `FilesystemCredentialStore` + `TelegramPersister`, dispatches
+  a `credentials/register` for telegram + verifies the secret
+  file (mode 0600), the `telegram.yaml` shape, the
+  `agents.yaml` `inbound_bindings` patch, the reload signal,
+  and then `revoke` cleans all three sites. Same end-to-end
+  for email with structured IMAP metadata; the probe uses port
+  1 (always-refused) so we cover the unhealthy outcome path
+  deterministically. 2 tests.
+- **82.10.n.10** — `docs/src/microapps/admin-rpc.md` gains a
+  "Channel credential persisters (Phase 82.10.n)" section
+  documenting the lifecycle, response shape, stable reason
+  code table, bundled-persister matrix (yaml file × secret
+  layout × probe), per-channel payload+metadata schemas,
+  audit redaction policy, and the "adding a new channel
+  persister" recipe. `mdbook build docs` clean.
+- **82.10.n.11** — microapp downstream refactor (deferred to
+  microapp commit; framework side closes here).
+
+**Tests:** 11 + 7 + 7 + 12 + 18 + 5 + ad-hoc + 4 + 2 = **66+ verde**.
+
+**Deferred (FOLLOWUPS):**
+
+- **82.10.n.cb** — circuit breaker around the telegram/email
+  probe calls. Today they use `tokio::time::timeout` only;
+  CB shines on repeated failure paths, but a one-shot probe
+  doesn't amortize the dep. Add when continuous health
+  monitoring lands.
+- **82.10.n.health** — periodic re-probe + emit
+  `nexo/notify/credential_health` so operator UIs render a
+  rolling badge instead of a register-time snapshot.
+- **82.10.n.imap-login** — extend the email probe to actually
+  run `LOGIN + NOOP + LOGOUT` (currently we only do TCP +
+  TLS; LOGIN auth surfaces on first poll cycle). Requires
+  reusing `nexo-plugin-email::ImapConnection` from
+  `nexo-setup` or rolling a minimal IMAP probe.
+- **82.10.n.starttls** — the email probe only does the TLS
+  handshake for `implicit_tls`. STARTTLS path needs
+  consuming the `* OK` IMAP greeting + issuing `STARTTLS`
+  before the rustls handshake. Defer until the IMAP probe
+  lands.
+- **82.10.n.slack** — bundled `SlackPersister` when the slack
+  channel plugin lands. Trait + dispatcher already accept
+  arbitrary channel ids — adding a new persister is a single
+  `crates/setup/src/persisters/slack.rs` file + push into
+  `main.rs`.
+
 #### 82.11 — Agent event firehose + admin RPC (transcript-shaped events as one variant)   ✅  (shipped 2026-05-01)
 
 Six steps shipped:
