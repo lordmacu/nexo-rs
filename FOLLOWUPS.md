@@ -572,6 +572,29 @@ coordinación de archivos cross-cutting.
   for cross-language SDK authoring + internal wire-change
   reviews.
 
+- **81.23 ✅ shipped 2026-05-01** — Plugin stdio → daemon tracing
+  bridge. subprocess.rs flips `stderr(Stdio::null())` →
+  `stderr(Stdio::piped())` + new stderr reader task forwards
+  each line as `tracing::info!(target: "plugin.stderr",
+  plugin_id, line)`. Stdout reader's non-JSON path downgraded
+  from warn-drop to `tracing::info!(target: "plugin.stdout", ...)`.
+  Stderr reader spawned BEFORE handshake so boot-time errors
+  land in operator logs. 1 new unit test + 2 existing task-count
+  assertions updated. Operators filter via
+  `RUST_LOG=plugin.stderr=info,plugin.stdout=info`. 14/14
+  subprocess + 2/2 e2e tests pass. Structured field extraction
+  (parsing tracing-subscriber JSON output from child) deferred
+  to 81.23.b.
+
+- **81.23.b ⬜** Structured field extraction from child tracing.
+  Today child stderr lines forward as opaque `line = "..."` field.
+  When the child uses `tracing-subscriber` with JSON formatter,
+  the daemon could parse each line + emit a structured event
+  with the child's spans / fields preserved. Requires the SDK
+  side to standardize on JSON output and the host side to
+  attempt JSON parsing on each stderr line (fall back to opaque
+  on parse failure). ~1 d effort.
+
 - **81.15.b ✅ shipped 2026-05-01** — Rust plugin template
   drafted in-workspace as `extensions/template-plugin-rust/`.
   Cargo.toml + nexo-plugin.toml + src/main.rs (~70 LOC) +

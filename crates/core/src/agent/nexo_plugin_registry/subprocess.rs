@@ -180,7 +180,11 @@ impl SubprocessNexoPlugin {
         cmd.args(&entry.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            // Phase 81.23 — pipe stderr into the daemon's tracing
+            // subsystem instead of discarding. Child code that uses
+            // `eprintln!` / `tracing` writing to stderr now becomes
+            // operator-visible debug output filtered by `plugin_id`.
+            .stderr(Stdio::piped())
             .kill_on_drop(true);
         for (k, v) in &entry.env {
             cmd.env(k, v);
@@ -198,6 +202,10 @@ impl SubprocessNexoPlugin {
             .stdout
             .take()
             .ok_or_else(|| anyhow::anyhow!("child has no stdout"))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("child has no stderr"))?;
 
         let cancel = ctx_shutdown.child_token();
         let pending: Arc<DashMap<u64, oneshot::Sender<Result<Value, String>>>> =
@@ -238,6 +246,49 @@ impl SubprocessNexoPlugin {
                     tracing::warn!(error = %e, "subprocess plugin: stdin flush failed");
                     return;
                 }
+            }
+        });
+
+        // Phase 81.23 — stderr reader task. Forwards each line
+        // the child writes to stderr into the daemon's tracing
+        // subsystem at `target = "plugin.stderr"` with the
+        // plugin_id captured as a structured field. Operators can
+        // then filter `RUST_LOG=plugin.stderr=info` to see
+        // child output, or per-plugin via the field.
+        // Spawned BEFORE the handshake send so any child boot-time
+        // errors land in the operator's log.
+        let stderr_cancel = cancel.clone();
+        let stderr_plugin_id = self.cached_manifest.plugin.id.clone();
+        let stderr_handle = tokio::spawn(async move {
+            let mut reader = BufReader::new(stderr).lines();
+            loop {
+                let line = tokio::select! {
+                    biased;
+                    _ = stderr_cancel.cancelled() => return,
+                    next = reader.next_line() => match next {
+                        Ok(Some(l)) => l,
+                        Ok(None) => return, // EOF — child closed stderr
+                        Err(e) => {
+                            tracing::warn!(
+                                target: "plugin.stderr",
+                                plugin_id = %stderr_plugin_id,
+                                error = %e,
+                                "stderr read failed"
+                            );
+                            return;
+                        }
+                    },
+                };
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                tracing::info!(
+                    target: "plugin.stderr",
+                    plugin_id = %stderr_plugin_id,
+                    line = %trimmed,
+                    "child stderr"
+                );
             }
         });
 
@@ -295,11 +346,21 @@ impl SubprocessNexoPlugin {
                 }
                 let parsed: Value = match serde_json::from_str(trimmed) {
                     Ok(v) => v,
-                    Err(e) => {
-                        tracing::warn!(
-                            error = %e,
-                            plugin = %reader_plugin_id,
-                            "stdout: drop frame, parse failed"
+                    Err(_) => {
+                        // Phase 81.23 — non-JSON stdout lines are
+                        // INFO-level child output, NOT a parser
+                        // failure. Plugin authors mixing stderr +
+                        // stdout for diagnostics get the same
+                        // operator visibility as stderr-only output.
+                        // The wire spec (`nexo-plugin-contract.md`)
+                        // says lines on stdout SHOULD be JSON-RPC,
+                        // but children may emit debug noise — log,
+                        // don't drop with warn.
+                        tracing::info!(
+                            target: "plugin.stdout",
+                            plugin_id = %reader_plugin_id,
+                            line = %trimmed,
+                            "child stdout (non-json)"
                         );
                         continue;
                     }
@@ -405,7 +466,7 @@ impl SubprocessNexoPlugin {
         // stays open with just the writer + reader tasks but no
         // broker traffic crosses. Test paths pass `broker = None`
         // to skip subscriptions entirely.
-        let mut tasks = vec![writer_handle, reader_handle];
+        let mut tasks = vec![writer_handle, reader_handle, stderr_handle];
         if let Some(broker) = broker {
             let kinds: Vec<String> = self
                 .cached_manifest
@@ -933,13 +994,13 @@ sleep 5
             .await;
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
         let inner = res.expect("handshake + bridge wiring must succeed");
-        // 2 baseline tasks (writer + reader) + 2 bridge tasks
-        // (one per subscribe pattern, exact + wildcard) for the one
-        // declared kind = 4 total.
+        // 3 baseline tasks (writer + stdout reader + 81.23 stderr
+        // reader) + 2 bridge tasks (one per subscribe pattern,
+        // exact + wildcard) for the one declared kind = 5 total.
         assert_eq!(
             inner.tasks.len(),
-            4,
-            "expected writer + reader + 2 forwarder tasks"
+            5,
+            "expected writer + stdout reader + stderr reader + 2 forwarder tasks"
         );
         cancel.cancel();
     }
@@ -1031,11 +1092,66 @@ sleep 5
         let res = plugin.spawn_and_handshake(cancel.clone(), None).await;
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
         let inner = res.expect("handshake must succeed without broker");
-        // Only writer + reader, no forwarder tasks.
+        // 81.23 — writer + stdout reader + stderr reader, no
+        // forwarder tasks (broker = None).
         assert_eq!(
             inner.tasks.len(),
-            2,
-            "expected writer + reader only, no forwarders"
+            3,
+            "expected writer + stdout reader + stderr reader, no forwarders"
+        );
+        cancel.cancel();
+    }
+
+    /// Phase 81.23 — stderr is piped (not Stdio::null()) so the
+    /// reader task can forward child stderr lines into daemon
+    /// tracing. We assert this by writing a stderr-emitting mock
+    /// that successfully completes the handshake — if stderr were
+    /// `Stdio::null()`, the reader_handle on stderr couldn't be
+    /// constructed (child has no stderr), and `take()` in
+    /// `spawn_and_handshake` would error with "child has no stderr"
+    /// before we ever get to a successful handshake.
+    #[tokio::test]
+    async fn stderr_is_piped_so_reader_can_construct() {
+        // Mock that writes "boot diag" on stderr BEFORE replying
+        // on stdout — proves both streams flow through the daemon
+        // simultaneously. We can't capture daemon tracing output
+        // from inside the test (no global subscriber configured),
+        // so the assertion focuses on the structural invariant:
+        // spawn_and_handshake must succeed when stderr is piped
+        // and the child writes to it.
+        let script = r#"#!/bin/sh
+echo "boot diag from child" >&2
+read line
+echo '{"jsonrpc":"2.0","id":1,"result":{"manifest":{"plugin":{"id":"test_plugin","version":"0.1.0","name":"x","description":"x","min_nexo_version":">=0.1.0"}},"server_version":"mock-0.1.0"}}'
+echo "post-init diag" >&2
+sleep 5
+"#;
+        let dir = std::env::temp_dir().join("nexo-stderr-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("plugin.sh");
+        std::fs::write(&path, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&path).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&path, perms).unwrap();
+        }
+
+        std::env::set_var("NEXO_PLUGIN_INIT_TIMEOUT_MS", "1000");
+        let m = manifest_with_entrypoint(Some(path.to_str().unwrap()));
+        let plugin = SubprocessNexoPlugin::new(m);
+        let cancel = CancellationToken::new();
+        let res = plugin.spawn_and_handshake(cancel.clone(), None).await;
+        std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
+
+        let inner = res.expect("handshake must succeed with stderr piped");
+        // 3 tasks confirm the stderr reader is alive: writer +
+        // stdout reader + stderr reader.
+        assert_eq!(
+            inner.tasks.len(),
+            3,
+            "writer + stdout reader + stderr reader = 3"
         );
         cancel.cancel();
     }

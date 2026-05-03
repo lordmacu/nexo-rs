@@ -10,6 +10,53 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.23 — Plugin stdio → daemon tracing bridge.** Child
+  process stderr is now piped into the daemon's tracing subsystem
+  instead of discarded; plugin authors using `eprintln!` /
+  `tracing` writing to stderr finally get operator-visible debug
+  output. Three coupled changes in
+  `crates/core/src/agent/nexo_plugin_registry/subprocess.rs`:
+  (1) Spawn config flips `stderr(Stdio::null())` →
+  `stderr(Stdio::piped())` so the child's stderr is captured.
+  (2) New stderr reader task spawned BEFORE the `initialize`
+  handshake send (so any boot-time stderr lands in operator logs)
+  forwards each line as
+  `tracing::info!(target: "plugin.stderr", plugin_id = %id, line = %trimmed, "child stderr")`.
+  Empty lines skipped. Read errors logged at warn level. Reader
+  exits on EOF or `cancel.cancelled()`. Joined on shutdown via
+  `Inner.tasks`.
+  (3) Stdout reader's "non-JSON line" path downgraded from
+  `tracing::warn!` (drop frame) to
+  `tracing::info!(target: "plugin.stdout", plugin_id, line, "child stdout (non-json)")`.
+  The wire spec says stdout SHOULD be JSON-RPC, but children may
+  emit debug noise; treating those lines as informational logging
+  matches operator expectation that ALL child output (stderr +
+  non-JSON stdout) becomes structured tracing.
+  Operators filter via `RUST_LOG=plugin.stderr=info,plugin.stdout=info`
+  globally or per-plugin via the `plugin_id` field
+  (`RUST_LOG=plugin=info` + tracing's structured filtering).
+  1 new unit test `stderr_is_piped_so_reader_can_construct`
+  proves the structural invariant: spawning a mock that emits
+  stderr both before AND after the initialize reply succeeds with
+  3 spawned tasks (writer + stdout reader + stderr reader); if
+  stderr were `Stdio::null()` the `child.stderr.take()` call in
+  `spawn_and_handshake` would error with "child has no stderr".
+  Two existing task-count assertions updated:
+  `bridge_subscribes_outbound_topics_for_each_channel_register_kind`
+  4→5 (writer + stdout reader + 81.23 stderr reader + 2 forwarder
+  tasks); `bridge_skipped_when_broker_is_none` 2→3 (writer +
+  stdout reader + stderr reader). 14/14 subprocess unit tests +
+  2/2 e2e tests pass. Out of scope: structured field extraction
+  from tracing-subscriber JSON output (so operators get parsed
+  spans/fields from child traces, not just opaque lines) deferred
+  to follow-up 81.23.b. Per-line rate limiting on noisy children
+  also deferred. IRROMPIBLE refs: internal subprocess.rs +
+  `extensions/openai-whisper/src/main.rs:1-79` (child SDK uses
+  `tracing` writing to stderr — until 81.23 it went nowhere);
+  claude-code-leak `src/utils/managedEnv.ts` + MCP server stdio
+  transport (captures stderr into console.error pattern);
+  OpenClaw absence stated.
+
 - **Phase 81.15.b — Rust plugin template (in-workspace draft).**
   New `extensions/template-plugin-rust/` crate. Skeleton out-of-tree
   subprocess plugin authors clone-and-rename to start a new
