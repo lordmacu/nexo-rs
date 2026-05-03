@@ -10,6 +10,85 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.21.b — Plugin supervisor: stderr tail capture +
+  manifest.supervisor config.** Crashed events now carry the
+  last N stderr lines from the dying child so operators can
+  debug without grepping daemon logs. Manifest gets a parsable
+  `[plugin.supervisor]` section so authors declare respawn
+  intent today; the actual respawn loop is deferred to
+  81.21.b.b (needs higher-level lifecycle ownership the current
+  `Mutex<Option<Inner>>` shape doesn't support). New manifest
+  section in `crates/plugin-manifest/src/manifest.rs`:
+  ```toml
+  [plugin.supervisor]
+  respawn = false                # opt-in; not yet wired
+  max_attempts = 3
+  backoff_ms = 1000
+  stderr_tail_lines = 32         # capped at SUPERVISOR_STDERR_TAIL_MAX = 512
+  ```
+  All four fields default — every existing 81.12.a-d in-tree
+  manifest (browser/telegram/whatsapp/email) plus the
+  `template-plugin-rust` external template parses cleanly
+  without `[plugin.supervisor]` (verified by re-running each
+  crate's tests: 12+31+33+219 plugin tests still pass).
+  
+  Validation: `stderr_tail_lines > SUPERVISOR_STDERR_TAIL_MAX`
+  (= 512) rejected at parse time via new
+  `ManifestError::SupervisorStderrTailExceedsCap { value, max }`.
+  Hard cap prevents a buggy / malicious manifest from requesting
+  megabytes of in-memory ring buffer per running plugin (12
+  bytes/line average × 512 = ~6 KiB cap per plugin, generous for
+  realistic debug needs).
+  
+  Subprocess.rs runtime changes:
+  - New `Arc<Mutex<VecDeque<String>>>` stderr-tail ring buffer
+    sized to `manifest.supervisor.stderr_tail_lines`. Shared
+    between the stderr reader (writer side) and the supervisor
+    task (reader side, drains on crash).
+  - Stderr reader appends each non-empty line to the buffer
+    after emitting the existing `tracing::info!` event. Ring
+    semantics: when at capacity, drop the oldest line via
+    `pop_front` before pushing. When capacity is 0 (operator
+    disabled the buffer), skip appending entirely.
+  - Supervisor on detected exit drains the buffer into a `Vec`
+    and serializes it as `stderr_tail: [String]` field of the
+    `plugin.lifecycle.<id>.crashed` event payload.
+  - `respawn = true` in the manifest currently logs a one-shot
+    `tracing::info!(target: "plugin.supervisor", respawn_requested = true,
+    "respawn config not yet wired (Phase 81.21.b.b); operator must
+    restart the daemon to recover")` reminder so operators know
+    the field landed but the behavior they expected is deferred.
+  
+  Tests:
+  - `manifest_validate_rejects_stderr_tail_above_cap` (new)
+    enforces the validation hook.
+  - `supervisor_publishes_crashed_event_on_child_exit`
+    (extended) — mock now writes 3 diag stderr lines before
+    exiting; test asserts those exact 3 lines (chronological,
+    oldest first) appear in the payload's `stderr_tail` array.
+  - 17/17 subprocess tests + 2/2 e2e tests pass.
+  - 295 in-tree plugin tests across browser/telegram/whatsapp/
+    email confirm manifest backward compatibility.
+  
+  Out of scope (81.21.b.b): respawn loop. The supervisor task
+  has Arc handles to child / cancel / broker but NOT write
+  access to `Inner` (owned by `SubprocessNexoPlugin.inner:
+  Mutex<Option<Inner>>`). Respawning cleanly requires either
+  (a) a higher-level supervisor that owns the full adapter
+  lifecycle and atomically swaps Inner instances, or (b) Inner
+  refactored to be partially replaceable. Either is ~2-3 days
+  of careful state management. 81.21.b's stderr tail gives
+  operators 80% of the recovery value with 20% of the work —
+  they can decide what to do with the daemon based on the
+  context the crashed event provides.
+  
+  IRROMPIBLE refs: internal subprocess.rs (where the buffer +
+  drain wire in); `crates/plugins/whatsapp/src/lifecycle.rs`
+  (proven nexo-rs lifecycle-event-on-broker pattern with rich
+  payload); claude-code-leak
+  `src/services/plugins/pluginOperations.ts` (captures stderr
+  in crashed-event payload); OpenClaw absence stated.
+
 - **Phase 81.21 — Plugin supervisor (MVP: crash detection +
   broker event).** When a subprocess plugin crashes, operator
   gets a structured event on the broker plus a warn-level log

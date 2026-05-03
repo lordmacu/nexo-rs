@@ -52,5 +52,6 @@ pub use manifest::{
     AdvisorsSection, AgentsSection, Capabilities, Capability, CapabilityGateDecl,
     CapabilityGatesSection, ChannelDecl, ChannelsSection, ConfigSection, ContractsSection,
     EntrypointSection, GateKind, GateRisk, MetaSection, PluginManifest, PluginSection,
-    RequiresSection, SkillsSection, ToolsSection, UiHint, UiSection, PLUGIN_MANIFEST_FILENAME,
+    RequiresSection, SkillsSection, SupervisorSection, ToolsSection, UiHint, UiSection,
+    PLUGIN_MANIFEST_FILENAME, SUPERVISOR_STDERR_TAIL_MAX,
 };

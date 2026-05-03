@@ -49,6 +49,7 @@
 //!   Subprocess pattern in nexo is strictly tool-extension shape
 //!   (whisper) extended to channel plugins via 81.14.
 
+use std::collections::VecDeque;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
@@ -272,6 +273,19 @@ impl SubprocessNexoPlugin {
         // errors land in the operator's log.
         let stderr_cancel = cancel.clone();
         let stderr_plugin_id = self.cached_manifest.plugin.id.clone();
+        // Phase 81.21.b — ring buffer of last N stderr lines.
+        // Capacity comes from `manifest.supervisor.stderr_tail_lines`
+        // (validated at parse-time to be ≤ SUPERVISOR_STDERR_TAIL_MAX).
+        // Shared between the stderr reader (writer side) and the
+        // supervisor task (reader side, drains on crash for the
+        // crashed event payload). Mutex contention is rare:
+        // appends happen at child stderr rate, drain happens once
+        // per crash.
+        let stderr_tail_capacity = self.cached_manifest.plugin.supervisor.stderr_tail_lines;
+        let stderr_tail: Arc<Mutex<VecDeque<String>>> = Arc::new(Mutex::new(
+            VecDeque::with_capacity(stderr_tail_capacity.max(1)),
+        ));
+        let stderr_tail_for_reader = stderr_tail.clone();
         let stderr_handle = tokio::spawn(async move {
             let mut reader = BufReader::new(stderr).lines();
             loop {
@@ -302,6 +316,17 @@ impl SubprocessNexoPlugin {
                     line = %trimmed,
                     "child stderr"
                 );
+                // Append to the tail ring buffer; drop the oldest
+                // line when at capacity. `stderr_tail_capacity == 0`
+                // is degenerate (operator turned off the buffer);
+                // skip appending entirely so we don't grow.
+                if stderr_tail_capacity > 0 {
+                    let mut buf = stderr_tail_for_reader.lock().await;
+                    if buf.len() >= stderr_tail_capacity {
+                        buf.pop_front();
+                    }
+                    buf.push_back(trimmed.to_string());
+                }
             }
         });
 
@@ -492,6 +517,14 @@ impl SubprocessNexoPlugin {
         let supervisor_child = child_handle.clone();
         let supervisor_cancel = cancel.clone();
         let supervisor_plugin_id = self.cached_manifest.plugin.id.clone();
+        let supervisor_stderr_tail = stderr_tail.clone();
+        // Phase 81.21.b — `respawn = true` is parsed + validated
+        // but not yet wired to the actual respawn loop. Surface a
+        // one-shot reminder so operators know the manifest field
+        // landed but the behavior they expected is deferred to
+        // 81.21.b.b.
+        let supervisor_respawn_requested =
+            self.cached_manifest.plugin.supervisor.respawn;
         let supervisor_handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_millis(500));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -525,6 +558,26 @@ impl SubprocessNexoPlugin {
                             exit_code,
                             "subprocess plugin exited unexpectedly"
                         );
+                        // Phase 81.21.b — drain the stderr tail
+                        // ring buffer into a fresh Vec for the
+                        // crashed event payload. Up to
+                        // `supervisor.stderr_tail_lines` recent
+                        // lines (in chronological order, oldest
+                        // first). Empty when the buffer never
+                        // received anything OR the manifest set
+                        // `stderr_tail_lines = 0`.
+                        let stderr_tail_drained: Vec<String> = {
+                            let mut buf = supervisor_stderr_tail.lock().await;
+                            buf.drain(..).collect()
+                        };
+                        if supervisor_respawn_requested {
+                            tracing::info!(
+                                target: "plugin.supervisor",
+                                plugin_id = %supervisor_plugin_id,
+                                respawn_requested = true,
+                                "respawn config not yet wired (Phase 81.21.b.b); operator must restart the daemon to recover"
+                            );
+                        }
                         if let Some(broker) = supervisor_broker.as_ref() {
                             let topic = format!(
                                 "plugin.lifecycle.{}.crashed",
@@ -533,6 +586,7 @@ impl SubprocessNexoPlugin {
                             let payload = json!({
                                 "plugin_id": supervisor_plugin_id,
                                 "exit_code": exit_code,
+                                "stderr_tail": stderr_tail_drained,
                             });
                             let event =
                                 Event::new(&topic, "plugin.supervisor", payload);
@@ -1272,16 +1326,18 @@ sleep 5
     }
 
     /// Phase 81.21 — supervisor task detects child exit and
-    /// publishes a `plugin.lifecycle.<id>.crashed` event. We
-    /// drop a mock that exits 200ms after handshake (well below
-    /// the 500ms supervisor poll interval, but the supervisor
-    /// will catch it on its next tick — assertion uses a 2s
-    /// timeout so the wait is generous enough).
+    /// publishes a `plugin.lifecycle.<id>.crashed` event. The mock
+    /// also writes a few stderr lines so the test verifies
+    /// 81.21.b's stderr-tail capture: those lines must show up in
+    /// the event payload's `stderr_tail` field.
     #[tokio::test]
     async fn supervisor_publishes_crashed_event_on_child_exit() {
         let script = r#"#!/bin/sh
 read line
 echo '{"jsonrpc":"2.0","id":1,"result":{"manifest":{"plugin":{"id":"test_plugin","version":"0.1.0","name":"x","description":"x","min_nexo_version":">=0.1.0"}},"server_version":"mock-0.1.0"}}'
+echo "diag line 1" >&2
+echo "diag line 2" >&2
+echo "fatal: simulated crash cause" >&2
 sleep 0.2
 exit 7
 "#;
@@ -1328,6 +1384,68 @@ exit 7
             event.payload.get("exit_code").and_then(|v| v.as_i64()),
             Some(7)
         );
+        // Phase 81.21.b — stderr_tail must contain the 3 diag
+        // lines the mock wrote before exiting. Order is
+        // chronological (oldest first). The mock wrote the lines
+        // BEFORE the 0.2s sleep, so the stderr reader has plenty
+        // of time to populate the buffer before the supervisor's
+        // 500ms poll catches the exit.
+        let stderr_tail = event
+            .payload
+            .get("stderr_tail")
+            .and_then(|v| v.as_array())
+            .expect("stderr_tail field must be an array");
+        let lines: Vec<&str> = stderr_tail
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert_eq!(
+            lines,
+            vec![
+                "diag line 1",
+                "diag line 2",
+                "fatal: simulated crash cause"
+            ]
+        );
         cancel.cancel();
+    }
+
+    /// Phase 81.21.b — manifest validation rejects a stderr tail
+    /// request above the hard cap (preventing a buggy / malicious
+    /// manifest from requesting megabytes of in-memory ring
+    /// buffer per running plugin).
+    #[test]
+    fn manifest_validate_rejects_stderr_tail_above_cap() {
+        use nexo_plugin_manifest::SUPERVISOR_STDERR_TAIL_MAX;
+
+        let toml_str = format!(
+            r#"
+[plugin]
+id = "x"
+version = "0.1.0"
+name = "x"
+description = "x"
+min_nexo_version = ">=0.0.1"
+
+[plugin.supervisor]
+stderr_tail_lines = {}
+"#,
+            SUPERVISOR_STDERR_TAIL_MAX + 1
+        );
+        let manifest: PluginManifest =
+            toml::from_str(&toml_str).expect("manifest parses (cap is enforced at validate time, not parse)");
+        let mut errors = Vec::new();
+        nexo_plugin_manifest::validate::run_all(
+            &manifest,
+            &semver::Version::parse("0.1.0").unwrap(),
+            &mut errors,
+        );
+        assert!(
+            errors.iter().any(|e| matches!(
+                e,
+                nexo_plugin_manifest::ManifestError::SupervisorStderrTailExceedsCap { .. }
+            )),
+            "expected SupervisorStderrTailExceedsCap, got {errors:?}"
+        );
     }
 }
