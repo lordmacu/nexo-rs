@@ -572,6 +572,32 @@ coordinación de archivos cross-cutting.
   for cross-language SDK authoring + internal wire-change
   reviews.
 
+- **81.21 ✅ shipped 2026-05-01** — Plugin supervisor (MVP:
+  crash detection + broker event). Inner.child wrapped as
+  `Arc<Mutex<Option<Child>>>`. Supervisor task polls `try_wait()`
+  every 500ms; on exit publishes
+  `plugin.lifecycle.<id>.crashed { plugin_id, exit_code }` event
+  on broker (when wired) with `source = "plugin.supervisor"` +
+  warn log + cascades cancel.cancel(). New helper
+  `kill_handle(&Arc<Mutex<Option<Child>>>)` consolidates kill
+  sites. shutdown() locks the mutex idempotently with supervisor.
+  1 new unit test + 3 existing task-count assertions updated.
+  15/15 subprocess + 2/2 e2e tests pass. Auto-respawn +
+  backoff + resource limits deferred to 81.21.b/.c.
+
+- **81.21.b ⬜** Plugin supervisor: auto-respawn + backoff policy.
+  Manifest config `supervisor.{respawn: bool, max_attempts: u32,
+  backoff_ms: u64}` + respawn loop in supervisor task on detected
+  crash. Stderr tail capture (~last 32 lines) attached to crash
+  event for operator context. Required before community-tier
+  plugins are safe in production. ~1 d.
+
+- **81.21.c ⬜** Plugin resource limits. OS-divergent: linux
+  cgroup v2 + rlimit, macOS sandbox-exec resource caps, fallback
+  to monitoring on others. Manifest knobs `limits.cpu_pct` /
+  `limits.mem_mb` / `limits.startup_timeout_ms`. Required to
+  gate community-tier plugins. ~3 d.
+
 - **81.23 ✅ shipped 2026-05-01** — Plugin stdio → daemon tracing
   bridge. subprocess.rs flips `stderr(Stdio::null())` →
   `stderr(Stdio::piped())` + new stderr reader task forwards

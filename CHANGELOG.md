@@ -10,6 +10,81 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.21 — Plugin supervisor (MVP: crash detection +
+  broker event).** When a subprocess plugin crashes, operator
+  gets a structured event on the broker plus a warn-level log
+  with the exit code. Auto-respawn + resource limits deferred to
+  81.21.b/c — this slice is just the detection-and-emission
+  foundation production deployments need.
+  
+  `Inner.child` rewrapped from `Option<Child>` to
+  `Arc<Mutex<Option<Child>>>` so the supervisor task can
+  `try_wait()` every 500ms (lock-poll-unlock — non-blocking)
+  while shutdown can still `take()` for reaping. Mutex
+  contention is cheap: one half-second poll vs single take on
+  shutdown. New helper `kill_handle(&Arc<Mutex<Option<Child>>>)`
+  consolidates the kill-on-error sites in spawn_and_handshake.
+  
+  Supervisor task spawned alongside writer / stdout-reader /
+  stderr-reader. Captures `broker.clone()` (Option), the child
+  Arc, the cancellation token, and the plugin id. Polls
+  `child.try_wait()` every 500ms via
+  `tokio::time::interval(500ms).tick()`. On detected exit:
+  - Logs at warn level: `plugin.supervisor`, `plugin_id`,
+    `exit_code`
+  - When broker is wired: publishes
+    `plugin.lifecycle.<plugin_id>.crashed` event with payload
+    `{ plugin_id, exit_code }` + `source = "plugin.supervisor"`.
+    Operators subscribe with `broker.subscribe("plugin.lifecycle.>")`
+    to observe crashes across all plugins.
+  - Cascade-teardown: cancels the plugin's `cancel` token so
+    writer / readers / forwarders exit before they try to use
+    pipes attached to a dead child.
+  
+  shutdown() lock-takes the child + waits 1s + kills — works
+  idempotently with supervisor (whichever observes the child
+  first takes it; the other sees None and skips). Cancellation
+  via `supervisor_cancel.cancelled()` returns the supervisor
+  task cleanly during graceful shutdown without firing a
+  crashed event (graceful shutdown ≠ crash).
+  
+  1 new unit test
+  `supervisor_publishes_crashed_event_on_child_exit` drops a
+  mock script that exits with code 7 about 200ms after handshake;
+  test subscribes to `plugin.lifecycle.test_plugin.crashed`
+  before init, asserts the event arrives within 2s with
+  `exit_code: 7` and `source: "plugin.supervisor"`. The 500ms
+  poll catches the exit on the second tick — 2s timeout is
+  comfortably above worst-case wakeup.
+  
+  Three existing task-count assertions updated (+1 for
+  supervisor):
+  - `bridge_subscribes_outbound_topics_for_each_channel_register_kind`:
+    5 → 6 (writer + stdout-reader + stderr-reader + supervisor +
+    2 forwarder tasks)
+  - `bridge_skipped_when_broker_is_none`: 3 → 4 (writer +
+    stdout-reader + stderr-reader + supervisor)
+  - `stderr_is_piped_so_reader_can_construct`: 3 → 4
+  
+  15/15 subprocess unit tests + 2/2 e2e tests pass.
+  
+  Out of scope (tracked):
+  - 81.21.b: auto-respawn + backoff policy (manifest config:
+    `supervisor.{respawn: bool, max_attempts: u32, backoff_ms: u64}`)
+    + stderr tail capture (~last 32 lines) attached to crash
+    event for context.
+  - 81.21.c: resource limits via cgroup v2 + rlimit on linux,
+    sandbox-exec on macOS. Manifest knobs: `limits.cpu_pct` /
+    `limits.mem_mb` / `limits.startup_timeout_ms`. Required to
+    gate community-tier plugins safely.
+  
+  IRROMPIBLE refs: internal subprocess.rs (where supervisor wires
+  in); internal `crates/plugins/whatsapp/src/lifecycle.rs`
+  (proven nexo-rs lifecycle-event-on-broker pattern that 81.21
+  mirrors for subprocess crashes); claude-code-leak
+  `src/services/plugins/pluginOperations.ts` (plugin process exit
+  → state change events); OpenClaw absence stated.
+
 - **Phase 81.23 — Plugin stdio → daemon tracing bridge.** Child
   process stderr is now piped into the daemon's tracing subsystem
   instead of discarded; plugin authors using `eprintln!` /
