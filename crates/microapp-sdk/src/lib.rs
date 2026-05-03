@@ -45,6 +45,9 @@ pub mod notifications;
 #[cfg(feature = "outbound")]
 pub mod outbound;
 
+#[cfg(feature = "plugin")]
+pub mod plugin;
+
 #[cfg(feature = "test-harness")]
 pub mod test_harness;
 
@@ -58,6 +61,9 @@ pub use runtime::ToolHandler;
 
 #[cfg(feature = "outbound")]
 pub use outbound::{DispatchAck, DispatchError, OutboundDispatcher};
+
+#[cfg(feature = "plugin")]
+pub use plugin::{BrokerEventHandler, BrokerSender, PluginAdapter, ShutdownHandler};
 
 #[cfg(feature = "admin")]
 pub use admin::{AdminClient, AdminError, AdminSender, DEFAULT_ADMIN_TIMEOUT};

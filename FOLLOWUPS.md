@@ -488,6 +488,40 @@ coordinación de archivos cross-cutting.
   plugins. 4 new unit tests cover subscribe pattern derivation,
   child publish forwarding, allowlist rejection, broker=None skip.
 
+- **81.15.a ✅ shipped 2026-05-01** — `nexo-microapp-sdk`
+  `plugin` feature + `PluginAdapter` child-side helper. New module
+  `crates/microapp-sdk/src/plugin.rs` (~430 LOC) gated behind a
+  new optional `plugin` Cargo feature with deps on
+  `nexo-plugin-manifest` + `nexo-broker` + `toml`. Builder API:
+  `PluginAdapter::new(manifest_toml)` parses the bundled manifest
+  at construction; `.on_broker_event(handler)` registers a closure
+  that receives `(topic, event, BrokerSender)`; `.on_shutdown(handler)`
+  registers an async cleanup hook; `.run_stdio()` drives the
+  dispatch loop. Child-side `BrokerSender` is clone-cheap and
+  exposes `publish(topic, event)` that emits a `broker.publish`
+  notification (no `id`) on stdout. Dispatch loop handles
+  `initialize` (replies with cached manifest), `broker.event`
+  notifications, `shutdown` (invokes hook, replies, breaks loop),
+  unknown methods (`-32601`), parse errors (`-32700`). 6 unit
+  tests using `tokio::io::duplex` for end-to-end simulation.
+  Mirrors the structural pattern of `runtime.rs::dispatch_loop`
+  but uses a different lifecycle envelope (manifest reply +
+  broker notifications) so consciously authored as a parallel
+  module rather than extending the existing one — different
+  trajectories shouldn't couple.
+
+- **81.15.b ⬜** Rust plugin template repo
+  (`github.com/nexo-rs/plugin-template-rust`). External repo
+  bootstrap; single commit. Includes: Cargo.toml with
+  `nexo-microapp-sdk = { features = ["plugin"] }`,
+  `nexo-plugin.toml` skeleton (id placeholder + minimal
+  channels.register entry), `src/main.rs` example with
+  `PluginAdapter::new(include_str!("../nexo-plugin.toml"))`,
+  README walkthrough, GitHub Actions CI template (build per-target
+  + cosign sign + tag-driven release stub awaiting Phase 31.2).
+  Out of this workspace's scope. ~1 d effort. Required before
+  Phase 31.6 `nexo plugin new --lang rust` scaffolder can clone it.
+
 Critical path: 81.1 → 81.2 → 81.5 → 81.9 (~3 días). Después
 de 81.9 plugin model is fully operational. Out-of-tree path
 adds 81.14 → 81.14.b → 81.15 → 81.16 → 81.17 → 81.18 →

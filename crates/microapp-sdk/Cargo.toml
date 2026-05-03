@@ -27,6 +27,12 @@ webhook       = []
 # microapps that fan out daemon notifications to per-connection
 # SSE streams.
 notifications = []
+# Phase 81.15.a — child-side `PluginAdapter` for out-of-tree
+# subprocess plugins. Gated so existing microapp consumers don't
+# pull the `nexo-plugin-manifest` + `nexo-broker` deps unless they
+# author plugins. Plugin authors enable this feature in their
+# Cargo.toml; microapp authors leave it off.
+plugin = ["dep:nexo-plugin-manifest", "dep:nexo-broker", "dep:toml"]
 
 [dependencies]
 serde       = { workspace = true, features = ["derive"] }
@@ -42,6 +48,12 @@ uuid        = { workspace = true }
 # (only the `admin` feature pulls it). Keeps the default
 # microapp dep tree slim.
 dashmap     = { workspace = true, optional = true }
+# Phase 81.15.a — gated by the `plugin` feature. Pulled only by
+# plugin authors who use `PluginAdapter`; microapp authors leave
+# the feature off and don't pay the dep cost.
+nexo-plugin-manifest = { version = "0.1.0", path = "../plugin-manifest", optional = true }
+nexo-broker = { version = "0.1.1", path = "../broker", optional = true }
+toml = { version = "0.8", optional = true }
 
 [dev-dependencies]
 nexo-microapp-sdk = { path = ".", features = ["test-harness", "outbound"] }
