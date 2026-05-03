@@ -30,6 +30,27 @@ use super::{
 use crate::agent::channel_adapter::ChannelAdapterRegistry;
 use crate::agent::plugin_host::NexoPlugin;
 use crate::config_reload::ConfigReloadCoordinator;
+use nexo_broker::AnyBroker;
+use tokio_util::sync::CancellationToken;
+
+/// Phase 81.17.b — runtime handles the caller (main.rs) supplies
+/// so the auto-subprocess fallback in
+/// `run_plugin_init_loop_with_factory` can build a real
+/// `PluginInitContext` for `SubprocessNexoPlugin::init`.
+///
+/// Today the subprocess adapter only reads `broker` + `shutdown`
+/// from the context. Other registries (tool / advisor / hook /
+/// llm / channel_adapter / sessions / reload_coord) get stub
+/// `::new()` instances inside `wire_plugin_registry`'s ctx_factory
+/// because the subprocess path doesn't touch them. `config_dir`
+/// + `state_root` are passed so the SDK's `plugin_config_dir(id)`
+/// helper resolves correctly when 81.20+ extends the contract.
+pub struct SubprocessRuntime {
+    pub broker: AnyBroker,
+    pub shutdown: CancellationToken,
+    pub config_dir: PathBuf,
+    pub state_root: PathBuf,
+}
 
 /// Phase 81.9 — bundle of registry handles produced by
 /// [`wire_plugin_registry`] and consumed by the per-agent boot loop.
@@ -61,6 +82,15 @@ pub struct WirePluginRegistryOutput {
     /// `requires.nexo_capabilities` that are not currently wired
     /// in the daemon.
     pub unmet_required_capabilities: Vec<UnmetRequirement>,
+
+    /// Phase 81.17.b — live `Arc<dyn NexoPlugin>` handles produced
+    /// by the auto-subprocess fallback (and any in-tree factory).
+    /// Caller MUST retain this output for the daemon's lifetime —
+    /// dropping these handles triggers `Arc::drop` on each plugin
+    /// which, for `SubprocessNexoPlugin`, SIGKILLs the child
+    /// process via `Command::kill_on_drop(true)`. Empty when no
+    /// factory was wired.
+    pub plugin_handles: BTreeMap<String, Arc<dyn NexoPlugin>>,
 }
 
 /// Phase 81.9 — atomic 4-step plugin registry boot wire.
@@ -80,13 +110,46 @@ pub struct WirePluginRegistryOutput {
 /// + the snapshot's `skill_roots` is populated. Single
 /// `tracing::info!(target: "plugins.discovery")` summary emitted
 /// at end with eight fields.
-pub fn wire_plugin_registry(
+pub async fn wire_plugin_registry(
     cfg: &mut AgentsConfig,
     discovery_cfg: &PluginDiscoveryConfig,
     current_version: &Version,
     core_env_vars: &[(&str, &str)],
     available_capabilities: &BTreeSet<String>,
     factory_registry: Option<&PluginFactoryRegistry>,
+) -> WirePluginRegistryOutput {
+    wire_plugin_registry_with_runtime(
+        cfg,
+        discovery_cfg,
+        current_version,
+        core_env_vars,
+        available_capabilities,
+        factory_registry,
+        None,
+    )
+    .await
+}
+
+/// Phase 81.17.b — variant of [`wire_plugin_registry`] that
+/// accepts an optional [`SubprocessRuntime`] from the caller.
+/// When `factory_registry: Some` AND `subprocess_runtime: Some`,
+/// the auto-subprocess fallback in
+/// `run_plugin_init_loop_with_factory` builds a real
+/// `PluginInitContext` (using the runtime's broker + shutdown +
+/// config_dir + state_root, plus stub registries for the other
+/// fields the subprocess path doesn't read). With
+/// `subprocess_runtime: None` (the default) and a Some
+/// factory_registry, the legacy `unreachable!()` ctx_factory
+/// fires — preserving the existing 81.12.0 contract for callers
+/// that haven't migrated.
+pub async fn wire_plugin_registry_with_runtime(
+    cfg: &mut AgentsConfig,
+    discovery_cfg: &PluginDiscoveryConfig,
+    current_version: &Version,
+    core_env_vars: &[(&str, &str)],
+    available_capabilities: &BTreeSet<String>,
+    factory_registry: Option<&PluginFactoryRegistry>,
+    subprocess_runtime: Option<&SubprocessRuntime>,
 ) -> WirePluginRegistryOutput {
     // 1. discover.
     let snap = discover(discovery_cfg, current_version);
@@ -107,22 +170,52 @@ pub fn wire_plugin_registry(
     //    records NoHandle. ctx_factory closure is `unreachable!`
     //    because no current factory's init body actually consumes
     //    a real `PluginInitContext` until 81.12.a-e ship.
-    let init_outcomes = match factory_registry {
-        Some(factory) => {
-            let fut = run_plugin_init_loop_with_factory(
+    let (init_outcomes, plugin_handles): (
+        BTreeMap<String, super::InitOutcome>,
+        BTreeMap<String, Arc<dyn NexoPlugin>>,
+    ) = match (factory_registry, subprocess_runtime) {
+        (Some(factory), Some(rt)) => {
+            // Phase 81.17.b — caller wired a real subprocess runtime,
+            // so the ctx_factory builds a real-enough PluginInitContext
+            // for the subprocess fallback. Stubbed registries are
+            // fine because SubprocessNexoPlugin::init only reads
+            // ctx.broker + ctx.shutdown today. `stubs` lives inside
+            // this match arm, the closure borrows from it.
+            let stubs = SubprocessCtxStubs::build(rt);
+            let r = run_plugin_init_loop_with_factory(
+                &snap,
+                factory,
+                |id| stubs.context_for(id, rt),
+            )
+            .await;
+            (r.outcomes, r.handles)
+        }
+        (Some(factory), None) => {
+            // Legacy 81.12.0 contract path: caller registered an
+            // in-tree factory whose init body does NOT consume
+            // PluginInitContext. The unreachable!() here fires only
+            // if a manifest with `entrypoint.command` slips into the
+            // snapshot (auto-subprocess fallback then tries to use
+            // ctx.broker) — that's a programmer error, not an
+            // operator error: caller should have used
+            // `wire_plugin_registry_with_runtime` with
+            // `subprocess_runtime: Some(...)`.
+            let r = run_plugin_init_loop_with_factory(
                 &snap,
                 factory,
                 |_id| -> crate::agent::plugin_host::PluginInitContext<'_> {
                     unreachable!(
-                        "wire_plugin_registry's ctx_factory not yet wired for real plugins; 81.12.a-e populate this"
+                        "wire_plugin_registry: subprocess_runtime is None but a manifest with entrypoint was discovered. \
+                         Use wire_plugin_registry_with_runtime(...subprocess_runtime: Some(_)) when subprocess plugins might be present."
                     )
                 },
-            );
-            futures::executor::block_on(fut)
+            )
+            .await;
+            (r.outcomes, r.handles)
         }
-        None => {
+        (None, _) => {
             let empty_handles: BTreeMap<String, Arc<dyn NexoPlugin>> = BTreeMap::new();
-            let fut = run_plugin_init_loop(
+            let outcomes = run_plugin_init_loop(
                 &snap,
                 &empty_handles,
                 |_id| -> crate::agent::plugin_host::PluginInitContext<'_> {
@@ -130,8 +223,9 @@ pub fn wire_plugin_registry(
                         "wire_plugin_registry passes empty handles; ctx_factory must not be invoked"
                     )
                 },
-            );
-            futures::executor::block_on(fut)
+            )
+            .await;
+            (outcomes, BTreeMap::new())
         }
     };
 
@@ -222,6 +316,70 @@ pub fn wire_plugin_registry(
         channel_adapter_registry: Arc::new(ChannelAdapterRegistry::new()),
         plugin_capability_gates: plugin_capability_gates_for_output,
         unmet_required_capabilities: unmet_required_for_output,
+        plugin_handles,
+    }
+}
+
+/// Phase 81.17.b — stub registries reused across every subprocess
+/// plugin's `PluginInitContext`. `SubprocessNexoPlugin::init` only
+/// reads `ctx.broker` + `ctx.shutdown` today, so the rest stay
+/// empty. Owned by the dispatch closure inside
+/// `wire_plugin_registry_with_runtime` and dropped when boot
+/// completes — they live just long enough for `init()` to clone
+/// the broker handle.
+struct SubprocessCtxStubs {
+    tool_registry: Arc<crate::agent::tool_registry::ToolRegistry>,
+    advisor_registry: Arc<tokio::sync::RwLock<nexo_driver_permission::AdvisorRegistry>>,
+    hook_registry: Arc<crate::agent::hook_registry::HookRegistry>,
+    llm_registry: Arc<nexo_llm::LlmRegistry>,
+    reload_coord: Arc<ConfigReloadCoordinator>,
+    sessions: Arc<crate::session::SessionManager>,
+    channel_adapter_registry: Arc<ChannelAdapterRegistry>,
+}
+
+impl SubprocessCtxStubs {
+    fn build(rt: &SubprocessRuntime) -> Self {
+        let llm_registry = Arc::new(nexo_llm::LlmRegistry::new());
+        let reload_coord = Arc::new(ConfigReloadCoordinator::new(
+            rt.config_dir.clone(),
+            llm_registry.clone(),
+            rt.shutdown.clone(),
+        ));
+        Self {
+            tool_registry: Arc::new(crate::agent::tool_registry::ToolRegistry::new()),
+            advisor_registry: Arc::new(tokio::sync::RwLock::new(
+                nexo_driver_permission::AdvisorRegistry::new(),
+            )),
+            hook_registry: Arc::new(crate::agent::hook_registry::HookRegistry::new()),
+            llm_registry,
+            reload_coord,
+            sessions: Arc::new(crate::session::SessionManager::new(
+                std::time::Duration::from_secs(60),
+                8,
+            )),
+            channel_adapter_registry: Arc::new(ChannelAdapterRegistry::new()),
+        }
+    }
+
+    fn context_for<'env>(
+        &'env self,
+        _id: &str,
+        rt: &'env SubprocessRuntime,
+    ) -> crate::agent::plugin_host::PluginInitContext<'env> {
+        crate::agent::plugin_host::PluginInitContext {
+            config_dir: rt.config_dir.as_path(),
+            state_root: rt.state_root.as_path(),
+            tool_registry: self.tool_registry.clone(),
+            advisor_registry: self.advisor_registry.clone(),
+            hook_registry: self.hook_registry.clone(),
+            broker: rt.broker.clone(),
+            llm_registry: self.llm_registry.clone(),
+            reload_coord: self.reload_coord.clone(),
+            sessions: self.sessions.clone(),
+            long_term_memory: None,
+            shutdown: rt.shutdown.clone(),
+            channel_adapter_registry: self.channel_adapter_registry.clone(),
+        }
     }
 }
 

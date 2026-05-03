@@ -1045,7 +1045,7 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         Mode::DoctorPlugins { json } => {
-            let exit_code = run_doctor_plugins(&args.config_dir, json)?;
+            let exit_code = run_doctor_plugins(&args.config_dir, json).await?;
             std::process::exit(exit_code);
         }
         Mode::SetupTelegramLink { agent } => {
@@ -1952,24 +1952,46 @@ async fn main() -> Result<()> {
     let core_envs = core_capability_env_vars();
     let available_caps = build_available_capabilities(&cfg);
     let discovery_cfg_clone = cfg.plugins.discovery.clone();
-    // Phase 81.17 — auto-subprocess fallback shipped library-side
-    // in `run_plugin_init_loop_with_factory` but the boot wire stays
-    // `None` for now: activating it via `Some(&factory_registry)`
-    // would route through the `unreachable!()` ctx_factory in
-    // `boot.rs`, which would panic the moment an operator drops a
-    // subprocess manifest into `plugins.discovery.search_paths`.
-    // Phase 81.17.b extends `wire_plugin_registry` to accept a real
-    // broker + shutdown token from this main.rs scope so the
-    // subprocess path can build a minimal `PluginInitContext`.
-    let wire = nexo_core::agent::nexo_plugin_registry::wire_plugin_registry(
-        &mut cfg.agents,
-        &discovery_cfg_clone,
-        &semver::Version::parse(env!("CARGO_PKG_VERSION"))
-            .unwrap_or_else(|_| semver::Version::new(0, 0, 0)),
-        &core_envs,
-        &available_caps,
-        None,
-    );
+    // Phase 81.17.b — empty in-tree factory registry plus a
+    // `SubprocessRuntime` carrying the broker + shutdown token +
+    // config/state roots activate the auto-subprocess fallback in
+    // `run_plugin_init_loop_with_factory`. Any discovered manifest
+    // with `[plugin.entrypoint] command = "..."` gets instantiated
+    // as a `SubprocessNexoPlugin` automatically; operator's only
+    // job is to drop the manifest into a
+    // `plugins.discovery.search_paths` directory. In-tree plugins
+    // (browser/telegram/whatsapp/email) keep their dormant
+    // manifests OUT of `search_paths` and continue via the legacy
+    // block above until 81.18-81.19 extract them out-of-tree.
+    let factory_registry =
+        nexo_core::agent::nexo_plugin_registry::PluginFactoryRegistry::new();
+    let plugin_state_root = std::env::var("NEXO_STATE_ROOT")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| config_dir.clone());
+    // Local cancellation token — daemon's main shutdown isn't yet
+    // a single shared resource at this scope; the subprocess
+    // adapter spawns each child with `kill_on_drop(true)` so the
+    // children die with the daemon process anyway. 81.21 wires
+    // graceful shutdown through a real supervisor.
+    let subprocess_shutdown = tokio_util::sync::CancellationToken::new();
+    let subprocess_runtime = nexo_core::agent::nexo_plugin_registry::SubprocessRuntime {
+        broker: broker.clone(),
+        shutdown: subprocess_shutdown,
+        config_dir: config_dir.clone(),
+        state_root: plugin_state_root,
+    };
+    let wire =
+        nexo_core::agent::nexo_plugin_registry::wire_plugin_registry_with_runtime(
+            &mut cfg.agents,
+            &discovery_cfg_clone,
+            &semver::Version::parse(env!("CARGO_PKG_VERSION"))
+                .unwrap_or_else(|_| semver::Version::new(0, 0, 0)),
+            &core_envs,
+            &available_caps,
+            Some(&factory_registry),
+            Some(&subprocess_runtime),
+        )
+        .await;
     // `wire.registry` + `wire.skill_roots` +
     // `wire.channel_adapter_registry` stay in scope for 81.10 hot-
     // reload registration + 81.12 per-agent threading without
@@ -6670,7 +6692,7 @@ fn build_available_capabilities(
     set
 }
 
-fn run_doctor_plugins(config_dir: &std::path::Path, json: bool) -> Result<i32> {
+async fn run_doctor_plugins(config_dir: &std::path::Path, json: bool) -> Result<i32> {
     let cfg = nexo_config::AppConfig::load(config_dir)
         .with_context(|| format!("failed to load config from {}", config_dir.display()))?;
     let core_envs = core_capability_env_vars();
@@ -6687,7 +6709,8 @@ fn run_doctor_plugins(config_dir: &std::path::Path, json: bool) -> Result<i32> {
         // Phase 81.12.0 — doctor handler runs the same offline
         // pipeline as boot wire; no factories registered yet.
         None,
-    );
+    )
+    .await;
     let snap = wire.registry.snapshot();
     let exit_code =
         nexo_core::agent::nexo_plugin_registry::doctor_render::determine_exit_code(&snap);

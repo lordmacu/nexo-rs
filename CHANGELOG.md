@@ -8,6 +8,96 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ## [Unreleased]
 
+### Changed
+
+- **Phase 81.17.b — `wire_plugin_registry` is now async + retains
+  plugin handles + supports `SubprocessRuntime`.** Three coupled
+  changes that finally activate the auto-subprocess pipeline
+  end-to-end through main.rs.
+  
+  **(1) Async signature.** The prior sync `wire_plugin_registry`
+  used `futures::executor::block_on` to drive the inner
+  `run_plugin_init_loop_with_factory` future. That deadlocked the
+  moment the subprocess fallback tried to spawn a child via
+  `tokio::process::Command::spawn` from inside the futures
+  executor — tokio's IO driver couldn't see the spawned child
+  because the futures executor doesn't expose tokio runtime
+  context, and the futures executor itself blocks the tokio
+  worker thread it was called from. Rewrote both
+  `wire_plugin_registry` and the 81.17.b-new
+  `wire_plugin_registry_with_runtime` as `async fn`s; each of the
+  three internal `block_on` arms became `.await`. All 5 call sites
+  updated: `src/main.rs` ×2 (boot wire + `run_doctor_plugins` —
+  also turned async), 3 integration tests
+  (`wire_plugin_registry_integration.rs`,
+  `plugin_factory_registry_integration.rs`,
+  `subprocess_plugin_e2e.rs`). `run_doctor_plugins` propagated
+  to `Mode::DoctorPlugins` arm in main.rs.
+  
+  **(2) Handle retention.** New return type
+  `FactoryInitResult { outcomes, handles: BTreeMap<String, Arc<dyn NexoPlugin>> }`
+  for `run_plugin_init_loop_with_factory`. Without retention,
+  the auto-subprocess fallback's `Arc<SubprocessNexoPlugin>` was
+  dropped immediately after `init()` returned — and because
+  `tokio::process::Command::kill_on_drop(true)` is set on the
+  spawned child, dropping the Arc SIGKILLed the child a few ms
+  after handshake, before any `broker.publish` notification could
+  cross. New field `WirePluginRegistryOutput.plugin_handles` —
+  caller MUST retain to keep subprocess plugins alive for the
+  daemon's runtime. main.rs's `wire` binding stays in scope for
+  the daemon's lifetime, so the handles live until process exit.
+  
+  **(3) `SubprocessRuntime` plumbing.** New struct
+  `SubprocessRuntime { broker: AnyBroker, shutdown: CancellationToken,
+  config_dir: PathBuf, state_root: PathBuf }` carries the runtime
+  handles the subprocess path needs to build a real
+  `PluginInitContext`. New function
+  `wire_plugin_registry_with_runtime(...)` accepts an optional
+  `&SubprocessRuntime` as a 7th parameter; when paired with a
+  Some `factory_registry`, builds `SubprocessCtxStubs` with stub
+  `Arc::new(<Registry>::new())` instances for the fields the
+  subprocess path doesn't read (tool / advisor / hook / llm /
+  channel_adapter / sessions / reload_coord). Uses runtime's real
+  broker + shutdown + config_dir + state_root. Single `'env`
+  lifetime parameter on `run_plugin_init_loop_with_factory`
+  replaces the prior HRTB so the closure can borrow from
+  `&stubs` + `&runtime` (HRTB demanded `'static` because the
+  closure had to be valid for any input lifetime).
+  
+  main.rs activation: empty factory_registry + populated
+  `SubprocessRuntime` + `Some(&factory_registry) + Some(&runtime)`
+  → auto-subprocess fallback fires for any discovered manifest
+  with `[plugin.entrypoint] command = "..."`. Operator's only job
+  is to drop the manifest + binary into a
+  `plugins.discovery.search_paths` directory. In-tree plugins
+  (browser/telegram/whatsapp/email) keep their dormant manifests
+  OUT of `search_paths` and continue via the legacy registration
+  block above until 81.18-81.19 extract them.
+  
+  New integration test `crates/core/tests/subprocess_plugin_e2e.rs`:
+  - `auto_subprocess_pipeline_initializes_and_forwards_publish`
+    builds a tempdir with `nexo-plugin.toml` + a bash mock script
+    that responds to `initialize` + emits one `broker.publish`
+    notification, runs `wire_plugin_registry_with_runtime`,
+    asserts `InitOutcome::Ok` plus broker subscriber receives the
+    forwarded event within 2s.
+  - `manifest_without_entrypoint_keeps_no_handle_outcome` is the
+    defensive regression: confirms a manifest WITHOUT
+    `entrypoint.command` keeps `InitOutcome::NoHandle` even with
+    the activated boot wire (so in-tree dormant manifests don't
+    accidentally get spawned as subprocesses).
+  
+  2/2 e2e tests pass. 5/5 init_loop unit tests pass. Pre-existing
+  `nexo-core::exposable_catalog_test::every_always_entry_boots_with_full_context`
+  failure on main is unrelated (verified via stash).
+  
+  IRROMPIBLE refs: internal subprocess.rs (host wire) +
+  microapp-sdk plugin.rs (child SDK) + nexo-plugin-contract.md
+  (canonical spec) — three pieces shipped previously, now wired
+  end-to-end through the daemon's boot path. claude-code-leak
+  `src/services/plugins/pluginOperations.ts` per-id runtime
+  instantiation pattern; OpenClaw absence stated.
+
 ### Added
 
 - **Phase 81.17 — Auto-subprocess init-loop fallback.**

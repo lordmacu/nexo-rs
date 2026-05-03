@@ -60,7 +60,8 @@ async fn factory_driven_path_records_failed_outcome_for_registered_plugin() {
         &[],
         &BTreeSet::new(),
         Some(&registry),
-    );
+    )
+    .await;
 
     let snap = wire.registry.snapshot();
     let outcome = snap
@@ -102,7 +103,8 @@ async fn factory_none_path_preserves_no_handle_default() {
         &[],
         &BTreeSet::new(),
         None,
-    );
+    )
+    .await;
 
     let snap = wire.registry.snapshot();
     assert!(matches!(
