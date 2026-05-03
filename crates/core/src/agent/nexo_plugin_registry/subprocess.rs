@@ -1131,8 +1131,20 @@ impl NexoPlugin for SubprocessNexoPlugin {
         &self,
         ctx: &mut PluginInitContext<'_>,
     ) -> Result<(), PluginInitError> {
+        // Phase 81.20.b.b — build LlmServices from the context's
+        // already-threaded registry + config so `llm.complete`
+        // RPC requests reach operator-configured providers.
+        let llm = Some(LlmServices {
+            registry: ctx.llm_registry.clone(),
+            config: ctx.llm_config.clone(),
+        });
         let inner = self
-            .spawn_and_handshake(ctx.shutdown.clone(), Some(ctx.broker.clone()), ctx.long_term_memory.clone(), None)
+            .spawn_and_handshake(
+                ctx.shutdown.clone(),
+                Some(ctx.broker.clone()),
+                ctx.long_term_memory.clone(),
+                llm,
+            )
             .await
             .map_err(|source| PluginInitError::Other {
                 plugin_id: self.cached_manifest.plugin.id.clone(),

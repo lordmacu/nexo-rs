@@ -603,19 +603,19 @@ coordinación de archivos cross-cutting.
   SubprocessRuntime. Runtime threading + streaming deferred to
   81.20.b.b. 22/22 subprocess + 2/2 e2e tests pass.
 
-- **81.20.b.b ⬜** main.rs threads LlmServices into subprocess
-  runtime + streaming via `llm.complete.delta` notifications.
-  (1) Plumb `cfg.llm: Arc<LlmConfig>` into
-  `SubprocessRuntime.llm` so handler stops returning -32603.
-  Either extend `PluginInitContext` with
-  `llm_config: Arc<LlmConfig>` (so SubprocessNexoPlugin::init
-  builds LlmServices inline) OR thread LlmServices via
-  SubprocessCtxStubs. (2) Streaming: switch `client.chat` to
-  `client.stream`, emit `llm.complete.delta` notifications per
-  chunk + final `llm.complete.done`; reply to original request
-  with the same id but result containing only final usage +
-  finish_reason. SDK helpers for streaming consumption land in
-  81.15.c. ~1.5 d.
+- **81.20.b.b ✅ shipped 2026-05-01** — Runtime threading half.
+  PluginInitContext extended with `llm_config: Arc<LlmConfig>`.
+  SubprocessNexoPlugin::init builds LlmServices from
+  `ctx.llm_registry + ctx.llm_config`. SubprocessRuntime fields
+  flattened (`llm_registry` + `llm_config`). main.rs threads
+  real handles. Streaming carved out as 81.20.b.c (~1 d).
+  22/22 subprocess + 2/2 e2e tests pass.
+
+- **81.20.b.c ⬜** Streaming via `llm.complete.delta`
+  notifications. Switch `client.chat` to `client.stream`, emit
+  delta notifications per chunk, final `llm.complete.done` +
+  reply with final usage. SDK helpers for streaming consumption
+  in 81.15.c. ~1 d.
 
 - **81.20.c ⬜** Daemon-mediated `tool.dispatch` RPC. Extends
   `handle_child_request` match. Needs ToolRegistry in

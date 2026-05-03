@@ -111,7 +111,8 @@ async fn auto_subprocess_pipeline_initializes_and_forwards_publish() {
         config_dir: tmp.path().to_path_buf(),
         state_root: tmp.path().to_path_buf(),
         long_term_memory: None,
-        llm: None,
+        llm_registry: std::sync::Arc::new(nexo_llm::LlmRegistry::new()),
+        llm_config: std::sync::Arc::new(nexo_config::LlmConfig { providers: std::collections::HashMap::new(), retry: Default::default(), context_optimization: Default::default(), tenants: std::collections::HashMap::new() }),
     };
 
     // Cap the initialize-reply window short for the test so a
@@ -208,7 +209,8 @@ nexo_capabilities = ["broker"]
         config_dir: tmp.path().to_path_buf(),
         state_root: tmp.path().to_path_buf(),
         long_term_memory: None,
-        llm: None,
+        llm_registry: std::sync::Arc::new(nexo_llm::LlmRegistry::new()),
+        llm_config: std::sync::Arc::new(nexo_config::LlmConfig { providers: std::collections::HashMap::new(), retry: Default::default(), context_optimization: Default::default(), tenants: std::collections::HashMap::new() }),
     };
 
     let wire = wire_plugin_registry_with_runtime(
