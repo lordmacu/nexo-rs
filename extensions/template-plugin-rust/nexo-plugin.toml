@@ -56,7 +56,7 @@ adapter = "TemplateEchoAdapter"
 # operators running the binary from a release tarball will replace
 # this with `/usr/local/bin/template-plugin-rust` or similar.
 [plugin.entrypoint]
-command = "./target/debug/template-plugin-rust"
+command = "./target/debug/template_plugin_rust"
 args = []
 
 # `env` is forwarded verbatim to the child's environment. Keys

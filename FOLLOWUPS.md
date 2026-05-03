@@ -723,6 +723,34 @@ coordinación de archivos cross-cutting.
   live at `<state_dir>/plugin-install-cache/` (deleted on
   success).
 
+- **31.2 ✅ shipped 2026-05-03** — Per-plugin CI publish
+  workflow template. New
+  `extensions/template-plugin-rust/.github/workflows/release.yml`
+  (~210 LOC) + `scripts/extract-plugin-meta.sh` +
+  `scripts/pack-tarball.sh`. Tag-driven (`v*`) workflow with
+  four jobs: validate-tag (regex + tag-vs-manifest version
+  match), build matrix (linux musl x86_64/aarch64 via
+  `cargo-zigbuild` 0.22.3 + macOS x86_64/aarch64 via direct
+  cargo), optional sign job gated on repo variable
+  `COSIGN_ENABLED == "true"` (keyless cosign sign-blob
+  producing .sig/.pem/.bundle per asset), release job with
+  idempotent `gh release create` + `gh release upload
+  --clobber`. Asset convention
+  `<id>-<version>-<target>.tar.gz` matches what 31.1 resolver
+  expects + 31.1.b extractor consumes (`bin/<id>` +
+  `nexo-plugin.toml` at root, no wrapping dir). Concurrency
+  group keyed on tag prevents duplicate publish. Template
+  binary renamed `template_plugin_rust` (underscores) to
+  match `plugin.id` — convention: cargo `[[bin]] name ==
+  [plugin] id`. New Rust integration test
+  `tests/pack_tarball.rs` builds a synthetic binary, runs
+  `pack-tarball.sh`, re-extracts, asserts canonical layout
+  + sha256 + binary 0o755. README publishing section + new
+  docs page `docs/src/plugins/publishing.md`. mdbook builds
+  clean. Out of scope: SLSA L3 attestation (defer 31.2.b);
+  Windows target; multi-plugin monorepo; `crates.io`
+  auto-publish.
+
 - **81.15.c.b ✅ shipped 2026-05-01** — SDK streaming
   consumption helper. Pending value type changed to
   `PendingKind` enum (Single for non-streaming, Streaming for

@@ -70,6 +70,7 @@
 - [Browser (CDP)](./plugins/browser.md)
 - [Google / Gmail](./plugins/google.md)
 - [Plugin contract (out-of-tree)](./plugins/contract.md)
+- [Publishing a plugin (CI workflow)](./plugins/publishing.md)
 
 # Memory
 

@@ -125,6 +125,99 @@ End-to-end against the production daemon: drop the manifest into
 `plugins.discovery.search_paths` and check `nexo agent doctor
 plugins` (Phase 81.9.b) for the load + init outcome.
 
+## Publishing your plugin (Phase 31.2)
+
+Operators install plugins via `nexo plugin install <owner>/<repo>[@<tag>]`,
+which fetches a GitHub Release matching a fixed asset naming
+convention. This template ships a workflow + helper scripts that
+produce that exact convention from a tag push.
+
+### Asset convention
+
+For every release tag `v<semver>` the workflow uploads:
+
+| Asset | Required | Contents |
+|-------|----------|----------|
+| `nexo-plugin.toml` | ✅ | Manifest. Operator's CLI fetches first to learn `plugin.id`. |
+| `<id>-<version>-<target>.tar.gz` | ✅ | One per supported target. Layout: `bin/<id>` + `nexo-plugin.toml` at root, no wrapping dir. |
+| `<id>-<version>-<target>.tar.gz.sha256` | ✅ | Single line of lowercase hex. |
+| `<id>-<version>-<target>.tar.gz.sig` / `.pem` / `.bundle` | ⬜ | Cosign keyless signing material. Phase 31.3 verifier consumes these when present. |
+
+### What's in the box
+
+```
+.github/workflows/release.yml   # tag-driven publish workflow
+scripts/extract-plugin-meta.sh  # exports PLUGIN_ID + PLUGIN_VERSION
+scripts/pack-tarball.sh         # packs <id>-<version>-<target>.tar.gz + sha256
+```
+
+### Drop-in workflow
+
+After copying this template to your own repo:
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The workflow:
+
+1. Validates the tag format (`^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$`).
+2. Asserts the tag matches `nexo-plugin.toml` `version`.
+3. Builds release binaries per target (matrix). Default matrix:
+   `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`,
+   `x86_64-apple-darwin`, `aarch64-apple-darwin`. Comment out
+   matrix entries you do not want — macOS runners are billed at
+   10× linux on GitHub-hosted runners.
+4. Packs each target's binary via `scripts/pack-tarball.sh`,
+   producing `dist/<id>-<version>-<target>.tar.gz` + sidecar.
+5. (Optional) cosign signs each tarball when the repo variable
+   `COSIGN_ENABLED` equals `"true"`. Set it once via:
+   ```
+   gh variable set COSIGN_ENABLED --body true
+   ```
+6. Creates the GitHub Release if missing, then uploads all
+   artifacts (including `nexo-plugin.toml`).
+
+### Required permissions
+
+The workflow declares:
+
+```yaml
+permissions:
+  contents: write   # gh release upload
+  id-token: write   # cosign keyless OIDC
+```
+
+`GITHUB_TOKEN` is auto-provided. No additional secrets are
+required for the unsigned path. Cosign keyless does not need any
+secret either — it uses Sigstore/Fulcio with the workflow's OIDC
+token.
+
+### Validating the asset convention locally
+
+Before pushing a tag, dry-run the pack step:
+
+```bash
+cargo build --release --target x86_64-unknown-linux-gnu
+bash scripts/pack-tarball.sh x86_64-unknown-linux-gnu
+ls dist/
+# template_plugin_rust-0.1.0-x86_64-unknown-linux-gnu.tar.gz
+# template_plugin_rust-0.1.0-x86_64-unknown-linux-gnu.tar.gz.sha256
+```
+
+The integration test `tests/pack_tarball.rs` covers this end to
+end against a synthetic binary.
+
+### Constraint: bin name = plugin id
+
+Cargo's `[[bin]] name` MUST equal `nexo-plugin.toml` `[plugin] id`
+(the convention is `bin/<id>` inside the tarball, and
+`pack-tarball.sh` looks for the binary at
+`target/<target>/release/<id>`). This template ships them aligned
+(`template_plugin_rust`); preserve the alignment when you rename
+for your own plugin.
+
 ## Phase tracking
 
 - 81.15.a (shipped) — `nexo-microapp-sdk` `plugin` feature +
@@ -132,7 +225,7 @@ plugins` (Phase 81.9.b) for the load + init outcome.
 - 81.16 (shipped) — `nexo-plugin-contract.md` v1.0.0
 - 81.17 + 81.17.b (shipped) — daemon-side auto-subprocess
   pipeline activation
-- 81.15.b (in flight, this template) — clone-and-go starter
-  drafted in-workspace; Phase 31.6 `nexo plugin new --lang rust`
-  scaffolder will publish it as
-  `github.com/nexo-rs/plugin-template-rust`
+- 81.15.b (shipped) — clone-and-go starter drafted in-workspace.
+- 31.2 (shipped) — release workflow + pack scripts (this section).
+- 31.6 (deferred) — `nexo plugin new --lang rust` scaffolder will
+  publish this template as `github.com/nexo-rs/plugin-template-rust`.
