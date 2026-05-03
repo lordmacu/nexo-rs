@@ -590,11 +590,32 @@ coordinación de archivos cross-cutting.
   separate function. Subprocess memory.recall now reaches the
   real backend.
 
-- **81.20.b ⬜** Daemon-mediated `llm.complete` RPC. Extends
-  `handle_child_request` match. Streaming via
-  `llm.complete.delta` notifications (JSON-RPC has no partial
-  responses). CircuitBreaker around `LlmRegistry::build` +
-  `complete`. ~1.5 d.
+- **81.20.b ✅ shipped 2026-05-01** — Daemon-mediated
+  `llm.complete` RPC (non-streaming MVP). Host-side handler +
+  3 unit tests + wire spec at contract v1.2.0. New
+  `LlmServices { registry, config }` bundle in BridgeContext +
+  SubprocessRuntime. Handler validates params (-32602), checks
+  llm services wired (-32603), builds client via LlmRegistry
+  (-32603 if provider unknown), calls `chat()`, returns
+  `{ content, finish_reason, usage }`. Tool-call responses
+  surface as -32601 (deferred). main.rs llm_registry construction
+  reordered to wrap in Arc immediately so it's clonable into
+  SubprocessRuntime. Runtime threading + streaming deferred to
+  81.20.b.b. 22/22 subprocess + 2/2 e2e tests pass.
+
+- **81.20.b.b ⬜** main.rs threads LlmServices into subprocess
+  runtime + streaming via `llm.complete.delta` notifications.
+  (1) Plumb `cfg.llm: Arc<LlmConfig>` into
+  `SubprocessRuntime.llm` so handler stops returning -32603.
+  Either extend `PluginInitContext` with
+  `llm_config: Arc<LlmConfig>` (so SubprocessNexoPlugin::init
+  builds LlmServices inline) OR thread LlmServices via
+  SubprocessCtxStubs. (2) Streaming: switch `client.chat` to
+  `client.stream`, emit `llm.complete.delta` notifications per
+  chunk + final `llm.complete.done`; reply to original request
+  with the same id but result containing only final usage +
+  finish_reason. SDK helpers for streaming consumption land in
+  81.15.c. ~1.5 d.
 
 - **81.20.c ⬜** Daemon-mediated `tool.dispatch` RPC. Extends
   `handle_child_request` match. Needs ToolRegistry in

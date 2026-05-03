@@ -57,6 +57,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use nexo_broker::{topic::topic_matches, AnyBroker, BrokerHandle, Event};
+use nexo_config::LlmConfig;
+use nexo_llm::LlmRegistry;
 use nexo_memory::LongTermMemory;
 use nexo_plugin_manifest::PluginManifest;
 use serde_json::{json, Value};
@@ -162,6 +164,7 @@ impl SubprocessNexoPlugin {
         ctx_shutdown: CancellationToken,
         broker: Option<AnyBroker>,
         memory: Option<Arc<LongTermMemory>>,
+        llm: Option<LlmServices>,
     ) -> Result<Inner, anyhow::Error> {
         let entry = &self.cached_manifest.plugin.entrypoint;
         let command = entry
@@ -764,8 +767,9 @@ impl SubprocessNexoPlugin {
                 broker,
                 publish_allowlist,
                 memory,
+                llm,
             });
-        } else if let Some(_mem) = memory.as_ref() {
+        } else if memory.is_some() || llm.is_some() {
             // Memory provided but no broker → can't reach this
             // path today (factory_registry callers always pass
             // both Some or both None via SubprocessRuntime).
@@ -773,7 +777,7 @@ impl SubprocessNexoPlugin {
             tracing::debug!(
                 target: "plugin.subprocess",
                 plugin_id = %plugin_id_for_log,
-                "memory provided without broker — bridge inactive, memory.recall path won't fire"
+                "memory or llm services provided without broker — bridge inactive, RPC path won't fire"
             );
         }
 
@@ -798,9 +802,21 @@ async fn kill_handle(h: &Arc<Mutex<Option<Child>>>) {
     }
 }
 
-/// Phase 81.14.b + 81.20.a — captured by the stdout reader task to
-/// forward validated `broker.publish` notifications to the broker
-/// AND service incoming `memory.recall` requests from the child.
+/// Phase 81.20.b — bundle of LLM-related handles needed to
+/// service `llm.complete` requests from a subprocess plugin.
+/// `LlmRegistry` builds clients per (provider, model);
+/// `LlmConfig` carries the provider table (api keys, endpoints)
+/// the registry needs at build time.
+#[derive(Clone)]
+pub struct LlmServices {
+    pub registry: Arc<LlmRegistry>,
+    pub config: Arc<LlmConfig>,
+}
+
+/// Phase 81.14.b + 81.20.a + 81.20.b — captured by the stdout
+/// reader task to forward validated `broker.publish`
+/// notifications to the broker AND service incoming
+/// `memory.recall` + `llm.complete` requests from the child.
 struct BridgeContext {
     broker: AnyBroker,
     /// Topic patterns the child is allowed to publish to. Derived
@@ -814,11 +830,14 @@ struct BridgeContext {
     /// Phase 81.20.a — long-term memory backend the daemon
     /// exposes to subprocess plugins via the `memory.recall`
     /// JSON-RPC method. `None` when the operator hasn't
-    /// configured long-term memory OR main.rs hasn't yet plumbed
-    /// the handle through `SubprocessRuntime` (deferred to
-    /// 81.20.a.b reorder). Handler returns `-32603` "memory not
-    /// configured" when None.
+    /// configured long-term memory. Handler returns `-32603`
+    /// "memory not configured" when None.
     memory: Option<Arc<LongTermMemory>>,
+    /// Phase 81.20.b — LLM services exposed via `llm.complete`.
+    /// `None` means the daemon hasn't wired the registry / config
+    /// to the subprocess pipeline (operator-level decision); the
+    /// handler returns `-32603 "llm not configured"`.
+    llm: Option<LlmServices>,
 }
 
 /// Forward a `broker.publish` notification from the child onto the
@@ -890,6 +909,7 @@ async fn handle_child_request(
 ) -> Result<Value, (i32, String)> {
     match method {
         "memory.recall" => handle_memory_recall(bridge, plugin_id, params).await,
+        "llm.complete" => handle_llm_complete(bridge, plugin_id, params).await,
         other => Err((-32601, format!("method not found: {other}"))),
     }
 }
@@ -950,6 +970,157 @@ async fn handle_memory_recall(
     Ok(json!({ "entries": entries_json }))
 }
 
+/// Phase 81.20.b — service an `llm.complete` request from the
+/// child. Params shape:
+///   {
+///     "provider": "minimax",
+///     "model": "minimax-m2.5",
+///     "messages": [{"role":"user","content":"hello"}],
+///     "max_tokens": 1024,    // optional, default 4096
+///     "temperature": 0.7,    // optional, default 0.7
+///     "system_prompt": "..." // optional
+///   }
+/// Result on success:
+///   {
+///     "content": "...",
+///     "finish_reason": "stop"|"length"|"tool_use"|"other",
+///     "usage": { "prompt_tokens": N, "completion_tokens": N }
+///   }
+/// Errors:
+///   -32602 invalid params (missing provider/model/messages, bad role, etc.)
+///   -32603 llm not configured (LlmServices None)
+///   -32603 client build failed (provider unknown / config invalid)
+///   -32603 chat call failed (provider error wrapped)
+///   -32601 method returned tool calls instead of text (deferred — MVP
+///          surfaces tool calls as `-32601 not_implemented` since
+///          plumbing tool-call results back through stdio is its own
+///          contract slice)
+async fn handle_llm_complete(
+    bridge: &BridgeContext,
+    plugin_id: &str,
+    params: &Value,
+) -> Result<Value, (i32, String)> {
+    use nexo_config::ModelConfig;
+    use nexo_llm::types::{ChatMessage, ChatRequest, ResponseContent};
+
+    let llm = bridge
+        .llm
+        .as_ref()
+        .ok_or_else(|| (-32603, "llm not configured".to_string()))?;
+    let provider = params
+        .get("provider")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            (-32602, "missing or invalid `provider` (string)".to_string())
+        })?;
+    let model = params
+        .get("model")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            (-32602, "missing or invalid `model` (string)".to_string())
+        })?;
+    let messages_val = params.get("messages").ok_or_else(|| {
+        (-32602, "missing `messages` (array of {role, content})".to_string())
+    })?;
+    let messages: Vec<ChatMessage> = serde_json::from_value(messages_val.clone())
+        .map_err(|e| {
+            (
+                -32602,
+                format!("invalid `messages`: {e} — expected [{{\"role\":\"user|assistant|system|tool\",\"content\":\"...\"}}]"),
+            )
+        })?;
+    if messages.is_empty() {
+        return Err((-32602, "`messages` must not be empty".to_string()));
+    }
+    let max_tokens = params
+        .get("max_tokens")
+        .and_then(|v| v.as_u64())
+        .map(|n| n.min(u32::MAX as u64) as u32)
+        .unwrap_or(4096);
+    let temperature = params
+        .get("temperature")
+        .and_then(|v| v.as_f64())
+        .map(|f| f as f32)
+        .unwrap_or(0.7);
+    let system_prompt = params
+        .get("system_prompt")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    // Build the registry's expected ModelConfig view from params.
+    // ModelConfig today is just `provider` + `model`.
+    let model_cfg = ModelConfig {
+        provider: provider.to_string(),
+        model: model.to_string(),
+    };
+
+    let client = llm
+        .registry
+        .build(&llm.config, &model_cfg)
+        .map_err(|e| {
+            tracing::warn!(
+                plugin_id,
+                provider,
+                model,
+                error = %e,
+                "llm.complete: client build failed"
+            );
+            (-32603, format!("llm client build failed: {e}"))
+        })?;
+
+    let mut req = ChatRequest::new(model.to_string(), messages);
+    req.max_tokens = max_tokens;
+    req.temperature = temperature;
+    req.system_prompt = system_prompt;
+
+    let response = client.chat(req).await.map_err(|e| {
+        tracing::warn!(
+            plugin_id,
+            provider,
+            model,
+            error = %e,
+            "llm.complete: chat() returned error"
+        );
+        (-32603, format!("llm chat failed: {e}"))
+    })?;
+
+    // For MVP we only forward text responses. Tool-call responses
+    // need a richer wire shape so the child can re-submit tool
+    // results — deferring to a future contract bump.
+    let content = match response.content {
+        ResponseContent::Text(s) => s,
+        ResponseContent::ToolCalls(calls) => {
+            tracing::info!(
+                plugin_id,
+                provider,
+                model,
+                num_tool_calls = calls.len(),
+                "llm.complete: provider returned tool calls — MVP surfaces -32601 not_implemented"
+            );
+            return Err((
+                -32601,
+                "llm.complete returned tool calls; MVP supports text responses only \
+                 (tool-call wire shape lands in a future contract bump)"
+                    .to_string(),
+            ));
+        }
+    };
+    let finish_reason = match response.finish_reason {
+        nexo_llm::types::FinishReason::Stop => "stop".to_string(),
+        nexo_llm::types::FinishReason::ToolUse => "tool_use".to_string(),
+        nexo_llm::types::FinishReason::Length => "length".to_string(),
+        nexo_llm::types::FinishReason::Other(s) => format!("other:{s}"),
+    };
+    Ok(json!({
+        "content": content,
+        "finish_reason": finish_reason,
+        "usage": {
+            "prompt_tokens": response.usage.prompt_tokens,
+            "completion_tokens": response.usage.completion_tokens,
+        },
+    }))
+}
+
 #[async_trait]
 impl NexoPlugin for SubprocessNexoPlugin {
     fn manifest(&self) -> &PluginManifest {
@@ -961,7 +1132,7 @@ impl NexoPlugin for SubprocessNexoPlugin {
         ctx: &mut PluginInitContext<'_>,
     ) -> Result<(), PluginInitError> {
         let inner = self
-            .spawn_and_handshake(ctx.shutdown.clone(), Some(ctx.broker.clone()), ctx.long_term_memory.clone())
+            .spawn_and_handshake(ctx.shutdown.clone(), Some(ctx.broker.clone()), ctx.long_term_memory.clone(), None)
             .await
             .map_err(|source| PluginInitError::Other {
                 plugin_id: self.cached_manifest.plugin.id.clone(),
@@ -1109,7 +1280,7 @@ RUST_LOG = "info"
         ));
         let plugin = SubprocessNexoPlugin::new(m);
         let cancel = CancellationToken::new();
-        let result = plugin.spawn_and_handshake(cancel, None, None).await;
+        let result = plugin.spawn_and_handshake(cancel, None, None, None).await;
         match result {
             Ok(_) => panic!("spawn must fail for missing command"),
             Err(err) => assert!(
@@ -1128,7 +1299,7 @@ RUST_LOG = "info"
         );
         let plugin = SubprocessNexoPlugin::new(m);
         let cancel = CancellationToken::new();
-        let result = plugin.spawn_and_handshake(cancel, None, None).await;
+        let result = plugin.spawn_and_handshake(cancel, None, None, None).await;
         match result {
             Ok(_) => panic!("env collision must fail"),
             Err(err) => assert!(
@@ -1147,7 +1318,7 @@ RUST_LOG = "info"
         let m = manifest_with_entrypoint(Some("/bin/cat"));
         let plugin = SubprocessNexoPlugin::new(m);
         let cancel = CancellationToken::new();
-        let result = plugin.spawn_and_handshake(cancel, None, None).await;
+        let result = plugin.spawn_and_handshake(cancel, None, None, None).await;
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
         match result {
             Ok(_) => panic!("silent child must time out"),
@@ -1186,7 +1357,7 @@ sleep 30
         // "impostor" — adapter must reject.
         let plugin = SubprocessNexoPlugin::new(m);
         let cancel = CancellationToken::new();
-        let result = plugin.spawn_and_handshake(cancel, None, None).await;
+        let result = plugin.spawn_and_handshake(cancel, None, None, None).await;
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
         match result {
             Ok(_) => panic!("id mismatch must fail"),
@@ -1315,7 +1486,7 @@ sleep 5
         let cancel = CancellationToken::new();
         let broker = AnyBroker::Local(nexo_broker::LocalBroker::new());
         let res = plugin
-            .spawn_and_handshake(cancel.clone(), Some(broker), None)
+            .spawn_and_handshake(cancel.clone(), Some(broker), None, None)
             .await;
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
         let inner = res.expect("handshake + bridge wiring must succeed");
@@ -1353,7 +1524,7 @@ sleep 5
             .await
             .expect("subscribe before init");
         let _inner = plugin
-            .spawn_and_handshake(cancel.clone(), Some(broker), None)
+            .spawn_and_handshake(cancel.clone(), Some(broker), None, None)
             .await
             .expect("handshake + bridge wiring");
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
@@ -1387,7 +1558,7 @@ sleep 5
             .await
             .expect("subscribe rogue");
         let _inner = plugin
-            .spawn_and_handshake(cancel.clone(), Some(broker), None)
+            .spawn_and_handshake(cancel.clone(), Some(broker), None, None)
             .await
             .expect("handshake");
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
@@ -1415,7 +1586,7 @@ sleep 5
         let m = manifest_with_channel(path.to_str().unwrap(), "slack");
         let plugin = SubprocessNexoPlugin::new(m);
         let cancel = CancellationToken::new();
-        let res = plugin.spawn_and_handshake(cancel.clone(), None, None).await;
+        let res = plugin.spawn_and_handshake(cancel.clone(), None, None, None).await;
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
         let inner = res.expect("handshake must succeed without broker");
         // 81.23 + 81.21 — writer + stdout reader + stderr reader
@@ -1468,7 +1639,7 @@ sleep 5
         let m = manifest_with_entrypoint(Some(path.to_str().unwrap()));
         let plugin = SubprocessNexoPlugin::new(m);
         let cancel = CancellationToken::new();
-        let res = plugin.spawn_and_handshake(cancel.clone(), None, None).await;
+        let res = plugin.spawn_and_handshake(cancel.clone(), None, None, None).await;
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
 
         let inner = res.expect("handshake must succeed with stderr piped");
@@ -1520,7 +1691,7 @@ exit 7
             .await
             .expect("subscribe to crash topic");
         let _inner = plugin
-            .spawn_and_handshake(cancel.clone(), Some(broker), None)
+            .spawn_and_handshake(cancel.clone(), Some(broker), None, None)
             .await
             .expect("handshake");
         std::env::remove_var("NEXO_PLUGIN_INIT_TIMEOUT_MS");
@@ -1632,6 +1803,7 @@ stderr_tail_lines = {}
             broker: AnyBroker::Local(nexo_broker::LocalBroker::new()),
             publish_allowlist: vec![],
             memory: Some(memory),
+            llm: None,
         };
 
         let params = json!({
@@ -1676,6 +1848,7 @@ stderr_tail_lines = {}
             broker: AnyBroker::Local(nexo_broker::LocalBroker::new()),
             publish_allowlist: vec![],
             memory: None,
+            llm: None,
         };
         let params = json!({"agent_id": "any", "query": "any"});
         let result = handle_memory_recall(&bridge, "test_plugin", &params).await;
@@ -1708,6 +1881,7 @@ stderr_tail_lines = {}
             broker: AnyBroker::Local(nexo_broker::LocalBroker::new()),
             publish_allowlist: vec![],
             memory: Some(memory),
+            llm: None,
         };
 
         // Missing agent_id
@@ -1732,6 +1906,136 @@ stderr_tail_lines = {}
         match r {
             Err((-32602, msg)) => assert!(msg.contains("query")),
             other => panic!("expected -32602 invalid query, got {other:?}"),
+        }
+    }
+
+    /// Phase 81.20.b — `llm.complete` handler returns -32603
+    /// when no `LlmServices` is wired in the bridge. Covers the
+    /// "operator hasn't enabled LLM RPC" path.
+    #[tokio::test]
+    async fn llm_complete_handler_returns_neg_32603_when_llm_none() {
+        let bridge = BridgeContext {
+            broker: AnyBroker::Local(nexo_broker::LocalBroker::new()),
+            publish_allowlist: vec![],
+            memory: None,
+            llm: None,
+        };
+        let params = json!({
+            "provider": "minimax",
+            "model": "x",
+            "messages": [{"role":"user","content":"hi"}],
+        });
+        match handle_llm_complete(&bridge, "test_plugin", &params).await {
+            Ok(v) => panic!("expected -32603, got Ok({v:?})"),
+            Err((code, msg)) => {
+                assert_eq!(code, -32603);
+                assert!(
+                    msg.contains("not configured"),
+                    "msg should mention 'not configured', got: {msg}"
+                );
+            }
+        }
+    }
+
+    /// Phase 81.20.b — bad params surface as -32602. We test
+    /// missing `provider`, missing `messages`, empty `messages`,
+    /// and a malformed message (role as integer). Each path must
+    /// fail with the correct field name in the error.
+    #[tokio::test]
+    async fn llm_complete_handler_returns_neg_32602_on_bad_params() {
+        let bridge = BridgeContext {
+            broker: AnyBroker::Local(nexo_broker::LocalBroker::new()),
+            publish_allowlist: vec![],
+            memory: None,
+            llm: Some(LlmServices {
+                registry: Arc::new(LlmRegistry::new()),
+                config: Arc::new(LlmConfig { providers: std::collections::HashMap::new(), retry: Default::default(), context_optimization: Default::default(), tenants: std::collections::HashMap::new() }),
+            }),
+        };
+
+        // Missing provider.
+        let r = handle_llm_complete(
+            &bridge,
+            "test_plugin",
+            &json!({"model": "x", "messages": []}),
+        )
+        .await;
+        match r {
+            Err((-32602, msg)) => assert!(msg.contains("provider")),
+            other => panic!("expected -32602 missing provider, got {other:?}"),
+        }
+
+        // Missing messages.
+        let r = handle_llm_complete(
+            &bridge,
+            "test_plugin",
+            &json!({"provider": "p", "model": "x"}),
+        )
+        .await;
+        match r {
+            Err((-32602, msg)) => assert!(msg.contains("messages")),
+            other => panic!("expected -32602 missing messages, got {other:?}"),
+        }
+
+        // Empty messages array.
+        let r = handle_llm_complete(
+            &bridge,
+            "test_plugin",
+            &json!({"provider": "p", "model": "x", "messages": []}),
+        )
+        .await;
+        match r {
+            Err((-32602, msg)) => assert!(msg.contains("must not be empty")),
+            other => panic!("expected -32602 empty messages, got {other:?}"),
+        }
+
+        // Malformed role.
+        let r = handle_llm_complete(
+            &bridge,
+            "test_plugin",
+            &json!({
+                "provider": "p",
+                "model": "x",
+                "messages": [{"role": 42, "content": "hi"}],
+            }),
+        )
+        .await;
+        match r {
+            Err((-32602, msg)) => assert!(msg.contains("messages")),
+            other => panic!("expected -32602 malformed role, got {other:?}"),
+        }
+    }
+
+    /// Phase 81.20.b — when the provider is not registered in the
+    /// LlmRegistry, the handler returns -32603 with the build
+    /// error wrapped (not -32602 — the params themselves are
+    /// well-formed JSON; the failure is server-side).
+    #[tokio::test]
+    async fn llm_complete_handler_returns_neg_32603_when_provider_not_registered() {
+        let bridge = BridgeContext {
+            broker: AnyBroker::Local(nexo_broker::LocalBroker::new()),
+            publish_allowlist: vec![],
+            memory: None,
+            llm: Some(LlmServices {
+                registry: Arc::new(LlmRegistry::new()), // empty — no providers
+                config: Arc::new(LlmConfig { providers: std::collections::HashMap::new(), retry: Default::default(), context_optimization: Default::default(), tenants: std::collections::HashMap::new() }),
+            }),
+        };
+        let params = json!({
+            "provider": "nonexistent_provider",
+            "model": "x",
+            "messages": [{"role":"user","content":"hi"}],
+        });
+        match handle_llm_complete(&bridge, "test_plugin", &params).await {
+            Ok(v) => panic!("expected -32603, got Ok({v:?})"),
+            Err((code, msg)) => {
+                assert_eq!(code, -32603);
+                assert!(
+                    msg.contains("client build failed")
+                        || msg.contains("nonexistent_provider"),
+                    "msg should mention build failure, got: {msg}"
+                );
+            }
         }
     }
 }

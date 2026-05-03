@@ -52,11 +52,12 @@ pub struct SubprocessRuntime {
     pub state_root: PathBuf,
     /// Phase 81.20.a — long-term memory backend exposed to
     /// subprocess plugins via the `memory.recall` JSON-RPC method.
-    /// `None` when the operator hasn't configured memory or main.rs
-    /// hasn't yet plumbed the handle through the boot wire (today
-    /// always None; 81.20.a.b reorders main.rs construction so it
-    /// lands here).
+    /// `None` when the operator hasn't configured memory.
     pub long_term_memory: Option<Arc<nexo_memory::LongTermMemory>>,
+    /// Phase 81.20.b — LLM services exposed via `llm.complete`.
+    /// `None` when main.rs hasn't yet threaded the registry +
+    /// config (or operator has explicitly disabled the path).
+    pub llm: Option<crate::agent::nexo_plugin_registry::subprocess::LlmServices>,
 }
 
 /// Phase 81.9 — bundle of registry handles produced by

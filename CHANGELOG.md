@@ -10,6 +10,94 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.20.b — Daemon-mediated RPC: `llm.complete`
+  (non-streaming MVP).** Second of three planned RPC handlers
+  (81.20.a memory.recall ✅, 81.20.b llm.complete this slice,
+  81.20.c tool.dispatch). Lets out-of-tree plugins call the
+  daemon's LlmRegistry without re-implementing provider clients
+  or vendoring API keys.
+  
+  Wire format (added to `nexo-plugin-contract.md` §5.3, contract
+  bumped to v1.2.0 — additive):
+  
+  Child → host request:
+  ```json
+  {
+    "jsonrpc": "2.0",
+    "id": 50,
+    "method": "llm.complete",
+    "params": {
+      "provider": "minimax",
+      "model": "minimax-m2.5",
+      "messages": [{"role": "user", "content": "..."}],
+      "max_tokens": 1024,
+      "temperature": 0.7,
+      "system_prompt": "..."
+    }
+  }
+  ```
+  
+  Host → child reply (success): `{ content, finish_reason, usage }`
+  where finish_reason is `stop`, `length`, `tool_use`, or
+  `other:<reason>`. Errors: -32602 invalid params (missing
+  `provider` / `model` / `messages`, malformed message,
+  empty messages array), -32603 LLM not configured / client
+  build failed / chat failed, -32601 provider returned tool
+  calls (MVP supports text only; tool-call wire shape defers
+  to a future contract bump).
+  
+  New `LlmServices { registry: Arc<LlmRegistry>, config: Arc<LlmConfig> }`
+  bundle. `BridgeContext` extends with `llm: Option<LlmServices>`.
+  `SubprocessRuntime` extends with `llm`. `handle_child_request`
+  match adds `llm.complete`. Handler validates params, builds a
+  `ChatRequest`, calls `LlmRegistry::build(&cfg, &model_cfg)`
+  then `client.chat(req)`, serializes the response.
+  
+  main.rs: `let llm_registry = LlmRegistry::with_builtins()` at
+  line 1506 now wraps in `Arc` immediately (was previously
+  wrapped at line ~5023, AFTER the wire callsite). The duplicate
+  `Arc::new(llm_registry)` is removed. All intermediate
+  `llm_registry.method()` calls work via `Arc<T>: Deref<Target = T>`.
+  
+  **Runtime threading deferred to 81.20.b.b**: main.rs's
+  `SubprocessRuntime.llm` is `None` today. Extending
+  `PluginInitContext` with `llm_config: Arc<LlmConfig>` (so
+  SubprocessNexoPlugin::init builds LlmServices inline) is the
+  next slice. Until that lands, subprocess plugins receive
+  `-32603 "llm not configured"` for every `llm.complete`
+  request — even when the operator has providers configured in
+  llm.yaml. This matches the 81.20.a → 81.20.a.b shape:
+  library + tests now, runtime plumbing follow-up.
+  
+  Streaming via `llm.complete.delta` notifications also bundled
+  into 81.20.b.b — today the host buffers the full chat response
+  and replies once.
+  
+  3 new unit tests:
+  - `llm_complete_handler_returns_neg_32603_when_llm_none`
+    exercises the LlmServices=None path.
+  - `llm_complete_handler_returns_neg_32602_on_bad_params`
+    covers 4 sub-cases (missing provider, missing messages,
+    empty messages array, malformed role).
+  - `llm_complete_handler_returns_neg_32603_when_provider_not_registered`
+    builds a bridge with empty `LlmRegistry::new()`, calls handler
+    with provider="nonexistent_provider", asserts -32603 with
+    the build error wrapped.
+  
+  22/22 subprocess unit tests + 2/2 e2e tests pass.
+  
+  IRROMPIBLE refs:
+  - internal `crates/llm/src/registry.rs:84` (`LlmRegistry::build`
+    we wire to)
+  - internal `crates/llm/src/client.rs:8` (`LlmClient::chat` and
+    `LlmClient::stream` for the future streaming slice)
+  - internal subprocess.rs handler dispatch (`handle_child_request`
+    + memory.recall pattern from 81.20.a)
+  - claude-code-leak `src/services/llm/dispatch.ts` per-method
+    LLM dispatch pattern
+  - OpenClaw absence stated — their plugins called LLM in-process,
+    no IPC layer.
+
 - **Phase 81.20.a.b — main.rs threads `memory` → `SubprocessRuntime`.**
   Turned out to be a 1-LOC fix: the daemon path's `let memory =`
   binding at `src/main.rs:1731-1821` (Long-term memory section)
