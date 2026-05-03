@@ -18,6 +18,7 @@ use serde::Serialize;
 use nexo_plugin_manifest::PluginManifest;
 
 use super::contributes::{AgentMergeConflict, AgentMergeReport};
+use super::contributes_skills::{SkillConflict, SkillsMergeReport};
 use super::init_loop::InitOutcome;
 
 /// One validated plugin manifest plus the on-disk paths used to find
@@ -52,6 +53,13 @@ pub struct PluginDiscoveryReport {
     /// `NexoPlugin::init()` driver.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub init_outcomes: BTreeMap<String, InitOutcome>,
+    /// Phase 81.7 — `plugin_id -> [skill_name, ...]` populated by
+    /// the skill merge step.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub contributed_skills_per_plugin: BTreeMap<String, Vec<String>>,
+    /// Phase 81.7 — same-skill-name collisions across plugins.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skill_conflicts: Vec<SkillConflict>,
 }
 
 impl PluginDiscoveryReport {
@@ -69,6 +77,18 @@ impl PluginDiscoveryReport {
     /// [`super::init_loop::run_plugin_init_loop`] into this report.
     pub fn fold_init_outcomes(&mut self, outcomes: BTreeMap<String, InitOutcome>) {
         self.init_outcomes = outcomes;
+    }
+
+    /// Phase 81.7 — fold a [`super::contributes_skills::SkillsMergeReport`]
+    /// into this report. Diagnostics are appended; the
+    /// `contributed_skills_per_plugin` map is replaced verbatim;
+    /// conflicts are appended. The `skill_roots` + `attribution`
+    /// maps live on `NexoPluginRegistrySnapshot.skill_roots` (set by
+    /// the caller), not in this audit report.
+    pub fn fold_skill_merge(&mut self, m: SkillsMergeReport) {
+        self.diagnostics.extend(m.diagnostics);
+        self.contributed_skills_per_plugin = m.contributed_per_plugin;
+        self.skill_conflicts.extend(m.conflicts);
     }
 }
 

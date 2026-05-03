@@ -7,12 +7,15 @@
 //! (Phase 81.2). 81.5 only produces validated manifests + paths;
 //! actual `NexoPlugin::init()` invocation is Phase 81.6's job.
 
+use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 
 pub mod config;
 pub mod contributes;
+pub mod contributes_skills;
 pub mod discovery;
 pub mod init_loop;
 pub mod report;
@@ -21,6 +24,9 @@ pub use config::{resolve_search_paths, PluginDiscoveryConfig};
 pub use contributes::{
     merge_plugin_contributed_agents, AgentMergeConflict, AgentMergeReport,
     MergeResolution,
+};
+pub use contributes_skills::{
+    merge_plugin_contributed_skills, SkillConflict, SkillsMergeReport,
 };
 pub use discovery::discover;
 pub use init_loop::{run_plugin_init_loop, InitOutcome};
@@ -41,6 +47,11 @@ pub struct NexoPluginRegistry {
 pub struct NexoPluginRegistrySnapshot {
     pub plugins: Vec<DiscoveredPlugin>,
     pub last_report: PluginDiscoveryReport,
+    /// Phase 81.7 — runtime routing data: `plugin_id -> absolute
+    /// skills root` populated by `merge_plugin_contributed_skills`.
+    /// Per-agent `SkillLoader::with_plugin_roots` consumes the
+    /// values at boot. Empty on snapshots that pre-date 81.7 wire.
+    pub skill_roots: BTreeMap<String, PathBuf>,
 }
 
 impl NexoPluginRegistry {
@@ -78,6 +89,7 @@ mod tests {
                 loaded_ids: vec!["dummy".to_string()],
                 ..Default::default()
             },
+            skill_roots: BTreeMap::new(),
         });
         registry.swap(next);
         let observed = registry.snapshot();

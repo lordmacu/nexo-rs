@@ -102,6 +102,7 @@ async fn discover_merge_init_pipeline_round_trip() {
         nexo_core::agent::nexo_plugin_registry::NexoPluginRegistrySnapshot {
             plugins: snap.plugins.clone(),
             last_report: updated,
+            skill_roots: BTreeMap::new(),
         },
     );
     registry.swap(new_snap);

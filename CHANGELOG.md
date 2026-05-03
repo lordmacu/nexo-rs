@@ -10,6 +10,38 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.7 — Plugin-contributed skills_dir cataloging + `SkillLoader::with_plugin_roots`
+  (library + tests).** New module
+  `nexo_core::agent::nexo_plugin_registry::contributes_skills`
+  exposes `merge_plugin_contributed_skills(snapshot) -> SkillsMergeReport`.
+  Walks each loaded plugin's `skills.contributes_dir` (already in
+  Phase 81.1's manifest), indexes any subdir containing `SKILL.md`
+  as a contributed skill named after the dir. Records per-plugin
+  root + first-plugin-wins attribution map + per-plugin contributed
+  list. `SkillConflict { skill_name, plugin_ids }` simple struct
+  (no resolution enum — only one outcome since search order is the
+  resolver). `SkillLoader` extended in `crates/core/src/agent/skills.rs`
+  with `plugin_roots: Vec<PathBuf>` field + `with_plugin_roots(roots)`
+  builder; `candidate_paths()` appends each plugin root AFTER the
+  existing tenant + global + legacy chain so operator content
+  always wins by search order. **NO `allow_override` for skills** —
+  security stance: skills exec subprocesses, plugin replacing
+  operator skill is an escalation vector. `NexoPluginRegistrySnapshot`
+  gains `skill_roots: BTreeMap<plugin_id, PathBuf>` for runtime
+  routing data (separate from audit data in `last_report`).
+  `PluginDiscoveryReport` extended with
+  `contributed_skills_per_plugin` + `skill_conflicts` (both
+  `#[serde(default, skip_serializing_if = ...is_empty)]` for
+  backward-compat with 81.5/81.6 consumers). `fold_skill_merge`
+  helper mirrors `fold_agent_merge`. 6 unit tests + 1 integration
+  test (`crates/core/tests/plugin_skills_integration.rs`) covering
+  the full discover → merge → load pipeline. **Out of scope
+  (deferred bundle)**: boot wire in `src/main.rs::Mode::Run`
+  threading `snap.skill_roots` into per-agent `SkillLoader`
+  instantiation + `nexo agent doctor plugins` CLI sections (PLUGIN
+  SKILLS CONTRIBUTED, SKILL CONFLICTS). The boot wire bundle ships
+  alongside 81.5.b / 81.6 wires when the working tree quiets.
+
 - **Phase 81.6 — Plugin-contributed agent merge + `NexoPlugin::init()` driver
   (library + tests).** New module
   `nexo_core::agent::nexo_plugin_registry::contributes` exposes

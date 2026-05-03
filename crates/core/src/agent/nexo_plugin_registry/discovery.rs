@@ -244,6 +244,7 @@ pub fn discover(
     Arc::new(NexoPluginRegistrySnapshot {
         plugins,
         last_report: report,
+        skill_roots: std::collections::BTreeMap::new(),
     })
 }
 

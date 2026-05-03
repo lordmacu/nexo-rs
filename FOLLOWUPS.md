@@ -207,7 +207,23 @@ coordinación de archivos cross-cutting.
   CLI subcommand (also deferred from 81.5) lands alongside 81.7
   manifest-driven `NexoPlugin` instantiation that populates the
   handles map.
-- **81.7 ⬜** Plugin-side `skills_dir` contribution.
+- **81.7 ✅ shipped 2026-05-03** —
+  `merge_plugin_contributed_skills` fn in
+  `nexo_core::agent::nexo_plugin_registry::contributes_skills` walks
+  each loaded plugin's `skills.contributes_dir`, indexes any subdir
+  containing `SKILL.md`, records `(plugin_id → root)` +
+  `(skill_name → plugin_id)` first-plugin-wins attribution + per-
+  plugin list. `SkillConflict` simple struct (no resolution enum —
+  only one outcome). `SkillLoader` extended with `plugin_roots`
+  + `with_plugin_roots(roots)` builder; `candidate_paths()` appends
+  plugin roots AFTER tenant/global/legacy so operator wins by
+  search order. NO `allow_override` for skills (security: skills
+  exec subprocesses). `NexoPluginRegistrySnapshot.skill_roots`
+  for runtime routing. `PluginDiscoveryReport` extended with
+  `contributed_skills_per_plugin` + `skill_conflicts` (additive
+  serde, backward-compat with 81.5/81.6). 6 unit + 1 integration
+  test. **Library-only ship**: boot wire + doctor CLI sections
+  land in the deferred bundle alongside 81.5.b/81.6 wires.
 - **81.8 ⬜** `ChannelAdapter` trait extension point para nuevos
   channel kinds (SMS, Discord, custom webhook).
 - **81.9 ⬜** `Mode::Run` registry sweep — reduce ~500 LOC boot
