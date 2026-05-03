@@ -7,6 +7,10 @@ use nexo_auth::google::GoogleCredentialStore;
 use nexo_broker::AnyBroker;
 use nexo_config::types::plugins::EmailPluginConfig;
 use nexo_core::agent::plugin::{Command, Plugin, Response};
+use nexo_core::agent::plugin_host::{
+    NexoPlugin, PluginInitContext, PluginInitError, PluginShutdownError,
+};
+use nexo_plugin_manifest::PluginManifest;
 use tokio::sync::{Mutex, OnceCell};
 use tracing::info;
 
@@ -45,6 +49,13 @@ pub struct EmailPlugin {
     creds: Arc<EmailCredentialStore>,
     google: Arc<GoogleCredentialStore>,
     data_dir: PathBuf,
+    /// Phase 81.12.d — compile-time-bundled plugin manifest. Parsed
+    /// once in `new()` from `../nexo-plugin.toml` via `include_str!`.
+    /// Unlike telegram / whatsapp there is no per-instance `registry_name`
+    /// divergence — `manifest().plugin.id` equals `Plugin::name()` ("email")
+    /// at all times. Multi-account is internal: `EmailPluginConfig.accounts`
+    /// drives the inbound/outbound fan-out within this single plugin.
+    cached_manifest: PluginManifest,
     inbound: Mutex<Option<InboundManager>>,
     outbound: Mutex<Option<OutboundDispatcher>>,
     cursor: OnceCell<Arc<CursorStore>>,
@@ -52,6 +63,12 @@ pub struct EmailPlugin {
     attachments: OnceCell<Arc<AttachmentStore>>,
     gc_cancel: OnceCell<tokio_util::sync::CancellationToken>,
 }
+
+/// Phase 81.12.d — bundled NexoPlugin manifest. `expect()` is OK here:
+/// the file ships in this crate and is checked at compile time by
+/// `include_str!`, so a parse failure means the workspace itself is
+/// broken — fail-fast at boot beats a deferred "manifest missing" surprise.
+const MANIFEST_TOML: &str = include_str!("../nexo-plugin.toml");
 
 impl EmailPlugin {
     /// Construct the plugin with its dependencies. `data_dir` is the
@@ -63,11 +80,14 @@ impl EmailPlugin {
         google: Arc<GoogleCredentialStore>,
         data_dir: PathBuf,
     ) -> Self {
+        let cached_manifest: PluginManifest = toml::from_str(MANIFEST_TOML)
+            .expect("compile-time-bundled nexo-plugin.toml must parse");
         Self {
             cfg: Arc::new(cfg),
             creds,
             google,
             data_dir,
+            cached_manifest,
             inbound: Mutex::new(None),
             outbound: Mutex::new(None),
             cursor: OnceCell::new(),
@@ -596,6 +616,43 @@ impl Plugin for EmailPlugin {
     }
 }
 
+/// Phase 81.12.d — dual-trait wrapper. Until Phase 81.12.e flips the
+/// boot path in `src/main.rs`, the legacy `Plugin` impl above is the
+/// one actually invoked at runtime; this `NexoPlugin` impl exists so a
+/// future `factory_registry.register("email", email_plugin_factory(...))`
+/// callsite can drive the same plugin through `wire_plugin_registry`
+/// without touching the per-account fields.
+///
+/// `enabled = false` or empty `accounts` short-circuits inside
+/// `Plugin::start` returning `Ok(())`, so init-disabled / empty-config
+/// plugins still report success through the NexoPlugin path — same
+/// observable behavior as the legacy `register_arc` + `start_all`
+/// combination.
+#[async_trait]
+impl NexoPlugin for EmailPlugin {
+    fn manifest(&self) -> &PluginManifest {
+        &self.cached_manifest
+    }
+
+    async fn init(&self, ctx: &mut PluginInitContext<'_>) -> Result<(), PluginInitError> {
+        Plugin::start(self, ctx.broker.clone())
+            .await
+            .map_err(|source| PluginInitError::Other {
+                plugin_id: self.cached_manifest.plugin.id.clone(),
+                source,
+            })
+    }
+
+    async fn shutdown(&self) -> Result<(), PluginShutdownError> {
+        Plugin::stop(self)
+            .await
+            .map_err(|source| PluginShutdownError::Other {
+                plugin_id: self.cached_manifest.plugin.id.clone(),
+                source,
+            })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -631,5 +688,94 @@ email:
         // Only stop is exercised here; the start path requires a real
         // broker which integration tests will wire up.
         p.stop().await.unwrap();
+    }
+}
+
+#[cfg(test)]
+mod nexo_plugin_tests {
+    use super::*;
+    use nexo_config::types::plugins::EmailPluginConfigFile;
+
+    fn test_email_config() -> EmailPluginConfig {
+        // Empty `accounts` short-circuits Plugin::start with Ok(()) so
+        // no IMAP/SMTP/network is touched. The trait-shape tests only
+        // exercise manifest, factory, and dual-trait dispatch paths.
+        let yaml = r#"
+email:
+  accounts: []
+"#;
+        let f: EmailPluginConfigFile = serde_yaml::from_str(yaml).unwrap();
+        f.email
+    }
+
+    fn test_email_plugin() -> EmailPlugin {
+        EmailPlugin::new(
+            test_email_config(),
+            Arc::new(EmailCredentialStore::empty()),
+            Arc::new(GoogleCredentialStore::empty()),
+            std::env::temp_dir().join("nexo-email-nexo-plugin-test"),
+        )
+    }
+
+    #[test]
+    fn manifest_parses_and_id_is_email() {
+        let m: PluginManifest = toml::from_str(MANIFEST_TOML).unwrap();
+        assert_eq!(m.plugin.id, "email");
+        assert_eq!(m.plugin.version.to_string(), "0.1.1");
+        assert_eq!(
+            m.plugin.requires.nexo_capabilities,
+            vec!["broker".to_string()]
+        );
+    }
+
+    #[test]
+    fn nexo_plugin_init_delegates_to_legacy_start() {
+        // Trait-dispatch shape only — calling init() for real requires
+        // a running broker and (with non-empty accounts) live IMAP. The
+        // body is a 1-line delegation to Plugin::start.
+        let plugin = test_email_plugin();
+        let nexo: &dyn NexoPlugin = &plugin;
+        assert_eq!(nexo.manifest().plugin.id, "email");
+        assert_eq!(nexo.manifest().plugin.version.to_string(), "0.1.1");
+    }
+
+    #[test]
+    fn factory_builder_produces_usable_handle() {
+        // 4-arg factory variant (cfg + creds + google + data_dir).
+        // Differentiates from telegram/whatsapp factories that close
+        // over only the config struct.
+        let cfg = test_email_config();
+        let creds = Arc::new(EmailCredentialStore::empty());
+        let google = Arc::new(GoogleCredentialStore::empty());
+        let data_dir = std::env::temp_dir().join("nexo-email-factory-test");
+        let factory: nexo_core::agent::nexo_plugin_registry::PluginFactory =
+            Box::new(move |_m| {
+                let plugin: Arc<dyn NexoPlugin> = Arc::new(EmailPlugin::new(
+                    cfg.clone(),
+                    creds.clone(),
+                    google.clone(),
+                    data_dir.clone(),
+                ));
+                Ok(plugin)
+            });
+        let m: PluginManifest = toml::from_str(MANIFEST_TOML).unwrap();
+        match factory(&m) {
+            Ok(handle) => assert_eq!(handle.manifest().plugin.id, "email"),
+            Err(e) => panic!("factory should succeed, got {e}"),
+        }
+    }
+
+    #[test]
+    fn dual_trait_methods_share_state() {
+        // Single-plugin / multi-account-internal model. Unlike telegram
+        // / whatsapp where per-instance `registry_name` diverges from
+        // manifest id, email's legacy `name()` and `manifest().plugin.id`
+        // agree at all times — there is no per-instance label.
+        let plugin = test_email_plugin();
+        let legacy: &dyn Plugin = &plugin;
+        let nexo: &dyn NexoPlugin = &plugin;
+        assert_eq!(legacy.name(), "email");
+        assert_eq!(nexo.manifest().plugin.id, "email");
+        assert_eq!(legacy.name(), nexo.manifest().plugin.id);
     }
 }

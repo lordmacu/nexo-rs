@@ -10,6 +10,52 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.12.d — Email plugin dual-trait migration to `NexoPlugin`.**
+  Fourth per-plugin slice of the `81.12` migration (after 81.12.a/b/c).
+  New file `crates/plugins/email/nexo-plugin.toml` (~30 LOC) declares
+  `id = "email"`, version `0.1.1`, name `"Email"`, description referencing
+  IMAP/SMTP and the multi-account-internal model,
+  `min_nexo_version = ">=0.1.0"`, and `requires.nexo_capabilities = ["broker"]`.
+  Manifest is **dormant** — top-of-file warning matches the prior
+  slices. `EmailPlugin` struct gains a `cached_manifest: PluginManifest`
+  field parsed once via `include_str!("../nexo-plugin.toml")` +
+  `toml::from_str` in `EmailPlugin::new()`. `impl NexoPlugin for
+  EmailPlugin` ships alongside `impl Plugin for EmailPlugin` (dual-trait):
+  delegating shape mirrors browser/telegram/whatsapp slices.
+  **Single-plugin / multi-account-internal model** — unlike telegram /
+  whatsapp where N plugin instances each carry one account's
+  `registry_name`, email is ONE plugin with `EmailPluginConfig.accounts:
+  Vec<>` driving internal fan-out via `InboundManager` +
+  `OutboundDispatcher`. No per-instance label divergence:
+  `manifest().plugin.id` and legacy `Plugin::name()` both equal
+  `"email"` at all times. Public factory builder
+  `pub fn email_plugin_factory(cfg, creds: Arc<EmailCredentialStore>,
+  google: Arc<GoogleCredentialStore>, data_dir: PathBuf) -> PluginFactory`
+  in `crates/plugins/email/src/lib.rs` returns a closure that clones
+  all four arguments per invocation. **Credential injection avoided
+  extending `PluginInitContext`** — factory closes over `creds` /
+  `google` / `data_dir` at registration time (analog to browser closing
+  over `BrowserConfig`). Same pattern lets future plugins with non-config
+  dependencies stay factory-side without touching the trait.
+  `enabled = false` or empty `accounts` short-circuits inside
+  `Plugin::start` returning `Ok(())`, so init-disabled plugins still
+  report success through the NexoPlugin path — same observable behavior
+  as the legacy `register_arc` + `start_all` combination. The factory
+  is exported but no caller registers it today — main.rs's legacy block
+  at lines 1914-1937 stays untouched. **Behavior identical to pre-81.12.d
+  until Phase 81.12.e flips main.rs**. New deps:
+  `nexo-plugin-manifest = { path = "../../plugin-manifest" }` + `toml = "0.8"`
+  on the email crate's `Cargo.toml`. No cycle introduced. 4 unit tests
+  in `nexo_plugin_tests`: manifest parses + id correct; cached_manifest
+  reachable via `&dyn NexoPlugin`; 4-arg factory builder produces a
+  usable `Arc<dyn NexoPlugin>`; dual-trait dispatch agrees on identity
+  (no multi-instance test — single plugin model). Compatibility audit:
+  `EmailPluginConfig: Clone` already derived
+  (`crates/config/src/types/plugins.rs:522-529`); zero struct-literal
+  callsites for `EmailPlugin` outside the crate (only `EmailPlugin::new`
+  callers); hot-reload `apply_account_diff` API untouched; GC ticker
+  untouched; `register_email_tools` per-agent untouched (defer Phase 81.3).
+
 - **Phase 81.12.c — WhatsApp plugin dual-trait migration to `NexoPlugin`.**
   Third per-plugin slice of the `81.12` migration (after 81.12.a / browser
   and 81.12.b / telegram). New file `crates/plugins/whatsapp/nexo-plugin.toml`
