@@ -1,7 +1,7 @@
 [package]
 name = "nexo-poller-tools"
 description   = "Built-in tools and builders for the Nexo poller (LLM turn, channel ops)."
-version       = "0.1.1"
+version       = "0.1.2"
 edition       = { workspace = true }
 rust-version  = { workspace = true }
 license       = { workspace = true }
@@ -18,9 +18,9 @@ categories    = { workspace = true }
 # core → poller → plugin-google → core).
 
 [dependencies]
-nexo-core = { version = "0.1.1", path = "../core" }
-nexo-llm = { version = "0.1.1", path = "../llm" }
-nexo-poller = { version = "0.1.1", path = "../poller" }
+nexo-core = { version = "0.2.0", path = "../core" }
+nexo-llm = { version = "0.2.0", path = "../llm" }
+nexo-poller = { version = "0.1.2", path = "../poller" }
 async-trait  = { workspace = true }
 serde_json   = { workspace = true }
 anyhow       = { workspace = true }

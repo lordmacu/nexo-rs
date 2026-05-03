@@ -1,7 +1,7 @@
 [package]
 name = "nexo-pairing"
 description   = "Setup-code pairing store and DM-challenge gate for Nexo channel plugins."
-version       = "0.1.2"
+version       = "0.1.3"
 edition       = { workspace = true }
 rust-version  = { workspace = true }
 license       = { workspace = true }

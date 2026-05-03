@@ -14,7 +14,7 @@ documentation = { workspace = true }
 workspace = true
 
 [dependencies]
-nexo-config = { version = "0.1.1", path = "../config" }
+nexo-config = { version = "0.2.0", path = "../config" }
 serde       = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]

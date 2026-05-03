@@ -1,0 +1,192 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.2.0](https://github.com/lordmacu/nexo-rs/compare/nexo-core-v0.1.1...nexo-core-v0.2.0) - 2026-05-03
+
+### Added
+
+- *(82.10.l)* admin/llm_providers/probe — daemon-side LLM provider reachability check
+- *(82.10.k)* nexo/admin/secrets/write — atomic secret persist + std::env::set_var injection
+- *(82.11.bridge)* NatsAgentEventEmitter — multi-host firehose
+- *(82.11.log.merge)* MergingAgentEventReader cross-source backfill
+- *(82.11.log.sweep)* retention sweep on SqliteAgentEventLog
+- *(82.11.log)* SqliteAgentEventLog — durable firehose sink
+- *(82.11.tee)* TeeAgentEventEmitter — fan-out emitter composition
+- *(82.13.b.firehose)* emit ProcessingStateChanged on pause/resume
+- *(82.14.b.throttle)* EscalationThrottle — sliding-window per-scope cap
+- *(82.14.c)* SqliteEscalationStore — durable pending escalations
+- *(82.13.d)* SqliteProcessingControlStore — durable pause + pending queue
+- *(82.14.b.firehose)* EscalationRequested + EscalationResolved variants
+- *(83.8.12.5.cron)* tenant-aware cron LLM build
+- *(83.8.12.6.runtime+.b)* SkillLoader fallback chain + on-disk migration
+- *(83.8.12.4.b)* tenant-aware firehose + escalations handler filter
+- *(83.8.12.7)* admin audit log tenant_id column + tail_for_tenant
+- *(83.8.12.6)* skills per-tenant layout — <root>/{__global__,<tenant_id>}/<name>/SKILL.md
+- *(83.8.12.5.c.b)* tenant-scoped LLM provider yaml writer + drop the not_implemented gates
+- *(83.8.12.5.c)* admin RPC llm_providers wire shapes for tenant scope (handler stubs reject)
+- *(83.8.12.5.b)* wire BindingContext/AgentConfig.tenant_id → build_for_tenant on agent + worker
+- *(83.8.12.5)* LLM providers per-tenant — TenantLlmConfig + resolve_provider + build_for_tenant
+- *(82.13.c.1)* runtime intake hook checks ProcessingControlStore + buffers inbound during pause
+- *(81.6)* plugin-contributed agent merge + NexoPlugin::init() driver (library + tests)
+- *(82.13.b.3.2)* resume drains pending inbounds + stamps as User transcript entries
+- *(82.13.b.3.1)* ProcessingControlStore push_pending/drain_pending + cap policy + drop event
+- *(82.13.b.2)* processing/resume injects operator summary as System transcript entry + SDK release end-to-end
+- *(82.13.b.1.3)* TranscriptWriterAppender adapter + SDK + boot wire + docs
+- *(82.13.b.1.2)* processing/intervention stamps operator reply on transcript
+- *(81.5)* NexoPluginRegistry filesystem discovery (library + tests)
+- *(82.13.b.1.1)* TranscriptAppender trait + ProcessingInterventionParams.session_id
+- *(83.8.12.4)* tenant_id filter wire shapes + agents handler enforcement
+- *(83.8.12.2)* tenants domain handler + capability + INVENTORY
+- *(83.8.12.1)* empresa wire shapes + BindingContext + AgentConfig empresa_id
+- *(83.8.4.b.1)* BrokerOutboundDispatcher + WhatsAppTranslator
+- *(83.8.4.a)* close processing.intervention end-to-end via ChannelOutboundDispatcher
+- *(83.8.2)* admin/skills domain handler + capability + INVENTORY
+- *(83.3)* hook vote-to-block / vote-to-transform wire shapes + 19 tests
+- *(83.1)* AgentConfig.extensions_config field + 2 YAML round-trip tests
+- *(85.1)* LlmError::PromptTooLong + Budget Consecutive413 axis
+- *(84.4)* worker persona system prompt + boot wire
+- *(84.3.1)* WorkerRegistry + SendMessageToWorker tool + 24 tests
+- *(84.1.2)* EffectiveBindingPolicy prepends coordinator persona
+- *(84.1.1)* coordinator persona prompt builder + 7 tests
+- *(82.14.2)* EscalationStore + handlers + auto-resolve hook
+- *(82.13.2)* processing domain + InMemory store + dispatcher routing
+- *(82.11.4)* AgentEventEmitter + broadcast firehose hook
+- *(82.11.2)* agent_events admin domain handlers
+- *(82.10.h.b.3)* AdminRouter trait + reader_task app: prefix routing
+- *(82.10.h.2)* library-level audit tail() query + format helpers
+- *(82.10.h.1)* SqliteAdminAuditWriter + retention sweep
+- *(82.10.g)* nexo/admin/reload + capability map for reload
+- *(82.10.f)* llm_providers + channels domains
+- *(36.2/MS-1.b)* compaction mutation hook from llm_behavior
+- *(36.2/MS-1.b)* wire mutation hook on workspace_git.commit_all
+- *(82.10.e)* pairing domain (start/status/cancel + notify wire)
+- *(82.10.d)* credentials domain (list/register/revoke many-to-many)
+- *(82.10.c)* agents domain (list/get/upsert/delete)
+- *(82.10.b)* capability gates + audit log + INVENTORY
+- *(36.2)* agent memory snapshot subsystem
+- *(82.10.a)* admin RPC SDK + dispatcher skeleton + mock echo
+- *(82.7.e)* wire-up llm_behavior + Phase 72 rate_limited marker
+- *(82.7.d)* ToolRateLimiter binding-aware + LRU + essential_deny
+- *(82.7.b+c)* per-binding tool_rate_limits config + resolver
+- *(82.7.a)* unify ToolRateLimitSpec + add essential_deny_on_miss
+- *(82.5.d)* delegation + heartbeat tick inbound meta producers
+- *(82.5.c)* event-subscriber yaml inbound_kind + propagation
+- *(82.5.b)* whatsapp inbound meta producer + per-turn stamp
+- *(82.5.a)* InboundMessageMeta shape + signature change
+- *(82.4.b.b.3-5)* boot supervisor + auto-synth + resolver hook
+- *(82.4.b.b.2)* producer loop self-event guard
+- *(82.4.b.b.1)* AgentContext::with_event_source builder
+- *(82.4.b.5+6)* EventSubscriber run loop + off mode + cancel
+- *(82.4.b.4)* synthesize_event_inbound_bindings auto-synth
+- *(82.4.b.3)* extract_nexo_event_source resolver helper
+- *(82.4.b.2)* synthesised inbound payload builder
+- *(82.4.b.1)* EventSubscriber skeleton + id reserved-char validate
+- *(82.4.4)* EventSubscriberBinding schema + AgentConfig field
+- *(82.2.b.6)* nexo-core re-exports BindingContext from tool-meta
+- *(82.1.6)* unify _meta builder via AgentContext::build_meta_value
+- *(82.1.5)* inject_context_meta dual-writes _meta.nexo.binding
+- *(core)* with_effective populates BindingContext at intake (Phase 82.1 Step 4)
+- *(core)* BindingContext::from_effective + AgentContext.binding (Phase 82.1 Step 3)
+- *(core)* EffectiveBindingPolicy gains channel + account_id + binding_id() (Phase 82.1 Step 2)
+- *(core)* BindingContext struct + standalone helpers (Phase 82.1 Step 1)
+- *(channels)* rate limit + per-binding tool granularity (Phase 80.9 closed)
+- *(core)* NexoPlugin trait + PluginInitContext + lifecycle errors (Phase 81.2)
+- *(config,driver-loop,main)* extract_memories boot wire (M4.a.b)
+- *(core,driver-types,driver-loop)* MemoryExtractor trait + LlmAgentBehavior wire (M4.a)
+- *(core)* built-in deferred tools sweep (M8.a)
+- *(core/bridge)* listChanged capability + ArcSwap allowlist (M1.a)
+- *(effective-policy)* per-binding override for lsp/team/config_tool/repl (C1)
+- deferred-schema filtering, cron jitter, MCP completion/complete, plan-mode pairing parser
+- Phase 77.2-77.6 + skills (autoCompact, sessionMemoryCompact, extractMemories, relevance scorer, bundled skills)
+- *(memory)* add secret scanner + guard for Phase 77.7
+- *(cache)* add global cache-break detection with anthropic diagnostics
+- *(setup)* per-agent wizard submenu + yaml_patch helpers
+- audit-before-done as code (HookAction::DispatchAudit + AuditChainer)
+- operator interrupt + audit-before-done workflow
+- self-modify gate so Cody can finish the nexo-rs roadmap
+- *(core,project-tracker,agents)* Cody flows — preflight + workspace ops
+- *(main,core)* in-process driver subsystem behind NEXO_DRIVER_INTEGRATED
+- *(core)* web_fetch built-in tool [W-2]
+- *(core)* PT-3 — DispatchTelemetry threaded through ProgramPhaseHandler + PT-9 NON_CHAT_ORIGIN_PLUGINS
+- *(core)* PT-2 — runtime intake migrates to get_or_build_with_dispatch
+- *(core)* PT-1 — ToolHandler adapters for the dispatch surface
+- *(link-understanding)* readability-shaped boilerplate dropper [L-2]
+- *(core)* Phase 67.H.3 — dispatch capability hot-reload via fresh ToolRegistryCache
+- *(core,dispatch-tools)* Phase 67.D.3 — registry filters by DispatchPolicy
+- *(config,core)* Phase 67.D.1 — DispatchPolicy on agent + per-binding override
+- *(pairing)* wire telemetry counters PR-2 (Phase 26.y)
+
+### Fixed
+
+- *(83.8.12.2.b)* wire tenants domain into admin RPC dispatcher
+- *(clippy)* clear all -D warnings across workspace
+- *(ci)* unused imports + broken docs links + README SEO
+- B22+B23+B24 + comprehensive READMEs for programmer agent crates
+- B17–B21 + S1/S3/S5 — audit pass cleanup
+- B10 + B11 + B12 + B13 + B16 hardening pass
+- B1..B7 + B9 — wiring del programador agente end-to-end
+
+### Other
+
+- *(82.13.c)* regression — pause/resume cycles don't drag along queue entries
+- *(83.8.12.1.fix)* rename empresa → tenant for English code identifiers
+- *(84.3)* SendMessageToWorker docs + worked example + close-out
+- *(84.1)* YAML-fixture smoke test + coordinator-mode docs page
+- *(82.1.8)* e2e BindingContext propagation through stdio extension
+- *(wip)* checkpoint mid-refactor + split microapp PHASES into dedicated file
+- *(mcp-expose)* snapshot regression guard for canonical tool names (M9 step 1)
+- *(team-tools)* pull policy from ctx.effective_policy() per call (C2 step 5)
+- *(repl-tool)* per-call allowlist guard + drop dead config field (C2 step 4)
+- *(lsp-tool)* pull policy from ctx.effective_policy() per call (C2 steps 2-3)
+- audit followups: log all 2026-04-30 findings + ship M3 + M10
+- replace deprecated TempDir::into_path in config-self-edit tests
+- fix workspace clippy/build regressions and docker context
+- sync all local changes
+- stabilize workspace: complete mcp/followup wiring and satisfy strict CI lints
+- harden denied overrides and pass per-call session context
+- Phase 79.6 step 9: full Team* handlers (Create/Delete/SendMessage/List/Status)
+- Phase 79.6 step 8: team_tools scaffold + 5 ToolDef stubs
+- Phase 79.6 step 7: plan-mode entries for the 5 Team* tools
+- Phase 79.6 step 6: AgentContext team fields + DmMessage
+- Phase 79.6 step 5: TeamMessageRouter — DM + broadcast over `team.>`
+- Phase 79.6 step 4: TeamPolicy + AgentConfig.team + fixture sweep
+- Phase 79.10 step 9: Config tool — propose + apply + rollback
+- Phase 79.10 step 8: Config tool — read path + scaffold (gated)
+- Phase 79.10 step 7: config_changes_tail tool (read-only)
+- Phase 79.10 step 6: plan-mode op-aware gating + read-only tail tool
+- Phase 79.10 step 5: SqliteConfigChangesStore audit log
+- Phase 79.10 step 4: approval correlator (parser + FSM + tests)
+- Phase 79.10 step 3: ConfigToolPolicy + SUPPORTED_SETTINGS + AgentConfig.config_tool
+- Phase 79.5 step 12: main.rs boot wiring + AgentConfig.lsp + fixture sweep
+- Phase 79.5 step 11: LspTool registration + handler in nexo-core
+- Phase 79.5 step 10: plan-mode classification — `Lsp` is read-only
+- CI fix: silence clippy on in-flux Phase 76 + 79 + 48 scaffolding
+- CI fix: silence dead-code + unused-assignment warnings under -D warnings
+- Phase 79 tool follow-ups: cron recipient field + plan_mode + cross-tool polish
+- Phase 79.7 follow-up: outbound publish — cron LLM responses reach the user
+- Phase 79.7 follow-up: LlmCronDispatcher (real LLM call)
+- Phase 79.7 follow-up: runtime firing live (logging dispatcher)
+- Phase 79.11: ListMcpResources + ReadMcpResource router tools (MVP)
+- Phase 79.2 follow-up: ToolSearch per-agent rate limit (5/min)
+- Phase 79.7 + 79.2 follow-ups: cron pause/resume, jitter, MCP auto-defer
+- Phase 79.7: cron_create / cron_list / cron_delete (MVP — runtime firing deferred)
+- thread `remote_triggers` field through nexo-core test fixtures
+- Phase 79.8: RemoteTrigger outbound publisher (webhook + NATS)
+- Phase 79.13: NotebookEdit Jupyter cell editor
+- Phase 79.3: SyntheticOutput typed-output validator
+- Phase 79.2: ToolSearch deferred-schema discovery (MVP)
+- Phase 79.4: TodoWriteTool (intra-turn scratch list)
+- Phase 79.1: EnterPlanMode + ExitPlanMode tools (MVP)
+- Phase 27.1: cargo-dist baseline + bundled WIP
+- Phase 72: turn-level audit log
+- Phase 71: agent registry persistence + shutdown drain
+- Phase 70: pairing/dispatch DX cleanup
+- cargo fmt --all
+- *(crates)* expand 4 more READMEs (core, llm, pairing, extensions)
+- *(core)* PT-8 — multi-agent dispatch e2e for handler + telemetry wiring
