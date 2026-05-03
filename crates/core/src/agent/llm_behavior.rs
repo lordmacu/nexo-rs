@@ -236,6 +236,13 @@ pub struct LlmAgentBehavior {
     /// `"default"`; multi-tenant SaaS wires the per-binding tenant
     /// at boot via `with_mutation_hook`.
     mutation_tenant: String,
+    /// Phase 81.9 — plugin-contributed skill roots threaded from
+    /// `wire_plugin_registry` boot output. Empty when no plugin
+    /// discovery is configured. `prepare_system_prompt()` consumes
+    /// this via `SkillLoader::with_plugin_roots(self.plugin_skill_roots.clone())`
+    /// so plugin-contributed skills become discoverable to every
+    /// agent without operator-level skills_dir duplication.
+    plugin_skill_roots: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -344,7 +351,18 @@ impl LlmAgentBehavior {
             memory_dir: None,
             mutation_hook: None,
             mutation_tenant: "default".into(),
+            plugin_skill_roots: Vec::new(),
         }
+    }
+
+    /// Phase 81.9 — install the plugin-contributed skill roots
+    /// returned by `wire_plugin_registry`. Empty vec preserves
+    /// legacy behavior (operator's `skills_dir` is the only
+    /// source). Operator-priority is preserved by the loader's
+    /// search order — see `SkillLoader::candidate_paths`.
+    pub fn with_plugin_skill_roots(mut self, roots: Vec<PathBuf>) -> Self {
+        self.plugin_skill_roots = roots;
+        self
     }
 
     /// Phase 36.2 (MS-1.b compactions) — wire the mutation
@@ -905,7 +923,14 @@ impl LlmAgentBehavior {
                         // global, and legacy `<root>/<name>/`
                         // remains as fallback for un-migrated
                         // deployments.
-                        .with_tenant_id(ctx.config.tenant_id.clone());
+                        .with_tenant_id(ctx.config.tenant_id.clone())
+                        // Phase 81.9 — append plugin-contributed
+                        // skill roots from `wire_plugin_registry`.
+                        // Operator-priority is preserved because
+                        // `candidate_paths` searches the operator
+                        // chain (tenant + global + legacy) before
+                        // any plugin root.
+                        .with_plugin_roots(self.plugin_skill_roots.clone());
                 let loaded = loader.load_many(&effective.skills).await;
                 if let Some(blocks) = render_skill_blocks(&loaded) {
                     skills_section = Some(blocks);
