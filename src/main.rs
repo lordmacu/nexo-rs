@@ -1959,6 +1959,11 @@ async fn main() -> Result<()> {
             .unwrap_or_else(|_| semver::Version::new(0, 0, 0)),
         &core_envs,
         &available_caps,
+        // Phase 81.12.0 — no per-plugin factories registered yet;
+        // legacy plugin block continues to handle browser /
+        // whatsapp / telegram / email registration. 81.12.a-e
+        // will replace `None` with `Some(&factory_registry)`.
+        None,
     );
     // `wire.registry` + `wire.skill_roots` +
     // `wire.channel_adapter_registry` stay in scope for 81.10 hot-
@@ -6674,6 +6679,9 @@ fn run_doctor_plugins(config_dir: &std::path::Path, json: bool) -> Result<i32> {
         &version,
         &core_envs,
         &available,
+        // Phase 81.12.0 — doctor handler runs the same offline
+        // pipeline as boot wire; no factories registered yet.
+        None,
     );
     let snap = wire.registry.snapshot();
     let exit_code =

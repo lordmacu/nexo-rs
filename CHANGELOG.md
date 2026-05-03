@@ -10,6 +10,57 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.12.0 — `PluginFactoryRegistry` foundation (no plugin
+  migrations).** New module
+  `nexo_core::agent::nexo_plugin_registry::factory` ships the
+  manifest-driven plugin instantiation infrastructure that 81.12.a-e
+  will populate. `BoxError = Box<dyn std::error::Error + Send + Sync + 'static>`
+  type-erases plugin authors' error types. `PluginFactory =
+  Box<dyn Fn(&PluginManifest) -> Result<Arc<dyn NexoPlugin>, BoxError> + Send + Sync + 'static>`
+  is the closure shape per-plugin authors register at boot. Closures
+  capture references to `&AppConfig` (or specific config slices) via
+  move-closure so they can build plugin-specific config structs from
+  the running daemon's state — sidesteps the `PluginInitContext`
+  config-injection gap. `PluginFactoryRegistry { factories: BTreeMap<String, PluginFactory> }`
+  with `register / instantiate / is_registered / kinds / len /
+  is_empty` methods and two thiserror enums:
+  `FactoryRegistrationError::AlreadyRegistered` (duplicate id;
+  first-registers-wins) and `FactoryInstantiateError::{NotRegistered, FactoryFailed { source: BoxError }}`.
+  Sibling fn `run_plugin_init_loop_with_factory(snapshot, factory_registry, ctx_factory)`
+  ships in `init_loop.rs` next to the existing handles-map-based
+  `run_plugin_init_loop`; both coexist. Per-plugin behavior:
+  unregistered → `InitOutcome::NoHandle` (preserves backward-compat
+  during partial migration); registered + factory ok → `Ok { duration_ms }`
+  after `init()` succeeds; factory closure errors → `Failed { error }`.
+  `wire_plugin_registry` (Phase 81.9 helper) gains a 6th parameter
+  `factory_registry: Option<&PluginFactoryRegistry>`. `None` →
+  existing path verbatim (every plugin records `NoHandle`). `Some`
+  → factory-driven path. `main.rs`'s legacy plugin registration
+  block at lines 1855-1941 stays untouched; both callsites
+  (`Mode::Run` boot wire + `run_doctor_plugins` handler) pass
+  `None` until 81.12.a-e flips them. 5 unit tests in `factory::tests`
+  cover register-first / register-duplicate / instantiate-unregistered /
+  instantiate-factory-error / instantiate-success. 1 init-loop
+  unit test exercises the routing path (registered → Failed,
+  unregistered → NoHandle). 2 integration tests in
+  `crates/core/tests/plugin_factory_registry_integration.rs`
+  cover Some / None paths through the full `wire_plugin_registry`
+  pipeline.
+
+  **81.12 split into 6 sub-slices** (one foundation + one per
+  legacy plugin + one cleanup):
+  - 81.12.0 ✅ — Foundation (this commit)
+  - 81.12.a ⬜ — Browser plugin migration (~2h)
+  - 81.12.b ⬜ — Telegram plugin migration (~3h)
+  - 81.12.c ⬜ — WhatsApp plugin migration (~4h)
+  - 81.12.d ⬜ — Email plugin migration (~5h, may extend
+    `PluginInitContext` for credential injection)
+  - 81.12.e ⬜ — Remove legacy registration block from main.rs
+    (~87 LOC removal; only after 81.12.a-d ship dual-trait)
+
+  Total estimated effort to close 81.12 fully: ~16h spread across
+  4-5 future sessions.
+
 - **Phase 81.11 — Plugin doctor + capability inventory integration
   (library + tests).** New module
   `nexo_core::agent::nexo_plugin_registry::capability_aggregator`

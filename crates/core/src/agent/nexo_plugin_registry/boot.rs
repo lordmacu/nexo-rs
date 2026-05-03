@@ -20,6 +20,8 @@ use std::collections::BTreeSet;
 use super::capability_aggregator::{
     aggregate_plugin_gates, AggregatedGate, UnmetRequirement,
 };
+use super::factory::PluginFactoryRegistry;
+use super::init_loop::run_plugin_init_loop_with_factory;
 use super::{
     discover, merge_plugin_contributed_agents, merge_plugin_contributed_skills,
     run_plugin_init_loop, NexoPluginRegistry, NexoPluginRegistrySnapshot,
@@ -84,6 +86,7 @@ pub fn wire_plugin_registry(
     current_version: &Version,
     core_env_vars: &[(&str, &str)],
     available_capabilities: &BTreeSet<String>,
+    factory_registry: Option<&PluginFactoryRegistry>,
 ) -> WirePluginRegistryOutput {
     // 1. discover.
     let snap = discover(discovery_cfg, current_version);
@@ -95,25 +98,42 @@ pub fn wire_plugin_registry(
     let skill_merge = merge_plugin_contributed_skills(&snap);
     let skill_roots: Vec<PathBuf> = skill_merge.skill_roots.values().cloned().collect();
 
-    // 4. drive NexoPlugin::init() per discovered plugin. 81.9
-    //    callers pass an empty handles map — every plugin records
-    //    NoHandle. 81.7.b / 81.12 will populate.
-    let empty_handles: BTreeMap<String, Arc<dyn NexoPlugin>> = BTreeMap::new();
-    let init_outcomes_future = run_plugin_init_loop(
-        &snap,
-        &empty_handles,
-        |_id| -> crate::agent::plugin_host::PluginInitContext<'_> {
-            unreachable!(
-                "wire_plugin_registry passes empty handles; ctx_factory must not be invoked"
-            )
-        },
-    );
-    // The init-loop is async only because it `.await`s on the
-    // (potentially-real) plugin's `init()`. With an empty handles
-    // map every iteration short-circuits to `NoHandle` synchronously
-    // — block_on is safe because the closure body is unreachable
-    // and no actual await ever happens.
-    let init_outcomes = futures::executor::block_on(init_outcomes_future);
+    // 4. drive NexoPlugin::init() per discovered plugin.
+    //    Phase 81.12.0 — when the operator supplies a
+    //    `factory_registry`, plugins with a registered factory
+    //    are instantiated + their `init()` is called; the rest
+    //    record NoHandle. With `None` (today's main.rs path),
+    //    behavior matches the pre-81.12.0 branch: every plugin
+    //    records NoHandle. ctx_factory closure is `unreachable!`
+    //    because no current factory's init body actually consumes
+    //    a real `PluginInitContext` until 81.12.a-e ship.
+    let init_outcomes = match factory_registry {
+        Some(factory) => {
+            let fut = run_plugin_init_loop_with_factory(
+                &snap,
+                factory,
+                |_id| -> crate::agent::plugin_host::PluginInitContext<'_> {
+                    unreachable!(
+                        "wire_plugin_registry's ctx_factory not yet wired for real plugins; 81.12.a-e populate this"
+                    )
+                },
+            );
+            futures::executor::block_on(fut)
+        }
+        None => {
+            let empty_handles: BTreeMap<String, Arc<dyn NexoPlugin>> = BTreeMap::new();
+            let fut = run_plugin_init_loop(
+                &snap,
+                &empty_handles,
+                |_id| -> crate::agent::plugin_host::PluginInitContext<'_> {
+                    unreachable!(
+                        "wire_plugin_registry passes empty handles; ctx_factory must not be invoked"
+                    )
+                },
+            );
+            futures::executor::block_on(fut)
+        }
+    };
 
     // Fold everything into a fresh snapshot.
     let mut updated_report = snap.last_report.clone();

@@ -71,6 +71,7 @@ async fn wire_plugin_registry_full_pipeline() {
         &version,
         &[],
         &std::collections::BTreeSet::new(),
+        None,
     );
 
     // Contributed agent landed in the runtime config.

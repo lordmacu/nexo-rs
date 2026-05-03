@@ -105,6 +105,12 @@ drives this phase. Critical-path rows flagged `P1`.
 | 81.9.b — `nexo agent doctor plugins` CLI subcommand | **P2** | ✅ shipped 2026-05-03 (Mode::DoctorPlugins variant + parser arm + run_doctor_plugins handler + 8-section TTY/JSON render) |
 | 81.10 — Plugin hot-load via Phase 18 reload coord | **P3** | ✅ shipped 2026-05-03 (register_plugin_registry_reload_hook helper + boot wire + 3 unit tests; skill_roots rebuild + live discovery_cfg deferred 81.10.b) |
 | 81.11 — Plugin doctor + capability inventory integration | **P3** | ✅ shipped 2026-05-03 (capability_aggregator + 3 new diagnostic variants + report extension + wire_plugin_registry signature; doctor_render sections + DoctorCapabilities envelope mode deferred 81.11.b) |
+| 81.12.0 — `PluginFactoryRegistry` foundation (no plugin migrations) | **P3** | ✅ shipped 2026-05-03 (factory module + run_plugin_init_loop_with_factory + wire_plugin_registry 6th param) |
+| 81.12.a — Browser plugin migration to NexoPlugin | **P3** | ⬜ pending |
+| 81.12.b — Telegram plugin migration to NexoPlugin | **P3** | ⬜ pending |
+| 81.12.c — WhatsApp plugin migration to NexoPlugin | **P3** | ⬜ pending |
+| 81.12.d — Email plugin migration to NexoPlugin | **P3** | ⬜ pending |
+| 81.12.e — Remove legacy registration block from main.rs | **P3** | ⬜ pending (after 81.12.a-d) |
 | 83.2 — Extension-contributed skills | **P2** | ⬜ | Microapp ships its own skills; opportunistic |
 | 83.3 — Hook interceptor (vote-to-block) | **P1** | ⬜ | Compliance primitives plug in here — gates 83.5 + 83.8 |
 | 83.4 — `microapp-sdk-rust` reusable helper | **P1** | 🔄 | Core SDK ✅ 2026-04-30; 83.4.b ✅; 83.4.c Phase 82.x helpers pending |

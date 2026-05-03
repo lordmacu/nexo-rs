@@ -15,6 +15,7 @@ use serde::Serialize;
 
 use crate::agent::plugin_host::{NexoPlugin, PluginInitContext};
 
+use super::factory::{FactoryInstantiateError, PluginFactoryRegistry};
 use super::NexoPluginRegistrySnapshot;
 
 #[derive(Clone, Debug, Serialize)]
@@ -71,6 +72,67 @@ where
                     "plugin init failed; continuing"
                 );
                 outcomes.insert(id, InitOutcome::Failed { error });
+            }
+        }
+    }
+    outcomes
+}
+
+/// Phase 81.12.0 — factory-driven init loop. For each plugin in
+/// the snapshot, look up a factory in `factory_registry`; if
+/// found, instantiate via the factory closure + call its `init()`.
+/// Plugins WITHOUT a factory record `InitOutcome::NoHandle` so
+/// operators with partial migration see consistent output during
+/// the 81.12.a-e per-plugin slices. Sequential per snapshot order;
+/// one failure logs `tracing::warn!` and the loop never aborts.
+pub async fn run_plugin_init_loop_with_factory<F>(
+    snapshot: &NexoPluginRegistrySnapshot,
+    factory_registry: &PluginFactoryRegistry,
+    mut ctx_factory: F,
+) -> BTreeMap<String, InitOutcome>
+where
+    F: for<'a> FnMut(&'a str) -> PluginInitContext<'a>,
+{
+    let mut outcomes = BTreeMap::new();
+    for plugin in &snapshot.plugins {
+        let id = plugin.manifest.plugin.id.clone();
+        if !factory_registry.is_registered(&id) {
+            outcomes.insert(id, InitOutcome::NoHandle);
+            continue;
+        }
+        match factory_registry.instantiate(&id, &plugin.manifest) {
+            Err(FactoryInstantiateError::NotRegistered { .. }) => {
+                outcomes.insert(id, InitOutcome::NoHandle);
+            }
+            Err(FactoryInstantiateError::FactoryFailed { source, .. }) => {
+                let error = format!("factory failed: {source}");
+                tracing::warn!(
+                    target: "plugins.init",
+                    plugin_id = %id,
+                    %error,
+                    "plugin factory failed; recording Failed outcome"
+                );
+                outcomes.insert(id, InitOutcome::Failed { error });
+            }
+            Ok(handle) => {
+                let mut ctx = ctx_factory(&id);
+                let start = std::time::Instant::now();
+                match handle.init(&mut ctx).await {
+                    Ok(()) => {
+                        let duration_ms = start.elapsed().as_millis() as u64;
+                        outcomes.insert(id, InitOutcome::Ok { duration_ms });
+                    }
+                    Err(e) => {
+                        let error = e.to_string();
+                        tracing::warn!(
+                            target: "plugins.init",
+                            plugin_id = %id,
+                            %error,
+                            "plugin init failed; continuing"
+                        );
+                        outcomes.insert(id, InitOutcome::Failed { error });
+                    }
+                }
             }
         }
     }
@@ -146,5 +208,49 @@ mod tests {
         let none = InitOutcome::NoHandle;
         let s = serde_json::to_string(&none).unwrap();
         assert!(s.contains("\"outcome\":\"no_handle\""));
+    }
+
+    /// Phase 81.12.0 — factory-driven init loop records `Failed`
+    /// for plugins whose factory closure errors and `NoHandle` for
+    /// the unregistered ones. We use a closure that returns Err so
+    /// the helper short-circuits BEFORE invoking `ctx_factory` —
+    /// building a real `PluginInitContext` is heavy and not
+    /// required to validate the dispatch path.
+    #[tokio::test]
+    async fn run_plugin_init_loop_with_factory_routes_registered_vs_unregistered() {
+        use super::super::factory::{PluginFactory, PluginFactoryRegistry};
+        use crate::agent::plugin_host::PluginInitContext;
+
+        let snap = snapshot_with(vec![discovered("alpha"), discovered("beta")]);
+        let mut registry = PluginFactoryRegistry::new();
+        let factory: PluginFactory = Box::new(|_m| {
+            let err: super::super::factory::BoxError =
+                Box::new(std::io::Error::other("forced failure for test"));
+            Err(err)
+        });
+        registry.register("alpha", factory).unwrap();
+
+        let outcomes = run_plugin_init_loop_with_factory(
+            &snap,
+            &registry,
+            |_id| -> PluginInitContext<'_> {
+                unreachable!(
+                    "ctx_factory must NOT be invoked when the factory closure returns Err"
+                )
+            },
+        )
+        .await;
+
+        // alpha registered → factory failed → Failed outcome.
+        match outcomes.get("alpha") {
+            Some(InitOutcome::Failed { error }) => {
+                assert!(error.contains("forced failure"));
+            }
+            other => panic!(
+                "alpha must be Failed (factory closure errored), got {other:?}"
+            ),
+        }
+        // beta unregistered → NoHandle.
+        assert!(matches!(outcomes.get("beta"), Some(InitOutcome::NoHandle)));
     }
 }

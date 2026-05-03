@@ -20,6 +20,7 @@ pub mod contributes;
 pub mod contributes_skills;
 pub mod discovery;
 pub mod doctor_render;
+pub mod factory;
 pub mod init_loop;
 pub mod report;
 
@@ -39,7 +40,11 @@ pub use contributes_skills::{
     merge_plugin_contributed_skills, SkillConflict, SkillsMergeReport,
 };
 pub use discovery::discover;
-pub use init_loop::{run_plugin_init_loop, InitOutcome};
+pub use factory::{
+    BoxError, FactoryInstantiateError, FactoryRegistrationError, PluginFactory,
+    PluginFactoryRegistry,
+};
+pub use init_loop::{run_plugin_init_loop, run_plugin_init_loop_with_factory, InitOutcome};
 pub use report::{
     DiagnosticLevel, DiscoveredPlugin, DiscoveryDiagnostic,
     DiscoveryDiagnosticKind, PluginDiscoveryReport,
