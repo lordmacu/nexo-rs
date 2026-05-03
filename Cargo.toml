@@ -169,7 +169,7 @@ anyhow             = "1"
 thiserror          = "1"
 tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-async-nats         = "0.35"
+async-nats         = "0.47"
 reqwest            = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "cookies", "charset", "http2", "macos-system-configuration"] }
 sqlx               = { version = "0.8", features = ["sqlite", "runtime-tokio"] }
 tokio-tungstenite  = { version = "0.21", features = ["rustls-tls-native-roots"] }
