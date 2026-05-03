@@ -346,6 +346,45 @@ a oneshot receiver, writes the JSON-RPC frame, and awaits the
 response (default 30 s timeout). Capability denial maps to the
 typed `AdminError::CapabilityNotGranted { capability, method }`.
 
+### Operator identity stamping (Phase 82.10.m)
+
+A handful of admin methods carry an `operator_token_hash: String`
+field in their wire shape — `processing/{pause, resume,
+intervention}` and `escalations/resolve`. The canonical list lives
+at
+[`nexo_tool_meta::admin::operator_stamping::OPERATOR_STAMPED_METHODS`](https://docs.rs/nexo-tool-meta).
+
+Microapps register a closure-based source via
+`AdminClient::set_operator_token_hash`; the SDK then transparently
+stamps the field on every outbound stamped call. The override is
+unconditional (defense-in-depth): any caller-supplied value is
+replaced with the value the closure returns.
+
+```rust
+use std::sync::Arc;
+use arc_swap::ArcSwap;
+use nexo_microapp_sdk::admin::AdminClient;
+
+// Hot-swappable identity source — rotation updates the ArcSwap
+// in place; the next stamped call re-reads it.
+let live_hash = Arc::new(ArcSwap::from_pointee(
+    "deadbeef0123cafe".to_string(),
+));
+
+fn install(client: &AdminClient, source: Arc<ArcSwap<String>>) {
+    client.set_operator_token_hash(move || (*source.load_full()).clone());
+}
+```
+
+The closure is invoked once per outbound stamped call, so a
+post-rotation `pause` request lands the new identity without any
+re-registration. Non-stamped methods (`agents/list`,
+`escalations/list`, etc.) pass through untouched.
+
+This pattern replaces the legacy "HTTP middleware injection"
+approach where each microapp duplicated the method list locally.
+Single source of truth lives in `nexo-tool-meta`.
+
 ## Production wiring
 
 Three production adapters ship in `nexo_setup::admin_adapters`

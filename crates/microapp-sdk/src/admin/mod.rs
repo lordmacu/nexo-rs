@@ -27,7 +27,7 @@ pub use runtime_sender::WriterAdminSender;
 pub use takeover::{HumanTakeover, SendReplyArgs};
 pub use transcripts::TranscriptStream;
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use dashmap::DashMap;
@@ -36,6 +36,15 @@ use serde_json::Value;
 use thiserror::Error;
 use tokio::sync::oneshot;
 use uuid::Uuid;
+
+/// Closure type for the operator-token-hash source. The SDK
+/// invokes the closure once per outbound `call()` whose method
+/// is in `nexo_tool_meta::admin::operator_stamping::OPERATOR_STAMPED_METHODS`.
+/// Closure-based registration lets a microapp plug into a
+/// hot-swappable source (e.g. an `ArcSwap<String>`-backed live
+/// token state) so post-rotation calls stamp the new identity
+/// without re-registration.
+pub type OperatorHashSource = Arc<dyn Fn() -> String + Send + Sync>;
 
 /// Default timeout for admin RPC round-trips. Mirrors the daemon
 /// pending-request timeout from the Phase 82.10 spec.
@@ -134,11 +143,30 @@ pub trait AdminSender: Send + Sync + std::fmt::Debug {
 /// Each call generates a new `app:<uuid-v7>` request id, registers
 /// a oneshot receiver in the pending map, writes the JSON-RPC
 /// frame, and awaits the response (default 30s timeout).
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AdminClient {
     sender: Arc<dyn AdminSender>,
     pending: Arc<DashMap<String, oneshot::Sender<Result<Value, AdminError>>>>,
     timeout: std::time::Duration,
+    operator_hash_source: Arc<OnceLock<OperatorHashSource>>,
+}
+
+impl std::fmt::Debug for AdminClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AdminClient")
+            .field("sender", &self.sender)
+            .field("pending_len", &self.pending.len())
+            .field("timeout", &self.timeout)
+            .field(
+                "operator_hash_source",
+                &if self.operator_hash_source.get().is_some() {
+                    "Some(<closure>)"
+                } else {
+                    "None"
+                },
+            )
+            .finish()
+    }
 }
 
 impl AdminClient {
@@ -153,7 +181,60 @@ impl AdminClient {
             sender,
             pending: Arc::new(DashMap::new()),
             timeout,
+            operator_hash_source: Arc::new(OnceLock::new()),
         }
+    }
+
+    /// Phase 82.10.m — register a closure that produces the
+    /// current operator token hash on demand. After registration,
+    /// every outbound [`call`](Self::call) whose method is in
+    /// [`nexo_tool_meta::admin::operator_stamping::OPERATOR_STAMPED_METHODS`]
+    /// has its `params.operator_token_hash` field overwritten by
+    /// the closure's return value.
+    ///
+    /// Override is unconditional (defense-in-depth): a caller-
+    /// supplied value is replaced by the authenticated
+    /// server-computed value.
+    ///
+    /// The closure is invoked once per outbound stamped call so a
+    /// microapp can plug a hot-swappable identity source (e.g.
+    /// `ArcSwap<String>`) and have post-rotation calls stamp the
+    /// new identity automatically.
+    ///
+    /// Set-once: subsequent calls log via `tracing::warn` and
+    /// keep the original source. Microapps register inside their
+    /// `on_admin_ready` hook, which fires exactly once.
+    pub fn set_operator_token_hash<F>(&self, source: F)
+    where
+        F: Fn() -> String + Send + Sync + 'static,
+    {
+        let arc: OperatorHashSource = Arc::new(source);
+        if self.operator_hash_source.set(arc).is_err() {
+            tracing::warn!(
+                "AdminClient::set_operator_token_hash called twice; \
+                 keeping the source registered first"
+            );
+        }
+    }
+
+    /// Stamp `operator_token_hash` onto `params` if `method` is
+    /// in [`OPERATOR_STAMPED_METHODS`] and a source is registered.
+    /// No-op when the source is absent, the method is not stamped,
+    /// or `params` is not a JSON object.
+    fn maybe_stamp_operator(&self, method: &str, params: &mut Value) {
+        let Some(source) = self.operator_hash_source.get() else {
+            return;
+        };
+        if !nexo_tool_meta::admin::operator_stamping::is_operator_stamped(method) {
+            return;
+        }
+        let Some(obj) = params.as_object_mut() else {
+            return;
+        };
+        obj.insert(
+            "operator_token_hash".to_string(),
+            Value::String(source()),
+        );
     }
 
     /// Generate the next `app:<uuid>` id. Public so the SDK
@@ -185,6 +266,10 @@ impl AdminClient {
         let id = Self::next_request_id();
         let (tx, rx) = oneshot::channel();
         self.pending.insert(id.clone(), tx);
+
+        // Phase 82.10.m — transparent operator-hash stamping.
+        let mut params = params;
+        self.maybe_stamp_operator(method, &mut params);
 
         let frame = serde_json::json!({
             "jsonrpc": "2.0",
@@ -384,6 +469,192 @@ mod tests {
         assert!(id.starts_with("app:"));
         // UUID v4 portion is 36 chars.
         assert_eq!(id.len(), "app:".len() + 36);
+    }
+
+    /// Helper used by stamping tests: drives the request-side
+    /// half of the round-trip (capture, parse, return frame +
+    /// id) without resolving the response. The synthesise +
+    /// pending-resolve path is unused — these tests only assert
+    /// on the captured outbound frame.
+    async fn drive_send_only(
+        client: &AdminClient,
+        sender: &CaptureSender,
+        method: &str,
+        params: Value,
+    ) -> Value {
+        let client_for_call = client.clone();
+        let m = method.to_string();
+        let p = params.clone();
+        tokio::spawn(async move {
+            let _ = client_for_call.call_raw(&m, p).await;
+        });
+        for _ in 0..200 {
+            if !sender.lines.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        let line = sender
+            .lines
+            .lock()
+            .unwrap()
+            .first()
+            .cloned()
+            .expect("frame written");
+        serde_json::from_str(&line).unwrap()
+    }
+
+    /// Phase 82.10.m — without a registered source, params pass
+    /// through untouched even for stamped methods.
+    #[tokio::test]
+    async fn client_without_source_passes_params_through() {
+        let sender = Arc::new(CaptureSender::default());
+        let client =
+            AdminClient::with_timeout(sender.clone(), std::time::Duration::from_millis(50));
+        let frame = drive_send_only(
+            &client,
+            &sender,
+            "nexo/admin/processing/pause",
+            serde_json::json!({ "scope": "x" }),
+        )
+        .await;
+        assert!(frame["params"]
+            .as_object()
+            .unwrap()
+            .get("operator_token_hash")
+            .is_none());
+    }
+
+    /// Phase 82.10.m — registered source stamps the field.
+    #[tokio::test]
+    async fn client_with_source_stamps_processing_pause() {
+        let sender = Arc::new(CaptureSender::default());
+        let client =
+            AdminClient::with_timeout(sender.clone(), std::time::Duration::from_millis(50));
+        client.set_operator_token_hash(|| "abc123".to_string());
+        let frame = drive_send_only(
+            &client,
+            &sender,
+            "nexo/admin/processing/pause",
+            serde_json::json!({ "scope": "x" }),
+        )
+        .await;
+        assert_eq!(frame["params"]["operator_token_hash"], "abc123");
+    }
+
+    /// Phase 82.10.m — caller-supplied value is overridden by
+    /// the registered source (defense-in-depth).
+    #[tokio::test]
+    async fn client_with_source_overrides_caller_value() {
+        let sender = Arc::new(CaptureSender::default());
+        let client =
+            AdminClient::with_timeout(sender.clone(), std::time::Duration::from_millis(50));
+        client.set_operator_token_hash(|| "trusted".to_string());
+        let frame = drive_send_only(
+            &client,
+            &sender,
+            "nexo/admin/processing/pause",
+            serde_json::json!({
+                "scope": "x",
+                "operator_token_hash": "untrusted-from-client"
+            }),
+        )
+        .await;
+        assert_eq!(frame["params"]["operator_token_hash"], "trusted");
+    }
+
+    /// Phase 82.10.m — non-stamped methods are not modified.
+    #[tokio::test]
+    async fn client_with_source_skips_non_stamped_methods() {
+        let sender = Arc::new(CaptureSender::default());
+        let client =
+            AdminClient::with_timeout(sender.clone(), std::time::Duration::from_millis(50));
+        client.set_operator_token_hash(|| "should-not-leak".to_string());
+        let frame = drive_send_only(
+            &client,
+            &sender,
+            "nexo/admin/agents/list",
+            serde_json::json!({}),
+        )
+        .await;
+        assert!(frame["params"]
+            .as_object()
+            .unwrap()
+            .get("operator_token_hash")
+            .is_none());
+    }
+
+    /// Phase 82.10.m — closure invoked once per outbound stamped
+    /// call. Counter increments verify hot-swap support.
+    #[tokio::test]
+    async fn client_source_called_per_request_supports_hot_swap() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let sender = Arc::new(CaptureSender::default());
+        let client =
+            AdminClient::with_timeout(sender.clone(), std::time::Duration::from_millis(50));
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counter_for_closure = counter.clone();
+        client.set_operator_token_hash(move || {
+            let n = counter_for_closure.fetch_add(1, Ordering::SeqCst);
+            format!("hash-{n}")
+        });
+
+        // First call: increment 0 -> 1; stamp = hash-0
+        let client_a = client.clone();
+        let h1 = tokio::spawn(async move {
+            let _ = client_a
+                .call_raw(
+                    "nexo/admin/processing/pause",
+                    serde_json::json!({"scope": "a"}),
+                )
+                .await;
+        });
+        // Second call: increment 1 -> 2; stamp = hash-1
+        let client_b = client.clone();
+        let h2 = tokio::spawn(async move {
+            let _ = client_b
+                .call_raw(
+                    "nexo/admin/processing/resume",
+                    serde_json::json!({"scope": "b"}),
+                )
+                .await;
+        });
+        let _ = h1.await;
+        let _ = h2.await;
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            2,
+            "closure called once per stamped request"
+        );
+
+        // Non-stamped call afterwards: counter unchanged
+        let client_c = client.clone();
+        let h3 = tokio::spawn(async move {
+            let _ = client_c
+                .call_raw("nexo/admin/agents/list", serde_json::json!({}))
+                .await;
+        });
+        let _ = h3.await;
+        assert_eq!(counter.load(Ordering::SeqCst), 2);
+    }
+
+    /// Phase 82.10.m — non-object params don't panic; stamping
+    /// no-ops. Daemon serde will reject the malformed frame
+    /// downstream (existing behavior, not ours to fix here).
+    #[tokio::test]
+    async fn client_with_source_skips_when_params_not_object() {
+        let sender = Arc::new(CaptureSender::default());
+        let client =
+            AdminClient::with_timeout(sender.clone(), std::time::Duration::from_millis(50));
+        client.set_operator_token_hash(|| "abc".to_string());
+        let frame = drive_send_only(
+            &client,
+            &sender,
+            "nexo/admin/processing/pause",
+            Value::Null,
+        )
+        .await;
+        assert_eq!(frame["params"], Value::Null);
     }
 
     #[test]

@@ -1114,6 +1114,61 @@ returns 401 today. Provider-specific deep probe lands as
   responds.
 - 82.10.l.metrics — per-provider probe latency histogram.
 
+#### 82.10.m — SDK transparent operator_token_hash stamping   ✅  (shipped 2026-05-03)
+
+Resolves the `M7.c.frame` follow-up logged by the
+`agent-creator-microapp` build. Eliminates the per-microapp
+`OPERATOR_STAMPED_METHODS` const list + HTTP middleware
+injection pattern (path B); SDK now stamps identity
+transparently from a closure-based source (path A).
+
+Sub-steps shipped:
+- **82.10.m.1** — `nexo_tool_meta::admin::processing` exports
+  `PROCESSING_PAUSE_METHOD` / `_RESUME_METHOD` /
+  `_INTERVENTION_METHOD` / `_STATE_METHOD` consts.
+  `nexo_tool_meta::admin::escalations` exports
+  `ESCALATIONS_LIST_METHOD` / `_RESOLVE_METHOD`.
+- **82.10.m.2** — new module
+  `nexo_tool_meta::admin::operator_stamping` with canonical
+  `OPERATOR_STAMPED_METHODS: &[&str]` + `is_operator_stamped`
+  helper. 3 tests (non-empty + no duplicates, prefix sanity,
+  query helper round-trip).
+- **82.10.m.3** — `nexo_microapp_sdk::admin::AdminClient`
+  gains `OnceLock<OperatorHashSource>` interior-mut field
+  + `set_operator_token_hash<F>(&self, source: F)` setter
+  (set-once, fail-soft via `tracing::warn`) + private
+  `maybe_stamp_operator()` hook in `call_raw` (skips when
+  source absent / method not stamped / params not object).
+  Override is unconditional — caller-supplied
+  `operator_token_hash` is replaced by the closure value
+  (defense-in-depth). 6 tests (no-op pass-through, stamping,
+  override, non-stamped skip, hot-swap counter, non-object
+  no-panic).
+- **82.10.m.4** — `docs/src/microapps/admin-rpc.md` gains
+  "Operator identity stamping (Phase 82.10.m)" subsection
+  under "SDK side" with an `ArcSwap`-backed live source
+  example.
+
+Done criteria:
+- Canonical list `OPERATOR_STAMPED_METHODS` is the single
+  source of truth for "which methods carry
+  `operator_token_hash`". Microapps no longer duplicate it.
+- `AdminClient::set_operator_token_hash(closure)` registers
+  a hot-swappable source; subsequent `call()`s on stamped
+  methods overwrite `params.operator_token_hash` with the
+  closure value.
+- Compat: wire shapes intact (`String`, not `Option<String>`).
+  Microapps still passing the field manually keep working —
+  the SDK simply overrides their value when a source is
+  registered.
+
+Tests: +9 (3 tool-meta + 6 microapp-sdk). 0 regressions.
+
+**Followups carved:**
+- 82.10.m.b — multi-tenant `tenant_id` stamping (when Phase
+  86+ multi-tenant lands; same closure pattern, separate
+  registry entry).
+
 #### 82.11 — Agent event firehose + admin RPC (transcript-shaped events as one variant)   ✅  (shipped 2026-05-01)
 
 Six steps shipped:
