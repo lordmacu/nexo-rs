@@ -336,8 +336,47 @@ awaits the response.
   lands in a future contract bump.
 
 Daemon-side caps `max_tokens` at u32::MAX. Streaming via
-`llm.complete.delta` notifications is on the roadmap (81.20.b.b)
-— today the host buffers the full response and replies once.
+`llm.complete.delta` notifications is opt-in via
+`params.stream = true` (Phase 81.20.b.c).
+
+#### Streaming flow
+
+When the request includes `"stream": true`, the host calls
+`LlmClient::stream` instead of `chat`. Each text chunk arrives
+as a notification correlated to the original request id:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "llm.complete.delta",
+  "params": { "request_id": 50, "chunk": "hello" }
+}
+{
+  "jsonrpc": "2.0",
+  "method": "llm.complete.delta",
+  "params": { "request_id": 50, "chunk": " world" }
+}
+```
+
+The final reply matches the original `id` but carries only
+`finish_reason` + `usage` — `content` is omitted because the
+child reassembled it from deltas:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 50,
+  "result": {
+    "finish_reason": "stop",
+    "usage": { "prompt_tokens": 12, "completion_tokens": 7 }
+  }
+}
+```
+
+Tool-call deltas in streaming mode are dropped (same scope as
+the non-streaming MVP). If the provider returns ONLY tool calls
+during a stream (no text), the final reply is `-32601`
+not_implemented.
 
 ### 5.4 `broker.publish` (child → host)
 
@@ -627,3 +666,4 @@ contract document.
 | `1.0.0` | 2026-05-01 | Initial publication. Lifecycle (`initialize` / `shutdown`) + broker bridge (`broker.event` / `broker.publish`) + manifest `[plugin.entrypoint]` section. Host adapter shipped in Phase 81.14 + 81.14.b; Rust child SDK in Phase 81.15.a. |
 | `1.1.0` | 2026-05-01 | Phase 81.20.a — `memory.recall` request-response added. Additive; existing 1.0.0 plugins continue to work unchanged. Manifest `[plugin.supervisor]` section (Phase 81.21.b) — additive. Host-side activation: Phase 81.17.b boot wire. Phase 81.21 supervisor + 81.21.b stderr tail capture. |
 | `1.2.0` | 2026-05-01 | Phase 81.20.b — `llm.complete` request-response added. Additive. MVP supports text responses only; tool-call responses surface as `-32601 not_implemented`. Streaming (`llm.complete.delta` notifications) on roadmap as 81.20.b.b. Host-side runtime threading deferred to 81.20.b.b — daemon today returns `-32603 "llm not configured"` until main.rs threads `LlmServices` into the subprocess pipeline. |
+| `1.3.0` | 2026-05-01 | Phase 81.20.b.b runtime threading shipped (memory + llm both flow end-to-end through production daemon path). Phase 81.20.b.c streaming added — `llm.complete` accepts `stream: true` opt-in; chunks emit as `llm.complete.delta { request_id, chunk }` notifications, final reply omits `content`. Additive — non-streaming requests unchanged. |
