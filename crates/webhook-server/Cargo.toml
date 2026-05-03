@@ -29,9 +29,9 @@ axum        = { version = "0.7", features = ["macros", "tokio"] }
 tower       = { version = "0.5", features = ["limit", "util"] }
 tower-http  = { version = "0.5", features = ["limit", "timeout", "trace"] }
 arc-swap    = "1"
-nexo-broker            = { path = "../broker" }
-nexo-config            = { path = "../config" }
-nexo-webhook-receiver  = { path = "../webhook-receiver" }
+nexo-broker            = { version = "0.1.2", path = "../broker" }
+nexo-config            = { version = "0.1.4", path = "../config" }
+nexo-webhook-receiver  = { version = "0.1.5", path = "../webhook-receiver" }
 
 [dev-dependencies]
 serde_yaml  = { workspace = true }

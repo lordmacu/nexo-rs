@@ -12,8 +12,8 @@ categories  = ["web-programming::http-server"]
 readme      = "README.md"
 
 [dependencies]
-nexo-microapp-sdk = { path = "../microapp-sdk", features = ["admin"] }
-nexo-tool-meta = { path = "../tool-meta" }
+nexo-microapp-sdk = { version = "0.1.0", path = "../microapp-sdk", features = ["admin"] }
+nexo-tool-meta = { version = "0.1.0", path = "../tool-meta" }
 axum       = { version = "0.7", default-features = false, features = ["http1", "json", "tokio", "tower-log", "query"] }
 tower      = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["limit", "trace", "fs", "compression-gzip", "compression-br"] }
