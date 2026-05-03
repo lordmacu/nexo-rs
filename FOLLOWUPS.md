@@ -572,17 +572,17 @@ coordinación de archivos cross-cutting.
   for cross-language SDK authoring + internal wire-change
   reviews.
 
-- **81.15.b ⬜** Rust plugin template repo
-  (`github.com/nexo-rs/plugin-template-rust`). External repo
-  bootstrap; single commit. Includes: Cargo.toml with
-  `nexo-microapp-sdk = { features = ["plugin"] }`,
-  `nexo-plugin.toml` skeleton (id placeholder + minimal
-  channels.register entry), `src/main.rs` example with
-  `PluginAdapter::new(include_str!("../nexo-plugin.toml"))`,
-  README walkthrough, GitHub Actions CI template (build per-target
-  + cosign sign + tag-driven release stub awaiting Phase 31.2).
-  Out of this workspace's scope. ~1 d effort. Required before
-  Phase 31.6 `nexo plugin new --lang rust` scaffolder can clone it.
+- **81.15.b ✅ shipped 2026-05-01** — Rust plugin template
+  drafted in-workspace as `extensions/template-plugin-rust/`.
+  Cargo.toml + nexo-plugin.toml + src/main.rs (~70 LOC) +
+  README. Workspace member so CI keeps it green. Handshake
+  smoke test passes. Doubles as 81.17.c-validation (real Rust
+  binary proves the wire format end-to-end vs the prior bash
+  mock). Phase 31.6 `nexo plugin new --lang rust` scaffolder
+  will publish this as the external
+  `github.com/nexo-rs/plugin-template-rust` repo when 31.6 ships
+  (just adds GitHub Actions CI for build-per-target + cosign
+  + auto-PR to ext-registry on tag).
 
 Critical path: 81.1 → 81.2 → 81.5 → 81.9 (~3 días). Después
 de 81.9 plugin model is fully operational. Out-of-tree path

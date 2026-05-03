@@ -6563,6 +6563,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "template-plugin-rust"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "nexo-broker",
+ "nexo-microapp-sdk",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "tendril"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

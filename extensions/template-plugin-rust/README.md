@@ -1,0 +1,138 @@
+# template-plugin-rust
+
+Skeleton out-of-tree **subprocess plugin** for Nexo. Copy + rename
+to start a new channel plugin that speaks the wire format defined
+in [`nexo-plugin-contract.md`](../../nexo-plugin-contract.md) at
+the workspace root.
+
+This template is the Rust counterpart to upcoming Phase 31.4
+(Python) and 31.5 (TypeScript) SDKs. The wire format is identical
+across languages — only the SDK differs.
+
+## What this template provides
+
+- A minimal `PluginAdapter` driver in `src/main.rs` that:
+  - Parses the bundled `nexo-plugin.toml` at boot
+  - Responds to `initialize` requests with the full manifest
+  - Echoes inbound `broker.event` notifications back as
+    `broker.publish` notifications
+  - Cleanly responds to `shutdown` requests
+- A `nexo-plugin.toml` declaring `[plugin.entrypoint]` so the
+  daemon's auto-subprocess fallback (Phase 81.17 + 81.17.b) can
+  spawn this binary automatically when the manifest is dropped
+  into a `plugins.discovery.search_paths` directory.
+- A `Cargo.toml` with the SDK dep gated behind the `plugin`
+  feature so out-of-tree builds only pull what they need.
+
+## Quick start
+
+```bash
+# 1. Copy this directory out of the workspace
+cp -r extensions/template-plugin-rust /tmp/my-plugin
+cd /tmp/my-plugin
+
+# 2. Rename the package + binary
+sed -i 's/template-plugin-rust/my-plugin/g' Cargo.toml
+sed -i 's/template_plugin_rust/my_plugin/g' src/main.rs nexo-plugin.toml
+mv src/main.rs src/main.rs.bak # then edit your handler
+
+# 3. Edit nexo-plugin.toml: pick a unique plugin.id + your
+#    own [[plugin.channels.register]].kind
+
+# 4. Once the SDK ships to crates.io, swap the path deps in
+#    Cargo.toml for the published versions:
+#       nexo-microapp-sdk = { version = "0.1", features = ["plugin"] }
+#       nexo-broker = "0.1"
+
+# 5. Build
+cargo build --release
+
+# 6. Drop into operator's discovery search_paths
+cp nexo-plugin.toml ~/.local/share/nexo/plugins/my-plugin/
+cp target/release/my-plugin ~/.local/share/nexo/plugins/my-plugin/
+
+# 7. Edit ~/.local/share/nexo/plugins/my-plugin/nexo-plugin.toml
+#    [plugin.entrypoint] command to the absolute path:
+#       command = "/home/<user>/.local/share/nexo/plugins/my-plugin/my-plugin"
+
+# 8. Restart the nexo daemon (or trigger Phase 18 hot-reload).
+#    Plugin loads automatically — see daemon logs for
+#    "plugin registry wire complete" with your plugin id.
+```
+
+## Where to add your channel logic
+
+Replace the `handle_event` function in `src/main.rs`:
+
+```rust
+async fn handle_event(topic: String, event: Event, broker: BrokerSender) {
+    // 1. Decode event.payload into your channel's message shape:
+    //    let msg: MyChannelMessage = serde_json::from_value(event.payload)?;
+
+    // 2. Forward to the external service:
+    //    let reply = http_client.post("...").json(&msg).send().await?;
+
+    // 3. Optionally publish the service's reply back through the
+    //    broker so agents can observe it:
+    //    let inbound = Event::new(
+    //        "plugin.inbound.<your_kind>",
+    //        "<your_plugin_id>",
+    //        serde_json::to_value(reply)?,
+    //    );
+    //    broker.publish("plugin.inbound.<your_kind>", inbound).await?;
+}
+```
+
+## Topic conventions
+
+The daemon derives the broker bridge subscribe / publish allowlist
+from your manifest's `[[plugin.channels.register]]` entries.
+For each declared `kind = K`:
+
+| Direction | Topics the daemon allows |
+|-----------|--------------------------|
+| Outbound (daemon → your plugin) | `plugin.outbound.K`, `plugin.outbound.K.<instance>` |
+| Inbound (your plugin → daemon) | `plugin.inbound.K`, `plugin.inbound.K.<instance>` |
+
+A child publish to anything outside this allowlist is dropped
+with a `tracing::warn!` log. This is the daemon's primary defense
+against a buggy / malicious plugin attempting to hijack core nexo
+topics.
+
+## What the daemon expects from your plugin
+
+| Method | Source | What you reply with |
+|--------|--------|---------------------|
+| `initialize` | host → child | `{ manifest, server_version }`. The `manifest.plugin.id` MUST match the id under which the plugin was registered (the SDK handles this for you when you pass `MANIFEST` to `PluginAdapter::new`). |
+| `broker.event` (notification) | host → child | No reply required. Process the event; optionally publish a `broker.publish` back. |
+| `shutdown` | host → child | `{ ok: true }` after flushing state. Daemon waits 1s for clean exit before SIGKILL. |
+| `broker.publish` (notification) | child → host | The daemon validates the topic against your allowlist before forwarding to the broker. No reply expected. |
+
+Full spec: [`nexo-plugin-contract.md`](../../nexo-plugin-contract.md).
+
+## Testing
+
+```bash
+# Quick handshake smoke test:
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"nexo_version":"0.1.5"}}' \
+    | cargo run --release
+
+# You should see one JSON-RPC response with your manifest +
+# server_version.
+```
+
+End-to-end against the production daemon: drop the manifest into
+`plugins.discovery.search_paths` and check `nexo agent doctor
+plugins` (Phase 81.9.b) for the load + init outcome.
+
+## Phase tracking
+
+- 81.15.a (shipped) — `nexo-microapp-sdk` `plugin` feature +
+  `PluginAdapter` child-side helper
+- 81.16 (shipped) — `nexo-plugin-contract.md` v1.0.0
+- 81.17 + 81.17.b (shipped) — daemon-side auto-subprocess
+  pipeline activation
+- 81.15.b (in flight, this template) — clone-and-go starter
+  drafted in-workspace; Phase 31.6 `nexo plugin new --lang rust`
+  scaffolder will publish it as
+  `github.com/nexo-rs/plugin-template-rust`
