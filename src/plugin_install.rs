@@ -18,8 +18,10 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use nexo_ext_installer::{
-    download_and_verify, extract_verified_tarball, resolve_release, ExtractError, ExtractInput,
-    ExtractLimits, InstallError, PluginCoords, ResolvedInstall, DEFAULT_GITHUB_API_BASE,
+    discover_cosign_binary, download_and_verify, extract_verified_tarball, resolve_release,
+    verify_plugin_signature, AuthorPolicy, ExtractError, ExtractInput, ExtractLimits, InstallError,
+    PluginCoords, ResolvedInstall, TrustMode, TrustedKeysConfig, VerifyError, VerifyInput,
+    DEFAULT_GITHUB_API_BASE,
 };
 use serde::Serialize;
 
@@ -42,6 +44,23 @@ pub struct PluginInstallReport {
     pub size_bytes: u64,
     pub was_already_present: bool,
     pub lifecycle_event_emitted: bool,
+    /// `true` when cosign verification ran and succeeded.
+    pub signature_verified: bool,
+    /// SAN extracted from cosign's stderr (e.g. workflow URL).
+    /// Omitted when verification was skipped.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature_identity: Option<String>,
+    /// OIDC issuer the cert was minted by. Omitted when
+    /// verification was skipped.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature_issuer: Option<String>,
+    /// Effective trust mode used for this install
+    /// (`"ignore" | "warn" | "require"`).
+    pub trust_mode: &'static str,
+    /// Repo owner that matched a `[[authors]]` entry in
+    /// `trusted_keys.toml`. `None` means no entry matched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trust_policy_matched: Option<String>,
 }
 
 /// Error report shape. Serialized to JSON when `--json` is passed.
@@ -82,6 +101,18 @@ pub fn extract_error_kind(e: &ExtractError) -> &'static str {
         ExtractError::ManifestInvalid { .. } => "ManifestInvalid",
         ExtractError::BinaryMissing { .. } => "BinaryMissing",
         ExtractError::JoinError(_) => "JoinError",
+    }
+}
+
+pub fn verify_error_kind(e: &VerifyError) -> &'static str {
+    match e {
+        VerifyError::CosignNotFound { .. } => "CosignNotFound",
+        VerifyError::CosignFailed { .. } => "CosignFailed",
+        VerifyError::Io(_) => "VerifyIo",
+        VerifyError::PolicyRequiresSig { .. } => "PolicyRequiresSig",
+        VerifyError::AssetIncomplete { .. } => "AssetIncomplete",
+        VerifyError::TrustedKeysParse { .. } => "TrustedKeysParse",
+        VerifyError::IdentityRegexpInvalid { .. } => "IdentityRegexpInvalid",
     }
 }
 
@@ -161,6 +192,58 @@ fn cache_tarball_path(state_dir: &Path, id: &str, version: &str, target: &str) -
     state_dir
         .join("plugin-install-cache")
         .join(format!("{}-{}-{}.tar.gz", id, version, target))
+}
+
+async fn download_to_cache(
+    client: &reqwest::Client,
+    url: &str,
+    dest: &Path,
+) -> Result<(), VerifyError> {
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| VerifyError::Io(format!("mkdir cache parent: {e}")))?;
+    }
+    let bytes = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| VerifyError::Io(format!("fetch {url}: {e}")))?
+        .error_for_status()
+        .map_err(|e| VerifyError::Io(format!("http error for {url}: {e}")))?
+        .bytes()
+        .await
+        .map_err(|e| VerifyError::Io(format!("read body of {url}: {e}")))?;
+    std::fs::write(dest, &bytes).map_err(|e| VerifyError::Io(format!("write {}: {e}", dest.display())))?;
+    Ok(())
+}
+
+fn cache_sidecar_path(tarball_path: &Path, suffix: &str) -> PathBuf {
+    let mut name = tarball_path
+        .file_name()
+        .map(|n| n.to_os_string())
+        .unwrap_or_default();
+    name.push(suffix);
+    tarball_path.with_file_name(name)
+}
+
+/// Resolve the effective trust mode honoring CLI overrides
+/// (`--require-signature` / `--skip-signature-verify`) over
+/// per-author entry over global default.
+fn resolve_effective_mode(
+    cfg: &TrustedKeysConfig,
+    owner: &str,
+    cli_require: bool,
+    cli_skip: bool,
+) -> (TrustMode, Option<AuthorPolicy>) {
+    if cli_skip {
+        return (TrustMode::Ignore, None);
+    }
+    let (mode, hit) = cfg.resolve(owner);
+    let policy = hit.cloned();
+    if cli_require {
+        return (TrustMode::Require, policy);
+    }
+    (mode, policy)
 }
 
 fn truncate_sha(sha: &str) -> String {
@@ -244,9 +327,33 @@ pub async fn run_plugin_install(
     dest_override: Option<PathBuf>,
     target_override: Option<String>,
     json: bool,
+    require_signature: bool,
+    skip_signature_verify: bool,
 ) -> Result<i32> {
+    if require_signature && skip_signature_verify {
+        let report = PluginInstallErrorReport {
+            ok: false,
+            kind: "FlagsConflict",
+            error:
+                "--require-signature and --skip-signature-verify are mutually exclusive"
+                    .to_string(),
+            available: None,
+        };
+        if json {
+            println!("{}", serde_json::to_string(&report).unwrap_or_default());
+        } else {
+            eprintln!("✗ {}", report.error);
+        }
+        return Ok(1);
+    }
+
     let cfg = nexo_config::AppConfig::load(config_dir)
         .with_context(|| format!("failed to load config from {}", config_dir.display()))?;
+
+    let trusted = match TrustedKeysConfig::load(config_dir) {
+        Ok(t) => t,
+        Err(e) => return Ok(emit_verify_error_and_exit(&e, json)),
+    };
 
     let target = resolve_target(target_override);
     let dest_root = resolve_dest_root(&cfg, dest_override, json)?;
@@ -257,6 +364,9 @@ pub async fn run_plugin_install(
         Ok(c) => c,
         Err(e) => return Ok(emit_install_error_and_exit(&e, json)),
     };
+
+    let (effective_mode, matched_policy) =
+        resolve_effective_mode(&trusted, &coords.owner, require_signature, skip_signature_verify);
 
     if !json {
         eprintln!(
@@ -295,6 +405,120 @@ pub async fn run_plugin_install(
 
     if !json {
         eprintln!("✓ sha256 verified");
+    }
+
+    // ── Phase 31.3 — cosign signature verification hook ───────
+    let mut signature_verified = false;
+    let mut signature_identity: Option<String> = None;
+    let mut signature_issuer: Option<String> = None;
+    let sig_cache_paths: Option<(PathBuf, PathBuf, Option<PathBuf>)> = match (
+        effective_mode,
+        installed.entry.signing.as_ref(),
+        matched_policy.as_ref(),
+    ) {
+        (TrustMode::Ignore, _, _) => None,
+        (mode, None, _) => {
+            if mode == TrustMode::Require {
+                let _ = std::fs::remove_file(&installed.tarball_path);
+                return Ok(emit_verify_error_and_exit(
+                    &VerifyError::PolicyRequiresSig {
+                        owner: coords.owner.clone(),
+                    },
+                    json,
+                ));
+            }
+            if !json {
+                eprintln!(
+                    "! No signature in release; trust mode is `{}` — proceeding unverified.",
+                    mode.as_str()
+                );
+            }
+            None
+        }
+        (mode, Some(_), None) => {
+            if mode == TrustMode::Require {
+                let _ = std::fs::remove_file(&installed.tarball_path);
+                return Ok(emit_verify_error_and_exit(
+                    &VerifyError::PolicyRequiresSig {
+                        owner: coords.owner.clone(),
+                    },
+                    json,
+                ));
+            }
+            if !json {
+                eprintln!(
+                    "! No `[[authors]]` entry for `{}` in trusted_keys.toml; proceeding unverified.",
+                    coords.owner
+                );
+            }
+            None
+        }
+        (_mode, Some(signing), Some(policy)) => {
+            let sig_path = cache_sidecar_path(&installed.tarball_path, ".sig");
+            let cert_path = cache_sidecar_path(&installed.tarball_path, ".cert");
+            let bundle_path = cache_sidecar_path(&installed.tarball_path, ".bundle");
+            if let Err(e) =
+                download_to_cache(&client, &signing.cosign_signature_url, &sig_path).await
+            {
+                let _ = std::fs::remove_file(&installed.tarball_path);
+                return Ok(emit_verify_error_and_exit(&e, json));
+            }
+            if let Err(e) =
+                download_to_cache(&client, &signing.cosign_certificate_url, &cert_path).await
+            {
+                let _ = std::fs::remove_file(&installed.tarball_path);
+                let _ = std::fs::remove_file(&sig_path);
+                return Ok(emit_verify_error_and_exit(&e, json));
+            }
+            // bundle is optional — best-effort fetch if the resolver
+            // surfaced it (currently ExtSigning carries only sig+cert,
+            // bundle URL inference deferred). Skip for v1.
+            let bundle_used: Option<PathBuf> = if bundle_path.exists() {
+                Some(bundle_path.clone())
+            } else {
+                None
+            };
+
+            let cosign_bin = match discover_cosign_binary(trusted.cosign_binary.as_deref()) {
+                Ok(p) => p,
+                Err(e) => {
+                    let _ = std::fs::remove_file(&installed.tarball_path);
+                    let _ = std::fs::remove_file(&sig_path);
+                    let _ = std::fs::remove_file(&cert_path);
+                    return Ok(emit_verify_error_and_exit(&e, json));
+                }
+            };
+
+            if !json {
+                eprintln!("→ Verifying signature against trusted_keys.toml");
+            }
+            let verified = match verify_plugin_signature(VerifyInput {
+                cosign_bin: &cosign_bin,
+                tarball_path: &installed.tarball_path,
+                sig_path: &sig_path,
+                cert_path: &cert_path,
+                bundle_path: bundle_used.as_deref(),
+                policy,
+            })
+            .await
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    let _ = std::fs::remove_file(&installed.tarball_path);
+                    let _ = std::fs::remove_file(&sig_path);
+                    let _ = std::fs::remove_file(&cert_path);
+                    return Ok(emit_verify_error_and_exit(&e, json));
+                }
+            };
+
+            signature_verified = true;
+            signature_identity = Some(verified.identity);
+            signature_issuer = Some(verified.issuer);
+            Some((sig_path, cert_path, bundle_used))
+        }
+    };
+
+    if !json {
         eprintln!("→ Extracting to {}", dest_root.display());
     }
 
@@ -310,8 +534,15 @@ pub async fn run_plugin_install(
         Err(e) => return Ok(emit_extract_error_and_exit(&e, json)),
     };
 
-    // Cleanup cached tarball on success — extracted tree is the source of truth.
+    // Cleanup cached tarball + signing material on success — extracted tree is source of truth.
     let _ = std::fs::remove_file(&installed.tarball_path);
+    if let Some((sig, cert, bundle)) = sig_cache_paths {
+        let _ = std::fs::remove_file(sig);
+        let _ = std::fs::remove_file(cert);
+        if let Some(b) = bundle {
+            let _ = std::fs::remove_file(b);
+        }
+    }
 
     let lifecycle_emitted = emit_lifecycle_installed_event(
         &cfg,
@@ -333,6 +564,11 @@ pub async fn run_plugin_install(
         size_bytes: download.size_bytes,
         was_already_present: extracted.was_already_present,
         lifecycle_event_emitted: lifecycle_emitted,
+        signature_verified,
+        signature_identity: signature_identity.clone(),
+        signature_issuer,
+        trust_mode: effective_mode.as_str(),
+        trust_policy_matched: matched_policy.as_ref().map(|p| p.owner.clone()),
     };
 
     if json {
@@ -349,6 +585,13 @@ pub async fn run_plugin_install(
             "✓ Plugin installed at {}",
             extracted.plugin_dir.display()
         );
+        if signature_verified {
+            if let Some(identity) = &signature_identity {
+                eprintln!("✓ Signature verified (identity: {})", identity);
+            } else {
+                eprintln!("✓ Signature verified");
+            }
+        }
         if lifecycle_emitted {
             eprintln!("✓ Lifecycle event emitted (broker)");
         } else {
@@ -410,6 +653,49 @@ fn emit_extract_error_and_exit(err: &ExtractError, json: bool) -> i32 {
     1
 }
 
+fn emit_verify_error_and_exit(err: &VerifyError, json: bool) -> i32 {
+    let kind = verify_error_kind(err);
+    if json {
+        let report = PluginInstallErrorReport {
+            ok: false,
+            kind,
+            error: err.to_string(),
+            available: None,
+        };
+        println!("{}", serde_json::to_string(&report).unwrap_or_default());
+    } else {
+        eprintln!("✗ Signature verification failed: {}", err);
+        match err {
+            VerifyError::CosignNotFound { .. } => {
+                eprintln!(
+                    "  Hint: install cosign (brew install cosign / apt install cosign / dnf install cosign),"
+                );
+                eprintln!(
+                    "  or set --skip-signature-verify if you accept unverified bytes for this install."
+                );
+            }
+            VerifyError::PolicyRequiresSig { .. } => {
+                eprintln!(
+                    "  Hint: ask the plugin author to publish cosign signing material, or relax"
+                );
+                eprintln!(
+                    "  trusted_keys.toml `mode` for this owner to `warn`."
+                );
+            }
+            VerifyError::CosignFailed { .. } => {
+                eprintln!(
+                    "  Hint: the certificate's identity did not match `identity_regexp` in"
+                );
+                eprintln!(
+                    "  trusted_keys.toml. Check the publisher workflow URL or update the regex."
+                );
+            }
+            _ => {}
+        }
+    }
+    1
+}
+
 // Used by main.rs to satisfy the Arc-once import; suppresses a
 // dead-code warning when the broker emit path is not exercised.
 #[allow(dead_code)]
@@ -423,13 +709,20 @@ pub fn print_plugin_help() {
          \n\
          Subcommands:\n\
          \n\
-         install <owner>/<repo>[@<tag>] [--dest <path>] [--target <triple>] [--json]\n\
+         install <owner>/<repo>[@<tag>] [--dest <path>] [--target <triple>]\n\
+                 [--require-signature|--skip-signature-verify] [--json]\n\
              Install a community plugin from GitHub Releases. The CLI resolves the\n\
              release JSON via the GitHub API, downloads the matching\n\
              <id>-<version>-<target>.tar.gz asset, verifies its sha256 against the\n\
-             companion .sha256 asset, and extracts under\n\
+             companion .sha256 asset, runs cosign verification per\n\
+             config/extensions/trusted_keys.toml, and extracts under\n\
              plugins.discovery.search_paths[0] (or --dest, or the state-dir\n\
              fallback when both are unset). Tag defaults to `latest`.\n\
+         \n\
+             Trust mode flags (mutually exclusive):\n\
+               --require-signature       force `Require` mode for this call.\n\
+               --skip-signature-verify   force `Ignore` mode for this call.\n\
+             Without either flag the trusted_keys.toml default applies.\n\
          \n\
          help\n\
              Show this help.\n\
@@ -588,9 +881,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn report_serializes_to_expected_json_shape() {
-        let r = PluginInstallReport {
+    fn make_report() -> PluginInstallReport {
+        PluginInstallReport {
             ok: true,
             id: "slack".into(),
             version: "0.2.0".into(),
@@ -601,7 +893,17 @@ mod tests {
             size_bytes: 1234,
             was_already_present: false,
             lifecycle_event_emitted: true,
-        };
+            signature_verified: false,
+            signature_identity: None,
+            signature_issuer: None,
+            trust_mode: "warn",
+            trust_policy_matched: None,
+        }
+    }
+
+    #[test]
+    fn report_serializes_to_expected_json_shape() {
+        let r = make_report();
         let v: serde_json::Value = serde_json::to_value(&r).unwrap();
         assert_eq!(v["ok"], true);
         assert_eq!(v["id"], "slack");
@@ -612,6 +914,105 @@ mod tests {
         assert_eq!(v["size_bytes"], 1234);
         assert_eq!(v["was_already_present"], false);
         assert_eq!(v["lifecycle_event_emitted"], true);
+        assert_eq!(v["signature_verified"], false);
+        assert_eq!(v["trust_mode"], "warn");
+    }
+
+    #[test]
+    fn report_includes_signature_fields_when_verified() {
+        let mut r = make_report();
+        r.signature_verified = true;
+        r.signature_identity =
+            Some("https://github.com/foo/bar/.github/workflows/release.yml".into());
+        r.signature_issuer = Some("https://token.actions.githubusercontent.com".into());
+        r.trust_mode = "require";
+        r.trust_policy_matched = Some("foo".into());
+        let v = serde_json::to_value(&r).unwrap();
+        assert_eq!(v["signature_verified"], true);
+        assert!(v["signature_identity"]
+            .as_str()
+            .unwrap()
+            .contains("github.com/foo/bar"));
+        assert_eq!(
+            v["signature_issuer"],
+            "https://token.actions.githubusercontent.com"
+        );
+        assert_eq!(v["trust_mode"], "require");
+        assert_eq!(v["trust_policy_matched"], "foo");
+    }
+
+    #[test]
+    fn report_omits_signature_identity_when_unverified() {
+        let r = make_report();
+        let v = serde_json::to_value(&r).unwrap();
+        assert!(v.get("signature_identity").is_none());
+        assert!(v.get("signature_issuer").is_none());
+        assert!(v.get("trust_policy_matched").is_none());
+    }
+
+    #[test]
+    fn verify_error_kind_maps_all_variants() {
+        use std::path::PathBuf;
+        let cases: Vec<(VerifyError, &'static str)> = vec![
+            (
+                VerifyError::CosignNotFound {
+                    searched: vec![PathBuf::from("/x")],
+                },
+                "CosignNotFound",
+            ),
+            (
+                VerifyError::CosignFailed {
+                    stderr: "x".into(),
+                },
+                "CosignFailed",
+            ),
+            (VerifyError::Io("x".into()), "VerifyIo"),
+            (
+                VerifyError::PolicyRequiresSig {
+                    owner: "alice".into(),
+                },
+                "PolicyRequiresSig",
+            ),
+            (
+                VerifyError::AssetIncomplete {
+                    present: ".sig",
+                    missing: ".cert",
+                },
+                "AssetIncomplete",
+            ),
+            (
+                VerifyError::TrustedKeysParse {
+                    path: PathBuf::from("/x"),
+                    reason: "y".into(),
+                },
+                "TrustedKeysParse",
+            ),
+            (
+                VerifyError::IdentityRegexpInvalid {
+                    got: "x".into(),
+                    reason: "y".into(),
+                },
+                "IdentityRegexpInvalid",
+            ),
+        ];
+        for (err, expected) in cases {
+            assert_eq!(verify_error_kind(&err), expected, "kind for {err:?}");
+        }
+    }
+
+    #[test]
+    fn error_report_serializes_policy_requires_sig() {
+        let r = PluginInstallErrorReport {
+            ok: false,
+            kind: "PolicyRequiresSig",
+            error: "trust policy requires signature for `alice`".into(),
+            available: None,
+        };
+        let v = serde_json::to_value(&r).unwrap();
+        assert_eq!(v["ok"], false);
+        assert_eq!(v["kind"], "PolicyRequiresSig");
+        assert!(v["error"].as_str().unwrap().contains("alice"));
+        assert!(v.get("available").is_none());
     }
 
     #[test]

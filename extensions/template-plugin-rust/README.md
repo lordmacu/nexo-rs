@@ -209,6 +209,26 @@ ls dist/
 The integration test `tests/pack_tarball.rs` covers this end to
 end against a synthetic binary.
 
+### What an operator's trust entry looks like for your plugin
+
+Once you tag a release with `COSIGN_ENABLED=true`, an operator
+can allowlist your identity in their
+`config/extensions/trusted_keys.toml` (Phase 31.3):
+
+```toml
+[[authors]]
+owner = "your-github-username"
+identity_regexp = "^https://github\\.com/your-github-username/[^/]+/\\.github/workflows/release\\.yml@.*$"
+oidc_issuer = "https://token.actions.githubusercontent.com"
+mode = "require"
+```
+
+The `identity_regexp` matches the cosign certificate Subject
+Alternative Name, which in GitHub Actions keyless flow is the
+workflow URL embedded in the cert. Tell your operators the
+exact string (or regex) they should allowlist; it's stable as
+long as you don't rename the workflow file.
+
 ### Constraint: bin name = plugin id
 
 Cargo's `[[bin]] name` MUST equal `nexo-plugin.toml` `[plugin] id`

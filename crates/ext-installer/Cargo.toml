@@ -26,13 +26,14 @@ serde_json        = { workspace = true }
 sha2              = { workspace = true }
 hex               = { workspace = true }
 toml              = "0.8"
-tokio             = { workspace = true, features = ["fs", "io-util", "rt"] }
+tokio             = { workspace = true, features = ["fs", "io-util", "rt", "process"] }
 thiserror         = { workspace = true }
 tracing           = { workspace = true }
 futures           = { workspace = true }
 tar               = "0.4"
 flate2            = "1"
 rand              = { workspace = true }
+regex             = { workspace = true }
 
 [dev-dependencies]
 wiremock          = "0.6"

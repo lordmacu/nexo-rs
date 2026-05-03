@@ -38,6 +38,152 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 31.3 — Cosign signature verification + `trusted_keys.toml`.**
+  New modules `crates/ext-installer/src/{trusted_keys.rs,
+  verify.rs, verify_error.rs}` plus a sample config at
+  `config/extensions/trusted_keys.toml.example`. The plugin
+  install pipeline now verifies cosign keyless signatures
+  against an operator-maintained allowlist before extraction.
+  
+  Trust modes:
+  
+  | Mode | Behavior |
+  |------|----------|
+  | `ignore` | Skip cosign verification entirely (dev / CI). |
+  | `warn` (default) | Verify when `.sig` + `.cert` present; warn-and-proceed when absent. |
+  | `require` | Reject any unsigned / mismatched install. |
+  
+  Per-author `[[authors]]` blocks bind a repo owner to a
+  cosign certificate identity regex (matched against the cert
+  Subject Alternative Name) plus an OIDC issuer (defaults to
+  the GitHub Actions issuer). An entry's `mode` field
+  overrides the global default for that owner.
+  
+  CLI flags on `nexo plugin install`:
+  
+  - `--require-signature` — force `Require` for this call.
+  - `--skip-signature-verify` — force `Ignore` for this call.
+  - Mutually exclusive — passing both yields a `FlagsConflict`
+    parse-time error before any IO.
+  
+  Verification mechanics: shells out to
+  `cosign verify-blob --signature <sig> --certificate <cert>
+  --certificate-identity-regexp <regex>
+  --certificate-oidc-issuer <issuer> [--bundle <bundle>]
+  <tarball>`. Bundle (when present) lets cosign verify the
+  Rekor inclusion proof offline; without it, cosign reaches
+  out to Rekor at verify time. The Phase 31.2 publish workflow
+  ships `.bundle` by default — operators behind firewalls
+  benefit automatically.
+  
+  Cosign binary discovery walks: explicit `cosign_binary`
+  config override → `$PATH` → `/usr/local/bin/cosign` →
+  `/opt/homebrew/bin/cosign` → `/usr/bin/cosign` →
+  `~/go/bin/cosign`. `CosignNotFound { searched }` lists every
+  probed path so operators see exactly where the verifier
+  looked.
+  
+  New `VerifyError` enum (7 variants):
+  
+  - `CosignNotFound` — binary not found on host.
+  - `CosignFailed` — `cosign verify-blob` non-zero exit
+    (captured stderr preserved verbatim).
+  - `Io` — IO error during sig/cert/bundle download or process
+    spawn.
+  - `PolicyRequiresSig` — `Require` mode + no signing material
+    in release.
+  - `AssetIncomplete` — release ships one half of the signing
+    material but not the other.
+  - `TrustedKeysParse` — `trusted_keys.toml` failed to parse.
+  - `IdentityRegexpInvalid` — operator-provided regex did not
+    compile.
+  
+  `PluginInstallReport` JSON output extended with five new
+  fields:
+  
+  - `signature_verified: bool` — `true` when cosign succeeded.
+  - `signature_identity: Option<String>` — SAN extracted from
+    cosign stderr (`Subject:` line). Omitted when
+    verification was skipped.
+  - `signature_issuer: Option<String>` — echoes the policy's
+    OIDC issuer.
+  - `trust_mode: &'static str` — effective mode used
+    (`"ignore" | "warn" | "require"`).
+  - `trust_policy_matched: Option<String>` — repo owner that
+    matched a `[[authors]]` entry; omitted when no match.
+  
+  `PluginInstallErrorReport.kind` enum extended with the 7
+  `Verify*` strings + `FlagsConflict`.
+  
+  Pipeline integration: verify hook lands between
+  `download_and_verify` (sha256) and `extract_verified_tarball`
+  in `src/plugin_install.rs::run_plugin_install`. Sig/cert/
+  bundle assets cache-download next to the tarball under
+  `<state_dir>/plugin-install-cache/`; cleanup happens
+  post-success along with the tarball cleanup that already
+  shipped in 31.1.c.
+  
+  Hint blocks on error:
+  
+  - `CosignNotFound` → install via brew/apt/dnf, or
+    `--skip-signature-verify` for one-off.
+  - `PolicyRequiresSig` → ask the author to enable
+    `COSIGN_ENABLED=true` on their publish workflow, or relax
+    the per-author `mode` to `warn`.
+  - `CosignFailed` → check the publisher workflow URL versus
+    your `identity_regexp`.
+  
+  14 new tests:
+  - 9 in `crates/ext-installer/src/trusted_keys.rs::tests`:
+    parse minimal default, parse global+authors, reject
+    unknown fields, resolve global default, resolve author
+    override, resolve inherits global when mode unset, load
+    default when missing file, reject invalid regex, reject
+    invalid mode, `as_str` canonical lowercase.
+  - 6 in `crates/ext-installer/src/verify.rs::tests` (using
+    mock cosign shell-script): discover override, discover
+    not found, verify argv shape success, verify with bundle,
+    verify without bundle, verify failure propagation, verify
+    io error on unrunnable bin. `#[cfg(unix)]` gated.
+  - 4 in `src/plugin_install.rs::tests`:
+    `verify_error_kind_maps_all_variants`,
+    `report_includes_signature_fields_when_verified`,
+    `report_omits_signature_identity_when_unverified`,
+    `error_report_serializes_policy_requires_sig`.
+  
+  Test totals: ext-installer 21→38; plugin_install 8→12.
+  Workspace builds clean. `mdbook build docs` clean.
+  
+  Out of scope (tracked):
+  - Pure-Rust cosign via `sigstore-rs` (defer; shell-out is
+    canonical operator tool per existing
+    `docs/src/getting-started/verify.md`).
+  - Per-plugin override beyond per-owner (defer; `[[plugins]]`
+    table follow-up).
+  - Auto-fetch / auto-update of `trusted_keys.toml` from
+    upstream (operator's local file is source of truth).
+  - TUF / GPG fallback / threshold signatures.
+  - `NEXO_PLUGIN_TRUST_REQUIRED` env knob (defer; capability
+    inventory churn this slice).
+  - Modifying `crates/ext-registry/` (already declares
+    `ExtSigning` from 31.0).
+  
+  IRROMPIBLE refs:
+  internal `.github/workflows/sign-artifacts.yml:8-13`
+  (operator verification command shape — same per-plugin);
+  internal `docs/src/getting-started/verify.md:1-30` (keyless
+  model precedent — re-cited for plugin trust);
+  internal `crates/ext-registry/src/lib.rs:184-192` (`ExtSigning`
+  shape declared in 31.0);
+  internal `crates/ext-installer/src/lib.rs` (resolver already
+  locates `.sig`/`.cert` — hook point);
+  internal `extensions/template-plugin-rust/.github/workflows/release.yml`
+  (Phase 31.2 — produces the signing material this consumes);
+  claude-code-leak
+  `src/utils/plugins/marketplaceHelpers.ts:480-505`
+  (allowlist-precedence pattern — per-author entry wins over
+  global default).
+
 - **Phase 31.2 — Per-plugin CI publish workflow template.**
   New `extensions/template-plugin-rust/.github/workflows/release.yml`
   (~210 LOC) + helper scripts (`extract-plugin-meta.sh`,
