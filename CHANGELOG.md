@@ -38,6 +38,112 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 31.1.c — `nexo plugin install` CLI mode.** New
+  `src/plugin_install.rs` module + `Mode::PluginInstall` /
+  `Mode::PluginHelp` variants in the daemon binary. Operator
+  command:
+  
+  ```bash
+  nexo plugin install <owner>/<repo>[@<tag>]
+      [--dest <path>] [--target <triple>] [--json]
+  
+  nexo plugin help
+  ```
+  
+  Pipeline (in `run_plugin_install`):
+  1. Load `AppConfig`.
+  2. Resolve target: `--target` flag → `NEXO_INSTALL_TARGET`
+     env → `current_target_triple()` autodetect.
+  3. Resolve dest root: `--dest` → first
+     `cfg.plugins.discovery.search_paths` entry →
+     `nexo_state_dir().join("plugins")` fallback (auto-create
+     with stderr warn in human mode).
+  4. Build a reqwest client with `Accept: application/vnd.github+json`
+     + `User-Agent: nexo-rs-plugin-install/<version>` and
+     optional `Authorization: Bearer <NEXO_GITHUB_TOKEN>`.
+  5. `PluginCoords::parse(coords_str)`.
+  6. `resolve_release(...)` against `DEFAULT_GITHUB_API_BASE`.
+  7. `download_and_verify(...)` into
+     `<state_dir>/plugin-install-cache/<id>-<version>-<target>.tar.gz`.
+  8. `extract_verified_tarball(...)` into the resolved dest
+     root (uses `ExtractLimits::default()` from 31.1.b).
+  9. Delete the cached tarball on success — extracted tree
+     is now the source of truth.
+  10. Best-effort emit `plugin.lifecycle.<id>.installed` on
+      the broker (NATS only, 2s connect timeout). Failure
+      is non-fatal: warn logged, exit code unchanged.
+  
+  Output:
+  - **Human mode**: 6-line progress (`→ Resolving …`,
+    `✓ Found release vX.Y.Z (target, size, sha trunc)`,
+    `→ Downloading`, `✓ sha256 verified`, `→ Extracting to …`,
+    `✓ Plugin installed at …`, `✓ Lifecycle event emitted`).
+    Idempotent re-install short-circuits with a one-line
+    "already installed at … — nothing to do" message.
+    Errors render `✗ Install failed: <msg>` with hint blocks
+    for `TargetNotFound` (lists available targets), GitHub
+    rate-limit (suggests `NEXO_GITHUB_TOKEN`), and 404 (verify
+    coords).
+  - **JSON mode** (`--json`): single-line
+    `PluginInstallReport` with stable field names
+    (`ok`, `id`, `version`, `target`, `plugin_dir`,
+    `binary_path`, `sha256`, `size_bytes`,
+    `was_already_present`, `lifecycle_event_emitted`).
+    Error path emits `PluginInstallErrorReport`
+    (`{ ok: false, kind, error, available? }`) with `kind`
+    being a stable string from a fixed set: `CoordsInvalid`,
+    `Http`, `Io`, `ReleaseShape`, `TargetNotFound`,
+    `Sha256Invalid`, `Sha256Mismatch`, `ExtractIo`,
+    `TarballTooLarge`, `TooManyEntries`, `EntryTooLarge`,
+    `ExtractedTooLarge`, `UnsafePath`, `DisallowedEntryType`,
+    `ManifestMismatch`, `ManifestInvalid`, `BinaryMissing`,
+    `JoinError`. Field `available` only populated for
+    `TargetNotFound`.
+  
+  8 new unit tests in `src/plugin_install.rs::tests`:
+  - `install_error_kind_maps_all_variants` — table-test over
+    all 7 `InstallError` variants asserting their stable
+    `kind` strings.
+  - `extract_error_kind_maps_all_variants` — table-test over
+    all 11 `ExtractError` variants.
+  - `install_error_available_only_set_for_target_not_found`.
+  - `report_serializes_to_expected_json_shape`.
+  - `error_report_serializes_with_kind_and_available`.
+  - `error_report_skips_available_when_none` (asserts the
+    `#[serde(skip_serializing_if = "Option::is_none")]` works).
+  - `human_bytes_formats_units`.
+  - `truncate_sha_keeps_short_strings`.
+  
+  Workspace builds clean. Ext-installer regression: 21/21
+  tests still pass.
+  
+  Out of scope (tracked):
+  - `nexo plugin uninstall` / `list` / `info` (separate
+    follow-up slices).
+  - `--enable` / `--dry-run` flags (deferred — Phase 81.5
+    discovery walker handles enable; dry-run friction not
+    yet justified).
+  - Hot-reload trigger for already-running plugins: emitting
+    the lifecycle event lets future hot-reload subsystem
+    react; restart logic itself is out of scope.
+  - Concurrent-install file lock (idempotent extract handles
+    overlap; tighter lock deferred until contention demand).
+  
+  IRROMPIBLE refs: `research/src/agents/skills-install-download.ts:31-50`
+  (target dir resolver with escape check pattern — mining for
+  `--dest` resolution + warn-on-outside-search-paths);
+  `research/src/agents/skills-install.ts:14-15` (structured
+  `SkillInstallResult` shape pattern — mining for
+  `PluginInstallReport` + dedicated formatter helpers); internal
+  `crates/ext-installer/src/lib.rs` (supplies
+  `resolve_release` / `download_and_verify` / `current_target_triple`),
+  `crates/ext-installer/src/extract.rs` (supplies
+  `extract_verified_tarball`), and
+  `crates/core/src/agent/nexo_plugin_registry/subprocess.rs:650`
+  (existing `plugin.lifecycle.<id>.crashed` event topic shape
+  — mining for the same `plugin.lifecycle.<id>.<verb>`
+  namespace for `installed`).
+
 - **Phase 31.1.b — Tarball extraction.** New `extract.rs` +
   `extract_error.rs` modules in `nexo-ext-installer`. The
   install pipeline now closes from "verified tarball on disk"

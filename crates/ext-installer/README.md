@@ -66,8 +66,13 @@ Behind the scenes:
   (regular files + dirs only — symlinks/hardlinks/special-files
   rejected), size budgets, manifest re-validation, and
   idempotent re-install.
-- ⬜ **31.1.c** — `Mode::PluginInstall` CLI integration in
-  main.rs.
+- ✅ **31.1.c** — `nexo plugin install <owner>/<repo>[@<tag>]`
+  CLI mode in `src/plugin_install.rs`. Resolves dest from
+  `plugins.discovery.search_paths[0]` (with state-dir fallback),
+  resolves target from `--target` / env / autodetect, runs the
+  full pipeline (resolve → download → verify → extract), and
+  best-effort emits `plugin.lifecycle.<id>.installed` on the
+  broker. Supports `--json` for scripted operator workflows.
 - ⬜ **31.2** — per-plugin CI publish workflow template
   (GitHub Actions workflow that builds tarballs + sha256s +
   cosign signs + creates the Release).
