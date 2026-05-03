@@ -38,6 +38,116 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 31.2 — Per-plugin CI publish workflow template.**
+  New `extensions/template-plugin-rust/.github/workflows/release.yml`
+  (~210 LOC) + helper scripts (`extract-plugin-meta.sh`,
+  `pack-tarball.sh`) + Rust integration test
+  (`tests/pack_tarball.rs`) + operator-author docs page
+  (`docs/src/plugins/publishing.md`). Plugin authors copy
+  `.github/workflows/release.yml` + `scripts/` to their own
+  GitHub repo and tag `v<semver>`; the workflow auto-publishes
+  a GitHub Release with assets matching the convention 31.1
+  consumes.
+  
+  Workflow shape (four jobs):
+  
+  1. `validate-tag` — checks regex
+     `^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$`, asserts the
+     tag matches `nexo-plugin.toml` `version`. Hard-fails on
+     mismatch (no partial release).
+  2. `build` — matrix over targets:
+     - `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl`
+       cross-compiled from `ubuntu-latest` via
+       `cargo-zigbuild 0.22.3` + zig 0.13.0.
+     - `x86_64-apple-darwin` and `aarch64-apple-darwin` built on
+       `macos-latest`. Authors comment matrix entries to skip
+       targets they do not publish.
+     - Per target: `bash scripts/pack-tarball.sh <target>`
+       packs `dist/<id>-<version>-<target>.tar.gz` with layout
+       `bin/<id>` + `nexo-plugin.toml` at the root (no
+       wrapping dir), plus a `<asset>.sha256` sidecar (one
+       line of lowercase hex).
+  3. `sign` — gated on repo variable
+     `COSIGN_ENABLED == "true"`. Uses
+     `sigstore/cosign-installer@v3` and `cosign sign-blob`
+     keyless OIDC to produce `.sig` / `.pem` / `.bundle` per
+     tarball. Skipped silently when unset.
+  4. `release` — idempotent `gh release create` (skip if
+     existing) + `gh release upload --clobber` of every
+     tarball + sha256 + signing material + `nexo-plugin.toml`.
+  
+  Convention enforcement:
+  
+  - Tarball asset name `<id>-<version>-<target>.tar.gz` matches
+    what `nexo_ext_installer::resolve_release` looks for.
+  - Tarball layout matches what
+    `nexo_ext_installer::extract_verified_tarball` expects
+    (`bin/<id>` exec bit set + `nexo-plugin.toml` at the root).
+  - `pack-tarball.sh` self-tests the sidecar via `sha256sum -c`
+    so a tar/sha256 mismatch fails the build job, not a
+    downstream operator.
+  
+  Constraint: cargo `[[bin]] name` MUST equal `[plugin] id`.
+  Pack script searches `target/<target>/release/<plugin_id>`;
+  mismatch fails with `built binary missing`. Template binary
+  renamed `template_plugin_rust` (underscores) to honor the
+  invariant — previously `template-plugin-rust` (hyphens).
+  
+  Concurrency: workflow uses
+  `group: release-${{ github.ref_name || inputs.tag }}` with
+  `cancel-in-progress: false`. Re-runs of the same tag
+  serialize without aborting in-flight publishes.
+  
+  1 new Rust integration test in
+  `extensions/template-plugin-rust/tests/pack_tarball.rs`:
+  builds a synthetic 1-byte binary at the cargo release path,
+  runs `pack-tarball.sh` from a tempdir, asserts the asset +
+  sidecar exist, validates the sidecar is 64 lowercase hex,
+  recomputes sha256 of the tarball + verifies match,
+  re-extracts the tarball into a second tempdir, asserts
+  `bin/<id>` + `nexo-plugin.toml` at the root with no
+  wrapping dir, and asserts the binary mode is `0o755`. Test
+  is `#[cfg(unix)]`-gated.
+  
+  Required workflow permissions:
+  
+  ```yaml
+  permissions:
+    contents: write   # gh release upload
+    id-token: write   # cosign keyless OIDC
+  ```
+  
+  No additional secrets. Cosign keyless uses Sigstore/Fulcio
+  with the workflow's OIDC token; no operator-managed signing
+  key.
+  
+  Out of scope (tracked):
+  - SLSA Level 3 provenance attestation (defer 31.2.b — 31.2
+    ships sigstore-only signature; SLSA pipeline separate).
+  - Windows targets (subprocess plugin host on Windows
+    untested; defer until that path lands).
+  - Multi-plugin monorepo support (single plugin per repo by
+    convention).
+  - `crates.io` auto-publish (per-plugin author choice).
+  
+  IRROMPIBLE refs:
+  `research/.github/workflows/plugin-npm-release.yml:34-36`
+  (concurrency-group-on-ref shape pattern);
+  `research/.github/workflows/plugin-npm-release.yml:199-208`
+  (idempotency: reject already-published — adapted to
+  `--clobber` upload since CI re-runs are common);
+  `research/.github/workflows/macos-release.yml:31-39`
+  (tag format regex enforcement — adapted from Year-based
+  pattern to plain semver);
+  internal `.github/workflows/release.yml:78-120`
+  (matrix-over-targets + cargo-zigbuild + Swatinem cache +
+  upload-artifact pattern, copied wholesale to plugin
+  template);
+  internal `.github/workflows/sign-artifacts.yml:41-50`
+  (keyless cosign sign-blob pattern, copied);
+  `crates/ext-installer/src/lib.rs` + `extract.rs` (define
+  the asset convention this workflow must produce).
+
 - **Phase 31.1.c — `nexo plugin install` CLI mode.** New
   `src/plugin_install.rs` module + `Mode::PluginInstall` /
   `Mode::PluginHelp` variants in the daemon binary. Operator
