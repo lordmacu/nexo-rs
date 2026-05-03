@@ -10,6 +10,48 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.10 — Plugin hot-load via Phase 18 reload coord.** New
+  helper `register_plugin_registry_reload_hook(coord, registry,
+  discovery_cfg, version)` in
+  `nexo_core::agent::nexo_plugin_registry::boot` registers a single
+  `PostReloadHook` (sync, captured-state-only per Phase 18 contract)
+  with the `ConfigReloadCoordinator`. On every successful reload the
+  hook re-runs `discover()`, computes deltas vs the previous
+  snapshot's report (loaded / invalid counts), atomically swaps the
+  fresh snapshot into `Arc<NexoPluginRegistry>` via the existing
+  ArcSwap, and emits a single `tracing::info!` line with six fields
+  (prev_loaded / new_loaded / delta_loaded / prev_invalid /
+  new_invalid / delta_invalid). Errors are swallowed per the coord's
+  best-effort contract — the hook never aborts a reload. The
+  snapshot's `skill_roots` field is intentionally left empty
+  post-reload: re-merging skill roots would not affect running
+  agents (their `LlmAgentBehavior.plugin_skill_roots` is cloned at
+  boot), so we stay honest about the runtime state until Phase
+  81.10.b ships per-agent skill rebuild. `merge_plugin_contributed_agents`
+  is NOT re-run on reload — Phase 18 does not support runtime agent
+  removal. `run_plugin_init_loop` is NOT re-run — init handles map
+  is empty today; when the manifest-driven factory ships
+  (81.7.b / 81.12) its hook slice augments this one. Boot wire is a
+  single `await` line in `src/main.rs::Mode::Run` immediately
+  before `reload_coord.start(...)`. Two test-only helpers added to
+  `ConfigReloadCoordinator` behind `#[cfg(test)]`:
+  `post_hooks_len_for_test` and `fire_post_hooks_for_test` so unit
+  tests exercise the hook contract directly without spinning a
+  real reload pipeline. 3 unit tests cover the registration count,
+  the happy-path snapshot replacement, and the failure-swallowing
+  edge case (search_path missing on disk → diagnostic recorded,
+  no panic).
+
+  **Deferred follow-ups (Phase 81.10.b)**:
+  - Skill roots rebuild + per-agent `LlmAgentBehavior.plugin_skill_roots`
+    re-clone so running agents pick up new plugin-contributed skills
+    without restart.
+  - Live `discovery_cfg` updates (operator changes
+    `plugins.discovery.search_paths` or `disabled` list) — today
+    captured immutable at boot.
+  - Init re-run when 81.7.b / 81.12 populate the
+    `Arc<dyn NexoPlugin>` handles map.
+
 - **Phase 81.9.b — `nexo agent doctor plugins` CLI subcommand.** Closes
   the deferred CLI piece of Phase 81.9. New `Mode::DoctorPlugins { json: bool }`
   variant + parser arm `[cmd, sub] if cmd == "doctor" && sub == "plugins"`.

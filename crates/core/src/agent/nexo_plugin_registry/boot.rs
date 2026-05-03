@@ -22,6 +22,7 @@ use super::{
 };
 use crate::agent::channel_adapter::ChannelAdapterRegistry;
 use crate::agent::plugin_host::NexoPlugin;
+use crate::config_reload::ConfigReloadCoordinator;
 
 /// Phase 81.9 — bundle of registry handles produced by
 /// [`wire_plugin_registry`] and consumed by the per-agent boot loop.
@@ -169,3 +170,182 @@ pub fn wire_plugin_registry(
         channel_adapter_registry: Arc::new(ChannelAdapterRegistry::new()),
     }
 }
+
+/// Phase 81.10 — register a post-reload hook with the
+/// `ConfigReloadCoordinator` that re-runs `discover()` and
+/// atomically swaps the registry snapshot, so a daemon picks up
+/// new / removed plugin manifests without restart.
+///
+/// Captured state (immutable per closure):
+/// - `Arc<NexoPluginRegistry>` — the swap target.
+/// - `PluginDiscoveryConfig` — boot-time snapshot of the operator's
+///   `plugins.discovery` config. Reloads do NOT update this; if the
+///   operator wants new search_paths picked up, daemon restart is
+///   required (Phase 81.10.b lifts this).
+/// - `Version` — daemon's `CARGO_PKG_VERSION` for `min_nexo_version`
+///   matching during re-discover.
+///
+/// Hook body is sync (matches `PostReloadHook`); `discover()` is
+/// sync. Errors swallowed via `tracing::warn` per the coord's
+/// best-effort contract — the hook never aborts the reload.
+///
+/// **Limitations** (deferred):
+/// - The new snapshot's `skill_roots` field is left empty. Running
+///   agents already cloned their `LlmAgentBehavior.plugin_skill_roots`
+///   at boot — re-merging skill roots here would not affect them.
+///   Phase 81.10.b adds per-agent skill rebuild.
+/// - `merge_plugin_contributed_agents` is NOT re-run. Phase 18
+///   does not support runtime agent removal; re-merging would
+///   leave stale config on running agents. Operator must restart
+///   the daemon to apply agent contribution changes.
+/// - `run_plugin_init_loop` is NOT re-run. Init handles map is
+///   empty today; when the manifest-driven factory ships
+///   (81.7.b / 81.12), its hook slice augments this one.
+pub async fn register_plugin_registry_reload_hook(
+    coord: Arc<ConfigReloadCoordinator>,
+    registry: Arc<NexoPluginRegistry>,
+    discovery_cfg: PluginDiscoveryConfig,
+    current_version: semver::Version,
+) {
+    coord
+        .register_post_hook(Box::new(move || {
+            // 1. Re-discover.
+            let discovered = discover(&discovery_cfg, &current_version);
+
+            // 2. Snapshot the previous report for delta logging.
+            let prev = registry.snapshot();
+            let prev_loaded = prev.last_report.loaded_ids.len();
+            let prev_invalid = prev.last_report.invalid;
+
+            let new_loaded = discovered.last_report.loaded_ids.len();
+            let new_invalid = discovered.last_report.invalid;
+
+            // 3. Build a fresh snapshot. `skill_roots` stays empty
+            //    in 81.10 — see the doc-comment above.
+            let new_snap = Arc::new(NexoPluginRegistrySnapshot {
+                plugins: discovered.plugins.clone(),
+                last_report: discovered.last_report.clone(),
+                skill_roots: std::collections::BTreeMap::new(),
+            });
+
+            // 4. Atomic swap.
+            registry.swap(new_snap);
+
+            tracing::info!(
+                target: "plugins.discovery",
+                prev_loaded,
+                new_loaded,
+                delta_loaded = (new_loaded as i64) - (prev_loaded as i64),
+                prev_invalid,
+                new_invalid,
+                delta_invalid = (new_invalid as i64) - (prev_invalid as i64),
+                "post-reload plugin registry swap complete"
+            );
+        }))
+        .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use semver::Version;
+    use tokio_util::sync::CancellationToken;
+
+    use crate::config_reload::ConfigReloadCoordinator;
+    use nexo_llm::LlmRegistry;
+
+    fn fresh_coord() -> Arc<ConfigReloadCoordinator> {
+        let tmp = tempfile::tempdir().unwrap();
+        Arc::new(ConfigReloadCoordinator::new(
+            tmp.path().to_path_buf(),
+            Arc::new(LlmRegistry::new()),
+            CancellationToken::new(),
+        ))
+    }
+
+    fn write_plugin(root: &std::path::Path, plugin_id: &str) {
+        std::fs::create_dir_all(root).unwrap();
+        let manifest = format!(
+            "[plugin]\n\
+             id = \"{plugin_id}\"\n\
+             version = \"0.1.0\"\n\
+             name = \"{plugin_id}\"\n\
+             description = \"hot-reload fixture\"\n\
+             min_nexo_version = \">=0.0.1\"\n",
+        );
+        std::fs::write(root.join("nexo-plugin.toml"), manifest).unwrap();
+    }
+
+    #[tokio::test]
+    async fn register_plugin_registry_reload_hook_pushes_one_post_hook() {
+        let coord = fresh_coord();
+        let registry = NexoPluginRegistry::empty();
+        assert_eq!(coord.post_hooks_len_for_test().await, 0);
+        register_plugin_registry_reload_hook(
+            Arc::clone(&coord),
+            registry,
+            PluginDiscoveryConfig::default(),
+            Version::new(0, 1, 0),
+        )
+        .await;
+        assert_eq!(coord.post_hooks_len_for_test().await, 1);
+    }
+
+    #[tokio::test]
+    async fn hook_replaces_snapshot_when_discover_succeeds() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_plugin(&tmp.path().join("alpha"), "alpha");
+
+        let coord = fresh_coord();
+        let registry = NexoPluginRegistry::empty();
+        // Sanity: empty before fire.
+        assert!(registry.snapshot().last_report.loaded_ids.is_empty());
+
+        let cfg = PluginDiscoveryConfig {
+            search_paths: vec![tmp.path().to_path_buf()],
+            ..Default::default()
+        };
+        register_plugin_registry_reload_hook(
+            Arc::clone(&coord),
+            Arc::clone(&registry),
+            cfg,
+            Version::new(0, 1, 0),
+        )
+        .await;
+
+        coord.fire_post_hooks_for_test().await;
+
+        let snap = registry.snapshot();
+        assert_eq!(snap.last_report.loaded_ids, vec!["alpha".to_string()]);
+        assert!(snap.skill_roots.is_empty());
+    }
+
+    #[tokio::test]
+    async fn hook_swallows_discover_failure_does_not_panic() {
+        let coord = fresh_coord();
+        let registry = NexoPluginRegistry::empty();
+        let cfg = PluginDiscoveryConfig {
+            search_paths: vec![PathBuf::from(
+                "/this/path/definitely/does/not/exist/__nexo_test__",
+            )],
+            ..Default::default()
+        };
+        register_plugin_registry_reload_hook(
+            Arc::clone(&coord),
+            Arc::clone(&registry),
+            cfg,
+            Version::new(0, 1, 0),
+        )
+        .await;
+        // Must not panic.
+        coord.fire_post_hooks_for_test().await;
+        // Snapshot still valid; loaded empty; diagnostic recorded.
+        let snap = registry.snapshot();
+        assert!(snap.last_report.loaded_ids.is_empty());
+        assert!(!snap.last_report.diagnostics.is_empty());
+    }
+}
+

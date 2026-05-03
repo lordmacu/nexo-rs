@@ -22,7 +22,9 @@ pub mod doctor_render;
 pub mod init_loop;
 pub mod report;
 
-pub use boot::{wire_plugin_registry, WirePluginRegistryOutput};
+pub use boot::{
+    register_plugin_registry_reload_hook, wire_plugin_registry, WirePluginRegistryOutput,
+};
 pub use config::{resolve_search_paths, PluginDiscoveryConfig};
 pub use contributes::{
     merge_plugin_contributed_agents, AgentMergeConflict, AgentMergeReport,

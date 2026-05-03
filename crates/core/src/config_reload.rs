@@ -384,6 +384,27 @@ impl ConfigReloadCoordinator {
 }
 
 #[cfg(test)]
+impl ConfigReloadCoordinator {
+    /// Phase 81.10 — test-only: count of registered post hooks.
+    /// Used by `register_plugin_registry_reload_hook` to verify
+    /// it pushes exactly one hook.
+    pub async fn post_hooks_len_for_test(&self) -> usize {
+        self.post_hooks.lock().await.len()
+    }
+
+    /// Phase 81.10 — test-only: fire every registered post-hook in
+    /// FIFO order. Mirrors the production fire path (line 275-284)
+    /// but skips the gate + reload itself; callers exercise the
+    /// hook contract, not the reload mechanics.
+    pub async fn fire_post_hooks_for_test(&self) {
+        let hooks = self.post_hooks.lock().await;
+        for hook in hooks.iter() {
+            hook();
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
