@@ -50,6 +50,13 @@ pub struct SubprocessRuntime {
     pub shutdown: CancellationToken,
     pub config_dir: PathBuf,
     pub state_root: PathBuf,
+    /// Phase 81.20.a — long-term memory backend exposed to
+    /// subprocess plugins via the `memory.recall` JSON-RPC method.
+    /// `None` when the operator hasn't configured memory or main.rs
+    /// hasn't yet plumbed the handle through the boot wire (today
+    /// always None; 81.20.a.b reorders main.rs construction so it
+    /// lands here).
+    pub long_term_memory: Option<Arc<nexo_memory::LongTermMemory>>,
 }
 
 /// Phase 81.9 — bundle of registry handles produced by
@@ -376,7 +383,7 @@ impl SubprocessCtxStubs {
             llm_registry: self.llm_registry.clone(),
             reload_coord: self.reload_coord.clone(),
             sessions: self.sessions.clone(),
-            long_term_memory: None,
+            long_term_memory: rt.long_term_memory.clone(),
             shutdown: rt.shutdown.clone(),
             channel_adapter_registry: self.channel_adapter_registry.clone(),
         }
