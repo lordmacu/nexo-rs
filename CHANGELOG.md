@@ -10,6 +10,89 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 31.0 — `ext-registry` index format spec + types crate.**
+  Foundation for the plugin marketplace. Out-of-tree subprocess
+  plugins (Phase 81.x) need a discovery mechanism for operators
+  to find + install them — Phase 31 builds that out via a
+  remote JSON catalog at a well-known URL (`https://nexo-rs.dev/ext-index.json`)
+  consumed by `nexo ext install <id>` (Phase 31.1).
+  
+  This slice ships ONLY the data types + parser + validation —
+  the catalog publish workflow (31.2), CLI (31.1), and cosign
+  verification (31.3) are downstream slices. Splitting this way
+  matches the 81.15.a / 81.16 / 81.17 pattern: format spec
+  first, callers second.
+  
+  New crate `crates/ext-registry/` (workspace member). Public
+  types:
+  - `ExtRegistryIndex { schema_version: Version, generated_at:
+    DateTime<Utc>, entries: Vec<ExtEntry> }` — top-level
+  - `ExtEntry { id, version, name, description, homepage, tier,
+    min_nexo_version, downloads, manifest_url, signing, authors }`
+  - `ExtDownload { target, url, sha256, size_bytes }` — per-target
+    prebuilt artifact
+  - `ExtSigning { cosign_signature_url, cosign_certificate_url }`
+  - `ExtTier::Verified` (signed by nexo-rs maintainers) vs
+    `ExtTier::Community` (third-party signed)
+  - `IndexValidationError` enum (Parse, SchemaVersionUnsupported,
+    IdInvalid, FieldEmpty, UrlInvalid, UrlNotHttps,
+    DownloadsEmpty, Sha256Invalid, VerifiedRequiresSigning)
+  
+  Validation enforces:
+  - Schema version major matches `SCHEMA_VERSION = "1.0.0"`
+  - Plugin id matches `^[a-z][a-z0-9_]{0,31}$`
+  - `name` + `description` non-empty after trim
+  - `homepage`, `manifest_url`, every `download.url`, signing
+    URLs are valid HTTPS URLs (HTTP rejected — registry MUST
+    serve over HTTPS)
+  - `downloads` array non-empty per entry
+  - Every `sha256` is exactly 64 lowercase hex chars
+  - `tier == verified` entries MUST carry a `signing` block
+  - `#[serde(deny_unknown_fields)]` rejects typos in field names
+  
+  Bundled sample at `crates/ext-registry/examples/sample-ext-index.json`
+  with two entries: a verified Slack plugin (with cosign URLs)
+  and a community Discord plugin (without signing — operator
+  decides via trusted_keys.toml in 31.3 whether to accept).
+  
+  9 unit tests:
+  - `parse_and_validate_minimal_verified_entry`
+  - `bundled_sample_index_parses_and_validates` (regression
+    guard — sample + schema must update together)
+  - `rejects_invalid_id` (uppercase fails)
+  - `rejects_non_https_url` (HTTP rejected)
+  - `rejects_bad_sha256` (wrong length + uppercase variants)
+  - `rejects_verified_without_signing`
+  - `community_tier_can_omit_signing` (positive case)
+  - `rejects_empty_downloads`
+  - `rejects_unknown_field_in_entry` (deny_unknown_fields)
+  
+  9/9 tests pass. Workspace builds clean.
+  
+  **Out of scope (tracked in PHASES-curated.md):**
+  - 31.1 — `nexo ext install <id>` CLI (consumes this crate to
+    fetch + verify + unpack)
+  - 31.2 — per-plugin CI publish workflow (generates entries
+    on tag push, opens PR to ext-registry)
+  - 31.3 — cosign verification + `config/extensions/trusted_keys.toml`
+    (operator-allowlisted signing keys, verified vs community
+    tier policy enforcement)
+  - **Index repo bootstrap** (`github.com/nexo-rs/ext-registry`)
+    — separate external repo, deferred to operator setup since
+    it's a 1-commit init outside this workspace.
+  
+  IRROMPIBLE refs: internal `crates/plugin-manifest/` (per-plugin
+  manifest schema; the registry is a CATALOG OF those manifests
+  — distinct shape, distinct crate); OpenClaw absence stated
+  (`research/extensions/<id>/openclaw.plugin.json` are
+  individual plugin manifests, no remote index — all plugins
+  ship in-repo); claude-code-leak `src/plugins/builtinPlugins.ts`
+  builtins ship inline with binary. Real-world references for
+  the format design: crates.io index (per-crate JSON in a git
+  repo), npm registry (single doc per package), brew taps. Chose
+  single-document layout because nexo plugin count starts small
+  (10s, not millions like crates.io).
+
 - **Phase 81.15.c.b — SDK streaming consumption helper
   (`complete_llm_stream`).** Closes the streaming half of the
   SDK ergonomics gap. Plugin authors now write:

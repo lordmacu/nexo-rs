@@ -1,0 +1,28 @@
+[package]
+name = "nexo-ext-registry"
+description = "Phase 31.0 — ext-registry index format types + parser + validation. The catalog of installable nexo plugins (out-of-tree subprocess plugins authored against nexo-plugin-contract.md)."
+version       = "0.1.0"
+edition       = { workspace = true }
+rust-version  = { workspace = true }
+license       = { workspace = true }
+authors       = { workspace = true }
+repository    = { workspace = true }
+homepage      = { workspace = true }
+documentation = { workspace = true }
+readme        = "README.md"
+keywords      = { workspace = true }
+categories    = { workspace = true }
+
+[lints]
+workspace = true
+
+[dependencies]
+serde       = { workspace = true, features = ["derive"] }
+serde_json  = { workspace = true }
+semver      = { workspace = true, features = ["serde"] }
+chrono      = { workspace = true, features = ["serde"] }
+thiserror   = { workspace = true }
+url         = "2"
+
+[dev-dependencies]
+serde_json  = { workspace = true }
