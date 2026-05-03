@@ -14,6 +14,7 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 
 pub mod boot;
+pub mod capability_aggregator;
 pub mod config;
 pub mod contributes;
 pub mod contributes_skills;
@@ -24,6 +25,10 @@ pub mod report;
 
 pub use boot::{
     register_plugin_registry_reload_hook, wire_plugin_registry, WirePluginRegistryOutput,
+};
+pub use capability_aggregator::{
+    aggregate_plugin_gates, AggregatedGate, AggregatedGateState,
+    PluginCapabilityAggregation, UnmetRequirement,
 };
 pub use config::{resolve_search_paths, PluginDiscoveryConfig};
 pub use contributes::{

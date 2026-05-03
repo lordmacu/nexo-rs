@@ -65,7 +65,13 @@ async fn wire_plugin_registry_full_pipeline() {
     let mut agents = AgentsConfig { agents: Vec::new() };
     let version = Version::parse("0.1.0").unwrap();
 
-    let wire = wire_plugin_registry(&mut agents, &cfg, &version);
+    let wire = wire_plugin_registry(
+        &mut agents,
+        &cfg,
+        &version,
+        &[],
+        &std::collections::BTreeSet::new(),
+    );
 
     // Contributed agent landed in the runtime config.
     assert_eq!(agents.agents.len(), 1);

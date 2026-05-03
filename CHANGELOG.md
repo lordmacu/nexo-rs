@@ -10,6 +10,64 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.11 — Plugin doctor + capability inventory integration
+  (library + tests).** New module
+  `nexo_core::agent::nexo_plugin_registry::capability_aggregator`
+  exposes `aggregate_plugin_gates(snapshot, core_env_vars, available) -> PluginCapabilityAggregation`.
+  Iterates each plugin manifest's `[plugin.capability_gates.gate]`
+  array, catalogs gates as `AggregatedGate { plugin_id, env_var,
+  kind, risk, effect, hint, state, raw_value }` keyed by `env_var`,
+  and computes runtime state per `GateKind` (Boolean / Allowlist
+  via `env::var`; CargoFeature always `Disabled` because runtime
+  env lookup is meaningless for compile-time gates). Conflict
+  detection at aggregate time: plugin gate `env_var` matches a
+  core INVENTORY entry → drop the plugin gate + emit
+  `CapabilityGateConflictsCore` Error diagnostic; plugin gate
+  `env_var` matches another plugin's gate → drop the new gate +
+  emit `CapabilityGateConflictsPlugin` Error (first-plugin-wins);
+  plugin's `requires.nexo_capabilities` entry not in `available`
+  set → emit `RequiredCapabilityNotGranted` Warn diagnostic +
+  record `UnmetRequirement` (graceful degraded). Three new
+  `DiscoveryDiagnosticKind` variants ship. `PluginDiscoveryReport`
+  extended with `plugin_capability_gates: BTreeMap<String, AggregatedGate>`
+  and `unmet_required_capabilities: Vec<UnmetRequirement>`
+  (`#[serde(default, skip_serializing_if = ...)]` for backward-compat
+  with 81.5/81.6/81.7/81.8 consumers). Helper
+  `fold_capability_aggregation` mirrors `fold_agent_merge` /
+  `fold_skill_merge` / `fold_init_outcomes`. `wire_plugin_registry`
+  signature gains two new params: `core_env_vars: &[(&str, &str)]`
+  + `available_capabilities: &BTreeSet<String>`. The aggregator
+  takes an explicit `core_env_vars` slice instead of reading
+  `nexo_setup::capabilities::INVENTORY` directly because
+  `nexo-core` cannot depend on `nexo-setup` (workspace topology:
+  `nexo-setup → nexo-core`). Main.rs bridges via two new helpers:
+  `core_capability_env_vars()` (calls `evaluate_all`, projects
+  `(env_var, extension)`) and `build_available_capabilities(&cfg)`
+  (returns the set of framework capabilities the running daemon
+  has wired: always `broker` / `memory` / `sessions`; conditional
+  `long_term_memory` when `cfg.memory.long_term.backend` non-empty).
+  Boot wire updated + 81.9.b doctor handler updated to thread the
+  new args. Drift-prevention contract preserved: `INVENTORY` const
+  stays private + immutable; the bridge layer reads through the
+  public `evaluate_all` API. 4 unit tests cover single-gate
+  aggregation, core conflict, cross-plugin conflict, and unmet-
+  requirement Warn emission. 1 integration regression: existing
+  `wire_plugin_registry_full_pipeline` fixture updated to pass
+  the two new args + asserts empty aggregation when no plugins
+  declare gates.
+
+  **Deferred follow-ups (Phase 81.11.b)**:
+  - `doctor_render` TTY sections `PLUGIN CAPABILITY GATES` +
+    `PLUGIN REQUIRED CAPABILITIES` (data is in the snapshot;
+    render layer follows when working tree quiets).
+  - `DoctorPluginsJsonReport` field extension for the two new
+    aggregator outputs.
+  - `agent doctor capabilities --json` envelope mode mixing core
+    INVENTORY + plugin gates.
+  - Phase 18 reload coord re-aggregation slice (today the 81.10
+    hook only re-discovers; capability re-aggregation lands in
+    81.11.b).
+
 - **Phase 81.10 — Plugin hot-load via Phase 18 reload coord.** New
   helper `register_plugin_registry_reload_hook(coord, registry,
   discovery_cfg, version)` in

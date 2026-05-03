@@ -15,6 +15,11 @@ use semver::Version;
 
 use nexo_config::AgentsConfig;
 
+use std::collections::BTreeSet;
+
+use super::capability_aggregator::{
+    aggregate_plugin_gates, AggregatedGate, UnmetRequirement,
+};
 use super::{
     discover, merge_plugin_contributed_agents, merge_plugin_contributed_skills,
     run_plugin_init_loop, NexoPluginRegistry, NexoPluginRegistrySnapshot,
@@ -44,6 +49,16 @@ pub struct WirePluginRegistryOutput {
     /// scope so the outbound dispatcher refactor (Phase 81.9.b)
     /// can pull it without changing the boot wire shape.
     pub channel_adapter_registry: Arc<ChannelAdapterRegistry>,
+    /// Phase 81.11 — plugin-declared capability gates aggregated
+    /// at boot. Same data as
+    /// `registry.snapshot().last_report.plugin_capability_gates`,
+    /// surfaced here for callers that don't want to load the
+    /// snapshot.
+    pub plugin_capability_gates: std::collections::BTreeMap<String, AggregatedGate>,
+    /// Phase 81.11 — capabilities a plugin declared in
+    /// `requires.nexo_capabilities` that are not currently wired
+    /// in the daemon.
+    pub unmet_required_capabilities: Vec<UnmetRequirement>,
 }
 
 /// Phase 81.9 — atomic 4-step plugin registry boot wire.
@@ -67,6 +82,8 @@ pub fn wire_plugin_registry(
     cfg: &mut AgentsConfig,
     discovery_cfg: &PluginDiscoveryConfig,
     current_version: &Version,
+    core_env_vars: &[(&str, &str)],
+    available_capabilities: &BTreeSet<String>,
 ) -> WirePluginRegistryOutput {
     // 1. discover.
     let snap = discover(discovery_cfg, current_version);
@@ -103,6 +120,21 @@ pub fn wire_plugin_registry(
     updated_report.fold_agent_merge(agent_merge);
     updated_report.fold_skill_merge(skill_merge);
     updated_report.fold_init_outcomes(init_outcomes);
+
+    // Phase 81.11 — aggregate plugin capability gates + check
+    // unmet `requires.nexo_capabilities`. Snapshot for the
+    // aggregator borrows the just-discovered plugins (the same
+    // ones that will populate the final snapshot below).
+    let aggregator_snap_view = NexoPluginRegistrySnapshot {
+        plugins: snap.plugins.clone(),
+        last_report: super::report::PluginDiscoveryReport::default(),
+        skill_roots: BTreeMap::new(),
+    };
+    let aggregation =
+        aggregate_plugin_gates(&aggregator_snap_view, core_env_vars, available_capabilities);
+    let plugin_capability_gates_for_output = aggregation.gates.clone();
+    let unmet_required_for_output = aggregation.unmet_required.clone();
+    updated_report.fold_capability_aggregation(aggregation);
 
     let new_skill_roots_for_snapshot: BTreeMap<String, PathBuf> = snap
         .plugins
@@ -168,6 +200,8 @@ pub fn wire_plugin_registry(
         registry,
         skill_roots,
         channel_adapter_registry: Arc::new(ChannelAdapterRegistry::new()),
+        plugin_capability_gates: plugin_capability_gates_for_output,
+        unmet_required_capabilities: unmet_required_for_output,
     }
 }
 
