@@ -1401,6 +1401,27 @@ async fn main() -> Result<()> {
                 skills_store: skills_store.clone(),
                 escalation_store: escalation_store.clone(),
                 agent_event_log: agent_event_log.clone(),
+                // Phase 82.10.n — always wire all three channel
+                // persisters. They translate
+                // `nexo/admin/credentials/register` into the
+                // per-plugin yaml + secret-file shape the
+                // runtime loader consumes. Wiring is independent
+                // of whether the plugin is currently enabled in
+                // `extensions.yaml` — operators routinely
+                // register accounts BEFORE the plugin is hot
+                // (config reload activates them on the next
+                // tick).
+                persisters: vec![
+                    nexo_setup::persisters::TelegramPersister::new(
+                        config_dir.join("plugins").join("telegram.yaml"),
+                        secrets_dir.clone(),
+                    ),
+                    nexo_setup::persisters::EmailPersister::new(
+                        config_dir.join("plugins").join("email.yaml"),
+                        secrets_dir.clone(),
+                    ),
+                    nexo_setup::persisters::WhatsappPersister::new(),
+                ],
             },
         )
         .await

@@ -32,6 +32,7 @@ pub mod config_tool_bridge;
 pub mod credentials_check;
 pub mod pairing_check;
 pub mod llm_provider_probe;
+pub mod persisters;
 pub mod prompt;
 pub mod registry;
 pub mod secrets_store;
