@@ -319,8 +319,34 @@ coordinación de archivos cross-cutting.
   CAPABILITIES) + DoctorCapabilities envelope JSON mode + Phase
   18 reload re-aggregation hook slice. Library + aggregator wire
   shipped today; render layer follows when working tree quiets.
-- **81.12 ⬜** Existing-plugin migration
-  (whatsapp/telegram/email/browser → `NexoPlugin` impls).
+- **81.12 split into foundation + per-plugin sub-slices** —
+  - **81.12.0 ✅ shipped 2026-05-03** —
+    `PluginFactoryRegistry` foundation: new `factory.rs` module
+    con `BoxError` + `PluginFactory` (`Box<dyn Fn(&PluginManifest) ->
+    Result<Arc<dyn NexoPlugin>, BoxError>>`) + `PluginFactoryRegistry`
+    con register/instantiate/is_registered/kinds/len/is_empty +
+    `FactoryRegistrationError::AlreadyRegistered` +
+    `FactoryInstantiateError::{NotRegistered, FactoryFailed}`
+    thiserror enums. Sibling fn `run_plugin_init_loop_with_factory`
+    en init_loop.rs (existing `run_plugin_init_loop` coexists).
+    `wire_plugin_registry` gana 6th param `factory_registry:
+    Option<&PluginFactoryRegistry>` — None preserves existing
+    NoHandle behavior; Some routes via the factory-driven helper.
+    main.rs both callsites pass `None` por ahora (legacy block
+    untouched). 5 unit + 1 init_loop helper + 2 integration tests.
+  - **81.12.a ⬜** Browser plugin migration to `NexoPlugin`
+    trait + `nexo-plugin.toml` + register factory in main.rs.
+    Single-instance, simplest. ~2h effort.
+  - **81.12.b ⬜** Telegram plugin migration. Multi-instance loop
+    inside init(). ~3h effort.
+  - **81.12.c ⬜** WhatsApp plugin migration. Multi-instance +
+    pairing state collection. ~4h effort.
+  - **81.12.d ⬜** Email plugin migration. Single-NexoPlugin,
+    multi-account internal, credential injection (may extend
+    PluginInitContext). ~5h effort.
+  - **81.12.e ⬜** Remove legacy plugin registration block from
+    main.rs:1855-1941 (~87 LOC). Only after 81.12.a-d ship dual-
+    trait. ~2h effort.
 - **81.13 ⬜ DEFER** Reference plugin template
   (`nexo plugin new <name>` CLI) + docs +
   `crates/plugins/sales-agent/` reference example.
