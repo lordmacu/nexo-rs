@@ -676,11 +676,29 @@ coordinación de archivos cross-cutting.
   sha256-mismatch cleanup). README documents Option B + asset
   naming convention. Workspace builds clean.
 
-- **31.1.b ⬜** Tarball extraction. After `download_and_verify`
-  the verified tarball must be extracted into the daemon's
-  `plugins.discovery.search_paths`. Reject path traversal entries
-  (`..`, absolute paths), preserve executable bits, idempotent
-  overwrite. ~0.5 d.
+- **31.1.b ✅ shipped 2026-05-03** — Tarball extraction. New
+  `extract.rs` + `extract_error.rs` in `nexo-ext-installer`.
+  `extract_verified_tarball(ExtractInput) -> ExtractedPlugin`
+  pipeline: idempotent re-install check (existing `<id>-<version>/`
+  with matching manifest short-circuits), stale `.staging-*`
+  cleanup, unique staging dir, sync extract under
+  `tokio::task::spawn_blocking` with per-entry path validation
+  (rejects `..`, absolute, Windows-prefix, NUL bytes) + entry
+  type whitelist (`Regular | Directory` only — symlinks /
+  hardlinks / char / block / fifo / GNU extensions all rejected
+  with `DisallowedEntryType`) + 4-axis size budgets
+  (`ExtractLimits`: 100 MB tarball, 10K entries, 250 MB
+  extracted, 100 MB per entry), manifest re-parsed + validated
+  against expected id/version (catches tampered tarballs even
+  past sha verification), `bin/<id>` existence + chmod 0o755 on
+  Unix, atomic-rename staging → final. New `ExtractError` enum
+  (11 variants). 13 new tests (8 public-API including raw-header
+  path-traversal and absolute-path injection that bypass
+  `tar::Builder::set_path` upstream normalization, 5
+  helper-level for `validate_entry_path` + `cleanup_stale_staging`).
+  21/21 installer tests pass. Workspace builds clean. Crate
+  intentionally does NOT read config — caller resolves
+  `dest_root` from `plugins.discovery.search_paths[0]`.
 
 - **31.1.c ⬜** `Mode::PluginInstall` CLI integration in main.rs.
   New CLI mode parses coords, resolves config to learn install

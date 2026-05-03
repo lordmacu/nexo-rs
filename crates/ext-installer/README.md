@@ -60,7 +60,12 @@ Behind the scenes:
   `ExtDownload`, `ExtSigning`, `ExtTier`).
 - ✅ **31.1** — this crate. Resolver + downloader + sha256
   verifier hitting GitHub Releases API.
-- ⬜ **31.1.b** — tarball extraction.
+- ✅ **31.1.b** — `extract_verified_tarball` lays the verified
+  tarball into `<dest_root>/<id>-<version>/` with staging +
+  atomic rename, path-safety validation, entry-type whitelist
+  (regular files + dirs only — symlinks/hardlinks/special-files
+  rejected), size budgets, manifest re-validation, and
+  idempotent re-install.
 - ⬜ **31.1.c** — `Mode::PluginInstall` CLI integration in
   main.rs.
 - ⬜ **31.2** — per-plugin CI publish workflow template
@@ -95,7 +100,15 @@ See `proyecto/PHASES-curated.md` § Phase 31 for the full plan.
 cargo test -p nexo-ext-installer
 ```
 
-8 tests covering coords parsing, GitHub API URL construction,
-release shape validation (missing manifest, missing target
-tarball), happy-path round-trip with sha256 verification, and
-sha256 mismatch cleanup.
+21 tests:
+
+- **Resolver / downloader (8)** — coords parsing, GitHub API URL
+  construction, release shape validation (missing manifest,
+  missing target tarball), happy-path round-trip with sha256
+  verification, sha256 mismatch cleanup.
+- **Extraction (13)** — happy path with binary chmod check,
+  idempotent re-install skip, manifest mismatch + staging
+  cleanup, path traversal via `..`, absolute-path injection,
+  symlink rejection, entry count limit, missing binary, plus
+  helper-level coverage of `validate_entry_path` and
+  `cleanup_stale_staging`.
