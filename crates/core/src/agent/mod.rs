@@ -10,6 +10,7 @@ pub mod approval_correlator;
 pub mod behavior;
 pub mod binding_validate;
 pub mod built_in_deferred;
+pub mod channel_adapter;
 pub mod compaction;
 pub mod config_changes_tail_tool;
 #[cfg(feature = "config-self-edit")]

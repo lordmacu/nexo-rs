@@ -119,6 +119,17 @@ pub enum DiscoveryDiagnosticKind {
     Disabled { id: String },
     AllowlistRejected { id: String },
     UnresolvedEnvVar { var_name: String, in_path: PathBuf },
+    /// Phase 81.8 — two plugins both tried to register the same
+    /// channel kind. The first plugin's adapter is live; the
+    /// later plugin's adapter is rejected. Other registrations
+    /// (tools / advisors / hooks) by the rejected plugin are not
+    /// affected. Field is `channel_kind` (not `kind`) because the
+    /// outer enum already uses `kind` as its serde discriminator.
+    ChannelKindAlreadyRegistered {
+        channel_kind: String,
+        prior_registered_by: String,
+        attempted_by: String,
+    },
 }
 
 #[cfg(test)]

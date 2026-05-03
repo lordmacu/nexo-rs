@@ -224,8 +224,27 @@ coordinación de archivos cross-cutting.
   serde, backward-compat with 81.5/81.6). 6 unit + 1 integration
   test. **Library-only ship**: boot wire + doctor CLI sections
   land in the deferred bundle alongside 81.5.b/81.6 wires.
-- **81.8 ⬜** `ChannelAdapter` trait extension point para nuevos
-  channel kinds (SMS, Discord, custom webhook).
+- **81.8 ✅ shipped 2026-05-03** — minimal `ChannelAdapter` async
+  trait (4 métodos: kind / start / stop / send_outbound) + typed
+  `OutboundMessage { Text | Media | Custom(serde_json::Value) }` +
+  `OutboundAck { message_id, sent_at_unix }` + `ChannelAdapterError`
+  thiserror enum (Connection / Authentication / Recipient /
+  RateLimited / Unsupported / Other). `ChannelAdapterRegistry` con
+  `std::sync::RwLock<BTreeMap<String, AdapterEntry>>` + register /
+  get / kinds / has_any methods + first-registers-wins-rest-rejected
+  semantic via `ChannelAdapterRegistrationError::KindAlreadyRegistered`
+  (NOT first-plugin-wins like 81.6/81.7 — channels compete por broker
+  topic exclusivity). `PluginInitContext` extendido con field
+  `channel_adapter_registry: Arc<ChannelAdapterRegistry>`.
+  `DiscoveryDiagnosticKind` extendido con
+  `ChannelKindAlreadyRegistered { channel_kind, prior_registered_by,
+  attempted_by }` variant. Legacy `Plugin` trait sin tocar
+  (whatsapp/telegram/email/browser); migración a `ChannelAdapter`
+  es 81.12 cuando se haga. 6 unit tests + 2 integration tests.
+  **Library-only ship**: boot wire (cómo el agent runtime's
+  outbound dispatcher consulta el registry) + doctor CLI section
+  CHANNEL ADAPTERS land en el deferred bundle alongside
+  81.5.b/81.6/81.7 sites.
 - **81.9 ⬜** `Mode::Run` registry sweep — reduce ~500 LOC boot
   wire a ~30 LOC iteration. Critical milestone.
 - **81.10 ⬜** Plugin hot-load via Phase 18 reload coord.
