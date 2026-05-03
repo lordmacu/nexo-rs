@@ -302,6 +302,7 @@ mod tests {
         NexoPluginRegistrySnapshot {
             plugins,
             last_report: PluginDiscoveryReport::default(),
+            skill_roots: std::collections::BTreeMap::new(),
         }
     }
 

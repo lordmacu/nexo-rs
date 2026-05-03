@@ -141,7 +141,13 @@ pub struct SkillLoader {
     /// 2. `<root>/__global__/<name>/SKILL.md`
     /// 3. `<root>/<name>/SKILL.md` (legacy — pre-83.8.12.6
     ///    deployments; logged as deprecation when used)
+    /// 4. each `plugin_roots[i]/<name>/SKILL.md` (Phase 81.7,
+    ///    operator-priority preserved by the order)
     tenant_id: Option<String>,
+    /// Phase 81.7 — fallback roots searched after the operator's
+    /// tenant + global + legacy chain. Populated at boot from
+    /// `SkillsMergeReport.skill_roots`.
+    plugin_roots: Vec<PathBuf>,
 }
 impl SkillLoader {
     pub fn new(root: impl AsRef<Path>) -> Self {
@@ -149,6 +155,7 @@ impl SkillLoader {
             root: root.as_ref().to_path_buf(),
             overrides: BTreeMap::new(),
             tenant_id: None,
+            plugin_roots: Vec::new(),
         }
     }
     /// Per-agent mode override map. Names that match a loaded skill
@@ -164,6 +171,17 @@ impl SkillLoader {
     /// through here.
     pub fn with_tenant_id(mut self, tenant_id: Option<String>) -> Self {
         self.tenant_id = tenant_id;
+        self
+    }
+
+    /// Phase 81.7 — register the plugin-contributed skill roots.
+    /// Each entry is searched AFTER the operator's tenant + global
+    /// + legacy chain, in the order provided. Operator's content
+    /// always wins by definition; plugin contributions are
+    /// fallbacks when the operator hasn't installed the named
+    /// skill themselves.
+    pub fn with_plugin_roots(mut self, roots: Vec<PathBuf>) -> Self {
+        self.plugin_roots = roots;
         self
     }
     /// Resolve a skill name to its on-disk path via the
@@ -196,12 +214,19 @@ impl SkillLoader {
     }
 
     fn candidate_paths(&self, name: &str) -> Vec<PathBuf> {
-        let mut out = Vec::with_capacity(3);
+        let mut out = Vec::with_capacity(3 + self.plugin_roots.len());
         if let Some(tid) = self.tenant_id.as_deref() {
             out.push(self.root.join(tid).join(name).join("SKILL.md"));
         }
         out.push(self.root.join("__global__").join(name).join("SKILL.md"));
         out.push(self.root.join(name).join("SKILL.md"));
+        // Phase 81.7 — plugin-contributed skills appended LAST so
+        // operator content always wins. `plugin_roots` is iterated
+        // in the order operators / boot wire passed it; the loader
+        // returns the first existing path.
+        for plugin_root in &self.plugin_roots {
+            out.push(plugin_root.join(name).join("SKILL.md"));
+        }
         out
     }
     pub async fn load_many(&self, names: &[String]) -> Vec<LoadedSkill> {
