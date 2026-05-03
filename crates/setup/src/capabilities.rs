@@ -189,8 +189,16 @@ const INVENTORY: &[CapabilityToggle] = &[
         env_var: "NEXO_MICROAPP_ADMIN_LLM_KEYS_ENABLED",
         kind: ToggleKind::Boolean,
         risk: Risk::Critical,
-        effect: "Enable `nexo/admin/llm_providers/*` admin RPC domain (microapps can rotate LLM provider keys via ${ENV_VAR} refs).",
+        effect: "Enable `nexo/admin/llm_providers/*` admin RPC domain (microapps can list/upsert/delete LLM provider keys via ${ENV_VAR} refs + 82.10.l probe daemon-side reachability).",
         hint: "export NEXO_MICROAPP_ADMIN_LLM_KEYS_ENABLED=0",
+    },
+    CapabilityToggle {
+        extension: "core",
+        env_var: "NEXO_LLM_PROBE_TIMEOUT_SECS",
+        kind: ToggleKind::Boolean,
+        risk: Risk::Low,
+        effect: "Phase 82.10.l — `nexo/admin/llm_providers/probe` request timeout in seconds. Default 5. Bump for slow networks; shrink to fail fast in CI.",
+        hint: "export NEXO_LLM_PROBE_TIMEOUT_SECS=15  # for slow networks",
     },
     CapabilityToggle {
         extension: "core",

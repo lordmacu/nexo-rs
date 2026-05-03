@@ -1033,6 +1033,87 @@ unified `SecretStore` trait so we can drop the `set_var` call.
 - 82.10.k.audit-encryption — encrypt-at-rest for `secrets/*.txt`
   via SOPS / system keychain.
 
+#### 82.10.l — `nexo/admin/llm_providers/probe` (daemon-side LLM provider reachability)   ✅  (shipped 2026-05-03)
+
+Resolves microapp follow-up **M9.frame.b** — the agent-creator
+wizard's Step 1 LLM-key flow now confirms end-to-end reachability
+from the daemon's network position before declaring the provider
+configured. Catches three cases the microapp's own probe can't:
+- daemon failed to read `std::env::var(api_key_env)` after
+  `secrets/write`,
+- daemon network can't reach the provider (firewall / DNS skew
+  vs. microapp),
+- `llm.yaml` config is malformed (wrong env var name, wrong base URL).
+
+Eight steps shipped:
+- **82.10.l.1** — `nexo_tool_meta::admin::llm_providers` extends
+  with `LLM_PROVIDERS_PROBE_METHOD` const +
+  `LlmProviderProbeInput { provider_id, tenant_id? }` +
+  `LlmProviderProbeResponse { ok, status, latency_ms,
+  model_count?, error? }`. 3 unit tests pin round-trip + method
+  string.
+- **82.10.l.2** — `nexo_core::agent::admin_rpc::domains::llm_providers`
+  extends with `LlmProvidersProbe` trait + `probe` handler.
+  Validates non-empty `provider_id`, forwards to the probe
+  impl. 3 tests with `MockProbe` cover validation + dispatch.
+- **82.10.l.3** — dispatcher routing: `with_llm_provider_probe`
+  builder + extends `required_capability` table to include
+  `nexo/admin/llm_providers/probe → llm_keys_crud` + 3 tests
+  (happy path, denied, probe missing).
+- **82.10.l.4** — `nexo_setup::llm_provider_probe::HttpLlmProviderProbe`
+  production adapter: reads `(base_url, api_key_env)` from the
+  existing `LlmYamlPatcher`, resolves
+  `std::env::var(api_key_env)`, issues `GET {base_url}/models`
+  with bearer auth + 5s timeout, sanitises errors via
+  `redact_key`. 6 unit tests cover validation + helpers +
+  timeout.
+- **82.10.l.5** — `AdminBootstrapInputs.llm_provider_probe`
+  field; admin_bootstrap auto-constructs the production probe
+  using the local `llm_yaml` when caller passes `None`.
+  Bulk fixture migration adds `llm_provider_probe: None` to
+  ~14 existing fixture sites.
+- **82.10.l.6** — `NEXO_LLM_PROBE_TIMEOUT_SECS` INVENTORY
+  entry + `NEXO_MICROAPP_ADMIN_LLM_KEYS_ENABLED` effect string
+  extended to mention `+ probe`.
+- **82.10.l.7** — `main.rs` passes `llm_provider_probe: None`;
+  admin_bootstrap auto-wires the production probe.
+- **82.10.l.8** — integration test `crates/setup/tests/
+  llm_provider_probe.rs` covers dispatcher → production probe
+  → stub HTTP server (200 + 401 paths).
+
+Done criteria:
+- Microapp with `llm_keys_crud` capability calls
+  `nexo/admin/llm_providers/probe { provider_id }` →
+  daemon hits `GET {base_url}/models` with the resolved key
+  and returns the typed response.
+- Without the capability → -32004 capability_not_granted.
+- Without the probe wired → -32603 internal "llm_providers
+  probe not configured".
+- Empty `provider_id` / unknown provider / unset env var →
+  -32602 invalid_params with actionable messages.
+- API key value never leaks via error string (redacted with
+  full match + 8-char prefix).
+
+Tests: +14 across `nexo-tool-meta` (3), `nexo-core` (6 lib +
+3 dispatcher = 9... wait re-count: 3 wire + 3 handler + 3
+dispatcher = 9), `nexo-setup` (6 unit + 2 integration = 8).
+Total = 3 + 6 + 8 = 17.
+
+**Known limitation:** Anthropic's `/v1/models` endpoint uses
+`x-api-key` header, not `Bearer`. Probing Anthropic providers
+returns 401 today. Provider-specific deep probe lands as
+`82.10.l.b`.
+
+**Followups carved:**
+- 82.10.l.tenant — full tenant-scoped probe (today's adapter
+  ignores `tenant_id` and reads global only).
+- 82.10.l.b — provider-specific deep probe (Anthropic
+  x-api-key, future custom auth).
+- 82.10.l.c — chat-completion probe (1-token request) instead
+  of `/models` listing. Validates the `model` name actually
+  responds.
+- 82.10.l.metrics — per-provider probe latency histogram.
+
 #### 82.11 — Agent event firehose + admin RPC (transcript-shaped events as one variant)   ✅  (shipped 2026-05-01)
 
 Six steps shipped:
