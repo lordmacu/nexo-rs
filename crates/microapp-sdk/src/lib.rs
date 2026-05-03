@@ -39,6 +39,9 @@ pub mod runtime;
 #[cfg(feature = "admin")]
 pub mod admin;
 
+#[cfg(feature = "notifications")]
+pub mod notifications;
+
 #[cfg(feature = "outbound")]
 pub mod outbound;
 

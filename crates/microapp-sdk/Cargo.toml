@@ -17,11 +17,16 @@ categories    = ["api-bindings", "asynchronous"]
 workspace = true
 
 [features]
-default      = []
-admin        = ["dep:dashmap"]
-outbound     = []
-test-harness = []
-webhook      = []
+default       = []
+admin         = ["dep:dashmap"]
+outbound      = []
+test-harness  = []
+webhook       = []
+# Phase 82.10.m.b — generic helpers for `Microapp::with_notification_listener`
+# bridges (decode `Value` → typed T → broadcast). Used by
+# microapps that fan out daemon notifications to per-connection
+# SSE streams.
+notifications = []
 
 [dependencies]
 serde       = { workspace = true, features = ["derive"] }

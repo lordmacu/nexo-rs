@@ -46,6 +46,7 @@ members = [
     "crates/assistant",
     "crates/plugin-manifest",
     "crates/microapp-sdk",
+    "crates/microapp-http",
     "crates/compliance-primitives",
     "crates/tool-meta",
     "crates/webhook-receiver",
