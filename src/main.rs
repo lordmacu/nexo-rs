@@ -1373,7 +1373,31 @@ async fn main() -> Result<()> {
                 // against the local `LlmYamlPatcherFs`. Tests
                 // can override with a mock by passing Some(_).
                 llm_provider_probe: None,
-            auth_rotator: None,
+                // Phase 82.10.o — operator bearer rotation.
+                // `auth_rotator: None` lets admin_bootstrap
+                // default-construct `FsAuthRotator` if the
+                // production inputs (token_path + initial_hash)
+                // are supplied below. Tests inject a mock by
+                // setting `auth_rotator: Some(_)`.
+                auth_rotator: None,
+                // Canonical operator-token file the daemon
+                // persists rotated values to (atomic rename,
+                // mode 0600 on unix). Lives under the same
+                // `secrets/` root the FsSecretsStore uses for
+                // arbitrary operator-supplied secrets.
+                auth_token_path: Some(secrets_dir.join("operator_token.txt")),
+                // Initial operator-token-hash. Read the FIRST
+                // microapp's `[capabilities.http_server].token_env`
+                // and snapshot its env-var value at boot. If
+                // unset / no http_server caps declared, skip
+                // (auth/rotate_token returns -32603 until the
+                // operator configures a token).
+                auth_initial_hash: http_server_capabilities
+                    .values()
+                    .next()
+                    .and_then(|cap| std::env::var(&cap.token_env).ok())
+                    .filter(|t| !t.is_empty())
+                    .map(|t| nexo_setup::http_supervisor::token_hash(&t)),
                 skills_store: skills_store.clone(),
                 escalation_store: escalation_store.clone(),
                 agent_event_log: agent_event_log.clone(),

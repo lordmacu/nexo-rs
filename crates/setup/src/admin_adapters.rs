@@ -1226,6 +1226,117 @@ impl PairingNotifier for DeferredPairingNotifier {
     }
 }
 
+/// Phase 82.10.o — `TokenRotatedNotifier` whose backing
+/// `mpsc::Sender<String>` is bound after construction. Mirrors
+/// [`DeferredPairingNotifier`]: the per-microapp deferred is
+/// built before the spawn loop runs (boot wires it into the
+/// fanout that the global `FsAuthRotator` notifies); the live
+/// stdin sender only exists post-spawn.
+///
+/// Frames sent before [`Self::bind`] is called are dropped
+/// with a `warn` — same best-effort policy as
+/// [`DeferredPairingNotifier`].
+#[derive(Debug, Default)]
+pub struct DeferredTokenRotatedNotifier {
+    sender: OnceLock<mpsc::Sender<String>>,
+}
+
+impl DeferredTokenRotatedNotifier {
+    /// Build an unbound notifier. Frames sent before [`bind`]
+    /// is called are dropped + logged.
+    pub fn new() -> Self {
+        Self {
+            sender: OnceLock::new(),
+        }
+    }
+
+    /// Attach the live extension stdin sender. Idempotent.
+    pub fn bind(&self, sender: mpsc::Sender<String>) {
+        let _ = self.sender.set(sender);
+    }
+}
+
+impl nexo_core::agent::admin_rpc::domains::auth::TokenRotatedNotifier
+    for DeferredTokenRotatedNotifier
+{
+    fn notify_token_rotated(&self, payload: &nexo_tool_meta::http_server::TokenRotated) {
+        let Some(s) = self.sender.get() else {
+            tracing::warn!(
+                old_hash = %payload.old_hash,
+                "token_rotated notifier sent before outbound writer was bound; frame dropped",
+            );
+            return;
+        };
+        let params = serde_json::to_value(payload).unwrap_or(serde_json::Value::Null);
+        let frame = json_rpc_notification(
+            nexo_tool_meta::http_server::TOKEN_ROTATED_NOTIFY_METHOD,
+            params,
+        );
+        if let Err(e) = s.try_send(frame) {
+            tracing::warn!(
+                old_hash = %payload.old_hash,
+                error = %e,
+                "token_rotated notifier outbox full or closed; dropping notification frame",
+            );
+        }
+    }
+}
+
+/// Phase 82.10.o — fan-out token-rotation notifier that pushes
+/// each `nexo/notify/token_rotated` frame to every connected
+/// microapp's stdin queue.
+///
+/// The daemon-global `FsAuthRotator` calls this single
+/// `TokenRotatedNotifier` impl post-rotation; the fanout
+/// iterates its inner `Vec<DeferredTokenRotatedNotifier>` and
+/// re-emits to each. Each inner notifier is bound to its
+/// microapp's stdin sender via `bind_writer` post-spawn.
+///
+/// `Mutex<Vec<...>>` because microapps are added at boot AND
+/// in principle could be unloaded at runtime (currently the
+/// daemon doesn't support unload but the lock is cheap and
+/// future-proofs the shape).
+#[derive(Debug, Default)]
+pub struct FanoutTokenRotatedNotifier {
+    notifiers: std::sync::Mutex<Vec<Arc<DeferredTokenRotatedNotifier>>>,
+}
+
+impl FanoutTokenRotatedNotifier {
+    /// Build an empty fanout. Boot adds per-microapp deferred
+    /// notifiers via [`Self::add`] before constructing the
+    /// `FsAuthRotator`.
+    pub fn new() -> Self {
+        Self {
+            notifiers: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Register a per-microapp deferred notifier. Boot calls
+    /// this once per declared microapp inside the build loop;
+    /// the deferred handle is also stashed in the per-microapp
+    /// wire so `bind_writer` can attach the stdin sender after
+    /// spawn.
+    pub fn add(&self, n: Arc<DeferredTokenRotatedNotifier>) {
+        if let Ok(mut g) = self.notifiers.lock() {
+            g.push(n);
+        }
+    }
+}
+
+impl nexo_core::agent::admin_rpc::domains::auth::TokenRotatedNotifier
+    for FanoutTokenRotatedNotifier
+{
+    fn notify_token_rotated(&self, payload: &nexo_tool_meta::http_server::TokenRotated) {
+        let snapshot: Vec<Arc<DeferredTokenRotatedNotifier>> = match self.notifiers.lock() {
+            Ok(g) => g.iter().cloned().collect(),
+            Err(_) => return,
+        };
+        for n in snapshot {
+            n.notify_token_rotated(payload);
+        }
+    }
+}
+
 /// Phase 82.10.h.b.5 — `AdminOutboundWriter` whose backing
 /// `mpsc::Sender<String>` is bound after construction. Solves
 /// the chicken-and-egg between [`DispatcherAdminRouter`] (needs
