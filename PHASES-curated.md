@@ -111,6 +111,16 @@ drives this phase. Critical-path rows flagged `P1`.
 | 81.12.c — WhatsApp plugin migration to NexoPlugin | **P3** | ⬜ pending |
 | 81.12.d — Email plugin migration to NexoPlugin | **P3** | ⬜ pending |
 | 81.12.e — Remove legacy registration block from main.rs | **P3** | ⬜ pending (after 81.12.a-d) |
+| **81.14 — `SubprocessNexoPlugin` adapter (host-side spawn + stdio JSON-RPC bridge)** | **P3** | ⬜ NEW | ~2 d. Daemon-side wrapper that owns child process + translates broker topics ↔ stdio frames. Foundation for out-of-tree plugins. Reuses existing `extensions/openai-whisper` subprocess pattern. Depends on 81.12.e (clean dual-trait). |
+| **81.15 — `nexo-microapp-sdk` plugin-mode (`PluginAdapter` child-side) + Rust plugin template repo** | **P3** | ⬜ NEW | ~3 d. Extends 83.4 SDK with `PluginAdapter` helper that handles `init`/`shutdown`/`manifest` requests + broker pub/sub via stdio. Plus `github.com/nexo-rs/plugin-template-rust` clone-and-go starter. Depends on 81.14. |
+| **81.16 — `nexo-plugin-contract.md` versioned IPC spec** | **P3** | ⬜ NEW | ~1 d. Language-agnostic contract: handshake, topic envelope, lifecycle messages, capability negotiation. Versioned semver — independent from main repo. Depends on 81.14/15 working end-to-end at least once. |
+| **81.17 — Pilot: extract `plugin-browser` to standalone repo** | **P3** | ⬜ NEW | ~3 d. Proves contract end-to-end. `github.com/nexo-rs/plugin-browser` shippea binary; daemon carga via `subprocess_plugin_factory("browser-bin-path")`. Hot-reload via 81.10 must keep working. Browser stub stays in-tree until 81.20 cierra. |
+| **81.18 — Extract `plugin-telegram` to standalone repo** | **P3** | ⬜ NEW | ~2 d. Multi-instance pattern probado en 81.12.b se mantiene — operator declara N manifests, daemon spawn N subprocess. |
+| **81.19 — Extract `plugin-whatsapp` + `plugin-email` a standalone repos** | **P3** | ⬜ NEW | ~3 d. Email tiene multi-account interno (un solo subprocess maneja N cuentas) — requiere extender contract con per-account credential injection. |
+| **81.20 — Daemon-mediated RPC: memory + LLM + tools accesibles desde child plugin vía stdio** | **P3** | ⬜ NEW | ~3 d. Sin esto, plugins no-Rust no aprovechan memory/LLM/tools del framework. Bridges `memory.recall`, `llm.complete` (con streaming), `tool.dispatch` over stdio. Daemon side wraps each RPC in CircuitBreaker + retry policy automáticamente — plugin author no se entera. |
+| **81.21 — Plugin supervisor: respawn on crash + per-plugin CPU/mem/timeout limits** | **P3** | ⬜ NEW | ~2 d. Manifest declara `limits.cpu_pct` / `limits.mem_mb` / `limits.startup_timeout_ms`. Sin esto un plugin community-tier puede tirar el daemon. |
+| **81.22 — Plugin sandbox: network + filesystem allowlist per-plugin via manifest** | **P3** | ⬜ NEW | ~2 d. Gates community tier — untrusted code. Linux: namespaces / seccomp / nftables. macOS: sandbox-exec profile. Manifest declara `sandbox.network.hosts` + `sandbox.fs.read_paths` + `sandbox.fs.write_paths`. |
+| **81.23 — Plugin stdio → daemon tracing bridge (child stdout/stderr → structured logs)** | **P3** | ⬜ NEW | ~1 d. Child JSON lines on stdout = events; non-JSON = stderr trace at INFO level con `plugin_id` y `instance` como fields. Sin esto debug es ciego cuando un plugin falla. |
 | 83.2 — Extension-contributed skills | **P2** | ⬜ | Microapp ships its own skills; opportunistic |
 | 83.3 — Hook interceptor (vote-to-block) | **P1** | ⬜ | Compliance primitives plug in here — gates 83.5 + 83.8 |
 | 83.4 — `microapp-sdk-rust` reusable helper | **P1** | 🔄 | Core SDK ✅ 2026-04-30; 83.4.b ✅; 83.4.c Phase 82.x helpers pending |
@@ -171,7 +181,7 @@ transcripts, host its HTTP server, or pause agents.
 | 81.10 — Plugin hot-load via reload coord | **P3** | ⬜ |
 | 81.11 — Plugin doctor + capability inventory | **P3** | ⬜ |
 | 81.12 — Existing plugin migration | **P3** | ⬜ |
-| 81.13 — Reference plugin template + CLI | **DEFER** | ⬜ gated on 81.5 + 81.9 |
+| 81.13 — Reference plugin template + CLI | **DROPPED → folded into 31.6** | — Replaced by Phase 31.6 multi-lang scaffolder once subprocess infra (81.14-81.23) closes. |
 
 ---
 
@@ -200,6 +210,38 @@ transcripts, host its HTTP server, or pause agents.
 
 ---
 
+### Phase 31 — Plugin marketplace + multi-language authoring   `P3`
+
+Promoted from `PHASES.md` legacy backlog 2026-05-01. Activates only
+after Phase 81 subprocess infra (81.14-81.23) closes.
+**Replaces** the old 81.13 `nexo plugin new` defer (folded into 31.6).
+
+| Sub-phase | Priority | Status | Effort |
+|-----------|----------|--------|--------|
+| 31.0 — Static registry index format spec + `ext-registry` repo bootstrap | **P3** | ⬜ NEW | ~1 d. JSON schema for `ext-index.json` (id, version, download_url, sha256, manifest_url, signing_key, min_runtime_version). Index hosted on GitHub Pages or dedicated repo. |
+| 31.1 — `nexo ext install <id>` CLI | **P3** | ⬜ NEW | ~3 d. Resolve nombre → bajar tarball → verify sha256 → verify cosign signature → unpack a `~/.local/share/nexo/plugins/<id>/`. Boot pre-flight valida `min_nexo_version` + `requires.nexo_capabilities`. Depends on 81.16 contract stable. |
+| 31.2 — Per-plugin CI publish workflow template | **P3** | ⬜ NEW | ~2 d. GitHub Action template: build per-target (`x86_64-linux`, `aarch64-linux`, `x86_64-darwin`, `aarch64-darwin`) + cosign keyless OIDC sign + auto-PR al `ext-registry`. |
+| 31.3 — Trusted keys config + verified/community tier policy | **P3** | ⬜ NEW | ~1 d. `config/extensions/trusted_keys.toml` con allowlist de signing keys. "verified" (firmado por nosotros) vs "community" (terceros). Operator escoge default. |
+| 31.4 — Python SDK (`nexo-microapp-sdk-py`) | **P3** | ⬜ NEW | ~3 d. Port del Rust `PluginAdapter` (81.15) a Python — mismo handshake, broker pub/sub, RPC helpers (memory/llm/tools). Pip-installable. Depends on 81.16 contract frozen. |
+| 31.5 — TypeScript SDK (`nexo-microapp-sdk-ts`) | **P3** | ⬜ NEW | ~3 d. npm-publishable. Mismo contract. |
+| 31.6 — `nexo plugin new --lang <rust\|python\|ts>` scaffolder | **P3** | ⬜ NEW | ~2 d. **Replaces deferred 81.13**. Clones template repo del lenguaje seleccionado, sustituye placeholders, deja autor con `cargo build` / `pip install -e .` / `npm install` ready. |
+| 31.7 — Local dev loop: `nexo plugin run ./local-plugin` | **P3** | ⬜ NEW | ~1 d. Sin install + sin registry. Daemon arranca con un manifest local file path como override de `search_paths` para inner-loop tight de autor. |
+| 31.8 — Operator UI: `nexo ext list` / `upgrade` / `remove` | **P3** | ⬜ NEW | ~2 d. CRUD operacional de plugins instalados. `upgrade` re-resuelve contra index respetando semver constraints. `remove` cleanup atómico. |
+| 31.9 — Docs: plugin authoring guide per language + contract reference + signing how-to | **P3** | ⬜ NEW | ~2 d. `docs/src/plugin-authoring/{rust,python,typescript}.md` + `docs/src/plugin-authoring/contract-reference.md` (auto-generado del 81.16 spec) + `docs/src/plugin-authoring/signing-and-publishing.md`. |
+
+**Total Phase 31**: ~20 dev-days. Critical path 31.0 → 31.1 → 31.2.
+Lenguajes (31.4 + 31.5) son paralelos. 31.7 (local dev loop) es
+el feature que hace la DX viable — sin él autores externos sufren
+el round-trip publish-instalar-debug.
+
+**Total roadmap completo (81.14 → 31.9)**: ~42 dev-days desde el
+cierre de 81.12.e hasta "tercero con Python publica plugin
+firmado, otro operator hace `nexo ext install`, plugin corre
+con todos los recursos del framework (memory + LLM + tools +
+broker + circuit breaker) accesibles vía SDK".
+
+---
+
 ## DROPPED ❌ — explicit no-go
 
 These will not ship. Removed from the active sub-phase tally.
@@ -220,7 +262,7 @@ Listed here so the design pointer is not lost.
 | Phase | Trigger (when to revisit) |
 |-------|----------------------------|
 | **80.7** — Cron scheduler per-cwd lock owner (multi-instance) | Phase 32 (multi-host orchestration) becoming active. Single-daemon deploys do not need it. |
-| **81.13** — Reference plugin template + `nexo plugin new` CLI | After 81.5 (discover) + 81.9 (registry sweep) ship. Authors clone the reference example shipped by 81.5; the CLI ergonomics layer is value-add only after the discovery story is operational. |
+| ~~**81.13**~~ — folded into Phase 31.6 (`nexo plugin new --lang <rust\|python\|ts>`). |
 | **87.2** — Container runtime dispatcher (BYOC) | **Either** Phase 32 multi-host **or** Phase 82 multi-tenant SaaS hardening demanding stronger-than-worktree isolation. Until then, the existing `WorkspaceManager` git-worktree boundary is sufficient. |
 
 ---
