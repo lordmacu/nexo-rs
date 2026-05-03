@@ -8,6 +8,7 @@
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-green?style=for-the-badge)](#license)
 [![rust](https://img.shields.io/badge/built%20with-Rust-orange?style=for-the-badge&logo=rust)](https://www.rust-lang.org/)
 [![openclaw alternative](https://img.shields.io/badge/OpenClaw-alternative-purple?style=for-the-badge)](#inspired-by-openclaw-supercharged-by-rust)
+[![SafeSkill 60/100](https://img.shields.io/badge/SafeSkill-60%2F100_Use%20with%20Caution-orange)](https://safeskill.dev/scan/lordmacu-nexo-rs)
 
 **📘 Full documentation: <https://lordmacu.github.io/nexo-rs/>**
 
