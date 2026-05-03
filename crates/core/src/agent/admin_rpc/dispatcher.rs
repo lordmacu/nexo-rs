@@ -225,6 +225,17 @@ pub struct AdminRpcDispatcher {
     /// Resolves M9.frame.b (microapp follow-up).
     llm_provider_probe:
         Option<Arc<dyn super::domains::llm_providers::LlmProvidersProbe>>,
+    /// Phase 82.10.o — operator bearer rotator. `None` disables
+    /// `nexo/admin/auth/rotate_token` (returns `Internal`).
+    /// Production wires `nexo_setup::auth_rotator::FsAuthRotator`
+    /// rooted at `<state_root>/secrets/operator_token.txt`,
+    /// hooked to the SDK notification multicaster + the firehose
+    /// audit emitter so a successful rotation lands the live
+    /// `nexo/notify/token_rotated` AND the durable
+    /// `AgentEventKind::SecurityEvent::TokenRotated` audit row.
+    /// Resolves the M2.b.frame.emit blocker + unblocks
+    /// M2.b.audit (microapp follow-ups).
+    auth_rotator: Option<Arc<dyn super::domains::auth::AuthRotator>>,
 }
 
 impl std::fmt::Debug for AdminRpcDispatcher {
@@ -266,6 +277,7 @@ impl AdminRpcDispatcher {
             event_emitter: None,
             secrets_store: None,
             llm_provider_probe: None,
+            auth_rotator: None,
         }
     }
 
@@ -291,6 +303,19 @@ impl AdminRpcDispatcher {
         probe: Arc<dyn super::domains::llm_providers::LlmProvidersProbe>,
     ) -> Self {
         self.llm_provider_probe = Some(probe);
+        self
+    }
+
+    /// Phase 82.10.o — install the operator-bearer rotator.
+    /// Production passes
+    /// `nexo_setup::auth_rotator::FsAuthRotator::new(...)`.
+    /// Without one, `nexo/admin/auth/rotate_token` returns
+    /// `Internal("auth rotator not configured")`.
+    pub fn with_auth_rotator(
+        mut self,
+        rotator: Arc<dyn super::domains::auth::AuthRotator>,
+    ) -> Self {
+        self.auth_rotator = Some(rotator);
         self
     }
 
@@ -522,6 +547,11 @@ impl AdminRpcDispatcher {
             // pick up the value without a daemon restart.
             // Critical capability; INVENTORY-gated.
             "nexo/admin/secrets/write" => Some("secrets_write"),
+            // Phase 82.10.o — operator bearer rotation. Critical
+            // capability; operator who holds it can lock out the
+            // microapp from its own daemon. Granted only to UIs
+            // that expose a deliberate "rotate token" action.
+            "nexo/admin/auth/rotate_token" => Some("auth_rotate"),
             // `reload` requires any granted CRUD capability — operators
             // who can mutate yaml can also force-trigger the reload.
             // Resolution falls through to `agents_crud` since it's the
@@ -969,6 +999,12 @@ impl AdminRpcDispatcher {
                 Some(p) => super::domains::llm_providers::probe(p.as_ref(), params).await,
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "llm_providers probe not configured".into(),
+                )),
+            },
+            "nexo/admin/auth/rotate_token" => match &self.auth_rotator {
+                Some(r) => super::domains::auth::rotate_token(r.as_ref(), params).await,
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "auth rotator not configured".into(),
                 )),
             },
             "nexo/admin/reload" => match &self.reload_signal {

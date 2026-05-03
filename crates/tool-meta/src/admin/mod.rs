@@ -12,6 +12,7 @@
 
 pub mod agent_events;
 pub mod agents;
+pub mod auth;
 pub mod channels;
 pub mod credentials;
 pub mod tenants;

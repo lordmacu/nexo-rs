@@ -158,6 +158,45 @@ pub enum AgentEventKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tenant_id: Option<String>,
     },
+    /// Phase 82.10.o — security-domain audit event. Carries a
+    /// nested [`SecurityEventKind`] discriminator so future
+    /// security events (operator login, capability grant, …)
+    /// extend the shape without proliferating top-level
+    /// variants. Today only [`SecurityEventKind::TokenRotated`]
+    /// fires, from the daemon's `FsAuthRotator` post-rotation.
+    SecurityEvent {
+        /// Discriminated security-event payload.
+        #[serde(flatten)]
+        event: SecurityEventKind,
+    },
+}
+
+/// Phase 82.10.o — security-domain audit events. Nested under
+/// [`AgentEventKind::SecurityEvent`] so subscribers persist
+/// every variant alongside transcript / escalation events for
+/// a unified audit log.
+#[non_exhaustive]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "security_kind", rename_all = "snake_case")]
+pub enum SecurityEventKind {
+    /// Operator bearer token rotated. Emitted by the daemon's
+    /// `FsAuthRotator` after a successful
+    /// `nexo/admin/auth/rotate_token` call. Subscribers persist
+    /// for compliance audit trail.
+    TokenRotated {
+        /// Epoch milliseconds when the rotation persisted.
+        at_ms: u64,
+        /// Previous operator-token-hash (16-char sha256-hex
+        /// prefix). Zeroed (`""`) for the very first rotation
+        /// after boot when no prior hash is in cache.
+        prev_hash: String,
+        /// New operator-token-hash.
+        new_hash: String,
+        /// Optional operator-supplied audit hint, capped to
+        /// `auth::REASON_MAX_LEN` chars by the handler.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
 }
 
 /// Speaker role mirror — kept on the wire side so SDK types
@@ -395,6 +434,51 @@ mod tests {
             "tenant_id absent must be skipped"
         );
         let back: AgentEventKind = serde_json::from_value(v).unwrap();
+        assert_eq!(back, evt);
+    }
+
+    /// Phase 82.10.o — token-rotation security event round-trips
+    /// through the firehose envelope with all four fields
+    /// (timestamp + two hashes + reason).
+    #[test]
+    fn security_event_token_rotated_round_trip_with_reason() {
+        let evt = AgentEventKind::SecurityEvent {
+            event: SecurityEventKind::TokenRotated {
+                at_ms: 1_700_000_000_123,
+                prev_hash: "cafebabedeadbeef".into(),
+                new_hash: "1234567890abcdef".into(),
+                reason: Some("scheduled rotation".into()),
+            },
+        };
+        let v = serde_json::to_value(&evt).unwrap();
+        assert_eq!(v["kind"], "security_event");
+        // Nested discriminator from `#[serde(flatten)]`.
+        assert_eq!(v["security_kind"], "token_rotated");
+        assert_eq!(v["at_ms"], 1_700_000_000_123u64);
+        assert_eq!(v["prev_hash"], "cafebabedeadbeef");
+        assert_eq!(v["new_hash"], "1234567890abcdef");
+        assert_eq!(v["reason"], "scheduled rotation");
+        let back: AgentEventKind = serde_json::from_value(v).unwrap();
+        assert_eq!(back, evt);
+    }
+
+    /// Phase 82.10.o — `reason: None` is skipped on the wire so
+    /// audit firehose payloads stay tight when the operator
+    /// didn't supply one.
+    #[test]
+    fn security_event_token_rotated_omits_unset_reason() {
+        let evt = AgentEventKind::SecurityEvent {
+            event: SecurityEventKind::TokenRotated {
+                at_ms: 1_700_000_000_000,
+                prev_hash: String::new(),
+                new_hash: "deadbeefcafebabe".into(),
+                reason: None,
+            },
+        };
+        let s = serde_json::to_string(&evt).unwrap();
+        assert!(!s.contains("reason"), "absent reason skipped on wire");
+        let back: AgentEventKind = serde_json::from_value(serde_json::from_str(&s).unwrap())
+            .unwrap();
         assert_eq!(back, evt);
     }
 }
