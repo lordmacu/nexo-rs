@@ -72,7 +72,8 @@ async fn wire_plugin_registry_full_pipeline() {
         &[],
         &std::collections::BTreeSet::new(),
         None,
-    );
+    )
+    .await;
 
     // Contributed agent landed in the runtime config.
     assert_eq!(agents.agents.len(), 1);

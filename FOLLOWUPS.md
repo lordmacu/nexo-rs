@@ -523,21 +523,34 @@ coordinación de archivos cross-cutting.
   shutdown handles — 81.17.b extends `wire_plugin_registry` to
   accept caller-supplied `subprocess_runtime: SubprocessRuntime`.
 
-- **81.17.b ⬜** Boot-wire activation: extend
-  `wire_plugin_registry` signature with optional
-  `subprocess_runtime: Option<SubprocessRuntime>` carrying
-  `broker: AnyBroker` + `shutdown: CancellationToken`. Replace
-  `boot.rs`'s `unreachable!()` ctx_factory with a stub-context
-  builder for the subprocess path (uses caller's broker + shutdown,
-  stub Arc::new() for tool/advisor/hook/llm/reload/sessions
-  registries because SubprocessNexoPlugin doesn't read those
-  fields). main.rs switches from `None` to
-  `Some(SubprocessRuntime::from(...))`. New integration test under
-  `crates/core/tests/subprocess_plugin_e2e.rs` exercises the
-  pipeline end-to-end: writes manifest + mock-plugin.sh in tempdir,
-  calls `wire_plugin_registry`, asserts `InitOutcome::Ok` plus
-  broker.publish round-trip. ~1 d effort. Required before 81.17.c
-  (pilot extract plugin-browser).
+- **81.17.b ✅ shipped 2026-05-01** — Boot-wire activation
+  shipped end-to-end with three coupled changes:
+  (1) Made `wire_plugin_registry` async (the prior sync shape
+  used `futures::executor::block_on` which deadlocked tokio when
+  subprocess plugins tried to spawn children); 5 call sites
+  updated (main.rs ×2 incl. `run_doctor_plugins`, 3 tests).
+  (2) New `FactoryInitResult { outcomes, handles }` return type
+  + new `WirePluginRegistryOutput.plugin_handles` field — without
+  retention `kill_on_drop(true)` SIGKILLed children right after
+  init returned; main.rs's `wire` binding now keeps subprocess
+  Arcs alive for the daemon's lifetime.
+  (3) New `SubprocessRuntime { broker, shutdown, config_dir, state_root }`
+  + `wire_plugin_registry_with_runtime(...)` variant +
+  `SubprocessCtxStubs` builds a real-enough `PluginInitContext`
+  using runtime's broker + shutdown + stub `::new()` registries
+  for fields SubprocessNexoPlugin doesn't read. Single `'env`
+  lifetime on `run_plugin_init_loop_with_factory` replaces HRTB
+  (HRTB demanded `'static` so the closure couldn't borrow from
+  `&stubs` + `&runtime`).
+  main.rs activates: empty in-tree factory + populated
+  SubprocessRuntime → auto-subprocess fallback fires for any
+  discovered manifest with `[plugin.entrypoint] command`.
+  In-tree plugins keep dormant manifests OUT of `search_paths`
+  and continue via legacy block.
+  Integration test `crates/core/tests/subprocess_plugin_e2e.rs`
+  drops manifest + bash mock in tempdir, asserts InitOutcome::Ok
+  + broker.publish round-trip within 2s. 2/2 e2e tests + 5/5
+  init_loop unit tests pass.
 
 - **81.17.c ⬜ RENUMBERED (was 81.17)** — Pilot extract
   `plugin-browser` to standalone repo. Out-of-tree:

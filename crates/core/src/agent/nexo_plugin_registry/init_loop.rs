@@ -39,13 +39,13 @@ pub enum InitOutcome {
 /// constructs a fresh [`PluginInitContext`]. The closure must be
 /// callable but is never called for plugins recording `NoHandle`,
 /// so 81.6 callers can pass an `unreachable!()` body.
-pub async fn run_plugin_init_loop<F>(
+pub async fn run_plugin_init_loop<'env, F>(
     snapshot: &NexoPluginRegistrySnapshot,
     handles: &BTreeMap<String, Arc<dyn NexoPlugin>>,
     mut ctx_factory: F,
 ) -> BTreeMap<String, InitOutcome>
 where
-    F: for<'a> FnMut(&'a str) -> PluginInitContext<'a>,
+    F: FnMut(&str) -> PluginInitContext<'env>,
 {
     let mut outcomes = BTreeMap::new();
     for plugin in &snapshot.plugins {
@@ -86,15 +86,28 @@ where
 /// operators with partial migration see consistent output during
 /// the 81.12.a-e per-plugin slices. Sequential per snapshot order;
 /// one failure logs `tracing::warn!` and the loop never aborts.
-pub async fn run_plugin_init_loop_with_factory<F>(
+/// Phase 81.17.b — return shape for the factory-driven init loop.
+/// Outcomes describe what happened per plugin id; `handles` carries
+/// the live `Arc<dyn NexoPlugin>` instances that successfully
+/// passed `init()`. Callers MUST retain `handles` for the daemon's
+/// lifetime — dropping them triggers `Arc::drop` on the underlying
+/// plugin which, for `SubprocessNexoPlugin`, SIGKILLs the child
+/// process via `tokio::process::Command::kill_on_drop(true)`.
+pub struct FactoryInitResult {
+    pub outcomes: BTreeMap<String, InitOutcome>,
+    pub handles: BTreeMap<String, Arc<dyn NexoPlugin>>,
+}
+
+pub async fn run_plugin_init_loop_with_factory<'env, F>(
     snapshot: &NexoPluginRegistrySnapshot,
     factory_registry: &PluginFactoryRegistry,
     mut ctx_factory: F,
-) -> BTreeMap<String, InitOutcome>
+) -> FactoryInitResult
 where
-    F: for<'a> FnMut(&'a str) -> PluginInitContext<'a>,
+    F: FnMut(&str) -> PluginInitContext<'env>,
 {
     let mut outcomes = BTreeMap::new();
+    let mut handles: BTreeMap<String, Arc<dyn NexoPlugin>> = BTreeMap::new();
     for plugin in &snapshot.plugins {
         let id = plugin.manifest.plugin.id.clone();
         // Phase 81.17 — auto-subprocess fallback. If no in-tree
@@ -115,7 +128,9 @@ where
                         match handle.init(&mut ctx).await {
                             Ok(()) => {
                                 let duration_ms = start.elapsed().as_millis() as u64;
-                                outcomes.insert(id, InitOutcome::Ok { duration_ms });
+                                outcomes
+                                    .insert(id.clone(), InitOutcome::Ok { duration_ms });
+                                handles.insert(id, handle);
                             }
                             Err(e) => {
                                 let error = e.to_string();
@@ -165,7 +180,8 @@ where
                 match handle.init(&mut ctx).await {
                     Ok(()) => {
                         let duration_ms = start.elapsed().as_millis() as u64;
-                        outcomes.insert(id, InitOutcome::Ok { duration_ms });
+                        outcomes.insert(id.clone(), InitOutcome::Ok { duration_ms });
+                        handles.insert(id, handle);
                     }
                     Err(e) => {
                         let error = e.to_string();
@@ -181,7 +197,7 @@ where
             }
         }
     }
-    outcomes
+    FactoryInitResult { outcomes, handles }
 }
 
 #[cfg(test)]
@@ -275,7 +291,7 @@ mod tests {
         });
         registry.register("alpha", factory).unwrap();
 
-        let outcomes = run_plugin_init_loop_with_factory(
+        let result = run_plugin_init_loop_with_factory(
             &snap,
             &registry,
             |_id| -> PluginInitContext<'_> {
@@ -287,7 +303,7 @@ mod tests {
         .await;
 
         // alpha registered → factory failed → Failed outcome.
-        match outcomes.get("alpha") {
+        match result.outcomes.get("alpha") {
             Some(InitOutcome::Failed { error }) => {
                 assert!(error.contains("forced failure"));
             }
@@ -296,7 +312,13 @@ mod tests {
             ),
         }
         // beta unregistered → NoHandle.
-        assert!(matches!(outcomes.get("beta"), Some(InitOutcome::NoHandle)));
+        assert!(matches!(
+            result.outcomes.get("beta"),
+            Some(InitOutcome::NoHandle)
+        ));
+        // No handles ever produced (factory short-circuited; no
+        // init() call).
+        assert!(result.handles.is_empty());
     }
 
     /// Phase 81.17 — auto-subprocess fallback wires
@@ -337,7 +359,7 @@ mod tests {
         // None, is_subprocess() == false.
         let snap = snapshot_with(vec![discovered("in_tree_only")]);
         let registry = PluginFactoryRegistry::new();
-        let outcomes = run_plugin_init_loop_with_factory(
+        let result = run_plugin_init_loop_with_factory(
             &snap,
             &registry,
             |_id| -> PluginInitContext<'_> {
@@ -348,8 +370,12 @@ mod tests {
         )
         .await;
         assert!(
-            matches!(outcomes.get("in_tree_only"), Some(InitOutcome::NoHandle)),
+            matches!(
+                result.outcomes.get("in_tree_only"),
+                Some(InitOutcome::NoHandle)
+            ),
             "in-tree manifest without entrypoint must record NoHandle"
         );
+        assert!(result.handles.is_empty(), "no handles for NoHandle outcome");
     }
 }
