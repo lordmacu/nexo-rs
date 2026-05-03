@@ -1,0 +1,37 @@
+[package]
+name        = "nexo-microapp-http"
+description = "Reusable HTTP scaffolding for nexo-rs microapps with operator UIs (axum + tower-http; bearer auth, admin proxy, SPA serving, hot-rotatable token state)."
+version     = "0.1.0"
+edition     = { workspace = true }
+rust-version = { workspace = true }
+license     = { workspace = true }
+repository  = { workspace = true }
+homepage    = { workspace = true }
+keywords    = ["nexo", "microapp", "http", "axum", "operator-ui"]
+categories  = ["web-programming::http-server"]
+readme      = "README.md"
+
+[dependencies]
+nexo-microapp-sdk = { path = "../microapp-sdk", features = ["admin"] }
+nexo-tool-meta = { path = "../tool-meta" }
+axum       = { version = "0.7", default-features = false, features = ["http1", "json", "tokio", "tower-log", "query"] }
+tower      = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["limit", "trace", "fs", "compression-gzip", "compression-br"] }
+http       = "1"
+tokio      = { version = "1", features = ["rt", "macros", "sync"] }
+arc-swap   = "1"
+sha2       = "0.10"
+subtle     = "2"
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing    = "0.1"
+async-trait = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util", "macros", "rt-multi-thread"] }
+http-body-util = "0.1"
+tempfile = "3"
+# Tests need MockAdminRpc to drive the admin proxy without a
+# real daemon; the mock lives behind the SDK's `test-harness`
+# feature flag.
+nexo-microapp-sdk = { path = "../microapp-sdk", features = ["admin", "test-harness"] }
