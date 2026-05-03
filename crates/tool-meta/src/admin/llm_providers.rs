@@ -91,6 +91,56 @@ pub struct LlmProvidersDeleteResponse {
     pub removed: bool,
 }
 
+/// Phase 82.10.l — JSON-RPC method that probes a configured LLM
+/// provider's reachability + key validity from the daemon's
+/// network position.
+///
+/// Operator UIs (e.g. M9 wizard's Step 1) call this AFTER
+/// `secrets/write` + `llm_providers/upsert` to confirm the
+/// daemon successfully resolved the env var AND can reach the
+/// provider AND the key is accepted. Microapp's own probe
+/// (`/api/onboarding/llm/probe`) only validates browser → provider;
+/// this RPC closes the gap by validating daemon → provider.
+pub const LLM_PROVIDERS_PROBE_METHOD: &str = "nexo/admin/llm_providers/probe";
+
+/// Params for [`LLM_PROVIDERS_PROBE_METHOD`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LlmProviderProbeInput {
+    /// Provider id matching `llm.yaml.providers.<id>` (or
+    /// `tenants.<tenant_id>.providers.<id>` when scoped).
+    pub provider_id: String,
+    /// Phase 83.8.12.5.c — tenant scope. `None` reads the global
+    /// table; `Some(id)` reads the tenant namespace. v1 adapter
+    /// ignores tenant scope (always reads global) — full
+    /// support lands as `82.10.l.tenant`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<String>,
+}
+
+/// Result for [`LLM_PROVIDERS_PROBE_METHOD`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct LlmProviderProbeResponse {
+    /// `true` when the HTTP request returned 2xx.
+    pub ok: bool,
+    /// HTTP status from `GET {base_url}/models`. `0` for
+    /// pre-request errors (DNS, connect timeout, env var unset,
+    /// provider id missing).
+    pub status: u16,
+    /// End-to-end latency including DNS + TLS + body read.
+    pub latency_ms: u64,
+    /// Number of models in `data: [...]` (OpenAI-compat shape).
+    /// `None` when the body isn't JSON or doesn't have `data`.
+    /// Non-fatal — the probe still reports `ok: true` if HTTP
+    /// status was 2xx.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_count: Option<usize>,
+    /// Sanitised error string. Never echoes the API key —
+    /// every match of the key value (and its 8-char prefix) is
+    /// replaced with `<redacted>` before populating this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,5 +248,47 @@ mod tests {
         let without = LlmProvidersListFilter::default();
         let s = serde_json::to_string(&without).unwrap();
         assert_eq!(s, "{}", "tenant_id None must be omitted");
+    }
+
+    /// Phase 82.10.l — probe wire shapes round-trip cleanly +
+    /// `tenant_id` skips when None.
+    #[test]
+    fn probe_input_round_trip() {
+        let with = LlmProviderProbeInput {
+            provider_id: "minimax".into(),
+            tenant_id: Some("acme".into()),
+        };
+        let v = serde_json::to_value(&with).unwrap();
+        let back: LlmProviderProbeInput = serde_json::from_value(v).unwrap();
+        assert_eq!(back, with);
+
+        let without = LlmProviderProbeInput {
+            provider_id: "minimax".into(),
+            tenant_id: None,
+        };
+        let s = serde_json::to_string(&without).unwrap();
+        assert!(!s.contains("tenant_id"), "None tenant_id must be omitted");
+    }
+
+    #[test]
+    fn probe_response_round_trip() {
+        let r = LlmProviderProbeResponse {
+            ok: true,
+            status: 200,
+            latency_ms: 142,
+            model_count: Some(5),
+            error: None,
+        };
+        let v = serde_json::to_value(&r).unwrap();
+        let back: LlmProviderProbeResponse = serde_json::from_value(v).unwrap();
+        assert_eq!(back, r);
+    }
+
+    #[test]
+    fn probe_method_constant() {
+        assert_eq!(
+            LLM_PROVIDERS_PROBE_METHOD,
+            "nexo/admin/llm_providers/probe"
+        );
     }
 }

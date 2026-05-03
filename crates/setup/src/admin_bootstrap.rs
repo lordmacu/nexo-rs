@@ -218,6 +218,17 @@ pub struct AdminBootstrapInputs<'a> {
     /// (microapp follow-up).
     pub secrets_store:
         Option<Arc<dyn nexo_core::agent::admin_rpc::domains::secrets::SecretsStore>>,
+    /// Phase 82.10.l — daemon-side LLM provider probe. `None`
+    /// keeps `nexo/admin/llm_providers/probe` returning the
+    /// typed `llm_providers probe not configured` -32603.
+    /// Production wires
+    /// `crate::llm_provider_probe::HttpLlmProviderProbe` against
+    /// the existing `LlmYamlPatcher` so the probe reflects
+    /// the same config agent traffic would resolve. Resolves
+    /// M9.frame.b (microapp follow-up).
+    pub llm_provider_probe: Option<
+        Arc<dyn nexo_core::agent::admin_rpc::domains::llm_providers::LlmProvidersProbe>,
+    >,
     /// Phase 83.8.2 close-out — skills domain store. `None`
     /// keeps `nexo/admin/skills/*` returning the typed
     /// `skills domain not configured` -32603. Production wires
@@ -528,6 +539,17 @@ impl AdminRpcBootstrap {
             if let Some(store) = inputs.secrets_store.clone() {
                 dispatcher = dispatcher.with_secrets_domain(store);
             }
+            // Phase 82.10.l — install the daemon-side LLM
+            // provider probe. Caller-supplied (e.g. test mocks)
+            // wins; otherwise default-construct the production
+            // `HttpLlmProviderProbe` against the local
+            // `llm_yaml` so admin/llm_providers/probe just
+            // works out of the box. Resolves M9.frame.b.
+            let probe: Arc<dyn nexo_core::agent::admin_rpc::domains::llm_providers::LlmProvidersProbe> =
+                inputs.llm_provider_probe.clone().unwrap_or_else(|| {
+                    crate::llm_provider_probe::HttpLlmProviderProbe::new(llm_yaml.clone())
+                });
+            dispatcher = dispatcher.with_llm_provider_probe(probe);
             // Phase 83.8.2 close-out — install the skills domain
             // when boot has the production `FsSkillsStore`.
             if let Some(store) = inputs.skills_store.clone() {
@@ -743,6 +765,7 @@ mod tests {
             processing_store: None,
             tenant_store: None,
             secrets_store: None,
+            llm_provider_probe: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -775,6 +798,7 @@ mod tests {
             processing_store: None,
             tenant_store: None,
             secrets_store: None,
+            llm_provider_probe: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -808,6 +832,7 @@ mod tests {
             processing_store: None,
             tenant_store: None,
             secrets_store: None,
+            llm_provider_probe: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -855,6 +880,7 @@ mod tests {
             processing_store: None,
             tenant_store: None,
             secrets_store: None,
+            llm_provider_probe: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -895,6 +921,7 @@ mod tests {
             processing_store: None,
             tenant_store: None,
             secrets_store: None,
+            llm_provider_probe: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -934,6 +961,7 @@ mod tests {
             processing_store: None,
             tenant_store: None,
             secrets_store: None,
+            llm_provider_probe: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -981,6 +1009,7 @@ mod tests {
             processing_store: None,
             tenant_store: None,
             secrets_store: None,
+            llm_provider_probe: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -1034,6 +1063,7 @@ mod tests {
             processing_store: None,
             tenant_store: None,
             secrets_store: None,
+            llm_provider_probe: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -1082,6 +1112,7 @@ mod tests {
             processing_store: None,
             tenant_store: None,
             secrets_store: None,
+            llm_provider_probe: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -1132,6 +1163,7 @@ mod tests {
             processing_store: Some(shared.clone()),
             tenant_store: None,
             secrets_store: None,
+            llm_provider_probe: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -1200,6 +1232,7 @@ mod tests {
             processing_store: None,
             tenant_store: None,
             secrets_store: None,
+            llm_provider_probe: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -1248,6 +1281,7 @@ mod tests {
                 processing_store: None,
                 tenant_store: None,
             secrets_store: None,
+            llm_provider_probe: None,
                 skills_store: None,
                 escalation_store: None,
                 agent_event_log: Some(log.clone()),

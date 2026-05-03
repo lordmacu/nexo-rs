@@ -1368,6 +1368,11 @@ async fn main() -> Result<()> {
                     )
                         as std::sync::Arc<dyn nexo_core::agent::admin_rpc::domains::secrets::SecretsStore>,
                 ),
+                // Phase 82.10.l — None lets admin_bootstrap
+                // default-construct `HttpLlmProviderProbe`
+                // against the local `LlmYamlPatcherFs`. Tests
+                // can override with a mock by passing Some(_).
+                llm_provider_probe: None,
                 skills_store: skills_store.clone(),
                 escalation_store: escalation_store.clone(),
                 agent_event_log: agent_event_log.clone(),

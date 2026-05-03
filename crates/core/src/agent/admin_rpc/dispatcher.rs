@@ -216,6 +216,15 @@ pub struct AdminRpcDispatcher {
     /// new value without a daemon restart). Resolves M9.frame.a
     /// (microapp follow-up).
     secrets_store: Option<Arc<dyn super::domains::secrets::SecretsStore>>,
+    /// Phase 82.10.l — daemon-side LLM provider probe. `None`
+    /// disables `nexo/admin/llm_providers/probe` (returns
+    /// `Internal`). Production wires
+    /// `nexo_setup::llm_provider_probe::HttpLlmProviderProbe`
+    /// against the existing `LlmYamlPatcher` so the probe
+    /// reflects the same config agent traffic would resolve.
+    /// Resolves M9.frame.b (microapp follow-up).
+    llm_provider_probe:
+        Option<Arc<dyn super::domains::llm_providers::LlmProvidersProbe>>,
 }
 
 impl std::fmt::Debug for AdminRpcDispatcher {
@@ -256,6 +265,7 @@ impl AdminRpcDispatcher {
             transcript_appender: None,
             event_emitter: None,
             secrets_store: None,
+            llm_provider_probe: None,
         }
     }
 
@@ -268,6 +278,19 @@ impl AdminRpcDispatcher {
         store: Arc<dyn super::domains::secrets::SecretsStore>,
     ) -> Self {
         self.secrets_store = Some(store);
+        self
+    }
+
+    /// Phase 82.10.l — install the LLM provider probe.
+    /// Production passes
+    /// `nexo_setup::llm_provider_probe::HttpLlmProviderProbe::new(...)`.
+    /// Without one, `nexo/admin/llm_providers/probe` returns
+    /// `Internal("llm_providers probe not configured")`.
+    pub fn with_llm_provider_probe(
+        mut self,
+        probe: Arc<dyn super::domains::llm_providers::LlmProvidersProbe>,
+    ) -> Self {
+        self.llm_provider_probe = Some(probe);
         self
     }
 
@@ -452,7 +475,8 @@ impl AdminRpcDispatcher {
             | "nexo/admin/pairing/cancel" => Some("pairing_initiate"),
             "nexo/admin/llm_providers/list"
             | "nexo/admin/llm_providers/upsert"
-            | "nexo/admin/llm_providers/delete" => Some("llm_keys_crud"),
+            | "nexo/admin/llm_providers/delete"
+            | "nexo/admin/llm_providers/probe" => Some("llm_keys_crud"),
             "nexo/admin/channels/list"
             | "nexo/admin/channels/approve"
             | "nexo/admin/channels/revoke"
@@ -941,6 +965,12 @@ impl AdminRpcDispatcher {
                     "secrets domain not configured".into(),
                 )),
             },
+            "nexo/admin/llm_providers/probe" => match &self.llm_provider_probe {
+                Some(p) => super::domains::llm_providers::probe(p.as_ref(), params).await,
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "llm_providers probe not configured".into(),
+                )),
+            },
             "nexo/admin/reload" => match &self.reload_signal {
                 Some(reload) => {
                     reload();
@@ -1312,6 +1342,90 @@ mod tests {
         match err {
             AdminRpcError::Internal(msg) => {
                 assert!(msg.contains("secrets domain not configured"));
+            }
+            other => panic!("expected Internal, got {other:?}"),
+        }
+    }
+
+    /// Phase 82.10.l — `llm_providers/probe` requires
+    /// `llm_keys_crud` capability + an installed
+    /// `LlmProvidersProbe`. Test the happy-path routing.
+    #[tokio::test]
+    async fn dispatcher_routes_llm_providers_probe_with_capability_and_probe_wired() {
+        use async_trait::async_trait;
+        use nexo_tool_meta::admin::llm_providers::LlmProviderProbeResponse;
+
+        struct StaticProbe;
+        #[async_trait]
+        impl super::super::domains::llm_providers::LlmProvidersProbe for StaticProbe {
+            async fn probe(
+                &self,
+                _provider_id: &str,
+                _tenant_id: Option<&str>,
+            ) -> Result<LlmProviderProbeResponse, AdminRpcError> {
+                Ok(LlmProviderProbeResponse {
+                    ok: true,
+                    status: 200,
+                    latency_ms: 17,
+                    model_count: Some(3),
+                    error: None,
+                })
+            }
+        }
+
+        let d = dispatcher_granting("agent-creator", &["llm_keys_crud"])
+            .with_llm_provider_probe(Arc::new(StaticProbe));
+        let result = d
+            .dispatch(
+                "agent-creator",
+                "nexo/admin/llm_providers/probe",
+                serde_json::json!({"provider_id": "minimax"}),
+            )
+            .await;
+        let value = result.result.expect("ok");
+        assert_eq!(value["ok"], true);
+        assert_eq!(value["status"], 200);
+        assert_eq!(value["model_count"], 3);
+    }
+
+    /// Without the `llm_keys_crud` capability, dispatch is
+    /// rejected at the gate before the handler runs.
+    #[tokio::test]
+    async fn dispatcher_llm_providers_probe_capability_denied() {
+        let d = dispatcher_granting("agent-creator", &["agents_crud"]);
+        let result = d
+            .dispatch(
+                "agent-creator",
+                "nexo/admin/llm_providers/probe",
+                serde_json::json!({"provider_id": "minimax"}),
+            )
+            .await;
+        let err = result.error.expect("denied");
+        match err {
+            AdminRpcError::CapabilityNotGranted { capability, .. } => {
+                assert_eq!(capability, "llm_keys_crud");
+            }
+            other => panic!("expected CapabilityNotGranted, got {other:?}"),
+        }
+    }
+
+    /// With capability granted but no probe wired, the
+    /// dispatcher returns `Internal` so operators can tell
+    /// it's a misconfiguration vs an unknown method.
+    #[tokio::test]
+    async fn dispatcher_llm_providers_probe_internal_when_unwired() {
+        let d = dispatcher_granting("agent-creator", &["llm_keys_crud"]);
+        let result = d
+            .dispatch(
+                "agent-creator",
+                "nexo/admin/llm_providers/probe",
+                serde_json::json!({"provider_id": "minimax"}),
+            )
+            .await;
+        let err = result.error.expect("internal");
+        match err {
+            AdminRpcError::Internal(msg) => {
+                assert!(msg.contains("llm_providers probe not configured"));
             }
             other => panic!("expected Internal, got {other:?}"),
         }

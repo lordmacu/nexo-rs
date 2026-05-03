@@ -6,9 +6,11 @@
 
 use serde_json::Value;
 
+use async_trait::async_trait;
 use nexo_tool_meta::admin::llm_providers::{
-    LlmProviderSummary, LlmProviderUpsertInput, LlmProvidersDeleteParams,
-    LlmProvidersDeleteResponse, LlmProvidersListResponse,
+    LlmProviderProbeInput, LlmProviderProbeResponse, LlmProviderSummary,
+    LlmProviderUpsertInput, LlmProvidersDeleteParams, LlmProvidersDeleteResponse,
+    LlmProvidersListResponse,
 };
 
 use super::agents::YamlPatcher;
@@ -291,6 +293,58 @@ pub fn delete(
             "yaml remove: {e}"
         ))),
     }
+}
+
+/// Phase 82.10.l — daemon-side probe surface.
+///
+/// Production adapter (`nexo_setup::llm_provider_probe::HttpLlmProviderProbe`)
+/// reads the daemon's resolved `llm.yaml` config + env var,
+/// hits `GET {base_url}/models` with bearer auth, and returns
+/// a sanitised result. Mock impls in tests capture invocations
+/// without touching the network.
+#[async_trait]
+pub trait LlmProvidersProbe: Send + Sync {
+    /// Probe a configured provider end-to-end. Returns
+    /// `Ok(_)` for every reachable outcome (including 4xx /
+    /// 5xx with `ok: false`); returns `Err(_)` only for
+    /// pre-flight problems (unknown provider, env var unset)
+    /// so the wizard surfaces actionable signals.
+    async fn probe(
+        &self,
+        provider_id: &str,
+        tenant_id: Option<&str>,
+    ) -> Result<LlmProviderProbeResponse, AdminRpcError>;
+}
+
+/// Dispatcher entry point for `nexo/admin/llm_providers/probe`.
+/// Validates the input, then forwards to the configured probe
+/// impl. The handler does NOT touch `llm.yaml` itself; the
+/// adapter wraps the existing [`LlmYamlPatcher`] for that.
+pub async fn probe(
+    probe_impl: &dyn LlmProvidersProbe,
+    raw_params: Value,
+) -> AdminRpcResult {
+    match try_probe(probe_impl, raw_params).await {
+        Ok(v) => AdminRpcResult::ok(v),
+        Err(e) => AdminRpcResult::err(e),
+    }
+}
+
+async fn try_probe(
+    probe_impl: &dyn LlmProvidersProbe,
+    raw_params: Value,
+) -> Result<Value, AdminRpcError> {
+    let input: LlmProviderProbeInput = serde_json::from_value(raw_params)
+        .map_err(|e| AdminRpcError::InvalidParams(e.to_string()))?;
+    if input.provider_id.is_empty() {
+        return Err(AdminRpcError::InvalidParams(
+            "provider_id cannot be empty".into(),
+        ));
+    }
+    let response = probe_impl
+        .probe(&input.provider_id, input.tenant_id.as_deref())
+        .await?;
+    serde_json::to_value(response).map_err(|e| AdminRpcError::Internal(e.to_string()))
 }
 
 fn read_summary(
@@ -747,5 +801,101 @@ mod tests {
             llm.list_tenant_provider_ids("acme").unwrap(),
             vec!["minimax".to_string()]
         );
+    }
+
+    // ────────────────────────────────────────────────────────
+    // Phase 82.10.l — probe handler tests.
+    // ────────────────────────────────────────────────────────
+
+    /// Mock that captures invocations + returns a canned
+    /// `LlmProviderProbeResponse` (or `Err`).
+    struct MockProbe {
+        result: std::sync::Mutex<Result<LlmProviderProbeResponse, AdminRpcError>>,
+        calls: tokio::sync::Mutex<Vec<(String, Option<String>)>>,
+    }
+
+    impl MockProbe {
+        fn ok(response: LlmProviderProbeResponse) -> Self {
+            Self {
+                result: std::sync::Mutex::new(Ok(response)),
+                calls: tokio::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn err(e: AdminRpcError) -> Self {
+            Self {
+                result: std::sync::Mutex::new(Err(e)),
+                calls: tokio::sync::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl LlmProvidersProbe for MockProbe {
+        async fn probe(
+            &self,
+            provider_id: &str,
+            tenant_id: Option<&str>,
+        ) -> Result<LlmProviderProbeResponse, AdminRpcError> {
+            self.calls
+                .lock()
+                .await
+                .push((provider_id.to_string(), tenant_id.map(String::from)));
+            let mut guard = self.result.lock().unwrap();
+            // Replace the stored Result with a fresh
+            // placeholder so we can move out of it without
+            // requiring `Clone` on AdminRpcError.
+            let placeholder = Ok(LlmProviderProbeResponse::default());
+            std::mem::replace(&mut *guard, placeholder)
+        }
+    }
+
+    #[tokio::test]
+    async fn probe_validates_empty_provider_id() {
+        let mock = MockProbe::ok(LlmProviderProbeResponse::default());
+        let result = probe(&mock, serde_json::json!({"provider_id": ""})).await;
+        let err = result.error.expect("expected error");
+        match err {
+            AdminRpcError::InvalidParams(msg) => assert!(msg.contains("empty")),
+            other => panic!("expected InvalidParams, got {other:?}"),
+        }
+        assert!(mock.calls.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn probe_propagates_store_error() {
+        let mock = MockProbe::err(AdminRpcError::InvalidParams(
+            "env var FOO not set".into(),
+        ));
+        let result = probe(&mock, serde_json::json!({"provider_id": "minimax"})).await;
+        let err = result.error.expect("expected error");
+        match err {
+            AdminRpcError::InvalidParams(msg) => assert!(msg.contains("env var")),
+            other => panic!("expected InvalidParams, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn probe_returns_response_on_success() {
+        let mock = MockProbe::ok(LlmProviderProbeResponse {
+            ok: true,
+            status: 200,
+            latency_ms: 142,
+            model_count: Some(5),
+            error: None,
+        });
+        let result = probe(
+            &mock,
+            serde_json::json!({"provider_id": "minimax", "tenant_id": "acme"}),
+        )
+        .await;
+        let value = result.result.expect("ok");
+        assert_eq!(value["ok"], true);
+        assert_eq!(value["status"], 200);
+        assert_eq!(value["model_count"], 5);
+        let calls = mock.calls.lock().await;
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "minimax");
+        assert_eq!(calls[0].1.as_deref(), Some("acme"));
     }
 }
