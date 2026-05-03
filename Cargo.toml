@@ -249,6 +249,7 @@ nexo-broker = { version = "0.1.2", path = "crates/broker" }
 nexo-core = { version = "0.1.1", path = "crates/core" }
 nexo-team-store = { version = "0.1.1", path = "crates/team-store" }
 nexo-extensions = { version = "0.1.2", path = "crates/extensions" }
+nexo-ext-installer = { version = "0.1.0", path = "crates/ext-installer" }
 nexo-llm = { version = "0.1.2", path = "crates/llm" }
 nexo-lsp = { version = "0.1.1", path = "crates/lsp" }
 nexo-mcp = { version = "0.1.2", path = "crates/mcp" }

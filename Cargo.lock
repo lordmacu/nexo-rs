@@ -4151,6 +4151,7 @@ dependencies = [
  "nexo-driver-loop",
  "nexo-driver-permission",
  "nexo-driver-types",
+ "nexo-ext-installer",
  "nexo-extensions",
  "nexo-fork",
  "nexo-llm",

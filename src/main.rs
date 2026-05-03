@@ -1,5 +1,7 @@
 #![allow(clippy::all)] // In-flux — Phase 76 + 79 scaffolding
 
+mod plugin_install;
+
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -71,6 +73,19 @@ enum Mode {
         json: bool,
     },
     ExtHelp,
+    /// Phase 31.1.c — `nexo plugin install <owner>/<repo>[@<tag>]`.
+    /// Decentralized GitHub Releases install; downloads + sha-verifies
+    /// + extracts under `plugins.discovery.search_paths[0]` (or
+    /// `--dest`). Best-effort `plugin.lifecycle.<id>.installed` event
+    /// emitted when broker is up.
+    PluginInstall {
+        coords: String,
+        dest: Option<PathBuf>,
+        target: Option<String>,
+        json: bool,
+    },
+    /// Phase 31.1.c — static help block for the plugin subcommand.
+    PluginHelp,
     /// Phase 82.6 — `nexo ext state-dir <id>` prints the
     /// canonical state directory for `<id>` resolved against
     /// the current `NEXO_HOME` (created if absent). Operators
@@ -1140,6 +1155,26 @@ async fn main() -> Result<()> {
         }
         Mode::ExtUninstall { id, yes, json } => {
             return run_ext_cli(&args.config_dir, ExtCmd::Uninstall { id, yes, json })
+        }
+        Mode::PluginInstall {
+            coords,
+            dest,
+            target,
+            json,
+        } => {
+            let code = plugin_install::run_plugin_install(
+                &args.config_dir,
+                coords,
+                dest,
+                target,
+                json,
+            )
+            .await?;
+            std::process::exit(code);
+        }
+        Mode::PluginHelp => {
+            plugin_install::print_plugin_help();
+            return Ok(());
         }
         Mode::Admin { port } => return run_admin_web(port).await,
         Mode::Run => {}
@@ -7593,6 +7628,14 @@ fn parse_args() -> CliArgs {
             id: id.clone(),
             ensure: positional.iter().any(|a| a == "--ensure"),
         },
+        // Phase 31.1.c — `nexo plugin install <coords> [...]`.
+        [cmd, sub, coords] if cmd == "plugin" && sub == "install" => Mode::PluginInstall {
+            coords: coords.clone(),
+            dest: parse_kv_flag(&positional, "--dest").map(PathBuf::from),
+            target: parse_kv_flag(&positional, "--target"),
+            json: has_json_flag,
+        },
+        [cmd, sub] if cmd == "plugin" && sub == "help" => Mode::PluginHelp,
         // Phase 76.14 — mcp-server with optional subcommands
         [cmd] if cmd == "mcp-server" => {
             Mode::McpServer(McpServerSubcommand::Serve)
@@ -7863,6 +7906,10 @@ fn print_usage() {
     );
     println!("  agent [--config <dir>] ext uninstall <id> --yes [--json]");
     println!("  agent [--config <dir>] ext doctor [--runtime] [--json]");
+    println!(
+        "  agent [--config <dir>] plugin install <owner>/<repo>[@<tag>] [--dest <path>] [--target <triple>] [--json]"
+    );
+    println!("  agent plugin help                      Show plugin subcommand help");
     println!(
         "  agent doctor capabilities [--json]     List write/reveal env toggles and their state"
     );

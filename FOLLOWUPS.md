@@ -700,10 +700,28 @@ coordinación de archivos cross-cutting.
   intentionally does NOT read config — caller resolves
   `dest_root` from `plugins.discovery.search_paths[0]`.
 
-- **31.1.c ⬜** `Mode::PluginInstall` CLI integration in main.rs.
-  New CLI mode parses coords, resolves config to learn install
-  root, calls `install_plugin` + tarball extraction, prints
-  installed plugin id + version + sha256. ~0.5 d.
+- **31.1.c ✅ shipped 2026-05-03** — `Mode::PluginInstall` CLI
+  integration. New `src/plugin_install.rs` module + `Mode::PluginInstall`
+  / `Mode::PluginHelp` variants. Argv shape:
+  `nexo plugin install <owner>/<repo>[@<tag>] [--dest <path>]
+  [--target <triple>] [--json]`. Pipeline: resolve target
+  (`--target` flag → `NEXO_INSTALL_TARGET` env → autodetect) →
+  resolve dest_root (`--dest` → `cfg.plugins.discovery.search_paths[0]`
+  → `nexo_state_dir().join("plugins")` fallback with stderr
+  warn) → reqwest client with optional `NEXO_GITHUB_TOKEN`
+  Bearer + GitHub UA → coords parse → resolve_release →
+  download_and_verify → extract_verified_tarball → cleanup
+  cached tarball → best-effort
+  `plugin.lifecycle.<id>.installed` broker emit (NATS only, 2s
+  connect timeout, non-fatal). Output: 6-line human progress
+  with sha trunc + idempotent-skip line; or single-line JSON
+  `PluginInstallReport`. Error path: `PluginInstallErrorReport`
+  with stable `kind` enum mapping all 7 InstallError + 11
+  ExtractError variants. Hint blocks for `TargetNotFound` /
+  GH rate-limit / 404. 8 new unit tests. 21/21 ext-installer
+  regression green. Workspace builds clean. Cached tarballs
+  live at `<state_dir>/plugin-install-cache/` (deleted on
+  success).
 
 - **81.15.c.b ✅ shipped 2026-05-01** — SDK streaming
   consumption helper. Pending value type changed to
