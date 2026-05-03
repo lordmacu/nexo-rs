@@ -12,6 +12,18 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// JSON-RPC notification method emitted by the daemon as the
+/// pairing challenge state evolves. Frame shape:
+/// `{"jsonrpc":"2.0","method":"nexo/notify/pairing_status_changed",
+///  "params": <PairingStatus>}`.
+///
+/// Microapps register a listener via
+/// `Microapp::with_notification_listener(PAIRING_STATUS_NOTIFY_METHOD, …)`
+/// (Phase 83.4.c). Mirrors the
+/// `http_server::TOKEN_ROTATED_NOTIFY_METHOD` shape so consumers
+/// don't string-literal the method name.
+pub const PAIRING_STATUS_NOTIFY_METHOD: &str = "nexo/notify/pairing_status_changed";
+
 /// Params for `nexo/admin/pairing/start`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PairingStartInput {
@@ -177,5 +189,13 @@ mod tests {
         assert_eq!(v, serde_json::json!("awaiting_user"));
         let v = serde_json::to_value(PairingState::QrReady).unwrap();
         assert_eq!(v, serde_json::json!("qr_ready"));
+    }
+
+    #[test]
+    fn pairing_status_notify_method_constant() {
+        assert_eq!(
+            PAIRING_STATUS_NOTIFY_METHOD,
+            "nexo/notify/pairing_status_changed"
+        );
     }
 }
