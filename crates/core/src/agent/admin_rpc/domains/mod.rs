@@ -20,4 +20,5 @@ pub mod escalations;
 pub mod llm_providers;
 pub mod pairing;
 pub mod processing;
+pub mod secrets;
 pub mod skills;

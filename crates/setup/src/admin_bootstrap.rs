@@ -208,6 +208,16 @@ pub struct AdminBootstrapInputs<'a> {
     /// `config/tenants.yaml`.
     pub tenant_store:
         Option<Arc<dyn nexo_core::agent::admin_rpc::domains::tenants::TenantStore>>,
+    /// Phase 82.10.k — secrets store. `None` keeps
+    /// `nexo/admin/secrets/write` returning the typed
+    /// `secrets domain not configured` -32603. Production wires
+    /// `crate::secrets_store::FsSecretsStore` rooted at
+    /// `<state_root>/secrets/` (mode 0600 file write +
+    /// `std::env::set_var` so existing LLM clients see the new
+    /// value without a daemon restart). Resolves M9.frame.a
+    /// (microapp follow-up).
+    pub secrets_store:
+        Option<Arc<dyn nexo_core::agent::admin_rpc::domains::secrets::SecretsStore>>,
     /// Phase 83.8.2 close-out — skills domain store. `None`
     /// keeps `nexo/admin/skills/*` returning the typed
     /// `skills domain not configured` -32603. Production wires
@@ -510,6 +520,14 @@ impl AdminRpcBootstrap {
             if let Some(store) = inputs.tenant_store.clone() {
                 dispatcher = dispatcher.with_tenants_domain(store);
             }
+            // Phase 82.10.k — install the secrets domain when
+            // boot has the production `FsSecretsStore` adapter.
+            // Without it, `nexo/admin/secrets/write` returns the
+            // typed `secrets domain not configured` -32603 so
+            // the microapp wizard surfaces a clear wire-up gap.
+            if let Some(store) = inputs.secrets_store.clone() {
+                dispatcher = dispatcher.with_secrets_domain(store);
+            }
             // Phase 83.8.2 close-out — install the skills domain
             // when boot has the production `FsSkillsStore`.
             if let Some(store) = inputs.skills_store.clone() {
@@ -724,6 +742,7 @@ mod tests {
             transcript_writer: None,
             processing_store: None,
             tenant_store: None,
+            secrets_store: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -755,6 +774,7 @@ mod tests {
             transcript_writer: None,
             processing_store: None,
             tenant_store: None,
+            secrets_store: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -787,6 +807,7 @@ mod tests {
             transcript_writer: None,
             processing_store: None,
             tenant_store: None,
+            secrets_store: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -833,6 +854,7 @@ mod tests {
             transcript_writer: None,
             processing_store: None,
             tenant_store: None,
+            secrets_store: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -872,6 +894,7 @@ mod tests {
             transcript_writer: None,
             processing_store: None,
             tenant_store: None,
+            secrets_store: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -910,6 +933,7 @@ mod tests {
             transcript_writer: None,
             processing_store: None,
             tenant_store: None,
+            secrets_store: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -956,6 +980,7 @@ mod tests {
             transcript_writer: None,
             processing_store: None,
             tenant_store: None,
+            secrets_store: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -1008,6 +1033,7 @@ mod tests {
             transcript_writer: None,
             processing_store: None,
             tenant_store: None,
+            secrets_store: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -1055,6 +1081,7 @@ mod tests {
             transcript_writer: None,
             processing_store: None,
             tenant_store: None,
+            secrets_store: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -1104,6 +1131,7 @@ mod tests {
             transcript_writer: None,
             processing_store: Some(shared.clone()),
             tenant_store: None,
+            secrets_store: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -1171,6 +1199,7 @@ mod tests {
             transcript_writer: None,
             processing_store: None,
             tenant_store: None,
+            secrets_store: None,
             skills_store: None,
             escalation_store: None,
             agent_event_log: None,
@@ -1218,6 +1247,7 @@ mod tests {
                 transcript_writer: None,
                 processing_store: None,
                 tenant_store: None,
+            secrets_store: None,
                 skills_store: None,
                 escalation_store: None,
                 agent_event_log: Some(log.clone()),

@@ -1358,6 +1358,16 @@ async fn main() -> Result<()> {
                 transcript_writer: None,
                 processing_store: Some(std::sync::Arc::clone(&processing_store)),
                 tenant_store: tenant_store.clone(),
+                // Phase 82.10.k — file-backed secrets store at
+                // `<secrets_dir>/<NAME>.txt` + std::env
+                // injection so existing LLM clients see new
+                // values without a daemon restart.
+                secrets_store: Some(
+                    nexo_setup::secrets_store::FsSecretsStore::with_secrets_dir(
+                        secrets_dir.clone(),
+                    )
+                        as std::sync::Arc<dyn nexo_core::agent::admin_rpc::domains::secrets::SecretsStore>,
+                ),
                 skills_store: skills_store.clone(),
                 escalation_store: escalation_store.clone(),
                 agent_event_log: agent_event_log.clone(),

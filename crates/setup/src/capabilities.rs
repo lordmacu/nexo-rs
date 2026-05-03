@@ -224,6 +224,14 @@ const INVENTORY: &[CapabilityToggle] = &[
     },
     CapabilityToggle {
         extension: "core",
+        env_var: "NEXO_MICROAPP_ADMIN_SECRETS_ENABLED",
+        kind: ToggleKind::Boolean,
+        risk: Risk::Critical,
+        effect: "Phase 82.10.k — enable `nexo/admin/secrets/write` admin RPC (microapps with `secrets_write` capability persist values to <state_root>/secrets/<NAME>.txt + std::env::set_var so existing LLM clients see the new value without daemon restart). Off disables the domain regardless of operator grants. CRITICAL: a compromised microapp with this capability can replace any LLM API key in the daemon's process env.",
+        hint: "export NEXO_MICROAPP_ADMIN_SECRETS_ENABLED=0  # to disable",
+    },
+    CapabilityToggle {
+        extension: "core",
         env_var: "NEXO_MICROAPP_AGENT_EVENTS_ENABLED",
         kind: ToggleKind::Boolean,
         risk: Risk::High,

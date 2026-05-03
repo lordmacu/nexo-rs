@@ -32,6 +32,7 @@ pub mod credentials_check;
 pub mod pairing_check;
 pub mod prompt;
 pub mod registry;
+pub mod secrets_store;
 pub mod services;
 pub mod services_imperative;
 pub mod skills_migrate;
