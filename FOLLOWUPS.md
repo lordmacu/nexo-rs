@@ -413,9 +413,31 @@ coordinación de archivos cross-cutting.
     untouched, GC ticker untouched, `register_email_tools` per-agent
     untouched (defer Phase 81.3). Behavior identical to pre-81.12.d
     until 81.12.e flips main.rs.
-  - **81.12.e ⬜** Remove legacy plugin registration block from
-    main.rs:1855-1941 (~87 LOC). Only after 81.12.a-d ship dual-
-    trait. ~2h effort.
+  - **81.12.e ⏸ DEFER → SUPERSEDED-BY-81.17** — original scope (remove
+    main.rs:1855-1941 ~87 LOC legacy block) collides with three
+    realities discovered after 81.12.a-d shipped:
+    (1) the legacy block builds concrete `Arc<BrowserPlugin>` /
+    `Arc<EmailPlugin>` / per-instance `WhatsappPlugin::pairing_state`
+    references that downstream code in main.rs:1976+ (email tool ctx)
+    and the HTTP server (`/whatsapp/<instance>/pair*`) and per-agent
+    tool registration depends on directly — not via the `NexoPlugin`
+    trait. Removing construction breaks downstream.
+    (2) Activating `factory_registry` (passing `Some(&factory_registry)`
+    to `wire_plugin_registry`) without removing the legacy
+    `plugins.register*()` + `start_all()` calls causes `Plugin::start`
+    to fire twice (once via legacy `start_all`, once via
+    `NexoPlugin::init` delegation) → double-init breakage.
+    (3) For `factory_registry` to actually fire, the discovery walker
+    must find `nexo-plugin.toml` manifests; today they're dormant
+    inside `crates/plugins/<id>/`. Solving this requires bundled-
+    manifest discovery search_paths OR synthetic factory_registry
+    injection (~1-2 d of design + tests) — work that 81.17 (extract
+    `plugin-browser` to standalone repo via subprocess infra) deletes
+    entirely. Out-of-tree plugins don't need `Arc<BrowserPlugin>` from
+    main.rs at all; downstream code accesses the plugin via daemon-
+    mediated RPC. So 81.12.e is throwaway by design once 81.17 ships.
+    Phase 81 dual-trait migration counts a/b/c/d ✅; e is absorbed by
+    the subprocess work in 81.14 → 81.17 → 81.18 → 81.19.
 - **81.13 ⬜ DEFER** Reference plugin template
   (`nexo plugin new <name>` CLI) + docs +
   `crates/plugins/sales-agent/` reference example.
