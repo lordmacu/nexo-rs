@@ -32,7 +32,7 @@ notifications = []
 # pull the `nexo-plugin-manifest` + `nexo-broker` deps unless they
 # author plugins. Plugin authors enable this feature in their
 # Cargo.toml; microapp authors leave it off.
-plugin = ["dep:nexo-plugin-manifest", "dep:nexo-broker", "dep:toml"]
+plugin = ["dep:nexo-plugin-manifest", "dep:nexo-broker", "dep:nexo-llm", "dep:nexo-memory", "dep:toml", "dep:dashmap"]
 
 [dependencies]
 serde       = { workspace = true, features = ["derive"] }
@@ -53,6 +53,13 @@ dashmap     = { workspace = true, optional = true }
 # the feature off and don't pay the dep cost.
 nexo-plugin-manifest = { version = "0.1.0", path = "../plugin-manifest", optional = true }
 nexo-broker = { version = "0.1.1", path = "../broker", optional = true }
+# Phase 81.15.c — child-side typed wrappers for memory.recall +
+# llm.complete RPCs. nexo-llm gives ChatMessage/ChatRequest/
+# ChatResponse types so authors construct + decode messages
+# with the same shape the daemon uses; nexo-memory gives
+# MemoryEntry for recall_memory results.
+nexo-llm = { version = "0.1.1", path = "../llm", optional = true }
+nexo-memory = { version = "0.1.2", path = "../memory", optional = true }
 toml = { version = "0.8", optional = true }
 
 [dev-dependencies]

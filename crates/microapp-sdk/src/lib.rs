@@ -63,7 +63,10 @@ pub use runtime::ToolHandler;
 pub use outbound::{DispatchAck, DispatchError, OutboundDispatcher};
 
 #[cfg(feature = "plugin")]
-pub use plugin::{BrokerEventHandler, BrokerSender, PluginAdapter, ShutdownHandler};
+pub use plugin::{
+    BrokerEventHandler, BrokerSender, LlmCompleteParams, LlmCompleteResult, PluginAdapter,
+    RpcError, ShutdownHandler, TokenCount,
+};
 
 #[cfg(feature = "admin")]
 pub use admin::{AdminClient, AdminError, AdminSender, DEFAULT_ADMIN_TIMEOUT};
