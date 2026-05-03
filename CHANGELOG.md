@@ -10,6 +10,42 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.16 — `nexo-plugin-contract.md` versioned IPC spec.**
+  Workspace-root canonical wire-format document for out-of-tree
+  plugins. ~600 LOC of structured markdown at `nexo-plugin-contract.md`
+  with `contract_version: 1.0.0`. Sections cover transport (newline-
+  delimited JSON-RPC 2.0 over stdin/stdout), manifest
+  `[plugin.entrypoint]` section, JSON-RPC envelope (request /
+  response / notification shapes), lifecycle methods (`initialize` +
+  `shutdown` with literal request/response examples), broker bridge
+  notifications (`broker.event` host→child + `broker.publish`
+  child→host with full Event payload examples), topic allowlist
+  semantics with wildcard rules cross-referencing
+  `nexo_broker::topic::topic_matches`, error code table (`-32700`
+  parse, `-32600` invalid request, `-32601` method not found,
+  `-32602` invalid params, `-32603` internal, `-32000` shutdown
+  error, `-32001..-32099` reserved), backpressure note (mpsc depth
+  64 + drop-on-full warn matches at-most-once broker semantics),
+  code examples in Rust (uses shipped `PluginAdapter`), Python
+  skeleton (placeholder for Phase 31.4 SDK), TypeScript skeleton
+  (placeholder for Phase 31.5), semver compatibility policy
+  (additive changes = minor; remove/rename/shape change = major),
+  reference implementations table, out-of-scope list (81.20-81.23
+  + Phase 31), and a changelog seeded with the 1.0.0 entry.
+  Thin pointer at `docs/src/plugins/contract.md` (~20 LOC) plus
+  SUMMARY.md entry under "# Plugins" so mdbook surfaces the doc;
+  `mdbook build docs` runs clean. The contract documents what
+  81.14 + 81.14.b + 81.15.a already implement — single authoritative
+  reference for cross-language SDK authors (Phase 31.4 Python +
+  31.5 TypeScript) plus internal contributors making future wire
+  changes (each must check whether the change is additive vs
+  major-bumping). IRROMPIBLE refs: internal subprocess.rs +
+  plugin.rs as ground truth; OpenClaw `research/docs/gateway/protocol.md:1-40`
+  for protocol-doc structure pattern (different transport, but
+  section layout reusable); claude-code-leak absence stated —
+  their plugins follow upstream MCP spec which doesn't cover
+  bidirectional broker bridges.
+
 - **Phase 81.15.a — `nexo-microapp-sdk` plugin-mode (`PluginAdapter`
   child-side helper).** Lets out-of-tree plugin authors avoid hand-
   rolling the JSON-RPC parser / manifest handshake / broker-publish

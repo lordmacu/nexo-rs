@@ -510,6 +510,19 @@ coordinación de archivos cross-cutting.
   module rather than extending the existing one — different
   trajectories shouldn't couple.
 
+- **81.16 ✅ shipped 2026-05-01** — `nexo-plugin-contract.md`
+  versioned IPC spec at workspace root (~600 LOC, contract
+  version 1.0.0). Sections: transport, manifest entrypoint,
+  JSON-RPC envelope, lifecycle methods, broker bridge
+  notifications, topic allowlist, error codes, backpressure,
+  code examples (Rust shipped + Python/TS skeletons for
+  Phase 31.4/31.5), semver compat policy, reference impls,
+  out-of-scope list. Thin pointer at `docs/src/plugins/contract.md`
+  + SUMMARY.md entry; mdbook builds clean. Documents what
+  81.14/14.b/15.a already implements — single source of truth
+  for cross-language SDK authoring + internal wire-change
+  reviews.
+
 - **81.15.b ⬜** Rust plugin template repo
   (`github.com/nexo-rs/plugin-template-rust`). External repo
   bootstrap; single commit. Includes: Cargo.toml with
