@@ -611,11 +611,27 @@ coordinación de archivos cross-cutting.
   real handles. Streaming carved out as 81.20.b.c (~1 d).
   22/22 subprocess + 2/2 e2e tests pass.
 
-- **81.20.b.c ⬜** Streaming via `llm.complete.delta`
-  notifications. Switch `client.chat` to `client.stream`, emit
-  delta notifications per chunk, final `llm.complete.done` +
-  reply with final usage. SDK helpers for streaming consumption
-  in 81.15.c. ~1 d.
+- **81.20.b.c ✅ shipped 2026-05-01** — `llm.complete` streaming
+  via `llm.complete.delta` notifications. Opt-in via
+  `params.stream = true`. Host calls `client.stream`, emits
+  `TextDelta` chunks as notifications via stdin_tx with
+  request_id correlation. Final reply omits content. Tool-call
+  deltas dropped (same scope as non-streaming MVP).
+  `handle_child_request` signature gains stdin_tx + request_id
+  parameters. 22/22 subprocess tests pass. Wire docs at contract
+  v1.3.0. SDK-side streaming consumption helpers deferred to
+  81.15.c.
+
+- **81.20.c ⏸ DEFERRED** — `tool.dispatch` RPC. Original ~1d
+  estimate wrong: `ToolHandler::call` requires full AgentContext
+  (~25 fields of per-running-agent state owned by main.rs's
+  per-agent loop). Either Path A (new AgentContextRegistry,
+  ~2-3 d, proper) or Path B (stub AgentContext with broker/
+  sessions only, most tools break). Defer until path A
+  architecturally needed. memory.recall + llm.complete cover
+  the SaaS-ish use cases driving the microapp / agent-creator
+  program; tool.dispatch value comes mainly from in-tree tools
+  that already work in-process.
 
 - **81.20.c ⬜** Daemon-mediated `tool.dispatch` RPC. Extends
   `handle_child_request` match. Needs ToolRegistry in

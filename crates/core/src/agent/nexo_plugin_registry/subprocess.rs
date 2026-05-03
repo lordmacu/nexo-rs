@@ -440,6 +440,8 @@ impl SubprocessNexoPlugin {
                                 &reader_plugin_id,
                                 method_str,
                                 &params,
+                                &reader_stdin_tx,
+                                &id_for_reply,
                             )
                             .await
                         }
@@ -802,6 +804,15 @@ async fn kill_handle(h: &Arc<Mutex<Option<Child>>>) {
     }
 }
 
+/// Phase 81.20.b.c — small helper struct collected from
+/// streaming `Usage` chunks. Mirrors `TokenUsage` but lives in
+/// this module so we can default it without depending on
+/// `TokenUsage::default()` semantics changing.
+struct TokenUsageOut {
+    prompt_tokens: u32,
+    completion_tokens: u32,
+}
+
 /// Phase 81.20.b — bundle of LLM-related handles needed to
 /// service `llm.complete` requests from a subprocess plugin.
 /// `LlmRegistry` builds clients per (provider, model);
@@ -906,10 +917,14 @@ async fn handle_child_request(
     plugin_id: &str,
     method: &str,
     params: &Value,
+    stdin_tx: &mpsc::Sender<Value>,
+    request_id: &Value,
 ) -> Result<Value, (i32, String)> {
     match method {
         "memory.recall" => handle_memory_recall(bridge, plugin_id, params).await,
-        "llm.complete" => handle_llm_complete(bridge, plugin_id, params).await,
+        "llm.complete" => {
+            handle_llm_complete(bridge, plugin_id, params, stdin_tx, request_id).await
+        }
         other => Err((-32601, format!("method not found: {other}"))),
     }
 }
@@ -999,9 +1014,13 @@ async fn handle_llm_complete(
     bridge: &BridgeContext,
     plugin_id: &str,
     params: &Value,
+    stdin_tx: &mpsc::Sender<Value>,
+    request_id: &Value,
 ) -> Result<Value, (i32, String)> {
+    use futures::StreamExt;
     use nexo_config::ModelConfig;
-    use nexo_llm::types::{ChatMessage, ChatRequest, ResponseContent};
+    use nexo_llm::stream::StreamChunk;
+    use nexo_llm::types::{ChatMessage, ChatRequest, FinishReason, ResponseContent};
 
     let llm = bridge
         .llm
@@ -1046,6 +1065,16 @@ async fn handle_llm_complete(
         .get("system_prompt")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+    // Phase 81.20.b.c — opt-in streaming. When `stream: true`,
+    // the host calls `client.stream()` and emits each TextDelta
+    // as a `llm.complete.delta` notification correlated by
+    // `request_id`. Final reply (matching the original `id`)
+    // returns only `finish_reason` + `usage` — `content` is
+    // omitted because the child reassembled it from deltas.
+    let stream = params
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     // Build the registry's expected ModelConfig view from params.
     // ModelConfig today is just `provider` + `model`.
@@ -1072,6 +1101,103 @@ async fn handle_llm_complete(
     req.max_tokens = max_tokens;
     req.temperature = temperature;
     req.system_prompt = system_prompt;
+
+    if stream {
+        // Phase 81.20.b.c streaming branch. Iterate the provider's
+        // stream; emit TextDelta chunks as
+        // `llm.complete.delta { request_id, chunk }` notifications;
+        // collect Usage + final FinishReason for the response. Tool
+        // call deltas are dropped today (same scope as the
+        // non-streaming MVP — tool-call wire shape future).
+        let mut stream = client.stream(req).await.map_err(|e| {
+            tracing::warn!(
+                plugin_id,
+                provider,
+                model,
+                error = %e,
+                "llm.complete: stream() returned error"
+            );
+            (-32603, format!("llm stream failed: {e}"))
+        })?;
+        let mut usage: Option<TokenUsageOut> = None;
+        let mut finish: Option<FinishReason> = None;
+        let mut emitted_text = false;
+        let mut emitted_tool_calls = false;
+        while let Some(chunk_res) = stream.next().await {
+            let chunk = match chunk_res {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!(
+                        plugin_id,
+                        provider,
+                        model,
+                        error = %e,
+                        "llm.complete: stream chunk error"
+                    );
+                    return Err((-32603, format!("llm stream chunk failed: {e}")));
+                }
+            };
+            match chunk {
+                StreamChunk::TextDelta { delta } => {
+                    emitted_text = true;
+                    let frame = json!({
+                        "jsonrpc": "2.0",
+                        "method": "llm.complete.delta",
+                        "params": {
+                            "request_id": request_id,
+                            "chunk": delta,
+                        }
+                    });
+                    if let Err(e) = stdin_tx.try_send(frame) {
+                        tracing::warn!(
+                            plugin_id,
+                            error = %e,
+                            "llm.complete.delta dropped: stdin queue full or closed"
+                        );
+                    }
+                }
+                StreamChunk::ToolCallStart { .. }
+                | StreamChunk::ToolCallArgsDelta { .. }
+                | StreamChunk::ToolCallEnd { .. } => {
+                    emitted_tool_calls = true;
+                }
+                StreamChunk::Usage(u) => {
+                    usage = Some(TokenUsageOut {
+                        prompt_tokens: u.prompt_tokens,
+                        completion_tokens: u.completion_tokens,
+                    });
+                }
+                StreamChunk::End { finish_reason } => {
+                    finish = Some(finish_reason);
+                }
+            }
+        }
+        if emitted_tool_calls && !emitted_text {
+            return Err((
+                -32601,
+                "llm.complete stream returned tool calls only; MVP supports text \
+                 (tool-call wire shape lands in a future contract bump)"
+                    .to_string(),
+            ));
+        }
+        let finish_reason = match finish.unwrap_or(FinishReason::Other("stream-no-end".into())) {
+            FinishReason::Stop => "stop".to_string(),
+            FinishReason::ToolUse => "tool_use".to_string(),
+            FinishReason::Length => "length".to_string(),
+            FinishReason::Other(s) => format!("other:{s}"),
+        };
+        let usage_json = match usage {
+            Some(u) => json!({
+                "prompt_tokens": u.prompt_tokens,
+                "completion_tokens": u.completion_tokens,
+            }),
+            None => json!({"prompt_tokens": 0, "completion_tokens": 0}),
+        };
+        return Ok(json!({
+            "finish_reason": finish_reason,
+            "usage": usage_json,
+        }));
+    }
 
     let response = client.chat(req).await.map_err(|e| {
         tracing::warn!(
@@ -1937,7 +2063,7 @@ stderr_tail_lines = {}
             "model": "x",
             "messages": [{"role":"user","content":"hi"}],
         });
-        match handle_llm_complete(&bridge, "test_plugin", &params).await {
+        match { let (_dummy_tx, _dummy_rx) = mpsc::channel::<Value>(8); let _dummy_id = json!(99); handle_llm_complete(&bridge, "test_plugin", &params, &_dummy_tx, &_dummy_id).await } {
             Ok(v) => panic!("expected -32603, got Ok({v:?})"),
             Err((code, msg)) => {
                 assert_eq!(code, -32603);
@@ -1965,11 +2091,16 @@ stderr_tail_lines = {}
             }),
         };
 
+        let (_dtx, _drx) = mpsc::channel::<Value>(8);
+        let dummy_id = json!(99);
+
         // Missing provider.
         let r = handle_llm_complete(
             &bridge,
             "test_plugin",
             &json!({"model": "x", "messages": []}),
+            &_dtx,
+            &dummy_id,
         )
         .await;
         match r {
@@ -1982,6 +2113,8 @@ stderr_tail_lines = {}
             &bridge,
             "test_plugin",
             &json!({"provider": "p", "model": "x"}),
+            &_dtx,
+            &dummy_id,
         )
         .await;
         match r {
@@ -1994,6 +2127,8 @@ stderr_tail_lines = {}
             &bridge,
             "test_plugin",
             &json!({"provider": "p", "model": "x", "messages": []}),
+            &_dtx,
+            &dummy_id,
         )
         .await;
         match r {
@@ -2010,6 +2145,8 @@ stderr_tail_lines = {}
                 "model": "x",
                 "messages": [{"role": 42, "content": "hi"}],
             }),
+            &_dtx,
+            &dummy_id,
         )
         .await;
         match r {
@@ -2038,7 +2175,7 @@ stderr_tail_lines = {}
             "model": "x",
             "messages": [{"role":"user","content":"hi"}],
         });
-        match handle_llm_complete(&bridge, "test_plugin", &params).await {
+        match { let (_dummy_tx, _dummy_rx) = mpsc::channel::<Value>(8); let _dummy_id = json!(99); handle_llm_complete(&bridge, "test_plugin", &params, &_dummy_tx, &_dummy_id).await } {
             Ok(v) => panic!("expected -32603, got Ok({v:?})"),
             Err((code, msg)) => {
                 assert_eq!(code, -32603);

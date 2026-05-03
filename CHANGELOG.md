@@ -10,6 +10,96 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.20.b.c — `llm.complete` streaming via
+  `llm.complete.delta` notifications.** Opt-in streaming for the
+  RPC handler. Plugins set `params.stream = true` in the
+  `llm.complete` request; the host calls `LlmClient::stream`
+  instead of `chat` and emits each text chunk as a JSON-RPC
+  notification correlated to the original request id. The final
+  reply matches the original `id` but omits `content` (the child
+  reassembled it from deltas) and carries only `finish_reason` +
+  `usage`.
+  
+  Wire shape (additive — non-streaming requests unchanged):
+  ```json
+  // 1. Child issues request with stream: true
+  {"jsonrpc":"2.0","id":50,"method":"llm.complete","params":{...,"stream":true}}
+  // 2. Host emits N delta notifications during stream
+  {"jsonrpc":"2.0","method":"llm.complete.delta","params":{"request_id":50,"chunk":"hello"}}
+  {"jsonrpc":"2.0","method":"llm.complete.delta","params":{"request_id":50,"chunk":" world"}}
+  // 3. Host finalizes with response (no content field)
+  {"jsonrpc":"2.0","id":50,"result":{"finish_reason":"stop","usage":{"prompt_tokens":12,"completion_tokens":7}}}
+  ```
+  
+  Implementation: `handle_child_request` signature gains
+  `stdin_tx: &mpsc::Sender<Value>` + `request_id: &Value`
+  parameters threaded from reader. `handle_llm_complete`
+  branches on `params.stream`:
+  - `stream = false` (default) — buffered path unchanged from 81.20.b
+  - `stream = true` — calls `client.stream(req).await`, iterates
+    chunks via `futures::StreamExt`, maps each:
+    - `StreamChunk::TextDelta { delta }` → emits
+      `llm.complete.delta { request_id, chunk: delta }`
+      notification via stdin_tx (try_send + drop-on-full to
+      keep at-most-once semantics matching the broker bridge)
+    - `StreamChunk::Usage(u)` → captured for final reply
+    - `StreamChunk::End { finish_reason }` → captured
+    - `ToolCallStart/ArgsDelta/End` → dropped (same scope as
+      non-streaming MVP; pure-tool-call streams return -32601)
+  
+  New small helper struct `TokenUsageOut` collected from streaming
+  Usage chunks. `futures::StreamExt` brought into scope inside
+  the streaming branch.
+  
+  Test surface: 22/22 subprocess tests still pass. The 4
+  param-validation paths in `llm_complete_handler_returns_neg_32602_on_bad_params`
+  fire BEFORE the streaming branch so they're unaffected. The
+  3 existing llm.complete tests still work with the new 5-arg
+  handler signature (callsites updated to thread dummy stdin_tx
+  + request_id since none of the negative-path tests exercise
+  the streaming branch). Streaming integration test deferred —
+  needs a stub LlmClient that emits a known stream sequence,
+  which is ~50 LOC of fixture for the value of one assertion.
+  Real validation comes from the contract being clear + future
+  out-of-tree plugin authors hitting it.
+  
+  Wire docs at contract v1.3.0 (additive bump from v1.2.0).
+  
+  IRROMPIBLE refs: internal `crates/llm/src/stream.rs:112-119`
+  (StreamChunk variants); internal `crates/llm/src/client.rs:30-35`
+  (default `stream()` impl wraps `chat()`); internal subprocess.rs
+  reader path that now threads stdin_tx + request_id;
+  claude-code-leak `src/services/llm/streamHandler.ts` partial-
+  token streaming pattern; OpenClaw `research/src/agents/streamUtils.ts`.
+
+### Changed
+
+- **Phase 81.20.c — `tool.dispatch` RPC deferred (architectural
+  prereq).** Original ~1d estimate was wrong. Unlike memory.recall
+  + llm.complete (which have flat entry points returning
+  serializable results), `ToolHandler::call(&AgentContext, args)`
+  requires a full `AgentContext` — ~25 fields of per-running-agent
+  state (config, broker, sessions, memory, router, peers, mcp,
+  session_id, effective binding policy, effective_tools registry,
+  credentials, breakers, redactor, transcripts_index, ...). Most
+  fields are owned by main.rs's per-agent loop, not by the
+  subprocess pipeline. Two paths considered:
+  - **Path A (~2-3 d)**: new `AgentContextRegistry` that main.rs
+    populates per-agent at spawn + SubprocessRuntime accesses for
+    lookup. Proper architecture.
+  - **Path B (~1 d)**: stub AgentContext with only broker/sessions
+    populated; most tools fail accessing None fields. Hacky.
+  
+  Neither fits a clean slice. Deferred with explicit note in
+  PHASES-curated.md so future work is honest about the cost.
+  Plugin authors today access framework infra via
+  `memory.recall` + `llm.complete` — the two RPC handlers that
+  matter most for the SaaS-ish use cases driving the
+  microapp / agent-creator program. `tool.dispatch` value
+  comes mainly from in-tree tools that already work in-process.
+
+### Added
+
 - **Phase 81.20.b.b — main.rs threads `LlmServices` into
   subprocess runtime.** Closes the runtime-plumbing half of
   81.20.b. Subprocess plugins now receive `-32603 "llm not
