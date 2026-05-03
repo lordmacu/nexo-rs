@@ -1952,6 +1952,15 @@ async fn main() -> Result<()> {
     let core_envs = core_capability_env_vars();
     let available_caps = build_available_capabilities(&cfg);
     let discovery_cfg_clone = cfg.plugins.discovery.clone();
+    // Phase 81.17 — auto-subprocess fallback shipped library-side
+    // in `run_plugin_init_loop_with_factory` but the boot wire stays
+    // `None` for now: activating it via `Some(&factory_registry)`
+    // would route through the `unreachable!()` ctx_factory in
+    // `boot.rs`, which would panic the moment an operator drops a
+    // subprocess manifest into `plugins.discovery.search_paths`.
+    // Phase 81.17.b extends `wire_plugin_registry` to accept a real
+    // broker + shutdown token from this main.rs scope so the
+    // subprocess path can build a minimal `PluginInitContext`.
     let wire = nexo_core::agent::nexo_plugin_registry::wire_plugin_registry(
         &mut cfg.agents,
         &discovery_cfg_clone,
@@ -1959,10 +1968,6 @@ async fn main() -> Result<()> {
             .unwrap_or_else(|_| semver::Version::new(0, 0, 0)),
         &core_envs,
         &available_caps,
-        // Phase 81.12.0 — no per-plugin factories registered yet;
-        // legacy plugin block continues to handle browser /
-        // whatsapp / telegram / email registration. 81.12.a-e
-        // will replace `None` with `Some(&factory_registry)`.
         None,
     );
     // `wire.registry` + `wire.skill_roots` +

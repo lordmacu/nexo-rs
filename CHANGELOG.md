@@ -10,6 +10,49 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.17 — Auto-subprocess init-loop fallback.**
+  `run_plugin_init_loop_with_factory` extended with an inline
+  fallback: when no in-tree factory is registered for a manifest's
+  id AND the manifest has `[plugin.entrypoint] command = "..."`,
+  the loop builds `subprocess_plugin_factory(manifest)` inline,
+  invokes it, then drives the resulting `Arc<dyn NexoPlugin>`
+  through `init()` like any other handle. Operator-registered
+  factories continue to take priority — they're the override path
+  for in-tree migrations. Manifests without `entrypoint.command`
+  keep recording `InitOutcome::NoHandle`, preserving back-compat
+  with the partial-migration shape from 81.12.a-d.
+  3 new unit tests in `init_loop::tests`:
+  `auto_subprocess_factory_produces_usable_handle` (verifies the
+  standalone factory builds an `Arc<dyn NexoPlugin>` with the right
+  manifest id) and `auto_subprocess_fallback_skips_manifests_without_entrypoint`
+  (verifies ctx_factory is NOT invoked for in-tree-shape manifests
+  — the `NoHandle` path is unchanged). The third existing test
+  (`run_plugin_init_loop_with_factory_routes_registered_vs_unregistered`)
+  also passes unchanged, confirming registered in-tree factories
+  still win over the auto-subprocess fallback.
+  **Boot-wire activation deferred to 81.17.b**: main.rs continues
+  to pass `factory_registry: None` to `wire_plugin_registry`
+  because the `Some(...)` branch currently routes through an
+  `unreachable!()` ctx_factory in `boot.rs` (it was correct when
+  `Some` only fired for legacy factories whose init body did not
+  consume `PluginInitContext`, but the auto-subprocess fallback
+  inverts that assumption — `SubprocessNexoPlugin::init` clones
+  `ctx.broker` + `ctx.shutdown`). 81.17.b extends
+  `wire_plugin_registry` with an optional
+  `subprocess_runtime: Option<SubprocessRuntime>` parameter so the
+  caller passes a real broker + shutdown token; the boot helper
+  builds a minimal `PluginInitContext` for the subprocess path
+  using stub registries for the other fields. End-to-end
+  integration test under `crates/core/tests/subprocess_plugin_e2e.rs`
+  ships with 81.17.b — it needs the boot-wire change to be testable
+  through the public API surface. IRROMPIBLE refs: internal
+  `init_loop.rs:88-140` for the dispatch shape extended; internal
+  `subprocess.rs::subprocess_plugin_factory` (81.14) for the
+  inline-built factory; OpenClaw absence stated — their plugins
+  ran in-process Node, no discovery-driven subprocess loading
+  precedent; claude-code-leak `src/services/plugins/pluginOperations.ts`
+  for the runtime instantiation per-id pattern.
+
 - **Phase 81.16 — `nexo-plugin-contract.md` versioned IPC spec.**
   Workspace-root canonical wire-format document for out-of-tree
   plugins. ~600 LOC of structured markdown at `nexo-plugin-contract.md`
