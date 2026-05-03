@@ -8,6 +8,33 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ## [Unreleased]
 
+### Changed
+
+- **Phase 81.12.e deferred → superseded by Phase 81.17** (extract
+  `plugin-browser` to standalone repo via subprocess infra). With
+  81.12.a-d shipped, the original 81.12.e scope (delete the legacy
+  registration block from `src/main.rs:1855-1941`, ~87 LOC) collides
+  with three realities only visible post-implementation:
+  (1) the legacy block builds concrete `Arc<BrowserPlugin>` /
+  `Arc<EmailPlugin>` / per-instance `WhatsappPlugin::pairing_state`
+  references that downstream code (email tool ctx, HTTP server
+  `/whatsapp/<instance>/pair*` endpoints, per-agent tool registration)
+  consumes directly — not via the `NexoPlugin` trait. Removing
+  construction breaks downstream.
+  (2) Activating `factory_registry` without removing the legacy
+  `plugins.register*()` + `start_all()` calls would cause
+  `Plugin::start` to fire twice (once via legacy `start_all`, once
+  via `NexoPlugin::init` delegation) → double-init breakage.
+  (3) For `factory_registry` to fire, discovery walker must find
+  `nexo-plugin.toml` manifests, but they're dormant inside
+  `crates/plugins/<id>/` — solving requires bundled-manifest discovery
+  search_paths or synthetic injection (~1-2 d of work that Phase 81.17
+  obsoletes). With out-of-tree plugins (Phase 81.14 →
+  81.17 → 81.18 → 81.19), main.rs no longer constructs `Arc<BrowserPlugin>`
+  at all; downstream code accesses the plugin via daemon-mediated RPC.
+  Phase 81 dual-trait migration tally: 12/13 (a/b/c/d ✅), e absorbed
+  by subprocess work.
+
 ### Added
 
 - **Phase 81.12.d — Email plugin dual-trait migration to `NexoPlugin`.**
