@@ -16,6 +16,7 @@ use serde::Serialize;
 use crate::agent::plugin_host::{NexoPlugin, PluginInitContext};
 
 use super::factory::{FactoryInstantiateError, PluginFactoryRegistry};
+use super::subprocess::subprocess_plugin_factory;
 use super::NexoPluginRegistrySnapshot;
 
 #[derive(Clone, Debug, Serialize)]
@@ -96,7 +97,51 @@ where
     let mut outcomes = BTreeMap::new();
     for plugin in &snapshot.plugins {
         let id = plugin.manifest.plugin.id.clone();
+        // Phase 81.17 — auto-subprocess fallback. If no in-tree
+        // factory was registered for this id BUT the manifest
+        // declares an `[plugin.entrypoint]` with a non-empty
+        // `command`, build a `SubprocessNexoPlugin` factory inline
+        // and use it. Operator-registered factories take priority
+        // — they're the override path for in-tree migrations.
+        // Manifests without entrypoint.command keep recording
+        // NoHandle (the partial-migration shape from 81.12.a-d).
         if !factory_registry.is_registered(&id) {
+            if plugin.manifest.plugin.entrypoint.is_subprocess() {
+                let auto_factory = subprocess_plugin_factory(plugin.manifest.clone());
+                match auto_factory(&plugin.manifest) {
+                    Ok(handle) => {
+                        let mut ctx = ctx_factory(&id);
+                        let start = std::time::Instant::now();
+                        match handle.init(&mut ctx).await {
+                            Ok(()) => {
+                                let duration_ms = start.elapsed().as_millis() as u64;
+                                outcomes.insert(id, InitOutcome::Ok { duration_ms });
+                            }
+                            Err(e) => {
+                                let error = e.to_string();
+                                tracing::warn!(
+                                    target: "plugins.init",
+                                    plugin_id = %id,
+                                    %error,
+                                    "subprocess plugin init failed; continuing"
+                                );
+                                outcomes.insert(id, InitOutcome::Failed { error });
+                            }
+                        }
+                    }
+                    Err(source) => {
+                        let error = format!("auto-subprocess factory failed: {source}");
+                        tracing::warn!(
+                            target: "plugins.init",
+                            plugin_id = %id,
+                            %error,
+                            "auto-subprocess plugin construction failed"
+                        );
+                        outcomes.insert(id, InitOutcome::Failed { error });
+                    }
+                }
+                continue;
+            }
             outcomes.insert(id, InitOutcome::NoHandle);
             continue;
         }
@@ -252,5 +297,59 @@ mod tests {
         }
         // beta unregistered → NoHandle.
         assert!(matches!(outcomes.get("beta"), Some(InitOutcome::NoHandle)));
+    }
+
+    /// Phase 81.17 — auto-subprocess fallback wires
+    /// `subprocess_plugin_factory(manifest)` inline when no in-tree
+    /// factory is registered for a manifest with
+    /// `entrypoint.command`. We verify the factory itself produces a
+    /// usable `Arc<dyn NexoPlugin>` via the standalone helper —
+    /// end-to-end coverage of the init-loop fallback (with real
+    /// spawn + handshake) is in
+    /// `crates/core/tests/subprocess_plugin_e2e.rs` because building
+    /// a complete `PluginInitContext` for a unit test is heavier
+    /// than the fallback logic itself warrants.
+    #[tokio::test]
+    async fn auto_subprocess_factory_produces_usable_handle() {
+        let mut manifest = discovered("auto_subproc").manifest;
+        manifest.plugin.entrypoint = nexo_plugin_manifest::EntrypointSection {
+            command: Some("/bin/true".to_string()),
+            ..Default::default()
+        };
+        let factory = subprocess_plugin_factory(manifest.clone());
+        match factory(&manifest) {
+            Ok(plugin) => assert_eq!(plugin.manifest().plugin.id, "auto_subproc"),
+            Err(e) => panic!("auto-subprocess factory must build handle, got {e}"),
+        }
+    }
+
+    /// Phase 81.17 — manifests WITHOUT `entrypoint.command` keep
+    /// their pre-81.17 `NoHandle` outcome. Empty entrypoint section
+    /// is the in-tree-plugin shape (browser/telegram/whatsapp/email
+    /// dormant manifests in 81.12.a-d) — those must NOT accidentally
+    /// be instantiated as subprocesses.
+    #[tokio::test]
+    async fn auto_subprocess_fallback_skips_manifests_without_entrypoint() {
+        use super::super::factory::PluginFactoryRegistry;
+
+        // discovered() builds a manifest WITHOUT entrypoint, which
+        // serde fills with EntrypointSection::default() — command =
+        // None, is_subprocess() == false.
+        let snap = snapshot_with(vec![discovered("in_tree_only")]);
+        let registry = PluginFactoryRegistry::new();
+        let outcomes = run_plugin_init_loop_with_factory(
+            &snap,
+            &registry,
+            |_id| -> PluginInitContext<'_> {
+                unreachable!(
+                    "ctx_factory must NOT be invoked for non-subprocess manifests"
+                )
+            },
+        )
+        .await;
+        assert!(
+            matches!(outcomes.get("in_tree_only"), Some(InitOutcome::NoHandle)),
+            "in-tree manifest without entrypoint must record NoHandle"
+        );
     }
 }

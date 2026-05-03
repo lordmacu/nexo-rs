@@ -510,6 +510,42 @@ coordinación de archivos cross-cutting.
   module rather than extending the existing one — different
   trajectories shouldn't couple.
 
+- **81.17 ✅ shipped 2026-05-01** — Auto-subprocess init-loop
+  fallback (library + tests). `run_plugin_init_loop_with_factory`
+  extended with inline fallback: manifests with
+  `entrypoint.command` AND no in-tree factory registered get
+  built via `subprocess_plugin_factory(manifest)` and run through
+  `init()` like any registered factory. In-tree manifests without
+  entrypoint keep `NoHandle`. 3 unit tests cover positive factory
+  build + negative skip path. **Boot wire deferred to 81.17.b**
+  because the existing `boot.rs` `unreachable!()` ctx_factory
+  panics when subprocess plugins try to use real broker /
+  shutdown handles — 81.17.b extends `wire_plugin_registry` to
+  accept caller-supplied `subprocess_runtime: SubprocessRuntime`.
+
+- **81.17.b ⬜** Boot-wire activation: extend
+  `wire_plugin_registry` signature with optional
+  `subprocess_runtime: Option<SubprocessRuntime>` carrying
+  `broker: AnyBroker` + `shutdown: CancellationToken`. Replace
+  `boot.rs`'s `unreachable!()` ctx_factory with a stub-context
+  builder for the subprocess path (uses caller's broker + shutdown,
+  stub Arc::new() for tool/advisor/hook/llm/reload/sessions
+  registries because SubprocessNexoPlugin doesn't read those
+  fields). main.rs switches from `None` to
+  `Some(SubprocessRuntime::from(...))`. New integration test under
+  `crates/core/tests/subprocess_plugin_e2e.rs` exercises the
+  pipeline end-to-end: writes manifest + mock-plugin.sh in tempdir,
+  calls `wire_plugin_registry`, asserts `InitOutcome::Ok` plus
+  broker.publish round-trip. ~1 d effort. Required before 81.17.c
+  (pilot extract plugin-browser).
+
+- **81.17.c ⬜ RENUMBERED (was 81.17)** — Pilot extract
+  `plugin-browser` to standalone repo. Out-of-tree:
+  `github.com/nexo-rs/plugin-browser` ships binary; daemon loads
+  via discovery + auto-subprocess fallback (81.17 + 81.17.b).
+  ~3 d. Required to validate the contract end-to-end with a real
+  plugin before 81.18-81.19 extract telegram/whatsapp/email.
+
 - **81.16 ✅ shipped 2026-05-01** — `nexo-plugin-contract.md`
   versioned IPC spec at workspace root (~600 LOC, contract
   version 1.0.0). Sections: transport, manifest entrypoint,
