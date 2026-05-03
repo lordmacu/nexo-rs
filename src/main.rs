@@ -1949,16 +1949,16 @@ async fn main() -> Result<()> {
     // empty handles map today — every plugin records `NoHandle`
     // until the manifest-driven `Arc<dyn NexoPlugin>` factory
     // ships in 81.12.
-    let _wire = nexo_core::agent::nexo_plugin_registry::wire_plugin_registry(
+    let wire = nexo_core::agent::nexo_plugin_registry::wire_plugin_registry(
         &mut cfg.agents,
         &cfg.plugins.discovery,
         &semver::Version::parse(env!("CARGO_PKG_VERSION"))
             .unwrap_or_else(|_| semver::Version::new(0, 0, 0)),
     );
-    // `_wire.registry` + `_wire.skill_roots` +
-    // `_wire.channel_adapter_registry` stay in scope for 81.12 +
-    // future per-agent threading without changing the boot wire
-    // shape.
+    // `wire.registry` + `wire.skill_roots` +
+    // `wire.channel_adapter_registry` stay in scope for 81.10 hot-
+    // reload registration + 81.12 per-agent threading without
+    // changing the boot wire shape.
 
     // Email tool context — built post-start so the dispatcher handle
     // is primed. Each agent loop below picks it up when its `plugins`
@@ -5121,6 +5121,19 @@ async fn main() -> Result<()> {
         }
         _ => None,
     };
+
+    // Phase 81.10 — register post-reload hook that re-discovers
+    // plugin manifests and atomically swaps the registry snapshot.
+    // Hook captures discovery_cfg + version immutable; new
+    // search_paths require daemon restart (Phase 81.10.b lifts this).
+    nexo_core::agent::nexo_plugin_registry::register_plugin_registry_reload_hook(
+        Arc::clone(&reload_coord),
+        Arc::clone(&wire.registry),
+        cfg.plugins.discovery.clone(),
+        semver::Version::parse(env!("CARGO_PKG_VERSION"))
+            .unwrap_or_else(|_| semver::Version::new(0, 0, 0)),
+    )
+    .await;
 
     if let Err(e) = Arc::clone(&reload_coord)
         .start(broker.clone(), cfg.runtime.reload.clone())

@@ -271,7 +271,28 @@ coordinación de archivos cross-cutting.
   LOC boot wire" original goal stays open: requires legacy
   whatsapp/telegram/email/browser migration to `NexoPlugin`
   trait — that's Phase 81.12.
-- **81.10 ⬜** Plugin hot-load via Phase 18 reload coord.
+- **81.10 ✅ shipped 2026-05-03** —
+  `register_plugin_registry_reload_hook(coord, registry,
+  discovery_cfg, version)` helper en
+  `nexo_core::agent::nexo_plugin_registry::boot`. Pushes one
+  `PostReloadHook` (sync, captured-state-only) que re-corre
+  `discover()` + atomic `registry.swap()` + `tracing::info` summary
+  con prev/new/delta de loaded + invalid. Hook errors swallowed
+  per coord's best-effort contract. Test-only `#[cfg(test)]`
+  helpers en `config_reload.rs` (`post_hooks_len_for_test` +
+  `fire_post_hooks_for_test`). 3 unit tests cubren register-pushes-one
+  / hook-replaces-snapshot / hook-swallows-discover-failure. Boot
+  wire: 1 línea en `src/main.rs::Mode::Run` antes del
+  `reload_coord.start(...)` call. Snapshot's `skill_roots` queda
+  empty post-reload — running agents stay con sus boot-time
+  `LlmAgentBehavior.plugin_skill_roots`. Phase 18 limitation
+  (agent removal at runtime not supported) preservada — disabling
+  un plugin orphans su contributed agent hasta restart. **Out of
+  scope (deferred 81.10.b)**: skill_roots rebuild + live
+  `discovery_cfg` updates (cambios a search_paths require restart
+  hoy) + per-agent `plugin_skill_roots` re-clone. Cuando 81.7.b /
+  81.12 shippeen el manifest-driven `Arc<dyn NexoPlugin>` factory,
+  ese phase agrega su slice al hook (re-init plugins on reload).
 - **81.11 ⬜** Plugin doctor + capability inventory integration.
 - **81.12 ⬜** Existing-plugin migration
   (whatsapp/telegram/email/browser → `NexoPlugin` impls).
