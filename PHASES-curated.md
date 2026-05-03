@@ -108,7 +108,7 @@ drives this phase. Critical-path rows flagged `P1`.
 | 81.12.0 — `PluginFactoryRegistry` foundation (no plugin migrations) | **P3** | ✅ shipped 2026-05-03 (factory module + run_plugin_init_loop_with_factory + wire_plugin_registry 6th param) |
 | 81.12.a — Browser plugin migration to NexoPlugin | **P3** | ✅ shipped 2026-05-03 (dual-trait + manifest + factory builder; dormant — main.rs untouched) |
 | 81.12.b — Telegram plugin migration to NexoPlugin | **P3** | ✅ shipped 2026-05-01 (dual-trait + manifest + factory builder + 5 unit tests; multi-instance pattern verified — manifest.id stays "telegram", per-instance label lives in `registry_name`; dormant — main.rs untouched) |
-| 81.12.c — WhatsApp plugin migration to NexoPlugin | **P3** | ⬜ pending |
+| 81.12.c — WhatsApp plugin migration to NexoPlugin | **P3** | ✅ shipped 2026-05-01 (dual-trait + manifest + factory builder + 5 unit tests; multi-account pattern verified — manifest.id stays "whatsapp", per-instance label lives in `registry_name`, distinct session_dir per instance keeps Signal keys isolated; dormant — main.rs untouched; WhatsappPairingAdapter + register_whatsapp_tools out of scope) |
 | 81.12.d — Email plugin migration to NexoPlugin | **P3** | ⬜ pending |
 | 81.12.e — Remove legacy registration block from main.rs | **P3** | ⬜ pending (after 81.12.a-d) |
 | **81.14 — `SubprocessNexoPlugin` adapter (host-side spawn + stdio JSON-RPC bridge)** | **P3** | ⬜ NEW | ~2 d. Daemon-side wrapper that owns child process + translates broker topics ↔ stdio frames. Foundation for out-of-tree plugins. Reuses existing `extensions/openai-whisper` subprocess pattern. Depends on 81.12.e (clean dual-trait). |

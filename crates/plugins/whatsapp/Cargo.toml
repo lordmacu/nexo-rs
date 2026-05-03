@@ -19,6 +19,8 @@ nexo-config = { version = "0.1.1", path = "../../config" }
 nexo-llm = { version = "0.1.1", path = "../../llm" }
 nexo-auth = { version = "0.1.1", path = "../../auth" }
 nexo-pairing = { version = "0.1.2", path = "../../pairing", default-features = false }
+nexo-plugin-manifest = { version = "0.1.0", path = "../../plugin-manifest" }
+toml = "0.8"
 
 wa-agent = "0.1.1"
 

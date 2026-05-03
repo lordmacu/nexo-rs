@@ -367,8 +367,25 @@ coordinación de archivos cross-cutting.
     Compatibility audit pre-cycle: TelegramPluginConfig: Clone derived,
     PluginInitError::Other already exists. Behavior identical to pre-81.12.b
     until 81.12.e flips main.rs.
-  - **81.12.c ⬜** WhatsApp plugin migration. Multi-instance +
-    pairing state collection. ~4h effort.
+  - **81.12.c ✅ shipped 2026-05-01** — WhatsApp plugin migration:
+    dual-trait `WhatsappPlugin` + dormant `crates/plugins/whatsapp/nexo-plugin.toml`
+    + `pub fn whatsapp_plugin_factory(cfg) -> PluginFactory` in lib.rs.
+    Manifest parsed once via `include_str!` in `new()`. 5 unit tests
+    (4 same as telegram + `multi_instance_factory_yields_distinct_registry_names_same_manifest_id`
+    proving multi-account pattern: per-instance label lives in
+    `registry_name`, `manifest().plugin.id == "whatsapp"` for every
+    instance; distinct `session_dir` per instance keeps Signal keys
+    isolated). Multi-account handled by operator (one factory call per
+    `WhatsappPluginConfig` — same shape as legacy main.rs:1880-1897 loop).
+    `enabled = false` short-circuits inside `Plugin::start` returning
+    `Ok(())`, so init-disabled plugins still report success through the
+    NexoPlugin path — same observable behavior as legacy register +
+    start_all combination. Compatibility audit pre-cycle:
+    WhatsappPluginConfig: Clone derived, PluginInitError::Other already
+    exists, WhatsappPairingAdapter (registered separately) untouched,
+    `pairing_state()` accessor for HTTP server polling untouched,
+    `register_whatsapp_tools` per-agent untouched (defer Phase 81.3).
+    Behavior identical to pre-81.12.c until 81.12.e flips main.rs.
   - **81.12.d ⬜** Email plugin migration. Single-NexoPlugin,
     multi-account internal, credential injection (may extend
     PluginInitContext). ~5h effort.

@@ -18,6 +18,10 @@ use dashmap::DashMap;
 use nexo_broker::{AnyBroker, BrokerHandle, Event};
 use nexo_config::WhatsappPluginConfig;
 use nexo_core::agent::plugin::{Command, Plugin, Response};
+use nexo_core::agent::plugin_host::{
+    NexoPlugin, PluginInitContext, PluginInitError, PluginShutdownError,
+};
+use nexo_plugin_manifest::PluginManifest;
 use tokio::sync::{oneshot, Mutex, OnceCell};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -41,6 +45,11 @@ pub struct WhatsappPlugin {
     /// `PluginRegistry` keys on this string — multi-account setups need
     /// distinct names or the second registration overwrites the first.
     registry_name: String,
+    /// Phase 81.12.c — compile-time-bundled plugin manifest. Parsed
+    /// once in `new()` from `../nexo-plugin.toml` via `include_str!`.
+    /// `manifest().plugin.id` stays `"whatsapp"` for every instance —
+    /// the per-instance label lives in `registry_name`, not the manifest.
+    cached_manifest: PluginManifest,
     session: Arc<OnceCell<Arc<whatsapp_rs::Session>>>,
     broker: Arc<OnceCell<AnyBroker>>,
     pending: PendingMap,
@@ -53,15 +62,24 @@ pub struct WhatsappPlugin {
     spawned: Mutex<Vec<tokio::task::JoinHandle<()>>>,
 }
 
+/// Phase 81.12.c — bundled NexoPlugin manifest. `expect()` is OK here:
+/// the file ships in this crate and is checked at compile time by
+/// `include_str!`, so a parse failure means the workspace itself is
+/// broken — fail-fast at boot beats a deferred "manifest missing" surprise.
+const MANIFEST_TOML: &str = include_str!("../nexo-plugin.toml");
+
 impl WhatsappPlugin {
     pub fn new(cfg: WhatsappPluginConfig) -> Self {
         let registry_name = match cfg.instance.as_deref() {
             Some(inst) if !inst.is_empty() => format!("whatsapp.{inst}"),
             _ => "whatsapp".to_string(),
         };
+        let cached_manifest: PluginManifest = toml::from_str(MANIFEST_TOML)
+            .expect("compile-time-bundled nexo-plugin.toml must parse");
         Self {
             cfg: Arc::new(cfg),
             registry_name,
+            cached_manifest,
             session: Arc::new(OnceCell::new()),
             broker: Arc::new(OnceCell::new()),
             pending: Arc::new(DashMap::new()),
@@ -252,5 +270,165 @@ impl Plugin for WhatsappPlugin {
             .await
             .map_err(|e| anyhow::anyhow!("broker publish failed: {e}"))?;
         Ok(Response::Ok)
+    }
+}
+
+/// Phase 81.12.c — dual-trait wrapper. Until Phase 81.12.e flips the
+/// boot path in `src/main.rs`, the legacy `Plugin` impl above is the
+/// one actually invoked at runtime; this `NexoPlugin` impl exists so a
+/// future `factory_registry.register("whatsapp", whatsapp_plugin_factory(cfg))`
+/// callsite can drive the same plugin through `wire_plugin_registry`
+/// without touching the per-instance fields.
+///
+/// Note that `manifest().plugin.id == "whatsapp"` for every instance —
+/// the per-instance label (`"acct_a"`, `"acct_b"`, …) is operator-side
+/// state and lives in `registry_name`, not the manifest. The factory
+/// is what differentiates instances by closing over distinct configs.
+///
+/// `enabled = false` short-circuits inside `Plugin::start` returning
+/// `Ok(())`, so init-disabled plugins still report success through the
+/// NexoPlugin path — same observable behavior as the legacy register +
+/// start_all combination.
+#[async_trait]
+impl NexoPlugin for WhatsappPlugin {
+    fn manifest(&self) -> &PluginManifest {
+        &self.cached_manifest
+    }
+
+    async fn init(&self, ctx: &mut PluginInitContext<'_>) -> Result<(), PluginInitError> {
+        Plugin::start(self, ctx.broker.clone())
+            .await
+            .map_err(|source| PluginInitError::Other {
+                plugin_id: self.cached_manifest.plugin.id.clone(),
+                source,
+            })
+    }
+
+    async fn shutdown(&self) -> Result<(), PluginShutdownError> {
+        Plugin::stop(self)
+            .await
+            .map_err(|source| PluginShutdownError::Other {
+                plugin_id: self.cached_manifest.plugin.id.clone(),
+                source,
+            })
+    }
+}
+
+#[cfg(test)]
+mod nexo_plugin_tests {
+    use super::*;
+
+    fn test_whatsapp_config(instance: Option<&str>) -> WhatsappPluginConfig {
+        // `enabled: false` short-circuits Plugin::start (no Signal
+        // handshake / no real wa-agent boot). We never call init()
+        // here anyway — the trait-shape tests only exercise manifest,
+        // factory, and dual-trait dispatch paths.
+        let session_dir = std::env::temp_dir()
+            .join(format!(
+                "wa-nexo-plugin-test-{}",
+                instance.unwrap_or("default")
+            ))
+            .to_string_lossy()
+            .to_string();
+        let media_dir = std::env::temp_dir()
+            .join(format!(
+                "wa-nexo-plugin-test-media-{}",
+                instance.unwrap_or("default")
+            ))
+            .to_string_lossy()
+            .to_string();
+        WhatsappPluginConfig {
+            enabled: false,
+            session_dir,
+            media_dir,
+            credentials_file: None,
+            acl: Default::default(),
+            behavior: Default::default(),
+            rate_limit: Default::default(),
+            bridge: Default::default(),
+            transcriber: Default::default(),
+            daemon: Default::default(),
+            public_tunnel: Default::default(),
+            instance: instance.map(|s| s.to_string()),
+            allow_agents: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn manifest_parses_and_id_is_whatsapp() {
+        let m: PluginManifest = toml::from_str(MANIFEST_TOML).unwrap();
+        assert_eq!(m.plugin.id, "whatsapp");
+        assert_eq!(m.plugin.version.to_string(), "0.1.1");
+        assert_eq!(
+            m.plugin.requires.nexo_capabilities,
+            vec!["broker".to_string()]
+        );
+    }
+
+    #[test]
+    fn nexo_plugin_init_delegates_to_legacy_start() {
+        // Build the plugin and verify cached_manifest is reachable
+        // through the NexoPlugin trait. Calling init() for real would
+        // require a running broker + Signal Protocol session — out of
+        // scope for unit tests; the body is a 1-line delegation to
+        // Plugin::start.
+        let plugin = WhatsappPlugin::new(test_whatsapp_config(None));
+        let nexo: &dyn NexoPlugin = &plugin;
+        assert_eq!(nexo.manifest().plugin.id, "whatsapp");
+        assert_eq!(nexo.manifest().plugin.version.to_string(), "0.1.1");
+    }
+
+    #[test]
+    fn factory_builder_produces_usable_handle() {
+        let cfg = test_whatsapp_config(None);
+        let factory: nexo_core::agent::nexo_plugin_registry::PluginFactory =
+            Box::new(move |_m| {
+                let plugin: Arc<dyn NexoPlugin> = Arc::new(WhatsappPlugin::new(cfg.clone()));
+                Ok(plugin)
+            });
+        let m: PluginManifest = toml::from_str(MANIFEST_TOML).unwrap();
+        match factory(&m) {
+            Ok(handle) => assert_eq!(handle.manifest().plugin.id, "whatsapp"),
+            Err(e) => panic!("factory should succeed, got {e}"),
+        }
+    }
+
+    #[test]
+    fn dual_trait_methods_share_state() {
+        // Single-account (no instance label): legacy registry_name and
+        // manifest id agree. Multi-account diverges — see next test.
+        let plugin = WhatsappPlugin::new(test_whatsapp_config(None));
+        let legacy: &dyn Plugin = &plugin;
+        let nexo: &dyn NexoPlugin = &plugin;
+        assert_eq!(legacy.name(), "whatsapp");
+        assert_eq!(nexo.manifest().plugin.id, "whatsapp");
+        assert_eq!(legacy.name(), nexo.manifest().plugin.id);
+    }
+
+    #[test]
+    fn multi_instance_factory_yields_distinct_registry_names_same_manifest_id() {
+        // Multi-account: per-instance label diverges (`whatsapp.acct_a`
+        // vs `whatsapp.acct_b`) but the manifest id stays `"whatsapp"`
+        // for both. Operator-side state lives in `registry_name`, never
+        // the manifest — that is what lets one factory_registry entry
+        // per account coexist without collapsing into one another.
+        // Each instance also needs a distinct session_dir (test fixture
+        // builds path off the instance label) so Signal keys don't
+        // stomp each other.
+        let p_a = WhatsappPlugin::new(test_whatsapp_config(Some("acct_a")));
+        let p_b = WhatsappPlugin::new(test_whatsapp_config(Some("acct_b")));
+        let legacy_a: &dyn Plugin = &p_a;
+        let legacy_b: &dyn Plugin = &p_b;
+        let nexo_a: &dyn NexoPlugin = &p_a;
+        let nexo_b: &dyn NexoPlugin = &p_b;
+        assert_eq!(legacy_a.name(), "whatsapp.acct_a");
+        assert_eq!(legacy_b.name(), "whatsapp.acct_b");
+        assert_ne!(legacy_a.name(), legacy_b.name());
+        assert_eq!(nexo_a.manifest().plugin.id, "whatsapp");
+        assert_eq!(nexo_b.manifest().plugin.id, "whatsapp");
+        assert_eq!(
+            nexo_a.manifest().plugin.id,
+            nexo_b.manifest().plugin.id
+        );
     }
 }

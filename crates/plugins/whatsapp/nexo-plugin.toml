@@ -1,0 +1,27 @@
+# Phase 81.12.c — DORMANT until Phase 81.12.e ships the boot wire flip.
+#
+# This manifest is part of the plugin crate and parsed at compile-time
+# via `include_str!` in `WhatsappPlugin::new()`. Operators MUST NOT add
+# this directory to `plugins.discovery.search_paths` until Phase 81.12.e
+# (see proyecto/PHASES-curated.md). Doing so today would cause the
+# discovery walker to pick up the plugin while the legacy registration
+# in `src/main.rs:1880-1897` still constructs `WhatsappPlugin` via
+# `PluginRegistry::register`. The result is harmless on its own
+# (factory_registry passed to wire_plugin_registry is `None`, so the
+# discovered plugin records `InitOutcome::NoHandle`) — but it's
+# dead noise.
+#
+# 81.12.e moves this file (or a symlink) into the operator's discovery
+# search path AND replaces the legacy block with
+# `factory_registry.register("whatsapp", whatsapp_plugin_factory(cfg))`
+# called once per `WhatsappPluginConfig` instance.
+
+[plugin]
+id = "whatsapp"
+version = "0.1.1"
+name = "WhatsApp"
+description = "WhatsApp channel for nexo agents (wa-agent + Signal Protocol)."
+min_nexo_version = ">=0.1.0"
+
+[plugin.requires]
+nexo_capabilities = ["broker"]
