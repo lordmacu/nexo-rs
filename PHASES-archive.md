@@ -46,6 +46,7 @@ here** — reopen the phase by adding a row to the active table in
 | 76 | MCP server hardening | 16/16 | ✅ |
 | 77 | Tool parity sweep | 20/20 | ✅ |
 | 79 | Tool surface parity sweep | 14/14 | ✅ |
+| 31 | Plugin marketplace + multi-language authoring | 13/13 | ✅ shipped 2026-05-04 |
 
 ## Backlog phases (not yet active, not yet closed)
 
