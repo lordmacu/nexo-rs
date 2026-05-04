@@ -18,59 +18,69 @@ Historical detailed notes that were previously written in Spanish are preserved 
 
 ## Open items
 
-### Phase 82.10.p — admin pairing → channel plugin bridge
+### Phase 82.10.p — admin pairing → channel plugin bridge ✅ shipped
 
-`nexo/admin/pairing/start` (Phase 82.10.h.b.5) is wired to
-`InMemoryPairingChallengeStore::create_challenge`, which only
-inserts a row with `state: Pending` and never tells the
-WhatsApp plugin (or any future channel plugin) to actually
-generate a QR / pairing artifact. End-to-end consequence: the
-microapp UI calls `pairing/start` → gets `challenge_id` +
-`instructions` → polls `pairing/status` forever (state stays
-`pending`) → no QR ever surfaces.
+Resolved across commits `54e394a..fab0231` (8 atomic steps):
+1. `PairingChannelTrigger` trait + types — commit `54e394a`.
+2. `PairingChallengeStore::update_qr / update_state` — commit `285a059`.
+3. Dispatcher wires triggers map + handles registry — commit `efd89b9`.
+4. `pair_with_callback` in `nexo-plugin-whatsapp::session` exposes
+   each `wa-agent` `on_qr` rotation as `(qr_png_b64, qr_ascii,
+   expires_at_ms)` — commit `6537988`.
+5. `WhatsappPairingTrigger` impl spawns the wa-agent flow,
+   pushes QR rotations into the store + notifier, observes
+   cancel via `tokio::select!` — commit `f790088`.
+6. `AdminBootstrapInputs.pairing_triggers` field + `main.rs`
+   wires the production map from `cfg.plugins.whatsapp` —
+   commit `4c6c0cf`.
+7. End-to-end integration test in `nexo-setup` (4 cases:
+   happy / unsupported channel / trigger reject + rollback /
+   cancel propagation) — commit `fab0231`.
+8. Smoke test daemon-mode evidence: `pairing/start whatsapp`
+   resolved to `state: qr_ready` with 9.5 KB `qr_png_base64`
+   + ASCII art payload after wa-agent connected to
+   `wss://web.whatsapp.com/ws/chat` and received the
+   `pair-device` node. `pairing/cancel` flipped state to
+   `cancelled` and the trigger task exited cleanly.
 
-The WhatsApp plugin already has the building blocks
-(`crates/plugins/whatsapp/src/pairing.rs::SharedPairingState`
-with `get_qr` / `status` snapshots, lifecycle + `events::Qr`
-broker emission) but they're driven only by the plugin's own
-runtime — the admin pairing code path doesn't subscribe.
+Deferred follow-ups carried forward:
 
-Discovered while end-to-end testing the agent-creator microapp
-wizard against `nexo/admin/pairing/start`. Framework newline
-fix (commit `d95275b`) + microapp `agent_id` fallback (microapp
-commit `1caa683`) cleared the request path; this gap is the
-remaining blocker for the operator-facing QR flow.
+- **82.10.p.runtime-pairing-mode** — plugin runtime
+  (`crates/plugins/whatsapp/src/session.rs:131-143`) still
+  refuses to boot when `creds.json` is absent. Smoke test
+  worked around this by setting
+  `whatsapp.yaml.enabled: false` so only the trigger
+  registers (the runtime never boots). Production
+  multi-tenant SaaS needs a "pairing-only" plugin mode that
+  boots without creds and no-ops the outbound dispatch path
+  until the user completes pairing. Without it, operators
+  must toggle `enabled: true` AFTER the first scan and
+  hot-reload to start sending — workable for setup wizards,
+  rough edge for self-serve onboarding.
+- **82.10.p.handle-ttl-eviction** — the dispatcher inserts
+  handles into a `DashMap` but
+  `InMemoryPairingChallengeStore::prune_expired` doesn't
+  cross-reference and call `handle.abort()`. Long-running
+  daemons with many abandoned challenges leak the spawned
+  trigger tasks until process restart. Wire is straight:
+  pass the handles map into the prune sweep + abort each
+  evicted entry. ~30 LOC.
+- **82.10.p.device-jid-on-linked** — `pair_with_callback`
+  resolves with `PairingOutcome::default()` (no `device_jid`).
+  When wa-agent surfaces it post-connect (already on the
+  whatsapp-rs roadmap per `/home/familia/whatsapp-rs`), the
+  trigger should plumb it into `PairingStatusData.device_jid`.
+- **82.10.p.recovery-no-qr-path** — wa-agent's "creds existed,
+  recovered without QR" path
+  (`research/extensions/whatsapp/src/login-qr.test.ts:151-176`)
+  is not exercised today. Trigger should branch on the
+  missing on_qr callback inside `connect()` and flip directly
+  to `Linked` instead of staying `Pending`.
 
-Wire to design:
-1. `PairingChannelTrigger` trait in `nexo-core` —
-   `start(challenge_id, agent_id, channel, instance) -> ()`.
-2. `WhatsappPairingTrigger` impl in
-   `crates/plugins/whatsapp/` — boots a wa-agent client in
-   pairing mode (today the runtime refuses to boot without
-   creds; needs an explicit pairing-mode entry that
-   `crates/plugins/whatsapp/src/session.rs:137-139` currently
-   blocks) and routes `events::Qr` / lifecycle frames into the
-   challenge store + notifier.
-3. `AdminBootstrap` accepts an optional triggers map
-   (channel → trigger) and the dispatcher's
-   `pairing/start` handler invokes the matching trigger after
-   inserting the challenge.
-4. `PairingChallengeStore` gains `update_qr` / `update_state`
-   so the trigger task can flip `Pending → QrReady → Linked`
-   and the existing `StdioPairingNotifier` push path delivers
-   the SSE updates the microapp already subscribes to.
-5. Lifecycle: `pairing/cancel` → trigger.stop(); challenge TTL
-   → trigger.stop(); operator-side observability for stuck
-   triggers (timeout / channel unavailable / creds rejected).
-
-Out of scope for this entry but adjacent: telegram-link-style
-pairing (no QR — confirm via deep link) follows the same
-trigger surface; future channels plug in without touching
-admin pairing.
-
-Owners: framework. Upstream from microapp UI (Phase M9.b
-already consumes the SSE push path correctly — just gets
-nothing today).
+Telegram-link-style pairing (no QR — confirm via deep link)
+plugs into the same `PairingChannelTrigger` trait without
+admin handler changes; new channel impls can be added in
+isolation under `crates/plugins/<channel>/pairing_trigger.rs`.
 
 ### Phase 36.2 — Agent memory snapshots (deferred items)
 
