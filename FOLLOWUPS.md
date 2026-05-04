@@ -1375,6 +1375,36 @@ coordinación de archivos cross-cutting.
   if the consumer can't keep up. Switch to `mpsc::channel(N)`
   with drop-on-full + warn. ~0.3 d.
 
+- **81.27 ✅ shipped 2026-05-04** — Remote `HookInterceptor`
+  wrapper. New `crates/core/src/agent/hook_remote.rs`
+  (~280 LOC + 8 unit tests + 1 e2e). `RemoteHookHandler`
+  implements `HookHandler` trait by translating
+  `on_hook(name, event)` into `hook.on_hook` JSON-RPC
+  requests. Wire reply shape is the existing `HookResponse`
+  (already serde-derived — reused directly). Continue-on-error
+  semantic: every dispatch failure returns
+  `Ok(HookResponse::default())` so `HookRegistry::fire`
+  iterates + agent flow doesn't break. Default 5s timeout;
+  `NEXO_PLUGIN_HOOK_TIMEOUT_MS` env override.
+  `WirePluginRegistryOutput.hook_registry: Arc<HookRegistry>`
+  field added. `SubprocessCtxStubs::build_with_shared_registries`
+  combined constructor. `init_loop` gained 6th arg + new
+  `register_remote_hook_handlers_after_init` post-init hook
+  chained after llm. Factory-registered Ok arm in init_loop
+  also got the full chain (was missing llm+hook before — fix).
+  Contract v1.7.0 with §5.z "Hook methods". Authoring docs
+  gain "Contributing hook handlers" section. 1304/1304
+  nexo-core lib + 4 e2e tests + workspace clean.
+
+- **81.27.b ⬜** Per-hook priority via manifest. Today remote
+  hooks register with default priority 0; operator-side
+  priority tuning needs a manifest field. ~0.3 d.
+
+- **81.27.c ⬜** Capability-negotiation handshake validating
+  the subprocess actually exposes declared hook names at
+  `initialize`-reply time. Pairs with 81.28.b umbrella.
+  ~0.5 d.
+
 - **81.15.c.b ✅ shipped 2026-05-01** — SDK streaming
   consumption helper. Pending value type changed to
   `PendingKind` enum (Single for non-streaming, Streaming for

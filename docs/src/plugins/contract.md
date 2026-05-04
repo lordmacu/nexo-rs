@@ -5,7 +5,7 @@
 
 | Field | Value |
 |-------|-------|
-| `contract_version` | `1.6.0` |
+| `contract_version` | `1.7.0` |
 | Status | Stable |
 | Authoritative reference | This document |
 | Reference implementations | Host: `crates/core/src/agent/nexo_plugin_registry/subprocess.rs`. Rust child: `crates/microapp-sdk/src/plugin.rs` (feature `plugin`). |
@@ -724,6 +724,98 @@ etc.). Structured retry-after info lands in the message string
 for v1; future contract bumps may add a typed
 `LlmProviderError` enum.
 
+## 5.z Hook methods (Phase 81.27)
+
+Subprocess plugins that contribute hook handlers (declared in
+`[plugin.extends].hooks`, §2.1) implement one host-initiated
+request method.
+
+### `hook.on_hook`
+
+```jsonc
+// host → child
+{
+  "jsonrpc": "2.0",
+  "id": 60,
+  "method": "hook.on_hook",
+  "params": {
+    "plugin_id": "compliance_plugin",
+    "hook_name": "before_message",
+    "event": {
+      "sender": "alice",
+      "body": "ping"
+    }
+  }
+}
+
+// child → host (block)
+{
+  "jsonrpc": "2.0",
+  "id": 60,
+  "result": {
+    "abort": true,
+    "reason": "PII detected",
+    "decision": "block"
+  }
+}
+
+// child → host (transform — rewrite payload)
+{
+  "jsonrpc": "2.0",
+  "id": 60,
+  "result": {
+    "abort": false,
+    "decision": "transform",
+    "transformed_body": "[REDACTED]"
+  }
+}
+
+// child → host (allow / no-op)
+{
+  "jsonrpc": "2.0",
+  "id": 60,
+  "result": {}
+}
+```
+
+The `result` shape is `HookResponse` (defined in
+`crates/extensions/src/runtime/mod.rs`). Fields:
+
+- `abort: bool` (legacy block signal — Phase 11.6)
+- `reason: Option<String>` (operator-readable explanation)
+- `override: Option<JsonValue>` (key-by-key event mutation;
+  non-object values logged + ignored)
+- `decision: Option<"allow" | "block" | "transform">` (Phase 83.3
+  — richer audit signal)
+- `transformed_body: Option<String>` (only meaningful with
+  `decision: "transform"`)
+- `do_not_reply_again: bool` (anti-loop signal — host suppresses
+  pending auto-replies for the conversation)
+
+Default host-side timeout: **5 seconds** (lower than channel
+30s and LLM 60s — hooks fire on the message hot path; long
+timeouts block agent flow). Operator override via
+`NEXO_PLUGIN_HOOK_TIMEOUT_MS` env.
+
+### Continue-on-error semantic
+
+**Every dispatch failure** (transport closed, subprocess crash,
+timeout, JSON-RPC error, malformed reply) returns
+`HookResponse::default()` (Continue) on the host side. The
+`HookRegistry::fire` loop continues iterating remaining
+handlers and the agent flow does NOT break on subprocess
+misbehavior.
+
+This is the explicit philosophy from `hook_registry.rs`:
+> "extension misbehavior must not take down agent flow."
+
+Operators see the failures via `tracing::warn!` (target
+`plugins.init` and the handler's own dispatch logs).
+
+`-32601 method_not_found` from a child means the plugin declared
+`extends.hooks = [...]` but did not implement the wire method;
+the host treats this as Continue (no hard failure).
+
 ## 6. Topic allowlist
 
 The host derives subscribe + publish patterns from the
@@ -988,6 +1080,7 @@ contract document.
 | `1.4.0` | 2026-05-04 | Phase 81.28 — `[plugin.extends]` manifest section added (`channels` / `llm_providers` / `memory_backends` / `hooks` lists). Schema-only this revision: parser + validator ship; daemon dispatch wiring per registry lands in Phase 81.24 (channels), 81.25 (LLM providers), 81.26 (memory backends), 81.27 (hooks). Additive — manifests without `[plugin.extends]` parse and validate unchanged. |
 | `1.5.0` | 2026-05-04 | Phase 81.24 — `channel.start` / `channel.stop` / `channel.send_outbound` host-initiated request methods added (§5.x). Subprocess plugins declaring `[plugin.extends].channels = [...]` get one `RemoteChannelAdapter` per kind registered into the daemon's `ChannelAdapterRegistry`. Channel-specific error codes `-33001` through `-33005` map onto typed `ChannelAdapterError` variants. Default host-side timeouts: 30 s for start/stop, 60 s for send_outbound; `NEXO_PLUGIN_CHANNEL_TIMEOUT_MS` overrides all three. Additive — plugins not declaring channels are unaffected. |
 | `1.6.0` | 2026-05-04 | Phase 81.25 — `llm.chat` host-initiated request method (sync + streaming via `params.stream` flag) + `llm.chat.delta` streaming notifications added (§5.y). Subprocess plugins declaring `[plugin.extends].llm_providers = [...]` get one `RemoteLlmFactory` per provider name registered into the daemon's `LlmRegistry`. LLM-specific error codes `-33101` through `-33105`. Default timeouts: 60 s sync chat, 300 s streaming; `NEXO_PLUGIN_LLM_TIMEOUT_MS` overrides both. Additive — plugins not declaring llm_providers are unaffected. |
+| `1.7.0` | 2026-05-04 | Phase 81.27 — `hook.on_hook` host-initiated request method added (§5.z). Subprocess plugins declaring `[plugin.extends].hooks = [...]` get one `RemoteHookHandler` per hook name registered into the daemon's `HookRegistry`. Reply shape is the existing `HookResponse` (already serde-derived); reused directly as wire type. Continue-on-error semantic: every dispatch failure (transport, timeout, JSON-RPC err, decode) returns `HookResponse::default()` so `HookRegistry::fire` keeps iterating + agent flow doesn't break. Default 5s timeout (lower than channels/LLM); `NEXO_PLUGIN_HOOK_TIMEOUT_MS` env override. Additive — plugins not declaring hooks are unaffected. |
 
 ## See also
 

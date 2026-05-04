@@ -151,6 +151,42 @@ fn try_load_plugin_config(
     }
 }
 
+/// Phase 81.27 — after `init()` + channel + LLM registrations
+/// succeed, register every hook name from
+/// `manifest.plugin.extends.hooks` as a `RemoteHookHandler`.
+/// Only fires when the handle is a `SubprocessNexoPlugin`; other
+/// concrete types skip silently. Failure escalates to
+/// `InitOutcome::Failed`. Continue-on-error semantic lives
+/// inside `RemoteHookHandler::on_hook` itself; this hook only
+/// fires when registration plumbing fails (e.g. Inner not yet
+/// populated — shouldn't happen post-init).
+async fn register_remote_hook_handlers_after_init(
+    plugin_id: &str,
+    handle: &Arc<dyn NexoPlugin>,
+    hook_registry: &Arc<crate::agent::hook_registry::HookRegistry>,
+) -> Option<InitOutcome> {
+    let any = handle.as_any();
+    let sub = match any.downcast_ref::<
+        crate::agent::nexo_plugin_registry::subprocess::SubprocessNexoPlugin,
+    >() {
+        Some(s) => s,
+        None => return None,
+    };
+    match sub.register_remote_hook_handlers(hook_registry).await {
+        Ok(_) => None,
+        Err(e) => {
+            let error = format!("hook handler register: {e}");
+            tracing::warn!(
+                target: "plugins.init",
+                plugin_id = %plugin_id,
+                %error,
+                "remote hook handler registration failed"
+            );
+            Some(InitOutcome::Failed { error })
+        }
+    }
+}
+
 /// Phase 81.25 — after `init()` + channel registration succeed,
 /// register every provider name from
 /// `manifest.plugin.extends.llm_providers` as a `RemoteLlmFactory`.
@@ -261,6 +297,7 @@ pub async fn run_plugin_init_loop_with_factory<'env, F>(
     config_dir: &Path,
     channel_adapter_registry: &Arc<crate::agent::channel_adapter::ChannelAdapterRegistry>,
     llm_registry: &Arc<nexo_llm::LlmRegistry>,
+    hook_registry: &Arc<crate::agent::hook_registry::HookRegistry>,
     mut ctx_factory: F,
 ) -> FactoryInitResult
 where
@@ -327,6 +364,15 @@ where
                                     .await
                                 {
                                     outcomes.insert(id, failed);
+                                } else if let Some(failed) =
+                                    register_remote_hook_handlers_after_init(
+                                        &id,
+                                        &handle,
+                                        hook_registry,
+                                    )
+                                    .await
+                                {
+                                    outcomes.insert(id, failed);
                                 } else {
                                     outcomes
                                         .insert(id.clone(), InitOutcome::Ok { duration_ms });
@@ -387,6 +433,22 @@ where
                             &id,
                             &handle,
                             channel_adapter_registry,
+                        )
+                        .await
+                        {
+                            outcomes.insert(id, failed);
+                        } else if let Some(failed) = register_remote_llm_providers_after_init(
+                            &id,
+                            &handle,
+                            llm_registry,
+                        )
+                        .await
+                        {
+                            outcomes.insert(id, failed);
+                        } else if let Some(failed) = register_remote_hook_handlers_after_init(
+                            &id,
+                            &handle,
+                            hook_registry,
                         )
                         .await
                         {
@@ -507,12 +569,14 @@ mod tests {
         let cfg_dir = tempfile::tempdir().unwrap();
         let chan_reg = Arc::new(crate::agent::channel_adapter::ChannelAdapterRegistry::new());
         let llm_reg = Arc::new(nexo_llm::LlmRegistry::new());
+        let hook_reg = Arc::new(crate::agent::hook_registry::HookRegistry::new());
         let result = run_plugin_init_loop_with_factory(
             &snap,
             &registry,
             cfg_dir.path(),
             &chan_reg,
             &llm_reg,
+            &hook_reg,
             |_m, _cfg| -> PluginInitContext<'_> {
                 unreachable!(
                     "ctx_factory must NOT be invoked when the factory closure returns Err"
@@ -616,12 +680,14 @@ mod tests {
         let cfg_dir = tempfile::tempdir().unwrap();
         let chan_reg = Arc::new(crate::agent::channel_adapter::ChannelAdapterRegistry::new());
         let llm_reg = Arc::new(nexo_llm::LlmRegistry::new());
+        let hook_reg = Arc::new(crate::agent::hook_registry::HookRegistry::new());
         let result = run_plugin_init_loop_with_factory(
             &snap,
             &registry,
             cfg_dir.path(),
             &chan_reg,
             &llm_reg,
+            &hook_reg,
             |_m, _cfg| -> PluginInitContext<'_> {
                 unreachable!(
                     "ctx_factory must NOT be invoked for non-subprocess manifests"
@@ -685,12 +751,14 @@ mod tests {
 
         let chan_reg = Arc::new(crate::agent::channel_adapter::ChannelAdapterRegistry::new());
         let llm_reg = Arc::new(nexo_llm::LlmRegistry::new());
+        let hook_reg = Arc::new(crate::agent::hook_registry::HookRegistry::new());
         let result = run_plugin_init_loop_with_factory(
             &snap,
             &registry,
             cfg_dir.path(),
             &chan_reg,
             &llm_reg,
+            &hook_reg,
             |_m, _cfg| -> PluginInitContext<'_> {
                 unreachable!(
                     "ctx_factory must NOT be invoked when config load fails"

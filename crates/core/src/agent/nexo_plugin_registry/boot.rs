@@ -86,6 +86,11 @@ pub struct WirePluginRegistryOutput {
     /// scope so the outbound dispatcher refactor (Phase 81.9.b)
     /// can pull it without changing the boot wire shape.
     pub channel_adapter_registry: Arc<ChannelAdapterRegistry>,
+    /// Phase 81.27 — `HookRegistry` shared with the post-init
+    /// hook so subprocess plugins declaring `extends.hooks =
+    /// [...]` can register `RemoteHookHandler`s into the same
+    /// instance the agent runtime fires hooks against.
+    pub hook_registry: Arc<crate::agent::hook_registry::HookRegistry>,
     /// Phase 81.11 — plugin-declared capability gates aggregated
     /// at boot. Same data as
     /// `registry.snapshot().last_report.plugin_capability_gates`,
@@ -189,6 +194,11 @@ pub async fn wire_plugin_registry_with_runtime(
     // `WirePluginRegistryOutput` so callers see the same Arc.
     let shared_channel_adapter_registry: Arc<ChannelAdapterRegistry> =
         Arc::new(ChannelAdapterRegistry::new());
+    // Phase 81.27 — hook registry shared between the post-init
+    // `register_remote_hook_handlers` hook and the
+    // `WirePluginRegistryOutput` so callers see the same Arc.
+    let shared_hook_registry: Arc<crate::agent::hook_registry::HookRegistry> =
+        Arc::new(crate::agent::hook_registry::HookRegistry::new());
 
     let (init_outcomes, plugin_handles): (
         BTreeMap<String, super::InitOutcome>,
@@ -201,9 +211,10 @@ pub async fn wire_plugin_registry_with_runtime(
             // fine because SubprocessNexoPlugin::init only reads
             // ctx.broker + ctx.shutdown today. `stubs` lives inside
             // this match arm, the closure borrows from it.
-            let stubs = SubprocessCtxStubs::build_with_channel_registry(
+            let stubs = SubprocessCtxStubs::build_with_shared_registries(
                 rt,
                 shared_channel_adapter_registry.clone(),
+                shared_hook_registry.clone(),
             );
             let r = run_plugin_init_loop_with_factory(
                 &snap,
@@ -211,6 +222,7 @@ pub async fn wire_plugin_registry_with_runtime(
                 rt.config_dir.as_path(),
                 &shared_channel_adapter_registry,
                 &rt.llm_registry,
+                &shared_hook_registry,
                 |manifest, plugin_cfg| stubs.context_for(manifest, rt, plugin_cfg),
             )
             .await;
@@ -241,6 +253,7 @@ pub async fn wire_plugin_registry_with_runtime(
                 legacy_cfg_dir,
                 &shared_channel_adapter_registry,
                 &legacy_llm_registry,
+                &shared_hook_registry,
                 |_manifest, _plugin_cfg| -> crate::agent::plugin_host::PluginInitContext<'_> {
                     unreachable!(
                         "wire_plugin_registry: subprocess_runtime is None but a manifest with entrypoint was discovered. \
@@ -354,6 +367,9 @@ pub async fn wire_plugin_registry_with_runtime(
         // Phase 81.24 — same registry used by the post-init hook so
         // callers see the registered remote adapters.
         channel_adapter_registry: shared_channel_adapter_registry,
+        // Phase 81.27 — same registry used by the post-init hook so
+        // callers see remote `RemoteHookHandler` registrations.
+        hook_registry: shared_hook_registry,
         plugin_capability_gates: plugin_capability_gates_for_output,
         unmet_required_capabilities: unmet_required_for_output,
         plugin_handles,
@@ -377,15 +393,17 @@ struct SubprocessCtxStubs {
 }
 
 impl SubprocessCtxStubs {
-    /// Phase 81.24 — variant that accepts a pre-built channel
-    /// adapter registry so the post-init hook + the wire output
-    /// share the same Arc.
-    fn build_with_channel_registry(
+    /// Phase 81.27 — variant that accepts both a pre-built channel
+    /// adapter registry AND a pre-built hook registry so all three
+    /// (stubs + post-init hook + wire output) share the same Arcs.
+    fn build_with_shared_registries(
         rt: &SubprocessRuntime,
         channel_adapter_registry: Arc<ChannelAdapterRegistry>,
+        hook_registry: Arc<crate::agent::hook_registry::HookRegistry>,
     ) -> Self {
         let mut stubs = Self::build(rt);
         stubs.channel_adapter_registry = channel_adapter_registry;
+        stubs.hook_registry = hook_registry;
         stubs
     }
 

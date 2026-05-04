@@ -167,6 +167,57 @@ impl SubprocessNexoPlugin {
         }
     }
 
+    /// Phase 81.27 — for each hook name in
+    /// `manifest.plugin.extends.hooks`, build a
+    /// `RemoteHookHandler` sharing this plugin's stdio bridge
+    /// and register it with the hook registry. Returns the list
+    /// of registered hook names. `HookRegistry::register` itself
+    /// never fails (cap-violations log + skip silently), so the
+    /// only failure mode is `Inner` not yet being populated.
+    /// Must be called AFTER `init()`.
+    pub async fn register_remote_hook_handlers(
+        &self,
+        hook_registry: &Arc<crate::agent::hook_registry::HookRegistry>,
+    ) -> Result<
+        Vec<String>,
+        crate::agent::hook_remote::HookHandlerRegistrationError,
+    > {
+        let hooks = self.cached_manifest.plugin.extends.hooks.clone();
+        if hooks.is_empty() {
+            return Ok(Vec::new());
+        }
+        let plugin_id = self.cached_manifest.plugin.id.clone();
+        let (stdin_tx, pending, next_id) = {
+            let guard = self.inner.lock().await;
+            match guard.as_ref() {
+                Some(inner) => (
+                    inner.stdin_tx.clone(),
+                    inner.pending.clone(),
+                    inner.next_id.clone(),
+                ),
+                None => {
+                    return Err(
+                        crate::agent::hook_remote::HookHandlerRegistrationError::InnerUnavailable,
+                    );
+                }
+            }
+        };
+
+        let mut registered: Vec<String> = Vec::new();
+        for hook_name in hooks {
+            let handler = crate::agent::hook_remote::RemoteHookHandler::new(
+                hook_name.clone(),
+                plugin_id.clone(),
+                stdin_tx.clone(),
+                pending.clone(),
+                next_id.clone(),
+            );
+            hook_registry.register(&hook_name, plugin_id.clone(), handler);
+            registered.push(hook_name);
+        }
+        Ok(registered)
+    }
+
     /// Phase 81.25 — for each provider name in
     /// `manifest.plugin.extends.llm_providers`, build a
     /// `RemoteLlmFactory` sharing this plugin's stdio bridge and
