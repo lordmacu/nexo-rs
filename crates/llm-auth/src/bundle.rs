@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 /// `agent setup doctor` can surface a useful diagnosis when refresh
 /// fails (e.g. "imported from claude-cli — re-run `claude login`").
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[non_exhaustive]
 pub struct OAuthBundle {
     /// Bearer token sent in `Authorization: Bearer <token>` headers.
     pub access_token: String,
@@ -100,7 +99,6 @@ impl OAuthBundle {
 
 /// Errors produced by [`OAuthBundle::validate`].
 #[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
 pub enum BundleValidationError {
     /// A required string field was empty.
     #[error("bundle missing required field `{0}`")]

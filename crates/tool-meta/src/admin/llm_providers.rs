@@ -185,6 +185,105 @@ pub struct LlmProviderProbeDraftInput {
     pub fields: std::collections::BTreeMap<String, String>,
 }
 
+// ──────────────────────────────────────────────────────────────────
+// Phase 82.10.u — OAuth start/finish endpoints. Two-step flow:
+// SPA calls `oauth_start` to get an authorize URL (auth-code) or
+// user_code+verification_uri (device-code), the operator approves
+// in their browser, then SPA calls `oauth_finish` with the code
+// (or no code for device-code). The daemon owns the PKCE verifier
+// + state across both calls via `VerifierStore` so the SPA never
+// touches the verifier.
+// ──────────────────────────────────────────────────────────────────
+
+/// JSON-RPC method that initiates an OAuth flow.
+pub const LLM_PROVIDERS_OAUTH_START_METHOD: &str =
+    "nexo/admin/llm_providers/oauth_start";
+
+/// JSON-RPC method that finalises an OAuth flow.
+pub const LLM_PROVIDERS_OAUTH_FINISH_METHOD: &str =
+    "nexo/admin/llm_providers/oauth_finish";
+
+/// Params for [`LLM_PROVIDERS_OAUTH_START_METHOD`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct OAuthStartInput {
+    /// Factory id (`anthropic`, `minimax`).
+    pub factory_type: String,
+    /// Auth mode chosen by the operator. Must be one of
+    /// `oauth_auth_code` (Anthropic) or `oauth_device_code`
+    /// (MiniMax). Other modes return `INVALID_AUTH_MODE`.
+    pub auth_mode: AuthMode,
+    /// Optional tenant scope for the resulting bundle. Carried
+    /// across to `oauth_finish` via the verifier store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<String>,
+}
+
+/// Response for [`LLM_PROVIDERS_OAUTH_START_METHOD`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct OAuthStartResponse {
+    /// Opaque session id the SPA carries to `oauth_finish`. Single-
+    /// use: the daemon takes the entry on `oauth_finish` and a
+    /// second call with the same id returns `SESSION_NOT_FOUND`.
+    pub session_id: String,
+    /// URL the operator opens in their browser.
+    /// * For `auth_code`: the authorize URL (claude.ai/oauth/authorize?...).
+    /// * For `device_code`: the verification_uri returned by the
+    ///   provider (operator types `user_code` there).
+    pub authorize_url: String,
+    /// Unix-millis timestamp at which the session expires. SPA
+    /// shows a countdown so the operator knows to retry if they
+    /// take too long.
+    pub expires_at_ms: i64,
+    /// Discriminator: `"auth_code"` or `"device_code"`. SPA
+    /// renders different UIs per kind (paste box vs spinner +
+    /// user_code).
+    pub flow_kind: String,
+    /// Device-code-only: code the operator types into the
+    /// provider's portal. `None` for auth-code flows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_code: Option<String>,
+    /// Device-code-only: SPA-recommended polling interval in ms
+    /// (the daemon polls upstream; SPA polls the daemon at this
+    /// rate to render progress). `None` for auth-code flows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub polling_interval_ms: Option<u64>,
+}
+
+/// Params for [`LLM_PROVIDERS_OAUTH_FINISH_METHOD`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct OAuthFinishInput {
+    /// Session id returned by `oauth_start`.
+    pub session_id: String,
+    /// LLM provider INSTANCE id under which the resulting bundle
+    /// will be persisted (e.g. `"anthropic-personal"`). The yaml
+    /// key, NOT the factory type.
+    pub instance_id: String,
+    /// `auth_code` only: the `<code>#<state>` payload the operator
+    /// pasted from the callback page. Tolerates 4 input shapes
+    /// (see `nexo_llm_auth::pkce::parse_code_payload`). `None` for
+    /// device-code flows (the daemon polls instead).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+}
+
+/// Response for [`LLM_PROVIDERS_OAUTH_FINISH_METHOD`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct OAuthFinishResponse {
+    /// `true` when the bundle was minted + persisted.
+    pub ok: bool,
+    /// Operator-facing email surfaced by the provider (Anthropic
+    /// returns this; MiniMax does not).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_email: Option<String>,
+    /// Bundle access-token expiry in unix-millis.
+    pub expires_at_ms: i64,
+    /// Derived secret id under which the bundle JSON lives in the
+    /// SecretsStore (e.g. `LLM_ANTHROPIC_PERSONAL_OAUTH_BUNDLE`).
+    /// SPA uses this to populate `fields["api_key_secret_id"]` on
+    /// the subsequent upsert call.
+    pub secret_id: String,
+}
+
 /// Phase 82.10.l — JSON-RPC method that probes a configured LLM
 /// provider's reachability + key validity from the daemon's
 /// network position.
@@ -453,9 +552,10 @@ impl DependsOn {
 /// `LlmProviderCatalogEntry::supported_auth_modes`. The SPA shows a
 /// dropdown when more than one is supported; the admin RPC handler
 /// rejects upsert + oauth_start with an unsupported mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum AuthMode {
     /// Static API key (the legacy default).
+    #[default]
     #[serde(rename = "api_key")]
     ApiKey,
     /// Anthropic-style setup-token (`sk-ant-oat01-…`).

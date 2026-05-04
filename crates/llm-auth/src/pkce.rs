@@ -24,7 +24,6 @@ use sha2::{Digest, Sha256};
 /// attacker exchange an intercepted authorization code for tokens.
 /// The crate never logs them; callers must do the same.
 #[derive(Debug, Clone)]
-#[non_exhaustive]
 pub struct Pkce {
     /// Cryptographic random ≥ 32 bytes, base64url-no-pad.
     pub verifier: String,

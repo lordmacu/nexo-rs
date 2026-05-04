@@ -570,6 +570,30 @@ impl AdminRpcBootstrap {
                     crate::admin_adapters::CatalogFactorySchema::new(catalog_arc);
                 dispatcher = dispatcher.with_llm_factory_schema(lookup);
             }
+            // Phase 82.10.u — OAuth verifier store + sweep task.
+            // Cap 100 concurrent sessions; each entry ~256B so the
+            // worst case is ~25 KB. Sweep every 60s drops expired
+            // entries; abandoned wizards never accumulate past TTL.
+            let oauth_store = nexo_llm_auth::InMemoryVerifierStore::new(100);
+            dispatcher = dispatcher.with_oauth_verifier_store(oauth_store.clone());
+            // Spawn the TTL sweep. Detached: the daemon outlives the
+            // bootstrap, so dropping the JoinHandle is fine. Inside
+            // the loop we use `tokio::time::interval` so a slow tick
+            // does not pile up.
+            let store_for_sweep = oauth_store.clone();
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(
+                    std::time::Duration::from_secs(60),
+                );
+                tick.set_missed_tick_behavior(
+                    tokio::time::MissedTickBehavior::Delay,
+                );
+                loop {
+                    tick.tick().await;
+                    use nexo_llm_auth::VerifierStore;
+                    store_for_sweep.sweep_expired().await;
+                }
+            });
             if let Some(reader) = inputs.transcript_reader.clone() {
                 dispatcher = dispatcher.with_agent_events_domain(reader);
             }

@@ -212,6 +212,10 @@ pub struct AdminRpcDispatcher {
     /// factory's declared `credential_schema`.
     llm_factory_schema:
         Option<Arc<dyn super::domains::llm_providers::FactorySchemaLookup>>,
+    /// Phase 82.10.u — OAuth verifier store. `None` disables
+    /// `nexo/admin/llm_providers/oauth_*` (the SPA falls back to
+    /// the manual `oauth_bundle_import` paste path).
+    oauth_verifier_store: Option<Arc<dyn nexo_llm_auth::VerifierStore>>,
     /// Phase 82.11 — transcripts read surface. `None` disables
     /// `nexo/admin/agent_events/*`.
     transcript_reader: Option<Arc<dyn TranscriptReader>>,
@@ -325,6 +329,7 @@ impl AdminRpcDispatcher {
             llm_yaml: None,
             llm_provider_catalog: None,
             llm_factory_schema: None,
+            oauth_verifier_store: None,
             transcript_reader: None,
             processing_store: None,
             escalation_store: None,
@@ -526,6 +531,18 @@ impl AdminRpcDispatcher {
         self
     }
 
+    /// Phase 82.10.u — install the OAuth verifier store the
+    /// `oauth_start` / `oauth_finish` handlers use to suspend
+    /// PKCE state across the two RPC calls. Production wires
+    /// `nexo_llm_auth::InMemoryVerifierStore::new(100)`.
+    pub fn with_oauth_verifier_store(
+        mut self,
+        store: Arc<dyn nexo_llm_auth::VerifierStore>,
+    ) -> Self {
+        self.oauth_verifier_store = Some(store);
+        self
+    }
+
     /// Phase 82.11 — install the agent_events domain. Production
     /// passes a `TranscriptReader` adapter wrapping
     /// `TranscriptWriter` + `TranscriptsIndex`.
@@ -640,6 +657,8 @@ impl AdminRpcDispatcher {
             | "nexo/admin/llm_providers/delete"
             | "nexo/admin/llm_providers/probe"
             | "nexo/admin/llm_providers/probe_draft"
+            | "nexo/admin/llm_providers/oauth_start"
+            | "nexo/admin/llm_providers/oauth_finish"
             | "nexo/admin/llm_providers/catalog" => Some("llm_keys_crud"),
             "nexo/admin/channels/list"
             | "nexo/admin/channels/approve"
@@ -1193,6 +1212,38 @@ impl AdminRpcDispatcher {
                     "llm_providers probe not configured".into(),
                 )),
             },
+            "nexo/admin/llm_providers/oauth_start" => match &self.oauth_verifier_store {
+                Some(store) => {
+                    super::domains::llm_providers::oauth_start(store.as_ref(), params).await
+                }
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "OAuth verifier store not configured".into(),
+                )),
+            },
+            "nexo/admin/llm_providers/oauth_finish" => {
+                match (
+                    &self.oauth_verifier_store,
+                    &self.secrets_store,
+                    &self.llm_yaml,
+                    &self.reload_signal,
+                ) {
+                    (Some(store), Some(secrets), Some(llm), Some(reload)) => {
+                        let trigger = reload.clone();
+                        super::domains::llm_providers::oauth_finish(
+                            store.as_ref(),
+                            secrets.as_ref(),
+                            llm.as_ref(),
+                            params,
+                            &move || trigger(),
+                        )
+                        .await
+                    }
+                    _ => AdminRpcResult::err(AdminRpcError::Internal(
+                        "OAuth finish requires verifier_store + secrets + llm_yaml + reload"
+                            .into(),
+                    )),
+                }
+            }
             "nexo/admin/auth/rotate_token" => match &self.auth_rotator {
                 Some(r) => super::domains::auth::rotate_token(r.as_ref(), params).await,
                 None => AdminRpcResult::err(AdminRpcError::Internal(
