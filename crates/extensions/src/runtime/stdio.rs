@@ -54,6 +54,18 @@ pub struct StdioSpawnOptions {
     pub base_backoff: Duration,
     pub max_backoff: Duration,
     pub env_blocklist_suffixes: Vec<String>,
+    /// Phase 82.12.b — explicit env var names that bypass the
+    /// blocklist filter. Populated by the spawn caller from the
+    /// plugin manifest's
+    /// `[plugin.capabilities.http_server].token_env` (and any
+    /// other declared bearer-style names) so legitimate child-
+    /// facing tokens like `AGENT_CREATOR_TOKEN` reach the
+    /// microapp instead of getting silently stripped because
+    /// their name ends with `_TOKEN`.
+    ///
+    /// Names are matched case-sensitively against the host env
+    /// var keys.
+    pub env_passthrough_allowlist: Vec<String>,
     pub shutdown_grace: Duration,
     /// Phase 82.10.h.b.3 — optional admin RPC router. When set,
     /// frames whose `id` is a string starting with `app:` are
@@ -78,6 +90,7 @@ impl Default for StdioSpawnOptions {
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
+            env_passthrough_allowlist: Vec::new(),
             shutdown_grace: Duration::from_secs(3),
             admin_router: None,
         }
@@ -157,8 +170,24 @@ impl StdioRuntime {
 
     pub async fn spawn_with(
         manifest: &ExtensionManifest,
-        opts: StdioSpawnOptions,
+        mut opts: StdioSpawnOptions,
     ) -> Result<Self, StartError> {
+        // Phase 82.12.b — when the manifest declares an HTTP
+        // server with a `token_env` (e.g. `AGENT_CREATOR_TOKEN`),
+        // whitelist that env var name so the spawn doesn't strip
+        // it via the `_TOKEN` suffix blocklist. Without this the
+        // microapp's HTTP layer reads `unset` + degrades to
+        // stdio-only mode, never binding the operator UI port.
+        if let Some(http) = &manifest.capabilities.http_server {
+            if !opts
+                .env_passthrough_allowlist
+                .iter()
+                .any(|n| n == &http.token_env)
+            {
+                opts.env_passthrough_allowlist
+                    .push(http.token_env.clone());
+            }
+        }
         let (command, args) = match &manifest.transport {
             Transport::Stdio { command, args } => (command.clone(), args.clone()),
             _ => return Err(StartError::UnsupportedTransport),
@@ -451,6 +480,7 @@ fn clone_opts(o: &StdioSpawnOptions) -> StdioSpawnOptions {
         base_backoff: o.base_backoff,
         max_backoff: o.max_backoff,
         env_blocklist_suffixes: o.env_blocklist_suffixes.clone(),
+        env_passthrough_allowlist: o.env_passthrough_allowlist.clone(),
         shutdown_grace: o.shutdown_grace,
         admin_router: o.admin_router.clone(),
     }
@@ -688,8 +718,14 @@ fn build_command(
         .kill_on_drop(true);
 
     // Strip secrets by suffix blocklist before passing env.
+    // Phase 82.12.b — names in `env_passthrough_allowlist`
+    // bypass the blocklist (operator-declared `token_env`
+    // entries from the plugin manifest reach the child).
     let env: Vec<(String, String)> = std::env::vars()
-        .filter(|(k, _)| !env_is_blocked(k, &opts.env_blocklist_suffixes))
+        .filter(|(k, _)| {
+            opts.env_passthrough_allowlist.iter().any(|a| a == k)
+                || !env_is_blocked(k, &opts.env_blocklist_suffixes)
+        })
         .collect();
     cmd.env_clear();
     for (k, v) in env {

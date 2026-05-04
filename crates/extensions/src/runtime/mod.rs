@@ -157,13 +157,64 @@ mod tests {
 }
 
 /// Tool declared by an extension in its handshake response.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+///
+/// Accepts two on-the-wire shapes (Phase 81.13.c — bridge between
+/// SDKs that emit just the name string and the framework's full
+/// descriptor):
+///
+/// - **Bare string** (`"agent_delete"`) → name-only descriptor
+///   with empty `description` + `input_schema = {}`. Used by
+///   pre-82 SDKs whose `tools/list` response only knows tool
+///   names.
+/// - **Full object** (`{name, description, input_schema}`) →
+///   richer descriptor used by the modern microapp SDK.
+///
+/// Both forms validate; the daemon-side router only needs the
+/// name to dispatch, so the lossy form keeps the runtime alive
+/// until the SDK upgrades to the full shape.
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ToolDescriptor {
     pub name: String,
     #[serde(default)]
     pub description: String,
     #[serde(default = "empty_object", rename = "input_schema")]
     pub input_schema: serde_json::Value,
+}
+
+impl<'de> serde::Deserialize<'de> for ToolDescriptor {
+    fn deserialize<D>(d: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        #[serde(untagged)]
+        enum Wire {
+            Bare(String),
+            Full {
+                name: String,
+                #[serde(default)]
+                description: String,
+                #[serde(default = "empty_object", rename = "input_schema")]
+                input_schema: serde_json::Value,
+            },
+        }
+        Ok(match Wire::deserialize(d)? {
+            Wire::Bare(name) => ToolDescriptor {
+                name,
+                description: String::new(),
+                input_schema: empty_object(),
+            },
+            Wire::Full {
+                name,
+                description,
+                input_schema,
+            } => ToolDescriptor {
+                name,
+                description,
+                input_schema,
+            },
+        })
+    }
 }
 
 fn empty_object() -> serde_json::Value {
