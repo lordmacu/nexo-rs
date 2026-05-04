@@ -357,10 +357,14 @@ $adapter-&gt;run();</pre>
 
       </div>
 
-      <div class="mt-10 grid grid-cols-1 md:grid-cols-2 gap-4 max-w-3xl">
+      <div class="mt-10 grid grid-cols-1 md:grid-cols-3 gap-4">
         <a href="docs/plugins/contract.html" class="bg-ink-900/50 border border-ink-800 rounded-lg p-5 hover:border-accent-500/50 transition">
           <div class="font-semibold text-white mb-1">📜 Plugin contract spec</div>
           <div class="text-sm text-ink-400">Wire format, JSON-RPC frames, lifecycle</div>
+        </a>
+        <a href="docs/plugins/patterns.html" class="bg-ink-900/50 border border-ink-800 rounded-lg p-5 hover:border-accent-500/50 transition">
+          <div class="font-semibold text-white mb-1">🧩 8 plugin patterns</div>
+          <div class="text-sm text-ink-400">Echo · webhook · RPC bridge · poller · websocket · multi-instance</div>
         </a>
         <a href="docs/plugins/publishing.html" class="bg-ink-900/50 border border-ink-800 rounded-lg p-5 hover:border-accent-500/50 transition">
           <div class="font-semibold text-white mb-1">📦 Publishing guide</div>
@@ -394,11 +398,14 @@ $adapter-&gt;run();</pre>
               Manifest reference
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
             </a>
+            <a href="docs/extensions/patterns.html" class="inline-flex items-center gap-2 bg-ink-800 hover:bg-ink-700 text-white font-semibold px-5 py-2.5 rounded-lg transition border border-ink-700 text-sm">
+              🧩 8 patterns
+            </a>
             <a href="docs/extensions/templates.html" class="inline-flex items-center gap-2 bg-ink-800 hover:bg-ink-700 text-white font-semibold px-5 py-2.5 rounded-lg transition border border-ink-700 text-sm">
               Templates
             </a>
             <a href="docs/extensions/multi-tenant-saas.html" class="inline-flex items-center gap-2 bg-ink-800 hover:bg-ink-700 text-white font-semibold px-5 py-2.5 rounded-lg transition border border-ink-700 text-sm">
-              Multi-tenant guide
+              Multi-tenant
             </a>
           </div>
         </div>
@@ -460,11 +467,14 @@ per_tenant_secrets = <span class="text-orange-300">true</span></pre>
               Build your first microapp
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
             </a>
+            <a href="docs/microapps/patterns.html" class="inline-flex items-center gap-2 bg-ink-800 hover:bg-ink-700 text-white font-semibold px-5 py-2.5 rounded-lg transition border border-ink-700 text-sm">
+              🧩 8 patterns
+            </a>
             <a href="docs/microapps/admin-rpc.html" class="inline-flex items-center gap-2 bg-ink-800 hover:bg-ink-700 text-white font-semibold px-5 py-2.5 rounded-lg transition border border-ink-700 text-sm">
               Admin RPC API
             </a>
             <a href="docs/microapps/contract.html" class="inline-flex items-center gap-2 bg-ink-800 hover:bg-ink-700 text-white font-semibold px-5 py-2.5 rounded-lg transition border border-ink-700 text-sm">
-              Microapp contract
+              Contract
             </a>
           </div>
         </div>
@@ -634,6 +644,7 @@ admin.reload(<span class="text-orange-300">"acme-corp"</span>).await?;</pre>
           <div class="font-bold text-white mb-3">Plugin SDKs</div>
           <ul class="space-y-2 text-sm">
             <li><a href="docs/plugins/contract.html" class="text-ink-400 hover:text-white">Contract</a></li>
+            <li><a href="docs/plugins/patterns.html" class="text-ink-400 hover:text-white">🧩 Patterns</a></li>
             <li><a href="docs/plugins/python-sdk.html" class="text-ink-400 hover:text-white">Python</a></li>
             <li><a href="docs/plugins/typescript-sdk.html" class="text-ink-400 hover:text-white">TypeScript</a></li>
             <li><a href="docs/plugins/php-sdk.html" class="text-ink-400 hover:text-white">PHP</a></li>
@@ -644,6 +655,7 @@ admin.reload(<span class="text-orange-300">"acme-corp"</span>).await?;</pre>
           <div class="font-bold text-white mb-3">Extensions</div>
           <ul class="space-y-2 text-sm">
             <li><a href="docs/extensions/manifest.html" class="text-ink-400 hover:text-white">Manifest</a></li>
+            <li><a href="docs/extensions/patterns.html" class="text-ink-400 hover:text-white">🧩 Patterns</a></li>
             <li><a href="docs/extensions/templates.html" class="text-ink-400 hover:text-white">Templates</a></li>
             <li><a href="docs/extensions/multi-tenant-saas.html" class="text-ink-400 hover:text-white">Multi-tenant</a></li>
             <li><a href="docs/extensions/cli.html" class="text-ink-400 hover:text-white">CLI</a></li>
@@ -653,6 +665,7 @@ admin.reload(<span class="text-orange-300">"acme-corp"</span>).await?;</pre>
           <div class="font-bold text-white mb-3">Microapps</div>
           <ul class="space-y-2 text-sm">
             <li><a href="docs/microapps/getting-started.html" class="text-ink-400 hover:text-white">Getting started</a></li>
+            <li><a href="docs/microapps/patterns.html" class="text-ink-400 hover:text-white">🧩 Patterns</a></li>
             <li><a href="docs/microapps/admin-rpc.html" class="text-ink-400 hover:text-white">Admin RPC</a></li>
             <li><a href="docs/microapps/contract.html" class="text-ink-400 hover:text-white">Contract</a></li>
             <li><a href="docs/microapps/agent-creator.html" class="text-ink-400 hover:text-white">Agent creator</a></li>
