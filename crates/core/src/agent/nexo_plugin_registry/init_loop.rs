@@ -13,7 +13,10 @@ use std::time::Instant;
 
 use serde::Serialize;
 
+use nexo_plugin_manifest::PluginManifest;
+
 use crate::agent::plugin_host::{NexoPlugin, PluginInitContext};
+use crate::agent::scoped_tool_registry::{NamespaceEnforcement, NamespaceViolation};
 
 use super::factory::{FactoryInstantiateError, PluginFactoryRegistry};
 use super::subprocess::subprocess_plugin_factory;
@@ -45,7 +48,7 @@ pub async fn run_plugin_init_loop<'env, F>(
     mut ctx_factory: F,
 ) -> BTreeMap<String, InitOutcome>
 where
-    F: FnMut(&str) -> PluginInitContext<'env>,
+    F: FnMut(&PluginManifest) -> PluginInitContext<'env>,
 {
     let mut outcomes = BTreeMap::new();
     for plugin in &snapshot.plugins {
@@ -54,7 +57,7 @@ where
             outcomes.insert(id, InitOutcome::NoHandle);
             continue;
         };
-        let mut ctx = ctx_factory(&id);
+        let mut ctx = ctx_factory(&plugin.manifest);
         let start = Instant::now();
         match handle.init(&mut ctx).await {
             Ok(()) => {
@@ -98,13 +101,66 @@ pub struct FactoryInitResult {
     pub handles: BTreeMap<String, Arc<dyn NexoPlugin>>,
 }
 
+/// Phase 81.3 — convert collected violations into a human-readable
+/// "first-3-then-count" sample string. Used by the init loop to
+/// enrich `InitOutcome::Failed` when Strict mode rejects.
+fn format_violation_sample(violations: &[NamespaceViolation]) -> String {
+    let take = violations.len().min(3);
+    let head: Vec<String> = violations
+        .iter()
+        .take(take)
+        .map(|v| format!("{}={}", v.attempted_name, v.reason.as_str()))
+        .collect();
+    if violations.len() > take {
+        format!("{} … (+{} more)", head.join(", "), violations.len() - take)
+    } else {
+        head.join(", ")
+    }
+}
+
+/// Phase 81.3 — drain ScopedToolRegistry after `init()` returns and,
+/// in Strict mode, escalate any violations to `InitOutcome::Failed`.
+/// Returns `None` when the post-init outcome is unchanged.
+fn check_namespace_after_init(
+    plugin_id: &str,
+    ctx: &PluginInitContext<'_>,
+) -> Option<InitOutcome> {
+    let violations = ctx.tool_registry.drain_violations();
+    if violations.is_empty() {
+        return None;
+    }
+    if ctx.tool_registry.mode() != NamespaceEnforcement::Strict {
+        // Warn mode — log only; init outcome stays Ok.
+        tracing::warn!(
+            target: "plugins.init",
+            plugin_id = %plugin_id,
+            count = violations.len(),
+            "plugin tool-namespace violations recorded (warn mode; init succeeded)",
+        );
+        return None;
+    }
+    let sample = format_violation_sample(&violations);
+    let error = format!(
+        "plugin `{plugin_id}` violated tool namespace policy ({} violation(s); first 3: {sample})",
+        violations.len()
+    );
+    tracing::warn!(
+        target: "plugins.init",
+        plugin_id = %plugin_id,
+        count = violations.len(),
+        %sample,
+        "tool namespace violations rejected (strict mode)",
+    );
+    Some(InitOutcome::Failed { error })
+}
+
 pub async fn run_plugin_init_loop_with_factory<'env, F>(
     snapshot: &NexoPluginRegistrySnapshot,
     factory_registry: &PluginFactoryRegistry,
     mut ctx_factory: F,
 ) -> FactoryInitResult
 where
-    F: FnMut(&str) -> PluginInitContext<'env>,
+    F: FnMut(&PluginManifest) -> PluginInitContext<'env>,
 {
     let mut outcomes = BTreeMap::new();
     let mut handles: BTreeMap<String, Arc<dyn NexoPlugin>> = BTreeMap::new();
@@ -123,14 +179,18 @@ where
                 let auto_factory = subprocess_plugin_factory(plugin.manifest.clone());
                 match auto_factory(&plugin.manifest) {
                     Ok(handle) => {
-                        let mut ctx = ctx_factory(&id);
+                        let mut ctx = ctx_factory(&plugin.manifest);
                         let start = std::time::Instant::now();
                         match handle.init(&mut ctx).await {
                             Ok(()) => {
                                 let duration_ms = start.elapsed().as_millis() as u64;
-                                outcomes
-                                    .insert(id.clone(), InitOutcome::Ok { duration_ms });
-                                handles.insert(id, handle);
+                                if let Some(failed) = check_namespace_after_init(&id, &ctx) {
+                                    outcomes.insert(id, failed);
+                                } else {
+                                    outcomes
+                                        .insert(id.clone(), InitOutcome::Ok { duration_ms });
+                                    handles.insert(id, handle);
+                                }
                             }
                             Err(e) => {
                                 let error = e.to_string();
@@ -175,13 +235,17 @@ where
                 outcomes.insert(id, InitOutcome::Failed { error });
             }
             Ok(handle) => {
-                let mut ctx = ctx_factory(&id);
+                let mut ctx = ctx_factory(&plugin.manifest);
                 let start = std::time::Instant::now();
                 match handle.init(&mut ctx).await {
                     Ok(()) => {
                         let duration_ms = start.elapsed().as_millis() as u64;
-                        outcomes.insert(id.clone(), InitOutcome::Ok { duration_ms });
-                        handles.insert(id, handle);
+                        if let Some(failed) = check_namespace_after_init(&id, &ctx) {
+                            outcomes.insert(id, failed);
+                        } else {
+                            outcomes.insert(id.clone(), InitOutcome::Ok { duration_ms });
+                            handles.insert(id, handle);
+                        }
                     }
                     Err(e) => {
                         let error = e.to_string();
@@ -241,7 +305,7 @@ mod tests {
         let outcomes = run_plugin_init_loop(
             &snap,
             &BTreeMap::new(),
-            |_| -> PluginInitContext<'_> {
+            |_m| -> PluginInitContext<'_> {
                 unreachable!("ctx_factory should not be called when handles is empty");
             },
         )
@@ -294,7 +358,7 @@ mod tests {
         let result = run_plugin_init_loop_with_factory(
             &snap,
             &registry,
-            |_id| -> PluginInitContext<'_> {
+            |_m| -> PluginInitContext<'_> {
                 unreachable!(
                     "ctx_factory must NOT be invoked when the factory closure returns Err"
                 )
@@ -331,6 +395,41 @@ mod tests {
     /// `crates/core/tests/subprocess_plugin_e2e.rs` because building
     /// a complete `PluginInitContext` for a unit test is heavier
     /// than the fallback logic itself warrants.
+    #[test]
+    fn format_violation_sample_truncates_after_three() {
+        use crate::agent::scoped_tool_registry::{
+            NamespaceViolation, NamespaceViolationReason,
+        };
+        let violations = vec![
+            NamespaceViolation {
+                plugin_id: "p".into(),
+                attempted_name: "agent_x".into(),
+                reason: NamespaceViolationReason::ReservedPrefix("agent_"),
+            },
+            NamespaceViolation {
+                plugin_id: "p".into(),
+                attempted_name: "p_a".into(),
+                reason: NamespaceViolationReason::NotInExpose,
+            },
+            NamespaceViolation {
+                plugin_id: "p".into(),
+                attempted_name: "p_b".into(),
+                reason: NamespaceViolationReason::OutOfNamespace,
+            },
+            NamespaceViolation {
+                plugin_id: "p".into(),
+                attempted_name: "p_c".into(),
+                reason: NamespaceViolationReason::Collision,
+            },
+        ];
+        let sample = format_violation_sample(&violations);
+        assert!(sample.contains("agent_x=ReservedPrefix"));
+        assert!(sample.contains("p_a=NotInExpose"));
+        assert!(sample.contains("p_b=OutOfNamespace"));
+        assert!(sample.contains("(+1 more)"));
+        assert!(!sample.contains("p_c"));
+    }
+
     #[tokio::test]
     async fn auto_subprocess_factory_produces_usable_handle() {
         let mut manifest = discovered("auto_subproc").manifest;
@@ -362,7 +461,7 @@ mod tests {
         let result = run_plugin_init_loop_with_factory(
             &snap,
             &registry,
-            |_id| -> PluginInitContext<'_> {
+            |_m| -> PluginInitContext<'_> {
                 unreachable!(
                     "ctx_factory must NOT be invoked for non-subprocess manifests"
                 )

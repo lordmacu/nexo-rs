@@ -65,7 +65,7 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 use crate::agent::hook_registry::HookRegistry;
-use crate::agent::tool_registry::ToolRegistry;
+use crate::agent::scoped_tool_registry::ScopedToolRegistry;
 use crate::config_reload::ConfigReloadCoordinator;
 use crate::session::SessionManager;
 
@@ -124,10 +124,13 @@ pub struct PluginInitContext<'a> {
     /// [`plugin_state_dir`](Self::plugin_state_dir).
     pub state_root: &'a Path,
 
-    /// Tool registry. Plugin registers `<plugin_id>_*` tools
-    /// here. Names MUST match `manifest.tools.expose`
-    /// (registry-level audit lands in 81.3).
-    pub tool_registry: Arc<ToolRegistry>,
+    /// Per-plugin scoped tool registry. Plugin registers
+    /// `<plugin_id>_*` tools here. Names MUST match
+    /// `manifest.tools.expose` and respect the reserved-prefix
+    /// denylist; collisions are always rejected. See
+    /// [`ScopedToolRegistry`] (Phase 81.3) for the enforcement
+    /// model.
+    pub tool_registry: Arc<ScopedToolRegistry>,
 
     /// Advisor registry (advisory_hook). `RwLock` so multiple
     /// plugins can register without contention. Plugin acquires
@@ -238,6 +241,21 @@ pub enum PluginInitError {
         plugin_id: String,
         #[source]
         source: anyhow::Error,
+    },
+
+    /// Phase 81.3 — plugin attempted to register tools outside its
+    /// declared namespace, in a reserved namespace, or colliding
+    /// with existing tools. Surfaced when
+    /// `NEXO_PLUGIN_NAMESPACE_STRICT=1` or when the per-call
+    /// `register*` returns `Err` (`Strict` mode).
+    #[error(
+        "plugin `{plugin_id}` violated tool namespace policy ({count} violation(s); first 3: {sample})"
+    )]
+    ToolNamespace {
+        plugin_id: String,
+        count: usize,
+        sample: String,
+        violations: Vec<crate::agent::scoped_tool_registry::NamespaceViolation>,
     },
 }
 

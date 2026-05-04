@@ -63,6 +63,7 @@ pub mod remote_trigger_tool;
 pub mod routing;
 pub mod runtime;
 pub mod schema_validator;
+pub mod scoped_tool_registry;
 pub mod self_report;
 pub mod channel_list_tool;
 pub mod channel_send_tool;
@@ -152,6 +153,10 @@ pub use skills::{
 };
 pub use sleep_tool::{extract_sleep_ms, is_sleep_result, SleepTool, SLEEP_SENTINEL};
 pub use taskflow_tool::{TaskFlowTool, TaskFlowToolGuardrails};
+pub use scoped_tool_registry::{
+    NamespaceEnforcement, NamespaceViolation, NamespaceViolationReason, ScopedToolRegistry,
+    RESERVED_PREFIXES,
+};
 pub use tool_registry::{ToolHandler, ToolRegistry};
 pub use tool_registry_cache::ToolRegistryCache;
 pub use transcripts::{
