@@ -8,13 +8,16 @@
 //! misbehaving, the follow-up wraps each call in `tokio::time::timeout`.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
 use serde::Serialize;
 
 use nexo_plugin_manifest::PluginManifest;
+use serde_yaml::Value;
 
+use crate::agent::plugin_config_loader::{config_error_kind, load_plugin_config};
 use crate::agent::plugin_host::{NexoPlugin, PluginInitContext};
 use crate::agent::scoped_tool_registry::{NamespaceEnforcement, NamespaceViolation};
 
@@ -48,7 +51,7 @@ pub async fn run_plugin_init_loop<'env, F>(
     mut ctx_factory: F,
 ) -> BTreeMap<String, InitOutcome>
 where
-    F: FnMut(&PluginManifest) -> PluginInitContext<'env>,
+    F: FnMut(&PluginManifest, &Arc<Value>) -> PluginInitContext<'env>,
 {
     let mut outcomes = BTreeMap::new();
     for plugin in &snapshot.plugins {
@@ -57,7 +60,8 @@ where
             outcomes.insert(id, InitOutcome::NoHandle);
             continue;
         };
-        let mut ctx = ctx_factory(&plugin.manifest);
+        let empty_cfg: Arc<Value> = Arc::new(Value::Mapping(serde_yaml::Mapping::new()));
+        let mut ctx = ctx_factory(&plugin.manifest, &empty_cfg);
         let start = Instant::now();
         match handle.init(&mut ctx).await {
             Ok(()) => {
@@ -118,6 +122,35 @@ fn format_violation_sample(violations: &[NamespaceViolation]) -> String {
     }
 }
 
+/// Phase 81.4 — load + validate per-plugin config dir BEFORE
+/// `init()` runs. On failure, returns `InitOutcome::Failed` so the
+/// caller skips `init()` and records the outcome. `tracing::warn!`
+/// is the operator-visible signal; broker emit deferred to 81.4.b.
+fn try_load_plugin_config(
+    plugin_id: &str,
+    plugin_root: &Path,
+    config_dir: &Path,
+    manifest: &PluginManifest,
+) -> Result<Arc<Value>, InitOutcome> {
+    match load_plugin_config(plugin_root, config_dir, manifest) {
+        Ok(cfg) => Ok(Arc::new(cfg.merged)),
+        Err(err) => {
+            let kind = config_error_kind(&err);
+            let error = err.to_string();
+            tracing::warn!(
+                target: "plugins.init",
+                plugin_id = %plugin_id,
+                kind = %kind,
+                %error,
+                "plugin config load failed; skipping init"
+            );
+            Err(InitOutcome::Failed {
+                error: format!("config load: {error}"),
+            })
+        }
+    }
+}
+
 /// Phase 81.3 — drain ScopedToolRegistry after `init()` returns and,
 /// in Strict mode, escalate any violations to `InitOutcome::Failed`.
 /// Returns `None` when the post-init outcome is unchanged.
@@ -157,15 +190,35 @@ fn check_namespace_after_init(
 pub async fn run_plugin_init_loop_with_factory<'env, F>(
     snapshot: &NexoPluginRegistrySnapshot,
     factory_registry: &PluginFactoryRegistry,
+    config_dir: &Path,
     mut ctx_factory: F,
 ) -> FactoryInitResult
 where
-    F: FnMut(&PluginManifest) -> PluginInitContext<'env>,
+    F: FnMut(&PluginManifest, &Arc<Value>) -> PluginInitContext<'env>,
 {
     let mut outcomes = BTreeMap::new();
     let mut handles: BTreeMap<String, Arc<dyn NexoPlugin>> = BTreeMap::new();
     for plugin in &snapshot.plugins {
         let id = plugin.manifest.plugin.id.clone();
+        // Phase 81.4 — load + validate the plugin's config dir
+        // BEFORE any factory work. Failure here aborts the
+        // plugin's load with `InitOutcome::Failed`; the factory
+        // closure (and any subsequent init step) never runs.
+        // We pre-compute eagerly so both the auto-subprocess
+        // fallback and the registered-factory path see a
+        // pre-validated config.
+        let plugin_cfg = match try_load_plugin_config(
+            &id,
+            &plugin.root_dir,
+            config_dir,
+            &plugin.manifest,
+        ) {
+            Ok(cfg) => cfg,
+            Err(failed) => {
+                outcomes.insert(id, failed);
+                continue;
+            }
+        };
         // Phase 81.17 — auto-subprocess fallback. If no in-tree
         // factory was registered for this id BUT the manifest
         // declares an `[plugin.entrypoint]` with a non-empty
@@ -179,7 +232,7 @@ where
                 let auto_factory = subprocess_plugin_factory(plugin.manifest.clone());
                 match auto_factory(&plugin.manifest) {
                     Ok(handle) => {
-                        let mut ctx = ctx_factory(&plugin.manifest);
+                        let mut ctx = ctx_factory(&plugin.manifest, &plugin_cfg);
                         let start = std::time::Instant::now();
                         match handle.init(&mut ctx).await {
                             Ok(()) => {
@@ -235,7 +288,7 @@ where
                 outcomes.insert(id, InitOutcome::Failed { error });
             }
             Ok(handle) => {
-                let mut ctx = ctx_factory(&plugin.manifest);
+                let mut ctx = ctx_factory(&plugin.manifest, &plugin_cfg);
                 let start = std::time::Instant::now();
                 match handle.init(&mut ctx).await {
                     Ok(()) => {
@@ -305,7 +358,7 @@ mod tests {
         let outcomes = run_plugin_init_loop(
             &snap,
             &BTreeMap::new(),
-            |_m| -> PluginInitContext<'_> {
+            |_m, _cfg| -> PluginInitContext<'_> {
                 unreachable!("ctx_factory should not be called when handles is empty");
             },
         )
@@ -355,10 +408,12 @@ mod tests {
         });
         registry.register("alpha", factory).unwrap();
 
+        let cfg_dir = tempfile::tempdir().unwrap();
         let result = run_plugin_init_loop_with_factory(
             &snap,
             &registry,
-            |_m| -> PluginInitContext<'_> {
+            cfg_dir.path(),
+            |_m, _cfg| -> PluginInitContext<'_> {
                 unreachable!(
                     "ctx_factory must NOT be invoked when the factory closure returns Err"
                 )
@@ -458,10 +513,12 @@ mod tests {
         // None, is_subprocess() == false.
         let snap = snapshot_with(vec![discovered("in_tree_only")]);
         let registry = PluginFactoryRegistry::new();
+        let cfg_dir = tempfile::tempdir().unwrap();
         let result = run_plugin_init_loop_with_factory(
             &snap,
             &registry,
-            |_m| -> PluginInitContext<'_> {
+            cfg_dir.path(),
+            |_m, _cfg| -> PluginInitContext<'_> {
                 unreachable!(
                     "ctx_factory must NOT be invoked for non-subprocess manifests"
                 )
@@ -476,5 +533,78 @@ mod tests {
             "in-tree manifest without entrypoint must record NoHandle"
         );
         assert!(result.handles.is_empty(), "no handles for NoHandle outcome");
+    }
+
+    /// Phase 81.4 — when the plugin's manifest declares
+    /// `config.schema_path` pointing at a non-existent file,
+    /// the loader returns `SchemaRead` and the init-loop
+    /// records `InitOutcome::Failed` BEFORE invoking the
+    /// closure (closure body is `unreachable!`).
+    #[tokio::test]
+    async fn init_loop_records_failed_when_config_load_fails() {
+        use super::super::factory::PluginFactory;
+
+        let raw = "[plugin]\n\
+                   id = \"slack\"\n\
+                   version = \"0.1.0\"\n\
+                   name = \"slack\"\n\
+                   description = \"fixture\"\n\
+                   min_nexo_version = \">=0.0.1\"\n\
+                   \n\
+                   [plugin.config]\n\
+                   schema_path = \"missing-schema.json\"\n";
+        let manifest: PluginManifest = toml::from_str(raw).unwrap();
+        let plugin_root = tempfile::tempdir().unwrap();
+        let snap = snapshot_with(vec![DiscoveredPlugin {
+            manifest,
+            root_dir: plugin_root.path().to_path_buf(),
+            manifest_path: plugin_root.path().join("nexo-plugin.toml"),
+        }]);
+
+        // Place a yaml file so the loader actually tries to
+        // validate (otherwise empty dir → empty config and the
+        // schema read fires anyway because schema_path is set).
+        let cfg_dir = tempfile::tempdir().unwrap();
+        let plugin_cfg_dir = cfg_dir.path().join("plugins").join("slack");
+        std::fs::create_dir_all(&plugin_cfg_dir).unwrap();
+        std::fs::write(plugin_cfg_dir.join("00.yaml"), "x: 1\n").unwrap();
+
+        // Register a factory whose closure body is irrelevant —
+        // we expect the loader to fail BEFORE it's invoked.
+        let mut registry = PluginFactoryRegistry::new();
+        let factory: PluginFactory = Box::new(|_m| {
+            let err: super::super::factory::BoxError =
+                Box::new(std::io::Error::other("factory should not be reached"));
+            Err(err)
+        });
+        registry.register("slack", factory).unwrap();
+
+        let result = run_plugin_init_loop_with_factory(
+            &snap,
+            &registry,
+            cfg_dir.path(),
+            |_m, _cfg| -> PluginInitContext<'_> {
+                unreachable!(
+                    "ctx_factory must NOT be invoked when config load fails"
+                )
+            },
+        )
+        .await;
+
+        // The loader returns SchemaRead Err → InitOutcome::Failed
+        // surfaces with "config load: …" prefix; factory closure
+        // never ran, so no "factory should not be reached" string
+        // in the error.
+        match result.outcomes.get("slack") {
+            Some(InitOutcome::Failed { error }) => {
+                assert!(
+                    error.starts_with("config load:"),
+                    "expected config-load failure, got {error}"
+                );
+                assert!(error.contains("missing-schema.json"));
+            }
+            other => panic!("expected Failed, got {other:?}"),
+        }
+        assert!(result.handles.is_empty());
     }
 }

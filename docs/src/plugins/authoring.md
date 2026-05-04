@@ -97,6 +97,62 @@ To exit, send `Ctrl+C` — the daemon issues a `shutdown`
 request, the plugin's `on_shutdown` runs, and both processes
 return cleanly.
 
+## Plugin config dir
+
+Phase 81.4 — operators place per-plugin YAML config under
+`<config_dir>/plugins/<plugin_id>/`. The daemon reads every
+`*.yaml` / `*.yml` file in that directory at boot, deep-merges
+them alphabetically, resolves `${ENV_VAR}` placeholders, and
+(when your manifest declares a `schema_path`) validates the
+merged tree against your JSONSchema before calling
+`init()`. Validation failure aborts plugin load with
+`InitOutcome::Failed`; the daemon continues without the plugin.
+
+Multi-file sharding lets operators split sensitive settings
+from declarative ones:
+
+```text
+<config_dir>/plugins/slack/
+  01-credentials.yaml   # api_token: "${SLACK_BOT_TOKEN}"
+  02-channels.yaml      # channels: [...]
+  03-allowlist.yaml     # rate limits per channel
+```
+
+Mappings deep-merge across files (later wins per-key).
+**Arrays full-replace** — they don't concat — so an operator
+override file completely substitutes the array from earlier
+files. Comment-only and non-`.yaml` files are ignored.
+
+Declare your config schema in `nexo-plugin.toml`:
+
+```toml
+[plugin.config]
+schema_path = "config.schema.json"   # relative to plugin root
+hot_reload = true                    # parsed; wiring lands in 81.4.b
+```
+
+The schema validator currently supports the JSONSchema subset
+`type` / `required` / `properties` / `additionalProperties` /
+`enum`. Plugins needing `oneOf` / `$ref` / `pattern` will get
+richer validation in a future 81.4.c slice — for now, those
+keywords pass through silently.
+
+Inside your plugin, consume `ctx.plugin_config` (an
+`Arc<serde_yaml::Value>`):
+
+```rust
+let api_token = ctx
+    .plugin_config
+    .get("api_token")
+    .and_then(serde_yaml::Value::as_str)
+    .ok_or_else(|| anyhow::anyhow!("api_token missing"))?;
+```
+
+When the operator hasn't placed any config files, the value is
+an empty mapping — your plugin sees `Value::Mapping(empty)`,
+not `Null`. Plugins with all-optional fields boot cleanly
+without operator action.
+
 ## Local dev loop conventions
 
 - **`nexo plugin run <path>`** — boots the daemon with one

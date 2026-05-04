@@ -83,7 +83,7 @@ async fn discover_merge_init_pipeline_round_trip() {
     let outcomes = run_plugin_init_loop(
         &snap,
         &BTreeMap::new(),
-        |_id| -> nexo_core::agent::plugin_host::PluginInitContext<'_> {
+        |_m, _cfg| -> nexo_core::agent::plugin_host::PluginInitContext<'_> {
             unreachable!("ctx_factory should not be invoked when handles is empty")
         },
     )

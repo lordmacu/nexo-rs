@@ -199,7 +199,8 @@ pub async fn wire_plugin_registry_with_runtime(
             let r = run_plugin_init_loop_with_factory(
                 &snap,
                 factory,
-                |manifest| stubs.context_for(manifest, rt),
+                rt.config_dir.as_path(),
+                |manifest, plugin_cfg| stubs.context_for(manifest, rt, plugin_cfg),
             )
             .await;
             (r.outcomes, r.handles)
@@ -214,10 +215,18 @@ pub async fn wire_plugin_registry_with_runtime(
             // operator error: caller should have used
             // `wire_plugin_registry_with_runtime` with
             // `subprocess_runtime: Some(...)`.
+            // Phase 81.4 — config_dir defaults to "." for the
+            // legacy (Some-factory, None-runtime) branch since
+            // there's no SubprocessRuntime to read it from.
+            // Loader returns empty config when `./plugins/<id>`
+            // doesn't exist, so existing in-tree dual-trait
+            // factories see Arc<empty mapping> as before.
+            let legacy_cfg_dir = std::path::Path::new(".");
             let r = run_plugin_init_loop_with_factory(
                 &snap,
                 factory,
-                |_manifest| -> crate::agent::plugin_host::PluginInitContext<'_> {
+                legacy_cfg_dir,
+                |_manifest, _plugin_cfg| -> crate::agent::plugin_host::PluginInitContext<'_> {
                     unreachable!(
                         "wire_plugin_registry: subprocess_runtime is None but a manifest with entrypoint was discovered. \
                          Use wire_plugin_registry_with_runtime(...subprocess_runtime: Some(_)) when subprocess plugins might be present."
@@ -232,7 +241,7 @@ pub async fn wire_plugin_registry_with_runtime(
             let outcomes = run_plugin_init_loop(
                 &snap,
                 &empty_handles,
-                |_manifest| -> crate::agent::plugin_host::PluginInitContext<'_> {
+                |_manifest, _plugin_cfg| -> crate::agent::plugin_host::PluginInitContext<'_> {
                     unreachable!(
                         "wire_plugin_registry passes empty handles; ctx_factory must not be invoked"
                     )
@@ -382,6 +391,7 @@ impl SubprocessCtxStubs {
         &'env self,
         manifest: &nexo_plugin_manifest::PluginManifest,
         rt: &'env SubprocessRuntime,
+        plugin_config: &Arc<serde_yaml::Value>,
     ) -> crate::agent::plugin_host::PluginInitContext<'env> {
         // Phase 81.3 — wrap the raw ToolRegistry in a per-plugin
         // ScopedToolRegistry keyed on this manifest's tools.expose.
@@ -413,6 +423,7 @@ impl SubprocessCtxStubs {
             long_term_memory: rt.long_term_memory.clone(),
             shutdown: rt.shutdown.clone(),
             channel_adapter_registry: self.channel_adapter_registry.clone(),
+            plugin_config: plugin_config.clone(),
         }
     }
 }

@@ -185,6 +185,14 @@ pub struct PluginInitContext<'a> {
     /// [`crate::agent::channel_adapter::ChannelAdapterRegistrationError`].
     pub channel_adapter_registry:
         Arc<crate::agent::channel_adapter::ChannelAdapterRegistry>,
+
+    /// Phase 81.4 — pre-loaded + pre-validated plugin config
+    /// from `<config_dir>/plugins/<plugin_id>/*.yaml`. Always at
+    /// least an empty mapping. Plugin treats it as read-only;
+    /// typed views via `serde_yaml::from_value(cfg.clone())`.
+    /// Validation errors short-circuit `init()` with
+    /// `InitOutcome::Failed` BEFORE the plugin runs.
+    pub plugin_config: Arc<serde_yaml::Value>,
 }
 
 impl PluginInitContext<'_> {

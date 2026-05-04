@@ -50,6 +50,7 @@ pub mod peer_directory;
 pub mod personas;
 pub mod plan_mode_tool;
 pub mod plugin;
+pub mod plugin_config_loader;
 pub mod plugin_host;
 pub mod proactive_hint;
 pub mod prompt_assembly;
@@ -132,6 +133,9 @@ pub use mock_plugin::MockPlugin;
 pub use noop::NoOpAgent;
 pub use peer_directory::{PeerDirectory, PeerSummary};
 pub use plugin::{Command, Plugin, Response};
+pub use plugin_config_loader::{
+    config_error_kind, load_plugin_config, plugin_config_dir_for, PluginConfig, PluginConfigError,
+};
 pub use plugin_host::{
     NexoPlugin, PluginInitContext, PluginInitError, PluginShutdownError,
     DEFAULT_PLUGIN_SHUTDOWN_TIMEOUT,
