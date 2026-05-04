@@ -67,3 +67,10 @@ nexo-broker = { version = "0.1.1", path = "../broker" }
 # crates dir scanning for `env::var("X")` literals.
 walkdir = "2"
 regex = "1"
+# Phase 82.10.p — pairing trigger integration test asserts the
+# cancel token observed by the trigger task gets cancelled by
+# pairing/cancel.
+tokio-util = { workspace = true }
+async-trait = { workspace = true }
+nexo-tool-meta = { version = "0.1.0", path = "../tool-meta" }
+uuid = { workspace = true, features = ["v4"] }
