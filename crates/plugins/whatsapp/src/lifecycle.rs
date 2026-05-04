@@ -52,6 +52,12 @@ pub type SharedLifecycle = Arc<Mutex<LifecycleState>>;
 /// Spawn the forwarder. Owns a `broadcast::Receiver` on the session,
 /// translates interesting variants, publishes them to the broker, and
 /// keeps `state` current for `health()`.
+///
+/// Phase 82.10.r — `event_emitter` + `instance_label` are threaded
+/// in so wa-agent's `MessageEvent::Typing` variant surfaces as
+/// `AgentEventKind::PeerTyping` via the boot firehose. Standalone
+/// embeds without admin-bootstrap pass `None` and the typing emit
+/// silently skips.
 pub fn spawn(
     broker: AnyBroker,
     session: Arc<whatsapp_rs::Session>,
@@ -59,6 +65,8 @@ pub fn spawn(
     pairing: crate::pairing::SharedPairingState,
     cancel: CancellationToken,
     inbound_topic: String,
+    event_emitter: Option<Arc<dyn nexo_core::agent::agent_events::AgentEventEmitter>>,
+    instance_label: String,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut rx = session.events();
@@ -77,7 +85,16 @@ pub fn spawn(
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     };
-                    if let Err(e) = forward(&broker, &session, &state, &pairing, &inbound_topic, ev).await {
+                    if let Err(e) = forward(
+                        &broker,
+                        &session,
+                        &state,
+                        &pairing,
+                        &inbound_topic,
+                        event_emitter.as_ref(),
+                        &instance_label,
+                        ev,
+                    ).await {
                         warn!(error = %e, "lifecycle forward failed");
                     }
                 }
@@ -92,8 +109,32 @@ async fn forward(
     state: &SharedLifecycle,
     pairing: &crate::pairing::SharedPairingState,
     inbound_topic: &str,
+    event_emitter: Option<&Arc<dyn nexo_core::agent::agent_events::AgentEventEmitter>>,
+    instance_label: &str,
     ev: whatsapp_rs::MessageEvent,
 ) -> Result<()> {
+    // Phase 82.10.r — handle Typing presence outside the lifecycle
+    // state-machine block since it doesn't mutate connect/disconnect
+    // state and skips the broker `InboundEvent` emit.
+    if let whatsapp_rs::MessageEvent::Typing { jid, composing } = &ev {
+        if let Some(emitter) = event_emitter {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let evt = nexo_tool_meta::admin::agent_events::AgentEventKind::PeerTyping {
+                channel: "whatsapp".to_string(),
+                account_id: instance_label.to_string(),
+                sender_id: jid.clone(),
+                composing: *composing,
+                at_ms: now_ms,
+                agent_id: None,
+                tenant_id: None,
+            };
+            emitter.emit(evt).await;
+        }
+        return Ok(());
+    }
     let mut out: Option<InboundEvent> = None;
     {
         let mut s = state.lock().await;

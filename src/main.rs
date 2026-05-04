@@ -2131,6 +2131,14 @@ async fn main() -> Result<()> {
             wa_tunnel_cfg = Some(wa_cfg.public_tunnel.clone());
         }
         let plugin = WhatsappPlugin::new(wa_cfg);
+        // Phase 82.10.r — pass the bootstrap firehose emitter so
+        // wa-agent typing-presence events surface as
+        // `AgentEventKind::PeerTyping` on the live SSE stream.
+        let plugin = if let Some(ref bs) = admin_bootstrap {
+            plugin.with_emitter(bs.event_emitter())
+        } else {
+            plugin
+        };
         wa_pairing.insert(instance_label.clone(), plugin.pairing_state());
         plugins.register(plugin);
         tracing::info!(instance = %instance_label, "registered plugin: whatsapp");

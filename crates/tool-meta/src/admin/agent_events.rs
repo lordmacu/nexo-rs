@@ -169,6 +169,42 @@ pub enum AgentEventKind {
         #[serde(flatten)]
         event: SecurityEventKind,
     },
+    /// Phase 82.10.r — peer-side typing presence. Fired by the
+    /// channel plugin when wa-agent (or any other plugin that
+    /// surfaces composing/paused presence) reports that the
+    /// remote peer is typing into the chat. Operator dashboards
+    /// render an "X está escribiendo…" indicator next to the
+    /// conversation. The signal is purely informational —
+    /// dashboards SHOULD apply a TTL fallback (≈6 s) since the
+    /// "paused" packet is occasionally lost in transit.
+    PeerTyping {
+        /// Channel that produced the presence signal
+        /// (e.g. `whatsapp`).
+        channel: String,
+        /// Channel-instance qualifier (e.g. `smoketest`). Empty
+        /// when the channel does not support multi-instance.
+        #[serde(default)]
+        account_id: String,
+        /// Channel-native sender id (e.g.
+        /// `573154645370@s.whatsapp.net`).
+        sender_id: String,
+        /// `true` = peer is currently typing (composing).
+        /// `false` = peer stopped typing (paused).
+        composing: bool,
+        /// Epoch ms when the plugin observed the presence change.
+        at_ms: u64,
+        /// Owning agent when the plugin can resolve which agent
+        /// the conversation belongs to (single-agent inbound
+        /// binding). `None` for multi-agent setups — operator
+        /// dashboards then match by `(channel, account_id,
+        /// sender_id)` against every conversation.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_id: Option<String>,
+        /// Phase 83.8.12 — owning tenant. `None` for legacy /
+        /// single-tenant deployments.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tenant_id: Option<String>,
+    },
 }
 
 /// Phase 82.10.o — security-domain audit events. Nested under
