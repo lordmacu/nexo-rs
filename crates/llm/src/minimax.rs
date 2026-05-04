@@ -977,7 +977,7 @@ mod tests {
             auth: None,
             api_flavor: flavor.map(str::to_string),
             embedding_model: None,
-            safety_settings: None,
+            safety_settings: None, factory_type: None, api_key_secret_id: None,
         }
     }
 
