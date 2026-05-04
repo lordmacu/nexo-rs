@@ -1,0 +1,33 @@
+[package]
+name = "nexo-llm-auth"
+description  = "Reusable OAuth + PKCE primitives for Nexo LLM providers (Anthropic Claude.ai auth-code, MiniMax device-code). Pure functions callable from CLI wizard or admin RPC."
+version      = "0.1.0"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+homepage     = { workspace = true }
+documentation = { workspace = true }
+readme       = "README.md"
+keywords     = ["nexo", "oauth", "pkce", "anthropic", "minimax"]
+categories   = ["authentication", "asynchronous"]
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow      = { workspace = true }
+async-trait = { workspace = true }
+base64      = { workspace = true }
+chrono      = { workspace = true }
+dashmap     = { workspace = true }
+rand        = "0.8"
+reqwest     = { workspace = true }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+sha2        = { workspace = true }
+thiserror   = { workspace = true }
+tokio       = { workspace = true, features = ["sync", "time", "rt"] }
+tracing     = { workspace = true }
+uuid        = { workspace = true }
