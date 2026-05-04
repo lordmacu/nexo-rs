@@ -210,6 +210,7 @@ pub async fn wire_plugin_registry_with_runtime(
                 factory,
                 rt.config_dir.as_path(),
                 &shared_channel_adapter_registry,
+                &rt.llm_registry,
                 |manifest, plugin_cfg| stubs.context_for(manifest, rt, plugin_cfg),
             )
             .await;
@@ -232,11 +233,14 @@ pub async fn wire_plugin_registry_with_runtime(
             // doesn't exist, so existing in-tree dual-trait
             // factories see Arc<empty mapping> as before.
             let legacy_cfg_dir = std::path::Path::new(".");
+            let legacy_llm_registry: Arc<nexo_llm::LlmRegistry> =
+                Arc::new(nexo_llm::LlmRegistry::new());
             let r = run_plugin_init_loop_with_factory(
                 &snap,
                 factory,
                 legacy_cfg_dir,
                 &shared_channel_adapter_registry,
+                &legacy_llm_registry,
                 |_manifest, _plugin_cfg| -> crate::agent::plugin_host::PluginInitContext<'_> {
                     unreachable!(
                         "wire_plugin_registry: subprocess_runtime is None but a manifest with entrypoint was discovered. \

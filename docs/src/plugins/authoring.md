@@ -201,6 +201,71 @@ The matching SDK helpers (`handle_channel_start` /
 Until then, hand-handle the JSON-RPC frames using the SDK's
 existing primitives.
 
+## Contributing LLM providers
+
+Phase 81.25 — subprocess plugins that declare
+`[plugin.extends].llm_providers = [...]` get one host-side
+`RemoteLlmFactory` registered into `LlmRegistry` per provider
+name. When the agent runtime resolves
+`model.provider = "<name>"`, the factory builds a
+`RemoteLlmClient` that translates trait calls into `llm.chat`
+JSON-RPC requests over your subprocess plugin's stdio pipe.
+
+```toml
+[plugin.extends]
+llm_providers = ["cohere", "mistral"]
+```
+
+Two modes supported on the wire:
+
+- **Sync** — `params.stream = false`; reply once with
+  `WireChatResponse` (default 60 s timeout).
+- **Streaming** — `params.stream = true`; emit zero or more
+  `llm.chat.delta { request_id, chunk }` notifications + one
+  final response carrying `usage` / `finish_reason` (default
+  300 s timeout).
+
+Wire spec + error codes:
+[Plugin contract §5.y](./contract.md#5y-llm-provider-methods-phase-8125).
+
+Sketch (Rust subprocess plugin) — handle `llm.chat` from your
+adapter's reader loop:
+
+```rust
+match method {
+    "llm.chat" => {
+        let provider = params["provider"].as_str().unwrap_or("");
+        let stream = params["stream"].as_bool().unwrap_or(false);
+        let request = serde_json::from_value::<WireChatRequest>(
+            params["request"].clone()
+        )?;
+        if stream {
+            // Emit zero or more deltas
+            send_notification("llm.chat.delta", json!({
+                "request_id": id,
+                "chunk": { "type": "text_delta", "delta": "Hello" },
+            }));
+            // ...then the final response.
+            reply_ok(id, /* WireChatResponse with usage + finish_reason */);
+        } else {
+            // Sync: call your provider's API, build WireChatResponse.
+            let resp = call_my_provider(provider, &request).await?;
+            reply_ok(id, resp);
+        }
+    }
+    _ => reply_method_not_found(id, method),
+}
+```
+
+For typed errors (rate-limit, auth failed, model not found),
+reply with the LLM-specific error codes from the contract table
+— the host's `RemoteLlmClient` surfaces them as `anyhow::Error`
+with operator-greppable messages.
+
+The matching SDK helpers (`PluginAdapter::handle_llm_chat`,
+streaming sender, etc.) ship in Phase 81.25.b. Until then,
+hand-handle the JSON-RPC frames.
+
 ## Future capability extensions
 
 Phase 81.28 — subprocess plugins that contribute new

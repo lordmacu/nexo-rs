@@ -151,6 +151,39 @@ fn try_load_plugin_config(
     }
 }
 
+/// Phase 81.25 — after `init()` + channel registration succeed,
+/// register every provider name from
+/// `manifest.plugin.extends.llm_providers` as a `RemoteLlmFactory`.
+/// Only fires when the handle is a `SubprocessNexoPlugin`; other
+/// concrete types skip silently. Failure escalates to
+/// `InitOutcome::Failed`.
+async fn register_remote_llm_providers_after_init(
+    plugin_id: &str,
+    handle: &Arc<dyn NexoPlugin>,
+    llm_registry: &Arc<nexo_llm::LlmRegistry>,
+) -> Option<InitOutcome> {
+    let any = handle.as_any();
+    let sub = match any.downcast_ref::<
+        crate::agent::nexo_plugin_registry::subprocess::SubprocessNexoPlugin,
+    >() {
+        Some(s) => s,
+        None => return None,
+    };
+    match sub.register_remote_llm_providers(llm_registry).await {
+        Ok(_) => None,
+        Err(e) => {
+            let error = format!("llm provider register: {e}");
+            tracing::warn!(
+                target: "plugins.init",
+                plugin_id = %plugin_id,
+                %error,
+                "remote LLM provider registration failed"
+            );
+            Some(InitOutcome::Failed { error })
+        }
+    }
+}
+
 /// Phase 81.24 — after `init()` returns Ok, register every kind
 /// from `manifest.plugin.extends.channels` as a
 /// `RemoteChannelAdapter`. Only fires when the handle is a
@@ -227,6 +260,7 @@ pub async fn run_plugin_init_loop_with_factory<'env, F>(
     factory_registry: &PluginFactoryRegistry,
     config_dir: &Path,
     channel_adapter_registry: &Arc<crate::agent::channel_adapter::ChannelAdapterRegistry>,
+    llm_registry: &Arc<nexo_llm::LlmRegistry>,
     mut ctx_factory: F,
 ) -> FactoryInitResult
 where
@@ -280,6 +314,15 @@ where
                                         &id,
                                         &handle,
                                         channel_adapter_registry,
+                                    )
+                                    .await
+                                {
+                                    outcomes.insert(id, failed);
+                                } else if let Some(failed) =
+                                    register_remote_llm_providers_after_init(
+                                        &id,
+                                        &handle,
+                                        llm_registry,
                                     )
                                     .await
                                 {
@@ -463,11 +506,13 @@ mod tests {
 
         let cfg_dir = tempfile::tempdir().unwrap();
         let chan_reg = Arc::new(crate::agent::channel_adapter::ChannelAdapterRegistry::new());
+        let llm_reg = Arc::new(nexo_llm::LlmRegistry::new());
         let result = run_plugin_init_loop_with_factory(
             &snap,
             &registry,
             cfg_dir.path(),
             &chan_reg,
+            &llm_reg,
             |_m, _cfg| -> PluginInitContext<'_> {
                 unreachable!(
                     "ctx_factory must NOT be invoked when the factory closure returns Err"
@@ -570,11 +615,13 @@ mod tests {
         let registry = PluginFactoryRegistry::new();
         let cfg_dir = tempfile::tempdir().unwrap();
         let chan_reg = Arc::new(crate::agent::channel_adapter::ChannelAdapterRegistry::new());
+        let llm_reg = Arc::new(nexo_llm::LlmRegistry::new());
         let result = run_plugin_init_loop_with_factory(
             &snap,
             &registry,
             cfg_dir.path(),
             &chan_reg,
+            &llm_reg,
             |_m, _cfg| -> PluginInitContext<'_> {
                 unreachable!(
                     "ctx_factory must NOT be invoked for non-subprocess manifests"
@@ -637,11 +684,13 @@ mod tests {
         registry.register("slack", factory).unwrap();
 
         let chan_reg = Arc::new(crate::agent::channel_adapter::ChannelAdapterRegistry::new());
+        let llm_reg = Arc::new(nexo_llm::LlmRegistry::new());
         let result = run_plugin_init_loop_with_factory(
             &snap,
             &registry,
             cfg_dir.path(),
             &chan_reg,
+            &llm_reg,
             |_m, _cfg| -> PluginInitContext<'_> {
                 unreachable!(
                     "ctx_factory must NOT be invoked when config load fails"

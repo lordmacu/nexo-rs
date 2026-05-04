@@ -126,6 +126,16 @@ struct Inner {
     /// host-issued requests draw from the same id space.
     next_id: Arc<AtomicU64>,
 
+    /// Phase 81.25 — per-id streaming-response state for
+    /// `llm.chat` requests where `params.stream = true`. The
+    /// reader's notification handler dispatches
+    /// `llm.chat.delta { request_id, chunk }` notifications to
+    /// the matching entry's `delta_tx`; the response handler
+    /// resolves `final_tx` AND removes the entry so `delta_tx`
+    /// closes (signalling end-of-stream to the consumer).
+    streaming_pending:
+        Arc<DashMap<u64, crate::agent::llm_remote::StreamingPending>>,
+
     /// Background tasks: stdin writer, stdout reader, broker→child
     /// bridge per subscribed topic, supervisor (Phase 81.21).
     /// Joined on shutdown.
@@ -155,6 +165,71 @@ impl SubprocessNexoPlugin {
             cached_manifest: manifest,
             inner: Mutex::new(None),
         }
+    }
+
+    /// Phase 81.25 — for each provider name in
+    /// `manifest.plugin.extends.llm_providers`, build a
+    /// `RemoteLlmFactory` sharing this plugin's stdio bridge and
+    /// register it with the LLM registry. Returns the list of
+    /// successfully registered providers. On
+    /// `LlmRegistry::register` Err (provider already registered),
+    /// rolls back any providers this call already registered.
+    /// Must be called AFTER `init()` (so `Inner` is populated).
+    pub async fn register_remote_llm_providers(
+        &self,
+        llm_registry: &Arc<nexo_llm::LlmRegistry>,
+    ) -> Result<
+        Vec<String>,
+        crate::agent::llm_remote::LlmProviderRegistrationError,
+    > {
+        let providers = self.cached_manifest.plugin.extends.llm_providers.clone();
+        if providers.is_empty() {
+            return Ok(Vec::new());
+        }
+        let plugin_id = self.cached_manifest.plugin.id.clone();
+        let (stdin_tx, pending, streaming_pending, next_id) = {
+            let guard = self.inner.lock().await;
+            match guard.as_ref() {
+                Some(inner) => (
+                    inner.stdin_tx.clone(),
+                    inner.pending.clone(),
+                    inner.streaming_pending.clone(),
+                    inner.next_id.clone(),
+                ),
+                None => {
+                    return Err(
+                        crate::agent::llm_remote::LlmProviderRegistrationError::InnerUnavailable,
+                    );
+                }
+            }
+        };
+
+        let mut registered: Vec<String> = Vec::new();
+        for provider in providers {
+            let factory = crate::agent::llm_remote::RemoteLlmFactory::new(
+                provider.clone(),
+                plugin_id.clone(),
+                stdin_tx.clone(),
+                pending.clone(),
+                streaming_pending.clone(),
+                next_id.clone(),
+            );
+            match llm_registry.register(Box::new(factory)) {
+                Ok(()) => registered.push(provider),
+                Err(_) => {
+                    // Roll back any providers this call registered.
+                    for prior in &registered {
+                        llm_registry.unregister(prior);
+                    }
+                    return Err(
+                        crate::agent::llm_remote::LlmProviderRegistrationError::AlreadyRegistered {
+                            name: provider,
+                        },
+                    );
+                }
+            }
+        }
+        Ok(registered)
     }
 
     /// Phase 81.24 — for each kind in
@@ -297,6 +372,9 @@ impl SubprocessNexoPlugin {
         let cancel = ctx_shutdown.child_token();
         let pending: Arc<DashMap<u64, oneshot::Sender<Result<Value, String>>>> =
             Arc::new(DashMap::new());
+        let streaming_pending: Arc<
+            DashMap<u64, crate::agent::llm_remote::StreamingPending>,
+        > = Arc::new(DashMap::new());
         let (stdin_tx, mut stdin_rx) = mpsc::channel::<Value>(STDIN_CHANNEL_DEPTH);
 
         // Stdin writer task — single consumer of stdin_rx, writes
@@ -434,6 +512,7 @@ impl SubprocessNexoPlugin {
         // EOF.
         let reader_cancel = cancel.clone();
         let reader_pending = pending.clone();
+        let reader_streaming_pending = streaming_pending.clone();
         // Phase 81.20.a — reader needs stdin_tx so it can write
         // responses back to the child for incoming requests
         // (memory.recall today; llm.complete + tool.dispatch in
@@ -549,6 +628,31 @@ impl SubprocessNexoPlugin {
                         let _ = sender.send(payload);
                         continue;
                     }
+                    // Phase 81.25 — streaming-response path. The
+                    // final reply for an `llm.chat` streaming
+                    // request resolves the per-id `final_tx` AND
+                    // drops the `streaming_pending` entry so its
+                    // `delta_tx` closes (signalling end-of-stream
+                    // to the consumer).
+                    if let Some((_, entry)) = reader_streaming_pending.remove(&id) {
+                        let payload = if let Some(err) = parsed.get("error") {
+                            Err(err.to_string())
+                        } else {
+                            let result =
+                                parsed.get("result").cloned().unwrap_or(Value::Null);
+                            match serde_json::from_value::<
+                                crate::agent::llm_remote::wire::WireChatResponse,
+                            >(result)
+                            {
+                                Ok(wire) => Ok(
+                                    crate::agent::llm_remote::wire::wire_to_response(wire),
+                                ),
+                                Err(e) => Err(format!("decode WireChatResponse: {e}")),
+                            }
+                        };
+                        let _ = entry.final_tx.send(payload);
+                        continue;
+                    }
                     tracing::warn!(
                         id,
                         plugin = %reader_plugin_id,
@@ -570,6 +674,56 @@ impl SubprocessNexoPlugin {
                         continue;
                     };
                     handle_child_publish(bridge, &reader_plugin_id, &parsed).await;
+                    continue;
+                }
+                // Phase 81.25 — `llm.chat.delta { request_id,
+                // chunk }` notifications push streaming chunks
+                // into the per-id `streaming_pending.delta_tx`.
+                // Drop on `try_send` failure (consumer slow / gone).
+                if method == "llm.chat.delta" {
+                    let request_id = parsed
+                        .get("params")
+                        .and_then(|p| p.get("request_id"))
+                        .and_then(|v| v.as_u64());
+                    let chunk_value = parsed
+                        .get("params")
+                        .and_then(|p| p.get("chunk"))
+                        .cloned();
+                    let (Some(rid), Some(chunk_value)) = (request_id, chunk_value) else {
+                        tracing::warn!(
+                            plugin = %reader_plugin_id,
+                            "llm.chat.delta missing request_id / chunk — drop"
+                        );
+                        continue;
+                    };
+                    let wire: crate::agent::llm_remote::wire::WireStreamChunk =
+                        match serde_json::from_value(chunk_value) {
+                            Ok(w) => w,
+                            Err(e) => {
+                                tracing::warn!(
+                                    plugin = %reader_plugin_id,
+                                    error = %e,
+                                    "llm.chat.delta chunk parse failed — drop"
+                                );
+                                continue;
+                            }
+                        };
+                    let chunk = crate::agent::llm_remote::wire::wire_to_chunk(wire);
+                    if let Some(entry) = reader_streaming_pending.get(&rid) {
+                        if entry.delta_tx.send(chunk).is_err() {
+                            tracing::debug!(
+                                plugin = %reader_plugin_id,
+                                request_id = rid,
+                                "llm.chat.delta consumer dropped — chunk discarded"
+                            );
+                        }
+                    } else {
+                        tracing::debug!(
+                            plugin = %reader_plugin_id,
+                            request_id = rid,
+                            "llm.chat.delta with unknown request_id — drop"
+                        );
+                    }
                     continue;
                 }
                 tracing::debug!(
@@ -855,6 +1009,7 @@ impl SubprocessNexoPlugin {
             stdin_tx,
             pending,
             next_id: Arc::new(AtomicU64::new(2)),
+            streaming_pending: Arc::new(DashMap::new()),
             tasks,
             child: child_handle,
             cancel,

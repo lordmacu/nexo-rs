@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| `contract_version` | `1.5.0` |
+| `contract_version` | `1.6.0` |
 | Status | Stable |
 | Authoritative reference | This document |
 | Reference implementations | Host: `crates/core/src/agent/nexo_plugin_registry/subprocess.rs`. Rust child: `crates/microapp-sdk/src/plugin.rs` (feature `plugin`). |
@@ -566,6 +566,161 @@ the kind in `extends.channels` but did not implement the
 requested method; the host surfaces this as
 `ChannelAdapterError::Unsupported { feature: "<method>" }`.
 
+## 5.y LLM provider methods (Phase 81.25)
+
+Subprocess plugins that contribute LLM providers (declared in
+`[plugin.extends].llm_providers`, §2.1) implement one host-
+initiated request method with two modes (sync + streaming). The
+host's `RemoteLlmClient` wraps each `LlmClient` trait call into
+a JSON-RPC request; the child replies with the corresponding
+result or a typed error.
+
+Every payload carries `provider` so a single subprocess
+advertising multiple providers (`extends.llm_providers =
+["cohere", "mistral"]`) can dispatch via one request handler.
+
+### `llm.chat` (non-streaming)
+
+```jsonc
+// host → child
+{
+  "jsonrpc": "2.0",
+  "id": 50,
+  "method": "llm.chat",
+  "params": {
+    "provider": "cohere",
+    "model": "command-r",
+    "stream": false,
+    "request": {
+      "model": "command-r",
+      "messages": [{ "role": "user", "content": "hi" }],
+      "max_tokens": 1024,
+      "temperature": 0.7
+    }
+  }
+}
+
+// child → host
+{
+  "jsonrpc": "2.0",
+  "id": 50,
+  "result": {
+    "content": { "type": "text", "text": "Hello world" },
+    "usage": { "prompt_tokens": 12, "completion_tokens": 4 },
+    "finish_reason": { "kind": "stop" }
+  }
+}
+```
+
+The full `request` schema mirrors `nexo_llm::types::ChatRequest`
+fields (`messages` / `tools` / `max_tokens` / `temperature` /
+`system_prompt` / `stop_sequences` / `tool_choice` /
+`system_blocks` / `cache_tools`). `tool_choice` serializes as
+`{"kind":"auto"|"any"|"none"|"specific","name":"<n>"?}`.
+
+The full `result` schema:
+
+- `content` — `{type:"text", text:"..."}` OR
+  `{type:"tool_calls", tool_calls:[{id, name, arguments}]}`
+- `usage` — `{prompt_tokens, completion_tokens}`
+- `finish_reason` — `{kind:"stop"|"tool_use"|"length"|"other","reason":"<r>"?}`
+- `cache_usage` — optional `{cache_read_input_tokens,
+  cache_creation_input_tokens, input_tokens, output_tokens}`
+
+Default host-side timeout 60 seconds.
+
+### `llm.chat` (streaming)
+
+```jsonc
+// host → child
+{
+  "jsonrpc": "2.0",
+  "id": 51,
+  "method": "llm.chat",
+  "params": {
+    "provider": "cohere",
+    "model": "command-r",
+    "stream": true,
+    "request": { "...": "as above" }
+  }
+}
+
+// child → host: zero or more deltas
+{
+  "jsonrpc": "2.0",
+  "method": "llm.chat.delta",
+  "params": {
+    "request_id": 51,
+    "chunk": { "type": "text_delta", "delta": "Hello" }
+  }
+}
+{
+  "jsonrpc": "2.0",
+  "method": "llm.chat.delta",
+  "params": {
+    "request_id": 51,
+    "chunk": { "type": "text_delta", "delta": " world" }
+  }
+}
+
+// child → host: final response (id matches request)
+{
+  "jsonrpc": "2.0",
+  "id": 51,
+  "result": {
+    "content": { "type": "text", "text": "" },
+    "usage": { "prompt_tokens": 12, "completion_tokens": 4 },
+    "finish_reason": { "kind": "stop" }
+  }
+}
+```
+
+`chunk.type` values:
+
+- `text_delta` — `{ delta: "<text>" }`
+- `tool_call_start` — `{ id, name }`
+- `tool_call_args_delta` — `{ id, delta }`
+- `tool_call_end` — `{ id }`
+- `usage` — `{ usage: {prompt_tokens, completion_tokens} }`
+- `end` — `{ finish_reason: {kind, reason?} }`
+
+Default host-side stream timeout 300 seconds. Operator override
+via `NEXO_PLUGIN_LLM_TIMEOUT_MS` env (single value applied to
+both sync + streaming).
+
+### LLM-specific error codes
+
+In addition to the JSON-RPC standard codes (§7), `llm.chat`
+MAY return:
+
+| Code | Meaning |
+|------|---------|
+| `-33101` | `llm.connection_failed` |
+| `-33102` | `llm.authentication_failed` |
+| `-33103` | `llm.rate_limited` (`data.retry_after_secs`) |
+| `-33104` | `llm.model_not_found` |
+| `-33105` | `llm.context_overflow` |
+
+Error example:
+
+```jsonc
+{
+  "jsonrpc": "2.0",
+  "id": 50,
+  "error": {
+    "code": -33103,
+    "message": "rate limited",
+    "data": { "retry_after_secs": 30 }
+  }
+}
+```
+
+The host surfaces these as `anyhow::Error` with messages
+operators can grep (`"rate limited"`, `"authentication failed"`,
+etc.). Structured retry-after info lands in the message string
+for v1; future contract bumps may add a typed
+`LlmProviderError` enum.
+
 ## 6. Topic allowlist
 
 The host derives subscribe + publish patterns from the
@@ -829,3 +984,4 @@ contract document.
 | `1.3.0` | 2026-05-01 | Phase 81.20.b.b runtime threading shipped (memory + llm both flow end-to-end through production daemon path). Phase 81.20.b.c streaming added — `llm.complete` accepts `stream: true` opt-in; chunks emit as `llm.complete.delta { request_id, chunk }` notifications, final reply omits `content`. Additive — non-streaming requests unchanged. |
 | `1.4.0` | 2026-05-04 | Phase 81.28 — `[plugin.extends]` manifest section added (`channels` / `llm_providers` / `memory_backends` / `hooks` lists). Schema-only this revision: parser + validator ship; daemon dispatch wiring per registry lands in Phase 81.24 (channels), 81.25 (LLM providers), 81.26 (memory backends), 81.27 (hooks). Additive — manifests without `[plugin.extends]` parse and validate unchanged. |
 | `1.5.0` | 2026-05-04 | Phase 81.24 — `channel.start` / `channel.stop` / `channel.send_outbound` host-initiated request methods added (§5.x). Subprocess plugins declaring `[plugin.extends].channels = [...]` get one `RemoteChannelAdapter` per kind registered into the daemon's `ChannelAdapterRegistry`. Channel-specific error codes `-33001` through `-33005` map onto typed `ChannelAdapterError` variants. Default host-side timeouts: 30 s for start/stop, 60 s for send_outbound; `NEXO_PLUGIN_CHANNEL_TIMEOUT_MS` overrides all three. Additive — plugins not declaring channels are unaffected. |
+| `1.6.0` | 2026-05-04 | Phase 81.25 — `llm.chat` host-initiated request method (sync + streaming via `params.stream` flag) + `llm.chat.delta` streaming notifications added (§5.y). Subprocess plugins declaring `[plugin.extends].llm_providers = [...]` get one `RemoteLlmFactory` per provider name registered into the daemon's `LlmRegistry`. LLM-specific error codes `-33101` through `-33105`. Default timeouts: 60 s sync chat, 300 s streaming; `NEXO_PLUGIN_LLM_TIMEOUT_MS` overrides both. Additive — plugins not declaring llm_providers are unaffected. |

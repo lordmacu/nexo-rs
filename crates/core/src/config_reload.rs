@@ -163,7 +163,9 @@ impl ConfigReloadCoordinator {
         };
 
         // 2. Structural + provider validation (aggregate errors).
-        let known_providers = crate::agent::KnownProviders::new(self.llm_registry.names());
+        let names = self.llm_registry.names();
+        let known_providers =
+            crate::agent::KnownProviders::new(names.iter().map(String::as_str));
         let telegram_instances: &[TelegramPluginConfig] = &cfg.plugins.telegram;
         if let Err(e) = crate::agent::validate_agents_with_providers(
             &cfg.agents.agents,
