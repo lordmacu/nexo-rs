@@ -12,6 +12,7 @@ members = [
     "crates/core",
     "crates/broker",
     "crates/llm",
+    "crates/llm-auth",
     "crates/memory",
     "crates/config",
     "crates/extensions",

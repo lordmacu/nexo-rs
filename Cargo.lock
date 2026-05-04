@@ -3681,6 +3681,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexo-llm-auth"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "dashmap 6.1.0",
+ "rand 0.8.6",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "nexo-lsp"
 version = "0.1.1"
 dependencies = [
@@ -4242,6 +4262,7 @@ dependencies = [
  "nexo-core",
  "nexo-extensions",
  "nexo-llm",
+ "nexo-llm-auth",
  "nexo-pairing",
  "nexo-plugin-email",
  "nexo-plugin-google",
