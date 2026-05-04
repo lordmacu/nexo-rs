@@ -875,11 +875,66 @@ coordinación de archivos cross-cutting.
   `<runtime>-<version>-<triple>` before falling back to
   `noarch`. ~2 d.
 
-- **31.5.c ⬜** PHP plugin SDK + template + `noarch` resolver
-  (already shipped). Mirror of 31.4 (Python) with Composer
-  vendoring + Fibers (PHP 8.1+) for non-blocking handler
-  dispatch. Same wire format. Daemon-side: no changes
-  (language-agnostic). Estimated ~2 d.
+- **31.5.c ✅ shipped 2026-05-04** — PHP plugin SDK + template
+  (Fibers, robusto). New `extensions/sdk-php/` Composer
+  package with PSR-4 namespace `Nexo\Plugin\Sdk\` + SPDX
+  `MIT OR Apache-2.0` license + `version: "0.1.0"` for path-
+  repo resolution. Public API: `PluginAdapter`, `BrokerSender`,
+  `Event`, `Manifest`, `Wire`, `Scheduler`, `StdoutGuard`,
+  `PluginError`/`ManifestError`/`WireError` (one class per
+  file per PSR-4). Runtime dep `yosymfony/toml: ^1.0` (pure
+  PHP). PHP `^8.1` minimum — Fibers required for cooperative
+  scheduler that preserves "reader does not block on slow
+  handler" invariant proven necessary by TS + Python tests.
+  Robustness defaults all default-on: `enableStdoutGuard:true`
+  (`ob_start` diverts non-JSON `echo`/`print`/`printf`/`var_dump`
+  to stderr tagged `[stdout-guard]`; documented limitation:
+  `fwrite(STDOUT, ...)` direct writes BYPASS — SDK's
+  BrokerSender uses this deliberately for blessed JSON frames),
+  `maxFrameBytes:1048576`, `handleProcessSignals:true`
+  (`pcntl_async_signals` for SIGTERM/SIGINT), in-flight Fiber
+  drain on shutdown via `Scheduler::drain()`. Single-shot
+  `run()` throws PluginError on second call. 14 tests across 7
+  test files using stdlib `proc_open` runner (no PHPUnit dep):
+  handshake (3), manifest validation (3), dispatch (3 incl.
+  slow-handler proof + drain), stdout-guard (2), wire (1),
+  lifecycle (1), event (1). New `extensions/template-plugin-php/`
+  template: manifest, `src/main.php` echo handler,
+  `composer.json` declaring SDK via path repository
+  (`url: ../sdk-php, options: {symlink: false}`, `minimum-
+  stability: dev`, `prefer-stable: true`), `composer.lock`
+  checked in (reproducibility), helper scripts, end-to-end
+  pack test, 4-job CI workflow (`shivammathur/setup-php@v2` +
+  composer 2 + `composer validate --strict` + `composer install
+  --no-dev --optimize-autoloader --classmap-authoritative` +
+  pack + pure-PHP audit + optional sign + release). Bash
+  launcher uses `php -d display_errors=stderr -d log_errors=0`
+  so PHP errors land on stderr (defense-in-depth with the
+  stdout guard). Real handshake smoke verified locally: `echo
+  '{...,"method":"initialize"}' | php src/main.php` returns
+  valid JSON-RPC manifest reply. New docs page
+  `docs/src/plugins/php-sdk.md`; SUMMARY wired. Cross-links in
+  Rust + Python + TS template READMEs. Resolver `noarch`
+  fallback (Phase 31.4) reused unchanged; daemon spawn
+  pipeline UNCHANGED. Issue resolved during dev: PSR-4 needs
+  one class per file (originally had `Errors.php` with 3
+  classes — split into `PluginError.php` + `ManifestError.php`
+  + `WireError.php`). Issue resolved: path repo needed
+  `minimum-stability: dev` + `prefer-stable: true` since the
+  SDK has no stable tagged version; added explicit `version`
+  field to SDK composer.json so `^0.1.0` constraint resolves
+  cleanly. NO PHPUnit (stdlib runner mirrors TS+Python
+  choices); NO ReactPHP/Amp; NO embedded interpreter; NO
+  Packagist publish (defer); NO native PHP ext in noarch
+  (defer 31.5.c.b); NO PHP 7.4/8.0 (Fibers 8.1+).
+
+- **31.5.c.b ⬜** Per-target PHP tarballs for plugins with
+  native PHP extensions (`*.so` / `*.dylib` / `*.dll` from
+  Composer deps). Convention: `<id>-<version>-php83-<triple>.tar.gz`.
+  Pack script branch on `verify-pure-php.sh` failure: switch
+  to per-target build matrix instead of failing. Resolver
+  tweak to try `php<MAJOR><MINOR>-<triple>` before falling
+  back to `noarch`. ~2 d.
 
 - **81.15.c.b ✅ shipped 2026-05-01** — SDK streaming
   consumption helper. Pending value type changed to
