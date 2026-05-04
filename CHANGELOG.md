@@ -38,6 +38,76 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 31.9 — Author-side documentation closeout.** Four
+  new/expanded mdbook pages plus a sync script that vendors
+  the workspace-root plugin contract spec into the published
+  book. Closes the author-side docs gap for Phase 31.
+
+  New pages:
+
+  - `docs/src/plugins/authoring.md` — entry-point overview.
+    Decision-tree table (Plugin vs Extension vs Microapp,
+    3 rows × 4 cols) and language-picker table (Rust /
+    Python / TypeScript / PHP, 4 rows × 4 cols pointing at
+    the per-language SDK pages). 5-minute Rust quickstart
+    that uses the bundled `nexo plugin new` scaffolder and
+    `nexo plugin run` local dev loop end to end.
+
+  - `docs/src/plugins/rust-sdk.md` — Rust SDK reference,
+    structurally a peer of the existing `python-sdk.md`,
+    `typescript-sdk.md`, and `php-sdk.md`. Documents
+    `PluginAdapter::new` / `.on_broker_event` /
+    `.on_shutdown` / `.run_stdio()` plus the per-target
+    tarball convention, smoke-test handshake one-liner, and
+    SDK test command (`cargo test -p nexo-microapp-sdk
+    --features plugin`).
+
+  - `docs/src/plugins/signing-and-publishing.md` —
+    5-section end-to-end cosign tutorial: unsigned first
+    release → `gh variable set COSIGN_ENABLED --body true`
+    opt-in → operator-side `[[authors]]` block with
+    `identity_regexp` anchored on the GitHub Actions
+    workflow URL → round-trip install verification (human
+    + JSON output) → troubleshooting table cross-linking
+    `ops/plugin-trust.md`.
+
+  Expanded:
+
+  - `docs/src/plugins/contract.md` — was a 28-LOC stub
+    pointing at the workspace-root spec, now a 678-LOC
+    vendored copy with an HTML comment header marking it
+    auto-vendored and a "See also" cross-link footer.
+    Vendored via initial run of the new sync script.
+
+  New tooling:
+
+  - `scripts/sync-plugin-contract.sh` — vendors
+    `nexo-plugin-contract.md` into
+    `docs/src/plugins/contract.md`. Two modes:
+
+    ```bash
+    scripts/sync-plugin-contract.sh           # rewrite vendored copy
+    scripts/sync-plugin-contract.sh --check   # exit 1 if vendored copy is stale
+    ```
+
+    `--check` is the CI-gate mode (deferred to follow-up
+    31.9.b for actual workflow wire-up).
+
+  `docs/src/SUMMARY.md` "Plugin SDKs" section reordered to
+  reflect the new structure: Authoring overview / Plugin
+  contract / Patterns / Rust SDK / Python SDK / TypeScript
+  SDK / PHP SDK / Publishing / Signing & publishing.
+
+  `mdbook build docs` clean. No new mdbook plugins, no
+  Spanish content, no frontmatter (plain Markdown only).
+
+  Out of scope: `docs/src/plugin-authoring/` subdir
+  reorganization (kept inside existing `docs/src/plugins/`
+  to preserve published edit-url + external bookmarks),
+  mdbook-include/mdbook-cmdrun preprocessor installs (sync
+  script is dependency-free), and CI gate for the sync
+  script (deferred to 31.9.b).
+
 - **Phase 31.8 — `nexo plugin {list,upgrade,remove}` operator
   UI.** New CLI surface for plugin lifecycle on top of the 31.1.c
   install pipeline. Each subcommand:
