@@ -39,6 +39,7 @@
 //!   (Phase 11.1 extension manifest — distinct concept, distinct
 //!   filename).
 
+pub mod compat_v1;
 pub mod config_schema;
 pub mod error;
 pub mod id_regex;
