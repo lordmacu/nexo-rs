@@ -10,9 +10,9 @@ tracker**.
 | Phase | Name | Sub-phases | Status |
 |-------|------|-----------|--------|
 | 80 | Autonomous assistant mode | 25/22 | 🔄 follow-ups open (80.7 DEFER, 80.13 ❌ DROPPED) |
-| 81 | Plug-and-play plugin system | 10/13 | 🔄 (foundation 81.5-81.11 ✅ + 81.12.0 ✅ factory + 81.12.a ✅ browser dual-trait; per-plugin 81.12.b/c/d/e pending; 81.13 DEFER) |
+| 81 | Plug-and-play plugin system | 28/32 | 🔄 (81.3/81.4/81.5/81.6/81.7/81.8/81.9/81.9.b/81.10/81.11/81.12.a-d/81.13 manifest unification/81.14/81.14.b/81.15.a-c.b/81.16/81.17/81.17.b/81.20.a-b.c/81.21/81.21.b/81.23/81.24/81.25/81.26/81.27/81.28 ✅; 81.12.e DEFER → 81.17; 81.17.c/81.18/81.19/81.21.b.b/81.21.c/81.22 pending) |
 | 82 | Multi-tenant SaaS extension enablement | 15/15 | ✅ shipped 2026-05-01 (follow-ups in FOLLOWUPS.md) |
-| 83 | Microapp framework foundation | 13/17 | 🔄 (83.1-7 + 83.8 agent-creator-v1 + 83.11 + 83.14-17 ✅; 83.9/83.12/83.13 pending — heavy product/UI sub-phases) |
+| 83 | Microapp framework foundation | 13/17 | 🔄 (83.3/83.4/83.5/83.6/83.7/83.8/83.11/83.15/83.16/83.17 ✅; 83.14 publish-readiness ✅ — execution pending; 83.1/83.2/83.9/83.10/83.12/83.13 pending — heavy product/UI sub-phases) |
 | 84 | Coordinator agent persona + worker continuation | 5/5 | ✅ shipped 2026-05-01 (follow-ups in FOLLOWUPS.md) |
 | 85 | Compaction hardening: reactive recovery + cache-aware micro-compact | 2/2 | ✅ shipped 2026-05-01 (follow-ups in FOLLOWUPS.md) |
 | 86 | Memory observability | 1/1 | ✅ shipped 2026-05-01 (86.2 ❌ DROPPED, fire-site wiring in FOLLOWUPS) |
