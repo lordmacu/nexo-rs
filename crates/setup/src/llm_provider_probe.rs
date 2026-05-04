@@ -22,7 +22,9 @@ use nexo_core::agent::admin_rpc::dispatcher::AdminRpcError;
 use nexo_core::agent::admin_rpc::domains::llm_providers::{
     LlmProvidersProbe, LlmYamlPatcher,
 };
-use nexo_tool_meta::admin::llm_providers::LlmProviderProbeResponse;
+use nexo_tool_meta::admin::llm_providers::{
+    LlmProviderProbeDraftInput, LlmProviderProbeResponse,
+};
 
 const PROBE_TIMEOUT_ENV: &str = "NEXO_LLM_PROBE_TIMEOUT_SECS";
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -129,6 +131,99 @@ impl LlmProvidersProbe for HttpLlmProviderProbe {
             Err(e) => {
                 let raw = e.to_string();
                 let safe = redact_key(&raw, &api_key);
+                Ok(LlmProviderProbeResponse {
+                    ok: false,
+                    status: 0,
+                    latency_ms,
+                    model_count: None,
+                    model_names: None,
+                    error: Some(safe),
+                })
+            }
+        }
+    }
+
+    /// Phase 82.10.u — draft probe. Operator-supplied
+    /// `(base_url, fields)` payload; no yaml, no env var lookup.
+    /// Defensive: every error path returns `Ok(_)` with
+    /// `ok: false` + sanitised hint so the wizard renders a
+    /// usable diagnostic. Network errors only become `Err(_)`
+    /// when the input itself is malformed (missing api_key,
+    /// missing base_url) — those bail before any HTTP call.
+    async fn probe_draft(
+        &self,
+        draft: LlmProviderProbeDraftInput,
+    ) -> Result<LlmProviderProbeResponse, AdminRpcError> {
+        let api_key = draft
+            .fields
+            .get("api_key")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                AdminRpcError::InvalidParams(
+                    "draft.fields.api_key is required (empty / missing)".into(),
+                )
+            })?;
+        let base_url = draft.base_url.trim();
+        if base_url.is_empty() {
+            return Err(AdminRpcError::InvalidParams(
+                "draft.base_url is required".into(),
+            ));
+        }
+
+        // Per-factory headers: MiniMax also needs the group_id
+        // header for /v1/models to enumerate the group's
+        // available models. Other factories ignore it.
+        let mut request = self
+            .http
+            .get(build_models_url(base_url))
+            .bearer_auth(&api_key);
+        if let Some(group_id) = draft
+            .fields
+            .get("group_id")
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+        {
+            request = request.header("X-MiniMax-Group-Id", group_id);
+        }
+
+        let started = Instant::now();
+        let response = request.send().await;
+        let latency_ms = started.elapsed().as_millis() as u64;
+
+        match response {
+            Ok(r) => {
+                let status = r.status().as_u16();
+                let body = r.bytes().await.unwrap_or_default();
+                let ok = (200..300).contains(&status);
+                if ok {
+                    let parsed = parse_models_payload(&body);
+                    Ok(LlmProviderProbeResponse {
+                        ok: true,
+                        status,
+                        latency_ms,
+                        model_count: parsed.count,
+                        model_names: parsed.names,
+                        error: None,
+                    })
+                } else {
+                    let raw_text = String::from_utf8_lossy(&body)
+                        .chars()
+                        .take(400)
+                        .collect::<String>();
+                    let safe = redact_key(&raw_text, &api_key);
+                    Ok(LlmProviderProbeResponse {
+                        ok: false,
+                        status,
+                        latency_ms,
+                        model_count: None,
+                        model_names: None,
+                        error: Some(format!("HTTP {status}: {safe}")),
+                    })
+                }
+            }
+            Err(e) => {
+                let safe = redact_key(&e.to_string(), &api_key);
                 Ok(LlmProviderProbeResponse {
                     ok: false,
                     status: 0,
