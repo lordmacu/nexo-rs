@@ -152,7 +152,7 @@ async fn llm_chat_round_trips_via_mock_subprocess() {
             auth: None,
             api_flavor: None,
             embedding_model: None,
-            safety_settings: Default::default(),
+            safety_settings: Default::default(), factory_type: None, api_key_secret_id: None,
         },
     );
     let llm_cfg = LlmConfig {

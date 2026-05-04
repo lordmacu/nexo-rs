@@ -1,6 +1,9 @@
 pub mod env;
 pub mod migrations;
+pub mod secrets_source;
 pub mod types;
+
+pub use secrets_source::{InMemorySecretsSource, NoSecretsSource, SecretsSource};
 
 pub use types::*;
 

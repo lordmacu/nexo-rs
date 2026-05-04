@@ -84,6 +84,8 @@ impl LlmProviderFactory for DeepSeekFactory {
                 api_flavor: provider_cfg.api_flavor.clone(),
                 embedding_model: provider_cfg.embedding_model.clone(),
                 safety_settings: provider_cfg.safety_settings.clone(),
+                factory_type: provider_cfg.factory_type.clone(),
+                api_key_secret_id: provider_cfg.api_key_secret_id.clone(),
             }
         } else {
             provider_cfg.clone()
@@ -121,7 +123,7 @@ mod tests {
             auth: None,
             api_flavor: None,
             embedding_model: None,
-            safety_settings: None,
+            safety_settings: None, factory_type: None, api_key_secret_id: None,
         }
     }
 

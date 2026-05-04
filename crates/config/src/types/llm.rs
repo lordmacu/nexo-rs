@@ -1,5 +1,7 @@
+use crate::secrets_source::SecretsSource;
 use serde::Deserialize;
 use std::collections::HashMap;
+use thiserror::Error;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -376,8 +378,30 @@ impl ResolvedContextOptimization {
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct LlmProviderConfig {
+    /// Resolved API key — populated either from the YAML
+    /// `api_key:` field directly (post-`${ENV}` expansion) OR from
+    /// the secrets store via `api_key_secret_id` after
+    /// [`LlmProviderConfig::resolve_api_key`] runs. The two sources
+    /// are mutually exclusive — boot fails loud on conflict.
+    /// Defaults to empty string so YAML can omit it when using
+    /// `api_key_secret_id` exclusively.
+    #[serde(default)]
     pub api_key: String,
     pub base_url: String,
+    /// Phase 82.10.s — factory id from the registry. `None` ⇒ the
+    /// YAML key (i.e. the map key under `providers.<id>`) IS the
+    /// factory id (back-compat with single-instance-per-factory
+    /// yamls). When `Some("minimax")`, the operator can name the
+    /// instance anything (`minimax-cliente-a`) and the daemon uses
+    /// the `minimax` factory.
+    #[serde(default)]
+    pub factory_type: Option<String>,
+    /// Phase 82.10.s — reference into the secrets store. When set,
+    /// `resolve_api_key` reads `<state_root>/secrets/<id>.txt` (or
+    /// the configured backend) and populates `api_key`. Mutually
+    /// exclusive with a non-empty `api_key`.
+    #[serde(default)]
+    pub api_key_secret_id: Option<String>,
     pub group_id: Option<String>,
     #[serde(default)]
     pub rate_limit: RateLimitConfig,
@@ -409,6 +433,134 @@ pub struct LlmProviderConfig {
     /// `safetySettings: [...]` array verbatim.
     #[serde(default)]
     pub safety_settings: Option<serde_json::Value>,
+}
+
+/// Phase 82.10.s — typed errors from
+/// [`LlmProviderConfig::resolve_api_key`]. Surface loud at boot so
+/// operators can fix `llm.yaml` before the first agent turn.
+#[derive(Debug, Error)]
+pub enum KeyResolutionError {
+    /// Neither inline `api_key` nor `api_key_secret_id` was supplied
+    /// (or both yielded empty). Boot fails — no agent can run
+    /// without an API key.
+    #[error("provider '{0}': no API key source (set `api_key` inline or `api_key_secret_id`)")]
+    Missing(String),
+    /// Both `api_key` (non-empty) AND `api_key_secret_id` were
+    /// supplied. Refuse to silently pick one — operator must
+    /// remove one of the two to make intent explicit.
+    #[error(
+        "provider '{id}': conflicting API key sources — both `api_key` and `api_key_secret_id` set"
+    )]
+    Conflict {
+        /// Provider id whose config has the conflict.
+        id: String,
+    },
+    /// `api_key_secret_id` referenced a secret the source couldn't
+    /// retrieve (NotFound / permission / I/O error).
+    #[error("provider '{id}': secret '{secret_id}' read failed: {source}")]
+    SecretRead {
+        /// Provider id requesting the secret.
+        id: String,
+        /// Referenced secret id.
+        secret_id: String,
+        /// Underlying I/O error.
+        #[source]
+        source: std::io::Error,
+    },
+}
+
+impl LlmProviderConfig {
+    /// Phase 82.10.s — resolve `api_key` from one of two mutually
+    /// exclusive sources:
+    ///
+    /// 1. **Inline**: `api_key:` field non-empty (post-`${ENV}`
+    ///    expansion done at YAML parse). Already set on entry.
+    /// 2. **Secret store**: `api_key_secret_id:` set; reads from
+    ///    `secrets` and overwrites `api_key`.
+    ///
+    /// Conflict (both present) → `KeyResolutionError::Conflict`.
+    /// Missing (neither present) → `KeyResolutionError::Missing`.
+    /// Secret read failure → `KeyResolutionError::SecretRead`.
+    ///
+    /// Idempotent: calling twice after success is a no-op (second
+    /// call still has `api_key` non-empty + `api_key_secret_id`
+    /// untouched, so the `inline` branch wins; the secret is read
+    /// only on first resolution).
+    pub fn resolve_api_key(
+        &mut self,
+        provider_id: &str,
+        secrets: &dyn SecretsSource,
+    ) -> Result<(), KeyResolutionError> {
+        let inline_present = !self.api_key.is_empty();
+        let secret_id = self
+            .api_key_secret_id
+            .as_deref()
+            .filter(|s| !s.is_empty());
+
+        match (inline_present, secret_id) {
+            (true, Some(_)) => Err(KeyResolutionError::Conflict {
+                id: provider_id.to_string(),
+            }),
+            (false, None) => Err(KeyResolutionError::Missing(provider_id.to_string())),
+            (true, None) => {
+                // Already populated via YAML — nothing to do.
+                Ok(())
+            }
+            (false, Some(sid)) => {
+                let value = secrets
+                    .read(sid)
+                    .map_err(|source| KeyResolutionError::SecretRead {
+                        id: provider_id.to_string(),
+                        secret_id: sid.to_string(),
+                        source,
+                    })?;
+                if value.is_empty() {
+                    return Err(KeyResolutionError::SecretRead {
+                        id: provider_id.to_string(),
+                        secret_id: sid.to_string(),
+                        source: std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "secret value is empty",
+                        ),
+                    });
+                }
+                self.api_key = value;
+                Ok(())
+            }
+        }
+    }
+}
+
+impl LlmConfig {
+    /// Phase 82.10.s — walk every provider (global + tenant-scoped)
+    /// and resolve their API keys. Collects errors per provider id
+    /// rather than failing fast, so operators see EVERY broken
+    /// instance in one boot pass instead of fixing-restarting in a
+    /// loop.
+    pub fn resolve_all_keys(
+        &mut self,
+        secrets: &dyn SecretsSource,
+    ) -> Result<(), Vec<(String, KeyResolutionError)>> {
+        let mut errors: Vec<(String, KeyResolutionError)> = Vec::new();
+        for (id, cfg) in self.providers.iter_mut() {
+            if let Err(e) = cfg.resolve_api_key(id, secrets) {
+                errors.push((id.clone(), e));
+            }
+        }
+        for (tenant_id, t) in self.tenants.iter_mut() {
+            for (id, cfg) in t.providers.iter_mut() {
+                let scoped_id = format!("tenants.{tenant_id}.{id}");
+                if let Err(e) = cfg.resolve_api_key(&scoped_id, secrets) {
+                    errors.push((scoped_id, e));
+                }
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -849,5 +1001,181 @@ auto:
         let auto = cfg.auto.unwrap();
         assert!((auto.token_pct - 0.0).abs() < f32::EPSILON);
         assert_eq!(auto.max_age_minutes, 60);
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // Phase 82.10.s — multi-instance providers + secret-backed keys
+    // ────────────────────────────────────────────────────────────
+
+    use crate::secrets_source::{InMemorySecretsSource, NoSecretsSource};
+
+    fn provider_inline(api_key: &str) -> LlmProviderConfig {
+        LlmProviderConfig {
+            api_key: api_key.to_string(),
+            base_url: "https://example.invalid".to_string(),
+            factory_type: None,
+            api_key_secret_id: None,
+            group_id: None,
+            rate_limit: RateLimitConfig::default(),
+            auth: None,
+            api_flavor: None,
+            embedding_model: None,
+            safety_settings: None,
+        }
+    }
+
+    #[test]
+    fn resolve_api_key_inline_only_passes_through() {
+        let mut p = provider_inline("sk-abc");
+        p.resolve_api_key("minimax", &NoSecretsSource).unwrap();
+        assert_eq!(p.api_key, "sk-abc");
+    }
+
+    #[test]
+    fn resolve_api_key_secret_only_reads_store() {
+        let mut p = provider_inline("");
+        p.api_key_secret_id = Some("minimax-cliente-a".to_string());
+        let store = InMemorySecretsSource::new().with("minimax-cliente-a", "sk-secret");
+        p.resolve_api_key("minimax-cliente-a", &store).unwrap();
+        assert_eq!(p.api_key, "sk-secret");
+    }
+
+    #[test]
+    fn resolve_api_key_conflict_inline_and_secret() {
+        let mut p = provider_inline("sk-inline");
+        p.api_key_secret_id = Some("some-id".to_string());
+        let err = p.resolve_api_key("provider-x", &NoSecretsSource).unwrap_err();
+        assert!(matches!(err, KeyResolutionError::Conflict { .. }));
+    }
+
+    #[test]
+    fn resolve_api_key_missing_when_neither_present() {
+        let mut p = provider_inline("");
+        let err = p.resolve_api_key("provider-x", &NoSecretsSource).unwrap_err();
+        assert!(matches!(err, KeyResolutionError::Missing(_)));
+    }
+
+    #[test]
+    fn resolve_api_key_secret_read_failure_wraps_error() {
+        let mut p = provider_inline("");
+        p.api_key_secret_id = Some("missing-secret".to_string());
+        let err = p
+            .resolve_api_key("provider-x", &NoSecretsSource)
+            .unwrap_err();
+        match err {
+            KeyResolutionError::SecretRead { id, secret_id, .. } => {
+                assert_eq!(id, "provider-x");
+                assert_eq!(secret_id, "missing-secret");
+            }
+            other => panic!("expected SecretRead, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_api_key_empty_secret_value_is_treated_as_failure() {
+        let mut p = provider_inline("");
+        p.api_key_secret_id = Some("empty-secret".to_string());
+        let store = InMemorySecretsSource::new().with("empty-secret", "");
+        let err = p.resolve_api_key("provider-x", &store).unwrap_err();
+        assert!(matches!(err, KeyResolutionError::SecretRead { .. }));
+    }
+
+    #[test]
+    fn resolve_api_key_idempotent_inline_post_resolution() {
+        let mut p = provider_inline("sk-1");
+        p.resolve_api_key("provider-x", &NoSecretsSource).unwrap();
+        // Second call: still inline, still ok.
+        p.resolve_api_key("provider-x", &NoSecretsSource).unwrap();
+        assert_eq!(p.api_key, "sk-1");
+    }
+
+    #[test]
+    fn resolve_api_key_blank_secret_id_treated_as_absent() {
+        // Edge case: yaml deserialized `api_key_secret_id: ""`. The
+        // filter in resolve_api_key drops the empty string so the
+        // path falls through to inline (or Missing).
+        let mut p = provider_inline("sk-inline");
+        p.api_key_secret_id = Some(String::new());
+        p.resolve_api_key("provider-x", &NoSecretsSource).unwrap();
+        assert_eq!(p.api_key, "sk-inline");
+    }
+
+    #[test]
+    fn resolve_all_keys_collects_per_instance_errors() {
+        let mut llm = LlmConfig {
+            providers: HashMap::new(),
+            retry: RetryConfig::default(),
+            context_optimization: ContextOptimizationConfig::default(),
+            tenants: HashMap::new(),
+        };
+        // Good (inline).
+        llm.providers
+            .insert("good".to_string(), provider_inline("sk-good"));
+        // Conflict.
+        let mut conflict = provider_inline("sk-c");
+        conflict.api_key_secret_id = Some("any".to_string());
+        llm.providers.insert("bad-conflict".to_string(), conflict);
+        // Missing.
+        llm.providers
+            .insert("bad-missing".to_string(), provider_inline(""));
+
+        let errs = llm.resolve_all_keys(&NoSecretsSource).unwrap_err();
+        assert_eq!(errs.len(), 2);
+        let ids: std::collections::HashSet<String> =
+            errs.iter().map(|(id, _)| id.clone()).collect();
+        assert!(ids.contains("bad-conflict"));
+        assert!(ids.contains("bad-missing"));
+        assert!(!ids.contains("good"));
+        // The good one was still resolved successfully.
+        assert_eq!(llm.providers.get("good").unwrap().api_key, "sk-good");
+    }
+
+    #[test]
+    fn resolve_all_keys_walks_tenants() {
+        let mut llm = LlmConfig {
+            providers: HashMap::new(),
+            retry: RetryConfig::default(),
+            context_optimization: ContextOptimizationConfig::default(),
+            tenants: HashMap::new(),
+        };
+        let mut t = TenantLlmConfig::default();
+        let mut bad = provider_inline("");
+        bad.api_key_secret_id = Some("nope".to_string());
+        t.providers.insert("minimax".to_string(), bad);
+        llm.tenants.insert("acme".to_string(), t);
+        let errs = llm.resolve_all_keys(&NoSecretsSource).unwrap_err();
+        assert_eq!(errs.len(), 1);
+        assert_eq!(errs[0].0, "tenants.acme.minimax");
+    }
+
+    #[test]
+    fn legacy_yaml_loads_with_factory_type_none() {
+        let yaml = r#"
+providers:
+  minimax:
+    api_key: sk-test
+    base_url: https://api.minimax.chat/v1
+"#;
+        let cfg: LlmConfig = serde_yaml::from_str(yaml).unwrap();
+        let p = cfg.providers.get("minimax").unwrap();
+        assert!(p.factory_type.is_none());
+        assert!(p.api_key_secret_id.is_none());
+        assert_eq!(p.api_key, "sk-test");
+    }
+
+    #[test]
+    fn new_yaml_with_factory_type_and_secret_id_parses() {
+        let yaml = r#"
+providers:
+  minimax-cliente-a:
+    base_url: https://api.minimax.chat/v1
+    factory_type: minimax
+    api_key_secret_id: cliente-a-key
+"#;
+        let cfg: LlmConfig = serde_yaml::from_str(yaml).unwrap();
+        let p = cfg.providers.get("minimax-cliente-a").unwrap();
+        assert_eq!(p.factory_type.as_deref(), Some("minimax"));
+        assert_eq!(p.api_key_secret_id.as_deref(), Some("cliente-a-key"));
+        assert!(p.api_key.is_empty());
     }
 }
