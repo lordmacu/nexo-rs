@@ -1768,6 +1768,39 @@ async fn main() -> Result<()> {
     // calls work via `Arc<T>: Deref<Target = T>`.
     let llm_registry = Arc::new(LlmRegistry::with_builtins());
 
+    // Phase 82.10.s.4 — resolve every provider's API key from its
+    // configured source (inline / secret_id / env). This populates
+    // `LlmProviderConfig.api_key` so downstream LLM clients have a
+    // ready-to-use bearer without each crate re-reading secrets.
+    // Errors are collected per-instance for one-shot operator
+    // diagnostics (no fix-restart-loop).
+    {
+        let secrets_source =
+            nexo_setup::secrets_store::FsSecretsStore::with_secrets_dir(secrets_dir.clone());
+        if let Err(errs) = cfg.llm.resolve_all_keys(secrets_source.as_ref()) {
+            let joined = errs
+                .iter()
+                .map(|(id, e)| format!("  · {id}: {e}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            anyhow::bail!(
+                "LLM provider API-key resolution failed for {} instance(s):\n{joined}",
+                errs.len()
+            );
+        }
+    }
+
+    // Phase 82.10.s.4 — validate every yaml provider instance
+    // (global + tenant-scoped) maps to a registered factory. Loud
+    // boot fail beats a runtime LLM dispatch error mid-traffic.
+    if let Err(errs) = llm_registry.validate_config(&cfg.llm) {
+        anyhow::bail!(
+            "LLM provider factory validation failed for {} instance(s):\n  · {}",
+            errs.len(),
+            errs.join("\n  · ")
+        );
+    }
+
     // Provider-level validation pass: every agent's (and every
     // binding override's) `model.provider` must be a real registered
     // provider. Same aggregate error format as the structural pass
