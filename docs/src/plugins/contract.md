@@ -5,7 +5,7 @@
 
 | Field | Value |
 |-------|-------|
-| `contract_version` | `1.0.0` |
+| `contract_version` | `1.4.0` |
 | Status | Stable |
 | Authoritative reference | This document |
 | Reference implementations | Host: `crates/core/src/agent/nexo_plugin_registry/subprocess.rs`. Rust child: `crates/microapp-sdk/src/plugin.rs` (feature `plugin`). |
@@ -65,6 +65,52 @@ handshake (§4.1). It uses `plugin.entrypoint.command` to spawn
 the child process. Any env key beginning with `NEXO_` is
 **rejected at boot** — those names are reserved for the daemon's
 own runtime configuration.
+
+### 2.1 Extends section (Phase 81.28)
+
+A subprocess plugin that contributes to a daemon-side registry
+beyond `[plugin.channels.register]` declares its capabilities in
+an additive `[plugin.extends]` section:
+
+```toml
+[plugin.extends]
+channels         = ["slack", "discord"]    # paired with Phase 81.24 wrapper
+llm_providers    = ["cohere", "mistral"]   # paired with Phase 81.25
+memory_backends  = ["pinecone", "qdrant"]  # paired with Phase 81.26
+hooks            = ["pii_redact"]          # paired with Phase 81.27
+```
+
+Each list names the IDs the plugin contributes to the matching
+registry. Validation rules:
+
+- Each id MUST match `^[a-z][a-z0-9_]{0,31}$`.
+- No duplicates within a single list.
+- No cross-list duplicates — an id MUST occupy at most one of
+  the four lists within a single plugin.
+- All four fields default to empty; legacy manifests parse
+  unchanged.
+
+The four canonical sections are fixed in code
+(`EXTENDS_SECTIONS`); adding a new capability surface requires a
+manifest-crate change. This is intentional — the closed schema
+keeps `serde(deny_unknown_fields)` defense intact and gates new
+extension points behind a coordinated rollout.
+
+`[plugin.extends]` is the **declarative** half of the
+capability story. Daemon dispatch wiring — actually populating
+`LlmClientRegistry` / memory backend store / `HookInterceptor`
+registry — ships with Phase 81.24 (channels), 81.25 (LLM
+providers), 81.26 (memory backends), and 81.27 (hooks).
+Capability-negotiation handshake (verifying the subprocess's
+`initialize` reply matches the declared extensions) is a
+follow-up (81.28.b).
+
+`[plugin.extends].channels` exists in parallel with
+`[plugin.channels.register]` (§6 — topic allowlist). Use
+`extends` for **subprocess** plugins routed through the future
+remote `ChannelAdapter` wrapper; use `register` for **in-tree**
+adapters that link directly into the daemon binary. Both
+surfaces stay independent.
 
 ## 3. JSON-RPC envelope
 
@@ -670,6 +716,7 @@ contract document.
 | `1.1.0` | 2026-05-01 | Phase 81.20.a — `memory.recall` request-response added. Additive; existing 1.0.0 plugins continue to work unchanged. Manifest `[plugin.supervisor]` section (Phase 81.21.b) — additive. Host-side activation: Phase 81.17.b boot wire. Phase 81.21 supervisor + 81.21.b stderr tail capture. |
 | `1.2.0` | 2026-05-01 | Phase 81.20.b — `llm.complete` request-response added. Additive. MVP supports text responses only; tool-call responses surface as `-32601 not_implemented`. Streaming (`llm.complete.delta` notifications) on roadmap as 81.20.b.b. Host-side runtime threading deferred to 81.20.b.b — daemon today returns `-32603 "llm not configured"` until main.rs threads `LlmServices` into the subprocess pipeline. |
 | `1.3.0` | 2026-05-01 | Phase 81.20.b.b runtime threading shipped (memory + llm both flow end-to-end through production daemon path). Phase 81.20.b.c streaming added — `llm.complete` accepts `stream: true` opt-in; chunks emit as `llm.complete.delta { request_id, chunk }` notifications, final reply omits `content`. Additive — non-streaming requests unchanged. |
+| `1.4.0` | 2026-05-04 | Phase 81.28 — `[plugin.extends]` manifest section added (`channels` / `llm_providers` / `memory_backends` / `hooks` lists). Schema-only this revision: parser + validator ship; daemon dispatch wiring per registry lands in Phase 81.24 (channels), 81.25 (LLM providers), 81.26 (memory backends), 81.27 (hooks). Additive — manifests without `[plugin.extends]` parse and validate unchanged. |
 
 ## See also
 

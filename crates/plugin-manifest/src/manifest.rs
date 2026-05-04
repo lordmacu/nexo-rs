@@ -77,6 +77,16 @@ pub struct PluginSection {
     #[serde(default)]
     pub config: ConfigSection,
 
+    /// Phase 81.28 — per-registry capability declarations.
+    /// Subprocess plugins use this to declare which channel
+    /// kinds / LLM provider IDs / memory backend IDs / hook IDs
+    /// they contribute. Daemon dispatch wiring lands in 81.24
+    /// (channels), 81.25 (llm_providers), 81.26 (memory_backends),
+    /// 81.27 (hooks). Empty section is the legacy default —
+    /// in-tree plugins keep working unchanged.
+    #[serde(default)]
+    pub extends: ExtendsSection,
+
     #[serde(default)]
     pub requires: RequiresSection,
 
@@ -444,6 +454,102 @@ pub struct ChannelDecl {
     pub kind: String,
     /// Implementation type name (informational).
     pub adapter: String,
+}
+
+// ── Extends section (Phase 81.28) ───────────────────────────────
+
+/// Stable section names for `[plugin.extends]`. Ordered to match
+/// validator iteration + [`ExtendsSection::all_ids`] output.
+pub const EXTENDS_SECTIONS: &[&str] = &[
+    "channels",
+    "llm_providers",
+    "memory_backends",
+    "hooks",
+];
+
+/// Per-registry capability declaration. Each list names the IDs
+/// this plugin contributes to the daemon's corresponding registry
+/// slot. Daemon dispatch wiring lands in 81.24 (channels), 81.25
+/// (llm_providers), 81.26 (memory_backends), 81.27 (hooks).
+/// Empty section has no runtime effect — the manifest schema
+/// simply records intent so out-of-tree plugins declare what they
+/// extend.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ExtendsSection {
+    /// Channel kinds (e.g. `["slack", "discord"]`) the plugin's
+    /// subprocess implements via the future remote
+    /// `ChannelAdapter` wrapper (Phase 81.24).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub channels: Vec<String>,
+
+    /// LLM provider IDs (e.g. `["cohere", "mistral"]`) the
+    /// plugin's subprocess implements via the future remote
+    /// `LlmClient` wrapper (Phase 81.25).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub llm_providers: Vec<String>,
+
+    /// Memory backend IDs (e.g. `["pinecone", "qdrant"]`) the
+    /// plugin's subprocess implements via the future remote
+    /// memory wrapper (Phase 81.26). One namespace covers
+    /// short-term, long-term, and vector tiers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub memory_backends: Vec<String>,
+
+    /// HookInterceptor IDs (e.g. `["pii_redact", "rate_limit"]`)
+    /// the plugin's subprocess implements via the future remote
+    /// hook wrapper (Phase 81.27).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hooks: Vec<String>,
+}
+
+impl ExtendsSection {
+    /// `true` when all four lists are empty — the manifest
+    /// declares no extension contributions.
+    pub fn is_empty(&self) -> bool {
+        self.channels.is_empty()
+            && self.llm_providers.is_empty()
+            && self.memory_backends.is_empty()
+            && self.hooks.is_empty()
+    }
+
+    /// Flat `(section_name, id)` pairs across all four lists,
+    /// in the deterministic order matching [`EXTENDS_SECTIONS`].
+    /// Used by the (future) daemon dispatch + doctor surface.
+    pub fn all_ids(&self) -> Vec<(&'static str, &str)> {
+        let mut out = Vec::with_capacity(
+            self.channels.len()
+                + self.llm_providers.len()
+                + self.memory_backends.len()
+                + self.hooks.len(),
+        );
+        for id in &self.channels {
+            out.push(("channels", id.as_str()));
+        }
+        for id in &self.llm_providers {
+            out.push(("llm_providers", id.as_str()));
+        }
+        for id in &self.memory_backends {
+            out.push(("memory_backends", id.as_str()));
+        }
+        for id in &self.hooks {
+            out.push(("hooks", id.as_str()));
+        }
+        out
+    }
+
+    /// `true` when `id` appears in the named section. `section`
+    /// must match one of [`EXTENDS_SECTIONS`]; unknown sections
+    /// return `false`.
+    pub fn registers(&self, section: &str, id: &str) -> bool {
+        match section {
+            "channels" => self.channels.iter().any(|s| s == id),
+            "llm_providers" => self.llm_providers.iter().any(|s| s == id),
+            "memory_backends" => self.memory_backends.iter().any(|s| s == id),
+            "hooks" => self.hooks.iter().any(|s| s == id),
+            _ => false,
+        }
+    }
 }
 
 // ── Skills section ──────────────────────────────────────────────
@@ -1049,5 +1155,88 @@ min_nexo_version = ">=0.1.0"
         };
         let paths = validate_contributed_skills(&caps, tmp.path()).unwrap();
         assert!(paths.is_empty());
+    }
+
+    // ── Phase 81.28 — [plugin.extends] section ─────────────────
+
+    #[test]
+    fn manifest_extends_section_parses_minimal() {
+        let toml_src = r#"
+[plugin]
+id = "ext_one"
+version = "0.1.0"
+name = "Ext One"
+description = "x"
+min_nexo_version = ">=0.1.0"
+
+[plugin.extends]
+llm_providers = ["cohere"]
+"#;
+        let m = PluginManifest::from_str(toml_src).unwrap();
+        assert_eq!(m.plugin.extends.llm_providers, vec!["cohere".to_string()]);
+        assert!(m.plugin.extends.channels.is_empty());
+        assert!(m.plugin.extends.memory_backends.is_empty());
+        assert!(m.plugin.extends.hooks.is_empty());
+        assert!(!m.plugin.extends.is_empty());
+    }
+
+    #[test]
+    fn manifest_extends_section_parses_full() {
+        let toml_src = r#"
+[plugin]
+id = "ext_full"
+version = "0.1.0"
+name = "Ext Full"
+description = "x"
+min_nexo_version = ">=0.1.0"
+
+[plugin.extends]
+channels = ["slack", "discord"]
+llm_providers = ["cohere", "mistral"]
+memory_backends = ["pinecone"]
+hooks = ["pii_redact"]
+"#;
+        let m = PluginManifest::from_str(toml_src).unwrap();
+        assert_eq!(m.plugin.extends.channels.len(), 2);
+        assert_eq!(m.plugin.extends.llm_providers.len(), 2);
+        assert_eq!(m.plugin.extends.memory_backends.len(), 1);
+        assert_eq!(m.plugin.extends.hooks.len(), 1);
+        assert!(m.plugin.extends.registers("channels", "slack"));
+        assert!(m.plugin.extends.registers("llm_providers", "mistral"));
+        assert!(!m.plugin.extends.registers("hooks", "absent"));
+        assert!(!m.plugin.extends.registers("unknown_section", "anything"));
+        let ids = m.plugin.extends.all_ids();
+        assert_eq!(ids.len(), 6);
+        // Order: channels first, then llm_providers, then
+        // memory_backends, then hooks (matches EXTENDS_SECTIONS).
+        assert_eq!(ids[0], ("channels", "slack"));
+        assert_eq!(ids[1], ("channels", "discord"));
+        assert_eq!(ids[2], ("llm_providers", "cohere"));
+        assert_eq!(ids[5], ("hooks", "pii_redact"));
+    }
+
+    #[test]
+    fn manifest_extends_section_defaults_empty_when_absent() {
+        let m = PluginManifest::from_str(minimal_manifest_toml()).unwrap();
+        assert!(m.plugin.extends.is_empty());
+        assert!(m.plugin.extends.all_ids().is_empty());
+    }
+
+    #[test]
+    fn manifest_extends_section_serializes_round_trip() {
+        let extends = ExtendsSection {
+            channels: vec!["slack".into()],
+            llm_providers: vec!["cohere".into(), "mistral".into()],
+            memory_backends: Vec::new(),
+            hooks: vec!["pii_redact".into()],
+        };
+        let s = toml::to_string(&extends).unwrap();
+        // Empty `memory_backends` skipped via skip_serializing_if.
+        assert!(!s.contains("memory_backends"));
+        assert!(s.contains("channels = [\"slack\"]"));
+        assert!(s.contains("hooks = [\"pii_redact\"]"));
+        // Round-trip back to ExtendsSection.
+        let parsed: ExtendsSection = toml::from_str(&s).unwrap();
+        assert_eq!(parsed, extends);
     }
 }

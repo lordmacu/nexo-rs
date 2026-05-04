@@ -1245,6 +1245,35 @@ coordinación de archivos cross-cutting.
   `init_outcomes` + `namespace_violations` doctor surfaces.
   ~0.3 d.
 
+- **81.28 ✅ shipped 2026-05-04** — Manifest `[plugin.extends]`
+  section per-registry capability declaration. Additive 4-list
+  schema (`channels` / `llm_providers` / `memory_backends` /
+  `hooks`) + helpers (`is_empty`, `all_ids`,
+  `registers(section, id)`) + `EXTENDS_SECTIONS` const + 3
+  `ManifestError` variants + `validate_extends` wired in
+  `run_all`. Contract spec bumped to v1.4.0 with new §2.1
+  "Extends section"; vendored doc copy refreshed. Authoring
+  docs gain a cross-link callout. 8 unit tests. Daemon dispatch
+  wiring per registry comes in 81.24-27; capability-negotiation
+  handshake deferred to 81.28.b. Doctor surface deferred to
+  81.28.c.
+
+- **81.28.b ⬜** Capability-negotiation handshake. The host's
+  `initialize` reply parser cross-checks the subprocess's
+  declared capabilities (TBD shape — likely a `capabilities:
+  { channels: [...], llm_providers: [...], ... }` block on
+  the reply) against `manifest.plugin.extends.*`. Mismatch
+  fails plugin load with `PluginInitError::CapabilityMismatch`.
+  Defends against manifests claiming kinds the binary doesn't
+  actually implement. Bumps contract version to 1.5.0. ~1 d.
+
+- **81.28.c ⬜** `nexo agent doctor plugins --json` surfaces
+  per-plugin `extends: { channels: [...], llm_providers:
+  [...], memory_backends: [...], hooks: [...] }` so operators
+  audit declared capabilities without booting. Pairs with
+  the existing `init_outcomes` + `namespace_violations` +
+  `plugin_config` (81.4.d) doctor surfaces. ~0.3 d.
+
 - **81.15.c.b ✅ shipped 2026-05-01** — SDK streaming
   consumption helper. Pending value type changed to
   `PendingKind` enum (Single for non-streaming, Streaming for
