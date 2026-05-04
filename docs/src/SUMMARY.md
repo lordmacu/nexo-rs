@@ -23,12 +23,15 @@
 
 # Plugin SDKs
 
+- [Authoring overview](./plugins/authoring.md)
 - [Plugin contract](./plugins/contract.md)
 - [Patterns (8 common shapes)](./plugins/patterns.md)
+- [Rust SDK](./plugins/rust-sdk.md)
 - [Python SDK](./plugins/python-sdk.md)
 - [TypeScript SDK](./plugins/typescript-sdk.md)
 - [PHP SDK](./plugins/php-sdk.md)
 - [Publishing a plugin](./plugins/publishing.md)
+- [Signing & publishing](./plugins/signing-and-publishing.md)
 
 # Extensions
 

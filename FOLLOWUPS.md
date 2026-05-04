@@ -1094,6 +1094,54 @@ coordinación de archivos cross-cutting.
   Distinct from `--target` which only overrides the
   per-target triple resolution. ~0.3 d.
 
+- **31.9 ✅ shipped 2026-05-04** — Author-side documentation
+  closeout. 4 new/expanded mdbook pages + 1 sync script.
+  New `docs/src/plugins/authoring.md` (~200 LOC) — entry-point
+  overview with "Plugin vs Extension vs Microapp" decision-
+  tree table (3 rows × 4 cols) + 4-language picker table
+  (Rust/Python/TS/PHP × 4 cols pointing at SDK pages) +
+  5-min Rust quickstart (scaffold → build → `nexo plugin
+  run .` with expected stderr trace) + local dev loop
+  conventions. New `docs/src/plugins/rust-sdk.md` (~250 LOC)
+  — `PluginAdapter` builder API reference (constructor +
+  `on_broker_event` + `on_shutdown` + `run_stdio`), manifest
+  example, quickstart code block, smoke test handshake
+  one-liner, per-target tarball convention, CI workflow
+  pointer, SDK test command. New `docs/src/plugins/signing-
+  and-publishing.md` (~300 LOC) — 5-section end-to-end
+  tutorial: unsigned first release → `COSIGN_ENABLED`
+  opt-in → operator `[[authors]]` block with
+  `identity_regexp` regex anchored on workflow URL → round-
+  trip install verification with sample JSON output →
+  troubleshooting table. New `scripts/sync-plugin-contract.sh`
+  (~60 LOC bash, executable) — vendors workspace-root
+  `nexo-plugin-contract.md` into `docs/src/plugins/contract.md`
+  with auto-vendored HTML comment header + "See also"
+  cross-link footer; `--check` mode exits 1 on drift for
+  CI gate use (full CI integration deferred to 31.9.b).
+  `docs/src/plugins/contract.md` expanded from 28 LOC stub
+  to 678 LOC vendored copy via initial sync run.
+  `docs/src/SUMMARY.md` "Plugin SDKs" section reordered to
+  9 entries: Authoring overview / Plugin contract / Patterns
+  / Rust SDK / Python SDK / TypeScript SDK / PHP SDK /
+  Publishing / Signing & publishing. `mdbook build docs`
+  clean; existing `scripts/check_mdbook_english.sh` clean
+  on new pages. Out of scope: `docs/src/plugin-authoring/`
+  subdir reorganization (kept inside existing
+  `docs/src/plugins/` to preserve edit-url + bookmarks),
+  mdbook-include/mdbook-cmdrun plugins (sync script is
+  dependency-free), Spanish localization, frontmatter
+  (plain Markdown only), troubleshooting duplication
+  (cross-linked to `ops/plugin-trust.md`).
+
+- **31.9.b ⬜** CI gate hooking
+  `bash scripts/sync-plugin-contract.sh --check` into the
+  existing docs build job so any change to
+  `nexo-plugin-contract.md` that does not refresh the
+  vendored copy fails the PR pipeline. Currently authors
+  must remember to run the sync script manually before
+  commit. ~0.2 d.
+
 - **81.15.c.b ✅ shipped 2026-05-01** — SDK streaming
   consumption helper. Pending value type changed to
   `PendingKind` enum (Single for non-streaming, Streaming for
