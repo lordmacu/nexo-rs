@@ -504,6 +504,7 @@ pub const EXTENDS_SECTIONS: &[&str] = &[
     "llm_providers",
     "memory_backends",
     "hooks",
+    "tools",
 ];
 
 /// Per-registry capability declaration. Each list names the IDs
@@ -540,19 +541,32 @@ pub struct ExtendsSection {
     /// hook wrapper (Phase 81.27).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hooks: Vec<String>,
+
+    /// Phase 81.29 — tool names (e.g. `["browser_navigate",
+    /// "browser_click"]`) the plugin's subprocess implements via
+    /// the remote `ToolHandler` wrapper. Each tool name MUST also
+    /// satisfy the per-plugin namespace rule from Phase 81.3
+    /// (`<plugin_id>_*` or `ext_<plugin_id>_*`); the validator
+    /// runs `validate_tool_namespace` against this list as well
+    /// as `tools.expose`. Tool schemas (description +
+    /// input_schema JSONSchema) are advertised by the subprocess
+    /// at handshake via the initialize-reply `tools` array.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<String>,
 }
 
 impl ExtendsSection {
-    /// `true` when all four lists are empty — the manifest
+    /// `true` when all five lists are empty — the manifest
     /// declares no extension contributions.
     pub fn is_empty(&self) -> bool {
         self.channels.is_empty()
             && self.llm_providers.is_empty()
             && self.memory_backends.is_empty()
             && self.hooks.is_empty()
+            && self.tools.is_empty()
     }
 
-    /// Flat `(section_name, id)` pairs across all four lists,
+    /// Flat `(section_name, id)` pairs across all five lists,
     /// in the deterministic order matching [`EXTENDS_SECTIONS`].
     /// Used by the (future) daemon dispatch + doctor surface.
     pub fn all_ids(&self) -> Vec<(&'static str, &str)> {
@@ -560,7 +574,8 @@ impl ExtendsSection {
             self.channels.len()
                 + self.llm_providers.len()
                 + self.memory_backends.len()
-                + self.hooks.len(),
+                + self.hooks.len()
+                + self.tools.len(),
         );
         for id in &self.channels {
             out.push(("channels", id.as_str()));
@@ -574,6 +589,9 @@ impl ExtendsSection {
         for id in &self.hooks {
             out.push(("hooks", id.as_str()));
         }
+        for id in &self.tools {
+            out.push(("tools", id.as_str()));
+        }
         out
     }
 
@@ -586,6 +604,7 @@ impl ExtendsSection {
             "llm_providers" => self.llm_providers.iter().any(|s| s == id),
             "memory_backends" => self.memory_backends.iter().any(|s| s == id),
             "hooks" => self.hooks.iter().any(|s| s == id),
+            "tools" => self.tools.iter().any(|s| s == id),
             _ => false,
         }
     }
@@ -1308,6 +1327,7 @@ hooks = ["pii_redact"]
             llm_providers: vec!["cohere".into(), "mistral".into()],
             memory_backends: Vec::new(),
             hooks: vec!["pii_redact".into()],
+            tools: Vec::new(),
         };
         let s = toml::to_string(&extends).unwrap();
         // Empty `memory_backends` skipped via skip_serializing_if.
@@ -1315,6 +1335,69 @@ hooks = ["pii_redact"]
         assert!(s.contains("channels = [\"slack\"]"));
         assert!(s.contains("hooks = [\"pii_redact\"]"));
         // Round-trip back to ExtendsSection.
+        let parsed: ExtendsSection = toml::from_str(&s).unwrap();
+        assert_eq!(parsed, extends);
+    }
+
+    // ── Phase 81.29 — extends.tools field ──────────────────────────
+
+    #[test]
+    fn manifest_extends_tools_round_trip() {
+        let toml_src = r#"
+[plugin]
+id = "browser"
+version = "0.1.0"
+name = "Browser"
+description = "x"
+min_nexo_version = ">=0.1.0"
+
+[plugin.extends]
+tools = ["browser_navigate", "browser_click"]
+"#;
+        let m = PluginManifest::from_str(toml_src).unwrap();
+        assert_eq!(m.plugin.extends.tools.len(), 2);
+        assert!(m.plugin.extends.registers("tools", "browser_navigate"));
+        assert!(!m.plugin.extends.registers("tools", "browser_screenshot"));
+    }
+
+    #[test]
+    fn manifest_extends_tools_empty_when_absent() {
+        let m = PluginManifest::from_str(minimal_manifest_toml()).unwrap();
+        assert!(m.plugin.extends.tools.is_empty());
+    }
+
+    #[test]
+    fn manifest_extends_section_all_ids_includes_tools_in_order() {
+        let toml_src = r#"
+[plugin]
+id = "browser"
+version = "0.1.0"
+name = "Browser"
+description = "x"
+min_nexo_version = ">=0.1.0"
+
+[plugin.extends]
+channels = ["c1"]
+tools = ["browser_t1", "browser_t2"]
+"#;
+        let m = PluginManifest::from_str(toml_src).unwrap();
+        let ids = m.plugin.extends.all_ids();
+        assert_eq!(ids[0], ("channels", "c1"));
+        assert_eq!(ids[1], ("tools", "browser_t1"));
+        assert_eq!(ids[2], ("tools", "browser_t2"));
+    }
+
+    #[test]
+    fn manifest_extends_section_round_trip_with_tools() {
+        let extends = ExtendsSection {
+            channels: Vec::new(),
+            llm_providers: Vec::new(),
+            memory_backends: Vec::new(),
+            hooks: Vec::new(),
+            tools: vec!["browser_navigate".into(), "browser_click".into()],
+        };
+        let s = toml::to_string(&extends).unwrap();
+        assert!(s.contains("tools = [\"browser_navigate\", \"browser_click\"]"));
         let parsed: ExtendsSection = toml::from_str(&s).unwrap();
         assert_eq!(parsed, extends);
     }

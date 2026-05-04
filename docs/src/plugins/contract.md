@@ -5,7 +5,7 @@
 
 | Field | Value |
 |-------|-------|
-| `contract_version` | `1.9.0` |
+| `contract_version` | `1.10.0` |
 | Status | Stable |
 | Authoritative reference | This document |
 | Reference implementations | Host: `crates/core/src/agent/nexo_plugin_registry/subprocess.rs`. Rust child: `crates/microapp-sdk/src/plugin.rs` (feature `plugin`). |
@@ -279,6 +279,49 @@ different plugin.
 `server_version` is a free-form string identifying the running
 binary; the SDK defaults it to `<id>-<version>` from the
 manifest.
+
+#### 4.1.1 Tool catalog advertisement (Phase 81.29, optional)
+
+Plugins declaring `[plugin.extends].tools = [...]` MUST include
+a `tools` array in the initialize-reply `result`. Each entry is
+a `RemoteToolDef`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "manifest": { "plugin": { "id": "browser", ... } },
+    "server_version": "browser-0.1.1",
+    "tools": [
+      {
+        "name": "browser_navigate",
+        "description": "Navigate to a URL",
+        "input_schema": {
+          "type": "object",
+          "properties": { "url": { "type": "string" } },
+          "required": ["url"]
+        }
+      }
+    ]
+  }
+}
+```
+
+Validation rules at the host:
+
+- The `tools` field is OPTIONAL when `extends.tools` is empty.
+  Required (non-empty) when the manifest declares any tool.
+- Every advertised name MUST appear in `manifest.plugin.extends.tools`.
+  Drift in this direction (advertised but not declared) is a
+  hard failure: the daemon kills the child and refuses to load.
+- Manifest entries WITHOUT an advertised counterpart are
+  tolerated but logged at warn — runtime calls to those tools
+  yield `-33401 ToolNotFound`.
+- `name` must satisfy the per-plugin namespace rule
+  (`<plugin_id>_*` or `ext_<plugin_id>_*`).
+- `input_schema` is an arbitrary JSONSchema object; the daemon
+  caches it for arg validation before each `tool.invoke`.
 
 ### 4.2 `shutdown` (host → child request)
 
@@ -1039,6 +1082,76 @@ The host surfaces these as `anyhow::Error` with messages
 operators can grep (`"dimension mismatch: expected 768, got 2"`,
 `"rate limited; retry after 60s"`, etc.).
 
+## 5.t Tool methods (Phase 81.29)
+
+Plugins declaring `[plugin.extends].tools = [...]` get a
+host-initiated `tool.invoke` request per agent-loop tool call.
+The daemon's LLM picks a tool name from the cached function-
+calling spec (built from initialize-reply's `tools` array, see
+§4.1.1), the agent's tool registry routes the call to a
+`RemoteToolHandler`, and the handler serializes the call into
+a `tool.invoke` JSON-RPC frame over the existing stdio bridge.
+
+Default timeout: 60 s. Operator override via
+`NEXO_PLUGIN_TOOL_TIMEOUT_MS`.
+
+### `tool.invoke`
+
+Host → child request:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 80,
+  "method": "tool.invoke",
+  "params": {
+    "plugin_id": "browser",
+    "tool_name": "browser_navigate",
+    "args": { "url": "https://example.com" },
+    "agent_id": "shopper"
+  }
+}
+```
+
+Child → host reply on success — the result body is whatever
+JSON shape the daemon's `ToolHandler::call` returns to the
+agent loop. The conventional shape mirrors the in-tree
+`ToolResponse`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 80,
+  "result": {
+    "content": [
+      { "type": "text", "text": "Navigated to https://example.com" }
+    ],
+    "is_error": false
+  }
+}
+```
+
+Plugins MAY return any JSON `Value` — the daemon does not
+validate the result shape beyond the JSON-RPC envelope. Tool
+authors using the Rust SDK return `ToolResponse` directly.
+
+### Tool-specific error codes
+
+| Code | Variant | Semantic |
+|------|---------|----------|
+| `-33401` | `ToolNotFound` | Plugin doesn't actually implement the declared tool name (drift between manifest and implementation) |
+| `-33402` | `ToolArgumentInvalid` | Args failed plugin-side schema validation; surface `details: <Value>` for the offending fields |
+| `-33403` | `ToolExecutionFailed` | Tool executed but raised a typed error (network failure, CDP hung, etc.) |
+| `-33404` | `ToolUnavailable` | Resource exhausted, rate-limited, or otherwise transient. Optional `data: { retry_after_ms: <u64> }` |
+| `-33405` | `ToolDenied` | Plugin's per-tenant authorization rejected the call (auth-style) |
+| `-32601` | `MethodNotFound` | Plugin does not implement `tool.invoke` — manifest declared `extends.tools` but child doesn't handle the method |
+
+The host surfaces these as `anyhow::Error` with messages
+operators can grep (`"tool not found"`, `"argument invalid"`,
+`"unavailable; retry after 5s"`, etc.). The agent loop receives
+the error and decides what to do (LLM retry, abort tool plan,
+escalate).
+
 ## 6. Topic allowlist
 
 The host derives subscribe + publish patterns from the
@@ -1306,6 +1419,7 @@ contract document.
 | `1.7.0` | 2026-05-04 | Phase 81.27 — `hook.on_hook` host-initiated request method added (§5.z). Subprocess plugins declaring `[plugin.extends].hooks = [...]` get one `RemoteHookHandler` per hook name registered into the daemon's `HookRegistry`. Reply shape is the existing `HookResponse` (already serde-derived); reused directly as wire type. Continue-on-error semantic: every dispatch failure (transport, timeout, JSON-RPC err, decode) returns `HookResponse::default()` so `HookRegistry::fire` keeps iterating + agent flow doesn't break. Default 5s timeout (lower than channels/LLM); `NEXO_PLUGIN_HOOK_TIMEOUT_MS` env override. Additive — plugins not declaring hooks are unaffected. |
 | `1.8.0` | 2026-05-04 | Phase 81.26 — `memory.vector_upsert` / `memory.vector_search` / `memory.vector_delete` host-initiated request methods added (§5.w). Subprocess plugins declaring `[plugin.extends].memory_backends = [...]` get one `RemoteVectorBackend` per name registered into the daemon's `VectorBackendRegistry`. Memory-specific error codes `-33301..=-33304`. Default timeouts: 30s upsert/delete, 10s search; `NEXO_PLUGIN_MEMORY_TIMEOUT_MS` env override. v1 ships wire + registry only — consumer-side wiring (`LongTermMemory.recall_vector` reading from registry) lands in 81.26.b. Vector-only scope: short/long-term memory keep SQLite; plugin replaces ONLY the vector index. Additive — plugins not declaring memory_backends are unaffected. |
 | `1.9.0` | 2026-05-04 | Phase 81.22 — `[plugin.sandbox]` manifest section added (§2.2). Linux-only bubblewrap-based isolation: 5 fields (`enabled`, `network`, `fs_read_paths`, `fs_write_paths`, `drop_user`). Hard denylist enforced via `SANDBOX_DENYLIST_HOST_PATHS` const — operator-supplied allowlists that cover or equal denylisted paths are rejected at validate time. Two operator capability env knobs: `NEXO_PLUGIN_SANDBOX_REQUIRE` (strict-mode rejection of sandbox-disabled plugins) + `NEXO_PLUGIN_SANDBOX_HOST_NET_ALLOW` (gate for `network = "host"`). macOS no-op + warn (native sandbox-exec deferred to 81.22.macos). Default off — every existing manifest parses and runs unchanged. Additive — plugins without `[plugin.sandbox]` are unaffected. |
+| `1.10.0` | 2026-05-04 | Phase 81.29 — `tool.invoke` host-initiated request method added (§5.t) + initialize-reply `tools` array extension (§4.1.1). Subprocess plugins declaring `[plugin.extends].tools = [...]` advertise a tool catalog (`name`/`description`/`input_schema`) at handshake; daemon caches the schemas + builds typed function-calling defs for the LLM without per-call round-trip. Each agent-loop tool call becomes a single `tool.invoke { plugin_id, tool_name, args, agent_id }` request. Tool-specific error codes `-33401..=-33405` map onto typed failures (`ToolNotFound` / `ToolArgumentInvalid` / `ToolExecutionFailed` / `ToolUnavailable` / `ToolDenied`). Default timeout 60 s; `NEXO_PLUGIN_TOOL_TIMEOUT_MS` env override. Subset check: advertised tools MUST be subset of `extends.tools` (drift detection). New `extends.tools` field is the 5th list in `[plugin.extends]` (joining channels/llm_providers/memory_backends/hooks). Tool name MUST satisfy per-plugin namespace policy from 81.3 (`<plugin_id>_*` or `ext_<plugin_id>_*`). Completes the **5-wrapper subprocess fleet** (channels 81.24 + LLM 81.25 + hooks 81.27 + memory 81.26 + tools 81.29) — subprocess plugins can now contribute every category of host-side capability. Additive — plugins not declaring `extends.tools` are unaffected. |
 
 ## See also
 

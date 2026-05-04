@@ -149,6 +149,13 @@ struct Inner {
     streaming_pending:
         Arc<DashMap<u64, crate::agent::llm_remote::StreamingPending>>,
 
+    /// Phase 81.29 — tool catalog advertised by the subprocess
+    /// at initialize-reply time. `register_remote_tool_handlers`
+    /// reads this to build one `RemoteToolHandler` per declared
+    /// tool. Empty when the plugin doesn't expose any tools
+    /// (most of today's in-tree plugin manifests).
+    declared_tools: Vec<crate::agent::tool_remote::RemoteToolDef>,
+
     /// Background tasks: stdin writer, stdout reader, broker→child
     /// bridge per subscribed topic, supervisor (Phase 81.21).
     /// Joined on shutdown.
@@ -287,6 +294,89 @@ impl SubprocessNexoPlugin {
             );
             hook_registry.register(&hook_name, plugin_id.clone(), handler);
             registered.push(hook_name);
+        }
+        Ok(registered)
+    }
+
+    /// Phase 81.29 — for each tool name in
+    /// `manifest.plugin.extends.tools` that the subprocess
+    /// confirmed via initialize-reply, build a `RemoteToolHandler`
+    /// sharing this plugin's stdio bridge and register it with
+    /// the per-plugin scoped tool registry. Returns the list of
+    /// successfully registered tool names. On collision (a built-
+    /// in or another plugin already registered the name), aborts
+    /// with `ToolNameAlreadyRegistered` (host treats this as a
+    /// fatal init failure). Must be called AFTER `init()` (so
+    /// `Inner` is populated).
+    pub async fn register_remote_tool_handlers(
+        &self,
+        scoped_registry: &Arc<crate::agent::scoped_tool_registry::ScopedToolRegistry>,
+    ) -> Result<
+        Vec<String>,
+        crate::agent::tool_remote::ToolHandlerRegistrationError,
+    > {
+        let declared = self.cached_manifest.plugin.extends.tools.clone();
+        if declared.is_empty() {
+            return Ok(Vec::new());
+        }
+        let plugin_id = self.cached_manifest.plugin.id.clone();
+        let (stdin_tx, pending, next_id, advertised) = {
+            let guard = self.inner.lock().await;
+            match guard.as_ref() {
+                Some(inner) => (
+                    inner.stdin_tx.clone(),
+                    inner.pending.clone(),
+                    inner.next_id.clone(),
+                    inner.declared_tools.clone(),
+                ),
+                None => {
+                    return Err(
+                        crate::agent::tool_remote::ToolHandlerRegistrationError::InnerUnavailable,
+                    );
+                }
+            }
+        };
+
+        let mut registered: Vec<String> = Vec::new();
+        for tool_name in declared {
+            // Manifest declared but child did not advertise →
+            // already warned at handshake. Skip silently here so
+            // the registry doesn't accumulate dead handlers.
+            let def_match = advertised
+                .iter()
+                .find(|d| d.name == tool_name)
+                .cloned();
+            let def = match def_match {
+                Some(d) => d,
+                None => continue,
+            };
+
+            let handler = crate::agent::tool_remote::RemoteToolHandler::new(
+                plugin_id.clone(),
+                def.clone(),
+                stdin_tx.clone(),
+                pending.clone(),
+                next_id.clone(),
+            );
+            let tool_def = nexo_llm::ToolDef {
+                name: def.name.clone(),
+                description: def.description.clone(),
+                parameters: def.input_schema.clone(),
+            };
+            match scoped_registry.register_arc(
+                tool_def,
+                Arc::new(handler) as Arc<dyn crate::agent::tool_registry::ToolHandler>,
+            ) {
+                Ok(()) => registered.push(def.name.clone()),
+                Err(_violation) => {
+                    return Err(
+                        crate::agent::tool_remote::ToolHandlerRegistrationError::ToolNameAlreadyRegistered {
+                            tool_name: def.name,
+                            prior_plugin_hint: "unknown".to_string(),
+                        },
+                    );
+                }
+            }
         }
         Ok(registered)
     }
@@ -951,6 +1041,65 @@ impl SubprocessNexoPlugin {
             );
         }
 
+        // Phase 81.29 — parse optional `result.tools` array (tool
+        // catalog advertised by the subprocess at handshake). Subset
+        // check: every advertised tool name MUST appear in
+        // `manifest.plugin.extends.tools` (defense against drift /
+        // out-of-tree binary registering tools the operator did
+        // not authorize). Manifest entries WITHOUT an advertised
+        // counterpart are tolerated but logged at warn — they will
+        // surface as -33401 ToolNotFound at first agent-loop call.
+        let declared_tools: Vec<crate::agent::tool_remote::RemoteToolDef> =
+            match result.pointer("/tools") {
+                Some(Value::Array(arr)) => {
+                    let mut out = Vec::with_capacity(arr.len());
+                    for item in arr {
+                        let def: crate::agent::tool_remote::RemoteToolDef =
+                            serde_json::from_value(item.clone()).map_err(|e| {
+                                anyhow::anyhow!(
+                                    "initialize reply tools[]: malformed entry: {e}"
+                                )
+                            })?;
+                        if !self
+                            .cached_manifest
+                            .plugin
+                            .extends
+                            .tools
+                            .iter()
+                            .any(|t| t == &def.name)
+                        {
+                            cancel.cancel();
+                            kill_handle(&child_handle).await;
+                            anyhow::bail!(
+                                "initialize reply advertises undeclared tool `{}` (not in extends.tools = {:?})",
+                                def.name,
+                                self.cached_manifest.plugin.extends.tools
+                            );
+                        }
+                        out.push(def);
+                    }
+                    out
+                }
+                Some(_) => {
+                    cancel.cancel();
+                    kill_handle(&child_handle).await;
+                    anyhow::bail!(
+                        "initialize reply field `tools` must be an array if present"
+                    );
+                }
+                None => Vec::new(),
+            };
+        for t in &self.cached_manifest.plugin.extends.tools {
+            if !declared_tools.iter().any(|d| &d.name == t) {
+                tracing::warn!(
+                    target: "plugin.tools",
+                    plugin_id = %self.cached_manifest.plugin.id,
+                    tool = %t,
+                    "manifest declares extends.tools entry but plugin did not advertise it in initialize-reply — runtime calls will fail with ToolNotFound"
+                );
+            }
+        }
+
         // Phase 81.14.b — wire the broker ↔ child topic bridge.
         // Derives subscribe / publish patterns from
         // `manifest.channels.register[].kind`. Plugins that don't
@@ -1175,6 +1324,7 @@ impl SubprocessNexoPlugin {
             pending,
             next_id: Arc::new(AtomicU64::new(2)),
             streaming_pending: Arc::new(DashMap::new()),
+            declared_tools,
             tasks,
             child: child_handle,
             cancel,

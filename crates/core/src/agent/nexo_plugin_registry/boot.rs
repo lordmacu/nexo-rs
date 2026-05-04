@@ -105,6 +105,13 @@ pub struct WirePluginRegistryOutput {
     /// reading from this registry) lands in 81.26.b.
     pub vector_backend_registry:
         Arc<crate::agent::vector_backend_registry::VectorBackendRegistry>,
+    /// Phase 81.29 — shared `ToolRegistry` (the daemon's main
+    /// tool catalog). Surfaced on the wire output so callers can
+    /// enumerate registered subprocess tools (operator visibility,
+    /// e2e tests, future doctor surface). Subprocess plugins
+    /// declaring `extends.tools = [...]` register `RemoteToolHandler`s
+    /// into the per-plugin scoped wrapper around this same Arc.
+    pub tool_registry: Arc<crate::agent::tool_registry::ToolRegistry>,
     /// Phase 81.11 — plugin-declared capability gates aggregated
     /// at boot. Same data as
     /// `registry.snapshot().last_report.plugin_capability_gates`,
@@ -221,6 +228,12 @@ pub async fn wire_plugin_registry_with_runtime(
     > = Arc::new(
         crate::agent::vector_backend_registry::VectorBackendRegistry::new(),
     );
+    // Phase 81.29 — daemon's main tool registry shared between
+    // each per-plugin `ScopedToolRegistry` (built by `SubprocessCtxStubs`
+    // / per-plugin context_for) and the `WirePluginRegistryOutput`
+    // so callers can enumerate every subprocess-registered tool.
+    let shared_tool_registry: Arc<crate::agent::tool_registry::ToolRegistry> =
+        Arc::new(crate::agent::tool_registry::ToolRegistry::new());
 
     let (init_outcomes, plugin_handles): (
         BTreeMap<String, super::InitOutcome>,
@@ -238,6 +251,7 @@ pub async fn wire_plugin_registry_with_runtime(
                 shared_channel_adapter_registry.clone(),
                 shared_hook_registry.clone(),
                 shared_vector_backend_registry.clone(),
+                shared_tool_registry.clone(),
             );
             let r = run_plugin_init_loop_with_factory(
                 &snap,
@@ -398,6 +412,10 @@ pub async fn wire_plugin_registry_with_runtime(
         // Phase 81.26 — same registry used by the post-init hook so
         // callers see remote `RemoteVectorBackend` registrations.
         vector_backend_registry: shared_vector_backend_registry,
+        // Phase 81.29 — same Arc the per-plugin ScopedToolRegistry
+        // wraps, so callers can enumerate registered subprocess
+        // tools.
+        tool_registry: shared_tool_registry,
         plugin_capability_gates: plugin_capability_gates_for_output,
         unmet_required_capabilities: unmet_required_for_output,
         plugin_handles,
@@ -438,11 +456,13 @@ impl SubprocessCtxStubs {
         vector_backend_registry: Arc<
             crate::agent::vector_backend_registry::VectorBackendRegistry,
         >,
+        tool_registry: Arc<crate::agent::tool_registry::ToolRegistry>,
     ) -> Self {
         let mut stubs = Self::build(rt);
         stubs.channel_adapter_registry = channel_adapter_registry;
         stubs.hook_registry = hook_registry;
         stubs.vector_backend_registry = vector_backend_registry;
+        stubs.tool_registry = tool_registry;
         stubs
     }
 

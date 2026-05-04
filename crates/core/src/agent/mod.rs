@@ -29,6 +29,7 @@ pub mod heartbeat_tool;
 pub mod hook_registry;
 pub mod hook_remote;
 pub mod plugin_sandbox;
+pub mod tool_remote;
 pub mod vector_backend_registry;
 pub mod vector_remote;
 pub mod inbox;
