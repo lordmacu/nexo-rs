@@ -4046,6 +4046,7 @@ dependencies = [
  "nexo-llm",
  "nexo-pairing",
  "nexo-plugin-manifest",
+ "nexo-tool-meta",
  "qrcode",
  "reqwest",
  "serde",
@@ -4261,6 +4262,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tokio-rustls 0.26.4",
+ "tokio-util",
  "tracing",
  "uuid",
  "walkdir",
@@ -7352,8 +7354,6 @@ checksum = "5c3082ca00d5a5ef149bb8b555a72ae84c9c59f7250f013ac822ac2e49b19c64"
 [[package]]
 name = "wa-agent"
 version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c8ea48aff644b420effd0a0bb4116b881ea786ee86fc84d27e87ff66b4c64ef"
 dependencies = [
  "aes",
  "aes-gcm",

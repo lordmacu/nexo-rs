@@ -249,6 +249,20 @@ pub struct WhatsappBehaviorConfig {
     /// are allowed unless the chat-meta flag excludes them.
     #[serde(default)]
     pub ignore_groups: bool,
+    /// Phase 82.10.q.b — skip messages older than `N` seconds. The
+    /// WhatsApp Multi-Device protocol re-delivers buffered offline
+    /// messages on every reconnect (the per-device ACK isn't always
+    /// honored server-side), so without this gate the agent replies
+    /// to the same backlog every time the daemon restarts. `0`
+    /// disables the gate (legacy behavior). Default: 60 seconds —
+    /// covers typical restart cycles while keeping live messages
+    /// that arrived a few seconds before reconnect.
+    #[serde(default = "default_skip_backlog_age_secs")]
+    pub skip_backlog_age_secs: u64,
+}
+
+fn default_skip_backlog_age_secs() -> u64 {
+    60
 }
 
 impl Default for WhatsappBehaviorConfig {
@@ -257,6 +271,7 @@ impl Default for WhatsappBehaviorConfig {
             ignore_chat_meta: true,
             ignore_from_me: true,
             ignore_groups: false,
+            skip_backlog_age_secs: default_skip_backlog_age_secs(),
         }
     }
 }

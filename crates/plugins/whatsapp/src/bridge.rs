@@ -125,6 +125,28 @@ pub fn build_handler(
             if cfg.behavior.ignore_groups && ctx.msg.key.remote_jid.ends_with("@g.us") {
                 return Response::Noop;
             }
+            // Phase 82.10.q.b — drop offline backlog older than the
+            // configured threshold. WhatsApp Multi-Device re-delivers
+            // buffered messages on every reconnect even after we ACK
+            // them; without this gate the agent replies to the same
+            // stale backlog after every daemon restart. The check is
+            // a no-op when `skip_backlog_age_secs == 0`.
+            if cfg.behavior.skip_backlog_age_secs > 0 {
+                let now_secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(ctx.msg.message_timestamp);
+                let age_secs = now_secs.saturating_sub(ctx.msg.message_timestamp);
+                if age_secs > cfg.behavior.skip_backlog_age_secs {
+                    tracing::info!(
+                        msg_id = %ctx.msg.key.id,
+                        age_secs,
+                        threshold = cfg.behavior.skip_backlog_age_secs,
+                        "skipping offline backlog message older than threshold"
+                    );
+                    return Response::Noop;
+                }
+            }
 
             // Kick off media download in the background — we don't want
             // to block the handler (and wa-agent's typing indicator).

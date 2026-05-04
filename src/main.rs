@@ -1485,6 +1485,23 @@ async fn main() -> Result<()> {
     > = std::sync::Arc::new(
         nexo_setup::admin_adapters::InMemoryProcessingControlStore::new(),
     );
+
+    // Phase 82.13.b — initialise the broker BEFORE
+    // `AdminBootstrap` so the `processing/intervention` admin RPC
+    // gets a `BrokerOutboundDispatcher` adapter wired in. Boot was
+    // previously deferring broker creation until after the admin
+    // surface was wired, which left `inputs.broker = None` and
+    // operator takeover failed with
+    // `-32603 channel_outbound dispatcher not configured`.
+    let broker = AnyBroker::from_config(&cfg.broker.broker)
+        .await
+        .context("failed to initialize broker")?;
+    tracing::info!(
+        kind = ?cfg.broker.broker.kind,
+        url = %cfg.broker.broker.url,
+        "broker ready",
+    );
+
     let admin_bootstrap: Option<nexo_setup::admin_bootstrap::AdminRpcBootstrap> = if cfg
         .extensions
         .as_ref()
@@ -1582,7 +1599,14 @@ async fn main() -> Result<()> {
                 http_server_capabilities: &http_server_capabilities,
                 reload_signal: reload_noop,
                 transcript_reader: None,
-                broker: None,
+                // Phase 82.13.b — wire the broker so the
+                // `processing/intervention` admin RPC can reach
+                // `BrokerOutboundDispatcher` and publish operator
+                // replies on `plugin.outbound.<channel>.<instance>`.
+                // Without this, the dispatcher returns
+                // `-32603 channel_outbound dispatcher not configured`
+                // and operator takeover from the UI fails.
+                broker: Some(broker.clone()),
                 transcript_writer: None,
                 processing_store: Some(std::sync::Arc::clone(&processing_store)),
                 tenant_store: tenant_store.clone(),
@@ -1792,12 +1816,6 @@ async fn main() -> Result<()> {
         }
         None => None,
     };
-
-    // Broker ---------------------------------------------------------------
-    let broker = AnyBroker::from_config(&cfg.broker.broker)
-        .await
-        .context("failed to initialize broker")?;
-    tracing::info!(kind = ?cfg.broker.broker.kind, url = %cfg.broker.broker.url, "broker ready");
 
     // Phase 36.2 — memory snapshot subsystem (early init, before
     // `LongTermMemory::open_with_vector` so the mutation hook is

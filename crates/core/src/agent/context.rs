@@ -1,5 +1,6 @@
 #![allow(clippy::all)] // Phase 79 scaffolding — re-enable when 79.x fully shipped
 
+use super::agent_events::AgentEventEmitter;
 use super::effective::EffectiveBindingPolicy;
 use super::peer_directory::PeerDirectory;
 use super::redaction::Redactor;
@@ -82,6 +83,16 @@ pub struct AgentContext {
     /// in that case `llm_behavior` falls back to the boot-time
     /// `prompt_cache_enabled` / `compaction_runtime.enabled` flags.
     pub context_optimization: Option<nexo_config::types::llm::ResolvedContextOptimization>,
+    /// Phase 82.11.c — agent event emitter threaded from the
+    /// `AgentRuntime` so `llm_behavior` can attach it to
+    /// per-turn `TranscriptWriter` instances. Without this,
+    /// transcript appends emit through the default
+    /// `NoopAgentEventEmitter` and never reach the bootstrap's
+    /// broadcast firehose, leaving subscribers (microapps with
+    /// `agent_events_subscribe_all`) silent on live updates.
+    /// `None` for test/bootstrap contexts; consumers fall back
+    /// to no-op emission in that case.
+    pub event_emitter: Option<Arc<dyn AgentEventEmitter>>,
     /// PT-1 — bundle of services consumed by the dispatch tool
     /// handlers (program_phase, list_agents, etc.). Populated at
     /// boot when the project tracker is enabled. `None` keeps the
@@ -277,6 +288,7 @@ impl AgentContext {
             link_extractor: None,
             web_search_router: None,
             context_optimization: None,
+            event_emitter: None,
             dispatch: None,
             sender_trusted: false,
             inbound_origin: None,
@@ -405,6 +417,14 @@ impl AgentContext {
     }
     pub fn with_redactor(mut self, redactor: Arc<Redactor>) -> Self {
         self.redactor = Some(redactor);
+        self
+    }
+    /// Phase 82.11.c — install the firehose emitter so per-turn
+    /// `TranscriptWriter` instances built in `llm_behavior` can
+    /// chain `.with_emitter()` and broadcast `TranscriptAppended`
+    /// to subscribers.
+    pub fn with_event_emitter(mut self, emitter: Arc<dyn AgentEventEmitter>) -> Self {
+        self.event_emitter = Some(emitter);
         self
     }
     pub fn with_transcripts_index(mut self, index: Arc<TranscriptsIndex>) -> Self {
@@ -592,6 +612,7 @@ mod plan_mode_tests {
             language: None,
             outbound_allowlist: OutboundAllowlistConfig::default(),
             context_optimization: None,
+            event_emitter: None,
             dispatch_policy: Default::default(),
             plan_mode: Default::default(),
             remote_triggers: Vec::new(),
@@ -963,6 +984,7 @@ mod binding_context_tests {
             language: None,
             outbound_allowlist: OutboundAllowlistConfig::default(),
             context_optimization: None,
+            event_emitter: None,
             dispatch_policy: Default::default(),
             plan_mode: Default::default(),
             remote_triggers: Vec::new(),
@@ -1123,6 +1145,7 @@ mod build_meta_value_tests {
             pairing_policy: serde_json::Value::Null,
             language: None,
             context_optimization: None,
+            event_emitter: None,
             dispatch_policy: Default::default(),
             plan_mode: Default::default(),
             remote_triggers: Vec::new(),

@@ -848,6 +848,54 @@ impl LlmAgentBehavior {
             }
         }
         let mut session = ctx.sessions.get_or_create(msg.session_id, &ctx.agent_id);
+        // Phase 82.11.d — append the user transcript entry IMMEDIATELY,
+        // before the LLM call. The legacy code path appended both user
+        // and assistant entries together AFTER the LLM produced a
+        // reply, which meant the firehose `TranscriptAppended` event
+        // for the user message only fired once the assistant turn
+        // finished — operator dashboards saw both messages pop in
+        // simultaneously. Splitting the append lets the user entry
+        // broadcast at intake time so the operator sees inbound
+        // messages live, not batched with the bot's reply. Failure
+        // to append must NOT break the turn — transcripts are
+        // auxiliary state.
+        {
+            let transcripts_dir = ctx.config.transcripts_dir.trim();
+            if !transcripts_dir.is_empty() {
+                let redactor = ctx
+                    .redactor
+                    .clone()
+                    .unwrap_or_else(|| {
+                        std::sync::Arc::new(super::redaction::Redactor::disabled())
+                    });
+                let mut writer = TranscriptWriter::with_extras(
+                    transcripts_dir,
+                    &ctx.agent_id,
+                    redactor,
+                    ctx.transcripts_index.clone(),
+                )
+                .with_tenant_id(ctx.config.tenant_id.clone());
+                if let Some(ref em) = ctx.event_emitter {
+                    writer = writer.with_emitter(em.clone());
+                }
+                let user_entry = TranscriptEntry {
+                    timestamp: Utc::now(),
+                    role: TranscriptRole::User,
+                    content: msg.text.clone(),
+                    message_id: Some(msg.id),
+                    source_plugin: msg.source_plugin.clone(),
+                    sender_id: msg.sender_id.clone(),
+                };
+                if let Err(e) = writer.append_entry(msg.session_id, user_entry).await {
+                    tracing::warn!(
+                        agent_id = %ctx.agent_id,
+                        session_id = %msg.session_id,
+                        error = %e,
+                        "transcript append (user, early) failed"
+                    );
+                }
+            }
+        }
         // If session is new (empty history) and long-term memory is available,
         // prepend recent interactions from disk so the agent remembers past conversations.
         let mut prefix_messages: Vec<ChatMessage> = Vec::new();
@@ -1740,7 +1788,7 @@ impl LlmAgentBehavior {
                 .redactor
                 .clone()
                 .unwrap_or_else(|| std::sync::Arc::new(super::redaction::Redactor::disabled()));
-            let writer = TranscriptWriter::with_extras(
+            let mut writer = TranscriptWriter::with_extras(
                 transcripts_dir,
                 &ctx.agent_id,
                 redactor,
@@ -1751,22 +1799,23 @@ impl LlmAgentBehavior {
             // events carry `tenant_id`. `None` for
             // single-tenant agents.
             .with_tenant_id(ctx.config.tenant_id.clone());
-            let user_entry = TranscriptEntry {
-                timestamp: Utc::now(),
-                role: TranscriptRole::User,
-                content: msg.text.clone(),
-                message_id: Some(msg.id),
-                source_plugin: msg.source_plugin.clone(),
-                sender_id: msg.sender_id.clone(),
-            };
-            if let Err(e) = writer.append_entry(msg.session_id, user_entry).await {
-                tracing::warn!(
-                    agent_id = %ctx.agent_id,
-                    session_id = %msg.session_id,
-                    error = %e,
-                    "transcript append (user) failed"
-                );
+            // Phase 82.11.c — chain the firehose emitter onto
+            // the writer so every `append_entry` reaches the
+            // bootstrap's broadcast (live SSE subscribers) and
+            // the durable `SqliteAgentEventLog` (admin RPC
+            // backfill). Without this `.with_emitter` call the
+            // writer falls back to `NoopAgentEventEmitter` and
+            // microapps with `agent_events_subscribe_all` see no
+            // live updates.
+            if let Some(ref em) = ctx.event_emitter {
+                writer = writer.with_emitter(em.clone());
             }
+            // Phase 82.11.d — user_entry was already appended at
+            // the top of `run_turn` (right after the before_message
+            // hook) so the firehose `TranscriptAppended` for the
+            // inbound fires LIVE rather than batched with the
+            // assistant reply. The post-LLM block here is now
+            // assistant-only.
             if let Some(ref text) = reply_text {
                 let assistant_entry = TranscriptEntry {
                     timestamp: Utc::now(),
