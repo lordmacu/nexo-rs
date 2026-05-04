@@ -1,25 +1,19 @@
 //! Phase 82.10.h.b.b — surface `[capabilities.admin]` and
-//! `[capabilities.http_server]` from per-plugin
-//! `nexo-plugin.toml` files into the maps `AdminRpcBootstrap`
-//! consumes.
+//! `[capabilities.http_server]` declared by plugins into the
+//! maps `AdminRpcBootstrap` consumes.
 //!
-//! Boot today reads `plugin.toml` (`nexo-extensions` schema —
-//! tools / hooks / channels / providers / pollers) once during
-//! discovery. The admin RPC layer needs a SEPARATE manifest
-//! (`nexo-plugin.toml` — `nexo-plugin-manifest` schema) that
-//! declares which `nexo/admin/*` capabilities the microapp
-//! requires + optional, plus the HTTP server bind policy.
+//! Phase 81.13: walks BOTH `plugin.toml` (canonical) and
+//! `nexo-plugin.toml` (legacy modern-schema sidecar) via
+//! [`nexo_plugin_manifest::discover_in_root`]. The shared
+//! parser auto-detects v1 vs v2 shape and emits a one-shot
+//! deprecation warn for v1 plugins. So a plugin author can
+//! declare admin caps in their existing `plugin.toml` (under
+//! `[capabilities.admin]`) without keeping a separate
+//! `nexo-plugin.toml` sidecar.
 //!
-//! Plugin authors maintain both files by design — they cover
-//! different concerns (runtime contributions vs daemon-RPC
-//! orchestration). This module bridges them at boot so main.rs
-//! can wire `AdminRpcBootstrap` from a single source of truth
-//! without re-parsing inside `run_extension_discovery`.
-//!
-//! Plugins that ship only `plugin.toml` (legacy / pre-82.10
-//! extensions without admin RPC needs) silently skip — the
-//! returned map omits their id and `AdminRpcBootstrap::build`
-//! treats omission as "no admin RPC declared".
+//! Plugins without an admin block silently skip — the returned
+//! map omits their id and `AdminRpcBootstrap::build` treats
+//! omission as "no admin RPC declared".
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -27,24 +21,25 @@ use std::path::Path;
 use nexo_plugin_manifest::manifest::{
     AdminCapabilities, HttpServerCapability,
 };
-use nexo_plugin_manifest::{PluginManifest, PLUGIN_MANIFEST_FILENAME};
+use nexo_plugin_manifest::{discover_in_root, PluginManifest};
 
-/// Walk every plugin root, parse `<root>/nexo-plugin.toml` if
-/// present, and return a map keyed by `manifest.id()` with the
-/// declared admin capabilities. Roots without the file (or with
-/// a parse error) are logged + skipped — never fatal — so a
-/// single misconfigured plugin can't block the daemon from
-/// booting.
+/// Walk every plugin root, find a manifest (`plugin.toml`
+/// preferred, `nexo-plugin.toml` legacy fallback) via
+/// [`discover_in_root`], parse it (auto-migrating v1 to v2 if
+/// needed), and return a map keyed by `manifest.id()` with the
+/// declared admin capabilities. Roots without either file (or
+/// with a parse error) are logged + skipped — never fatal —
+/// so a single misconfigured plugin can't block the daemon
+/// from booting.
 pub fn collect_admin_capabilities(
     plugin_roots: impl IntoIterator<Item = impl AsRef<Path>>,
 ) -> BTreeMap<String, AdminCapabilities> {
     let mut out = BTreeMap::new();
     for root in plugin_roots {
         let root = root.as_ref();
-        let path = root.join(PLUGIN_MANIFEST_FILENAME);
-        if !path.exists() {
+        let Some(path) = discover_in_root(root) else {
             continue;
-        }
+        };
         match PluginManifest::from_path(&path) {
             Ok(m) => {
                 let id = m.id().to_string();
@@ -56,7 +51,7 @@ pub fn collect_admin_capabilities(
                 tracing::warn!(
                     error = %e,
                     path = %path.display(),
-                    "manifest_collect: skipping malformed nexo-plugin.toml",
+                    "manifest_collect: skipping malformed manifest",
                 );
             }
         }
@@ -74,10 +69,9 @@ pub fn collect_http_server_capabilities(
     let mut out = BTreeMap::new();
     for root in plugin_roots {
         let root = root.as_ref();
-        let path = root.join(PLUGIN_MANIFEST_FILENAME);
-        if !path.exists() {
+        let Some(path) = discover_in_root(root) else {
             continue;
-        }
+        };
         match PluginManifest::from_path(&path) {
             Ok(m) => {
                 let id = m.id().to_string();
@@ -89,7 +83,7 @@ pub fn collect_http_server_capabilities(
                 tracing::warn!(
                     error = %e,
                     path = %path.display(),
-                    "manifest_collect: skipping malformed nexo-plugin.toml",
+                    "manifest_collect: skipping malformed manifest",
                 );
             }
         }
@@ -102,7 +96,10 @@ mod tests {
     use super::*;
 
     fn write_manifest(root: &Path, body: &str) {
-        std::fs::write(root.join(PLUGIN_MANIFEST_FILENAME), body).unwrap();
+        // Use the canonical filename so post-81.13 tests exercise
+        // the new discovery path; legacy `nexo-plugin.toml` is
+        // covered by a dedicated test below.
+        std::fs::write(root.join("plugin.toml"), body).unwrap();
     }
 
     fn manifest_with_admin(id: &str, required: &[&str], optional: &[&str]) -> String {
@@ -239,6 +236,58 @@ token_env = "TOKEN"
 
         let map = collect_http_server_capabilities([&stdio]);
         assert!(map.is_empty(), "no http_server section → omit");
+    }
+
+    #[test]
+    fn collect_admin_walks_legacy_nexo_plugin_toml_filename() {
+        // Plugins authored before 81.13 dropped a sidecar
+        // `nexo-plugin.toml`; the discovery layer still finds
+        // them via the dual-filename resolver until they migrate.
+        let dir = tempfile::tempdir().unwrap();
+        let legacy_only = dir.path().join("legacy-only");
+        std::fs::create_dir_all(&legacy_only).unwrap();
+        std::fs::write(
+            legacy_only.join("nexo-plugin.toml"),
+            manifest_with_admin("legacy-id", &["agents_crud"], &[]),
+        )
+        .unwrap();
+
+        let map = collect_admin_capabilities([&legacy_only]);
+        assert_eq!(map.len(), 1);
+        assert!(map.contains_key("legacy-id"));
+    }
+
+    #[test]
+    fn collect_admin_picks_up_admin_block_from_legacy_v1_plugin_toml() {
+        // Phase 81.13: a legacy `plugin.toml` with the new
+        // `[capabilities.admin]` block (top-level under
+        // `[capabilities]`) is auto-translated by `compat_v1` to
+        // the v2 shape, and the admin caps surface in the
+        // returned map.
+        let dir = tempfile::tempdir().unwrap();
+        let v1 = dir.path().join("v1");
+        std::fs::create_dir_all(&v1).unwrap();
+        let legacy_v1 = r#"
+[plugin]
+id = "legacy-v1"
+version = "0.0.1"
+name = "Legacy V1"
+description = "Pre-81.13 microapp shipping admin caps inline."
+
+[capabilities.admin]
+required = ["agents_crud"]
+optional = ["llm_keys_crud"]
+
+[transport]
+kind = "stdio"
+command = "./legacy-v1"
+"#;
+        std::fs::write(v1.join("plugin.toml"), legacy_v1).unwrap();
+
+        let map = collect_admin_capabilities([&v1]);
+        assert_eq!(map.len(), 1);
+        assert_eq!(map["legacy-v1"].required, vec!["agents_crud"]);
+        assert_eq!(map["legacy-v1"].optional, vec!["llm_keys_crud"]);
     }
 
     #[test]
