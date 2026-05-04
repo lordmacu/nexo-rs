@@ -46,56 +46,23 @@ pub fn agent_version() -> &'static str {
         .unwrap_or(AGENT_VERSION_FALLBACK)
 }
 
-pub const MAX_ID_LEN: usize = 64;
 pub const MAX_DESC_LEN: usize = 512;
 pub const MAX_CAPABILITY_NAME_LEN: usize = 64;
 
-/// IDs owned by native (compiled-in) plugins. Extensions cannot claim these,
-/// even if the native crate is not loaded on a given deployment.
-pub const RESERVED_IDS: &[&str] = &[
-    "agent",
-    "browser",
-    "core",
-    "email",
-    "heartbeat",
-    "memory",
-    "telegram",
-    "whatsapp",
-];
+// Phase 81.13 — id regex + reserved id list now live in
+// `nexo_plugin_manifest::id_regex` so both manifest crates
+// validate the same set. Re-exported here so existing callers
+// keep their import paths unchanged.
+pub use nexo_plugin_manifest::id_regex::{
+    is_reserved_id, register_reserved_ids, MAX_ID_LEN, RESERVED_IDS,
+};
 
-/// Host-side extension of [`RESERVED_IDS`]. The `agent` binary can add
-/// ids belonging to native crates that aren't baked into this crate's
-/// static list — useful when a new bundled plugin lands before
-/// `RESERVED_IDS` is updated.
-///
-/// Populated via [`register_reserved_ids`]. `is_reserved` unions the
-/// static and dynamic sets.
-static DYNAMIC_RESERVED_IDS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
-
-/// Idempotent: first call wins; subsequent calls are ignored with an
-/// `Err(&'static str)` so the caller can log + move on.
-pub fn register_reserved_ids(ids: impl IntoIterator<Item = String>) -> Result<(), &'static str> {
-    let mut v: Vec<String> = ids.into_iter().collect();
-    v.sort();
-    v.dedup();
-    DYNAMIC_RESERVED_IDS
-        .set(v)
-        .map_err(|_| "reserved ids already initialized")
+/// Compiled id regex — re-exposed here so the legacy
+/// `Manifest::validate` path can keep matching against the
+/// shared source.
+fn id_re() -> &'static Regex {
+    nexo_plugin_manifest::id_regex::id_regex()
 }
-
-/// Return true if `id` is reserved by either the static list or the
-/// host-registered dynamic set.
-pub fn is_reserved_id(id: &str) -> bool {
-    if RESERVED_IDS.contains(&id) {
-        return true;
-    }
-    DYNAMIC_RESERVED_IDS
-        .get()
-        .map(|v| v.iter().any(|s| s == id))
-        .unwrap_or(false)
-}
-
-static ID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-z][a-z0-9_-]*$").unwrap());
 
 static CAPABILITY_NAME_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[a-z][a-z0-9_]*$").unwrap());
@@ -284,6 +251,22 @@ pub struct Capabilities {
     /// `poll_tick { kind, ctx }` on the extension for each tick.
     #[serde(default)]
     pub pollers: Vec<String>,
+    /// Phase 81.13 + 82.10 — admin RPC capabilities the
+    /// extension declares it needs from the daemon. Lets a
+    /// single `plugin.toml` declare both Phase-11 contributions
+    /// (`tools/hooks/channels/...`) and the Phase-82 admin
+    /// surface; the daemon's `admin_capability_collect` walks
+    /// this field directly so a sidecar `nexo-plugin.toml` is no
+    /// longer required.
+    #[serde(default)]
+    pub admin: nexo_plugin_manifest::AdminCapabilities,
+    /// Phase 81.13 + 82.12 — embedded HTTP server policy
+    /// declared by the microapp. The daemon's boot supervisor
+    /// polls `<bind>:<port><health_path>` until 200 OK before
+    /// flipping the extension to `ready`. `None` keeps the
+    /// extension stdio-only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_server: Option<nexo_plugin_manifest::HttpServerCapability>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -457,7 +440,7 @@ fn validate_id(id: &str) -> Result<(), ManifestError> {
     if id.is_empty() {
         return Err(ManifestError::EmptyId);
     }
-    if id.len() > MAX_ID_LEN || !ID_RE.is_match(id) {
+    if id.len() > MAX_ID_LEN || !id_re().is_match(id) {
         return Err(ManifestError::InvalidId { id: id.to_string() });
     }
     if is_reserved_id(id) {
