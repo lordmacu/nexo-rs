@@ -185,6 +185,12 @@ pub struct AdminRpcDispatcher {
     /// Phase 82.10.f — `llm.yaml` mutator. `None` disables
     /// `nexo/admin/llm_providers/*`.
     llm_yaml: Option<Arc<dyn LlmYamlPatcher>>,
+    /// Snapshot of every LLM provider factory the daemon has
+    /// registered (builtins + plugin-contributed). Drives the
+    /// `nexo/admin/llm_providers/catalog` RPC. `None` disables
+    /// the RPC.
+    llm_provider_catalog:
+        Option<Arc<Vec<nexo_tool_meta::admin::llm_providers::LlmProviderCatalogEntry>>>,
     /// Phase 82.11 — transcripts read surface. `None` disables
     /// `nexo/admin/agent_events/*`.
     transcript_reader: Option<Arc<dyn TranscriptReader>>,
@@ -296,6 +302,7 @@ impl AdminRpcDispatcher {
             pairing_handles: Arc::new(DashMap::new()),
             pairing_cancel_root: CancellationToken::new(),
             llm_yaml: None,
+            llm_provider_catalog: None,
             transcript_reader: None,
             processing_store: None,
             escalation_store: None,
@@ -471,6 +478,19 @@ impl AdminRpcDispatcher {
         self
     }
 
+    /// Install the LLM provider catalog snapshot. The vec is taken
+    /// once at boot from `LlmRegistry::catalog()` and shared via
+    /// `Arc` so the RPC handler can serialise it without cloning
+    /// per-call. `None` keeps `nexo/admin/llm_providers/catalog`
+    /// disabled.
+    pub fn with_llm_provider_catalog(
+        mut self,
+        catalog: Vec<nexo_tool_meta::admin::llm_providers::LlmProviderCatalogEntry>,
+    ) -> Self {
+        self.llm_provider_catalog = Some(Arc::new(catalog));
+        self
+    }
+
     /// Phase 82.11 — install the agent_events domain. Production
     /// passes a `TranscriptReader` adapter wrapping
     /// `TranscriptWriter` + `TranscriptsIndex`.
@@ -583,7 +603,8 @@ impl AdminRpcDispatcher {
             "nexo/admin/llm_providers/list"
             | "nexo/admin/llm_providers/upsert"
             | "nexo/admin/llm_providers/delete"
-            | "nexo/admin/llm_providers/probe" => Some("llm_keys_crud"),
+            | "nexo/admin/llm_providers/probe"
+            | "nexo/admin/llm_providers/catalog" => Some("llm_keys_crud"),
             "nexo/admin/channels/list"
             | "nexo/admin/channels/approve"
             | "nexo/admin/channels/revoke"
@@ -865,6 +886,12 @@ impl AdminRpcDispatcher {
                 Some(llm) => super::domains::llm_providers::list(llm.as_ref()),
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "llm_providers domain not configured".into(),
+                )),
+            },
+            "nexo/admin/llm_providers/catalog" => match &self.llm_provider_catalog {
+                Some(catalog) => super::domains::llm_providers::catalog(catalog.as_slice()),
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "llm_providers catalog not configured".into(),
                 )),
             },
             "nexo/admin/llm_providers/upsert" => match (&self.llm_yaml, &self.reload_signal) {

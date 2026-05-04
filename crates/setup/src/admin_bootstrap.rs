@@ -235,6 +235,14 @@ pub struct AdminBootstrapInputs<'a> {
     pub llm_provider_probe: Option<
         Arc<dyn nexo_core::agent::admin_rpc::domains::llm_providers::LlmProvidersProbe>,
     >,
+    /// Snapshot of every LLM provider factory the daemon registered
+    /// at boot. Drives the `nexo/admin/llm_providers/catalog` RPC.
+    /// Production passes
+    /// `LlmRegistry::catalog()` mapped into the wire shape so SPA
+    /// wizards render strict provider/model dropdowns. Empty vec
+    /// disables the RPC silently (caller error message guides ops).
+    pub llm_provider_catalog:
+        Vec<nexo_tool_meta::admin::llm_providers::LlmProviderCatalogEntry>,
     /// Phase 82.10.o — operator bearer rotator. Test override:
     /// when `Some`, the bootstrap installs this rotator
     /// directly without consulting [`Self::auth_token_path`] /
@@ -549,6 +557,7 @@ impl AdminRpcBootstrap {
                 )
                 .with_pairing_triggers(inputs.pairing_triggers.clone())
                 .with_llm_providers_domain(llm_yaml.clone())
+                .with_llm_provider_catalog(inputs.llm_provider_catalog.clone())
                 .with_channels_domain();
             if let Some(reader) = inputs.transcript_reader.clone() {
                 dispatcher = dispatcher.with_agent_events_domain(reader);

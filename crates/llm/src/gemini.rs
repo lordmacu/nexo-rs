@@ -661,6 +661,22 @@ impl LlmProviderFactory for GeminiFactory {
     ) -> anyhow::Result<Arc<dyn LlmClient>> {
         Ok(Arc::new(GeminiClient::new(provider_cfg, model, retry)))
     }
+
+    fn default_base_url(&self) -> &'static str {
+        "https://generativelanguage.googleapis.com/v1beta"
+    }
+
+    fn default_env_var(&self) -> &'static str {
+        "GEMINI_API_KEY"
+    }
+
+    fn known_models(&self) -> &'static [&'static str] {
+        &[
+            "gemini-2.5-pro",
+            "gemini-2.5-flash",
+            "gemini-2.0-flash",
+        ]
+    }
 }
 
 #[cfg(test)]

@@ -90,6 +90,18 @@ impl LlmProviderFactory for DeepSeekFactory {
         };
         Ok(Arc::new(OpenAiClient::new(&cfg, model, retry)))
     }
+
+    fn default_base_url(&self) -> &'static str {
+        DEFAULT_BASE_URL
+    }
+
+    fn default_env_var(&self) -> &'static str {
+        "DEEPSEEK_API_KEY"
+    }
+
+    fn known_models(&self) -> &'static [&'static str] {
+        &["deepseek-chat", "deepseek-reasoner"]
+    }
 }
 
 #[cfg(test)]

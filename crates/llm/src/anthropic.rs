@@ -1114,6 +1114,23 @@ impl LlmProviderFactory for AnthropicFactory {
     ) -> anyhow::Result<Arc<dyn LlmClient>> {
         Ok(Arc::new(AnthropicClient::new(provider_cfg, model, retry)?))
     }
+
+    fn default_base_url(&self) -> &'static str {
+        "https://api.anthropic.com/v1"
+    }
+
+    fn default_env_var(&self) -> &'static str {
+        "ANTHROPIC_API_KEY"
+    }
+
+    fn known_models(&self) -> &'static [&'static str] {
+        &[
+            "claude-opus-4-7",
+            "claude-sonnet-4-6",
+            "claude-sonnet-4-5",
+            "claude-haiku-4-5",
+        ]
+    }
 }
 
 /// Resolve an [`AnthropicAuth`] for the given provider config.

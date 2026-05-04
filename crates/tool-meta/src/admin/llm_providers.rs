@@ -141,6 +141,38 @@ pub struct LlmProviderProbeResponse {
     pub error: Option<String>,
 }
 
+/// JSON-RPC method that returns the static metadata for every
+/// LLM provider the daemon has registered factories for. Operator
+/// UIs use this to render a strict provider/model dropdown without
+/// keeping their own hardcoded list in sync with the framework.
+pub const LLM_PROVIDERS_CATALOG_METHOD: &str = "nexo/admin/llm_providers/catalog";
+
+/// One row of [`LLM_PROVIDERS_CATALOG_METHOD`]'s response.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct LlmProviderCatalogEntry {
+    /// Provider id (matches `llm.yaml.providers.<id>` and the
+    /// `crates/llm/<id>.rs` factory's `name()`).
+    pub id: String,
+    /// Suggested HTTP base URL. Empty when the factory hasn't
+    /// declared one.
+    pub default_base_url: String,
+    /// Conventional env var holding the API key (e.g.
+    /// `MINIMAX_API_KEY`). Empty when the factory hasn't declared
+    /// one.
+    pub default_env_var: String,
+    /// Curated list of model ids the provider's factory accepts.
+    /// Empty when the factory hasn't declared any — UIs fall back
+    /// to a free-text input in that case.
+    pub models: Vec<String>,
+}
+
+/// Response shape for [`LLM_PROVIDERS_CATALOG_METHOD`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct LlmProvidersCatalogResponse {
+    /// Providers in stable alpha order by id.
+    pub providers: Vec<LlmProviderCatalogEntry>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

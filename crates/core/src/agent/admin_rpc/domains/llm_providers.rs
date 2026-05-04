@@ -8,9 +8,9 @@ use serde_json::Value;
 
 use async_trait::async_trait;
 use nexo_tool_meta::admin::llm_providers::{
-    LlmProviderProbeInput, LlmProviderProbeResponse, LlmProviderSummary,
-    LlmProviderUpsertInput, LlmProvidersDeleteParams, LlmProvidersDeleteResponse,
-    LlmProvidersListResponse,
+    LlmProviderCatalogEntry, LlmProviderProbeInput, LlmProviderProbeResponse,
+    LlmProviderSummary, LlmProviderUpsertInput, LlmProvidersCatalogResponse,
+    LlmProvidersDeleteParams, LlmProvidersDeleteResponse, LlmProvidersListResponse,
 };
 
 use super::agents::YamlPatcher;
@@ -90,6 +90,19 @@ pub trait LlmYamlPatcher: Send + Sync {
             "remove_tenant_provider not implemented for this LlmYamlPatcher"
         ))
     }
+}
+
+/// `nexo/admin/llm_providers/catalog` — return the static metadata
+/// for every LLM provider factory the daemon has registered. Pure
+/// snapshot read; no yaml access. Operator UIs use this to render a
+/// strict provider/model dropdown without keeping their own list.
+pub fn catalog(catalog: &[LlmProviderCatalogEntry]) -> AdminRpcResult {
+    AdminRpcResult::ok(
+        serde_json::to_value(LlmProvidersCatalogResponse {
+            providers: catalog.to_vec(),
+        })
+        .unwrap_or(Value::Null),
+    )
 }
 
 /// `nexo/admin/llm_providers/list` — return all providers from
