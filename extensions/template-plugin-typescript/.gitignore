@@ -1,0 +1,9 @@
+node_modules/
+dist/
+lib/
+.audit/
+*.tsbuildinfo
+.tsbuildinfo
+package-lock.json
+.pnpm-store/
+.npm-cache/

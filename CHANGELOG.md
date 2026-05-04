@@ -38,6 +38,212 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 31.5 — TypeScript plugin SDK + template (robust).**
+  Plugin authors can now ship TypeScript (or plain JavaScript)
+  plugins through the same `nexo plugin install` pipeline used
+  by Rust + Python plugins. Two new in-tree directories:
+  
+  - `extensions/sdk-typescript/` — ESM package with strict
+    `tsconfig.json` (Node16 module resolution,
+    noUncheckedIndexedAccess, isolatedModules). Public API
+    mirrors the Rust + Python SDKs: `PluginAdapter` (async
+    dispatch loop), `BrokerSender` (Promise-chain write lock
+    for ordered `broker.publish` notifications), `Event`
+    (value object with `fromJson`/`toJson` helpers),
+    `parseManifest` (TOML reader with full id regex +
+    version + name + description validation), exception
+    classes (`PluginError`/`ManifestError`/`WireError` with
+    proper `name` set so `instanceof` works post-transpile),
+    `installStdoutGuard` (defensive, exported standalone),
+    `STDOUT_GUARD_MARKER` sentinel, JSON-RPC frame helpers
+    (`buildResponse`, `buildErrorResponse`,
+    `serializeFrame`, `MAX_FRAME_BYTES`).
+  - `extensions/template-plugin-typescript/` — drop-in
+    template with manifest, `src/main.ts` echo handler,
+    `tsconfig.json`, `package.json` declaring the SDK as
+    `file:../sdk-typescript` for in-tree dev, helper scripts
+    (`extract-plugin-meta.sh`, `pack-tarball-typescript.sh`,
+    `verify-pure-js.sh`), end-to-end pack test,
+    `.github/workflows/release.yml`.
+  
+  **Robustness defaults** — all default-on, opt-out via
+  constructor options:
+  
+  | Default | Purpose |
+  |---------|---------|
+  | `enableStdoutGuard: true` | Patches `process.stdout.write` to buffer-and-line-parse every write. Lines that pass `JSON.parse` forwarded to real stdout; non-JSON lines diverted to stderr tagged with `[stdout-guard]`. Catches the most common plugin-author mistake (`console.log` corrupting the JSON-RPC frame stream the host parses). |
+  | `maxFrameBytes: 1 << 20` (1 MiB) | Rejects oversized inbound frames with a `WireError` log; dispatch loop continues. Adversarial host cannot OOM the plugin via a single huge line. |
+  | `handleProcessSignals: true` | SIGTERM + SIGINT trigger graceful shutdown — closes the readline interface, drains in-flight handler tasks via `Promise.allSettled([...inflight])`, exits 0. |
+  | In-flight task drain on `shutdown` request | Handlers spawned for `broker.event` are awaited before the SDK replies `{ok: true}`. Same idiom as the Python SDK's `_drain_inflight` (Phase 31.4 fix); prevents `broker.publish` cancellation mid-flight. |
+  | Single-shot `run()` | Throws `PluginError("PluginAdapter.run() already invoked")` on second call. Guards against accidental double-init in test fixtures. |
+  
+  Tarball convention reuses the `noarch` target shipped in
+  Phase 31.4 — no resolver changes needed. Layout for TS
+  plugins:
+  
+  ```
+  <id>-<version>-noarch.tar.gz
+  ├── nexo-plugin.toml
+  ├── bin/<id>            # bash launcher mode 0755
+  └── lib/
+      ├── plugin/main.js  # compiled from main.ts via tsc
+      └── node_modules/
+          ├── nexo-plugin-sdk/dist/...
+          └── ...         # pure-JS production deps
+  ```
+  
+  Bash launcher (~5 LOC) sets `NODE_PATH=lib/node_modules`
+  and exec's `node lib/plugin/main.js`. The daemon's spawn
+  pipeline (`crates/core/src/agent/nexo_plugin_registry/subprocess.rs`)
+  is **unchanged** — it just exec's `bin/<id>`, OS shebang
+  dispatches.
+  
+  Pure-JS deps constraint: `verify-pure-js.sh` audits the
+  vendored `lib/node_modules` for `*.node` / `*.so` /
+  `*.dylib` / `*.dll` and fails the publish workflow if any
+  are present. Native-addon plugins → per-target tarballs
+  (Phase 31.5.b, deferred).
+  
+  Publish workflow shape (`.github/workflows/release.yml`):
+  
+  - Same 4-job structure as Phase 31.2/31.4 (validate-tag,
+    build, sign, release).
+  - Build matrix has a single `noarch` entry.
+  - Build step uses `actions/setup-node@v4` with
+    `node-version: "20"` + `cache: "npm"` + `npm ci` +
+    `npm run typecheck` + `npm run build` (`tsc` to
+    `dist/`).
+  - `npm prune --omit=dev` strips dev deps before vendoring
+    so only runtime deps land in the tarball.
+  - Post-pack the workflow re-extracts the tarball into a
+    scratch dir and runs
+    `bash scripts/verify-pure-js.sh .audit/lib/node_modules`
+    as a hard gate.
+  - Sign + release jobs identical to the Rust + Python
+    templates; cosign keyless OIDC produces `.sig` + `.pem`
+    + `.bundle` per asset when `COSIGN_ENABLED == "true"`.
+  
+  Operator install path (no changes for TypeScript plugins):
+  
+  ```bash
+  nexo plugin install your-handle/your-plugin@v0.2.0
+  ```
+  
+  Pipeline: resolve release → try per-target tarball (miss
+  for noarch plugins) → fall back to `noarch` (Phase 31.4
+  addition) → sha256 verify (31.1) → cosign verify per
+  `trusted_keys.toml` (31.3) → extract under
+  `<dest_root>/<id>-0.2.0/` (31.1.b) → daemon picks it up at
+  next boot or hot-reload.
+  
+  `PluginAdapter` TypeScript class:
+  
+  ```typescript
+  new PluginAdapter({
+      manifestToml: ...,
+      serverVersion: "0.1.0",
+      onEvent: async (topic, event, broker) => { ... },
+      onShutdown: async () => { ... },
+      enableStdoutGuard: true,        // default
+      maxFrameBytes: 1 << 20,         // default
+      handleProcessSignals: true,     // default
+  })
+  ```
+  
+  13 stdlib `node:test` tests (zero Jest/Mocha install
+  friction):
+  
+  - **Handshake (3)**: `initialize` reply with manifest;
+    unknown method `-32601`; unknown notification silently
+    ignored.
+  - **Manifest validation (3)**: missing id raises
+    `ManifestError` with `field` populated; invalid TOML
+    raises `ManifestError`; id regex violation raises
+    `ManifestError`.
+  - **Dispatch (3)**: `broker.event` invokes handler; slow
+    handler does not block reader; in-flight handlers
+    drained on shutdown (proves no mid-publish
+    cancellation).
+  - **Stdout guard (2)**: idempotent install + uninstall;
+    `console.log` from plugin code diverted to stderr
+    tagged with `[stdout-guard]` while shutdown reply
+    stays on stdout.
+  - **Wire (1)**: oversized frame (2 MiB) rejected with
+    `WireError` on stderr; subsequent initialize still
+    processes.
+  - **Lifecycle (1)**: double `run()` rejects with
+    `PluginError`. Driven via child fixture so the readline
+    loop does not block the test runner's stdin.
+  
+  1 template test
+  (`tests/pack-tarball.test.mjs::pack_tarball_produces_canonical_layout`):
+  builds a synthetic SDK in a tempdir, runs
+  `pack-tarball-typescript.sh` with `SDK_SRC` + `SKIP_BUILD`
+  + `SKIP_NPM` overrides, asserts asset + sidecar exist,
+  sha256 round-trip valid, re-extracts the tarball, and
+  verifies layout (`bin/<id>` + `lib/plugin/main.js` +
+  `lib/node_modules/nexo-plugin-sdk/dist/index.js` +
+  `nexo-plugin.toml` at root, no wrapping dir, launcher mode
+  `0o755`).
+  
+  Test totals: TypeScript SDK 13, template 1. Workspace
+  builds clean. Rust ext-installer regression: 40/40 still
+  pass. Python regression: 6/6 SDK + 1/1 template still
+  pass. mdbook clean.
+  
+  New docs page `docs/src/plugins/typescript-sdk.md`
+  (operator-author facing): architecture diagram, public API
+  table, robustness defaults explanation (with focus on
+  stdout guard rationale), tarball convention, pure-JS
+  constraint, CI workflow walkthrough, install flow, smoke
+  test commands, cross-links to publishing + plugin-trust +
+  python-sdk pages. Wired under `# Plugins` in
+  `docs/src/SUMMARY.md` after `python-sdk.md`.
+  
+  Run commands:
+  
+  ```bash
+  cd extensions/sdk-typescript && npm install && npm run build && npm test
+  cd extensions/template-plugin-typescript && npm install && npm run build && node --test tests/pack-tarball.test.mjs
+  ```
+  
+  Out of scope (tracked):
+  - CommonJS fallback — ESM-only at v1; modern Node default.
+  - Embedded TS compiler at runtime — pre-compile at CI is
+    faster + simpler.
+  - Bundling via esbuild/tsup — author's choice; not a
+    robustness blocker.
+  - Worker threads for handler dispatch — Promise pattern is
+    sufficient.
+  - Hot-reload of plugin code — out of scope; daemon handles
+    process restart.
+  - npm publish of `nexo-plugin-sdk` — defer until cross-
+    language API stabilizes after 31.5.c (PHP) lands.
+  - Native node addons in `noarch` tarballs — Phase 31.5.b
+    follow-up.
+  - PHP SDK + template — Phase 31.5.c follow-up per user
+    direction.
+  
+  IRROMPIBLE refs:
+  internal `crates/microapp-sdk/src/plugin.rs:514-549` (Rust
+  `PluginAdapter` shape mirrored verbatim);
+  internal `extensions/sdk-python/nexo_plugin_sdk/adapter.py`
+  (Python `_drain_inflight` pattern + manifest re-validation
+  + EOF handling — TS uses `Set<Promise<void>>` analog);
+  internal `crates/core/src/agent/nexo_plugin_registry/subprocess.rs:170-219`
+  (daemon spawn — language-agnostic, no daemon-side changes);
+  internal `nexo-plugin-contract.md` — wire format spec
+  implemented verbatim;
+  internal `extensions/template-plugin-python/scripts/pack-tarball-python.sh`
+  (Phase 31.4 — packer pattern reused);
+  internal `crates/ext-installer/src/lib.rs::resolve_release`
+  (`noarch` fallback — zero changes);
+  OpenClaw `research/packages/plugin-sdk/package.json:1-160`
+  — multi-export ESM package shape (mining: simplified to
+  single entry);
+  OpenClaw `research/extensions/browser/package.json:6-16`
+  — single-`index.ts` extension package shape.
+
 - **Phase 31.4 — Python plugin SDK + template + `noarch`
   resolver fallback.** Plugin authors can now ship Python
   plugins through the same `nexo plugin install` pipeline used
