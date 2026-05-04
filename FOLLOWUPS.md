@@ -18,6 +18,35 @@ Historical detailed notes that were previously written in Spanish are preserved 
 
 ## Open items
 
+### Phase 82.10.s + 82.10.t — multi-instance LLM providers + dynamic models 🟢 shipped, 1 follow-up open
+
+Phase 82.10.s split `factory_type` (registered `crates/llm/src/<id>.rs`
+factory) from instance id (yaml key under `llm.yaml.providers.*`) so
+operators can run N MiniMaxes with separate keys for billing
+isolation across microapps / tenants. Boot resolver
+(`LlmConfig::resolve_all_keys` + `LlmRegistry::validate_config`)
+collects all errors per-instance. Admin RPC `llm_providers/upsert`
+write-throughs `api_key_secret_value` into `FsSecretsStore` under
+`LLM_<INSTANCE>` and patches yaml with `api_key_secret_id`. Audit
+redactor masks the cleartext.
+
+Phase 82.10.t added `model_names` to `llm_providers/probe` parsed
+from OpenAI-compat `/v1/models data[].id` (capped 200) so SPA
+wizards show the live list a key actually has access to.
+
+E2E coverage in `crates/setup/tests/llm_multi_instance_e2e.rs` (2
+cases: write-through + resolve + registry validate; conflicting
+sources rejected). Docs in `docs/src/llm/multi-instance.md`.
+
+Open follow-up:
+
+- **82.10.s.probe-server-cache** — the 60 s probe cache lives only
+  in the frontend (`useLiveModels` zustand store). Two operator
+  tabs each issue their own probe call against the upstream
+  provider. Move the cache server-side in
+  `crates/setup/src/llm_provider_probe.rs::HttpLlmProviderProbe`
+  so the daemon dedupes across all SPA instances. ~50 LOC.
+
 ### Phase 82.10.p — admin pairing → channel plugin bridge ✅ shipped
 
 Resolved across commits `54e394a..fab0231` (8 atomic steps):
