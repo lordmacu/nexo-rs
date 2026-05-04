@@ -21,6 +21,7 @@ pub mod channel_outbound;
 pub mod dispatcher;
 pub mod domains;
 pub mod escalations_sqlite;
+pub mod pairing_trigger;
 pub mod processing_sqlite;
 pub mod router;
 pub mod transcript_appender;
@@ -46,4 +47,8 @@ pub use channel_outbound::{
     ChannelOutboundDispatcher, ChannelOutboundError, OutboundAck, OutboundMessage,
 };
 pub use dispatcher::{AdminRpcDispatcher, AdminRpcError, AdminRpcResult};
+pub use pairing_trigger::{
+    PairingChannelTrigger, PairingChannelTriggers, PairingContext, PairingHandle,
+    PairingTriggerError, PAIRING_DEFAULT_TIMEOUT,
+};
 pub use router::{AdminOutboundWriter, DispatcherAdminRouter};
