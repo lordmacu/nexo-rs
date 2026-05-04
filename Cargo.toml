@@ -285,6 +285,9 @@ serde_yaml          = { workspace = true }
 chrono              = { workspace = true }
 humantime           = { workspace = true }
 async-trait         = { workspace = true }
+include_dir         = "0.7"
+regex               = { workspace = true }
+thiserror           = { workspace = true }
 
 [dev-dependencies]
 tempfile            = "3"

@@ -936,6 +936,47 @@ coordinación de archivos cross-cutting.
   tweak to try `php<MAJOR><MINOR>-<triple>` before falling
   back to `noarch`. ~2 d.
 
+- **31.6 ✅ shipped 2026-05-04** — `nexo plugin new --lang
+  <rust|python|typescript|php>` scaffolder. New
+  `src/plugin_new.rs` module + `Mode::PluginNew` variant +
+  parse arm. Templates embedded at compile time via
+  `include_dir!` from the four `extensions/template-plugin-*/`
+  directories — binary works after `cargo install` with no
+  runtime FS dependency. Argv: `nexo plugin new <id> --lang
+  <lang> [--dest <path>] [--owner <gh-handle>] [--description
+  <text>] [--git] [--force] [--json]`. Validates id regex
+  `^[a-z][a-z0-9_]{0,31}$` + lang ∈ `{rust, python,
+  typescript, php}` before any IO. Substitution is literal
+  byte-replace, longest-pattern-first (covers
+  `template_plugin_<lang>` snake, `template-plugin-<lang>`
+  kebab, `template_echo_<suffix>` channel kind, `Template
+  Plugin (<Lang>)` title, boilerplate description, original
+  author string). Text-extension whitelist prevents binary
+  corruption. `--owner alice` injects
+  `alice <alice@users.noreply.github.com>` privacy-preserving
+  GitHub email. `--git` runs `git init --initial-branch=main`
+  + `git add .` + `git commit -m "chore: scaffold ..."`;
+  gracefully skips when `git` binary missing. `--force`
+  removes existing dest. Unix-only `chmod 0755` on
+  `scripts/*.sh`. `next_steps_for(lang, id, owner)` emits
+  language-specific commands (`cargo build` for rust, `pip
+  install` for python, `npm install && npm run build` for
+  typescript, `composer install` for php). 11 unit tests:
+  id/lang validation table-tests, title-case, placeholder
+  ordering, scaffold-{rust,python,typescript,php} (4 tests
+  verifying key files + manifest substitution + Cargo /
+  package / composer renames), dest-exists-without-force
+  fails, force-flag overwrites, owner-substitution lands. New
+  runtime dep `include_dir = "0.7"`; workspace `regex` +
+  `thiserror` added to root `[dependencies]`. Help text in
+  `print_plugin_help` + `print_usage`. All 4 template READMEs
+  replace the manual `cp -r` + `sed -i` quickstart pipeline
+  with `nexo plugin new <id> --lang <lang> --owner <handle>
+  --git`. Replaces deferred 81.13 (folded into 31.6 per
+  PHASES-curated). Workspace builds clean. Rust ext-installer
+  regression: 40/40 still pass; plugin_install: 12/12; new
+  plugin_new: 11/11. Phase 31 author-side flow closes end-to-end.
+
 - **81.15.c.b ✅ shipped 2026-05-01** — SDK streaming
   consumption helper. Pending value type changed to
   `PendingKind` enum (Single for non-streaming, Streaming for

@@ -28,29 +28,26 @@ different SDK + asset convention.
 ## Quick start
 
 ```bash
-# 1. Copy this directory out of the workspace.
-cp -r extensions/template-plugin-typescript /tmp/my-plugin
-cd /tmp/my-plugin
+# 1. Scaffold a fresh plugin (Phase 31.6 scaffolder)
+nexo plugin new my_plugin --lang typescript --owner yourhandle --git
+cd my_plugin
 
-# 2. Rename the package + plugin id.
-sed -i 's/template_plugin_typescript/my_plugin/g' nexo-plugin.toml src/main.ts
-sed -i 's/template_echo_ts/my_kind/g' nexo-plugin.toml src/main.ts
+# 2. Implement your handler in src/main.ts — replace `onEvent`.
 
-# 3. Implement your handler in src/main.ts — replace `onEvent`.
-
-# 4. Add deps via npm; pure-JS only (no native addons or the
+# 3. Add deps via npm; pure-JS only (no native addons or the
 #    publish workflow's audit job will reject the noarch tarball).
 
-# 5. Smoke test locally
+# 4. Smoke test locally
 npm install
 npm run build
 echo '{"jsonrpc":"2.0","id":1,"method":"initialize"}' \
     | node dist/main.js
 # expect one JSON-RPC response with your manifest
 
-# 6. Tag + push.
-git tag v0.1.0
-git push --tags
+# 5. Tag + push
+git remote add origin git@github.com:yourhandle/my_plugin.git
+git push -u origin main
+git tag v0.1.0 && git push --tags
 # .github/workflows/release.yml runs and uploads
 # my_plugin-0.1.0-noarch.tar.gz to the release.
 ```

@@ -32,32 +32,29 @@ different SDK + asset convention.
 ## Quick start
 
 ```bash
-# 1. Copy this directory out of the workspace.
-cp -r extensions/template-plugin-php /tmp/my-plugin
-cd /tmp/my-plugin
+# 1. Scaffold a fresh plugin (Phase 31.6 scaffolder)
+nexo plugin new my_plugin --lang php --owner yourhandle --git
+cd my_plugin
 
 # 2. Update the `repositories.url` in composer.json to point at
 #    your published SDK (or keep the path repo if you fork the
 #    nexo-rs workspace).
 
-# 3. Rename the package + plugin id.
-sed -i 's/template_plugin_php/my_plugin/g' nexo-plugin.toml src/main.php
-sed -i 's/template_echo_php/my_kind/g' nexo-plugin.toml src/main.php
-
-# 4. Implement your handler in src/main.php — replace the
+# 3. Implement your handler in src/main.php — replace the
 #    onEvent closure.
 
-# 5. Install deps. PHP 8.1+ + Composer 2.x required.
+# 4. Install deps. PHP 8.1+ + Composer 2.x required.
 composer install
 
-# 6. Smoke test locally
+# 5. Smoke test locally
 echo '{"jsonrpc":"2.0","id":1,"method":"initialize"}' \
     | php src/main.php
 # expect one JSON-RPC response with your manifest
 
-# 7. Tag + push.
-git tag v0.1.0
-git push --tags
+# 6. Tag + push
+git remote add origin git@github.com:yourhandle/my_plugin.git
+git push -u origin main
+git tag v0.1.0 && git push --tags
 # .github/workflows/release.yml runs and uploads
 # my_plugin-0.1.0-noarch.tar.gz to the release.
 ```
