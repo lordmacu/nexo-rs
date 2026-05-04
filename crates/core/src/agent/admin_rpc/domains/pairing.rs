@@ -44,6 +44,50 @@ pub trait PairingChallengeStore: Send + Sync {
     /// Mark a challenge cancelled. Returns `false` when already
     /// terminal (linked / expired / cancelled) — idempotent.
     fn cancel_challenge(&self, challenge_id: Uuid) -> anyhow::Result<bool>;
+
+    /// Phase 82.10.p — replace the QR snapshot for an in-flight
+    /// challenge. Called by `PairingChannelTrigger` impls on each
+    /// onQr callback. Idempotent — overwriting an existing QR is
+    /// the expected hot path (WhatsApp rotates pairing refs
+    /// every ~20s).
+    ///
+    /// Implicit state transition: stores SHOULD flip
+    /// `state` to [`PairingState::QrReady`] when called from
+    /// `Pending`. Already-QrReady → re-QrReady is fine
+    /// (just data swap).
+    ///
+    /// Returns `Ok(true)` when the challenge existed + was
+    /// updated. Returns `Ok(false)` when the entry is already
+    /// terminal (`Linked` / `Cancelled` / `Expired`) — trigger
+    /// SHOULD honor by stopping its loop. `Ok(false)` is also
+    /// returned for unknown ids (defensive — race against
+    /// `cancel_challenge`).
+    fn update_qr(
+        &self,
+        challenge_id: Uuid,
+        qr_png_base64: String,
+        qr_ascii: String,
+        expires_at_ms: u64,
+    ) -> anyhow::Result<bool>;
+
+    /// Phase 82.10.p — transition the state of an in-flight
+    /// challenge. Triggers push `AwaitingUser` after delivering
+    /// QR, `Linked` on confirmation. Transport failures are
+    /// surfaced via `data.error` (the wire enum has no `Error`
+    /// state today; UIs branch on `data.error.is_some()`).
+    /// Terminal states (`Linked` / `Cancelled` / `Expired`)
+    /// are sticky — subsequent calls return `Ok(false)`.
+    ///
+    /// `data` REPLACES the existing data field — callers should
+    /// merge upstream (e.g. preserve `qr_png_base64` from the
+    /// last `update_qr` if still relevant). `data` carries
+    /// `device_jid` on `Linked`, `error` on `Error`, etc.
+    fn update_state(
+        &self,
+        challenge_id: Uuid,
+        state: PairingState,
+        data: PairingStatusData,
+    ) -> anyhow::Result<bool>;
 }
 
 /// Notification sender — pushes
@@ -243,6 +287,48 @@ mod tests {
             }
             current.state = PairingState::Cancelled;
             current.data = PairingStatusData::default();
+            Ok(true)
+        }
+        fn update_qr(
+            &self,
+            challenge_id: Uuid,
+            qr_png_base64: String,
+            qr_ascii: String,
+            _expires_at_ms: u64,
+        ) -> anyhow::Result<bool> {
+            let mut map = self.challenges.lock().unwrap();
+            let Some(current) = map.get_mut(&challenge_id) else {
+                return Ok(false);
+            };
+            if matches!(
+                current.state,
+                PairingState::Linked | PairingState::Expired | PairingState::Cancelled
+            ) {
+                return Ok(false);
+            }
+            current.state = PairingState::QrReady;
+            current.data.qr_png_base64 = Some(qr_png_base64);
+            current.data.qr_ascii = Some(qr_ascii);
+            Ok(true)
+        }
+        fn update_state(
+            &self,
+            challenge_id: Uuid,
+            state: PairingState,
+            data: PairingStatusData,
+        ) -> anyhow::Result<bool> {
+            let mut map = self.challenges.lock().unwrap();
+            let Some(current) = map.get_mut(&challenge_id) else {
+                return Ok(false);
+            };
+            if matches!(
+                current.state,
+                PairingState::Linked | PairingState::Expired | PairingState::Cancelled
+            ) {
+                return Ok(false);
+            }
+            current.state = state;
+            current.data = data;
             Ok(true)
         }
     }

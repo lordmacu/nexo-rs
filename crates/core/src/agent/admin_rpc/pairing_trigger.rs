@@ -77,7 +77,8 @@ pub trait PairingChannelTrigger: Send + Sync + std::fmt::Debug {
     /// `ctx.store.update_qr`). Errors here are immediate
     /// (config invalid, instance already paired, dial failure);
     /// transient errors AFTER start arrive via
-    /// `ctx.store.update_state(state: Error, ...)`.
+    /// `ctx.store.update_state(...)` carrying `data.error`
+    /// (or via cancel + reset by the operator).
     async fn start(&self, ctx: PairingContext) -> Result<PairingHandle, PairingTriggerError>;
 }
 
@@ -153,9 +154,9 @@ impl PairingHandle {
     }
 }
 
-/// Errors a trigger surface BEFORE the spawned task takes
+/// Errors a trigger surfaces BEFORE the spawned task takes
 /// over. Post-spawn errors flow through
-/// `store.update_state(state: Error, ...)` instead.
+/// `store.update_state(...)` carrying `data.error` instead.
 #[derive(Debug, thiserror::Error)]
 pub enum PairingTriggerError {
     /// The channel id has no trigger registered with the
