@@ -154,6 +154,21 @@ impl ToolRegistry {
             }
         }
     }
+
+    /// Phase 81.3 — Arc-friendly variant of `register_if_absent`.
+    /// Used by `ScopedToolRegistry` (the per-plugin proxy) so plugin
+    /// callers go through a path that rejects collisions atomically
+    /// without re-Arc-ing an already-boxed handler.
+    pub fn register_if_absent_arc(&self, def: ToolDef, handler: Arc<dyn ToolHandler>) -> bool {
+        use dashmap::mapref::entry::Entry;
+        match self.handlers.entry(def.name.clone()) {
+            Entry::Occupied(_) => false,
+            Entry::Vacant(slot) => {
+                slot.insert((def, handler));
+                true
+            }
+        }
+    }
     /// True if a handler is registered under `name`.
     pub fn contains(&self, name: &str) -> bool {
         self.handlers.contains_key(name)

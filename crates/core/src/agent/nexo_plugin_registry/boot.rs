@@ -199,7 +199,7 @@ pub async fn wire_plugin_registry_with_runtime(
             let r = run_plugin_init_loop_with_factory(
                 &snap,
                 factory,
-                |id| stubs.context_for(id, rt),
+                |manifest| stubs.context_for(manifest, rt),
             )
             .await;
             (r.outcomes, r.handles)
@@ -217,7 +217,7 @@ pub async fn wire_plugin_registry_with_runtime(
             let r = run_plugin_init_loop_with_factory(
                 &snap,
                 factory,
-                |_id| -> crate::agent::plugin_host::PluginInitContext<'_> {
+                |_manifest| -> crate::agent::plugin_host::PluginInitContext<'_> {
                     unreachable!(
                         "wire_plugin_registry: subprocess_runtime is None but a manifest with entrypoint was discovered. \
                          Use wire_plugin_registry_with_runtime(...subprocess_runtime: Some(_)) when subprocess plugins might be present."
@@ -232,7 +232,7 @@ pub async fn wire_plugin_registry_with_runtime(
             let outcomes = run_plugin_init_loop(
                 &snap,
                 &empty_handles,
-                |_id| -> crate::agent::plugin_host::PluginInitContext<'_> {
+                |_manifest| -> crate::agent::plugin_host::PluginInitContext<'_> {
                     unreachable!(
                         "wire_plugin_registry passes empty handles; ctx_factory must not be invoked"
                     )
@@ -380,13 +380,25 @@ impl SubprocessCtxStubs {
 
     fn context_for<'env>(
         &'env self,
-        _id: &str,
+        manifest: &nexo_plugin_manifest::PluginManifest,
         rt: &'env SubprocessRuntime,
     ) -> crate::agent::plugin_host::PluginInitContext<'env> {
+        // Phase 81.3 — wrap the raw ToolRegistry in a per-plugin
+        // ScopedToolRegistry keyed on this manifest's tools.expose.
+        // Plugins receive the proxy via PluginInitContext;
+        // attempts to register out-of-namespace tools are gated
+        // (Strict mode) or recorded + emitted to broker (Warn).
+        let scoped = Arc::new(crate::agent::scoped_tool_registry::ScopedToolRegistry::new(
+            manifest.plugin.id.clone(),
+            &manifest.plugin.tools.expose,
+            self.tool_registry.clone(),
+            crate::agent::scoped_tool_registry::NamespaceEnforcement::from_env(),
+            Some(rt.broker.clone()),
+        ));
         crate::agent::plugin_host::PluginInitContext {
             config_dir: rt.config_dir.as_path(),
             state_root: rt.state_root.as_path(),
-            tool_registry: self.tool_registry.clone(),
+            tool_registry: scoped,
             advisor_registry: self.advisor_registry.clone(),
             hook_registry: self.hook_registry.clone(),
             broker: rt.broker.clone(),

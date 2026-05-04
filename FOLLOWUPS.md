@@ -1142,6 +1142,55 @@ coordinación de archivos cross-cutting.
   must remember to run the sync script manually before
   commit. ~0.2 d.
 
+- **81.3 ✅ shipped 2026-05-04** — Tool namespace runtime
+  enforcement. New `crates/core/src/agent/scoped_tool_registry.rs`
+  module (~440 LOC + 11 unit tests). `ScopedToolRegistry`
+  per-plugin proxy gates every `register*` call against 4
+  layers: reserved-prefix denylist (`agent_`, `system_`,
+  `nexo_`, `mcp_`, `ext_`) with `ext_<self_id>_*` carve-out
+  for the canonical plugin shape, plugin-scoped namespace
+  prefix (`<plugin_id>_` or `ext_<plugin_id>_`), manifest
+  `tools.expose` allowlist, collision rejection.
+  `NamespaceEnforcement::Warn` (default) records + logs +
+  emits broker event but allows non-collision violations
+  to fall through; `Strict` (`NEXO_PLUGIN_NAMESPACE_STRICT=1`)
+  returns Err on every violation. Collisions ALWAYS rejected.
+  `NamespaceViolation` + 4-variant `NamespaceViolationReason`
+  (`ReservedPrefix(&'static str)`, `OutOfNamespace`,
+  `NotInExpose`, `Collision`). Best-effort broker event
+  `plugin.lifecycle.<id>.namespace_violation` (non-blocking,
+  2s budget). `PluginInitContext.tool_registry: Arc<ScopedToolRegistry>`
+  swap (non-breaking for the 4 in-tree plugins, none call
+  `register*`). New `PluginInitError::ToolNamespace` variant.
+  `init_loop::check_namespace_after_init` post-init drain +
+  Strict-mode escalation to `InitOutcome::Failed`. `ctx_factory`
+  closure signature changed from `FnMut(&str)` to
+  `FnMut(&PluginManifest)`. `ToolRegistry::register_if_absent_arc`
+  helper added. 1262/1262 nexo-core lib tests pass + 2/2
+  e2e tests + 11 new scoped_tool_registry tests + 1 new
+  init_loop test (`format_violation_sample_truncates_after_three`).
+  Workspace builds clean (only pre-existing test failures
+  unrelated to 81.3).
+
+- **81.3.b ⬜** Per-plugin manifest override for namespace
+  enforcement mode. New `[plugin.tool_namespace] mode = "strict"`
+  optional section so plugin authors can opt their own
+  releases into Strict regardless of operator default. Today
+  enforcement is global via env var only. ~0.5 d.
+
+- **81.3.c ⬜** `nexo agent doctor plugins --json` extension
+  to surface namespace-violation history per plugin (count
+  + last-N samples). Operators benefit from one-shot audit
+  before flipping `NEXO_PLUGIN_NAMESPACE_STRICT=1` in
+  production. ~0.5 d.
+
+- **81.3.d ⬜** Flip `NamespaceEnforcement::from_env` default
+  from `Warn` to `Strict` after a deprecation window. Pre-
+  requisites: 81.3.c doctor surface lands; community plugin
+  audit completes; `NEXO_PLUGIN_NAMESPACE_LENIENT=1` opt-out
+  ships for the few plugins that legitimately need looser
+  enforcement. ~0.3 d once gates clear.
+
 - **81.15.c.b ✅ shipped 2026-05-01** — SDK streaming
   consumption helper. Pending value type changed to
   `PendingKind` enum (Single for non-streaming, Streaming for

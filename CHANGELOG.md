@@ -38,6 +38,104 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.3 — Tool namespace runtime enforcement.** New
+  `ScopedToolRegistry` per-plugin proxy gates every plugin-side
+  tool registration against four layers — reserved-prefix
+  denylist, plugin-scoped namespace, manifest `tools.expose`
+  allowlist, collision rejection. Plugins receive
+  `Arc<ScopedToolRegistry>` via `PluginInitContext.tool_registry`
+  (was `Arc<ToolRegistry>`); built-ins keep registering through
+  the raw `ToolRegistry::register*` path unchanged.
+
+  Reserved prefixes (rejected for any plugin id):
+
+  ```rust
+  pub const RESERVED_PREFIXES: &[&str] = &[
+      "agent_", "system_", "nexo_", "mcp_", "ext_",
+  ];
+  ```
+
+  `ext_<self_id>_*` carves through the literal `ext_` rule
+  because that's the canonical plugin-namespaced tool shape;
+  every other `ext_*` is rejected (so a plugin can't forge
+  `ext_other_plugin_…` names).
+
+  Two enforcement modes selected via
+  `NEXO_PLUGIN_NAMESPACE_STRICT` env var:
+
+  - **`Warn` (default)** — records + logs + emits broker
+    event `plugin.lifecycle.<id>.namespace_violation` but
+    allows the registration to fall through (back-compat
+    for plugins not yet aware of the gate).
+  - **`Strict`** — `register*` returns `Err`; the init loop
+    converts accumulated violations into
+    `PluginInitError::ToolNamespace { count, sample, violations }`,
+    refusing to load the plugin.
+
+  Collisions always reject in both modes — silent overwrite
+  is a footgun regardless of policy.
+
+  New types in `nexo_core::agent`:
+
+  - `ScopedToolRegistry` (proxy)
+  - `NamespaceEnforcement` (`Warn` / `Strict`)
+  - `NamespaceViolation { plugin_id, attempted_name, reason }`
+  - `NamespaceViolationReason` (`ReservedPrefix(&'static str)`,
+    `OutOfNamespace`, `NotInExpose`, `Collision`)
+  - `RESERVED_PREFIXES` const
+
+  New `PluginInitError::ToolNamespace { plugin_id, count,
+  sample, violations }` additive variant.
+
+  Broker event payload:
+
+  ```json
+  {
+    "plugin_id": "slack",
+    "attempted_name": "agent_route",
+    "reason": "ReservedPrefix",
+    "reserved_prefix": "agent_",
+    "mode": "warn",
+    "rejected": true
+  }
+  ```
+
+  Implementation notes:
+
+  - `ctx_factory` closure signature changed from
+    `FnMut(&str)` to `FnMut(&PluginManifest)` so the
+    per-plugin `ScopedToolRegistry` can be built with the
+    manifest's `tools.expose` allowlist at call time.
+  - `init_loop::check_namespace_after_init` drains
+    violations after `NexoPlugin::init` returns and, in
+    Strict mode, escalates to `InitOutcome::Failed`.
+  - Helper `ToolRegistry::register_if_absent_arc` added
+    for the Arc-friendly internal wiring.
+  - `SubprocessCtxStubs::context_for` builds the scoped
+    registry inline using each manifest's expose list.
+
+  Tests: 11 new `scoped_tool_registry::tests` covering
+  canonical + bare prefix accept, reject paths
+  (unprefixed / reserved-agent / reserved-mcp / collision-
+  warn-mode / not-in-expose), Strict-vs-Warn semantics,
+  empty-expose edge, drain semantics, reserved-prefix
+  precedence over namespace check. Plus 1 in
+  `init_loop::tests::format_violation_sample_truncates_after_three`.
+
+  All 1262 `nexo-core` lib tests pass; 2/2 e2e tests pass;
+  workspace builds clean. Existing in-tree plugins
+  (browser / telegram / whatsapp / email) compile unchanged
+  — none call `ctx.tool_registry.register*` today.
+
+  Out of scope (deferred to follow-ups): per-plugin
+  manifest override for the mode (81.3.b), `nexo agent
+  doctor plugins --json` violation surface (81.3.c),
+  default mode flip from Warn → Strict after deprecation
+  window (81.3.d). The `NEXO_PLUGIN_NAMESPACE_STRICT` env
+  var is opt-in safety hardening, not a dangerous-behavior
+  toggle, so it does not need a `crates/setup/src/capabilities.rs`
+  inventory entry.
+
 - **Phase 31.9 — Author-side documentation closeout.** Four
   new/expanded mdbook pages plus a sync script that vendors
   the workspace-root plugin contract spec into the published
