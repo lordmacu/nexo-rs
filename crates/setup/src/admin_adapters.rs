@@ -225,6 +225,60 @@ impl LlmYamlPatcher for LlmYamlPatcherFs {
     }
 }
 
+/// Phase 82.10.u — production [`FactorySchemaLookup`] adapter
+/// backed by the same catalog snapshot the daemon serves over
+/// `nexo/admin/llm_providers/catalog`. Forwards
+/// `factory_id → credential_schema + supported_auth_modes` from
+/// that single source of truth so the schema the wizard rendered
+/// is the EXACT schema the upsert handler validates against — no
+/// chance of drift between SPA-side rendering and server-side
+/// gate.
+///
+/// Wired into the dispatcher via
+/// [`AdminRpcDispatcher::with_llm_factory_schema`].
+#[derive(Clone)]
+pub struct CatalogFactorySchema {
+    catalog: Arc<Vec<nexo_tool_meta::admin::llm_providers::LlmProviderCatalogEntry>>,
+}
+
+impl CatalogFactorySchema {
+    /// Wrap a catalog snapshot. Production passes the same `Vec`
+    /// the dispatcher's `with_llm_provider_catalog` consumes —
+    /// both share an `Arc` so the underlying memory is allocated
+    /// once.
+    pub fn new(
+        catalog: Arc<Vec<nexo_tool_meta::admin::llm_providers::LlmProviderCatalogEntry>>,
+    ) -> Arc<Self> {
+        Arc::new(Self { catalog })
+    }
+}
+
+impl nexo_core::agent::admin_rpc::domains::llm_providers::FactorySchemaLookup
+    for CatalogFactorySchema
+{
+    fn credential_schema(
+        &self,
+        factory_id: &str,
+    ) -> Option<
+        Vec<nexo_tool_meta::admin::llm_providers::CredentialFieldDescriptor>,
+    > {
+        self.catalog
+            .iter()
+            .find(|e| e.id == factory_id)
+            .map(|e| e.credential_schema.clone())
+    }
+
+    fn supported_auth_modes(
+        &self,
+        factory_id: &str,
+    ) -> Option<Vec<nexo_tool_meta::admin::llm_providers::AuthMode>> {
+        self.catalog
+            .iter()
+            .find(|e| e.id == factory_id)
+            .map(|e| e.supported_auth_modes.clone())
+    }
+}
+
 /// Filesystem-backed `CredentialStore` rooted at `secrets/`.
 /// Layout: `secrets/<channel>/[<instance>/]payload.json`. The
 /// `<instance>` segment is omitted for `instance = None`. Atomic

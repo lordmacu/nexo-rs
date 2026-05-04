@@ -559,6 +559,17 @@ impl AdminRpcBootstrap {
                 .with_llm_providers_domain(llm_yaml.clone())
                 .with_llm_provider_catalog(inputs.llm_provider_catalog.clone())
                 .with_channels_domain();
+            // Phase 82.10.u — schema-driven upsert lookup. Reuses
+            // the SAME catalog snapshot the SPA renders against,
+            // so the schema validated server-side is identical
+            // to the schema the wizard rendered. No drift
+            // possible.
+            if !inputs.llm_provider_catalog.is_empty() {
+                let catalog_arc = Arc::new(inputs.llm_provider_catalog.clone());
+                let lookup =
+                    crate::admin_adapters::CatalogFactorySchema::new(catalog_arc);
+                dispatcher = dispatcher.with_llm_factory_schema(lookup);
+            }
             if let Some(reader) = inputs.transcript_reader.clone() {
                 dispatcher = dispatcher.with_agent_events_domain(reader);
             }
