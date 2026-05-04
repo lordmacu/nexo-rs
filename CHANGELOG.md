@@ -38,6 +38,78 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 31.8 — `nexo plugin {list,upgrade,remove}` operator
+  UI.** New CLI surface for plugin lifecycle on top of the 31.1.c
+  install pipeline. Each subcommand:
+
+  ```bash
+  nexo plugin list [--include-orphan] [--json]
+  nexo plugin upgrade <id> [--target <triple>]
+                           [--require-signature|--skip-signature-verify] [--json]
+  nexo plugin remove <id> [--purge-cache] [--yes] [--json]
+  ```
+
+  - `list` walks `cfg.plugins.discovery.search_paths`, parses
+    every immediate child dir's `nexo-plugin.toml` + optional
+    `.nexo-install.json`, prints a tabular `ID VERSION TARGET
+    TAG INSTALLED_AT` (or JSON). Plugins without
+    `.nexo-install.json` (orphans — installed before 31.8 or
+    via `plugin run`) are hidden by default; `--include-orphan`
+    surfaces them with an `(orphan)` suffix.
+  - `upgrade` reads `.nexo-install.json`, rebuilds
+    `PluginCoords { owner, repo, tag }`, calls `resolve_release`
+    against the recorded (or `--target`-overridden) target.
+    Same-version → `was_no_op: true` reply (exit 0). Lower
+    version → `DowngradeRefused` error. Higher version →
+    delegates to `run_plugin_install` which downloads / verifies
+    sha256 + cosign / extracts / writes new metadata. Old
+    `<id>-<old>/` dir survives in case operator wants to
+    rollback by `cd`.
+  - `remove` requires `--yes` (interactive TTY prompt deferred
+    to 31.8.b — non-interactive use must opt in). Atomic via
+    rename-aside `<plugin_dir>.removing-<rand>` then
+    `remove_dir_all`. `--purge-cache` additionally walks
+    `nexo_state_dir/plugins/<id>` + `nexo_state_dir/plugins/cache/<id>`.
+    Best-effort `plugin.lifecycle.<id>.removed` broker emit.
+
+  New `<plugin_dir>/.nexo-install.json` schema (v1.0):
+
+  ```json
+  {
+    "schema_version": "1.0",
+    "id": "my_plugin",
+    "version": "0.2.0",
+    "owner": "alice",
+    "repo": "nexo-plugin-slack",
+    "tag": "v0.2.0",
+    "target": "x86_64-unknown-linux-gnu",
+    "sha256": "abc...",
+    "installed_at": "2026-05-04T18:00:00Z",
+    "source": "github-releases"
+  }
+  ```
+
+  Written by `plugin install` (and `plugin upgrade`) via
+  `write_install_metadata`'s atomic `<file>.tmp` + rename. Soft-
+  fails (stderr warn) on write error so the plugin still works
+  even if metadata write fails — operator just loses upgrade
+  tracking for that dir until reinstall.
+
+  `AdminError` enum: `PluginNotFound`, `NoInstallMetadata`,
+  `MetadataInvalid`, `ManifestRead`, `ConfigLoad`, `Io`,
+  `DowngradeRefused`, `NeedsYesConfirm`, `Resolve(InstallError)`.
+  JSON error reports use stable `kind` strings.
+
+  Tests: 11 unit tests in `plugin_admin::tests` cover metadata
+  round-trip, missing/invalid metadata, discovery walking,
+  orphan filtering on/off, error-kind exhaustive mapping,
+  aside-path uniqueness, list-entry metadata projection.
+  Workspace builds clean; full plugin suite 42/42.
+
+  Out of scope (deferred to follow-ups): interactive TTY
+  confirm prompt for `remove` (31.8.b), `--tag <pin>` for
+  upgrade to bump recorded tag (31.8.c).
+
 - **Phase 31.7 — `nexo plugin run <path>` local dev loop.**
   New CLI mode that boots the daemon with a local plugin
   directory injected as `cfg.plugins.discovery.search_paths[0]`,
