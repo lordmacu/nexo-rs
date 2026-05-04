@@ -159,6 +159,100 @@ pub fn status(store: &dyn PairingChallengeStore, params: Value) -> AdminRpcResul
     }
 }
 
+/// Phase 82.10.p — async wrapper that performs the trigger
+/// lookup + spawn AFTER the legacy `start` path created the
+/// challenge. Production dispatcher routes here. The stale
+/// `start` (above) is kept for unit tests that don't care
+/// about the trigger map.
+pub async fn start_with_trigger(
+    store: std::sync::Arc<dyn PairingChallengeStore>,
+    notifier: Option<std::sync::Arc<dyn PairingNotifier>>,
+    triggers: &super::super::pairing_trigger::PairingChannelTriggers,
+    handles: std::sync::Arc<dashmap::DashMap<Uuid, super::super::pairing_trigger::PairingHandle>>,
+    cancel_root: &tokio_util::sync::CancellationToken,
+    params: Value,
+) -> AdminRpcResult {
+    use super::super::pairing_trigger::{PairingContext, PairingTriggerError, PAIRING_DEFAULT_TIMEOUT};
+
+    let input: PairingStartInput = match serde_json::from_value(params) {
+        Ok(i) => i,
+        Err(e) => return AdminRpcResult::err(AdminRpcError::InvalidParams(e.to_string())),
+    };
+    if input.agent_id.is_empty() {
+        return AdminRpcResult::err(AdminRpcError::InvalidParams("agent_id is empty".into()));
+    }
+    if input.channel.is_empty() {
+        return AdminRpcResult::err(AdminRpcError::InvalidParams("channel is empty".into()));
+    }
+
+    // Phase 82.10.p — fail-fast if no trigger registered. No
+    // garbage row in store; operator gets a clean error.
+    let Some(trigger) = triggers.get(&input.channel) else {
+        return AdminRpcResult::err(AdminRpcError::InvalidParams(format!(
+            "channel `{}` not supported", input.channel
+        )));
+    };
+
+    let (challenge_id, expires_at_ms) = match store.create_challenge(
+        &input.agent_id,
+        &input.channel,
+        input.instance.as_deref(),
+        DEFAULT_CHALLENGE_TTL_SECS,
+    ) {
+        Ok(v) => v,
+        Err(e) => {
+            return AdminRpcResult::err(AdminRpcError::Internal(format!(
+                "create_challenge: {e}"
+            )));
+        }
+    };
+
+    let cancel = cancel_root.child_token();
+    let ctx = PairingContext {
+        challenge_id,
+        agent_id: input.agent_id.clone(),
+        instance: input.instance.clone(),
+        store: store.clone(),
+        notifier: notifier.clone(),
+        timeout: PAIRING_DEFAULT_TIMEOUT,
+        cancel: cancel.clone(),
+    };
+
+    match trigger.start(ctx).await {
+        Ok(handle) => {
+            handles.insert(challenge_id, handle);
+            let response = PairingStartResponse {
+                challenge_id,
+                expires_at_ms,
+                instructions: pairing_instructions_for(&input.channel),
+            };
+            AdminRpcResult::ok(serde_json::to_value(response).unwrap_or(Value::Null))
+        }
+        Err(e) => {
+            // Roll back the row — trigger refused before spawn.
+            let _ = store.cancel_challenge(challenge_id);
+            let admin_err = match e {
+                PairingTriggerError::ChannelNotSupported(c) => {
+                    AdminRpcError::InvalidParams(format!("channel `{c}` not supported"))
+                }
+                PairingTriggerError::AlreadyPaired(i) => {
+                    AdminRpcError::InvalidParams(format!("instance `{i}` already paired"))
+                }
+                PairingTriggerError::InstanceNotConfigured(i) => {
+                    AdminRpcError::InvalidParams(format!("instance `{i}` not configured"))
+                }
+                PairingTriggerError::Transport(m) => {
+                    AdminRpcError::Internal(format!("transport: {m}"))
+                }
+                PairingTriggerError::Internal(err) => {
+                    AdminRpcError::Internal(err.to_string())
+                }
+            };
+            AdminRpcResult::err(admin_err)
+        }
+    }
+}
+
 /// `nexo/admin/pairing/cancel` — abort a pending challenge.
 pub fn cancel(
     store: &dyn PairingChallengeStore,
@@ -195,6 +289,28 @@ pub fn cancel(
         serde_json::to_value(PairingCancelResponse { cancelled })
             .unwrap_or(Value::Null),
     )
+}
+
+/// Phase 82.10.p — wrapper that aborts the spawned trigger
+/// task BEFORE flipping the store entry. Production dispatcher
+/// routes here. Same semantics as `cancel` for callers that
+/// have no trigger handles to abort.
+pub fn cancel_with_handles(
+    store: &dyn PairingChallengeStore,
+    notifier: Option<&dyn PairingNotifier>,
+    handles: &dashmap::DashMap<Uuid, super::super::pairing_trigger::PairingHandle>,
+    params: Value,
+) -> AdminRpcResult {
+    let p: PairingCancelParams = match serde_json::from_value(params.clone()) {
+        Ok(p) => p,
+        Err(e) => return AdminRpcResult::err(AdminRpcError::InvalidParams(e.to_string())),
+    };
+    // Abort the in-flight task first so the trigger stops
+    // pushing updates while we mutate the store.
+    if let Some((_, handle)) = handles.remove(&p.challenge_id) {
+        handle.abort();
+    }
+    cancel(store, notifier, params)
 }
 
 /// Instruction copy per channel. Operator UIs render verbatim.
@@ -506,4 +622,233 @@ mod tests {
             "nexo/notify/pairing_status_changed"
         );
     }
+
+    // ── Phase 82.10.p — start_with_trigger / cancel_with_handles ──
+
+    use crate::agent::admin_rpc::pairing_trigger::{
+        PairingChannelTrigger, PairingChannelTriggers, PairingContext, PairingHandle,
+        PairingTriggerError,
+    };
+    use async_trait::async_trait;
+    use dashmap::DashMap;
+    use std::collections::HashMap;
+    use std::sync::atomic::AtomicBool;
+    use tokio_util::sync::CancellationToken;
+
+    /// Test trigger that records every `start` invocation and
+    /// returns either a happy handle or an error per fixture.
+    #[derive(Debug)]
+    struct MockTrigger {
+        channel: String,
+        called: AtomicUsize,
+        error: Option<PairingTriggerError>,
+        last_cancel: Mutex<Option<CancellationToken>>,
+    }
+
+    impl MockTrigger {
+        fn happy(channel: &str) -> Arc<Self> {
+            Arc::new(Self {
+                channel: channel.into(),
+                called: AtomicUsize::new(0),
+                error: None,
+                last_cancel: Mutex::new(None),
+            })
+        }
+        fn rejects(channel: &str, err: PairingTriggerError) -> Arc<Self> {
+            Arc::new(Self {
+                channel: channel.into(),
+                called: AtomicUsize::new(0),
+                error: Some(err),
+                last_cancel: Mutex::new(None),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl PairingChannelTrigger for MockTrigger {
+        fn channel_id(&self) -> &str {
+            &self.channel
+        }
+        async fn start(
+            &self,
+            ctx: PairingContext,
+        ) -> Result<PairingHandle, PairingTriggerError> {
+            self.called.fetch_add(1, Ordering::Relaxed);
+            if let Some(ref e) = self.error {
+                return Err(match e {
+                    PairingTriggerError::ChannelNotSupported(s) => {
+                        PairingTriggerError::ChannelNotSupported(s.clone())
+                    }
+                    PairingTriggerError::AlreadyPaired(s) => {
+                        PairingTriggerError::AlreadyPaired(s.clone())
+                    }
+                    PairingTriggerError::InstanceNotConfigured(s) => {
+                        PairingTriggerError::InstanceNotConfigured(s.clone())
+                    }
+                    PairingTriggerError::Transport(s) => {
+                        PairingTriggerError::Transport(s.clone())
+                    }
+                    PairingTriggerError::Internal(_) => {
+                        PairingTriggerError::Transport("test internal".into())
+                    }
+                });
+            }
+            *self.last_cancel.lock().unwrap() = Some(ctx.cancel.clone());
+            Ok(PairingHandle {
+                challenge_id: ctx.challenge_id,
+                channel: self.channel.clone(),
+                cancel: ctx.cancel,
+            })
+        }
+    }
+
+    fn empty_handles() -> Arc<DashMap<Uuid, PairingHandle>> {
+        Arc::new(DashMap::new())
+    }
+
+    #[tokio::test]
+    async fn start_with_trigger_inserts_handle_on_happy_path() {
+        let store: Arc<dyn PairingChallengeStore> = MockStore::new();
+        let mut triggers: PairingChannelTriggers = HashMap::new();
+        let trigger = MockTrigger::happy("whatsapp");
+        triggers.insert("whatsapp".into(), trigger.clone());
+        let handles = empty_handles();
+        let root = CancellationToken::new();
+        let result = start_with_trigger(
+            store.clone(),
+            None,
+            &triggers,
+            handles.clone(),
+            &root,
+            whatsapp_start_params("ana"),
+        )
+        .await;
+        assert!(result.error.is_none(), "expected ok, got {:?}", result.error);
+        assert_eq!(trigger.called.load(Ordering::Relaxed), 1);
+        assert_eq!(handles.len(), 1, "handle must be registered");
+    }
+
+    #[tokio::test]
+    async fn start_with_trigger_unknown_channel_returns_invalid_params_no_row() {
+        let store = MockStore::new();
+        let store_dyn: Arc<dyn PairingChallengeStore> = store.clone();
+        let triggers: PairingChannelTriggers = HashMap::new();
+        let handles = empty_handles();
+        let root = CancellationToken::new();
+        let result = start_with_trigger(
+            store_dyn,
+            None,
+            &triggers,
+            handles.clone(),
+            &root,
+            whatsapp_start_params("ana"),
+        )
+        .await;
+        assert!(matches!(result.error, Some(AdminRpcError::InvalidParams(_))));
+        assert_eq!(
+            store.challenges.lock().unwrap().len(),
+            0,
+            "no row must be created when channel unsupported"
+        );
+        assert_eq!(handles.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn start_with_trigger_rolls_back_row_when_trigger_rejects() {
+        let store = MockStore::new();
+        let store_dyn: Arc<dyn PairingChallengeStore> = store.clone();
+        let mut triggers: PairingChannelTriggers = HashMap::new();
+        let trigger = MockTrigger::rejects(
+            "whatsapp",
+            PairingTriggerError::AlreadyPaired("ana".into()),
+        );
+        triggers.insert("whatsapp".into(), trigger.clone());
+        let handles = empty_handles();
+        let root = CancellationToken::new();
+        let result = start_with_trigger(
+            store_dyn,
+            None,
+            &triggers,
+            handles.clone(),
+            &root,
+            whatsapp_start_params("ana"),
+        )
+        .await;
+        assert!(matches!(result.error, Some(AdminRpcError::InvalidParams(_))));
+        assert_eq!(trigger.called.load(Ordering::Relaxed), 1);
+        assert_eq!(handles.len(), 0, "handle must NOT be registered on reject");
+        // Row was created but rolled back to Cancelled.
+        let row = store
+            .challenges
+            .lock()
+            .unwrap()
+            .values()
+            .next()
+            .cloned();
+        assert!(
+            matches!(row.map(|r| r.state), Some(PairingState::Cancelled)),
+            "store row must be cancelled after rollback",
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_with_handles_aborts_trigger_then_cancels_store() {
+        let store: Arc<dyn PairingChallengeStore> = MockStore::new();
+        let mut triggers: PairingChannelTriggers = HashMap::new();
+        let trigger = MockTrigger::happy("whatsapp");
+        triggers.insert("whatsapp".into(), trigger.clone());
+        let handles = empty_handles();
+        let root = CancellationToken::new();
+        // Start a pairing so a handle exists.
+        let _ = start_with_trigger(
+            store.clone(),
+            None,
+            &triggers,
+            handles.clone(),
+            &root,
+            whatsapp_start_params("ana"),
+        )
+        .await;
+        let challenge_id = *handles.iter().next().unwrap().key();
+        // Pull the trigger's stored token so we can verify it
+        // gets cancelled by cancel_with_handles.
+        let observed_cancel = trigger.last_cancel.lock().unwrap().clone().unwrap();
+        assert!(!observed_cancel.is_cancelled());
+
+        let cancel_params = serde_json::to_value(PairingCancelParams { challenge_id }).unwrap();
+        let result = cancel_with_handles(
+            store.as_ref(),
+            None,
+            handles.as_ref(),
+            cancel_params,
+        );
+        assert!(result.error.is_none());
+        assert!(observed_cancel.is_cancelled(), "trigger token must be cancelled");
+        assert_eq!(handles.len(), 0, "handle entry must be removed");
+    }
+
+    /// Defensive: `cancel_with_handles` MUST still flip the
+    /// store entry to Cancelled even when no handle was
+    /// registered (e.g. challenge id unknown to the trigger
+    /// registry — operator cancels something that was never
+    /// paired through the trigger path).
+    #[tokio::test]
+    async fn cancel_with_handles_handles_missing_handle_gracefully() {
+        let store: Arc<dyn PairingChallengeStore> = MockStore::new();
+        let (id, _) = store
+            .create_challenge("ana", "whatsapp", None, 60)
+            .unwrap();
+        let handles = empty_handles();
+        let cancel_params = serde_json::to_value(PairingCancelParams { challenge_id: id }).unwrap();
+        let result = cancel_with_handles(store.as_ref(), None, handles.as_ref(), cancel_params);
+        assert!(result.error.is_none());
+        let status = store.read_challenge(id).unwrap().unwrap();
+        assert_eq!(status.state, PairingState::Cancelled);
+    }
+
+    // Silence unused-warning when the module hits an
+    // intermediate state where an `AtomicBool` import isn't
+    // referenced by an active test.
+    #[allow(dead_code)]
+    fn _touch_atomic_bool(_: AtomicBool) {}
 }

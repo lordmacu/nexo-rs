@@ -33,6 +33,10 @@ use super::domains::credentials::{ChannelCredentialPersister, CredentialStore, P
 use super::domains::escalations::EscalationStore;
 use super::domains::llm_providers::LlmYamlPatcher;
 use super::domains::pairing::{PairingChallengeStore, PairingNotifier};
+use super::pairing_trigger::{PairingChannelTriggers, PairingHandle};
+use dashmap::DashMap;
+use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 use super::domains::processing::ProcessingControlStore;
 use super::channel_outbound::ChannelOutboundDispatcher;
 use super::transcript_appender::TranscriptAppender;
@@ -163,6 +167,21 @@ pub struct AdminRpcDispatcher {
     /// `nexo/notify/pairing_status_changed`. `None` = best-effort
     /// (poll only, notifications dropped).
     pairing_notifier: Option<Arc<dyn PairingNotifier>>,
+    /// Phase 82.10.p — per-channel pairing trigger registry. Empty
+    /// map = `pairing/start` returns `channel not supported` for
+    /// any channel (no garbage Pending row). Production wires
+    /// `WhatsappPairingTrigger` (and future telegram-link, etc).
+    pairing_triggers: PairingChannelTriggers,
+    /// Phase 82.10.p — registry of in-flight pairing tasks
+    /// keyed by `challenge_id`. `pairing/cancel` (and TTL
+    /// eviction) call `handle.abort()` to stop the underlying
+    /// trigger task cleanly.
+    pairing_handles: Arc<DashMap<Uuid, PairingHandle>>,
+    /// Phase 82.10.p — root cancel token. Per-trigger handles
+    /// derive their own children via `child_token`. Aborting
+    /// the root cancels every in-flight pairing (used at
+    /// shutdown).
+    pairing_cancel_root: CancellationToken,
     /// Phase 82.10.f — `llm.yaml` mutator. `None` disables
     /// `nexo/admin/llm_providers/*`.
     llm_yaml: Option<Arc<dyn LlmYamlPatcher>>,
@@ -273,6 +292,9 @@ impl AdminRpcDispatcher {
             persisters: PersisterRegistry::new(),
             pairing_store: None,
             pairing_notifier: None,
+            pairing_triggers: PairingChannelTriggers::new(),
+            pairing_handles: Arc::new(DashMap::new()),
+            pairing_cancel_root: CancellationToken::new(),
             llm_yaml: None,
             transcript_reader: None,
             processing_store: None,
@@ -423,6 +445,22 @@ impl AdminRpcDispatcher {
         self.pairing_store = Some(store);
         self.pairing_notifier = notifier;
         self
+    }
+
+    /// Phase 82.10.p — install per-channel pairing triggers.
+    /// Empty map (default) = `pairing/start` rejects every
+    /// `channel` with `channel not supported` (no garbage row).
+    /// Production passes one entry per channel that has a
+    /// configured plugin (WhatsApp + future telegram-link / etc).
+    pub fn with_pairing_triggers(mut self, triggers: PairingChannelTriggers) -> Self {
+        self.pairing_triggers = triggers;
+        self
+    }
+
+    /// Phase 82.10.p — observability hook: count of in-flight
+    /// pairing handles. Used by health probes / TTL sweep.
+    pub fn pairing_handles_len(&self) -> usize {
+        self.pairing_handles.len()
     }
 
     /// Phase 82.10.f — install the llm_providers domain.
@@ -791,7 +829,17 @@ impl AdminRpcDispatcher {
                 }
             }
             "nexo/admin/pairing/start" => match &self.pairing_store {
-                Some(store) => super::domains::pairing::start(store.as_ref(), params),
+                Some(store) => {
+                    super::domains::pairing::start_with_trigger(
+                        store.clone(),
+                        self.pairing_notifier.clone(),
+                        &self.pairing_triggers,
+                        self.pairing_handles.clone(),
+                        &self.pairing_cancel_root,
+                        params,
+                    )
+                    .await
+                }
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "pairing domain not configured".into(),
                 )),
@@ -803,9 +851,10 @@ impl AdminRpcDispatcher {
                 )),
             },
             "nexo/admin/pairing/cancel" => match &self.pairing_store {
-                Some(store) => super::domains::pairing::cancel(
+                Some(store) => super::domains::pairing::cancel_with_handles(
                     store.as_ref(),
                     self.pairing_notifier.as_deref(),
+                    &self.pairing_handles,
                     params,
                 ),
                 None => AdminRpcResult::err(AdminRpcError::Internal(
