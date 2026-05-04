@@ -178,6 +178,23 @@ pub fn redact_for_audit(method: &str, params: &Value) -> Value {
             return Value::Object(redacted);
         }
     }
+    // Phase 82.10.s.4 — `llm_providers/upsert` carries
+    // `api_key_secret_value` (write-through API key plaintext)
+    // when the operator rotates a key from the SPA. Redact it
+    // before audit so the cleartext never lands on disk; the
+    // SecretsStore is the only place it persists.
+    if method == "nexo/admin/llm_providers/upsert" {
+        if let Some(obj) = params.as_object() {
+            let mut redacted = obj.clone();
+            if redacted.contains_key("api_key_secret_value") {
+                redacted.insert(
+                    "api_key_secret_value".into(),
+                    Value::String("<redacted>".into()),
+                );
+            }
+            return Value::Object(redacted);
+        }
+    }
     params.clone()
 }
 
@@ -340,6 +357,38 @@ mod tests {
         // Hashes diverge — proves the redaction takes effect
         // before hashing in the dispatcher.
         assert_ne!(hash_params(&original), hash_params(&redacted));
+    }
+
+    /// Phase 82.10.s.4 — `llm_providers/upsert` redacts the
+    /// write-through `api_key_secret_value` field so the cleartext
+    /// only persists in the SecretsStore, never on the audit log.
+    #[test]
+    fn redact_for_audit_redacts_llm_upsert_secret_value() {
+        let original = serde_json::json!({
+            "id": "minimax-cliente-a",
+            "base_url": "https://api.minimax.chat/v1",
+            "factory_type": "minimax",
+            "api_key_secret_value": "sk-leak-this-not"
+        });
+        let redacted = redact_for_audit("nexo/admin/llm_providers/upsert", &original);
+        assert_eq!(redacted["id"], "minimax-cliente-a");
+        assert_eq!(redacted["factory_type"], "minimax");
+        assert_eq!(redacted["api_key_secret_value"], "<redacted>");
+        assert_ne!(hash_params(&original), hash_params(&redacted));
+    }
+
+    /// Confirm that the redactor leaves `api_key_secret_id` intact
+    /// — that field references a secret BY NAME, not value, so
+    /// it's safe to surface for diagnostics.
+    #[test]
+    fn redact_for_audit_keeps_llm_upsert_secret_id_visible() {
+        let original = serde_json::json!({
+            "id": "minimax-cliente-a",
+            "base_url": "https://api.minimax.chat/v1",
+            "api_key_secret_id": "LLM_MINIMAX_CLIENTE_A"
+        });
+        let redacted = redact_for_audit("nexo/admin/llm_providers/upsert", &original);
+        assert_eq!(redacted["api_key_secret_id"], "LLM_MINIMAX_CLIENTE_A");
     }
 
     #[test]

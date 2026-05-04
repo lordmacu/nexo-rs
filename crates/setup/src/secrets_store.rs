@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use nexo_config::secrets_source::SecretsSource;
 use nexo_core::agent::admin_rpc::dispatcher::AdminRpcError;
 use nexo_core::agent::admin_rpc::domains::secrets::SecretsStore;
 use nexo_tool_meta::admin::secrets::SecretsWriteResponse;
@@ -103,6 +104,31 @@ impl SecretsStore for FsSecretsStore {
             path,
             overwrote_env,
         })
+    }
+}
+
+/// Phase 82.10.s.4 — sync read path used at config-load by
+/// `LlmConfig::resolve_all_keys` to populate `api_key` from the
+/// `api_key_secret_id` reference. Reads `<secrets_dir>/<id>.txt`,
+/// trims trailing whitespace (matching the write side's behaviour
+/// when the operator stores a value with a trailing newline).
+impl SecretsSource for FsSecretsStore {
+    fn read(&self, id: &str) -> std::io::Result<String> {
+        let path = self.secrets_dir.join(format!("{id}.txt"));
+        let raw = std::fs::read_to_string(&path)?;
+        // The store's write side persists exactly the bytes the
+        // operator supplied; we trim whitespace on read so a stray
+        // newline (`echo "$KEY" > file`) doesn't break the bearer
+        // header. Empty after trim ⇒ NotFound (semantically: the
+        // operator hasn't written a usable secret yet).
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("secret '{id}' is empty in {}", path.display()),
+            ));
+        }
+        Ok(trimmed.to_string())
     }
 }
 
