@@ -24,6 +24,7 @@
 # Plugin SDKs
 
 - [Plugin contract](./plugins/contract.md)
+- [Patterns (8 common shapes)](./plugins/patterns.md)
 - [Python SDK](./plugins/python-sdk.md)
 - [TypeScript SDK](./plugins/typescript-sdk.md)
 - [PHP SDK](./plugins/php-sdk.md)
@@ -32,6 +33,7 @@
 # Extensions
 
 - [Manifest reference](./extensions/manifest.md)
+- [Patterns (8 common shapes)](./extensions/patterns.md)
 - [Templates](./extensions/templates.md)
 - [CLI](./extensions/cli.md)
 - [Multi-tenant SaaS](./extensions/multi-tenant-saas.md)
@@ -40,6 +42,7 @@
 # Microapps
 
 - [Getting started (1-hour walkthrough)](./microapps/getting-started.md)
+- [Patterns (8 common shapes)](./microapps/patterns.md)
 - [Admin RPC](./microapps/admin-rpc.md)
 - [Contract](./microapps/contract.md)
 - [`agent-creator` reference microapp](./microapps/agent-creator.md)
