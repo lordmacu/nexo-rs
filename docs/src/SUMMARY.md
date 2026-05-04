@@ -2,6 +2,7 @@
 
 [Introduction](./introduction.md)
 [Why nexo-rs](./why.md)
+[What you can build](./what-you-can-build.md)
 [Install for AI assistants](./install-for-ai.md)
 
 # Getting started
