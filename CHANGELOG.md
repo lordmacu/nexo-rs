@@ -38,6 +38,109 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.22 — Plugin sandbox v1 (bubblewrap-based, fs +
+  network allowlist on Linux).** New `[plugin.sandbox]` manifest
+  section enables defense-in-depth isolation for subprocess
+  plugins:
+
+  ```toml
+  [plugin.sandbox]
+  enabled = true
+  network = "deny"                       # "deny" | "host"
+  fs_read_paths = ["/etc/ssl/certs"]
+  fs_write_paths = ["${state_dir}"]
+  drop_user = true                       # bwrap maps to nobody:nogroup
+  ```
+
+  When enabled, the daemon wraps the subprocess `Command` with
+  `bwrap` flags before spawn — process namespaces (`--unshare-pid/uts/ipc`),
+  read-only system dirs (`/usr/bin/sbin/lib/lib64/etc/ssl`), fresh
+  `/proc + /tmp`, optional `--unshare-net` (deny mode),
+  `--unshare-user --uid/gid 65534` (drop_user), per-allowlist
+  `--ro-bind` / `--bind`. The plugin command's parent dir is
+  auto-bound read-only so the binary is reachable inside the
+  sandbox.
+
+  Hard denylist (compile-time const) — operator-supplied
+  allowlists that equal or include any of these paths are
+  rejected at validation time:
+
+  - `/etc/shadow`, `/etc/sudoers`, `/etc/sudoers.d`
+  - `/proc/sys`, `/proc/kcore`, `/proc/kallsyms`
+  - `/sys/firmware`, `/sys/kernel`
+  - `/dev/mem`, `/dev/kmem`, `/dev/port`
+  - `/var/run/docker.sock` + variants
+  - `/root`, `/boot`
+
+  Plus a separate home-subpath denylist (`.aws`, `.ssh`,
+  `.gnupg`, `.netrc`, `.cargo/credentials*`, `.docker`, `.kube`,
+  `.npmrc`, `.config/{gh,git}`).
+
+  Two operator capability env knobs:
+
+  | Env | Purpose |
+  |-----|---------|
+  | `NEXO_PLUGIN_SANDBOX_REQUIRE=1` | Strict mode: refuse to spawn any plugin without `sandbox.enabled = true` |
+  | `NEXO_PLUGIN_SANDBOX_HOST_NET_ALLOW=1` | Permit `network = "host"` manifests (default off) |
+
+  New host-side types in `nexo-plugin-manifest`:
+  - `SandboxSection` (5 fields) + `SandboxNetwork` enum
+    (`Deny | Host`) + `SandboxPathKind` (`Read | Write`).
+  - 4 new `ManifestError` variants:
+    `SandboxAllowlistTouchesDenylist`, `SandboxRelativePath`,
+    `SandboxInvalidStateDirInterpolation`,
+    `SandboxHostNetworkWithoutCapability`.
+  - `validate_sandbox(...)` validator + new
+    `run_all_with_sandbox_env(...)` env-aware variant
+    (existing `run_all` keeps strict default for tests/CLI).
+
+  New host-side types in `nexo-core::agent`:
+  - `SandboxRunner` — `discover()` caches `bwrap` PATH lookup +
+    env-driven capability flags. `wrap_command(manifest,
+    state_dir, cmd, args)` builds the bwrap argv or
+    passes the raw command through (sandbox disabled / macOS /
+    bwrap missing branches with diagnostic logs).
+  - `WrappedCommand { program, args, diagnostic }` — consumed
+    at spawn time.
+  - `SandboxError` 5+1 variants for typed failures.
+
+  Integration: `PluginInitContext.sandbox: Arc<SandboxRunner>`
+  threaded from `SubprocessRuntime.sandbox`;
+  `SubprocessNexoPlugin::init` stashes the runner + state_dir;
+  `spawn_and_handshake` calls `runner.wrap_command(...)` before
+  `Command::new(...)`. Diagnostic surfaces via `tracing::warn!`
+  with `target = "plugin.sandbox"`.
+
+  **Platform support**:
+  - **Linux** = primary path. Requires `bubblewrap` in PATH
+    (`apt install bubblewrap`).
+  - **macOS** = no-op + `tracing::warn!` per spawn. Native
+    sandbox-exec integration deferred to follow-up
+    81.22.macos. With `NEXO_PLUGIN_SANDBOX_REQUIRE=1` on macOS,
+    the daemon refuses to spawn (treats macOS as unsupported).
+
+  Capability inventory: 2 new entries
+  (`NEXO_PLUGIN_SANDBOX_REQUIRE`,
+  `NEXO_PLUGIN_SANDBOX_HOST_NET_ALLOW`) + 7 pre-existing
+  NEXO_* envs added to `NON_DANGEROUS_ENV_ALLOWLIST` (timeouts
+  + namespace-strict + install-target) so the
+  `inventory_covers_known_dangerous_envs` drift test passes
+  cleanly.
+
+  Contract spec advances to v1.9.0 with new §2.2 "Sandbox
+  section" + Changelog row. Authoring docs gain "Sandboxing
+  your plugin" section.
+
+  Default = OFF — every existing manifest parses and runs
+  unchanged. In-tree plugins (browser/telegram/whatsapp/email)
+  keep `enabled = false`; per-plugin migration deferred.
+
+  Follow-ups: 81.22.b granular network egress allowlist
+  (slirp4netns + nftables), 81.22.c per-syscall seccomp filters
+  (`seccompiler`), 81.22.d doctor CLI sandbox surface,
+  81.22.macos native sandbox-exec, 81.22.e symlink
+  canonicalization. See FOLLOWUPS.md.
+
 - **Phase 81.26 — Remote memory backend wrapper (subprocess-
   backed, vector-only).** New `RemoteVectorBackend` implements
   the `VectorBackend` trait by translating each upsert/search/

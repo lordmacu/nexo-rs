@@ -151,6 +151,16 @@ pub struct PluginSection {
     /// today's behavior (no respawn, 32-line stderr tail).
     #[serde(default)]
     pub supervisor: SupervisorSection,
+
+    /// Phase 81.22 — bubblewrap-based sandbox manifest section.
+    /// Default = disabled, so every existing manifest parses
+    /// unchanged. Subprocess plugins opt in via
+    /// `[plugin.sandbox] enabled = true` to get fs/network
+    /// allowlist enforcement at spawn time on Linux. macOS
+    /// is currently a no-op + warn (native sandbox-exec
+    /// integration deferred to 81.22.macos).
+    #[serde(default)]
+    pub sandbox: crate::sandbox::SandboxSection,
 }
 
 // ── Subprocess entrypoint (Phase 81.14) ─────────────────────────

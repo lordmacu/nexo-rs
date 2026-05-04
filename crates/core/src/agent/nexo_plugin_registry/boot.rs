@@ -64,6 +64,12 @@ pub struct SubprocessRuntime {
     /// `build()` time. Subprocess plugins issuing `llm.complete`
     /// requests get clients constructed from this config.
     pub llm_config: Arc<nexo_config::LlmConfig>,
+    /// Phase 81.22 — sandbox runner shared across subprocess
+    /// plugin spawns. Discovers `bwrap` once + caches env-driven
+    /// capability flags. Used by `SubprocessNexoPlugin::spawn_and_handshake`
+    /// to wrap each plugin's command with bwrap argv when the
+    /// plugin's manifest declares `[plugin.sandbox] enabled = true`.
+    pub sandbox: Arc<crate::agent::plugin_sandbox::SandboxRunner>,
 }
 
 /// Phase 81.9 — bundle of registry handles produced by
@@ -507,6 +513,7 @@ impl SubprocessCtxStubs {
             shutdown: rt.shutdown.clone(),
             channel_adapter_registry: self.channel_adapter_registry.clone(),
             plugin_config: plugin_config.clone(),
+            sandbox: rt.sandbox.clone(),
         }
     }
 }

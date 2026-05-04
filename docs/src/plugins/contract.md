@@ -5,7 +5,7 @@
 
 | Field | Value |
 |-------|-------|
-| `contract_version` | `1.8.0` |
+| `contract_version` | `1.9.0` |
 | Status | Stable |
 | Authoritative reference | This document |
 | Reference implementations | Host: `crates/core/src/agent/nexo_plugin_registry/subprocess.rs`. Rust child: `crates/microapp-sdk/src/plugin.rs` (feature `plugin`). |
@@ -111,6 +111,83 @@ follow-up (81.28.b).
 remote `ChannelAdapter` wrapper; use `register` for **in-tree**
 adapters that link directly into the daemon binary. Both
 surfaces stay independent.
+
+### 2.2 Sandbox section (Phase 81.22)
+
+Subprocess plugins on Linux can opt into bubblewrap-based
+isolation via an additive `[plugin.sandbox]` section. Default =
+disabled — every existing manifest parses unchanged; the daemon
+spawns the plugin as a normal child process.
+
+```toml
+[plugin.sandbox]
+enabled = true                        # default false (opt-in)
+network = "deny"                       # "deny" | "host"
+fs_read_paths = ["/etc/ssl/certs"]    # absolute, ro-bind into sandbox
+fs_write_paths = ["${state_dir}"]     # absolute, rw-bind. ${state_dir}
+                                       # token expands to the plugin's
+                                       # per-instance state root.
+drop_user = true                       # default true; bwrap maps the
+                                       # child to nobody:nogroup (uid
+                                       # 65534) via --unshare-user.
+```
+
+When enabled, the daemon wraps the spawn `Command` with `bwrap`
+flags:
+
+- Process hardening: `--die-with-parent --unshare-pid --unshare-uts
+  --unshare-ipc --new-session`.
+- Filesystem skeleton: `--proc /proc --dev /dev --tmpfs /tmp` plus
+  read-only binds for `/usr /bin /sbin /lib /lib64 /etc/ssl`. The
+  plugin command's parent dir is also auto-bound read-only so the
+  binary is reachable inside the sandbox.
+- Network: `--unshare-net` for `network = "deny"`. For
+  `network = "host"` the operator must set the
+  `NEXO_PLUGIN_SANDBOX_HOST_NET_ALLOW=1` capability env var; the
+  manifest validator otherwise rejects the field.
+- User: `--unshare-user --uid 65534 --gid 65534` when
+  `drop_user = true`.
+- Allowlist: each `fs_read_paths` entry becomes
+  `--ro-bind <path> <path>`; each `fs_write_paths` entry becomes
+  `--bind <path> <path>` after `${state_dir}` expansion.
+
+Operators control sandbox enforcement via two env knobs:
+
+| Env var | Purpose |
+|---------|---------|
+| `NEXO_PLUGIN_SANDBOX_REQUIRE` | When `1`, the daemon refuses to spawn any plugin without `sandbox.enabled = true`. Strict-mode operator gate. |
+| `NEXO_PLUGIN_SANDBOX_HOST_NET_ALLOW` | When `1`, manifests declaring `network = "host"` validate. Default off. |
+
+Hard denylist (compile-time const) — operator-supplied allowlists
+that equal or include any of these paths are rejected at
+manifest load:
+
+- `/etc/shadow`, `/etc/sudoers`, `/etc/sudoers.d`
+- `/proc/sys`, `/proc/kcore`, `/proc/kallsyms`
+- `/sys/firmware`, `/sys/kernel`
+- `/dev/mem`, `/dev/kmem`, `/dev/port`
+- `/var/run/docker.sock`, `/run/docker.sock`,
+  `/private/var/run/docker.sock`
+- `/root`, `/boot`
+
+Validation errors surface as `ManifestError::Sandbox*` variants
+(`SandboxAllowlistTouchesDenylist`, `SandboxRelativePath`,
+`SandboxInvalidStateDirInterpolation`,
+`SandboxHostNetworkWithoutCapability`).
+
+**Platform support**: Linux requires `bubblewrap` in PATH
+(`apt install bubblewrap`). macOS is currently a no-op + `tracing::warn!`
+log per spawn — native sandbox-exec integration is deferred to
+follow-up 81.22.macos. With `NEXO_PLUGIN_SANDBOX_REQUIRE=1` on
+macOS, the daemon refuses to spawn (treats macOS as unsupported).
+
+**Out of scope for v1**:
+- Granular network egress allowlist (`network = "allowlist"`,
+  `network_allowlist = ["host:port"]`) — defers to 81.22.b
+  (slirp4netns + nftables).
+- Per-syscall seccomp filters — defers to 81.22.c.
+- Cgroup / rlimit resource caps — Phase 81.21.c.
+- Doctor CLI surface — defers to 81.22.d.
 
 ## 3. JSON-RPC envelope
 
@@ -1228,6 +1305,7 @@ contract document.
 | `1.6.0` | 2026-05-04 | Phase 81.25 — `llm.chat` host-initiated request method (sync + streaming via `params.stream` flag) + `llm.chat.delta` streaming notifications added (§5.y). Subprocess plugins declaring `[plugin.extends].llm_providers = [...]` get one `RemoteLlmFactory` per provider name registered into the daemon's `LlmRegistry`. LLM-specific error codes `-33101` through `-33105`. Default timeouts: 60 s sync chat, 300 s streaming; `NEXO_PLUGIN_LLM_TIMEOUT_MS` overrides both. Additive — plugins not declaring llm_providers are unaffected. |
 | `1.7.0` | 2026-05-04 | Phase 81.27 — `hook.on_hook` host-initiated request method added (§5.z). Subprocess plugins declaring `[plugin.extends].hooks = [...]` get one `RemoteHookHandler` per hook name registered into the daemon's `HookRegistry`. Reply shape is the existing `HookResponse` (already serde-derived); reused directly as wire type. Continue-on-error semantic: every dispatch failure (transport, timeout, JSON-RPC err, decode) returns `HookResponse::default()` so `HookRegistry::fire` keeps iterating + agent flow doesn't break. Default 5s timeout (lower than channels/LLM); `NEXO_PLUGIN_HOOK_TIMEOUT_MS` env override. Additive — plugins not declaring hooks are unaffected. |
 | `1.8.0` | 2026-05-04 | Phase 81.26 — `memory.vector_upsert` / `memory.vector_search` / `memory.vector_delete` host-initiated request methods added (§5.w). Subprocess plugins declaring `[plugin.extends].memory_backends = [...]` get one `RemoteVectorBackend` per name registered into the daemon's `VectorBackendRegistry`. Memory-specific error codes `-33301..=-33304`. Default timeouts: 30s upsert/delete, 10s search; `NEXO_PLUGIN_MEMORY_TIMEOUT_MS` env override. v1 ships wire + registry only — consumer-side wiring (`LongTermMemory.recall_vector` reading from registry) lands in 81.26.b. Vector-only scope: short/long-term memory keep SQLite; plugin replaces ONLY the vector index. Additive — plugins not declaring memory_backends are unaffected. |
+| `1.9.0` | 2026-05-04 | Phase 81.22 — `[plugin.sandbox]` manifest section added (§2.2). Linux-only bubblewrap-based isolation: 5 fields (`enabled`, `network`, `fs_read_paths`, `fs_write_paths`, `drop_user`). Hard denylist enforced via `SANDBOX_DENYLIST_HOST_PATHS` const — operator-supplied allowlists that cover or equal denylisted paths are rejected at validate time. Two operator capability env knobs: `NEXO_PLUGIN_SANDBOX_REQUIRE` (strict-mode rejection of sandbox-disabled plugins) + `NEXO_PLUGIN_SANDBOX_HOST_NET_ALLOW` (gate for `network = "host"`). macOS no-op + warn (native sandbox-exec deferred to 81.22.macos). Default off — every existing manifest parses and runs unchanged. Additive — plugins without `[plugin.sandbox]` are unaffected. |
 
 ## See also
 

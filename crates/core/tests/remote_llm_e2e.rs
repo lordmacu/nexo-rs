@@ -107,6 +107,7 @@ async fn llm_chat_round_trips_via_mock_subprocess() {
             context_optimization: Default::default(),
             tenants: HashMap::new(),
         }),
+        sandbox: Arc::new(nexo_core::agent::plugin_sandbox::SandboxRunner::discover()),
     };
 
     std::env::set_var("NEXO_PLUGIN_INIT_TIMEOUT_MS", "2000");

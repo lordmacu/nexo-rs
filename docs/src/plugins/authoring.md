@@ -409,6 +409,88 @@ Operators audit registered backends today via
 (`agents.yaml.<id>.vector_backend = "pinecone"`) lands in
 Phase 81.26.b.
 
+## Sandboxing your plugin
+
+Phase 81.22 — Linux subprocess plugins can opt into bubblewrap
+isolation by declaring `[plugin.sandbox]` in `nexo-plugin.toml`.
+Default is disabled, so existing plugins keep today's behavior;
+opt in when you want defense-in-depth.
+
+```toml
+[plugin.sandbox]
+enabled = true
+network = "deny"                       # "deny" | "host"
+fs_read_paths = ["/etc/ssl/certs"]    # absolute paths only
+fs_write_paths = ["${state_dir}"]     # ${state_dir} = per-plugin
+                                       # state root, the only safe
+                                       # writable place by default
+drop_user = true                       # nobody:nogroup uid mapping
+```
+
+**Linux prereq**: install `bubblewrap` (`apt install bubblewrap`
+on Debian/Ubuntu, available on Arch + Alpine + Fedora). The
+daemon discovers `bwrap` once at boot via PATH lookup. Without
+bwrap, sandbox-enabled plugins log a warning and run unsandboxed
+unless `NEXO_PLUGIN_SANDBOX_REQUIRE=1` is set (in which case
+boot fails).
+
+**macOS**: not yet enforced. The daemon logs a `tracing::warn!`
+at every spawn and runs the plugin without sandbox. Native
+sandbox-exec integration is deferred to follow-up 81.22.macos
+(deprecated-API risk noted).
+
+**Network policy**:
+- `network = "deny"` → plugin runs in an isolated network
+  namespace with only loopback. Use the host's daemon-mediated
+  RPCs (`llm.complete`, `memory.recall`, `broker.publish`) for
+  any external IO. Recommended default.
+- `network = "host"` → plugin shares the daemon's network.
+  Operator must opt in via
+  `NEXO_PLUGIN_SANDBOX_HOST_NET_ALLOW=1`; manifest validation
+  rejects this otherwise. Use only when daemon-mediated RPCs
+  cannot satisfy your plugin's IO needs.
+
+**Filesystem allowlist**:
+- `fs_read_paths` = host paths bound read-only into the sandbox
+  (`bwrap --ro-bind`). Common: `/etc/ssl/certs` for outbound
+  TLS verification.
+- `fs_write_paths` = host paths bound read-write
+  (`bwrap --bind`). The literal `${state_dir}` token expands at
+  spawn time to `<state_root>/plugins/<plugin_id>` — that is
+  your plugin's per-instance owned scratch space. Only token
+  recognized; only valid in `fs_write_paths`.
+
+**Hard denylist** (compile-time, not configurable):
+allowlist entries that equal or include any of these paths are
+rejected at manifest validation:
+
+```
+/etc/shadow, /etc/sudoers, /etc/sudoers.d
+/proc/sys, /proc/kcore, /proc/kallsyms
+/sys/firmware, /sys/kernel
+/dev/mem, /dev/kmem, /dev/port
+/var/run/docker.sock, /run/docker.sock,
+  /private/var/run/docker.sock
+/root, /boot
+```
+
+**Operator capability env knobs**:
+
+| Env var | Effect |
+|---------|--------|
+| `NEXO_PLUGIN_SANDBOX_REQUIRE=1` | Refuse to spawn any plugin without `sandbox.enabled = true`. |
+| `NEXO_PLUGIN_SANDBOX_HOST_NET_ALLOW=1` | Permit `network = "host"` manifests. Default off. |
+
+**Recommended pattern**: `enabled = true, network = "deny",
+fs_write_paths = ["${state_dir}"]`, no `fs_read_paths` unless
+your plugin truly needs to read host config (e.g. CA bundles
+for TLS). Use daemon-mediated RPCs for everything else.
+
+**v1 out of scope** — see follow-ups in `FOLLOWUPS.md`:
+granular network egress allowlist (81.22.b), per-syscall
+seccomp filters (81.22.c), `nexo agent doctor plugins` sandbox
+section (81.22.d), native macOS sandbox-exec (81.22.macos).
+
 ## Future capability extensions
 
 Phase 81.28 — subprocess plugins that contribute new
