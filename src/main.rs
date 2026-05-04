@@ -1635,17 +1635,19 @@ async fn main() -> Result<()> {
                     .catalog()
                     .into_iter()
                     .map(|e| {
+                        // Phase 82.10.u — internal LlmProviderCatalogEntry
+                        // (nexo-llm) and the wire LlmProviderCatalogEntry
+                        // (nexo-tool-meta) share field names by design;
+                        // copy each across so the SPA sees the schema +
+                        // auth_modes + probe flag the factory declared.
                         nexo_tool_meta::admin::llm_providers::LlmProviderCatalogEntry {
                             id: e.id,
                             default_base_url: e.default_base_url,
                             default_env_var: e.default_env_var,
                             models: e.models,
-                            // Phase 82.10.u — schema fields default
-                            // empty until each factory implements
-                            // `credential_schema()` (Step 3 of this
-                            // sub-phase). SPA falls back to legacy
-                            // single-api_key UI when these are empty.
-                            ..Default::default()
+                            credential_schema: e.credential_schema,
+                            supported_auth_modes: e.supported_auth_modes,
+                            supports_models_probe: e.supports_models_probe,
                         }
                     })
                     .collect(),

@@ -3,6 +3,9 @@ use std::sync::{Arc, RwLock};
 
 use nexo_config::types::agents::ModelConfig;
 use nexo_config::types::llm::{LlmConfig, LlmProviderConfig, RetryConfig};
+use nexo_tool_meta::admin::llm_providers::{
+    AuthMode, CredentialFieldDescriptor, FieldKind, FieldValidation, SelectOption,
+};
 
 use crate::anthropic::AnthropicFactory;
 use crate::client::LlmClient;
@@ -10,6 +13,148 @@ use crate::deepseek::DeepSeekFactory;
 use crate::gemini::GeminiFactory;
 use crate::minimax::MiniMaxClient;
 use crate::openai_compat::OpenAiClient;
+
+/// Phase 82.10.u — reusable [`CredentialFieldDescriptor`]
+/// constructors so each factory's schema stays declarative + DRY.
+pub mod schema {
+    use super::*;
+
+    /// `api_key` field — password input, secret, required by default.
+    pub fn api_key(label: &str, hint: Option<&str>) -> CredentialFieldDescriptor {
+        CredentialFieldDescriptor {
+            name: "api_key".into(),
+            label: label.into(),
+            kind: FieldKind::Password,
+            required: true,
+            secret: true,
+            default: None,
+            help: hint.map(str::to_string),
+            validation: Some(FieldValidation::Length { min: 1, max: 512 }),
+            depends_on: None,
+        }
+    }
+
+    /// MiniMax `group_id` — numeric string, required, NOT secret
+    /// (it's an account identifier, not a credential — but lives in
+    /// the SecretsStore for ease of bundle management).
+    pub fn group_id() -> CredentialFieldDescriptor {
+        CredentialFieldDescriptor {
+            name: "group_id".into(),
+            label: "MiniMax Group ID".into(),
+            kind: FieldKind::Text,
+            required: true,
+            secret: false,
+            default: None,
+            help: Some(
+                "Dashboard → Account → Group. Numeric string (10-20 digits)."
+                    .into(),
+            ),
+            validation: Some(FieldValidation::Regex {
+                pattern: "^[0-9]{10,20}$".into(),
+                hint: "10-20 digits, numeric only".into(),
+            }),
+            depends_on: None,
+        }
+    }
+
+    /// Generic `<select>` builder — `(value, label)` pairs.
+    pub fn select(
+        name: &str,
+        label: &str,
+        options: &[(&str, &str)],
+        default: Option<&str>,
+        help: Option<&str>,
+    ) -> CredentialFieldDescriptor {
+        CredentialFieldDescriptor {
+            name: name.into(),
+            label: label.into(),
+            kind: FieldKind::Select {
+                options: options
+                    .iter()
+                    .map(|(v, l)| SelectOption {
+                        value: (*v).into(),
+                        label: (*l).into(),
+                    })
+                    .collect(),
+            },
+            required: true,
+            secret: false,
+            default: default.map(str::to_string),
+            help: hint_or_none(help),
+            validation: None,
+            depends_on: None,
+        }
+    }
+
+    fn hint_or_none(h: Option<&str>) -> Option<String> {
+        h.map(str::to_string)
+    }
+
+    /// MiniMax `key_kind` selector (api / plan).
+    pub fn minimax_key_kind() -> CredentialFieldDescriptor {
+        select(
+            "key_kind",
+            "Tipo de key",
+            &[
+                ("api", "API key (sk-…)"),
+                ("plan", "Token Plan (sk-cp-…)"),
+            ],
+            Some("api"),
+            Some("plan = Coding/Token Plan key — uses Anthropic-flavor wire."),
+        )
+    }
+
+    /// MiniMax region selector — drives base_url + api_flavor.
+    pub fn minimax_region() -> CredentialFieldDescriptor {
+        select(
+            "region",
+            "Región",
+            &[
+                ("global", "Global (api.minimax.io)"),
+                ("cn", "China (api.minimaxi.com)"),
+                ("chat", "Legacy (api.minimax.chat)"),
+            ],
+            Some("global"),
+            None,
+        )
+    }
+
+    /// Anthropic `auth_mode` selector — exposed when the factory
+    /// supports more than one mode.
+    pub fn anthropic_auth_mode() -> CredentialFieldDescriptor {
+        select(
+            "auth_mode",
+            "Modo de autenticación",
+            &[
+                ("api_key", "API key (sk-ant-…)"),
+                ("setup_token", "Setup token (sk-ant-oat01-…)"),
+                ("oauth_auth_code", "OAuth Claude.ai (recomendado)"),
+                ("oauth_bundle_import", "Importar bundle JSON"),
+            ],
+            Some("oauth_auth_code"),
+            Some("oauth_auth_code = browser PKCE flow against claude.ai"),
+        )
+    }
+
+    /// Anthropic `setup_token` — only visible when `auth_mode = setup_token`.
+    pub fn anthropic_setup_token() -> CredentialFieldDescriptor {
+        use nexo_tool_meta::admin::llm_providers::DependsOn;
+        CredentialFieldDescriptor {
+            name: "setup_token".into(),
+            label: "Setup token".into(),
+            kind: FieldKind::Password,
+            required: true,
+            secret: true,
+            default: None,
+            help: Some("Pega `sk-ant-oat01-…` (genera en `claude setup-token`).".into()),
+            validation: Some(FieldValidation::Regex {
+                pattern: "^sk-ant-oat01-".into(),
+                hint: "must start with sk-ant-oat01-".into(),
+            }),
+            depends_on: Some(DependsOn::any_of("auth_mode", &["setup_token"])),
+        }
+    }
+}
 
 /// Builds a concrete `LlmClient` for one named provider.
 ///
@@ -54,18 +199,58 @@ pub trait LlmProviderFactory: Send + Sync {
     fn known_models(&self) -> &'static [&'static str] {
         &[]
     }
+
+    /// Phase 82.10.u — declarative credential schema. Each
+    /// descriptor renders as one input in the SPA wizard and is
+    /// validated server-side by the admin RPC handler. Default
+    /// returns the legacy single-`api_key` shape so factories
+    /// shipped before this method existed keep working.
+    fn credential_schema(&self) -> Vec<CredentialFieldDescriptor> {
+        vec![schema::api_key("API key", None)]
+    }
+
+    /// Phase 82.10.u — auth modes this factory supports. The SPA
+    /// renders an `auth_mode` dropdown when this returns more than
+    /// one value; the admin RPC handler rejects upsert /
+    /// oauth_start with an unsupported mode. Default
+    /// `[AuthMode::ApiKey]` keeps legacy factories working.
+    fn supported_auth_modes(&self) -> Vec<AuthMode> {
+        vec![AuthMode::ApiKey]
+    }
+
+    /// Phase 82.10.u — `true` when the factory exposes an
+    /// OpenAI-compat `/v1/models` endpoint that `probe_draft` can
+    /// hit to enumerate live models. `false` for Anthropic +
+    /// Gemini (their model lists are static); the SPA then skips
+    /// the "validate → live models" step and offers the static
+    /// `known_models` list directly. Default `true` matches the
+    /// majority of providers.
+    fn supports_models_probe(&self) -> bool {
+        true
+    }
 }
 
 /// Catalogue entry surfaced by [`LlmRegistry::catalog`]. Aggregates
-/// per-factory metadata (default base URL, env var, known models)
-/// so SPA wizards can render a strict provider/model dropdown
-/// without keeping their own hardcoded list in sync.
+/// per-factory metadata (default base URL, env var, known models +
+/// Phase 82.10.u schema fields) so SPA wizards can render a strict
+/// provider/model dropdown without keeping their own hardcoded
+/// list in sync.
 #[derive(Debug, Clone)]
 pub struct LlmProviderCatalogEntry {
+    /// Provider id (matches `LlmProviderFactory::name()`).
     pub id: String,
+    /// Suggested HTTP base URL.
     pub default_base_url: String,
+    /// Conventional env var holding the API key (legacy).
     pub default_env_var: String,
+    /// Curated static model id list.
     pub models: Vec<String>,
+    /// Phase 82.10.u — declarative credential field schema.
+    pub credential_schema: Vec<CredentialFieldDescriptor>,
+    /// Phase 82.10.u — auth modes supported by this factory.
+    pub supported_auth_modes: Vec<AuthMode>,
+    /// Phase 82.10.u — whether `/v1/models` is exposed.
+    pub supports_models_probe: bool,
 }
 
 /// In-process registry of LLM providers. Lookup is by `model.provider` name.
@@ -168,6 +353,9 @@ impl LlmRegistry {
                     .iter()
                     .map(|s| (*s).to_string())
                     .collect(),
+                credential_schema: f.credential_schema(),
+                supported_auth_modes: f.supported_auth_modes(),
+                supports_models_probe: f.supports_models_probe(),
             })
             .collect();
         out.sort_by(|a, b| a.id.cmp(&b.id));
@@ -362,6 +550,19 @@ impl LlmProviderFactory for MiniMaxFactory {
 
     fn known_models(&self) -> &'static [&'static str] {
         &["MiniMax-M2.5", "MiniMax-M2.7"]
+    }
+
+    fn credential_schema(&self) -> Vec<CredentialFieldDescriptor> {
+        vec![
+            schema::api_key("MiniMax API key", Some("Empieza con sk-…")),
+            schema::group_id(),
+            schema::minimax_region(),
+            schema::minimax_key_kind(),
+        ]
+    }
+
+    fn supported_auth_modes(&self) -> Vec<AuthMode> {
+        vec![AuthMode::ApiKey, AuthMode::OAuthDeviceCode]
     }
 }
 
@@ -725,5 +926,74 @@ mod tests {
         assert_eq!(errs.len(), 1);
         assert!(errs[0].contains("tenants.acme.custom"));
         assert!(errs[0].contains("ghost"));
+    }
+
+    // ── Phase 82.10.u — schema declarations per factory ──
+
+    #[test]
+    fn minimax_factory_declares_full_credential_schema() {
+        let f = MiniMaxFactory;
+        let schema = f.credential_schema();
+        let names: Vec<_> = schema.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(names, vec!["api_key", "group_id", "region", "key_kind"]);
+        assert!(schema[0].secret, "api_key must be secret");
+        assert!(!schema[1].secret, "group_id is identifier, not secret");
+        assert!(schema[1].validation.is_some(), "group_id has regex");
+    }
+
+    #[test]
+    fn minimax_factory_supports_apikey_and_device_oauth() {
+        let modes = MiniMaxFactory.supported_auth_modes();
+        assert!(modes.contains(&AuthMode::ApiKey));
+        assert!(modes.contains(&AuthMode::OAuthDeviceCode));
+    }
+
+    #[test]
+    fn anthropic_factory_supports_oauth_auth_code_and_skips_models_probe() {
+        let f = AnthropicFactory;
+        let modes = f.supported_auth_modes();
+        assert!(modes.contains(&AuthMode::OAuthAuthCode));
+        assert!(modes.contains(&AuthMode::SetupToken));
+        assert!(!f.supports_models_probe(), "Anthropic exposes /v1/models but the catalogue is curated");
+    }
+
+    #[test]
+    fn anthropic_setup_token_field_depends_on_auth_mode() {
+        let schema = AnthropicFactory.credential_schema();
+        let setup = schema
+            .iter()
+            .find(|d| d.name == "setup_token")
+            .expect("setup_token descriptor present");
+        let dep = setup.depends_on.as_ref().expect("setup_token depends_on auth_mode");
+        assert_eq!(dep.field, "auth_mode");
+        assert!(dep.any_of.iter().any(|v| v == "setup_token"));
+    }
+
+    #[test]
+    fn openai_factory_uses_default_schema_apikey_only() {
+        let schema = OpenAiFactory.credential_schema();
+        assert_eq!(schema.len(), 1);
+        assert_eq!(schema[0].name, "api_key");
+        assert!(OpenAiFactory.supports_models_probe());
+    }
+
+    #[test]
+    fn registry_catalog_emits_schema_for_every_builtin() {
+        let cat = LlmRegistry::with_builtins().catalog();
+        let minimax = cat
+            .iter()
+            .find(|e| e.id == "minimax")
+            .expect("minimax in catalog");
+        assert_eq!(minimax.credential_schema.len(), 4);
+        assert!(!minimax.supported_auth_modes.is_empty());
+        assert!(minimax.supports_models_probe);
+        let anthropic = cat
+            .iter()
+            .find(|e| e.id == "anthropic")
+            .expect("anthropic in catalog");
+        assert!(!anthropic.supports_models_probe);
+        assert!(anthropic
+            .supported_auth_modes
+            .contains(&AuthMode::OAuthAuthCode));
     }
 }

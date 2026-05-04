@@ -3666,6 +3666,7 @@ dependencies = [
  "lru",
  "nexo-config",
  "nexo-resilience",
+ "nexo-tool-meta",
  "reqwest",
  "serde",
  "serde_json",
