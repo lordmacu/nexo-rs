@@ -292,6 +292,15 @@ pub struct Meta {
     pub author: Option<String>,
     #[serde(default)]
     pub license: Option<String>,
+    /// Phase 81.13 — operator-facing project URL. Optional.
+    /// Mirrors `nexo_plugin_manifest::manifest::MetaSection.homepage`
+    /// so a single `plugin.toml` can declare both legacy + modern
+    /// metadata under one `[meta]` block.
+    #[serde(default)]
+    pub homepage: Option<String>,
+    /// Phase 81.13 — source repository URL. Optional.
+    #[serde(default)]
+    pub repository: Option<String>,
 }
 
 // ─── Error ────────────────────────────────────────────────────────────────────
