@@ -51,6 +51,12 @@ pub struct LlmProvidersListResponse {
 }
 
 /// Params for `nexo/admin/llm_providers/upsert`.
+///
+/// NOT marked `#[non_exhaustive]` because operators in other
+/// crates (e.g. agent-creator microapp's onboarding routes)
+/// construct it with literal struct expressions + `..Default`.
+/// New optional fields keep landing additively under
+/// `#[serde(default)]` so wire-level back-compat is preserved.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct LlmProviderUpsertInput {
     /// Provider INSTANCE id. Phase 82.10.s — distinct from the
@@ -99,6 +105,28 @@ pub struct LlmProviderUpsertInput {
     /// pre-83.8.12.5 behaviour (writes the global table).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tenant_id: Option<String>,
+    /// Phase 82.10.u — selected auth mode for this instance.
+    /// `None` ⇒ `AuthMode::ApiKey` (back-compat). When set to an
+    /// OAuth mode, the operator must run `oauth_start` /
+    /// `oauth_finish` BEFORE upsert; the resulting bundle's
+    /// secret_id then lives in `fields["api_key_secret_id"]` (or
+    /// equivalent — the factory's schema decides the field name).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_mode: Option<AuthMode>,
+    /// Phase 82.10.u — schema-driven credential payload. Each key
+    /// MUST match a `CredentialFieldDescriptor.name` from the
+    /// factory's `credential_schema`. Values are validated server-
+    /// side against the descriptor's `validation` + `required` +
+    /// `depends_on`. `secret == true` fields are persisted to the
+    /// SecretsStore + redacted in audit logs; `secret == false`
+    /// fields land inline in yaml.
+    ///
+    /// Empty map ⇒ legacy back-compat path (handler uses
+    /// `api_key_env` / `api_key_secret_id` / `api_key_secret_value`
+    /// instead). Mixed mode (legacy field + non-empty `fields`) is
+    /// rejected with `INVALID_FORMAT`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub fields: BTreeMap<String, String>,
 }
 
 /// Params for `nexo/admin/llm_providers/delete`.
@@ -187,6 +215,12 @@ pub struct LlmProviderProbeResponse {
 pub const LLM_PROVIDERS_CATALOG_METHOD: &str = "nexo/admin/llm_providers/catalog";
 
 /// One row of [`LLM_PROVIDERS_CATALOG_METHOD`]'s response.
+///
+/// NOT marked `#[non_exhaustive]` because `src/main.rs` (and
+/// downstream consumers) construct it with literal struct
+/// expressions when bridging from `LlmRegistry::catalog()`. New
+/// optional fields land additively under `#[serde(default)]` for
+/// wire-level back-compat.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct LlmProviderCatalogEntry {
     /// Provider id (matches `llm.yaml.providers.<id>` and the
@@ -203,6 +237,27 @@ pub struct LlmProviderCatalogEntry {
     /// Empty when the factory hasn't declared any — UIs fall back
     /// to a free-text input in that case.
     pub models: Vec<String>,
+    /// Phase 82.10.u — declarative credential schema. Empty for
+    /// factories that haven't migrated yet (SPA falls back to the
+    /// legacy "single api_key field" UI). When non-empty, the SPA
+    /// renders one input per descriptor + the upsert handler
+    /// validates the operator's payload against this schema.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub credential_schema: Vec<CredentialFieldDescriptor>,
+    /// Phase 82.10.u — auth modes the factory supports. Empty
+    /// implies `[ApiKey]` (back-compat with pre-82.10.u factories).
+    /// When > 1, the SPA renders an `auth_mode` dropdown.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supported_auth_modes: Vec<AuthMode>,
+    /// Phase 82.10.u — `true` when the factory exposes an
+    /// OpenAI-compat `/v1/models` endpoint that `probe_draft` can
+    /// hit to enumerate live models. `false` for Anthropic +
+    /// Gemini (their model lists are static and exposed via the
+    /// `models` field). When `false`, the SPA skips the "validate
+    /// → live models" wizard step and offers the static list
+    /// directly.
+    #[serde(default)]
+    pub supports_models_probe: bool,
 }
 
 /// Response shape for [`LLM_PROVIDERS_CATALOG_METHOD`].
@@ -210,6 +265,414 @@ pub struct LlmProviderCatalogEntry {
 pub struct LlmProvidersCatalogResponse {
     /// Providers in stable alpha order by id.
     pub providers: Vec<LlmProviderCatalogEntry>,
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Phase 82.10.u — schema-driven credential descriptors.
+//
+// Each LLM factory declares the credential fields it accepts. The
+// admin RPC catalog surfaces the schema; the SPA wizard renders one
+// input per descriptor; the upsert handler validates the operator's
+// payload against the schema before touching disk.
+// ──────────────────────────────────────────────────────────────────
+
+/// Renderable credential field declared by an `LlmProviderFactory`.
+///
+/// `secret == true` ⇒ value is persisted to the daemon's
+/// SecretsStore (mode 0600 file) and the yaml carries only an
+/// `<name>_secret_id` reference. `secret == false` ⇒ value lands
+/// inline in `llm.yaml.providers.<id>.<name>`.
+///
+/// Audit redaction MUST mask every field where `secret == true` —
+/// the redactor reads this schema at runtime to decide what to
+/// scrub from the audit log.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
+pub struct CredentialFieldDescriptor {
+    /// Stable machine-readable name. Becomes the yaml key (for
+    /// non-secret fields) or the secret id suffix (for secret
+    /// fields). Must match `^[a-z][a-z0-9_]{1,40}$`.
+    pub name: String,
+    /// Operator-facing label. Free-form; the SPA may translate.
+    pub label: String,
+    /// Renderable input shape — see [`FieldKind`].
+    pub kind: FieldKind,
+    /// `true` ⇒ admin RPC rejects upsert when this field is missing
+    /// (or empty after trim). Subject to [`Self::depends_on`].
+    pub required: bool,
+    /// `true` ⇒ value is sensitive: persisted to SecretsStore +
+    /// redacted in audit logs. `false` ⇒ value is plaintext yaml.
+    pub secret: bool,
+    /// Default the SPA pre-fills (e.g. `"global"` for MiniMax
+    /// region). `None` ⇒ no pre-fill.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+    /// Operator-facing help text — origin URL, format example, etc.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub help: Option<String>,
+    /// Optional shape validation applied client-side AND server-side.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validation: Option<FieldValidation>,
+    /// Conditional visibility: this field only appears (and is only
+    /// validated) when [`DependsOn::satisfied`] returns true against
+    /// the upsert payload. Use to hide e.g. `setup_token` unless
+    /// `auth_mode = "setup_token"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depends_on: Option<DependsOn>,
+}
+
+/// What HTML-input shape the SPA should render for this field.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum FieldKind {
+    /// Plain text input.
+    Text,
+    /// Password input — masked by default in the SPA. Implies
+    /// `secret = true` semantically (audit / persistence) but the
+    /// flag remains explicit on [`CredentialFieldDescriptor`] for
+    /// clarity.
+    Password,
+    /// `<select>` with the listed options. SPA pre-fills with the
+    /// descriptor's `default` when present.
+    Select {
+        /// Allowed values + display labels in display order.
+        options: Vec<SelectOption>,
+    },
+}
+
+/// One option inside a [`FieldKind::Select`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
+pub struct SelectOption {
+    /// Stored value (yaml-side / secret-side).
+    pub value: String,
+    /// Operator-facing label (i18n-ready).
+    pub label: String,
+}
+
+/// Optional validation rule applied to a field's value before
+/// persistence. The SPA may apply it client-side for instant
+/// feedback; the admin RPC handler ALWAYS re-applies it server-side
+/// so a custom client cannot smuggle invalid values.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum FieldValidation {
+    /// Value must match the supplied regex (anchored implicitly —
+    /// callers should write `^...$` if they want full-match
+    /// semantics; otherwise it's a substring check).
+    Regex {
+        /// Regex pattern (Rust `regex` crate syntax).
+        pattern: String,
+        /// Operator-facing hint shown when the regex fails.
+        hint: String,
+    },
+    /// Value length (in unicode chars) must fall within `[min, max]`.
+    Length {
+        /// Minimum length (inclusive). Use 0 for unbounded below.
+        min: usize,
+        /// Maximum length (inclusive). Use `usize::MAX` for
+        /// unbounded above.
+        max: usize,
+    },
+}
+
+/// Conditional-visibility predicate used by
+/// [`CredentialFieldDescriptor::depends_on`].
+///
+/// The most common case is "this field only matters when
+/// `auth_mode` equals one of these values" — see
+/// [`DependsOn::any_of`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
+pub struct DependsOn {
+    /// Field name in the upsert payload (commonly `"auth_mode"`).
+    pub field: String,
+    /// Field is satisfied when its value is one of these.
+    pub any_of: Vec<String>,
+}
+
+impl DependsOn {
+    /// Convenience constructor: this descriptor depends on
+    /// `field` taking one of `values`.
+    pub fn any_of(field: impl Into<String>, values: &[&str]) -> Self {
+        Self {
+            field: field.into(),
+            any_of: values.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    /// Evaluate against an upsert payload. Returns `true` when the
+    /// dependency is satisfied (i.e. the field is present AND its
+    /// value is in `any_of`). Returns `false` when the field is
+    /// absent or holds a value outside the allow-list — the
+    /// dependent descriptor is then hidden / skipped.
+    pub fn satisfied(&self, fields: &BTreeMap<String, String>) -> bool {
+        match fields.get(&self.field) {
+            Some(v) => self.any_of.iter().any(|allowed| allowed == v),
+            None => false,
+        }
+    }
+}
+
+/// Authentication mode supported by an `LlmProviderFactory`.
+///
+/// Each factory advertises its supported modes via
+/// `LlmProviderCatalogEntry::supported_auth_modes`. The SPA shows a
+/// dropdown when more than one is supported; the admin RPC handler
+/// rejects upsert + oauth_start with an unsupported mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum AuthMode {
+    /// Static API key (the legacy default).
+    #[serde(rename = "api_key")]
+    ApiKey,
+    /// Anthropic-style setup-token (`sk-ant-oat01-…`).
+    #[serde(rename = "setup_token")]
+    SetupToken,
+    /// Authorization-code OAuth with PKCE (Anthropic Claude.ai).
+    #[serde(rename = "oauth_auth_code")]
+    OAuthAuthCode,
+    /// Device-code OAuth user-code polling (MiniMax Token Plan).
+    #[serde(rename = "oauth_device_code")]
+    OAuthDeviceCode,
+    /// Operator pastes a pre-existing OAuth bundle JSON.
+    #[serde(rename = "oauth_bundle_import")]
+    OAuthBundleImport,
+}
+
+/// Typed error surfaced by `llm_providers/upsert`,
+/// `llm_providers/probe_draft`, `llm_providers/oauth_*` handlers.
+///
+/// Travels in `AdminRpcError::data` so the SPA can discriminate by
+/// `code` and render localised messages without parsing free-form
+/// strings.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "code")]
+#[non_exhaustive]
+pub enum LlmProviderError {
+    /// Required field absent or empty after trim.
+    #[serde(rename = "MISSING_FIELD")]
+    MissingField {
+        /// Field name from the factory's credential schema.
+        field: String,
+    },
+    /// Field present in payload but absent from the factory's
+    /// schema. Defensive: prevents silent typo land.
+    #[serde(rename = "UNKNOWN_FIELD")]
+    UnknownField {
+        /// The unrecognised field name.
+        field: String,
+    },
+    /// Field present + non-empty but failed [`FieldValidation`].
+    #[serde(rename = "INVALID_FORMAT")]
+    InvalidFormat {
+        /// Field name.
+        field: String,
+        /// Operator-facing hint from the descriptor.
+        hint: String,
+    },
+    /// `auth_mode` not in the factory's `supported_auth_modes`.
+    #[serde(rename = "INVALID_AUTH_MODE")]
+    InvalidAuthMode {
+        /// Factory id.
+        factory: String,
+        /// The mode the operator supplied.
+        mode: String,
+    },
+    /// OAuth session id has elapsed its TTL.
+    #[serde(rename = "SESSION_EXPIRED")]
+    SessionExpired,
+    /// OAuth session id was never issued or has been consumed.
+    #[serde(rename = "SESSION_NOT_FOUND")]
+    SessionNotFound,
+    /// Upstream `oauth_finish` exchange / poll failed.
+    #[serde(rename = "OAUTH_EXCHANGE_FAILED")]
+    OAuthExchangeFailed {
+        /// HTTP status of the upstream call (0 for transport
+        /// errors).
+        upstream_status: u16,
+        /// Sanitised error body. NEVER contains the OAuth code or
+        /// token.
+        message: String,
+    },
+    /// `probe_draft` upstream call failed.
+    #[serde(rename = "PROBE_FAILED")]
+    ProbeFailed {
+        /// HTTP status.
+        upstream_status: u16,
+        /// Sanitised error body.
+        message: String,
+    },
+    /// Yaml patch step failed mid-upsert. Operator can retry —
+    /// secret writes (if any) are idempotent under the same
+    /// instance id.
+    #[serde(rename = "YAML_WRITE_FAILED")]
+    YamlWriteFailed {
+        /// Lower-level error detail.
+        detail: String,
+    },
+    /// SecretsStore write step failed mid-upsert.
+    #[serde(rename = "SECRET_WRITE_FAILED")]
+    SecretWriteFailed {
+        /// Lower-level error detail.
+        detail: String,
+    },
+}
+
+#[cfg(test)]
+mod schema_tests {
+    use super::*;
+
+    #[test]
+    fn credential_field_descriptor_round_trip() {
+        let d = CredentialFieldDescriptor {
+            name: "api_key".into(),
+            label: "API key".into(),
+            kind: FieldKind::Password,
+            required: true,
+            secret: true,
+            default: None,
+            help: Some("sk-…".into()),
+            validation: Some(FieldValidation::Length { min: 1, max: 200 }),
+            depends_on: None,
+        };
+        let v = serde_json::to_value(&d).unwrap();
+        let back: CredentialFieldDescriptor = serde_json::from_value(v).unwrap();
+        assert_eq!(d, back);
+    }
+
+    #[test]
+    fn field_kind_select_serializes_with_options() {
+        let k = FieldKind::Select {
+            options: vec![
+                SelectOption {
+                    value: "global".into(),
+                    label: "Global".into(),
+                },
+                SelectOption {
+                    value: "cn".into(),
+                    label: "China".into(),
+                },
+            ],
+        };
+        let s = serde_json::to_string(&k).unwrap();
+        assert!(s.contains("\"type\":\"select\""));
+        assert!(s.contains("\"value\":\"global\""));
+        let back: FieldKind = serde_json::from_str(&s).unwrap();
+        assert_eq!(k, back);
+    }
+
+    #[test]
+    fn auth_mode_wire_form_is_lowercase_oauth() {
+        // Hand-written wire forms — these strings are part of the
+        // public protocol contract; renaming a variant must NOT
+        // change them.
+        for (mode, wire) in [
+            (AuthMode::ApiKey, "\"api_key\""),
+            (AuthMode::SetupToken, "\"setup_token\""),
+            (AuthMode::OAuthAuthCode, "\"oauth_auth_code\""),
+            (AuthMode::OAuthDeviceCode, "\"oauth_device_code\""),
+            (AuthMode::OAuthBundleImport, "\"oauth_bundle_import\""),
+        ] {
+            let s = serde_json::to_string(&mode).unwrap();
+            assert_eq!(s, wire);
+            let back: AuthMode = serde_json::from_str(&s).unwrap();
+            assert_eq!(back, mode);
+        }
+    }
+
+    #[test]
+    fn llm_provider_error_round_trip_typed_data() {
+        let e = LlmProviderError::MissingField {
+            field: "group_id".into(),
+        };
+        let s = serde_json::to_string(&e).unwrap();
+        assert!(s.contains("\"code\":\"MISSING_FIELD\""));
+        assert!(s.contains("\"field\":\"group_id\""));
+        let back: LlmProviderError = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, e);
+
+        let e = LlmProviderError::OAuthExchangeFailed {
+            upstream_status: 401,
+            message: "invalid grant".into(),
+        };
+        let s = serde_json::to_string(&e).unwrap();
+        assert!(s.contains("\"code\":\"OAUTH_EXCHANGE_FAILED\""));
+        let back: LlmProviderError = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, e);
+    }
+
+    /// Phase 82.10.u back-compat: old microapps that don't know
+    /// about the new `auth_mode` + `fields` keys must still be
+    /// able to serialise legacy upserts. The new fields default
+    /// to absent on the wire.
+    #[test]
+    fn upsert_input_legacy_payload_round_trips_without_new_fields() {
+        let raw = r#"{"id":"minimax","base_url":"https://x","api_key_env":"K"}"#;
+        let i: LlmProviderUpsertInput = serde_json::from_str(raw).unwrap();
+        assert_eq!(i.id, "minimax");
+        assert!(i.fields.is_empty());
+        assert!(i.auth_mode.is_none());
+        let back = serde_json::to_string(&i).unwrap();
+        assert!(!back.contains("auth_mode"));
+        assert!(!back.contains("\"fields\":"));
+    }
+
+    /// New `fields` payload survives a full round-trip and the
+    /// legacy `api_key_env` stays empty when the operator opts
+    /// into the schema-driven path.
+    #[test]
+    fn upsert_input_schema_payload_round_trip() {
+        let mut fields = BTreeMap::new();
+        fields.insert("api_key".into(), "sk-test".into());
+        fields.insert("group_id".into(), "1234567890123".into());
+        fields.insert("region".into(), "global".into());
+        let i = LlmProviderUpsertInput {
+            id: "minimax-cliente-a".into(),
+            base_url: "https://api.minimax.io/v1".into(),
+            factory_type: Some("minimax".into()),
+            auth_mode: Some(AuthMode::ApiKey),
+            fields,
+            ..Default::default()
+        };
+        let s = serde_json::to_string(&i).unwrap();
+        assert!(s.contains("\"auth_mode\":\"api_key\""));
+        assert!(s.contains("\"fields\":{"));
+        let back: LlmProviderUpsertInput = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.fields.len(), 3);
+        assert_eq!(back.auth_mode, Some(AuthMode::ApiKey));
+    }
+
+    /// `LlmProviderCatalogEntry` legacy payloads (without
+    /// `credential_schema` + `supported_auth_modes` +
+    /// `supports_models_probe`) deserialise cleanly into the
+    /// post-82.10.u shape so older operator UIs stay compatible.
+    #[test]
+    fn catalog_entry_legacy_payload_deserialises_into_82_10_u_shape() {
+        let raw = r#"{
+            "id": "minimax",
+            "default_base_url": "https://api.minimax.io/v1",
+            "default_env_var": "MINIMAX_API_KEY",
+            "models": ["MiniMax-M2.5"]
+        }"#;
+        let e: LlmProviderCatalogEntry = serde_json::from_str(raw).unwrap();
+        assert!(e.credential_schema.is_empty());
+        assert!(e.supported_auth_modes.is_empty());
+        assert!(!e.supports_models_probe);
+    }
+
+    #[test]
+    fn depends_on_satisfied_matches_value_in_allow_list() {
+        let d = DependsOn::any_of("auth_mode", &["setup_token", "api_key"]);
+        let mut fields: BTreeMap<String, String> = BTreeMap::new();
+        assert!(!d.satisfied(&fields), "missing key ⇒ unsatisfied");
+        fields.insert("auth_mode".into(), "oauth_auth_code".into());
+        assert!(!d.satisfied(&fields), "value not in allow-list ⇒ unsatisfied");
+        fields.insert("auth_mode".into(), "setup_token".into());
+        assert!(d.satisfied(&fields), "value in allow-list ⇒ satisfied");
+    }
 }
 
 #[cfg(test)]
@@ -235,8 +698,7 @@ mod tests {
             id: "minimax".into(),
             base_url: "x".into(),
             api_key_env: "Y".into(),
-            headers: BTreeMap::new(),
-            tenant_id: None,
+            ..Default::default()
         };
         let v = serde_json::to_value(&i).unwrap();
         let back: LlmProviderUpsertInput = serde_json::from_value(v).unwrap();
@@ -285,8 +747,8 @@ mod tests {
             id: "minimax".into(),
             base_url: "https://api.minimax.io".into(),
             api_key_env: "MINIMAX_KEY_ACME".into(),
-            headers: BTreeMap::new(),
             tenant_id: Some("acme".into()),
+            ..Default::default()
         };
         let s = serde_json::to_string(&i).unwrap();
         assert!(s.contains("\"tenant_id\":\"acme\""));
@@ -348,6 +810,7 @@ mod tests {
             status: 200,
             latency_ms: 142,
             model_count: Some(5),
+            model_names: Some(vec!["gpt-4o".into()]),
             error: None,
         };
         let v = serde_json::to_value(&r).unwrap();

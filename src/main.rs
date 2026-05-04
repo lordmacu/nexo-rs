@@ -1640,6 +1640,12 @@ async fn main() -> Result<()> {
                             default_base_url: e.default_base_url,
                             default_env_var: e.default_env_var,
                             models: e.models,
+                            // Phase 82.10.u — schema fields default
+                            // empty until each factory implements
+                            // `credential_schema()` (Step 3 of this
+                            // sub-phase). SPA falls back to legacy
+                            // single-api_key UI when these are empty.
+                            ..Default::default()
                         }
                     })
                     .collect(),
