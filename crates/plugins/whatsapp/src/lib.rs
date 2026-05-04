@@ -12,6 +12,7 @@ pub mod lifecycle;
 pub mod media;
 pub mod pairing;
 pub mod pairing_adapter;
+pub mod pairing_trigger;
 pub mod plugin;
 pub mod session;
 pub mod session_id;
