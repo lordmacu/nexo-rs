@@ -38,6 +38,119 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.4 — Plugin-scoped config dir loader.** New host-
+  side loader reads each plugin's
+  `<config_dir>/plugins/<plugin_id>/*.yaml` files, deep-merges
+  them with `${ENV_VAR}` resolution, validates the merged
+  tree against `manifest.config.schema_path` (when set), and
+  surfaces the result to the plugin via
+  `PluginInitContext.plugin_config: Arc<serde_yaml::Value>`.
+  Validation failure short-circuits with
+  `InitOutcome::Failed` BEFORE the plugin's `init()` runs.
+
+  Operator workflow:
+
+  ```text
+  <config_dir>/plugins/slack/
+    01-credentials.yaml   # api_token: "${SLACK_BOT_TOKEN}"
+    02-channels.yaml      # channels: [...]
+    03-allowlist.yaml     # rate limits per channel
+  ```
+
+  Multi-file sharding lets operators split sensitive
+  settings (credentials) from declarative ones (channels,
+  allowlists). Mappings deep-merge across files; arrays
+  full-replace (NOT concat). Files merge alphabetically by
+  filename — operators use `01-` / `02-` prefixes for
+  ordering.
+
+  Plugin author declares schema in `nexo-plugin.toml`:
+
+  ```toml
+  [plugin.config]
+  schema_path = "config.schema.json"   # relative to plugin root
+  hot_reload = true                    # parsed; wiring lands in 81.4.b
+  ```
+
+  Schema validator currently supports the JSONSchema subset
+  `type` / `required` / `properties` /
+  `additionalProperties` / `enum`. Plugins needing `oneOf` /
+  `$ref` / `pattern` / format checks will get the richer
+  validator behind a feature gate in a future 81.4.c slice.
+
+  Plugin consumes config via:
+
+  ```rust
+  let api_token = ctx
+      .plugin_config
+      .get("api_token")
+      .and_then(serde_yaml::Value::as_str)
+      .ok_or_else(|| anyhow::anyhow!("api_token missing"))?;
+  ```
+
+  Empty / missing dir is OK — plugin sees
+  `Value::Mapping(empty)`, not `Null`. Plugins with all-
+  optional fields boot cleanly without operator action.
+
+  New types in `nexo_core::agent`:
+
+  - `PluginConfig { merged, schema_validated, source_files }`
+  - `PluginConfigError` (8 variants: `DirRead`, `FileRead`,
+    `EnvResolve`, `YamlParse`, `SchemaRead`, `SchemaParse`,
+    `SchemaValidation { errors }`, `SymlinkEscape`)
+  - `load_plugin_config(plugin_root, config_dir, manifest)`
+  - `plugin_config_dir_for(config_dir, plugin_id)`
+  - `config_error_kind(&PluginConfigError) -> &'static str`
+
+  Implementation notes:
+
+  - `ctx_factory` closure signature changed from
+    `FnMut(&PluginManifest)` to
+    `FnMut(&PluginManifest, &Arc<serde_yaml::Value>)`.
+  - `run_plugin_init_loop_with_factory` gained `config_dir:
+    &Path` arg; main.rs threads `rt.config_dir` through
+    `SubprocessRuntime`.
+  - Config load runs at the TOP of each iteration, BEFORE
+    `factory_registry.instantiate` — failure short-circuits
+    factory work as well.
+  - Symlinks pointing INTO the plugin config dir are
+    accepted; escapes rejected via canonicalize +
+    `starts_with` guard (mirrors Phase 31.1.b extract path-
+    traversal check).
+  - `${ENV_VAR}` resolution runs PRE-yaml-parse via
+    `nexo_config::env::resolve_placeholders` (string-level
+    substitution avoids quoting weirdness — same path
+    `agents.yaml` etc. take).
+
+  Tests: 13 new `plugin_config_loader::tests` covering
+  dir-missing, dir-empty, skip-non-yaml, alphabetical
+  deep-merge, scalar overwrite, array full-replace,
+  env-var substitution, yaml parse error, schema-validates,
+  schema-validation-errors-with-pointers, skip-validation-
+  when-unset, symlink escape, exhaustive error-kind. Plus
+  1 init-loop integration test
+  (`init_loop_records_failed_when_config_load_fails`).
+  All 1262 `nexo-core` lib tests pass; 2/2 e2e tests pass;
+  workspace builds clean. Existing in-tree plugins
+  (browser / telegram / whatsapp / email) compile unchanged
+  — none use `ctx.plugin_config` today; they keep central
+  `cfg.plugins.<id>` config.
+
+  New documentation section in `docs/src/plugins/authoring.md`
+  ("Plugin config dir") with directory layout, schema
+  declaration, env-var interpolation, and consumption
+  example.
+
+  Out of scope: hot-reload of plugin config files (defer
+  81.4.b — Phase 18 reload coord post-hook), richer
+  JSONSchema keyword support behind feature flag (81.4.c),
+  `nexo agent doctor plugins --json` plugin_config surface
+  (81.4.d), broker emit `plugin.lifecycle.<id>.config_load_failed`
+  (deferred to 81.4.b together with hot-reload), in-tree
+  plugin config migration to per-plugin dir (separate
+  decision once subprocess extraction in 81.18 / 81.19
+  happens).
+
 - **Phase 81.3 — Tool namespace runtime enforcement.** New
   `ScopedToolRegistry` per-plugin proxy gates every plugin-side
   tool registration against four layers — reserved-prefix

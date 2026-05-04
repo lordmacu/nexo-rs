@@ -1191,6 +1191,60 @@ coordinación de archivos cross-cutting.
   ships for the few plugins that legitimately need looser
   enforcement. ~0.3 d once gates clear.
 
+- **81.4 ✅ shipped 2026-05-04** — Plugin-scoped config dir
+  loader. New `crates/core/src/agent/plugin_config_loader.rs`
+  module (~340 LOC + 13 unit tests). `load_plugin_config`
+  reads `<config_dir>/plugins/<plugin_id>/*.yaml` alphabetical,
+  canonicalizes + symlink-escape-guards each path, resolves
+  `${ENV_VAR}` placeholders pre-yaml-parse, deep-merges
+  (mappings recurse, arrays full-replace, scalars overwrite),
+  validates against `manifest.config.schema_path` JSONSchema
+  via `nexo_plugin_manifest::config_schema::validate_config`
+  (lightweight subset: type/required/properties/additionalProperties/enum).
+  `PluginConfig { merged: Value, schema_validated: bool,
+  source_files: Vec<PathBuf> }`. `PluginConfigError` 8
+  variants. New `PluginInitContext.plugin_config:
+  Arc<serde_yaml::Value>` field — empty mapping when operator
+  has placed no config files. `init_loop` runs config load
+  BEFORE any factory work; failure short-circuits with
+  `InitOutcome::Failed { error: "config load: …" }` plus
+  `tracing::warn!`. `ctx_factory` closure signature changed
+  from `FnMut(&PluginManifest)` to `FnMut(&PluginManifest,
+  &Arc<serde_yaml::Value>)`. New `config_dir: &Path` arg on
+  `run_plugin_init_loop_with_factory`. `SubprocessCtxStubs::context_for`
+  extended with `plugin_config: &Arc<Value>`. Authoring docs
+  updated with a "Plugin config dir" section explaining
+  multi-file sharding + env-var interpolation + schema_path.
+  Out of scope: hot-reload of plugin config files (defer
+  81.4.b), `jsonschema 0.20` richer keywords (defer 81.4.c),
+  doctor JSON surface (defer 81.4.d), broker emit on
+  config_load_failed (defer 81.4.b).
+
+- **81.4.b ⬜** Hot-reload of plugin config files via Phase
+  18 reload coord post-hook. When `manifest.config.hot_reload
+  = true` (default), file changes under
+  `<config_dir>/plugins/<plugin_id>/*.yaml` re-run the loader
+  + revalidate against the schema; on success, emit
+  `plugin.lifecycle.<id>.config_reloaded` so the plugin can
+  refresh its in-process state. Also adds best-effort broker
+  emit `plugin.lifecycle.<id>.config_load_failed` on initial
+  load failure (currently only `tracing::warn!`). ~1 d.
+
+- **81.4.c ⬜** Richer JSONSchema validation behind
+  `schema-validation` feature gate. Wires the existing
+  `jsonschema 0.20` validator (already optional dep on
+  nexo-core) so plugin schemas using `oneOf` / `$ref` /
+  `pattern` / `format` / numeric bounds get validated
+  properly. Today those keywords pass through silently in
+  the lightweight subset validator. ~0.5 d.
+
+- **81.4.d ⬜** `nexo agent doctor plugins --json` extension
+  surfacing per-plugin `plugin_config: { source_files,
+  schema_validated, last_load_error? }` so operators audit
+  config without booting. Pairs with the existing
+  `init_outcomes` + `namespace_violations` doctor surfaces.
+  ~0.3 d.
+
 - **81.15.c.b ✅ shipped 2026-05-01** — SDK streaming
   consumption helper. Pending value type changed to
   `PendingKind` enum (Single for non-streaming, Streaming for
