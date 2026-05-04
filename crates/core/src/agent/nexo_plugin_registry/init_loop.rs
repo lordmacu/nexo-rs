@@ -151,6 +151,44 @@ fn try_load_plugin_config(
     }
 }
 
+/// Phase 81.26 — after `init()` + channel + LLM + hook
+/// registrations succeed, register every backend name from
+/// `manifest.plugin.extends.memory_backends` as a
+/// `RemoteVectorBackend`. Only fires when the handle is a
+/// `SubprocessNexoPlugin`. Failure escalates to
+/// `InitOutcome::Failed`.
+async fn register_remote_vector_backends_after_init(
+    plugin_id: &str,
+    handle: &Arc<dyn NexoPlugin>,
+    vector_backend_registry: &Arc<
+        crate::agent::vector_backend_registry::VectorBackendRegistry,
+    >,
+) -> Option<InitOutcome> {
+    let any = handle.as_any();
+    let sub = match any.downcast_ref::<
+        crate::agent::nexo_plugin_registry::subprocess::SubprocessNexoPlugin,
+    >() {
+        Some(s) => s,
+        None => return None,
+    };
+    match sub
+        .register_remote_vector_backends(vector_backend_registry)
+        .await
+    {
+        Ok(_) => None,
+        Err(e) => {
+            let error = format!("vector backend register: {e}");
+            tracing::warn!(
+                target: "plugins.init",
+                plugin_id = %plugin_id,
+                %error,
+                "remote vector backend registration failed"
+            );
+            Some(InitOutcome::Failed { error })
+        }
+    }
+}
+
 /// Phase 81.27 — after `init()` + channel + LLM registrations
 /// succeed, register every hook name from
 /// `manifest.plugin.extends.hooks` as a `RemoteHookHandler`.
@@ -298,6 +336,9 @@ pub async fn run_plugin_init_loop_with_factory<'env, F>(
     channel_adapter_registry: &Arc<crate::agent::channel_adapter::ChannelAdapterRegistry>,
     llm_registry: &Arc<nexo_llm::LlmRegistry>,
     hook_registry: &Arc<crate::agent::hook_registry::HookRegistry>,
+    vector_backend_registry: &Arc<
+        crate::agent::vector_backend_registry::VectorBackendRegistry,
+    >,
     mut ctx_factory: F,
 ) -> FactoryInitResult
 where
@@ -369,6 +410,15 @@ where
                                         &id,
                                         &handle,
                                         hook_registry,
+                                    )
+                                    .await
+                                {
+                                    outcomes.insert(id, failed);
+                                } else if let Some(failed) =
+                                    register_remote_vector_backends_after_init(
+                                        &id,
+                                        &handle,
+                                        vector_backend_registry,
                                     )
                                     .await
                                 {
@@ -451,6 +501,15 @@ where
                             hook_registry,
                         )
                         .await
+                        {
+                            outcomes.insert(id, failed);
+                        } else if let Some(failed) =
+                            register_remote_vector_backends_after_init(
+                                &id,
+                                &handle,
+                                vector_backend_registry,
+                            )
+                            .await
                         {
                             outcomes.insert(id, failed);
                         } else {
@@ -570,6 +629,9 @@ mod tests {
         let chan_reg = Arc::new(crate::agent::channel_adapter::ChannelAdapterRegistry::new());
         let llm_reg = Arc::new(nexo_llm::LlmRegistry::new());
         let hook_reg = Arc::new(crate::agent::hook_registry::HookRegistry::new());
+        let vec_reg = Arc::new(
+            crate::agent::vector_backend_registry::VectorBackendRegistry::new(),
+        );
         let result = run_plugin_init_loop_with_factory(
             &snap,
             &registry,
@@ -577,6 +639,7 @@ mod tests {
             &chan_reg,
             &llm_reg,
             &hook_reg,
+            &vec_reg,
             |_m, _cfg| -> PluginInitContext<'_> {
                 unreachable!(
                     "ctx_factory must NOT be invoked when the factory closure returns Err"
@@ -681,6 +744,9 @@ mod tests {
         let chan_reg = Arc::new(crate::agent::channel_adapter::ChannelAdapterRegistry::new());
         let llm_reg = Arc::new(nexo_llm::LlmRegistry::new());
         let hook_reg = Arc::new(crate::agent::hook_registry::HookRegistry::new());
+        let vec_reg = Arc::new(
+            crate::agent::vector_backend_registry::VectorBackendRegistry::new(),
+        );
         let result = run_plugin_init_loop_with_factory(
             &snap,
             &registry,
@@ -688,6 +754,7 @@ mod tests {
             &chan_reg,
             &llm_reg,
             &hook_reg,
+            &vec_reg,
             |_m, _cfg| -> PluginInitContext<'_> {
                 unreachable!(
                     "ctx_factory must NOT be invoked for non-subprocess manifests"
@@ -752,6 +819,9 @@ mod tests {
         let chan_reg = Arc::new(crate::agent::channel_adapter::ChannelAdapterRegistry::new());
         let llm_reg = Arc::new(nexo_llm::LlmRegistry::new());
         let hook_reg = Arc::new(crate::agent::hook_registry::HookRegistry::new());
+        let vec_reg = Arc::new(
+            crate::agent::vector_backend_registry::VectorBackendRegistry::new(),
+        );
         let result = run_plugin_init_loop_with_factory(
             &snap,
             &registry,
@@ -759,6 +829,7 @@ mod tests {
             &chan_reg,
             &llm_reg,
             &hook_reg,
+            &vec_reg,
             |_m, _cfg| -> PluginInitContext<'_> {
                 unreachable!(
                     "ctx_factory must NOT be invoked when config load fails"

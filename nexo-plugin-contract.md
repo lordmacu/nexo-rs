@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| `contract_version` | `1.7.0` |
+| `contract_version` | `1.8.0` |
 | Status | Stable |
 | Authoritative reference | This document |
 | Reference implementations | Host: `crates/core/src/agent/nexo_plugin_registry/subprocess.rs`. Rust child: `crates/microapp-sdk/src/plugin.rs` (feature `plugin`). |
@@ -813,6 +813,152 @@ Operators see the failures via `tracing::warn!` (target
 `extends.hooks = [...]` but did not implement the wire method;
 the host treats this as Continue (no hard failure).
 
+## 5.w Memory backend methods (Phase 81.26)
+
+Subprocess plugins that contribute vector store backends
+(declared in `[plugin.extends].memory_backends`, §2.1)
+implement three host-initiated request methods. The host's
+`RemoteVectorBackend` wraps each `VectorBackend` trait method
+into a JSON-RPC request; the child replies with the
+corresponding result or a typed error.
+
+Every payload carries `backend` so a single subprocess
+advertising multiple backends (`extends.memory_backends =
+["pinecone", "qdrant"]`) can dispatch via one request handler.
+
+v1 ships the wire surface + registry only — operator-side
+consumer wiring (`LongTermMemory.recall_vector` reading from
+`wire.vector_backend_registry`) lands in 81.26.b. Operators
+can audit registered backends today via
+`wire.vector_backend_registry.names()`.
+
+### `memory.vector_upsert`
+
+```jsonc
+// host → child
+{
+  "jsonrpc": "2.0",
+  "id": 70,
+  "method": "memory.vector_upsert",
+  "params": {
+    "backend": "pinecone",
+    "collection": "kb",
+    "records": [
+      {
+        "id": "r1",
+        "content": "hello",
+        "embedding": [0.1, 0.2, 0.3],
+        "metadata": {"source": "kb"}
+      }
+    ]
+  }
+}
+
+// child → host
+{ "jsonrpc": "2.0", "id": 70, "result": { "count": 1 } }
+```
+
+`embedding` is a pre-computed dense vector (host-side embedder
+or LLM provider produces it; backend stores). `metadata` is
+opaque JSON the backend may filter against. Default host-side
+timeout 30 seconds.
+
+### `memory.vector_search`
+
+```jsonc
+// host → child
+{
+  "jsonrpc": "2.0",
+  "id": 71,
+  "method": "memory.vector_search",
+  "params": {
+    "backend": "pinecone",
+    "collection": "kb",
+    "query": {
+      "embedding": [0.1, 0.2, 0.3],
+      "limit": 10,
+      "filter": {"namespace": "tenant-1"}
+    }
+  }
+}
+
+// child → host
+{
+  "jsonrpc": "2.0",
+  "id": 71,
+  "result": {
+    "matches": [
+      {
+        "id": "r1",
+        "content": "hello",
+        "score": 0.97,
+        "metadata": {"source": "kb"}
+      }
+    ]
+  }
+}
+```
+
+`filter` is opaque — backend interprets per its native
+convention (Pinecone metadata filter, Qdrant filter
+expression, Weaviate `where`, etc.). The host does NOT
+validate or rewrite. `score` uses the backend's native scale
+(cosine vs dot-product vs distance). Default host-side
+timeout 10 seconds (search is hot-path).
+
+### `memory.vector_delete`
+
+```jsonc
+// host → child
+{
+  "jsonrpc": "2.0",
+  "id": 72,
+  "method": "memory.vector_delete",
+  "params": {
+    "backend": "pinecone",
+    "collection": "kb",
+    "ids": ["r1", "r2"]
+  }
+}
+
+// child → host
+{ "jsonrpc": "2.0", "id": 72, "result": { "count": 2 } }
+```
+
+Default host-side timeout 30 seconds. Operator override via
+`NEXO_PLUGIN_MEMORY_TIMEOUT_MS` env (single value applied to
+all 3 methods).
+
+### Memory-specific error codes
+
+In addition to the JSON-RPC standard codes (§7), `memory.*`
+methods MAY return:
+
+| Code | Meaning | `data` fields |
+|------|---------|---------------|
+| `-33301` | `memory.collection_not_found` | `collection` |
+| `-33302` | `memory.dimension_mismatch` | `expected`, `got` |
+| `-33303` | `memory.rate_limited` | `retry_after_secs` |
+| `-33304` | `memory.write_failed` | `(message)` |
+
+Error example:
+
+```jsonc
+{
+  "jsonrpc": "2.0",
+  "id": 70,
+  "error": {
+    "code": -33302,
+    "message": "dimension mismatch",
+    "data": { "expected": 768, "got": 2 }
+  }
+}
+```
+
+The host surfaces these as `anyhow::Error` with messages
+operators can grep (`"dimension mismatch: expected 768, got 2"`,
+`"rate limited; retry after 60s"`, etc.).
+
 ## 6. Topic allowlist
 
 The host derives subscribe + publish patterns from the
@@ -1078,3 +1224,4 @@ contract document.
 | `1.5.0` | 2026-05-04 | Phase 81.24 — `channel.start` / `channel.stop` / `channel.send_outbound` host-initiated request methods added (§5.x). Subprocess plugins declaring `[plugin.extends].channels = [...]` get one `RemoteChannelAdapter` per kind registered into the daemon's `ChannelAdapterRegistry`. Channel-specific error codes `-33001` through `-33005` map onto typed `ChannelAdapterError` variants. Default host-side timeouts: 30 s for start/stop, 60 s for send_outbound; `NEXO_PLUGIN_CHANNEL_TIMEOUT_MS` overrides all three. Additive — plugins not declaring channels are unaffected. |
 | `1.6.0` | 2026-05-04 | Phase 81.25 — `llm.chat` host-initiated request method (sync + streaming via `params.stream` flag) + `llm.chat.delta` streaming notifications added (§5.y). Subprocess plugins declaring `[plugin.extends].llm_providers = [...]` get one `RemoteLlmFactory` per provider name registered into the daemon's `LlmRegistry`. LLM-specific error codes `-33101` through `-33105`. Default timeouts: 60 s sync chat, 300 s streaming; `NEXO_PLUGIN_LLM_TIMEOUT_MS` overrides both. Additive — plugins not declaring llm_providers are unaffected. |
 | `1.7.0` | 2026-05-04 | Phase 81.27 — `hook.on_hook` host-initiated request method added (§5.z). Subprocess plugins declaring `[plugin.extends].hooks = [...]` get one `RemoteHookHandler` per hook name registered into the daemon's `HookRegistry`. Reply shape is the existing `HookResponse` (already serde-derived); reused directly as wire type. Continue-on-error semantic: every dispatch failure (transport, timeout, JSON-RPC err, decode) returns `HookResponse::default()` so `HookRegistry::fire` keeps iterating + agent flow doesn't break. Default 5s timeout (lower than channels/LLM); `NEXO_PLUGIN_HOOK_TIMEOUT_MS` env override. Additive — plugins not declaring hooks are unaffected. |
+| `1.8.0` | 2026-05-04 | Phase 81.26 — `memory.vector_upsert` / `memory.vector_search` / `memory.vector_delete` host-initiated request methods added (§5.w). Subprocess plugins declaring `[plugin.extends].memory_backends = [...]` get one `RemoteVectorBackend` per name registered into the daemon's `VectorBackendRegistry`. Memory-specific error codes `-33301..=-33304`. Default timeouts: 30s upsert/delete, 10s search; `NEXO_PLUGIN_MEMORY_TIMEOUT_MS` env override. v1 ships wire + registry only — consumer-side wiring (`LongTermMemory.recall_vector` reading from registry) lands in 81.26.b. Vector-only scope: short/long-term memory keep SQLite; plugin replaces ONLY the vector index. Additive — plugins not declaring memory_backends are unaffected. |

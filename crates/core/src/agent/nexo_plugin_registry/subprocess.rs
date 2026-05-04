@@ -167,6 +167,64 @@ impl SubprocessNexoPlugin {
         }
     }
 
+    /// Phase 81.26 — for each backend name in
+    /// `manifest.plugin.extends.memory_backends`, build a
+    /// `RemoteVectorBackend` sharing this plugin's stdio bridge
+    /// and register it with the vector backend registry.
+    /// Returns the list of registered backend names. On
+    /// `NameAlreadyRegistered`, rolls back any backends this
+    /// call already registered. Must be called AFTER `init()`.
+    pub async fn register_remote_vector_backends(
+        &self,
+        registry: &Arc<crate::agent::vector_backend_registry::VectorBackendRegistry>,
+    ) -> Result<
+        Vec<String>,
+        crate::agent::vector_backend_registry::VectorBackendRegistrationError,
+    > {
+        let backends = self.cached_manifest.plugin.extends.memory_backends.clone();
+        if backends.is_empty() {
+            return Ok(Vec::new());
+        }
+        let plugin_id = self.cached_manifest.plugin.id.clone();
+        let (stdin_tx, pending, next_id) = {
+            let guard = self.inner.lock().await;
+            match guard.as_ref() {
+                Some(inner) => (
+                    inner.stdin_tx.clone(),
+                    inner.pending.clone(),
+                    inner.next_id.clone(),
+                ),
+                None => {
+                    return Err(
+                        crate::agent::vector_backend_registry::VectorBackendRegistrationError::InnerUnavailable,
+                    );
+                }
+            }
+        };
+
+        let mut registered: Vec<String> = Vec::new();
+        for name in backends {
+            let backend: Arc<dyn nexo_memory::VectorBackend> =
+                Arc::new(crate::agent::vector_remote::RemoteVectorBackend::new(
+                    name.clone(),
+                    plugin_id.clone(),
+                    stdin_tx.clone(),
+                    pending.clone(),
+                    next_id.clone(),
+                ));
+            match registry.register(backend, plugin_id.clone()) {
+                Ok(()) => registered.push(name),
+                Err(e) => {
+                    for prior in &registered {
+                        registry.unregister(prior, &plugin_id);
+                    }
+                    return Err(e);
+                }
+            }
+        }
+        Ok(registered)
+    }
+
     /// Phase 81.27 — for each hook name in
     /// `manifest.plugin.extends.hooks`, build a
     /// `RemoteHookHandler` sharing this plugin's stdio bridge

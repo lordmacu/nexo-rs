@@ -28,6 +28,8 @@ pub mod followup_tool;
 pub mod heartbeat_tool;
 pub mod hook_registry;
 pub mod hook_remote;
+pub mod vector_backend_registry;
+pub mod vector_remote;
 pub mod inbox;
 pub mod inbox_router;
 pub mod list_peers_tool;
@@ -117,6 +119,10 @@ pub use followup_tool::{CancelFollowupTool, CheckFollowupTool, StartFollowupTool
 pub use heartbeat_tool::HeartbeatTool;
 pub use hook_registry::{HookHandler, HookOutcome, HookRegistry};
 pub use hook_remote::{HookHandlerRegistrationError, RemoteHookHandler};
+pub use vector_backend_registry::{
+    VectorBackendRegistrationError, VectorBackendRegistry,
+};
+pub use vector_remote::RemoteVectorBackend;
 pub use llm_behavior::LlmAgentBehavior;
 pub use llm_remote::{
     LlmProviderRegistrationError, RemoteLlmClient, RemoteLlmFactory, StreamingPending,

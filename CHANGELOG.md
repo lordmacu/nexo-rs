@@ -38,6 +38,85 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.26 — Remote memory backend wrapper (subprocess-
+  backed, vector-only).** New `RemoteVectorBackend` implements
+  the `VectorBackend` trait by translating each upsert/search/
+  delete call into a single JSON-RPC request over the subprocess
+  plugin's stdio bridge. Subprocess plugins declaring
+  `[plugin.extends].memory_backends = ["pinecone"]` get a
+  backend handle registered into the daemon's
+  `VectorBackendRegistry` automatically at boot.
+
+  Three new wire methods (contract v1.8.0):
+
+  ```jsonc
+  // host → child — memory.vector_upsert
+  {
+    "jsonrpc": "2.0",
+    "id": 70,
+    "method": "memory.vector_upsert",
+    "params": {
+      "plugin_id": "pinecone",
+      "namespace": "kb",
+      "records": [
+        {"id": "r1", "content": "...", "embedding": [0.1, 0.2],
+         "metadata": {}}
+      ]
+    }
+  }
+  // child → host
+  {"jsonrpc": "2.0", "id": 70, "result": {"count": 1}}
+  ```
+
+  Plus `memory.vector_search` (returns `{matches: [...]}`) and
+  `memory.vector_delete` (returns `{count: N}`). Error band
+  `-33301..=-33304` covers backend-unavailable / invalid-query /
+  backend-internal / timeout. Default timeouts 30 s for write
+  ops, 10 s for search; overridable via
+  `NEXO_PLUGIN_MEMORY_TIMEOUT_MS`.
+
+  New host-side types in `nexo-memory::vector_backend`:
+  - `VectorBackend` trait (object-safe, `async_trait`).
+  - `VectorRecord` / `VectorQuery` / `VectorMatch` /
+    `UpsertAck` / `DeleteAck` wire types.
+
+  New host-side types in `nexo-core::agent`:
+  - `VectorBackendRegistry` — `BTreeMap`-backed first-wins
+    registry with ownership-checked `unregister`.
+  - `RemoteVectorBackend` — `Arc<Inner>` clone of the
+    subprocess transport; `register_remote_vector_backends`
+    rolls back on `NameAlreadyRegistered` collision.
+  - `VectorBackendRegistrationError::{NameAlreadyRegistered,
+    InnerUnavailable}`.
+
+  Integration: post-init hook
+  `register_remote_vector_backends_after_init` chained after
+  the Phase 81.27 hook chain in both Ok arms (auto-subprocess
+  fallback + factory-registered) of
+  `run_plugin_init_loop_with_factory`. Registry exposed via
+  `WirePluginRegistryOutput.vector_backend_registry`.
+
+  **Completes the 4-wrapper subprocess quartet** — Phase 81.24
+  (`RemoteChannelAdapter`) + 81.25 (`RemoteLlmClient`) + 81.27
+  (`RemoteHookHandler`) + 81.26 (`RemoteVectorBackend`) — all
+  backed by 81.28's `extends.<section>` manifest schema. From
+  this point a subprocess plugin can extend any of the four
+  framework extension surfaces purely via TOML declaration
+  plus implementing the corresponding wire methods. No host
+  rebuild required to add a new vector backend, channel
+  adapter, LLM provider, or hook handler.
+
+  Authoring docs gain a "Contributing memory backends" section
+  with a Rust subprocess sketch. Contract spec advances to
+  v1.8.0 with §5.w "Memory backend methods (Phase 81.26)".
+
+  Follow-ups: 81.26.b consumer-side wiring
+  (`LongTermMemory.recall_vector` → registry resolution),
+  81.26.c typed `MemoryBackendError` enum, 81.26.d
+  `RegistriesBundle` consolidation across 81.24-27 (init loop
+  carries 7 registry args today), 81.26.e binary embedding
+  encoding for large vectors. See FOLLOWUPS.md.
+
 - **Phase 81.27 — Remote `HookInterceptor` wrapper (subprocess-
   backed).** New `RemoteHookHandler` implements the existing
   `HookHandler` trait by translating each `on_hook(name, event)`
