@@ -1506,6 +1506,60 @@ coordinación de archivos cross-cutting.
   `VectorRecord`/`VectorQuery` with feature negotiation at
   `initialize`. ~0.5 d.
 
+- **81.22 ✅ shipped 2026-05-04** — Plugin sandbox v1
+  (bwrap-based, fs/network allowlist). New
+  `[plugin.sandbox]` manifest section (5 fields, default
+  off) + `SandboxSection` types + hard denylist consts
+  (17 host paths + 11 home subpaths, compile-time) +
+  `validate_sandbox` + 4 new ManifestError variants. New
+  `SandboxRunner` discovers `bwrap` once at boot + caches
+  env-driven capability flags
+  (`NEXO_PLUGIN_SANDBOX_REQUIRE` / `NEXO_PLUGIN_SANDBOX_HOST_NET_ALLOW`).
+  `spawn_and_handshake` wraps `Command::new(...)` with
+  bwrap argv when `enabled = true`. macOS = no-op + warn
+  (defer 81.22.macos). Capability inventory: 2 new
+  entries + 7 pre-existing NEXO_* envs added to
+  NON_DANGEROUS_ENV_ALLOWLIST cleaning the drift test.
+  Contract v1.9.0 §2.2 + authoring docs "Sandboxing your
+  plugin" section. 1331/1331 nexo-core lib + 102/102
+  plugin-manifest + 273/273 setup + 6/6 e2e tests pass +
+  workspace builds clean + mdbook clean.
+
+- **81.22.b ⬜** Granular network egress allowlist
+  (`network = "allowlist", network_allowlist =
+  ["api.example.com:443"]`). Today only `deny` and `host`.
+  Implementation: slirp4netns (already used by Podman) +
+  nftables rules built from manifest list. Per-host CIDR /
+  port-range tightening. ~2 d.
+
+- **81.22.c ⬜** Per-syscall seccomp filters via
+  `seccompiler` crate. Plugin-specific syscall sets
+  layered on top of bwrap's default filter. Manifest
+  declares `[plugin.sandbox.seccomp] profile =
+  "<default|tight|custom>"` with custom JSON-rule
+  optional. Risk: complexity + plugin-author confusion if
+  defaults are wrong. ~3 d.
+
+- **81.22.d ⬜** Doctor CLI sandbox surface. `nexo agent
+  doctor plugins` extends with per-plugin
+  `{ sandbox_required, sandbox_active, runner_path,
+  network_mode, fs_paths }` rows. JSON envelope mirror.
+  ~0.5 d.
+
+- **81.22.macos ⬜** Native macOS sandbox-exec
+  integration. Generate `.sb` profile from manifest at
+  spawn time. Risk: Apple has marked sandbox-exec
+  deprecated since 10.15; could break in a future macOS
+  release. Defer until enterprise customer asks. ~2 d.
+
+- **81.22.e ⬜** Symlink canonicalization for sandbox
+  allowlist entries. Today validator does string-match
+  only — a symlinked path like `/var/log/myapp -> /etc`
+  could in theory be exposed without the denylist
+  catching it. Real-world risk low (operator-supplied
+  paths, not attacker-supplied) but defense-in-depth
+  hardening is cheap. ~0.3 d.
+
 - **81.15.c.b ✅ shipped 2026-05-01** — SDK streaming
   consumption helper. Pending value type changed to
   `PendingKind` enum (Single for non-streaming, Streaming for

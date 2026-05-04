@@ -461,6 +461,33 @@ const INVENTORY: &[CapabilityToggle] = &[
                  results truncated.",
         hint: "export NEXO_MEMORY_RESTORE_ALLOW=true",
     },
+    // ── Phase 81.22 — Plugin sandbox capability gates ────────────
+    CapabilityToggle {
+        extension: "core",
+        env_var: "NEXO_PLUGIN_SANDBOX_REQUIRE",
+        kind: ToggleKind::Boolean,
+        risk: Risk::Low,
+        effect: "Refuse to spawn any subprocess plugin without \
+                 `[plugin.sandbox] enabled = true` in its manifest. \
+                 Strict-mode operator gate for hardened deployments \
+                 that only run sandboxed plugins. Implies bwrap \
+                 must be installed on Linux; macOS treated as \
+                 unsupported and fails the spawn.",
+        hint: "export NEXO_PLUGIN_SANDBOX_REQUIRE=1",
+    },
+    CapabilityToggle {
+        extension: "core",
+        env_var: "NEXO_PLUGIN_SANDBOX_HOST_NET_ALLOW",
+        kind: ToggleKind::Boolean,
+        risk: Risk::High,
+        effect: "Permit subprocess plugins to declare \
+                 `[plugin.sandbox] network = \"host\"` (share the \
+                 daemon's network namespace). Defeats most of the \
+                 sandbox; off by default. Manifests requesting \
+                 host network are rejected at validation time \
+                 unless this flag is set.",
+        hint: "export NEXO_PLUGIN_SANDBOX_HOST_NET_ALLOW=1",
+    },
 ];
 
 pub fn inventory() -> &'static [CapabilityToggle] {
@@ -1037,6 +1064,14 @@ mod drift_tests {
         "DELEGATE_TARGET",     // delegation_e2e_test fixture.
         "WA_LIVE_PEER_JID",    // WhatsApp live integration test.
         "WA_LIVE_SESSION_DIR", // WhatsApp live integration test.
+        // ---- Plugin runtime tuning (non-destructive operator knobs) ----
+        "NEXO_INSTALL_TARGET",            // ext-installer arch override.
+        "NEXO_PLUGIN_INIT_TIMEOUT_MS",    // 81.17 init handshake timeout.
+        "NEXO_PLUGIN_NAMESPACE_STRICT",   // 81.3 strict-mode escalation.
+        "NEXO_PLUGIN_CHANNEL_TIMEOUT_MS", // 81.24 RemoteChannelAdapter timeout.
+        "NEXO_PLUGIN_LLM_TIMEOUT_MS",     // 81.25 RemoteLlmClient timeout.
+        "NEXO_PLUGIN_HOOK_TIMEOUT_MS",    // 81.27 RemoteHookHandler timeout.
+        "NEXO_PLUGIN_MEMORY_TIMEOUT_MS",  // 81.26 RemoteVectorBackend timeout.
         // ---- LLM provider tuning (non-destructive) ----
         // Anthropic
         "ANTHROPIC_VERSION",

@@ -2201,6 +2201,11 @@ async fn main() -> Result<()> {
         // (Minimax, OpenAI, etc.).
         llm_registry: llm_registry.clone(),
         llm_config: Arc::new(cfg.llm.clone()),
+        // Phase 81.22 — sandbox runner: discover bwrap once at
+        // boot + cache env-driven capability flags. Plugins
+        // declaring `[plugin.sandbox] enabled = true` get their
+        // command wrapped at spawn time.
+        sandbox: nexo_core::agent::plugin_sandbox::shared_runner_from_env(),
     };
     let wire =
         nexo_core::agent::nexo_plugin_registry::wire_plugin_registry_with_runtime(

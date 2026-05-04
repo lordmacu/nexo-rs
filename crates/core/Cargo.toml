@@ -90,6 +90,8 @@ semver          = { workspace = true }
 # Phase 81.5 — plugin discovery walker + manifest parsing
 walkdir         = "2"
 toml            = "0.8"
+# Phase 81.22 — bwrap binary discovery for sandbox runner.
+which           = { workspace = true }
 # Phase 82.11.bridge — multi-host firehose emitter publishes
 # AgentEventKind frames to a NATS subject so operator UIs hosted
 # off-daemon receive events from every node.

@@ -21,6 +21,10 @@ use semver::Version;
 
 use crate::error::ManifestError;
 use crate::manifest::{Capability, ExtendsSection, PluginManifest};
+use crate::sandbox::{
+    contains_state_dir_token, path_under_or_equals_denylist, SandboxNetwork, SandboxPathKind,
+    SandboxSection, SANDBOX_DENYLIST_HOST_PATHS, SANDBOX_STATE_DIR_TOKEN,
+};
 
 const ID_REGEX_SRC: &str = r"^[a-z][a-z0-9_]{0,31}$";
 const CHANNEL_KIND_REGEX_SRC: &str = r"^[a-z][a-z0-9_]{0,31}$";
@@ -37,10 +41,26 @@ fn channel_kind_regex() -> &'static Regex {
     R.get_or_init(|| Regex::new(CHANNEL_KIND_REGEX_SRC).expect("valid channel-kind regex"))
 }
 
-/// Run every validator and append errors to `errors`.
+/// Run every validator and append errors to `errors`. Sandbox
+/// validation runs with `host_net_allowed = false` (the strict
+/// default — operator opt-in is checked host-side at boot via
+/// [`run_all_with_sandbox_env`]).
 pub fn run_all(
     manifest: &PluginManifest,
     current_nexo_version: &Version,
+    errors: &mut Vec<ManifestError>,
+) {
+    run_all_with_sandbox_env(manifest, current_nexo_version, false, errors);
+}
+
+/// Phase 81.22 — env-aware variant. `host_net_allowed` is the
+/// boot-time read of `NEXO_PLUGIN_SANDBOX_HOST_NET_ALLOW`. The
+/// daemon's `wire_plugin_registry` calls this; CLI tools and
+/// tests call [`run_all`] which assumes the strict default.
+pub fn run_all_with_sandbox_env(
+    manifest: &PluginManifest,
+    current_nexo_version: &Version,
+    host_net_allowed: bool,
     errors: &mut Vec<ManifestError>,
 ) {
     validate_id(&manifest.plugin.id, errors);
@@ -77,6 +97,7 @@ pub fn run_all(
     validate_capability_impl(manifest, errors);
     validate_capability_gates_unique(&manifest.plugin.capability_gates.gates, errors);
     validate_supervisor(&manifest.plugin.supervisor, errors);
+    validate_sandbox(&manifest.plugin.sandbox, host_net_allowed, errors);
 }
 
 /// Phase 81.21.b — guard against a manifest requesting an
@@ -93,6 +114,75 @@ fn validate_supervisor(
         errors.push(ManifestError::SupervisorStderrTailExceedsCap {
             value: supervisor.stderr_tail_lines,
             max: super::manifest::SUPERVISOR_STDERR_TAIL_MAX,
+        });
+    }
+}
+
+/// Phase 81.22 — sandbox section validator. Skips entirely when
+/// `enabled = false` (the section is descriptive but inactive).
+/// Otherwise checks: path absoluteness, denylist match,
+/// `${state_dir}` placement, host-network capability gate.
+fn validate_sandbox(
+    sandbox: &SandboxSection,
+    host_net_allowed: bool,
+    errors: &mut Vec<ManifestError>,
+) {
+    if !sandbox.enabled {
+        return;
+    }
+
+    if sandbox.network == SandboxNetwork::Host && !host_net_allowed {
+        errors.push(ManifestError::SandboxHostNetworkWithoutCapability);
+    }
+
+    for path in &sandbox.fs_read_paths {
+        validate_sandbox_path(path, SandboxPathKind::Read, errors);
+    }
+    for path in &sandbox.fs_write_paths {
+        validate_sandbox_path(path, SandboxPathKind::Write, errors);
+    }
+}
+
+fn validate_sandbox_path(
+    path: &str,
+    kind: SandboxPathKind,
+    errors: &mut Vec<ManifestError>,
+) {
+    // ${state_dir} token is only meaningful in fs_write_paths;
+    // anywhere else it's a typo for read intent and we surface it
+    // explicitly so the operator catches the wrong-list mistake.
+    if kind == SandboxPathKind::Read && contains_state_dir_token(path) {
+        errors.push(ManifestError::SandboxInvalidStateDirInterpolation {
+            path: path.to_string(),
+        });
+        return;
+    }
+
+    // Effective path for absolute-check + denylist: substitute
+    // ${state_dir} with a sentinel absolute prefix so the rest of
+    // the validator sees a fully-absolute path. Host-side
+    // SandboxRunner does the real expansion at spawn time.
+    let probe = if contains_state_dir_token(path) {
+        path.replace(SANDBOX_STATE_DIR_TOKEN, "/__sandbox_state_dir__")
+    } else {
+        path.to_string()
+    };
+
+    if !probe.starts_with('/') {
+        errors.push(ManifestError::SandboxRelativePath {
+            path: path.to_string(),
+            kind,
+        });
+        return;
+    }
+
+    if let Some(denylisted) =
+        path_under_or_equals_denylist(&probe, SANDBOX_DENYLIST_HOST_PATHS)
+    {
+        errors.push(ManifestError::SandboxAllowlistTouchesDenylist {
+            path: path.to_string(),
+            denylisted: denylisted.to_string(),
+            kind,
         });
     }
 }
@@ -647,5 +737,118 @@ expose = ["wrong_prefix"]
                 ("hooks", "h1"),
             ]
         );
+    }
+
+    // ── Phase 81.22 sandbox validator ─────────────────────────
+
+    fn manifest_with_sandbox(body: &str) -> PluginManifest {
+        let toml = format!(
+            "{}\n[plugin.sandbox]\n{}\n",
+            base_manifest_toml(),
+            body
+        );
+        parse(&toml)
+    }
+
+    #[test]
+    fn sandbox_disabled_skips_all_checks() {
+        // enabled = false: even denylisted paths in the section
+        // produce zero violations because the section is inert.
+        let m = manifest_with_sandbox(
+            "enabled = false\n\
+             fs_read_paths = [\"/etc/shadow\"]\n\
+             fs_write_paths = [\"relative/path\"]\n\
+             network = \"host\"",
+        );
+        let mut errs = Vec::new();
+        run_all_with_sandbox_env(&m, &current(), false, &mut errs);
+        assert!(
+            !errs.iter().any(|e| matches!(
+                e,
+                ManifestError::SandboxAllowlistTouchesDenylist { .. }
+                    | ManifestError::SandboxRelativePath { .. }
+                    | ManifestError::SandboxHostNetworkWithoutCapability
+            )),
+            "disabled sandbox must not emit sandbox violations: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn sandbox_valid_enabled_section_passes() {
+        let m = manifest_with_sandbox(
+            "enabled = true\n\
+             network = \"deny\"\n\
+             fs_read_paths = [\"/etc/ssl/certs\"]\n\
+             fs_write_paths = [\"${state_dir}\", \"/tmp/plugin-scratch\"]",
+        );
+        m.validate(&current()).unwrap();
+    }
+
+    #[test]
+    fn sandbox_rejects_denylisted_host_path() {
+        let m = manifest_with_sandbox(
+            "enabled = true\n\
+             fs_read_paths = [\"/etc/shadow\"]",
+        );
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(errs.iter().any(|e| matches!(
+            e,
+            ManifestError::SandboxAllowlistTouchesDenylist { denylisted, .. }
+                if denylisted == "/etc/shadow"
+        )));
+    }
+
+    #[test]
+    fn sandbox_rejects_relative_allowlist_path() {
+        let m = manifest_with_sandbox(
+            "enabled = true\n\
+             fs_write_paths = [\"data/cache\"]",
+        );
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(errs.iter().any(|e| matches!(
+            e,
+            ManifestError::SandboxRelativePath { path, kind }
+                if path == "data/cache" && *kind == SandboxPathKind::Write
+        )));
+    }
+
+    #[test]
+    fn sandbox_rejects_state_dir_token_in_read_paths() {
+        let m = manifest_with_sandbox(
+            "enabled = true\n\
+             fs_read_paths = [\"${state_dir}/cache\"]",
+        );
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(errs.iter().any(|e| matches!(
+            e,
+            ManifestError::SandboxInvalidStateDirInterpolation { path }
+                if path == "${state_dir}/cache"
+        )));
+    }
+
+    #[test]
+    fn sandbox_rejects_host_network_without_capability() {
+        let m = manifest_with_sandbox(
+            "enabled = true\n\
+             network = \"host\"",
+        );
+        let mut errs = Vec::new();
+        run_all_with_sandbox_env(&m, &current(), false, &mut errs);
+        assert!(errs
+            .iter()
+            .any(|e| matches!(e, ManifestError::SandboxHostNetworkWithoutCapability)));
+    }
+
+    #[test]
+    fn sandbox_accepts_host_network_with_capability() {
+        let m = manifest_with_sandbox(
+            "enabled = true\n\
+             network = \"host\"",
+        );
+        let mut errs = Vec::new();
+        run_all_with_sandbox_env(&m, &current(), true, &mut errs);
+        assert!(!errs
+            .iter()
+            .any(|e| matches!(e, ManifestError::SandboxHostNetworkWithoutCapability)));
     }
 }

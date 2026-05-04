@@ -45,6 +45,7 @@ pub mod discover;
 pub mod error;
 pub mod id_regex;
 pub mod manifest;
+pub mod sandbox;
 pub mod validate;
 
 pub use discover::{discover_in_root, PLUGIN_MANIFEST_FILENAMES};
@@ -61,4 +62,9 @@ pub use manifest::{
     SkillsSection, SupervisorSection, ToolsSection, UiHint, UiSection,
     CURRENT_MANIFEST_VERSION, EXTENDS_SECTIONS, PLUGIN_MANIFEST_FILENAME,
     SUPERVISOR_STDERR_TAIL_MAX,
+};
+pub use sandbox::{
+    contains_state_dir_token, path_under_or_equals_denylist, SandboxNetwork, SandboxPathKind,
+    SandboxSection, SANDBOX_DENYLIST_HOME_SUBPATHS, SANDBOX_DENYLIST_HOST_PATHS,
+    SANDBOX_STATE_DIR_TOKEN,
 };

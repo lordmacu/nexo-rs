@@ -101,6 +101,19 @@ pub struct SubprocessNexoPlugin {
     /// Live state — populated by `init()`. None means the plugin
     /// hasn't been started or its boot failed.
     inner: Mutex<Option<Inner>>,
+
+    /// Phase 81.22 — sandbox runner threaded by `init()` from
+    /// `PluginInitContext.sandbox`. None for tests that call
+    /// `spawn_and_handshake` directly without going through
+    /// init() — those paths skip sandbox wrapping (default
+    /// disabled, equivalent to `sandbox.enabled = false`).
+    sandbox: Mutex<Option<Arc<crate::agent::plugin_sandbox::SandboxRunner>>>,
+
+    /// Phase 81.22 — plugin's per-instance state dir, used to
+    /// expand `${state_dir}` tokens in `fs_write_paths`.
+    /// Threaded from `PluginInitContext::plugin_state_dir(...)`
+    /// at init time.
+    plugin_state_dir: Mutex<Option<std::path::PathBuf>>,
 }
 
 /// Per-instance live state. Separated from the outer struct so
@@ -164,6 +177,8 @@ impl SubprocessNexoPlugin {
         Self {
             cached_manifest: manifest,
             inner: Mutex::new(None),
+            sandbox: Mutex::new(None),
+            plugin_state_dir: Mutex::new(None),
         }
     }
 
@@ -439,8 +454,49 @@ impl SubprocessNexoPlugin {
             }
         }
 
-        let mut cmd = Command::new(&command);
-        cmd.args(&entry.args)
+        // Phase 81.22 — wrap the spawn command with the sandbox
+        // runner when one is configured. `init()` stashes the
+        // runner + state dir; tests calling spawn_and_handshake
+        // directly leave both as None → wrap_command resolves to
+        // the raw command (sandbox-disabled passthrough).
+        let (program, prog_args) = {
+            let runner_guard = self.sandbox.lock().await;
+            let state_guard = self.plugin_state_dir.lock().await;
+            match (runner_guard.as_ref(), state_guard.as_ref()) {
+                (Some(runner), Some(state_dir)) => {
+                    let wrapped = runner
+                        .wrap_command(
+                            &self.cached_manifest,
+                            state_dir,
+                            &command,
+                            &entry.args,
+                        )
+                        .map_err(|e| {
+                            anyhow::anyhow!("sandbox setup failed: {e}")
+                        })?;
+                    if let Some(diag) = &wrapped.diagnostic {
+                        tracing::warn!(
+                            target: "plugin.sandbox",
+                            plugin_id = %self.cached_manifest.plugin.id,
+                            "{}",
+                            diag
+                        );
+                    }
+                    (wrapped.program, wrapped.args)
+                }
+                _ => (
+                    std::path::PathBuf::from(&command),
+                    entry
+                        .args
+                        .iter()
+                        .map(std::ffi::OsString::from)
+                        .collect::<Vec<_>>(),
+                ),
+            }
+        };
+
+        let mut cmd = Command::new(&program);
+        cmd.args(&prog_args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             // Phase 81.23 — pipe stderr into the daemon's tracing
@@ -1590,6 +1646,15 @@ impl NexoPlugin for SubprocessNexoPlugin {
         &self,
         ctx: &mut PluginInitContext<'_>,
     ) -> Result<(), PluginInitError> {
+        // Phase 81.22 — stash the sandbox runner + plugin state
+        // dir so `spawn_and_handshake` can wrap the child Command
+        // with bwrap argv when the manifest declares
+        // `[plugin.sandbox] enabled = true`.
+        let plugin_id = self.cached_manifest.plugin.id.clone();
+        let plugin_state_dir = ctx.plugin_state_dir(&plugin_id);
+        *self.sandbox.lock().await = Some(ctx.sandbox.clone());
+        *self.plugin_state_dir.lock().await = Some(plugin_state_dir);
+
         // Phase 81.20.b.b — build LlmServices from the context's
         // already-threaded registry + config so `llm.complete`
         // RPC requests reach operator-configured providers.

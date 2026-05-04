@@ -144,6 +144,54 @@ pub enum ManifestError {
         id: String,
         sections: Vec<&'static str>,
     },
+
+    /// Phase 81.22 — sandbox allowlist entry equals or contains a
+    /// host path on the hard denylist. `path` is the manifest
+    /// allowlist entry, `denylisted` is the denylist match,
+    /// `kind` distinguishes `fs_read_paths` from `fs_write_paths`.
+    #[error(
+        "[plugin.sandbox].{kind:?} entry `{path}` rejected: equals or covers denylisted host path `{denylisted}`. \
+         Narrow the allowlist to a sibling that does not include `{denylisted}`."
+    )]
+    SandboxAllowlistTouchesDenylist {
+        path: String,
+        denylisted: String,
+        kind: crate::sandbox::SandboxPathKind,
+    },
+
+    /// Phase 81.22 — sandbox allowlist entry must be an absolute
+    /// path. Relative paths are ambiguous (relative to plugin
+    /// root? cwd? state_dir?) and bwrap binds need absolute
+    /// host paths anyway.
+    #[error(
+        "[plugin.sandbox].{kind:?} entry `{path}` rejected: must be an absolute path starting with `/`."
+    )]
+    SandboxRelativePath {
+        path: String,
+        kind: crate::sandbox::SandboxPathKind,
+    },
+
+    /// Phase 81.22 — `${state_dir}` token appears in
+    /// `fs_read_paths`. State dir is the plugin's per-instance
+    /// owned write space; reading from it is meaningless.
+    /// Operators using this token are usually trying to declare
+    /// a write mount and put it in the wrong list.
+    #[error(
+        "[plugin.sandbox].fs_read_paths entry `{path}` rejected: `${{state_dir}}` token only allowed in fs_write_paths."
+    )]
+    SandboxInvalidStateDirInterpolation {
+        path: String,
+    },
+
+    /// Phase 81.22 — manifest declares `network = \"host\"` but
+    /// the operator-side capability `NEXO_PLUGIN_SANDBOX_HOST_NET_ALLOW`
+    /// is not set. Sharing the host network namespace defeats
+    /// most of the sandbox; operator must opt in explicitly.
+    #[error(
+        "[plugin.sandbox].network = \"host\" rejected: requires operator-side capability \
+         NEXO_PLUGIN_SANDBOX_HOST_NET_ALLOW=1. Either set that env var or switch to network = \"deny\"."
+    )]
+    SandboxHostNetworkWithoutCapability,
 }
 
 #[cfg(test)]

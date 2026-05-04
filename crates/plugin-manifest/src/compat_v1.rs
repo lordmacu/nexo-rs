@@ -314,6 +314,7 @@ fn migrate_v1_to_v2(legacy: LegacyV1Manifest) -> Result<MigrationOutcome, Manife
             repository: legacy.meta.repository,
         },
         supervisor: Default::default(),
+        sandbox: Default::default(),
         entrypoint,
     };
 

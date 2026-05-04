@@ -200,6 +200,14 @@ pub struct PluginInitContext<'a> {
     /// Validation errors short-circuit `init()` with
     /// `InitOutcome::Failed` BEFORE the plugin runs.
     pub plugin_config: Arc<serde_yaml::Value>,
+
+    /// Phase 81.22 — shared sandbox runner. Subprocess plugin
+    /// adapters consume this at spawn time to wrap the child
+    /// `Command` with bwrap argv when the plugin's manifest
+    /// declares `[plugin.sandbox] enabled = true`. In-tree
+    /// plugins ignore the field. Built once by
+    /// `SubprocessRuntime` at boot.
+    pub sandbox: Arc<crate::agent::plugin_sandbox::SandboxRunner>,
 }
 
 impl PluginInitContext<'_> {
