@@ -12,42 +12,75 @@ use nexo_config::WhatsappPluginConfig;
 
 use crate::pairing::SharedPairingState;
 
-/// One-shot pairing helper used by the setup wizard. Spawns a
-/// `wa-agent` Client with a terminal QR renderer, blocks on
-/// `connect()` until the user scans. First successful connect
-/// persists to `<session_dir>/.whatsapp-rs/` so later boots of the
-/// main agent resume silently.
+/// Phase 82.10.p — outcome returned by `pair_with_callback`.
+/// Today carries no fields beyond the success signal; future
+/// channels may extend with `device_jid` etc. once wa-agent
+/// surfaces them post-connect.
+#[derive(Debug, Default, Clone)]
+pub struct PairingOutcome {}
+
+/// Phase 82.10.p — one-shot pairing helper that surfaces every
+/// QR rotation through `on_qr` callback. Used by:
 ///
-/// Lives here (not in the setup crate) so the "how to pair" knowledge
-/// stays next to the rest of the wa-agent wrapping — callers don't
-/// need to pull `wa-agent` themselves.
-pub async fn pair_once(session_dir: &Path) -> Result<()> {
+/// - **Setup CLI** (`agent setup whatsapp`): passes a closure
+///   that renders the QR to stdout (terminal scan). Wrapped
+///   by [`pair_once`] for backwards compat.
+/// - **Admin RPC pairing trigger** (Phase 82.10.p Step 5):
+///   passes a closure that pushes
+///   `(qr_png_base64, qr_ascii, expires_at_ms)` into the
+///   challenge store + the SSE notifier so the operator UI
+///   can render the QR live.
+///
+/// Returns when wa-agent's `connect()` resolves (creds persisted
+/// to `<session_dir>/.whatsapp-rs/`). Caller is responsible for
+/// observing cancel signals + dropping the future when the
+/// operator aborts (the trigger task in
+/// `WhatsappPairingTrigger` does this via `tokio::select!`).
+pub async fn pair_with_callback<F>(session_dir: &Path, on_qr: F) -> Result<PairingOutcome>
+where
+    F: FnMut(String, String, u64) + Send + 'static,
+{
     tokio::fs::create_dir_all(session_dir)
         .await
         .with_context(|| format!("mkdir {}", session_dir.display()))?;
 
+    // wa-agent's on_qr handler is `Fn(&str)`, not async.
+    // Wrap our `FnMut` in a Mutex so the synchronous callback
+    // can mutably re-enter it on every QR rotation.
+    use std::sync::Mutex;
+    let on_qr_arc = Arc::new(Mutex::new(on_qr));
+    let on_qr_for_handler = on_qr_arc.clone();
+
     let client = whatsapp_rs::Client::new_in_dir(session_dir)
         .context("wa-agent Client::new_in_dir failed")?
-        .on_qr(|qr_payload| {
+        .on_qr(move |qr_payload| {
             let payload = qr_payload.to_string();
-            match qrcode::QrCode::new(payload.as_bytes()) {
+            let (ascii, png_b64) = match qrcode::QrCode::new(payload.as_bytes()) {
                 Ok(code) => {
-                    // Inverted colors so the QR scans from both dark
-                    // and light terminal themes. Quiet zone keeps
-                    // phones from losing the finder patterns.
-                    let rendered = code
+                    // ASCII: inverted colors + quiet zone so the
+                    // QR scans on both dark + light terminal themes.
+                    let ascii = code
+                        .clone()
                         .render::<qrcode::render::unicode::Dense1x2>()
                         .dark_color(qrcode::render::unicode::Dense1x2::Light)
                         .light_color(qrcode::render::unicode::Dense1x2::Dark)
                         .quiet_zone(true)
                         .build();
-                    println!();
-                    println!("{rendered}");
-                    println!("Esperando scan…");
+                    let png_b64 = render_qr_png(&payload);
+                    (ascii, png_b64)
                 }
                 Err(e) => {
-                    eprintln!("QR render failed: {e} (payload: {payload})");
+                    tracing::warn!(error = %e, payload = %payload, "QR render failed");
+                    (String::new(), String::new())
                 }
+            };
+            // WhatsApp QRs rotate roughly every 20 s — we hand
+            // out the conservative end so UIs that count down
+            // never overshoot. The next on_qr callback will
+            // refresh the bound.
+            let expires_at_ms = epoch_ms_now().saturating_add(20_000);
+            if let Ok(mut cb) = on_qr_for_handler.lock() {
+                cb(png_b64, ascii, expires_at_ms);
             }
         });
 
@@ -55,7 +88,36 @@ pub async fn pair_once(session_dir: &Path) -> Result<()> {
         .connect()
         .await
         .context("wa-agent connect failed — ¿QR expirado? ¿conectividad?")?;
-    Ok(())
+    Ok(PairingOutcome::default())
+}
+
+/// One-shot pairing helper used by the setup wizard. Spawns a
+/// `wa-agent` Client with a terminal QR renderer, blocks on
+/// `connect()` until the user scans. First successful connect
+/// persists to `<session_dir>/.whatsapp-rs/` so later boots of the
+/// main agent resume silently.
+///
+/// Phase 82.10.p — now a thin wrapper over [`pair_with_callback`]
+/// that prints the QR to stdout. New callers (admin RPC trigger,
+/// future channel UIs) should use `pair_with_callback` directly
+/// so they can route QR data wherever they need it.
+pub async fn pair_once(session_dir: &Path) -> Result<()> {
+    pair_with_callback(session_dir, |_png_b64, ascii, _expires| {
+        println!();
+        println!("{ascii}");
+        println!("Esperando scan…");
+    })
+    .await
+    .map(|_outcome| ())
+}
+
+/// Epoch-ms helper used to stamp QR rotation deadlines.
+fn epoch_ms_now() -> u64 {
+    use std::time::SystemTime;
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// Ensure `session_dir` and `media_dir` exist; return the resolved XDG
@@ -161,12 +223,12 @@ pub async fn connect_session(
     Ok(session)
 }
 
-/// Render the pairing payload as a base64-encoded PNG for UIs. Fails
-/// soft — returns an empty string when rendering fails so the ascii
-/// QR is still usable. `#[cfg(test)]` — runtime no longer renders QRs
-/// (pairing moved to the setup wizard), but the helper stays covered
-/// so we can re-enable if a future UI wants PNG QRs again.
-#[cfg(test)]
+/// Render the pairing payload as a base64-encoded PNG for UIs.
+/// Fails soft — returns an empty string when rendering fails so
+/// the ascii QR is still usable. Phase 82.10.p — promoted from
+/// test-only to production: `pair_with_callback` invokes it on
+/// every QR rotation so admin RPC pairing can stream PNG data
+/// to the operator UI.
 fn render_qr_png(payload: &str) -> String {
     use base64::Engine;
     let code = match qrcode::QrCode::new(payload.as_bytes()) {
