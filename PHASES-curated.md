@@ -43,26 +43,28 @@ top of the list when starting a sprint; do not skip ahead.
 
 ### Suggested pickup order (top → bottom)
 
-1. **P0** — Phase 84.1 coordinator persona system prompt (in flight: brainstorm + spec + plan approved → `/forge ejecutar 84.1`)
-2. **P0** — Phase 84.2 → 84.3 → 84.4 → 84.5 (chain of the current phase)
-3. **P1** — Phase 82.12 HTTP server hosting (agent-creator can't bind without it)
-4. **P1** — Phase 82.11 agent event firehose (agent-creator UI can't reconstruct conversations without it)
-5. **P1** — Phase 82.13 agent processing pause + takeover (operator intervention blocks production use)
-6. **P1** — Phase 83.15 microapp testing harness (every author needs it; lands DX value early)
-7. **P1** — Phase 83.16 microapp error → operator path (operational visibility)
-8. **P1** — Phase 83.17 microapp config schema validation (install-time fail-fast)
-9. **P1** — Phase 83.5 compliance primitives (gates 83.8 ventas-etb + serves agent-creator)
-10. **P1** — Phase 83.6 microapp contract document (gates Python/TS authors using 83.7-Rust as porting source)
-11. **P1** — Phase 83.10 second microapp validation (agent-creator production validation)
-12. **P1** — Phase 83.12 → 83.13 → 83.14 React UI scaffold + component library + SDK publish (agent-creator UI shell)
-13. **P2** — Phase 85.1 reactive 413 recovery (defensive, always-on benefit, ~1 d)
-14. **P2** — Phase 86.1 local memory-shape metrics (ops observability, ~1 d)
-15. ✅ ~~Phase 81.5 PluginRegistry::discover~~ (shipped 2026-05-02 library + tests; boot wire + CLI deferred to 81.6)
-16. **P2** — Phase 81.9 Mode::Run registry sweep (~500 → 30 LOC critical milestone)
-17. **P2** — Phase 81.3 / 81.4 / 81.6 / 81.7 / 81.8 (plug-and-play remainder; order after 81.5/9)
-18. **P3** — Phase 85.2 cache-aware micro-compaction (multi-tenant cost optimization, ~3-4 d)
-19. **P3** — Phase 87.1 LlmJudgeEvaluator (depends on Phase 84 fully shipped)
-20. **P3** — Phase 81.10 / 81.11 / 81.12 (plugin hot-load / doctor / migration — after 81.5/9 land)
+**2026-05-04 resync** — Phase 84 ✅ (5/5 shipped 2026-05-01); Phase
+82 P1 chain ✅ (82.6/82.8/82.9/82.11/82.12/82.13/82.14 all
+shipped); Phase 83 microapp foundation P1 chain ✅ (83.3/83.4/
+83.5/83.6/83.7/83.11/83.15/83.16/83.17 all shipped, 83.14
+publish-readiness ✅ — actual `cargo/npm publish` deferred);
+Phase 81 plug-and-play P2/P3 chain ✅ (81.3/81.4/81.5/81.6/
+81.7/81.8/81.9/81.9.b/81.10/81.11/81.12.a-d/81.14-81.28 all
+shipped); Phase 85/86/87 P2/P3 ✅ (85.1/85.2/86.1/87.1 shipped).
+
+Genuine pending:
+
+1. **P1** — Phase 83.10 second microapp validation (agent-creator production validation — out-of-tree work at `/home/familia/chat/agent-creator-microapp/`)
+2. **P1** — Phase 83.12 → 83.13 React UI scaffold + WhatsApp-Web component library (agent-creator UI shell — out-of-tree)
+3. **P1** — Phase 83.14.b actual `cargo publish` + `npm publish` (decouples agent-creator from in-tree path; readiness work ✅, execution pending)
+4. **P3** — Phase 81.17.c pilot extract `plugin-browser` to standalone repo (~3 d)
+5. **P3** — Phase 81.18 extract `plugin-telegram` to standalone repo (~2 d)
+6. **P3** — Phase 81.19 extract `plugin-whatsapp` + `plugin-email` to standalone repos (~3 d)
+7. **P3** — Phase 81.22 plugin sandbox network + filesystem allowlist (~2 d, gates community tier)
+8. **P3** — Phase 83.9 `ana` cutover (yaml-only → extension-based; depends on 83.10)
+
+Anything else: ✅ shipped, **DEFER**, or **DROPPED** —
+see sections below + `FOLLOWUPS.md` for sub-phase deferreds.
 
 Anything not in this list is either ✅ shipped, **DEFER**, or
 **DROPPED** — see sections below.
@@ -73,20 +75,17 @@ Anything not in this list is either ✅ shipped, **DEFER**, or
 
 Order: priority within each phase × phase numerical order.
 
-### ⭐ Phase 84 — Coordinator agent persona + worker continuation   `P0`
-
-**Status**: brainstorm + spec + plan all approved in
-conversation. Next action: `/forge ejecutar 84.1`.
+### ✅ Phase 84 — Coordinator agent persona + worker continuation — shipped 2026-05-01
 
 | Sub-phase | Priority | Status | Effort |
 |-----------|----------|--------|--------|
-| 84.1 — Coordinator persona system prompt | **P0 NEXT** | ⬜ ready | 1.5 d |
-| 84.2 — `<task-notification>` envelope | **P0** | ⬜ | 1 d |
-| 84.3 — `SendMessageToWorker` continuation tool | **P0** | ⬜ | 2 d |
-| 84.4 — Worker persona system prompt | **P0** | ⬜ | 1 d |
-| 84.5 — Docs + admin-ui sync | **P0** | ⬜ | 0.5 d |
+| 84.1 — Coordinator persona system prompt | **P0** | ✅ shipped 2026-05-01 (84.1.1 builder + 84.1.2 EffectiveBindingPolicy prepend + YAML-fixture smoke + docs) | 1.5 d |
+| 84.2 — `<task-notification>` envelope | **P0** | ✅ shipped 2026-05-01 (84.2.1 XML envelope + 11 tests + 84.2.2 nexo-fork producers ForkResult/ForkError → TaskNotification) | 1 d |
+| 84.3 — `SendMessageToWorker` continuation tool | **P0** | ✅ shipped 2026-05-01 (84.3.1 WorkerRegistry + tool + 24 tests + worked example docs) | 2 d |
+| 84.4 — Worker persona system prompt | **P0** | ✅ shipped 2026-05-01 (worker persona + boot wire) | 1 d |
+| 84.5 — Docs + admin-ui sync | **P0** | ✅ shipped 2026-05-01 (CHANGELOG + cross-link + Phase 84 close-out) | 0.5 d |
 
-**Total**: ~6 dev-days. Critical path 84.1 → 84.2 → 84.3.
+**Status**: archived in PHASES-archive.md. Follow-ups in FOLLOWUPS.md.
 
 ---
 
@@ -141,21 +140,21 @@ drives this phase. Critical-path rows flagged `P1`.
 | **81.27 — Remote `HookInterceptor` wrapper** | **P3** | ✅ shipped 2026-05-04 (new `crates/core/src/agent/hook_remote.rs` ~280 LOC + 8 unit tests + 1 e2e. `RemoteHookHandler` implements existing `HookHandler` trait by translating each `on_hook(name, event)` call into a `hook.on_hook` JSON-RPC request over subprocess plugin's stdio bridge. Single new wire method `hook.on_hook { plugin_id, hook_name, event }` (contract v1.7.0); reply shape is the existing `HookResponse` (already serde-derived — reused directly as wire type, NO parallel `WireHookResponse`). Continue-on-error semantic: every dispatch failure (transport closed / subprocess crash / timeout / decode err / JSON-RPC err) returns `Ok(HookResponse::default())` so `HookRegistry::fire` keeps iterating + agent flow doesn't break (matches existing 11.6 philosophy "extension misbehavior must not take down agent flow"). Default 5s timeout (lower than 81.24's 30s for channels and 81.25's 60s for LLMs — hooks fire on hot path); env override `NEXO_PLUGIN_HOOK_TIMEOUT_MS`. New `SubprocessNexoPlugin::register_remote_hook_handlers(hook_registry)` reads `manifest.plugin.extends.hooks`, builds one `RemoteHookHandler` per name sharing existing `Inner.{stdin_tx, pending, next_id}`, registers via `hook_registry.register(hook_name, plugin_id, handler)`. New `HookHandlerRegistrationError::InnerUnavailable` (only failure mode; `HookRegistry::register` itself never errors — cap-violations log + skip). `WirePluginRegistryOutput.hook_registry: Arc<HookRegistry>` field added; `boot.rs::wire_plugin_registry_with_runtime` builds shared `Arc<HookRegistry>` threaded into both `SubprocessCtxStubs::build_with_shared_registries` (new combined channel + hook variant; old `build_with_channel_registry` removed as dead code) AND the wire output. `init_loop::run_plugin_init_loop_with_factory` gained 6th arg `hook_registry: &Arc<HookRegistry>`; new `register_remote_hook_handlers_after_init` post-init hook chained AFTER `register_remote_llm_providers_after_init`. Factory-registered Ok arm in init_loop (was missing 81.25 + 81.27 chain hooks — fixed; now in-tree plugins also flow through full chain even if their `extends.*` are empty). 8 unit tests in `hook_remote::tests` (`tokio::io::duplex`-style fakes): on_hook-serializes-with-name-and-event / on_hook-deserializes-with-decision / on_hook-unsupported-returns-Continue / on_hook-timeout-returns-Continue / on_hook-invalid-response-returns-Continue / on_hook-transform-decision-round-trips-transformed_body / on_hook-do_not_reply_again-round-trips / on_hook-override_event-round-trips. 1 e2e test `crates/core/tests/remote_hook_e2e.rs::hook_block_decision_round_trips_via_mock_subprocess` — bash mock plugin returns block decision, asserts `HookOutcome::Aborted { plugin_id, reason }`. 1304/1304 nexo-core lib + 2/2 subprocess e2e + 1/1 remote_channel_e2e + 1/1 remote_llm_e2e + 1/1 remote_hook_e2e + workspace clean + mdbook clean. Contract spec bumped to v1.7.0 with §5.z "Hook methods" + Changelog row; vendored doc copy refreshed. Authoring docs gain "Contributing hook handlers" section. NO per-hook priority via manifest (defer 81.27.b); NO capability-negotiation handshake (defer 81.27.c / 81.28.b umbrella); NO custom hook NAME registration (declaring NEW hook points beyond what daemon fires); NO `HookRegistry::unregister(hook_name, plugin_id)` API (`deregister_plugin` already covers reload).) |
 | **81.28 — Manifest `[extends]` section per-registry capability declaration** | **P3** | ✅ shipped 2026-05-04 (additive `[plugin.extends]` manifest section with 4 string-list fields: `channels`, `llm_providers`, `memory_backends`, `hooks`. New `pub struct ExtendsSection` (~30 LOC) + `pub const EXTENDS_SECTIONS: &[&str; 4]` + helpers `is_empty()` / `all_ids() -> Vec<(&'static str, &str)>` / `registers(section, id) -> bool`. New `pub extends: ExtendsSection` field on `PluginSection` with `#[serde(default)]` so legacy manifests parse unchanged. 3 new `ManifestError` variants (`ExtendsIdInvalid`, `ExtendsDuplicate`, `ExtendsCrossListConflict`). New `validate_extends` fn wired into `run_all` AFTER `validate_tool_namespace`: enforces id regex (`^[a-z][a-z0-9_]{0,31}$`), within-list dup, cross-list dup; collects all violations per pass (matches existing don't-bail-on-first pattern). Re-exports added to `lib.rs`. Contract spec bumped to v1.4.0 with new §2.1 "Extends section" + Changelog entry; vendored copy at `docs/src/plugins/contract.md` refreshed via `scripts/sync-plugin-contract.sh`. Authoring docs gain "Future capability extensions" cross-link callout. 8 unit tests: 4 in `manifest::tests` (parses-minimal, parses-full, defaults-empty-when-absent, serializes-round-trip) + 4 in `validate::tests` (rejects-invalid-id, rejects-duplicate-within-list, rejects-cross-list-duplicate, all_ids-iterator-deterministic-order). 56/56 plugin-manifest tests pass; workspace builds clean; mdbook builds clean. NO daemon dispatch wiring (delivered by 81.24-27); NO capability-negotiation handshake at `initialize` reply (defer 81.28.b); NO doctor surface (defer 81.28.c); NO coupling to `[plugin.channels.register]`; NO per-id metadata.) |
 | 83.2 — Extension-contributed skills | **P2** | ⬜ | Microapp ships its own skills; opportunistic |
-| 83.3 — Hook interceptor (vote-to-block) | **P1** | ⬜ | Compliance primitives plug in here — gates 83.5 + 83.8 |
-| 83.4 — `microapp-sdk-rust` reusable helper | **P1** | 🔄 | Core SDK ✅ 2026-04-30; 83.4.b ✅; 83.4.c Phase 82.x helpers pending |
-| 83.5 — `compliance-primitives` reusable library | **P1** | ⬜ | Anti-loop / anti-manipulation / opt-out / PII redact / rate-limit / consent. Provider-agnostic, microapp-foundational |
-| 83.6 — Microapp contract document | **P1** | ⬜ | Language-agnostic spec — replaces Python/TS reference templates as the portability story |
-| 83.7 — Microapp template (Rust only) | **P2** | ⬜ | **Reduced** from 3 stacks to Rust only. Other stacks port from 83.6 contract |
-| 83.8 — `ventas-etb` reference microapp | **P2** | ⬜ | First production microapp built on the framework |
-| 83.9 — `ana` cutover | **P3** | ⬜ | Migration from yaml-only to extension-based; depends on 83.8 |
-| 83.10 — Second microapp validation | **P1** | ⬜ | agent-creator production validation — proves framework reusability |
-| 83.11 — Docs + admin-ui sync | **P3** | ⬜ | Final docs sweep |
-| 83.12 — Meta-microapp React UI scaffold | **P1** | ⬜ | agent-creator UI shell |
-| 83.13 — `microapp-ui-react` component library | **P1** | ⬜ | WhatsApp-inspired chat helper for microapps that need it |
-| 83.14 — Publish SDKs (crates.io + npm) | **P1** | ⬜ | Decouples agent-creator from nexo source |
-| **83.15 — Microapp testing harness (mock daemon)** | **P1** | ⬜ NEW | Closes a foundational DX gap — every author re-invents mocks today |
-| **83.16 — Microapp error → operator path** | **P1** | ⬜ NEW | Operator visibility into microapp boot/handler failures |
-| **83.17 — Microapp config schema validation** | **P1** | ⬜ NEW | Shifts validation to install/boot time so misconfig fails fast |
+| 83.3 — Hook interceptor (vote-to-block) | **P1** | ✅ shipped 2026-05-01 (vote-to-block + vote-to-transform wire shapes + 19 tests) |
+| 83.4 — `microapp-sdk-rust` reusable helper | **P1** | ✅ shipped 2026-05-01 (core SDK + 83.4.b on_admin_ready + 83.4.c with_notification_listener) |
+| 83.5 — `compliance-primitives` reusable library | **P1** | ✅ shipped 2026-05-01 (`nexo-compliance-primitives` crate — 6 modules + 47 tests) |
+| 83.6 — Microapp contract document | **P1** | ✅ shipped 2026-05-01 (language-agnostic spec) |
+| 83.7 — Microapp template (Rust only) | **P2** | ✅ shipped 2026-05-01 (copy-and-rename scaffold) |
+| 83.8 — `ventas-etb` reference microapp | **P2** | ✅ shipped 2026-05-01 (heavy sub-phase chain 83.8.1-83.8.12; multi-tenant primitives + outbound dispatcher + skills + escalations + tenants domain) |
+| 83.9 — `ana` cutover | **P3** | ⬜ | Migration from yaml-only to extension-based; depends on 83.10 |
+| 83.10 — Second microapp validation | **P1** | ⬜ | agent-creator production validation — proves framework reusability (out-of-tree at `/home/familia/chat/agent-creator-microapp/`) |
+| 83.11 — Docs + admin-ui sync | **P3** | ✅ shipped 2026-05-01 (getting-started + templates + compliance-primitives) |
+| 83.12 — Meta-microapp React UI scaffold | **P1** | ⬜ | agent-creator UI shell — out-of-tree React work |
+| 83.13 — `microapp-ui-react` component library | **P1** | ⬜ | WhatsApp-inspired chat helper for microapps — out-of-tree |
+| 83.14 — Publish SDKs (crates.io + npm) | **P1** | 🔄 | Publish-readiness ✅ (CHANGELOGs + READMEs + dry-run pass); actual `cargo publish` + `npm publish` execution pending (83.14.b) |
+| **83.15 — Microapp testing harness (mock daemon)** | **P1** | ✅ shipped 2026-05-01 (83.15.b MockAdminRpc + MicroappTestHarness::with_admin_mock + reference test + docs) |
+| **83.16 — Microapp error → operator path** | **P1** | ✅ shipped 2026-05-01 (MicroappError notification wire shape + 6 tests) |
+| **83.17 — Microapp config schema validation** | **P1** | ✅ shipped 2026-05-01 (config schema validator + 11 tests) |
 
 **3 new gap-closing sub-phases added in this curation pass**
 (83.15 / 83.16 / 83.17). They were missing from the original
@@ -175,13 +174,13 @@ transcripts, host its HTTP server, or pause agents.
 | 82.2 — Tool registry + manifest parsing | — | ✅ |
 | 82.3 — Plugin.toml [outbound_bindings] schema | — | ✅ |
 | 82.4 / 82.5 / 82.7 / 82.10 | — | ✅ |
-| 82.6 — Per-extension state_root convention | **P2** | ⬜ |
-| 82.8 — Multi-tenant audit log filter | **P2** | ⬜ |
-| 82.9 — Reference SaaS template | **P3** | ⬜ |
-| 82.11 — Agent event firehose + transcripts | **P1** | ⬜ |
-| 82.12 — HTTP server hosting | **P1** | ⬜ |
-| 82.13 — Agent processing pause + takeover | **P1** | ⬜ |
-| 82.14 — `escalate_to_human` tool + notification | **P2** | ⬜ |
+| 82.6 — Per-extension state_root convention | **P2** | ✅ shipped 2026-05-01 (`nexo ext state-dir` CLI + 82.6.b NEXO_EXTENSION_STATE_ROOT env stamp) |
+| 82.8 — Multi-tenant audit log filter | **P2** | ✅ shipped 2026-05-01 (account_id column + tail_for_account) |
+| 82.9 — Reference SaaS template | **P3** | ✅ shipped 2026-05-01 (multi-tenant SaaS walkthrough docs) |
+| 82.11 — Agent event firehose + transcripts | **P1** | ✅ shipped 2026-05-01 (TeeAgentEventEmitter + SqliteAgentEventLog + retention sweep + MergingAgentEventReader + NatsAgentEventEmitter multi-host firehose + boot-side Tee composition + durable threads) |
+| 82.12 — HTTP server hosting | **P1** | ✅ shipped 2026-05-01 (82.12.1-5: http_server capability + TokenRotated wire shapes + HttpServerSupervisor + allow_external_bind + NEXO_MICROAPP_HTTP_SERVERS_ENABLED) |
+| 82.13 — Agent processing pause + takeover | **P1** | ✅ shipped 2026-05-01 (82.13.b ProcessingStateChanged firehose + 82.13.c boot share processing_store + event_emitter + 82.13.d SqliteProcessingControlStore — durable pause + pending queue) |
+| 82.14 — `escalate_to_human` tool + notification | **P2** | ✅ shipped 2026-05-01 (82.14.b firehose EscalationRequested/Resolved + 82.14.b.throttle EscalationThrottle sliding-window + 82.14.c SqliteEscalationStore durable pending) |
 
 ---
 
@@ -190,17 +189,18 @@ transcripts, host its HTTP server, or pause agents.
 | Sub-phase | Priority | Status |
 |-----------|----------|--------|
 | 81.1 / 81.2 | — | ✅ |
+| 81.6 — Plugin-side agent registration | **P2** | ✅ (see microapp section row above) |
+| 81.7 — Plugin-side `skills_dir` | **P2** | ✅ (see microapp section row above) |
+| 81.8 — `ChannelAdapter` trait | **P2** | ✅ (see microapp section row above) |
+| 81.9 — `wire_plugin_registry` boot helper | **P2** | ✅ (see microapp section row above; original "Mode::Run registry sweep" topic absorbed into 81.9 boot helper + 81.9.b doctor CLI) |
+| 81.10 — Plugin hot-load via reload coord | **P3** | ✅ (see microapp section row above) |
+| 81.11 — Plugin doctor + capability inventory | **P3** | ✅ (see microapp section row above) |
+| 81.12 — Existing plugin migration | **P3** | ✅ (a/b/c/d shipped; e DEFER → SUPERSEDED-BY-81.17) |
 | 81.3 — Tool namespace runtime enforcement | **P2** | ✅ shipped 2026-05-04 (new `crates/core/src/agent/scoped_tool_registry.rs` ~440 LOC + 11 unit tests. `ScopedToolRegistry` per-plugin proxy gates every `register*` call against 4 layers: reserved-prefix denylist (`agent_`, `system_`, `nexo_`, `mcp_`, `ext_`) with `ext_<self_id>_*` carve-out for the canonical plugin shape; `<plugin_id>_` or `ext_<plugin_id>_` namespace prefix; manifest `tools.expose` allowlist (canonical + bare forms accepted); collision rejection. `NamespaceEnforcement::Warn` (default) records + logs + emits broker event but allows non-collision violations to fall through; `NamespaceEnforcement::Strict` (`NEXO_PLUGIN_NAMESPACE_STRICT=1`) returns Err on every violation. Collisions ALWAYS rejected regardless of mode. `NamespaceViolation { plugin_id, attempted_name, reason }` with `NamespaceViolationReason` 4 variants (`ReservedPrefix(&'static str)`, `OutOfNamespace`, `NotInExpose`, `Collision`). `drain_violations()` host-side post-init drain. Broker event `plugin.lifecycle.<id>.namespace_violation` emitted via tokio::spawn (non-blocking, 2s budget) with payload `{plugin_id, attempted_name, reason, reserved_prefix?, mode, rejected}`. `PluginInitContext.tool_registry` field swapped from `Arc<ToolRegistry>` to `Arc<ScopedToolRegistry>` — non-breaking for the 4 in-tree plugins (none call `ctx.tool_registry.register*`). New `PluginInitError::ToolNamespace { plugin_id, count, sample, violations }` additive variant. `init_loop::check_namespace_after_init` helper drains + escalates Strict violations to `InitOutcome::Failed`. `ctx_factory` closure signature changed from `FnMut(&str)` to `FnMut(&PluginManifest)` so the per-plugin scoped registry can be built with the manifest's expose list. `boot.rs::SubprocessCtxStubs::context_for` builds the scoped registry inline. `ToolRegistry::register_if_absent_arc` added (Arc-friendly variant of `register_if_absent`). 11 unit tests in `scoped_tool_registry::tests` (canonical + bare prefix accept; reject unprefixed / reserved-agent / reserved-mcp / collision-warn-mode / not-in-expose; strict-vs-warn semantics; empty-expose edge; drain consumes; reserved-prefix takes precedence). 1 unit test in `init_loop::tests` (`format_violation_sample_truncates_after_three`). 1262 nexo-core lib tests pass; 2 e2e tests pass; workspace builds clean. NO per-plugin override knob in manifest (defer 81.3.b); NO `nexo agent doctor plugins` JSON envelope extension (defer 81.3.c); NO default mode flip Warn→Strict (defer to deprecation window after community plugins audit); NO removal of `ToolRegistry::register*` host-side methods (built-ins stay on raw path).) |
 | 81.4 — Plugin-scoped config dir loader | **P2** | ✅ shipped 2026-05-04 (new `crates/core/src/agent/plugin_config_loader.rs` ~340 LOC + 13 unit tests. `load_plugin_config(plugin_root, config_dir, manifest) -> Result<PluginConfig, PluginConfigError>` reads `<config_dir>/plugins/<plugin_id>/*.yaml`, sorts alphabetically, canonicalizes each path with symlink-escape guard (`path.starts_with(canonical_dir)`), resolves `${ENV_VAR}` via `nexo_config::env::resolve_placeholders` pre-yaml-parse, deep-merges via private `merge_yaml(into, from)` (mappings recurse, arrays full-replace, scalars overwrite), validates merged tree against `manifest.config.schema_path` JSONSchema via `nexo_plugin_manifest::config_schema::validate_config` (lightweight subset: type/required/properties/additionalProperties/enum). `PluginConfig { merged, schema_validated, source_files }`. `PluginConfigError` 8 variants (`DirRead`, `FileRead`, `EnvResolve`, `YamlParse`, `SchemaRead`, `SchemaParse`, `SchemaValidation { errors }`, `SymlinkEscape`). `config_error_kind` discriminator. `plugin_config_dir_for` convenience. New `PluginInitContext.plugin_config: Arc<serde_yaml::Value>` field threaded via `init_loop` BEFORE any factory work — load failure short-circuits with `InitOutcome::Failed { error: "config load: ..." }` and `tracing::warn!` (broker emit deferred to 81.4.b). `ctx_factory` closure signature changed from `FnMut(&PluginManifest)` to `FnMut(&PluginManifest, &Arc<serde_yaml::Value>)` so closures consume the pre-loaded config. New `config_dir: &Path` arg to `run_plugin_init_loop_with_factory`. `boot.rs::SubprocessCtxStubs::context_for` extended with `plugin_config: &Arc<Value>` arg. Test fixtures (`|_m| → |_m, _cfg|`) updated. 13 loader unit tests (empty-dir-missing/empty, skip-non-yaml, alphabetical-deep-merge, scalar-overwrite, array-full-replace, env-var-substitution, yaml-parse-error, validate-with-schema, schema-validation-errors-with-pointers, skip-validation-when-unset, symlink-escape, error-kind exhaustive). 1 init_loop integration test (`init_loop_records_failed_when_config_load_fails`). 1262/1262 nexo-core lib tests pass + 2/2 e2e tests + new 13 loader + 1 init_loop test. Workspace builds clean. Authoring docs updated with "Plugin config dir" section. NO hot-reload of plugin config files (defer 81.4.b), NO `jsonschema 0.20` full keyword support (defer 81.4.c), NO `nexo agent doctor plugins --json` plugin_config surface (defer 81.4.d), NO migration of in-tree plugin config (browser/telegram/whatsapp/email keep central `cfg.plugins.<id>`), NO broker emit on config_load_failed (defer 81.4.b).) |
 | 81.5 — `PluginRegistry::discover` filesystem walk | **P2** | ✅ shipped 2026-05-02 (library + tests; boot wire + CLI deferred to 81.6) |
-| 81.6 — Plugin-side agent registration | **P3** | ⬜ |
-| 81.7 — Plugin-side `skills_dir` | **P3** | ⬜ |
-| 81.8 — `ChannelAdapter` trait | **P3** | ⬜ |
-| 81.9 — `Mode::Run` registry sweep | **P2** | ⬜ critical milestone (~500 → 30 LOC) |
-| 81.10 — Plugin hot-load via reload coord | **P3** | ⬜ |
-| 81.11 — Plugin doctor + capability inventory | **P3** | ⬜ |
-| 81.12 — Existing plugin migration | **P3** | ⬜ |
 | 81.13 — Reference plugin template + CLI | **DROPPED → folded into 31.6** | — Replaced by Phase 31.6 multi-lang scaffolder once subprocess infra (81.14-81.23) closes. |
+| 81.13 (renumbered) — Plugin manifest unification (id_regex + manifest_version + compat_v1 migrator + auto-migrate) | **P3** | ✅ shipped 2026-05-04 (81.13.3 compat_v1 + 81.13.4-5 from_str auto-migrate + discover_in_root + 81.13.6 nexo-extensions absorbs unified id regex + admin/http_server caps + 81.13.7 admin_capability_collect + daemon-mode microapp spawn fix + legacy [meta] homepage/repository) |
 
 ---
 
@@ -208,8 +208,8 @@ transcripts, host its HTTP server, or pause agents.
 
 | Sub-phase | Priority | Status | Effort |
 |-----------|----------|--------|--------|
-| 85.1 — Reactive 413 recovery | **P2** | ⬜ | ~1 d |
-| 85.2 — Cache-aware micro-compaction | **P3** | ⬜ | ~3-4 d |
+| 85.1 — Reactive 413 recovery | **P2** | ✅ shipped 2026-05-01 (LlmError::PromptTooLong + Budget Consecutive413 axis + ReplayDecision::CompactAndRetry + classifier + 4 tests) | ~1 d |
+| 85.2 — Cache-aware micro-compaction | **P3** | ✅ shipped 2026-05-01 (MicroCompactPolicy + CompactSummary cache fields + 10 tests) | ~3-4 d |
 
 ---
 
@@ -217,7 +217,7 @@ transcripts, host its HTTP server, or pause agents.
 
 | Sub-phase | Priority | Status | Effort |
 |-----------|----------|--------|--------|
-| 86.1 — Local memory-shape Prometheus metrics | **P2** | ⬜ | ~1 d |
+| 86.1 — Local memory-shape Prometheus metrics | **P2** | ✅ shipped 2026-05-01 (memory metrics module + 9 tests) | ~1 d |
 
 ---
 
@@ -225,7 +225,7 @@ transcripts, host its HTTP server, or pause agents.
 
 | Sub-phase | Priority | Status | Effort |
 |-----------|----------|--------|--------|
-| 87.1 — `LlmJudgeEvaluator` impl | **P3** | ⬜ AFTER-PHASE-84 | ~2 d |
+| 87.1 — `LlmJudgeEvaluator` impl | **P3** | ✅ shipped 2026-05-01 (LlmJudgeEvaluator + AcceptanceCriterion::LlmJudge + 11 tests) | ~2 d |
 
 ---
 
