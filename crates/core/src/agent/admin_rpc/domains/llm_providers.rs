@@ -14,7 +14,27 @@ use nexo_tool_meta::admin::llm_providers::{
 };
 
 use super::agents::YamlPatcher;
+use super::secrets::SecretsStore;
 use crate::agent::admin_rpc::dispatcher::{AdminRpcError, AdminRpcResult};
+
+/// Phase 82.10.s.3.b — derive a valid `SecretsStore` name from an
+/// LLM provider instance id. The store enforces
+/// `^[A-Z][A-Z0-9_]{1,63}$`, but instance ids are lowercase slugs
+/// (e.g. `minimax-cliente-a`). Transform: prefix `LLM_`, uppercase,
+/// replace any non-alnum with `_`. Keeps the mapping deterministic
+/// + reversible for diagnostics.
+pub fn secret_id_for_instance(instance_id: &str) -> String {
+    let mut out = String::with_capacity(4 + instance_id.len());
+    out.push_str("LLM_");
+    for c in instance_id.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_uppercase());
+        } else {
+            out.push('_');
+        }
+    }
+    out
+}
 
 /// Yaml mutation surface for `llm.yaml`. Production wraps an
 /// `nexo_setup::yaml_patch`-style adapter pointed at the LLM
@@ -128,13 +148,16 @@ pub fn list(patcher: &dyn LlmYamlPatcher) -> AdminRpcResult {
 }
 
 /// `nexo/admin/llm_providers/upsert` — create or update a
-/// provider block. Validates that `api_key_env` resolves to an
-/// env var that exists at call time (operator already exported
-/// the secret).
-pub fn upsert(
+/// provider block. Validates exactly-one-of api_key_env /
+/// api_key_secret_id / api_key_secret_value (Phase 82.10.s.3) and,
+/// when `api_key_secret_value` is supplied, persists the value
+/// through the SecretsStore atomically before stamping
+/// `api_key_secret_id` on the yaml (Phase 82.10.s.3.b).
+pub async fn upsert(
     patcher: &dyn LlmYamlPatcher,
+    secrets: Option<&dyn SecretsStore>,
     params: Value,
-    reload_signal: &dyn Fn(),
+    reload_signal: &(dyn Fn() + Send + Sync),
 ) -> AdminRpcResult {
     let input: LlmProviderUpsertInput = match serde_json::from_value(params) {
         Ok(i) => i,
@@ -178,13 +201,32 @@ pub fn upsert(
             "conflicting API key sources: pick exactly ONE of api_key_env, api_key_secret_id, api_key_secret_value".into(),
         ));
     }
-    // Phase 82.10.s.3.b will land write-through; for now, surface a
-    // clear deferred-feature error so callers don't silently drop
-    // the value.
+    // Phase 82.10.s.3.b — write-through. Stamp the value into the
+    // SecretsStore under a derived id (`LLM_<INSTANCE>`), then on
+    // successful persist swap the in-memory input to point at the
+    // secret_id so the rest of the handler treats it as the
+    // pre-staged path. Atomic ordering: SECRET WRITE FIRST, yaml
+    // second — if the yaml write fails the operator can retry
+    // with the same value (idempotent overwrite) without leaking
+    // a half-written provider block.
+    let mut effective_secret_id: Option<String> = input.api_key_secret_id.clone();
     if secret_value_set {
-        return AdminRpcResult::err(AdminRpcError::InvalidParams(
-            "api_key_secret_value is not yet supported (write the secret via nexo/admin/secrets/write first, then use api_key_secret_id) — deferred to Phase 82.10.s.3.b".into(),
-        ));
+        let store = match secrets {
+            Some(s) => s,
+            None => {
+                return AdminRpcResult::err(AdminRpcError::Internal(
+                    "secrets store not configured — cannot write api_key_secret_value".into(),
+                ));
+            }
+        };
+        let value = input.api_key_secret_value.as_deref().unwrap_or_default();
+        let derived = secret_id_for_instance(&input.id);
+        match store.write(&derived, value).await {
+            Ok(_) => {
+                effective_secret_id = Some(derived);
+            }
+            Err(e) => return AdminRpcResult::err(e),
+        }
     }
     if env_set && std::env::var(&input.api_key_env).is_err() {
         return AdminRpcResult::err(AdminRpcError::InvalidParams(format!(
@@ -247,8 +289,7 @@ pub fn upsert(
             )));
         }
     }
-    if let Some(sid) = input
-        .api_key_secret_id
+    if let Some(sid) = effective_secret_id
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
