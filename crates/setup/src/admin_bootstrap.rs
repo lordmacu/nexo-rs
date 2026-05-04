@@ -311,6 +311,13 @@ pub struct AdminBootstrapInputs<'a> {
     /// [`crate::persisters::WhatsappPersister`] when the matching
     /// plugin is enabled in `extensions.yaml`.
     pub persisters: Vec<Arc<dyn nexo_core::agent::admin_rpc::domains::credentials::ChannelCredentialPersister>>,
+    /// Phase 82.10.p — per-channel pairing trigger registry.
+    /// Empty default keeps the legacy "Pending forever" behavior
+    /// (admin pairing/start creates a row but never pushes QR);
+    /// production passes one entry per channel that has a
+    /// registered plugin (today: `whatsapp` → `WhatsappPairingTrigger`,
+    /// future: `telegram` → telegram-link, etc).
+    pub pairing_triggers: nexo_core::agent::admin_rpc::pairing_trigger::PairingChannelTriggers,
 }
 
 
@@ -540,6 +547,7 @@ impl AdminRpcBootstrap {
                     pairing_store.clone(),
                     Some(pairing_notifier.clone()),
                 )
+                .with_pairing_triggers(inputs.pairing_triggers.clone())
                 .with_llm_providers_domain(llm_yaml.clone())
                 .with_channels_domain();
             if let Some(reader) = inputs.transcript_reader.clone() {
@@ -872,6 +880,7 @@ mod tests {
             escalation_store: None,
             agent_event_log: None,
             persisters: Vec::new(),
+            pairing_triggers: Default::default(),
         })
         .await
         .unwrap();
@@ -909,6 +918,7 @@ mod tests {
             escalation_store: None,
             agent_event_log: None,
             persisters: Vec::new(),
+            pairing_triggers: Default::default(),
         })
         .await
         .unwrap_err();
@@ -947,6 +957,7 @@ mod tests {
             escalation_store: None,
             agent_event_log: None,
             persisters: Vec::new(),
+            pairing_triggers: Default::default(),
         })
         .await
         .unwrap()
@@ -999,6 +1010,7 @@ mod tests {
             escalation_store: None,
             agent_event_log: None,
             persisters: Vec::new(),
+            pairing_triggers: Default::default(),
             },
             true,
         )
@@ -1044,6 +1056,7 @@ mod tests {
             escalation_store: None,
             agent_event_log: None,
             persisters: Vec::new(),
+            pairing_triggers: Default::default(),
             },
             true,
         )
@@ -1088,6 +1101,7 @@ mod tests {
             escalation_store: None,
             agent_event_log: None,
             persisters: Vec::new(),
+            pairing_triggers: Default::default(),
             },
             true,
         )
@@ -1140,6 +1154,7 @@ mod tests {
             escalation_store: None,
             agent_event_log: None,
             persisters: Vec::new(),
+            pairing_triggers: Default::default(),
             },
             true,
         )
@@ -1198,6 +1213,7 @@ mod tests {
             escalation_store: None,
             agent_event_log: None,
             persisters: Vec::new(),
+            pairing_triggers: Default::default(),
             },
             true,
         )
@@ -1251,6 +1267,7 @@ mod tests {
             escalation_store: None,
             agent_event_log: None,
             persisters: Vec::new(),
+            pairing_triggers: Default::default(),
             },
             true,
         )
@@ -1306,6 +1323,7 @@ mod tests {
             escalation_store: None,
             agent_event_log: None,
             persisters: Vec::new(),
+            pairing_triggers: Default::default(),
         })
         .await
         .unwrap()
@@ -1379,6 +1397,7 @@ mod tests {
             escalation_store: None,
             agent_event_log: None,
             persisters: Vec::new(),
+            pairing_triggers: Default::default(),
             },
             false,
         )
@@ -1432,6 +1451,7 @@ mod tests {
                 escalation_store: None,
                 agent_event_log: Some(log.clone()),
                 persisters: Vec::new(),
+            pairing_triggers: Default::default(),
             },
             true,
         )
