@@ -287,7 +287,6 @@ pub struct LlmProvidersCatalogResponse {
 /// the redactor reads this schema at runtime to decide what to
 /// scrub from the audit log.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[non_exhaustive]
 pub struct CredentialFieldDescriptor {
     /// Stable machine-readable name. Becomes the yaml key (for
     /// non-secret fields) or the secret id suffix (for secret
@@ -324,7 +323,6 @@ pub struct CredentialFieldDescriptor {
 /// What HTML-input shape the SPA should render for this field.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[non_exhaustive]
 pub enum FieldKind {
     /// Plain text input.
     Text,
@@ -343,7 +341,6 @@ pub enum FieldKind {
 
 /// One option inside a [`FieldKind::Select`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[non_exhaustive]
 pub struct SelectOption {
     /// Stored value (yaml-side / secret-side).
     pub value: String,
@@ -357,7 +354,6 @@ pub struct SelectOption {
 /// so a custom client cannot smuggle invalid values.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[non_exhaustive]
 pub enum FieldValidation {
     /// Value must match the supplied regex (anchored implicitly —
     /// callers should write `^...$` if they want full-match
@@ -385,7 +381,6 @@ pub enum FieldValidation {
 /// `auth_mode` equals one of these values" — see
 /// [`DependsOn::any_of`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[non_exhaustive]
 pub struct DependsOn {
     /// Field name in the upsert payload (commonly `"auth_mode"`).
     pub field: String,
@@ -423,7 +418,6 @@ impl DependsOn {
 /// dropdown when more than one is supported; the admin RPC handler
 /// rejects upsert + oauth_start with an unsupported mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[non_exhaustive]
 pub enum AuthMode {
     /// Static API key (the legacy default).
     #[serde(rename = "api_key")]
@@ -450,7 +444,6 @@ pub enum AuthMode {
 /// strings.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "code")]
-#[non_exhaustive]
 pub enum LlmProviderError {
     /// Required field absent or empty after trim.
     #[serde(rename = "MISSING_FIELD")]

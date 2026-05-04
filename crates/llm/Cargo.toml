@@ -34,6 +34,10 @@ bytes        = { workspace = true }
 dashmap      = { workspace = true }
 nexo-config = { version = "0.1.4", path = "../config" }
 nexo-resilience = { version = "0.1.1", path = "../resilience" }
+# Phase 82.10.u — factories declare credential schema + auth modes
+# in shared wire types so admin RPC + SPA wizard render dynamic
+# forms without each crate re-defining the descriptor shape.
+nexo-tool-meta = { workspace = true }
 sha2         = { workspace = true }
 hex          = { workspace = true }
 chrono       = { workspace = true }

@@ -23,7 +23,8 @@ use crate::anthropic_auth::{
 use crate::client::LlmClient;
 use crate::prompt_block::{CachePolicy, PromptBlock};
 use crate::rate_limiter::RateLimiter;
-use crate::registry::LlmProviderFactory;
+use crate::registry::{schema, LlmProviderFactory};
+use nexo_tool_meta::admin::llm_providers::{AuthMode, CredentialFieldDescriptor};
 use crate::retry::{parse_retry_after_ms, with_retry, LlmError};
 use crate::stream::{
     ensure_event_stream, parse_anthropic_sse, record_usage_tap, stream_metrics_tap, StreamChunk,
@@ -1130,6 +1131,49 @@ impl LlmProviderFactory for AnthropicFactory {
             "claude-sonnet-4-5",
             "claude-haiku-4-5",
         ]
+    }
+
+    /// Phase 82.10.u — credential schema. The `auth_mode` selector
+    /// is always visible; `api_key` shows up when `auth_mode ∈
+    /// {api_key, setup_token}` (the SetupToken flavor reuses the
+    /// `api_key` field name to keep the wire shape uniform — the
+    /// runtime resolves `auth.mode = setup_token` from yaml and
+    /// switches the validation regex). `setup_token` field shows
+    /// up only when its mode is selected.
+    fn credential_schema(&self) -> Vec<CredentialFieldDescriptor> {
+        use nexo_tool_meta::admin::llm_providers::{DependsOn, FieldKind, FieldValidation};
+        vec![
+            schema::anthropic_auth_mode(),
+            CredentialFieldDescriptor {
+                name: "api_key".into(),
+                label: "API key".into(),
+                kind: FieldKind::Password,
+                required: true,
+                secret: true,
+                default: None,
+                help: Some("Empieza con sk-ant-…".into()),
+                validation: Some(FieldValidation::Length { min: 1, max: 512 }),
+                depends_on: Some(DependsOn::any_of("auth_mode", &["api_key"])),
+            },
+            schema::anthropic_setup_token(),
+        ]
+    }
+
+    fn supported_auth_modes(&self) -> Vec<AuthMode> {
+        vec![
+            AuthMode::ApiKey,
+            AuthMode::SetupToken,
+            AuthMode::OAuthAuthCode,
+            AuthMode::OAuthBundleImport,
+        ]
+    }
+
+    /// Anthropic exposes `/v1/models` (since 2024-12) but the
+    /// catalogue is small + stable; the static `known_models` list
+    /// is the canonical source. Keep `false` so the SPA wizard
+    /// uses the static list and skips a redundant probe call.
+    fn supports_models_probe(&self) -> bool {
+        false
     }
 }
 
