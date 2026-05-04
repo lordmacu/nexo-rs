@@ -149,6 +149,42 @@ pub struct LlmProvidersDeleteResponse {
     pub removed: bool,
 }
 
+/// Phase 82.10.u — JSON-RPC method that probes a DRAFT provider
+/// payload before it lands in `llm.yaml`. Used by the SPA wizard
+/// between the "fill credentials" and "pick model" steps so the
+/// operator confirms the API key is accepted + enumerates live
+/// models WITHOUT polluting the daemon's persisted state on a
+/// failed key.
+pub const LLM_PROVIDERS_PROBE_DRAFT_METHOD: &str =
+    "nexo/admin/llm_providers/probe_draft";
+
+/// Params for [`LLM_PROVIDERS_PROBE_DRAFT_METHOD`].
+///
+/// Carries the same `fields` shape as `LlmProviderUpsertInput` so
+/// the SPA can reuse the form payload directly: probe first, then
+/// upsert if the result is `ok`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct LlmProviderProbeDraftInput {
+    /// Factory id from the catalog (`minimax`, `anthropic`,
+    /// `openai`, etc). The handler resolves the schema + the
+    /// downstream HTTP shape from this id.
+    pub factory_type: String,
+    /// HTTP base URL to probe. SPA pre-fills from
+    /// `LlmProviderCatalogEntry::default_base_url` but operators
+    /// can override (custom gateway).
+    pub base_url: String,
+    /// Selected auth mode. `None` ⇒ legacy api_key flow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_mode: Option<AuthMode>,
+    /// Schema-driven credential payload. Same key set as the
+    /// upsert path. The handler reads `fields["api_key"]` (or the
+    /// equivalent secret-flagged descriptor name) for the bearer
+    /// token; `secret == false` fields (e.g. MiniMax `group_id`)
+    /// are forwarded as required headers per factory.
+    #[serde(default)]
+    pub fields: std::collections::BTreeMap<String, String>,
+}
+
 /// Phase 82.10.l — JSON-RPC method that probes a configured LLM
 /// provider's reachability + key validity from the daemon's
 /// network position.
