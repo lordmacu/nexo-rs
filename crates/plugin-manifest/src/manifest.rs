@@ -818,12 +818,26 @@ pub struct MetaSection {
 // ── Public API ──────────────────────────────────────────────────
 
 impl PluginManifest {
-    /// Parse a manifest from a TOML string. Returns syntactic
-    /// errors only; call [`validate`](Self::validate) for full
-    /// semantic checks.
+    /// Parse a manifest from a TOML string. Phase 81.13: routes
+    /// through [`crate::compat_v1::try_parse_v2_or_v1`] so legacy
+    /// (`manifest_version = 1` or absent) docs auto-migrate to
+    /// the canonical v2 shape in memory. v1 plugins emit a
+    /// one-shot deprecation warning per `(id, version)` tuple.
+    ///
+    /// Returns SYNTAX/migration errors only; call
+    /// [`validate`](Self::validate) for full semantic checks.
+    /// Most callers should use [`Self::parse_validated`] which
+    /// runs both in one shot.
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(toml_src: &str) -> Result<Self, ManifestError> {
-        Ok(toml::from_str(toml_src)?)
+        let (parsed, was_v1) = crate::compat_v1::try_parse_v2_or_v1(toml_src)?;
+        if was_v1 {
+            crate::compat_v1::emit_v1_deprecation_warning(
+                &parsed.plugin.id,
+                &parsed.plugin.version.to_string(),
+            );
+        }
+        Ok(parsed)
     }
 
     /// Parse a manifest from a path on disk. Combines IO + parse
@@ -831,6 +845,32 @@ impl PluginManifest {
     pub fn from_path(path: &Path) -> Result<Self, ManifestError> {
         let raw = std::fs::read_to_string(path)?;
         Self::from_str(&raw)
+    }
+
+    /// Phase 81.13 — parse + auto-migrate + auto-validate. Most
+    /// callers should reach for this so the silent-skip bug in
+    /// `admin_capability_collect` (parsing without validating)
+    /// goes away framework-wide. Returns the parsed manifest on
+    /// success or the full validator error list on failure.
+    pub fn parse_validated(
+        toml_src: &str,
+        current_nexo_version: &Version,
+    ) -> Result<Self, Vec<ManifestError>> {
+        let parsed = Self::from_str(toml_src).map_err(|e| vec![e])?;
+        parsed.validate(current_nexo_version)?;
+        Ok(parsed)
+    }
+
+    /// Convenience for callers that have a path. Equivalent to
+    /// `Self::parse_validated(read_to_string(path)?, …)`.
+    pub fn from_path_validated(
+        path: &Path,
+        current_nexo_version: &Version,
+    ) -> Result<Self, Vec<ManifestError>> {
+        let raw = std::fs::read_to_string(path).map_err(|e| {
+            vec![ManifestError::Io(e)]
+        })?;
+        Self::parse_validated(&raw, current_nexo_version)
     }
 
     /// Run the full 4-tier validator. Collects every error

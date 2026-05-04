@@ -347,31 +347,78 @@ fn parse_version_req(s: &str, field: &'static str) -> Result<semver::VersionReq,
 /// indicating which path was taken. Callers log a one-shot
 /// deprecation warn for v1 plugins.
 ///
-/// Detection: peek at `manifest_version` via a shallow
-/// `toml::Value` parse. `2` → strict v2 parse. Anything else
-/// (missing, `1`, or a stray value) → v1 legacy parse + migrate.
+/// Detection strategy:
+/// 1. If `manifest_version` is explicitly set:
+///    - `2` → strict v2 parse.
+///    - anything else (`1`, stray int) → v1 legacy parse + migrate.
+/// 2. Otherwise, **try v2 parse first**. v2 is the canonical shape
+///    going forward; most plugins authored after 81.13 won't bother
+///    setting `manifest_version` even though they're v2-shaped.
+///    Only fall back to v1 if the v2 parse rejects an unknown field
+///    or a missing required field — those are the legacy markers.
+///
+/// This ordering keeps existing v2 manifests (which never set
+/// `manifest_version` historically) parsing unchanged, while
+/// real v1 docs (with `[transport]`, top-level `[capabilities]`,
+/// etc.) cleanly fall through.
 pub fn try_parse_v2_or_v1(raw: &str) -> Result<(PluginManifest, bool), ManifestError> {
-    let v: toml::Value = toml::from_str(raw)?;
-    let manifest_version = v
+    let value: toml::Value = toml::from_str(raw)?;
+    let explicit_version = value
         .as_table()
         .and_then(|t| t.get("manifest_version"))
-        .and_then(|v| v.as_integer())
-        .unwrap_or(1);
+        .and_then(|v| v.as_integer());
 
-    if manifest_version == 2 {
-        let parsed: PluginManifest = toml::from_str(raw)?;
-        Ok((parsed, false))
-    } else {
-        let legacy: LegacyV1Manifest = toml::from_str(raw)?;
-        let outcome = migrate_v1_to_v2(legacy)?;
-        if !outcome.dropped_fields.is_empty() {
-            tracing::warn!(
-                plugin_id = %outcome.manifest.plugin.id,
-                dropped = ?outcome.dropped_fields,
-                "manifest_version=1 fields dropped during 81.13 migration; see Phase 81.13.b for full preservation",
-            );
+    match explicit_version {
+        Some(2) => {
+            // Operator pinned v2 explicitly; strict parse — any
+            // failure surfaces with the original error.
+            let parsed: PluginManifest = toml::from_str(raw)?;
+            Ok((parsed, false))
         }
-        Ok((outcome.manifest, true))
+        Some(1) => {
+            // Operator pinned v1 explicitly; force legacy path.
+            let legacy: LegacyV1Manifest = toml::from_str(raw)?;
+            let outcome = migrate_v1_to_v2(legacy)?;
+            if !outcome.dropped_fields.is_empty() {
+                tracing::warn!(
+                    plugin_id = %outcome.manifest.plugin.id,
+                    dropped = ?outcome.dropped_fields,
+                    "manifest_version=1 fields dropped during 81.13 migration; see Phase 81.13.b for full preservation",
+                );
+            }
+            Ok((outcome.manifest, true))
+        }
+        Some(other) => {
+            use serde::de::Error as _;
+            Err(ManifestError::Parse(toml::de::Error::custom(format!(
+                "manifest_version `{other}` not supported (accepted: 1 | 2)"
+            ))))
+        }
+        None => {
+            // Try v2 first. Pre-81.13 v2 plugins didn't bother
+            // setting manifest_version even though their shape is
+            // canonical.
+            match toml::from_str::<PluginManifest>(raw) {
+                Ok(parsed) => Ok((parsed, false)),
+                Err(_v2_err) => {
+                    // v2 parse failed → assume legacy. Surface the
+                    // legacy parse error if THAT also fails (more
+                    // useful for the operator than the v2 error,
+                    // which mentions modern field names they didn't
+                    // write).
+                    let legacy: LegacyV1Manifest = toml::from_str(raw)?;
+                    let outcome = migrate_v1_to_v2(legacy)?;
+                    if !outcome.dropped_fields.is_empty() {
+                        tracing::warn!(
+                            plugin_id = %outcome.manifest.plugin.id,
+                            dropped = ?outcome.dropped_fields,
+                            "manifest_version=1 fields dropped during 81.13 migration; see Phase 81.13.b for full preservation",
+                        );
+                    }
+                    Ok((outcome.manifest, true))
+                }
+            }
+        }
     }
 }
 
@@ -650,6 +697,43 @@ command = "./agent-creator"
         let guard = dedup.lock().unwrap();
         assert!(guard.contains("dedup-test-plugin:0.0.1"));
         assert!(guard.contains("dedup-test-plugin:0.0.2"));
+    }
+
+    #[test]
+    fn try_parse_explicit_unsupported_manifest_version_errors() {
+        let raw = r#"
+manifest_version = 99
+
+[plugin]
+id = "agent-creator"
+version = "0.0.1"
+name = "Agent Creator"
+description = "Operator UI."
+"#;
+        let err = try_parse_v2_or_v1(raw).unwrap_err();
+        let s = err.to_string();
+        assert!(s.contains("manifest_version `99`"), "got: {s}");
+    }
+
+    #[test]
+    fn try_parse_unset_version_with_v2_shape_skips_legacy_path() {
+        // Legitimate v2 doc that doesn't bother setting
+        // manifest_version. The dispatcher should v2-parse first
+        // + succeed without ever touching the v1 path.
+        let raw = r#"
+[plugin]
+id = "agent_creator"
+version = "0.0.1"
+name = "Agent Creator"
+description = "Operator UI."
+min_nexo_version = ">=0.0.0"
+
+[plugin.entrypoint]
+command = "./agent-creator"
+"#;
+        let (m, was_v1) = try_parse_v2_or_v1(raw).unwrap();
+        assert!(!was_v1);
+        assert_eq!(m.plugin.id, "agent_creator");
     }
 
     #[test]
