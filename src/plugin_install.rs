@@ -716,6 +716,13 @@ pub fn print_plugin_help() {
              workflow, and helper scripts. With --git, the directory is a fresh\n\
              git repository with one initial commit.\n\
          \n\
+         run <path-or-manifest> [--no-daemon-config] [--watch] [--verbose] [--json]\n\
+             Boot the daemon with a local plugin overriding discovery's\n\
+             search_paths[0]. Use during inner-loop dev to skip the install +\n\
+             verify pipeline.\n\
+             --no-daemon-config: standalone mode, no agents loaded.\n\
+             --watch: (deferred to 31.7.b) rebuild + reload on file change.\n\
+         \n\
          install <owner>/<repo>[@<tag>] [--dest <path>] [--target <triple>]\n\
                  [--require-signature|--skip-signature-verify] [--json]\n\
              Install a community plugin from GitHub Releases. The CLI resolves the\n\
