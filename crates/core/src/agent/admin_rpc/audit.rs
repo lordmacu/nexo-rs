@@ -192,6 +192,17 @@ pub fn redact_for_audit(method: &str, params: &Value) -> Value {
                     Value::String("<redacted>".into()),
                 );
             }
+            // Phase 82.10.u — schema-driven payload. Walk the
+            // `fields` map with the same key-based redactor used
+            // for credentials/register so secret-grade names
+            // (api_key, setup_token, password, etc) get masked.
+            // Non-secret fields (group_id, region, key_kind) stay
+            // literal — useful for diagnostics. The dispatcher
+            // already validated against the factory schema; this
+            // is defense-in-depth for the audit trail.
+            if let Some(fields) = redacted.get("fields").cloned() {
+                redacted.insert("fields".into(), redact_secret_keys(&fields));
+            }
             return Value::Object(redacted);
         }
     }
@@ -213,6 +224,11 @@ fn redact_secret_keys(value: &Value) -> Value {
         "xoauth2_token",
         "api_key",
         "secret",
+        // Phase 82.10.u — schema-driven LLM credentials.
+        "setup_token",
+        "access_token",
+        "refresh_token",
+        "oauth_bundle",
     ];
     match value {
         Value::Object(map) => {
@@ -375,6 +391,56 @@ mod tests {
         assert_eq!(redacted["factory_type"], "minimax");
         assert_eq!(redacted["api_key_secret_value"], "<redacted>");
         assert_ne!(hash_params(&original), hash_params(&redacted));
+    }
+
+    /// Phase 82.10.u — schema-driven `fields` payload masks
+    /// secret-grade keys (api_key, setup_token) but keeps
+    /// non-secret identifiers (group_id, region) literal so the
+    /// audit log stays useful for diagnostics.
+    #[test]
+    fn redact_for_audit_redacts_llm_upsert_schema_fields() {
+        let original = serde_json::json!({
+            "id": "minimax-cliente-a",
+            "base_url": "https://api.minimax.chat/v1",
+            "factory_type": "minimax",
+            "auth_mode": "api_key",
+            "fields": {
+                "api_key": "sk-leak-this-not",
+                "group_id": "1234567890123",
+                "region": "global",
+                "setup_token": "sk-ant-oat01-leak-too",
+            }
+        });
+        let redacted = redact_for_audit("nexo/admin/llm_providers/upsert", &original);
+        let fields = &redacted["fields"];
+        assert_eq!(fields["api_key"], "<redacted>");
+        assert_eq!(fields["setup_token"], "<redacted>");
+        // Non-secret identifiers stay literal.
+        assert_eq!(fields["group_id"], "1234567890123");
+        assert_eq!(fields["region"], "global");
+        // Top-level metadata also preserved.
+        assert_eq!(redacted["auth_mode"], "api_key");
+        assert_eq!(redacted["factory_type"], "minimax");
+    }
+
+    /// Phase 82.10.u — OAuth bundle JSON pasted via
+    /// `api_key_secret_value` would be caught by the existing
+    /// `api_key_secret_value` rule, but defense-in-depth: confirm
+    /// the new SECRET_KEYS additions also fire when an operator
+    /// drops a bundle into the schema-driven payload.
+    #[test]
+    fn redact_for_audit_masks_oauth_bundle_keys_in_fields() {
+        let original = serde_json::json!({
+            "id": "anthropic-personal",
+            "base_url": "https://api.anthropic.com/v1",
+            "factory_type": "anthropic",
+            "auth_mode": "oauth_bundle_import",
+            "fields": {
+                "oauth_bundle": "{\"access_token\":\"sk-...\",\"refresh_token\":\"r-...\"}",
+            }
+        });
+        let redacted = redact_for_audit("nexo/admin/llm_providers/upsert", &original);
+        assert_eq!(redacted["fields"]["oauth_bundle"], "<redacted>");
     }
 
     /// Confirm that the redactor leaves `api_key_secret_id` intact
