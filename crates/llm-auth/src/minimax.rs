@@ -57,7 +57,6 @@ impl Region {
 /// Response from [`request_user_code`] surfaced to the operator
 /// (via TTY or SPA).
 #[derive(Debug, Clone)]
-#[non_exhaustive]
 pub struct DeviceCodeResponse {
     /// Code the operator types into the portal.
     pub user_code: String,

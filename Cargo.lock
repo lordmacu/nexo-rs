@@ -3365,6 +3365,7 @@ dependencies = [
  "nexo-driver-types",
  "nexo-extensions",
  "nexo-llm",
+ "nexo-llm-auth",
  "nexo-lsp",
  "nexo-mcp",
  "nexo-memory",

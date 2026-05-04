@@ -29,7 +29,6 @@ use crate::pkce::Pkce;
 /// PKCE verifier (always), the device-code response (MiniMax only),
 /// the factory id, and the auth_mode discriminator.
 #[derive(Debug, Clone)]
-#[non_exhaustive]
 pub struct VerifierEntry {
     /// PKCE bundle minted at `oauth_start`.
     pub pkce: Pkce,
@@ -57,7 +56,6 @@ pub struct VerifierEntry {
 /// calls — the SPA needs `user_code` + `verification_uri` to render
 /// the operator-facing pane between start + finish.
 #[derive(Debug, Clone)]
-#[non_exhaustive]
 pub struct DeviceCodeContext {
     /// Code the user types into the portal.
     pub user_code: String,

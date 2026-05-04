@@ -12,6 +12,7 @@ use nexo_tool_meta::admin::llm_providers::{
     LlmProviderProbeDraftInput, LlmProviderProbeInput, LlmProviderProbeResponse,
     LlmProviderSummary, LlmProviderUpsertInput, LlmProvidersCatalogResponse,
     LlmProvidersDeleteParams, LlmProvidersDeleteResponse, LlmProvidersListResponse,
+    OAuthFinishInput, OAuthFinishResponse, OAuthStartInput, OAuthStartResponse,
 };
 
 use super::agents::YamlPatcher;
@@ -887,6 +888,316 @@ async fn try_probe_draft(
     }
     let response = probe_impl.probe_draft(draft).await?;
     serde_json::to_value(response).map_err(|e| AdminRpcError::Internal(e.to_string()))
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Phase 82.10.u — OAuth start/finish handlers.
+//
+// Two-step flow that suspends PKCE state in `VerifierStore` so the
+// SPA never sees the verifier. Single-use sessions: `oauth_finish`
+// removes the entry before exchanging the code, so a replay returns
+// `SESSION_NOT_FOUND` even if the first call failed mid-exchange.
+// TTL 10 min — operators reasonably finish a browser approval in
+// under that.
+// ──────────────────────────────────────────────────────────────────
+
+const OAUTH_SESSION_TTL_SECS: i64 = 600;
+
+/// `nexo/admin/llm_providers/oauth_start` — generate PKCE, persist
+/// the verifier in the store, return `session_id + authorize_url`
+/// (auth-code) or `session_id + user_code + verification_uri`
+/// (device-code).
+pub async fn oauth_start(
+    verifier_store: &dyn nexo_llm_auth::VerifierStore,
+    raw_params: Value,
+) -> AdminRpcResult {
+    let input: OAuthStartInput = match serde_json::from_value(raw_params) {
+        Ok(v) => v,
+        Err(e) => return AdminRpcResult::err(AdminRpcError::InvalidParams(e.to_string())),
+    };
+    if input.factory_type.trim().is_empty() {
+        return AdminRpcResult::err(AdminRpcError::InvalidParams(
+            "factory_type is empty".into(),
+        ));
+    }
+
+    match (input.factory_type.as_str(), input.auth_mode) {
+        ("anthropic", AuthMode::OAuthAuthCode) => {
+            oauth_start_anthropic(verifier_store, input).await
+        }
+        ("minimax", AuthMode::OAuthDeviceCode) => {
+            oauth_start_minimax(verifier_store, input).await
+        }
+        (factory, mode) => err_typed(LlmProviderError::InvalidAuthMode {
+            factory: factory.to_string(),
+            mode: auth_mode_wire(mode).to_string(),
+        }),
+    }
+}
+
+async fn oauth_start_anthropic(
+    verifier_store: &dyn nexo_llm_auth::VerifierStore,
+    input: OAuthStartInput,
+) -> AdminRpcResult {
+    let pkce = nexo_llm_auth::pkce::gen_pkce(nexo_llm_auth::pkce::StateEncoding::HexOnly);
+    let authorize_url = nexo_llm_auth::anthropic::build_authorize_url(&pkce);
+    let now = unix_now();
+    let entry = nexo_llm_auth::VerifierEntry {
+        pkce,
+        factory_type: "anthropic".to_string(),
+        flow_kind: "auth_code".to_string(),
+        device_code: None,
+        tenant_id: input.tenant_id,
+        expires_at_unix: now + OAUTH_SESSION_TTL_SECS,
+        created_at_unix: now,
+    };
+    let session_id = verifier_store.put(entry).await;
+    let resp = OAuthStartResponse {
+        session_id,
+        authorize_url,
+        expires_at_ms: (now + OAUTH_SESSION_TTL_SECS) * 1000,
+        flow_kind: "auth_code".to_string(),
+        user_code: None,
+        polling_interval_ms: None,
+    };
+    AdminRpcResult::ok(serde_json::to_value(resp).unwrap_or(Value::Null))
+}
+
+async fn oauth_start_minimax(
+    verifier_store: &dyn nexo_llm_auth::VerifierStore,
+    input: OAuthStartInput,
+) -> AdminRpcResult {
+    let pkce = nexo_llm_auth::pkce::gen_pkce(nexo_llm_auth::pkce::StateEncoding::Base64Url);
+    let region = nexo_llm_auth::minimax::Region::Global;
+    let device = match nexo_llm_auth::minimax::request_user_code(region, &pkce, None).await
+    {
+        Ok(d) => d,
+        Err(e) => {
+            return err_typed(LlmProviderError::OAuthExchangeFailed {
+                upstream_status: 0,
+                message: format!("request_user_code: {e}"),
+            });
+        }
+    };
+    let now = unix_now();
+    let entry = nexo_llm_auth::VerifierEntry {
+        pkce,
+        factory_type: "minimax".to_string(),
+        flow_kind: "device_code".to_string(),
+        device_code: Some(nexo_llm_auth::DeviceCodeContext {
+            user_code: device.user_code.clone(),
+            verification_uri: device.verification_uri.clone(),
+            deadline_unix: device.deadline_unix,
+            interval: device.interval,
+        }),
+        tenant_id: input.tenant_id,
+        expires_at_unix: device.deadline_unix.min(now + OAUTH_SESSION_TTL_SECS),
+        created_at_unix: now,
+    };
+    let session_id = verifier_store.put(entry).await;
+    let resp = OAuthStartResponse {
+        session_id,
+        authorize_url: device.verification_uri,
+        expires_at_ms: device.deadline_unix * 1000,
+        flow_kind: "device_code".to_string(),
+        user_code: Some(device.user_code),
+        polling_interval_ms: Some(device.interval.as_millis() as u64),
+    };
+    AdminRpcResult::ok(serde_json::to_value(resp).unwrap_or(Value::Null))
+}
+
+/// `nexo/admin/llm_providers/oauth_finish` — exchange the code (or
+/// poll the device-code endpoint) for an OAuth bundle, persist it
+/// to the SecretsStore, patch yaml, and trigger reload. Single-
+/// use session: the verifier entry is taken (removed) BEFORE the
+/// exchange, so a failed exchange surfaces `SESSION_NOT_FOUND` on
+/// retry — the operator must restart with a fresh `oauth_start`.
+pub async fn oauth_finish(
+    verifier_store: &dyn nexo_llm_auth::VerifierStore,
+    secrets: &dyn SecretsStore,
+    patcher: &dyn LlmYamlPatcher,
+    raw_params: Value,
+    reload_signal: &(dyn Fn() + Send + Sync),
+) -> AdminRpcResult {
+    let input: OAuthFinishInput = match serde_json::from_value(raw_params) {
+        Ok(v) => v,
+        Err(e) => return AdminRpcResult::err(AdminRpcError::InvalidParams(e.to_string())),
+    };
+    if input.session_id.trim().is_empty() {
+        return AdminRpcResult::err(AdminRpcError::InvalidParams(
+            "session_id is empty".into(),
+        ));
+    }
+    if input.instance_id.trim().is_empty() {
+        return AdminRpcResult::err(AdminRpcError::InvalidParams(
+            "instance_id is empty".into(),
+        ));
+    }
+
+    // Single-use: peek_status discriminates expired vs missing
+    // for diagnostic-quality error codes; take() removes it.
+    use nexo_llm_auth::SessionStatus;
+    match verifier_store.peek_status(&input.session_id).await {
+        SessionStatus::Live => {}
+        SessionStatus::Expired => {
+            // Burn the entry so it doesn't linger.
+            let _ = verifier_store.take(&input.session_id).await;
+            return err_typed(LlmProviderError::SessionExpired);
+        }
+        SessionStatus::Missing => {
+            return err_typed(LlmProviderError::SessionNotFound);
+        }
+    }
+    let entry = match verifier_store.take(&input.session_id).await {
+        Some(e) => e,
+        None => return err_typed(LlmProviderError::SessionNotFound),
+    };
+
+    let bundle = match (entry.factory_type.as_str(), entry.flow_kind.as_str()) {
+        ("anthropic", "auth_code") => {
+            let code_payload = match input.code.as_deref() {
+                Some(c) if !c.trim().is_empty() => c,
+                _ => {
+                    return AdminRpcResult::err(AdminRpcError::InvalidParams(
+                        "auth_code flow requires `code` payload".into(),
+                    ));
+                }
+            };
+            let (code, state) = match nexo_llm_auth::pkce::parse_code_payload(code_payload) {
+                Ok(t) => t,
+                Err(e) => {
+                    return err_typed(LlmProviderError::OAuthExchangeFailed {
+                        upstream_status: 0,
+                        message: format!("parse code: {e}"),
+                    });
+                }
+            };
+            match nexo_llm_auth::anthropic::exchange_code(
+                &entry.pkce,
+                &code,
+                &state,
+                nexo_llm_auth::anthropic::TOKEN_URL,
+            )
+            .await
+            {
+                Ok(b) => b,
+                Err(e) => {
+                    return err_typed(LlmProviderError::OAuthExchangeFailed {
+                        upstream_status: 0,
+                        message: e.to_string(),
+                    });
+                }
+            }
+        }
+        ("minimax", "device_code") => {
+            let device_ctx = match entry.device_code.as_ref() {
+                Some(d) => d,
+                None => {
+                    return AdminRpcResult::err(AdminRpcError::Internal(
+                        "device_code session missing device_code context".into(),
+                    ));
+                }
+            };
+            let device = nexo_llm_auth::minimax::DeviceCodeResponse {
+                user_code: device_ctx.user_code.clone(),
+                verification_uri: device_ctx.verification_uri.clone(),
+                deadline_unix: device_ctx.deadline_unix,
+                interval: device_ctx.interval,
+            };
+            match nexo_llm_auth::minimax::poll_token(
+                nexo_llm_auth::minimax::Region::Global,
+                &entry.pkce,
+                &device,
+                None,
+            )
+            .await
+            {
+                Ok(b) => b,
+                Err(e) => {
+                    return err_typed(LlmProviderError::OAuthExchangeFailed {
+                        upstream_status: 0,
+                        message: e.to_string(),
+                    });
+                }
+            }
+        }
+        (factory, kind) => {
+            return AdminRpcResult::err(AdminRpcError::Internal(format!(
+                "unsupported (factory={factory}, flow_kind={kind})"
+            )));
+        }
+    };
+
+    // Persist bundle JSON to the SecretsStore. Derived id
+    // mirrors the Anthropic CLI convention so the runtime
+    // `OAuthState::load(path)` can read it back.
+    let bundle_json = match bundle.to_json_pretty() {
+        Ok(s) => s,
+        Err(e) => {
+            return err_typed(LlmProviderError::SecretWriteFailed {
+                detail: format!("serialise bundle: {e}"),
+            });
+        }
+    };
+    let secret_id = oauth_bundle_secret_id(&input.instance_id);
+    let bundle_path = match secrets.write(&secret_id, &bundle_json).await {
+        Ok(r) => r.path,
+        Err(e) => {
+            return err_typed(LlmProviderError::SecretWriteFailed {
+                detail: e.to_string(),
+            });
+        }
+    };
+
+    // Patch yaml: auth.mode = oauth_bundle, auth.bundle = path.
+    let tenant_id = entry.tenant_id.clone();
+    let write_field = |dotted: &str, value: Value| -> anyhow::Result<()> {
+        match tenant_id.as_deref() {
+            Some(tid) => {
+                patcher.upsert_tenant_provider_field(tid, &input.instance_id, dotted, value)
+            }
+            None => patcher.upsert_provider_field(&input.instance_id, dotted, value),
+        }
+    };
+    if let Err(e) = write_field("auth.mode", Value::String("oauth_bundle".into())) {
+        return err_typed(LlmProviderError::YamlWriteFailed {
+            detail: e.to_string(),
+        });
+    }
+    if let Err(e) = write_field(
+        "auth.bundle",
+        Value::String(bundle_path.display().to_string()),
+    ) {
+        return err_typed(LlmProviderError::YamlWriteFailed {
+            detail: e.to_string(),
+        });
+    }
+    reload_signal();
+
+    let resp = OAuthFinishResponse {
+        ok: true,
+        account_email: bundle.account_email.clone(),
+        expires_at_ms: bundle.expires_at * 1000,
+        secret_id,
+    };
+    AdminRpcResult::ok(serde_json::to_value(resp).unwrap_or(Value::Null))
+}
+
+/// Derive a SecretsStore name for an OAuth bundle from the
+/// instance id. Mirrors `secret_id_for_field` shape: prefix
+/// `LLM_`, uppercase, non-alnum → `_`, suffix `_OAUTH_BUNDLE`.
+fn oauth_bundle_secret_id(instance_id: &str) -> String {
+    let mut out = secret_id_for_instance(instance_id);
+    out.push_str("_OAUTH_BUNDLE");
+    out
+}
+
+fn unix_now() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
 }
 
 fn read_summary(
