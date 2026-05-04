@@ -1117,6 +1117,54 @@ impl PairingChallengeStore for InMemoryPairingChallengeStore {
         entry.status.data = PairingStatusData::default();
         Ok(true)
     }
+
+    fn update_qr(
+        &self,
+        challenge_id: Uuid,
+        qr_png_base64: String,
+        qr_ascii: String,
+        _expires_at_ms: u64,
+    ) -> anyhow::Result<bool> {
+        // `_expires_at_ms` is logged in audit but not stored on
+        // the data row — `PairingStatusData` doesn't carry an
+        // expiry field today (it lives on the entry-level
+        // `expires_at`). UIs read the entry's
+        // `expires_at_ms` from the original `pairing/start`
+        // response and combine with the QR data themselves.
+        let Some(mut entry) = self.inner.get_mut(&challenge_id) else {
+            return Ok(false);
+        };
+        if matches!(
+            entry.status.state,
+            PairingState::Linked | PairingState::Expired | PairingState::Cancelled
+        ) {
+            return Ok(false);
+        }
+        entry.status.state = PairingState::QrReady;
+        entry.status.data.qr_png_base64 = Some(qr_png_base64);
+        entry.status.data.qr_ascii = Some(qr_ascii);
+        Ok(true)
+    }
+
+    fn update_state(
+        &self,
+        challenge_id: Uuid,
+        state: PairingState,
+        data: PairingStatusData,
+    ) -> anyhow::Result<bool> {
+        let Some(mut entry) = self.inner.get_mut(&challenge_id) else {
+            return Ok(false);
+        };
+        if matches!(
+            entry.status.state,
+            PairingState::Linked | PairingState::Expired | PairingState::Cancelled
+        ) {
+            return Ok(false);
+        }
+        entry.status.state = state;
+        entry.status.data = data;
+        Ok(true)
+    }
 }
 
 fn epoch_ms_now() -> u64 {
@@ -1929,6 +1977,67 @@ mod pairing_store_tests {
         assert_eq!(parsed["method"], "nexo/notify/test");
         assert_eq!(parsed["params"]["k"], 1);
         assert!(parsed.get("id").is_none());
+    }
+
+    // ── Phase 82.10.p — PairingChallengeStore::update_qr / update_state ──
+
+    #[test]
+    fn update_qr_flips_pending_to_qr_ready_and_stores_payload() {
+        use nexo_core::agent::admin_rpc::domains::pairing::PairingChallengeStore;
+        let store = store_with(60_000);
+        let (id, _) = store.create_challenge("ana", "whatsapp", None, 60).unwrap();
+        let updated = store.update_qr(id, "PNGB64".into(), "##".into(), 1_111).unwrap();
+        assert!(updated);
+        let status = store.read_challenge(id).unwrap().unwrap();
+        assert_eq!(status.state, PairingState::QrReady);
+        assert_eq!(status.data.qr_png_base64.as_deref(), Some("PNGB64"));
+        assert_eq!(status.data.qr_ascii.as_deref(), Some("##"));
+    }
+
+    #[test]
+    fn update_qr_returns_false_for_terminal_states() {
+        use nexo_core::agent::admin_rpc::domains::pairing::PairingChallengeStore;
+        let store = store_with(60_000);
+        let (id, _) = store.create_challenge("ana", "whatsapp", None, 60).unwrap();
+        // Terminal: cancel.
+        store.cancel_challenge(id).unwrap();
+        let updated = store.update_qr(id, "x".into(), "y".into(), 0).unwrap();
+        assert!(!updated, "cancelled entries are frozen");
+    }
+
+    #[test]
+    fn update_state_pending_to_linked_with_device_jid() {
+        use nexo_core::agent::admin_rpc::domains::pairing::PairingChallengeStore;
+        let store = store_with(60_000);
+        let (id, _) = store.create_challenge("ana", "whatsapp", None, 60).unwrap();
+        let mut data = PairingStatusData::default();
+        data.device_jid = Some("5491100@s.whatsapp.net".into());
+        let updated = store.update_state(id, PairingState::Linked, data).unwrap();
+        assert!(updated);
+        let status = store.read_challenge(id).unwrap().unwrap();
+        assert_eq!(status.state, PairingState::Linked);
+        assert_eq!(status.data.device_jid.as_deref(), Some("5491100@s.whatsapp.net"));
+    }
+
+    #[test]
+    fn update_state_idempotent_on_terminal_entries() {
+        use nexo_core::agent::admin_rpc::domains::pairing::PairingChallengeStore;
+        let store = store_with(60_000);
+        let (id, _) = store.create_challenge("ana", "whatsapp", None, 60).unwrap();
+        // First write to terminal.
+        let data1 = PairingStatusData::default();
+        store.update_state(id, PairingState::Linked, data1).unwrap();
+        // Second attempt should be rejected — terminal entries
+        // are sticky regardless of the new target state.
+        let mut data2 = PairingStatusData::default();
+        data2.error = Some("late error".into());
+        let updated = store
+            .update_state(id, PairingState::Cancelled, data2)
+            .unwrap();
+        assert!(!updated);
+        // State unchanged.
+        let status = store.read_challenge(id).unwrap().unwrap();
+        assert_eq!(status.state, PairingState::Linked);
     }
 
     /// Regression: the supervisor writes raw bytes to the child
