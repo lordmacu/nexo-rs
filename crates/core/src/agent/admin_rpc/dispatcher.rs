@@ -639,6 +639,7 @@ impl AdminRpcDispatcher {
             | "nexo/admin/llm_providers/upsert"
             | "nexo/admin/llm_providers/delete"
             | "nexo/admin/llm_providers/probe"
+            | "nexo/admin/llm_providers/probe_draft"
             | "nexo/admin/llm_providers/catalog" => Some("llm_keys_crud"),
             "nexo/admin/channels/list"
             | "nexo/admin/channels/approve"
@@ -1180,6 +1181,14 @@ impl AdminRpcDispatcher {
             },
             "nexo/admin/llm_providers/probe" => match &self.llm_provider_probe {
                 Some(p) => super::domains::llm_providers::probe(p.as_ref(), params).await,
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "llm_providers probe not configured".into(),
+                )),
+            },
+            "nexo/admin/llm_providers/probe_draft" => match &self.llm_provider_probe {
+                Some(p) => {
+                    super::domains::llm_providers::probe_draft(p.as_ref(), params).await
+                }
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "llm_providers probe not configured".into(),
                 )),

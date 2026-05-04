@@ -9,9 +9,9 @@ use serde_json::Value;
 use async_trait::async_trait;
 use nexo_tool_meta::admin::llm_providers::{
     AuthMode, CredentialFieldDescriptor, LlmProviderCatalogEntry, LlmProviderError,
-    LlmProviderProbeInput, LlmProviderProbeResponse, LlmProviderSummary,
-    LlmProviderUpsertInput, LlmProvidersCatalogResponse, LlmProvidersDeleteParams,
-    LlmProvidersDeleteResponse, LlmProvidersListResponse,
+    LlmProviderProbeDraftInput, LlmProviderProbeInput, LlmProviderProbeResponse,
+    LlmProviderSummary, LlmProviderUpsertInput, LlmProvidersCatalogResponse,
+    LlmProvidersDeleteParams, LlmProvidersDeleteResponse, LlmProvidersListResponse,
 };
 
 use super::agents::YamlPatcher;
@@ -801,6 +801,23 @@ pub trait LlmProvidersProbe: Send + Sync {
         provider_id: &str,
         tenant_id: Option<&str>,
     ) -> Result<LlmProviderProbeResponse, AdminRpcError>;
+
+    /// Phase 82.10.u — probe a DRAFT payload that hasn't landed in
+    /// `llm.yaml` yet. Used by the SPA wizard to validate
+    /// credentials BEFORE persistence so a bad key never lands on
+    /// disk.
+    ///
+    /// Default impl returns `Internal "probe_draft not implemented"`
+    /// so adapters that haven't migrated keep the legacy probe
+    /// path working.
+    async fn probe_draft(
+        &self,
+        _draft: LlmProviderProbeDraftInput,
+    ) -> Result<LlmProviderProbeResponse, AdminRpcError> {
+        Err(AdminRpcError::Internal(
+            "probe_draft not implemented for this LlmProvidersProbe adapter".into(),
+        ))
+    }
 }
 
 /// Dispatcher entry point for `nexo/admin/llm_providers/probe`.
@@ -831,6 +848,44 @@ async fn try_probe(
     let response = probe_impl
         .probe(&input.provider_id, input.tenant_id.as_deref())
         .await?;
+    serde_json::to_value(response).map_err(|e| AdminRpcError::Internal(e.to_string()))
+}
+
+/// Phase 82.10.u — `nexo/admin/llm_providers/probe_draft` handler.
+///
+/// Forwards a not-yet-persisted credential payload to the probe
+/// adapter. Validates the input shape, then defers entirely to
+/// `probe_impl.probe_draft(draft).await`. Errors return the same
+/// `AdminRpcError` taxonomy as the regular probe — including the
+/// `Internal "not implemented"` fallback for adapters that haven't
+/// migrated.
+pub async fn probe_draft(
+    probe_impl: &dyn LlmProvidersProbe,
+    raw_params: Value,
+) -> AdminRpcResult {
+    match try_probe_draft(probe_impl, raw_params).await {
+        Ok(v) => AdminRpcResult::ok(v),
+        Err(e) => AdminRpcResult::err(e),
+    }
+}
+
+async fn try_probe_draft(
+    probe_impl: &dyn LlmProvidersProbe,
+    raw_params: Value,
+) -> Result<Value, AdminRpcError> {
+    let draft: LlmProviderProbeDraftInput = serde_json::from_value(raw_params)
+        .map_err(|e| AdminRpcError::InvalidParams(e.to_string()))?;
+    if draft.factory_type.trim().is_empty() {
+        return Err(AdminRpcError::InvalidParams(
+            "factory_type cannot be empty".into(),
+        ));
+    }
+    if draft.base_url.trim().is_empty() {
+        return Err(AdminRpcError::InvalidParams(
+            "base_url cannot be empty".into(),
+        ));
+    }
+    let response = probe_impl.probe_draft(draft).await?;
     serde_json::to_value(response).map_err(|e| AdminRpcError::Internal(e.to_string()))
 }
 
