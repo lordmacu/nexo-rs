@@ -54,9 +54,11 @@ pub use config_schema::{
 };
 pub use error::ManifestError;
 pub use manifest::{
-    AdvisorsSection, AgentsSection, Capabilities, Capability, CapabilityGateDecl,
-    CapabilityGatesSection, ChannelDecl, ChannelsSection, ConfigSection, ContractsSection,
-    EntrypointSection, ExtendsSection, GateKind, GateRisk, MetaSection, PluginManifest,
-    PluginSection, RequiresSection, SkillsSection, SupervisorSection, ToolsSection, UiHint,
-    UiSection, EXTENDS_SECTIONS, PLUGIN_MANIFEST_FILENAME, SUPERVISOR_STDERR_TAIL_MAX,
+    AdminCapabilities, AdvisorsSection, AgentsSection, Capabilities, Capability,
+    CapabilityGateDecl, CapabilityGatesSection, ChannelDecl, ChannelsSection, ConfigSection,
+    ContractsSection, EntrypointSection, ExtendsSection, GateKind, GateRisk,
+    HttpServerCapability, MetaSection, PluginManifest, PluginSection, RequiresSection,
+    SkillsSection, SupervisorSection, ToolsSection, UiHint, UiSection,
+    CURRENT_MANIFEST_VERSION, EXTENDS_SECTIONS, PLUGIN_MANIFEST_FILENAME,
+    SUPERVISOR_STDERR_TAIL_MAX,
 };
