@@ -38,6 +38,173 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 31.7 — `nexo plugin run <path>` local dev loop.**
+  New CLI mode that boots the daemon with a local plugin
+  directory injected as `cfg.plugins.discovery.search_paths[0]`,
+  bypassing the install + verify pipeline. Inner-loop dev with
+  zero round-trips through GitHub Releases / cosign / sha256.
+  
+  Argv:
+  
+  ```bash
+  nexo plugin run <path-or-manifest>
+      [--no-daemon-config]      # standalone — no agents loaded
+      [--watch]                  # deferred to 31.7.b
+      [--verbose]
+      [--json]
+  ```
+  
+  `<path-or-manifest>` accepts a directory containing
+  `nexo-plugin.toml` or the manifest file directly; both
+  resolve to the same plugin root via `canonicalize`.
+  
+  Implementation pattern: **fall-through** to the existing
+  `Mode::Run` boot path. The `Mode::PluginRun` arm validates
+  the path + manifest pre-boot, prints a banner (or JSON
+  report), stamps `args.plugin_run_override`, and falls
+  through. The daemon boot path detects the override and
+  mutates `cfg` right after `AppConfig::load`. Single source
+  of truth for daemon startup — no duplicated boot code.
+  
+  `resolve_local_plugin(path, no_daemon_config)`:
+  
+  1. Canonicalize the path; reject if non-existent.
+  2. Branch on file (must end in `nexo-plugin.toml`) vs dir
+     (must contain `nexo-plugin.toml` at root).
+  3. Parse via `PluginManifest::from_str` (same parser the
+     daemon uses at boot).
+  4. Validate `[plugin.entrypoint] command` is non-empty.
+  5. Return `PluginRunOverride { plugin_root, manifest_path,
+     plugin_id, plugin_version, no_daemon_config }`.
+  
+  `apply_override(&mut cfg, &override)`:
+  
+  - Prepends `plugin_root` to `cfg.plugins.discovery.search_paths`
+    (idempotent: skips when already at head — supports
+    repeated apply without duplicate insertion).
+  - If `no_daemon_config`: clears `cfg.agents.agents` for
+    standalone plugin inspection (broker + plugin still run;
+    no agent loop).
+  
+  `local > global` precedence: local plugin wins because the
+  discovery walker stops at first id-match in
+  `search_paths[0]` — same precedence model as the
+  `local > project > user` scope ordering used by other
+  plugin-marketplace clients.
+  
+  Reuses existing infra without changes:
+  
+  - **Phase 81.17.b subprocess auto-fallback** — daemon spawns
+    the plugin from manifest exactly like an installed plugin.
+  - **Phase 81.10 hot-reload** — re-walks `search_paths` each
+    tick. Author runs `cargo build --release` in another
+    terminal; daemon respawns the child against the new
+    binary.
+  
+  `PluginRunError` variants (6):
+  
+  | Variant | When |
+  |---------|------|
+  | `PathNotFound` | `<path>` doesn't exist on disk. |
+  | `NotAPluginPath` | Path is neither a manifest file nor a directory containing one. |
+  | `ManifestInvalid` | TOML parse / schema validation fails. |
+  | `MissingEntrypoint` | Manifest has empty / absent `[plugin.entrypoint] command`. |
+  | `WatchDeferred` | `--watch` flag present (functional in 31.7.b). |
+  | `Io` | Filesystem error during canonicalize / read. |
+  
+  Stable error `kind` strings via `plugin_run_error_kind` for
+  JSON output: `PathNotFound`, `NotAPluginPath`,
+  `ManifestInvalid`, `MissingEntrypoint`, `WatchDeferred`,
+  `Io`.
+  
+  JSON output (`--json`) emits a single `PluginRunReport`
+  before daemon log lines start:
+  
+  ```json
+  {
+    "ok": true,
+    "id": "my_plugin",
+    "version": "0.1.0",
+    "manifest_path": "/abs/path/to/my_plugin/nexo-plugin.toml",
+    "plugin_root": "/abs/path/to/my_plugin",
+    "no_daemon_config": false,
+    "next": "daemon-boot"
+  }
+  ```
+  
+  Error path: `PluginRunErrorReport` with stable `kind` +
+  optional `path`. Hint blocks per error variant
+  (`PathNotFound` → "pass a path to a plugin directory or its
+  nexo-plugin.toml file"; `NotAPluginPath` → "the directory
+  must contain a nexo-plugin.toml at its root";
+  `MissingEntrypoint` → "declare `[plugin.entrypoint]
+  command = './bin/<id>'`"; `WatchDeferred` → "re-run without
+  --watch; ships in Phase 31.7.b").
+  
+  8 unit tests in `src/plugin_run.rs::tests`:
+  
+  - `path_to_manifest_resolves_dir_with_manifest`
+  - `path_to_manifest_resolves_manifest_directly`
+  - `path_to_manifest_rejects_non_existent`
+  - `path_to_manifest_rejects_dir_without_manifest`
+  - `path_to_manifest_rejects_invalid_toml`
+  - `path_to_manifest_rejects_missing_entrypoint`
+  - `apply_search_path_prepend_inserts_at_head`
+  - `apply_search_path_prepend_is_idempotent_for_head_match`
+  
+  Apply-override tests use a private
+  `apply_search_path_prepend(&mut Vec<PathBuf>, &Path)` helper
+  rather than constructing a full `AppConfig` (which has no
+  `Default` impl). The helper is the actual prepend logic;
+  the public `apply_override` delegates to it.
+  
+  `CliArgs` struct gained a `plugin_run_override:
+  Option<PluginRunOverride>` field. Updated all 9
+  construction sites in `parse_args` to initialize the field.
+  `args` is now `let mut args = parse_args()` so the
+  dispatch arm can stamp the override.
+  
+  Help text added to `print_plugin_help` (run subcommand
+  block before `install`) + main `print_usage` (single line).
+  
+  Out of scope (tracked):
+  - `--watch` filesystem watcher — Phase 31.7.b. Flag is
+    parsed today but rejected with `WatchDeferred`; the
+    error message tells operators to re-run without it.
+  - `--stdio-only` no-broker contract smoke mode — Phase
+    31.7.c.
+  - Multi-plugin injection (single path only at v1).
+  - Custom port pinning.
+  - Modifying daemon-side spawn / supervisor / hot-reload —
+    already shipped in Phase 81.
+  
+  Test totals: plugin_run 8/8 (new). Regression: ext-installer
+  40/40, plugin_install 12/12, plugin_new 11/11. Workspace
+  builds clean.
+  
+  IRROMPIBLE refs:
+  internal `src/plugin_install.rs::run_plugin_install`
+  (Phase 31.1.c — async dispatch fn shape mirrored);
+  internal `src/main.rs:1156-1183` (`Mode::PluginInstall`
+  parse + dispatch precedent);
+  internal
+  `crates/core/src/agent/nexo_plugin_registry/config.rs:21-30`
+  (`resolve_search_paths` — mining: prepend before resolve);
+  internal
+  `crates/core/src/agent/nexo_plugin_registry/factory.rs:74-92`
+  (`PluginFactoryRegistry` — mining: local-plugin-run uses
+  subprocess auto-fallback, no factory needed);
+  internal Phase 81.17.b (subprocess auto-fallback) +
+  Phase 81.10 (hot-reload) — reused without changes;
+  claude-code-leak
+  `src/services/plugins/pluginOperations.ts:72,81,178`
+  (`local > project > user` precedence — mining: local-wins
+  rule);
+  claude-code-leak
+  `src/utils/plugins/marketplaceHelpers.ts:46,213,420,522`
+  (`'directory'` source type — mining: peer of github source
+  for dev-time directory pointer).
+
 - **Phase 31.6 — `nexo plugin new --lang` scaffolder.** Closes
   the Phase 31 author-side flow: a single command spins up a
   ready-to-build plugin repo from one of the four bundled

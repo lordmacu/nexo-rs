@@ -977,6 +977,64 @@ coordinación de archivos cross-cutting.
   regression: 40/40 still pass; plugin_install: 12/12; new
   plugin_new: 11/11. Phase 31 author-side flow closes end-to-end.
 
+- **31.7 ✅ shipped 2026-05-04** — `nexo plugin run <path>`
+  local dev loop. New `src/plugin_run.rs` module +
+  `Mode::PluginRun` variant + parse arm. Argv:
+  `nexo plugin run <path-or-manifest> [--no-daemon-config]
+  [--watch] [--verbose] [--json]`. Implementation pattern:
+  pre-boot validation + side-channel `args.plugin_run_override`
+  + **fall-through** to `Mode::Run` boot path (single source
+  of truth — no duplicated daemon startup). `resolve_local_plugin`
+  canonicalizes the path, branches on file (must end in
+  `nexo-plugin.toml`) vs dir (must contain `nexo-plugin.toml`),
+  parses manifest via `PluginManifest::from_str`, validates
+  `[plugin.entrypoint] command` is non-empty. Errors:
+  `PathNotFound`, `NotAPluginPath`, `ManifestInvalid`,
+  `MissingEntrypoint`, `WatchDeferred` (--watch reserved for
+  31.7.b), `Io`. `apply_override(&mut cfg, &override)`
+  injected right after `AppConfig::load` — prepends
+  `plugin_root` to `cfg.plugins.discovery.search_paths`
+  (idempotent: skips when already at head); when
+  `--no-daemon-config`, clears `cfg.agents.agents` for
+  standalone plugin inspection. `local > global` precedence —
+  local plugin wins because discovery walker stops at first
+  id-match in `search_paths[0]`. Reuses Phase 81.17.b
+  subprocess auto-fallback for spawn (no daemon-side changes);
+  reuses Phase 81.10 hot-reload (re-walks `search_paths` each
+  tick → `cargo build` triggers respawn). 8 unit tests: 6
+  path-resolution + 2 search-path-prepend (resolves dir with
+  manifest, resolves manifest directly, rejects non-existent,
+  rejects dir without manifest, rejects invalid TOML, rejects
+  missing entrypoint, prepend inserts at head, prepend
+  idempotent for head-match). Tests use a private
+  `apply_search_path_prepend` helper that operates on
+  `Vec<PathBuf>` directly to avoid `AppConfig::default()`
+  (no Default impl). `CliArgs` gained `plugin_run_override:
+  Option<PluginRunOverride>` field; `parse_args` updated
+  across all 9 construction sites. New help text in
+  `print_plugin_help` + main `print_usage`. NO `--watch`
+  (deferred 31.7.b), NO stdio-only no-broker mode (deferred
+  31.7.c), NO multi-plugin injection, NO custom port.
+  Workspace builds clean; ext-installer regression 40/40;
+  plugin_install 12/12; plugin_new 11/11; plugin_run 8/8.
+
+- **31.7.b ⬜** `nexo plugin run --watch` — filesystem watcher
+  via `notify` crate. On manifest or src/ change, trigger
+  Phase 81.10 hot-reload (re-walks search_paths) so the
+  daemon respawns the subprocess against the new binary.
+  Author runs `cargo watch -x build` in another terminal;
+  watcher plugs in here. Defer parsing the existing flag is
+  already in place via `WatchDeferred` error; this slice
+  flips it to functional. ~0.5 d.
+
+- **31.7.c ⬜** `nexo plugin run --stdio-only` — boot ONLY the
+  plugin's broker bridge + JSON-RPC pipe over stdin/stdout,
+  no NATS, no agents, no LLM. Pure contract smoke test for
+  authors who want to verify wire format independently of
+  agent runtime. Plugin's `BrokerSender::publish` writes to
+  stdout instead of NATS; daemon-side reader echoes to
+  stderr. ~1 d.
+
 - **81.15.c.b ✅ shipped 2026-05-01** — SDK streaming
   consumption helper. Pending value type changed to
   `PendingKind` enum (Single for non-streaming, Streaming for

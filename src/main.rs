@@ -2,6 +2,7 @@
 
 mod plugin_install;
 mod plugin_new;
+mod plugin_run;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -104,6 +105,19 @@ enum Mode {
         description: Option<String>,
         git_init: bool,
         force: bool,
+        json: bool,
+    },
+    /// Phase 31.7 — `nexo plugin run <path>` boots the daemon
+    /// with a local plugin directory injected as
+    /// `cfg.plugins.discovery.search_paths[0]`. Inner-loop dev
+    /// without going through install + verify pipeline. Falls
+    /// through to `Mode::Run` after stamping
+    /// `args.plugin_run_override`.
+    PluginRun {
+        path: PathBuf,
+        no_daemon_config: bool,
+        watch: bool,
+        verbose: bool,
         json: bool,
     },
     /// Phase 82.6 — `nexo ext state-dir <id>` prints the
@@ -503,6 +517,11 @@ enum AgentDreamSubcommand {
 struct CliArgs {
     config_dir: PathBuf,
     mode: Mode,
+    /// Phase 31.7 — set when `Mode::PluginRun` falls through to
+    /// `Mode::Run`. Tells the daemon boot path to mutate the
+    /// loaded `AppConfig` (prepend the local plugin's path to
+    /// discovery search_paths; optionally clear agents).
+    plugin_run_override: Option<plugin_run::PluginRunOverride>,
 }
 
 /// Shared state for the companion WebSocket pairing handshake.
@@ -907,7 +926,7 @@ async fn main() -> Result<()> {
     // value wins — safe default.
     let _ = nexo_extensions::set_agent_version(env!("CARGO_PKG_VERSION"));
 
-    let args = parse_args();
+    let mut args = parse_args();
     match args.mode {
         Mode::Help => {
             print_usage();
@@ -1223,6 +1242,25 @@ async fn main() -> Result<()> {
             .await?;
             std::process::exit(code);
         }
+        Mode::PluginRun {
+            path,
+            no_daemon_config,
+            watch,
+            verbose: _verbose,
+            json,
+        } => {
+            if watch {
+                let err = plugin_run::PluginRunError::WatchDeferred;
+                std::process::exit(plugin_run::emit_error(&err, json, Some(path)));
+            }
+            let override_ = match plugin_run::resolve_local_plugin(&path, no_daemon_config) {
+                Ok(o) => o,
+                Err(e) => std::process::exit(plugin_run::emit_error(&e, json, Some(path))),
+            };
+            plugin_run::print_pre_boot_banner(&override_, json);
+            args.plugin_run_override = Some(override_);
+            // Fall through to the daemon boot path below.
+        }
         Mode::Admin { port } => return run_admin_web(port).await,
         Mode::Run => {}
     }
@@ -1236,6 +1274,19 @@ async fn main() -> Result<()> {
     let config_dir = args.config_dir;
     tracing::info!(config_dir = %config_dir.display(), "loading config");
     let mut cfg = AppConfig::load(&config_dir).context("failed to load config")?;
+
+    // Phase 31.7 — `nexo plugin run <path>` falls through to the
+    // boot path with a side-channel override. Apply it here, AFTER
+    // load and BEFORE any consumer reads `cfg.plugins.discovery` or
+    // `cfg.agents.agents`.
+    if let Some(ref override_) = args.plugin_run_override {
+        plugin_run::apply_override(&mut cfg, override_);
+        tracing::info!(
+            plugin_id = %override_.plugin_id,
+            plugin_root = %override_.plugin_root.display(),
+            "local plugin override applied"
+        );
+    }
 
     // Phase 82.4.b.b — auto-synth `InboundBinding { plugin: "event",
     // instance: "<id>" }` for each declared `event_subscribers[*].id`
@@ -7529,6 +7580,7 @@ fn parse_args() -> CliArgs {
                 return CliArgs {
                     config_dir,
                     mode: Mode::Help,
+                    plugin_run_override: None,
                 }
             }
             other => positional.push(other.to_string()),
@@ -7543,6 +7595,7 @@ fn parse_args() -> CliArgs {
         return CliArgs {
             config_dir,
             mode: Mode::Version { verbose },
+            plugin_run_override: None,
         };
     }
 
@@ -7560,6 +7613,7 @@ fn parse_args() -> CliArgs {
         return CliArgs {
             config_dir,
             mode: Mode::CheckConfig { strict },
+            plugin_run_override: None,
         };
     }
 
@@ -7573,6 +7627,7 @@ fn parse_args() -> CliArgs {
             mode: Mode::DryRun {
                 json: has_json_flag,
             },
+            plugin_run_override: None,
         };
     }
 
@@ -7582,13 +7637,13 @@ fn parse_args() -> CliArgs {
     // match arms below.
     if pos_no_flags.first().map(|s| s.as_str()) == Some("pair") {
         if let Some(mode) = route_pair_subcommand(&positional, has_json_flag) {
-            return CliArgs { config_dir, mode };
+            return CliArgs { config_dir, mode, plugin_run_override: None };
         }
     }
 
     if pos_no_flags.first().map(|s| s.as_str()) == Some("cron") {
         if let Some(mode) = route_cron_subcommand(&positional, has_json_flag) {
-            return CliArgs { config_dir, mode };
+            return CliArgs { config_dir, mode, plugin_run_override: None };
         }
     }
 
@@ -7619,12 +7674,13 @@ fn parse_args() -> CliArgs {
                 db: parse_kv_flag(&positional, "--db").map(PathBuf::from),
                 tenant_id: parse_kv_flag(&positional, "--tenant"),
             },
+            plugin_run_override: None,
         };
     }
 
     if pos_no_flags.first().map(|s| s.as_str()) == Some("memory") {
         if let Some(mode) = route_memory_subcommand(&pos_no_flags, &positional, has_json_flag) {
-            return CliArgs { config_dir, mode };
+            return CliArgs { config_dir, mode, plugin_run_override: None };
         }
     }
 
@@ -7685,6 +7741,14 @@ fn parse_args() -> CliArgs {
             skip_signature_verify: positional.iter().any(|a| a == "--skip-signature-verify"),
         },
         [cmd, sub] if cmd == "plugin" && sub == "help" => Mode::PluginHelp,
+        // Phase 31.7 — `nexo plugin run <path-or-manifest> [...]`.
+        [cmd, sub, path] if cmd == "plugin" && sub == "run" => Mode::PluginRun {
+            path: PathBuf::from(path),
+            no_daemon_config: positional.iter().any(|a| a == "--no-daemon-config"),
+            watch: positional.iter().any(|a| a == "--watch"),
+            verbose: positional.iter().any(|a| a == "--verbose"),
+            json: has_json_flag,
+        },
         // Phase 31.6 — `nexo plugin new <id> --lang <lang> [...]`.
         [cmd, sub, id] if cmd == "plugin" && sub == "new" => Mode::PluginNew {
             id: id.clone(),
@@ -7935,7 +7999,7 @@ fn parse_args() -> CliArgs {
         }
     };
 
-    CliArgs { config_dir, mode }
+    CliArgs { config_dir, mode, plugin_run_override: None }
 }
 
 /// Phase 27.1 — print version to stdout. `verbose=false` mirrors clap's
@@ -7971,6 +8035,9 @@ fn print_usage() {
     );
     println!(
         "                                         [--description <text>] [--git] [--force] [--json]"
+    );
+    println!(
+        "  agent [--config <dir>] plugin run <path> [--no-daemon-config] [--watch] [--verbose] [--json]"
     );
     println!(
         "  agent [--config <dir>] plugin install <owner>/<repo>[@<tag>] [--dest <path>] [--target <triple>]"
