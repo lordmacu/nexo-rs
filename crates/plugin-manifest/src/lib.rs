@@ -41,10 +41,13 @@
 
 pub mod compat_v1;
 pub mod config_schema;
+pub mod discover;
 pub mod error;
 pub mod id_regex;
 pub mod manifest;
 pub mod validate;
+
+pub use discover::{discover_in_root, PLUGIN_MANIFEST_FILENAMES};
 
 pub use config_schema::{
     is_validation_bypassed, validate_config, ConfigSchemaError, SKIP_SCHEMA_ENV,
