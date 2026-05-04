@@ -38,6 +38,123 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.25 — Remote `LlmClient` provider wrapper
+  (subprocess-backed).** New `RemoteLlmClient` implements the
+  `LlmClient` trait by translating `chat()` and `stream()` into
+  JSON-RPC requests over the subprocess plugin's stdio bridge.
+  Subprocess plugins declaring
+  `[plugin.extends].llm_providers = ["cohere"]` get one
+  `RemoteLlmFactory` per provider name registered into
+  `LlmRegistry` automatically at boot.
+
+  One new wire method (contract v1.6.0) with two modes:
+
+  - `llm.chat { provider, model, request, stream: false }` →
+    reply once with `WireChatResponse` (default 60 s timeout).
+  - `llm.chat { provider, model, request, stream: true }` →
+    emit zero or more `llm.chat.delta { request_id, chunk }`
+    notifications + a final response carrying `usage` /
+    `finish_reason` / optional `cache_usage` (default 300 s).
+
+  LLM-specific error codes:
+
+  | Code | Meaning |
+  |------|---------|
+  | `-33101` | `llm.connection_failed` |
+  | `-33102` | `llm.authentication_failed` |
+  | `-33103` | `llm.rate_limited` (`data.retry_after_secs`) |
+  | `-33104` | `llm.model_not_found` |
+  | `-33105` | `llm.context_overflow` |
+
+  Mapped to `anyhow::Error` with operator-greppable messages
+  (`"rate limited; retry after 30s"`, `"model X not available
+  on provider Y"`, etc.).
+
+  Architectural changes:
+
+  - `LlmRegistry::factories: HashMap<...>` →
+    `RwLock<HashMap<...>>`. `register(&self, ...)` (was
+    `&mut self`) so callers holding `Arc<LlmRegistry>` can
+    register post-construction. New `unregister(&self, name)
+    -> bool` for the rollback path. `LlmRegistry::names()`
+    return type changed `Vec<&str>` → `Vec<String>`; 2
+    callsites updated.
+  - 15 wire-only types in `llm_remote/wire.rs`
+    (`WireChatRequest` / `WireChatResponse` /
+    `WireChatMessage` / `WireToolDef` / `WireToolChoice` /
+    `WireToolCall` / `WireResponseContent` /
+    `WireFinishReason` / `WireTokenUsage` / `WireCacheUsage` /
+    `WireStreamChunk` / `WirePromptBlock` / `WireCachePolicy`
+    / `WireAttachment` / `WireChatRole`) keep `nexo-llm`
+    types untouched. `PromptBlock.label` (telemetry-only
+    `&'static str`) drops at the wire boundary.
+  - `Inner.streaming_pending: Arc<DashMap<u64, StreamingPending>>`
+    field added on `SubprocessNexoPlugin::Inner`. Reader
+    notification handler dispatches `llm.chat.delta` to the
+    per-id `delta_tx`; response handler resolves streaming
+    `final_tx` + drops the entry so `delta_tx` closes.
+  - `SubprocessNexoPlugin::register_remote_llm_providers(llm_registry)`
+    post-init hook reads `manifest.plugin.extends.llm_providers`,
+    builds one `RemoteLlmFactory` per name, registers each.
+    Rolls back on `LlmProviderRegistrationError::AlreadyRegistered`.
+  - `init_loop::run_plugin_init_loop_with_factory` gained 5th
+    arg `llm_registry: &Arc<LlmRegistry>`; new
+    `register_remote_llm_providers_after_init` post-init hook
+    chained after `register_remote_channels_after_init`.
+  - `boot.rs::wire_plugin_registry_with_runtime` threads
+    `runtime.llm_registry` through; legacy `(Some, None)`
+    branch builds an empty `Arc::new(LlmRegistry::new())`.
+
+  Plugin authors consume via:
+
+  ```rust
+  // In subprocess plugin's reader loop:
+  match method {
+      "llm.chat" => {
+          let stream = params["stream"].as_bool().unwrap_or(false);
+          let request = serde_json::from_value::<WireChatRequest>(
+              params["request"].clone()
+          )?;
+          if stream {
+              // Emit deltas
+              send_notification("llm.chat.delta", json!({
+                  "request_id": id,
+                  "chunk": { "type": "text_delta", "delta": "Hello" },
+              }));
+              reply_ok(id, /* WireChatResponse */);
+          } else {
+              let resp = call_my_provider(&request).await?;
+              reply_ok(id, resp);
+          }
+      }
+      _ => reply_method_not_found(id, method),
+  }
+  ```
+
+  Tests: 11 unit tests (3 in `wire::tests` for round-tripping
+  + 8 in `llm_remote::tests` covering provider id, request /
+  response serialization, unsupported / rate-limited / timeout
+  error mapping, streaming chunks ordering, dropped
+  subscription cleanup) + 1 e2e
+  (`crates/core/tests/remote_llm_e2e.rs::llm_chat_round_trips_via_mock_subprocess`)
+  with a bash mock plugin echoing `llm.chat`. All 1296
+  `nexo-core` lib tests pass + 2/2 subprocess e2e + 1/1
+  remote_channel_e2e + 1/1 remote_llm_e2e; workspace builds
+  clean.
+
+  Contract spec bumped to v1.6.0 with new §5.y "LLM provider
+  methods" + Changelog row. Authoring docs gain "Contributing
+  LLM providers" section.
+
+  Out of scope (deferred): embed support over the wire
+  (81.25.b); per-method timeout knobs in manifest (81.25.c);
+  capability-negotiation handshake validating declared
+  providers at `initialize`-reply time (81.25.d); bounded
+  streaming sender to prevent flood (81.25.e). In-tree LLM
+  providers (Minimax / OpenAI / Anthropic / Gemini / DeepSeek)
+  keep direct trait impls; only out-of-tree subprocess
+  providers use the remote wrapper.
+
 - **Phase 81.24 — Remote `ChannelAdapter` wrapper (subprocess-
   backed).** New `RemoteChannelAdapter` that implements the
   `ChannelAdapter` trait by translating each method call into a

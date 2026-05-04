@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use nexo_config::types::agents::ModelConfig;
 use nexo_config::types::llm::{LlmConfig, LlmProviderConfig, RetryConfig};
@@ -35,9 +35,16 @@ pub trait LlmProviderFactory: Send + Sync {
 /// 1. Implement `LlmClient` for the new client struct.
 /// 2. Implement `LlmProviderFactory` next to it.
 /// 3. Register it in `with_builtins` (or via `register` from a downstream binary).
+///
+/// Phase 81.25 — `factories` lives behind an internal `RwLock` so
+/// post-Arc registration works (subprocess plugins declaring
+/// `extends.llm_providers = [...]` register during init via the
+/// shared `Arc<LlmRegistry>`). Read paths (`build` / `names`)
+/// take a read lock per call; writes (`register` / `unregister`)
+/// take a write lock briefly.
 #[derive(Default)]
 pub struct LlmRegistry {
-    factories: HashMap<String, Box<dyn LlmProviderFactory>>,
+    factories: RwLock<HashMap<String, Box<dyn LlmProviderFactory>>>,
 }
 
 impl LlmRegistry {
@@ -47,7 +54,7 @@ impl LlmRegistry {
 
     /// Build a registry pre-populated with every provider shipped in this crate.
     pub fn with_builtins() -> Self {
-        let mut r = Self::new();
+        let r = Self::new();
         // Builtins are infallible — `register` only fails on duplicate name,
         // which cannot happen here because each factory has a unique literal.
         r.register(Box::new(MiniMaxFactory))
@@ -63,17 +70,39 @@ impl LlmRegistry {
         r
     }
 
-    pub fn register(&mut self, factory: Box<dyn LlmProviderFactory>) -> anyhow::Result<()> {
+    /// Register a factory. Phase 81.25 — `&self` (was `&mut self`)
+    /// so callers holding `Arc<LlmRegistry>` can register
+    /// post-construction. Internal `RwLock` write-locks briefly.
+    pub fn register(&self, factory: Box<dyn LlmProviderFactory>) -> anyhow::Result<()> {
         let name = factory.name().to_string();
-        if self.factories.contains_key(&name) {
+        let mut guard = self
+            .factories
+            .write()
+            .unwrap_or_else(|p| p.into_inner());
+        if guard.contains_key(&name) {
             anyhow::bail!("LLM provider '{name}' already registered");
         }
-        self.factories.insert(name, factory);
+        guard.insert(name, factory);
         Ok(())
     }
 
-    pub fn names(&self) -> Vec<&str> {
-        let mut names: Vec<&str> = self.factories.keys().map(String::as_str).collect();
+    /// Phase 81.25 — remove a factory by provider name. Used by
+    /// the remote-LLM rollback path on partial registration
+    /// failure. Returns `true` when removed; `false` when absent.
+    pub fn unregister(&self, name: &str) -> bool {
+        let mut guard = self
+            .factories
+            .write()
+            .unwrap_or_else(|p| p.into_inner());
+        guard.remove(name).is_some()
+    }
+
+    pub fn names(&self) -> Vec<String> {
+        let guard = self
+            .factories
+            .read()
+            .unwrap_or_else(|p| p.into_inner());
+        let mut names: Vec<String> = guard.keys().cloned().collect();
         names.sort_unstable();
         names
     }
@@ -107,11 +136,15 @@ impl LlmRegistry {
         agent_model: &ModelConfig,
         tenant_id: Option<&str>,
     ) -> anyhow::Result<Arc<dyn LlmClient>> {
-        let factory = self.factories.get(&agent_model.provider).ok_or_else(|| {
+        let guard = self
+            .factories
+            .read()
+            .unwrap_or_else(|p| p.into_inner());
+        let factory = guard.get(&agent_model.provider).ok_or_else(|| {
             anyhow::anyhow!(
                 "LLM provider '{}' not registered (known: {:?})",
                 agent_model.provider,
-                self.names()
+                self.names_locked(&guard)
             )
         })?;
         let provider_cfg = llm_cfg
@@ -124,6 +157,17 @@ impl LlmRegistry {
                 )
             })?;
         factory.build(provider_cfg, &agent_model.model, llm_cfg.retry.clone())
+    }
+
+    /// Helper used inside `build_for_tenant` so we don't double-
+    /// lock the RwLock when constructing the diagnostic.
+    fn names_locked(
+        &self,
+        guard: &HashMap<String, Box<dyn LlmProviderFactory>>,
+    ) -> Vec<String> {
+        let mut names: Vec<String> = guard.keys().cloned().collect();
+        names.sort_unstable();
+        names
     }
 }
 
@@ -205,20 +249,28 @@ mod tests {
     fn builtins_present() {
         let r = LlmRegistry::with_builtins();
         let names = r.names();
-        assert!(names.contains(&"minimax"));
-        assert!(names.contains(&"openai"));
-        assert!(names.contains(&"anthropic"));
-        assert!(names.contains(&"gemini"));
-        assert!(names.contains(&"deepseek"));
+        assert!(names.iter().any(|n| n == "minimax"));
+        assert!(names.iter().any(|n| n == "openai"));
+        assert!(names.iter().any(|n| n == "anthropic"));
+        assert!(names.iter().any(|n| n == "gemini"));
+        assert!(names.iter().any(|n| n == "deepseek"));
     }
 
     #[test]
     fn duplicate_register_errors() {
-        let mut r = LlmRegistry::with_builtins();
+        let r = LlmRegistry::with_builtins();
         let err = r
             .register(Box::new(MiniMaxFactory))
             .expect_err("expected duplicate error");
         assert!(err.to_string().contains("already registered"));
+    }
+
+    #[test]
+    fn unregister_removes_factory() {
+        let r = LlmRegistry::with_builtins();
+        assert!(r.unregister("minimax"));
+        assert!(!r.names().iter().any(|n| n == "minimax"));
+        assert!(!r.unregister("absent_provider"));
     }
 
     #[test]

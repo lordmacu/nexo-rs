@@ -31,6 +31,7 @@ pub mod inbox;
 pub mod inbox_router;
 pub mod list_peers_tool;
 pub mod llm_behavior;
+pub mod llm_remote;
 pub mod lsp_tool;
 pub mod mcp_catalog;
 pub mod mcp_resource_tool;
@@ -115,6 +116,9 @@ pub use followup_tool::{CancelFollowupTool, CheckFollowupTool, StartFollowupTool
 pub use heartbeat_tool::HeartbeatTool;
 pub use hook_registry::{HookHandler, HookOutcome, HookRegistry};
 pub use llm_behavior::LlmAgentBehavior;
+pub use llm_remote::{
+    LlmProviderRegistrationError, RemoteLlmClient, RemoteLlmFactory, StreamingPending,
+};
 pub use mcp_catalog::{McpCatalogEntry, McpServerSummary, McpToolCatalog};
 pub use mcp_resource_tool::{
     McpResourceListTool, McpResourceReadTool, RESOURCE_LIST_SUFFIX, RESOURCE_READ_SUFFIX,

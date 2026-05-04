@@ -1715,7 +1715,8 @@ async fn main() -> Result<()> {
     // above so multi-agent configs surface every typo in one error.
     {
         let names = llm_registry.names();
-        let known_providers = nexo_core::agent::KnownProviders::new(names);
+        let known_providers =
+            nexo_core::agent::KnownProviders::new(names.iter().map(String::as_str));
         nexo_core::agent::validate_agents_with_providers(
             &cfg.agents.agents,
             &cfg.plugins.telegram,

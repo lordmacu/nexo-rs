@@ -1322,6 +1322,59 @@ coordinación de archivos cross-cutting.
   `channel.send_outbound` call instead of at boot. Duplicate
   of 81.28.b but specifically scoped to channels. ~0.5 d.
 
+- **81.25 ✅ shipped 2026-05-04** — Remote `LlmClient`
+  provider wrapper. New `crates/core/src/agent/llm_remote/{mod.rs,
+  wire.rs}` (~480 LOC + 11 unit tests + 1 e2e).
+  `RemoteLlmClient` translates `chat()` and `stream()` into
+  JSON-RPC requests over the subprocess plugin's stdio bridge.
+  Wire method `llm.chat { provider, model, request, stream }`
+  (contract v1.6.0): non-streaming replies once with
+  `WireChatResponse`; streaming emits zero or more
+  `llm.chat.delta { request_id, chunk }` notifications + a
+  final response carrying `usage`/`finish_reason`. 15 wire-only
+  types keep `nexo-llm` types untouched (`PromptBlock.label`
+  drops at boundary). LLM-specific error codes
+  `-33101..=-33105` map to `anyhow::Error` with operator-
+  greppable messages. Default timeouts 60s sync / 300s
+  streaming; `NEXO_PLUGIN_LLM_TIMEOUT_MS` env override.
+  `LlmRegistry::factories: HashMap<...>` →
+  `RwLock<HashMap<...>>` so `register(&self, ...)` works
+  post-Arc; new `unregister(&self, name) -> bool` for
+  rollback. `LlmRegistry::names()` return type changed
+  `Vec<&str>` → `Vec<String>`. `Inner.streaming_pending` field
+  added; reader notification handler dispatches
+  `llm.chat.delta`. `SubprocessNexoPlugin::register_remote_llm_providers(llm_registry)`
+  post-init hook chained after channel registration.
+  `init_loop::run_plugin_init_loop_with_factory` gained 5th
+  arg `llm_registry: &Arc<LlmRegistry>`. Contract spec v1.6.0
+  with §5.y "LLM provider methods" + Changelog row; vendored
+  doc copy refreshed. Authoring docs gain "Contributing LLM
+  providers" section. 11 unit tests + 1 e2e
+  `remote_llm_e2e::llm_chat_round_trips_via_mock_subprocess`.
+  1296/1296 nexo-core lib + 2/2 subprocess e2e + 1/1
+  remote_channel_e2e + 1/1 remote_llm_e2e + workspace clean.
+
+- **81.25.b ⬜** Embed support over the wire. New
+  `llm.embed { provider, texts: [String] }` method →
+  `Vec<Vec<f32>>`. Today `LlmClient::embed` for remote
+  providers returns the trait's default Err. ~0.5 d.
+
+- **81.25.c ⬜** Per-method timeout knobs in manifest
+  (`[plugin.llm_chat] sync_timeout_ms / stream_timeout_ms`)
+  so operators tune individually. Today
+  `NEXO_PLUGIN_LLM_TIMEOUT_MS` overrides both. ~0.3 d.
+
+- **81.25.d ⬜** Capability-negotiation handshake validating
+  the subprocess actually exposes the declared providers at
+  `initialize`-reply time. Mismatch fails at boot instead of
+  at first `llm.chat` call. ~0.5 d.
+
+- **81.25.e ⬜** Bounded streaming sender for `llm.chat.delta`
+  to prevent flood from a slow consumer. Today
+  `mpsc::unbounded_channel` allows the child to fill memory
+  if the consumer can't keep up. Switch to `mpsc::channel(N)`
+  with drop-on-full + warn. ~0.3 d.
+
 - **81.15.c.b ✅ shipped 2026-05-01** — SDK streaming
   consumption helper. Pending value type changed to
   `PendingKind` enum (Single for non-streaming, Streaming for
