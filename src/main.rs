@@ -1625,6 +1625,24 @@ async fn main() -> Result<()> {
                 // against the local `LlmYamlPatcherFs`. Tests
                 // can override with a mock by passing Some(_).
                 llm_provider_probe: None,
+                // Snapshot the LLM provider catalogue from a fresh
+                // `LlmRegistry::with_builtins()` so the admin RPC
+                // can serve `nexo/admin/llm_providers/catalog` from
+                // boot. The runtime registry built later in main.rs
+                // contains the same builtins; plugin-registered
+                // remote providers (rare) land via daemon restart.
+                llm_provider_catalog: nexo_llm::LlmRegistry::with_builtins()
+                    .catalog()
+                    .into_iter()
+                    .map(|e| {
+                        nexo_tool_meta::admin::llm_providers::LlmProviderCatalogEntry {
+                            id: e.id,
+                            default_base_url: e.default_base_url,
+                            default_env_var: e.default_env_var,
+                            models: e.models,
+                        }
+                    })
+                    .collect(),
                 // Phase 82.10.o — operator bearer rotation.
                 // `auth_rotator: None` lets admin_bootstrap
                 // default-construct `FsAuthRotator` if the

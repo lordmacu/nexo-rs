@@ -27,6 +27,45 @@ pub trait LlmProviderFactory: Send + Sync {
         model: &str,
         retry: RetryConfig,
     ) -> anyhow::Result<Arc<dyn LlmClient>>;
+
+    /// Default `base_url` to suggest when an operator-side UI builds
+    /// a fresh `llm.yaml.providers.<name>` block. Empty string when
+    /// the factory has no canonical default (rare — most providers
+    /// have one well-known endpoint). Used by the
+    /// `nexo/admin/llm_providers/catalog` admin RPC so SPA wizards
+    /// don't have to hardcode it.
+    fn default_base_url(&self) -> &'static str {
+        ""
+    }
+
+    /// Conventional env var that holds the API key for this
+    /// provider (e.g. `MINIMAX_API_KEY`). Empty when the factory
+    /// doesn't enforce a default.
+    fn default_env_var(&self) -> &'static str {
+        ""
+    }
+
+    /// Curated list of model ids this factory accepts. Operator UIs
+    /// render these as a dropdown, locked-down so the operator
+    /// can't pick a model the framework can't actually dispatch
+    /// against this provider's API. Empty when the factory hasn't
+    /// declared a list yet — UIs fall back to a free-text input
+    /// in that case.
+    fn known_models(&self) -> &'static [&'static str] {
+        &[]
+    }
+}
+
+/// Catalogue entry surfaced by [`LlmRegistry::catalog`]. Aggregates
+/// per-factory metadata (default base URL, env var, known models)
+/// so SPA wizards can render a strict provider/model dropdown
+/// without keeping their own hardcoded list in sync.
+#[derive(Debug, Clone)]
+pub struct LlmProviderCatalogEntry {
+    pub id: String,
+    pub default_base_url: String,
+    pub default_env_var: String,
+    pub models: Vec<String>,
 }
 
 /// In-process registry of LLM providers. Lookup is by `model.provider` name.
@@ -105,6 +144,34 @@ impl LlmRegistry {
         let mut names: Vec<String> = guard.keys().cloned().collect();
         names.sort_unstable();
         names
+    }
+
+    /// Snapshot of every registered factory's metadata. Sorted alpha
+    /// by provider id for deterministic RPC payloads. Returns the
+    /// providers the daemon can actually instantiate at runtime —
+    /// builtins shipped in this crate plus any subprocess plugin
+    /// that called `register` post-Arc (Phase 81.25). Operator UIs
+    /// use this to render a "no custom" provider dropdown.
+    pub fn catalog(&self) -> Vec<LlmProviderCatalogEntry> {
+        let guard = self
+            .factories
+            .read()
+            .unwrap_or_else(|p| p.into_inner());
+        let mut out: Vec<LlmProviderCatalogEntry> = guard
+            .values()
+            .map(|f| LlmProviderCatalogEntry {
+                id: f.name().to_string(),
+                default_base_url: f.default_base_url().to_string(),
+                default_env_var: f.default_env_var().to_string(),
+                models: f
+                    .known_models()
+                    .iter()
+                    .map(|s| (*s).to_string())
+                    .collect(),
+            })
+            .collect();
+        out.sort_by(|a, b| a.id.cmp(&b.id));
+        out
     }
 
     /// Resolve `model.provider` against the registry and the YAML provider
@@ -188,6 +255,18 @@ impl LlmProviderFactory for MiniMaxFactory {
     ) -> anyhow::Result<Arc<dyn LlmClient>> {
         Ok(Arc::new(MiniMaxClient::new(provider_cfg, model, retry)))
     }
+
+    fn default_base_url(&self) -> &'static str {
+        "https://api.minimax.chat/v1"
+    }
+
+    fn default_env_var(&self) -> &'static str {
+        "MINIMAX_API_KEY"
+    }
+
+    fn known_models(&self) -> &'static [&'static str] {
+        &["MiniMax-M2.5", "MiniMax-M2.7"]
+    }
 }
 
 pub struct OpenAiFactory;
@@ -204,6 +283,18 @@ impl LlmProviderFactory for OpenAiFactory {
         retry: RetryConfig,
     ) -> anyhow::Result<Arc<dyn LlmClient>> {
         Ok(Arc::new(OpenAiClient::new(provider_cfg, model, retry)))
+    }
+
+    fn default_base_url(&self) -> &'static str {
+        "https://api.openai.com/v1"
+    }
+
+    fn default_env_var(&self) -> &'static str {
+        "OPENAI_API_KEY"
+    }
+
+    fn known_models(&self) -> &'static [&'static str] {
+        &["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"]
     }
 }
 
