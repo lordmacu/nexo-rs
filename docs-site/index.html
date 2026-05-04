@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>nexo-rs · Multi-agent framework for Rust</title>
+  <meta name="description" content="Build production-grade agent systems that talk to WhatsApp, Telegram, browsers and more. Single Rust binary, NATS-backed event bus, multi-language plugin SDKs (Rust, Python, TypeScript, PHP)." />
+  <meta property="og:title" content="nexo-rs · Multi-agent framework for Rust" />
+  <meta property="og:description" content="Ship agents that talk to real channels. Memory, LLMs, fault tolerance. 34 MB single binary." />
+  <meta property="og:type" content="website" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🤖%3C/text%3E%3C/svg%3E" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            ink: { 50: '#f8fafc', 100: '#f1f5f9', 200: '#e2e8f0', 300: '#cbd5e1', 400: '#94a3b8', 500: '#64748b', 600: '#475569', 700: '#334155', 800: '#1e293b', 900: '#0f172a', 950: '#020617' },
+            accent: { 50: '#f0fdf4', 100: '#dcfce7', 200: '#bbf7d0', 300: '#86efac', 400: '#4ade80', 500: '#22c55e', 600: '#16a34a', 700: '#15803d', 800: '#166534', 900: '#14532d', 950: '#052e16' }
+          },
+          fontFamily: {
+            sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+            mono: ['JetBrains Mono', 'Menlo', 'Monaco', 'monospace']
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" />
+  <style>
+    html { scroll-behavior: smooth; }
+    .gradient-mesh {
+      background-image:
+        radial-gradient(at 20% 0%, rgb(34 197 94 / 0.08) 0, transparent 50%),
+        radial-gradient(at 80% 0%, rgb(59 130 246 / 0.08) 0, transparent 50%),
+        radial-gradient(at 50% 100%, rgb(168 85 247 / 0.06) 0, transparent 50%);
+    }
+    .code-block { font-family: 'JetBrains Mono', monospace; }
+    code { font-family: 'JetBrains Mono', monospace; }
+  </style>
+</head>
+<body class="bg-ink-950 text-ink-100 font-sans antialiased">
+
+  <!-- Nav -->
+  <nav class="border-b border-ink-800 bg-ink-950/80 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-2 font-bold text-lg">
+        <span class="text-2xl">🤖</span>
+        <span>nexo-rs</span>
+      </a>
+      <div class="flex items-center gap-6 text-sm">
+        <a href="docs/getting-started/quickstart.html" class="text-ink-300 hover:text-white transition hidden md:inline">Quickstart</a>
+        <a href="#plugins" class="text-ink-300 hover:text-white transition hidden md:inline">Plugins</a>
+        <a href="#extensions" class="text-ink-300 hover:text-white transition hidden md:inline">Extensions</a>
+        <a href="#microapps" class="text-ink-300 hover:text-white transition hidden md:inline">Microapps</a>
+        <a href="docs/" class="text-ink-300 hover:text-white transition">Docs</a>
+        <a href="https://github.com/lordmacu/nexo-rs" class="text-ink-300 hover:text-white transition flex items-center gap-1">
+          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.4 3-.405 1.02.005 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
+          GitHub
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <section class="gradient-mesh">
+    <div class="max-w-6xl mx-auto px-6 py-24 md:py-32">
+      <div class="max-w-4xl">
+        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-accent-500/10 text-accent-300 text-sm font-medium border border-accent-500/30 mb-6">
+          <span class="relative flex h-2 w-2">
+            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent-400 opacity-75"></span>
+            <span class="relative inline-flex rounded-full h-2 w-2 bg-accent-500"></span>
+          </span>
+          v0.1.5 · 4 SDK languages shipped
+        </div>
+        <h1 class="text-5xl md:text-7xl font-extrabold tracking-tight leading-[1.05] mb-6">
+          Multi-agent framework
+          <span class="block bg-gradient-to-r from-accent-400 via-accent-300 to-emerald-200 bg-clip-text text-transparent">
+            for Rust.
+          </span>
+        </h1>
+        <p class="text-xl md:text-2xl text-ink-300 leading-relaxed mb-10 max-w-3xl">
+          Ship agents that talk to <strong class="text-white">WhatsApp, Telegram, browsers and email</strong> — with memory, LLMs, and fault tolerance. <span class="text-ink-400">One static binary. No Node. No Docker required.</span>
+        </p>
+        <div class="flex flex-wrap gap-4 items-center">
+          <a href="docs/getting-started/quickstart.html" class="inline-flex items-center gap-2 bg-accent-500 hover:bg-accent-400 text-ink-950 font-semibold px-6 py-3 rounded-lg transition shadow-lg shadow-accent-500/20">
+            Get started
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
+          </a>
+          <a href="docs/" class="inline-flex items-center gap-2 bg-ink-800 hover:bg-ink-700 text-white font-semibold px-6 py-3 rounded-lg transition border border-ink-700">
+            Read the docs
+          </a>
+          <a href="https://github.com/lordmacu/nexo-rs" class="inline-flex items-center gap-2 text-ink-300 hover:text-white font-medium px-2 py-3 transition">
+            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.4 3-.405 1.02.005 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
+            Star on GitHub
+          </a>
+        </div>
+
+        <!-- Quick install snippet -->
+        <div class="mt-12 max-w-2xl">
+          <div class="text-sm text-ink-500 uppercase tracking-wider mb-2">Install</div>
+          <div class="bg-ink-900/80 border border-ink-800 rounded-lg p-4 code-block text-sm overflow-x-auto">
+            <span class="text-ink-500"># Debian/Ubuntu</span><br/>
+            <span class="text-accent-400">curl</span> -sSL https://github.com/lordmacu/nexo-rs/releases/latest/download/nexo-rs_amd64.deb <span class="text-ink-500">\</span><br/>
+            &nbsp;&nbsp;-o nexo.deb <span class="text-ink-500">&amp;&amp;</span> <span class="text-accent-400">sudo dpkg -i</span> nexo.deb<br/>
+            <br/>
+            <span class="text-ink-500"># Or build from source</span><br/>
+            <span class="text-accent-400">cargo install</span> --git https://github.com/lordmacu/nexo-rs nexo-rs
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Why nexo-rs -->
+  <section class="border-t border-ink-800 py-24">
+    <div class="max-w-6xl mx-auto px-6">
+      <div class="max-w-3xl mb-16">
+        <div class="text-sm text-accent-400 font-semibold uppercase tracking-wider mb-3">Why nexo-rs</div>
+        <h2 class="text-4xl md:text-5xl font-bold mb-6">Built for the shape of real agent deployments.</h2>
+        <p class="text-xl text-ink-300 leading-relaxed">
+          Most "agent frameworks" assume <em>one</em> LLM talking to <em>one</em> user through <em>one</em> UI. Real deployments are not shaped that way — multiple agents, multiple channels, business logic that isn't LLM-driven, private prompts alongside an open core. nexo-rs is opinionated toward that shape.
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+        <!-- Card 1 -->
+        <div class="bg-ink-900/50 border border-ink-800 rounded-xl p-8 hover:border-accent-500/50 transition">
+          <div class="w-12 h-12 rounded-lg bg-accent-500/10 border border-accent-500/30 flex items-center justify-center mb-4">
+            <svg class="w-6 h-6 text-accent-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+          </div>
+          <h3 class="text-xl font-bold mb-3">Real channels, not chat webapps</h3>
+          <p class="text-ink-300 leading-relaxed">
+            Agents speak WhatsApp, Telegram, email, and browser CDP out of the box. Bring your own channel by writing a plugin — Rust, Python, TypeScript, or PHP.
+          </p>
+        </div>
+
+        <!-- Card 2 -->
+        <div class="bg-ink-900/50 border border-ink-800 rounded-xl p-8 hover:border-accent-500/50 transition">
+          <div class="w-12 h-12 rounded-lg bg-accent-500/10 border border-accent-500/30 flex items-center justify-center mb-4">
+            <svg class="w-6 h-6 text-accent-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          </div>
+          <h3 class="text-xl font-bold mb-3">Single 34 MB binary</h3>
+          <p class="text-ink-300 leading-relaxed">
+            No Node, no npm, no Docker required. Stripped: 29 MB. Gzipped: 13 MB. Runs on a fresh VPS, on Termux without root, or as a systemd unit.
+          </p>
+        </div>
+
+        <!-- Card 3 -->
+        <div class="bg-ink-900/50 border border-ink-800 rounded-xl p-8 hover:border-accent-500/50 transition">
+          <div class="w-12 h-12 rounded-lg bg-accent-500/10 border border-accent-500/30 flex items-center justify-center mb-4">
+            <svg class="w-6 h-6 text-accent-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          </div>
+          <h3 class="text-xl font-bold mb-3">Production-grade by default</h3>
+          <p class="text-ink-300 leading-relaxed">
+            NATS-backed event bus with disk fallback. Per-agent capability sandboxes. Cosign-verified plugin marketplace. Multi-tenant SaaS-ready.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Three ways to extend -->
+  <section class="border-t border-ink-800 py-24 bg-ink-900/30">
+    <div class="max-w-6xl mx-auto px-6">
+      <div class="max-w-3xl mb-12">
+        <div class="text-sm text-accent-400 font-semibold uppercase tracking-wider mb-3">Three ways to extend</div>
+        <h2 class="text-4xl md:text-5xl font-bold mb-6">Pick the right extension point.</h2>
+        <p class="text-xl text-ink-300 leading-relaxed">
+          nexo-rs gives you three layers to extend. Each solves a different problem — pick the layer that matches what you're building.
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <a href="#plugins" class="block bg-ink-950 border border-ink-800 rounded-xl p-8 hover:border-accent-500/50 transition group">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-10 h-10 rounded-lg bg-accent-500/10 border border-accent-500/30 flex items-center justify-center">
+              <svg class="w-5 h-5 text-accent-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            </div>
+            <div class="font-bold text-lg group-hover:text-accent-400 transition">1. Plugin</div>
+          </div>
+          <p class="text-ink-300 leading-relaxed text-sm mb-3">
+            Bring a new <strong>channel</strong> (WhatsApp variant, Discord, Slack…) or expose new tools to agents. Subprocess plugin in your favorite language.
+          </p>
+          <div class="text-accent-400 text-sm font-medium">4 SDKs · GitHub Releases marketplace →</div>
+        </a>
+
+        <a href="#extensions" class="block bg-ink-950 border border-ink-800 rounded-xl p-8 hover:border-accent-500/50 transition group">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-10 h-10 rounded-lg bg-accent-500/10 border border-accent-500/30 flex items-center justify-center">
+              <svg class="w-5 h-5 text-accent-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+            </div>
+            <div class="font-bold text-lg group-hover:text-accent-400 transition">2. Extension</div>
+          </div>
+          <p class="text-ink-300 leading-relaxed text-sm mb-3">
+            Drop bundled <strong>tools, advisors, skills, MCP servers</strong> as a single tarball. Operator runs <code class="text-xs bg-ink-900 px-1 rounded">nexo ext install</code>.
+          </p>
+          <div class="text-accent-400 text-sm font-medium">Local-path bundles · multi-tenant ready →</div>
+        </a>
+
+        <a href="#microapps" class="block bg-ink-950 border border-ink-800 rounded-xl p-8 hover:border-accent-500/50 transition group">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-10 h-10 rounded-lg bg-accent-500/10 border border-accent-500/30 flex items-center justify-center">
+              <svg class="w-5 h-5 text-accent-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+            </div>
+            <div class="font-bold text-lg group-hover:text-accent-400 transition">3. Microapp</div>
+          </div>
+          <p class="text-ink-300 leading-relaxed text-sm mb-3">
+            Build a <strong>SaaS product</strong> on top of nexo-rs. Multi-tenant, admin RPC over NATS, your own UI. The framework runs out of view.
+          </p>
+          <div class="text-accent-400 text-sm font-medium">Build a product · admin RPC API →</div>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Plugin SDKs (detailed) -->
+  <section id="plugins" class="border-t border-ink-800 py-24 scroll-mt-20">
+    <div class="max-w-6xl mx-auto px-6">
+      <div class="max-w-3xl mb-12">
+        <div class="text-sm text-accent-400 font-semibold uppercase tracking-wider mb-3">Layer 1 · Plugins</div>
+        <h2 class="text-4xl md:text-5xl font-bold mb-6">Write a plugin in your language.</h2>
+        <p class="text-xl text-ink-300 leading-relaxed">
+          The daemon spawns plugins as subprocesses and talks JSON-RPC 2.0 over stdin/stdout. Same wire contract across all four SDKs — pick the language, vendor your deps, ship a single <code class="bg-ink-900 px-2 py-0.5 rounded text-base">noarch</code> tarball.
+        </p>
+      </div>
+
+      <!-- 4 SDK detailed cards -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+        <!-- Rust -->
+        <div class="bg-ink-900/50 border border-ink-800 rounded-xl overflow-hidden hover:border-orange-500/50 transition">
+          <div class="p-6 border-b border-ink-800 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <div class="text-3xl">🦀</div>
+              <div>
+                <div class="font-bold text-lg">Rust</div>
+                <div class="text-sm text-ink-400"><code>nexo-microapp-sdk</code></div>
+              </div>
+            </div>
+            <a href="docs/plugins/contract.html" class="text-orange-400 hover:text-orange-300 text-sm font-medium">Docs →</a>
+          </div>
+          <div class="bg-ink-950 p-5 code-block text-xs overflow-x-auto">
+<pre class="text-ink-300"><span class="text-purple-400">use</span> nexo_microapp_sdk::plugin::{<span class="text-yellow-300">PluginAdapter</span>, <span class="text-yellow-300">Event</span>};
+
+<span class="text-blue-400">#[tokio::main]</span>
+<span class="text-purple-400">async fn</span> <span class="text-green-400">main</span>() -> Result&lt;()&gt; {
+    <span class="text-purple-400">let</span> adapter = PluginAdapter::new(MANIFEST)
+        .on_event(|topic, event, broker| <span class="text-purple-400">async</span> {
+            broker.publish(<span class="text-orange-300">"plugin.inbound.echo"</span>, event).await
+        });
+    adapter.run().await
+}</pre>
+          </div>
+          <div class="p-4 bg-ink-900/50 text-sm text-ink-400">
+            Add to <code>Cargo.toml</code>: <code class="text-accent-400">nexo-microapp-sdk = { features = ["plugin"] }</code>
+          </div>
+        </div>
+
+        <!-- Python -->
+        <div class="bg-ink-900/50 border border-ink-800 rounded-xl overflow-hidden hover:border-yellow-500/50 transition">
+          <div class="p-6 border-b border-ink-800 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <div class="text-3xl">🐍</div>
+              <div>
+                <div class="font-bold text-lg">Python</div>
+                <div class="text-sm text-ink-400"><code>nexo_plugin_sdk</code> · stdlib only</div>
+              </div>
+            </div>
+            <a href="docs/plugins/python-sdk.html" class="text-yellow-400 hover:text-yellow-300 text-sm font-medium">Docs →</a>
+          </div>
+          <div class="bg-ink-950 p-5 code-block text-xs overflow-x-auto">
+<pre class="text-ink-300"><span class="text-purple-400">import</span> asyncio
+<span class="text-purple-400">from</span> nexo_plugin_sdk <span class="text-purple-400">import</span> PluginAdapter, Event
+
+<span class="text-purple-400">async def</span> <span class="text-green-400">on_event</span>(topic, event, broker):
+    out = Event.new(<span class="text-orange-300">"plugin.inbound.echo"</span>,
+                    <span class="text-orange-300">"my_plugin"</span>,
+                    {<span class="text-orange-300">"echoed"</span>: event.payload})
+    <span class="text-purple-400">await</span> broker.publish(<span class="text-orange-300">"plugin.inbound.echo"</span>, out)
+
+asyncio.run(PluginAdapter(manifest_toml=MANIFEST,
+                          on_event=on_event).run())</pre>
+          </div>
+          <div class="p-4 bg-ink-900/50 text-sm text-ink-400">
+            <code>requirements.txt</code>: <code class="text-accent-400">-e ../sdk-python</code> (in-tree path)
+          </div>
+        </div>
+
+        <!-- TypeScript -->
+        <div class="bg-ink-900/50 border border-ink-800 rounded-xl overflow-hidden hover:border-blue-500/50 transition">
+          <div class="p-6 border-b border-ink-800 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <div class="text-3xl">📘</div>
+              <div>
+                <div class="font-bold text-lg">TypeScript</div>
+                <div class="text-sm text-ink-400"><code>nexo-plugin-sdk</code> · Node 18+ ESM</div>
+              </div>
+            </div>
+            <a href="docs/plugins/typescript-sdk.html" class="text-blue-400 hover:text-blue-300 text-sm font-medium">Docs →</a>
+          </div>
+          <div class="bg-ink-950 p-5 code-block text-xs overflow-x-auto">
+<pre class="text-ink-300"><span class="text-purple-400">import</span> { PluginAdapter, Event } <span class="text-purple-400">from</span> <span class="text-orange-300">"nexo-plugin-sdk"</span>;
+
+<span class="text-purple-400">const</span> adapter = <span class="text-purple-400">new</span> PluginAdapter({
+  manifestToml: MANIFEST,
+  onEvent: <span class="text-purple-400">async</span> (topic, event, broker) =&gt; {
+    <span class="text-purple-400">const</span> out = Event.new(<span class="text-orange-300">"plugin.inbound.echo"</span>,
+                            <span class="text-orange-300">"my_plugin"</span>,
+                            { echoed: event.payload });
+    <span class="text-purple-400">await</span> broker.publish(<span class="text-orange-300">"plugin.inbound.echo"</span>, out);
+  },
+});
+<span class="text-purple-400">await</span> adapter.run();</pre>
+          </div>
+          <div class="p-4 bg-ink-900/50 text-sm text-ink-400">
+            <code>package.json</code>: <code class="text-accent-400">"nexo-plugin-sdk": "file:../sdk-typescript"</code>
+          </div>
+        </div>
+
+        <!-- PHP -->
+        <div class="bg-ink-900/50 border border-ink-800 rounded-xl overflow-hidden hover:border-purple-500/50 transition">
+          <div class="p-6 border-b border-ink-800 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <div class="text-3xl">🐘</div>
+              <div>
+                <div class="font-bold text-lg">PHP</div>
+                <div class="text-sm text-ink-400"><code>nexo/plugin-sdk</code> · 8.1+ Fibers</div>
+              </div>
+            </div>
+            <a href="docs/plugins/php-sdk.html" class="text-purple-400 hover:text-purple-300 text-sm font-medium">Docs →</a>
+          </div>
+          <div class="bg-ink-950 p-5 code-block text-xs overflow-x-auto">
+<pre class="text-ink-300"><span class="text-purple-400">use</span> Nexo\Plugin\Sdk\{PluginAdapter, Event};
+
+$adapter = <span class="text-purple-400">new</span> PluginAdapter([
+  <span class="text-orange-300">'manifestToml'</span> =&gt; $manifest,
+  <span class="text-orange-300">'onEvent'</span> =&gt; <span class="text-purple-400">function</span> ($topic, $event, $broker) {
+    $out = Event::new(<span class="text-orange-300">'plugin.inbound.echo'</span>,
+                      <span class="text-orange-300">'my_plugin'</span>,
+                      [<span class="text-orange-300">'echoed'</span> =&gt; $event-&gt;payload]);
+    $broker-&gt;publish(<span class="text-orange-300">'plugin.inbound.echo'</span>, $out);
+  },
+]);
+$adapter-&gt;run();</pre>
+          </div>
+          <div class="p-4 bg-ink-900/50 text-sm text-ink-400">
+            <code>composer.json</code>: <code class="text-accent-400">"nexo/plugin-sdk": "^0.1.0"</code> via path repo
+          </div>
+        </div>
+
+      </div>
+
+      <div class="mt-10 grid grid-cols-1 md:grid-cols-2 gap-4 max-w-3xl">
+        <a href="docs/plugins/contract.html" class="bg-ink-900/50 border border-ink-800 rounded-lg p-5 hover:border-accent-500/50 transition">
+          <div class="font-semibold text-white mb-1">📜 Plugin contract spec</div>
+          <div class="text-sm text-ink-400">Wire format, JSON-RPC frames, lifecycle</div>
+        </a>
+        <a href="docs/plugins/publishing.html" class="bg-ink-900/50 border border-ink-800 rounded-lg p-5 hover:border-accent-500/50 transition">
+          <div class="font-semibold text-white mb-1">📦 Publishing guide</div>
+          <div class="text-sm text-ink-400">CI workflow, asset convention, cosign signing</div>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Extensions -->
+  <section id="extensions" class="border-t border-ink-800 py-24 bg-ink-900/30 scroll-mt-20">
+    <div class="max-w-6xl mx-auto px-6">
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-12 items-start">
+        <div>
+          <div class="text-sm text-accent-400 font-semibold uppercase tracking-wider mb-3">Layer 2 · Extensions</div>
+          <h2 class="text-4xl md:text-5xl font-bold mb-6">Bundle your tools as a single tarball.</h2>
+          <p class="text-xl text-ink-300 leading-relaxed mb-6">
+            An <strong>extension</strong> is a self-contained directory with a <code class="bg-ink-900 px-2 rounded">manifest.toml</code> that declares contributed tools, advisors, skills, MCP servers, channel adapters, and config schemas.
+          </p>
+          <p class="text-lg text-ink-400 leading-relaxed mb-6">
+            Operators install with one command:
+          </p>
+          <div class="bg-ink-950 border border-ink-800 rounded-lg p-4 code-block text-sm mb-6">
+            <span class="text-accent-400">nexo ext install</span> ./my-extension
+          </div>
+          <p class="text-lg text-ink-400 leading-relaxed mb-6">
+            Built for multi-tenant SaaS. Each tenant gets isolated state, scoped capabilities, and per-tenant audit logs. Use it when you have <em>bundled functionality</em> that's not a separate process — just code that ships alongside your daemon.
+          </p>
+          <div class="flex flex-wrap gap-3">
+            <a href="docs/extensions/manifest.html" class="inline-flex items-center gap-2 bg-accent-500 hover:bg-accent-400 text-ink-950 font-semibold px-5 py-2.5 rounded-lg transition text-sm">
+              Manifest reference
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
+            </a>
+            <a href="docs/extensions/templates.html" class="inline-flex items-center gap-2 bg-ink-800 hover:bg-ink-700 text-white font-semibold px-5 py-2.5 rounded-lg transition border border-ink-700 text-sm">
+              Templates
+            </a>
+            <a href="docs/extensions/multi-tenant-saas.html" class="inline-flex items-center gap-2 bg-ink-800 hover:bg-ink-700 text-white font-semibold px-5 py-2.5 rounded-lg transition border border-ink-700 text-sm">
+              Multi-tenant guide
+            </a>
+          </div>
+        </div>
+
+        <div>
+          <div class="text-sm text-ink-500 uppercase tracking-wider mb-2">Example: my-extension/manifest.toml</div>
+          <div class="bg-ink-950 border border-ink-800 rounded-lg p-5 code-block text-xs overflow-x-auto">
+<pre class="text-ink-300"><span class="text-blue-400">[extension]</span>
+id = <span class="text-orange-300">"my-extension"</span>
+version = <span class="text-orange-300">"0.1.0"</span>
+description = <span class="text-orange-300">"Custom tools + advisors"</span>
+
+<span class="text-blue-400">[[tools]]</span>
+name = <span class="text-orange-300">"summarize"</span>
+schema_path = <span class="text-orange-300">"tools/summarize.json"</span>
+
+<span class="text-blue-400">[[advisors]]</span>
+id = <span class="text-orange-300">"sales-advisor"</span>
+prompt_path = <span class="text-orange-300">"advisors/sales.md"</span>
+
+<span class="text-blue-400">[[skills]]</span>
+id = <span class="text-orange-300">"send-quote"</span>
+yaml_path = <span class="text-orange-300">"skills/send-quote.yaml"</span>
+
+<span class="text-blue-400">[[mcp_servers]]</span>
+id = <span class="text-orange-300">"crm"</span>
+command = <span class="text-orange-300">"./bin/crm-mcp"</span>
+
+<span class="text-blue-400">[multi_tenant]</span>
+isolated_state = <span class="text-orange-300">true</span>
+per_tenant_secrets = <span class="text-orange-300">true</span></pre>
+          </div>
+          <div class="mt-4 text-sm text-ink-400">
+            Then: <code class="text-accent-400">nexo ext install ./my-extension</code> — daemon picks up tools, registers them with the agent runtime, and surfaces them in <code>nexo agent doctor</code>.
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Microapps -->
+  <section id="microapps" class="border-t border-ink-800 py-24 scroll-mt-20">
+    <div class="max-w-6xl mx-auto px-6">
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-12 items-start">
+        <div>
+          <div class="text-sm text-accent-400 font-semibold uppercase tracking-wider mb-3">Layer 3 · Microapps</div>
+          <h2 class="text-4xl md:text-5xl font-bold mb-6">Build a SaaS on top of nexo-rs.</h2>
+          <p class="text-xl text-ink-300 leading-relaxed mb-6">
+            A <strong>microapp</strong> is a complete product that consumes nexo-rs as its agent runtime. The framework runs in the background; your microapp owns the UI, the multi-tenant story, the billing — everything end-users see.
+          </p>
+          <p class="text-lg text-ink-400 leading-relaxed mb-6">
+            Microapps talk to the framework via <strong>admin RPC over NATS</strong> — provision tenants, configure agents, manage knowledge bases, rotate API keys. The framework stays agnostic; the microapp drives configuration.
+          </p>
+          <p class="text-lg text-ink-400 leading-relaxed mb-6">
+            Reference implementation: <a href="https://github.com/lordmacu/agent-creator-microapp" class="text-accent-400 hover:text-accent-300">agent-creator-microapp</a> — a SaaS where end-users create their own WhatsApp agents through a WhatsApp-Web-style React UI.
+          </p>
+          <div class="flex flex-wrap gap-3">
+            <a href="docs/microapps/getting-started.html" class="inline-flex items-center gap-2 bg-accent-500 hover:bg-accent-400 text-ink-950 font-semibold px-5 py-2.5 rounded-lg transition text-sm">
+              Build your first microapp
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
+            </a>
+            <a href="docs/microapps/admin-rpc.html" class="inline-flex items-center gap-2 bg-ink-800 hover:bg-ink-700 text-white font-semibold px-5 py-2.5 rounded-lg transition border border-ink-700 text-sm">
+              Admin RPC API
+            </a>
+            <a href="docs/microapps/contract.html" class="inline-flex items-center gap-2 bg-ink-800 hover:bg-ink-700 text-white font-semibold px-5 py-2.5 rounded-lg transition border border-ink-700 text-sm">
+              Microapp contract
+            </a>
+          </div>
+        </div>
+
+        <div>
+          <div class="text-sm text-ink-500 uppercase tracking-wider mb-2">Example: provision a tenant from your microapp</div>
+          <div class="bg-ink-950 border border-ink-800 rounded-lg p-5 code-block text-xs overflow-x-auto">
+<pre class="text-ink-300"><span class="text-purple-400">use</span> nexo_microapp_sdk::admin::{<span class="text-yellow-300">AdminClient</span>, <span class="text-yellow-300">TenantSpec</span>};
+
+<span class="text-purple-400">let</span> admin = AdminClient::connect(<span class="text-orange-300">"nats://localhost:4222"</span>).await?;
+
+<span class="text-ink-500">// Create a tenant for a new SaaS customer</span>
+admin.create_tenant(TenantSpec {
+    id: <span class="text-orange-300">"acme-corp"</span>.into(),
+    plan: <span class="text-orange-300">"pro"</span>.into(),
+    quotas: Quotas { agents: <span class="text-cyan-300">10</span>, llm_tokens_month: <span class="text-cyan-300">5_000_000</span> },
+}).await?;
+
+<span class="text-ink-500">// Provision an agent for that tenant</span>
+admin.create_agent(<span class="text-orange-300">"acme-corp"</span>, AgentSpec {
+    id: <span class="text-orange-300">"customer-support"</span>.into(),
+    persona_path: <span class="text-orange-300">"./personas/support.md"</span>.into(),
+    channels: vec![<span class="text-orange-300">"whatsapp:acme-prod"</span>.into()],
+    llm: <span class="text-orange-300">"minimax-m2.5"</span>.into(),
+}).await?;
+
+<span class="text-ink-500">// Hot-reload — no daemon restart</span>
+admin.reload(<span class="text-orange-300">"acme-corp"</span>).await?;</pre>
+          </div>
+          <div class="mt-4 text-sm text-ink-400">
+            Your UI — React, Vue, anything — calls into your microapp backend; the backend uses the admin SDK to manipulate the framework. Tenants, billing, branding stay in your code.
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Architecture preview -->
+  <section class="border-t border-ink-800 py-24">
+    <div class="max-w-6xl mx-auto px-6">
+      <div class="max-w-3xl mb-12">
+        <div class="text-sm text-accent-400 font-semibold uppercase tracking-wider mb-3">Architecture</div>
+        <h2 class="text-4xl md:text-5xl font-bold mb-6">One process, many agents, many channels.</h2>
+        <p class="text-xl text-ink-300 leading-relaxed">
+          Kate handles your personal Telegram. Ana works the WhatsApp sales line. A cron-style poller sweeps Gmail for leads — all sharing one broker, one tool registry, and one memory layer.
+        </p>
+      </div>
+
+      <div class="bg-ink-900 border border-ink-800 rounded-xl p-8 code-block text-sm overflow-x-auto">
+<pre class="text-ink-300 leading-relaxed">  <span class="text-accent-400">┌─────────────┐</span>      <span class="text-accent-400">┌──────────────────┐</span>      <span class="text-accent-400">┌─────────────────────┐</span>
+  <span class="text-accent-400">│</span>  WhatsApp   <span class="text-accent-400">├──┐</span>   <span class="text-accent-400">│</span>                  <span class="text-accent-400">│</span>      <span class="text-accent-400">│</span>  Agent: Ana        <span class="text-accent-400">│</span>
+  <span class="text-accent-400">│</span>  Telegram   <span class="text-accent-400">├──┤</span>   <span class="text-accent-400">│</span>   NATS broker    <span class="text-accent-400">├──────┤</span>  Agent: Kate       <span class="text-accent-400">│</span>
+  <span class="text-accent-400">│</span>  Email      <span class="text-accent-400">├──┼──▶│</span>   (event bus)    <span class="text-accent-400">│</span>      <span class="text-accent-400">│</span>  Agent: ops-bot    <span class="text-accent-400">│</span>
+  <span class="text-accent-400">│</span>  Browser    <span class="text-accent-400">├──┘</span>   <span class="text-accent-400">│</span>                  <span class="text-accent-400">│</span>      <span class="text-accent-400">└──────────┬──────────┘</span>
+  <span class="text-accent-400">└─────────────┘</span>      <span class="text-accent-400">└──────────────────┘</span>                 <span class="text-accent-400">│</span>
+                                                          <span class="text-accent-400">▼</span>
+                                                <span class="text-accent-400">┌─────────────────────┐</span>
+                                                <span class="text-accent-400">│</span>  Memory + LLMs +    <span class="text-accent-400">│</span>
+                                                <span class="text-accent-400">│</span>  Tools + Skills     <span class="text-accent-400">│</span>
+                                                <span class="text-accent-400">└─────────────────────┘</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- vs OpenClaw comparison -->
+  <section class="border-t border-ink-800 py-24 bg-ink-900/30">
+    <div class="max-w-6xl mx-auto px-6">
+      <div class="max-w-3xl mb-12">
+        <div class="text-sm text-accent-400 font-semibold uppercase tracking-wider mb-3">vs OpenClaw</div>
+        <h2 class="text-4xl md:text-5xl font-bold mb-6">A Rust alternative to OpenClaw.</h2>
+        <p class="text-xl text-ink-300 leading-relaxed">
+          The closest reference point is <a href="https://github.com/openclaw/openclaw" class="text-accent-400 hover:text-accent-300">OpenClaw</a> (TypeScript, single Node process). nexo-rs trades JS familiarity for portability + fault tolerance + per-agent sandboxes.
+        </p>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-left border-collapse">
+          <thead>
+            <tr class="border-b border-ink-700">
+              <th class="py-4 px-4 font-semibold text-ink-400 text-sm uppercase tracking-wider"></th>
+              <th class="py-4 px-4 font-semibold text-accent-400">nexo-rs</th>
+              <th class="py-4 px-4 font-semibold text-ink-400">OpenClaw</th>
+            </tr>
+          </thead>
+          <tbody class="text-ink-300">
+            <tr class="border-b border-ink-800/50">
+              <td class="py-4 px-4 font-medium text-ink-200">Runtime</td>
+              <td class="py-4 px-4">Single static Rust binary, ~34 MB</td>
+              <td class="py-4 px-4">Node + npm + transitive deps</td>
+            </tr>
+            <tr class="border-b border-ink-800/50">
+              <td class="py-4 px-4 font-medium text-ink-200">Process model</td>
+              <td class="py-4 px-4">Multi-agent over NATS</td>
+              <td class="py-4 px-4">Single Node process</td>
+            </tr>
+            <tr class="border-b border-ink-800/50">
+              <td class="py-4 px-4 font-medium text-ink-200">Fault tolerance</td>
+              <td class="py-4 px-4">NATS broker + disk fallback queue</td>
+              <td class="py-4 px-4">In-memory only</td>
+            </tr>
+            <tr class="border-b border-ink-800/50">
+              <td class="py-4 px-4 font-medium text-ink-200">Plugin languages</td>
+              <td class="py-4 px-4">Rust, Python, TypeScript, PHP</td>
+              <td class="py-4 px-4">TypeScript only</td>
+            </tr>
+            <tr class="border-b border-ink-800/50">
+              <td class="py-4 px-4 font-medium text-ink-200">Plugin trust</td>
+              <td class="py-4 px-4">Cosign keyless verification</td>
+              <td class="py-4 px-4">npm registry</td>
+            </tr>
+            <tr class="border-b border-ink-800/50">
+              <td class="py-4 px-4 font-medium text-ink-200">Termux / mobile</td>
+              <td class="py-4 px-4">First-class support</td>
+              <td class="py-4 px-4">Not supported</td>
+            </tr>
+            <tr>
+              <td class="py-4 px-4 font-medium text-ink-200">Multi-tenant SaaS</td>
+              <td class="py-4 px-4">Built-in (Phase 82)</td>
+              <td class="py-4 px-4">Not designed for</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="mt-8">
+        <a href="docs/architecture/vs-openclaw.html" class="inline-flex items-center gap-2 text-accent-400 hover:text-accent-300 font-medium">
+          See the full side-by-side
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="border-t border-ink-800 py-24">
+    <div class="max-w-4xl mx-auto px-6 text-center">
+      <h2 class="text-4xl md:text-5xl font-bold mb-6">Build your first agent in 5 minutes.</h2>
+      <p class="text-xl text-ink-300 mb-10 max-w-2xl mx-auto">
+        Install the binary, drop a YAML, talk to your agent. The quickstart walks you through the whole thing.
+      </p>
+      <div class="flex flex-wrap gap-4 justify-center">
+        <a href="docs/getting-started/quickstart.html" class="inline-flex items-center gap-2 bg-accent-500 hover:bg-accent-400 text-ink-950 font-semibold px-8 py-4 rounded-lg transition shadow-lg shadow-accent-500/20 text-lg">
+          Get started
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
+        </a>
+        <a href="docs/" class="inline-flex items-center gap-2 bg-ink-800 hover:bg-ink-700 text-white font-semibold px-8 py-4 rounded-lg transition border border-ink-700 text-lg">
+          Browse the docs
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="border-t border-ink-800 py-12 bg-ink-950">
+    <div class="max-w-6xl mx-auto px-6">
+      <div class="grid grid-cols-2 md:grid-cols-5 gap-8 mb-8">
+        <div>
+          <div class="font-bold text-white mb-3">Get started</div>
+          <ul class="space-y-2 text-sm">
+            <li><a href="docs/getting-started/quickstart.html" class="text-ink-400 hover:text-white">Quickstart</a></li>
+            <li><a href="docs/getting-started/installation.html" class="text-ink-400 hover:text-white">Installation</a></li>
+            <li><a href="docs/" class="text-ink-400 hover:text-white">All docs</a></li>
+          </ul>
+        </div>
+        <div>
+          <div class="font-bold text-white mb-3">Plugin SDKs</div>
+          <ul class="space-y-2 text-sm">
+            <li><a href="docs/plugins/contract.html" class="text-ink-400 hover:text-white">Contract</a></li>
+            <li><a href="docs/plugins/python-sdk.html" class="text-ink-400 hover:text-white">Python</a></li>
+            <li><a href="docs/plugins/typescript-sdk.html" class="text-ink-400 hover:text-white">TypeScript</a></li>
+            <li><a href="docs/plugins/php-sdk.html" class="text-ink-400 hover:text-white">PHP</a></li>
+            <li><a href="docs/plugins/publishing.html" class="text-ink-400 hover:text-white">Publishing</a></li>
+          </ul>
+        </div>
+        <div>
+          <div class="font-bold text-white mb-3">Extensions</div>
+          <ul class="space-y-2 text-sm">
+            <li><a href="docs/extensions/manifest.html" class="text-ink-400 hover:text-white">Manifest</a></li>
+            <li><a href="docs/extensions/templates.html" class="text-ink-400 hover:text-white">Templates</a></li>
+            <li><a href="docs/extensions/multi-tenant-saas.html" class="text-ink-400 hover:text-white">Multi-tenant</a></li>
+            <li><a href="docs/extensions/cli.html" class="text-ink-400 hover:text-white">CLI</a></li>
+          </ul>
+        </div>
+        <div>
+          <div class="font-bold text-white mb-3">Microapps</div>
+          <ul class="space-y-2 text-sm">
+            <li><a href="docs/microapps/getting-started.html" class="text-ink-400 hover:text-white">Getting started</a></li>
+            <li><a href="docs/microapps/admin-rpc.html" class="text-ink-400 hover:text-white">Admin RPC</a></li>
+            <li><a href="docs/microapps/contract.html" class="text-ink-400 hover:text-white">Contract</a></li>
+            <li><a href="docs/microapps/agent-creator.html" class="text-ink-400 hover:text-white">Agent creator</a></li>
+          </ul>
+        </div>
+        <div>
+          <div class="font-bold text-white mb-3">Project</div>
+          <ul class="space-y-2 text-sm">
+            <li><a href="https://github.com/lordmacu/nexo-rs" class="text-ink-400 hover:text-white">GitHub</a></li>
+            <li><a href="https://github.com/lordmacu/nexo-rs/releases" class="text-ink-400 hover:text-white">Releases</a></li>
+            <li><a href="docs/contributing.html" class="text-ink-400 hover:text-white">Contributing</a></li>
+            <li><a href="docs/license.html" class="text-ink-400 hover:text-white">License</a></li>
+          </ul>
+        </div>
+      </div>
+      <div class="pt-8 border-t border-ink-800 flex flex-col md:flex-row items-center justify-between text-sm text-ink-500">
+        <div>nexo-rs · Multi-agent framework for Rust · MIT OR Apache-2.0</div>
+        <div class="mt-2 md:mt-0">Built by <a href="https://github.com/lordmacu" class="hover:text-white">@lordmacu</a></div>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>

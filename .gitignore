@@ -48,6 +48,7 @@ config/agents.d/*.yaml
 
 # mdBook build output — published via GitHub Actions, not committed
 docs/book/
+_site/
 docs/theme/highlight.css.bak
 *.swp
 *.swo
