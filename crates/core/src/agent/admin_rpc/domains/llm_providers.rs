@@ -8,14 +8,36 @@ use serde_json::Value;
 
 use async_trait::async_trait;
 use nexo_tool_meta::admin::llm_providers::{
-    LlmProviderCatalogEntry, LlmProviderProbeInput, LlmProviderProbeResponse,
-    LlmProviderSummary, LlmProviderUpsertInput, LlmProvidersCatalogResponse,
-    LlmProvidersDeleteParams, LlmProvidersDeleteResponse, LlmProvidersListResponse,
+    AuthMode, CredentialFieldDescriptor, LlmProviderCatalogEntry, LlmProviderError,
+    LlmProviderProbeInput, LlmProviderProbeResponse, LlmProviderSummary,
+    LlmProviderUpsertInput, LlmProvidersCatalogResponse, LlmProvidersDeleteParams,
+    LlmProvidersDeleteResponse, LlmProvidersListResponse,
 };
 
 use super::agents::YamlPatcher;
 use super::secrets::SecretsStore;
 use crate::agent::admin_rpc::dispatcher::{AdminRpcError, AdminRpcResult};
+
+/// Phase 82.10.u — minimal schema lookup the upsert handler needs to
+/// validate operator payloads against the factory the daemon has
+/// registered. Production wraps a `nexo_llm::LlmRegistry`; tests can
+/// inject an inline mock. Kept small + read-only so the handler
+/// stays cycle-free vs `nexo-llm` while still being able to gate
+/// every persistence step on the schema.
+pub trait FactorySchemaLookup: Send + Sync {
+    /// Returns the credential schema for `factory_id`, or `None` when
+    /// the factory isn't registered. The handler maps `None` to
+    /// `LlmProviderError::InvalidAuthMode { factory: factory_id, mode: "<unknown>" }`
+    /// — operator picked a factory the daemon can't instantiate.
+    fn credential_schema(
+        &self,
+        factory_id: &str,
+    ) -> Option<Vec<CredentialFieldDescriptor>>;
+
+    /// Returns the auth modes `factory_id` supports. Used to reject
+    /// upsert / oauth_start with an unsupported mode early.
+    fn supported_auth_modes(&self, factory_id: &str) -> Option<Vec<AuthMode>>;
+}
 
 /// Phase 82.10.s.3.b — derive a valid `SecretsStore` name from an
 /// LLM provider instance id. The store enforces
@@ -148,14 +170,24 @@ pub fn list(patcher: &dyn LlmYamlPatcher) -> AdminRpcResult {
 }
 
 /// `nexo/admin/llm_providers/upsert` — create or update a
-/// provider block. Validates exactly-one-of api_key_env /
-/// api_key_secret_id / api_key_secret_value (Phase 82.10.s.3) and,
-/// when `api_key_secret_value` is supplied, persists the value
-/// through the SecretsStore atomically before stamping
-/// `api_key_secret_id` on the yaml (Phase 82.10.s.3.b).
+/// provider block.
+///
+/// Two execution paths:
+///
+/// * **Schema-driven (Phase 82.10.u)**: when `input.fields` is
+///   non-empty, the handler resolves the factory's
+///   `credential_schema` via `factory_schema`, validates the
+///   payload, then persists each field — `secret == true` to the
+///   SecretsStore, others inline in yaml. Triggered by Phase 82.10.u
+///   microapp wizard.
+/// * **Legacy (Phase 82.10.s)**: when `input.fields` is empty,
+///   falls back to the api_key_env / api_key_secret_id /
+///   api_key_secret_value path (exactly-one-source rule). Existing
+///   pre-82.10.u microapps keep working unchanged.
 pub async fn upsert(
     patcher: &dyn LlmYamlPatcher,
     secrets: Option<&dyn SecretsStore>,
+    factory_schema: Option<&dyn FactorySchemaLookup>,
     params: Value,
     reload_signal: &(dyn Fn() + Send + Sync),
 ) -> AdminRpcResult {
@@ -169,6 +201,21 @@ pub async fn upsert(
     if input.base_url.is_empty() {
         return AdminRpcResult::err(AdminRpcError::InvalidParams("base_url is empty".into()));
     }
+
+    // Phase 82.10.u — branch into the schema-driven path when the
+    // operator submitted a `fields` payload. Legacy path stays
+    // intact for callers that still use api_key_env etc.
+    if !input.fields.is_empty() {
+        return upsert_schema_driven(
+            patcher,
+            secrets,
+            factory_schema,
+            input,
+            reload_signal,
+        )
+        .await;
+    }
+    let _ = factory_schema; // silence unused when fields empty
 
     // Phase 82.10.s.3 — exactly-one-key-source rule. Caller must
     // pick a SINGLE path:
@@ -321,6 +368,318 @@ pub async fn upsert(
         tenant_scope: tenant_id,
     };
     AdminRpcResult::ok(serde_json::to_value(summary).unwrap_or(Value::Null))
+}
+
+/// Phase 82.10.u — schema-driven persistence path. Triggered when
+/// `LlmProviderUpsertInput::fields` is non-empty. Validates the
+/// payload against the factory's declared
+/// [`CredentialFieldDescriptor`] schema before any disk write so
+/// the SecretsStore + yaml never end up in a partial state from a
+/// bad payload.
+///
+/// Order of operations:
+///
+/// 1. Resolve factory id (`factory_type` ?? instance id) +
+///    schema lookup. Unknown factory ⇒
+///    `LlmProviderError::InvalidAuthMode { mode: "<unknown>" }`.
+/// 2. Validate `auth_mode` against
+///    `factory.supported_auth_modes()`. Unsupported ⇒
+///    `InvalidAuthMode`.
+/// 3. Walk the operator's `fields`:
+///    a. Each key MUST be in schema (else `UnknownField`).
+///    b. If the descriptor has `depends_on` and it isn't
+///       satisfied, the field is silently ignored (the SPA
+///       shouldn't have shown it; defensive).
+/// 4. Walk the schema:
+///    a. Required fields whose `depends_on` is satisfied MUST be
+///       present + non-empty (else `MissingField`).
+///    b. Apply `validation` regex / length (else `InvalidFormat`).
+/// 5. Persist:
+///    a. `secret == true` fields → SecretsStore under
+///       `LLM_<INSTANCE>_<NAME_UPPER>`. yaml gets a
+///       `<name>_secret_id` reference.
+///    b. `secret == false` fields → yaml inline at
+///       `providers.<id>.<name>`.
+/// 6. If `auth_mode != Some(ApiKey)` and not `None`, persist
+///    yaml `auth.mode = <wire form>`.
+/// 7. `reload_signal()`.
+async fn upsert_schema_driven(
+    patcher: &dyn LlmYamlPatcher,
+    secrets: Option<&dyn SecretsStore>,
+    factory_schema: Option<&dyn FactorySchemaLookup>,
+    input: LlmProviderUpsertInput,
+    reload_signal: &(dyn Fn() + Send + Sync),
+) -> AdminRpcResult {
+    // ── Step 1: resolve factory + schema ─────────────────────────
+    let factory_id = input
+        .factory_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(input.id.as_str())
+        .to_string();
+    let lookup = match factory_schema {
+        Some(l) => l,
+        None => {
+            return AdminRpcResult::err(AdminRpcError::Internal(
+                "factory schema lookup not configured — cannot honour `fields` payload".into(),
+            ));
+        }
+    };
+    let schema = match lookup.credential_schema(&factory_id) {
+        Some(s) => s,
+        None => {
+            return err_typed(LlmProviderError::InvalidAuthMode {
+                factory: factory_id.clone(),
+                mode: "<unknown factory>".into(),
+            });
+        }
+    };
+
+    // ── Step 2: auth_mode validation ─────────────────────────────
+    if let Some(mode) = input.auth_mode {
+        let supported = lookup
+            .supported_auth_modes(&factory_id)
+            .unwrap_or_default();
+        if !supported.contains(&mode) {
+            return err_typed(LlmProviderError::InvalidAuthMode {
+                factory: factory_id.clone(),
+                mode: auth_mode_wire(mode).to_string(),
+            });
+        }
+    }
+
+    // ── Step 3: unknown / ignored field check ────────────────────
+    for k in input.fields.keys() {
+        if !schema.iter().any(|d| &d.name == k) {
+            return err_typed(LlmProviderError::UnknownField { field: k.clone() });
+        }
+    }
+
+    // ── Step 4: required + validation pass ───────────────────────
+    for descriptor in &schema {
+        let active = descriptor
+            .depends_on
+            .as_ref()
+            .map(|d| d.satisfied(&input.fields))
+            .unwrap_or(true);
+        let value = input
+            .fields
+            .get(&descriptor.name)
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        if descriptor.required && active && value.is_none() {
+            return err_typed(LlmProviderError::MissingField {
+                field: descriptor.name.clone(),
+            });
+        }
+        if let (Some(v), Some(rule)) = (value, descriptor.validation.as_ref()) {
+            if let Err(hint) = apply_validation(v, rule) {
+                return err_typed(LlmProviderError::InvalidFormat {
+                    field: descriptor.name.clone(),
+                    hint,
+                });
+            }
+        }
+    }
+
+    // ── Step 5: persistence ──────────────────────────────────────
+    let tenant_id = input
+        .tenant_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
+    let write_field = |dotted: &str, value: Value| -> anyhow::Result<()> {
+        match tenant_id.as_deref() {
+            Some(tid) => patcher.upsert_tenant_provider_field(tid, &input.id, dotted, value),
+            None => patcher.upsert_provider_field(&input.id, dotted, value),
+        }
+    };
+
+    if let Err(e) = write_field("base_url", Value::String(input.base_url.clone())) {
+        return err_typed(LlmProviderError::YamlWriteFailed {
+            detail: e.to_string(),
+        });
+    }
+    if let Some(ft) = input
+        .factory_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if let Err(e) = write_field("factory_type", Value::String(ft.to_string())) {
+            return err_typed(LlmProviderError::YamlWriteFailed {
+                detail: e.to_string(),
+            });
+        }
+    }
+
+    // Per-field persistence: secret → SecretsStore + yaml ref.
+    // non-secret → yaml inline. depends_on-inactive fields are
+    // skipped (SPA shouldn't have submitted them; if it did,
+    // dropping them is the safe choice).
+    for descriptor in &schema {
+        let active = descriptor
+            .depends_on
+            .as_ref()
+            .map(|d| d.satisfied(&input.fields))
+            .unwrap_or(true);
+        if !active {
+            continue;
+        }
+        let Some(value) = input
+            .fields
+            .get(&descriptor.name)
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        else {
+            continue;
+        };
+
+        if descriptor.secret {
+            let store = match secrets {
+                Some(s) => s,
+                None => {
+                    return AdminRpcResult::err(AdminRpcError::Internal(format!(
+                        "secrets store not configured — cannot persist secret field `{}`",
+                        descriptor.name
+                    )));
+                }
+            };
+            let derived = secret_id_for_field(&input.id, &descriptor.name);
+            if let Err(e) = store.write(&derived, value).await {
+                return err_typed(LlmProviderError::SecretWriteFailed {
+                    detail: e.to_string(),
+                });
+            }
+            let yaml_key = format!("{}_secret_id", descriptor.name);
+            if let Err(e) = write_field(&yaml_key, Value::String(derived)) {
+                return err_typed(LlmProviderError::YamlWriteFailed {
+                    detail: e.to_string(),
+                });
+            }
+        } else if let Err(e) = write_field(&descriptor.name, Value::String(value.to_string())) {
+            return err_typed(LlmProviderError::YamlWriteFailed {
+                detail: e.to_string(),
+            });
+        }
+    }
+
+    // ── Step 6: persist auth.mode when explicit + non-default ────
+    if let Some(mode) = input.auth_mode {
+        if mode != AuthMode::ApiKey {
+            if let Err(e) = write_field(
+                "auth.mode",
+                Value::String(auth_mode_wire(mode).to_string()),
+            ) {
+                return err_typed(LlmProviderError::YamlWriteFailed {
+                    detail: e.to_string(),
+                });
+            }
+        }
+    }
+
+    // ── Step 7: reload + summary ─────────────────────────────────
+    reload_signal();
+    let summary = LlmProviderSummary {
+        id: input.id,
+        base_url: input.base_url,
+        api_key_env: String::new(),
+        tenant_scope: tenant_id,
+    };
+    AdminRpcResult::ok(serde_json::to_value(summary).unwrap_or(Value::Null))
+}
+
+/// Phase 82.10.u — derive a per-field secret id from
+/// `(instance_id, field_name)`. Combines the instance-id transform
+/// (`secret_id_for_instance`) with the field name to produce e.g.
+/// `LLM_MINIMAX_CLIENTE_A_API_KEY`. Deterministic + reversible.
+fn secret_id_for_field(instance_id: &str, field_name: &str) -> String {
+    let mut out = secret_id_for_instance(instance_id);
+    out.push('_');
+    for c in field_name.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_uppercase());
+        } else {
+            out.push('_');
+        }
+    }
+    out
+}
+
+/// Apply a `FieldValidation` rule to a value. Returns the operator-
+/// facing hint on failure.
+fn apply_validation(
+    value: &str,
+    rule: &nexo_tool_meta::admin::llm_providers::FieldValidation,
+) -> Result<(), String> {
+    use nexo_tool_meta::admin::llm_providers::FieldValidation;
+    match rule {
+        FieldValidation::Regex { pattern, hint } => {
+            // Best-effort compile. A bad regex from a factory is a
+            // bug; we treat it as "no validation" rather than
+            // crashing the dispatch.
+            match regex::Regex::new(pattern) {
+                Ok(re) if re.is_match(value) => Ok(()),
+                Ok(_) => Err(hint.clone()),
+                Err(_) => Ok(()),
+            }
+        }
+        FieldValidation::Length { min, max } => {
+            let n = value.chars().count();
+            if n < *min || n > *max {
+                Err(format!("length {n} not in [{min}, {max}]"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+}
+
+/// Wire form for an [`AuthMode`] — must match the
+/// `#[serde(rename = "...")]` discriminators in `nexo-tool-meta`.
+fn auth_mode_wire(mode: AuthMode) -> &'static str {
+    match mode {
+        AuthMode::ApiKey => "api_key",
+        AuthMode::SetupToken => "setup_token",
+        AuthMode::OAuthAuthCode => "oauth_auth_code",
+        AuthMode::OAuthDeviceCode => "oauth_device_code",
+        AuthMode::OAuthBundleImport => "oauth_bundle_import",
+    }
+}
+
+/// Build an [`AdminRpcError::InvalidParams`] carrying a typed
+/// [`LlmProviderError`] in `data` so the SPA can discriminate by
+/// `code` without parsing free-form strings.
+fn err_typed(err: LlmProviderError) -> AdminRpcResult {
+    let data = serde_json::to_value(&err).unwrap_or(Value::Null);
+    let msg = match &err {
+        LlmProviderError::MissingField { field } => format!("missing required field `{field}`"),
+        LlmProviderError::UnknownField { field } => format!("unknown field `{field}`"),
+        LlmProviderError::InvalidFormat { field, hint } => {
+            format!("invalid format for `{field}`: {hint}")
+        }
+        LlmProviderError::InvalidAuthMode { factory, mode } => {
+            format!("auth_mode `{mode}` not supported by factory `{factory}`")
+        }
+        LlmProviderError::SessionExpired => "OAuth session expired".into(),
+        LlmProviderError::SessionNotFound => "OAuth session not found".into(),
+        LlmProviderError::OAuthExchangeFailed {
+            upstream_status,
+            message,
+        } => format!("OAuth exchange failed (HTTP {upstream_status}): {message}"),
+        LlmProviderError::ProbeFailed {
+            upstream_status,
+            message,
+        } => format!("probe failed (HTTP {upstream_status}): {message}"),
+        LlmProviderError::YamlWriteFailed { detail } => format!("yaml write failed: {detail}"),
+        LlmProviderError::SecretWriteFailed { detail } => format!("secret write failed: {detail}"),
+    };
+    AdminRpcResult::err(AdminRpcError::InvalidParamsWithData { msg, data })
 }
 
 /// `nexo/admin/llm_providers/delete` — remove a provider block.
@@ -689,36 +1048,42 @@ mod tests {
         assert_eq!(response.providers[2].id, "zphi");
     }
 
-    #[test]
-    fn llm_providers_upsert_validates_env_var_exists() {
+    #[tokio::test]
+    async fn llm_providers_upsert_validates_env_var_exists() {
         let llm = MockLlm::default();
         // Use an env var guaranteed not present.
         let result = upsert(
             &llm,
+            None,
+            None,
             serde_json::json!({
                 "id": "newp",
                 "base_url": "https://x",
                 "api_key_env": "NEXO_DEFINITELY_NOT_SET_VAR_42"
             }),
             &|| {},
-        );
+        )
+        .await;
         let err = result.error.expect("error");
         assert!(matches!(err, AdminRpcError::InvalidParams(_)));
     }
 
-    #[test]
-    fn llm_providers_upsert_writes_when_env_var_present() {
+    #[tokio::test]
+    async fn llm_providers_upsert_writes_when_env_var_present() {
         let llm = MockLlm::default();
         // PATH is always set.
         let result = upsert(
             &llm,
+            None,
+            None,
             serde_json::json!({
                 "id": "newp",
                 "base_url": "https://x",
                 "api_key_env": "PATH"
             }),
             &|| {},
-        );
+        )
+        .await;
         assert!(result.result.is_some());
         // Stored.
         assert_eq!(llm.list_provider_ids().unwrap(), vec!["newp".to_string()]);
@@ -783,6 +1148,8 @@ mod tests {
         let llm = MockLlm::default();
         let result = upsert(
             &llm,
+            None,
+            None,
             serde_json::json!({
                 "id": "minimax",
                 "base_url": "https://api.minimax.io",
@@ -790,7 +1157,8 @@ mod tests {
                 "tenant_id": "acme",
             }),
             &|| {},
-        );
+        )
+        .await;
         assert!(result.error.is_none(), "{result:?}");
         let summary: LlmProviderSummary =
             serde_json::from_value(result.result.unwrap()).unwrap();
@@ -1010,6 +1378,7 @@ mod tests {
             status: 200,
             latency_ms: 142,
             model_count: Some(5),
+            model_names: None,
             error: None,
         });
         let result = probe(
@@ -1025,5 +1394,292 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].0, "minimax");
         assert_eq!(calls[0].1.as_deref(), Some("acme"));
+    }
+
+    // ── Phase 82.10.u — schema-driven upsert ────────────────────
+
+    use nexo_tool_meta::admin::llm_providers::{
+        AuthMode, CredentialFieldDescriptor, FieldKind, FieldValidation,
+    };
+
+    /// In-memory `FactorySchemaLookup` mock: holds one factory's
+    /// schema + auth modes. Convenient for the schema-driven
+    /// upsert tests below.
+    struct MockSchema {
+        factory_id: String,
+        schema: Vec<CredentialFieldDescriptor>,
+        modes: Vec<AuthMode>,
+    }
+    impl FactorySchemaLookup for MockSchema {
+        fn credential_schema(
+            &self,
+            factory_id: &str,
+        ) -> Option<Vec<CredentialFieldDescriptor>> {
+            (factory_id == self.factory_id).then(|| self.schema.clone())
+        }
+        fn supported_auth_modes(&self, factory_id: &str) -> Option<Vec<AuthMode>> {
+            (factory_id == self.factory_id).then(|| self.modes.clone())
+        }
+    }
+
+    fn minimax_schema() -> MockSchema {
+        MockSchema {
+            factory_id: "minimax".into(),
+            schema: vec![
+                CredentialFieldDescriptor {
+                    name: "api_key".into(),
+                    label: "API key".into(),
+                    kind: FieldKind::Password,
+                    required: true,
+                    secret: true,
+                    default: None,
+                    help: None,
+                    validation: Some(FieldValidation::Length { min: 1, max: 200 }),
+                    depends_on: None,
+                },
+                CredentialFieldDescriptor {
+                    name: "group_id".into(),
+                    label: "Group ID".into(),
+                    kind: FieldKind::Text,
+                    required: true,
+                    secret: false,
+                    default: None,
+                    help: None,
+                    validation: Some(FieldValidation::Regex {
+                        pattern: "^[0-9]{10,20}$".into(),
+                        hint: "10-20 digits".into(),
+                    }),
+                    depends_on: None,
+                },
+            ],
+            modes: vec![AuthMode::ApiKey, AuthMode::OAuthDeviceCode],
+        }
+    }
+
+    /// In-memory `SecretsStore` mock: records every write so the
+    /// test can assert what landed where.
+    struct MockSecrets {
+        writes: Mutex<Vec<(String, String)>>,
+    }
+    #[async_trait]
+    impl SecretsStore for MockSecrets {
+        async fn write(
+            &self,
+            name: &str,
+            value: &str,
+        ) -> Result<
+            nexo_tool_meta::admin::secrets::SecretsWriteResponse,
+            AdminRpcError,
+        > {
+            self.writes
+                .lock()
+                .unwrap()
+                .push((name.to_string(), value.to_string()));
+            Ok(nexo_tool_meta::admin::secrets::SecretsWriteResponse {
+                path: std::path::PathBuf::from(format!("/mock/{name}.txt")),
+                overwrote_env: false,
+            })
+        }
+    }
+
+    /// Happy path — full minimax payload validates, persists the
+    /// secret api_key under a derived id, writes group_id inline,
+    /// and reload_signal fires once.
+    #[tokio::test]
+    async fn schema_driven_upsert_persists_secret_and_yaml() {
+        let llm = MockLlm::default();
+        let secrets = MockSecrets {
+            writes: Mutex::new(Vec::new()),
+        };
+        let schema = minimax_schema();
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let result = upsert(
+            &llm,
+            Some(&secrets),
+            Some(&schema),
+            serde_json::json!({
+                "id": "minimax-cliente-a",
+                "factory_type": "minimax",
+                "base_url": "https://api.minimax.io/v1",
+                "auth_mode": "api_key",
+                "fields": {
+                    "api_key": "sk-test-key",
+                    "group_id": "1234567890123",
+                },
+            }),
+            &|| {
+                calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            },
+        )
+        .await;
+        assert!(result.error.is_none(), "{result:?}");
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "reload_signal must fire exactly once"
+        );
+        // Secret persisted under derived id with the field name suffix.
+        let writes = secrets.writes.lock().unwrap().clone();
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0].0, "LLM_MINIMAX_CLIENTE_A_API_KEY");
+        assert_eq!(writes[0].1, "sk-test-key");
+        // Yaml has factory_type + group_id inline + api_key_secret_id ref.
+        let providers = llm.providers.lock().unwrap();
+        let entry = providers.get("minimax-cliente-a").unwrap();
+        assert_eq!(
+            entry.get("factory_type"),
+            Some(&Value::String("minimax".into()))
+        );
+        assert_eq!(
+            entry.get("group_id"),
+            Some(&Value::String("1234567890123".into()))
+        );
+        assert_eq!(
+            entry.get("api_key_secret_id"),
+            Some(&Value::String("LLM_MINIMAX_CLIENTE_A_API_KEY".into()))
+        );
+    }
+
+    /// Required field absent → MissingField error code, no
+    /// side-effect on disk.
+    #[tokio::test]
+    async fn schema_driven_upsert_rejects_missing_required_field() {
+        let llm = MockLlm::default();
+        let secrets = MockSecrets {
+            writes: Mutex::new(Vec::new()),
+        };
+        let schema = minimax_schema();
+        let result = upsert(
+            &llm,
+            Some(&secrets),
+            Some(&schema),
+            serde_json::json!({
+                "id": "minimax-cliente-b",
+                "factory_type": "minimax",
+                "base_url": "https://x",
+                "fields": { "api_key": "sk-x" },  // group_id missing
+            }),
+            &|| {},
+        )
+        .await;
+        let err = result.error.expect("MissingField error");
+        let data = err.data().expect("typed data");
+        assert_eq!(data["code"], "MISSING_FIELD");
+        assert_eq!(data["field"], "group_id");
+        // Nothing written.
+        assert!(secrets.writes.lock().unwrap().is_empty());
+        assert!(llm.list_provider_ids().unwrap().is_empty());
+    }
+
+    /// Field present but failing the regex validation → InvalidFormat.
+    #[tokio::test]
+    async fn schema_driven_upsert_rejects_invalid_format() {
+        let llm = MockLlm::default();
+        let secrets = MockSecrets {
+            writes: Mutex::new(Vec::new()),
+        };
+        let schema = minimax_schema();
+        let result = upsert(
+            &llm,
+            Some(&secrets),
+            Some(&schema),
+            serde_json::json!({
+                "id": "minimax-cliente-c",
+                "factory_type": "minimax",
+                "base_url": "https://x",
+                "fields": {
+                    "api_key": "sk-x",
+                    "group_id": "not-numeric",  // regex fails
+                },
+            }),
+            &|| {},
+        )
+        .await;
+        let err = result.error.expect("InvalidFormat error");
+        let data = err.data().expect("typed data");
+        assert_eq!(data["code"], "INVALID_FORMAT");
+        assert_eq!(data["field"], "group_id");
+        assert!(secrets.writes.lock().unwrap().is_empty());
+    }
+
+    /// Field outside the schema → UnknownField. Defensive against
+    /// payload typos.
+    #[tokio::test]
+    async fn schema_driven_upsert_rejects_unknown_field() {
+        let llm = MockLlm::default();
+        let secrets = MockSecrets {
+            writes: Mutex::new(Vec::new()),
+        };
+        let schema = minimax_schema();
+        let result = upsert(
+            &llm,
+            Some(&secrets),
+            Some(&schema),
+            serde_json::json!({
+                "id": "minimax-cliente-d",
+                "factory_type": "minimax",
+                "base_url": "https://x",
+                "fields": {
+                    "api_key": "sk-x",
+                    "group_id": "1234567890",
+                    "garbage": "what",
+                },
+            }),
+            &|| {},
+        )
+        .await;
+        let err = result.error.expect("UnknownField error");
+        let data = err.data().expect("typed data");
+        assert_eq!(data["code"], "UNKNOWN_FIELD");
+    }
+
+    /// Factory id absent from the lookup → InvalidAuthMode with
+    /// `<unknown factory>`. Tests the case where the operator
+    /// supplies a factory the daemon doesn't have registered.
+    #[tokio::test]
+    async fn schema_driven_upsert_rejects_unknown_factory() {
+        let llm = MockLlm::default();
+        let secrets = MockSecrets {
+            writes: Mutex::new(Vec::new()),
+        };
+        let schema = minimax_schema();
+        let result = upsert(
+            &llm,
+            Some(&secrets),
+            Some(&schema),
+            serde_json::json!({
+                "id": "ghost-instance",
+                "factory_type": "ghost",
+                "base_url": "https://x",
+                "fields": { "api_key": "sk-x" },
+            }),
+            &|| {},
+        )
+        .await;
+        let err = result.error.expect("InvalidAuthMode error");
+        let data = err.data().expect("typed data");
+        assert_eq!(data["code"], "INVALID_AUTH_MODE");
+    }
+
+    /// Legacy path: empty `fields` → falls back to `api_key_env`
+    /// branch, preserves pre-82.10.u behaviour for existing
+    /// microapps.
+    #[tokio::test]
+    async fn schema_driven_upsert_falls_back_to_legacy_when_fields_empty() {
+        let llm = MockLlm::default();
+        // Schema absent — the legacy path doesn't need a lookup.
+        let result = upsert(
+            &llm,
+            None,
+            None,
+            serde_json::json!({
+                "id": "legacy-minimax",
+                "base_url": "https://x",
+                "api_key_env": "PATH",  // PATH always set
+            }),
+            &|| {},
+        )
+        .await;
+        assert!(result.error.is_none(), "legacy path must still work");
     }
 }

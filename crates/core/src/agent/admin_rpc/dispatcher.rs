@@ -60,6 +60,18 @@ pub enum AdminRpcError {
     /// `-32602` — caller-supplied params failed validation.
     #[error("invalid_params: {0}")]
     InvalidParams(String),
+    /// `-32602` with a typed `data` payload — caller-supplied
+    /// params failed validation AND the handler has a structured
+    /// error code (e.g. [`nexo_tool_meta::admin::llm_providers::LlmProviderError`]).
+    /// SPA discriminates by `data.code` to render localised
+    /// messages without parsing free-form `msg`.
+    #[error("invalid_params: {msg}")]
+    InvalidParamsWithData {
+        /// Free-form fallback message.
+        msg: String,
+        /// Typed structured payload.
+        data: Value,
+    },
     /// `-32004` — operator did not grant `capability` to this
     /// microapp via `extensions.yaml.<id>.capabilities_grant`.
     /// Wired in 82.10.b.
@@ -83,6 +95,7 @@ impl AdminRpcError {
         match self {
             AdminRpcError::MethodNotFound(_) => -32601,
             AdminRpcError::InvalidParams(_) => -32602,
+            AdminRpcError::InvalidParamsWithData { .. } => -32602,
             AdminRpcError::CapabilityNotGranted { .. } => -32004,
             AdminRpcError::Internal(_) => -32603,
         }
@@ -100,6 +113,7 @@ impl AdminRpcError {
                 "microapp_id": microapp_id,
                 "method": method,
             })),
+            AdminRpcError::InvalidParamsWithData { data, .. } => Some(data.clone()),
             _ => None,
         }
     }
@@ -191,6 +205,13 @@ pub struct AdminRpcDispatcher {
     /// the RPC.
     llm_provider_catalog:
         Option<Arc<Vec<nexo_tool_meta::admin::llm_providers::LlmProviderCatalogEntry>>>,
+    /// Phase 82.10.u — schema-driven `upsert` lookup. `None` keeps
+    /// the legacy `api_key_env` / `api_key_secret_value` path
+    /// active; with a lookup wired the handler also accepts the
+    /// new `fields: BTreeMap` payload validated against the
+    /// factory's declared `credential_schema`.
+    llm_factory_schema:
+        Option<Arc<dyn super::domains::llm_providers::FactorySchemaLookup>>,
     /// Phase 82.11 — transcripts read surface. `None` disables
     /// `nexo/admin/agent_events/*`.
     transcript_reader: Option<Arc<dyn TranscriptReader>>,
@@ -303,6 +324,7 @@ impl AdminRpcDispatcher {
             pairing_cancel_root: CancellationToken::new(),
             llm_yaml: None,
             llm_provider_catalog: None,
+            llm_factory_schema: None,
             transcript_reader: None,
             processing_store: None,
             escalation_store: None,
@@ -488,6 +510,19 @@ impl AdminRpcDispatcher {
         catalog: Vec<nexo_tool_meta::admin::llm_providers::LlmProviderCatalogEntry>,
     ) -> Self {
         self.llm_provider_catalog = Some(Arc::new(catalog));
+        self
+    }
+
+    /// Phase 82.10.u — install the schema lookup the upsert handler
+    /// uses to validate operator payloads against the factory's
+    /// declared `credential_schema`. `None` (default) keeps
+    /// `llm_providers/upsert` on the legacy `api_key_env` path so
+    /// pre-82.10.u microapps don't break.
+    pub fn with_llm_factory_schema(
+        mut self,
+        schema: Arc<dyn super::domains::llm_providers::FactorySchemaLookup>,
+    ) -> Self {
+        self.llm_factory_schema = Some(schema);
         self
     }
 
@@ -905,6 +940,7 @@ impl AdminRpcDispatcher {
                     super::domains::llm_providers::upsert(
                         llm.as_ref(),
                         self.secrets_store.as_deref(),
+                        self.llm_factory_schema.as_deref(),
                         params,
                         &move || trigger(),
                     )
@@ -1551,6 +1587,7 @@ mod tests {
                     status: 200,
                     latency_ms: 17,
                     model_count: Some(3),
+                    model_names: None,
                     error: None,
                 })
             }
