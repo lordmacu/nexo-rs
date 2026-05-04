@@ -1,9 +1,10 @@
 # template-plugin-python
 
 Skeleton out-of-tree **subprocess plugin** for nexo, written in
-Python. Counterpart to
-[`template-plugin-rust`](../template-plugin-rust/) — same wire
-format ([`nexo-plugin-contract.md`](../../nexo-plugin-contract.md)),
+Python. Counterpart to [`template-plugin-rust`](../template-plugin-rust/)
+and [`template-plugin-typescript`](../template-plugin-typescript/)
+— same wire format
+([`nexo-plugin-contract.md`](../../nexo-plugin-contract.md)),
 different SDK + asset convention.
 
 ## What this template provides

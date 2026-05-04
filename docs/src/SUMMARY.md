@@ -72,6 +72,7 @@
 - [Plugin contract (out-of-tree)](./plugins/contract.md)
 - [Publishing a plugin (CI workflow)](./plugins/publishing.md)
 - [Python plugin SDK](./plugins/python-sdk.md)
+- [TypeScript plugin SDK](./plugins/typescript-sdk.md)
 
 # Memory
 

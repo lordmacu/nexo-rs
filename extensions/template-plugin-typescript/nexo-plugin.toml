@@ -1,0 +1,39 @@
+# Phase 31.5 — out-of-tree subprocess plugin template (TypeScript).
+#
+# COPY-AND-MODIFY workflow:
+# 1. Copy this entire `extensions/template-plugin-typescript/`
+#    directory into a new repo of your own.
+# 2. Edit this manifest: pick a unique `plugin.id` (regex
+#    `^[a-z][a-z0-9_]{0,31}$`).
+# 3. Implement your plugin's logic in `src/main.ts`.
+# 4. `npm install && npm run build` to compile + check.
+# 5. Tag a release `v<semver>`; the
+#    `.github/workflows/release.yml` workflow vendors deps,
+#    pre-compiles the TypeScript, and publishes a
+#    `<id>-<version>-noarch.tar.gz` to the GitHub Release.
+#
+# The asset convention is identical to the Rust + Python
+# templates; only the runtime differs (Node ≥ 18 instead of
+# python3 / native binary).
+
+[plugin]
+id = "template_plugin_typescript"
+version = "0.1.0"
+name = "Template Plugin (TypeScript)"
+description = "Skeleton out-of-tree subprocess plugin in TypeScript."
+min_nexo_version = ">=0.1.0"
+
+[plugin.requires]
+nexo_capabilities = ["broker"]
+
+[[plugin.channels.register]]
+kind = "template_echo_ts"
+adapter = "TemplateEchoAdapter"
+
+# `entrypoint.command` points at the bash launcher script that
+# the publish workflow drops into `bin/<id>` at pack time. The
+# launcher sets NODE_PATH to the vendored `lib/node_modules` and
+# exec's `node lib/plugin/main.js`.
+[plugin.entrypoint]
+command = "./bin/template_plugin_typescript"
+args = []

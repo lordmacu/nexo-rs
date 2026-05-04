@@ -1,0 +1,208 @@
+name: release
+
+# Phase 31.5 — TypeScript plugin author's release workflow template.
+#
+# Trigger: push a tag matching `v<semver>` (e.g. v0.2.0). The
+# workflow:
+#   1. Validates the tag format and asserts the tag matches the
+#      `version` declared in nexo-plugin.toml.
+#   2. Vendors production deps via `npm ci --omit=dev`,
+#      pre-compiles TypeScript via `tsc`, and runs
+#      `scripts/pack-tarball-typescript.sh` to produce
+#      `dist/<id>-<version>-noarch.tar.gz` plus its sha256
+#      sidecar.
+#   3. (Optional, gated on repo variable
+#      `COSIGN_ENABLED == "true"`) keyless cosign signs the
+#      tarball, producing `<asset>.sig` + `<asset>.pem` +
+#      `<asset>.bundle`.
+#   4. Creates the GitHub Release if missing, then uploads all
+#      artifacts including `nexo-plugin.toml`.
+#
+# Asset naming + layout match the convention 31.1 install path
+# expects. The single `noarch` matrix entry replaces the per-target
+# build matrix from the Rust template — TypeScript plugins ship
+# one tarball that runs on every operator host (subject to the
+# pure-JS deps constraint enforced by
+# `scripts/verify-pure-js.sh`).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing v* tag to (re)build for"
+        required: true
+
+permissions:
+  contents: write
+  id-token: write   # cosign keyless OIDC
+
+concurrency:
+  group: release-${{ github.ref_name || github.event.inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  validate-tag:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.value }}
+      version: ${{ steps.tag.outputs.version }}
+      plugin_id: ${{ steps.meta.outputs.id }}
+    steps:
+      - id: tag
+        env:
+          RAW_TAG: ${{ github.ref_name || github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$RAW_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+            echo "::error::tag '$RAW_TAG' does not match v<semver>"
+            exit 1
+          fi
+          version="${RAW_TAG#v}"
+          {
+            echo "value=$RAW_TAG"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.value }}
+
+      - id: meta
+        env:
+          TAG_VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          # shellcheck source=./scripts/extract-plugin-meta.sh
+          source ./scripts/extract-plugin-meta.sh
+          if [[ "$PLUGIN_VERSION" != "$TAG_VERSION" ]]; then
+            echo "::error::nexo-plugin.toml version $PLUGIN_VERSION != tag $TAG_VERSION"
+            exit 1
+          fi
+          echo "id=$PLUGIN_ID" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: validate-tag
+    name: build (noarch)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate-tag.outputs.tag }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install deps (production + dev for tsc)
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Build (tsc)
+        run: npm run build
+
+      - name: Prune dev deps for vendoring
+        run: npm prune --omit=dev
+
+      - name: Pack tarball
+        run: bash scripts/pack-tarball-typescript.sh
+
+      - name: Verify pure-JS (no native node addons smuggled in)
+        run: |
+          set -euo pipefail
+          mkdir -p .audit
+          tar -xzf dist/*.tar.gz -C .audit
+          bash scripts/verify-pure-js.sh .audit/lib/node_modules
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-noarch
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+          if-no-files-found: error
+
+  sign:
+    needs: [validate-tag, build]
+    if: vars.COSIGN_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: v2.4.1
+
+      - name: Sign each tarball
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          for asset in artifacts/**/*.tar.gz; do
+            cosign sign-blob --yes \
+              --output-signature  "${asset}.sig" \
+              --output-certificate "${asset}.pem" \
+              --bundle             "${asset}.bundle" \
+              "$asset"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-signatures
+          path: |
+            artifacts/**/*.tar.gz.sig
+            artifacts/**/*.tar.gz.pem
+            artifacts/**/*.tar.gz.bundle
+          if-no-files-found: error
+
+  release:
+    needs: [validate-tag, build, sign]
+    if: |
+      always() &&
+      needs.build.result == 'success' &&
+      (needs.sign.result == 'success' || needs.sign.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate-tag.outputs.tag }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Create release if missing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.validate-tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$TAG" \
+              --generate-notes
+          fi
+
+      - name: Upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.validate-tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          assets=()
+          for f in artifacts/**/*.tar.gz \
+                   artifacts/**/*.tar.gz.sha256 \
+                   artifacts/**/*.tar.gz.sig \
+                   artifacts/**/*.tar.gz.pem \
+                   artifacts/**/*.tar.gz.bundle; do
+            assets+=("$f")
+          done
+          assets+=("nexo-plugin.toml")
+          gh release upload "$TAG" "${assets[@]}" --clobber --repo "$GITHUB_REPOSITORY"

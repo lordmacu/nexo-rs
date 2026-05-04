@@ -7,8 +7,9 @@ the workspace root.
 
 This template is the Rust counterpart to the Phase 31.4 Python
 SDK ([`extensions/template-plugin-python/`](../template-plugin-python/))
-and the upcoming Phase 31.5 TypeScript SDK. The wire format is
-identical across languages — only the SDK differs.
+and the Phase 31.5 TypeScript SDK
+([`extensions/template-plugin-typescript/`](../template-plugin-typescript/)).
+The wire format is identical across languages — only the SDK differs.
 
 ## What this template provides
 

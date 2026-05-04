@@ -819,6 +819,68 @@ coordinación de archivos cross-cutting.
   PyPI publish (defer until 31.5 lands), NO native-ext
   per-target Python tarballs (defer 31.4.b).
 
+- **31.5 ✅ shipped 2026-05-04** — TypeScript plugin SDK +
+  template (robusto). New `extensions/sdk-typescript/` ESM
+  package with strict tsconfig (Node16 module resolution,
+  noUncheckedIndexedAccess, isolatedModules). Public API:
+  `PluginAdapter`, `BrokerSender`, `Event`, `parseManifest`,
+  `installStdoutGuard`, `STDOUT_GUARD_MARKER`, 3 exception
+  classes (`PluginError`/`ManifestError`/`WireError`),
+  JSON-RPC frame helpers (`buildResponse` /
+  `buildErrorResponse` / `MAX_FRAME_BYTES`). Single runtime
+  dep `smol-toml@^1.4.1` (~5 KB pure-JS TOML parser).
+  Robustness defaults all default-on:
+  `enableStdoutGuard:true` (patches `process.stdout.write` to
+  divert non-JSON lines to stderr tagged `[stdout-guard]` —
+  catches the most common plugin-author mistake of
+  `console.log` corrupting the JSON-RPC stream),
+  `maxFrameBytes:1<<20` (rejects oversized inbound frames
+  with `WireError`), `handleProcessSignals:true`
+  (SIGTERM/SIGINT trigger graceful shutdown), in-flight task
+  drain on shutdown via `Promise.allSettled([...inflight])`.
+  Single-shot `run()` throws `PluginError` on second call.
+  13 stdlib `node:test` tests across handshake (3), manifest
+  validation (3), dispatch (3), stdout-guard (2), wire (1),
+  lifecycle (1). Spawn-driven fixtures
+  (`tests/fixtures/{echo,slow,console-log,lifecycle}-plugin.mjs`).
+  New `extensions/template-plugin-typescript/` template:
+  manifest, `src/main.ts` echo handler, `tsconfig.json`,
+  `package.json` (SDK as `file:../sdk-typescript`),
+  `scripts/{extract-plugin-meta.sh, pack-tarball-typescript.sh,
+  verify-pure-js.sh}`, end-to-end pack test, 4-job CI workflow
+  (`actions/setup-node@v4` + `npm ci` + typecheck + tsc +
+  `npm prune --omit=dev` + pack + pure-JS audit + optional
+  sign + release). Pack script vendors compiled `dist/main.js`
+  to `lib/plugin/` and SDK + scoped/unscoped npm deps to
+  `lib/node_modules/`; ships bash launcher with
+  `NODE_PATH=lib/node_modules` exec'ing `node lib/plugin/main.js`.
+  New docs page `docs/src/plugins/typescript-sdk.md`; SUMMARY
+  wired. Cross-links added in Rust + Python template READMEs.
+  Resolver `noarch` fallback (Phase 31.4) reused unchanged;
+  daemon spawn pipeline UNCHANGED. Lifecycle test uses a
+  child-process fixture so the readline loop doesn't block
+  the test runner's stdin (would have deadlocked with an
+  in-process double-`run()`). NO CJS fallback, NO embedded
+  TS at runtime, NO Deno entry, NO bundling, NO npm publish
+  (defer until 31.5.c lands), NO native addons in noarch
+  (defer 31.5.b). PHP SDK explicitly deferred to **31.5.c**
+  per user direction.
+
+- **31.5.b ⬜** Per-target TypeScript tarballs for plugins
+  with native node addons (`*.node` files from packages like
+  `bcrypt`, `sharp`, `better-sqlite3`). Convention:
+  `<id>-<version>-node20-<triple>.tar.gz`. Pack script branch
+  on `verify-pure-js.sh` failure: switch to per-target build
+  matrix instead of failing. Resolver tweak to try
+  `<runtime>-<version>-<triple>` before falling back to
+  `noarch`. ~2 d.
+
+- **31.5.c ⬜** PHP plugin SDK + template + `noarch` resolver
+  (already shipped). Mirror of 31.4 (Python) with Composer
+  vendoring + Fibers (PHP 8.1+) for non-blocking handler
+  dispatch. Same wire format. Daemon-side: no changes
+  (language-agnostic). Estimated ~2 d.
+
 - **81.15.c.b ✅ shipped 2026-05-01** — SDK streaming
   consumption helper. Pending value type changed to
   `PendingKind` enum (Single for non-streaming, Streaming for
