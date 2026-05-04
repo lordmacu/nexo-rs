@@ -11,7 +11,7 @@ preferred-dark-theme = "navy"
 git-repository-url = "https://github.com/lordmacu/nexo-rs"
 # Default icon (fab-github) renders the GitHub brand mark in the top-right corner.
 edit-url-template = "https://github.com/lordmacu/nexo-rs/edit/main/docs/{path}"
-site-url = "/nexo-rs/"
+site-url = "/nexo-rs/docs/"
 additional-js = ["mermaid.min.js", "mermaid-init.js"]
 
 [output.html.search]

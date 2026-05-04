@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'docs/**'
+      - 'docs-site/**'
       - 'crates/**'
       - 'src/**'
       - 'Cargo.toml'
@@ -104,11 +105,23 @@ jobs:
         run: |
           echo "::warning::rustdoc build failed; mdBook will be published without /api/"
 
+      - name: Assemble GitHub Pages site (landing at /, mdbook at /docs/)
+        run: |
+          set -euo pipefail
+          rm -rf _site
+          mkdir -p _site/docs
+          # Standalone landing page at the root.
+          cp -R docs-site/. _site/
+          # mdBook (with rustdoc bundled at /docs/api/) under /docs/.
+          cp -R docs/book/. _site/docs/
+          ls -la _site/ | head -20
+          ls -la _site/docs/ | head -20
+
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: docs/book
+          path: _site
 
   deploy:
     needs: build
