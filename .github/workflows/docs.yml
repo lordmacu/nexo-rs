@@ -30,7 +30,7 @@ jobs:
       MDBOOK_MERMAID_VERSION: 0.14.0
       # RUSTDOCFLAGS: -D warnings   # re-enable once public surface is clean
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
 
