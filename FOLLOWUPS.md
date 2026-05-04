@@ -4938,6 +4938,34 @@ Trait + dispatcher + telegram/email/whatsapp persisters shipped
   `crates/setup/src/persisters/slack.rs` file + push into
   `src/main.rs`'s `AdminBootstrapInputs.persisters` vec.
 
+### Phase 81.13 — Plugin manifest schema unification (deferred)
+
+Foundation + dispatcher + microapp shipped 2026-05-04. Steps
+that stay pending:
+
+- **81.13.b.preserve** — extend the v2 schema with v2 homes for
+  the legacy fields the migrator currently DROPS-with-warn:
+  `mcp_servers`, `outbound_bindings`, `context.passthrough`,
+  `requires.bins+env`,
+  `capabilities.tools+hooks+channels+providers+pollers`,
+  `transport.kind=nats|http`, `plugin.priority`. Today these
+  stay readable via `nexo-extensions::manifest::ExtensionManifest`
+  legacy parser; sub-phase folds them into the canonical v2
+  shape so the migrator stops dropping them.
+- **81.13.b.in-tree-migrate** — rewrite the 33 in-tree
+  `plugin.toml` files to `manifest_version = 2` so they stop
+  emitting deprecation warns at boot. Mechanical script work
+  per-family commit (extensions/, crates/plugins/, templates/).
+  Defer until `81.13.b.preserve` lands so we don't need a
+  second migration pass.
+- **81.13.b.json-schema** — JSON-Schema export of the canonical
+  v2 shape for editor autocomplete + CI validation. Mirrors
+  OpenClaw's `openclaw.plugin.json` pattern.
+- **81.13.hard-remove** — drop `nexo-plugin.toml` filename
+  fallback + `manifest_version = 1` legacy support entirely
+  (target nexo-rs 0.2.0). Plugins still on v1 fail boot with a
+  migration message.
+
 ## Maintenance note
 
 If a future historical import includes non-English notes, keep them in `archive/spanish/*.txt` and update this Markdown tracker in English only.
