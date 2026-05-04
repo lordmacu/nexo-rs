@@ -18,6 +18,60 @@ Historical detailed notes that were previously written in Spanish are preserved 
 
 ## Open items
 
+### Phase 82.10.p — admin pairing → channel plugin bridge
+
+`nexo/admin/pairing/start` (Phase 82.10.h.b.5) is wired to
+`InMemoryPairingChallengeStore::create_challenge`, which only
+inserts a row with `state: Pending` and never tells the
+WhatsApp plugin (or any future channel plugin) to actually
+generate a QR / pairing artifact. End-to-end consequence: the
+microapp UI calls `pairing/start` → gets `challenge_id` +
+`instructions` → polls `pairing/status` forever (state stays
+`pending`) → no QR ever surfaces.
+
+The WhatsApp plugin already has the building blocks
+(`crates/plugins/whatsapp/src/pairing.rs::SharedPairingState`
+with `get_qr` / `status` snapshots, lifecycle + `events::Qr`
+broker emission) but they're driven only by the plugin's own
+runtime — the admin pairing code path doesn't subscribe.
+
+Discovered while end-to-end testing the agent-creator microapp
+wizard against `nexo/admin/pairing/start`. Framework newline
+fix (commit `d95275b`) + microapp `agent_id` fallback (microapp
+commit `1caa683`) cleared the request path; this gap is the
+remaining blocker for the operator-facing QR flow.
+
+Wire to design:
+1. `PairingChannelTrigger` trait in `nexo-core` —
+   `start(challenge_id, agent_id, channel, instance) -> ()`.
+2. `WhatsappPairingTrigger` impl in
+   `crates/plugins/whatsapp/` — boots a wa-agent client in
+   pairing mode (today the runtime refuses to boot without
+   creds; needs an explicit pairing-mode entry that
+   `crates/plugins/whatsapp/src/session.rs:137-139` currently
+   blocks) and routes `events::Qr` / lifecycle frames into the
+   challenge store + notifier.
+3. `AdminBootstrap` accepts an optional triggers map
+   (channel → trigger) and the dispatcher's
+   `pairing/start` handler invokes the matching trigger after
+   inserting the challenge.
+4. `PairingChallengeStore` gains `update_qr` / `update_state`
+   so the trigger task can flip `Pending → QrReady → Linked`
+   and the existing `StdioPairingNotifier` push path delivers
+   the SSE updates the microapp already subscribes to.
+5. Lifecycle: `pairing/cancel` → trigger.stop(); challenge TTL
+   → trigger.stop(); operator-side observability for stuck
+   triggers (timeout / channel unavailable / creds rejected).
+
+Out of scope for this entry but adjacent: telegram-link-style
+pairing (no QR — confirm via deep link) follows the same
+trigger surface; future channels plug in without touching
+admin pairing.
+
+Owners: framework. Upstream from microapp UI (Phase M9.b
+already consumes the SSE push path correctly — just gets
+nothing today).
+
 ### Phase 36.2 — Agent memory snapshots (deferred items)
 
 The `nexo-memory-snapshot` crate is feature-complete and operational.
