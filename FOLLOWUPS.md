@@ -1506,6 +1506,43 @@ coordinación de archivos cross-cutting.
   `VectorRecord`/`VectorQuery` with feature negotiation at
   `initialize`. ~0.5 d.
 
+- **81.29 ✅ shipped 2026-05-04** — Remote ToolHandler
+  wrapper (5th wire surface). Manifest gains
+  `extends.tools = [...]` (5th list); EXTENDS_SECTIONS grew
+  4→5. `tool.invoke` JSON-RPC host→child request + initialize-
+  reply `tools` array extension (`{name, description,
+  input_schema}` per tool). Error band -33401..=-33405.
+  Default timeout 60 s; NEXO_PLUGIN_TOOL_TIMEOUT_MS env
+  override. RemoteToolHandler shares `Inner.{stdin_tx,
+  pending, next_id}` Arc with siblings. Subset check
+  (advertised ⊆ declared) at handshake — drift fails boot.
+  Post-init hook chained after vector backends in both Ok
+  arms; uses `ctx.tool_registry` so init_loop arg count
+  stays at 8. WirePluginRegistryOutput exposes shared tool
+  registry. ScopedToolRegistry seeded with
+  `tools.expose ∪ extends.tools`. Contract v1.10.0 §4.1.1
+  + §5.t. Authoring docs "Contributing tools" section.
+  Completes the 5-wrapper subprocess fleet — unblocks
+  81.17.c/18/19 plugin extracts. 1349/1349 nexo-core +
+  110/110 manifest + 10/10 tool_remote + 8/8 e2e tests pass.
+
+- **81.29.b ⬜** SDK helper `PluginAdapter::on_tool(name,
+  handler)` registration API mirroring `on_broker_event`.
+  Plugin authors today hand-roll the JSON-RPC frame parsing
+  for tool.invoke; SDK helper drops boilerplate. ~0.5 d.
+
+- **81.29.c ⬜** Per-tool timeout knob in manifest
+  `[plugin.tools.timeouts] browser_navigate = "30s"`. Today
+  a single env var covers all tools per plugin; some need
+  longer (full-page-load) than others (button-click).
+  ~0.3 d.
+
+- **81.29.d ⬜** Streaming tool dispatch via
+  `tool.invoke.delta { request_id, chunk }` notifications.
+  Mirrors 81.25 LLM streaming shape. Use case: tools
+  returning chunked output (browser_screenshot binary
+  blob, web_fetch large body). ~1 d.
+
 - **81.22 ✅ shipped 2026-05-04** — Plugin sandbox v1
   (bwrap-based, fs/network allowlist). New
   `[plugin.sandbox]` manifest section (5 fields, default

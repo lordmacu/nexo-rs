@@ -38,6 +38,104 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.29 — Remote `ToolHandler` wrapper (subprocess-
+  backed) — 5th wire surface.** Subprocess plugins can now
+  expose tools to the daemon's LLM. Manifest gains a 5th list
+  in `[plugin.extends]`:
+
+  ```toml
+  [plugin.extends]
+  tools = ["browser_navigate", "browser_click"]
+  ```
+
+  Tool schemas are advertised at handshake via the
+  initialize-reply's new `tools` array (`{name, description,
+  input_schema}` per tool). The daemon caches schemas and
+  builds typed function-calling defs for the LLM without
+  per-call round-trips. Subset check at handshake: advertised
+  tools MUST be subset of `extends.tools` — drift in this
+  direction is a hard failure.
+
+  One new wire method (contract v1.10.0):
+
+  ```jsonc
+  {
+    "jsonrpc": "2.0",
+    "id": 80,
+    "method": "tool.invoke",
+    "params": {
+      "plugin_id": "browser",
+      "tool_name": "browser_navigate",
+      "args": { "url": "https://example.com" },
+      "agent_id": "shopper"
+    }
+  }
+  ```
+
+  Tool-specific error band `-33401..=-33405`:
+  `ToolNotFound` / `ToolArgumentInvalid` / `ToolExecutionFailed` /
+  `ToolUnavailable` / `ToolDenied`. Default timeout 60 s
+  (matches LLM band — tools span fast `browser_click` to slow
+  `browser_navigate`); operator override via
+  `NEXO_PLUGIN_TOOL_TIMEOUT_MS`.
+
+  New host-side types in `nexo-core::agent::tool_remote`:
+  - `RemoteToolDef` — wire shape advertised at handshake.
+  - `RemoteToolHandler` — `ToolHandler` impl that translates
+    each agent-loop call into a `tool.invoke` JSON-RPC frame
+    over the existing stdio bridge.
+  - `ToolHandlerRegistrationError` — 3 variants
+    (`ToolNameAlreadyRegistered`, `InnerUnavailable`,
+    `NotInDeclaredList`).
+
+  Integration: `Inner.declared_tools` field populated from
+  initialize-reply with subset validation. New
+  `SubprocessNexoPlugin::register_remote_tool_handlers(...)`
+  reads declared tools, intersects with advertised, builds
+  `RemoteToolHandler` per tool, registers via the existing
+  per-plugin `ScopedToolRegistry::register_arc` (the same
+  81.3 namespace-gated path). Post-init hook
+  `register_remote_tool_handlers_after_init` chained AFTER
+  `register_remote_vector_backends_after_init` in both Ok
+  arms (auto-subprocess fallback + factory-registered).
+  Reads `ctx.tool_registry` directly so the init_loop arg
+  count stays at 8 (avoids the `RegistriesBundle`
+  consolidation pressure deferred in 81.26.d).
+
+  `WirePluginRegistryOutput.tool_registry: Arc<ToolRegistry>`
+  surfaces the daemon's main tool catalog so callers can
+  enumerate registered subprocess tools (operator visibility,
+  e2e tests, future doctor surface).
+
+  `ScopedToolRegistry::new` now seeds `allowed_canonical`
+  with `tools.expose ∪ extends.tools` so subprocess plugins
+  don't have to declare a tool in BOTH manifest sections —
+  the wire-binding IS the declaration. `validate_tool_namespace`
+  updated to accept canonical `ext_<plugin_id>_*` shape in
+  addition to bare `<plugin_id>_*` (matches 81.3 policy).
+
+  **Completes the 5-wrapper subprocess fleet** — channels
+  (81.24) + LLM (81.25) + hooks (81.27) + memory backends
+  (81.26) + tools (81.29). Subprocess plugins can now
+  contribute every category of host-side capability via
+  `[plugin.extends]` declaration plus implementing the
+  matching wire methods. **Unblocks the
+  `plugin-browser`/`plugin-whatsapp`/`plugin-telegram`/`plugin-email`
+  extracts to standalone repos** (Phase 81.17.c/18/19) —
+  those plugins use tools today; with 81.29 shipped, the
+  wire path exists.
+
+  Authoring docs gain "Contributing tools" section.
+  Contract spec advances to v1.10.0 with new §4.1.1 "Tool
+  catalog advertisement" + §5.t "Tool methods" + Changelog
+  row.
+
+  Follow-ups: 81.29.b SDK helper
+  `PluginAdapter::on_tool(name, handler)` (~0.5 d), 81.29.c
+  per-tool timeout knob in manifest (~0.3 d), 81.29.d
+  streaming tool dispatch via `tool.invoke.delta`
+  notifications (~1 d). See FOLLOWUPS.md.
+
 - **Phase 81.22 — Plugin sandbox v1 (bubblewrap-based, fs +
   network allowlist on Linux).** New `[plugin.sandbox]` manifest
   section enables defense-in-depth isolation for subprocess

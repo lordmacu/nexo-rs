@@ -72,6 +72,13 @@ pub fn run_all_with_sandbox_env(
         errors,
     );
     validate_tool_namespace(&manifest.plugin.id, &manifest.plugin.tools.expose, errors);
+    // Phase 81.29 — extends.tools entries must satisfy the same
+    // per-plugin namespace policy as tools.expose.
+    validate_tool_namespace(
+        &manifest.plugin.id,
+        &manifest.plugin.extends.tools,
+        errors,
+    );
     validate_extends(&manifest.plugin.extends, errors);
     validate_deferred_subset(
         &manifest.plugin.tools.expose,
@@ -237,11 +244,14 @@ fn validate_min_nexo_version(
 /// without bailing on the first.
 fn validate_extends(extends: &ExtendsSection, errors: &mut Vec<ManifestError>) {
     let regex = id_regex();
-    let lists: [(&'static str, &Vec<String>); 4] = [
+    // Phase 81.29 — `tools` joins channels/llm_providers/
+    // memory_backends/hooks as the 5th list.
+    let lists: [(&'static str, &Vec<String>); 5] = [
         ("channels", &extends.channels),
         ("llm_providers", &extends.llm_providers),
         ("memory_backends", &extends.memory_backends),
         ("hooks", &extends.hooks),
+        ("tools", &extends.tools),
     ];
 
     let mut cross_list: BTreeMap<String, Vec<&'static str>> = BTreeMap::new();
@@ -283,8 +293,9 @@ fn validate_tool_namespace(
     errors: &mut Vec<ManifestError>,
 ) {
     let prefix = format!("{plugin_id}_");
+    let ext_prefix = format!("ext_{plugin_id}_");
     for tool_name in expose {
-        if !tool_name.starts_with(&prefix) {
+        if !tool_name.starts_with(&prefix) && !tool_name.starts_with(&ext_prefix) {
             errors.push(ManifestError::ToolNamespaceViolation {
                 plugin_id: plugin_id.to_string(),
                 tool_name: tool_name.clone(),
@@ -712,6 +723,78 @@ expose = ["wrong_prefix"]
                   && sections.contains(&"llm_providers")
             )),
             "expected ExtendsCrossListConflict, got {errs:?}"
+        );
+    }
+
+    // ── Phase 81.29 — extends.tools validator ─────────────────
+
+    #[test]
+    fn validate_extends_tools_rejects_invalid_id() {
+        let m = manifest_with_extends("tools = [\"BadTool\"]");
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(
+                e,
+                ManifestError::ExtendsIdInvalid {
+                    section: "tools",
+                    id,
+                    ..
+                } if id == "BadTool"
+            )),
+            "expected ExtendsIdInvalid for tools, got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn validate_extends_tools_rejects_duplicate_within_list() {
+        let m = manifest_with_extends(
+            "tools = [\"marketing_lead\", \"marketing_lead\"]",
+        );
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(
+                e,
+                ManifestError::ExtendsDuplicate {
+                    section: "tools",
+                    id,
+                } if id == "marketing_lead"
+            )),
+            "expected ExtendsDuplicate for tools, got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn validate_extends_tools_rejects_cross_list_duplicate() {
+        let m = manifest_with_extends(
+            "channels = [\"marketing_lead\"]\n\
+             tools = [\"marketing_lead\"]",
+        );
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(
+                e,
+                ManifestError::ExtendsCrossListConflict {
+                    id,
+                    sections,
+                } if id == "marketing_lead"
+                  && sections.contains(&"tools")
+                  && sections.contains(&"channels")
+            )),
+            "expected ExtendsCrossListConflict, got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn validate_extends_tools_must_satisfy_plugin_namespace() {
+        let m = manifest_with_extends("tools = [\"foo_bar\"]");
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(
+                e,
+                ManifestError::ToolNamespaceViolation { tool_name, .. }
+                if tool_name == "foo_bar"
+            )),
+            "expected ToolNamespaceViolation for extends.tools entry, got {errs:?}"
         );
     }
 

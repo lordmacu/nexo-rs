@@ -409,6 +409,99 @@ Operators audit registered backends today via
 (`agents.yaml.<id>.vector_backend = "pinecone"`) lands in
 Phase 81.26.b.
 
+## Contributing tools
+
+Phase 81.29 — subprocess plugins can expose **tools** that the
+daemon's LLM picks via function-calling. Each tool name lives
+in `[plugin.extends].tools = [...]` plus the subprocess
+advertises the matching schema at handshake.
+
+```toml
+[plugin]
+id = "browser"
+# ... other manifest fields ...
+
+[plugin.extends]
+tools = ["browser_navigate", "browser_click"]
+```
+
+The subprocess MUST advertise these tools in the
+initialize-reply's `tools` array:
+
+```jsonc
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "manifest": { "plugin": { "id": "browser", ... } },
+    "server_version": "browser-0.1.1",
+    "tools": [
+      {
+        "name": "browser_navigate",
+        "description": "Navigate to a URL",
+        "input_schema": {
+          "type": "object",
+          "properties": { "url": { "type": "string" } },
+          "required": ["url"]
+        }
+      }
+    ]
+  }
+}
+```
+
+When the agent's LLM picks a tool the daemon issues a
+`tool.invoke` JSON-RPC request to the subprocess:
+
+```jsonc
+{
+  "jsonrpc": "2.0",
+  "id": 80,
+  "method": "tool.invoke",
+  "params": {
+    "plugin_id": "browser",
+    "tool_name": "browser_navigate",
+    "args": { "url": "https://example.com" },
+    "agent_id": "shopper"
+  }
+}
+```
+
+The plugin replies with the tool's result (typically a
+`ToolResponse`-shaped object). Errors use the
+`-33401..=-33405` band documented in
+[Plugin contract §5.t](./contract.md#5t-tool-methods-phase-8129).
+
+**Validation rules** (host-side):
+
+- Tool names MUST satisfy the per-plugin namespace policy from
+  Phase 81.3 (`<plugin_id>_*` or `ext_<plugin_id>_*`).
+- The advertised `tools` array MUST be a subset of
+  `extends.tools` — drift in this direction is a hard failure
+  at handshake.
+- Manifest entries WITHOUT an advertised counterpart are
+  tolerated but logged at warn; runtime calls yield
+  `-33401 ToolNotFound`.
+
+**Plugin-side responsibilities**:
+
+- Validate args against the published `input_schema` before
+  executing (defense in depth — host already validates host-
+  side, but plugins should re-check).
+- Return `-33402 ToolArgumentInvalid` with `details: <Value>`
+  pointing to the offending field if validation fails.
+- Return `-33404 ToolUnavailable` with `data: { retry_after_ms: <u64> }`
+  for transient failures (rate-limits, locked resources).
+
+**Default timeout**: 60 s (matches the LLM band — tools span
+fast `browser_click` to slow `browser_navigate`). Operator
+override via `NEXO_PLUGIN_TOOL_TIMEOUT_MS`.
+
+**v1 limitations** — see follow-ups in `FOLLOWUPS.md`:
+streaming tools (chunked outputs via `tool.invoke.delta`),
+per-tool timeout knobs in manifest, SDK helper
+`PluginAdapter::on_tool(name, handler)`.
+
 ## Sandboxing your plugin
 
 Phase 81.22 — Linux subprocess plugins can opt into bubblewrap

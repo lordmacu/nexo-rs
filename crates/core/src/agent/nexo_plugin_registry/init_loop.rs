@@ -189,6 +189,52 @@ async fn register_remote_vector_backends_after_init(
     }
 }
 
+/// Phase 81.29 — after `init()` + channel + LLM + hook + vector
+/// registrations succeed, register every tool name from
+/// `manifest.plugin.extends.tools` (intersected with the
+/// initialize-reply tools array) as a `RemoteToolHandler` in the
+/// per-plugin scoped tool registry. Only fires when the handle
+/// is a `SubprocessNexoPlugin`; other concrete types skip
+/// silently. Failure escalates to `InitOutcome::Failed` so the
+/// agent loop never tries to dispatch a tool whose subprocess
+/// registration is broken.
+async fn register_remote_tool_handlers_after_init(
+    plugin_id: &str,
+    handle: &Arc<dyn NexoPlugin>,
+    scoped_tool_registry: &Arc<crate::agent::scoped_tool_registry::ScopedToolRegistry>,
+) -> Option<InitOutcome> {
+    let any = handle.as_any();
+    let sub = match any.downcast_ref::<
+        crate::agent::nexo_plugin_registry::subprocess::SubprocessNexoPlugin,
+    >() {
+        Some(s) => s,
+        None => return None,
+    };
+    match sub.register_remote_tool_handlers(scoped_tool_registry).await {
+        Ok(names) => {
+            if !names.is_empty() {
+                tracing::info!(
+                    target: "plugins.init",
+                    plugin_id = %plugin_id,
+                    registered_count = names.len(),
+                    "registered remote tools"
+                );
+            }
+            None
+        }
+        Err(e) => {
+            let error = format!("tool handler register: {e}");
+            tracing::warn!(
+                target: "plugins.init",
+                plugin_id = %plugin_id,
+                %error,
+                "remote tool handler registration failed"
+            );
+            Some(InitOutcome::Failed { error })
+        }
+    }
+}
+
 /// Phase 81.27 — after `init()` + channel + LLM registrations
 /// succeed, register every hook name from
 /// `manifest.plugin.extends.hooks` as a `RemoteHookHandler`.
@@ -423,6 +469,15 @@ where
                                     .await
                                 {
                                     outcomes.insert(id, failed);
+                                } else if let Some(failed) =
+                                    register_remote_tool_handlers_after_init(
+                                        &id,
+                                        &handle,
+                                        &ctx.tool_registry,
+                                    )
+                                    .await
+                                {
+                                    outcomes.insert(id, failed);
                                 } else {
                                     outcomes
                                         .insert(id.clone(), InitOutcome::Ok { duration_ms });
@@ -508,6 +563,15 @@ where
                                 &id,
                                 &handle,
                                 vector_backend_registry,
+                            )
+                            .await
+                        {
+                            outcomes.insert(id, failed);
+                        } else if let Some(failed) =
+                            register_remote_tool_handlers_after_init(
+                                &id,
+                                &handle,
+                                &ctx.tool_registry,
                             )
                             .await
                         {
