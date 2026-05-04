@@ -1,0 +1,6 @@
+vendor/
+dist/
+lib/
+.audit/
+.phpunit.cache/
+.phpunit.result.cache

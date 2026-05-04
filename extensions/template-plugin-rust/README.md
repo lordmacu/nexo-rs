@@ -6,9 +6,11 @@ in [`nexo-plugin-contract.md`](../../nexo-plugin-contract.md) at
 the workspace root.
 
 This template is the Rust counterpart to the Phase 31.4 Python
-SDK ([`extensions/template-plugin-python/`](../template-plugin-python/))
-and the Phase 31.5 TypeScript SDK
-([`extensions/template-plugin-typescript/`](../template-plugin-typescript/)).
+SDK ([`extensions/template-plugin-python/`](../template-plugin-python/)),
+the Phase 31.5 TypeScript SDK
+([`extensions/template-plugin-typescript/`](../template-plugin-typescript/)),
+and the Phase 31.5.c PHP SDK
+([`extensions/template-plugin-php/`](../template-plugin-php/)).
 The wire format is identical across languages — only the SDK differs.
 
 ## What this template provides

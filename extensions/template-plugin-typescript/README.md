@@ -2,8 +2,9 @@
 
 Skeleton out-of-tree **subprocess plugin** for nexo, written in
 TypeScript. Counterpart to
-[`template-plugin-rust`](../template-plugin-rust/) and
-[`template-plugin-python`](../template-plugin-python/) — same wire
+[`template-plugin-rust`](../template-plugin-rust/),
+[`template-plugin-python`](../template-plugin-python/), and
+[`template-plugin-php`](../template-plugin-php/) — same wire
 format ([`nexo-plugin-contract.md`](../../nexo-plugin-contract.md)),
 different SDK + asset convention.
 

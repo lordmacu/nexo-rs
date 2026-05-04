@@ -1,0 +1,37 @@
+# Phase 31.5.c — out-of-tree subprocess plugin template (PHP).
+#
+# COPY-AND-MODIFY workflow:
+# 1. Copy this entire `extensions/template-plugin-php/`
+#    directory into a new repo of your own.
+# 2. Edit this manifest: pick a unique `plugin.id` (regex
+#    `^[a-z][a-z0-9_]{0,31}$`).
+# 3. Implement your plugin's logic in `src/main.php`.
+# 4. `composer install` to vendor SDK + deps.
+# 5. Tag a release `v<semver>`; the
+#    `.github/workflows/release.yml` workflow vendors deps via
+#    `composer install --no-dev --optimize-autoloader
+#    --classmap-authoritative` and publishes a
+#    `<id>-<version>-noarch.tar.gz` to the GitHub Release.
+
+[plugin]
+id = "template_plugin_php"
+version = "0.1.0"
+name = "Template Plugin (PHP)"
+description = "Skeleton out-of-tree subprocess plugin in PHP."
+min_nexo_version = ">=0.1.0"
+
+[plugin.requires]
+nexo_capabilities = ["broker"]
+
+[[plugin.channels.register]]
+kind = "template_echo_php"
+adapter = "TemplateEchoAdapter"
+
+# `entrypoint.command` points at the bash launcher script that
+# the publish workflow drops into `bin/<id>` at pack time. The
+# launcher exec's `php -d display_errors=stderr lib/plugin/main.php`
+# so PHP errors land on stderr (not stdout, where they would
+# corrupt the JSON-RPC frame stream the host parses).
+[plugin.entrypoint]
+command = "./bin/template_plugin_php"
+args = []
