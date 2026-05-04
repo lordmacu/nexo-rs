@@ -38,6 +38,87 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.24 — Remote `ChannelAdapter` wrapper (subprocess-
+  backed).** New `RemoteChannelAdapter` that implements the
+  `ChannelAdapter` trait by translating each method call into a
+  JSON-RPC 2.0 request over the subprocess plugin's existing
+  stdio bridge. Subprocess plugins declaring
+  `[plugin.extends].channels = ["slack"]` get one adapter per
+  kind registered into `ChannelAdapterRegistry` automatically
+  at boot.
+
+  Three new wire methods (contract v1.5.0):
+
+  - `channel.start { kind, instance }` → `{ ok: true }` (30 s)
+  - `channel.stop { kind }` → `{ ok: true }` (30 s)
+  - `channel.send_outbound { kind, msg }` → `OutboundAck { message_id, sent_at_unix }` (60 s)
+
+  `kind` field on every payload allows one subprocess
+  advertising multiple kinds (`extends.channels = ["slack",
+  "discord"]`) to dispatch via a single request handler.
+
+  Channel-specific error codes (in addition to the JSON-RPC
+  standard codes):
+
+  | Code | `ChannelAdapterError` variant |
+  |------|-------------------------------|
+  | `-33001` | `Connection { source }` |
+  | `-33002` | `Authentication { reason }` |
+  | `-33003` | `Recipient { recipient, reason }` |
+  | `-33004` | `RateLimited { retry_after_secs }` |
+  | `-33005` | `Unsupported { feature }` |
+
+  Timeouts default to 30 s for start/stop and 60 s for
+  send_outbound. Operator override via
+  `NEXO_PLUGIN_CHANNEL_TIMEOUT_MS` env (single value applied
+  to all three methods).
+
+  New `NexoPlugin::as_any(&self) -> &dyn std::any::Any`
+  required trait method so the boot helper can downcast to
+  `SubprocessNexoPlugin` and trigger remote-adapter
+  registration. 8 concrete impls touched (4 in-tree plugins +
+  SubprocessNexoPlugin + 3 test fixtures), 1 LOC each.
+
+  New `ChannelAdapterRegistry::unregister(kind, plugin_id) ->
+  bool` with ownership check — defends against one plugin
+  unregistering another's adapter; used by 81.24's rollback
+  path on partial registration failures.
+
+  Boot integration: `run_plugin_init_loop_with_factory` gains
+  a `channel_adapter_registry: &Arc<ChannelAdapterRegistry>`
+  parameter; post-init hook runs after the namespace check,
+  registers each kind from `manifest.plugin.extends.channels`,
+  rolls back on `KindAlreadyRegistered`. The boot helper now
+  threads a single `Arc<ChannelAdapterRegistry>` through the
+  init-loop AND into `WirePluginRegistryOutput` so callers see
+  the registered adapters (was returning a fresh empty
+  registry — fixed).
+
+  Tests: 8 unit tests in `remote::tests` using `mpsc` +
+  `DashMap` + `AtomicU64` to fake the stdio peer (kind /
+  start-with-instance / stop / send-round-trip / unsupported
+  / rate-limited / connection-error / timeout). 1 unit test
+  for `ChannelAdapterRegistry::unregister`. 1 e2e test
+  `crates/core/tests/remote_channel_e2e.rs` with a bash mock
+  plugin echoing `channel.send_outbound` through the full
+  daemon stack. All 1285 `nexo-core` lib tests pass; 2/2
+  subprocess e2e + 1/1 remote channel e2e + workspace builds
+  clean.
+
+  Authoring docs gain a "Contributing channel kinds" section
+  with a Rust subprocess plugin sketch showing how to handle
+  the three wire methods. Wire spec lives at
+  [Plugin contract §5.x](https://github.com/lordmacu/nexo-rs/blob/main/nexo-plugin-contract.md#5x-channel-methods-phase-8124).
+
+  Out of scope (deferred): SDK child-side helpers
+  (`PluginAdapter::handle_channel_*`) — 81.24.b; per-method
+  timeout knobs in manifest — 81.24.c; capability-negotiation
+  handshake validating declared kinds at `initialize`-reply
+  time — 81.24.d. In-tree plugins (browser / telegram /
+  whatsapp / email) keep their direct `ChannelAdapter` trait
+  impls; only out-of-tree subprocess plugins use the remote
+  wrapper.
+
 - **Phase 81.28 — Manifest `[plugin.extends]` section per-
   registry capability declaration.** Additive 4-list manifest
   schema for subprocess plugins to declare which channel kinds

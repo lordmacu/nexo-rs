@@ -312,6 +312,10 @@ impl NexoPlugin for WhatsappPlugin {
                 source,
             })
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 #[cfg(test)]

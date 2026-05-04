@@ -107,6 +107,13 @@ pub trait NexoPlugin: Send + Sync + 'static {
     async fn shutdown(&self) -> Result<(), PluginShutdownError> {
         Ok(())
     }
+
+    /// Phase 81.24 — downcast hook so the boot helper can detect
+    /// `SubprocessNexoPlugin` instances and register their declared
+    /// `extends.channels` adapters into the channel registry.
+    /// Concrete types return `&self`; required (no default impl)
+    /// so each plugin opts in explicitly.
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 /// Bundle of handles a plugin's `init` receives. Lifetimes tied
@@ -363,6 +370,9 @@ min_nexo_version = ">=0.1.0"
                 }),
             }
         }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
     }
 
     /// Plugin whose `shutdown()` sleeps long enough to trip a
@@ -386,6 +396,9 @@ min_nexo_version = ">=0.1.0"
         async fn shutdown(&self) -> Result<(), PluginShutdownError> {
             tokio::time::sleep(Duration::from_millis(500)).await;
             Ok(())
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
         }
     }
 
