@@ -1,5 +1,6 @@
 #![allow(clippy::all)] // In-flux — Phase 76 + 79 scaffolding
 
+mod plugin_admin;
 mod plugin_install;
 mod plugin_new;
 mod plugin_run;
@@ -118,6 +119,34 @@ enum Mode {
         no_daemon_config: bool,
         watch: bool,
         verbose: bool,
+        json: bool,
+    },
+    /// Phase 31.8 — `nexo plugin list [--include-orphan] [--json]`.
+    /// Walks `cfg.plugins.discovery.search_paths` and tabulates
+    /// every installed plugin. Orphans (no `.nexo-install.json`)
+    /// hidden by default.
+    PluginList {
+        include_orphan: bool,
+        json: bool,
+    },
+    /// Phase 31.8 — `nexo plugin upgrade <id> [...]`. Re-resolves
+    /// the plugin's recorded GitHub Releases coordinates +
+    /// delegates to the install pipeline. Refuses to downgrade.
+    PluginUpgrade {
+        id: String,
+        target: Option<String>,
+        require_signature: bool,
+        skip_signature_verify: bool,
+        json: bool,
+    },
+    /// Phase 31.8 — `nexo plugin remove <id> [--purge-cache] [--yes]`.
+    /// Atomically renames the plugin dir aside then deletes it.
+    /// `--purge-cache` also purges `nexo_state_dir/plugins/<id>`
+    /// and `plugins/cache/<id>`.
+    PluginRemove {
+        id: String,
+        purge_cache: bool,
+        yes: bool,
         json: bool,
     },
     /// Phase 82.6 — `nexo ext state-dir <id>` prints the
@@ -1260,6 +1289,41 @@ async fn main() -> Result<()> {
             plugin_run::print_pre_boot_banner(&override_, json);
             args.plugin_run_override = Some(override_);
             // Fall through to the daemon boot path below.
+        }
+        Mode::PluginList {
+            include_orphan,
+            json,
+        } => {
+            let code = plugin_admin::run_plugin_list(&args.config_dir, include_orphan, json).await?;
+            std::process::exit(code);
+        }
+        Mode::PluginUpgrade {
+            id,
+            target,
+            require_signature,
+            skip_signature_verify,
+            json,
+        } => {
+            let code = plugin_admin::run_plugin_upgrade(
+                &args.config_dir,
+                id,
+                target,
+                require_signature,
+                skip_signature_verify,
+                json,
+            )
+            .await?;
+            std::process::exit(code);
+        }
+        Mode::PluginRemove {
+            id,
+            purge_cache,
+            yes,
+            json,
+        } => {
+            let code =
+                plugin_admin::run_plugin_remove(&args.config_dir, id, purge_cache, yes, json).await?;
+            std::process::exit(code);
         }
         Mode::Admin { port } => return run_admin_web(port).await,
         Mode::Run => {}
@@ -7760,6 +7824,26 @@ fn parse_args() -> CliArgs {
             force: positional.iter().any(|a| a == "--force"),
             json: has_json_flag,
         },
+        // Phase 31.8 — `nexo plugin list [--include-orphan] [--json]`.
+        [cmd, sub] if cmd == "plugin" && sub == "list" => Mode::PluginList {
+            include_orphan: positional.iter().any(|a| a == "--include-orphan"),
+            json: has_json_flag,
+        },
+        // Phase 31.8 — `nexo plugin upgrade <id> [...]`.
+        [cmd, sub, id] if cmd == "plugin" && sub == "upgrade" => Mode::PluginUpgrade {
+            id: id.clone(),
+            target: parse_kv_flag(&positional, "--target"),
+            require_signature: positional.iter().any(|a| a == "--require-signature"),
+            skip_signature_verify: positional.iter().any(|a| a == "--skip-signature-verify"),
+            json: has_json_flag,
+        },
+        // Phase 31.8 — `nexo plugin remove <id> [--purge-cache] [--yes] [--json]`.
+        [cmd, sub, id] if cmd == "plugin" && sub == "remove" => Mode::PluginRemove {
+            id: id.clone(),
+            purge_cache: positional.iter().any(|a| a == "--purge-cache"),
+            yes: positional.iter().any(|a| a == "--yes"),
+            json: has_json_flag,
+        },
         // Phase 76.14 — mcp-server with optional subcommands
         [cmd] if cmd == "mcp-server" => {
             Mode::McpServer(McpServerSubcommand::Serve)
@@ -8044,6 +8128,18 @@ fn print_usage() {
     );
     println!(
         "                                         [--require-signature|--skip-signature-verify] [--json]"
+    );
+    println!(
+        "  agent [--config <dir>] plugin list [--include-orphan] [--json]   List installed plugins"
+    );
+    println!(
+        "  agent [--config <dir>] plugin upgrade <id> [--target <triple>]   Re-resolve and upgrade"
+    );
+    println!(
+        "                                         [--require-signature|--skip-signature-verify] [--json]"
+    );
+    println!(
+        "  agent [--config <dir>] plugin remove <id> [--purge-cache] [--yes] [--json]   Remove plugin"
     );
     println!("  agent plugin help                      Show plugin subcommand help");
     println!(

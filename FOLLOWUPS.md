@@ -1035,6 +1035,65 @@ coordinación de archivos cross-cutting.
   stdout instead of NATS; daemon-side reader echoes to
   stderr. ~1 d.
 
+- **31.8 ✅ shipped 2026-05-04** — Operator UI: `nexo plugin
+  list` / `upgrade` / `remove`. New `src/plugin_admin.rs`
+  module + 3 `Mode` variants (`PluginList`, `PluginUpgrade`,
+  `PluginRemove`) + parse/dispatch arms in `src/main.rs`.
+  Per-plugin `<plugin_dir>/.nexo-install.json` schema (v1.0)
+  records `id, version, owner, repo, tag, target, sha256,
+  installed_at (RFC3339), source: "github-releases"`.
+  `plugin_install.rs::run_plugin_install` patched to call
+  `write_install_metadata` after extract success (skipped on
+  `was_already_present`); soft-fail with stderr warn when
+  write fails. `discover_installed_plugins` walks every
+  search_path's immediate child dirs, parses `nexo-plugin.toml`
+  + optional `.nexo-install.json`, sorted by id. `list`
+  filters orphans by default; `--include-orphan` surfaces
+  with `(orphan)` row suffix; JSON shape
+  `PluginListReport { ok, plugins[] }`. `upgrade` reads
+  metadata, builds `PluginCoords { owner, repo, tag }`, calls
+  `resolve_release` honoring `--target` override; emits
+  `PluginUpgradeReport { was_no_op: true }` on same-version,
+  `DowngradeRefused` on lower-version, otherwise delegates
+  to `run_plugin_install` (single download/verify/extract/cosign
+  code path; JSON line is the install report). `remove`
+  requires `--yes` (interactive prompt deferred to 31.8.b →
+  `NeedsYesConfirm` error otherwise); atomic via rename-aside
+  `<plugin_dir>.removing-<rand>` + `remove_dir_all`;
+  `--purge-cache` walks `nexo_state_dir/plugins/<id>` +
+  `nexo_state_dir/plugins/cache/<id>`. Best-effort
+  `plugin.lifecycle.<id>.removed` broker emit (NATS only,
+  2s timeout, mirrors install pattern). `AdminError` 9
+  variants. 11 unit tests in `plugin_admin::tests` (metadata
+  round-trip + read-none + read-invalid + discover-skips +
+  discover-collects-meta + list-filters-orphans + list-includes-orphans
+  + list-empty-when-search-paths-missing + admin-error-kind
+  exhaustive + aside-path-differs + list-entry-includes-meta).
+  Help text in `print_plugin_help` + `print_usage`.
+  Workspace builds clean; `cargo test --bin nexo plugin`
+  42/42 (11 admin + 12 install + 8 run + 11 new).
+  Out of scope: interactive TTY prompt (defer 31.8.b),
+  semver constraint pinning beyond literal tag tracking
+  (defer 31.8.c), separate upgrade-side cosign duplication
+  (delegated to install).
+
+- **31.8.b ⬜** Interactive TTY confirm prompt for
+  `nexo plugin remove <id>`. Currently `--yes` is mandatory.
+  Detect TTY via `io::stdin().is_terminal()` (Rust 1.70+).
+  When stdin is interactive AND `--yes` not passed, print
+  `Remove plugin <id> v<version>? [y/N]` and read one byte
+  reply. When `--purge-cache`, mention the cache dirs in the
+  prompt. Returns `NeedsYesConfirm` only on non-TTY (keeps
+  ansible / CI safety). ~0.3 d.
+
+- **31.8.c ⬜** `nexo plugin upgrade --tag <pin>` — explicit
+  tag pinning that updates `.nexo-install.json::tag` so
+  subsequent `upgrade` calls track the new pin. Currently
+  `upgrade` always uses the recorded tag (which is `latest`
+  for floating installs and `vX.Y.Z` for pinned ones).
+  Distinct from `--target` which only overrides the
+  per-target triple resolution. ~0.3 d.
+
 - **81.15.c.b ✅ shipped 2026-05-01** — SDK streaming
   consumption helper. Pending value type changed to
   `PendingKind` enum (Single for non-streaming, Streaming for

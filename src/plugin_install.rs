@@ -544,6 +544,31 @@ pub async fn run_plugin_install(
         }
     }
 
+    // Phase 31.8 — persist .nexo-install.json so future
+    // `plugin upgrade` knows how to re-resolve. Skipped on
+    // `was_already_present` to avoid bumping `installed_at`
+    // on a no-op call. Soft-fail: plugin works either way,
+    // operator just loses upgrade tracking on this dir.
+    if !extracted.was_already_present {
+        let meta = crate::plugin_admin::InstallMetadata::new_now(
+            id.clone(),
+            version.to_string(),
+            coords.owner.clone(),
+            coords.repo.clone(),
+            coords.tag.clone(),
+            target.clone(),
+            download.sha256.clone(),
+            "github-releases".to_string(),
+        );
+        if let Err(e) = crate::plugin_admin::write_install_metadata(&extracted.plugin_dir, &meta) {
+            eprintln!(
+                "! Failed to write .nexo-install.json at {}: {} (plugin still installed; `plugin upgrade` will treat it as orphan)",
+                extracted.plugin_dir.display(),
+                e
+            );
+        }
+    }
+
     let lifecycle_emitted = emit_lifecycle_installed_event(
         &cfg,
         &id,
@@ -737,6 +762,21 @@ pub fn print_plugin_help() {
                --require-signature       force `Require` mode for this call.\n\
                --skip-signature-verify   force `Ignore` mode for this call.\n\
              Without either flag the trusted_keys.toml default applies.\n\
+         \n\
+         list [--include-orphan] [--json]\n\
+             List installed plugins discovered under plugins.discovery.search_paths.\n\
+             Orphans (plugins without .nexo-install.json) hidden by default.\n\
+         \n\
+         upgrade <id> [--target <triple>] [--require-signature|--skip-signature-verify] [--json]\n\
+             Re-resolve <id> against its recorded GitHub Releases coordinates,\n\
+             download + verify + extract, and atomically update metadata.\n\
+             Refuses to downgrade. Plugins installed via @latest float with\n\
+             the latest release; plugins pinned to @v0.2.0 stay pinned.\n\
+         \n\
+         remove <id> [--purge-cache] [--yes] [--json]\n\
+             Atomically remove an installed plugin. Requires --yes\n\
+             (interactive prompt deferred to 31.8.b). With --purge-cache,\n\
+             additionally deletes per-plugin state under nexo_state_dir.\n\
          \n\
          help\n\
              Show this help.\n\
