@@ -51,7 +51,7 @@ pub use error::ManifestError;
 pub use manifest::{
     AdvisorsSection, AgentsSection, Capabilities, Capability, CapabilityGateDecl,
     CapabilityGatesSection, ChannelDecl, ChannelsSection, ConfigSection, ContractsSection,
-    EntrypointSection, GateKind, GateRisk, MetaSection, PluginManifest, PluginSection,
-    RequiresSection, SkillsSection, SupervisorSection, ToolsSection, UiHint, UiSection,
-    PLUGIN_MANIFEST_FILENAME, SUPERVISOR_STDERR_TAIL_MAX,
+    EntrypointSection, ExtendsSection, GateKind, GateRisk, MetaSection, PluginManifest,
+    PluginSection, RequiresSection, SkillsSection, SupervisorSection, ToolsSection, UiHint,
+    UiSection, EXTENDS_SECTIONS, PLUGIN_MANIFEST_FILENAME, SUPERVISOR_STDERR_TAIL_MAX,
 };

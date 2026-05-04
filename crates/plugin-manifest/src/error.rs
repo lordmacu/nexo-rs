@@ -110,6 +110,40 @@ pub enum ManifestError {
         value: usize,
         max: usize,
     },
+
+    /// Phase 81.28 — entry in `[plugin.extends].<section>` does
+    /// not match the id regex (`^[a-z][a-z0-9_]{0,31}$`).
+    #[error(
+        "[plugin.extends].{section} id `{id}` invalid: {reason}"
+    )]
+    ExtendsIdInvalid {
+        section: &'static str,
+        id: String,
+        reason: &'static str,
+    },
+
+    /// Phase 81.28 — same id appears more than once within a
+    /// single `[plugin.extends].<section>` list.
+    #[error(
+        "[plugin.extends].{section} contains duplicate id `{id}`"
+    )]
+    ExtendsDuplicate {
+        section: &'static str,
+        id: String,
+    },
+
+    /// Phase 81.28 — same id appears in two or more
+    /// `[plugin.extends]` lists. Each id must occupy at most one
+    /// list within a plugin to keep operator-visible declarations
+    /// unambiguous.
+    #[error(
+        "id `{id}` appears in multiple [plugin.extends] lists ({}); each id must occupy at most one list",
+        sections.join(", ")
+    )]
+    ExtendsCrossListConflict {
+        id: String,
+        sections: Vec<&'static str>,
+    },
 }
 
 #[cfg(test)]

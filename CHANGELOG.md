@@ -38,6 +38,82 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.28 — Manifest `[plugin.extends]` section per-
+  registry capability declaration.** Additive 4-list manifest
+  schema for subprocess plugins to declare which channel kinds
+  / LLM provider IDs / memory backend IDs / hook IDs they
+  contribute. Schema-only this revision: parser + validator
+  ship; daemon dispatch wiring per registry lands across
+  Phase 81.24-27.
+
+  ```toml
+  [plugin.extends]
+  channels         = ["slack", "discord"]    # paired with 81.24
+  llm_providers    = ["cohere", "mistral"]   # paired with 81.25
+  memory_backends  = ["pinecone", "qdrant"]  # paired with 81.26
+  hooks            = ["pii_redact"]          # paired with 81.27
+  ```
+
+  Validation rules:
+
+  - Each id MUST match `^[a-z][a-z0-9_]{0,31}$`.
+  - No duplicates within a single list.
+  - No cross-list duplicates — an id MUST occupy at most one
+    of the four lists within a single plugin.
+  - All four fields default to `[]`; legacy manifests parse
+    unchanged.
+  - Closed schema (`#[serde(deny_unknown_fields)]`); adding a
+    fifth section is a coordinated code change.
+
+  New types in `nexo_plugin_manifest`:
+
+  - `ExtendsSection { channels, llm_providers,
+    memory_backends, hooks }`
+  - `EXTENDS_SECTIONS: &[&str; 4]` (canonical section names
+    in deterministic order)
+  - `ExtendsSection::is_empty()`,
+    `ExtendsSection::all_ids() -> Vec<(&'static str, &str)>`,
+    `ExtendsSection::registers(section, id) -> bool`
+
+  New `ManifestError` variants:
+
+  - `ExtendsIdInvalid { section, id, reason }`
+  - `ExtendsDuplicate { section, id }`
+  - `ExtendsCrossListConflict { id, sections }`
+
+  `validate_extends` wired into `run_all` after the existing
+  `validate_tool_namespace` call. Validator collects every
+  offense per pass — operator sees the full diagnostic in
+  one boot.
+
+  `[plugin.extends].channels` exists in parallel with
+  `[plugin.channels.register]`. Use `extends` for subprocess
+  plugins routed through the future remote `ChannelAdapter`
+  wrapper; use `register` for in-tree adapters that link
+  directly into the daemon binary. Both surfaces stay
+  independent.
+
+  Contract spec bumped to **v1.4.0** with new §2.1 "Extends
+  section" + Changelog entry. Vendored doc copy at
+  `docs/src/plugins/contract.md` refreshed via
+  `scripts/sync-plugin-contract.sh`. Authoring docs gain a
+  "Future capability extensions" cross-link callout in
+  `docs/src/plugins/authoring.md`.
+
+  Tests: 4 in `manifest::tests` (parses-minimal, parses-full,
+  defaults-empty-when-absent, serializes-round-trip) + 4 in
+  `validate::tests` (rejects-invalid-id, rejects-duplicate-
+  within-list, rejects-cross-list-duplicate,
+  all_ids-iterator-deterministic-order). All 56
+  `nexo-plugin-manifest` tests pass; workspace builds clean;
+  mdbook builds clean.
+
+  Out of scope: daemon dispatch wiring per registry (81.24-27),
+  capability-negotiation handshake at `initialize`-reply time
+  (81.28.b), `nexo agent doctor plugins --json` extends
+  surface (81.28.c), per-id metadata (use Phase 81.4 plugin
+  config dir).
+
 - **Phase 81.4 — Plugin-scoped config dir loader.** New host-
   side loader reads each plugin's
   `<config_dir>/plugins/<plugin_id>/*.yaml` files, deep-merges

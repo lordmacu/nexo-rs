@@ -13,14 +13,14 @@
 //!    deferred ⊆ expose, tool namespace policy, gate uniqueness.
 //! 4. **Runtime** — `min_nexo_version.matches(current)`.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
 use regex::Regex;
 use semver::Version;
 
 use crate::error::ManifestError;
-use crate::manifest::{Capability, PluginManifest};
+use crate::manifest::{Capability, ExtendsSection, PluginManifest};
 
 const ID_REGEX_SRC: &str = r"^[a-z][a-z0-9_]{0,31}$";
 const CHANNEL_KIND_REGEX_SRC: &str = r"^[a-z][a-z0-9_]{0,31}$";
@@ -52,6 +52,7 @@ pub fn run_all(
         errors,
     );
     validate_tool_namespace(&manifest.plugin.id, &manifest.plugin.tools.expose, errors);
+    validate_extends(&manifest.plugin.extends, errors);
     validate_deferred_subset(
         &manifest.plugin.tools.expose,
         &manifest.plugin.tools.deferred,
@@ -138,6 +139,51 @@ fn validate_min_nexo_version(
             required: req.to_string(),
             current: current.to_string(),
         });
+    }
+}
+
+/// Phase 81.28 — validate `[plugin.extends]` lists. Collects
+/// every offense (invalid id, within-list dup, cross-list dup)
+/// without bailing on the first.
+fn validate_extends(extends: &ExtendsSection, errors: &mut Vec<ManifestError>) {
+    let regex = id_regex();
+    let lists: [(&'static str, &Vec<String>); 4] = [
+        ("channels", &extends.channels),
+        ("llm_providers", &extends.llm_providers),
+        ("memory_backends", &extends.memory_backends),
+        ("hooks", &extends.hooks),
+    ];
+
+    let mut cross_list: BTreeMap<String, Vec<&'static str>> = BTreeMap::new();
+
+    for (section, list) in &lists {
+        let mut seen: HashSet<&str> = HashSet::new();
+        for id in list.iter() {
+            if !regex.is_match(id) {
+                errors.push(ManifestError::ExtendsIdInvalid {
+                    section,
+                    id: id.clone(),
+                    reason: "must match ^[a-z][a-z0-9_]{0,31}$",
+                });
+                continue;
+            }
+            if !seen.insert(id.as_str()) {
+                errors.push(ManifestError::ExtendsDuplicate {
+                    section,
+                    id: id.clone(),
+                });
+                continue;
+            }
+            cross_list.entry(id.clone()).or_default().push(section);
+        }
+    }
+
+    // Collapse cross-list duplicates into one error per id with
+    // the full list of sections that claimed it.
+    for (id, sections) in cross_list {
+        if sections.len() > 1 {
+            errors.push(ManifestError::ExtendsCrossListConflict { id, sections });
+        }
     }
 }
 
@@ -517,5 +563,89 @@ expose = ["wrong_prefix"]
         let errs = m.validate(&current()).unwrap_err();
         // We expect at least: id invalid, name empty, version mismatch, namespace.
         assert!(errs.len() >= 3, "expected multiple errors, got {errs:?}");
+    }
+
+    // ── Phase 81.28 — [plugin.extends] validator ───────────────
+
+    fn manifest_with_extends(extends_block: &str) -> PluginManifest {
+        let toml = format!("{}\n[plugin.extends]\n{}\n", base_manifest_toml(), extends_block);
+        parse(&toml)
+    }
+
+    #[test]
+    fn validate_rejects_invalid_extends_id() {
+        let m = manifest_with_extends("llm_providers = [\"Cohere\"]");
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(
+                e,
+                ManifestError::ExtendsIdInvalid {
+                    section: "llm_providers",
+                    id,
+                    ..
+                } if id == "Cohere"
+            )),
+            "expected ExtendsIdInvalid, got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_within_list() {
+        let m = manifest_with_extends("channels = [\"slack\", \"slack\"]");
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(
+                e,
+                ManifestError::ExtendsDuplicate {
+                    section: "channels",
+                    id,
+                } if id == "slack"
+            )),
+            "expected ExtendsDuplicate, got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_cross_list_duplicate() {
+        let m = manifest_with_extends(
+            "channels = [\"slack\"]\nllm_providers = [\"slack\"]",
+        );
+        let errs = m.validate(&current()).unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(
+                e,
+                ManifestError::ExtendsCrossListConflict {
+                    id,
+                    sections,
+                } if id == "slack"
+                  && sections.contains(&"channels")
+                  && sections.contains(&"llm_providers")
+            )),
+            "expected ExtendsCrossListConflict, got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn extends_section_all_ids_iterator_order_is_deterministic() {
+        let m = manifest_with_extends(
+            "hooks = [\"h1\"]\n\
+             memory_backends = [\"m1\"]\n\
+             llm_providers = [\"l1\"]\n\
+             channels = [\"c1\"]",
+        );
+        // Validation passes (all ids unique + valid).
+        m.validate(&current()).unwrap();
+        // all_ids order matches EXTENDS_SECTIONS regardless of
+        // declaration order in the TOML.
+        let ids = m.plugin.extends.all_ids();
+        assert_eq!(
+            ids,
+            vec![
+                ("channels", "c1"),
+                ("llm_providers", "l1"),
+                ("memory_backends", "m1"),
+                ("hooks", "h1"),
+            ]
+        );
     }
 }

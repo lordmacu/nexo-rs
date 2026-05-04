@@ -153,6 +153,29 @@ an empty mapping — your plugin sees `Value::Mapping(empty)`,
 not `Null`. Plugins with all-optional fields boot cleanly
 without operator action.
 
+## Future capability extensions
+
+Phase 81.28 — subprocess plugins that contribute new
+**channel kinds**, **LLM providers**, **memory backends**, or
+**HookInterceptor IDs** declare them via an additive
+`[plugin.extends]` manifest section:
+
+```toml
+[plugin.extends]
+channels         = ["slack"]              # paired with Phase 81.24 wrapper
+llm_providers    = ["cohere"]             # paired with Phase 81.25
+memory_backends  = ["pinecone"]           # paired with Phase 81.26
+hooks            = ["pii_redact"]         # paired with Phase 81.27
+```
+
+Each list names the IDs the plugin contributes. Validation
+rules + the canonical schema live in
+[Plugin contract §2.1](./contract.md#21-extends-section-phase-8128).
+Daemon dispatch wiring (actually populating the matching
+registry slots) ships per-registry across Phase 81.24-27 — the
+schema is shipped today so subprocess plugin authors can
+declare intent ahead of those wrappers landing.
+
 ## Local dev loop conventions
 
 - **`nexo plugin run <path>`** — boots the daemon with one
