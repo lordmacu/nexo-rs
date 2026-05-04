@@ -29,29 +29,26 @@ different SDK + asset convention.
 ## Quick start
 
 ```bash
-# 1. Copy this directory out of the workspace
-cp -r extensions/template-plugin-python /tmp/my-plugin
-cd /tmp/my-plugin
+# 1. Scaffold a fresh plugin (Phase 31.6 scaffolder)
+nexo plugin new my_plugin --lang python --owner yourhandle --git
+cd my_plugin
 
-# 2. Rename the package + plugin id
-sed -i 's/template_plugin_python/my_plugin/g' nexo-plugin.toml src/main.py
-sed -i 's/template_echo_py/my_kind/g' nexo-plugin.toml src/main.py
+# 2. Implement your handler in src/main.py — replace `on_event`.
 
-# 3. Implement your handler in src/main.py — replace `on_event`.
-
-# 4. Add any pure-Python deps to requirements.txt. Native
+# 3. Add any pure-Python deps to requirements.txt. Native
 #    extensions (.so / .pyd / .dylib) invalidate the noarch
 #    convention and the publish workflow's audit job will
 #    reject them — see scripts/verify-pure-python.sh.
 
-# 5. Smoke test locally
+# 4. Smoke test locally
 echo '{"jsonrpc":"2.0","id":1,"method":"initialize"}' \
     | python3 src/main.py
 # expect one JSON-RPC response with your manifest
 
-# 6. Tag + push
-git tag v0.1.0
-git push --tags
+# 5. Tag + push
+git remote add origin git@github.com:yourhandle/my_plugin.git
+git push -u origin main
+git tag v0.1.0 && git push --tags
 # .github/workflows/release.yml runs and uploads
 # my_plugin-0.1.0-noarch.tar.gz to the release.
 ```

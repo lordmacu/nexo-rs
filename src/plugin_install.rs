@@ -709,6 +709,13 @@ pub fn print_plugin_help() {
          \n\
          Subcommands:\n\
          \n\
+         new <id> --lang <rust|python|typescript|php> [--dest <path>] [--owner <gh-handle>]\n\
+             [--description <text>] [--git] [--force] [--json]\n\
+             Scaffold a new out-of-tree plugin from the bundled template.\n\
+             Generates a ready-to-build directory with manifest, source, publish\n\
+             workflow, and helper scripts. With --git, the directory is a fresh\n\
+             git repository with one initial commit.\n\
+         \n\
          install <owner>/<repo>[@<tag>] [--dest <path>] [--target <triple>]\n\
                  [--require-signature|--skip-signature-verify] [--json]\n\
              Install a community plugin from GitHub Releases. The CLI resolves the\n\

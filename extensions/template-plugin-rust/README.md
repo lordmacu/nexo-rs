@@ -31,38 +31,29 @@ The wire format is identical across languages — only the SDK differs.
 ## Quick start
 
 ```bash
-# 1. Copy this directory out of the workspace
-cp -r extensions/template-plugin-rust /tmp/my-plugin
-cd /tmp/my-plugin
+# 1. Scaffold a fresh plugin (Phase 31.6 scaffolder)
+nexo plugin new my_plugin --lang rust --owner yourhandle --git
+cd my_plugin
 
-# 2. Rename the package + binary
-sed -i 's/template-plugin-rust/my-plugin/g' Cargo.toml
-sed -i 's/template_plugin_rust/my_plugin/g' src/main.rs nexo-plugin.toml
-mv src/main.rs src/main.rs.bak # then edit your handler
+# 2. Implement your handler in src/main.rs (replace the echo logic).
 
-# 3. Edit nexo-plugin.toml: pick a unique plugin.id + your
-#    own [[plugin.channels.register]].kind
-
-# 4. Once the SDK ships to crates.io, swap the path deps in
-#    Cargo.toml for the published versions:
-#       nexo-microapp-sdk = { version = "0.1", features = ["plugin"] }
-#       nexo-broker = "0.1"
-
-# 5. Build
+# 3. Build
 cargo build --release
 
-# 6. Drop into operator's discovery search_paths
-cp nexo-plugin.toml ~/.local/share/nexo/plugins/my-plugin/
-cp target/release/my-plugin ~/.local/share/nexo/plugins/my-plugin/
+# 4. Push + tag — release.yml handles the rest
+git remote add origin git@github.com:yourhandle/my_plugin.git
+git push -u origin main
+git tag v0.1.0 && git push --tags
+# Workflow vendors deps + packs the noarch tarball, optionally
+# cosign-signs, uploads to the GitHub Release.
 
-# 7. Edit ~/.local/share/nexo/plugins/my-plugin/nexo-plugin.toml
-#    [plugin.entrypoint] command to the absolute path:
-#       command = "/home/<user>/.local/share/nexo/plugins/my-plugin/my-plugin"
-
-# 8. Restart the nexo daemon (or trigger Phase 18 hot-reload).
-#    Plugin loads automatically — see daemon logs for
-#    "plugin registry wire complete" with your plugin id.
+# 5. Operators install with one command:
+#    nexo plugin install yourhandle/my_plugin@v0.1.0
 ```
+
+The daemon's plugin discovery + spawn pipeline picks up the
+installed plugin at next boot or hot-reload — no manual file
+copy needed.
 
 ## Where to add your channel logic
 

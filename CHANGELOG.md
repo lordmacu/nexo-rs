@@ -38,6 +38,190 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 31.6 — `nexo plugin new --lang` scaffolder.** Closes
+  the Phase 31 author-side flow: a single command spins up a
+  ready-to-build plugin repo from one of the four bundled
+  templates (Rust, Python, TypeScript, PHP). Replaces the
+  manual `cp -r` + `sed -i` quickstart pipeline previously
+  documented in each template README.
+  
+  Argv:
+  
+  ```bash
+  nexo plugin new <id>
+      --lang rust|python|typescript|php
+      [--dest <path>]               # default ./<id>
+      [--owner <gh-handle>]
+      [--description "<text>"]
+      [--git]                        # init + initial commit
+      [--force]                      # overwrite existing dest
+      [--json]
+  ```
+  
+  Templates are embedded at **compile time** via
+  `include_dir!` from
+  `extensions/template-plugin-{rust,python,typescript,php}/`.
+  After `cargo install`, the binary scaffolds with no runtime
+  filesystem dependency on the workspace tree.
+  
+  Validation pipeline runs before any IO: `<id>` regex
+  `^[a-z][a-z0-9_]{0,31}$` (same as Phase 81 manifest
+  validation), `<lang>` ∈ `{rust, python, typescript, php}`,
+  `<dest>` doesn't exist (or `--force` was passed).
+  
+  Substitution is **literal byte-replace, longest-pattern-first**
+  (no regex; safer for TOML/JSON/markdown). Substitution table:
+  
+  | Order | Placeholder | Replaced by |
+  |-------|-------------|-------------|
+  | 1 | `template_plugin_<lang>` | `<id>` |
+  | 2 | `template-plugin-<lang>` | `<id>` |
+  | 3 | `template_echo_<suffix>` | `<id>_echo` |
+  | 4 | `Template Plugin (<Lang>)` | Title-case from `<id>` |
+  | 5 | Boilerplate description | `--description` else `"<id> plugin"` |
+  | 6 | Original author string | `<owner> <<owner>@users.noreply.github.com>` (privacy-preserving GitHub email) |
+  
+  Text-extension whitelist
+  (`.toml/.md/.rs/.py/.ts/.mjs/.js/.php/.json/.sh/.yml/.yaml/.lock/.txt`)
+  ensures non-text files copy byte-for-byte without
+  corruption.
+  
+  `--git` runs `git init --initial-branch=main` + `git add .`
+  + `git commit -m "chore: scaffold ..."`. When the `git`
+  binary is missing, the scaffold succeeds but
+  `git_initialized: false` is returned + a warning logged.
+  Unix-only `chmod 0755` on `scripts/*.sh` post-write.
+  
+  `next_steps_for(lang, id, owner)` emits language-specific
+  commands so the human-mode summary tells operators exactly
+  what to type next:
+  
+  - **rust**: `cargo build --release`
+  - **python**: venv + `pip install -r requirements.txt`
+  - **typescript**: `npm install` + `npm run build`
+  - **php**: `composer install`
+  
+  Plus `git remote add origin git@github.com:<owner>/<id>.git`,
+  `git push -u origin main`, `git tag v0.1.0 && git push --tags`.
+  
+  JSON output (`--json`):
+  
+  ```json
+  {
+    "ok": true,
+    "id": "my_plugin",
+    "lang": "typescript",
+    "dest": "/abs/path/to/my_plugin",
+    "files_created": 17,
+    "git_initialized": true,
+    "next_steps": ["cd my_plugin", "npm install", "npm run build", ...]
+  }
+  ```
+  
+  Error path: `PluginNewErrorReport` with stable `kind`
+  strings — `InvalidId`, `InvalidLang`, `DestExists`,
+  `TemplateRead`, `Io`, `GitInit`. Hint blocks for
+  `InvalidId` (shows the regex), `DestExists` (suggests
+  `--force` or different `--dest`), `InvalidLang` (lists the
+  4 allowed values).
+  
+  11 unit tests in `src/plugin_new.rs::tests`:
+  
+  - `id_validation_rejects_invalid_chars` — table-test (5 bad
+    + 5 good).
+  - `lang_validation_rejects_unknown` — `go`, `ruby`, ``.
+  - `title_case_appends_lang_label` —
+    `my_plugin → "My Plugin (TypeScript)"`.
+  - `placeholder_list_is_longest_first` — verifies ordering
+    invariant.
+  - `scaffold_rust_creates_expected_files`,
+    `scaffold_python_creates_expected_files`,
+    `scaffold_typescript_creates_expected_files`,
+    `scaffold_php_creates_expected_files` — language-specific
+    file presence + manifest substitution + Cargo / package /
+    composer renames.
+  - `dest_already_exists_without_force_fails` — pre-creates
+    dest, expects `DestExists`, asserts dest stays empty.
+  - `force_flag_overwrites_existing_dest` — pre-creates with
+    junk file, runs with `--force`, asserts junk gone +
+    template files present.
+  - `owner_substitution_lands_in_manifest_files` — passes
+    `--owner alice`, asserts `alice` lands in `Cargo.toml`.
+  
+  All 11 pass; plugin_install regression 12/12 still passes;
+  ext-installer regression 40/40 still passes.
+  
+  New runtime dep `include_dir = "0.7"`. Workspace `regex` +
+  `thiserror` added to root crate's `[dependencies]` (already
+  in `[workspace.dependencies]`).
+  
+  All 4 template READMEs
+  (`extensions/template-plugin-{rust,python,typescript,php}/README.md`)
+  replace the manual quickstart pipeline:
+  
+  ```bash
+  # OLD (removed)
+  cp -r extensions/template-plugin-typescript /tmp/my-plugin
+  cd /tmp/my-plugin
+  sed -i 's/template_plugin_typescript/my_plugin/g' nexo-plugin.toml src/main.ts
+  sed -i 's/template_echo_ts/my_kind/g' nexo-plugin.toml src/main.ts
+  
+  # NEW
+  nexo plugin new my_plugin --lang typescript --owner yourhandle --git
+  cd my_plugin
+  ```
+  
+  Help text added to `print_plugin_help` (in
+  `plugin_install.rs`) + main `print_usage`.
+  
+  **Replaces deferred 81.13** (per PHASES-curated.md backlog
+  entry — folded into 31.6 once subprocess infra closed).
+  
+  Phase 31 marketplace status — **complete loop, all 4
+  languages**:
+  
+  - 31.0/31.1/31.1.b/31.1.c — registry + installer + extract
+    + CLI ✅
+  - 31.2 — Rust template + per-plugin CI workflow ✅
+  - 31.3 — cosign verification + trusted_keys.toml ✅
+  - 31.4 — Python SDK + template + noarch ✅
+  - 31.5 — TypeScript SDK + template ✅
+  - 31.5.c — PHP SDK + template ✅
+  - 31.6 — scaffolder (this slice) ✅
+  - 31.5.b / 31.5.c.b — per-target tarballs for plugins with
+    native deps (deferred; rare use case)
+  
+  Out of scope (tracked):
+  - Interactive TUI wizard — flags suffice.
+  - Custom template URL (`--template-url <git-repo>`).
+  - `nexo plugin update` to refresh existing plugin.
+  - GitHub repo creation (`gh repo create`).
+  - Filesystem template lookup (no embed) — embedded only
+    at v1; `NEXO_PLUGIN_TEMPLATES_DIR` env override available
+    for testing.
+  - Windows `chmod` — `#[cfg(unix)]`-gated; rest of the
+    scaffolder works on Windows.
+  
+  IRROMPIBLE refs:
+  internal `src/plugin_install.rs::run_plugin_install`
+  (Phase 31.1.c — async dispatch fn pattern mirrored
+  verbatim);
+  internal `src/main.rs` (`Mode::PluginInstall` parse +
+  dispatch precedent);
+  internal
+  `extensions/template-plugin-{rust,python,typescript,php}/`
+  (4 in-tree templates embedded);
+  internal
+  `extensions/template-plugin-rust/scripts/extract-plugin-meta.sh`
+  (id regex `^[a-z][a-z0-9_]{0,31}$` — same in scaffolder
+  validation);
+  OpenClaw
+  `research/skills/skill-creator/scripts/init_skill.py:255-280`
+  (directory-create + fail-if-exists pattern);
+  OpenClaw
+  `research/skills/skill-creator/scripts/init_skill.py:200-205`
+  (name normalization pattern).
+
 - **Phase 31.5.c — PHP plugin SDK + template (Fibers, robust).**
   Plugin authors can now ship PHP plugins through the same
   `nexo plugin install` pipeline used by Rust + Python + TS

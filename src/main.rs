@@ -1,6 +1,7 @@
 #![allow(clippy::all)] // In-flux — Phase 76 + 79 scaffolding
 
 mod plugin_install;
+mod plugin_new;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -91,6 +92,20 @@ enum Mode {
     },
     /// Phase 31.1.c — static help block for the plugin subcommand.
     PluginHelp,
+    /// Phase 31.6 — `nexo plugin new <id> --lang <lang>` scaffolds
+    /// a fresh out-of-tree plugin from one of the four bundled
+    /// templates (rust / python / typescript / php). Templates
+    /// are embedded at compile time via `include_dir!`.
+    PluginNew {
+        id: String,
+        lang: String,
+        dest: Option<PathBuf>,
+        owner: Option<String>,
+        description: Option<String>,
+        git_init: bool,
+        force: bool,
+        json: bool,
+    },
     /// Phase 82.6 — `nexo ext state-dir <id>` prints the
     /// canonical state directory for `<id>` resolved against
     /// the current `NEXO_HOME` (created if absent). Operators
@@ -1184,6 +1199,29 @@ async fn main() -> Result<()> {
         Mode::PluginHelp => {
             plugin_install::print_plugin_help();
             return Ok(());
+        }
+        Mode::PluginNew {
+            id,
+            lang,
+            dest,
+            owner,
+            description,
+            git_init,
+            force,
+            json,
+        } => {
+            let code = plugin_new::run_plugin_new(
+                id,
+                lang,
+                dest,
+                owner,
+                description,
+                git_init,
+                force,
+                json,
+            )
+            .await?;
+            std::process::exit(code);
         }
         Mode::Admin { port } => return run_admin_web(port).await,
         Mode::Run => {}
@@ -7647,6 +7685,17 @@ fn parse_args() -> CliArgs {
             skip_signature_verify: positional.iter().any(|a| a == "--skip-signature-verify"),
         },
         [cmd, sub] if cmd == "plugin" && sub == "help" => Mode::PluginHelp,
+        // Phase 31.6 — `nexo plugin new <id> --lang <lang> [...]`.
+        [cmd, sub, id] if cmd == "plugin" && sub == "new" => Mode::PluginNew {
+            id: id.clone(),
+            lang: parse_kv_flag(&positional, "--lang").unwrap_or_default(),
+            dest: parse_kv_flag(&positional, "--dest").map(PathBuf::from),
+            owner: parse_kv_flag(&positional, "--owner"),
+            description: parse_kv_flag(&positional, "--description"),
+            git_init: positional.iter().any(|a| a == "--git"),
+            force: positional.iter().any(|a| a == "--force"),
+            json: has_json_flag,
+        },
         // Phase 76.14 — mcp-server with optional subcommands
         [cmd] if cmd == "mcp-server" => {
             Mode::McpServer(McpServerSubcommand::Serve)
@@ -7917,6 +7966,12 @@ fn print_usage() {
     );
     println!("  agent [--config <dir>] ext uninstall <id> --yes [--json]");
     println!("  agent [--config <dir>] ext doctor [--runtime] [--json]");
+    println!(
+        "  agent plugin new <id> --lang <rust|python|typescript|php> [--dest <path>] [--owner <gh-handle>]"
+    );
+    println!(
+        "                                         [--description <text>] [--git] [--force] [--json]"
+    );
     println!(
         "  agent [--config <dir>] plugin install <owner>/<repo>[@<tag>] [--dest <path>] [--target <triple>]"
     );
