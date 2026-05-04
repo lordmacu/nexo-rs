@@ -60,6 +60,14 @@ pub struct WhatsappPlugin {
     /// Background loops (inbound, dispatch, lifecycle) registered at
     /// `start()` so `stop()` can join them instead of racing shutdown.
     spawned: Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    /// Phase 82.10.r — agent-event emitter handed in from boot.
+    /// `Some` when the daemon's `AdminBootstrap` is wired and we
+    /// should forward `MessageEvent::Typing` from wa-agent to the
+    /// firehose as `AgentEventKind::PeerTyping`. `None` keeps the
+    /// plugin standalone-friendly (tests, embed scenarios) — the
+    /// lifecycle loop just skips the typing forwarder.
+    event_emitter:
+        Arc<OnceCell<Arc<dyn nexo_core::agent::agent_events::AgentEventEmitter>>>,
 }
 
 /// Phase 81.12.c — bundled NexoPlugin manifest. `expect()` is OK here:
@@ -88,7 +96,20 @@ impl WhatsappPlugin {
             pairing: PairingState::new(),
             shutdown: CancellationToken::new(),
             spawned: Mutex::new(Vec::new()),
+            event_emitter: Arc::new(OnceCell::new()),
         }
+    }
+
+    /// Phase 82.10.r — install the boot-side firehose emitter so the
+    /// plugin's lifecycle loop can forward wa-agent typing presence
+    /// events as `AgentEventKind::PeerTyping`. Must be called BEFORE
+    /// `start`. Idempotent — second call is a no-op.
+    pub fn with_emitter(
+        self,
+        emitter: Arc<dyn nexo_core::agent::agent_events::AgentEventEmitter>,
+    ) -> Self {
+        let _ = self.event_emitter.set(emitter);
+        self
     }
 
     /// External accessor so the HTTP server can poll pairing state
@@ -227,6 +248,11 @@ impl Plugin for WhatsappPlugin {
             outbound_topic,
         );
 
+        let instance_label = self
+            .cfg
+            .instance
+            .clone()
+            .unwrap_or_else(|| "default".into());
         let lifecycle_handle = crate::lifecycle::spawn(
             broker,
             session,
@@ -234,6 +260,12 @@ impl Plugin for WhatsappPlugin {
             self.pairing.clone(),
             self.shutdown.clone(),
             inbound_topic,
+            // Phase 82.10.r — pass the optional firehose emitter so
+            // wa-agent typing-presence events surface as
+            // `AgentEventKind::PeerTyping`. None keeps the standalone
+            // / test path intact.
+            self.event_emitter.get().cloned(),
+            instance_label,
         );
 
         *self.spawned.lock().await = vec![inbound_handle, dispatch_handle, lifecycle_handle];
