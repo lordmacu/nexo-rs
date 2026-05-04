@@ -41,6 +41,7 @@
 
 pub mod config_schema;
 pub mod error;
+pub mod id_regex;
 pub mod manifest;
 pub mod validate;
 

@@ -17,11 +17,40 @@ pub const PLUGIN_MANIFEST_FILENAME: &str = "nexo-plugin.toml";
 // ── Top-level wrapper ────────────────────────────────────────────
 
 /// Top-level TOML structure. Always `[plugin]` table at root.
+/// Top-level plugin manifest. Phase 81.13 introduces
+/// [`PluginManifest::manifest_version`] so future schema bumps
+/// can land without an immediate breaking change for plugin
+/// authors. Today only `1` (legacy compat mode, auto-translated
+/// from the pre-81.13 dual-file shape) and `2` (canonical, this
+/// file) are accepted.
+///
+/// Plugins authored before 81.13 omitted the field entirely;
+/// the parser maps that to v1 + emits a one-shot deprecation
+/// warning. New plugins set `manifest_version = 2` explicitly.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PluginManifest {
+    /// Schema revision of this manifest file. `1` = legacy
+    /// (auto-migrated by the parser); `2` = canonical Phase
+    /// 81.13 shape. Defaults to `1` so manifests authored
+    /// before 81.13 (which omitted the field) keep parsing.
+    #[serde(default = "default_manifest_version")]
+    pub manifest_version: u32,
     pub plugin: PluginSection,
 }
+
+/// Default `manifest_version` when the field is omitted from a
+/// plugin's TOML. v1 = legacy mode → triggers compat translation
+/// in [`crate::compat_v1`]. New plugins MUST set
+/// `manifest_version = 2` to opt into the canonical shape.
+fn default_manifest_version() -> u32 {
+    1
+}
+
+/// Latest manifest schema version this crate understands. Used
+/// by `cargo`-driven migrations + JSON-Schema export to lock the
+/// canonical contract. Bumping this is a semver-major change.
+pub const CURRENT_MANIFEST_VERSION: u32 = 2;
 
 // ── Main plugin section ──────────────────────────────────────────
 
