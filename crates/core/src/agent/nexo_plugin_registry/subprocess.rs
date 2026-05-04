@@ -51,6 +51,7 @@
 
 use std::collections::VecDeque;
 use std::process::Stdio;
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -118,6 +119,13 @@ struct Inner {
     /// stay intact.
     pending: Arc<DashMap<u64, oneshot::Sender<Result<Value, String>>>>,
 
+    /// Phase 81.24 — fresh JSON-RPC request id generator. Starts
+    /// at 2 because `init_id = 1` is hardcoded for the initialize
+    /// handshake. Shared with `RemoteChannelAdapter` instances
+    /// registered into the channel adapter registry so all
+    /// host-issued requests draw from the same id space.
+    next_id: Arc<AtomicU64>,
+
     /// Background tasks: stdin writer, stdout reader, broker→child
     /// bridge per subscribed topic, supervisor (Phase 81.21).
     /// Joined on shutdown.
@@ -147,6 +155,66 @@ impl SubprocessNexoPlugin {
             cached_manifest: manifest,
             inner: Mutex::new(None),
         }
+    }
+
+    /// Phase 81.24 — for each kind in
+    /// `manifest.plugin.extends.channels`, build a
+    /// `RemoteChannelAdapter` sharing this plugin's stdio bridge
+    /// and register it with the channel adapter registry.
+    /// Returns the list of successfully registered kinds. On
+    /// `KindAlreadyRegistered`, rolls back any kinds this plugin
+    /// already registered in the same call. Must be called AFTER
+    /// `init()` (so `Inner` is populated).
+    pub async fn register_remote_channel_adapters(
+        &self,
+        channel_registry: &Arc<crate::agent::channel_adapter::ChannelAdapterRegistry>,
+    ) -> Result<
+        Vec<String>,
+        crate::agent::channel_adapter::ChannelAdapterRegistrationError,
+    > {
+        let kinds = self.cached_manifest.plugin.extends.channels.clone();
+        if kinds.is_empty() {
+            return Ok(Vec::new());
+        }
+        let plugin_id = self.cached_manifest.plugin.id.clone();
+
+        // Snapshot the inner transport handles. If `init()` hasn't
+        // run yet, treat this as a no-op (defensive — production
+        // boot path always calls init before this).
+        let (stdin_tx, pending, next_id) = {
+            let guard = self.inner.lock().await;
+            match guard.as_ref() {
+                Some(inner) => (
+                    inner.stdin_tx.clone(),
+                    inner.pending.clone(),
+                    inner.next_id.clone(),
+                ),
+                None => return Ok(Vec::new()),
+            }
+        };
+
+        let mut registered: Vec<String> = Vec::new();
+        for kind in kinds {
+            let adapter = Arc::new(crate::agent::channel_adapter::RemoteChannelAdapter::new(
+                kind.clone(),
+                plugin_id.clone(),
+                stdin_tx.clone(),
+                pending.clone(),
+                next_id.clone(),
+            ));
+            match channel_registry.register(adapter, &plugin_id) {
+                Ok(()) => registered.push(kind),
+                Err(e) => {
+                    // Roll back any kinds this call registered so
+                    // partial state doesn't poison the registry.
+                    for prior in &registered {
+                        channel_registry.unregister(prior, &plugin_id);
+                    }
+                    return Err(e);
+                }
+            }
+        }
+        Ok(registered)
     }
 
     /// Spawn the child and handshake. Returns the populated
@@ -786,6 +854,7 @@ impl SubprocessNexoPlugin {
         Ok(Inner {
             stdin_tx,
             pending,
+            next_id: Arc::new(AtomicU64::new(2)),
             tasks,
             child: child_handle,
             cancel,
@@ -1316,6 +1385,10 @@ impl NexoPlugin for SubprocessNexoPlugin {
             let _ = tokio::time::timeout(Duration::from_secs(1), task).await;
         }
         Ok(())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 

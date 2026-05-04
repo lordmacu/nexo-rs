@@ -1274,6 +1274,54 @@ coordinación de archivos cross-cutting.
   the existing `init_outcomes` + `namespace_violations` +
   `plugin_config` (81.4.d) doctor surfaces. ~0.3 d.
 
+- **81.24 ✅ shipped 2026-05-04** — Remote `ChannelAdapter`
+  wrapper (subprocess-backed). New
+  `crates/core/src/agent/channel_adapter/remote.rs`
+  (~340 LOC + 8 unit tests). `RemoteChannelAdapter` translates
+  each `ChannelAdapter` trait method into a JSON-RPC request
+  over the subprocess plugin's stdio bridge. 3 new wire
+  methods: `channel.start { kind, instance }`,
+  `channel.stop { kind }`, `channel.send_outbound { kind, msg }`
+  — `kind` field allows one subprocess to advertise multiple
+  kinds. Channel-specific error codes `-33001..=-33005` map to
+  typed `ChannelAdapterError` variants. Default timeouts
+  30s/30s/60s; `NEXO_PLUGIN_CHANNEL_TIMEOUT_MS` env override.
+  New required `NexoPlugin::as_any` trait method (8 sites
+  updated). New `ChannelAdapterRegistry::unregister(kind,
+  plugin_id)` with ownership check. Boot integration via
+  post-init hook in `init_loop` after
+  `check_namespace_after_init`; rolls back partial
+  registrations on `KindAlreadyRegistered`. `boot.rs` now
+  shares one `Arc<ChannelAdapterRegistry>` between the post-
+  init hook and the `WirePluginRegistryOutput` (was building
+  a fresh empty registry — fixed). Contract spec bumped to
+  v1.5.0 with new §5.x "Channel methods". Authoring docs gain
+  "Contributing channel kinds" section. e2e test
+  `remote_channel_e2e::send_outbound_round_trips_via_mock_subprocess`
+  validates the full pipeline through a bash mock plugin.
+  1285/1285 nexo-core lib + 2/2 subprocess e2e + 1/1 remote
+  channel e2e + workspace clean + mdbook clean.
+
+- **81.24.b ⬜** SDK child-side helpers
+  (`PluginAdapter::handle_channel_start` / `handle_channel_stop`
+  / `handle_channel_send_outbound`) so subprocess plugin
+  authors don't hand-handle JSON-RPC frames. Pairs with the
+  existing `on_broker_event` / `on_shutdown` builder methods
+  in `nexo-microapp-sdk::plugin`. ~1 d.
+
+- **81.24.c ⬜** Per-method timeout knobs in manifest
+  (`[plugin.channels.<kind>] start_timeout_ms /
+  stop_timeout_ms / send_timeout_ms`). Today
+  `NEXO_PLUGIN_CHANNEL_TIMEOUT_MS` overrides all three at
+  once — operators can't tune individually. ~0.3 d.
+
+- **81.24.d ⬜** Capability-negotiation handshake at
+  `initialize`-reply time validating the subprocess actually
+  exposes `extends.channels` kinds. Today the manifest
+  declaration is taken on faith; mismatch fails at first
+  `channel.send_outbound` call instead of at boot. Duplicate
+  of 81.28.b but specifically scoped to channels. ~0.5 d.
+
 - **81.15.c.b ✅ shipped 2026-05-01** — SDK streaming
   consumption helper. Pending value type changed to
   `PendingKind` enum (Single for non-streaming, Streaming for

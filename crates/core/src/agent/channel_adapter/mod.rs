@@ -20,6 +20,10 @@
 //! [`ChannelAdapterRegistrationError::KindAlreadyRegistered`] and
 //! a typed diagnostic is emitted.
 
+pub mod remote;
+
+pub use remote::RemoteChannelAdapter;
+
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
@@ -204,6 +208,21 @@ impl ChannelAdapterRegistry {
         let guard = self.inner.read().unwrap_or_else(|p| p.into_inner());
         !guard.is_empty()
     }
+
+    /// Phase 81.24 — remove an adapter only when it was registered
+    /// by `plugin_id`. Defends against one plugin unregistering
+    /// another's adapter. Returns `true` when removed; `false` when
+    /// absent or owned by a different plugin.
+    pub fn unregister(&self, kind: &str, plugin_id: &str) -> bool {
+        let mut guard = self.inner.write().unwrap_or_else(|p| p.into_inner());
+        match guard.get(kind) {
+            Some(entry) if entry.registered_by == plugin_id => {
+                guard.remove(kind);
+                true
+            }
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Error)]
@@ -361,5 +380,19 @@ mod tests {
         let back: OutboundAck = serde_json::from_str(&s).unwrap();
         assert_eq!(back.message_id, "m1");
         assert_eq!(back.sent_at_unix, 1700000000);
+    }
+
+    #[test]
+    fn unregister_only_removes_when_registered_by_matches() {
+        let reg = ChannelAdapterRegistry::new();
+        reg.register(DummyAdapter::new("sms"), "plugin_a").unwrap();
+        // Mismatched plugin_id leaves the entry intact.
+        assert!(!reg.unregister("sms", "plugin_evil"));
+        assert!(reg.get("sms").is_some());
+        // Matched plugin_id removes it.
+        assert!(reg.unregister("sms", "plugin_a"));
+        assert!(reg.get("sms").is_none());
+        // Unregister of absent kind returns false (idempotent).
+        assert!(!reg.unregister("sms", "plugin_a"));
     }
 }

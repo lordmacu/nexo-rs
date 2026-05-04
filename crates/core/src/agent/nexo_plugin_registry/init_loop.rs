@@ -151,6 +151,41 @@ fn try_load_plugin_config(
     }
 }
 
+/// Phase 81.24 — after `init()` returns Ok, register every kind
+/// from `manifest.plugin.extends.channels` as a
+/// `RemoteChannelAdapter`. Only fires when the handle is a
+/// `SubprocessNexoPlugin`; other concrete types skip silently.
+/// Failure escalates to `InitOutcome::Failed`.
+async fn register_remote_channels_after_init(
+    plugin_id: &str,
+    handle: &Arc<dyn NexoPlugin>,
+    channel_adapter_registry: &Arc<crate::agent::channel_adapter::ChannelAdapterRegistry>,
+) -> Option<InitOutcome> {
+    let any = handle.as_any();
+    let sub = match any.downcast_ref::<
+        crate::agent::nexo_plugin_registry::subprocess::SubprocessNexoPlugin,
+    >() {
+        Some(s) => s,
+        None => return None,
+    };
+    match sub
+        .register_remote_channel_adapters(channel_adapter_registry)
+        .await
+    {
+        Ok(_) => None,
+        Err(e) => {
+            let error = format!("channel adapter register: {e}");
+            tracing::warn!(
+                target: "plugins.init",
+                plugin_id = %plugin_id,
+                %error,
+                "remote channel adapter registration failed"
+            );
+            Some(InitOutcome::Failed { error })
+        }
+    }
+}
+
 /// Phase 81.3 — drain ScopedToolRegistry after `init()` returns and,
 /// in Strict mode, escalate any violations to `InitOutcome::Failed`.
 /// Returns `None` when the post-init outcome is unchanged.
@@ -191,6 +226,7 @@ pub async fn run_plugin_init_loop_with_factory<'env, F>(
     snapshot: &NexoPluginRegistrySnapshot,
     factory_registry: &PluginFactoryRegistry,
     config_dir: &Path,
+    channel_adapter_registry: &Arc<crate::agent::channel_adapter::ChannelAdapterRegistry>,
     mut ctx_factory: F,
 ) -> FactoryInitResult
 where
@@ -238,6 +274,15 @@ where
                             Ok(()) => {
                                 let duration_ms = start.elapsed().as_millis() as u64;
                                 if let Some(failed) = check_namespace_after_init(&id, &ctx) {
+                                    outcomes.insert(id, failed);
+                                } else if let Some(failed) =
+                                    register_remote_channels_after_init(
+                                        &id,
+                                        &handle,
+                                        channel_adapter_registry,
+                                    )
+                                    .await
+                                {
                                     outcomes.insert(id, failed);
                                 } else {
                                     outcomes
@@ -294,6 +339,14 @@ where
                     Ok(()) => {
                         let duration_ms = start.elapsed().as_millis() as u64;
                         if let Some(failed) = check_namespace_after_init(&id, &ctx) {
+                            outcomes.insert(id, failed);
+                        } else if let Some(failed) = register_remote_channels_after_init(
+                            &id,
+                            &handle,
+                            channel_adapter_registry,
+                        )
+                        .await
+                        {
                             outcomes.insert(id, failed);
                         } else {
                             outcomes.insert(id.clone(), InitOutcome::Ok { duration_ms });
@@ -409,10 +462,12 @@ mod tests {
         registry.register("alpha", factory).unwrap();
 
         let cfg_dir = tempfile::tempdir().unwrap();
+        let chan_reg = Arc::new(crate::agent::channel_adapter::ChannelAdapterRegistry::new());
         let result = run_plugin_init_loop_with_factory(
             &snap,
             &registry,
             cfg_dir.path(),
+            &chan_reg,
             |_m, _cfg| -> PluginInitContext<'_> {
                 unreachable!(
                     "ctx_factory must NOT be invoked when the factory closure returns Err"
@@ -514,10 +569,12 @@ mod tests {
         let snap = snapshot_with(vec![discovered("in_tree_only")]);
         let registry = PluginFactoryRegistry::new();
         let cfg_dir = tempfile::tempdir().unwrap();
+        let chan_reg = Arc::new(crate::agent::channel_adapter::ChannelAdapterRegistry::new());
         let result = run_plugin_init_loop_with_factory(
             &snap,
             &registry,
             cfg_dir.path(),
+            &chan_reg,
             |_m, _cfg| -> PluginInitContext<'_> {
                 unreachable!(
                     "ctx_factory must NOT be invoked for non-subprocess manifests"
@@ -579,10 +636,12 @@ mod tests {
         });
         registry.register("slack", factory).unwrap();
 
+        let chan_reg = Arc::new(crate::agent::channel_adapter::ChannelAdapterRegistry::new());
         let result = run_plugin_init_loop_with_factory(
             &snap,
             &registry,
             cfg_dir.path(),
+            &chan_reg,
             |_m, _cfg| -> PluginInitContext<'_> {
                 unreachable!(
                     "ctx_factory must NOT be invoked when config load fails"

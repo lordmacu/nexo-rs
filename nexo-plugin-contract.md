@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| `contract_version` | `1.4.0` |
+| `contract_version` | `1.5.0` |
 | Status | Stable |
 | Authoritative reference | This document |
 | Reference implementations | Host: `crates/core/src/agent/nexo_plugin_registry/subprocess.rs`. Rust child: `crates/microapp-sdk/src/plugin.rs` (feature `plugin`). |
@@ -452,6 +452,120 @@ The host **validates** the topic against the allowlist (§6)
 allowlist are dropped with a `tracing::warn!` log and **never**
 reach the broker.
 
+## 5.x Channel methods (Phase 81.24)
+
+Subprocess plugins that contribute new channel kinds (declared
+in `[plugin.extends].channels`, §2.1) implement three host-
+initiated request methods. The host's `RemoteChannelAdapter`
+wraps each `ChannelAdapter` trait method into a JSON-RPC
+request; the child replies with the corresponding result or a
+typed error.
+
+Every payload carries `kind` so a single subprocess advertising
+multiple kinds (`extends.channels = ["slack", "discord"]`) can
+dispatch via one request handler.
+
+### `channel.start`
+
+```jsonc
+// host → child
+{
+  "jsonrpc": "2.0",
+  "id": 42,
+  "method": "channel.start",
+  "params": {
+    "kind": "slack",
+    "instance": "primary"   // null when no per-instance multiplexing
+  }
+}
+
+// child → host
+{ "jsonrpc": "2.0", "id": 42, "result": { "ok": true } }
+```
+
+Subscribe to `plugin.outbound.<kind>` (or per-instance
+`plugin.outbound.<kind>.<instance>` when `instance` is set) and
+begin publishing inbound events. Default host-side timeout
+30 seconds.
+
+### `channel.stop`
+
+```jsonc
+// host → child
+{
+  "jsonrpc": "2.0",
+  "id": 43,
+  "method": "channel.stop",
+  "params": { "kind": "slack" }
+}
+
+// child → host
+{ "jsonrpc": "2.0", "id": 43, "result": { "ok": true } }
+```
+
+Release resources, drop subscriptions, stop publishing inbound.
+Idempotent. Default host-side timeout 30 seconds.
+
+### `channel.send_outbound`
+
+```jsonc
+// host → child
+{
+  "jsonrpc": "2.0",
+  "id": 44,
+  "method": "channel.send_outbound",
+  "params": {
+    "kind": "slack",
+    "msg": { "kind": "text", "to": "U123", "body": "hi" }
+  }
+}
+
+// child → host (success)
+{
+  "jsonrpc": "2.0",
+  "id": 44,
+  "result": { "message_id": "1234.5678", "sent_at_unix": 1741032000 }
+}
+```
+
+`msg.kind` is one of `text`, `media`, or `custom` (see
+`OutboundMessage` in §3 for the full enum). Default host-side
+timeout 60 seconds. Operator override via
+`NEXO_PLUGIN_CHANNEL_TIMEOUT_MS` env (single value applied to
+all 3 methods).
+
+### Channel-specific error codes
+
+In addition to the JSON-RPC standard codes (§7), `channel.*`
+methods MAY return:
+
+| Code | Meaning | Maps to `ChannelAdapterError` |
+|------|---------|-------------------------------|
+| `-33001` | `channel.connection_failed` | `Connection { source: <message> }` |
+| `-33002` | `channel.authentication_failed` | `Authentication { reason: <message> }` |
+| `-33003` | `channel.recipient_invalid` | `Recipient { recipient: <data.recipient>, reason: <data.reason \| message> }` |
+| `-33004` | `channel.rate_limited` | `RateLimited { retry_after_secs: <data.retry_after_secs> }` |
+| `-33005` | `channel.unsupported_feature` | `Unsupported { feature: <data.feature \| message> }` |
+
+Error example:
+
+```jsonc
+{
+  "jsonrpc": "2.0",
+  "id": 44,
+  "error": {
+    "code": -33004,
+    "message": "rate limited",
+    "data": { "retry_after_secs": 42 }
+  }
+}
+```
+
+`-32601 method_not_found` from a child means the plugin declared
+the kind in `extends.channels` but did not implement the
+requested method; the host surfaces this as
+`ChannelAdapterError::Unsupported { feature: "<method>" }`.
+
 ## 6. Topic allowlist
 
 The host derives subscribe + publish patterns from the
@@ -714,3 +828,4 @@ contract document.
 | `1.2.0` | 2026-05-01 | Phase 81.20.b — `llm.complete` request-response added. Additive. MVP supports text responses only; tool-call responses surface as `-32601 not_implemented`. Streaming (`llm.complete.delta` notifications) on roadmap as 81.20.b.b. Host-side runtime threading deferred to 81.20.b.b — daemon today returns `-32603 "llm not configured"` until main.rs threads `LlmServices` into the subprocess pipeline. |
 | `1.3.0` | 2026-05-01 | Phase 81.20.b.b runtime threading shipped (memory + llm both flow end-to-end through production daemon path). Phase 81.20.b.c streaming added — `llm.complete` accepts `stream: true` opt-in; chunks emit as `llm.complete.delta { request_id, chunk }` notifications, final reply omits `content`. Additive — non-streaming requests unchanged. |
 | `1.4.0` | 2026-05-04 | Phase 81.28 — `[plugin.extends]` manifest section added (`channels` / `llm_providers` / `memory_backends` / `hooks` lists). Schema-only this revision: parser + validator ship; daemon dispatch wiring per registry lands in Phase 81.24 (channels), 81.25 (LLM providers), 81.26 (memory backends), 81.27 (hooks). Additive — manifests without `[plugin.extends]` parse and validate unchanged. |
+| `1.5.0` | 2026-05-04 | Phase 81.24 — `channel.start` / `channel.stop` / `channel.send_outbound` host-initiated request methods added (§5.x). Subprocess plugins declaring `[plugin.extends].channels = [...]` get one `RemoteChannelAdapter` per kind registered into the daemon's `ChannelAdapterRegistry`. Channel-specific error codes `-33001` through `-33005` map onto typed `ChannelAdapterError` variants. Default host-side timeouts: 30 s for start/stop, 60 s for send_outbound; `NEXO_PLUGIN_CHANNEL_TIMEOUT_MS` overrides all three. Additive — plugins not declaring channels are unaffected. |

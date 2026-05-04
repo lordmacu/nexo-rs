@@ -184,6 +184,12 @@ pub async fn wire_plugin_registry_with_runtime(
     //    records NoHandle. ctx_factory closure is `unreachable!`
     //    because no current factory's init body actually consumes
     //    a real `PluginInitContext` until 81.12.a-e ship.
+    // Phase 81.24 — channel adapter registry shared between the
+    // post-init `register_remote_channel_adapters` hook and the
+    // `WirePluginRegistryOutput` so callers see the same Arc.
+    let shared_channel_adapter_registry: Arc<ChannelAdapterRegistry> =
+        Arc::new(ChannelAdapterRegistry::new());
+
     let (init_outcomes, plugin_handles): (
         BTreeMap<String, super::InitOutcome>,
         BTreeMap<String, Arc<dyn NexoPlugin>>,
@@ -195,11 +201,15 @@ pub async fn wire_plugin_registry_with_runtime(
             // fine because SubprocessNexoPlugin::init only reads
             // ctx.broker + ctx.shutdown today. `stubs` lives inside
             // this match arm, the closure borrows from it.
-            let stubs = SubprocessCtxStubs::build(rt);
+            let stubs = SubprocessCtxStubs::build_with_channel_registry(
+                rt,
+                shared_channel_adapter_registry.clone(),
+            );
             let r = run_plugin_init_loop_with_factory(
                 &snap,
                 factory,
                 rt.config_dir.as_path(),
+                &shared_channel_adapter_registry,
                 |manifest, plugin_cfg| stubs.context_for(manifest, rt, plugin_cfg),
             )
             .await;
@@ -226,6 +236,7 @@ pub async fn wire_plugin_registry_with_runtime(
                 &snap,
                 factory,
                 legacy_cfg_dir,
+                &shared_channel_adapter_registry,
                 |_manifest, _plugin_cfg| -> crate::agent::plugin_host::PluginInitContext<'_> {
                     unreachable!(
                         "wire_plugin_registry: subprocess_runtime is None but a manifest with entrypoint was discovered. \
@@ -336,7 +347,9 @@ pub async fn wire_plugin_registry_with_runtime(
     WirePluginRegistryOutput {
         registry,
         skill_roots,
-        channel_adapter_registry: Arc::new(ChannelAdapterRegistry::new()),
+        // Phase 81.24 — same registry used by the post-init hook so
+        // callers see the registered remote adapters.
+        channel_adapter_registry: shared_channel_adapter_registry,
         plugin_capability_gates: plugin_capability_gates_for_output,
         unmet_required_capabilities: unmet_required_for_output,
         plugin_handles,
@@ -360,6 +373,18 @@ struct SubprocessCtxStubs {
 }
 
 impl SubprocessCtxStubs {
+    /// Phase 81.24 — variant that accepts a pre-built channel
+    /// adapter registry so the post-init hook + the wire output
+    /// share the same Arc.
+    fn build_with_channel_registry(
+        rt: &SubprocessRuntime,
+        channel_adapter_registry: Arc<ChannelAdapterRegistry>,
+    ) -> Self {
+        let mut stubs = Self::build(rt);
+        stubs.channel_adapter_registry = channel_adapter_registry;
+        stubs
+    }
+
     fn build(rt: &SubprocessRuntime) -> Self {
         // Phase 81.20.b.b — reuse rt's REAL llm_registry for the
         // reload coordinator instead of a separate empty stub.

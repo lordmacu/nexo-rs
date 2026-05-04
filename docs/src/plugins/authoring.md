@@ -153,6 +153,54 @@ an empty mapping — your plugin sees `Value::Mapping(empty)`,
 not `Null`. Plugins with all-optional fields boot cleanly
 without operator action.
 
+## Contributing channel kinds
+
+Phase 81.24 — subprocess plugins that declare
+`[plugin.extends].channels = [...]` automatically get a
+host-side `RemoteChannelAdapter` registered for each kind. The
+daemon's `ChannelAdapterRegistry` routes outbound dispatches to
+your subprocess via three JSON-RPC methods:
+
+- `channel.start { kind, instance }` — subscribe outbound
+  topics + begin publishing inbound (default 30 s timeout)
+- `channel.stop { kind }` — release resources (30 s)
+- `channel.send_outbound { kind, msg }` — send one outbound
+  message; reply with `{ message_id, sent_at_unix }` (60 s)
+
+Wire spec + error codes:
+[Plugin contract §5.x](./contract.md#5x-channel-methods-phase-8124).
+
+Sketch (Rust subprocess plugin) — handle each request from your
+adapter's reader loop:
+
+```rust
+match method {
+    "channel.start" => reply_ok(id, serde_json::json!({ "ok": true })),
+    "channel.stop"  => reply_ok(id, serde_json::json!({ "ok": true })),
+    "channel.send_outbound" => {
+        let msg = params.get("msg").cloned().unwrap_or_default();
+        // Forward `msg` to your provider's API; map the API's
+        // response into OutboundAck.
+        let ack = send_to_slack(msg).await?;
+        reply_ok(id, serde_json::json!({
+            "message_id": ack.id,
+            "sent_at_unix": ack.ts,
+        }));
+    }
+    _ => reply_method_not_found(id, method),
+}
+```
+
+For typed errors (rate-limit, recipient invalid, etc.), reply
+with the channel-specific error codes from the contract table —
+the host's adapter maps them to `ChannelAdapterError` variants
+the agent runtime understands.
+
+The matching SDK helpers (`handle_channel_start` /
+`handle_channel_send_outbound` etc.) ship in Phase 81.24.b.
+Until then, hand-handle the JSON-RPC frames using the SDK's
+existing primitives.
+
 ## Future capability extensions
 
 Phase 81.28 — subprocess plugins that contribute new

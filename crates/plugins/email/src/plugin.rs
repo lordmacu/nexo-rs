@@ -651,6 +651,10 @@ impl NexoPlugin for EmailPlugin {
                 source,
             })
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 #[cfg(test)]

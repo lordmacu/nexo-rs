@@ -172,6 +172,9 @@ mod tests {
         async fn shutdown(&self) -> Result<(), PluginShutdownError> {
             Ok(())
         }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
     }
 
     fn fixture_manifest(plugin_id: &str) -> PluginManifest {

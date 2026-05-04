@@ -289,6 +289,10 @@ impl NexoPlugin for TelegramPlugin {
                 source,
             })
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 #[doc(hidden)]
