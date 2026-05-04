@@ -461,6 +461,13 @@ impl AgentRuntime {
             if let Some(ref dc) = dispatch_ctx {
                 ctx = ctx.with_dispatch(Arc::clone(dc));
             }
+            // Phase 82.11.c — thread the firehose emitter so
+            // `llm_behavior` can chain `.with_emitter()` on the
+            // per-turn `TranscriptWriter` and broadcast
+            // `TranscriptAppended` to live subscribers.
+            if let Some(ref em) = event_emitter {
+                ctx = ctx.with_event_emitter(em.clone());
+            }
             ctx = ctx.with_router(Arc::clone(&router));
             ctx = ctx.with_plan_approval_registry(plan_approval_registry.clone());
             ctx = ctx.with_context_optimization(snapshot.load().context_optimization);
@@ -992,6 +999,14 @@ impl AgentRuntime {
                             // see the runtime services on every session.
                             if let Some(ref dc) = dispatch_ctx {
                                 ctx = ctx.with_dispatch(Arc::clone(dc));
+                            }
+                            // Phase 82.11.c — same firehose-emitter
+                            // thread on the per-session ctx as the
+                            // primary spawn site, so the second
+                            // intake path (event-bus subscriber)
+                            // also broadcasts transcript appends.
+                            if let Some(ref em) = event_emitter {
+                                ctx = ctx.with_event_emitter(em.clone());
                             }
                             let behavior = Arc::clone(&agent.behavior);
                             let cancel = shutdown.clone();
