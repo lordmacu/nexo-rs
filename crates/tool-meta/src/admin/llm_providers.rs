@@ -164,6 +164,15 @@ pub struct LlmProviderProbeResponse {
     /// status was 2xx.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_count: Option<usize>,
+    /// Phase 82.10.t — model ids parsed from `data[].id` of an
+    /// OpenAI-compat `/v1/models` response. `None` when the
+    /// provider doesn't expose that shape (Anthropic + Gemini use
+    /// distinct endpoints) or the body wasn't parseable. UI falls
+    /// back to the static `models` from `llm_providers/catalog`
+    /// when this is `None`. Capped at 200 entries to bound the
+    /// RPC payload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_names: Option<Vec<String>>,
     /// Sanitised error string. Never echoes the API key —
     /// every match of the key value (and its 8-char prefix) is
     /// replaced with `<redacted>` before populating this field.

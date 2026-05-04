@@ -101,11 +101,13 @@ impl LlmProvidersProbe for HttpLlmProviderProbe {
                 let body = r.bytes().await.unwrap_or_default();
                 let ok = (200..300).contains(&status);
                 if ok {
+                    let parsed = parse_models_payload(&body);
                     Ok(LlmProviderProbeResponse {
                         ok: true,
                         status,
                         latency_ms,
-                        model_count: parse_model_count(&body),
+                        model_count: parsed.count,
+                        model_names: parsed.names,
                         error: None,
                     })
                 } else {
@@ -119,6 +121,7 @@ impl LlmProvidersProbe for HttpLlmProviderProbe {
                         status,
                         latency_ms,
                         model_count: None,
+                        model_names: None,
                         error: Some(format!("HTTP {status}: {safe}")),
                     })
                 }
@@ -131,6 +134,7 @@ impl LlmProvidersProbe for HttpLlmProviderProbe {
                     status: 0,
                     latency_ms,
                     model_count: None,
+                    model_names: None,
                     error: Some(safe),
                 })
             }
@@ -153,9 +157,35 @@ fn build_models_url(base_url: &str) -> String {
     format!("{trimmed}/models")
 }
 
-fn parse_model_count(body: &[u8]) -> Option<usize> {
-    let v: serde_json::Value = serde_json::from_slice(body).ok()?;
-    v.get("data")?.as_array().map(|a| a.len())
+/// Phase 82.10.t — combined parse for model count + names from
+/// an OpenAI-compat `/v1/models` payload (`{"data":[{"id": "..."}, ...]}`).
+/// Returns `count = None` when the body isn't JSON or lacks `data`,
+/// `names = None` when no `data[].id` strings could be extracted.
+/// Names capped at 200 to bound RPC payload — paranoid against a
+/// pathological provider that returns 50k variants. Order preserved
+/// from the wire so the operator's UI can show "newest first" by
+/// provider convention.
+struct ParsedModels {
+    count: Option<usize>,
+    names: Option<Vec<String>>,
+}
+
+fn parse_models_payload(body: &[u8]) -> ParsedModels {
+    let parsed: Option<serde_json::Value> = serde_json::from_slice(body).ok();
+    let data = parsed.as_ref().and_then(|v| v.get("data")).and_then(|d| d.as_array());
+    let count = data.map(|a| a.len());
+    let names = data.map(|arr| {
+        arr.iter()
+            .filter_map(|m| m.get("id").and_then(|v| v.as_str()).map(String::from))
+            .take(200)
+            .collect::<Vec<_>>()
+    });
+    // Drop names when the parse extracted zero — UIs interpret
+    // `Some(empty)` as "no models" rather than "fall back to
+    // catalog", so distinguish "parsed but empty" from "couldn't
+    // parse" by making both look like "fall back to catalog".
+    let names = names.filter(|v| !v.is_empty());
+    ParsedModels { count, names }
 }
 
 /// Replace every occurrence of `key` (and its first 8 chars
@@ -279,11 +309,61 @@ mod tests {
     }
 
     #[test]
-    fn parse_model_count_returns_none_on_unexpected_shape() {
-        assert_eq!(parse_model_count(b"not json"), None);
-        assert_eq!(parse_model_count(br#"{"models":[]}"#), None);
-        assert_eq!(parse_model_count(br#"{"data":"oops"}"#), None);
-        assert_eq!(parse_model_count(br#"{"data":[{},{}]}"#), Some(2));
+    fn parse_models_payload_handles_all_shapes() {
+        // Garbage / non-JSON → both None.
+        let p = parse_models_payload(b"not json");
+        assert!(p.count.is_none());
+        assert!(p.names.is_none());
+
+        // No `data` field → both None (Anthropic / Gemini shapes).
+        let p = parse_models_payload(br#"{"models":[]}"#);
+        assert!(p.count.is_none());
+        assert!(p.names.is_none());
+
+        // `data` present but wrong type → both None.
+        let p = parse_models_payload(br#"{"data":"oops"}"#);
+        assert!(p.count.is_none());
+        assert!(p.names.is_none());
+
+        // `data` empty array → count=0, names=None (treated as
+        // "fall back to catalog" rather than "no models").
+        let p = parse_models_payload(br#"{"data":[]}"#);
+        assert_eq!(p.count, Some(0));
+        assert!(p.names.is_none());
+
+        // Objects without `id` strings → count=2, names=None.
+        let p = parse_models_payload(br#"{"data":[{},{}]}"#);
+        assert_eq!(p.count, Some(2));
+        assert!(p.names.is_none());
+
+        // Happy path — OpenAI-compat with three model ids.
+        let p = parse_models_payload(
+            br#"{"data":[{"id":"gpt-4o"},{"id":"gpt-4o-mini"},{"id":"gpt-4-turbo"}]}"#,
+        );
+        assert_eq!(p.count, Some(3));
+        assert_eq!(
+            p.names.as_deref(),
+            Some(&[
+                "gpt-4o".to_string(),
+                "gpt-4o-mini".to_string(),
+                "gpt-4-turbo".to_string(),
+            ][..])
+        );
+    }
+
+    #[test]
+    fn parse_models_payload_caps_names_at_200() {
+        // Defensive against a pathological provider returning
+        // thousands of variants. Build 250-item payload, expect
+        // count=250, names truncated to 200.
+        let entries: Vec<String> = (0..250).map(|i| format!(r#"{{"id":"m-{i}"}}"#)).collect();
+        let body = format!(r#"{{"data":[{}]}}"#, entries.join(","));
+        let p = parse_models_payload(body.as_bytes());
+        assert_eq!(p.count, Some(250));
+        let names = p.names.expect("names populated");
+        assert_eq!(names.len(), 200);
+        assert_eq!(names[0], "m-0");
+        assert_eq!(names[199], "m-199");
     }
 
     #[tokio::test]
