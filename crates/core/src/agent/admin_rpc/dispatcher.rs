@@ -897,11 +897,18 @@ impl AdminRpcDispatcher {
             "nexo/admin/llm_providers/upsert" => match (&self.llm_yaml, &self.reload_signal) {
                 (Some(llm), Some(reload)) => {
                     let trigger = reload.clone();
+                    // Phase 82.10.s.3.b — secrets_store passed
+                    // through so api_key_secret_value can stamp
+                    // the value before yaml write. None falls
+                    // through to legacy api_key_env / pre-staged
+                    // api_key_secret_id paths.
                     super::domains::llm_providers::upsert(
                         llm.as_ref(),
+                        self.secrets_store.as_deref(),
                         params,
                         &move || trigger(),
                     )
+                    .await
                 }
                 _ => AdminRpcResult::err(AdminRpcError::Internal(
                     "llm_providers domain not configured".into(),
