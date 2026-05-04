@@ -672,8 +672,10 @@ pub fn read_agent_field(path: &Path, agent_id: &str, dotted: &str) -> Result<Opt
 }
 
 /// Upsert `value` at the dotted path inside the matching agent's
-/// mapping. Creates intermediate maps as needed; bails when the agent
-/// is absent.
+/// mapping. Creates intermediate maps as needed. When the agent
+/// does not exist, appends a fresh `- id: <agent_id>` entry to
+/// the `agents:` sequence first — supports the wizard's
+/// "create new agent" path through `nexo/admin/agents/upsert`.
 pub fn upsert_agent_field(path: &Path, agent_id: &str, dotted: &str, value: Value) -> Result<()> {
     let _guard = YAML_UPSERT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let text = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
@@ -685,10 +687,25 @@ pub fn upsert_agent_field(path: &Path, agent_id: &str, dotted: &str, value: Valu
             .get_mut("agents")
             .and_then(Value::as_sequence_mut)
             .ok_or_else(|| anyhow::anyhow!("`agents:` sequence missing in {}", path.display()))?;
+        // Phase 82.10.p.b — create the agent block if absent so
+        // `nexo/admin/agents/upsert` can act as a true upsert
+        // (the wizard's "save new agent" flow expects creation,
+        // not just patching of an existing one).
+        let exists = agents
+            .iter()
+            .any(|it| it.get("id").and_then(Value::as_str) == Some(agent_id));
+        if !exists {
+            let mut new_agent = serde_yaml::Mapping::new();
+            new_agent.insert(
+                Value::String("id".into()),
+                Value::String(agent_id.to_string()),
+            );
+            agents.push(Value::Mapping(new_agent));
+        }
         let target = agents
             .iter_mut()
             .find(|it| it.get("id").and_then(Value::as_str) == Some(agent_id))
-            .ok_or_else(|| anyhow::anyhow!("agent `{agent_id}` not found in {}", path.display()))?;
+            .expect("agent block was just appended above");
         let parts: Vec<&str> = dotted.split('.').collect();
         if parts.is_empty() {
             anyhow::bail!("empty dotted path");
@@ -990,6 +1007,23 @@ mod tests {
         upsert_agent_field(&file, "ana", "language", Value::String("es".into())).unwrap();
         let v = read_agent_field(&file, "ana", "language").unwrap().unwrap();
         assert_eq!(v.as_str(), Some("es"));
+    }
+
+    /// Phase 82.10.p.b regression: when the agent doesn't exist
+    /// yet, upsert appends a fresh `- id: <agent_id>` block and
+    /// then writes the field. Supports the wizard's "save new
+    /// agent" flow that lands at `nexo/admin/agents/upsert`
+    /// before the agent ever existed in `agents.yaml`.
+    #[test]
+    fn upsert_agent_field_creates_missing_agent_block() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("agents.yaml");
+        write_sample_agents(&file);
+        // `bob` is absent from the sample; before the fix this
+        // returned `agent not found in <path>`.
+        upsert_agent_field(&file, "bob", "language", Value::String("en".into())).unwrap();
+        let v = read_agent_field(&file, "bob", "language").unwrap().unwrap();
+        assert_eq!(v.as_str(), Some("en"));
     }
 
     #[test]
