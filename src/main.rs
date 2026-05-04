@@ -1556,6 +1556,22 @@ async fn main() -> Result<()> {
         > = Some(std::sync::Arc::new(
             nexo_setup::admin_adapters::InMemoryEscalationStore::default(),
         ));
+        // Phase 82.10.p — build the per-channel pairing trigger
+        // map. Empty when no whatsapp instance is configured;
+        // admin pairing/start then returns
+        // `channel not supported` instead of stalling Pending.
+        let mut pairing_triggers =
+            nexo_core::agent::admin_rpc::pairing_trigger::PairingChannelTriggers::new();
+        if !cfg.plugins.whatsapp.is_empty() {
+            pairing_triggers.insert(
+                nexo_plugin_whatsapp::pairing_trigger::CHANNEL_ID.to_string(),
+                std::sync::Arc::new(
+                    nexo_plugin_whatsapp::pairing_trigger::WhatsappPairingTrigger::from_configs(
+                        &cfg.plugins.whatsapp,
+                    ),
+                ),
+            );
+        }
         match nexo_setup::admin_bootstrap::AdminRpcBootstrap::build(
             nexo_setup::admin_bootstrap::AdminBootstrapInputs {
                 config_dir: &config_dir,
@@ -1634,6 +1650,7 @@ async fn main() -> Result<()> {
                     ),
                     nexo_setup::persisters::WhatsappPersister::new(),
                 ],
+                pairing_triggers,
             },
         )
         .await
