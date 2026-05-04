@@ -146,7 +146,47 @@ pub fn upsert(
     if input.base_url.is_empty() {
         return AdminRpcResult::err(AdminRpcError::InvalidParams("base_url is empty".into()));
     }
-    if std::env::var(&input.api_key_env).is_err() {
+
+    // Phase 82.10.s.3 — exactly-one-key-source rule. Caller must
+    // pick a SINGLE path:
+    //   * api_key_env (legacy, deprecated): name of an env var
+    //     already exported in the daemon process.
+    //   * api_key_secret_id: name of a pre-written secret in the
+    //     SecretsStore (write it via secrets/write first).
+    //   * api_key_secret_value: write-through (deferred to .3.b).
+    // Refuse mixed sources loud — operator intent must be explicit.
+    let env_set = !input.api_key_env.is_empty();
+    let secret_id_set = input
+        .api_key_secret_id
+        .as_deref()
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+    let secret_value_set = input
+        .api_key_secret_value
+        .as_deref()
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+    let source_count =
+        usize::from(env_set) + usize::from(secret_id_set) + usize::from(secret_value_set);
+    if source_count == 0 {
+        return AdminRpcResult::err(AdminRpcError::InvalidParams(
+            "exactly one API key source required: api_key_env, api_key_secret_id, or api_key_secret_value".into(),
+        ));
+    }
+    if source_count > 1 {
+        return AdminRpcResult::err(AdminRpcError::InvalidParams(
+            "conflicting API key sources: pick exactly ONE of api_key_env, api_key_secret_id, api_key_secret_value".into(),
+        ));
+    }
+    // Phase 82.10.s.3.b will land write-through; for now, surface a
+    // clear deferred-feature error so callers don't silently drop
+    // the value.
+    if secret_value_set {
+        return AdminRpcResult::err(AdminRpcError::InvalidParams(
+            "api_key_secret_value is not yet supported (write the secret via nexo/admin/secrets/write first, then use api_key_secret_id) — deferred to Phase 82.10.s.3.b".into(),
+        ));
+    }
+    if env_set && std::env::var(&input.api_key_env).is_err() {
         return AdminRpcResult::err(AdminRpcError::InvalidParams(format!(
             "api_key_env `{}` is not set in process env",
             input.api_key_env
@@ -178,12 +218,46 @@ pub fn upsert(
             "yaml write: {e}"
         )));
     }
-    if let Err(e) =
-        write_field("api_key_env", Value::String(input.api_key_env.clone()))
+    // Phase 82.10.s.3 — persist factory_type when supplied so the
+    // registry can split instance-id from factory-id at runtime.
+    // Empty / None ⇒ skip the write so legacy yamls stay tidy
+    // (factory_type field stays absent, instance id is the
+    // factory id by fallback).
+    if let Some(ft) = input
+        .factory_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
     {
-        return AdminRpcResult::err(AdminRpcError::Internal(format!(
-            "yaml write: {e}"
-        )));
+        if let Err(e) = write_field("factory_type", Value::String(ft.to_string())) {
+            return AdminRpcResult::err(AdminRpcError::Internal(format!(
+                "yaml write: {e}"
+            )));
+        }
+    }
+    // Phase 82.10.s.3 — write whichever single key source was
+    // provided. The pre-validation above guaranteed exactly one is
+    // set; we still defensively check before writing each.
+    if env_set {
+        if let Err(e) =
+            write_field("api_key_env", Value::String(input.api_key_env.clone()))
+        {
+            return AdminRpcResult::err(AdminRpcError::Internal(format!(
+                "yaml write: {e}"
+            )));
+        }
+    }
+    if let Some(sid) = input
+        .api_key_secret_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if let Err(e) = write_field("api_key_secret_id", Value::String(sid.to_string())) {
+            return AdminRpcResult::err(AdminRpcError::Internal(format!(
+                "yaml write: {e}"
+            )));
+        }
     }
     if !input.headers.is_empty() {
         let map: serde_json::Map<String, Value> = input

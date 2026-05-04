@@ -51,18 +51,48 @@ pub struct LlmProvidersListResponse {
 }
 
 /// Params for `nexo/admin/llm_providers/upsert`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct LlmProviderUpsertInput {
-    /// Provider id.
+    /// Provider INSTANCE id. Phase 82.10.s — distinct from the
+    /// factory id; can be e.g. `"minimax-cliente-a"` while
+    /// `factory_type: Some("minimax")` routes against the
+    /// `MiniMaxFactory`.
     pub id: String,
     /// HTTP base URL.
     pub base_url: String,
-    /// Env var name holding the API key.
+    /// LEGACY env var name holding the API key. Phase 82.10.s
+    /// recommends `api_key_secret_value` instead — env vars
+    /// collide between microapps in the same daemon. Kept for
+    /// back-compat with pre-82.10.s yamls and the M9 wizard's
+    /// existing flow.
+    #[serde(default)]
     pub api_key_env: String,
     /// Optional extra HTTP headers (e.g. `X-Custom-Auth`). Empty
     /// map if not needed.
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
+    /// Phase 82.10.s — factory id from the catalog the daemon
+    /// reports via `llm_providers/catalog`. When `Some`, the yaml
+    /// instance can be named anything; when `None`, the daemon
+    /// treats the instance id as the factory id (legacy path).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub factory_type: Option<String>,
+    /// Phase 82.10.s — name of the secret in the daemon's
+    /// SecretsStore that holds the API key. Mutually exclusive
+    /// with `api_key_secret_value` AND `api_key_env`. Useful when
+    /// the operator has already written the secret out-of-band
+    /// (e.g. via `nexo/admin/secrets/write`) and just wants to
+    /// point the provider at it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key_secret_id: Option<String>,
+    /// Phase 82.10.s — write-through API key. The daemon stamps
+    /// the value into the SecretsStore (under a generated id) AND
+    /// sets `api_key_secret_id` on the yaml in one transaction.
+    /// Audit redaction MUST mask this field — it never lands in
+    /// the audit log. Mutually exclusive with `api_key_secret_id`
+    /// AND `api_key_env` (loud -32602 on multi-source).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key_secret_value: Option<String>,
     /// Phase 83.8.12.5.c — when `Some(tenant_id)`, the upsert
     /// targets `llm.yaml.tenants.<tenant_id>.providers.<id>`
     /// instead of the global `providers.<id>`. `None` keeps
