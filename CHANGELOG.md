@@ -38,6 +38,124 @@ and the project adheres to [Semantic Versioning](https://semver.org)
 
 ### Added
 
+- **Phase 81.27 — Remote `HookInterceptor` wrapper (subprocess-
+  backed).** New `RemoteHookHandler` implements the existing
+  `HookHandler` trait by translating each `on_hook(name, event)`
+  call into a single `hook.on_hook` JSON-RPC request over the
+  subprocess plugin's stdio bridge. Subprocess plugins
+  declaring `[plugin.extends].hooks = ["before_message",
+  "after_message"]` get one handler per hook name registered
+  into the daemon's `HookRegistry` automatically at boot.
+
+  One new wire method (contract v1.7.0):
+
+  ```jsonc
+  // host → child
+  {
+    "jsonrpc": "2.0",
+    "id": 60,
+    "method": "hook.on_hook",
+    "params": {
+      "plugin_id": "compliance",
+      "hook_name": "before_message",
+      "event": {"sender": "alice", "body": "ping"}
+    }
+  }
+  ```
+
+  Reply shape is the existing `HookResponse` struct (already
+  `Serialize + Deserialize`) — reused directly as wire type
+  with NO parallel `WireHookResponse`. Fields preserved:
+  `abort` (legacy block), `reason`, `override` (event mutation),
+  `decision` (`"allow" | "block" | "transform"`),
+  `transformed_body`, `do_not_reply_again`.
+
+  **Continue-on-error semantic** — every dispatch failure
+  (transport closed, subprocess crash, timeout, JSON-RPC error,
+  malformed reply) returns `Ok(HookResponse::default())`. The
+  `HookRegistry::fire` loop continues iterating remaining
+  handlers; agent flow does NOT break on subprocess
+  misbehavior. This matches the existing 11.6 philosophy:
+  "extension misbehavior must not take down agent flow."
+  Failures land in `tracing::warn!` for operator debugging
+  but never as hard failures.
+
+  Hooks fire on the message hot path — default 5 s timeout
+  (lower than channels' 30 s and LLM's 60 s). Operator override
+  via `NEXO_PLUGIN_HOOK_TIMEOUT_MS` env.
+
+  New types in `nexo_core::agent`:
+
+  - `RemoteHookHandler` (impl `HookHandler`)
+  - `HookHandlerRegistrationError` (single variant
+    `InnerUnavailable` — `HookRegistry::register` itself never
+    fails)
+
+  Architectural changes:
+
+  - `WirePluginRegistryOutput.hook_registry: Arc<HookRegistry>`
+    field added. `boot.rs::wire_plugin_registry_with_runtime`
+    builds a single shared `Arc<HookRegistry>` threaded into
+    both `SubprocessCtxStubs::build_with_shared_registries`
+    AND the wire output (mirrors 81.24's
+    `shared_channel_adapter_registry` pattern). The old
+    `build_with_channel_registry` constructor removed as dead
+    code.
+  - `SubprocessNexoPlugin::register_remote_hook_handlers(hook_registry)`
+    post-init hook reads `manifest.plugin.extends.hooks`,
+    builds one `RemoteHookHandler` per name sharing existing
+    `Inner.{stdin_tx, pending, next_id}`, registers via
+    `HookRegistry::register(hook_name, plugin_id, handler)`.
+  - `init_loop::run_plugin_init_loop_with_factory` gained 6th
+    arg `hook_registry: &Arc<HookRegistry>`; new
+    `register_remote_hook_handlers_after_init` post-init hook
+    chained AFTER `register_remote_llm_providers_after_init`.
+  - **Bug fix**: factory-registered Ok arm in `init_loop` was
+    missing the full post-init chain (only ran channel
+    registration, skipped LLM + hooks). Now all 4 hooks
+    (namespace check + channels + llm + hooks) run on both
+    auto-subprocess and factory-registered paths.
+
+  Plugin authors consume via:
+
+  ```rust
+  match method {
+      "hook.on_hook" => {
+          let hook_name = params["hook_name"].as_str().unwrap_or("");
+          let event = params["event"].clone();
+          let response = match hook_name {
+              "before_message" => check_pii(&event)?,
+              "after_message"  => log_audit(&event)?,
+              _ => HookResponse::default(),  // Continue
+          };
+          reply_ok(id, serde_json::to_value(&response)?);
+      }
+      _ => reply_method_not_found(id, method),
+  }
+  ```
+
+  Tests: 8 unit tests in `hook_remote::tests` covering serde
+  round-trip, all decision modes (allow / block / transform),
+  override-event, do-not-reply-again, plus all error paths
+  (unsupported / timeout / malformed) returning Continue. 1
+  e2e test
+  (`crates/core/tests/remote_hook_e2e.rs::hook_block_decision_round_trips_via_mock_subprocess`)
+  with bash mock plugin returning a block decision; asserts
+  `HookOutcome::Aborted`. All 1304 `nexo-core` lib tests pass
+  (was 1296 → 1304); 4/4 e2e tests pass; workspace builds
+  clean.
+
+  Contract spec bumped to v1.7.0 with new §5.z "Hook methods"
+  + Continue-on-error semantic documented + Changelog row.
+  Authoring docs gain "Contributing hook handlers" section.
+
+  Out of scope (deferred): per-hook priority via manifest
+  (81.27.b); capability-negotiation handshake (81.27.c). The 4
+  remote-wrapper sub-phases (81.24 channels / 81.25 LLM
+  providers / 81.27 hooks / 81.26 memory backends — pending)
+  share a unified post-init hook chain via
+  `SubprocessNexoPlugin::register_remote_*_*` family.
+
 - **Phase 81.25 — Remote `LlmClient` provider wrapper
   (subprocess-backed).** New `RemoteLlmClient` implements the
   `LlmClient` trait by translating `chat()` and `stream()` into

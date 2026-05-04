@@ -27,6 +27,7 @@ pub mod extension_tool;
 pub mod followup_tool;
 pub mod heartbeat_tool;
 pub mod hook_registry;
+pub mod hook_remote;
 pub mod inbox;
 pub mod inbox_router;
 pub mod list_peers_tool;
@@ -115,6 +116,7 @@ pub use extension_tool::{ExtensionTool, EXT_NAME_PREFIX};
 pub use followup_tool::{CancelFollowupTool, CheckFollowupTool, StartFollowupTool};
 pub use heartbeat_tool::HeartbeatTool;
 pub use hook_registry::{HookHandler, HookOutcome, HookRegistry};
+pub use hook_remote::{HookHandlerRegistrationError, RemoteHookHandler};
 pub use llm_behavior::LlmAgentBehavior;
 pub use llm_remote::{
     LlmProviderRegistrationError, RemoteLlmClient, RemoteLlmFactory, StreamingPending,

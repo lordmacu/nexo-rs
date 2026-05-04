@@ -266,6 +266,74 @@ The matching SDK helpers (`PluginAdapter::handle_llm_chat`,
 streaming sender, etc.) ship in Phase 81.25.b. Until then,
 hand-handle the JSON-RPC frames.
 
+## Contributing hook handlers
+
+Phase 81.27 — subprocess plugins that declare
+`[plugin.extends].hooks = [...]` get one host-side
+`RemoteHookHandler` registered into `HookRegistry` per hook
+name. When the daemon fires that hook, the handler translates
+the call into a `hook.on_hook` JSON-RPC request over your
+subprocess plugin's stdio pipe.
+
+```toml
+[plugin.extends]
+hooks = ["before_message", "after_message"]
+```
+
+Wire spec + error semantic:
+[Plugin contract §5.z](./contract.md#5z-hook-methods-phase-8127).
+
+The reply shape is the existing `HookResponse` struct:
+
+```rust
+HookResponse {
+    abort: bool,                     // legacy block signal
+    reason: Option<String>,          // operator-readable
+    override: Option<Value>,         // key-by-key mutation
+    decision: Option<String>,        // "allow" | "block" | "transform"
+    transformed_body: Option<String>,// for "transform"
+    do_not_reply_again: bool,        // anti-loop signal
+}
+```
+
+Sketch (Rust subprocess plugin) — handle each hook by name:
+
+```rust
+match method {
+    "hook.on_hook" => {
+        let hook_name = params["hook_name"].as_str().unwrap_or("");
+        let event = params["event"].clone();
+        let response = match hook_name {
+            "before_message" => check_pii(&event)?,    // your logic
+            "after_message"  => log_audit(&event)?,
+            _ => HookResponse::default(),               // Continue
+        };
+        reply_ok(id, serde_json::to_value(&response)?);
+    }
+    _ => reply_method_not_found(id, method),
+}
+```
+
+**Continue-on-error semantic** — the host swallows every
+dispatch failure (timeout, malformed reply, JSON-RPC error)
+and returns `HookResponse::default()` so the registry's fire
+loop keeps iterating. Failures land in `tracing::warn!` for
+operator debugging but never break the agent flow. This means:
+
+- Returning `-32601 method_not_found` for an unknown hook is
+  fine — host logs + continues.
+- A hung subprocess hook eventually times out (5s default;
+  `NEXO_PLUGIN_HOOK_TIMEOUT_MS` env override) and the agent
+  proceeds.
+- Returning a malformed `HookResponse` still continues; only
+  well-formed responses with `abort: true` or `decision:
+  "block"` actually block.
+
+Hooks fire on the message hot path — keep handler latency
+low (<50 ms typical). Use the `decision: "transform"` path
+sparingly: every transform rewrites the event payload for
+subsequent handlers.
+
 ## Future capability extensions
 
 Phase 81.28 — subprocess plugins that contribute new
