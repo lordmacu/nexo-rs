@@ -135,6 +135,7 @@ part of day-to-day usage. Skim only when you need it.
 - [Anthropic / Claude](./llm/anthropic.md)
 - [OpenAI-compatible](./llm/openai.md)
 - [DeepSeek](./llm/deepseek.md)
+- [Multi-instance providers + secret-backed keys](./llm/multi-instance.md)
 - [Rate limiting & retry](./llm/retry.md)
 
 # Built-in channels — provider guides
