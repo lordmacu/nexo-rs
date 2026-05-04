@@ -1382,6 +1382,19 @@ impl DeferredAdminOutboundWriter {
 #[async_trait]
 impl AdminOutboundWriter for DeferredAdminOutboundWriter {
     async fn send(&self, line: String) {
+        // Stdio framing: the daemon's supervisor writes raw bytes
+        // to the child stdin, so the SDK's `BufReader::lines()`
+        // only delivers a frame when it terminates in `\n`. Add
+        // one if the caller didn't already (admin response and
+        // notification helpers both produce trailing-`\n`-less
+        // strings via `serde_json::to_string`).
+        let line = if line.ends_with('\n') {
+            line
+        } else {
+            let mut framed = line;
+            framed.push('\n');
+            framed
+        };
         match self.sender.get() {
             Some(s) => {
                 if let Err(e) = s.try_send(line) {
@@ -1916,6 +1929,36 @@ mod pairing_store_tests {
         assert_eq!(parsed["method"], "nexo/notify/test");
         assert_eq!(parsed["params"]["k"], 1);
         assert!(parsed.get("id").is_none());
+    }
+
+    /// Regression: the supervisor writes raw bytes to the child
+    /// stdin, so the SDK's `BufReader::lines()` only delivers a
+    /// frame when it terminates in `\n`. Without this guarantee
+    /// in the writer, every admin response + notify frame would
+    /// stall the microapp's pending oneshot until timeout.
+    #[tokio::test(flavor = "current_thread")]
+    async fn deferred_writer_appends_newline_when_caller_omits_it() {
+        use nexo_core::agent::admin_rpc::AdminOutboundWriter;
+        let (tx, mut rx) = mpsc::channel::<String>(8);
+        let writer = DeferredAdminOutboundWriter::new();
+        writer.bind(tx);
+        writer.send(r#"{"jsonrpc":"2.0","id":"app:x","result":null}"#.into()).await;
+        let line = rx.recv().await.unwrap();
+        assert!(line.ends_with('\n'), "frame must terminate in newline");
+    }
+
+    /// And a frame that already ends in `\n` should not get a
+    /// second one (idempotent — protects future callers that do
+    /// frame their own lines).
+    #[tokio::test(flavor = "current_thread")]
+    async fn deferred_writer_preserves_existing_newline() {
+        use nexo_core::agent::admin_rpc::AdminOutboundWriter;
+        let (tx, mut rx) = mpsc::channel::<String>(8);
+        let writer = DeferredAdminOutboundWriter::new();
+        writer.bind(tx);
+        writer.send("{\"k\":1}\n".into()).await;
+        let line = rx.recv().await.unwrap();
+        assert_eq!(line, "{\"k\":1}\n");
     }
 
     #[test]
