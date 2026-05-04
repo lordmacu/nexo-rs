@@ -1405,6 +1405,53 @@ coordinación de archivos cross-cutting.
   `initialize`-reply time. Pairs with 81.28.b umbrella.
   ~0.5 d.
 
+- **81.26 ✅ shipped 2026-05-04** — Remote memory backend
+  wrapper. `VectorBackend` trait + 5 wire types
+  (`VectorRecord`/`VectorQuery`/`VectorMatch`/`UpsertAck`/
+  `DeleteAck`) in `nexo-memory`. `VectorBackendRegistry`
+  (BTreeMap, ownership-checked unregister) +
+  `RemoteVectorBackend` (subprocess JSON-RPC, 3 wire methods
+  `memory.vector_upsert`/`vector_search`/`vector_delete`,
+  error band `-33301..=-33304`, default 30s upsert/delete +
+  10s search timeouts overridable via
+  `NEXO_PLUGIN_MEMORY_TIMEOUT_MS`) in `nexo-core`. Post-init
+  hook `register_remote_vector_backends_after_init` chained
+  in both auto-subprocess + factory-registered Ok arms.
+  `WirePluginRegistryOutput.vector_backend_registry` exposed
+  to consumers. Contract v1.8.0 §5.w. Authoring docs gain
+  "Contributing memory backends" section. **Completes the
+  4-wrapper quartet** (81.24 channels + 81.25 LLM + 81.27
+  hooks + 81.26 memory) backed by 81.28
+  `extends.<section>` manifest schema. 1316/1316 nexo-core
+  lib + e2e mock-subprocess test + workspace clean.
+
+- **81.26.b ⬜** Consumer-side wiring:
+  `LongTermMemory.recall_vector` resolves through
+  `VectorBackendRegistry` instead of the in-tree sqlite-vec
+  default when an `extends.memory_backends` plugin is
+  active. Today the registry is exposed via
+  `WirePluginRegistryOutput` but no in-tree call path
+  consults it. ~1.5 d.
+
+- **81.26.c ⬜** Typed `MemoryBackendError` enum replacing
+  `anyhow::Error` returns from `RemoteVectorBackend`.
+  Variants for `BackendUnavailable`/`InvalidQuery`/
+  `BackendInternal`/`Timeout` aligned with -33301..=-33304
+  band. ~0.5 d.
+
+- **81.26.d ⬜** `RegistriesBundle` consolidation. After
+  81.24-27, `run_plugin_init_loop_with_factory` carries 7
+  registry args (channel/llm/hook/vector + 3 contextual).
+  Bundle them into a single struct passed by reference.
+  ~0.3 d.
+
+- **81.26.e ⬜** Binary embedding encoding for large
+  vectors. Wire format currently sends `Vec<f32>` as JSON
+  array; for embedding dims ≥ 1024 this is wasteful.
+  Optional base64-encoded `f32[]` field in
+  `VectorRecord`/`VectorQuery` with feature negotiation at
+  `initialize`. ~0.5 d.
+
 - **81.15.c.b ✅ shipped 2026-05-01** — SDK streaming
   consumption helper. Pending value type changed to
   `PendingKind` enum (Single for non-streaming, Streaming for

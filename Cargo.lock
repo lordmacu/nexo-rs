@@ -3599,6 +3599,7 @@ dependencies = [
  "nexo-broker",
  "nexo-config",
  "nexo-mcp",
+ "nexo-plugin-manifest",
  "nexo-resilience",
  "notify",
  "notify-debouncer-full",
@@ -3993,6 +3994,7 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "toml 0.8.23",
+ "tracing",
 ]
 
 [[package]]

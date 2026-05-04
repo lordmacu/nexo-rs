@@ -91,6 +91,14 @@ pub struct WirePluginRegistryOutput {
     /// [...]` can register `RemoteHookHandler`s into the same
     /// instance the agent runtime fires hooks against.
     pub hook_registry: Arc<crate::agent::hook_registry::HookRegistry>,
+    /// Phase 81.26 — `VectorBackendRegistry` shared with the
+    /// post-init hook so subprocess plugins declaring
+    /// `extends.memory_backends = [...]` can register
+    /// `RemoteVectorBackend` instances. v1 ships the registry +
+    /// wire only; consumer-side wiring (`LongTermMemory.recall_vector`
+    /// reading from this registry) lands in 81.26.b.
+    pub vector_backend_registry:
+        Arc<crate::agent::vector_backend_registry::VectorBackendRegistry>,
     /// Phase 81.11 — plugin-declared capability gates aggregated
     /// at boot. Same data as
     /// `registry.snapshot().last_report.plugin_capability_gates`,
@@ -199,6 +207,14 @@ pub async fn wire_plugin_registry_with_runtime(
     // `WirePluginRegistryOutput` so callers see the same Arc.
     let shared_hook_registry: Arc<crate::agent::hook_registry::HookRegistry> =
         Arc::new(crate::agent::hook_registry::HookRegistry::new());
+    // Phase 81.26 — vector backend registry shared between the
+    // post-init `register_remote_vector_backends` hook and the
+    // `WirePluginRegistryOutput`.
+    let shared_vector_backend_registry: Arc<
+        crate::agent::vector_backend_registry::VectorBackendRegistry,
+    > = Arc::new(
+        crate::agent::vector_backend_registry::VectorBackendRegistry::new(),
+    );
 
     let (init_outcomes, plugin_handles): (
         BTreeMap<String, super::InitOutcome>,
@@ -215,6 +231,7 @@ pub async fn wire_plugin_registry_with_runtime(
                 rt,
                 shared_channel_adapter_registry.clone(),
                 shared_hook_registry.clone(),
+                shared_vector_backend_registry.clone(),
             );
             let r = run_plugin_init_loop_with_factory(
                 &snap,
@@ -223,6 +240,7 @@ pub async fn wire_plugin_registry_with_runtime(
                 &shared_channel_adapter_registry,
                 &rt.llm_registry,
                 &shared_hook_registry,
+                &shared_vector_backend_registry,
                 |manifest, plugin_cfg| stubs.context_for(manifest, rt, plugin_cfg),
             )
             .await;
@@ -254,6 +272,7 @@ pub async fn wire_plugin_registry_with_runtime(
                 &shared_channel_adapter_registry,
                 &legacy_llm_registry,
                 &shared_hook_registry,
+                &shared_vector_backend_registry,
                 |_manifest, _plugin_cfg| -> crate::agent::plugin_host::PluginInitContext<'_> {
                     unreachable!(
                         "wire_plugin_registry: subprocess_runtime is None but a manifest with entrypoint was discovered. \
@@ -370,6 +389,9 @@ pub async fn wire_plugin_registry_with_runtime(
         // Phase 81.27 — same registry used by the post-init hook so
         // callers see remote `RemoteHookHandler` registrations.
         hook_registry: shared_hook_registry,
+        // Phase 81.26 — same registry used by the post-init hook so
+        // callers see remote `RemoteVectorBackend` registrations.
+        vector_backend_registry: shared_vector_backend_registry,
         plugin_capability_gates: plugin_capability_gates_for_output,
         unmet_required_capabilities: unmet_required_for_output,
         plugin_handles,
@@ -390,20 +412,31 @@ struct SubprocessCtxStubs {
     reload_coord: Arc<ConfigReloadCoordinator>,
     sessions: Arc<crate::session::SessionManager>,
     channel_adapter_registry: Arc<ChannelAdapterRegistry>,
+    /// Phase 81.26 — kept on stubs so the boot helper can reach
+    /// it via `stubs.vector_backend_registry` if needed; today
+    /// `PluginInitContext` doesn't expose it (consumers read
+    /// from `wire.vector_backend_registry`).
+    #[allow(dead_code)]
+    vector_backend_registry:
+        Arc<crate::agent::vector_backend_registry::VectorBackendRegistry>,
 }
 
 impl SubprocessCtxStubs {
-    /// Phase 81.27 — variant that accepts both a pre-built channel
-    /// adapter registry AND a pre-built hook registry so all three
-    /// (stubs + post-init hook + wire output) share the same Arcs.
+    /// Phase 81.26/27 — variant that accepts pre-built channel +
+    /// hook + vector backend registries so all three (stubs +
+    /// post-init hook + wire output) share the same Arcs.
     fn build_with_shared_registries(
         rt: &SubprocessRuntime,
         channel_adapter_registry: Arc<ChannelAdapterRegistry>,
         hook_registry: Arc<crate::agent::hook_registry::HookRegistry>,
+        vector_backend_registry: Arc<
+            crate::agent::vector_backend_registry::VectorBackendRegistry,
+        >,
     ) -> Self {
         let mut stubs = Self::build(rt);
         stubs.channel_adapter_registry = channel_adapter_registry;
         stubs.hook_registry = hook_registry;
+        stubs.vector_backend_registry = vector_backend_registry;
         stubs
     }
 
@@ -431,6 +464,9 @@ impl SubprocessCtxStubs {
                 8,
             )),
             channel_adapter_registry: Arc::new(ChannelAdapterRegistry::new()),
+            vector_backend_registry: Arc::new(
+                crate::agent::vector_backend_registry::VectorBackendRegistry::new(),
+            ),
         }
     }
 

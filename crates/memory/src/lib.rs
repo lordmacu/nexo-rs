@@ -7,6 +7,7 @@ pub mod relevance;
 pub mod secret_config;
 pub mod secret_scanner;
 pub mod vector;
+pub mod vector_backend;
 
 pub use compactions::{CompactionRow, CompactionStore};
 pub use concepts::{classify_script, derive_concept_tags, ScriptFamily, MAX_CONCEPT_TAGS};
@@ -18,3 +19,6 @@ pub use long_term::{
 pub use relevance::{freshness_note, score_memories, MemoryType, ScoredMemory};
 pub use secret_config::SecretGuardConfig;
 pub use secret_scanner::{OnSecret, SecretBlockedError, SecretGuard, SecretMatch, SecretScanner};
+pub use vector_backend::{
+    DeleteAck, UpsertAck, VectorBackend, VectorMatch, VectorQuery, VectorRecord,
+};

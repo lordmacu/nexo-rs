@@ -334,6 +334,81 @@ low (<50 ms typical). Use the `decision: "transform"` path
 sparingly: every transform rewrites the event payload for
 subsequent handlers.
 
+## Contributing memory backends
+
+Phase 81.26 — subprocess plugins that declare
+`[plugin.extends].memory_backends = [...]` get one
+host-side `RemoteVectorBackend` registered into the daemon's
+`VectorBackendRegistry` per backend name. v1 covers VECTOR
+storage only — short/long-term memory keep their SQLite
+implementation; plugins replace only the vector index. Primary
+use case: Pinecone / Qdrant / Weaviate / pgvector.
+
+```toml
+[plugin.extends]
+memory_backends = ["pinecone"]
+```
+
+Three wire methods (default timeouts 30s upsert/delete, 10s
+search):
+
+- `memory.vector_upsert { backend, collection, records }` →
+  `{ count }`
+- `memory.vector_search { backend, collection, query }` →
+  `{ matches: [...] }`
+- `memory.vector_delete { backend, collection, ids }` →
+  `{ count }`
+
+`NEXO_PLUGIN_MEMORY_TIMEOUT_MS` env overrides all three.
+
+Wire spec + error codes:
+[Plugin contract §5.w](./contract.md#5w-memory-backend-methods-phase-8126).
+
+Sketch (Rust subprocess plugin) — handle each method by name:
+
+```rust
+match method {
+    "memory.vector_upsert" => {
+        let collection = params["collection"].as_str().unwrap_or("");
+        let records: Vec<VectorRecord> = serde_json::from_value(
+            params["records"].clone()
+        )?;
+        let count = my_pinecone_client.upsert(collection, records).await?;
+        reply_ok(id, serde_json::json!({"count": count}));
+    }
+    "memory.vector_search" => {
+        let collection = params["collection"].as_str().unwrap_or("");
+        let query: VectorQuery = serde_json::from_value(
+            params["query"].clone()
+        )?;
+        let matches = my_pinecone_client.search(collection, query).await?;
+        reply_ok(id, serde_json::json!({"matches": matches}));
+    }
+    "memory.vector_delete" => {
+        let collection = params["collection"].as_str().unwrap_or("");
+        let ids: Vec<String> = serde_json::from_value(
+            params["ids"].clone()
+        )?;
+        let count = my_pinecone_client.delete(collection, ids).await?;
+        reply_ok(id, serde_json::json!({"count": count}));
+    }
+    _ => reply_method_not_found(id, method),
+}
+```
+
+For typed errors (collection-not-found, dimension-mismatch,
+rate-limited, write-failed), reply with the memory-specific
+error codes from the contract table — the host's
+`RemoteVectorBackend` surfaces them as `anyhow::Error` with
+operator-greppable messages.
+
+**v1 limitation**: registered backends are NOT yet consumed at
+runtime — `LongTermMemory.recall_vector` still uses sqlite-vec.
+Operators audit registered backends today via
+`wire.vector_backend_registry.names()`. Consumer-side dispatch
+(`agents.yaml.<id>.vector_backend = "pinecone"`) lands in
+Phase 81.26.b.
+
 ## Future capability extensions
 
 Phase 81.28 — subprocess plugins that contribute new
