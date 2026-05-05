@@ -24,3 +24,4 @@ pub mod pollers;
 pub mod processing;
 pub mod secrets;
 pub mod skills;
+pub mod wa_bot;

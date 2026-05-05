@@ -211,20 +211,33 @@ pub async fn send_media_auto(
     Ok(())
 }
 
-/// Download an inbound media message to disk and publish a
-/// `MediaReceived` event. Safe to call speculatively — non-media
-/// `MessageContent` variants are no-ops.
-pub async fn download_inbound(
+/// Result of a successful inbound download. The bridge handler
+/// uses this to enrich the published `InboundEvent::Message` with
+/// media metadata (path, mime, kind) so the runtime's
+/// `extract_inbound_media` populates `InboundMessage.media`.
+#[derive(Debug, Clone)]
+pub struct DownloadedInbound {
+    pub variant: MediaVariant,
+    pub mime: String,
+    pub local_path: PathBuf,
+}
+
+/// Download an inbound media message to disk WITHOUT publishing the
+/// `MediaReceived` broker event. Returns `None` when the message
+/// has no media content. Used by the bridge handler when it needs
+/// the file to be on disk before publishing the `Message` event
+/// (e.g. audio inbound that should be transcribed by an inbound
+/// transformer before the LLM runs).
+pub async fn download_inbound_to_disk(
     session: &whatsapp_rs::Session,
-    broker: &AnyBroker,
     cfg: &WhatsappPluginConfig,
     msg: &whatsapp_rs::WAMessage,
-) -> Result<()> {
+) -> Result<Option<DownloadedInbound>> {
     let Some(content) = msg.message.as_ref() else {
-        return Ok(());
+        return Ok(None);
     };
     let Some((variant, media_type, mime)) = variant_of_content(content) else {
-        return Ok(());
+        return Ok(None);
     };
 
     let info = match content {
@@ -233,7 +246,7 @@ pub async fn download_inbound(
         | whatsapp_rs::MessageContent::Audio { info, .. }
         | whatsapp_rs::MessageContent::Document { info, .. }
         | whatsapp_rs::MessageContent::Sticker { info } => info,
-        _ => return Ok(()),
+        _ => return Ok(None),
     };
 
     let bytes = session
@@ -245,15 +258,31 @@ pub async fn download_inbound(
     std::fs::create_dir_all(&dir).with_context(|| format!("mkdir {}", dir.display()))?;
     let ext = variant.default_ext();
     let path = dir.join(format!("{}.{}", sanitize(&msg.key.id), ext));
-    // Atomic write: stage to `<path>.tmp` then rename. Without this,
-    // a crash mid-write leaves a truncated file at `path`. Future
-    // dedup checks see the file exists and skip the (now-incomplete)
-    // download forever.
     let tmp = path.with_extension(format!("{ext}.tmp"));
     std::fs::write(&tmp, &bytes).with_context(|| format!("write {}", tmp.display()))?;
     std::fs::rename(&tmp, &path)
         .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))?;
 
+    Ok(Some(DownloadedInbound {
+        variant,
+        mime,
+        local_path: path,
+    }))
+}
+
+/// Download an inbound media message to disk and publish a
+/// `MediaReceived` event. Safe to call speculatively — non-media
+/// `MessageContent` variants are no-ops.
+pub async fn download_inbound(
+    session: &whatsapp_rs::Session,
+    broker: &AnyBroker,
+    cfg: &WhatsappPluginConfig,
+    msg: &whatsapp_rs::WAMessage,
+) -> Result<()> {
+    let Some(downloaded) = download_inbound_to_disk(session, cfg, msg).await? else {
+        return Ok(());
+    };
+    let content = msg.message.as_ref();
     let session_id = session_id_for_jid(&msg.key.remote_jid);
     let ev = InboundEvent::MediaReceived {
         from: msg
@@ -263,9 +292,9 @@ pub async fn download_inbound(
             .unwrap_or_else(|| msg.key.remote_jid.clone()),
         chat: msg.key.remote_jid.clone(),
         msg_id: msg.key.id.clone(),
-        local_path: path,
-        mime,
-        caption: caption_of(content),
+        local_path: downloaded.local_path,
+        mime: downloaded.mime,
+        caption: content.and_then(caption_of),
     };
     let inbound_topic = crate::bridge::inbound_topic_for(cfg.instance.as_deref());
     let mut event = Event::new(&inbound_topic, SOURCE, ev.to_payload());

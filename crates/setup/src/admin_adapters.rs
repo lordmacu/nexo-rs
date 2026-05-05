@@ -1258,7 +1258,10 @@ impl StdioPairingNotifier {
 impl PairingNotifier for StdioPairingNotifier {
     fn notify_status(&self, status: &PairingStatus) {
         let params = serde_json::to_value(status).unwrap_or(serde_json::Value::Null);
-        let frame = json_rpc_notification(PAIRING_STATUS_NOTIFY_METHOD, params);
+        let mut frame = json_rpc_notification(PAIRING_STATUS_NOTIFY_METHOD, params);
+        if !frame.ends_with('\n') {
+            frame.push('\n');
+        }
         if let Err(e) = self.sender.try_send(frame) {
             tracing::warn!(
                 challenge_id = %status.challenge_id,
@@ -1317,7 +1320,16 @@ impl PairingNotifier for DeferredPairingNotifier {
             return;
         };
         let params = serde_json::to_value(status).unwrap_or(serde_json::Value::Null);
-        let frame = json_rpc_notification(PAIRING_STATUS_NOTIFY_METHOD, params);
+        // The supervisor writes raw bytes to the child stdin and the
+        // SDK's `BufReader::lines()` only delivers a frame when it
+        // terminates in `\n`. `json_rpc_notification` does not append
+        // one — without this the notification sits in the child's
+        // buffer until a subsequent admin response (which DOES add
+        // `\n`) flushes both as a single corrupted line.
+        let mut frame = json_rpc_notification(PAIRING_STATUS_NOTIFY_METHOD, params);
+        if !frame.ends_with('\n') {
+            frame.push('\n');
+        }
         if let Err(e) = s.try_send(frame) {
             tracing::warn!(
                 challenge_id = %status.challenge_id,
@@ -1370,10 +1382,13 @@ impl nexo_core::agent::admin_rpc::domains::auth::TokenRotatedNotifier
             return;
         };
         let params = serde_json::to_value(payload).unwrap_or(serde_json::Value::Null);
-        let frame = json_rpc_notification(
+        let mut frame = json_rpc_notification(
             nexo_tool_meta::http_server::TOKEN_ROTATED_NOTIFY_METHOD,
             params,
         );
+        if !frame.ends_with('\n') {
+            frame.push('\n');
+        }
         if let Err(e) = s.try_send(frame) {
             tracing::warn!(
                 old_hash = %payload.old_hash,

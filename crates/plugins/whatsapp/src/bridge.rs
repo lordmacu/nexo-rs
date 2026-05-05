@@ -148,22 +148,49 @@ pub fn build_handler(
                 }
             }
 
-            // Kick off media download in the background — we don't want
-            // to block the handler (and wa-agent's typing indicator).
+            // Audio inbound: download synchronously so the
+            // `InboundEvent::Message` payload includes media_path /
+            // mime up-front. An auto-discovered
+            // `*_inbound_transform` tool (e.g. STT) needs the file
+            // available BEFORE the LLM turn runs, otherwise the
+            // agent sees an empty inbound and replies "no entiendo".
+            // Non-audio media (image / video / document) keeps the
+            // legacy async-spawn path — those don't gate the agent.
+            let mut audio_attachment: Option<crate::media::DownloadedInbound> = None;
             if let Some(content) = ctx.msg.message.as_ref() {
-                if crate::media::variant_of_content(content).is_some() {
-                    let broker_m = broker.clone();
-                    let cfg_m = cfg.clone();
-                    let session_m = session.clone();
-                    let msg_m = ctx.msg.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) =
-                            crate::media::download_inbound(&session_m, &broker_m, &cfg_m, &msg_m)
-                                .await
+                if let Some((variant, _, _)) = crate::media::variant_of_content(content) {
+                    let is_audio = matches!(
+                        variant,
+                        crate::media::MediaVariant::Audio
+                            | crate::media::MediaVariant::VoiceNote
+                    );
+                    if is_audio {
+                        match crate::media::download_inbound_to_disk(
+                            &session, &cfg, &ctx.msg,
+                        )
+                        .await
                         {
-                            tracing::warn!(error = %e, "inbound media download failed");
+                            Ok(downloaded) => audio_attachment = downloaded,
+                            Err(e) => tracing::warn!(
+                                error = %e,
+                                "inbound audio download failed; agent will see empty text"
+                            ),
                         }
-                    });
+                    } else {
+                        let broker_m = broker.clone();
+                        let cfg_m = cfg.clone();
+                        let session_m = session.clone();
+                        let msg_m = ctx.msg.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = crate::media::download_inbound(
+                                &session_m, &broker_m, &cfg_m, &msg_m,
+                            )
+                            .await
+                            {
+                                tracing::warn!(error = %e, "inbound media download failed");
+                            }
+                        });
+                    }
                 }
             }
 
@@ -173,6 +200,20 @@ pub fn build_handler(
                 .as_deref()
                 .and_then(|rid| ask_reply_index.get(rid).map(|v| v.value().clone()))
                 .or_else(|| ctx.text.as_deref().and_then(extract_question_id_marker));
+            let (media_kind, media_path, media) = match audio_attachment.as_ref() {
+                Some(a) => (
+                    Some(match a.variant {
+                        crate::media::MediaVariant::VoiceNote => "audio_voice".to_string(),
+                        crate::media::MediaVariant::Audio => "audio".to_string(),
+                        _ => "audio".to_string(),
+                    }),
+                    Some(a.local_path.to_string_lossy().into_owned()),
+                    Some(crate::events::InboundMessageMedia {
+                        mime_type: a.mime.clone(),
+                    }),
+                ),
+                None => (None, None, None),
+            };
             let payload = InboundEvent::Message {
                 from: ctx.sender().to_string(),
                 chat: ctx.jid().to_string(),
@@ -183,6 +224,9 @@ pub fn build_handler(
                 is_group: ctx.msg.key.remote_jid.ends_with("@g.us"),
                 timestamp: chrono::Utc::now().timestamp(),
                 msg_id: ctx.msg.key.id.clone(),
+                media_kind,
+                media_path,
+                media,
             };
 
             match bridge_step(&broker, &pending, &cfg, session_id, payload).await {

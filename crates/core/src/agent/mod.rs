@@ -63,6 +63,7 @@ pub mod prompt_assembly;
 pub mod rate_limit;
 pub mod redaction;
 pub mod repl_registry;
+pub mod reply_transform;
 #[cfg(feature = "repl-tool")]
 pub mod repl_tool;
 pub mod registry;

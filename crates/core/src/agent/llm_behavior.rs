@@ -23,6 +23,67 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+/// Build the JSON payload channel plugins consume from
+/// `plugin.outbound.<channel>.<instance?>`. The `text` variant
+/// keeps the legacy shape (`{to, text, kind: "text", session_id}`)
+/// so back-compat with old microapp consumers stays intact; new
+/// variants land additively under `kind`.
+fn build_outbound_payload(
+    reply: &nexo_tool_meta::reply_kind::OutboundReplyKind,
+    to: Option<&str>,
+    session_id: uuid::Uuid,
+) -> serde_json::Value {
+    use base64::{engine::general_purpose::STANDARD as B64, Engine};
+    use nexo_tool_meta::reply_kind::OutboundReplyKind;
+    match reply {
+        OutboundReplyKind::Text { body } => serde_json::json!({
+            "to": to,
+            "text": body,
+            "kind": "text",
+            "session_id": session_id,
+        }),
+        OutboundReplyKind::VoiceNote {
+            audio_bytes,
+            mimetype,
+            transcript,
+        } => serde_json::json!({
+            "to": to,
+            "kind": "voice_note",
+            "audio_bytes_b64": B64.encode(audio_bytes),
+            "mimetype": mimetype,
+            // Surface the transcript under `text` so audit /
+            // takeover dashboards that read `text` keep working
+            // even when the actual wire payload is audio.
+            "text": transcript,
+            "session_id": session_id,
+        }),
+        OutboundReplyKind::Image {
+            bytes,
+            mimetype,
+            caption,
+        } => serde_json::json!({
+            "to": to,
+            "kind": "image",
+            "image_bytes_b64": B64.encode(bytes),
+            "mimetype": mimetype,
+            "caption": caption,
+            "session_id": session_id,
+        }),
+    }
+}
+
+/// Aggregate result of running every `*_inbound_transform`
+/// tool for one inbound message. `new_text` is `Some` when at
+/// least one transformer rewrote the text; `system_addenda`
+/// is the per-turn system-prompt fragments the transformers
+/// optionally returned (concatenated into one extra system
+/// section just before the LLM call).
+#[derive(Debug, Default)]
+struct InboundTransformOutcome {
+    new_text: Option<String>,
+    system_addenda: Vec<String>,
+}
+
 /// Decide whether a session is a private DM (main) or a shared surface.
 /// `MEMORY.md` loads only for `Main` — shared scopes strip it at load time.
 fn session_scope_for(msg: &InboundMessage) -> SessionScope {
@@ -243,6 +304,11 @@ pub struct LlmAgentBehavior {
     /// so plugin-contributed skills become discoverable to every
     /// agent without operator-level skills_dir duplication.
     plugin_skill_roots: Vec<PathBuf>,
+    /// Outbound reply transform pipeline. Each transformer runs in
+    /// registration order before the reply hits the channel topic.
+    /// Empty by default — transformers are opt-in via
+    /// `with_reply_transformers`.
+    reply_transform_chain: super::reply_transform::OutboundReplyTransformChain,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -352,7 +418,283 @@ impl LlmAgentBehavior {
             mutation_hook: None,
             mutation_tenant: "default".into(),
             plugin_skill_roots: Vec::new(),
+            reply_transform_chain: super::reply_transform::OutboundReplyTransformChain::empty(),
         }
+    }
+
+    /// Install the outbound reply transform chain. Replaces any
+    /// previously-installed chain. Pass
+    /// `OutboundReplyTransformChain::empty()` to disable.
+    pub fn with_reply_transformers(
+        mut self,
+        chain: super::reply_transform::OutboundReplyTransformChain,
+    ) -> Self {
+        self.reply_transform_chain = chain;
+        self
+    }
+
+    /// Counterpart of `discover_reply_transform_tools` for inbound.
+    /// Tools whose name ends in `_inbound_transform` get invoked
+    /// once per inbound message — useful for STT, OCR, language
+    /// detection, etc. Convention preserves the daemon's "no extra
+    /// RPC" stance: register a regular tool with the suffix and the
+    /// framework picks it up.
+    fn discover_inbound_transform_tools(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .tools
+            .names()
+            .into_iter()
+            .filter(|n| n.ends_with("_inbound_transform"))
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// Run each inbound transformer in order. Each receives JSON
+    /// `{ context: { ... }, text: "<current>", media: { kind, path,
+    /// mime_type } | null }` and may return:
+    ///   * `{ ok: true, text: "<new>" }` — replace the inbound text.
+    ///   * `{ ok: true, passthrough: true }` — leave unchanged.
+    ///   * `{ ok: false, error: "<msg>" }` — short-circuit; caller
+    ///     keeps the original text and surfaces a warn log.
+    /// Returns `Ok(Some(new))` when at least one transformer
+    /// rewrote, `Ok(None)` for pure passthrough, `Err` on rejection.
+    async fn run_tool_inbound_transforms(
+        &self,
+        tool_names: &[String],
+        msg: &InboundMessage,
+        ctx: &AgentContext,
+    ) -> Result<InboundTransformOutcome, String> {
+        let context = serde_json::json!({
+            "agent_id": ctx.agent_id,
+            "session_id": msg.session_id.to_string(),
+            "channel": msg.source_plugin,
+            "instance": msg.source_instance,
+            "sender_id": msg.sender_id,
+            "tenant_id": ctx.config.tenant_id,
+            "conversation_key": format!("{}:session:{}", ctx.agent_id, msg.session_id),
+            // ISO-639-1 hint from `agents.yaml.<id>.language` so
+            // transformers can localise their output (e.g.
+            // voice_mode picks ES/EN system addendum).
+            "language": ctx.config.language,
+        });
+        let media = msg.media.as_ref().map(|m| {
+            serde_json::json!({
+                "kind": m.kind,
+                "path": m.path,
+                "mime_type": m.mime_type,
+            })
+        });
+        let mut current_text = msg.text.clone();
+        let mut mutated = false;
+        let mut system_addenda: Vec<String> = Vec::new();
+        for name in tool_names {
+            let Some((_def, handler)) = self.tools.get(name) else {
+                continue;
+            };
+            let args = serde_json::json!({
+                "context": context,
+                "text": current_text,
+                "media": media,
+            });
+            let started = std::time::Instant::now();
+            let result = handler.call(ctx, args).await;
+            let elapsed_ms = started.elapsed().as_millis() as u64;
+            match result {
+                Ok(value) => {
+                    if value.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+                        let err_msg = value
+                            .get("error")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("(no error message)")
+                            .to_string();
+                        tracing::warn!(
+                            agent_id = %ctx.agent_id,
+                            tool = %name,
+                            elapsed_ms,
+                            error = %err_msg,
+                            "tool inbound transform rejected"
+                        );
+                        return Err(err_msg);
+                    }
+                    if value.get("passthrough").and_then(|v| v.as_bool()) == Some(true) {
+                        tracing::debug!(
+                            agent_id = %ctx.agent_id,
+                            tool = %name,
+                            elapsed_ms,
+                            "tool inbound transform passthrough"
+                        );
+                        continue;
+                    }
+                    if let Some(new_text) = value.get("text").and_then(|v| v.as_str()) {
+                        tracing::info!(
+                            agent_id = %ctx.agent_id,
+                            tool = %name,
+                            elapsed_ms,
+                            new_text_len = new_text.len(),
+                            "tool inbound transform rewrote text"
+                        );
+                        current_text = new_text.to_string();
+                        mutated = true;
+                    }
+                    // Optional `system_addendum` lets a transformer
+                    // append extra instructions to THIS turn's
+                    // system prompt (e.g. voice-mode marker
+                    // syntax). Per-turn — never persisted to the
+                    // agent's SOUL.md.
+                    if let Some(addendum) = value
+                        .get("system_addendum")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.trim().is_empty())
+                    {
+                        tracing::info!(
+                            agent_id = %ctx.agent_id,
+                            tool = %name,
+                            elapsed_ms,
+                            addendum_len = addendum.len(),
+                            "tool inbound transform contributed system addendum"
+                        );
+                        system_addenda.push(addendum.to_string());
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        agent_id = %ctx.agent_id,
+                        tool = %name,
+                        elapsed_ms,
+                        error = %e,
+                        "tool inbound transform handler errored"
+                    );
+                    return Err(format!("{name} handler error: {e}"));
+                }
+            }
+        }
+        Ok(InboundTransformOutcome {
+            new_text: if mutated { Some(current_text) } else { None },
+            system_addenda,
+        })
+    }
+
+    /// Surface every registered tool whose name ends in
+    /// `_reply_transform`. Microapps use this naming convention to
+    /// plug into the outbound reply pipeline without requiring a
+    /// dedicated registration RPC. Sorted alphabetically so chain
+    /// order is deterministic across daemon restarts.
+    fn discover_reply_transform_tools(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .tools
+            .names()
+            .into_iter()
+            .filter(|n| n.ends_with("_reply_transform"))
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// Run each tool transformer in order. Each tool receives JSON
+    /// `{ "context": <OutboundReplyContext>, "reply": <OutboundReplyKind> }`
+    /// and must return either:
+    ///   * `{ "ok": true, "reply": <OutboundReplyKind> }` — proceed
+    ///     with the (possibly rewritten) reply.
+    ///   * `{ "ok": true, "passthrough": true }` — leave unchanged.
+    ///   * `{ "ok": false, "error": <string> }` — reject; chain
+    ///     short-circuits and the outbound is dropped.
+    async fn run_tool_reply_transforms(
+        &self,
+        tool_names: &[String],
+        transform_ctx: &nexo_tool_meta::reply_kind::OutboundReplyContext,
+        mut reply: nexo_tool_meta::reply_kind::OutboundReplyKind,
+        ctx: &AgentContext,
+    ) -> Result<nexo_tool_meta::reply_kind::OutboundReplyKind, String> {
+        for name in tool_names {
+            let Some((_def, handler)) = self.tools.get(name) else {
+                continue;
+            };
+            let args = serde_json::json!({
+                "context": transform_ctx,
+                "reply": reply,
+            });
+            let started = std::time::Instant::now();
+            let result = handler.call(ctx, args).await;
+            let elapsed_ms = started.elapsed().as_millis() as u64;
+            match result {
+                Ok(value) => {
+                    if value.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+                        let err_msg = value
+                            .get("error")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("(no error message)")
+                            .to_string();
+                        tracing::warn!(
+                            agent_id = %ctx.agent_id,
+                            tool = %name,
+                            elapsed_ms,
+                            error = %err_msg,
+                            "tool reply transform rejected"
+                        );
+                        return Err(err_msg);
+                    }
+                    if value.get("passthrough").and_then(|v| v.as_bool()) == Some(true) {
+                        tracing::debug!(
+                            agent_id = %ctx.agent_id,
+                            tool = %name,
+                            elapsed_ms,
+                            "tool reply transform passthrough"
+                        );
+                        continue;
+                    }
+                    match value.get("reply") {
+                        Some(reply_value) => {
+                            match serde_json::from_value::<
+                                nexo_tool_meta::reply_kind::OutboundReplyKind,
+                            >(
+                                reply_value.clone()
+                            ) {
+                                Ok(next) => {
+                                    tracing::info!(
+                                        agent_id = %ctx.agent_id,
+                                        tool = %name,
+                                        elapsed_ms,
+                                        new_kind = next.kind_label(),
+                                        "tool reply transform applied"
+                                    );
+                                    reply = next;
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        agent_id = %ctx.agent_id,
+                                        tool = %name,
+                                        elapsed_ms,
+                                        error = %e,
+                                        "tool reply transform returned malformed reply"
+                                    );
+                                    return Err(format!("malformed reply from {name}: {e}"));
+                                }
+                            }
+                        }
+                        None => {
+                            tracing::debug!(
+                                agent_id = %ctx.agent_id,
+                                tool = %name,
+                                elapsed_ms,
+                                "tool reply transform returned ok with no reply (treated as passthrough)"
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        agent_id = %ctx.agent_id,
+                        tool = %name,
+                        elapsed_ms,
+                        error = %e,
+                        "tool reply transform handler errored"
+                    );
+                    return Err(format!("{name} handler error: {e}"));
+                }
+            }
+        }
+        Ok(reply)
     }
 
     /// Phase 81.9 — install the plugin-contributed skill roots
@@ -812,7 +1154,7 @@ impl LlmAgentBehavior {
     async fn run_turn(
         &self,
         ctx: &AgentContext,
-        msg: InboundMessage,
+        mut msg: InboundMessage,
         publish_reply: bool,
     ) -> anyhow::Result<RunTurnOutcome> {
         tracing::info!(
@@ -824,6 +1166,44 @@ impl LlmAgentBehavior {
             publish_reply,
             "agent turn started"
         );
+        // Inbound transform chain — auto-discovered by tool naming
+        // convention (`*_inbound_transform`). Each tool sees the
+        // current text + any media attachment and can rewrite the
+        // text before the LLM runs (e.g. STT for voice notes).
+        // Cheap on the no-op path: when no transformer tools are
+        // registered, this is a single tools.names() lookup.
+        let inbound_transform_tools = self.discover_inbound_transform_tools();
+        let mut per_turn_system_addenda: Vec<String> = Vec::new();
+        if !inbound_transform_tools.is_empty() {
+            match self
+                .run_tool_inbound_transforms(&inbound_transform_tools, &msg, ctx)
+                .await
+            {
+                Ok(outcome) => {
+                    if let Some(new_text) = outcome.new_text {
+                        let preview: String = new_text.chars().take(400).collect();
+                        tracing::info!(
+                            agent_id = %ctx.agent_id,
+                            session_id = %msg.session_id,
+                            original_len = msg.text.len(),
+                            new_len = new_text.len(),
+                            new_text = %preview,
+                            "inbound transform rewrote text"
+                        );
+                        msg.text = new_text;
+                    }
+                    per_turn_system_addenda = outcome.system_addenda;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        agent_id = %ctx.agent_id,
+                        session_id = %msg.session_id,
+                        error = %e,
+                        "inbound transform chain rejected; continuing with original text"
+                    );
+                }
+            }
+        }
         // Phase 11.6 — before_message hook. Extensions can short-circuit the
         // turn (e.g. content filter, rate-limiter, observability gate).
         if let Some(hooks) = &self.hooks {
@@ -1114,6 +1494,18 @@ impl LlmAgentBehavior {
         let registry_for_deferred = ctx.effective_tools.as_ref().unwrap_or(&self.tools);
         if let Some(summary) = registry_for_deferred.deferred_tools_summary() {
             system_blocks.push(nexo_llm::PromptBlock::plain("deferred_tools", summary));
+        }
+        // Per-turn system addenda contributed by `*_inbound_transform`
+        // tools. Used today by voice_mode to teach the LLM the
+        // marker syntax only when the conversation is in voice
+        // mode — avoids polluting the operator's static SOUL.md
+        // with conditional instructions.
+        if !per_turn_system_addenda.is_empty() {
+            let merged = per_turn_system_addenda.join("\n\n");
+            system_blocks.push(nexo_llm::PromptBlock::plain(
+                "per_turn_addendum",
+                merged,
+            ));
         }
         // Legacy flat string for providers that don't honor
         // `system_blocks` (and as a back-compat path when prompt_cache
@@ -1853,11 +2245,72 @@ impl LlmAgentBehavior {
                     }
                     _ => format!("plugin.outbound.{}", plugin),
                 };
-                let payload = serde_json::json!({
-                    "to": msg.sender_id,
-                    "text": text,
-                    "session_id": msg.session_id,
-                });
+                // Build the per-turn reply kind + transform context.
+                let transform_ctx = nexo_tool_meta::reply_kind::OutboundReplyContext {
+                    agent_id: ctx.agent_id.clone(),
+                    session_id: msg.session_id.to_string(),
+                    channel: plugin.to_string(),
+                    instance: msg.source_instance.clone(),
+                    recipient: msg.sender_id.clone(),
+                    tenant_id: ctx.config.tenant_id.clone(),
+                    conversation_key: format!(
+                        "{}:session:{}",
+                        ctx.agent_id, msg.session_id
+                    ),
+                    language: ctx.config.language.clone(),
+                };
+                let mut current_reply =
+                    nexo_tool_meta::reply_kind::OutboundReplyKind::text(text.clone());
+                // 1. Pre-registered Rust transformers (today empty;
+                //    direct-link future extensions wire here).
+                if !self.reply_transform_chain.is_empty() {
+                    match self
+                        .reply_transform_chain
+                        .run(&transform_ctx, current_reply.clone())
+                        .await
+                    {
+                        Ok(r) => current_reply = r,
+                        Err(e) => {
+                            tracing::warn!(
+                                agent_id = %ctx.agent_id,
+                                session_id = %msg.session_id,
+                                error = %e,
+                                "reply transform chain rejected reply; dropping"
+                            );
+                            return Ok(RunTurnOutcome::Reply(reply_text));
+                        }
+                    }
+                }
+                // 2. Tool-discovered transformers — any registered
+                //    tool whose name ends in `_reply_transform` gets
+                //    invoked with `{context, reply}`. Microapps use
+                //    this convention to plug in TTS / DLP / persona
+                //    decorators without touching the framework.
+                let transform_tools = self.discover_reply_transform_tools();
+                if !transform_tools.is_empty() {
+                    match self
+                        .run_tool_reply_transforms(
+                            &transform_tools,
+                            &transform_ctx,
+                            current_reply,
+                            ctx,
+                        )
+                        .await
+                    {
+                        Ok(r) => current_reply = r,
+                        Err(e) => {
+                            tracing::warn!(
+                                agent_id = %ctx.agent_id,
+                                session_id = %msg.session_id,
+                                error = %e,
+                                "tool reply transform rejected reply; dropping"
+                            );
+                            return Ok(RunTurnOutcome::Reply(reply_text));
+                        }
+                    }
+                }
+                let final_reply = current_reply;
+                let payload = build_outbound_payload(&final_reply, msg.sender_id.as_deref(), msg.session_id);
                 let mut event = Event::new(&topic, &ctx.agent_id, payload);
                 event.session_id = Some(msg.session_id);
                 ctx.broker.publish(&topic, event).await?;
@@ -1866,6 +2319,7 @@ impl LlmAgentBehavior {
                     session_id = %msg.session_id,
                     message_id = %msg.id,
                     topic = %topic,
+                    reply_kind = final_reply.kind_label(),
                     "agent reply published"
                 );
             }

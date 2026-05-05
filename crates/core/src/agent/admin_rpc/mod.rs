@@ -25,6 +25,7 @@ pub mod pairing_trigger;
 pub mod processing_sqlite;
 pub mod router;
 pub mod transcript_appender;
+pub mod wa_bot;
 
 pub use agent_events_sqlite::{
     AgentEventLog, AgentEventLogFilter, SqliteAgentEventLog,

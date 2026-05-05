@@ -102,6 +102,15 @@ where
     G: Fn(&T) -> bool + Send + Sync + 'static,
 {
     let s = stream! {
+        // Flush headers + first body byte to the client immediately.
+        // Without this, Axum's `Sse` holds the response body pending
+        // until either an event yields or the keep-alive interval
+        // (default 15 s) fires. Buffering proxies (cloudflared/QUIC,
+        // nginx) won't deliver the response until the first body
+        // byte lands, so `EventSource.onopen` is delayed by up to
+        // `DEFAULT_KEEP_ALIVE_SECS` on idle streams. A leading SSE
+        // comment is invisible to clients and unblocks the pipe.
+        yield Ok(Event::default().comment("ready"));
         loop {
             match rx.recv().await {
                 Ok(value) => {
