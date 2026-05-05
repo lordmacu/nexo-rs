@@ -1174,35 +1174,42 @@ impl LlmProviderFactory for AnthropicFactory {
     }
 
     fn known_models(&self) -> &'static [&'static str] {
-        // Static fallback when /v1/models is unreachable (no creds
-        // yet, OAuth-bundle pre-upsert, network blocked). IDs come
-        // from `claude-code-leak/src/utils/model/configs.ts`
-        // `firstParty` field. Two SKU shapes coexist:
+        // Static fallback when `/v1/models` is unreachable (no
+        // creds yet, OAuth-bundle pre-upsert, network blocked).
+        // The wizard's live probe (`supports_models_probe = true`)
+        // is the primary source — this list is just a safe default
+        // shown when the probe can't run.
         //
-        // * **Versionless aliases** — `claude-sonnet-4-6`,
-        //   `claude-opus-4-6`. Resolved server-side to the
-        //   latest dated build. Claude Code subscription tier
-        //   exposes these as the canonical Pro / Max defaults
-        //   (see `model.ts::getDefaultSonnetModel` line 127).
-        // * **Dated SKUs** — `claude-sonnet-4-5-20250929`,
-        //   `claude-haiku-4-5-20251001`, etc. Required for
-        //   pinned production deployments and direct API key
-        //   access; the OAuth-bundle endpoint 404s on the
-        //   versionless 4-5 alias and on dated 4-5 SKUs from
-        //   the Pro tier (incident 2026-05-05).
+        // IDs sourced from `claude-code-leak/src/utils/model/configs.ts`
+        // `firstParty` field + `model.ts::getDefaultSonnetModel`
+        // (line 127, returns `sonnet46` for firstParty) and
+        // `getDefaultHaikuModel` (line 137, returns `haiku45` for
+        // all platforms).
         //
-        // Order: Claude Code OAuth-tier defaults first
-        // (`-4-6` aliases) so `models[0]` is the safest pick
-        // when the wizard stamps without a live probe.
+        // Curated to 5 SKUs Claude Code Pro / Max OAuth tiers
+        // accept (verified live 2026-05-05 against OAuth bundle
+        // bearer auth):
+        //
+        // 1. `claude-sonnet-4-6` — versionless alias, Pro default
+        //    per leak. Confirmed working live.
+        // 2. `claude-opus-4-6` — versionless alias, Max default
+        //    per leak.
+        // 3. `claude-haiku-4-5-20251001` — universal haiku per
+        //    `getDefaultHaikuModel`.
+        // 4. `claude-sonnet-4-5-20250929` — dated fallback when
+        //    operator pins to a specific build for cache stability.
+        // 5. `claude-sonnet-4-20250514` — older sonnet 4 dated SKU
+        //    for stability windows.
+        //
+        // Versionless aliases lead because the wizard stamps
+        // `models[0]` and Claude Code's own defaults (Pro / Max)
+        // both resolve through versionless aliases server-side.
         &[
             "claude-sonnet-4-6",
             "claude-opus-4-6",
             "claude-haiku-4-5-20251001",
             "claude-sonnet-4-5-20250929",
             "claude-sonnet-4-20250514",
-            "claude-opus-4-1-20250805",
-            "claude-opus-4-5-20251101",
-            "claude-opus-4-20250514",
         ]
     }
 
