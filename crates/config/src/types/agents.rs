@@ -25,6 +25,10 @@ pub enum SkillDepsMode {
     Disable,
 }
 
+fn default_active() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentConfig {
@@ -35,6 +39,15 @@ pub struct AgentConfig {
     /// keys on this field.
     #[serde(default)]
     pub tenant_id: Option<String>,
+    /// Whether the runtime should bind this agent's plugins +
+    /// inbound subscribers at boot. The admin RPC `agents/upsert`
+    /// handler writes this top-level field via `YamlPatcher`, so
+    /// the loader needs to accept it (otherwise the daemon
+    /// refuses to start the next time it boots after an upsert
+    /// — `deny_unknown_fields` flagged it as unknown). Defaults
+    /// to `true` for legacy yaml without the field.
+    #[serde(default = "default_active")]
+    pub active: bool,
     pub model: ModelConfig,
     #[serde(default)]
     pub plugins: Vec<String>,
