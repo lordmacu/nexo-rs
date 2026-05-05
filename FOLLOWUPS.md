@@ -100,6 +100,28 @@ Open follow-up:
   `crates/setup/src/llm_provider_probe.rs::HttpLlmProviderProbe`
   so the daemon dedupes across all SPA instances. ~50 LOC.
 
+### Phase 82.10.p.b — wipe stale signal session before pairing ✅ shipped 2026-05-05
+
+Live deployment surfaced the "auto-paired without QR" symptom:
+operators who deleted the credential YAML AND unpaired the
+device from WhatsApp app side STILL got dropped on the green
+"✅ Dispositivo emparejado" pane on the next `pairing/start` —
+no QR, no escape. Root cause: wa-agent's `Client::new_in_dir`
+silently resumes any signal session under
+`<session_dir>/.whatsapp-rs/`; a credential revoke only touches
+the YAML, never the on-disk session.
+
+`WhatsappPairingTrigger::start` now wipes
+`<session_dir>/.whatsapp-rs/` before invoking
+`pair_with_callback`, so every `pairing/start` produces a fresh
+QR. Belt-and-suspenders: the trigger also tracks whether
+`on_qr` ever fired before `connect()` resolved Ok; if not (rare
+race where the wipe failed), the challenge is flipped to
+`Expired` with a clear `data.error` instead of the misleading
+`Linked`.
+
+Shipped in `nexo-plugin-whatsapp` v0.1.2.
+
 ### Phase 82.10.p — admin pairing → channel plugin bridge ✅ shipped
 
 Resolved across commits `54e394a..fab0231` (8 atomic steps):
