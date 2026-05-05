@@ -203,8 +203,33 @@ pub async fn upsert(
         return AdminRpcResult::err(AdminRpcError::InvalidParams("base_url is empty".into()));
     }
 
-    // Phase 82.10.u — branch into the schema-driven path when the
-    // operator submitted a `fields` payload. Legacy path stays
+    // Phase 82.10.u — OAuth bypass. When the operator has already
+    // run `oauth_finish` (which persisted the bundle to the
+    // SecretsStore + patched yaml `auth.mode = oauth_bundle,
+    // auth.bundle = <path>`), the subsequent `upsert` call only
+    // needs to stamp `base_url + factory_type` on the yaml. Skip
+    // both the schema-driven validation AND the legacy
+    // exactly-one-key-source rule — bundle owns the credentials.
+    //
+    // Order matters: the bypass runs FIRST so any stray `fields`
+    // payload (e.g. older microapp versions stamping
+    // `oauth_bundle_secret_id` for tracking) doesn't trip the
+    // schema validator's UNKNOWN_FIELD check. Defensive against
+    // stale frontend deployments.
+    let oauth_mode = matches!(
+        input.auth_mode,
+        Some(AuthMode::OAuthAuthCode)
+            | Some(AuthMode::OAuthDeviceCode)
+            | Some(AuthMode::OAuthBundleImport)
+    );
+    if oauth_mode {
+        let _ = factory_schema; // schema not consulted in OAuth path
+        let _ = secrets;        // bundle persistence already done by oauth_finish
+        return upsert_oauth_metadata(patcher, input, reload_signal);
+    }
+
+    // Phase 82.10.u — schema-driven path when the operator
+    // submitted a non-OAuth `fields` payload. Legacy path stays
     // intact for callers that still use api_key_env etc.
     if !input.fields.is_empty() {
         return upsert_schema_driven(
@@ -217,22 +242,6 @@ pub async fn upsert(
         .await;
     }
     let _ = factory_schema; // silence unused when fields empty
-
-    // Phase 82.10.u — OAuth bypass. When the operator has already
-    // run `oauth_finish` (which persisted the bundle to the
-    // SecretsStore + patched yaml `auth.mode = oauth_bundle,
-    // auth.bundle = <path>`), the subsequent `upsert` call only
-    // needs to stamp `base_url + factory_type` on the yaml. Skip
-    // the exactly-one-key-source rule — keys live in the bundle.
-    let oauth_mode = matches!(
-        input.auth_mode,
-        Some(AuthMode::OAuthAuthCode)
-            | Some(AuthMode::OAuthDeviceCode)
-            | Some(AuthMode::OAuthBundleImport)
-    );
-    if oauth_mode {
-        return upsert_oauth_metadata(patcher, input, reload_signal);
-    }
 
     // Phase 82.10.s.3 — exactly-one-key-source rule. Caller must
     // pick a SINGLE path:
