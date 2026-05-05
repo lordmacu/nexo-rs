@@ -491,6 +491,18 @@ impl LlmProviderConfig {
         provider_id: &str,
         secrets: &dyn SecretsSource,
     ) -> Result<(), KeyResolutionError> {
+        // OAuth-bundle / cli-import / device-code providers carry
+        // their credential in the bundle file referenced by
+        // `auth.bundle`, NOT in `api_key` / `api_key_secret_id`.
+        // Skipping the gauntlet for those modes lets the boot
+        // continue; the LLM client reads the bundle at first
+        // request time and self-refreshes on expiry.
+        if let Some(auth) = self.auth.as_ref() {
+            let mode = auth.mode.as_str();
+            if mode != "api_key" && mode != "setup_token" && !mode.is_empty() {
+                return Ok(());
+            }
+        }
         let inline_present = !self.api_key.is_empty();
         let secret_id = self
             .api_key_secret_id
@@ -1051,6 +1063,41 @@ auto:
     #[test]
     fn resolve_api_key_missing_when_neither_present() {
         let mut p = provider_inline("");
+        let err = p.resolve_api_key("provider-x", &NoSecretsSource).unwrap_err();
+        assert!(matches!(err, KeyResolutionError::Missing(_)));
+    }
+
+    fn auth_with_mode(mode: &str) -> LlmAuthConfig {
+        LlmAuthConfig {
+            mode: mode.to_string(),
+            bundle: None,
+            setup_token_file: None,
+            refresh_endpoint: None,
+            client_id: None,
+        }
+    }
+
+    #[test]
+    fn resolve_api_key_skips_for_oauth_bundle_mode() {
+        // Anthropic OAuth-bundle providers (claude-code-style auth)
+        // store creds in `auth.bundle`, not `api_key`. The boot
+        // gauntlet must accept that — otherwise the daemon refuses
+        // to start with `KeyResolutionError::Missing` even though
+        // the bundle is valid and the LLM client can self-refresh.
+        let mut p = provider_inline("");
+        p.auth = Some(LlmAuthConfig {
+            bundle: Some("/path/to/bundle.txt".to_string()),
+            ..auth_with_mode("oauth_bundle")
+        });
+        p.resolve_api_key("anthropic-x", &NoSecretsSource).unwrap();
+    }
+
+    #[test]
+    fn resolve_api_key_still_required_when_auth_mode_is_api_key() {
+        // Explicit `auth.mode: api_key` must keep the gauntlet
+        // active — operator opted into the static-key path.
+        let mut p = provider_inline("");
+        p.auth = Some(auth_with_mode("api_key"));
         let err = p.resolve_api_key("provider-x", &NoSecretsSource).unwrap_err();
         assert!(matches!(err, KeyResolutionError::Missing(_)));
     }
