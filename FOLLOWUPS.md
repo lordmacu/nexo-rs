@@ -70,6 +70,34 @@ Open follow-ups:
   lands at `.json`. Cosmetic; functionality unaffected.
 - **82.10.s.probe-server-cache** (open since 82.10.s+t) — move
   the 60s probe cache from frontend into daemon for shared dedup.
+- **82.10.u.anthropic-live-probe** — ✅ shipped 2026-05-05.
+  `AnthropicFactory::supports_models_probe → true`, daemon-side
+  `HttpLlmProviderProbe` branches on factory id and uses
+  `AnthropicAuth::resolve_headers` for the right header set
+  (`x-api-key` for legacy keys, `Authorization: Bearer` +
+  `anthropic-beta: oauth-2025-04-20` for OAuth subscription) plus
+  `anthropic-version: 2023-06-01`. OAuth modes in `probe_draft`
+  short-circuit to "fall back to catalog" (bundle path isn't in
+  the draft payload). After upsert, frontend can re-probe via
+  `probe(provider_id)` to refresh the live model list against
+  the persisted bundle.
+- **82.10.u.preflight-model-validation** — write-time gate at
+  `nexo/admin/llm_providers/upsert`: before persisting the
+  instance, fire a 1-token `messages` (or factory-equivalent)
+  request with the operator-chosen model. Reject upsert with
+  typed `ModelNotAvailableForTier` when upstream returns 404 /
+  "model not found", surfacing a clear "tu suscripción no tiene
+  acceso a `<model>`, prueba `<fallback>`" hint in the wizard.
+  Still relevant after 82.10.u.anthropic-live-probe: even live
+  `/v1/models` returns the API-tier catalog (not the
+  subscription-tier catalog), so the OAuth-bundle Claude Code
+  path can still surface models the operator can't actually
+  call. Preflight closes the gap by validating the chosen model
+  end-to-end. Reference: `claude-code-leak/src/services/api/bootstrap.ts:63-90`
+  shows Claude Code uses internal `/api/claude_cli/bootstrap`
+  (not public `/v1/models`) precisely because the public
+  catalogue isn't tier-filtered. Don't depend on that internal
+  endpoint — preflight at write time is provider-agnostic.
 
 ### Phase 82.10.s + 82.10.t — multi-instance LLM providers + dynamic models 🟢 shipped, 1 follow-up open
 
