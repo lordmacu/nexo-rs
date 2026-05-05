@@ -272,6 +272,22 @@ pub(crate) fn merge_beta_headers(
     }
 }
 
+/// Build the `/v1/messages` URL from an operator-supplied
+/// `base_url`. Handles both the canonical `https://api.anthropic.com`
+/// shape (no trailing path) and the legacy `https://api.anthropic.com/v1`
+/// shape some operator yamls carry — appending `/v1/messages`
+/// blindly would land at `/v1/v1/messages` and 404. Mirrors
+/// `research/src/agents/anthropic-transport-stream.ts:430-431`:
+/// strip trailing slashes, then route on the `/v1` suffix.
+pub(crate) fn build_messages_url(base_url: &str) -> String {
+    let trimmed = base_url.trim_end_matches('/');
+    if trimmed.ends_with("/v1") {
+        format!("{trimmed}/messages")
+    } else {
+        format!("{trimmed}/v1/messages")
+    }
+}
+
 /// Read a reqwest response body lossily — `text()` returns `Err` on
 /// invalid UTF-8 or transport-level read errors, both of which lose
 /// the body entirely and leave us with empty error logs. Read raw
@@ -452,7 +468,7 @@ impl AnthropicClient {
     async fn do_request(&self, req: &ChatRequest) -> Result<ChatResponse, LlmError> {
         validate_request(req)?;
         self.rate_limiter.acquire().await;
-        let url = format!("{}/v1/messages", self.base_url);
+        let url = build_messages_url(&self.base_url);
         tracing::info!(
             target: "anthropic",
             model = %self.model,
@@ -536,7 +552,7 @@ impl AnthropicClient {
     async fn open_stream(&self, req: &ChatRequest) -> Result<reqwest::Response, LlmError> {
         validate_request(req)?;
         self.rate_limiter.acquire().await;
-        let url = format!("{}/v1/messages", self.base_url);
+        let url = build_messages_url(&self.base_url);
         tracing::info!(
             target: "anthropic",
             model = %self.model,
