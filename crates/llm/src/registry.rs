@@ -949,12 +949,15 @@ mod tests {
     }
 
     #[test]
-    fn anthropic_factory_supports_oauth_auth_code_and_skips_models_probe() {
+    fn anthropic_factory_supports_oauth_auth_code_and_models_probe() {
         let f = AnthropicFactory;
         let modes = f.supported_auth_modes();
         assert!(modes.contains(&AuthMode::OAuthAuthCode));
         assert!(modes.contains(&AuthMode::SetupToken));
-        assert!(!f.supports_models_probe(), "Anthropic exposes /v1/models but the catalogue is curated");
+        assert!(
+            f.supports_models_probe(),
+            "Anthropic /v1/models is reachable; HttpLlmProviderProbe handles the per-factory auth shape"
+        );
     }
 
     #[test]
@@ -991,7 +994,7 @@ mod tests {
             .iter()
             .find(|e| e.id == "anthropic")
             .expect("anthropic in catalog");
-        assert!(!anthropic.supports_models_probe);
+        assert!(anthropic.supports_models_probe);
         assert!(anthropic
             .supported_auth_modes
             .contains(&AuthMode::OAuthAuthCode));

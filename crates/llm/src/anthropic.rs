@@ -1125,11 +1125,17 @@ impl LlmProviderFactory for AnthropicFactory {
     }
 
     fn known_models(&self) -> &'static [&'static str] {
+        // Static fallback when /v1/models is unreachable (no creds
+        // yet, OAuth-bundle pre-upsert, network blocked). Order:
+        // sonnet-4-5 first because it's available on every tier
+        // (public API + Claude Code OAuth-bundle), opus higher-revs
+        // last because the subscription endpoint sometimes 404s on
+        // them despite being in the catalog.
         &[
-            "claude-opus-4-7",
-            "claude-sonnet-4-6",
             "claude-sonnet-4-5",
             "claude-haiku-4-5",
+            "claude-sonnet-4-6",
+            "claude-opus-4-7",
         ]
     }
 
@@ -1168,12 +1174,16 @@ impl LlmProviderFactory for AnthropicFactory {
         ]
     }
 
-    /// Anthropic exposes `/v1/models` (since 2024-12) but the
-    /// catalogue is small + stable; the static `known_models` list
-    /// is the canonical source. Keep `false` so the SPA wizard
-    /// uses the static list and skips a redundant probe call.
+    /// Anthropic exposes `/v1/models` (since 2024-12). Returning
+    /// `true` lets the SPA wizard issue a live probe so the model
+    /// dropdown reflects what the operator's API key (or OAuth
+    /// bundle) can actually call — `known_models` becomes the
+    /// offline fallback. Daemon-side: `HttpLlmProviderProbe` reads
+    /// the factory id from yaml and switches to `x-api-key` +
+    /// `anthropic-version` headers (or Bearer + OAuth-beta for
+    /// subscription auth).
     fn supports_models_probe(&self) -> bool {
-        false
+        true
     }
 }
 
@@ -1191,7 +1201,7 @@ impl LlmProviderFactory for AnthropicFactory {
 /// * `auto` — tries in order: oauth_bundle (if file exists) →
 ///   cli_import (if available) → setup_token (if file exists) →
 ///   api_key.
-fn resolve_auth(cfg: &LlmProviderConfig) -> anyhow::Result<AnthropicAuth> {
+pub fn resolve_auth(cfg: &LlmProviderConfig) -> anyhow::Result<AnthropicAuth> {
     let auth = cfg.auth.as_ref();
     let mode = auth.map(|a| a.mode.as_str()).unwrap_or("api_key");
     let bundle_path = auth
