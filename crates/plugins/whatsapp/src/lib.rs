@@ -5,6 +5,7 @@
 //! currently wires only configuration + bootstrap — inbound bridge and
 //! outbound dispatcher land in 6.3 and 6.4.
 
+pub mod bot_registry;
 pub mod bridge;
 pub mod dispatch;
 pub mod events;

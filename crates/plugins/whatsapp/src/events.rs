@@ -7,6 +7,15 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Sub-payload for the `media.mime_type` JSON pointer that core's
+/// `extract_inbound_media` reads. Kept tiny on purpose — runtime
+/// only needs the mime; everything else lives next to it as
+/// flat fields on `InboundEvent::Message`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InboundMessageMedia {
+    pub mime_type: String,
+}
+
 /// Discriminated union of everything the plugin may publish inbound.
 ///
 /// Serialised with `#[serde(tag = "kind", rename_all = "snake_case")]`
@@ -32,6 +41,20 @@ pub enum InboundEvent {
         is_group: bool,
         timestamp: i64,
         msg_id: String,
+        /// Inbound media attachment surfaced to the agent runtime via
+        /// `extract_inbound_media`. Populated when the message carries
+        /// audio/image/video/document content AND the bridge has the
+        /// file already on disk. Read-side: runtime maps the
+        /// `(media_kind, media_path, media.mime_type)` triple to
+        /// `InboundMessage.media` so `_inbound_transform` tools (e.g.
+        /// audio STT) can find the file. `None` for plain-text
+        /// messages.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        media_kind: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        media_path: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        media: Option<InboundMessageMedia>,
     },
     /// Paired with `Message` when an incoming message carried media.
     /// The file has already been downloaded to disk when this event is

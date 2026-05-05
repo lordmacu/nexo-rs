@@ -52,6 +52,7 @@ pub mod http_server;
 pub mod inbound;
 pub mod meta;
 pub mod microapp_error;
+pub mod reply_kind;
 pub mod template;
 pub mod webhook;
 

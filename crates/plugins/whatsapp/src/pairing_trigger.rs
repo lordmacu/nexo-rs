@@ -103,6 +103,13 @@ impl PairingChannelTrigger for WhatsappPairingTrigger {
     }
 
     async fn start(&self, ctx: PairingContext) -> Result<PairingHandle, PairingTriggerError> {
+        let entered_at = std::time::Instant::now();
+        tracing::info!(
+            target: "pairing_perf",
+            challenge_id = %ctx.challenge_id,
+            instance = ?ctx.instance,
+            "WhatsappPairingTrigger::start: entered"
+        );
         let session_dir = match self.resolve_session_dir(ctx.instance.as_deref()) {
             Some(p) => p,
             None => {
@@ -166,6 +173,14 @@ impl PairingChannelTrigger for WhatsappPairingTrigger {
         let notifier_for_qr = notifier.clone();
         let on_qr = move |qr_png_b64: String, qr_ascii: String, expires_at_ms: u64| {
             qr_fired_for_qr.store(true, Ordering::SeqCst);
+            tracing::info!(
+                target: "pairing_perf",
+                challenge_id = %challenge_id,
+                png_b64_len = qr_png_b64.len(),
+                ascii_len = qr_ascii.len(),
+                expires_at_ms,
+                "WhatsappPairingTrigger: QR ready — notifying operators"
+            );
             // Skip update if cancelled — race between QR
             // arrival and operator clicking cancel.
             let _ = store_for_qr.update_qr(
@@ -183,9 +198,21 @@ impl PairingChannelTrigger for WhatsappPairingTrigger {
                     state: PairingState::QrReady,
                     data,
                 });
+                tracing::info!(
+                    target: "pairing_perf",
+                    challenge_id = %challenge_id,
+                    "WhatsappPairingTrigger: QrReady status notified"
+                );
             }
         };
 
+        let _ = entered_at; // silence when target not enabled
+        tracing::info!(
+            target: "pairing_perf",
+            challenge_id = %challenge_id,
+            elapsed_ms = entered_at.elapsed().as_millis() as u64,
+            "WhatsappPairingTrigger::start: pre-spawn (about to return RPC)"
+        );
         // Spawn the wa-agent pairing flow with cancel-aware
         // select. `kill_on_drop` semantics on the wa-agent
         // Client mean dropping the future closes the

@@ -191,6 +191,17 @@ impl Plugin for WhatsappPlugin {
         self.session
             .set(session.clone())
             .map_err(|_| anyhow::anyhow!("session already initialised"))?;
+        // Register in the global bot registry so admin RPC routes
+        // (`nexo/admin/whatsapp/bot/{list,send}`) can drive this
+        // session via its instance label. Lookup is keyed on the
+        // label the registry uses; default to "default" when the
+        // plugin is configured single-account.
+        let registry_label = self
+            .cfg
+            .instance
+            .clone()
+            .unwrap_or_else(|| "default".to_string());
+        crate::bot_registry::register(&registry_label, session.clone());
         self.broker
             .set(broker.clone())
             .map_err(|_| anyhow::anyhow!("broker already initialised"))?;
@@ -276,6 +287,14 @@ impl Plugin for WhatsappPlugin {
     async fn stop(&self) -> Result<()> {
         self.shutdown.cancel();
         self.pending.clear();
+        // Drop our registry entry so admin callers don't hand back
+        // a session whose loops are about to exit.
+        let registry_label = self
+            .cfg
+            .instance
+            .clone()
+            .unwrap_or_else(|| "default".to_string());
+        crate::bot_registry::unregister(&registry_label);
         // Wait up to 5s per task for graceful exit. Anything still
         // running after that gets dropped — mostly belt-and-suspenders
         // because `cancel` already signals the loops to break.

@@ -75,6 +75,16 @@ pub struct AgentDetail {
     /// Optional output language directive (`"es"`, `"en"`, …).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
+    /// Workspace directory the framework loads each turn (IDENTITY,
+    /// SOUL, USER, AGENTS, MEMORY, plus `extra_docs`). Empty when
+    /// the agent has no workspace layer wired.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub workspace: String,
+    /// Workspace-relative knowledge files appended to the system
+    /// prompt as `# RULES — <filename>` blocks. Empty when no
+    /// knowledge is wired.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_docs: Vec<String>,
 }
 
 /// LLM provider + model pointer.
@@ -125,6 +135,27 @@ pub struct AgentUpsertInput {
     /// `None` keeps existing; defaults to `true` for new agents.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active: Option<bool>,
+    /// Path where per-session JSONL transcripts are written. The
+    /// `TranscriptWriter` is the sole emitter of `TranscriptAppended`
+    /// firehose events, so an empty value disables live conversation
+    /// updates in operator dashboards. `None` keeps existing yaml
+    /// value (no write); pass `Some("")` to explicitly disable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcripts_dir: Option<String>,
+    /// Workspace directory the framework loads on every turn. Holds
+    /// the IDENTITY/SOUL/USER/AGENTS/MEMORY markdowns that compose
+    /// the agent's persona + the knowledge docs referenced in
+    /// `extra_docs`. `None` keeps existing yaml value; empty string
+    /// disables the workspace layer entirely.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
+    /// Workspace-relative markdown files appended to the system prompt
+    /// alongside IDENTITY/SOUL/USER/AGENTS. Used by the microapp
+    /// uploader to expose .txt/.md/.pdf knowledge as source of truth
+    /// (each entry renders as `# RULES — <filename>`). `None` keeps
+    /// the existing list; empty vec clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_docs: Option<Vec<String>>,
 }
 
 /// Params for `nexo/admin/agents/delete`. Soft-delete:
@@ -183,6 +214,8 @@ mod tests {
             inbound_bindings: vec![],
             system_prompt: "hi".into(),
             language: None,
+            workspace: String::new(),
+            extra_docs: vec![],
         };
         let v = serde_json::to_value(&d).unwrap();
         let obj = v.as_object().unwrap();
@@ -202,6 +235,9 @@ mod tests {
             system_prompt: None,
             language: None,
             active: None,
+            transcripts_dir: None,
+            workspace: None,
+            extra_docs: None,
         };
         let v = serde_json::to_value(&i).unwrap();
         let obj = v.as_object().unwrap();

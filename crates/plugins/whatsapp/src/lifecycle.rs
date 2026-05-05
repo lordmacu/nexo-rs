@@ -16,7 +16,7 @@ use nexo_broker::{AnyBroker, BrokerHandle, Event};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::bridge::SOURCE;
 use crate::events::InboundEvent;
@@ -116,6 +116,82 @@ async fn forward(
     // Phase 82.10.r — handle Typing presence outside the lifecycle
     // state-machine block since it doesn't mutate connect/disconnect
     // state and skips the broker `InboundEvent` emit.
+    // Passive monitor — log every NewMessage that hits the session,
+    // including chats the agent's ACL would otherwise filter out
+    // (Meta AI replies, third-party bots, archived contacts). Pure
+    // observation: no broker emit, no agent routing. Useful for
+    // debugging "did wa-agent see this stanza at all?".
+    if let whatsapp_rs::MessageEvent::NewMessage { msg } = &ev {
+        let from = msg
+            .key
+            .participant
+            .clone()
+            .unwrap_or_else(|| msg.key.remote_jid.clone());
+        let text_preview = whatsapp_rs::agent::extract_text(msg.message.as_ref())
+            .map(|t| t.chars().take(300).collect::<String>())
+            .unwrap_or_default();
+        let content_kind = msg.message.as_ref().map(|c| {
+            use whatsapp_rs::messages::MessageContent;
+            match c {
+                MessageContent::Text { .. } => "text",
+                MessageContent::Image { .. } => "image",
+                MessageContent::Video { .. } => "video",
+                MessageContent::Audio { .. } => "audio",
+                MessageContent::Document { .. } => "document",
+                MessageContent::Sticker { .. } => "sticker",
+                MessageContent::Location { .. } => "location",
+                MessageContent::Contact { .. } => "contact",
+                MessageContent::Reaction { .. } => "reaction",
+                MessageContent::Reply { .. } => "reply",
+                MessageContent::Poll { .. } => "poll",
+                MessageContent::LinkPreview { .. } => "link_preview",
+                MessageContent::Buttons { .. } => "buttons",
+                MessageContent::List { .. } => "list",
+            }
+        });
+        info!(
+            target: "wa::monitor",
+            from = %from,
+            chat = %msg.key.remote_jid,
+            from_me = msg.key.from_me,
+            msg_id = %msg.key.id,
+            push_name = %msg.push_name.as_deref().unwrap_or(""),
+            content = content_kind.unwrap_or("none"),
+            text_len = text_preview.len(),
+            text = %text_preview,
+            "wa-monitor: inbound message"
+        );
+    }
+    // Bot replies — Meta AI etc. — surface to the firehose so
+    // microapps can render them in a dedicated bubble UI without
+    // routing through the agent dispatcher (which would otherwise
+    // try to reply to the bot and create a fan-out loop).
+    if let whatsapp_rs::MessageEvent::BotMessage {
+        bot_jid,
+        msg_id,
+        target_id,
+        edit,
+        text,
+    } = &ev
+    {
+        if let Some(emitter) = event_emitter {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let evt = nexo_tool_meta::admin::agent_events::AgentEventKind::WhatsappBotMessage {
+                instance: instance_label.to_string(),
+                bot_jid: bot_jid.clone(),
+                msg_id: msg_id.clone(),
+                target_id: target_id.clone(),
+                edit: edit.clone(),
+                text: text.clone(),
+                at_ms: now_ms,
+            };
+            emitter.emit(evt).await;
+        }
+        return Ok(());
+    }
     if let whatsapp_rs::MessageEvent::Typing { jid, composing } = &ev {
         if let Some(emitter) = event_emitter {
             let now_ms = std::time::SystemTime::now()

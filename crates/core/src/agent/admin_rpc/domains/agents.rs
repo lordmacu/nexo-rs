@@ -263,6 +263,17 @@ fn read_detail(
         Some(Value::String(s)) => Some(s),
         _ => None,
     };
+    let workspace = match patcher.read_agent_field(agent_id, "workspace")? {
+        Some(Value::String(s)) => s,
+        _ => String::new(),
+    };
+    let extra_docs: Vec<String> = match patcher.read_agent_field(agent_id, "extra_docs")? {
+        Some(Value::Array(arr)) => arr
+            .into_iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect(),
+        _ => Vec::new(),
+    };
     let inbound_bindings: Vec<BindingSummary> =
         match patcher.read_agent_field(agent_id, "inbound_bindings")? {
             Some(Value::Array(arr)) => arr
@@ -287,20 +298,32 @@ fn read_detail(
         inbound_bindings,
         system_prompt,
         language,
+        workspace,
+        extra_docs,
     }))
 }
 
 fn upsert_yaml(patcher: &dyn YamlPatcher, input: &AgentUpsertInput) -> anyhow::Result<()> {
-    patcher.upsert_agent_field(
-        &input.id,
-        "model.provider",
-        Value::String(input.model.provider.clone()),
-    )?;
-    patcher.upsert_agent_field(
-        &input.id,
-        "model.model",
-        Value::String(input.model.model.clone()),
-    )?;
+    // Empty `model.provider` / `model.model` mean "don't touch the
+    // existing yaml value" — historically the handler overwrote
+    // both unconditionally, so partial updates from callers that
+    // only wanted to amend (e.g. `extra_docs`) silently bricked the
+    // agent. Treat empty as a no-op write; non-empty is the real
+    // upsert path.
+    if !input.model.provider.is_empty() {
+        patcher.upsert_agent_field(
+            &input.id,
+            "model.provider",
+            Value::String(input.model.provider.clone()),
+        )?;
+    }
+    if !input.model.model.is_empty() {
+        patcher.upsert_agent_field(
+            &input.id,
+            "model.model",
+            Value::String(input.model.model.clone()),
+        )?;
+    }
     if let Some(active) = input.active {
         patcher.upsert_agent_field(&input.id, "active", Value::Bool(active))?;
     }
@@ -321,6 +344,26 @@ fn upsert_yaml(patcher: &dyn YamlPatcher, input: &AgentUpsertInput) -> anyhow::R
             "language",
             Value::String(language.clone()),
         )?;
+    }
+    if let Some(transcripts_dir) = &input.transcripts_dir {
+        patcher.upsert_agent_field(
+            &input.id,
+            "transcripts_dir",
+            Value::String(transcripts_dir.clone()),
+        )?;
+    }
+    if let Some(workspace) = &input.workspace {
+        patcher.upsert_agent_field(
+            &input.id,
+            "workspace",
+            Value::String(workspace.clone()),
+        )?;
+    }
+    if let Some(extra_docs) = &input.extra_docs {
+        let arr = Value::Array(
+            extra_docs.iter().map(|s| Value::String(s.clone())).collect(),
+        );
+        patcher.upsert_agent_field(&input.id, "extra_docs", arr)?;
     }
     if let Some(bindings) = &input.inbound_bindings {
         let arr: Vec<Value> = bindings
@@ -523,6 +566,9 @@ mod tests {
             inbound_bindings: None,
             system_prompt: None,
             language: Some("en".into()),
+            transcripts_dir: None,
+            workspace: None,
+            extra_docs: None,
         };
         let result = upsert(
             &*yaml,

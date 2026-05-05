@@ -607,7 +607,7 @@ fn default_auth_mode() -> String {
     "auto".to_string()
 }
 
-#[derive(Debug, Deserialize, Default, Clone)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct RateLimitConfig {
     #[serde(default = "default_rps")]
@@ -615,11 +615,20 @@ pub struct RateLimitConfig {
     pub quota_alert_threshold: Option<u64>,
 }
 
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            requests_per_second: default_rps(),
+            quota_alert_threshold: None,
+        }
+    }
+}
+
 fn default_rps() -> f32 {
     2.0
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RetryConfig {
     #[serde(default = "default_max_attempts")]
@@ -630,6 +639,17 @@ pub struct RetryConfig {
     pub max_backoff_ms: u64,
     #[serde(default = "default_multiplier")]
     pub backoff_multiplier: f32,
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            max_attempts: default_max_attempts(),
+            initial_backoff_ms: default_initial_backoff(),
+            max_backoff_ms: default_max_backoff(),
+            backoff_multiplier: default_multiplier(),
+        }
+    }
 }
 
 fn default_max_attempts() -> u32 {

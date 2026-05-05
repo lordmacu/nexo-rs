@@ -59,9 +59,35 @@ pub async fn handler(
     State(s): State<Arc<AdminProxyState>>,
     Json(req): Json<AdminRequest>,
 ) -> Response {
-    match s.admin.call::<Value, Value>(&req.method, req.params).await {
-        Ok(result) => Json(json!({"ok": true, "result": result})).into_response(),
-        Err(e) => admin_error_to_response(e),
+    let started = std::time::Instant::now();
+    let method = req.method.clone();
+    tracing::info!(
+        target: "admin_proxy_perf",
+        method = %method,
+        "admin proxy: dispatching"
+    );
+    let result = s.admin.call::<Value, Value>(&req.method, req.params).await;
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+    match result {
+        Ok(result) => {
+            tracing::info!(
+                target: "admin_proxy_perf",
+                method = %method,
+                elapsed_ms,
+                "admin proxy: ok"
+            );
+            Json(json!({"ok": true, "result": result})).into_response()
+        }
+        Err(e) => {
+            tracing::warn!(
+                target: "admin_proxy_perf",
+                method = %method,
+                elapsed_ms,
+                error = %e,
+                "admin proxy: error"
+            );
+            admin_error_to_response(e)
+        }
     }
 }
 

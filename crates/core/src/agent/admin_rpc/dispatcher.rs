@@ -177,6 +177,9 @@ pub struct AdminRpcDispatcher {
     /// Phase 82.10.e — pairing challenge store. `None` disables
     /// `nexo/admin/pairing/*`.
     pairing_store: Option<Arc<dyn PairingChallengeStore>>,
+    /// WhatsApp bot channel handle. `None` disables
+    /// `nexo/admin/whatsapp/bot/*`.
+    wa_bot_handle: super::wa_bot::WaBotHandleArc,
     /// Phase 82.10.e — push channel for
     /// `nexo/notify/pairing_status_changed`. `None` = best-effort
     /// (poll only, notifications dropped).
@@ -322,6 +325,7 @@ impl AdminRpcDispatcher {
             credential_store: None,
             persisters: PersisterRegistry::new(),
             pairing_store: None,
+            wa_bot_handle: None,
             pairing_notifier: None,
             pairing_triggers: PairingChannelTriggers::new(),
             pairing_handles: Arc::new(DashMap::new()),
@@ -478,6 +482,18 @@ impl AdminRpcDispatcher {
     ) -> Self {
         self.pairing_store = Some(store);
         self.pairing_notifier = notifier;
+        self
+    }
+
+    /// Install the WhatsApp bot channel handle that backs
+    /// `nexo/admin/whatsapp/bot/{list,send}`. Pass the
+    /// implementation owned by the WhatsApp plugin at boot. Calling
+    /// this with `None` (default) disables the routes.
+    pub fn with_wa_bot_handle(
+        mut self,
+        handle: Arc<dyn super::wa_bot::WaBotHandle>,
+    ) -> Self {
+        self.wa_bot_handle = Some(handle);
         self
     }
 
@@ -924,6 +940,74 @@ impl AdminRpcDispatcher {
                 Some(store) => super::domains::pairing::status(store.as_ref(), params),
                 None => AdminRpcResult::err(AdminRpcError::Internal(
                     "pairing domain not configured".into(),
+                )),
+            },
+            "nexo/admin/whatsapp/bot/list" => match &self.wa_bot_handle {
+                Some(handle) => {
+                    let p: nexo_tool_meta::admin::wa_bot::BotListParams =
+                        match serde_json::from_value(params) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                return AdminRpcResult::err(
+                                    AdminRpcError::InvalidParams(e.to_string()),
+                                );
+                            }
+                        };
+                    match handle.list_bots(&p.agent_id).await {
+                        Ok(bots) => {
+                            let resp = nexo_tool_meta::admin::wa_bot::BotListResponse {
+                                agent_id: p.agent_id,
+                                bots: bots.into_iter().collect(),
+                            };
+                            AdminRpcResult::ok(
+                                serde_json::to_value(resp).unwrap_or(Value::Null),
+                            )
+                        }
+                        Err(e) => AdminRpcResult::err(AdminRpcError::Internal(format!(
+                            "wa_bot list: {e}"
+                        ))),
+                    }
+                }
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "whatsapp bot domain not configured".into(),
+                )),
+            },
+            "nexo/admin/whatsapp/bot/send" => match &self.wa_bot_handle {
+                Some(handle) => {
+                    let p: nexo_tool_meta::admin::wa_bot::BotSendInput =
+                        match serde_json::from_value(params) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                return AdminRpcResult::err(
+                                    AdminRpcError::InvalidParams(e.to_string()),
+                                );
+                            }
+                        };
+                    if !p.bot_jid.contains("@bot") {
+                        return AdminRpcResult::err(AdminRpcError::InvalidParams(
+                            format!("bot_jid {} must end in @bot", p.bot_jid),
+                        ));
+                    }
+                    if p.text.trim().is_empty() {
+                        return AdminRpcResult::err(AdminRpcError::InvalidParams(
+                            "text must not be empty".into(),
+                        ));
+                    }
+                    match handle.send_to_bot(&p.agent_id, &p.bot_jid, &p.text).await {
+                        Ok(msg_id) => {
+                            let resp =
+                                nexo_tool_meta::admin::wa_bot::BotSendResponse { msg_id };
+                            AdminRpcResult::ok(
+                                serde_json::to_value(resp).unwrap_or(Value::Null),
+                            )
+                        }
+                        Err(e) => AdminRpcResult::err(AdminRpcError::Internal(format!(
+                            "wa_bot send: {e}"
+                        ))),
+                    }
+                }
+                None => AdminRpcResult::err(AdminRpcError::Internal(
+                    "whatsapp bot domain not configured".into(),
                 )),
             },
             "nexo/admin/pairing/cancel" => match &self.pairing_store {

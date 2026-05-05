@@ -556,6 +556,9 @@ impl AdminRpcBootstrap {
                     Some(pairing_notifier.clone()),
                 )
                 .with_pairing_triggers(inputs.pairing_triggers.clone())
+                .with_wa_bot_handle(Arc::new(
+                    nexo_plugin_whatsapp::bot_registry::WhatsappBotHandle,
+                ))
                 .with_llm_providers_domain(llm_yaml.clone())
                 .with_llm_provider_catalog(inputs.llm_provider_catalog.clone())
                 .with_channels_domain();

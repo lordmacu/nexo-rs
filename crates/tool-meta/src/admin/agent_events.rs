@@ -205,6 +205,30 @@ pub enum AgentEventKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tenant_id: Option<String>,
     },
+    /// One streaming-edit chunk of a Meta AI / `*@bot` reply.
+    /// Always paired with an outbound the user (or microapp UI)
+    /// sent — the `target_id` matches the outbound's stanza id.
+    /// Replaces, not appends to, prior chunks for the same
+    /// `target_id` — UIs render the latest snapshot.
+    WhatsappBotMessage {
+        /// WhatsApp plugin instance label (`smoketest`,
+        /// `default`, …). Resolves to the paired account.
+        instance: String,
+        /// Bot JID, e.g. `718584497008509@bot`.
+        bot_jid: String,
+        /// This chunk's stanza id (different per chunk).
+        msg_id: String,
+        /// The original outbound id we sent to the bot. Constant
+        /// across every chunk of one logical reply.
+        target_id: String,
+        /// `first` / `inner` / `last`. `last` = reply complete.
+        edit: String,
+        /// Concatenated `AIRichResponseMessage.submessages[].messageText`
+        /// for this snapshot.
+        text: String,
+        /// Epoch ms when the daemon received the chunk.
+        at_ms: u64,
+    },
 }
 
 /// Phase 82.10.o — security-domain audit events. Nested under

@@ -57,6 +57,14 @@ pub(crate) struct OutboundPayload {
     pub(crate) caption: Option<String>,
     #[serde(default)]
     pub(crate) file_name: Option<String>,
+    /// Base64-encoded audio bytes. Set when `kind == "voice_note"`
+    /// (reply transform pipeline produced a voice reply).
+    #[serde(default)]
+    pub(crate) audio_bytes_b64: Option<String>,
+    /// MIME type accompanying `audio_bytes_b64` (`audio/mpeg`,
+    /// `audio/ogg`, …).
+    #[serde(default)]
+    pub(crate) mimetype: Option<String>,
 }
 
 pub(crate) fn default_kind() -> String {
@@ -121,6 +129,8 @@ async fn dispatch_event(
             url: None,
             caption: None,
             file_name: None,
+            audio_bytes_b64: None,
+            mimetype: None,
         });
 
     // Reactive path: resolve the oneshot and stop — the bridge handler
@@ -134,6 +144,16 @@ async fn dispatch_event(
                 // Receiver already dropped (timeout) — fall through to
                 // a direct send so the user still gets the message.
             }
+        }
+    } else if let Some(sid) = ev.session_id {
+        // Non-text kinds (voice_note, image, …) bypass wa-agent's
+        // reactive Response::Text path and send proactively below.
+        // Drop the pending oneshot so `bridge_step` returns None
+        // immediately and the bridge handler stops typing — without
+        // this the typing indicator hangs until `response_timeout_ms`
+        // elapses while we've already sent the audio.
+        if let Some((_, tx)) = pending.remove(&sid) {
+            drop(tx);
         }
     }
 
@@ -231,6 +251,38 @@ async fn dispatch_event(
             )
             .await?;
         }
+        "voice_note" => {
+            use base64::{engine::general_purpose::STANDARD as B64, Engine};
+            let to = payload
+                .to
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("voice_note missing `to`"))?;
+            let b64 = payload
+                .audio_bytes_b64
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("voice_note missing `audio_bytes_b64`"))?;
+            let mimetype = payload
+                .mimetype
+                .clone()
+                .unwrap_or_else(|| "audio/mpeg".to_string());
+            let audio = B64
+                .decode(b64)
+                .map_err(|e| anyhow::anyhow!("voice_note audio_bytes_b64 decode: {e}"))?;
+            if audio.is_empty() {
+                return Err(anyhow::anyhow!("voice_note audio_bytes_b64 decoded to 0 bytes"));
+            }
+            tracing::info!(
+                to = %to,
+                bytes = audio.len(),
+                mimetype = %mimetype,
+                session_id = ?ev.session_id,
+                "DISPATCH_EVENT proactive send_voice_note"
+            );
+            session
+                .send_voice_note(&to, &audio, &mimetype)
+                .await
+                .map_err(|e| anyhow::anyhow!("send_voice_note: {e}"))?;
+        }
         other => {
             return Err(anyhow::anyhow!("unknown outbound kind `{other}`"));
         }
@@ -273,6 +325,8 @@ pub mod __test {
                 url: None,
                 caption: None,
                 file_name: None,
+                audio_bytes_b64: None,
+                mimetype: None,
             });
         if payload.kind != "text" {
             return ResolveOutcome::NotReactive;
