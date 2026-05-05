@@ -72,6 +72,24 @@ pub fn entries() -> Vec<(String, Arc<whatsapp_rs::Session>)> {
 /// without re-injecting the handle.
 pub struct WhatsappBotHandle;
 
+/// Cap on every WhatsApp iq we make from the admin RPC handler.
+/// The admin dispatcher reads one JSON-RPC frame at a time off the
+/// microapp's stdin — if list_bots blocks the full 60s the
+/// underlying `send_iq_await` allows, every other admin call backs
+/// up behind it and the operator UI freezes. 8 s is a comfortable
+/// trade-off: long enough for a roundtripping iq on a healthy
+/// connection, short enough that an unresponsive server unblocks
+/// the queue fast.
+const ADMIN_IQ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// JID of Meta AI on every WhatsApp account. The `<iq xmlns="bot"
+/// v="2">` query only enumerates **explicitly enrolled** AI
+/// personas; Meta AI itself is implicit and never appears in the
+/// section list. We surface it manually so the bubble UI can chat
+/// with it from the first connect.
+const META_AI_JID: &str = "718584497008509@bot";
+const META_AI_PERSONA_ID: &str = "867051314767696$760019659443059";
+
 #[async_trait]
 impl WaBotHandle for WhatsappBotHandle {
     async fn list_bots(&self, agent_id: &str) -> WaBotResult<Vec<BotInfo>> {
@@ -81,14 +99,39 @@ impl WaBotHandle for WhatsappBotHandle {
         // registry hit.
         let session = lookup(agent_id)
             .ok_or_else(|| anyhow!("no whatsapp session registered for {agent_id}"))?;
-        let bots = session.list_bots().await?;
-        Ok(bots
-            .into_iter()
-            .map(|b| BotInfo {
-                jid: b.jid,
-                persona_id: b.persona_id,
-            })
-            .collect())
+        // Always start with Meta AI — the official iq query
+        // (`<iq xmlns="bot" v="2">`) does not list it because it's
+        // an implicit, account-wide persona on every WhatsApp
+        // install. Custom personas the operator has enrolled show
+        // up via the iq below and get appended.
+        let mut bots = vec![BotInfo {
+            jid: META_AI_JID.to_string(),
+            persona_id: META_AI_PERSONA_ID.to_string(),
+        }];
+        match tokio::time::timeout(ADMIN_IQ_TIMEOUT, session.list_bots()).await {
+            Ok(Ok(discovered)) => {
+                for b in discovered {
+                    if b.jid == META_AI_JID {
+                        continue;
+                    }
+                    bots.push(BotInfo {
+                        jid: b.jid,
+                        persona_id: b.persona_id,
+                    });
+                }
+            }
+            Ok(Err(e)) => {
+                tracing::warn!(target: "wa::bot_registry", error = %e, "discovery iq failed; returning default bot list");
+            }
+            Err(_) => {
+                tracing::warn!(
+                    target: "wa::bot_registry",
+                    timeout = ?ADMIN_IQ_TIMEOUT,
+                    "discovery iq timed out; returning default bot list"
+                );
+            }
+        }
+        Ok(bots)
     }
 
     async fn send_to_bot(
@@ -99,7 +142,21 @@ impl WaBotHandle for WhatsappBotHandle {
     ) -> WaBotResult<String> {
         let session = lookup(agent_id)
             .ok_or_else(|| anyhow!("no whatsapp session registered for {agent_id}"))?;
-        let id = session.send_text(bot_jid, text).await?;
+        // Use the dedicated bot path: messageSecret + BotMetadata
+        // get attached so the bot can encrypt + send a reply we'll
+        // be able to decrypt. Falls back to the default Meta AI
+        // persona id when the caller doesn't carry one.
+        let id = tokio::time::timeout(
+            ADMIN_IQ_TIMEOUT,
+            session.send_text_to_bot(bot_jid, text, META_AI_PERSONA_ID),
+        )
+        .await
+        .map_err(|_| {
+            anyhow!(
+                "send_to_bot timed out after {:?} — message stanza ack pending",
+                ADMIN_IQ_TIMEOUT
+            )
+        })??;
         Ok(id)
     }
 }
