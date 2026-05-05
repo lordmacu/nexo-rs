@@ -81,23 +81,33 @@ Open follow-ups:
   the draft payload). After upsert, frontend can re-probe via
   `probe(provider_id)` to refresh the live model list against
   the persisted bundle.
-- **runtime.turn-stuck-after-cron-overlap** — second user-triggered
-  turn hangs indefinitely between `agent turn started` and
+- **runtime.turn-stuck-pre-llm** — second user-triggered turn
+  hangs indefinitely between `agent turn started` and
   `anthropic request` (no LLM call ever fires; no error; no
-  timeout). Reproduces when the agent has a cron / heartbeat
-  config AND the user sends a second message shortly after the
-  first one finished. Live incident 2026-05-05: agent `aana` with
-  `claude-haiku-4-5-20251001` answered "Hola" in 2s then locked
-  on "Cómo estas" while a parallel `[cron] fallback model for
-  legacy cron rows` line appeared at the same window, plus a
-  `DISPATCH_EVENT proactive send_text session_id=None` 50s
-  later (likely cron-triggered turn racing the user turn).
-  Hypothesis: per-session mutex / pre-LLM lock in the runtime
-  doesn't drain cleanly when the user turn arrives mid-cron-tick.
-  Need RUST_LOG=debug repro + stack trace at hang. Workaround:
-  daemon restart unblocks the queue. Add `tracing::debug!` spans
-  for the pre-LLM phase in `nexo-core::agent::llm_behavior` so
-  the next hang shows where exactly it parked.
+  timeout). Reproduces with: agent `aana` answered "Hola"
+  cleanly in 2s (turn 1), then "Cómo estas" (turn 2) issued
+  `agent turn started` and never produced any further log line
+  for that `message_id`. Daemon restart clears it. Microapp
+  stderr emitted `firehose store: skipping unknown event variant`
+  3 times in the same window, suggesting an unrecognized
+  agent_event variant the microapp's firehose persistence layer
+  drops silently. Hypothesis: pre-LLM phase (history load /
+  tool collection via stdio RPC to microapp / compaction check)
+  parks on an IPC future the microapp never resolves because it
+  bailed out of the unknown-variant branch without acking.
+  Live incident 2026-05-05.
+
+  Action items:
+  1. Add `tracing::debug!` spans for each pre-LLM step in
+     `nexo-core::agent::llm_behavior` so the next hang pinpoints
+     the parked future (history load / tool fetch / hook /
+     compaction).
+  2. Update microapp firehose handler to ack-and-skip unknown
+     variants instead of silent drop (or at minimum log the
+     variant name).
+  3. Add a per-turn pre-LLM watchdog (e.g. 30s) that bails out
+     to DLQ + `tracing::error!` so future hangs surface as
+     errors rather than silent voids.
 
 - **82.10.p.b.client-reload** — `WhatsappPairingTrigger::start()`
   (Phase 82.10.p.b, commit `cc47c80`) wipes `.whatsapp-rs/`
