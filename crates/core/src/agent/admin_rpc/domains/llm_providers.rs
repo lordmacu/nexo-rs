@@ -218,6 +218,22 @@ pub async fn upsert(
     }
     let _ = factory_schema; // silence unused when fields empty
 
+    // Phase 82.10.u — OAuth bypass. When the operator has already
+    // run `oauth_finish` (which persisted the bundle to the
+    // SecretsStore + patched yaml `auth.mode = oauth_bundle,
+    // auth.bundle = <path>`), the subsequent `upsert` call only
+    // needs to stamp `base_url + factory_type` on the yaml. Skip
+    // the exactly-one-key-source rule — keys live in the bundle.
+    let oauth_mode = matches!(
+        input.auth_mode,
+        Some(AuthMode::OAuthAuthCode)
+            | Some(AuthMode::OAuthDeviceCode)
+            | Some(AuthMode::OAuthBundleImport)
+    );
+    if oauth_mode {
+        return upsert_oauth_metadata(patcher, input, reload_signal);
+    }
+
     // Phase 82.10.s.3 — exactly-one-key-source rule. Caller must
     // pick a SINGLE path:
     //   * api_key_env (legacy, deprecated): name of an env var
@@ -366,6 +382,83 @@ pub async fn upsert(
         id: input.id,
         base_url: input.base_url,
         api_key_env: input.api_key_env,
+        tenant_scope: tenant_id,
+    };
+    AdminRpcResult::ok(serde_json::to_value(summary).unwrap_or(Value::Null))
+}
+
+/// Phase 82.10.u — OAuth metadata-only path. The operator has
+/// already run `oauth_finish` which persisted the bundle to the
+/// SecretsStore + patched yaml `auth.mode = oauth_bundle,
+/// auth.bundle = <path>`. The follow-up `upsert` only stamps
+/// `base_url + factory_type + auth.mode` so the operator's chosen
+/// instance has a complete yaml block.
+fn upsert_oauth_metadata(
+    patcher: &dyn LlmYamlPatcher,
+    input: LlmProviderUpsertInput,
+    reload_signal: &(dyn Fn() + Send + Sync),
+) -> AdminRpcResult {
+    let tenant_id = input
+        .tenant_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
+    let write_field = |dotted: &str, value: Value| -> anyhow::Result<()> {
+        match tenant_id.as_deref() {
+            Some(tid) => patcher.upsert_tenant_provider_field(tid, &input.id, dotted, value),
+            None => patcher.upsert_provider_field(&input.id, dotted, value),
+        }
+    };
+
+    if let Err(e) = write_field("base_url", Value::String(input.base_url.clone())) {
+        return err_typed(LlmProviderError::YamlWriteFailed {
+            detail: e.to_string(),
+        });
+    }
+    if let Some(ft) = input
+        .factory_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if let Err(e) = write_field("factory_type", Value::String(ft.to_string())) {
+            return err_typed(LlmProviderError::YamlWriteFailed {
+                detail: e.to_string(),
+            });
+        }
+    }
+    // The bundle path was already stamped by oauth_finish.
+    // Setting auth.mode here is idempotent — it should already
+    // match — but keep it for defense (e.g. operator switched
+    // mode between oauth_finish and upsert).
+    if let Some(mode) = input.auth_mode {
+        let wire = auth_mode_wire(mode);
+        // OAuthBundleImport persists as `oauth_bundle` upstream;
+        // for the other OAuth variants, oauth_finish already
+        // wrote `auth.mode = oauth_bundle`. Either way we mirror
+        // that here.
+        let yaml_mode = if matches!(
+            mode,
+            AuthMode::OAuthAuthCode | AuthMode::OAuthDeviceCode | AuthMode::OAuthBundleImport
+        ) {
+            "oauth_bundle"
+        } else {
+            wire
+        };
+        if let Err(e) = write_field("auth.mode", Value::String(yaml_mode.to_string())) {
+            return err_typed(LlmProviderError::YamlWriteFailed {
+                detail: e.to_string(),
+            });
+        }
+    }
+    reload_signal();
+
+    let summary = LlmProviderSummary {
+        id: input.id,
+        base_url: input.base_url,
+        api_key_env: String::new(),
         tenant_scope: tenant_id,
     };
     AdminRpcResult::ok(serde_json::to_value(summary).unwrap_or(Value::Null))
