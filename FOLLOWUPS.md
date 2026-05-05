@@ -81,6 +81,24 @@ Open follow-ups:
   the draft payload). After upsert, frontend can re-probe via
   `probe(provider_id)` to refresh the live model list against
   the persisted bundle.
+- **runtime.turn-stuck-after-cron-overlap** — second user-triggered
+  turn hangs indefinitely between `agent turn started` and
+  `anthropic request` (no LLM call ever fires; no error; no
+  timeout). Reproduces when the agent has a cron / heartbeat
+  config AND the user sends a second message shortly after the
+  first one finished. Live incident 2026-05-05: agent `aana` with
+  `claude-haiku-4-5-20251001` answered "Hola" in 2s then locked
+  on "Cómo estas" while a parallel `[cron] fallback model for
+  legacy cron rows` line appeared at the same window, plus a
+  `DISPATCH_EVENT proactive send_text session_id=None` 50s
+  later (likely cron-triggered turn racing the user turn).
+  Hypothesis: per-session mutex / pre-LLM lock in the runtime
+  doesn't drain cleanly when the user turn arrives mid-cron-tick.
+  Need RUST_LOG=debug repro + stack trace at hang. Workaround:
+  daemon restart unblocks the queue. Add `tracing::debug!` spans
+  for the pre-LLM phase in `nexo-core::agent::llm_behavior` so
+  the next hang shows where exactly it parked.
+
 - **82.10.p.b.client-reload** — `WhatsappPairingTrigger::start()`
   (Phase 82.10.p.b, commit `cc47c80`) wipes `.whatsapp-rs/`
   before `pair_with_callback` so the next session is clean on
