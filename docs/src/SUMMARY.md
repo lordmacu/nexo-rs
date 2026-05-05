@@ -136,6 +136,8 @@ part of day-to-day usage. Skim only when you need it.
 - [OpenAI-compatible](./llm/openai.md)
 - [DeepSeek](./llm/deepseek.md)
 - [Multi-instance providers + secret-backed keys](./llm/multi-instance.md)
+- [Credential schema (Phase 82.10.u)](./llm/credential-schema.md)
+- [OAuth flows (Phase 82.10.u)](./llm/oauth-flows.md)
 - [Rate limiting & retry](./llm/retry.md)
 
 # Built-in channels — provider guides

@@ -18,6 +18,59 @@ Historical detailed notes that were previously written in Spanish are preserved 
 
 ## Open items
 
+### Phase 82.10.u — schema-driven LLM provider wizard 🟢 shipped, follow-ups open
+
+Phase 82.10.u introduced declarative credential schemas + OAuth
+endpoints. Operators can now mint MiniMax instances with
+`group_id`, validate keys before persistence, and authorise
+Anthropic Claude.ai subscriptions from the SPA.
+
+Shipped commits (`3b24a83..e2b6f36` + `aed54b5` + `1ab01cb` +
+`0f982c7` + `aa46f27`):
+1. `nexo-llm-auth` crate extracted (PKCE + anthropic + minimax +
+   bundle + verifier_store, 26 unit tests).
+2. `tool-meta` wire shapes: CredentialFieldDescriptor, AuthMode,
+   FieldKind, FieldValidation, DependsOn, LlmProviderError,
+   OAuthStartInput / OAuthFinishInput / responses (8 tests).
+3. `LlmProviderFactory` trait gains `credential_schema +
+   supported_auth_modes + supports_models_probe` (6 tests, 4
+   factories migrated: minimax/anthropic/openai/deepseek/gemini).
+4. Schema-driven `upsert` handler with FactorySchemaLookup +
+   typed LlmProviderError data + audit redaction (6 tests).
+5. `probe_draft` endpoint (HTTP impl in HttpLlmProviderProbe).
+6. OAuth `start/finish` endpoints with VerifierStore single-use +
+   TTL sweep (60s) wired in `admin_bootstrap`.
+7. Microapp 0.0.45 primitives: CredentialFieldRenderer + OAuthPane
+   + useOAuthFlow zustand store.
+8. Docs: `docs/src/llm/credential-schema.md` +
+   `docs/src/llm/oauth-flows.md`.
+
+Open follow-ups:
+
+- **82.10.u.wizard-state-machine** — the microapp's
+  `LlmInstanceCreateModal` still uses the legacy single-api_key
+  UI. The new primitives (`CredentialFieldRenderer`, `OAuthPane`,
+  `useOAuthFlow`) are ready; integration as a state machine
+  (factory_pick → fill_credentials → validate → pick_model → save)
+  is deferred. ~300 LOC TS/React.
+- **82.10.u.e2e-tests** — `crates/setup/tests/llm_provider_schema_e2e.rs`
+  + `llm_oauth_flow_e2e.rs` (5 cases each, wiremock for upstream)
+  not yet written. Existing `llm_multi_instance_e2e.rs` exercises
+  the legacy path; the schema-driven + OAuth paths only have unit
+  coverage in `nexo-core` + `nexo-llm-auth`.
+- **82.10.u.google-oauth** — Google / Gemini OAuth (offline
+  refresh) deferred — separate sub-phase. Existing flow lives in
+  `crates/plugins/google` and uses a different shape (refresh
+  token offline).
+- **82.10.u.bundle-as-secret** — OAuth `oauth_finish` writes the
+  bundle JSON via `SecretsStore.write(name, &str)` which lands at
+  `<secrets_dir>/<id>.txt`. The Anthropic runtime reads from
+  `auth.bundle: <path>` so the file extension is misleading. Move
+  to `SecretsStore.write_bytes(name, ext, bytes)` so the bundle
+  lands at `.json`. Cosmetic; functionality unaffected.
+- **82.10.s.probe-server-cache** (open since 82.10.s+t) — move
+  the 60s probe cache from frontend into daemon for shared dedup.
+
 ### Phase 82.10.s + 82.10.t — multi-instance LLM providers + dynamic models 🟢 shipped, 1 follow-up open
 
 Phase 82.10.s split `factory_type` (registered `crates/llm/src/<id>.rs`
