@@ -81,6 +81,21 @@ Open follow-ups:
   the draft payload). After upsert, frontend can re-probe via
   `probe(provider_id)` to refresh the live model list against
   the persisted bundle.
+- **82.10.u.oauth-finish-seed-defaults** — `nexo/admin/llm_providers/oauth_finish`
+  currently writes `auth.mode + auth.bundle` to yaml as a side
+  effect (so a subsequent `upsert` only needs metadata + model).
+  But if the operator abandons the wizard between `oauth_finish`
+  and `upsert`, the yaml entry is partial: it has `auth.*` but
+  **lacks `base_url` and `factory_type`**, both of which are
+  required by `LlmProviderConfig` (deny_unknown_fields, base_url
+  has no Default). Result: daemon refuses to boot on next start
+  with `missing field 'base_url'`. Fix: oauth_finish should also
+  seed `base_url = factory.default_base_url()` and
+  `factory_type = factory.name()` so the partial yaml is valid
+  on its own. Live incident 2026-05-05: operator did 2 OAuth
+  flows, abandoned both, yaml became unparseable, daemon
+  wouldn't restart until orphan entries were patched manually.
+
 - **82.10.u.preflight-model-validation** — write-time gate at
   `nexo/admin/llm_providers/upsert`: before persisting the
   instance, fire a 1-token `messages` (or factory-equivalent)
