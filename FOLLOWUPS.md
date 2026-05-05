@@ -47,12 +47,12 @@ Shipped commits (`3b24a83..e2b6f36` + `aed54b5` + `1ab01cb` +
 
 Open follow-ups:
 
-- **82.10.u.wizard-state-machine** — the microapp's
-  `LlmInstanceCreateModal` still uses the legacy single-api_key
-  UI. The new primitives (`CredentialFieldRenderer`, `OAuthPane`,
-  `useOAuthFlow`) are ready; integration as a state machine
-  (factory_pick → fill_credentials → validate → pick_model → save)
-  is deferred. ~300 LOC TS/React.
+- **82.10.u.wizard-state-machine** — ✅ shipped in microapp 0.0.46
+  (`fabb16d`). 5-stage state machine: factory_pick →
+  fill_credentials → validate → pick_model → saving, with OAuth
+  branch. CredentialFieldRenderer + OAuthPane + StageBreadcrumb
+  wired. probe_draft gates pick_model; legacy single-api_key
+  fallback retained for pre-82.10.u factories.
 - **82.10.u.e2e-tests** — `crates/setup/tests/llm_provider_schema_e2e.rs`
   + `llm_oauth_flow_e2e.rs` (5 cases each, wiremock for upstream)
   not yet written. Existing `llm_multi_instance_e2e.rs` exercises
